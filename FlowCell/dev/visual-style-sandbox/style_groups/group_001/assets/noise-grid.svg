@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" fill="none">
+  <rect width="160" height="160" fill="transparent"/>
+  <g opacity="0.12" stroke="#D9FF9C" stroke-width="1">
+    <path d="M0 20H160"/>
+    <path d="M0 52H160"/>
+    <path d="M0 84H160"/>
+    <path d="M0 116H160"/>
+    <path d="M0 148H160"/>
+    <path d="M20 0V160"/>
+    <path d="M52 0V160"/>
+    <path d="M84 0V160"/>
+    <path d="M116 0V160"/>
+    <path d="M148 0V160"/>
+  </g>
+</svg>

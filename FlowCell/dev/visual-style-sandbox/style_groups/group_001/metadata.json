@@ -1,0 +1,18 @@
+{
+  "groupId": 1,
+  "name": "Group 1",
+  "button": {
+    "sourceType": "html",
+    "entryFile": "button/source.html"
+  },
+  "panel": {
+    "sourceType": "",
+    "entryFile": ""
+  },
+  "css": {
+    "entryFile": "css/group.css"
+  },
+  "assets": {
+    "folder": "assets"
+  }
+}

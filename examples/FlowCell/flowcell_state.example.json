@@ -1,0 +1,57 @@
+{
+  "SelectedProgramTabId": 1,
+  "ButtonScale": 1.0,
+  "MainWindowBounds": null,
+  "Programs": [
+    {
+      "ProgramTabId": 1,
+      "SelectedPanelId": "panel_layers",
+      "ProgramConfig": {
+        "NormalizedName": "illustrator",
+        "ProgramType": "adobe_direct_script_runner",
+        "ExePath": "",
+        "ScriptFolder": "REPLACE_WITH_REPO_ROOT\\Illustrator",
+        "RunMethod": "illustrator_direct",
+        "AllowedScriptExtensions": [
+          ".jsx",
+          ".js"
+        ],
+        "BridgeFolder": "",
+        "RequiresRestart": false,
+        "DefaultPanels": [
+          "Layers",
+          "Files",
+          "Utility"
+        ],
+        "ProcessNames": [
+          "illustrator"
+        ]
+      },
+      "Panels": [
+        {
+          "Id": "panel_layers",
+          "Name": "Layers",
+          "IsPoppedOut": false,
+          "PopoutBounds": null,
+          "Buttons": []
+        },
+        {
+          "Id": "panel_files",
+          "Name": "Files",
+          "IsPoppedOut": false,
+          "PopoutBounds": null,
+          "Buttons": []
+        },
+        {
+          "Id": "panel_utility",
+          "Name": "Utility",
+          "IsPoppedOut": false,
+          "PopoutBounds": null,
+          "Buttons": []
+        }
+      ]
+    }
+  ],
+  "ToolPopouts": [],
+  "PopoutClusters": []
+}

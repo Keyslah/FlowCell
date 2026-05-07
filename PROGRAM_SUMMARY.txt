@@ -1,0 +1,353 @@
+﻿FlowCell Program Summary
+Last updated: 2026-05-07
+Revision note: FlowTest Blender buttons now use a separate `blender_bridge_flowtest` sandbox with their own registry/generated add-on files, so FlowTest no longer shares FlowCell's live `flowcell_actions.py`. The FlowTest Blender bridge now owns one shared live-tool runner for all live tools, Smart Axis Lock is a single grouped inline FlowCell utility backed by tool id `smart_axis_lock`, the old Blender sidebar panel is removed, the Blender Item-tab refresh helper now exposes both `refresh flowcell` and `refresh flowtest`, and the Smart Axis inline control now pre-initializes its script state under `Set-StrictMode`, renders as a button-only row (`Base`, `X`, `Y`, `Z`, `Live`), shows armed axes as `+` or `-`, highlights live in red, routes requests through the active PID-scoped FlowTest bridge, stretches to fill its host instead of staying a tiny fixed strip, uses dispatcher-timer bridge polling so Smart Axis clicks do not block the WPF UI while waiting on Blender, now updates its button labels only from confirmed Blender responses instead of optimistic local previews, and the Blender button sync now maps imported buttons by their actual panel names so custom panels like `Tool Set` keep their buttons instead of being collapsed into `Collections`.
+Guardrail note: Codex guardrails were added through `AGENTS.md` files. FlowTest-specific instructions protect the three-layer button architecture and keep visual skins render-only.
+
+Maintenance rule
+----------------
+This file is the living summary for the FlowCell workspace. Any time FlowCell is updated, fixed, reorganized, or extended, update this file in the same change so it stays accurate.
+
+Purpose
+-------
+FlowCell is a Windows desktop automation shell for creative and system workflows. It combines a PowerShell WPF UI with an AutoHotkey v2 backend to manage:
+
+- program tabs
+- editable panel tabs
+- script and macro buttons
+- hotkey bindings
+- recorded macros
+- panel popouts
+- tool popouts
+- popout layout snapshots
+- Blender bridge actions
+
+Open-source repository model
+----------------------------
+The repository is now arranged for public GitHub use. Tracked source, docs, examples, and tooling remain in the repo. Mutable user state, machine-specific settings, logs, and build artifacts are kept in ignored local storage.
+FlowCell also now includes donation support through .github\FUNDING.yml, a README support badge link, and a Stripe Payment Link.
+Contributor guidance now explicitly requires relative repo-path resolution instead of tracked machine-specific absolute paths.
+README and contributor docs now lead with script folder rules, explicitly point Blender submissions to Blender\FlowCellButtons, and direct contributors toward GitHub Issues for bugs and GitHub Discussions for questions or early script proposals.
+README now keeps the `How Blender buttons work` section short and direct: it points to the Codex prompt doc first, then gives only the core script requirements and valid-file outcome.
+docs\blender-buttons.md is now intentionally short: it starts with the Codex conversion prompt, then keeps only a compact contract, Add Button flow, and main path list.
+That Blender-button doc still covers FlowCell-root paths only, including FlowCellButtons, SupportScripts, ManagedActions, config files, Blender runtime filenames, and ScriptDump locations without embedding personal machine paths.
+That Blender-button doc now states that FlowTest copies the selected script's code into the configured live Blender runtime file, which is `...\scripts\addons\flowtest_actions.py` for this sandbox.
+That doc now keeps the custom-action structure guidance concise while still covering required entrypoint names, accepted callable signatures, prompt preservation, return shapes, and a minimal starter template.
+Blender\FlowCellButtons\README.md is back to being a tiny folder-specific note that points readers at docs\blender-buttons.md.
+
+Top-level folders:
+- Blender: Blender integration files, including FlowCell button scripts, Blender support infrastructure, and a sanitized public config.
+- FlowCell: the main desktop app, helper scripts, vendored dependencies, and ignored local runtime storage.
+- Illustrator: public Illustrator script area.
+- Illustrator\random: imported Illustrator script packs currently kept in-repo for evaluation/reference.
+- Photoshop: public Photoshop script area.
+- Windows: public Windows script area.
+- docs: repository documentation.
+- examples: public example configs with safe placeholders.
+- releases: release-process notes only. No committed EXEs.
+- tools: source-only tooling, including the optional C# launcher source.
+
+Top-level launcher files:
+- run.cmd: root entry point that delegates to FlowCell\run.cmd.
+- run_hidden.vbs: hidden root launcher wrapper.
+- run_backend_hidden.vbs: hidden root backend wrapper.
+
+Main live files
+---------------
+- FlowCell\FlowCellUI.ps1: main PowerShell WPF UI.
+- FlowCell\FlowCellBackend.ahk: AutoHotkey v2 backend controller.
+- FlowCell\run.cmd: local app launcher for UI or backend execution.
+- FlowCell\helpers\RecordMacro.ahk: recorded macro capture helper.
+- FlowCell\helpers\RunRecordedMacro.ps1: recorded macro launcher helper.
+- tools\launcher\FlowCellLauncher.cs: optional launcher source kept as source only.
+
+UI architecture layers
+----------------------
+FlowCell UI now uses an explicit three-layer split for interactive button surfaces:
+
+- State Layer: FlowCell state is the only source of truth for button identity, bindings, script targets, panel membership, popout/layout participation, selected tabs, persistence, and `StyleGroupId` / `style_group_id` assignments.
+- State Layer now resolves and validates button metadata before execution, including relative script-target normalization against the owning program configuration, and writes explicit `State resolved metadata...` plus `State validation...` log entries.
+- Functional Host Layer: host-owned behavior for button action dispatch, selection checkboxes, drag/reorder surfaces, context menu integration, popout interactions, and persistence participation. Main-window buttons, panel popout buttons, grouped tool popouts, and individual tool popouts now all run through one shared host execution path before any backend dispatch occurs.
+- Functional Host Layer now rejects invalid state targets in the UI layer instead of handing broken button metadata to the backend, and writes explicit `Functional Host handled behavior...` log entries for success and validation failures.
+- Visual Skin Layer: render-only visual skin mounting inside host surfaces via style-group metadata lookup with sandboxed boundaries and automatic fallback to default FlowCell visuals if a style group is missing or invalid.
+- Visual Skin Layer now writes explicit `Visual Skin rendered appearance...` log entries so appearance rendering stays observable without owning any behavior.
+
+Program-tab and panel-tab strips now apply host-style item surfaces through shared tab item style generation so their visuals are aligned with the same host/skin model while behavior ownership remains in the host layer.
+
+Local-only runtime storage
+--------------------------
+FlowCell now keeps mutable runtime data in FlowCell\local, which is ignored by Git.
+
+Local runtime paths:
+- FlowCell\local\bindings.ini: hotkeys, program tab metadata, and shortcut bindings.
+- FlowCell\local\flowcell_state.json: selected program, selected panel, button layout, panel state, startup popout-only preference, popout state, and tool popout state.
+- FlowCell\local\scan_state.ini: Illustrator scan cache/state.
+- FlowCell\local\layouts: saved popout layout snapshots.
+- FlowCell\local\panel_saves: saved panel exports.
+- FlowCell\local\recorded_actions: recorded macro definitions.
+- FlowCell\local\logs: UI, backend, launcher, and action status logs.
+- FlowCell\local\private\local.settings.json: optional machine-specific settings such as private config paths.
+- FlowCell\local\temp: generated temp files.
+- FlowCell\local\bin: ignored local binaries such as the optional launcher EXE.
+
+This change ensures existing panel configuration, hotkeys, bindings, popout layouts, saved panels, and other user changes remain local and should not be overwritten by GitHub updates.
+
+Program folder rules
+--------------------
+Blender FlowCell button scripts belong in:
+- Blender\FlowCellButtons
+
+Blender support scripts belong in:
+- Blender\SupportScripts
+
+Blender sidebar helper add-ons belong in:
+- Blender\AddonScripts
+
+Managed Blender action source files belong in:
+- Blender\ManagedActions
+
+Illustrator and Windows user-facing scripts are now expected directly inside their program folder:
+- Illustrator\*.jsx and Illustrator\*.js
+- Windows\*.ps1, *.cmd, *.bat, *.vbs, *.ahk, or similar public launchers
+
+Imported reference packs can also exist under:
+- Illustrator\random
+
+ScriptDump folders are reserved for loose, unfinished, downloaded, old, or experimental scripts and wrappers that should not be treated as normal FlowCell button candidates:
+- Illustrator\ScriptDump
+- Photoshop\ScriptDump
+- Windows\ScriptDump
+- Blender\ScriptDump
+- Blender\FlowCellButtons\ScriptDump
+
+Each ScriptDump folder uses only these standard subfolders:
+- Downloaded
+- Testing
+- OldVersions
+
+Photoshop repo-safe public scripts belong in:
+- Photoshop\*
+
+Illustrator internal helper scripts remain in:
+- Illustrator\HelperScripts
+
+Preferred filename prefixes:
+- file_
+- util_
+- org_
+
+These prefixes are for file organization and display cleanup only. They are not used for routing behavior, panel placement, or execution rules.
+
+Preferred usage:
+- org_ for organization actions such as Illustrator layer tools and Blender collection tools
+- file_ for file-oriented scripts
+- util_ for utility-style scripts
+
+Script header rule:
+- FlowCell-managed scripts in `FlowCell`, `Blender\FlowCellButtons`, `Windows`, and `Illustrator` now use a one-line `Description:` comment at the top of each script file.
+- FlowCell UI reads this top description to populate concise button help text.
+- `Blender\FlowCellButtons\org_snapshot.ps1` now explicitly describes snapshot behavior (copy selected Live objects into Snapshots as versioned `s#` duplicates) instead of a generic placeholder description.
+- All scripts in `Blender\FlowCellButtons` now use action-accurate top descriptions that match their real behavior (bridge action, utility action, or full script behavior) instead of generic `Runs ...` placeholders.
+
+GitHub collaboration guidance
+-----------------------------
+- GitHub Issues are for bugs, regressions, broken scripts, and concrete feature requests.
+- GitHub Discussions are for questions, script ideas, workflow proposals, and early feedback before implementation.
+- Script proposals should mention the intended target folder and preferred filename prefix.
+
+Add Script behavior
+-------------------
+The main FlowCell panel Add Script button now:
+
+- opens a file picker rooted in the current program folder
+- allows selecting multiple scripts at once
+- creates one button per selected script
+- adds those buttons only to the currently selected panel
+- for Blender program tabs, imported files selected outside `Blender\FlowCellButtons` are now automatically copied into `Blender\FlowCellButtons` first so the button target stays inside FlowCell's managed structure
+- on Blender tabs, this control is labeled `Add Button` to match the one-click button workflow
+- on Blender tabs, `Add Button` now runs a real installer flow for `.py` and `.ps1` selections: install/register a Blender bridge action, create or update a bridge wrapper in `Blender\FlowCellButtons`, add the new button to the currently selected FlowCell panel, and sync the Blender button list back into FlowCell state/layout files
+- FlowTest now keeps that Blender Add Button lifecycle inside its own sandbox bridge at `C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\blender_bridge_flowtest`, with separate `flowtest_actions.py`, `flowtest_bridge.py`, `flowtest_custom_actions.json`, and `flowtest_bridge_setup.json`
+- Blender `Add Button` now reports when Blender must reload the add-on or restart before a newly installed action is callable
+- Blender `Add Button` now only accepts Python files that expose `run_flowcell_action`, `main`, or a `perform_*` function, and rejects listener/bootstrap files instead of registering dead custom actions
+
+Default button labels come from the filename with any leading file_, util_, or org_ prefix removed for display only.
+
+For the built-in Blender tab, Add Script now roots to:
+- Blender\FlowCellButtons
+- Blender\SupportScripts
+
+Legacy Blender add-on folders and the old repo-root Blender folder are treated as stale local paths and migrated forward to Blender\FlowCellButtons for button scripts.
+
+ScriptDump behavior:
+- normal default folder opening stays on the current program's main script folder
+- manual navigation into a ScriptDump folder is still possible through the normal file picker
+- FlowCell ignores scripts inside folders named exactly ScriptDump during normal button discovery, sync, and script-template setup paths
+
+Startup and launcher model
+--------------------------
+The normal root launcher remains run.cmd at the repository root. It delegates to FlowCell\run.cmd.
+
+FlowCell\run.cmd:
+- launches FlowCellUI.ps1 with Windows PowerShell and STA mode when started without backend arguments
+- launches FlowCellBackend.ahk with AutoHotkey v2 when backend arguments are present
+- writes launcher output into FlowCell\local\logs
+
+The optional hidden launcher source is stored in tools\launcher\FlowCellLauncher.cs. Its built EXE is intentionally not part of the tracked repo.
+
+UI behavior overview
+--------------------
+FlowCellUI.ps1 provides:
+
+- top-level program tabs
+- per-program panel tabs
+- script and macro buttons per panel
+- button selection and shortcut binding
+- panel popouts
+- selected-tool popouts
+- popout layout save/load
+- panel save/load
+- Macro Lab
+- Bind Viewer
+- program-template setup for Illustrator, Blender, Photoshop, Windows, and generic apps
+- a startup checkbox that controls whether FlowCell launches minimized and restores the last pop-out-only layout
+- the main program and panel selectors are still horizontal WPF `ListBoxItem` strips, while `Pop Tab`, `Pop Tools`, and `Arrange` remain ordinary shell buttons in the main toolbar row
+- right-click rename and delete actions on the top program tiles
+- delayed main-page hover help: when the pointer stays over a tool tile for about 2 seconds, FlowCell shows that button's concise description in the main status line
+- Windows-template Files panels now auto-ensure built-in `Update GitHub` and `GitHub Pull` buttons so existing and newly created Windows tabs keep those repo actions available
+
+Windows Git actions note:
+- `Windows\file_update_github.ps1` stages, commits, and pushes the active Explorer Git repository to GitHub.
+- `Windows\file_pull_github.ps1` uses the same Explorer/clipboard repo targeting model but only performs a clean-worktree `git fetch` plus `git pull --ff-only`, refusing dirty or diverged branches.
+
+Shortcut display note:
+- Bind Viewer, the shortcut picker list, the bind-area shortcut dropdown, and the macro/program shortcut readouts now translate internal AutoHotkey-style tokens into readable labels such as `Ctrl + Alt + K` while keeping the stored bind format unchanged.
+
+Program tile note:
+- Right-clicking a program tile on the main page now opens Rename Program and Delete Program actions. Delete removes that FlowCell program tab plus its panels, buttons, shortcuts, and saved live popout state from current local configuration.
+
+Selected-tool popout note:
+- `Pop Tools` now has only two modes: `Group` and `Individual`.
+- `Group` opens checked regular buttons together in one responsive tool popout that reflows as the window is resized, matching panel-popout behavior more closely.
+- `Individual` opens one popout per selected button.
+- Special embedded tool controls that render many internal buttons, such as alignment tools and flatten/revolve tools, still pop out as their own individual windows even when other selected buttons are grouped.
+- Grouped tool popouts now persist and restore as grouped windows instead of being split back into one window per button on restart.
+
+The UI still persists popout-first workspace state, panel geometry, button order, selected tabs, button scale, and cluster membership, but those writes now stay under FlowCell\local instead of the tracked app folder.
+
+Backend behavior overview
+-------------------------
+FlowCellBackend.ahk:
+
+- loads bindings from FlowCell\local\bindings.ini
+- loads recorded macros from FlowCell\local\recorded_actions
+- writes action status to FlowCell\local\logs\last_action_status.txt
+- writes controller logs and scan reports to FlowCell\local\logs
+- runs Illustrator and Photoshop direct-script actions
+- runs Windows and generic scripts
+- handles Blender bridge actions
+- registers hotkeys and action shortcuts
+
+Blender integration
+-------------------
+Blender remains structured around:
+
+- Blender\AddonScripts\refresh_flowcell_item_tab.py as a Blender-side Item-tab helper that offers both `refresh flowcell` and `refresh flowtest`, each reloading the matching live Blender add-on and restarting the matching desktop UI
+- Blender\SupportScripts\Invoke-BlenderFlowCellAction.ps1 as the dispatcher support script
+- Blender\SupportScripts\Sync-BlenderButtonsToFlowCell.ps1 as the sync/regeneration support script
+- Blender\SupportScripts\Sync-BlenderCustomActionCode.ps1 as the live custom-code regeneration support script
+- Blender\FlowCellButtons\org_*.ps1 user-facing button scripts for collections-style actions
+- Blender\FlowCellButtons\file_*.ps1 user-facing button scripts for file-style actions
+- Blender\FlowCellButtons\util_*.ps1 user-facing button scripts for utility-style actions
+- Blender\config.json as the sanitized public default config
+- FlowCell\local\private\blender.config.local.json as the machine-specific override for live bridge paths
+- The live addon now keeps one shared live-tool registry/timer runner in `flowtest_bridge.py`; live tools register into that runner instead of creating per-tool modal operators or timers.
+- Smart Axis Lock now appears in FlowCell as one grouped inline utility button (`Blender\FlowCellButtons\util_smart_axis_lock.ps1`) with internal baseline, X/Y/Z cycle, live toggle, and status controls that pop/move/delete together.
+- The Blender sidebar panel for FlowTest actions is removed; Smart Axis Lock and similar dense controls should stay in FlowCell-hosted inline controls instead of Blender add-on UI panels.
+- After editing the Blender bridge/add-on runtime, Blender must reload the add-on or restart before runtime verification reflects the new code.
+
+Generated Blender button scripts resolve the dispatcher from a sibling SupportScripts folder instead of hardcoding a machine-local repo path.
+Normal button discovery and Blender template setup must not treat Invoke-BlenderFlowCellAction.ps1 or Sync-BlenderButtonsToFlowCell.ps1 as user-facing button scripts.
+The real Blender bridge runtime folder is the live AppData add-on path referenced by `automation.bridgeFolder`; it does not belong under `Blender\FlowCellButtons` or `Blender\SupportScripts` inside the repo.
+The installed Blender addon runtime file `flowtest_actions.py` now identifies itself as `FlowTest` and includes a top-of-file button reference block that documents each button's behavior in concise terms.
+Blender FlowCell button descriptions now avoid generic placeholders and include explicit behavior details (for example, `sort` now documents visible-to-Live, matching invisible-to-Snapshots `s#`, and remaining invisible-to-Trash `t#` behavior).
+Blender wrapper scripts now consistently resolve the dispatcher from `Blender\SupportScripts\Invoke-BlenderFlowCellAction.ps1`, including `file_cura.ps1`, `file_orca.ps1`, and `util_cursor_center_hole.ps1`.
+`Sync-BlenderButtonsToFlowCell.ps1` now resolves config `scriptPath` entries relative to the Blender project before protection/deletion and state import, so relative-path wrappers such as `file_cura.ps1`, `file_orca.ps1`, `util_alignment_tools.ps1`, `util_flatten_revolve_tools.ps1`, and `util_cursor_center_hole.ps1` are no longer mistakenly deleted during sync.
+That sync path now fails loudly if a configured `scriptPath` target cannot be resolved to a real file, and it writes absolute script targets into FlowCell persistence for imported Blender buttons.
+Blender `Add Button` installs custom action scripts into `Blender\ManagedActions` and registers them through `blender_bridge\flowcell_custom_actions.json` under the live Blender add-ons path.
+The Blender bridge runtime now regenerates an auto-generated custom-action section inside the live `flowtest_actions.py` file from the currently registered Blender buttons, so only active custom button handlers remain in that file.
+That live `flowtest_actions.py` regeneration now writes UTF-8 without a BOM, because Blender 5.0's add-on scanner only detects add-ons whose first line literally starts with `bl_info`, and a BOM made the FlowTest add-on disappear into Preferences > Missing Add-ons.
+That custom-action regeneration path now also drops registry entries whose source Python file no longer exposes a supported FlowCell entrypoint, so stale invalid custom buttons cannot keep reappearing from the live Blender registry.
+Deleting a Blender button now also removes its matching Blender config entry, prunes any orphaned custom-action registry entry and managed source file, regenerates the live `flowtest_actions.py` custom section, and re-syncs Blender wrappers/panels so removed buttons do not come back later.
+Every wrapper in `Blender\FlowCellButtons` now starts with a `Description:` line plus a source map (`Source Python File`, action/function, and start line) followed by a commented copy of the real Python logic, while still dispatching through `Blender\SupportScripts\Invoke-BlenderFlowCellAction.ps1`.
+`Sync-BlenderButtonsToFlowCell.ps1` now preserves and regenerates that wrapper metadata block for built-in Blender action wrappers, including blank-line spacing between the description, source-map fields, and commented Python logic.
+That Blender sync path now also skips popout-only layout snapshots that do not embed a full `Programs` state payload, so routine Blender button syncs no longer emit false layout warnings.
+Built-in Blender action wrappers and the live Blender config now prefer an authoritative action-description map during install/sync, so stale generic tooltips like `Run the Blender sort action...` are replaced with behavior-specific text in both wrapper headers and launcher metadata.
+`Blender\AddonScripts\refresh_flowcell_item_tab.py` now provides a Blender `Item` sidebar panel labeled `FlowCell` with both `refresh flowcell` and `refresh flowtest` buttons; each one reads the matching workspace Blender config, disables and re-enables the matching live bridge add-on module, and relaunches that workspace through its own `run_hidden.vbs`.
+
+The public example for Blender config now belongs in:
+- examples\Blender\config.example.json
+
+Blender bridge requests prefer the configured bridge root, but FlowCell now also falls back to installed addon bridge folders under the user's AppData Blender addons path when a stale local bridge path no longer matches the live addon.
+Blender\ScriptBank now includes `custom_lithophane_tool.py`, a FlowCell-ready single-file lithophane action whose default `run_flowcell_action` opens an image picker, creates the DPI-sized plane, and completes the lithophane in one click while still exposing separate top-level `perform_*` helpers.
+Blender wrapper install/sync writes now retry briefly on Windows file locks, downgrade locked-wrapper metadata refreshes to warnings, and surface a normal Add Button status error instead of hard-failing the whole FlowCell window when one `.ps1` wrapper is temporarily in use.
+FlowCell now includes explicit Blender import helpers at `Blender\FlowCellButtons\Import-FlowCellObjIntoBlender.ps1` and `Blender\FlowCellButtons\Import-FlowCellPngAsLithophane.ps1`; these bridge import actions and write the `ResultPath` key/value context expected by `FlowCellBackend.ahk` so `blender obj` and `blender litho` can report deterministic status.
+FlowTest also restores the live Blender utility and slicer wrappers in `Blender\FlowCellButtons`, including `file_cura.ps1`, `file_orca.ps1`, `util_alignment_tools.ps1`, `util_flatten_revolve_tools.ps1`, `util_cursor_center_hole.ps1`, and the Smart Axis helper set.
+
+Repo-safe examples
+------------------
+Public example configs now live under examples:
+
+- examples\FlowCell\bindings.example.ini
+- examples\FlowCell\flowcell_state.example.json
+- examples\FlowCell\local.settings.example.json
+- examples\Blender\config.example.json
+- examples\Windows\windows.env.example
+
+These examples intentionally avoid personal paths and secrets.
+
+Windows helper override model
+-----------------------------
+Some Windows helper scripts still depend on machine-local tools, but the tracked repo no longer hardcodes those paths.
+
+- fix_this_folder_from_explorer.ps1 now resolves the Codex skill path from CODEX_HOME or %USERPROFILE%\.codex.
+- monitor layout helper scripts now expect FLOWCELL_DUMMY_MONITOR_SCRIPT locally and can optionally use FLOWCELL_DUMMY_MONITOR_TARGET_DISPLAY.
+- sync_recent_creative_shortcuts.ps1 now uses local environment overrides for recent-root and watch-root locations, with neutral per-user defaults instead of personal drive paths.
+- file_update_github.ps1 now prefers the active Explorer repo, then clipboard, then the FlowCell repo itself, and finally a folder picker to find a Git repo. It stages changes, prompts for a commit message when needed, pushes the current branch to GitHub, and shows a visible success or failure message.
+- monitor layout launcher entry scripts now resolve their sibling dialog scripts from $PSScriptRoot instead of a fixed machine path.
+- monitor layout wrappers now share Windows\DummyMonitorHelpers.ps1, auto-discover dummy_monitor_toggle.py from FLOWCELL_DUMMY_MONITOR_SCRIPT or the sibling Codex workspace, and write explicit FlowCell status text instead of falling back to a generic script success line.
+- the Save Layout and Use Layout wrappers no longer depend on the Python helper writing JSON only when stdout is a TTY; they now show success from the requested layout name after a verified zero exit code.
+- the Save Layout and Use Layout entry scripts now run their STA dialog helpers synchronously, so FlowCell waits for the real result and can surface actual monitor-layout failures instead of instant launcher success.
+- the one-shot Dummy button restore path now prefers the fresh session snapshot from the last toggle before falling back to the saved active layout profile, avoiding stale `main` profile restores when the display topology has changed since that profile was saved.
+- the shared Windows dummy-monitor helper now validates the Python interpreter before use and prefers a working `python.exe` over a broken `py.exe` launcher, preventing false button failures caused by a stale Python launcher registration.
+- FlowCell now canonicalizes side-specific hotkey text like `<^<+F2` into one shared stored bind such as `^+F2`, so the backend cannot keep duplicate left/right modifier variants alive and the UI stops showing the wrong modifier side for the active shortcut.
+- FlowCell now repairs orphaned script-button `BindingId` values by matching the current script target and program tab during UI sync, which fixes stale Utility-panel button binds like the Windows `Dummy` entry after a binding is recreated.
+- FlowCell host tab visual style now uses typed WPF values for host tab setters/template values (`Padding`, `Margin`, `BorderThickness`, `CornerRadius`, and content alignment enums), preventing startup failures caused by string-based style and template conversion.
+
+Illustrator 3D test scripts now resolve their helper macro wrappers from the repo's FlowCell\helpers folder relative to the script location instead of a user-specific codexapp path.
+
+UI-dependent Windows scripts now launch through the backend STA path when their filename indicates dialogs or interactive prompts, including file_update_github.ps1, fix_this_folder_from_explorer.ps1, and the monitor layout dialog helpers.
+
+FlowCell's backend runner now respects child process exit codes and preserves script-written status output for CLI/button launches, so Update GitHub reports real verified Git success or failure instead of a generic launcher result.
+The Update GitHub script also disables PowerShell's native-command stderr escalation around Git calls so normal push progress output does not get misreported as a failure after a successful push.
+The Update GitHub flow now opens a topmost commit-message dialog that shows the resolved repo path, writes clearer intermediate status text while waiting/committing, and gets a longer FlowCell script timeout so interactive git pushes are not killed after the generic 120-second window.
+
+Release model
+-------------
+The repository is source-only by default.
+
+- EXE files and build artifacts are ignored.
+- Built binaries are not committed to the repo.
+- The optional launcher source is tracked under tools\launcher.
+- Release binaries should be produced locally and later distributed through GitHub Releases.
+
+Current maintenance expectations
+--------------------------------
+- Keep public source in tracked repo folders.
+- Keep mutable runtime data in FlowCell\local.
+- Keep Blender FlowCell button scripts in Blender\FlowCellButtons only.
+- Keep Blender support scripts in Blender\SupportScripts.
+- Keep Illustrator and Windows user-facing scripts directly in their program folder.
+- Keep Photoshop repo-safe public scripts directly in Photoshop.
+- Keep Illustrator\HelperScripts for internal non-button helper scripts.
+- Prefer filename prefixes for file organization only.
+- Update this summary whenever the repository structure or FlowCell behavior changes.
+

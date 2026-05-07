@@ -1,0 +1,135 @@
+{
+  "pink": {
+    "mode": "RGBA",
+    "size": [
+      620,
+      142
+    ],
+    "corner_alpha": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "canvas_edge_max_alpha": 0,
+    "center_alpha": 186,
+    "max_alpha": 234,
+    "fully_opaque_pixels": 0,
+    "text_or_symbols": "none",
+    "glow_curve": "70%,45%,25%,10%,5%,3%,1.5%,0.3%,0%"
+  },
+  "orange": {
+    "mode": "RGBA",
+    "size": [
+      620,
+      142
+    ],
+    "corner_alpha": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "canvas_edge_max_alpha": 0,
+    "center_alpha": 186,
+    "max_alpha": 234,
+    "fully_opaque_pixels": 0,
+    "text_or_symbols": "none",
+    "glow_curve": "70%,45%,25%,10%,5%,3%,1.5%,0.3%,0%"
+  },
+  "blue": {
+    "mode": "RGBA",
+    "size": [
+      620,
+      142
+    ],
+    "corner_alpha": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "canvas_edge_max_alpha": 0,
+    "center_alpha": 186,
+    "max_alpha": 234,
+    "fully_opaque_pixels": 0,
+    "text_or_symbols": "none",
+    "glow_curve": "70%,45%,25%,10%,5%,3%,1.5%,0.3%,0%"
+  },
+  "green": {
+    "mode": "RGBA",
+    "size": [
+      620,
+      142
+    ],
+    "corner_alpha": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "canvas_edge_max_alpha": 0,
+    "center_alpha": 186,
+    "max_alpha": 234,
+    "fully_opaque_pixels": 0,
+    "text_or_symbols": "none",
+    "glow_curve": "70%,45%,25%,10%,5%,3%,1.5%,0.3%,0%"
+  },
+  "purple": {
+    "mode": "RGBA",
+    "size": [
+      620,
+      142
+    ],
+    "corner_alpha": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "canvas_edge_max_alpha": 0,
+    "center_alpha": 186,
+    "max_alpha": 234,
+    "fully_opaque_pixels": 0,
+    "text_or_symbols": "none",
+    "glow_curve": "70%,45%,25%,10%,5%,3%,1.5%,0.3%,0%"
+  },
+  "cyan": {
+    "mode": "RGBA",
+    "size": [
+      620,
+      142
+    ],
+    "corner_alpha": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "canvas_edge_max_alpha": 0,
+    "center_alpha": 186,
+    "max_alpha": 234,
+    "fully_opaque_pixels": 0,
+    "text_or_symbols": "none",
+    "glow_curve": "70%,45%,25%,10%,5%,3%,1.5%,0.3%,0%"
+  },
+  "lime": {
+    "mode": "RGBA",
+    "size": [
+      620,
+      142
+    ],
+    "corner_alpha": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "canvas_edge_max_alpha": 0,
+    "center_alpha": 186,
+    "max_alpha": 234,
+    "fully_opaque_pixels": 0,
+    "text_or_symbols": "none",
+    "glow_curve": "70%,45%,25%,10%,5%,3%,1.5%,0.3%,0%"
+  }
+}

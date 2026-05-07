@@ -1,0 +1,18 @@
+{
+  "mode": "RGBA",
+  "size": [
+    565,
+    113
+  ],
+  "corner_alpha": [
+    0,
+    0,
+    0,
+    0
+  ],
+  "canvas_edge_max_alpha": 0,
+  "center_alpha": 224,
+  "max_alpha": 252,
+  "fully_opaque_pixels": 0,
+  "text_icon_patch_pixels": 4750
+}

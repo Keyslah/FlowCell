@@ -1,0 +1,423 @@
+#flowcell-runtime-scope {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  overflow: hidden;
+  background: transparent;
+}
+
+#flowcell-runtime-scope .body {
+  --global--size: clamp(
+    0.56rem,
+    min(
+      calc(var(--flowcell-host-width, 160px) * 0.115),
+      calc(var(--flowcell-host-height, 48px) * 0.4)
+    ),
+    1.4rem
+  );
+  --flowcell-pad-inline: clamp(1px, calc(var(--flowcell-host-width, 160px) * 0.02), 10px);
+  --flowcell-pad-block: clamp(1px, calc(var(--flowcell-host-height, 48px) * 0.08), 8px);
+  --anim--hover-time: 400ms;
+  --anim--hover-ease: cubic-bezier(0.25, 1, 0.5, 1);
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: var(--flowcell-pad-block) var(--flowcell-pad-inline);
+  box-sizing: border-box;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  font-size: var(--global--size);
+  background: transparent;
+  font-family: "Inter", "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+}
+
+#flowcell-runtime-scope .button-wrap {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  justify-content: stretch;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  z-index: 2;
+  border-radius: 999px;
+  background: transparent;
+  pointer-events: none;
+  transition: all var(--anim--hover-time) var(--anim--hover-ease);
+}
+
+#flowcell-runtime-scope .button-shadow {
+  --shadow-cuttoff-fix: 2em;
+  position: absolute;
+  width: calc(100% + var(--shadow-cuttoff-fix));
+  height: calc(100% + var(--shadow-cuttoff-fix));
+  top: calc(0% - var(--shadow-cuttoff-fix) / 2);
+  left: calc(0% - var(--shadow-cuttoff-fix) / 2);
+  filter: blur(clamp(2px, 0.125em, 12px));
+  -webkit-filter: blur(clamp(2px, 0.125em, 12px));
+  -moz-filter: blur(clamp(2px, 0.125em, 12px));
+  -ms-filter: blur(clamp(2px, 0.125em, 12px));
+  overflow: visible;
+  pointer-events: none;
+}
+
+#flowcell-runtime-scope .button-shadow::after {
+  content: "";
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.1));
+  width: calc(100% - var(--shadow-cuttoff-fix) - 0.25em);
+  height: calc(100% - var(--shadow-cuttoff-fix) - 0.25em);
+  top: calc(var(--shadow-cuttoff-fix) - 0.5em);
+  left: calc(var(--shadow-cuttoff-fix) - 0.875em);
+  padding: 0.125em;
+  box-sizing: border-box;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  transition: all var(--anim--hover-time) var(--anim--hover-ease);
+  overflow: visible;
+  opacity: 1;
+}
+
+#flowcell-runtime-scope .button {
+  --border-width: clamp(1px, 0.0625em, 4px);
+  --angle-1: -75deg;
+  --angle-2: 0deg;
+  all: unset;
+  cursor: pointer;
+  position: relative;
+  -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+  pointer-events: auto;
+  z-index: 3;
+  background: linear-gradient(
+    -75deg,
+    rgba(255, 255, 255, 0.05),
+    rgba(255, 255, 255, 0.2),
+    rgba(255, 255, 255, 0.05)
+  );
+  border-radius: 999px;
+  box-shadow:
+    inset 0 0.125em 0.125em rgba(0, 0, 0, 0.05),
+    inset 0 -0.125em 0.125em rgba(255, 255, 255, 0.5),
+    0 0.25em 0.125em -0.125em rgba(0, 0, 0, 0.2),
+    0 0 0.1em 0.25em inset rgba(255, 255, 255, 0.2),
+    0 0 0 0 rgba(255, 255, 255, 1);
+  backdrop-filter: blur(clamp(1px, 0.125em, 4px));
+  -webkit-backdrop-filter: blur(clamp(1px, 0.125em, 4px));
+  -moz-backdrop-filter: blur(clamp(1px, 0.125em, 4px));
+  -ms-backdrop-filter: blur(clamp(1px, 0.125em, 4px));
+  transition: all var(--anim--hover-time) var(--anim--hover-ease);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+}
+
+#flowcell-runtime-scope .button::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--flowcell-accent-color, #9cff18) 16%, rgba(255, 255, 255, 0.1)),
+    color-mix(in srgb, var(--flowcell-accent-color, #9cff18) 10%, rgba(255, 255, 255, 0.02))
+  );
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--anim--hover-time) var(--anim--hover-ease);
+}
+
+#flowcell-runtime-scope .button:hover,
+#flowcell-runtime-scope[data-hovered="true"] .button {
+  transform: scale(0.975);
+  backdrop-filter: blur(0.01em);
+  -webkit-backdrop-filter: blur(0.01em);
+  -moz-backdrop-filter: blur(0.01em);
+  -ms-backdrop-filter: blur(0.01em);
+  box-shadow:
+    inset 0 0.125em 0.125em rgba(0, 0, 0, 0.05),
+    inset 0 -0.125em 0.125em rgba(255, 255, 255, 0.5),
+    0 0.15em 0.05em -0.1em rgba(0, 0, 0, 0.25),
+    0 0 0.05em 0.1em inset rgba(255, 255, 255, 0.5),
+    0 0 0 0 rgba(255, 255, 255, 1);
+}
+
+#flowcell-runtime-scope .button .span {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  font-family: "Inter", "Segoe UI", sans-serif;
+  letter-spacing: -0.05em;
+  font-weight: 500;
+  font-size: 1em;
+  color: rgba(50, 50, 50, 1);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-shadow: 0em 0.25em 0.05em rgba(0, 0, 0, 0.1);
+  transition: all var(--anim--hover-time) var(--anim--hover-ease);
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  text-align: center;
+  padding-inline: clamp(0.75em, calc(var(--flowcell-host-width, 160px) * 0.02), 1.4em);
+  padding-block: clamp(0.5em, calc(var(--flowcell-host-height, 48px) * 0.18), 0.85em);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+#flowcell-runtime-scope[data-long-label="true"] .button .span {
+  font-size: 0.86em;
+  letter-spacing: -0.03em;
+}
+
+#flowcell-runtime-scope .button:hover .span,
+#flowcell-runtime-scope[data-hovered="true"] .button .span {
+  text-shadow: 0.025em 0.025em 0.025em rgba(0, 0, 0, 0.12);
+}
+
+#flowcell-runtime-scope .button .span::after {
+  content: "";
+  display: block;
+  position: absolute;
+  width: calc(100% - var(--border-width));
+  height: calc(100% - var(--border-width));
+  top: calc(0% + var(--border-width) / 2);
+  left: calc(0% + var(--border-width) / 2);
+  box-sizing: border-box;
+  border-radius: 999px;
+  overflow: clip;
+  background: linear-gradient(
+    var(--angle-2),
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.5) 40% 50%,
+    rgba(255, 255, 255, 0) 55%
+  );
+  z-index: 3;
+  mix-blend-mode: screen;
+  pointer-events: none;
+  background-size: 200% 200%;
+  background-position: 0% 50%;
+  background-repeat: no-repeat;
+  transition:
+    background-position calc(var(--anim--hover-time) * 1.25) var(--anim--hover-ease),
+    --angle-2 calc(var(--anim--hover-time) * 1.25) var(--anim--hover-ease);
+}
+
+#flowcell-runtime-scope .button:hover .span::after,
+#flowcell-runtime-scope[data-hovered="true"] .button .span::after {
+  background-position: 25% 50%;
+}
+
+#flowcell-runtime-scope .button:active .span::after,
+#flowcell-runtime-scope[data-pressed="true"] .button .span::after,
+#flowcell-runtime-scope[data-active="true"] .button .span::after {
+  background-position: 50% 15%;
+  --angle-2: -15deg;
+}
+
+#flowcell-runtime-scope .button::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  border-radius: 999px;
+  width: calc(100% + var(--border-width));
+  height: calc(100% + var(--border-width));
+  top: calc(0% - var(--border-width) / 2);
+  left: calc(0% - var(--border-width) / 2);
+  padding: var(--border-width);
+  box-sizing: border-box;
+  background: conic-gradient(
+      from var(--angle-1) at 50% 50%,
+      rgba(0, 0, 0, 0.5),
+      rgba(0, 0, 0, 0) 5% 40%,
+      rgba(0, 0, 0, 0.5) 50%,
+      rgba(0, 0, 0, 0) 60% 95%,
+      rgba(0, 0, 0, 0.5)
+    ),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.5), rgba(255, 255, 255, 0.5));
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  transition:
+    all var(--anim--hover-time) var(--anim--hover-ease),
+    --angle-1 500ms ease;
+  box-shadow: inset 0 0 0 calc(var(--border-width) / 2) rgba(255, 255, 255, 0.5);
+}
+
+#flowcell-runtime-scope .button:hover::after,
+#flowcell-runtime-scope[data-hovered="true"] .button::after {
+  --angle-1: -125deg;
+}
+
+#flowcell-runtime-scope .button:active::after,
+#flowcell-runtime-scope[data-pressed="true"] .button::after,
+#flowcell-runtime-scope[data-active="true"] .button::after {
+  --angle-1: -75deg;
+}
+
+#flowcell-runtime-scope[data-selected="true"] .button::before {
+  opacity: 0.34;
+}
+
+#flowcell-runtime-scope[data-selected="true"] .button {
+  box-shadow:
+    inset 0 0.125em 0.125em rgba(0, 0, 0, 0.05),
+    inset 0 -0.125em 0.125em rgba(255, 255, 255, 0.5),
+    0 0.25em 0.125em -0.125em rgba(0, 0, 0, 0.2),
+    0 0 0.1em 0.25em inset rgba(255, 255, 255, 0.2),
+    0 0 0 0 rgba(255, 255, 255, 1),
+    0 0 0 1px color-mix(in srgb, var(--flowcell-accent-color, #9cff18) 34%, rgba(255, 255, 255, 0.18)),
+    0 0 14px color-mix(in srgb, var(--flowcell-accent-color, #9cff18) 22%, transparent);
+}
+
+#flowcell-runtime-scope .button-wrap:has(button:hover) .button-shadow,
+#flowcell-runtime-scope[data-hovered="true"] .button-wrap .button-shadow {
+  filter: blur(clamp(2px, 0.0625em, 6px));
+  -webkit-filter: blur(clamp(2px, 0.0625em, 6px));
+  -moz-filter: blur(clamp(2px, 0.0625em, 6px));
+  -ms-filter: blur(clamp(2px, 0.0625em, 6px));
+  transition: filter var(--anim--hover-time) var(--anim--hover-ease);
+}
+
+#flowcell-runtime-scope .button-wrap:has(button:hover) .button-shadow::after,
+#flowcell-runtime-scope[data-hovered="true"] .button-wrap .button-shadow::after {
+  top: calc(var(--shadow-cuttoff-fix) - 0.875em);
+  opacity: 1;
+}
+
+#flowcell-runtime-scope .button-wrap:has(button:active),
+#flowcell-runtime-scope[data-pressed="true"] .button-wrap,
+#flowcell-runtime-scope[data-active="true"] .button-wrap {
+  transform: rotate3d(1, 0, 0, 25deg);
+}
+
+#flowcell-runtime-scope .button-wrap:has(button:active) button,
+#flowcell-runtime-scope[data-pressed="true"] .button-wrap button,
+#flowcell-runtime-scope[data-active="true"] .button-wrap button {
+  box-shadow:
+    inset 0 0.125em 0.125em rgba(0, 0, 0, 0.05),
+    inset 0 -0.125em 0.125em rgba(255, 255, 255, 0.5),
+    0 0.125em 0.125em -0.125em rgba(0, 0, 0, 0.2),
+    0 0 0.1em 0.25em inset rgba(255, 255, 255, 0.2),
+    0 0.225em 0.05em 0 rgba(0, 0, 0, 0.05),
+    0 0.25em 0 0 rgba(255, 255, 255, 0.75),
+    inset 0 0.25em 0.05em 0 rgba(0, 0, 0, 0.15);
+}
+
+#flowcell-runtime-scope .button-wrap:has(button:active) .button-shadow,
+#flowcell-runtime-scope[data-pressed="true"] .button-wrap .button-shadow,
+#flowcell-runtime-scope[data-active="true"] .button-wrap .button-shadow {
+  filter: blur(clamp(2px, 0.125em, 12px));
+  -webkit-filter: blur(clamp(2px, 0.125em, 12px));
+  -moz-filter: blur(clamp(2px, 0.125em, 12px));
+  -ms-filter: blur(clamp(2px, 0.125em, 12px));
+}
+
+#flowcell-runtime-scope .button-wrap:has(button:active) .button-shadow::after,
+#flowcell-runtime-scope[data-pressed="true"] .button-wrap .button-shadow::after,
+#flowcell-runtime-scope[data-active="true"] .button-wrap .button-shadow::after {
+  top: calc(var(--shadow-cuttoff-fix) - 0.5em);
+  opacity: 0.75;
+}
+
+#flowcell-runtime-scope .button-wrap:has(button:active) .span,
+#flowcell-runtime-scope[data-pressed="true"] .button-wrap .span,
+#flowcell-runtime-scope[data-active="true"] .button-wrap .span {
+  text-shadow: 0.025em 0.25em 0.05em rgba(0, 0, 0, 0.12);
+}
+
+#flowcell-runtime-scope[data-disabled="true"] .button {
+  cursor: default;
+  opacity: 0.6;
+}
+
+#flowcell-runtime-scope[data-compact="true"] .body {
+  --global--size: clamp(
+    0.42rem,
+    min(
+      calc(var(--flowcell-host-width, 96px) * 0.12),
+      calc(var(--flowcell-host-height, 32px) * 0.42)
+    ),
+    0.88rem
+  );
+  --flowcell-pad-inline: clamp(0px, calc(var(--flowcell-host-width, 96px) * 0.01), 4px);
+  --flowcell-pad-block: clamp(0px, calc(var(--flowcell-host-height, 32px) * 0.04), 2px);
+}
+
+#flowcell-runtime-scope[data-compact="true"] .button-shadow {
+  display: none;
+}
+
+#flowcell-runtime-scope[data-compact="true"] .button {
+  box-shadow:
+    inset 0 0.1em 0.1em rgba(0, 0, 0, 0.05),
+    inset 0 -0.08em 0.08em rgba(255, 255, 255, 0.42),
+    0 0.04em 0.04em -0.04em rgba(0, 0, 0, 0.14),
+    0 0 0.04em 0.08em inset rgba(255, 255, 255, 0.12);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  -moz-backdrop-filter: none;
+  -ms-backdrop-filter: none;
+}
+
+#flowcell-runtime-scope[data-compact="true"] .button::after {
+  display: none;
+}
+
+#flowcell-runtime-scope[data-compact="true"] .button .span::after {
+  display: none;
+}
+
+#flowcell-runtime-scope[data-compact="true"] .button .span {
+  padding-inline: clamp(0.28em, calc(var(--flowcell-host-width, 96px) * 0.01), 0.6em);
+  padding-block: clamp(0.12em, calc(var(--flowcell-host-height, 32px) * 0.08), 0.28em);
+  letter-spacing: -0.02em;
+  text-shadow: none;
+}
+
+#flowcell-runtime-scope[data-compact="true"][data-long-label="true"] .button .span,
+#flowcell-runtime-scope[data-tiny="true"] .button .span {
+  font-size: 0.78em;
+}
+
+#flowcell-runtime-scope[data-compact="true"] .button-wrap:has(button:active),
+#flowcell-runtime-scope[data-compact="true"][data-pressed="true"] .button-wrap,
+#flowcell-runtime-scope[data-compact="true"][data-active="true"] .button-wrap {
+  transform: none;
+}
+
+#flowcell-runtime-scope[data-compact="true"] .button-wrap:has(button:active) button,
+#flowcell-runtime-scope[data-compact="true"][data-pressed="true"] .button-wrap button,
+#flowcell-runtime-scope[data-compact="true"][data-active="true"] .button-wrap button {
+  box-shadow:
+    inset 0 0.1em 0.1em rgba(0, 0, 0, 0.05),
+    inset 0 -0.08em 0.08em rgba(255, 255, 255, 0.42),
+    0 0.03em 0.03em -0.03em rgba(0, 0, 0, 0.14),
+    0 0 0.04em 0.08em inset rgba(255, 255, 255, 0.12);
+}

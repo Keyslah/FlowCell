@@ -1,0 +1,29 @@
+{
+  "automation": {
+    "bridgeFolder": "C:\\Path\\To\\Your\\BlenderBridge",
+    "responseTimeoutSeconds": 20
+  },
+  "appearance": {
+    "maxRowsPerColumn": 7,
+    "outerPadding": 16,
+    "panelPadding": 16,
+    "gap": 10,
+    "buttonWidth": 222,
+    "buttonHeight": 56,
+    "arrowWidth": 48,
+    "radius": 16,
+    "fontSize": 16,
+    "windowBackground": "#2a3440",
+    "panelBackground": "#34414f",
+    "buttonColor": "#6ce36c",
+    "buttonHoverColor": "#86f086",
+    "buttonActiveColor": "#50c850",
+    "buttonTextColor": "#182217",
+    "statusBackground": "#182217",
+    "statusTextColor": "#f2f2f2",
+    "theme": "dark",
+    "sizePreset": "compact",
+    "minButtonWidth": 148
+  },
+  "buttons": []
+}

@@ -1,0 +1,160 @@
+{
+  "automation": {
+    "bridgeFolder": "",
+    "responseTimeoutSeconds": 20
+  },
+  "appearance": {
+    "maxRowsPerColumn": 7,
+    "outerPadding": 16,
+    "panelPadding": 16,
+    "gap": 10,
+    "buttonWidth": 222,
+    "buttonHeight": 56,
+    "arrowWidth": 48,
+    "radius": 16,
+    "fontSize": 16,
+    "windowBackground": "#2a3440",
+    "panelBackground": "#34414f",
+    "buttonColor": "#6ce36c",
+    "buttonHoverColor": "#86f086",
+    "buttonActiveColor": "#50c850",
+    "buttonTextColor": "#182217",
+    "statusBackground": "#182217",
+    "statusTextColor": "#f2f2f2",
+    "theme": "dark",
+    "sizePreset": "compact",
+    "minButtonWidth": 148
+  },
+  "buttons": [
+    {
+      "label": "add button",
+      "tooltip": "Add another launcher button for one of the built-in Blender actions.",
+      "localAction": "add_button"
+    },
+    {
+      "label": "style",
+      "tooltip": "Change launcher size, spacing, rows, and colors.",
+      "localAction": "style_settings"
+    },
+    {
+      "label": "alignment tools",
+      "tooltip": "Open FlowCell alignment controls for active-object min, center, max, surface, and geocenter alignment.",
+      "scriptPath": ".\\FlowCellButtons\\util_alignment_tools.ps1",
+      "panel": "utility"
+    },
+    {
+      "label": "flatten revolve",
+      "tooltip": "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.",
+      "scriptPath": ".\\FlowCellButtons\\util_flatten_revolve_tools.ps1",
+      "panel": "utility"
+    },
+    {
+      "label": "Smart Axis Lock",
+      "tooltip": "Open the grouped Smart Axis Lock controls for baseline, X/Y/Z cycling, live pinning, and status.",
+      "scriptPath": ".\\FlowCellButtons\\util_smart_axis_lock.ps1",
+      "panel": "utility"
+    },
+    {
+      "label": "Cursor Center Hole",
+      "tooltip": "With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.",
+      "scriptPath": ".\\FlowCellButtons\\util_cursor_center_hole.ps1",
+      "panel": "edit"
+    },
+    {
+      "label": "save stl",
+      "tooltip": "Export the selected mesh objects to 01 src\\04 assets\\03 3d as a uniquely named STL.",
+      "action": "save_selected_stl_to_assets",
+      "panel": "files"
+    },
+    {
+      "label": "save png",
+      "tooltip": "Render the active selected object from the current scene camera to 01 src\\04 assets\\01 images as a transparent PNG cropped exactly to the visible object bounds.",
+      "action": "render_active_object_png_to_images",
+      "panel": "files"
+    },
+    {
+      "label": "cura",
+      "tooltip": "Export the selected mesh objects as STL files and add them to Cura.",
+      "scriptPath": ".\\FlowCellButtons\\file_cura.ps1",
+      "panel": "files"
+    },
+    {
+      "label": "orca",
+      "tooltip": "Export the selected mesh objects as STL files and add them to Orca.",
+      "scriptPath": ".\\FlowCellButtons\\file_orca.ps1",
+      "panel": "files"
+    },
+    {
+      "label": "make layers",
+      "tooltip": "Create Live, Snapshots, Trash, and Archive if missing.",
+      "action": "make_layers"
+    },
+    {
+      "label": "sort",
+      "tooltip": "Sort by visibility: visible objects become Live, matching invisible family objects become Snapshots as s#, and other invisible objects become Trash as t#.",
+      "action": "sort"
+    },
+    {
+      "label": "Sort Live",
+      "tooltip": "Move every currently hidden object under Live into Trash.",
+      "action": "sort_live"
+    },
+    {
+      "label": "snapshot",
+      "tooltip": "Save the selected Live objects into Snapshots.",
+      "action": "snapshot"
+    },
+    {
+      "label": "back",
+      "tooltip": "Move current Live to Trash and restore the latest snapshot for the selected target.",
+      "action": "back"
+    },
+    {
+      "label": "restore",
+      "tooltip": "Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first.",
+      "action": "restore"
+    },
+    {
+      "label": "add to live",
+      "tooltip": "Copy selected snapshot, trash, or archive objects into Live without replacing the current Live version.",
+      "action": "add_to_live"
+    },
+    {
+      "label": "trash",
+      "tooltip": "Move selected objects into Trash.",
+      "action": "trash"
+    },
+    {
+      "label": "archive",
+      "tooltip": "Copy selected objects into Archive.",
+      "action": "archive"
+    },
+    {
+      "label": "empty trash",
+      "tooltip": "Delete everything inside Trash.",
+      "action": "empty_trash"
+    },
+    {
+      "label": "new collection",
+      "tooltip": "Prompt for a name and create a new child collection near the selected object.",
+      "action": "new_collection"
+    },
+    {
+      "label": "empty collections",
+      "tooltip": "Delete empty collections while keeping the system roots.",
+      "action": "empty_collections"
+    },
+    {
+      "label": "cycle collection",
+      "tooltip": "Use the selected object's collection and show one direct object at a time while selecting it.",
+      "action": "cycle_collection"
+    },
+    {
+      "label": "cycle versions",
+      "tooltip": "With one selected Live object, cycle Live and snapshot versions one visible object at a time.",
+      "action": "cycle_live_versions",
+      "showCycleArrows": true,
+      "statusText": "live"
+    }
+  ]
+}
