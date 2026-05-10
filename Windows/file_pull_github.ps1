@@ -426,13 +426,7 @@ try {
         throw ('Repository has uncommitted changes. Commit, stash, or discard them before using GitHub Pull.{0}{0}Repository: {1}' -f [Environment]::NewLine, $repositoryRoot)
     }
 
-    $gitWarnings = New-Object System.Collections.Generic.List[string]
     $fetchResult = Invoke-Git -RepositoryRoot $repositoryRoot -Arguments @('fetch', '--prune', 'origin')
-    foreach ($warningLine in @($fetchResult.WarningLines)) {
-        if (-not [string]::IsNullOrWhiteSpace([string]$warningLine)) {
-            [void]$gitWarnings.Add([string]$warningLine)
-        }
-    }
 
     $aheadCount = Get-AheadCount -RepositoryRoot $repositoryRoot -UpstreamName $upstreamName
     $behindCount = Get-BehindCount -RepositoryRoot $repositoryRoot -UpstreamName $upstreamName
@@ -448,9 +442,6 @@ try {
         else {
             $statusLines += 'GitHub is already up to date.'
         }
-        if ($gitWarnings.Count -gt 0) {
-            $statusLines += ('Warnings: {0}' -f (($gitWarnings | Select-Object -Unique) -join ' | '))
-        }
 
         $statusMessage = ($statusLines -join [Environment]::NewLine)
         Write-Status $statusMessage
@@ -464,11 +455,6 @@ try {
 
     Write-Status ('Pulling latest changes from GitHub:{0}{0}{1}{0}Branch: {2}' -f [Environment]::NewLine, $repositoryRoot, $branchName)
     $pullResult = Invoke-Git -RepositoryRoot $repositoryRoot -Arguments @('pull', '--ff-only')
-    foreach ($warningLine in @($pullResult.WarningLines)) {
-        if (-not [string]::IsNullOrWhiteSpace([string]$warningLine)) {
-            [void]$gitWarnings.Add([string]$warningLine)
-        }
-    }
 
     $localHead = Get-RevisionHash -RepositoryRoot $repositoryRoot -Revision 'HEAD'
     $upstreamHead = Get-RevisionHash -RepositoryRoot $repositoryRoot -Revision $upstreamName
@@ -485,9 +471,6 @@ try {
     )
     if (-not [string]::IsNullOrWhiteSpace($pullResult.Text)) {
         $statusLines += ('Git: {0}' -f $pullResult.Text)
-    }
-    if ($gitWarnings.Count -gt 0) {
-        $statusLines += ('Warnings: {0}' -f (($gitWarnings | Select-Object -Unique) -join ' | '))
     }
 
     $statusMessage = ($statusLines -join [Environment]::NewLine)

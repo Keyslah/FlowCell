@@ -513,7 +513,6 @@ try {
     $hasWorkingChanges = -not [string]::IsNullOrWhiteSpace($statusResult.Text.Trim())
     $commitCreated = $false
     $commitMessage = ''
-    $gitWarnings = New-Object System.Collections.Generic.List[string]
 
     if ($hasWorkingChanges) {
         $commitMessage = Get-CommitMessage -RepositoryRoot $repositoryRoot -BranchName $branchName
@@ -523,17 +522,7 @@ try {
         }
 
         $addResult = Invoke-Git -RepositoryRoot $repositoryRoot -Arguments @('add', '-A')
-        foreach ($warningLine in @($addResult.WarningLines)) {
-            if (-not [string]::IsNullOrWhiteSpace([string]$warningLine)) {
-                [void]$gitWarnings.Add([string]$warningLine)
-            }
-        }
         $commitResult = Invoke-Git -RepositoryRoot $repositoryRoot -Arguments @('commit', '-m', $commitMessage) -AllowFailure
-        foreach ($warningLine in @($commitResult.WarningLines)) {
-            if (-not [string]::IsNullOrWhiteSpace([string]$warningLine)) {
-                [void]$gitWarnings.Add([string]$warningLine)
-            }
-        }
         if ($commitResult.ExitCode -ne 0) {
             if ($commitResult.RawText -match 'nothing to commit') {
                 $hasWorkingChanges = $false
@@ -568,11 +557,6 @@ try {
     else {
         $pushResult = Invoke-Git -RepositoryRoot $repositoryRoot -Arguments @('push')
     }
-    foreach ($warningLine in @($pushResult.WarningLines)) {
-        if (-not [string]::IsNullOrWhiteSpace([string]$warningLine)) {
-            [void]$gitWarnings.Add([string]$warningLine)
-        }
-    }
 
     $localHead = Get-HeadCommitHash -RepositoryRoot $repositoryRoot
     $remoteHead = Get-RemoteBranchCommitHash -RepositoryRoot $repositoryRoot -RemoteName 'origin' -BranchName $branchName
@@ -596,9 +580,6 @@ try {
         $statusLines += 'Committed: no new commit'
     }
     $statusLines += 'Pushed to GitHub.'
-    if ($gitWarnings.Count -gt 0) {
-        $statusLines += ('Warnings: {0}' -f (($gitWarnings | Select-Object -Unique) -join ' | '))
-    }
 
     $statusMessage = ($statusLines -join [Environment]::NewLine)
     Write-Status $statusMessage
