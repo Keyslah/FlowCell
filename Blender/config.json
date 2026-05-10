@@ -49,10 +49,34 @@
       "panel": "utility"
     },
     {
-      "label": "Smart Axis Lock",
-      "tooltip": "Open the grouped Smart Axis Lock controls for baseline, X/Y/Z cycling, live pinning, and status.",
-      "scriptPath": ".\\FlowCellButtons\\util_smart_axis_lock.ps1",
-      "panel": "utility"
+      "label": "Base",
+      "tooltip": "Store the current selected-object bounds as the Smart Axis baseline.",
+      "scriptPath": ".\\FlowCellButtons\\util_smart_axis_base.ps1",
+      "panel": "Tool Set"
+    },
+    {
+      "label": "X",
+      "tooltip": "Cycle Smart Axis X between none, minus, and plus pinning.",
+      "scriptPath": ".\\FlowCellButtons\\util_smart_axis_x.ps1",
+      "panel": "Tool Set"
+    },
+    {
+      "label": "Y",
+      "tooltip": "Cycle Smart Axis Y between none, minus, and plus pinning.",
+      "scriptPath": ".\\FlowCellButtons\\util_smart_axis_y.ps1",
+      "panel": "Tool Set"
+    },
+    {
+      "label": "Z",
+      "tooltip": "Cycle Smart Axis Z between none, minus, and plus pinning.",
+      "scriptPath": ".\\FlowCellButtons\\util_smart_axis_z.ps1",
+      "panel": "Tool Set"
+    },
+    {
+      "label": "Live",
+      "tooltip": "Toggle Smart Axis live pinning.",
+      "scriptPath": ".\\FlowCellButtons\\util_smart_axis_live.ps1",
+      "panel": "Tool Set"
     },
     {
       "label": "Cursor Center Hole",

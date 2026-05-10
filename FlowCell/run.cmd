@@ -3,11 +3,10 @@
 setlocal
 
 set "ROOT=%~dp0"
-set "UI_SCRIPT=%ROOT%FlowCellUI.ps1"
-set "RESTORE_SCRIPT=%ROOT%helpers\Restore-FlowCellWindow.ps1"
+set "FRONTEND_SCRIPT=%ROOT%helpers\Start-FlowCellFrontend.ps1"
 set "LOG_DIR=%ROOT%local\logs"
 set "LAUNCH_LOG=%LOG_DIR%\launcher.log"
-set "UI_LAUNCH_LOG=%LOG_DIR%\ui-launcher.log"
+set "FRONTEND_LAUNCH_LOG=%LOG_DIR%\frontend-launcher.log"
 set "BACKEND_LAUNCH_LOG=%LOG_DIR%\backend-launcher.log"
 set "PS_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 set "AHK_EXE="
@@ -24,9 +23,9 @@ if not exist "%PS_EXE%" (
     exit /b 1
 )
 
-if not exist "%UI_SCRIPT%" (
-    echo FlowCell UI script was not found:
-    echo   %UI_SCRIPT%
+if not exist "%FRONTEND_SCRIPT%" (
+    echo FlowCell frontend launcher script was not found:
+    echo   %FRONTEND_SCRIPT%
     pause
     exit /b 1
 )
@@ -37,13 +36,8 @@ if "%~1"=="" goto launch_ui
 goto launch_backend
 
 :launch_ui
-if exist "%RESTORE_SCRIPT%" (
-    "%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%RESTORE_SCRIPT%" >nul 2>&1
-    if "%ERRORLEVEL%"=="0" exit /b 0
-)
-
 pushd "%ROOT%"
-"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -STA -File "%UI_SCRIPT%" 1>>"%UI_LAUNCH_LOG%" 2>&1
+"%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%FRONTEND_SCRIPT%"
 set "EXIT_CODE=%ERRORLEVEL%"
 popd
 

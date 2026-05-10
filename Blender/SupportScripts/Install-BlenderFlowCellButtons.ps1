@@ -35,6 +35,7 @@ New-Item -ItemType Directory -Path $managedActionRoot -Force | Out-Null
 
 $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 if ($null -eq $config.buttons) { $config | Add-Member -MemberType NoteProperty -Name buttons -Value @() }
+$config.buttons = @($config.buttons)
 $bridgeLayout = Get-FlowCellBlenderBridgeLayout -Config $config -BridgeFolder $BridgeFolder
 $BridgeFolder = [string]$bridgeLayout.BridgeFolder
 
@@ -54,6 +55,7 @@ if (Test-Path -LiteralPath $customRegistryPath -PathType Leaf) {
         $registry = [pscustomobject]@{ actions = @() }
     }
 }
+$registry.actions = @($registry.actions)
 
 function Get-SafeName([string]$Value) {
     $safe = (($Value -replace '[^A-Za-z0-9]+', '_').Trim('_')).ToLowerInvariant()
@@ -86,7 +88,11 @@ function Write-FlowCellTextFile {
     $lastError = $null
     for ($attempt = 1; $attempt -le $RetryCount; $attempt++) {
         try {
-            Set-Content -LiteralPath $Path -Value $Value -Encoding $Encoding
+            $resolvedEncoding = switch ($Encoding) {
+                'UTF8' { New-Object System.Text.UTF8Encoding($false) }
+                default { [System.Text.Encoding]::ASCII }
+            }
+            [System.IO.File]::WriteAllText($Path, $Value, $resolvedEncoding)
             return
         }
         catch [System.IO.IOException] {
@@ -550,12 +556,12 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             $updatedConfigButtons++
         }
         else {
-            $config.buttons += [pscustomobject]@{
+            $config.buttons = @($config.buttons) + @([pscustomobject]@{
                 label = [string]$label
                 tooltip = [string](Get-PreferredActionDescription -ActionName $actionName -CurrentDescription $description)
                 action = [string]$actionName
                 panel = [string]$PanelName
-            }
+            })
             $addedConfigButtons++
         }
 
@@ -569,7 +575,7 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             $existingEntry[0] | Add-Member -MemberType NoteProperty -Name description -Value ([string]$description) -Force
         }
         else {
-            $registry.actions += [pscustomobject]@{
+            $registry.actions = @($registry.actions) + @([pscustomobject]@{
                 action = [string]$actionName
                 pythonPath = [string]$pythonPath
                 functionName = [string]$functionName
@@ -577,7 +583,7 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
                 sourceFunctionName = [string]$functionName
                 startLine = [int]$startLine
                 description = [string]$description
-            }
+            })
             $registeredActions++
         }
 

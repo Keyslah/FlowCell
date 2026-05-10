@@ -100,7 +100,5 @@
 $ErrorActionPreference = 'Stop'
 $supportRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'SupportScripts'
 $dispatcherPath = Join-Path $supportRoot 'Invoke-BlenderFlowCellAction.ps1'
-& $dispatcherPath -Action 'flowtest_custom_file_orca' -Label 'file_orca'
+& $dispatcherPath -Action 'flowtest_custom_file_cura_4' -Label 'file_cura'
 exit $LASTEXITCODE
-
-

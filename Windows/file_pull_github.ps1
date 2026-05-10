@@ -271,9 +271,13 @@ function Invoke-Git {
     $process = New-Object System.Diagnostics.Process
     $process.StartInfo = $processStartInfo
     [void]$process.Start()
-    $stdOut = $process.StandardOutput.ReadToEnd()
-    $stdErr = $process.StandardError.ReadToEnd()
+    $stdOutTask = $process.StandardOutput.ReadToEndAsync()
+    $stdErrTask = $process.StandardError.ReadToEndAsync()
     $process.WaitForExit()
+    [void]$stdOutTask.Wait()
+    [void]$stdErrTask.Wait()
+    $stdOut = $stdOutTask.Result
+    $stdErr = $stdErrTask.Result
     $exitCode = [int]$process.ExitCode
 
     $lines = @(

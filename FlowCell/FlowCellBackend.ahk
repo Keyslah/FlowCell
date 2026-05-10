@@ -13,7 +13,9 @@ flowCellLogsDir := EnsureFlowCellDir(flowCellLocalRoot "\logs")
 flowCellBindingsPath := flowCellLocalRoot "\bindings.ini"
 flowCellScanStatePath := flowCellLocalRoot "\scan_state.ini"
 flowCellRecordedActionsDir := EnsureFlowCellDir(flowCellLocalRoot "\recorded_actions")
+flowCellCommandTempDir := EnsureFlowCellDir(flowCellLocalRoot "\temp\command_host_ahk")
 flowCellLastActionStatusPath := flowCellLogsDir "\last_action_status.txt"
+flowCellCommandBackendPath := A_ScriptDir "\FlowCellCommandBackend.ps1"
 
 logger := ControllerLogger(flowCellLogsDir)
 
@@ -74,6 +76,16 @@ GetCliIntValue(prefix, defaultValue) {
         return defaultValue
 }
 
+JsonEscape(value) {
+    text := value ""
+    text := StrReplace(text, "\", "\\")
+    text := StrReplace(text, '"', '\"')
+    text := StrReplace(text, "`r", "\r")
+    text := StrReplace(text, "`n", "\n")
+    text := StrReplace(text, "`t", "\t")
+    return text
+}
+
 SplitConfigList(value) {
     values := []
     if value = ""
@@ -95,10 +107,11 @@ BoolConfigValue(value, defaultValue := false) {
 }
 
 class FlowCellApp {
-    __New(logger) {
+    __New(logger, showUi := true) {
         global flowCellScanStatePath, flowCellBindingsPath, flowCellRecordedActionsDir
         this.projectRoot := A_ScriptDir
         this.logger := logger
+        this.isVisualHost := !!showUi
         this.scanner := IllustratorScanner(this.logger, flowCellScanStatePath)
         this.shortcutManager := ScriptShortcutManager(this, flowCellBindingsPath, this.logger)
         this.actionHotkeyManager := ActionHotkeyManager(this, flowCellBindingsPath, this.logger, this.shortcutManager.candidateShortcuts)
@@ -114,21 +127,29 @@ class FlowCellApp {
         this.macroStopRequested := false
         this.bindingRowIds := []
         this.editorDialog := ""
-        this.BuildGui()
-        this.vScrollHandler := ObjBindMethod(this, "HandleVScroll")
-        this.mouseWheelHandler := ObjBindMethod(this, "HandleMouseWheel")
-        OnMessage(0x115, this.vScrollHandler)
-        OnMessage(0x20A, this.mouseWheelHandler)
-        this.UpdateActionButtons(false)
-        this.actionStatusEdit.Value := JoinLines([
+        this.actionStatusText := ""
+        this.shortcutStatusText := ""
+        if this.isVisualHost {
+            this.BuildGui()
+            this.vScrollHandler := ObjBindMethod(this, "HandleVScroll")
+            this.mouseWheelHandler := ObjBindMethod(this, "HandleMouseWheel")
+            OnMessage(0x115, this.vScrollHandler)
+            OnMessage(0x20A, this.mouseWheelHandler)
+            this.UpdateActionButtons(false)
+        }
+        this.SetActionStatus(JoinLines([
             "Fresh session.",
             "This build is recorder-first.",
             "Use Record Action in the macro window, then bind the saved macro here if you want a hotkey.",
             "Emergency stop hotkey: Pause"
-        ])
-        this.LoadBindings()
-        Hotkey "Pause", ObjBindMethod(this, "HandleEmergencyMacroStop"), "On"
-        this.logger.Info("Application started.")
+        ]))
+        if this.isVisualHost {
+            this.LoadBindings()
+            Hotkey "Pause", ObjBindMethod(this, "HandleEmergencyMacroStop"), "On"
+            this.logger.Info("Application started.")
+        } else {
+            this.logger.Info("Controller CLI runner started without UI.")
+        }
     }
 
     BuildGui() {
@@ -234,6 +255,8 @@ class FlowCellApp {
     }
 
     Show() {
+        if !this.isVisualHost || !HasProp(this, "gui") || !IsObject(this.gui)
+            return
         options := "w" this.defaultGuiWidth " h" this.defaultGuiHeight
         if HasCliFlag("--minimized") || HasCliFlag("--start-minimized")
             options .= " Minimize"
@@ -599,21 +622,34 @@ class FlowCellApp {
     }
 
     SetActionStatus(text, flush := false) {
-        this.actionStatusEdit.Value := text
-        if flush
+        this.actionStatusText := text
+        if this.isVisualHost && HasProp(this, "actionStatusEdit") && IsObject(this.actionStatusEdit) {
+            this.actionStatusEdit.Value := text
+        }
+        if flush && this.isVisualHost && HasProp(this, "actionStatusEdit") && IsObject(this.actionStatusEdit)
             this.FlushUi(this.actionStatusEdit)
     }
 
+    GetActionStatusText() {
+        return this.actionStatusText
+    }
+
     SetShortcutStatus(text) {
-        this.shortcutStatusEdit.Value := text
+        this.shortcutStatusText := text
+        if this.isVisualHost && HasProp(this, "shortcutStatusEdit") && IsObject(this.shortcutStatusEdit)
+            this.shortcutStatusEdit.Value := text
     }
 
     UpdateActionButtons(enabled) {
+        if !this.isVisualHost || !HasProp(this, "actionButtons") || !IsObject(this.actionButtons)
+            return
         for button in this.actionButtons
             button.Enabled := enabled
     }
 
     SetScanBusy(isBusy, scanButtonText := "") {
+        if !this.isVisualHost || !HasProp(this, "scanButton") || !IsObject(this.scanButton) || !HasProp(this, "rescanButton") || !IsObject(this.rescanButton)
+            return
         this.scanButton.Enabled := !isBusy
         this.rescanButton.Enabled := !isBusy
         if isBusy {
@@ -628,6 +664,8 @@ class FlowCellApp {
     }
 
     FlushUi(control := "") {
+        if !this.isVisualHost || !HasProp(this, "gui") || !IsObject(this.gui)
+            return
         try {
             if IsObject(control)
                 control.Redraw()
@@ -947,7 +985,7 @@ class FlowCellApp {
     HandleShortcutInvocation(binding) {
         global flowCellLastActionStatusPath
         this.logger.Info("Script hotkey requested. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
-        result := this.RunBoundScript(binding.scriptPath, "hotkey " binding.shortcut, binding.HasOwnProp("programTabId") ? binding.programTabId : 0)
+        result := this.RunBackendScriptCommand(binding.scriptPath, binding.HasOwnProp("programTabId") ? binding.programTabId : 0, "hotkey " binding.shortcut)
         lines := [
             "Shortcut: " binding.shortcut,
             "Script: " binding.scriptPath,
@@ -961,29 +999,143 @@ class FlowCellApp {
         this.logger.Info("Script hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
     }
 
+    RunBackendCommand(commandId, payloadJson, programTabId := 0, programName := "", sourceButtonId := "") {
+        global flowCellCommandBackendPath, flowCellCommandTempDir, flowCellLastActionStatusPath
+        result := {
+            attempted: false,
+            succeeded: false,
+            method: "command_host",
+            detail: "",
+            exitCode: "",
+            statusText: ""
+        }
+
+        if !FileExist(flowCellCommandBackendPath) {
+            result.detail := "Command backend script was not found."
+            return result
+        }
+
+        programConfig := this.GetProgramTabConfig(programTabId, programName)
+        resolvedProgramLabel := Trim(programConfig.label != "" ? programConfig.label : programName)
+        if resolvedProgramLabel = ""
+            resolvedProgramLabel := this.GetProgramNameFromBinding(programTabId)
+        resolvedProgramNormalized := StrLower(Trim(programConfig.normalizedName != "" ? programConfig.normalizedName : resolvedProgramLabel))
+        resolvedRunMethod := Trim(programConfig.runMethod)
+
+        token := A_TickCount "_" Random(1000, 9999)
+        envelopePath := flowCellCommandTempDir "\command_" token ".json"
+        resultPath := flowCellCommandTempDir "\result_" token ".json"
+        envelopeJson := "{"
+            . '"command_id":"' JsonEscape(commandId) '",'
+            . '"source_button_id":"' JsonEscape(sourceButtonId) '",'
+            . '"program_id":' Integer(programTabId) ','
+            . '"panel_id":"",'
+            . '"source_surface":"Hotkey",'
+            . '"correlation_id":"' JsonEscape(token) '",'
+            . '"program":{'
+                . '"id":' Integer(programTabId) ','
+                . '"label":"' JsonEscape(resolvedProgramLabel) '",'
+                . '"normalized_name":"' JsonEscape(resolvedProgramNormalized) '",'
+                . '"run_method":"' JsonEscape(resolvedRunMethod) '"'
+            . '},'
+            . '"payload":' payloadJson
+            . "}"
+
+        try {
+            FileDelete envelopePath
+            FileDelete resultPath
+        } catch {
+        }
+
+        try {
+            file := FileOpen(envelopePath, "w", "UTF-8")
+            file.Write(envelopeJson)
+            file.Close()
+        } catch as err {
+            result.detail := "Failed to write command envelope. " err.Message
+            return result
+        }
+
+        result.attempted := true
+        command := 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' flowCellCommandBackendPath '" -EnvelopePath "' envelopePath '" -ResultPath "' resultPath '"'
+        try exitCode := RunWait(command, , "Hide")
+        catch as err {
+            result.detail := "Launching the command backend failed. " err.Message
+            return result
+        } finally {
+            try FileDelete envelopePath
+            catch {
+            }
+        }
+
+        statusText := ""
+        if FileExist(flowCellLastActionStatusPath) {
+            try statusText := FileRead(flowCellLastActionStatusPath, "UTF-8")
+            catch
+                statusText := ""
+        }
+
+        try FileDelete resultPath
+        catch {
+        }
+
+        result.exitCode := exitCode
+        result.succeeded := exitCode = 0
+        result.statusText := statusText
+        result.detail := Trim(statusText) != "" ? statusText : (result.succeeded ? "Command completed." : "Command failed.")
+        return result
+    }
+
+    RunBackendScriptCommand(scriptPath, programTabId := 0, source := "") {
+        programName := this.GetProgramNameFromBinding(programTabId, scriptPath)
+        resolvedScriptPath := scriptPath
+        label := scriptPath
+        try {
+            SplitPath resolvedScriptPath, &fileName
+            if fileName != ""
+                label := fileName
+        }
+        payloadJson := "{"
+            . '"kind":"script",'
+            . '"label":"' JsonEscape(label) '",'
+            . '"target":"' JsonEscape(resolvedScriptPath) '",'
+            . '"resolved_target":"' JsonEscape(resolvedScriptPath) '",'
+            . '"tool":"",'
+            . '"intent":"",'
+            . '"owner_button_id":"",'
+            . '"owner_panel_id":"",'
+            . '"style_group_id":"",'
+            . '"compound_tool_id":""'
+            . "}"
+        return this.RunBackendCommand("flowcell.run_script", payloadJson, programTabId, programName, "hotkey_script")
+    }
+
+    RunBackendActionCommand(actionId, shortcut := "") {
+        payloadJson := "{"
+            . '"kind":"macro",'
+            . '"label":"' JsonEscape(this.GetActionLabelById(actionId)) '",'
+            . '"target":"' JsonEscape(actionId) '",'
+            . '"resolved_target":"' JsonEscape(actionId) '",'
+            . '"tool":"",'
+            . '"intent":"",'
+            . '"owner_button_id":"",'
+            . '"owner_panel_id":"",'
+            . '"style_group_id":"",'
+            . '"compound_tool_id":""'
+            . "}"
+        return this.RunBackendCommand("flowcell.run_macro", payloadJson, 0, "", "hotkey_action")
+    }
+
     HandleActionHotkeyInvocation(actionId, shortcut) {
         action := this.GetActionById(actionId)
         if !IsObject(action)
             return
 
         this.logger.Info("Action hotkey requested. Action=" actionId " | Shortcut=" shortcut)
-        if !this.EnsureActionReady(action, "hotkey " shortcut)
-            return
-
-        result := action.Run(this.scanResult)
-        this.logger.Info(
-            "Action hotkey result: "
-            . action.Id
-            . " | Attempted="
-            . BoolToWord(result.attempted)
-            . " | DeliverySucceeded="
-            . BoolToWord(result.deliverySucceeded)
-            . " | EffectConfirmed="
-            . BoolToWord(result.effectConfirmed)
-            . " | Method="
-            . result.method
-        )
-        this.SetActionStatus(this.BuildActionStatus(action, result))
+        result := this.RunBackendActionCommand(actionId, shortcut)
+        statusText := Trim(result.statusText) != "" ? result.statusText : result.detail
+        this.logger.Info("Action hotkey result: " action.Id " | Attempted=" BoolToWord(result.attempted) " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method)
+        this.SetActionStatus(statusText)
     }
 
     GetActionById(actionId) {
@@ -1582,6 +1734,8 @@ class FlowCellApp {
                 catch
                     statusAfter := ""
             }
+            if statusAfter = statusBefore
+                statusAfter := ""
 
             result.exitCode := exitCode
             if statusAfter != ""
@@ -7116,7 +7270,8 @@ WriteTextFile(path, text) {
     file.Close()
 }
 
-app := FlowCellApp(logger)
+cliOneShotMode := runActionId != "" || runScriptPath != ""
+app := FlowCellApp(logger, !cliOneShotMode)
 
 if runActionId != "" {
     try {
@@ -7125,7 +7280,7 @@ if runActionId != "" {
             throw Error("Action not found: " runActionId)
 
         if !app.EnsureActionReady(action, "cli " runActionId) {
-            text := app.actionStatusEdit.Value
+            text := app.GetActionStatusText()
             WriteTextFile(flowCellLastActionStatusPath, text)
             ExitApp(1)
         }

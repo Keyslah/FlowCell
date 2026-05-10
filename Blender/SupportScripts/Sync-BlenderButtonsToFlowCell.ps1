@@ -54,7 +54,11 @@ function Write-FlowCellTextFile {
     $lastError = $null
     for ($attempt = 1; $attempt -le $RetryCount; $attempt++) {
         try {
-            Set-Content -LiteralPath $Path -Value $Value -Encoding $Encoding
+            $resolvedEncoding = switch ($Encoding) {
+                'UTF8' { New-Object System.Text.UTF8Encoding($false) }
+                default { [System.Text.Encoding]::ASCII }
+            }
+            [System.IO.File]::WriteAllText($Path, $Value, $resolvedEncoding)
             return
         }
         catch [System.IO.IOException] {
@@ -812,7 +816,14 @@ foreach ($entry in @($importedPanelButtonMap.GetEnumerator())) {
         default { Get-OrCreateFlowCellPanel -Program $blenderProgram -PanelName $panelName }
     }
     $preserved = if ($panelPreservedButtons.ContainsKey([string]$targetPanel.Id)) { @($panelPreservedButtons[[string]$targetPanel.Id]) } else { @() }
-    $targetPanel.Buttons = @($preserved + @($entry.Value.Buttons))
+    $mergedButtons = New-Object System.Collections.Generic.List[object]
+    foreach ($button in @($preserved)) {
+        [void]$mergedButtons.Add($button)
+    }
+    foreach ($button in @($entry.Value.Buttons)) {
+        [void]$mergedButtons.Add($button)
+    }
+    $targetPanel.Buttons = @($mergedButtons.ToArray())
     $lastImportedPanel = $targetPanel
 }
 

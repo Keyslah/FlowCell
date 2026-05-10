@@ -3,7 +3,7 @@
 # Source Python File: C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\flowtest_bridge.py
 
 # Source Action Function: perform_batch_rename_selected_objects
-# Source Action Start Line: 710
+# Source Action Start Line: 711
 
 # Source Action Logic:
 
@@ -582,6 +582,49 @@ catch {
     }
     exit 1
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
