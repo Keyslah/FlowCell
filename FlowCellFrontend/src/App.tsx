@@ -80,9 +80,10 @@ import {
   saveProgramSnapshot,
   updateAlignmentToolModifiers,
   updateAppTheme,
-  updateAllProgramStyleGroups,
   updateButtonLabel,
+  updateButtonTransparentPopout,
   updatePanelButtonStyleGroup,
+  updatePanelButtonTransparentPopout,
   updateButtonStyleGroup,
   updateButtonTooltip,
   updateImportedSkins,
@@ -112,6 +113,7 @@ import {
 } from "./lib/skins";
 import {
   buildAppThemeCssVars,
+  buildBlackTintImportedSkin,
   buildEggshellImportedSkin,
   getAppThemeVariant,
   getAppThemePreset,
@@ -145,6 +147,7 @@ import {
 } from "./components/ToolSurfaces";
 import { DEFAULT_PANEL_FAN_OPTIONS } from "./types";
 import type {
+  AppTheme,
   CommandEnvelope,
   CommandResult,
   FlowCellButton,
@@ -1432,6 +1435,7 @@ export default function App() {
   const startupPanelRestoreRef = useRef(false);
   const startupToolRestoreRef = useRef(false);
   const toolPopoutAutoFitKeyRef = useRef<string | null>(null);
+  const transparentToolPopoutMeasureRef = useRef<HTMLDivElement | null>(null);
   const programmaticWindowPlacementUntilRef = useRef(0);
   const layoutLoadInFlightRef = useRef(false);
 
@@ -1640,6 +1644,11 @@ export default function App() {
     windowContext?.kind === "tool-popout" && toolPopoutLayoutMode === "Fanout";
   const isPanelFanPopout =
     windowContext?.kind === "tool-popout" && toolPopoutLayoutMode === "PanelFan";
+  const isTransparentSingleButtonPopout =
+    windowContext?.kind === "tool-popout" &&
+    toolPopoutLayoutMode === "Individual" &&
+    toolPopoutButtons.length === 1 &&
+    toolPopoutOwnerButton?.transparent_popout === true;
 
   const selectedButton =
     state && selectedButtonRef
@@ -1678,7 +1687,9 @@ export default function App() {
   const selectedPopButtons = selectedPanel
     ? selectedPanel.Buttons.filter((button) => selectedPopButtonIds.includes(button.Id))
     : [];
-  const selectedRegularButtons = selectedPopButtons.filter((button) => isRegularPopCandidate(button));
+  const selectedRegularButtons = selectedPopButtons.filter(
+    (button) => !isToolOwnerPopCandidate(button) && !isSmartAxisButton(button)
+  );
   const selectedToolOwnerButtons = selectedPopButtons.filter((button) =>
     isToolOwnerPopCandidate(button)
   );
@@ -1688,7 +1699,7 @@ export default function App() {
     selectedButtonRef.panelId === selectedPanel?.Id
       ? selectedPanel?.Buttons.find((button) => button.Id === selectedButtonRef.buttonId)
       : undefined;
-  const buttonAppearanceButtons = isToolSetPanelSelection ? [] : selectedPanel?.Buttons ?? [];
+  const buttonAppearanceButtons = selectedPanel?.Buttons ?? [];
   const buttonAppearanceSelectionIsAll =
     buttonAppearanceButtonId === BUTTON_APPEARANCE_ALL_BUTTONS_ID;
   const buttonAppearanceTargetButton = buttonAppearanceSelectionIsAll
@@ -2703,7 +2714,9 @@ export default function App() {
           layoutMode,
           buttonLabel:
             layoutMode === "PanelFan" ? panel.Name : ownerButton!.Label,
-          bounds: toolPopout.Bounds ?? null
+          bounds: toolPopout.Bounds ?? null,
+          transparentWindow:
+            layoutMode === "Individual" && ownerButton?.transparent_popout === true
         });
       });
     })();
@@ -2732,11 +2745,42 @@ export default function App() {
     }
     toolPopoutAutoFitKeyRef.current = autoFitKey;
 
-    if (activeToolPopout?.Bounds && isPersistablePopoutBounds(activeToolPopout.Bounds)) {
+    if (
+      !isTransparentSingleButtonPopout &&
+      activeToolPopout?.Bounds &&
+      isPersistablePopoutBounds(activeToolPopout.Bounds)
+    ) {
       return;
     }
 
     const ensureWindowCoversButtonSpread = async () => {
+      if (isTransparentSingleButtonPopout) {
+        await new Promise<void>((resolve) => {
+          window.requestAnimationFrame(() => resolve());
+        });
+        const targetNode = transparentToolPopoutMeasureRef.current;
+        const measuredRect = targetNode?.getBoundingClientRect();
+        if (!measuredRect || measuredRect.width <= 0 || measuredRect.height <= 0 || cancelled) {
+          toolPopoutAutoFitKeyRef.current = null;
+          return;
+        }
+        const currentSize = await currentWindow.innerSize().catch(() => null);
+        if (!currentSize || cancelled) {
+          return;
+        }
+        const requiredWidth = Math.ceil(measuredRect.width);
+        const requiredHeight = Math.ceil(measuredRect.height);
+        if (
+          Math.abs(currentSize.width - requiredWidth) <= 1 &&
+          Math.abs(currentSize.height - requiredHeight) <= 1
+        ) {
+          return;
+        }
+        markProgrammaticWindowPlacement(700);
+        await currentWindow.setSize(new LogicalSize(requiredWidth, requiredHeight));
+        return;
+      }
+
       const currentBounds = await readLogicalWindowBounds(currentWindow);
       if (!currentBounds || cancelled) {
         return;
@@ -2805,6 +2849,7 @@ export default function App() {
     hasCompactSmartAxisPanelRow,
     regularPanelRenderItemCount,
     activeToolPopout?.Bounds,
+    isTransparentSingleButtonPopout,
     selectedPanel?.Id,
     selectedProgram?.ProgramTabId,
     toolPopoutButtons,
@@ -3322,12 +3367,34 @@ export default function App() {
   const appThemeStyle = buildAppThemeCssVars(appTheme);
   const appThemeVariant = getAppThemeVariant(appTheme);
 
+  const syncBlackTintImportedSkins = (
+    importedSkins: ImportedSkin[] | undefined,
+    nextTheme: AppTheme
+  ): ImportedSkin[] => {
+    const currentImportedSkins = importedSkins ?? [];
+    const nextBlackTintSkin = buildBlackTintImportedSkin(nextTheme.blackTintOpacity);
+    return currentImportedSkins.some((skin) => skin.id === nextBlackTintSkin.id)
+      ? currentImportedSkins.map((skin) =>
+          skin.id === nextBlackTintSkin.id ? nextBlackTintSkin : skin
+        )
+      : [...currentImportedSkins, nextBlackTintSkin];
+  };
+
+  const persistThemeWithBuiltInSkins = async (nextTheme: AppTheme) => {
+    await persistState(
+      updateImportedSkins(
+        updateAppTheme(state, nextTheme),
+        syncBlackTintImportedSkins(state.ImportedSkins, nextTheme)
+      )
+    );
+  };
+
   const applyShellThemePreset = async (presetId: string) => {
     const presetTheme = getAppThemePreset(presetId);
     if (!presetTheme) {
       return;
     }
-    await persistState(updateAppTheme(state, presetTheme));
+    await persistThemeWithBuiltInSkins(presetTheme);
   };
 
   const applyDarkTheme = async () => {
@@ -3358,9 +3425,10 @@ export default function App() {
             skin.id === targetSkinId ? buildEggshellImportedSkin(targetSkinId) : skin
           )
         : [buildEggshellImportedSkin(targetSkinId)];
+    const syncedImportedSkins = syncBlackTintImportedSkins(nextImportedSkins, presetTheme);
 
     await persistState(
-      updateImportedSkins(updateAppTheme(state, presetTheme), nextImportedSkins)
+      updateImportedSkins(updateAppTheme(state, presetTheme), syncedImportedSkins)
     );
   };
 
@@ -3440,6 +3508,8 @@ export default function App() {
   const panelsImportedSkin = resolveSectionImportedSkin("main-panels");
   const panelSurfaceStyleGroup = resolveSectionStyleGroup("main-panel-surface");
   const panelSurfaceImportedSkin = resolveSectionImportedSkin("main-panel-surface");
+  const mainButtonsStyleGroup = resolveSectionStyleGroup("main-buttons");
+  const mainButtonsImportedSkin = resolveSectionImportedSkin("main-buttons");
   const cardsStyleGroup = resolveSectionStyleGroup("main-cards");
   const cardsImportedSkin = resolveSectionImportedSkin("main-cards");
   const miscStyleGroup = resolveSectionStyleGroup("main-misc");
@@ -3600,7 +3670,9 @@ export default function App() {
         buttonIds: toolPopout.ButtonIds,
         layoutMode,
         buttonLabel: layoutMode === "PanelFan" ? panel.Name : ownerButton!.Label,
-        bounds: toolPopout.Bounds ?? null
+        bounds: toolPopout.Bounds ?? null,
+        transparentWindow:
+          layoutMode === "Individual" && ownerButton?.transparent_popout === true
       }).catch(() => {});
       openLabels.add(label);
     }
@@ -3969,7 +4041,10 @@ export default function App() {
       buttonIds: resolvedRecord.ButtonIds,
       layoutMode: resolvedRecord.LayoutMode,
       buttonLabel: args.buttonLabel,
-      bounds: resolvedRecord.Bounds
+      bounds: resolvedRecord.Bounds,
+      transparentWindow:
+        resolvedRecord.LayoutMode === "Individual" &&
+        args.ownerButton.transparent_popout === true
     });
     pushFrontendEvent(
       surface,
@@ -4057,7 +4132,11 @@ export default function App() {
   };
 
   const openPanelFanPopout = async (panel: FlowCellPanel) => {
-    if (panel.Buttons.length === 0) {
+    const fanButtons =
+      selectedPanel?.Id === panel.Id && selectedPopButtons.length > 0
+        ? selectedPopButtons
+        : panel.Buttons;
+    if (fanButtons.length === 0) {
       pushFrontendEvent(
         inferSurfaceName(windowContext),
         `Fan requested for ${panel.Name}, but the panel has no buttons.`
@@ -4098,7 +4177,7 @@ export default function App() {
       program: selectedProgram,
       panel,
       ownerButton,
-      buttons: panel.Buttons,
+      buttons: fanButtons,
       layoutMode: "PanelFan",
       buttonLabel: panel.Name
     });
@@ -4580,12 +4659,7 @@ export default function App() {
   };
 
   const handleOpenButtonAppearanceAction = async () => {
-    if (
-      !selectedProgram ||
-      !selectedPanel ||
-      !buttonAppearanceTargetButton ||
-      isToolSetPanelSelection
-    ) {
+    if (!selectedProgram || !selectedPanel || !buttonAppearanceTargetButton) {
       return;
     }
 
@@ -4597,7 +4671,11 @@ export default function App() {
     });
   };
 
-  const handleSaveButtonAppearance = async (buttonId: string, draft: ImportedSkin) => {
+  const handleSaveButtonAppearance = async (
+    buttonId: string,
+    draft: ImportedSkin,
+    transparentPopout: boolean
+  ) => {
     if (!selectedProgram || !selectedPanel) {
       return;
     }
@@ -4674,7 +4752,7 @@ export default function App() {
         updateImportedSkins(currentState, nextImportedSkins),
         nextStyleGroups
       );
-      return applyToAllButtons
+      const styleAppliedState = applyToAllButtons
         ? updatePanelButtonStyleGroup(
             nextState,
             selectedProgram.ProgramTabId,
@@ -4687,6 +4765,20 @@ export default function App() {
             selectedPanel.Id,
             buttonId,
             styleGroupId
+          );
+      return applyToAllButtons
+        ? updatePanelButtonTransparentPopout(
+            styleAppliedState,
+            selectedProgram.ProgramTabId,
+            selectedPanel.Id,
+            transparentPopout
+          )
+        : updateButtonTransparentPopout(
+            styleAppliedState,
+            selectedProgram.ProgramTabId,
+            selectedPanel.Id,
+            buttonId,
+            transparentPopout
           );
     });
 
@@ -5351,15 +5443,20 @@ export default function App() {
     const canPop =
       !compact &&
       windowContext.kind === "main" &&
-      (isRegularPopCandidate(button) ||
-        (isBlenderToolSetPanel(selectedProgram, selectedPanel) && isToolOwnerPopCandidate(button)));
-    const popoutStyleOverride = compact ? popoutRegularStyleGroup : undefined;
-    const popoutImportedSkinOverride = compact ? popoutRegularImportedSkin : undefined;
+      (isRegularPopCandidate(button) || isToolOwnerPopCandidate(button));
+    const compactStyleOverride = compact ? popoutRegularStyleGroup : undefined;
+    const compactImportedSkinOverride = compact ? popoutRegularImportedSkin : undefined;
+    const mainButtonStyleOverride =
+      !compact && windowContext.kind === "main" ? mainButtonsStyleGroup : undefined;
+    const mainButtonImportedSkinOverride =
+      !compact && windowContext.kind === "main" ? mainButtonsImportedSkin : undefined;
+    const specificButtonStyleGroup = resolveStyleGroup(state.StyleGroups, button.style_group_id ?? "");
     const buttonStyleGroup =
-      popoutStyleOverride ?? resolveStyleGroup(state.StyleGroups, button.style_group_id ?? "");
+      specificButtonStyleGroup ?? compactStyleOverride ?? mainButtonStyleOverride;
     const buttonImportedSkin =
-      popoutImportedSkinOverride ??
-      getImportedSkin(state.ImportedSkins, buttonStyleGroup?.importedSkinId);
+      getImportedSkin(state.ImportedSkins, buttonStyleGroup?.importedSkinId) ??
+      compactImportedSkinOverride ??
+      mainButtonImportedSkinOverride;
 
     return (
       <div
@@ -5409,8 +5506,8 @@ export default function App() {
             compact={compact}
             styleGroups={state.StyleGroups}
             importedSkins={state.ImportedSkins}
-            styleGroupOverride={popoutStyleOverride}
-            importedSkinOverride={popoutImportedSkinOverride}
+            styleGroupOverride={compactStyleOverride}
+            importedSkinOverride={compactImportedSkinOverride}
               onSelect={() =>
                 scheduleSelectedButtonRef({
                   programId: selectedProgram.ProgramTabId,
@@ -5655,19 +5752,23 @@ export default function App() {
   const renderSlimPopoutShell = (
     content: ReactNode,
     kind: "panel" | "tool",
-    variant: "default" | "panel-fan" | "floating-fanout" = "default"
+    variant: "default" | "panel-fan" | "floating-fanout" | "transparent-button" = "default"
   ) => {
     const shellModeClass =
       windowContext.kind === "button-appearance"
         ? "app-shell--editor-popout"
         : windowContext.kind === "layout-picker"
           ? "app-shell--picker-popout"
+          : variant === "transparent-button"
+            ? "app-shell--transparent-button-popout"
           : "";
     const contentModeClass =
       windowContext.kind === "button-appearance"
         ? "slim-popout-shell__content--editor"
         : windowContext.kind === "layout-picker"
           ? "slim-popout-shell__content--picker"
+          : variant === "transparent-button"
+            ? "slim-popout-shell__content--transparent-button"
           : "";
 
     return (
@@ -5677,7 +5778,7 @@ export default function App() {
       data-theme-variant={appThemeVariant}
     >
       <main
-        className={`slim-popout-shell slim-popout-shell--${kind} ${windowContext.kind === "button-appearance" ? "slim-popout-shell--editor" : ""} ${windowContext.kind === "layout-picker" ? "slim-popout-shell--picker" : ""} ${variant === "panel-fan" ? "slim-popout-shell--panel-fan" : ""} ${variant === "floating-fanout" ? "slim-popout-shell--floating-fanout" : ""}`}
+        className={`slim-popout-shell slim-popout-shell--${kind} ${windowContext.kind === "button-appearance" ? "slim-popout-shell--editor" : ""} ${windowContext.kind === "layout-picker" ? "slim-popout-shell--picker" : ""} ${variant === "panel-fan" ? "slim-popout-shell--panel-fan" : ""} ${variant === "floating-fanout" ? "slim-popout-shell--floating-fanout" : ""} ${variant === "transparent-button" ? "slim-popout-shell--transparent-button" : ""}`}
         onPointerDown={() => {
           if (popoutContextMenu) {
             setPopoutContextMenu(null);
@@ -5728,7 +5829,9 @@ export default function App() {
           });
         }}
       >
-        {popoutContextMenu && variant !== "panel-fan" && variant !== "floating-fanout" ? (
+        {popoutContextMenu &&
+        variant !== "panel-fan" &&
+        variant !== "floating-fanout" ? (
           <div
             className="button-context-menu button-context-menu--popout"
             style={{
@@ -5756,7 +5859,9 @@ export default function App() {
             </button>
           </div>
         ) : null}
-        {variant === "panel-fan" || variant === "floating-fanout" ? null : (
+        {variant === "panel-fan" ||
+        variant === "floating-fanout" ||
+        variant === "transparent-button" ? null : (
           <div className="slim-popout-shell__controls">
           <div
             className="slim-popout-shell__grabber"
@@ -6089,7 +6194,16 @@ export default function App() {
     }
 
     return (
-      <div className="single-popout-button">{renderButtonHost(toolPopoutOwnerButton, true)}</div>
+      <div
+        ref={isTransparentSingleButtonPopout ? transparentToolPopoutMeasureRef : undefined}
+        className={
+          isTransparentSingleButtonPopout
+            ? "single-popout-button single-popout-button--transparent"
+            : "single-popout-button"
+        }
+      >
+        {renderButtonHost(toolPopoutOwnerButton, true)}
+      </div>
     );
   };
 
@@ -6137,8 +6251,8 @@ export default function App() {
       styleGroups={state.StyleGroups ?? []}
       selectedButtonId={buttonAppearanceButtonId || buttonAppearanceTargetButton?.Id || ""}
       onSelectedButtonChange={setButtonAppearanceButtonId}
-      onSave={(buttonId, draft) => {
-        void handleSaveButtonAppearance(buttonId, draft);
+      onSave={(buttonId, draft, transparentPopout) => {
+        void handleSaveButtonAppearance(buttonId, draft, transparentPopout);
       }}
       onClose={() => {
         void handleWindowClose();
@@ -6231,8 +6345,14 @@ export default function App() {
     );
   };
 
-  const showMainRails = windowContext.kind === "main" && surfaceMode !== "macro-lab";
-  const showStatusRail = windowContext.kind === "main" && surfaceMode !== "macro-lab";
+  const showMainRails =
+    windowContext.kind === "main" &&
+    surfaceMode !== "macro-lab" &&
+    surfaceMode !== "appearance";
+  const showStatusRail =
+    windowContext.kind === "main" &&
+    surfaceMode !== "macro-lab" &&
+    surfaceMode !== "appearance";
 
   if (windowContext.kind === "panel-popout") {
     return renderSlimPopoutShell(renderPanelButtonGrid(true), "panel");
@@ -6262,7 +6382,7 @@ export default function App() {
     return renderSlimPopoutShell(
       renderToolPopoutSurface(),
       "tool",
-      "default"
+      isTransparentSingleButtonPopout ? "transparent-button" : "default"
     );
   }
 
@@ -6451,14 +6571,10 @@ export default function App() {
                     <HostSkinButton
                       type="button"
                       label={panel.Name}
-                      className={
-                        surfaceMode !== "appearance" && selectedPanel?.Id === panel.Id
-                          ? "rail-button is-active"
-                          : "rail-button"
-                      }
+                      className={selectedPanel?.Id === panel.Id ? "rail-button is-active" : "rail-button"}
                       styleGroup={panelsStyleGroup}
                       importedSkin={panelsImportedSkin}
-                      selected={surfaceMode !== "appearance" && selectedPanel?.Id === panel.Id}
+                      selected={selectedPanel?.Id === panel.Id}
                       onClick={() => {
                         void selectPanel(panel);
                       }}
@@ -6470,21 +6586,13 @@ export default function App() {
               )}
               <HostSkinButton
                 type="button"
-                label="Appearance"
-                className={
-                  surfaceMode === "appearance" && hasWorkspaceSelection
-                    ? "rail-button is-active"
-                    : "rail-button"
-                }
+                label="Main Appearance"
+                className="rail-button"
                 styleGroup={panelsStyleGroup}
                 importedSkin={panelsImportedSkin}
-                selected={surfaceMode === "appearance" && hasWorkspaceSelection}
+                selected={false}
                 disabled={!hasWorkspaceSelection}
-                onClick={() =>
-                  setSurfaceMode((current) =>
-                    current === "appearance" ? "panel" : "appearance"
-                  )
-                }
+                onClick={() => setSurfaceMode("appearance")}
               />
               <HostSkinButton
                 type="button"
@@ -6554,7 +6662,6 @@ export default function App() {
               <AppearanceTab
                 state={state}
                 appTheme={appTheme}
-                selectedProgram={selectedProgram}
                 selectedPanelName={selectedPanel.Name}
                 onClose={() => setSurfaceMode("panel")}
                 onSaveTheme={() => {
@@ -6573,18 +6680,16 @@ export default function App() {
                   void applyEggshellTheme();
                 }}
                 onUpdateAppTheme={(nextTheme) => {
-                  void persistState(updateAppTheme(state, nextTheme));
-                }}
-                onApplyProgramStyleGroup={(styleGroupId) => {
-                  void persistState(updateAllProgramStyleGroups(state, styleGroupId));
+                  void persistThemeWithBuiltInSkins(nextTheme);
                 }}
                 onUpdateSurfaceStyleAssignment={(surfaceId, styleGroupId) => {
                   void persistState(updateSurfaceStyleAssignment(state, surfaceId, styleGroupId));
                 }}
                 onSaveImportedSkin={(skin) => {
-                  const nextImportedSkins = (state.ImportedSkins ?? []).map((entry) =>
-                    entry.id === skin.id ? skin : entry
-                  );
+                  const existingImportedSkins = state.ImportedSkins ?? [];
+                  const nextImportedSkins = existingImportedSkins.some((entry) => entry.id === skin.id)
+                    ? existingImportedSkins.map((entry) => (entry.id === skin.id ? skin : entry))
+                    : [...existingImportedSkins, skin];
                   void persistState(updateImportedSkins(state, nextImportedSkins));
                 }}
               />
@@ -6628,7 +6733,6 @@ export default function App() {
                         className="surface-action"
                         styleGroup={miscStyleGroup}
                         importedSkin={miscImportedSkin}
-                        disabled={isToolSetPanelSelection}
                         onClick={() => void handlePanelFanAction(selectedPanel)}
                       />
                       <HostSkinButton
@@ -6637,16 +6741,15 @@ export default function App() {
                         className="surface-action"
                         styleGroup={miscStyleGroup}
                         importedSkin={miscImportedSkin}
-                        disabled={isToolSetPanelSelection}
                         onClick={() => void handlePanelPopAction(selectedPanel)}
                       />
                       <HostSkinButton
                         type="button"
-                        label="Appearance"
+                        label="Button Appearance"
                         className="surface-action"
                         styleGroup={miscStyleGroup}
                         importedSkin={miscImportedSkin}
-                        disabled={!buttonAppearanceTargetButton || isToolSetPanelSelection}
+                        disabled={!buttonAppearanceTargetButton}
                         onClick={() => void handleOpenButtonAppearanceAction()}
                       />
                       <HostSkinButton
@@ -6655,7 +6758,6 @@ export default function App() {
                         className="surface-action"
                         styleGroup={miscStyleGroup}
                         importedSkin={miscImportedSkin}
-                        disabled={isToolSetPanelSelection}
                         onClick={() => void handlePanelFanOptionsAction(selectedPanel)}
                       />
                       <HostSkinButton

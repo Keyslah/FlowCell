@@ -29,7 +29,8 @@ export const FLOW_GLASS_APP_THEME: AppTheme = {
   accentColor: "#68d9ff",
   successColor: "#9cf667",
   dangerColor: "#ff5969",
-  mainCardBlurPx: 18
+  mainCardBlurPx: 18,
+  blackTintOpacity: 0.92
 };
 
 export const NATURE_FROST_APP_THEME: AppTheme = {
@@ -48,7 +49,8 @@ export const NATURE_FROST_APP_THEME: AppTheme = {
   accentColor: "#dce9d9",
   successColor: "#b8e7bb",
   dangerColor: "#ff8f84",
-  mainCardBlurPx: 22
+  mainCardBlurPx: 22,
+  blackTintOpacity: 0.92
 };
 
 export const DEFAULT_APP_THEME: AppTheme = FLOW_GLASS_APP_THEME;
@@ -73,7 +75,8 @@ export const APP_THEME_PRESETS: AppThemePreset[] = [
       accentColor: "#b89b74",
       successColor: "#96ab7f",
       dangerColor: "#c08375",
-      mainCardBlurPx: 12
+      mainCardBlurPx: 12,
+      blackTintOpacity: 0.92
     }
   },
   {
@@ -105,7 +108,8 @@ export const APP_THEME_PRESETS: AppThemePreset[] = [
       accentColor: "#ffb469",
       successColor: "#d8ff72",
       dangerColor: "#ff6c67",
-      mainCardBlurPx: 14
+      mainCardBlurPx: 14,
+      blackTintOpacity: 0.92
     }
   },
   {
@@ -127,7 +131,8 @@ export const APP_THEME_PRESETS: AppThemePreset[] = [
       accentColor: "#6effd6",
       successColor: "#92ff7a",
       dangerColor: "#ff5c7a",
-      mainCardBlurPx: 16
+      mainCardBlurPx: 16,
+      blackTintOpacity: 0.92
     }
   }
 ];
@@ -147,15 +152,41 @@ export const DEFAULT_GLASS_HOVER_IMPORTED_SKIN: ImportedSkin = {
   svg: ""
 };
 
-export const DEFAULT_BLACK_TINT_IMPORTED_SKIN: ImportedSkin = {
-  id: "imported-skin-black-tint",
-  name: "Black Tint",
-  html: `<div class="black-tint-pill"><span class="black-tint-pill__label">{{label}}</span></div>`,
-  css: `.black-tint-pill{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:0 24px;border-radius:999px;background:linear-gradient(180deg,rgba(0,0,0,.78),rgba(0,0,0,.62));box-shadow:inset 0 1px 0 rgba(255,255,255,.12),inset 0 -28px 44px rgba(0,0,0,.28),0 14px 30px rgba(0,0,0,.18);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);overflow:hidden}.black-tint-pill::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0) 30%),radial-gradient(circle at top left,rgba(255,255,255,.05),transparent 36%)}.black-tint-pill::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(145deg,rgba(255,255,255,.2),rgba(255,255,255,.04) 42%,rgba(255,255,255,.14));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.88}.black-tint-pill__label{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:100%;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;color:rgba(255,255,255,.94);font:600 14px/1 "Segoe UI",sans-serif;letter-spacing:-.02em;text-shadow:0 1px 10px rgba(0,0,0,.35)}.button-skin:hover .black-tint-pill,.button-skin.is-selected .black-tint-pill{background:linear-gradient(180deg,rgba(0,0,0,.84),rgba(0,0,0,.7));box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 -32px 48px rgba(0,0,0,.34),0 18px 34px rgba(0,0,0,.22)}.button-skin.is-compact .black-tint-pill{padding:0 10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 4px 10px rgba(0,0,0,.16)}.button-skin.is-compact .black-tint-pill__label{font-size:11px;line-height:1;padding:2px 0;letter-spacing:0}`,
-  cardHtml: `<div class="black-tint-surface"><span class="black-tint-surface__label">{{label}}</span></div>`,
-  cardCss: `.black-tint-surface{position:relative;width:100%;height:100%;border-radius:inherit;background:linear-gradient(180deg,rgba(0,0,0,.82),rgba(0,0,0,.68));box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 -48px 72px rgba(0,0,0,.34),0 24px 64px rgba(0,0,0,.18);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);overflow:hidden}.black-tint-surface::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,0) 28%),radial-gradient(circle at top left,rgba(255,255,255,.05),transparent 34%),radial-gradient(circle at bottom right,rgba(255,255,255,.03),transparent 28%)}.black-tint-surface::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.04) 42%,rgba(255,255,255,.12));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.9}.black-tint-surface__label{position:absolute;top:18px;right:22px;z-index:1;font:600 11px/1 "Segoe UI",sans-serif;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.34)}`,
-  svg: ""
-};
+function readThemeOpacity(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return fallback;
+  }
+  return Math.min(0.98, Math.max(0.35, value));
+}
+
+function formatAlpha(value: number): string {
+  return Number(value.toFixed(2)).toString();
+}
+
+export function buildBlackTintImportedSkin(
+  opacity = DEFAULT_APP_THEME.blackTintOpacity,
+  skinId = "imported-skin-black-tint"
+): ImportedSkin {
+  const solid = readThemeOpacity(opacity, DEFAULT_APP_THEME.blackTintOpacity);
+  const pillTop = formatAlpha(solid);
+  const pillBottom = formatAlpha(Math.max(0.22, solid - 0.1));
+  const pillHoverTop = formatAlpha(Math.min(0.98, solid + 0.04));
+  const pillHoverBottom = formatAlpha(Math.max(0.26, solid - 0.02));
+  const cardTop = formatAlpha(Math.min(0.98, solid + 0.03));
+  const cardBottom = formatAlpha(Math.max(0.28, solid - 0.04));
+
+  return {
+    id: skinId,
+    name: "Black Tint",
+    html: `<div class="black-tint-pill"><span class="black-tint-pill__label">{{label}}</span></div>`,
+    css: `.black-tint-pill{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:0 24px;border-radius:999px;background:linear-gradient(180deg,rgba(0,0,0,${pillTop}),rgba(0,0,0,${pillBottom}));box-shadow:inset 0 1px 0 rgba(255,255,255,.12),inset 0 -34px 52px rgba(0,0,0,.34),0 18px 36px rgba(0,0,0,.24);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);overflow:hidden}.black-tint-pill::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0) 30%),radial-gradient(circle at top left,rgba(255,255,255,.05),transparent 36%)}.black-tint-pill::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(145deg,rgba(255,255,255,.22),rgba(255,255,255,.04) 42%,rgba(255,255,255,.14));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.9}.black-tint-pill__label{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:100%;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;color:rgba(255,255,255,.95);font:600 14px/1 "Segoe UI",sans-serif;letter-spacing:-.02em;text-shadow:0 1px 10px rgba(0,0,0,.4)}.button-skin:hover .black-tint-pill,.button-skin.is-selected .black-tint-pill{background:linear-gradient(180deg,rgba(0,0,0,${pillHoverTop}),rgba(0,0,0,${pillHoverBottom}));box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 -38px 56px rgba(0,0,0,.38),0 20px 38px rgba(0,0,0,.26)}.button-skin.is-compact .black-tint-pill{padding:0 10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 4px 10px rgba(0,0,0,.18)}.button-skin.is-compact .black-tint-pill__label{font-size:11px;line-height:1;padding:2px 0;letter-spacing:0}`,
+    cardHtml: `<div class="black-tint-surface"><span class="black-tint-surface__label">{{label}}</span></div>`,
+    cardCss: `.black-tint-surface{position:relative;width:100%;height:100%;border-radius:inherit;background:linear-gradient(180deg,rgba(0,0,0,${cardTop}),rgba(0,0,0,${cardBottom}));box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 -56px 84px rgba(0,0,0,.38),0 28px 72px rgba(0,0,0,.22);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);overflow:hidden}.black-tint-surface::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,0) 28%),radial-gradient(circle at top left,rgba(255,255,255,.05),transparent 34%),radial-gradient(circle at bottom right,rgba(255,255,255,.03),transparent 28%)}.black-tint-surface::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.04) 42%,rgba(255,255,255,.12));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.9}.black-tint-surface__label{position:absolute;top:18px;right:22px;z-index:1;font:600 11px/1 "Segoe UI",sans-serif;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.34)}`,
+    svg: ""
+  };
+}
+
+export const DEFAULT_BLACK_TINT_IMPORTED_SKIN: ImportedSkin = buildBlackTintImportedSkin();
 
 export function isLegacyGlassHoverImportedSkin(skin: ImportedSkin): boolean {
   return (
@@ -220,7 +251,11 @@ export function normalizeAppTheme(theme?: Partial<AppTheme> | null): AppTheme {
     accentColor: readThemeField(theme?.accentColor, DEFAULT_APP_THEME.accentColor),
     successColor: readThemeField(theme?.successColor, DEFAULT_APP_THEME.successColor),
     dangerColor: readThemeField(theme?.dangerColor, DEFAULT_APP_THEME.dangerColor),
-    mainCardBlurPx: readThemeNumber(theme?.mainCardBlurPx, DEFAULT_APP_THEME.mainCardBlurPx)
+    mainCardBlurPx: readThemeNumber(theme?.mainCardBlurPx, DEFAULT_APP_THEME.mainCardBlurPx),
+    blackTintOpacity: readThemeOpacity(
+      theme?.blackTintOpacity,
+      DEFAULT_APP_THEME.blackTintOpacity
+    )
   };
 }
 

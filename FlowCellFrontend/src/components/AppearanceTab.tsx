@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
   AppTheme,
-  FlowCellProgram,
   FlowCellState,
   ImportedSkin,
   StyleGroup,
@@ -9,6 +8,7 @@ import type {
 } from "../types";
 import {
   buildAppThemeCssVars,
+  buildBlackTintImportedSkin,
   getImportedSkinPreset,
   IMPORTED_SKIN_PRESETS
 } from "../lib/theme";
@@ -22,7 +22,6 @@ import {
 interface AppearanceTabProps {
   state: FlowCellState;
   appTheme: AppTheme;
-  selectedProgram: FlowCellProgram;
   selectedPanelName: string;
   onClose: () => void;
   onSaveTheme: () => void;
@@ -31,7 +30,6 @@ interface AppearanceTabProps {
   onApplyNatureTheme: () => void;
   onApplyEggshellTheme: () => void;
   onUpdateAppTheme: (appTheme: AppTheme) => void;
-  onApplyProgramStyleGroup: (styleGroupId: string) => void;
   onUpdateSurfaceStyleAssignment: (
     surfaceId: SurfaceStyleSectionId,
     styleGroupId: string
@@ -40,7 +38,7 @@ interface AppearanceTabProps {
 }
 
 interface SectionCardConfig {
-  id: SurfaceStyleSectionId | "programs";
+  id: SurfaceStyleSectionId;
   title: string;
   description: string;
   applyLabel: string;
@@ -50,28 +48,21 @@ interface SectionCardConfig {
 
 const MAIN_PAGE_SECTIONS: SectionCardConfig[] = [
   {
-    id: "programs",
-    title: "Programs",
-    description: "Program rail buttons on the main page.",
-    applyLabel: "Apply to All Programs",
-    previewKind: "button",
-    previewLabel: "Program"
-  },
-  {
-    id: "main-panels",
-    title: "Panels",
-    description: "Panel rail buttons and the Appearance rail entry.",
-    applyLabel: "Apply to Panel Rail",
-    previewKind: "button",
-    previewLabel: "Panel"
-  },
-  {
     id: "main-panel-surface",
-    title: "Panel Surface",
-    description: "The large main working surface behind the current panel. Uses saved card code.",
-    applyLabel: "Apply to Panel Surface",
+    title: "Main Page Card",
+    description: "The large host-owned card surface behind the current panel. Uses saved card code.",
+    applyLabel: "Apply to Main Page Card",
     previewKind: "card",
-    previewLabel: "Panel Surface"
+    previewLabel: "Main Page"
+  },
+  {
+    id: "main-buttons",
+    title: "Buttons",
+    description:
+      "Default main-page button surfaces when a button does not have its own Button Appearance. Uses saved button code.",
+    applyLabel: "Apply to Buttons",
+    previewKind: "button",
+    previewLabel: "Button"
   },
   {
     id: "main-cards",
@@ -139,10 +130,30 @@ function readAssignment(
   );
 }
 
+function createBlankImportedSkinDraft(): ImportedSkin {
+  return {
+    id: "",
+    name: "",
+    html: "",
+    css: "",
+    svg: "",
+    cardHtml: "",
+    cardCss: "",
+    cardSvg: ""
+  };
+}
+
+function createDraftSkinId(): string {
+  const randomPart =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID().replace(/-/g, "")
+      : `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
+  return `imported-skin-${randomPart}`;
+}
+
 export function AppearanceTab({
   state,
   appTheme,
-  selectedProgram,
   selectedPanelName,
   onClose,
   onSaveTheme,
@@ -151,17 +162,21 @@ export function AppearanceTab({
   onApplyNatureTheme,
   onApplyEggshellTheme,
   onUpdateAppTheme,
-  onApplyProgramStyleGroup,
   onUpdateSurfaceStyleAssignment,
   onSaveImportedSkin
 }: AppearanceTabProps) {
   const styleGroups = state.StyleGroups ?? [];
   const importedSkins = state.ImportedSkins ?? [];
   const loadEditorSkinDraft = (skinId: string) => {
+    if (!skinId.trim()) {
+      setEditorSkinId("");
+      setEditorDraft(createBlankImportedSkinDraft());
+      return;
+    }
     const sourceSkin = importedSkins.find((skin) => skin.id === skinId) ?? importedSkins[0];
     if (!sourceSkin) {
       setEditorSkinId("");
-      setEditorDraft(null);
+      setEditorDraft(createBlankImportedSkinDraft());
       return;
     }
     setEditorSkinId(sourceSkin.id);
@@ -169,66 +184,54 @@ export function AppearanceTab({
   };
 
   const [sectionDrafts, setSectionDrafts] = useState<Record<string, string>>({
-    programs: selectedProgram.style_group_id ?? "",
-    "main-panels": readAssignment(state, "main-panels"),
     "main-panel-surface": readAssignment(state, "main-panel-surface"),
+    "main-buttons": readAssignment(state, "main-buttons"),
     "main-cards": readAssignment(state, "main-cards"),
     "main-misc": readAssignment(state, "main-misc"),
     "popout-regular-buttons": readAssignment(state, "popout-regular-buttons"),
     "popout-tools": readAssignment(state, "popout-tools")
   });
-  const [editorSkinId, setEditorSkinId] = useState<string>(importedSkins[0]?.id ?? "");
-  const [editorDraft, setEditorDraft] = useState<ImportedSkin | null>(
-    importedSkins[0] ? { ...importedSkins[0] } : null
-  );
+  const [editorSkinId, setEditorSkinId] = useState<string>("");
+  const [editorDraft, setEditorDraft] = useState<ImportedSkin>(createBlankImportedSkinDraft());
   const [themeDraft, setThemeDraft] = useState<AppTheme>({ ...appTheme });
 
   useEffect(() => {
     setSectionDrafts({
-      programs: selectedProgram.style_group_id ?? "",
-      "main-panels": readAssignment(state, "main-panels"),
       "main-panel-surface": readAssignment(state, "main-panel-surface"),
+      "main-buttons": readAssignment(state, "main-buttons"),
       "main-cards": readAssignment(state, "main-cards"),
       "main-misc": readAssignment(state, "main-misc"),
       "popout-regular-buttons": readAssignment(state, "popout-regular-buttons"),
       "popout-tools": readAssignment(state, "popout-tools")
     });
-  }, [
-    selectedProgram.style_group_id,
-    state.SurfaceStyleAssignments
-  ]);
+  }, [state.SurfaceStyleAssignments]);
 
   useEffect(() => {
     setThemeDraft({ ...appTheme });
   }, [appTheme]);
 
   useEffect(() => {
-    if (importedSkins.length === 0) {
+    if (!editorSkinId.trim()) {
+      return;
+    }
+    const matchingSkin = importedSkins.find((skin) => skin.id === editorSkinId);
+    if (!matchingSkin) {
       setEditorSkinId("");
-      setEditorDraft(null);
+      setEditorDraft(createBlankImportedSkinDraft());
       return;
     }
-    if (!editorDraft) {
-      loadEditorSkinDraft(editorSkinId || importedSkins[0].id);
-      return;
-    }
-    if (!importedSkins.some((skin) => skin.id === editorSkinId)) {
-      loadEditorSkinDraft(importedSkins[0].id);
-    }
-  }, [editorDraft, editorSkinId, importedSkins]);
+    setEditorDraft((current) => (current.id === matchingSkin.id ? current : { ...matchingSkin }));
+  }, [editorSkinId, importedSkins]);
 
   const previewDraftStyleGroup = useMemo(
-    () => (editorDraft ? buildPreviewStyleGroup(editorDraft.id) : undefined),
+    () => buildPreviewStyleGroup(editorDraft.id || "preview-imported-skin"),
     [editorDraft]
   );
-  const draftCardPreview =
-    editorDraft && previewDraftStyleGroup
-      ? renderSurfaceSkin({
-          label: "Card Preview",
-          styleGroup: previewDraftStyleGroup,
-          importedSkin: editorDraft
-        })
-      : null;
+  const draftCardPreview = renderSurfaceSkin({
+    label: "Card Preview",
+    styleGroup: previewDraftStyleGroup,
+    importedSkin: editorDraft
+  });
   const textPreviewStyle = useMemo(() => buildAppThemeCssVars(themeDraft), [themeDraft]);
 
   const setSectionDraft = (id: string, styleGroupId: string) => {
@@ -249,8 +252,7 @@ export function AppearanceTab({
   };
 
   const renderSectionPreview = (config: SectionCardConfig) => {
-    const styleGroupId =
-      config.id === "programs" ? sectionDrafts.programs : sectionDrafts[config.id];
+    const styleGroupId = sectionDrafts[config.id];
     const styleGroup = resolveStyleGroup(styleGroups, styleGroupId);
     const importedSkin = getImportedSkin(importedSkins, styleGroup?.importedSkinId);
     const previewLabel = config.previewLabel;
@@ -289,7 +291,6 @@ export function AppearanceTab({
       >
         {surfaceSkin ? <div className="surface-skin-visual" aria-hidden="true">{surfaceSkin}</div> : null}
         <div className="appearance-surface-preview__content">
-          <span className="eyebrow">{previewLabel}</span>
           <strong>{config.title}</strong>
           <span className="caption">{config.description}</span>
         </div>
@@ -298,26 +299,16 @@ export function AppearanceTab({
   };
 
   const renderSectionCard = (config: SectionCardConfig) => {
-    const draftValue =
-      config.id === "programs" ? sectionDrafts.programs : sectionDrafts[config.id];
+    const draftValue = sectionDrafts[config.id];
 
     return (
       <article className="appearance-section-card" key={config.id}>
         <div className="appearance-section-card__header">
-          <div>
-            <span className="eyebrow">{config.title}</span>
-            <strong>{config.title}</strong>
-          </div>
+          <strong>{config.title}</strong>
           <button
             type="button"
             className="surface-action"
-            onClick={() => {
-              if (config.id === "programs") {
-                onApplyProgramStyleGroup(draftValue);
-                return;
-              }
-              onUpdateSurfaceStyleAssignment(config.id, draftValue);
-            }}
+            onClick={() => onUpdateSurfaceStyleAssignment(config.id, draftValue)}
           >
             {config.applyLabel}
           </button>
@@ -346,8 +337,7 @@ export function AppearanceTab({
       <section className="surface-card appearance-card">
         <div className="surface-header">
           <div>
-            <span className="eyebrow">Appearance</span>
-            <h2>Theme Studio</h2>
+            <h2>Main Appearance</h2>
           </div>
           <div className="surface-actions">
             <button type="button" className="surface-action" onClick={onSaveTheme}>
@@ -367,10 +357,7 @@ export function AppearanceTab({
 
       <section className="surface-card appearance-card">
         <div className="surface-header">
-          <div>
-            <span className="eyebrow">Main Page</span>
-            <h2>Main Page Sections</h2>
-          </div>
+          <h2>Main Page</h2>
           <div className="surface-actions">
             <button type="button" className="surface-action" onClick={onApplyDarkTheme}>
               Use Dark Theme
@@ -393,10 +380,7 @@ export function AppearanceTab({
 
       <section className="surface-card appearance-card">
         <div className="surface-header">
-          <div>
-            <span className="eyebrow">Theme Tweaks</span>
-            <h2>Shell Text + Blur</h2>
-          </div>
+          <h2>Text, Blur, And Black Tint</h2>
           <button
             type="button"
             className="surface-action"
@@ -458,23 +442,39 @@ export function AppearanceTab({
               <span>{themeDraft.mainCardBlurPx}px</span>
             </div>
           </label>
+          <label className="appearance-color-field">
+            Black Tint Opacity
+            <div className="appearance-slider-field">
+              <input
+                type="range"
+                min="0.35"
+                max="0.98"
+                step="0.01"
+                value={themeDraft.blackTintOpacity}
+                onChange={(event) =>
+                  setThemeDraft((current) => ({
+                    ...current,
+                    blackTintOpacity: Number(event.target.value)
+                  }))
+                }
+              />
+              <span>{Math.round(themeDraft.blackTintOpacity * 100)}%</span>
+            </div>
+          </label>
         </div>
         <div className="appearance-text-preview" style={textPreviewStyle}>
-          <span className="eyebrow">Preview</span>
           <strong>Primary text uses the main shell text color.</strong>
           <span className="caption">
             Secondary text uses the muted shell text color. Current host-card blur is{" "}
-            {themeDraft.mainCardBlurPx}px.
+            {themeDraft.mainCardBlurPx}px, and black tint opacity is{" "}
+            {Math.round(themeDraft.blackTintOpacity * 100)}%.
           </span>
         </div>
       </section>
 
       <section className="surface-card appearance-card">
         <div className="surface-header">
-          <div>
-            <span className="eyebrow">Pop-out</span>
-            <h2>Pop-out Sections</h2>
-          </div>
+          <h2>Pop-out</h2>
         </div>
         <div className="appearance-section-grid">
           {POPOUT_SECTIONS.map((config) => renderSectionCard(config))}
@@ -483,19 +483,26 @@ export function AppearanceTab({
 
       <section className="surface-card appearance-card">
         <div className="surface-header">
-          <div>
-            <span className="eyebrow">Imported Skin Editor</span>
-            <h2>Code + Live Preview</h2>
-          </div>
-          {editorDraft ? (
-            <button
-              type="button"
-              className="surface-action"
-              onClick={() => onSaveImportedSkin(editorDraft)}
-            >
-              Save Skin
-            </button>
-          ) : null}
+          <h2>Imported Skin Editor</h2>
+          <button
+            type="button"
+            className="surface-action"
+            onClick={() => {
+              const nextDraft =
+                editorDraft.id.trim().length > 0
+                  ? editorDraft
+                  : {
+                      ...editorDraft,
+                      id: createDraftSkinId(),
+                      name: editorDraft.name.trim() || "New Imported Skin"
+                    };
+              setEditorSkinId(nextDraft.id);
+              setEditorDraft(nextDraft);
+              onSaveImportedSkin(nextDraft);
+            }}
+          >
+            Save Skin
+          </button>
         </div>
         <p className="caption">
           Edit render-only code only. Button sections read the button HTML/CSS/SVG fields below.
@@ -511,6 +518,7 @@ export function AppearanceTab({
                   value={editorSkinId}
                   onChange={(event) => loadEditorSkinDraft(event.target.value)}
                 >
+                  <option value="">Blank Draft</option>
                   {importedSkins.map((skin) => (
                     <option key={skin.id} value={skin.id}>
                       {skin.name}
@@ -531,13 +539,24 @@ export function AppearanceTab({
                     if (!presetSkin) {
                       return;
                     }
-                    const targetSkinId = importedSkins.some((skin) => skin.id === presetSkin.id)
-                      ? presetSkin.id
-                      : editorDraft?.id || importedSkins[0]?.id || presetSkin.id;
+                    if (presetId === "black-tint") {
+                      const builtSkin = buildBlackTintImportedSkin(themeDraft.blackTintOpacity);
+                      const targetSkinId = editorSkinId.trim();
+                      setEditorSkinId(targetSkinId);
+                      setEditorDraft({
+                        ...builtSkin,
+                        id: targetSkinId,
+                        name: targetSkinId ? builtSkin.name : ""
+                      });
+                      event.target.value = "";
+                      return;
+                    }
+                    const targetSkinId = editorSkinId.trim();
                     setEditorSkinId(targetSkinId);
                     setEditorDraft({
                       ...presetSkin,
-                      id: targetSkinId
+                      id: targetSkinId,
+                      name: targetSkinId ? presetSkin.name : ""
                     });
                     event.target.value = "";
                   }}
@@ -551,10 +570,10 @@ export function AppearanceTab({
                 </select>
               </label>
             </div>
-            {editorDraft && previewDraftStyleGroup ? (
+            {previewDraftStyleGroup ? (
               <div className="appearance-preview-stack">
                 <div className="appearance-preview-panel">
-                  <span className="eyebrow">Button Preview</span>
+                  <strong>Button Preview</strong>
                   <div className="preview-card">
                     {renderButtonSkin({
                       label: "Button Preview",
@@ -565,7 +584,7 @@ export function AppearanceTab({
                   </div>
                 </div>
                 <div className="appearance-preview-panel">
-                  <span className="eyebrow">Card Preview</span>
+                  <strong>Card Preview</strong>
                   <div
                     className="appearance-surface-preview has-surface-skin"
                     style={buildSurfaceSkinStyle(previewDraftStyleGroup)}
@@ -590,100 +609,98 @@ export function AppearanceTab({
             ) : null}
           </article>
 
-          {editorDraft ? (
-            <article className="imported-skin-editor">
-              <label>
-                Name
-                <input
-                  value={editorDraft.name}
-                  onChange={(event) =>
-                    setEditorDraft({
-                      ...editorDraft,
-                      name: event.target.value
-                    })
-                  }
-                />
-              </label>
-              <label>
-                HTML
-                <textarea
-                  rows={7}
-                  value={editorDraft.html}
-                  onChange={(event) =>
-                    setEditorDraft({
-                      ...editorDraft,
-                      html: event.target.value
-                    })
-                  }
-                />
-              </label>
-              <label>
-                CSS
-                <textarea
-                  rows={16}
-                  value={editorDraft.css}
-                  onChange={(event) =>
-                    setEditorDraft({
-                      ...editorDraft,
-                      css: event.target.value
-                    })
-                  }
-                />
-              </label>
-              <label>
-                SVG
-                <textarea
-                  rows={6}
-                  value={editorDraft.svg ?? ""}
-                  onChange={(event) =>
-                    setEditorDraft({
-                      ...editorDraft,
-                      svg: event.target.value
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Card HTML
-                <textarea
-                  rows={7}
-                  value={editorDraft.cardHtml ?? ""}
-                  onChange={(event) =>
-                    setEditorDraft({
-                      ...editorDraft,
-                      cardHtml: event.target.value
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Card CSS
-                <textarea
-                  rows={16}
-                  value={editorDraft.cardCss ?? ""}
-                  onChange={(event) =>
-                    setEditorDraft({
-                      ...editorDraft,
-                      cardCss: event.target.value
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Card SVG
-                <textarea
-                  rows={6}
-                  value={editorDraft.cardSvg ?? ""}
-                  onChange={(event) =>
-                    setEditorDraft({
-                      ...editorDraft,
-                      cardSvg: event.target.value
-                    })
-                  }
-                />
-              </label>
-            </article>
-          ) : null}
+          <article className="imported-skin-editor">
+            <label>
+              Name
+              <input
+                value={editorDraft.name}
+                onChange={(event) =>
+                  setEditorDraft({
+                    ...editorDraft,
+                    name: event.target.value
+                  })
+                }
+              />
+            </label>
+            <label>
+              HTML
+              <textarea
+                rows={7}
+                value={editorDraft.html}
+                onChange={(event) =>
+                  setEditorDraft({
+                    ...editorDraft,
+                    html: event.target.value
+                  })
+                }
+              />
+            </label>
+            <label>
+              CSS
+              <textarea
+                rows={16}
+                value={editorDraft.css}
+                onChange={(event) =>
+                  setEditorDraft({
+                    ...editorDraft,
+                    css: event.target.value
+                  })
+                }
+              />
+            </label>
+            <label>
+              SVG
+              <textarea
+                rows={6}
+                value={editorDraft.svg ?? ""}
+                onChange={(event) =>
+                  setEditorDraft({
+                    ...editorDraft,
+                    svg: event.target.value
+                  })
+                }
+              />
+            </label>
+            <label>
+              Card HTML
+              <textarea
+                rows={7}
+                value={editorDraft.cardHtml ?? ""}
+                onChange={(event) =>
+                  setEditorDraft({
+                    ...editorDraft,
+                    cardHtml: event.target.value
+                  })
+                }
+              />
+            </label>
+            <label>
+              Card CSS
+              <textarea
+                rows={16}
+                value={editorDraft.cardCss ?? ""}
+                onChange={(event) =>
+                  setEditorDraft({
+                    ...editorDraft,
+                    cardCss: event.target.value
+                  })
+                }
+              />
+            </label>
+            <label>
+              Card SVG
+              <textarea
+                rows={6}
+                value={editorDraft.cardSvg ?? ""}
+                onChange={(event) =>
+                  setEditorDraft({
+                    ...editorDraft,
+                    cardSvg: event.target.value
+                  })
+                }
+              />
+            </label>
+          </article>
         </div>
       </section>
     </div>

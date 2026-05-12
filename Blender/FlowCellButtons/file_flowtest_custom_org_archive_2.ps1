@@ -1,5 +1,7 @@
 # Description: Copy the selected objects into Archive.
 
+# Source Bridge Action: flowtest_custom_org_archive_2
+# Source Python Filename: flowtest_actions.py
 # Source Python File: C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\flowtest_actions.py
 
 # Source Action Function: perform_archive

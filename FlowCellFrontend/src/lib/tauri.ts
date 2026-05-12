@@ -649,20 +649,22 @@ export function openToolPopout(args: {
   buttonIds: string[];
   layoutMode: ToolPopoutLayoutMode;
   buttonLabel: string;
+  transparentWindow?: boolean;
   bounds?: FlowCellBounds | null;
 }): Promise<void> {
   const label = `popout-tool-${args.programId}-${sanitizeWindowToken(args.panelId)}-${sanitizeWindowToken(args.ownerButtonId)}`;
   return (async () => {
     const isPanelFan = args.layoutMode === "PanelFan";
     const isFloatingFanout = args.layoutMode === "Fanout";
+    const isTransparentWindow = isPanelFan || isFloatingFanout || args.transparentWindow === true;
     const placement = resolveToolWindowOptions(args);
     const placementOptions = {
-      focus: !(isPanelFan || isFloatingFanout),
-      moveBeforeResize: isPanelFan || isFloatingFanout
+      focus: !isTransparentWindow,
+      moveBeforeResize: isTransparentWindow
     };
     const existing = await WebviewWindow.getByLabel(label);
     if (existing) {
-      if (isPanelFan || isFloatingFanout) {
+      if (isTransparentWindow) {
         await applyTransparentFanoutWindowAppearance(existing);
       }
       await applyWindowPlacement(existing, placement, placementOptions);
@@ -681,18 +683,18 @@ export function openToolPopout(args: {
       }),
       title: `FlowCell - ${args.buttonLabel}`,
       ...placement,
-      resizable: !(isPanelFan || isFloatingFanout),
+      resizable: !isTransparentWindow,
       decorations: false,
-      transparent: isPanelFan || isFloatingFanout,
-      shadow: !(isPanelFan || isFloatingFanout),
+      transparent: isTransparentWindow,
+      shadow: !isTransparentWindow,
       visible: true,
-      focus: !(isPanelFan || isFloatingFanout),
+      focus: !isTransparentWindow,
       skipTaskbar: isFloatingFanout,
       alwaysOnTop: true
     });
 
     await waitForWindowCreated(window);
-    if (isPanelFan || isFloatingFanout) {
+    if (isTransparentWindow) {
       await applyTransparentFanoutWindowAppearance(window);
     }
     await applyWindowPlacement(window, placement, placementOptions);

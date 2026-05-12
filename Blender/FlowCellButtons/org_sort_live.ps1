@@ -1,5 +1,7 @@
 # Description: Move every currently hidden object under Live into Trash.
 
+# Source Bridge Action: sort_live
+# Source Python Filename: flowtest_actions.py
 # Source Python File: C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\flowtest_actions.py
 
 # Source Action Function: perform_sort_live

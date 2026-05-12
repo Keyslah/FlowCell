@@ -104,6 +104,10 @@ button {
   background: transparent;
 }
 
+.app-shell--transparent-button-popout {
+  background: transparent;
+}
+
 .app-shell--editor-popout {
   min-height: 100vh;
   height: 100vh;
@@ -211,6 +215,13 @@ button {
   background: transparent;
 }
 
+.slim-popout-shell--transparent-button {
+  min-height: 100vh;
+  padding: 0;
+  overflow: visible;
+  background: transparent;
+}
+
 .slim-popout-shell__content--panel-fan {
   height: 100%;
   min-height: 100%;
@@ -225,6 +236,17 @@ button {
   height: 100%;
   min-height: 100%;
   display: block;
+  overflow: visible;
+  padding: 0;
+  background: transparent;
+}
+
+.slim-popout-shell__content--transparent-button {
+  height: 100%;
+  min-height: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
   overflow: visible;
   padding: 0;
   background: transparent;
@@ -318,14 +340,14 @@ button {
     0 28px 80px color-mix(in srgb, var(--fc-theme-surface-shadow) 28%, transparent);
 }
 
-.app-shell[data-theme-variant="nature-frost"]:not(.app-shell--panel-fan-popout):not(.app-shell--floating-fanout-popout) {
+.app-shell[data-theme-variant="nature-frost"]:not(.app-shell--panel-fan-popout):not(.app-shell--floating-fanout-popout):not(.app-shell--transparent-button-popout) {
   position: relative;
   isolation: isolate;
   background: transparent;
   overflow: hidden;
 }
 
-.app-shell[data-theme-variant="nature-frost"]:not(.app-shell--panel-fan-popout):not(.app-shell--floating-fanout-popout)::before {
+.app-shell[data-theme-variant="nature-frost"]:not(.app-shell--panel-fan-popout):not(.app-shell--floating-fanout-popout):not(.app-shell--transparent-button-popout)::before {
   content: "";
   position: absolute;
   inset: 0;
@@ -336,7 +358,7 @@ button {
   transform: scale(1.03);
 }
 
-.app-shell[data-theme-variant="nature-frost"]:not(.app-shell--panel-fan-popout):not(.app-shell--floating-fanout-popout)::after {
+.app-shell[data-theme-variant="nature-frost"]:not(.app-shell--panel-fan-popout):not(.app-shell--floating-fanout-popout):not(.app-shell--transparent-button-popout)::after {
   content: "";
   position: absolute;
   inset: 0;
@@ -992,11 +1014,33 @@ button {
   display: flex;
   justify-content: stretch;
   min-height: 100%;
+  background: transparent;
+}
+
+.single-popout-button--transparent {
+  display: inline-flex;
+  justify-content: flex-start;
+  align-items: flex-start;
+  min-height: 0;
+  width: auto;
+  height: auto;
 }
 
 .single-popout-button .button-host--compact {
   width: 100%;
   height: 100%;
+}
+
+.single-popout-button--transparent .button-host--compact {
+  display: inline-flex;
+  width: auto;
+  height: auto;
+}
+
+.single-popout-button--transparent .button-card--compact {
+  width: auto;
+  height: auto;
+  min-height: 0;
 }
 
 .button-card {

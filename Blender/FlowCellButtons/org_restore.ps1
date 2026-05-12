@@ -1,5 +1,7 @@
 # Description: Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first.
 
+# Source Bridge Action: restore
+# Source Python Filename: flowtest_actions.py
 # Source Python File: C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\flowtest_actions.py
 
 # Source Action Function: perform_restore

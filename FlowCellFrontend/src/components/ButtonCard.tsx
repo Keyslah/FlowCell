@@ -24,9 +24,10 @@ export function ButtonCard({
   onSelect,
   onActivate
 }: ButtonCardProps) {
-  const styleGroup = styleGroupOverride ?? resolveStyleGroup(styleGroups, button.style_group_id ?? "");
+  const specificButtonStyleGroup = resolveStyleGroup(styleGroups, button.style_group_id ?? "");
+  const styleGroup = specificButtonStyleGroup ?? styleGroupOverride;
   const importedSkin =
-    importedSkinOverride ?? getImportedSkin(importedSkins, styleGroup?.importedSkinId);
+    getImportedSkin(importedSkins, styleGroup?.importedSkinId) ?? importedSkinOverride;
 
   return (
     <button

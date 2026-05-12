@@ -38,6 +38,10 @@ const DEFAULT_SURFACE_STYLE_ASSIGNMENTS: SurfaceStyleAssignment[] = [
     style_group_id: ""
   },
   {
+    surface_id: "main-buttons",
+    style_group_id: ""
+  },
+  {
     surface_id: "main-cards",
     style_group_id: ""
   },
@@ -395,36 +399,82 @@ function matchesProgramClusterMember(memberId: string, programId: number): boole
 }
 
 function normalizeProgram(program: FlowCellProgram): FlowCellProgram {
+  const normalizedPanels = program.Panels.map((panel) => ({
+    ...panel,
+    FanOptions: normalizePanelFanOptions(panel.FanOptions),
+    Buttons: panel.Buttons.map((button) => ({
+      ...button,
+      command_id: inferButtonCommandId(button),
+      style_group_id: button.style_group_id ?? "",
+      transparent_popout: button.transparent_popout === true,
+      fanout:
+        button.fanout &&
+        Array.isArray(button.fanout.child_button_ids) &&
+        typeof button.fanout.layout === "string"
+          ? {
+              child_button_ids: button.fanout.child_button_ids.filter(
+                (buttonId) => typeof buttonId === "string" && buttonId.trim().length > 0
+              ),
+              layout: (
+                button.fanout.layout === "grid" || button.fanout.layout === "radial"
+                  ? button.fanout.layout
+                  : "row"
+              ) as "grid" | "radial" | "row",
+              direction: normalizeFanoutDirection(button.fanout.direction)
+            }
+          : undefined
+    }))
+  }));
+  const normalizedProgramName =
+    program.ProgramConfig?.NormalizedName?.trim().toLowerCase() ?? "";
+  const panels =
+    normalizedProgramName === "blender"
+      ? (() => {
+          const toolSetIndex = normalizedPanels.findIndex(
+            (panel) => panel.Name.trim().toLowerCase() === "tool set"
+          );
+          const utilityIndex = normalizedPanels.findIndex(
+            (panel) => panel.Id === "panel_utility" || panel.Name.trim().toLowerCase() === "utility"
+          );
+          if (toolSetIndex < 0 || utilityIndex < 0) {
+            return normalizedPanels;
+          }
+          const toolSetPanel = normalizedPanels[toolSetIndex];
+          const utilityPanel = normalizedPanels[utilityIndex];
+          const toolSetOwnerButtonIds = new Set([
+            "button_blender_flowcell_alignment_tools",
+            "button_blender_flowcell_flatten_revolve"
+          ]);
+          const movedButtons = utilityPanel.Buttons.filter((button) =>
+            toolSetOwnerButtonIds.has(button.Id)
+          );
+          if (movedButtons.length === 0) {
+            return normalizedPanels;
+          }
+          const existingToolSetButtonIds = new Set(toolSetPanel.Buttons.map((button) => button.Id));
+          const nextPanels = [...normalizedPanels];
+          nextPanels[toolSetIndex] = {
+            ...toolSetPanel,
+            Buttons: [
+              ...movedButtons.filter((button) => !existingToolSetButtonIds.has(button.Id)),
+              ...toolSetPanel.Buttons
+            ]
+          };
+          nextPanels[utilityIndex] = {
+            ...utilityPanel,
+            Buttons: utilityPanel.Buttons.filter((button) => !toolSetOwnerButtonIds.has(button.Id))
+          };
+          return nextPanels;
+        })()
+      : normalizedPanels;
+
   return {
     ...program,
     style_group_id:
       typeof program.style_group_id === "string" && program.style_group_id.trim().length > 0
         ? program.style_group_id
         : DEFAULT_PROGRAM_STYLE_GROUP_ID,
-    Panels: program.Panels.map((panel) => ({
-      ...panel,
-      FanOptions: normalizePanelFanOptions(panel.FanOptions),
-      Buttons: panel.Buttons.map((button) => ({
-        ...button,
-        command_id: inferButtonCommandId(button),
-        style_group_id: button.style_group_id ?? "",
-        fanout:
-          button.fanout &&
-          Array.isArray(button.fanout.child_button_ids) &&
-          typeof button.fanout.layout === "string"
-            ? {
-                child_button_ids: button.fanout.child_button_ids.filter(
-                  (buttonId) => typeof buttonId === "string" && buttonId.trim().length > 0
-                ),
-                layout:
-                  button.fanout.layout === "grid" || button.fanout.layout === "radial"
-                    ? button.fanout.layout
-                    : "row",
-                direction: normalizeFanoutDirection(button.fanout.direction)
-              }
-            : undefined
-      }))
-    }))
+    Panels: panels
   };
 }
 
@@ -1622,6 +1672,37 @@ export function updateButtonStyleGroup(
   };
 }
 
+export function updateButtonTransparentPopout(
+  state: FlowCellState,
+  programId: number,
+  panelId: string,
+  buttonId: string,
+  transparentPopout: boolean
+): FlowCellState {
+  return {
+    ...state,
+    Programs: state.Programs.map((program) =>
+      program.ProgramTabId === programId
+        ? {
+            ...program,
+            Panels: program.Panels.map((panel) =>
+              panel.Id === panelId
+                ? {
+                    ...panel,
+                    Buttons: panel.Buttons.map((button) =>
+                      button.Id === buttonId
+                        ? { ...button, transparent_popout: transparentPopout }
+                        : button
+                    )
+                  }
+                : panel
+            )
+          }
+        : program
+    )
+  };
+}
+
 export function updatePanelButtonStyleGroup(
   state: FlowCellState,
   programId: number,
@@ -1641,6 +1722,35 @@ export function updatePanelButtonStyleGroup(
                     Buttons: panel.Buttons.map((button) => ({
                       ...button,
                       style_group_id: styleGroupId
+                    }))
+                  }
+                : panel
+            )
+          }
+        : program
+    )
+  };
+}
+
+export function updatePanelButtonTransparentPopout(
+  state: FlowCellState,
+  programId: number,
+  panelId: string,
+  transparentPopout: boolean
+): FlowCellState {
+  return {
+    ...state,
+    Programs: state.Programs.map((program) =>
+      program.ProgramTabId === programId
+        ? {
+            ...program,
+            Panels: program.Panels.map((panel) =>
+              panel.Id === panelId
+                ? {
+                    ...panel,
+                    Buttons: panel.Buttons.map((button) => ({
+                      ...button,
+                      transparent_popout: transparentPopout
                     }))
                   }
                 : panel

@@ -16,7 +16,7 @@ interface ButtonAppearanceWindowProps {
   styleGroups: StyleGroup[];
   selectedButtonId: string;
   onSelectedButtonChange: (buttonId: string) => void;
-  onSave: (buttonId: string, skin: ImportedSkin) => void;
+  onSave: (buttonId: string, skin: ImportedSkin, transparentPopout: boolean) => void;
   onClose: () => void;
 }
 
@@ -126,10 +126,24 @@ export function ButtonAppearanceWindow({
   const [draft, setDraft] = useState<ImportedSkin | null>(() =>
     buildDraftFromSelection(buttons, selectedButtonId, styleGroups, importedSkins)
   );
+  const [transparentPopout, setTransparentPopout] = useState(false);
 
   useEffect(() => {
     setDraft(buildDraftFromSelection(buttons, selectedButtonId, styleGroups, importedSkins));
   }, [buttons, importedSkins, selectedButtonId, styleGroups]);
+
+  useEffect(() => {
+    if (buttons.length === 0) {
+      setTransparentPopout(false);
+      return;
+    }
+    if (selectedButtonId === BUTTON_APPEARANCE_ALL_BUTTONS_ID) {
+      setTransparentPopout(buttons.every((button) => button.transparent_popout === true));
+      return;
+    }
+    const selectedButton = buttons.find((button) => button.Id === selectedButtonId) ?? buttons[0];
+    setTransparentPopout(selectedButton?.transparent_popout === true);
+  }, [buttons, selectedButtonId]);
 
   const previewStyleGroup = useMemo(
     () => (draft ? buildPreviewStyleGroup(draft.id || "button-appearance-preview") : undefined),
@@ -179,7 +193,7 @@ export function ButtonAppearanceWindow({
             <button
               type="button"
               className="surface-action"
-              onClick={() => onSave(selectedButtonId || previewButton.Id, draft)}
+              onClick={() => onSave(selectedButtonId || previewButton.Id, draft, transparentPopout)}
             >
               {isAllButtonsSelection ? "Save To Panel Buttons" : "Save To Button"}
             </button>
@@ -190,8 +204,8 @@ export function ButtonAppearanceWindow({
         </div>
         <p className="caption">
           {isAllButtonsSelection
-            ? "This editor saves one dedicated imported skin onto every regular button in this panel."
-            : "This editor saves a dedicated imported skin onto one button at a time."}{" "}
+            ? "This editor saves one dedicated imported skin onto every regular button in this panel, including pop-outs and fanouts."
+            : "This editor saves a dedicated imported skin onto one button at a time, including its pop-out and fanout renders."}{" "}
           The current style source is <strong>{currentStyleLabel}</strong>.
         </p>
       </section>
@@ -260,6 +274,14 @@ export function ButtonAppearanceWindow({
                   }
                 />
               </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={transparentPopout}
+                  onChange={(event) => setTransparentPopout(event.target.checked)}
+                />{" "}
+                Transparent Single-Button Pop-out
+              </label>
             </div>
 
             <div className="appearance-preview-stack">
@@ -289,6 +311,10 @@ export function ButtonAppearanceWindow({
                       <span className="caption">
                         Use this when the whole panel should share one button look.
                       </span>
+                      <span className="caption">
+                        Single-button pop-out windows will use the transparent button-only shell
+                        when this is enabled.
+                      </span>
                     </>
                   ) : (
                     <>
@@ -297,6 +323,11 @@ export function ButtonAppearanceWindow({
                         {previewButton.Tooltip || "No description set."}
                       </span>
                       <span className="caption">{previewButton.Target || "No target."}</span>
+                      <span className="caption">
+                        {transparentPopout
+                          ? "Single-button pop-out window will be transparent."
+                          : "Single-button pop-out window will use the regular framed shell."}
+                      </span>
                     </>
                   )}
                 </div>

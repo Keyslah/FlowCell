@@ -782,14 +782,29 @@ export function FanOutButtonCluster({
   const lastFloatingLayoutRef = useRef<FanClusterFloatingLayout | null>(null);
   const [panelLayout, setPanelLayout] = useState<FanClusterPanelLayout | null>(null);
   const [floatingLayout, setFloatingLayout] = useState<FanClusterFloatingLayout | null>(null);
-  const ownerStyleGroup =
-    ownerStyleGroupOverride ??
-    styleGroupOverride ??
-    resolveStyleGroup(styleGroups, ownerButton.style_group_id ?? "");
-  const ownerImportedSkin =
-    ownerImportedSkinOverride ??
-    importedSkinOverride ??
-    getImportedSkin(importedSkins, ownerStyleGroup?.importedSkinId);
+  const resolveButtonVisuals = (
+    button: FlowCellButton,
+    explicitStyleGroupOverride?: StyleGroup,
+    explicitImportedSkinOverride?: ImportedSkin
+  ) => {
+    const buttonStyleGroup = resolveStyleGroup(styleGroups, button.style_group_id ?? "");
+    const styleGroup = explicitStyleGroupOverride ?? buttonStyleGroup ?? styleGroupOverride;
+    const importedSkin =
+      explicitImportedSkinOverride ??
+      getImportedSkin(importedSkins, styleGroup?.importedSkinId) ??
+      importedSkinOverride;
+    return {
+      styleGroup,
+      importedSkin
+    };
+  };
+  const ownerVisuals = resolveButtonVisuals(
+    ownerButton,
+    ownerStyleGroupOverride,
+    ownerImportedSkinOverride
+  );
+  const ownerStyleGroup = ownerVisuals.styleGroup;
+  const ownerImportedSkin = ownerVisuals.importedSkin;
   const ownerClassName =
     variant === "panel-fan"
       ? [
@@ -1077,29 +1092,34 @@ export function FanOutButtonCluster({
           tabIndex={-1}
         />
         {childVisuals.map((entry) => (
-          <HostSkinButton
-            key={`measure-${entry.key}`}
-            ref={(node) => {
-              if (!node) {
-                measureChildRefs.current.delete(entry.key);
-                return;
-              }
-              measureChildRefs.current.set(entry.key, node);
-            }}
-            type="button"
-            className={[
-              "fan-cluster__child",
-              `fan-cluster__child--${variant}`,
-              variant === "panel-fan" ? "panel-rail__popout" : ""
-            ]
-              .filter(Boolean)
-              .join(" ")}
-            label={entry.entry.button.Label}
-            styleGroup={ownerStyleGroup}
-            importedSkin={ownerImportedSkin}
-            skinCompact
-            tabIndex={-1}
-          />
+          (() => {
+            const childVisuals = resolveButtonVisuals(entry.entry.button);
+            return (
+              <HostSkinButton
+                key={`measure-${entry.key}`}
+                ref={(node) => {
+                  if (!node) {
+                    measureChildRefs.current.delete(entry.key);
+                    return;
+                  }
+                  measureChildRefs.current.set(entry.key, node);
+                }}
+                type="button"
+                className={[
+                  "fan-cluster__child",
+                  `fan-cluster__child--${variant}`,
+                  variant === "panel-fan" ? "panel-rail__popout" : ""
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+                label={entry.entry.button.Label}
+                styleGroup={childVisuals.styleGroup}
+                importedSkin={childVisuals.importedSkin}
+                skinCompact
+                tabIndex={-1}
+              />
+            );
+          })()
         ))}
       </div>
       <div className="fan-cluster__stage">
@@ -1120,6 +1140,7 @@ export function FanOutButtonCluster({
         <div className="fan-cluster__children" aria-hidden={!childrenVisible}>
           {childVisuals.map((entry, index) => {
             const childLayout = activeLayout?.childLayouts[index];
+            const childVisuals = resolveButtonVisuals(entry.entry.button);
             const childStyle =
               childLayout
                 ? ({
@@ -1152,8 +1173,8 @@ export function FanOutButtonCluster({
                   .filter(Boolean)
                   .join(" ")}
                 label={entry.entry.button.Label}
-                styleGroup={ownerStyleGroup}
-                importedSkin={ownerImportedSkin}
+                styleGroup={childVisuals.styleGroup}
+                importedSkin={childVisuals.importedSkin}
                 skinCompact
                 style={childStyle}
                 title={entry.entry.button.Tooltip || entry.entry.button.Label}

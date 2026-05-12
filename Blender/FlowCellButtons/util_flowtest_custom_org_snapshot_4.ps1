@@ -1,5 +1,7 @@
 # Description: Copy the selected Live objects into Snapshots as versioned s# duplicates.
 
+# Source Bridge Action: flowtest_custom_org_snapshot_4
+# Source Python Filename: flowtest_actions.py
 # Source Python File: C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\flowtest_actions.py
 
 # Source Action Function: perform_snapshot

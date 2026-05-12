@@ -1,5 +1,7 @@
 # Description: Prompt for rename values and batch-rename the selected Blender objects through the FlowCell bridge.
 
+# Source Bridge Action: rename_selected_objects
+# Source Python Filename: flowtest_bridge.py
 # Source Python File: C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\flowtest_bridge.py
 
 # Source Action Function: perform_batch_rename_selected_objects

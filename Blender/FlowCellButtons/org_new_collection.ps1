@@ -1,5 +1,7 @@
 # Description: Prompt for a name and create a new child collection near the selected object.
 
+# Source Bridge Action: new_collection
+# Source Python Filename: flowtest_actions.py
 # Source Python File: C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\flowtest_actions.py
 
 # Source Action Function: perform_new_collection

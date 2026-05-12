@@ -65,6 +65,7 @@ export interface FlowCellButton {
   Shortcut?: string;
   BindingId?: number;
   style_group_id?: string;
+  transparent_popout?: boolean;
   compound_tool_id?: string;
   fanout?: {
     child_button_ids: string[];
@@ -113,6 +114,7 @@ export interface StyleGroup {
 export type SurfaceStyleSectionId =
   | "main-panels"
   | "main-panel-surface"
+  | "main-buttons"
   | "main-cards"
   | "main-misc"
   | "popout-regular-buttons"
@@ -139,6 +141,7 @@ export interface AppTheme {
   successColor: string;
   dangerColor: string;
   mainCardBlurPx: number;
+  blackTintOpacity: number;
 }
 
 export type ToolPopoutLayoutMode = "Group" | "Individual" | "PanelFan" | "Fanout";
