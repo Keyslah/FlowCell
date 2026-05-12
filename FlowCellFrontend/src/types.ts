@@ -250,6 +250,30 @@ export interface SavedProgramRecord {
   PopoutClusters: PopoutClusterRecord[];
 }
 
+export interface SavedVisualThemeProgramAssignment {
+  programId: number;
+  style_group_id: string;
+}
+
+export interface SavedVisualThemeButtonAssignment {
+  programId: number;
+  panelId: string;
+  buttonId: string;
+  style_group_id: string;
+}
+
+export interface SavedVisualTheme {
+  id: string;
+  name: string;
+  savedAt: string;
+  appTheme: AppTheme;
+  styleGroups: StyleGroup[];
+  importedSkins: ImportedSkin[];
+  surfaceStyleAssignments: SurfaceStyleAssignment[];
+  programStyleAssignments: SavedVisualThemeProgramAssignment[];
+  buttonStyleAssignments: SavedVisualThemeButtonAssignment[];
+}
+
 export interface FlowCellState {
   SelectedProgramTabId: number;
   MainWindowBounds?: FlowCellBounds;
@@ -260,6 +284,7 @@ export interface FlowCellState {
   ToolPopouts?: ToolPopoutRecord[];
   PopoutClusters?: PopoutClusterRecord[];
   SavedPrograms?: SavedProgramRecord[];
+  SavedVisualThemes?: SavedVisualTheme[];
   AppTheme?: AppTheme;
   StyleGroups?: StyleGroup[];
   ImportedSkins?: ImportedSkin[];
@@ -325,11 +350,18 @@ export interface LoadStateResponse {
 }
 
 export interface WindowContext {
-  kind: "main" | "panel-popout" | "tool-popout" | "panel-fan-options";
+  kind:
+    | "main"
+    | "panel-popout"
+    | "tool-popout"
+    | "panel-fan-options"
+    | "button-appearance"
+    | "layout-picker";
   programId?: number;
   panelId?: string;
   panelName?: string;
   ownerButtonId?: string;
+  buttonId?: string;
   buttonIds?: string[];
   layoutMode?: ToolPopoutLayoutMode;
   buttonLabel?: string;

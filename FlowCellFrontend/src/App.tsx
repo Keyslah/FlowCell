@@ -34,6 +34,8 @@ import {
   loadLayoutSnapshot,
   loadState,
   logFrontendEvent,
+  openButtonAppearanceWindow,
+  openLayoutPickerWindow,
   openPanelFanOptionsWindow,
   openPanelPopout,
   openToolPopout,
@@ -54,6 +56,7 @@ import {
   buildScriptButtonsFromPaths,
   buildToolActionEnvelope,
   collectAllButtons,
+  deleteProgram,
   deleteButtonFromPanel,
   ensureStateDefaults,
   findButton,
@@ -73,10 +76,14 @@ import {
   isSmartAxisButton,
   isSmartAxisOwnerButton,
   removeToolPopout,
+  restoreSavedProgram,
+  saveProgramSnapshot,
   updateAlignmentToolModifiers,
   updateAppTheme,
   updateAllProgramStyleGroups,
   updateButtonLabel,
+  updatePanelButtonStyleGroup,
+  updateButtonStyleGroup,
   updateButtonTooltip,
   updateImportedSkins,
   updatePanelFanOptions,
@@ -84,6 +91,7 @@ import {
   updatePanelSelection,
   updateProgramSelection,
   updateSurfaceStyleAssignment,
+  updateStyleGroups,
   updateToolOptionState,
   updateToolPopout,
   upsertToolPopout
@@ -105,10 +113,15 @@ import {
 import {
   buildAppThemeCssVars,
   buildEggshellImportedSkin,
+  getAppThemeVariant,
   getAppThemePreset,
   normalizeAppTheme
 } from "./lib/theme";
 import { ButtonCard } from "./components/ButtonCard";
+import {
+  BUTTON_APPEARANCE_ALL_BUTTONS_ID,
+  ButtonAppearanceWindow
+} from "./components/ButtonAppearanceWindow";
 import { MacroLabPage } from "./components/MacroLabPage";
 import {
   FanOutButtonCluster,
@@ -137,15 +150,18 @@ import type {
   FlowCellButton,
   FlowCellBindingsState,
   FlowCellBounds,
-  PanelFanOptions,
   FlowCellPanel,
   FlowCellProgram,
   FlowCellState,
+  ImportedSkin,
   LayoutSnapshot,
   LoadStateResponse,
+  PanelFanOptions,
   RecordedMacroChoice,
   RuntimeInfo,
+  SavedProgramRecord,
   SavedLayoutFile,
+  SavedVisualTheme,
   SurfaceStyleSectionId,
   StyleGroup,
   ToolPopoutLayoutMode,
@@ -194,6 +210,18 @@ interface ButtonContextMenuState {
   buttonId: string;
   left: number;
   top: number;
+}
+
+interface ProgramContextMenuState {
+  programId: number;
+  left: number;
+  top: number;
+}
+
+interface ProgramManagerState {
+  programName: string;
+  exePath: string;
+  selectedSavedProgramId: number | null;
 }
 
 interface BindTargetState {
@@ -311,6 +339,10 @@ function inferSurfaceName(context: WindowContext): string {
       return "PanelPopout";
     case "panel-fan-options":
       return "PanelFanOptions";
+    case "button-appearance":
+      return "ButtonAppearance";
+    case "layout-picker":
+      return "LayoutPicker";
     case "tool-popout":
       switch (context.layoutMode) {
         case "PanelFan":
@@ -649,6 +681,26 @@ function areViewportRectsEqual(
 function sanitizeWindowToken(value: string): string {
   const sanitized = value.replace(/[^a-zA-Z0-9\-/:_]/g, "_");
   return sanitized.length > 0 ? sanitized : "flowcell";
+}
+
+function buildDedicatedButtonStyleGroupId(programId: number, panelId: string, buttonId: string): string {
+  return `button-style-${programId}-${sanitizeWindowToken(panelId)}-${sanitizeWindowToken(buttonId)}`;
+}
+
+function buildDedicatedButtonImportedSkinId(
+  programId: number,
+  panelId: string,
+  buttonId: string
+): string {
+  return `button-skin-${programId}-${sanitizeWindowToken(panelId)}-${sanitizeWindowToken(buttonId)}`;
+}
+
+function buildPanelButtonStyleGroupId(programId: number, panelId: string): string {
+  return `button-style-${programId}-${sanitizeWindowToken(panelId)}-all`;
+}
+
+function buildPanelButtonImportedSkinId(programId: number, panelId: string): string {
+  return `button-skin-${programId}-${sanitizeWindowToken(panelId)}-all`;
 }
 
 function createClientId(prefix: string): string {
@@ -1225,6 +1277,20 @@ function getProgramTemplateKey(program: FlowCellProgram): string {
   return "generic";
 }
 
+function formatProgramDisplayLabel(
+  program: Pick<FlowCellProgram, "ProgramTabId" | "ProgramConfig">
+): string {
+  return program.ProgramConfig?.NormalizedName?.trim() || `Program ${program.ProgramTabId}`;
+}
+
+function formatSavedProgramTimestamp(savedAt: string): string {
+  const parsed = new Date(savedAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return savedAt;
+  }
+  return parsed.toLocaleString();
+}
+
 function buildProgramScriptDialogFilter(program: FlowCellProgram): string {
   const label =
     program.ProgramConfig?.NormalizedName?.trim() || `Program ${program.ProgramTabId}`;
@@ -1317,8 +1383,13 @@ export default function App() {
   const [frontendEvents, setFrontendEvents] = useState<string[]>([]);
   const [selectedPopButtonIds, setSelectedPopButtonIds] = useState<string[]>([]);
   const [panelFanOptionsDraft, setPanelFanOptionsDraft] = useState<PanelFanOptions | null>(null);
+  const [buttonAppearanceButtonId, setButtonAppearanceButtonId] = useState("");
   const [layoutPicker, setLayoutPicker] = useState<LayoutPickerState | null>(null);
+  const [programManager, setProgramManager] = useState<ProgramManagerState | null>(null);
   const [macroPicker, setMacroPicker] = useState<MacroPickerState | null>(null);
+  const [programContextMenu, setProgramContextMenu] = useState<ProgramContextMenuState | null>(
+    null
+  );
   const [buttonContextMenu, setButtonContextMenu] = useState<ButtonContextMenuState | null>(null);
   const [popoutContextMenu, setPopoutContextMenu] = useState<PopoutContextMenuState | null>(null);
   const [bindTarget, setBindTarget] = useState<BindTargetState | null>(null);
@@ -1418,6 +1489,28 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (windowContext?.kind !== "layout-picker") {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const files = await listLayoutFiles();
+      if (cancelled) {
+        return;
+      }
+      setLayoutPicker({
+        files,
+        selectedPath: files[0]?.path ?? ""
+      });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [windowContext]);
+
+  useEffect(() => {
     if (!windowContext || windowContext.kind !== "main") {
       return;
     }
@@ -1482,6 +1575,25 @@ export default function App() {
       : selectedProgram
         ? getSelectedPanel(selectedProgram)
         : undefined;
+  const hasWorkspaceSelection = Boolean(selectedProgram && selectedPanel);
+  const savedPrograms = useMemo<SavedProgramRecord[]>(
+    () =>
+      [...(state?.SavedPrograms ?? [])].sort((left, right) =>
+        (right.SavedAt ?? "").localeCompare(left.SavedAt ?? "")
+      ),
+    [state?.SavedPrograms]
+  );
+  const selectedSavedProgram = programManager
+    ? savedPrograms.find(
+        (record) => record.SourceProgramTabId === programManager.selectedSavedProgramId
+      ) ?? savedPrograms[0]
+    : undefined;
+  const selectedSavedProgramInUse = Boolean(
+    selectedSavedProgram &&
+      state?.Programs.some(
+        (program) => program.ProgramTabId === selectedSavedProgram.SourceProgramTabId
+      )
+  );
 
   const activeToolPopout =
     state &&
@@ -1502,7 +1614,9 @@ export default function App() {
   const isSlimPopoutWindow =
     windowContext?.kind === "panel-popout" ||
     windowContext?.kind === "tool-popout" ||
-    windowContext?.kind === "panel-fan-options";
+    windowContext?.kind === "panel-fan-options" ||
+    windowContext?.kind === "button-appearance" ||
+    windowContext?.kind === "layout-picker";
   const toolPopoutButtons =
     state && selectedProgram && selectedPanel && windowContext?.kind === "tool-popout"
       ? rawToolPopoutLayoutMode === "PanelFan"
@@ -1545,10 +1659,15 @@ export default function App() {
           buttonContextMenu.buttonId
         )
       : undefined;
+  const contextMenuProgram =
+    state && programContextMenu ? findProgram(state, programContextMenu.programId) : undefined;
 
+  const isToolSetPanelSelection = isBlenderToolSetPanel(
+    selectedProgram ?? null,
+    selectedPanel ?? null
+  );
   const collapseSmartAxisToOwnerButton =
-    windowContext?.kind === "main" &&
-    isBlenderToolSetPanel(selectedProgram ?? null, selectedPanel ?? null);
+    windowContext?.kind === "main" && isToolSetPanelSelection;
   const panelRenderItems = selectedPanel
     ? buildPanelRenderItems(selectedPanel.Buttons, {
         collapseSmartAxisToOwnerButton
@@ -1563,6 +1682,20 @@ export default function App() {
   const selectedToolOwnerButtons = selectedPopButtons.filter((button) =>
     isToolOwnerPopCandidate(button)
   );
+  const selectedPanelButtonForAppearance =
+    selectedButtonRef &&
+    selectedButtonRef.programId === selectedProgram?.ProgramTabId &&
+    selectedButtonRef.panelId === selectedPanel?.Id
+      ? selectedPanel?.Buttons.find((button) => button.Id === selectedButtonRef.buttonId)
+      : undefined;
+  const buttonAppearanceButtons = isToolSetPanelSelection ? [] : selectedPanel?.Buttons ?? [];
+  const buttonAppearanceSelectionIsAll =
+    buttonAppearanceButtonId === BUTTON_APPEARANCE_ALL_BUTTONS_ID;
+  const buttonAppearanceTargetButton = buttonAppearanceSelectionIsAll
+    ? buttonAppearanceButtons[0]
+    : buttonAppearanceButtons.find((button) => button.Id === buttonAppearanceButtonId) ??
+      selectedPanelButtonForAppearance ??
+      buttonAppearanceButtons[0];
   const allButtons = state ? collectAllButtons(state) : [];
   const programOptions = state
     ? state.Programs.map((program) => ({
@@ -1797,6 +1930,31 @@ export default function App() {
       ...(selectedPanel.FanOptions ?? DEFAULT_PANEL_FAN_OPTIONS)
     });
   }, [selectedPanel?.Id, windowContext?.kind]);
+
+  useEffect(() => {
+    if (windowContext?.kind !== "button-appearance" || !selectedPanel) {
+      setButtonAppearanceButtonId("");
+      return;
+    }
+
+    const candidateIds = selectedPanel.Buttons.map((button) => button.Id);
+    if (candidateIds.length === 0) {
+      setButtonAppearanceButtonId("");
+      return;
+    }
+
+    const requestedButtonId = windowContext.buttonId ?? "";
+    const selectableIds = [BUTTON_APPEARANCE_ALL_BUTTONS_ID, ...candidateIds];
+    setButtonAppearanceButtonId((current) => {
+      if (current && selectableIds.includes(current)) {
+        return current;
+      }
+      if (requestedButtonId && candidateIds.includes(requestedButtonId)) {
+        return requestedButtonId;
+      }
+      return candidateIds[0];
+    });
+  }, [selectedPanel, windowContext?.buttonId, windowContext?.kind]);
 
   useEffect(() => {
     if (!isFloatingFanoutPopout || !selectedProgram || !selectedPanel || !windowContext?.ownerButtonId) {
@@ -2449,6 +2607,12 @@ export default function App() {
   }, [selectedProgram?.ProgramTabId, selectedPanel?.Id, windowContext?.kind]);
 
   useEffect(() => {
+    if (windowContext?.kind === "main" && !hasWorkspaceSelection && surfaceMode !== "panel") {
+      setSurfaceMode("panel");
+    }
+  }, [hasWorkspaceSelection, surfaceMode, windowContext?.kind]);
+
+  useEffect(() => {
     if (!state || !windowContext || !runtime || !selectedProgram || !selectedPanel) {
       return;
     }
@@ -2683,6 +2847,9 @@ export default function App() {
           return;
         }
         if (candidate.label.startsWith("panel-fan-options-")) {
+          continue;
+        }
+        if (candidate.label.startsWith("button-appearance-")) {
           continue;
         }
         if (!expectedLabels.has(candidate.label)) {
@@ -3037,6 +3204,7 @@ export default function App() {
   useEffect(() => {
     if (!windowContext || windowContext.kind !== "main" || surfaceMode !== "panel") {
       setButtonContextMenu(null);
+      setProgramContextMenu(null);
     }
   }, [surfaceMode, selectedPanel?.Id, selectedProgram?.ProgramTabId, windowContext]);
 
@@ -3152,6 +3320,7 @@ export default function App() {
 
   const appTheme = normalizeAppTheme(state.AppTheme);
   const appThemeStyle = buildAppThemeCssVars(appTheme);
+  const appThemeVariant = getAppThemeVariant(appTheme);
 
   const applyShellThemePreset = async (presetId: string) => {
     const presetTheme = getAppThemePreset(presetId);
@@ -3163,6 +3332,14 @@ export default function App() {
 
   const applyDarkTheme = async () => {
     await applyShellThemePreset("signal-night");
+  };
+
+  const applyBlackTintCards = async () => {
+    await persistState(updateSurfaceStyleAssignment(state, "main-cards", "style-group-05"));
+  };
+
+  const applyNatureTheme = async () => {
+    await applyShellThemePreset("nature-frost");
   };
 
   const applyEggshellTheme = async () => {
@@ -3184,6 +3361,59 @@ export default function App() {
 
     await persistState(
       updateImportedSkins(updateAppTheme(state, presetTheme), nextImportedSkins)
+    );
+  };
+
+  const handleSaveVisualTheme = async () => {
+    const defaultThemeName = `${appTheme.name} Snapshot`;
+    const nextThemeName = window.prompt("Save Theme As", defaultThemeName)?.trim();
+    if (!nextThemeName) {
+      return;
+    }
+
+    await persistLatestMutation((currentState) => {
+      const savedThemes = currentState.SavedVisualThemes ?? [];
+      const existingTheme = savedThemes.find(
+        (theme) => theme.name.trim().toLowerCase() === nextThemeName.toLowerCase()
+      );
+      const nextTheme: SavedVisualTheme = {
+        id: existingTheme?.id ?? createClientId("visual_theme_"),
+        name: nextThemeName,
+        savedAt: new Date().toISOString(),
+        appTheme: { ...normalizeAppTheme(currentState.AppTheme) },
+        styleGroups: (currentState.StyleGroups ?? []).map((styleGroup) => ({ ...styleGroup })),
+        importedSkins: (currentState.ImportedSkins ?? []).map((skin) => ({ ...skin })),
+        surfaceStyleAssignments: (currentState.SurfaceStyleAssignments ?? []).map((assignment) => ({
+          ...assignment
+        })),
+        programStyleAssignments: currentState.Programs.map((program) => ({
+          programId: program.ProgramTabId,
+          style_group_id: program.style_group_id ?? ""
+        })),
+        buttonStyleAssignments: currentState.Programs.flatMap((program) =>
+          program.Panels.flatMap((panel) =>
+            panel.Buttons.map((button) => ({
+              programId: program.ProgramTabId,
+              panelId: panel.Id,
+              buttonId: button.Id,
+              style_group_id: button.style_group_id ?? ""
+            }))
+          )
+        )
+      };
+      const nextSavedThemes = existingTheme
+        ? savedThemes.map((theme) => (theme.id === existingTheme.id ? nextTheme : theme))
+        : [...savedThemes, nextTheme];
+
+      return {
+        ...currentState,
+        SavedVisualThemes: nextSavedThemes
+      };
+    });
+
+    pushFrontendEvent(
+      inferSurfaceName(windowContext),
+      `Saved visual theme snapshot "${nextThemeName}".`
     );
   };
 
@@ -3287,6 +3517,93 @@ export default function App() {
         `Local state save failed. ${error instanceof Error ? error.message : String(error)}`
       );
     });
+  };
+
+  const closeProgramWindows = async (programId: number) => {
+    const windows = await getAllWebviewWindows().catch(() => []);
+    await Promise.all(
+      windows
+        .filter(
+          (candidate) =>
+            candidate.label.startsWith(`popout-panel-${programId}-`) ||
+            candidate.label.startsWith(`popout-tool-${programId}-`) ||
+            candidate.label.startsWith(`panel-fan-options-${programId}-`) ||
+            candidate.label.startsWith(`button-appearance-${programId}-`)
+        )
+        .map((candidate) => candidate.close().catch(() => {}))
+    );
+  };
+
+  const reopenProgramWindows = async (nextState: FlowCellState, programId: number) => {
+    const program = findProgram(nextState, programId);
+    if (!program) {
+      return;
+    }
+
+    const windows = await getAllWebviewWindows().catch(() => []);
+    const openLabels = new Set(windows.map((window) => window.label));
+
+    for (const panel of program.Panels) {
+      if (!panel.IsPoppedOut) {
+        continue;
+      }
+
+      const label = `popout-panel-${programId}-${sanitizeWindowToken(panel.Id)}`;
+      if (openLabels.has(label)) {
+        continue;
+      }
+
+      await openPanelPopout({
+        programId,
+        panelId: panel.Id,
+        panelName: panel.Name,
+        buttonCount: panel.Buttons.length,
+        bounds: panel.PopoutBounds
+      }).catch(() => {});
+      openLabels.add(label);
+    }
+
+    for (const toolPopout of (nextState.ToolPopouts ?? []).filter(
+      (entry) => entry.ProgramTabId === programId
+    )) {
+      const ownerButtonId = toolPopout.ButtonIds[0];
+      if (!ownerButtonId) {
+        continue;
+      }
+
+      const label = `popout-tool-${programId}-${sanitizeWindowToken(toolPopout.PanelId)}-${sanitizeWindowToken(ownerButtonId)}`;
+      if (openLabels.has(label)) {
+        continue;
+      }
+
+      const panel = findPanel(nextState, toolPopout.ProgramTabId, toolPopout.PanelId);
+      const ownerButton = findButton(
+        nextState,
+        toolPopout.ProgramTabId,
+        toolPopout.PanelId,
+        ownerButtonId
+      );
+      if (!panel || (toolPopout.LayoutMode !== "PanelFan" && !ownerButton)) {
+        continue;
+      }
+
+      const layoutMode = resolveEffectiveToolPopoutLayoutMode(
+        toolPopout.LayoutMode,
+        ownerButton ?? undefined
+      );
+
+      await openToolPopout({
+        programId: toolPopout.ProgramTabId,
+        panelId: toolPopout.PanelId,
+        panelName: panel.Name,
+        ownerButtonId,
+        buttonIds: toolPopout.ButtonIds,
+        layoutMode,
+        buttonLabel: layoutMode === "PanelFan" ? panel.Name : ownerButton!.Label,
+        bounds: toolPopout.Bounds ?? null
+      }).catch(() => {});
+      openLabels.add(label);
+    }
   };
 
   const persistCollapsedToolPopoutBounds = async (
@@ -3453,7 +3770,11 @@ export default function App() {
     try {
       closingWindowRef.current = true;
       const currentWindow = getCurrentWindow();
-      if (windowContext.kind === "panel-fan-options") {
+      if (
+        windowContext.kind === "panel-fan-options" ||
+        windowContext.kind === "button-appearance" ||
+        windowContext.kind === "layout-picker"
+      ) {
         await currentWindow.close();
         return;
       }
@@ -4248,6 +4569,9 @@ export default function App() {
   };
 
   const handlePanelFanOptionsAction = async (panel: FlowCellPanel) => {
+    if (!selectedProgram) {
+      return;
+    }
     await openPanelFanOptionsWindow({
       programId: selectedProgram.ProgramTabId,
       panelId: panel.Id,
@@ -4255,29 +4579,183 @@ export default function App() {
     });
   };
 
-  const handleAddProgram = async () => {
+  const handleOpenButtonAppearanceAction = async () => {
+    if (
+      !selectedProgram ||
+      !selectedPanel ||
+      !buttonAppearanceTargetButton ||
+      isToolSetPanelSelection
+    ) {
+      return;
+    }
+
+    await openButtonAppearanceWindow({
+      programId: selectedProgram.ProgramTabId,
+      panelId: selectedPanel.Id,
+      panelName: selectedPanel.Name,
+      buttonId: buttonAppearanceTargetButton.Id
+    });
+  };
+
+  const handleSaveButtonAppearance = async (buttonId: string, draft: ImportedSkin) => {
+    if (!selectedProgram || !selectedPanel) {
+      return;
+    }
+
+    const applyToAllButtons = buttonId === BUTTON_APPEARANCE_ALL_BUTTONS_ID;
+    const savedButtonLabel = applyToAllButtons
+      ? `${selectedPanel.Name} / all buttons`
+      : selectedPanel.Buttons.find((button) => button.Id === buttonId)?.Label ?? buttonId;
+    const importedSkinId = applyToAllButtons
+      ? buildPanelButtonImportedSkinId(selectedProgram.ProgramTabId, selectedPanel.Id)
+      : buildDedicatedButtonImportedSkinId(
+          selectedProgram.ProgramTabId,
+          selectedPanel.Id,
+          buttonId
+        );
+    const styleGroupId = applyToAllButtons
+      ? buildPanelButtonStyleGroupId(selectedProgram.ProgramTabId, selectedPanel.Id)
+      : buildDedicatedButtonStyleGroupId(selectedProgram.ProgramTabId, selectedPanel.Id, buttonId);
+
+    await persistLatestMutation((currentState) => {
+      const currentPanel = findPanel(currentState, selectedProgram.ProgramTabId, selectedPanel.Id);
+      if (!currentPanel) {
+        return currentState;
+      }
+
+      const targetButtons = applyToAllButtons
+        ? currentPanel.Buttons
+        : currentPanel.Buttons.filter((button) => button.Id === buttonId);
+      if (targetButtons.length === 0) {
+        return currentState;
+      }
+      const targetButton = targetButtons[0];
+
+      const currentStyleGroups = currentState.StyleGroups ?? [];
+      const currentImportedSkins = currentState.ImportedSkins ?? [];
+      const existingDedicatedGroup = resolveStyleGroup(currentStyleGroups, styleGroupId);
+      const sourceStyleGroup = resolveStyleGroup(
+        currentStyleGroups,
+        targetButtons.find((button) => (button.style_group_id ?? "").trim().length > 0)
+          ?.style_group_id ?? ""
+      );
+      const primaryLabel = applyToAllButtons ? selectedPanel.Name : targetButtons[0].Label;
+      const nextImportedSkin: ImportedSkin = {
+        ...draft,
+        id: importedSkinId,
+        name: draft.name.trim() || `${primaryLabel} Skin`
+      };
+      const nextStyleGroup: StyleGroup = {
+        id: styleGroupId,
+        index:
+          existingDedicatedGroup?.index ??
+          currentStyleGroups.reduce((maxIndex, entry) => Math.max(maxIndex, entry.index ?? 0), 0) +
+            1,
+        name: `Button · ${targetButton.Label}`,
+        skinId: "imported-skin",
+        importedSkinId,
+        accent:
+          existingDedicatedGroup?.accent ??
+          sourceStyleGroup?.accent ??
+          "#ffb870"
+      };
+      const nextStyleGroups = currentStyleGroups.some((entry) => entry.id === styleGroupId)
+        ? currentStyleGroups.map((entry) =>
+            entry.id === styleGroupId ? nextStyleGroup : entry
+          )
+        : [...currentStyleGroups, nextStyleGroup];
+      const nextImportedSkins = currentImportedSkins.some((entry) => entry.id === importedSkinId)
+        ? currentImportedSkins.map((entry) =>
+            entry.id === importedSkinId ? nextImportedSkin : entry
+          )
+        : [...currentImportedSkins, nextImportedSkin];
+
+      const nextState = updateStyleGroups(
+        updateImportedSkins(currentState, nextImportedSkins),
+        nextStyleGroups
+      );
+      return applyToAllButtons
+        ? updatePanelButtonStyleGroup(
+            nextState,
+            selectedProgram.ProgramTabId,
+            selectedPanel.Id,
+            styleGroupId
+          )
+        : updateButtonStyleGroup(
+            nextState,
+            selectedProgram.ProgramTabId,
+            selectedPanel.Id,
+            buttonId,
+            styleGroupId
+          );
+    });
+
+    setButtonAppearanceButtonId(buttonId);
+    pushFrontendEvent(
+      inferSurfaceName(windowContext),
+      applyToAllButtons
+        ? `Saved shared button appearance for ${savedButtonLabel}.`
+        : `Saved dedicated appearance for ${selectedPanel.Name} / ${savedButtonLabel}.`
+    );
+  };
+
+  const handleAddProgram = () => {
+    const defaultSavedProgram =
+      savedPrograms.find(
+        (record) =>
+          !state?.Programs.some((program) => program.ProgramTabId === record.SourceProgramTabId)
+      ) ?? savedPrograms[0];
+    setProgramManager({
+      programName: "",
+      exePath: "",
+      selectedSavedProgramId: defaultSavedProgram?.SourceProgramTabId ?? null
+    });
+  };
+
+  const handleBrowseProgramExe = async () => {
+    const initialExeFolder =
+      programManager?.exePath.trim().replace(/[\\/][^\\/]+$/, "") ||
+      selectedProgram?.ProgramConfig?.ExePath?.replace(/[\\/][^\\/]+$/, "") ||
+      "";
+    const exePath = await showOpenExeDialog(initialExeFolder);
+    if (!exePath) {
+      return;
+    }
+
+    setProgramManager((current) =>
+      current
+        ? {
+            ...current,
+            exePath
+          }
+        : current
+    );
+  };
+
+  const handleCreateProgram = async () => {
+    if (!programManager || !runtime) {
+      return;
+    }
+
+    const programName = programManager.programName.trim();
+    const exePath = programManager.exePath.trim();
+    if (!programName || !exePath) {
+      return;
+    }
+
     try {
-      const programName = window.prompt("Add Program", "")?.trim();
-      if (!programName) {
-        return;
-      }
-
-      const initialExeFolder =
-        selectedProgram.ProgramConfig?.ExePath?.replace(/[\\/][^\\/]+$/, "") ?? "";
-      const exePath = await showOpenExeDialog(initialExeFolder);
-      if (!exePath) {
-        return;
-      }
-
-      const nextState = addProgram(state, {
-        programName,
-        exePath,
-        repoRoot: runtime.repoRoot
-      });
-      await persistState(nextState);
+      const nextState = await persistLatestMutation((currentState) =>
+        addProgram(currentState, {
+          programName,
+          exePath,
+          repoRoot: runtime.repoRoot
+        })
+      );
+      setProgramManager(null);
+      setSurfaceMode("panel");
       pushFrontendEvent(
         inferSurfaceName(windowContext),
-        `Added program tab ${programName}.`
+        `Added program tab ${formatProgramDisplayLabel(getSelectedProgram(nextState))}.`
       );
     } catch (error) {
       pushFrontendEvent(
@@ -4287,7 +4765,93 @@ export default function App() {
     }
   };
 
+  const handleRestoreSavedProgram = async () => {
+    const sourceProgramTabId = programManager?.selectedSavedProgramId ?? 0;
+    const recordLabel = selectedSavedProgram
+      ? formatProgramDisplayLabel(selectedSavedProgram.Program)
+      : `Program ${sourceProgramTabId}`;
+    if (!sourceProgramTabId) {
+      return;
+    }
+
+    try {
+      const nextState = await persistLatestMutation((currentState) =>
+        restoreSavedProgram(currentState, sourceProgramTabId)
+      );
+      await reopenProgramWindows(nextState, sourceProgramTabId);
+      setProgramManager(null);
+      setSurfaceMode("panel");
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Restored ${recordLabel}.`
+      );
+    } catch (error) {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Restore Program failed. ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+
+  const handleSaveProgram = async (program: FlowCellProgram) => {
+    setProgramContextMenu(null);
+    try {
+      const latest = await loadState();
+      const currentState = await captureLivePopoutBounds(
+        applyBindingsToState(ensureStateDefaults(latest.state), latest.bindings)
+      );
+      const nextState = saveProgramSnapshot(currentState, program.ProgramTabId);
+      setRuntime(latest.runtime);
+      setBindingsState(latest.bindings);
+      await persistState(nextState);
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Saved ${formatProgramDisplayLabel(program)} for restore.`
+      );
+    } catch (error) {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Save Program failed. ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+
+  const handleDeleteProgram = async (program: FlowCellProgram) => {
+    setProgramContextMenu(null);
+    if (!window.confirm(`Delete "${formatProgramDisplayLabel(program)}" from the live workspace?`)) {
+      return;
+    }
+
+    try {
+      const nextState = await persistLatestMutation((currentState) =>
+        deleteProgram(currentState, program.ProgramTabId)
+      );
+      await closeProgramWindows(program.ProgramTabId);
+      setSelectedPopButtonIds([]);
+      setButtonContextMenu(null);
+      scheduleSelectedButtonRef(null);
+      setBindTarget((current) =>
+        current?.programId === program.ProgramTabId ? null : current
+      );
+      if (nextState.Programs.length === 0) {
+        setSurfaceMode("panel");
+      }
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Deleted live program ${formatProgramDisplayLabel(program)}.`
+      );
+    } catch (error) {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Delete Program failed. ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+
   const handleAddPanel = async () => {
+    if (!selectedProgram) {
+      return;
+    }
     const panelName = window.prompt("Add Panel", "")?.trim();
     if (!panelName) {
       return;
@@ -4593,10 +5157,7 @@ export default function App() {
       return;
     }
 
-    setLayoutPicker({
-      files,
-      selectedPath: files[0].path
-    });
+    await openLayoutPickerWindow();
   };
 
   const handleLoadLayout = async () => {
@@ -4606,10 +5167,16 @@ export default function App() {
 
     layoutLoadInFlightRef.current = true;
     const selectedPath = layoutPicker.selectedPath;
+    if (!selectedPath) {
+      layoutLoadInFlightRef.current = false;
+      return;
+    }
     try {
       const snapshot = (await loadLayoutSnapshot(selectedPath)) as LayoutSnapshot;
       const nextState = applyLayoutSnapshot(state, snapshot);
-      setLayoutPicker(null);
+      if (windowContext.kind === "main") {
+        setLayoutPicker(null);
+      }
       await persistState(nextState);
 
       for (const panelPopout of snapshot.PanelPopouts ?? []) {
@@ -4662,6 +5229,9 @@ export default function App() {
         inferSurfaceName(windowContext),
         `Loaded layout from ${selectedPath}.`
       );
+      if (windowContext.kind === "layout-picker") {
+        await getCurrentWindow().close().catch(() => {});
+      }
     } finally {
       layoutLoadInFlightRef.current = false;
     }
@@ -4671,7 +5241,7 @@ export default function App() {
     event: ReactMouseEvent<HTMLElement>,
     button: FlowCellButton
   ) => {
-    if (windowContext.kind !== "main") {
+    if (windowContext.kind !== "main" || !selectedProgram || !selectedPanel) {
       return;
     }
 
@@ -4683,10 +5253,30 @@ export default function App() {
       buttonId: button.Id
     });
     setPopoutContextMenu(null);
+    setProgramContextMenu(null);
     setButtonContextMenu({
       buttonId: button.Id,
       left: clamp(event.clientX, 8, Math.max(window.innerWidth - 204, 8)),
       top: clamp(event.clientY, 8, Math.max(window.innerHeight - 188, 8))
+    });
+  };
+
+  const openProgramContextMenu = (
+    event: ReactMouseEvent<HTMLElement>,
+    program: FlowCellProgram
+  ) => {
+    if (windowContext.kind !== "main") {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    setPopoutContextMenu(null);
+    setButtonContextMenu(null);
+    setProgramContextMenu({
+      programId: program.ProgramTabId,
+      left: clamp(event.clientX, 8, Math.max(window.innerWidth - 204, 8)),
+      top: clamp(event.clientY, 8, Math.max(window.innerHeight - 144, 8))
     });
   };
 
@@ -5066,13 +5656,28 @@ export default function App() {
     content: ReactNode,
     kind: "panel" | "tool",
     variant: "default" | "panel-fan" | "floating-fanout" = "default"
-  ) => (
-    <div
-      className={`app-shell app-shell--${kind}-popout app-shell--slim-popout ${variant === "panel-fan" ? "app-shell--panel-fan-popout" : ""} ${variant === "floating-fanout" ? "app-shell--floating-fanout-popout" : ""}`}
+  ) => {
+    const shellModeClass =
+      windowContext.kind === "button-appearance"
+        ? "app-shell--editor-popout"
+        : windowContext.kind === "layout-picker"
+          ? "app-shell--picker-popout"
+          : "";
+    const contentModeClass =
+      windowContext.kind === "button-appearance"
+        ? "slim-popout-shell__content--editor"
+        : windowContext.kind === "layout-picker"
+          ? "slim-popout-shell__content--picker"
+          : "";
+
+    return (
+      <div
+        className={`app-shell app-shell--${kind}-popout app-shell--slim-popout ${shellModeClass} ${variant === "panel-fan" ? "app-shell--panel-fan-popout" : ""} ${variant === "floating-fanout" ? "app-shell--floating-fanout-popout" : ""}`}
       style={appThemeStyle}
+      data-theme-variant={appThemeVariant}
     >
       <main
-        className={`slim-popout-shell slim-popout-shell--${kind} ${variant === "panel-fan" ? "slim-popout-shell--panel-fan" : ""} ${variant === "floating-fanout" ? "slim-popout-shell--floating-fanout" : ""}`}
+        className={`slim-popout-shell slim-popout-shell--${kind} ${windowContext.kind === "button-appearance" ? "slim-popout-shell--editor" : ""} ${windowContext.kind === "layout-picker" ? "slim-popout-shell--picker" : ""} ${variant === "panel-fan" ? "slim-popout-shell--panel-fan" : ""} ${variant === "floating-fanout" ? "slim-popout-shell--floating-fanout" : ""}`}
         onPointerDown={() => {
           if (popoutContextMenu) {
             setPopoutContextMenu(null);
@@ -5099,6 +5704,10 @@ export default function App() {
           });
         }}
         onContextMenuCapture={(event: ReactMouseEvent<HTMLElement>) => {
+          const target = event.target as HTMLElement | null;
+          if (target?.closest("input, textarea, select, [contenteditable='true']")) {
+            return;
+          }
           event.preventDefault();
           event.stopPropagation();
           if (variant === "panel-fan" || variant === "floating-fanout") {
@@ -5187,13 +5796,14 @@ export default function App() {
           </div>
         )}
         <div
-          className={`slim-popout-shell__content ${variant === "panel-fan" ? "slim-popout-shell__content--panel-fan" : ""} ${variant === "floating-fanout" ? "slim-popout-shell__content--floating-fanout" : ""} ${spaceDragActive ? "is-space-drag" : ""} ${spaceDragInProgress ? "is-space-dragging" : ""}`}
+          className={`slim-popout-shell__content ${contentModeClass} ${variant === "panel-fan" ? "slim-popout-shell__content--panel-fan" : ""} ${variant === "floating-fanout" ? "slim-popout-shell__content--floating-fanout" : ""} ${spaceDragActive ? "is-space-drag" : ""} ${spaceDragInProgress ? "is-space-dragging" : ""}`}
         >
           {content}
         </div>
       </main>
-    </div>
-  );
+      </div>
+    );
+  };
 
   const renderBareFanoutShell = (
     content: ReactNode,
@@ -5202,6 +5812,7 @@ export default function App() {
     <div
       className={`fanout-popout-root fanout-popout-root--${variant}`}
       style={appThemeStyle}
+      data-theme-variant={appThemeVariant}
       onPointerDownCapture={(event: ReactPointerEvent<HTMLElement>) => {
         const target = event.target as HTMLElement | null;
         if (
@@ -5518,6 +6129,108 @@ export default function App() {
     );
   };
 
+  const renderButtonAppearanceSurface = () => (
+    <ButtonAppearanceWindow
+      panelName={selectedPanel.Name}
+      buttons={buttonAppearanceButtons}
+      importedSkins={state.ImportedSkins ?? []}
+      styleGroups={state.StyleGroups ?? []}
+      selectedButtonId={buttonAppearanceButtonId || buttonAppearanceTargetButton?.Id || ""}
+      onSelectedButtonChange={setButtonAppearanceButtonId}
+      onSave={(buttonId, draft) => {
+        void handleSaveButtonAppearance(buttonId, draft);
+      }}
+      onClose={() => {
+        void handleWindowClose();
+      }}
+    />
+  );
+
+  const renderLayoutPickerSurface = () => {
+    const closeWindow = () => {
+      void getCurrentWindow().close().catch(() => {});
+    };
+
+    return (
+      <div className="tool-popout-surface">
+        <div className="layout-picker-window">
+          <div className="layout-picker-window__header">
+            <div>
+              <span className="eyebrow">Load Layout</span>
+              <h2>Saved Popout Layouts</h2>
+            </div>
+            <button
+              type="button"
+              className="modal-card__close"
+              onClick={closeWindow}
+            >
+              Close
+            </button>
+          </div>
+          {layoutPicker === null ? (
+            <div className="status-block">
+              <span className="caption">Loading saved layouts...</span>
+            </div>
+          ) : layoutPicker.files.length ? (
+            <>
+              <label className="compound-field">
+                <span>Layout</span>
+                <select
+                  value={layoutPicker.selectedPath}
+                  onChange={(event) =>
+                    setLayoutPicker((current) =>
+                      current
+                        ? {
+                            ...current,
+                            selectedPath: event.target.value
+                          }
+                        : current
+                    )
+                  }
+                >
+                  {layoutPicker.files.map((file) => (
+                    <option key={file.path} value={file.path}>
+                      {file.displayName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {layoutPicker.files
+                .filter((file) => file.path === layoutPicker.selectedPath)
+                .map((file) => (
+                  <div className="status-block" key={file.path}>
+                    <span className="caption">{file.details}</span>
+                    <span className="caption">{file.savedAt ?? file.modifiedAt ?? ""}</span>
+                  </div>
+                ))}
+              <div className="layout-picker-window__actions">
+                <button
+                  type="button"
+                  className="surface-action"
+                  disabled={!layoutPicker.selectedPath}
+                  onClick={() => void handleLoadLayout()}
+                >
+                  Load Layout
+                </button>
+                <button
+                  type="button"
+                  className="surface-action"
+                  onClick={closeWindow}
+                >
+                  Cancel
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="status-block">
+              <span className="caption">No saved layouts were found.</span>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const showMainRails = windowContext.kind === "main" && surfaceMode !== "macro-lab";
   const showStatusRail = windowContext.kind === "main" && surfaceMode !== "macro-lab";
 
@@ -5527,6 +6240,14 @@ export default function App() {
 
   if (windowContext.kind === "panel-fan-options") {
     return renderSlimPopoutShell(renderPanelFanOptionsSurface(), "tool", "default");
+  }
+
+  if (windowContext.kind === "button-appearance") {
+    return renderSlimPopoutShell(renderButtonAppearanceSurface(), "tool", "default");
+  }
+
+  if (windowContext.kind === "layout-picker") {
+    return renderSlimPopoutShell(renderLayoutPickerSurface(), "tool", "default");
   }
 
   if (windowContext.kind === "tool-popout") {
@@ -5549,8 +6270,9 @@ export default function App() {
     <div
       className={`app-shell app-shell--${windowContext.kind}`}
       style={appThemeStyle}
+      data-theme-variant={appThemeVariant}
       onPointerDownCapture={(event) => {
-        if (windowContext.kind !== "main" || !buttonContextMenu) {
+        if (windowContext.kind !== "main" || (!buttonContextMenu && !programContextMenu)) {
           return;
         }
         const target = event.target as HTMLElement | null;
@@ -5558,6 +6280,7 @@ export default function App() {
           return;
         }
         setButtonContextMenu(null);
+        setProgramContextMenu(null);
       }}
     >
       <header className="chrome-bar">
@@ -5569,6 +6292,7 @@ export default function App() {
               className="chrome-action"
               styleGroup={miscStyleGroup}
               importedSkin={miscImportedSkin}
+              disabled={!hasWorkspaceSelection}
               onClick={() => void handleSaveLayout()}
             />
             <HostSkinButton
@@ -5577,15 +6301,21 @@ export default function App() {
               className="chrome-action"
               styleGroup={miscStyleGroup}
               importedSkin={miscImportedSkin}
+              disabled={!hasWorkspaceSelection}
               onClick={() => void handleOpenLayoutPicker()}
             />
             <HostSkinButton
               type="button"
               label="Binds"
-              className={surfaceMode === "binds" ? "chrome-action is-active" : "chrome-action"}
+              className={
+                surfaceMode === "binds" && hasWorkspaceSelection
+                  ? "chrome-action is-active"
+                  : "chrome-action"
+              }
               styleGroup={miscStyleGroup}
               importedSkin={miscImportedSkin}
-              selected={surfaceMode === "binds"}
+              selected={surfaceMode === "binds" && hasWorkspaceSelection}
+              disabled={!hasWorkspaceSelection}
               onClick={() =>
                 setSurfaceMode((current) => (current === "binds" ? "panel" : "binds"))
               }
@@ -5594,11 +6324,14 @@ export default function App() {
               type="button"
               label="Macro Lab"
               className={
-                surfaceMode === "macro-lab" ? "chrome-action is-active" : "chrome-action"
+                surfaceMode === "macro-lab" && hasWorkspaceSelection
+                  ? "chrome-action is-active"
+                  : "chrome-action"
               }
               styleGroup={miscStyleGroup}
               importedSkin={miscImportedSkin}
-              selected={surfaceMode === "macro-lab"}
+              selected={surfaceMode === "macro-lab" && hasWorkspaceSelection}
+              disabled={!hasWorkspaceSelection}
               onClick={() =>
                 setSurfaceMode((current) => (current === "macro-lab" ? "panel" : "macro-lab"))
               }
@@ -5608,7 +6341,7 @@ export default function App() {
         <div className="chrome-bar__drag-region" data-tauri-drag-region="true">
           <div className="chrome-bar__title">
             <span className="eyebrow">FlowCell</span>
-            <strong>{selectedProgram.ProgramConfig?.NormalizedName ?? "Workspace"}</strong>
+            <strong>{selectedProgram?.ProgramConfig?.NormalizedName ?? "Workspace"}</strong>
           </div>
           <span className="chrome-bar__grabber">Drag</span>
         </div>
@@ -5661,7 +6394,7 @@ export default function App() {
                     state.ImportedSkins,
                     styleGroup?.importedSkinId
                   );
-                  const selected = program.ProgramTabId === selectedProgram.ProgramTabId;
+                  const selected = program.ProgramTabId === selectedProgram?.ProgramTabId;
                   const highlightStyle = {
                     ["--fc-selected-highlight" as string]: resolveGreenHighlightColor(
                       `program:${program.ProgramTabId}`
@@ -5677,6 +6410,7 @@ export default function App() {
                           ? "program-rail__button is-active"
                           : "program-rail__button"
                       }
+                      onContextMenuCapture={(event) => openProgramContextMenu(event, program)}
                       onClick={() =>
                         void persistState(updateProgramSelection(state, program.ProgramTabId))
                       }
@@ -5711,50 +6445,41 @@ export default function App() {
 
             <aside className="panel-rail surface-card">
               <h2>Panels</h2>
-              {selectedProgram.Panels.map((panel) => (
-                <div className="panel-rail__row" key={panel.Id}>
-                  <HostSkinButton
-                    type="button"
-                    label={panel.Name}
-                    className={
-                      surfaceMode !== "appearance" && selectedPanel.Id === panel.Id
-                        ? "rail-button is-active"
-                        : "rail-button"
-                    }
-                    styleGroup={panelsStyleGroup}
-                    importedSkin={panelsImportedSkin}
-                    selected={surfaceMode !== "appearance" && selectedPanel.Id === panel.Id}
-                    onClick={() => {
-                      void selectPanel(panel);
-                    }}
-                  />
-                  <div className="panel-rail__actions">
+              {selectedProgram ? (
+                selectedProgram.Panels.map((panel) => (
+                  <div className="panel-rail__row" key={panel.Id}>
                     <HostSkinButton
                       type="button"
-                      label="Fan"
-                      className="panel-rail__popout"
-                      styleGroup={miscStyleGroup}
-                      importedSkin={miscImportedSkin}
-                      onClick={() => void handlePanelFanAction(panel)}
-                    />
-                    <HostSkinButton
-                      type="button"
-                      label={panel.IsPoppedOut ? "Dock" : "Pop"}
-                      className="panel-rail__popout"
-                      styleGroup={miscStyleGroup}
-                      importedSkin={miscImportedSkin}
-                      onClick={() => void handlePanelPopAction(panel)}
+                      label={panel.Name}
+                      className={
+                        surfaceMode !== "appearance" && selectedPanel?.Id === panel.Id
+                          ? "rail-button is-active"
+                          : "rail-button"
+                      }
+                      styleGroup={panelsStyleGroup}
+                      importedSkin={panelsImportedSkin}
+                      selected={surfaceMode !== "appearance" && selectedPanel?.Id === panel.Id}
+                      onClick={() => {
+                        void selectPanel(panel);
+                      }}
                     />
                   </div>
-                </div>
-              ))}
+                ))
+              ) : (
+                <span className="caption">No live program is open.</span>
+              )}
               <HostSkinButton
                 type="button"
                 label="Appearance"
-                className={surfaceMode === "appearance" ? "rail-button is-active" : "rail-button"}
+                className={
+                  surfaceMode === "appearance" && hasWorkspaceSelection
+                    ? "rail-button is-active"
+                    : "rail-button"
+                }
                 styleGroup={panelsStyleGroup}
                 importedSkin={panelsImportedSkin}
-                selected={surfaceMode === "appearance"}
+                selected={surfaceMode === "appearance" && hasWorkspaceSelection}
+                disabled={!hasWorkspaceSelection}
                 onClick={() =>
                   setSurfaceMode((current) =>
                     current === "appearance" ? "panel" : "appearance"
@@ -5767,6 +6492,7 @@ export default function App() {
                 className="rail-footer-action"
                 styleGroup={miscStyleGroup}
                 importedSkin={miscImportedSkin}
+                disabled={!selectedProgram}
                 onClick={() => void handleAddPanel()}
               />
             </aside>
@@ -5775,16 +6501,24 @@ export default function App() {
 
         <main
           className={
-            surfaceMode === "panel" && panelSurfaceStyleGroup
+            surfaceMode === "panel" && hasWorkspaceSelection && panelSurfaceStyleGroup
               ? "main-surface surface-card has-surface-skin"
               : surfaceMode === "macro-lab"
                 ? "main-surface main-surface--macro-lab surface-card"
                 : "main-surface surface-card"
           }
-          style={surfaceMode === "panel" ? buildSurfaceSkinStyle(panelSurfaceStyleGroup) : undefined}
-          data-surface-skin={surfaceMode === "panel" ? panelSurfaceStyleGroup?.skinId ?? "" : ""}
+          style={
+            surfaceMode === "panel" && hasWorkspaceSelection
+              ? buildSurfaceSkinStyle(panelSurfaceStyleGroup)
+              : undefined
+          }
+          data-surface-skin={
+            surfaceMode === "panel" && hasWorkspaceSelection
+              ? panelSurfaceStyleGroup?.skinId ?? ""
+              : ""
+          }
         >
-          {surfaceMode === "panel"
+          {surfaceMode === "panel" && hasWorkspaceSelection
             ? renderSurfaceSkinBackdrop(
                 selectedPanel.Name,
                 panelSurfaceStyleGroup,
@@ -5792,91 +6526,152 @@ export default function App() {
               )
             : null}
           <div className={surfaceMode === "panel" ? "main-surface__content" : undefined}>
-          {surfaceMode === "appearance" && windowContext.kind === "main" ? (
-            <AppearanceTab
-              state={state}
-              appTheme={appTheme}
-              selectedProgram={selectedProgram}
-              selectedPanelName={selectedPanel.Name}
-              onClose={() => setSurfaceMode("panel")}
-              onApplyDarkTheme={() => {
-                void applyDarkTheme();
-              }}
-              onApplyEggshellTheme={() => {
-                void applyEggshellTheme();
-              }}
-              onUpdateAppTheme={(nextTheme) => {
-                void persistState(updateAppTheme(state, nextTheme));
-              }}
-              onApplyProgramStyleGroup={(styleGroupId) => {
-                void persistState(updateAllProgramStyleGroups(state, styleGroupId));
-              }}
-              onUpdateSurfaceStyleAssignment={(surfaceId, styleGroupId) => {
-                void persistState(updateSurfaceStyleAssignment(state, surfaceId, styleGroupId));
-              }}
-              onSaveImportedSkin={(skin) => {
-                const nextImportedSkins = (state.ImportedSkins ?? []).map((entry) =>
-                  entry.id === skin.id ? skin : entry
-                );
-                void persistState(updateImportedSkins(state, nextImportedSkins));
-              }}
-            />
-          ) : surfaceMode === "macro-lab" && windowContext.kind === "main" ? (
-            <MacroLabPage
-              bindingsState={bindingsState}
-              selectedProgramId={selectedProgram.ProgramTabId}
-              selectedProgramName={selectedProgram.ProgramConfig?.NormalizedName ?? "Program"}
-              selectedProgramScriptFolder={selectedProgram.ProgramConfig?.ScriptFolder}
-              programOptions={programOptions}
-              onSelectProgram={(programId) => {
-                void persistState(updateProgramSelection(state, programId));
-              }}
-              onReloadAppFromDisk={() => reloadAppFromDisk({ captureLiveBounds: false })}
-              onFrontendEvent={(message) => {
-                pushFrontendEvent(inferSurfaceName(windowContext), message);
-              }}
-            />
-          ) : surfaceMode === "binds" && windowContext.kind === "main" ? (
-            renderBindsSurface()
-          ) : (
-            <>
-              <div className="surface-header">
-                <div className="surface-header__meta">
-                  <h1>Buttons</h1>
-                  <span className="surface-header__panel-name">{selectedPanel.Name}</span>
+            {windowContext.kind === "main" && !hasWorkspaceSelection ? (
+              <div className="workspace-empty-state">
+                <strong>No program is open.</strong>
+                <span className="caption">
+                  Add a new program or restore one you saved earlier.
+                </span>
+                <div className="workspace-empty-state__actions">
+                  <HostSkinButton
+                    type="button"
+                    label="Add Or Restore Program"
+                    className="surface-action"
+                    styleGroup={miscStyleGroup}
+                    importedSkin={miscImportedSkin}
+                    onClick={() => handleAddProgram()}
+                  />
                 </div>
-                {windowContext.kind === "main" ? (
-                  <div className="surface-toolbar">
-                    <HostSkinButton
-                      type="button"
-                      label="Add Script"
-                      className="surface-action"
-                      styleGroup={miscStyleGroup}
-                      importedSkin={miscImportedSkin}
-                      onClick={() => void handleAddScriptButton()}
-                    />
-                    <HostSkinButton
-                      type="button"
-                      label="Fan Options"
-                      className="surface-action"
-                      styleGroup={miscStyleGroup}
-                      importedSkin={miscImportedSkin}
-                      onClick={() => void handlePanelFanOptionsAction(selectedPanel)}
-                    />
-                    <HostSkinButton
-                      type="button"
-                      label="Add Macro"
-                      className="surface-action"
-                      styleGroup={miscStyleGroup}
-                      importedSkin={miscImportedSkin}
-                      onClick={() => void handleOpenMacroPicker("add-button")}
-                    />
-                  </div>
-                ) : null}
               </div>
-              {renderPanelButtonGrid()}
-            </>
-          )}
+            ) : !hasWorkspaceSelection ? (
+              <div className="workspace-empty-state">
+                <strong>Program content is unavailable.</strong>
+                <span className="caption">
+                  This window will close once the workspace refresh finishes.
+                </span>
+              </div>
+            ) : surfaceMode === "appearance" && windowContext.kind === "main" ? (
+              <AppearanceTab
+                state={state}
+                appTheme={appTheme}
+                selectedProgram={selectedProgram}
+                selectedPanelName={selectedPanel.Name}
+                onClose={() => setSurfaceMode("panel")}
+                onSaveTheme={() => {
+                  void handleSaveVisualTheme();
+                }}
+                onApplyDarkTheme={() => {
+                  void applyDarkTheme();
+                }}
+                onApplyBlackTintCards={() => {
+                  void applyBlackTintCards();
+                }}
+                onApplyNatureTheme={() => {
+                  void applyNatureTheme();
+                }}
+                onApplyEggshellTheme={() => {
+                  void applyEggshellTheme();
+                }}
+                onUpdateAppTheme={(nextTheme) => {
+                  void persistState(updateAppTheme(state, nextTheme));
+                }}
+                onApplyProgramStyleGroup={(styleGroupId) => {
+                  void persistState(updateAllProgramStyleGroups(state, styleGroupId));
+                }}
+                onUpdateSurfaceStyleAssignment={(surfaceId, styleGroupId) => {
+                  void persistState(updateSurfaceStyleAssignment(state, surfaceId, styleGroupId));
+                }}
+                onSaveImportedSkin={(skin) => {
+                  const nextImportedSkins = (state.ImportedSkins ?? []).map((entry) =>
+                    entry.id === skin.id ? skin : entry
+                  );
+                  void persistState(updateImportedSkins(state, nextImportedSkins));
+                }}
+              />
+            ) : surfaceMode === "macro-lab" && windowContext.kind === "main" ? (
+              <MacroLabPage
+                bindingsState={bindingsState}
+                selectedProgramId={selectedProgram.ProgramTabId}
+                selectedProgramName={selectedProgram.ProgramConfig?.NormalizedName ?? "Program"}
+                selectedProgramScriptFolder={selectedProgram.ProgramConfig?.ScriptFolder}
+                programOptions={programOptions}
+                onSelectProgram={(programId) => {
+                  void persistState(updateProgramSelection(state, programId));
+                }}
+                onReloadAppFromDisk={() => reloadAppFromDisk({ captureLiveBounds: false })}
+                onFrontendEvent={(message) => {
+                  pushFrontendEvent(inferSurfaceName(windowContext), message);
+                }}
+              />
+            ) : surfaceMode === "binds" && windowContext.kind === "main" ? (
+              renderBindsSurface()
+            ) : (
+              <>
+                <div className="surface-header">
+                  <div className="surface-header__meta">
+                    <h1>Buttons</h1>
+                    <span className="surface-header__panel-name">{selectedPanel.Name}</span>
+                  </div>
+                  {windowContext.kind === "main" ? (
+                    <div className="surface-toolbar">
+                      <HostSkinButton
+                        type="button"
+                        label="Add Script"
+                        className="surface-action"
+                        styleGroup={miscStyleGroup}
+                        importedSkin={miscImportedSkin}
+                        onClick={() => void handleAddScriptButton()}
+                      />
+                      <HostSkinButton
+                        type="button"
+                        label="Fan"
+                        className="surface-action"
+                        styleGroup={miscStyleGroup}
+                        importedSkin={miscImportedSkin}
+                        disabled={isToolSetPanelSelection}
+                        onClick={() => void handlePanelFanAction(selectedPanel)}
+                      />
+                      <HostSkinButton
+                        type="button"
+                        label={selectedPanel.IsPoppedOut ? "Dock" : "Pop"}
+                        className="surface-action"
+                        styleGroup={miscStyleGroup}
+                        importedSkin={miscImportedSkin}
+                        disabled={isToolSetPanelSelection}
+                        onClick={() => void handlePanelPopAction(selectedPanel)}
+                      />
+                      <HostSkinButton
+                        type="button"
+                        label="Appearance"
+                        className="surface-action"
+                        styleGroup={miscStyleGroup}
+                        importedSkin={miscImportedSkin}
+                        disabled={!buttonAppearanceTargetButton || isToolSetPanelSelection}
+                        onClick={() => void handleOpenButtonAppearanceAction()}
+                      />
+                      <HostSkinButton
+                        type="button"
+                        label="Fan Options"
+                        className="surface-action"
+                        styleGroup={miscStyleGroup}
+                        importedSkin={miscImportedSkin}
+                        disabled={isToolSetPanelSelection}
+                        onClick={() => void handlePanelFanOptionsAction(selectedPanel)}
+                      />
+                      <HostSkinButton
+                        type="button"
+                        label="Add Macro"
+                        className="surface-action"
+                        styleGroup={miscStyleGroup}
+                        importedSkin={miscImportedSkin}
+                        onClick={() => void handleOpenMacroPicker("add-button")}
+                      />
+                    </div>
+                  ) : null}
+                </div>
+                {renderPanelButtonGrid()}
+              </>
+            )}
           </div>
         </main>
 
@@ -5919,6 +6714,44 @@ export default function App() {
         </aside>
         ) : null}
       </div>
+
+      {windowContext.kind === "main" && programContextMenu && contextMenuProgram ? (
+        <div
+          className="button-context-menu program-context-menu"
+          style={{
+            left: `${programContextMenu.left}px`,
+            top: `${programContextMenu.top}px`
+          }}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+          }}
+        >
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void handleDeleteProgram(contextMenuProgram);
+            }}
+          >
+            Delete
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              void handleSaveProgram(contextMenuProgram);
+            }}
+          >
+            Save
+          </button>
+        </div>
+      ) : null}
 
       {windowContext.kind === "main" && buttonContextMenu && contextMenuButton ? (
         <div
@@ -5978,74 +6811,163 @@ export default function App() {
         </div>
       ) : null}
 
-      {layoutPicker ? (
-        <div className="modal-backdrop" role="presentation" onClick={() => setLayoutPicker(null)}>
+      {programManager ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setProgramManager(null)}>
           <div
-            className="modal-card"
+            className="modal-card program-manager"
             role="dialog"
             aria-modal="true"
-            aria-label="Load FlowCell layout"
+            aria-label="Add or restore FlowCell program"
             onClick={(event) => event.stopPropagation()}
           >
             <div className="modal-card__header">
               <div>
-                <span className="eyebrow">Load Layout</span>
-                <h2>Saved Popout Layouts</h2>
+                <h2>Add Or Restore Program</h2>
+                <span className="caption">
+                  Create a new live program tab or reopen one you saved earlier.
+                </span>
               </div>
               <button
                 type="button"
                 className="modal-card__close"
-                onClick={() => setLayoutPicker(null)}
+                onClick={() => setProgramManager(null)}
               >
                 Close
               </button>
             </div>
-            <label className="compound-field">
-              <span>Layout</span>
-              <select
-                value={layoutPicker.selectedPath}
-                onChange={(event) =>
-                  setLayoutPicker((current) =>
-                    current
-                      ? {
-                          ...current,
-                          selectedPath: event.target.value
-                        }
-                      : current
-                  )
-                }
-              >
-                {layoutPicker.files.map((file) => (
-                  <option key={file.path} value={file.path}>
-                    {file.displayName}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {layoutPicker.files
-              .filter((file) => file.path === layoutPicker.selectedPath)
-              .map((file) => (
-                <div className="status-block" key={file.path}>
-                  <span className="caption">{file.details}</span>
-                  <span className="caption">{file.savedAt ?? file.modifiedAt ?? ""}</span>
-                </div>
-              ))}
-            <div className="modal-card__actions">
-              <button
-                type="button"
-                className="surface-action"
-                onClick={() => void handleLoadLayout()}
-              >
-                Load Layout
-              </button>
-              <button
-                type="button"
-                className="surface-action"
-                onClick={() => setLayoutPicker(null)}
-              >
-                Cancel
-              </button>
-            </div>
+
+            <section className="program-manager__section">
+              <div className="program-manager__section-header">
+                <strong>New Program</strong>
+                <span className="caption">Choose a name and the EXE that owns it.</span>
+              </div>
+              <label className="program-manager__field">
+                <span>Name</span>
+                <input
+                  type="text"
+                  value={programManager.programName}
+                  onChange={(event) =>
+                    setProgramManager((current) =>
+                      current
+                        ? {
+                            ...current,
+                            programName: event.target.value
+                          }
+                        : current
+                    )
+                  }
+                />
+              </label>
+              <label className="program-manager__field">
+                <span>EXE Path</span>
+                <input
+                  type="text"
+                  value={programManager.exePath}
+                  onChange={(event) =>
+                    setProgramManager((current) =>
+                      current
+                        ? {
+                            ...current,
+                            exePath: event.target.value
+                          }
+                        : current
+                    )
+                  }
+                />
+              </label>
+              <div className="program-manager__actions">
+                <HostSkinButton
+                  type="button"
+                  label="Browse EXE"
+                  className="surface-action"
+                  styleGroup={miscStyleGroup}
+                  importedSkin={miscImportedSkin}
+                  onClick={() => void handleBrowseProgramExe()}
+                />
+                <HostSkinButton
+                  type="button"
+                  label="Add Program"
+                  className="surface-action"
+                  styleGroup={miscStyleGroup}
+                  importedSkin={miscImportedSkin}
+                  disabled={
+                    !programManager.programName.trim() || !programManager.exePath.trim()
+                  }
+                  onClick={() => void handleCreateProgram()}
+                />
+              </div>
+            </section>
+
+            <section className="program-manager__section">
+              <div className="program-manager__section-header">
+                <strong>Restore Program</strong>
+                <span className="caption">
+                  Bring back a saved program with its panels and saved popouts.
+                </span>
+              </div>
+              {savedPrograms.length > 0 ? (
+                <>
+                  <label className="program-manager__field">
+                    <span>Saved Program</span>
+                    <select
+                      value={selectedSavedProgram?.SourceProgramTabId?.toString() ?? ""}
+                      onChange={(event) =>
+                        setProgramManager((current) =>
+                          current
+                            ? {
+                                ...current,
+                                selectedSavedProgramId: event.target.value
+                                  ? Number(event.target.value)
+                                  : null
+                              }
+                            : current
+                        )
+                      }
+                    >
+                      {savedPrograms.map((record) => (
+                        <option
+                          key={record.SourceProgramTabId}
+                          value={record.SourceProgramTabId.toString()}
+                        >
+                          {formatProgramDisplayLabel(record.Program)} |{" "}
+                          {formatSavedProgramTimestamp(record.SavedAt)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  {selectedSavedProgram ? (
+                    <div className="program-manager__saved-summary">
+                      <strong>{formatProgramDisplayLabel(selectedSavedProgram.Program)}</strong>
+                      <span className="caption">
+                        Saved {formatSavedProgramTimestamp(selectedSavedProgram.SavedAt)}
+                      </span>
+                      <span className="caption">
+                        Panels {selectedSavedProgram.Program.Panels.length} | Tool popouts{" "}
+                        {selectedSavedProgram.ToolPopouts.length}
+                      </span>
+                      <span className="caption">
+                        {selectedSavedProgramInUse
+                          ? "This program is already live."
+                          : "Ready to restore into the workspace."}
+                      </span>
+                    </div>
+                  ) : null}
+                  <div className="program-manager__actions">
+                    <HostSkinButton
+                      type="button"
+                      label="Restore Program"
+                      className="surface-action"
+                      styleGroup={miscStyleGroup}
+                      importedSkin={miscImportedSkin}
+                      disabled={!selectedSavedProgram || selectedSavedProgramInUse}
+                      onClick={() => void handleRestoreSavedProgram()}
+                    />
+                  </div>
+                </>
+              ) : (
+                <span className="caption">No saved programs are available yet.</span>
+              )}
+            </section>
           </div>
         </div>
       ) : null}

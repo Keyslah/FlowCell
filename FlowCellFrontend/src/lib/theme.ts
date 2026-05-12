@@ -36,22 +36,22 @@ export const NATURE_FROST_APP_THEME: AppTheme = {
   name: "Nature Frost",
   fontFamily: "\"Segoe UI\", sans-serif",
   pageBackground:
-    "radial-gradient(circle at top right, color-mix(in srgb, #f3ff9f 26%, transparent), transparent 28%), radial-gradient(circle at center left, color-mix(in srgb, #7ec769 18%, transparent), transparent 32%), linear-gradient(145deg, rgba(6, 19, 7, 0.84), rgba(18, 46, 17, 0.44) 42%, rgba(43, 74, 22, 0.24) 100%)",
-  pageForeground: "#f7ffe5",
-  mutedForeground: "#d7e8bb",
-  surfaceColor: "#17311f",
-  surfaceBorder: "#f1ffbf",
-  surfaceShadow: "#050b04",
-  controlColor: "#29452a",
-  buttonColor: "#2e4c2f",
-  inputColor: "#122615",
-  accentColor: "#d4f06a",
-  successColor: "#9de870",
-  dangerColor: "#ff7c72",
-  mainCardBlurPx: 18
+    "linear-gradient(180deg, rgba(5, 9, 7, 0.82), rgba(7, 10, 8, 0.58) 48%, rgba(4, 6, 5, 0.7))",
+  pageForeground: "#f4f7f4",
+  mutedForeground: "#d4dbd4",
+  surfaceColor: "#101512",
+  surfaceBorder: "#edf2ed",
+  surfaceShadow: "#010201",
+  controlColor: "#101512",
+  buttonColor: "#122a3d",
+  inputColor: "#0c100d",
+  accentColor: "#dce9d9",
+  successColor: "#b8e7bb",
+  dangerColor: "#ff8f84",
+  mainCardBlurPx: 22
 };
 
-export const DEFAULT_APP_THEME: AppTheme = NATURE_FROST_APP_THEME;
+export const DEFAULT_APP_THEME: AppTheme = FLOW_GLASS_APP_THEME;
 
 export const APP_THEME_PRESETS: AppThemePreset[] = [
   {
@@ -147,6 +147,16 @@ export const DEFAULT_GLASS_HOVER_IMPORTED_SKIN: ImportedSkin = {
   svg: ""
 };
 
+export const DEFAULT_BLACK_TINT_IMPORTED_SKIN: ImportedSkin = {
+  id: "imported-skin-black-tint",
+  name: "Black Tint",
+  html: `<div class="black-tint-pill"><span class="black-tint-pill__label">{{label}}</span></div>`,
+  css: `.black-tint-pill{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:0 24px;border-radius:999px;background:linear-gradient(180deg,rgba(0,0,0,.78),rgba(0,0,0,.62));box-shadow:inset 0 1px 0 rgba(255,255,255,.12),inset 0 -28px 44px rgba(0,0,0,.28),0 14px 30px rgba(0,0,0,.18);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);overflow:hidden}.black-tint-pill::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0) 30%),radial-gradient(circle at top left,rgba(255,255,255,.05),transparent 36%)}.black-tint-pill::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(145deg,rgba(255,255,255,.2),rgba(255,255,255,.04) 42%,rgba(255,255,255,.14));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.88}.black-tint-pill__label{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:100%;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;color:rgba(255,255,255,.94);font:600 14px/1 "Segoe UI",sans-serif;letter-spacing:-.02em;text-shadow:0 1px 10px rgba(0,0,0,.35)}.button-skin:hover .black-tint-pill,.button-skin.is-selected .black-tint-pill{background:linear-gradient(180deg,rgba(0,0,0,.84),rgba(0,0,0,.7));box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 -32px 48px rgba(0,0,0,.34),0 18px 34px rgba(0,0,0,.22)}.button-skin.is-compact .black-tint-pill{padding:0 10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 4px 10px rgba(0,0,0,.16)}.button-skin.is-compact .black-tint-pill__label{font-size:11px;line-height:1;padding:2px 0;letter-spacing:0}`,
+  cardHtml: `<div class="black-tint-surface"><span class="black-tint-surface__label">{{label}}</span></div>`,
+  cardCss: `.black-tint-surface{position:relative;width:100%;height:100%;border-radius:inherit;background:linear-gradient(180deg,rgba(0,0,0,.82),rgba(0,0,0,.68));box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 -48px 72px rgba(0,0,0,.34),0 24px 64px rgba(0,0,0,.18);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);overflow:hidden}.black-tint-surface::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,0) 28%),radial-gradient(circle at top left,rgba(255,255,255,.05),transparent 34%),radial-gradient(circle at bottom right,rgba(255,255,255,.03),transparent 28%)}.black-tint-surface::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(145deg,rgba(255,255,255,.18),rgba(255,255,255,.04) 42%,rgba(255,255,255,.12));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.9}.black-tint-surface__label{position:absolute;top:18px;right:22px;z-index:1;font:600 11px/1 "Segoe UI",sans-serif;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,.34)}`,
+  svg: ""
+};
+
 export function isLegacyGlassHoverImportedSkin(skin: ImportedSkin): boolean {
   return (
     skin.id === "imported-skin-glass-hover" &&
@@ -165,10 +175,16 @@ export const DEFAULT_IMPORTED_SKINS: ImportedSkin[] = [
     cardCss: `.soft-surface{position:relative;width:100%;height:100%;border-radius:inherit;background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,.08));box-shadow:inset 0 1px 0 rgba(255,255,255,.46),inset 0 -24px 40px rgba(95,137,164,.1);overflow:hidden}.soft-surface::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at top right,color-mix(in srgb,var(--accent) 18%,transparent),transparent 34%),linear-gradient(135deg,rgba(255,255,255,.28),rgba(255,255,255,0) 48%)}.soft-surface__label{position:absolute;top:16px;right:20px;font:600 11px/1 "Segoe UI",sans-serif;letter-spacing:.16em;text-transform:uppercase;color:rgba(245,248,250,.54)}`,
     svg: ""
   },
-  DEFAULT_GLASS_HOVER_IMPORTED_SKIN
+  DEFAULT_GLASS_HOVER_IMPORTED_SKIN,
+  DEFAULT_BLACK_TINT_IMPORTED_SKIN
 ];
 
 export const IMPORTED_SKIN_PRESETS: ImportedSkinPreset[] = [
+  {
+    id: "black-tint",
+    name: "Black Tint",
+    skin: DEFAULT_BLACK_TINT_IMPORTED_SKIN
+  },
   {
     id: "glass-hover-pill",
     name: "Glass Hover Pill",

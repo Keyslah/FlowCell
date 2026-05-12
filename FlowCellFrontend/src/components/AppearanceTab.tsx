@@ -25,7 +25,10 @@ interface AppearanceTabProps {
   selectedProgram: FlowCellProgram;
   selectedPanelName: string;
   onClose: () => void;
+  onSaveTheme: () => void;
   onApplyDarkTheme: () => void;
+  onApplyBlackTintCards: () => void;
+  onApplyNatureTheme: () => void;
   onApplyEggshellTheme: () => void;
   onUpdateAppTheme: (appTheme: AppTheme) => void;
   onApplyProgramStyleGroup: (styleGroupId: string) => void;
@@ -142,7 +145,10 @@ export function AppearanceTab({
   selectedProgram,
   selectedPanelName,
   onClose,
+  onSaveTheme,
   onApplyDarkTheme,
+  onApplyBlackTintCards,
+  onApplyNatureTheme,
   onApplyEggshellTheme,
   onUpdateAppTheme,
   onApplyProgramStyleGroup,
@@ -343,9 +349,14 @@ export function AppearanceTab({
             <span className="eyebrow">Appearance</span>
             <h2>Theme Studio</h2>
           </div>
-          <button type="button" className="surface-action" onClick={onClose}>
-            Back to {selectedPanelName}
-          </button>
+          <div className="surface-actions">
+            <button type="button" className="surface-action" onClick={onSaveTheme}>
+              Save Theme
+            </button>
+            <button type="button" className="surface-action" onClick={onClose}>
+              Back to {selectedPanelName}
+            </button>
+          </div>
         </div>
         <p className="caption">
           The shell theme is currently <strong>{appTheme.name}</strong>. Theme preset actions only
@@ -364,6 +375,12 @@ export function AppearanceTab({
             <button type="button" className="surface-action" onClick={onApplyDarkTheme}>
               Use Dark Theme
             </button>
+            <button type="button" className="surface-action" onClick={onApplyBlackTintCards}>
+              Use Black Tint Cards
+            </button>
+            <button type="button" className="surface-action" onClick={onApplyNatureTheme}>
+              Use Nature Theme
+            </button>
             <button type="button" className="surface-action" onClick={onApplyEggshellTheme}>
               Use Eggshell Theme
             </button>
@@ -377,20 +394,21 @@ export function AppearanceTab({
       <section className="surface-card appearance-card">
         <div className="surface-header">
           <div>
-            <span className="eyebrow">Text</span>
-            <h2>Shell Text</h2>
+            <span className="eyebrow">Theme Tweaks</span>
+            <h2>Shell Text + Blur</h2>
           </div>
           <button
             type="button"
             className="surface-action"
             onClick={() => onUpdateAppTheme(themeDraft)}
           >
-            Apply Text Colors
+            Apply Theme Tweaks
           </button>
         </div>
         <p className="caption">
           Change the host-owned shell text only. This updates page copy, captions, and other
-          themed chrome text without changing button skins.
+          themed chrome text without changing button skins. Main card blur changes the large
+          host-owned shells without editing button HTML/CSS/SVG.
         </p>
         <div className="appearance-theme-grid">
           <label className="appearance-color-field">
@@ -421,12 +439,32 @@ export function AppearanceTab({
               />
             </div>
           </label>
+          <label className="appearance-color-field">
+            Main Card Blur
+            <div className="appearance-slider-field">
+              <input
+                type="range"
+                min="0"
+                max="40"
+                step="1"
+                value={themeDraft.mainCardBlurPx}
+                onChange={(event) =>
+                  setThemeDraft((current) => ({
+                    ...current,
+                    mainCardBlurPx: Number(event.target.value)
+                  }))
+                }
+              />
+              <span>{themeDraft.mainCardBlurPx}px</span>
+            </div>
+          </label>
         </div>
         <div className="appearance-text-preview" style={textPreviewStyle}>
           <span className="eyebrow">Preview</span>
           <strong>Primary text uses the main shell text color.</strong>
           <span className="caption">
-            Secondary text uses the muted shell text color.
+            Secondary text uses the muted shell text color. Current host-card blur is{" "}
+            {themeDraft.mainCardBlurPx}px.
           </span>
         </div>
       </section>

@@ -11,6 +11,7 @@ import type {
   LayoutSnapshot,
   PanelFanOptions,
   RuntimeInfo,
+  SavedProgramRecord,
   SurfaceStyleAssignment,
   SurfaceStyleSectionId,
   StyleGroup,
@@ -84,6 +85,14 @@ const DEFAULT_STYLE_GROUPS: StyleGroup[] = [
     skinId: "imported-skin",
     importedSkinId: "imported-skin-glass-hover",
     accent: "#d2b28a"
+  },
+  {
+    id: "style-group-05",
+    index: 5,
+    name: "05 Black Tint",
+    skinId: "imported-skin",
+    importedSkinId: "imported-skin-black-tint",
+    accent: "#d8dee8"
   }
 ];
 
@@ -114,6 +123,10 @@ function createId(prefix: string): string {
       ? crypto.randomUUID().replace(/-/g, "")
       : `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
   return `${prefix}${randomPart}`;
+}
+
+function clonePlainValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function normalizeFanoutDirection(
@@ -345,6 +358,42 @@ function normalizePopoutClusters(clusters?: FlowCellState["PopoutClusters"]) {
   }));
 }
 
+function normalizeSavedProgramRecord(record: SavedProgramRecord): SavedProgramRecord {
+  const program = normalizeProgram(clonePlainValue(record.Program));
+  const sourceProgramTabId =
+    Number.isFinite(record.SourceProgramTabId) && record.SourceProgramTabId > 0
+      ? record.SourceProgramTabId
+      : program.ProgramTabId;
+  return {
+    SourceProgramTabId: sourceProgramTabId,
+    SavedAt:
+      typeof record.SavedAt === "string" && record.SavedAt.trim().length > 0
+        ? record.SavedAt
+        : new Date().toISOString(),
+    Program: program,
+    AlignmentToolStates: clonePlainValue(record.AlignmentToolStates ?? []),
+    ToolOptionStates: clonePlainValue(record.ToolOptionStates ?? []),
+    ToolPopouts: clonePlainValue(record.ToolPopouts ?? []).map((toolPopout) => ({
+      ...toolPopout,
+      ButtonIds: Array.isArray(toolPopout.ButtonIds)
+        ? toolPopout.ButtonIds.filter(
+            (buttonId): buttonId is string =>
+              typeof buttonId === "string" && buttonId.trim().length > 0
+          )
+        : [],
+      Bounds: toolPopout.Bounds ?? null
+    })),
+    PopoutClusters: normalizePopoutClusters(clonePlainValue(record.PopoutClusters ?? []))
+  };
+}
+
+function matchesProgramClusterMember(memberId: string, programId: number): boolean {
+  return (
+    memberId.startsWith(`panel|${programId}|`) ||
+    memberId.startsWith(`tool|${programId}|`)
+  );
+}
+
 function normalizeProgram(program: FlowCellProgram): FlowCellProgram {
   return {
     ...program,
@@ -465,6 +514,10 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
     ToolOptionStates: state.ToolOptionStates ?? [],
     ToolPopouts: state.ToolPopouts ?? [],
     PopoutClusters: normalizePopoutClusters(state.PopoutClusters),
+    SavedPrograms: (state.SavedPrograms ?? []).map((record) =>
+      normalizeSavedProgramRecord(record)
+    ),
+    SavedVisualThemes: (state.SavedVisualThemes ?? []).map((record) => clonePlainValue(record)),
     AppTheme: normalizeAppTheme(state.AppTheme),
     StyleGroups: styleGroups,
     ImportedSkins: importedSkins,
@@ -877,6 +930,138 @@ export function addProgram(
     ...state,
     SelectedProgramTabId: nextProgramId,
     Programs: [...state.Programs, nextProgram]
+  };
+}
+
+export function saveProgramSnapshot(
+  state: FlowCellState,
+  programId: number
+): FlowCellState {
+  const program = findProgram(state, programId);
+  if (!program) {
+    return state;
+  }
+
+  const nextRecord = normalizeSavedProgramRecord({
+    SourceProgramTabId: programId,
+    SavedAt: new Date().toISOString(),
+    Program: clonePlainValue(program),
+    AlignmentToolStates: clonePlainValue(
+      (state.AlignmentToolStates ?? []).filter((entry) => entry.ProgramTabId === programId)
+    ),
+    ToolOptionStates: clonePlainValue(
+      (state.ToolOptionStates ?? []).filter((entry) => entry.ProgramTabId === programId)
+    ),
+    ToolPopouts: clonePlainValue(
+      (state.ToolPopouts ?? []).filter((entry) => entry.ProgramTabId === programId)
+    ),
+    PopoutClusters: clonePlainValue(
+      (state.PopoutClusters ?? []).filter((cluster) =>
+        cluster.MemberIds.some((memberId) => matchesProgramClusterMember(memberId, programId))
+      )
+    )
+  });
+
+  const nextSavedPrograms = (state.SavedPrograms ?? []).filter(
+    (record) => record.SourceProgramTabId !== programId
+  );
+  nextSavedPrograms.push(nextRecord);
+  nextSavedPrograms.sort((left, right) => left.SourceProgramTabId - right.SourceProgramTabId);
+
+  return {
+    ...state,
+    SavedPrograms: nextSavedPrograms
+  };
+}
+
+export function deleteProgram(
+  state: FlowCellState,
+  programId: number
+): FlowCellState {
+  const removedProgramIndex = state.Programs.findIndex(
+    (program) => program.ProgramTabId === programId
+  );
+  if (removedProgramIndex < 0) {
+    return state;
+  }
+
+  const nextPrograms = state.Programs.filter((program) => program.ProgramTabId !== programId);
+  const currentSelectionStillExists = nextPrograms.some(
+    (program) => program.ProgramTabId === state.SelectedProgramTabId
+  );
+  const fallbackProgram =
+    nextPrograms[removedProgramIndex] ??
+    nextPrograms[removedProgramIndex - 1] ??
+    nextPrograms[0];
+
+  return {
+    ...state,
+    SelectedProgramTabId: currentSelectionStillExists
+      ? state.SelectedProgramTabId
+      : fallbackProgram?.ProgramTabId ?? 0,
+    Programs: nextPrograms,
+    AlignmentToolStates: (state.AlignmentToolStates ?? []).filter(
+      (entry) => entry.ProgramTabId !== programId
+    ),
+    ToolOptionStates: (state.ToolOptionStates ?? []).filter(
+      (entry) => entry.ProgramTabId !== programId
+    ),
+    ToolPopouts: (state.ToolPopouts ?? []).filter((entry) => entry.ProgramTabId !== programId),
+    PopoutClusters: (state.PopoutClusters ?? []).filter(
+      (cluster) =>
+        !cluster.MemberIds.some((memberId) => matchesProgramClusterMember(memberId, programId))
+    )
+  };
+}
+
+export function restoreSavedProgram(
+  state: FlowCellState,
+  sourceProgramTabId: number
+): FlowCellState {
+  const savedProgram = (state.SavedPrograms ?? []).find(
+    (record) => record.SourceProgramTabId === sourceProgramTabId
+  );
+  if (!savedProgram) {
+    return state;
+  }
+  if (state.Programs.some((program) => program.ProgramTabId === sourceProgramTabId)) {
+    return state;
+  }
+
+  const restoredProgram = normalizeProgram(clonePlainValue(savedProgram.Program));
+  const nextPrograms = [...state.Programs, restoredProgram].sort(
+    (left, right) => left.ProgramTabId - right.ProgramTabId
+  );
+
+  return {
+    ...state,
+    SelectedProgramTabId: restoredProgram.ProgramTabId,
+    Programs: nextPrograms,
+    AlignmentToolStates: [
+      ...(state.AlignmentToolStates ?? []).filter(
+        (entry) => entry.ProgramTabId !== sourceProgramTabId
+      ),
+      ...clonePlainValue(savedProgram.AlignmentToolStates ?? [])
+    ],
+    ToolOptionStates: [
+      ...(state.ToolOptionStates ?? []).filter(
+        (entry) => entry.ProgramTabId !== sourceProgramTabId
+      ),
+      ...clonePlainValue(savedProgram.ToolOptionStates ?? [])
+    ],
+    ToolPopouts: [
+      ...(state.ToolPopouts ?? []).filter((entry) => entry.ProgramTabId !== sourceProgramTabId),
+      ...clonePlainValue(savedProgram.ToolPopouts ?? [])
+    ],
+    PopoutClusters: [
+      ...(state.PopoutClusters ?? []).filter(
+        (cluster) =>
+          !cluster.MemberIds.some((memberId) =>
+            matchesProgramClusterMember(memberId, sourceProgramTabId)
+          )
+      ),
+      ...normalizePopoutClusters(clonePlainValue(savedProgram.PopoutClusters ?? []))
+    ]
   };
 }
 
@@ -1428,6 +1613,35 @@ export function updateButtonStyleGroup(
                         ? { ...button, style_group_id: styleGroupId }
                         : button
                     )
+                  }
+                : panel
+            )
+          }
+        : program
+    )
+  };
+}
+
+export function updatePanelButtonStyleGroup(
+  state: FlowCellState,
+  programId: number,
+  panelId: string,
+  styleGroupId: string
+): FlowCellState {
+  return {
+    ...state,
+    Programs: state.Programs.map((program) =>
+      program.ProgramTabId === programId
+        ? {
+            ...program,
+            Panels: program.Panels.map((panel) =>
+              panel.Id === panelId
+                ? {
+                    ...panel,
+                    Buttons: panel.Buttons.map((button) => ({
+                      ...button,
+                      style_group_id: styleGroupId
+                    }))
                   }
                 : panel
             )

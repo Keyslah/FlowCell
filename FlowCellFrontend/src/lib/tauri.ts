@@ -57,6 +57,14 @@ function buildPanelFanOptionsLabel(programId: number, panelId: string): string {
   return `panel-fan-options-${programId}-${sanitizeWindowToken(panelId)}`;
 }
 
+function buildButtonAppearanceLabel(programId: number, panelId: string): string {
+  return `button-appearance-${programId}-${sanitizeWindowToken(panelId)}`;
+}
+
+function buildLayoutPickerLabel(): string {
+  return "flowcell-layout-picker";
+}
+
 function isValidStoredBounds(
   bounds: FlowCellBounds | null | undefined,
   minWidth: number,
@@ -153,6 +161,40 @@ function resolvePanelFanOptionsWindowOptions() {
   };
 }
 
+function resolveButtonAppearanceWindowOptions() {
+  return {
+    width: 960,
+    height: 860
+  };
+}
+
+async function resolveLayoutPickerWindowOptions() {
+  const defaults = {
+    width: 520,
+    height: 320
+  };
+  const currentWindow = getCurrentWindow();
+  const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+  const [position, size] = await Promise.all([
+    currentWindow.outerPosition().catch(() => null),
+    currentWindow.innerSize().catch(() => null)
+  ]);
+
+  if (!position || !size) {
+    return defaults;
+  }
+
+  const logicalLeft = position.x / scaleFactor;
+  const logicalTop = position.y / scaleFactor;
+  const logicalWidth = size.width / scaleFactor;
+
+  return {
+    ...defaults,
+    x: logicalLeft + Math.max((logicalWidth - defaults.width) / 2, 24),
+    y: logicalTop + 46
+  };
+}
+
 function resolveToolWindowOptions(args: {
   ownerButtonId: string;
   buttonIds: string[];
@@ -225,8 +267,14 @@ function resolveToolWindowOptions(args: {
               maxWidth: 2200,
               maxHeight: 1800
             };
-  const storedMinWidth = isPanelFan || isFloatingFanout ? defaults.minWidth : 120;
-  const storedMinHeight = isPanelFan || isFloatingFanout ? defaults.minHeight : 72;
+  const storedMinWidth =
+    isPanelFan || isFloatingFanout || isAlignment || isFlattenRevolve || isSmartAxis
+      ? defaults.minWidth
+      : 120;
+  const storedMinHeight =
+    isPanelFan || isFloatingFanout || isAlignment || isFlattenRevolve || isSmartAxis
+      ? defaults.minHeight
+      : 72;
 
   if (isPanelFan) {
     if (isValidStoredBounds(args.bounds, storedMinWidth, storedMinHeight)) {
@@ -499,6 +547,73 @@ export function openPanelFanOptionsWindow(args: {
         panelName: args.panelName
       }),
       title: `FlowCell - Fan Options - ${args.panelName}`,
+      ...placement,
+      resizable: true,
+      decorations: true,
+      visible: true,
+      focus: true,
+      alwaysOnTop: true
+    });
+
+    await waitForWindowCreated(window);
+    await applyWindowPlacement(window, placement);
+  })();
+}
+
+export function openButtonAppearanceWindow(args: {
+  programId: number;
+  panelId: string;
+  panelName: string;
+  buttonId: string;
+}): Promise<void> {
+  const label = buildButtonAppearanceLabel(args.programId, args.panelId);
+  return (async () => {
+    const placement = resolveButtonAppearanceWindowOptions();
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      await applyWindowPlacement(existing, placement, { focus: true });
+      await existing.show().catch(() => {});
+      return;
+    }
+
+    const window = new WebviewWindow(label, {
+      url: buildWindowContextUrl({
+        kind: "button-appearance",
+        programId: args.programId,
+        panelId: args.panelId,
+        panelName: args.panelName,
+        buttonId: args.buttonId
+      }),
+      title: `FlowCell - Button Appearance - ${args.panelName}`,
+      ...placement,
+      resizable: true,
+      decorations: false,
+      visible: true,
+      focus: true,
+      alwaysOnTop: true
+    });
+
+    await waitForWindowCreated(window);
+    await applyWindowPlacement(window, placement);
+  })();
+}
+
+export function openLayoutPickerWindow(): Promise<void> {
+  const label = buildLayoutPickerLabel();
+  return (async () => {
+    const placement = await resolveLayoutPickerWindowOptions();
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      await applyWindowPlacement(existing, placement, { focus: true });
+      await existing.show().catch(() => {});
+      return;
+    }
+
+    const window = new WebviewWindow(label, {
+      url: buildWindowContextUrl({
+        kind: "layout-picker"
+      }),
+      title: "FlowCell - Load Layout",
       ...placement,
       resizable: true,
       decorations: true,
