@@ -646,6 +646,35 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
       ? [...state.SurfaceStyleAssignments]
       : [...DEFAULT_SURFACE_STYLE_ASSIGNMENTS];
 
+  const legacyMainWorkspaceAssignmentIndex = surfaceStyleAssignments.findIndex(
+    (assignment) => assignment.surface_id === ("main-workspace-buttons" as SurfaceStyleSectionId)
+  );
+  const mainButtonsAssignmentIndex = surfaceStyleAssignments.findIndex(
+    (assignment) => assignment.surface_id === "main-buttons"
+  );
+  if (legacyMainWorkspaceAssignmentIndex >= 0) {
+    const legacyAssignment = surfaceStyleAssignments[legacyMainWorkspaceAssignmentIndex];
+    if (
+      legacyAssignment &&
+      legacyAssignment.style_group_id.trim().length > 0 &&
+      (mainButtonsAssignmentIndex < 0 ||
+        surfaceStyleAssignments[mainButtonsAssignmentIndex].style_group_id.trim().length === 0)
+    ) {
+      if (mainButtonsAssignmentIndex >= 0) {
+        surfaceStyleAssignments[mainButtonsAssignmentIndex] = {
+          ...surfaceStyleAssignments[mainButtonsAssignmentIndex],
+          style_group_id: legacyAssignment.style_group_id
+        };
+      } else {
+        surfaceStyleAssignments.push({
+          surface_id: "main-buttons",
+          style_group_id: legacyAssignment.style_group_id
+        });
+      }
+    }
+    surfaceStyleAssignments.splice(legacyMainWorkspaceAssignmentIndex, 1);
+  }
+
   DEFAULT_SURFACE_STYLE_ASSIGNMENTS.forEach((defaultAssignment) => {
     if (
       !surfaceStyleAssignments.some(

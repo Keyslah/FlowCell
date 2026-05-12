@@ -269,6 +269,7 @@ if (Test-Path -LiteralPath $customActionSyncPath -PathType Leaf) {
 }
 
 if (Test-Path -LiteralPath $syncScriptPath -PathType Leaf) {
+    [Environment]::SetEnvironmentVariable('FLOWTEST_ALLOW_NEW_BLENDER_BUTTON_TARGETS_JSON', $null, 'Process')
     & $syncScriptPath | Out-Null
 }
 

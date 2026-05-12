@@ -13,6 +13,99 @@ function renderImportedTemplate(markup: string, label: string): string {
   return sanitizeMarkup(markup).replace(/\{\{label\}\}/g, label);
 }
 
+function sanitizeScopeToken(value: string): string {
+  const sanitized = value.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "-");
+  return sanitized.length > 0 ? sanitized : "imported-skin";
+}
+
+function buildImportedSkinScopeClass(importedSkinId: string | undefined): string {
+  return `imported-skin-scope--${sanitizeScopeToken(importedSkinId ?? "")}`;
+}
+
+function scopeCssSelector(selector: string, scopeSelector: string): string {
+  const trimmed = selector.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  if (/^(from|to|\d+%)$/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  const replacedRoot = trimmed.replace(/\bhtml\b|\bbody\b|:root/g, scopeSelector);
+  if (replacedRoot.includes(scopeSelector)) {
+    return replacedRoot;
+  }
+  if (/^[>+~]/.test(replacedRoot)) {
+    return `${scopeSelector}${replacedRoot}`;
+  }
+  return `${scopeSelector} ${replacedRoot}`;
+}
+
+function findMatchingBrace(source: string, openBraceIndex: number): number {
+  let depth = 0;
+  for (let index = openBraceIndex; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === "{") {
+      depth += 1;
+      continue;
+    }
+    if (character === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index;
+      }
+    }
+  }
+  return source.length - 1;
+}
+
+function scopeImportedCssRules(source: string, scopeSelector: string): string {
+  let output = "";
+  let cursor = 0;
+
+  while (cursor < source.length) {
+    const openBraceIndex = source.indexOf("{", cursor);
+    if (openBraceIndex < 0) {
+      output += source.slice(cursor);
+      break;
+    }
+
+    const prelude = source.slice(cursor, openBraceIndex);
+    const closeBraceIndex = findMatchingBrace(source, openBraceIndex);
+    const blockContent = source.slice(openBraceIndex + 1, closeBraceIndex);
+    const trimmedPrelude = prelude.trim();
+
+    if (!trimmedPrelude) {
+      output += `${prelude}{${blockContent}}`;
+      cursor = closeBraceIndex + 1;
+      continue;
+    }
+
+    if (trimmedPrelude.startsWith("@")) {
+      const atRuleName = trimmedPrelude
+        .slice(1)
+        .split(/[\s{]/, 1)[0]
+        .toLowerCase();
+      if (["media", "supports", "layer", "container", "document"].includes(atRuleName)) {
+        output += `${prelude}{${scopeImportedCssRules(blockContent, scopeSelector)}}`;
+      } else {
+        output += `${prelude}{${blockContent}}`;
+      }
+      cursor = closeBraceIndex + 1;
+      continue;
+    }
+
+    const scopedPrelude = prelude
+      .split(",")
+      .map((selector) => scopeCssSelector(selector, scopeSelector))
+      .join(", ");
+    output += `${scopedPrelude}{${blockContent}}`;
+    cursor = closeBraceIndex + 1;
+  }
+
+  return output;
+}
+
 export function normalizeImportedSkinHtmlMarkup(markup: string): string {
   if (typeof document === "undefined") {
     return markup;
@@ -89,12 +182,15 @@ export function renderSurfaceSkin(args: {
     return null;
   }
 
+  const scopeClassName = buildImportedSkinScopeClass(importedSkin.id);
+  const scopedCss = scopeImportedCssRules(sanitizeMarkup(cardCss), `.${scopeClassName}`);
+
   return (
     <div
-      className="surface-skin"
+      className={`surface-skin ${scopeClassName}`}
       style={{ ["--accent" as string]: styleGroup.accent ?? "#9cf667" }}
     >
-      <style>{sanitizeMarkup(cardCss)}</style>
+      <style>{scopedCss}</style>
       {cardSvg ? (
         <div
           className="imported-svg"
@@ -135,9 +231,14 @@ export function renderButtonSkin(args: {
     .join(" ");
 
   if (skinId === "imported-skin" && importedSkin) {
+    const scopeClassName = buildImportedSkinScopeClass(importedSkin.id);
+    const scopedCss = scopeImportedCssRules(sanitizeMarkup(importedSkin.css), `.${scopeClassName}`);
     return (
-      <div className={sharedClassName} style={{ ["--accent" as string]: accent }}>
-        <style>{sanitizeMarkup(importedSkin.css)}</style>
+      <div
+        className={`${sharedClassName} ${scopeClassName}`}
+        style={{ ["--accent" as string]: accent }}
+      >
+        <style>{scopedCss}</style>
         {importedSkin.svg ? (
           <div
             className="imported-svg"

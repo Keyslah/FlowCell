@@ -728,8 +728,29 @@ foreach ($wrapper in @(Get-ChildItem -LiteralPath $wrapperRoot -Filter '*.ps1' -
 }
 
 if (-not $SkipSync -and (Test-Path -LiteralPath $syncScriptPath -PathType Leaf)) {
-    & $syncScriptPath | Out-Null
-    $syncedFlowCellButtons = $true
+    $installedWrapperPaths = @(
+        @($installResults | Where-Object { [bool]$_.Installed }) |
+            ForEach-Object {
+                if ($_.PSObject.Properties['WrapperPath']) {
+                    [string]$_.WrapperPath
+                }
+            } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
+    )
+    $installedWrapperPathsJson = if ($installedWrapperPaths.Count -gt 0) {
+        $installedWrapperPaths | ConvertTo-Json -Compress
+    }
+    else {
+        ''
+    }
+    [Environment]::SetEnvironmentVariable('FLOWTEST_ALLOW_NEW_BLENDER_BUTTON_TARGETS_JSON', $installedWrapperPathsJson, 'Process')
+    try {
+        & $syncScriptPath | Out-Null
+        $syncedFlowCellButtons = $true
+    }
+    finally {
+        [Environment]::SetEnvironmentVariable('FLOWTEST_ALLOW_NEW_BLENDER_BUTTON_TARGETS_JSON', $null, 'Process')
+    }
 }
 
 $reloadRequired = $false

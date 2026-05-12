@@ -380,3 +380,7 @@
 [2m3:42:35 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx[22m
 [2m3:42:43 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/components/MacroLabPage.tsx[22m
 [2m3:43:22 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mpage reload [39m[2msrc-tauri/target/debug/build/flowcell_frontend-28530757eb414e6f/out/tauri-codegen-assets/a953954e211d9455b0d58b9a5cb87739c780619096993f3096892f07cd4d2f5d.html[22m
+[2m3:56:56 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx, /src/components/HostSkinButton.tsx, /src/components/AppearanceTab.tsx, /src/components/ButtonCard.tsx, /src/components/FanOutButtonCluster.tsx, /src/components/ButtonAppearanceWindow.tsx[22m
+[2m3:56:56 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx[22m
+[2m4:04:40 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/components/FanOutButtonCluster.tsx[22m
+[2m4:04:47 PM[22m [36m[1m[vite][22m[39m [90m[2m(client)[22m[39m [32mhmr update [39m[2m/src/App.tsx[22m

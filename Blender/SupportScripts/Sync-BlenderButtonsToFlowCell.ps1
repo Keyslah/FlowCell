@@ -2,6 +2,27 @@
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName Microsoft.VisualBasic
 
+$AllowNewButtonTargets = @()
+$AllowNewButtonTargetsJson = [Environment]::GetEnvironmentVariable('FLOWTEST_ALLOW_NEW_BLENDER_BUTTON_TARGETS_JSON', 'Process')
+
+if (-not [string]::IsNullOrWhiteSpace($AllowNewButtonTargetsJson)) {
+    try {
+        $decodedAllowNewButtonTargets = ConvertFrom-Json -InputObject $AllowNewButtonTargetsJson -ErrorAction Stop
+        if ($decodedAllowNewButtonTargets -is [System.Array]) {
+            $AllowNewButtonTargets = @($decodedAllowNewButtonTargets | ForEach-Object { [string]$_ })
+        }
+        elseif ($null -eq $decodedAllowNewButtonTargets) {
+            $AllowNewButtonTargets = @()
+        }
+        else {
+            $AllowNewButtonTargets = @([string]$decodedAllowNewButtonTargets)
+        }
+    }
+    catch {
+        throw "Could not parse -AllowNewButtonTargetsJson for Blender sync."
+    }
+}
+
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $projectRoot = Join-Path $repoRoot 'Blender'
 $localRoot = Join-Path $repoRoot 'FlowCell\local'
@@ -745,6 +766,16 @@ function Get-PreservedPanelButtons($Panel) {
     )
 }
 
+function Get-ManagedBlenderPanelButtons($Panel) {
+    return @(
+        @($Panel.Buttons) | Where-Object {
+            ([string]$_.Id -like 'button_blender_flowcell_*') -or
+            ([string]$_.Target -like (Join-Path $wrapperRoot '*')) -or
+            ([string]$_.Target -like $legacyAddonPattern)
+        }
+    )
+}
+
 function Copy-ButtonRecord($Button) {
     $copy = [pscustomobject]@{}
     if ($null -eq $Button) {
@@ -758,8 +789,8 @@ function Copy-ButtonRecord($Button) {
     return $copy
 }
 
-function Get-ExistingBlenderPanelButton($Panel, [string]$ButtonId, [string]$Target) {
-    foreach ($button in @($Panel.Buttons)) {
+function Get-ExistingBlenderPanelButton($Buttons, [string]$ButtonId, [string]$Target) {
+    foreach ($button in @($Buttons)) {
         $existingId = if ($button.PSObject.Properties['Id']) { [string]$button.Id } else { '' }
         $existingTarget = if ($button.PSObject.Properties['Target']) { [string]$button.Target } else { '' }
 
@@ -842,8 +873,10 @@ $blenderProgram.Panels = @(
 )
 $currentSelectedPanelId = if ($blenderProgram.PSObject.Properties['SelectedPanelId']) { [string]$blenderProgram.SelectedPanelId } else { '' }
 $panelPreservedButtons = @{}
+$panelExistingBlenderButtons = @{}
 foreach ($panel in @($blenderProgram.Panels)) {
     $panelPreservedButtons[[string]$panel.Id] = @(Get-PreservedPanelButtons -Panel $panel)
+    $panelExistingBlenderButtons[[string]$panel.Id] = @(Get-ManagedBlenderPanelButtons -Panel $panel)
 }
 
 $importedButtons = @(
@@ -887,6 +920,14 @@ foreach ($panel in @($blenderProgram.Panels)) {
     $panel.Buttons = @($preserved)
 }
 
+$allowedNewButtonTargets = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+foreach ($target in @($AllowNewButtonTargets)) {
+    $normalizedTarget = Get-NormalizedPathKey ([string]$target)
+    if (-not [string]::IsNullOrWhiteSpace($normalizedTarget)) {
+        [void]$allowedNewButtonTargets.Add($normalizedTarget)
+    }
+}
+
 $lastImportedPanel = $null
 foreach ($entry in @($importedPanelButtonMap.GetEnumerator())) {
     $panelName = [string]$entry.Value.PanelName
@@ -898,12 +939,17 @@ foreach ($entry in @($importedPanelButtonMap.GetEnumerator())) {
         default { Get-OrCreateFlowCellPanel -Program $blenderProgram -PanelName $panelName }
     }
     $preserved = if ($panelPreservedButtons.ContainsKey([string]$targetPanel.Id)) { @($panelPreservedButtons[[string]$targetPanel.Id]) } else { @() }
+    $existingManagedButtons = if ($panelExistingBlenderButtons.ContainsKey([string]$targetPanel.Id)) { @($panelExistingBlenderButtons[[string]$targetPanel.Id]) } else { @() }
     $mergedButtons = New-Object System.Collections.Generic.List[object]
     foreach ($button in @($preserved)) {
         [void]$mergedButtons.Add($button)
     }
     foreach ($button in @($entry.Value.Buttons)) {
-        $existingButton = Get-ExistingBlenderPanelButton -Panel $targetPanel -ButtonId ([string]$button.Id) -Target ([string]$button.Target)
+        $existingButton = Get-ExistingBlenderPanelButton -Buttons $existingManagedButtons -ButtonId ([string]$button.Id) -Target ([string]$button.Target)
+        $normalizedTarget = Get-NormalizedPathKey ([string]$button.Target)
+        if ($null -eq $existingButton -and -not $allowedNewButtonTargets.Contains($normalizedTarget)) {
+            continue
+        }
         [void]$mergedButtons.Add((Merge-ImportedBlenderButton -ExistingButton $existingButton -ImportedButton $button))
     }
     $targetPanel.Buttons = @($mergedButtons.ToArray())

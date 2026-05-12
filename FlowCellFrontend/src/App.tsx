@@ -2451,6 +2451,9 @@ export default function App() {
     let cancelled = false;
     let timer: number | undefined;
     let ignoreCursorUnavailable = false;
+    let scaleFactor = 1;
+    const pollIntervalMs =
+      isFloatingFanoutPopout || floatingFanoutChildrenVisible || panelFanChildrenVisible ? 48 : 96;
 
     const syncIgnoreCursorEvents = async () => {
       if (cancelled || ignoreCursorUnavailable) {
@@ -2487,10 +2490,7 @@ export default function App() {
         return;
       }
 
-      const [scaleFactor, pointer] = await Promise.all([
-        currentWindow.scaleFactor().catch(() => 1),
-        cursorPosition().catch(() => null)
-      ]);
+      const pointer = await cursorPosition().catch(() => null);
       if (cancelled || !pointer) {
         return;
       }
@@ -2518,10 +2518,18 @@ export default function App() {
       await setIgnoreCursorEvents(!hitInteractivePill);
     };
 
+    void currentWindow
+      .scaleFactor()
+      .then((nextScaleFactor) => {
+        if (Number.isFinite(nextScaleFactor) && nextScaleFactor > 0) {
+          scaleFactor = nextScaleFactor;
+        }
+      })
+      .catch(() => {});
     void syncIgnoreCursorEvents();
     timer = window.setInterval(() => {
       void syncIgnoreCursorEvents();
-    }, 32);
+    }, pollIntervalMs);
 
     return () => {
       cancelled = true;
