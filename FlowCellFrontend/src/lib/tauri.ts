@@ -24,6 +24,7 @@ import type {
 
 const FLOWCELL_STATE_SYNC_EVENT = "flowcell://state-saved";
 const FLOWCELL_WINDOW_PLACEMENT_EVENT = "flowcell://window-placement";
+const pendingToolPopoutOpens = new Map<string, Promise<void>>();
 
 interface FlowCellWindowPlacementEventPayload {
   label?: string;
@@ -693,7 +694,12 @@ export function openToolPopout(args: {
   bounds?: FlowCellBounds | null;
 }): Promise<void> {
   const label = `popout-tool-${args.programId}-${sanitizeWindowToken(args.panelId)}-${sanitizeWindowToken(args.ownerButtonId)}`;
-  return (async () => {
+  const pendingOpen = pendingToolPopoutOpens.get(label);
+  if (pendingOpen) {
+    return pendingOpen;
+  }
+
+  const openPromise = (async () => {
     const isPanelFan = args.layoutMode === "PanelFan";
     const isFloatingFanout = args.layoutMode === "Fanout";
     const isTransparentWindow = isPanelFan || isFloatingFanout;
@@ -738,7 +744,14 @@ export function openToolPopout(args: {
       await applyTransparentFanoutWindowAppearance(window);
     }
     await applyWindowPlacement(window, placement, placementOptions);
-  })();
+  })().finally(() => {
+    if (pendingToolPopoutOpens.get(label) === openPromise) {
+      pendingToolPopoutOpens.delete(label);
+    }
+  });
+
+  pendingToolPopoutOpens.set(label, openPromise);
+  return openPromise;
 }
 
 export function emitBackendEnvelope(
