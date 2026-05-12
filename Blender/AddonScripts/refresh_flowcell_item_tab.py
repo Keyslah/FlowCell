@@ -11,7 +11,7 @@ import bpy
 bl_info = {
     "name": "Refresh FlowCell Item Tab",
     "author": "OpenAI Codex",
-    "version": (1, 2, 0),
+    "version": (1, 3, 0),
     "blender": (5, 0, 0),
     "location": "View3D > Sidebar > Item",
     "description": "Add Item-tab buttons that reload the FlowCell or FlowTest bridge add-on and restart the matching desktop UI.",
@@ -141,18 +141,51 @@ def _find_workspace_module_name(target_key: str, workspace_root: Path) -> str:
     return ""
 
 
+def _get_workspace_runtime_paths(workspace_root: Path) -> dict[str, Path]:
+    flowcell_root = workspace_root / "FlowCell"
+    frontend_root = workspace_root / "FlowCellFrontend"
+    return {
+        "legacy_ui_script": (flowcell_root / "FlowCellUI.ps1").resolve(),
+        "backend_script": (flowcell_root / "FlowCellBackend.ahk").resolve(),
+        "frontend_launcher_script": (flowcell_root / "helpers" / "Start-FlowCellFrontend.ps1").resolve(),
+        "backend_launcher": (workspace_root / "run_backend_hidden.vbs").resolve(),
+        "workspace_launcher": (workspace_root / "run_hidden.vbs").resolve(),
+        "frontend_root": frontend_root.resolve(),
+        "frontend_exe": (frontend_root / "src-tauri" / "target" / "debug" / "flowcell_frontend.exe").resolve(),
+    }
+
+
 def _get_workspace_process_ids(workspace_root: Path) -> list[int]:
-    ui_script = str((workspace_root / "FlowCell" / "FlowCellUI.ps1").resolve())
-    backend_script = str((workspace_root / "FlowCell" / "FlowCellBackend.ahk").resolve())
+    runtime_paths = _get_workspace_runtime_paths(workspace_root)
+    ui_script = str(runtime_paths["legacy_ui_script"])
+    backend_script = str(runtime_paths["backend_script"])
+    frontend_script = str(runtime_paths["frontend_launcher_script"])
+    frontend_exe = str(runtime_paths["frontend_exe"])
     ps_command = (
-        "$ui='{0}';"
-        "$backend='{1}';"
+        "$frontendExe='{0}';"
+        "$frontendScript='{1}';"
+        "$ui='{2}';"
+        "$backend='{3}';"
         "Get-CimInstance Win32_Process | "
         "Where-Object {{ "
         "$cmd=[string]$_.CommandLine; "
-        "-not [string]::IsNullOrWhiteSpace($cmd) -and (($cmd -like ('*' + $ui + '*')) -or ($cmd -like ('*' + $backend + '*'))) "
+        "$exe=[string]$_.ExecutablePath; "
+        "("
+        "(-not [string]::IsNullOrWhiteSpace($cmd) -and ("
+        "($cmd -like ('*' + $ui + '*')) -or "
+        "($cmd -like ('*' + $backend + '*')) -or "
+        "($cmd -like ('*' + $frontendScript + '*'))"
+        ")) -or "
+        "(-not [string]::IsNullOrWhiteSpace($exe) -and "
+        "[System.StringComparer]::OrdinalIgnoreCase.Equals($exe, $frontendExe))"
+        ") "
         "}} | Select-Object -ExpandProperty ProcessId"
-    ).format(ui_script.replace("'", "''"), backend_script.replace("'", "''"))
+    ).format(
+        frontend_exe.replace("'", "''"),
+        frontend_script.replace("'", "''"),
+        ui_script.replace("'", "''"),
+        backend_script.replace("'", "''"),
+    )
 
     result = subprocess.run(
         ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_command],
@@ -190,14 +223,36 @@ def _stop_workspace_processes(workspace_root: Path) -> None:
 
 def _restart_workspace_desktop(target_key: str, workspace_root: Path) -> str:
     target_name = str(WORKSPACE_TARGETS[target_key]["display_name"])
-    launcher_path = workspace_root / "run_hidden.vbs"
+    runtime_paths = _get_workspace_runtime_paths(workspace_root)
+    _stop_workspace_processes(workspace_root)
+    time.sleep(0.35)
+
+    direct_frontend = runtime_paths["frontend_exe"]
+    backend_launcher = runtime_paths["backend_launcher"]
+    if direct_frontend.is_file() and backend_launcher.is_file():
+        subprocess.Popen(
+            ["wscript.exe", "//nologo", str(backend_launcher)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        subprocess.Popen(
+            [str(direct_frontend)],
+            cwd=str(runtime_paths["frontend_root"]),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return f"Restarted {target_name}."
+
+    launcher_path = runtime_paths["workspace_launcher"]
     if not launcher_path.is_file():
         raise RuntimeError(f"{target_name} launcher was not found: {launcher_path}")
 
-    _stop_workspace_processes(workspace_root)
-    time.sleep(0.35)
     subprocess.Popen(
-        ["wscript.exe", str(launcher_path)],
+        ["wscript.exe", "//nologo", str(launcher_path)],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         stdin=subprocess.DEVNULL,

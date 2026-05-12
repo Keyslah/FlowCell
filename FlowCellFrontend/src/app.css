@@ -1223,27 +1223,6 @@ button {
   background: transparent;
 }
 
-.fan-cluster__measure {
-  position: fixed;
-  left: -20000px;
-  top: -20000px;
-  display: grid;
-  gap: 12px;
-  visibility: hidden;
-  pointer-events: none;
-  z-index: -1;
-}
-
-.fan-cluster__measure .fan-cluster__owner,
-.fan-cluster__measure .fan-cluster__child {
-  position: relative;
-  left: auto;
-  top: auto;
-  opacity: 1;
-  transform: none;
-  pointer-events: none;
-}
-
 .fan-cluster__stage {
   position: relative;
   width: 100%;
@@ -1894,6 +1873,7 @@ button {
 }
 
 .host-skin-button:disabled,
+.host-skin-button[aria-disabled="true"],
 .button-context-menu button:disabled,
 .modal-card button:disabled {
   opacity: 0.54;
@@ -2118,6 +2098,17 @@ button {
   min-height: 0;
 }
 
+.button-options-window {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  justify-items: stretch;
+  gap: 16px;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
 .appearance-card {
   padding: 16px;
   display: grid;
@@ -2127,6 +2118,11 @@ button {
 }
 
 .button-appearance-window__workspace {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.button-options-window__workspace {
   min-height: 0;
   overflow: hidden;
 }
@@ -2215,6 +2211,10 @@ button {
   .style-group-list {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .button-options-window__fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 900px) {
@@ -2252,6 +2252,84 @@ button {
   display: grid;
   grid-template-columns: 1fr;
   gap: 12px;
+}
+
+.button-options-window__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.button-options-window label.button-options-window__master-toggle,
+.button-options-window label.button-options-window__row-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.84rem;
+}
+
+.button-options-window__master-toggle input,
+.button-options-window__row-toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.button-options-window__list {
+  display: grid;
+  align-content: start;
+  gap: 14px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.button-options-window__row {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--fc-theme-control-color) 40%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fc-theme-surface-border) 12%, transparent);
+}
+
+.button-options-window__row-header {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.button-options-window__row-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  flex: 1 1 320px;
+}
+
+.button-options-window__fields {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(200px, 0.7fr);
+  gap: 12px;
+}
+
+.button-options-window__description {
+  grid-column: 1 / -1;
+}
+
+.button-options-window__description textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+.button-options-window__row-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
 .button-appearance-window__controls label {
@@ -2337,7 +2415,8 @@ button {
 }
 
 .appearance-tab label,
-.button-appearance-window label {
+.button-appearance-window label,
+.button-options-window label {
   display: grid;
   gap: 6px;
   font-size: 0.85rem;
@@ -2384,13 +2463,26 @@ button {
 .appearance-tab textarea,
 .button-appearance-window input,
 .button-appearance-window select,
-.button-appearance-window textarea {
+.button-appearance-window textarea,
+.button-options-window input,
+.button-options-window select,
+.button-options-window textarea {
   width: 100%;
   padding: 10px 12px;
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--fc-theme-surface-border) 16%, transparent);
   background: color-mix(in srgb, var(--fc-theme-input-color) 92%, transparent);
   color: var(--fc-theme-page-foreground);
+}
+
+.button-options-window label.button-options-window__master-toggle input,
+.button-options-window label.button-options-window__row-toggle input {
+  width: 16px;
+  min-width: 16px;
+  height: 16px;
+  min-height: 16px;
+  padding: 0;
+  border-radius: 4px;
 }
 
 .preview-card {
@@ -2885,7 +2977,8 @@ button {
     padding: 12px;
   }
 
-  .button-appearance-window__editor {
+  .button-appearance-window__editor,
+  .button-options-window__fields {
     grid-template-columns: 1fr;
   }
 }

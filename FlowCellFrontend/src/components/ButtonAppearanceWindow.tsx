@@ -6,6 +6,7 @@ import {
   IMPORTED_SKIN_PRESETS
 } from "../lib/theme";
 import {
+  ensureImportedSkinLabelPlaceholder,
   getImportedSkin,
   IMPORTED_SKIN_LABEL_PLACEHOLDER,
   normalizeImportedSkinHtmlMarkup,
@@ -67,10 +68,10 @@ function buildDraftFromButton(
       : undefined;
 
   if (currentImportedSkin) {
-    return {
+    return ensureImportedSkinLabelPlaceholder({
       ...currentImportedSkin,
       name: currentImportedSkin.name?.trim() || `${button.Label} Skin`
-    };
+    });
   }
 
   return buildFallbackDraft(button.Label);
@@ -101,10 +102,10 @@ function buildDraftFromSelection(
           ? getImportedSkin(importedSkins, sharedStyleGroup.importedSkinId)
           : undefined;
       if (sharedImportedSkin) {
-        return {
+        return ensureImportedSkinLabelPlaceholder({
           ...sharedImportedSkin,
           name: sharedImportedSkin.name?.trim() || "Panel Buttons Skin"
-        };
+        });
       }
     }
     return buildFallbackDraft("Panel Buttons");
@@ -238,12 +239,12 @@ export function ButtonAppearanceWindow({
     ? "All Buttons"
     : selectedTargetButton?.Label ?? DEFAULT_BUTTON_PREVIEW_LABEL;
   const saveDraftToSkinLibrary = () => {
-    const nextDraft: ImportedSkin = {
+    const nextDraft = ensureImportedSkinLabelPlaceholder({
       ...draft,
       id: draft.id.trim() || createDraftSkinId(),
       name:
         draft.name.trim() || (hasSelectedTarget ? `${previewLabel} Skin` : DEFAULT_BUTTON_SKIN_NAME)
-    };
+    });
     setDraft(nextDraft);
     onSaveImportedSkin(nextDraft);
   };
@@ -255,7 +256,7 @@ export function ButtonAppearanceWindow({
     if (!savedSkin) {
       return;
     }
-    setDraft({ ...savedSkin });
+    setDraft(ensureImportedSkinLabelPlaceholder({ ...savedSkin }));
   };
 
   return (
@@ -271,7 +272,13 @@ export function ButtonAppearanceWindow({
               type="button"
               className="surface-action"
               disabled={!hasSelectedTarget}
-              onClick={() => onSave(selectedButtonId || previewButton.Id, draft, transparentPopout)}
+              onClick={() =>
+                onSave(
+                  selectedButtonId || previewButton.Id,
+                  ensureImportedSkinLabelPlaceholder(draft),
+                  transparentPopout
+                )
+              }
             >
               {isAllButtonsSelection ? "Save To Panel Buttons" : "Save To Button"}
             </button>
@@ -456,7 +463,7 @@ export function ButtonAppearanceWindow({
                     }
                     setDraft((current) => ({
                       ...(current ?? buildFallbackDraft(previewLabel)),
-                      ...presetSkin,
+                      ...ensureImportedSkinLabelPlaceholder(presetSkin),
                       id: current?.id ?? "",
                       name: current?.name?.trim() || presetSkin.name
                     }));

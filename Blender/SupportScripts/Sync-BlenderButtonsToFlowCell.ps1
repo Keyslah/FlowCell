@@ -745,6 +745,86 @@ function Get-PreservedPanelButtons($Panel) {
     )
 }
 
+function Copy-ButtonRecord($Button) {
+    $copy = [pscustomobject]@{}
+    if ($null -eq $Button) {
+        return $copy
+    }
+
+    foreach ($property in $Button.PSObject.Properties) {
+        $copy | Add-Member -MemberType NoteProperty -Name ([string]$property.Name) -Value $property.Value -Force
+    }
+
+    return $copy
+}
+
+function Get-ExistingBlenderPanelButton($Panel, [string]$ButtonId, [string]$Target) {
+    foreach ($button in @($Panel.Buttons)) {
+        $existingId = if ($button.PSObject.Properties['Id']) { [string]$button.Id } else { '' }
+        $existingTarget = if ($button.PSObject.Properties['Target']) { [string]$button.Target } else { '' }
+
+        if (-not [string]::IsNullOrWhiteSpace($ButtonId) -and $existingId -eq $ButtonId) {
+            return $button
+        }
+
+        if (
+            -not [string]::IsNullOrWhiteSpace($Target) -and
+            -not [string]::IsNullOrWhiteSpace($existingTarget) -and
+            $existingTarget -ieq $Target
+        ) {
+            return $button
+        }
+    }
+
+    return $null
+}
+
+function Merge-ImportedBlenderButton($ExistingButton, $ImportedButton) {
+    $merged = Copy-ButtonRecord -Button $ImportedButton
+
+    if ($null -ne $ExistingButton) {
+        foreach ($property in $ExistingButton.PSObject.Properties) {
+            if (-not $merged.PSObject.Properties[[string]$property.Name]) {
+                $merged | Add-Member -MemberType NoteProperty -Name ([string]$property.Name) -Value $property.Value -Force
+            }
+        }
+
+        if ($ExistingButton.PSObject.Properties['Label']) {
+            $merged.Label = [string]$ExistingButton.Label
+        }
+        if ($ExistingButton.PSObject.Properties['Tooltip']) {
+            $merged.Tooltip = [string]$ExistingButton.Tooltip
+        }
+        if ($ExistingButton.PSObject.Properties['Shortcut']) {
+            $merged.Shortcut = [string]$ExistingButton.Shortcut
+        }
+        if ($ExistingButton.PSObject.Properties['BindingId']) {
+            $merged.BindingId = [int]$ExistingButton.BindingId
+        }
+        if ($ExistingButton.PSObject.Properties['style_group_id']) {
+            $merged.style_group_id = [string]$ExistingButton.style_group_id
+        }
+        if ($ExistingButton.PSObject.Properties['command_id']) {
+            $merged.command_id = [string]$ExistingButton.command_id
+        }
+    }
+
+    if (-not $merged.PSObject.Properties['command_id']) {
+        $merged | Add-Member -MemberType NoteProperty -Name command_id -Value 'flowcell.run_script' -Force
+    }
+    if (-not $merged.PSObject.Properties['style_group_id']) {
+        $merged | Add-Member -MemberType NoteProperty -Name style_group_id -Value '' -Force
+    }
+    if (-not $merged.PSObject.Properties['Shortcut']) {
+        $merged | Add-Member -MemberType NoteProperty -Name Shortcut -Value '' -Force
+    }
+    if (-not $merged.PSObject.Properties['BindingId']) {
+        $merged | Add-Member -MemberType NoteProperty -Name BindingId -Value 0 -Force
+    }
+
+    return $merged
+}
+
 $filesPanel = Get-OrCreateFlowCellPanel -Program $blenderProgram -PanelName 'Files' -PreferredId 'panel_files'
 $utilityPanel = Get-OrCreateFlowCellPanel -Program $blenderProgram -PanelName 'Utility' -PreferredId 'panel_utility'
 $collectionsPanel = Get-OrCreateFlowCellPanel -Program $blenderProgram -PanelName 'Collections' -PreferredId 'panel_collections'
@@ -823,7 +903,8 @@ foreach ($entry in @($importedPanelButtonMap.GetEnumerator())) {
         [void]$mergedButtons.Add($button)
     }
     foreach ($button in @($entry.Value.Buttons)) {
-        [void]$mergedButtons.Add($button)
+        $existingButton = Get-ExistingBlenderPanelButton -Panel $targetPanel -ButtonId ([string]$button.Id) -Target ([string]$button.Target)
+        [void]$mergedButtons.Add((Merge-ImportedBlenderButton -ExistingButton $existingButton -ImportedButton $button))
     }
     $targetPanel.Buttons = @($mergedButtons.ToArray())
     $lastImportedPanel = $targetPanel

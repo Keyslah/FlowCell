@@ -2224,6 +2224,9 @@ fn install_blender_buttons(
         .join("SupportScripts")
         .join("Install-BlenderFlowCellButtons.ps1");
 
+    let selected_paths_json = serde_json::to_string(&selected_paths)
+        .map_err(|error| format!("Could not serialize selected Blender button paths: {}", error))?;
+
     let mut command = Command::new(powershell_exe());
     command
         .args([
@@ -2235,9 +2238,9 @@ fn install_blender_buttons(
             &installer_path.display().to_string(),
             "-PanelName",
             &panel_name,
-            "-SelectedPaths",
+            "-SelectedPathsJson",
+            &selected_paths_json,
         ])
-        .args(selected_paths.iter().cloned())
         .creation_flags(CREATE_NO_WINDOW);
     let output = command.output().map_err(|error| error.to_string())?;
 

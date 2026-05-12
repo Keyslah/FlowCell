@@ -13,6 +13,7 @@ import {
   IMPORTED_SKIN_PRESETS
 } from "../lib/theme";
 import {
+  ensureImportedSkinLabelPlaceholder,
   getImportedSkin,
   IMPORTED_SKIN_LABEL_PLACEHOLDER,
   normalizeImportedSkinHtmlMarkup,
@@ -59,6 +60,24 @@ const MAIN_PAGE_SECTIONS: SectionCardConfig[] = [
     previewLabel: "Rail Box"
   },
   {
+    id: "main-program-buttons",
+    title: "Program Buttons",
+    description:
+      "The clickable buttons in the Programs rail. Uses saved button code.",
+    applyLabel: "Apply to Program Buttons",
+    previewKind: "button",
+    previewLabel: "Program"
+  },
+  {
+    id: "main-panels",
+    title: "Panel Buttons",
+    description:
+      "The clickable buttons in the Panels rail, including Main Appearance. Uses saved button code.",
+    applyLabel: "Apply to Panel Buttons",
+    previewKind: "button",
+    previewLabel: "Panel"
+  },
+  {
     id: "main-panel-surface",
     title: "Main Page Card",
     description: "The large host-owned card surface behind the current panel. Uses saved card code.",
@@ -68,10 +87,10 @@ const MAIN_PAGE_SECTIONS: SectionCardConfig[] = [
   },
   {
     id: "main-buttons",
-    title: "Buttons",
+    title: "Workspace Buttons",
     description:
       "Default main-page button surfaces when a button does not have its own Button Appearance. Uses saved button code.",
-    applyLabel: "Apply to Buttons",
+    applyLabel: "Apply to Workspace Buttons",
     previewKind: "button",
     previewLabel: "Button"
   },
@@ -85,9 +104,18 @@ const MAIN_PAGE_SECTIONS: SectionCardConfig[] = [
   },
   {
     id: "main-misc",
-    title: "Misc",
-    description: "Min / Max / Close and other host-owned action buttons.",
-    applyLabel: "Apply to Main Buttons",
+    title: "Action Buttons",
+    description:
+      "Save Layout, Load Layout, Binds, Macro Lab, Add Script, Add Macro, Add Program, Add Panel, and similar host-owned action buttons.",
+    applyLabel: "Apply to Action Buttons",
+    previewKind: "button",
+    previewLabel: "Save Layout"
+  },
+  {
+    id: "main-window-buttons",
+    title: "Window Buttons",
+    description: "The Min / Max / Close window controls. Uses saved button code.",
+    applyLabel: "Apply to Window Buttons",
     previewKind: "button",
     previewLabel: "Close"
   }
@@ -111,6 +139,9 @@ const POPOUT_SECTIONS: SectionCardConfig[] = [
     previewLabel: "Tool Surface"
   }
 ];
+
+const DEDICATED_BUTTON_STYLE_GROUP_PREFIX = "button-style-";
+const DEDICATED_BUTTON_IMPORTED_SKIN_PREFIX = "button-skin-";
 
 function buildPreviewStyleGroup(importedSkinId: string): StyleGroup {
   return {
@@ -186,6 +217,17 @@ function createDraftSkinId(): string {
   return `imported-skin-${randomPart}`;
 }
 
+function isDedicatedButtonImportedSkin(skin: ImportedSkin): boolean {
+  return skin.id.startsWith(DEDICATED_BUTTON_IMPORTED_SKIN_PREFIX);
+}
+
+function isDedicatedButtonStyleGroup(styleGroup: StyleGroup): boolean {
+  return (
+    styleGroup.id.startsWith(DEDICATED_BUTTON_STYLE_GROUP_PREFIX) ||
+    (styleGroup.importedSkinId ?? "").startsWith(DEDICATED_BUTTON_IMPORTED_SKIN_PREFIX)
+  );
+}
+
 export function AppearanceTab({
   state,
   appTheme,
@@ -202,28 +244,38 @@ export function AppearanceTab({
 }: AppearanceTabProps) {
   const styleGroups = state.StyleGroups ?? [];
   const importedSkins = state.ImportedSkins ?? [];
+  const surfaceStyleGroups = styleGroups.filter(
+    (styleGroup) => !isDedicatedButtonStyleGroup(styleGroup)
+  );
+  const editorImportedSkins = importedSkins.filter(
+    (skin) => !isDedicatedButtonImportedSkin(skin)
+  );
   const loadEditorSkinDraft = (skinId: string) => {
     if (!skinId.trim()) {
       setEditorSkinId("");
       setEditorDraft(createBlankImportedSkinDraft());
       return;
     }
-    const sourceSkin = importedSkins.find((skin) => skin.id === skinId) ?? importedSkins[0];
+    const sourceSkin =
+      editorImportedSkins.find((skin) => skin.id === skinId) ?? editorImportedSkins[0];
     if (!sourceSkin) {
       setEditorSkinId("");
       setEditorDraft(createBlankImportedSkinDraft());
       return;
     }
     setEditorSkinId(sourceSkin.id);
-    setEditorDraft({ ...sourceSkin });
+    setEditorDraft(ensureImportedSkinLabelPlaceholder({ ...sourceSkin }));
   };
 
   const [sectionDrafts, setSectionDrafts] = useState<Record<string, string>>({
+    "main-panels": readAssignment(state, "main-panels"),
+    "main-program-buttons": readAssignment(state, "main-program-buttons"),
     "main-rails": readAssignment(state, "main-rails"),
     "main-panel-surface": readAssignment(state, "main-panel-surface"),
     "main-buttons": readAssignment(state, "main-buttons"),
     "main-cards": readAssignment(state, "main-cards"),
     "main-misc": readAssignment(state, "main-misc"),
+    "main-window-buttons": readAssignment(state, "main-window-buttons"),
     "popout-regular-buttons": readAssignment(state, "popout-regular-buttons"),
     "popout-tools": readAssignment(state, "popout-tools")
   });
@@ -233,11 +285,14 @@ export function AppearanceTab({
 
   useEffect(() => {
     setSectionDrafts({
+      "main-panels": readAssignment(state, "main-panels"),
+      "main-program-buttons": readAssignment(state, "main-program-buttons"),
       "main-rails": readAssignment(state, "main-rails"),
       "main-panel-surface": readAssignment(state, "main-panel-surface"),
       "main-buttons": readAssignment(state, "main-buttons"),
       "main-cards": readAssignment(state, "main-cards"),
       "main-misc": readAssignment(state, "main-misc"),
+      "main-window-buttons": readAssignment(state, "main-window-buttons"),
       "popout-regular-buttons": readAssignment(state, "popout-regular-buttons"),
       "popout-tools": readAssignment(state, "popout-tools")
     });
@@ -251,14 +306,14 @@ export function AppearanceTab({
     if (!editorSkinId.trim()) {
       return;
     }
-    const matchingSkin = importedSkins.find((skin) => skin.id === editorSkinId);
+    const matchingSkin = editorImportedSkins.find((skin) => skin.id === editorSkinId);
     if (!matchingSkin) {
       setEditorSkinId("");
       setEditorDraft(createBlankImportedSkinDraft());
       return;
     }
     setEditorDraft((current) => (current.id === matchingSkin.id ? current : { ...matchingSkin }));
-  }, [editorSkinId, importedSkins]);
+  }, [editorImportedSkins, editorSkinId]);
 
   const previewDraftStyleGroup = useMemo(
     () => buildPreviewStyleGroup(editorDraft.id || "preview-imported-skin"),
@@ -358,7 +413,7 @@ export function AppearanceTab({
             onChange={(event) => setSectionDraft(config.id, event.target.value)}
           >
             <option value="">Host Default</option>
-            {styleGroups.map((styleGroup) => (
+            {surfaceStyleGroups.map((styleGroup) => (
               <option key={styleGroup.id} value={styleGroup.id}>
                 {styleGroup.name}
               </option>
@@ -526,14 +581,15 @@ export function AppearanceTab({
             type="button"
             className="surface-action"
             onClick={() => {
-              const nextDraft =
+              const nextDraft = ensureImportedSkinLabelPlaceholder(
                 editorDraft.id.trim().length > 0
                   ? editorDraft
                   : {
                       ...editorDraft,
                       id: createDraftSkinId(),
                       name: editorDraft.name.trim() || "New Imported Skin"
-                    };
+                    }
+              );
               setEditorSkinId(nextDraft.id);
               setEditorDraft(nextDraft);
               onSaveImportedSkin(nextDraft);
@@ -559,7 +615,7 @@ export function AppearanceTab({
                   onChange={(event) => loadEditorSkinDraft(event.target.value)}
                 >
                   <option value="">Blank Draft</option>
-                  {importedSkins.map((skin) => (
+                  {editorImportedSkins.map((skin) => (
                     <option key={skin.id} value={skin.id}>
                       {skin.name}
                     </option>
@@ -580,24 +636,32 @@ export function AppearanceTab({
                       return;
                     }
                     if (presetId === "black-tint") {
-                      const builtSkin = buildBlackTintImportedSkin(themeDraft.blackTintOpacity);
+                      const builtSkin = buildBlackTintImportedSkin(
+                        themeDraft.blackTintOpacity,
+                        "imported-skin-black-tint",
+                        themeDraft.mainCardBlurPx
+                      );
                       const targetSkinId = editorSkinId.trim();
                       setEditorSkinId(targetSkinId);
-                      setEditorDraft({
-                        ...builtSkin,
-                        id: targetSkinId,
-                        name: targetSkinId ? builtSkin.name : ""
-                      });
+                      setEditorDraft(
+                        ensureImportedSkinLabelPlaceholder({
+                          ...builtSkin,
+                          id: targetSkinId,
+                          name: targetSkinId ? builtSkin.name : ""
+                        })
+                      );
                       event.target.value = "";
                       return;
                     }
                     const targetSkinId = editorSkinId.trim();
                     setEditorSkinId(targetSkinId);
-                    setEditorDraft({
-                      ...presetSkin,
-                      id: targetSkinId,
-                      name: targetSkinId ? presetSkin.name : ""
-                    });
+                    setEditorDraft(
+                      ensureImportedSkinLabelPlaceholder({
+                        ...presetSkin,
+                        id: targetSkinId,
+                        name: targetSkinId ? presetSkin.name : ""
+                      })
+                    );
                     event.target.value = "";
                   }}
                 >

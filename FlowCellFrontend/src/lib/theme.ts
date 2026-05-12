@@ -167,40 +167,49 @@ function formatAlpha(value: number): string {
 
 export function buildBlackTintImportedSkin(
   opacity = DEFAULT_APP_THEME.blackTintOpacity,
-  skinId = "imported-skin-black-tint"
+  skinId = "imported-skin-black-tint",
+  surfaceBlurPx = DEFAULT_APP_THEME.mainCardBlurPx
 ): ImportedSkin {
   const solid = readThemeOpacity(opacity, DEFAULT_APP_THEME.blackTintOpacity);
   const depth = Math.min(1, Math.max(0, (solid - 0.35) / 0.65));
+  const normalizedBlur =
+    typeof surfaceBlurPx === "number" && !Number.isNaN(surfaceBlurPx)
+      ? Math.min(48, Math.max(0, surfaceBlurPx))
+      : DEFAULT_APP_THEME.mainCardBlurPx;
+  const pillBlur = Math.max(6, Math.round(Math.max(8, normalizedBlur * 0.55)));
+  const cardBlur = Math.round(normalizedBlur);
   const pillTop = formatAlpha(Math.min(1, solid + 0.06 + depth * 0.04));
   const pillBottom = formatAlpha(Math.min(0.995, solid + 0.02 + depth * 0.03));
   const pillHoverTop = formatAlpha(Math.min(1, solid + 0.1 + depth * 0.04));
   const pillHoverBottom = formatAlpha(Math.min(1, solid + 0.05 + depth * 0.04));
   const cardTop = formatAlpha(Math.min(1, solid + 0.08 + depth * 0.04));
   const cardBottom = formatAlpha(Math.min(1, solid + 0.04 + depth * 0.03));
-  const pillDropShadow = formatAlpha(0.34 + depth * 0.14);
-  const pillInnerShadow = formatAlpha(0.52 + depth * 0.18);
+  const pillBase = formatAlpha(Math.max(0.2, solid * 0.92));
+  const cardBase = formatAlpha(Math.max(0.24, solid * 0.96));
+  const pillDropShadow = formatAlpha(0.4 + depth * 0.18);
+  const pillInnerShadow = formatAlpha(0.56 + depth * 0.2);
   const pillGloss = formatAlpha(Math.max(0.02, 0.05 - depth * 0.02));
   const pillHighlight = formatAlpha(Math.max(0.06, 0.16 - depth * 0.06));
   const pillOutline = formatAlpha(Math.max(0.03, 0.08 - depth * 0.03));
-  const pillVeilTop = formatAlpha(0.08 + depth * 0.1);
-  const pillVeilBottom = formatAlpha(0.2 + depth * 0.16);
-  const cardInnerShadow = formatAlpha(0.56 + depth * 0.18);
-  const cardDropShadow = formatAlpha(0.3 + depth * 0.14);
+  const pillVeilTop = formatAlpha(0.14 + depth * 0.14);
+  const pillVeilBottom = formatAlpha(0.28 + depth * 0.2);
+  const cardInnerShadow = formatAlpha(0.64 + depth * 0.2);
+  const cardDropShadow = formatAlpha(0.38 + depth * 0.18);
   const cardGloss = formatAlpha(Math.max(0.02, 0.04 - depth * 0.015));
   const cardHighlight = formatAlpha(Math.max(0.05, 0.14 - depth * 0.05));
   const cardOutline = formatAlpha(Math.max(0.03, 0.08 - depth * 0.025));
   const cardLabel = formatAlpha(Math.max(0.18, 0.28 - depth * 0.07));
-  const cardVeilTop = formatAlpha(0.12 + depth * 0.1);
-  const cardVeilBottom = formatAlpha(0.24 + depth * 0.16);
+  const cardVeilTop = formatAlpha(0.2 + depth * 0.14);
+  const cardVeilBottom = formatAlpha(0.36 + depth * 0.2);
 
   return {
     id: skinId,
     name: "Black Tint",
     themeBinding: BLACK_TINT_THEME_BINDING,
     html: `<div class="black-tint-pill"><span class="black-tint-pill__label">{{label}}</span></div>`,
-    css: `.black-tint-pill{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:0 24px;border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,${pillGloss}),rgba(255,255,255,0) 18%),linear-gradient(180deg,rgba(0,0,0,${pillTop}),rgba(0,0,0,${pillBottom}));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),inset 0 -42px 74px rgba(0,0,0,${pillInnerShadow}),0 22px 40px rgba(0,0,0,${pillDropShadow});backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);overflow:hidden}.black-tint-pill::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,${pillVeilTop}),rgba(0,0,0,${pillVeilBottom})),radial-gradient(circle at top left,rgba(255,255,255,.03),transparent 34%)}.black-tint-pill::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(145deg,rgba(255,255,255,${pillHighlight}),rgba(255,255,255,.02) 42%,rgba(255,255,255,${pillOutline}));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.84}.black-tint-pill__label{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:100%;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;color:rgba(255,255,255,.96);font:600 14px/1 "Segoe UI",sans-serif;letter-spacing:-.02em;text-shadow:0 1px 12px rgba(0,0,0,.62)}.button-skin:hover .black-tint-pill,.button-skin.is-selected .black-tint-pill{background:linear-gradient(180deg,rgba(255,255,255,${pillGloss}),rgba(255,255,255,0) 18%),linear-gradient(180deg,rgba(0,0,0,${pillHoverTop}),rgba(0,0,0,${pillHoverBottom}));box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 -46px 78px rgba(0,0,0,${pillInnerShadow}),0 24px 42px rgba(0,0,0,${pillDropShadow})}.button-skin.is-compact .black-tint-pill{padding:0 10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 4px 10px rgba(0,0,0,.28)}.button-skin.is-compact .black-tint-pill__label{font-size:11px;line-height:1;padding:2px 0;letter-spacing:0}`,
+    css: `.black-tint-pill{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:0 24px;border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,${pillGloss}),rgba(255,255,255,0) 18%),linear-gradient(180deg,rgba(0,0,0,${pillTop}),rgba(0,0,0,${pillBottom})),rgba(0,0,0,${pillBase});box-shadow:inset 0 1px 0 rgba(255,255,255,.06),inset 0 -42px 74px rgba(0,0,0,${pillInnerShadow}),0 22px 40px rgba(0,0,0,${pillDropShadow});backdrop-filter:blur(${pillBlur}px) saturate(115%);-webkit-backdrop-filter:blur(${pillBlur}px) saturate(115%);overflow:hidden}.black-tint-pill::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,${pillVeilTop}),rgba(0,0,0,${pillVeilBottom})),radial-gradient(circle at top left,rgba(255,255,255,.03),transparent 34%)}.black-tint-pill::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(145deg,rgba(255,255,255,${pillHighlight}),rgba(255,255,255,.02) 42%,rgba(255,255,255,${pillOutline}));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.84}.black-tint-pill__label{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:100%;max-width:100%;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:center;color:rgba(255,255,255,.96);font:600 14px/1 "Segoe UI",sans-serif;letter-spacing:-.02em;text-shadow:0 1px 12px rgba(0,0,0,.62)}.button-skin:hover .black-tint-pill,.button-skin.is-selected .black-tint-pill{background:linear-gradient(180deg,rgba(255,255,255,${pillGloss}),rgba(255,255,255,0) 18%),linear-gradient(180deg,rgba(0,0,0,${pillHoverTop}),rgba(0,0,0,${pillHoverBottom})),rgba(0,0,0,${pillBase});box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 -46px 78px rgba(0,0,0,${pillInnerShadow}),0 24px 42px rgba(0,0,0,${pillDropShadow})}.button-skin.is-compact .black-tint-pill{padding:0 10px;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 4px 10px rgba(0,0,0,.32)}.button-skin.is-compact .black-tint-pill__label{font-size:11px;line-height:1;padding:2px 0;letter-spacing:0}`,
     cardHtml: `<div class="black-tint-surface"><span class="black-tint-surface__label">{{label}}</span></div>`,
-    cardCss: `.black-tint-surface{position:relative;width:100%;height:100%;border-radius:inherit;background:linear-gradient(180deg,rgba(255,255,255,${cardGloss}),rgba(255,255,255,0) 16%),linear-gradient(180deg,rgba(0,0,0,${cardTop}),rgba(0,0,0,${cardBottom}));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),inset 0 -70px 108px rgba(0,0,0,${cardInnerShadow}),0 32px 84px rgba(0,0,0,${cardDropShadow});backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);overflow:hidden}.black-tint-surface::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,${cardVeilTop}),rgba(0,0,0,${cardVeilBottom})),radial-gradient(circle at top left,rgba(255,255,255,.03),transparent 32%),radial-gradient(circle at bottom right,rgba(255,255,255,.02),transparent 26%)}.black-tint-surface::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(145deg,rgba(255,255,255,${cardHighlight}),rgba(255,255,255,.02) 42%,rgba(255,255,255,${cardOutline}));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.82}.black-tint-surface__label{position:absolute;top:18px;right:22px;z-index:1;font:600 11px/1 "Segoe UI",sans-serif;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,${cardLabel})}`,
+    cardCss: `.black-tint-surface{position:relative;width:100%;height:100%;border-radius:inherit;background:linear-gradient(180deg,rgba(255,255,255,${cardGloss}),rgba(255,255,255,0) 16%),linear-gradient(180deg,rgba(0,0,0,${cardTop}),rgba(0,0,0,${cardBottom})),rgba(0,0,0,${cardBase});box-shadow:inset 0 1px 0 rgba(255,255,255,.05),inset 0 -70px 108px rgba(0,0,0,${cardInnerShadow}),0 32px 84px rgba(0,0,0,${cardDropShadow});backdrop-filter:blur(${cardBlur}px) saturate(118%);-webkit-backdrop-filter:blur(${cardBlur}px) saturate(118%);overflow:hidden}.black-tint-surface::before{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(0,0,0,${cardVeilTop}),rgba(0,0,0,${cardVeilBottom})),radial-gradient(circle at top left,rgba(255,255,255,.03),transparent 32%),radial-gradient(circle at bottom right,rgba(255,255,255,.02),transparent 26%)}.black-tint-surface::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(145deg,rgba(255,255,255,${cardHighlight}),rgba(255,255,255,.02) 42%,rgba(255,255,255,${cardOutline}));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.82}.black-tint-surface__label{position:absolute;top:18px;right:22px;z-index:1;font:600 11px/1 "Segoe UI",sans-serif;letter-spacing:.18em;text-transform:uppercase;color:rgba(255,255,255,${cardLabel})}`,
     svg: ""
   };
 }

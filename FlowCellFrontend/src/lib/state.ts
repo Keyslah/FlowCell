@@ -30,9 +30,15 @@ import {
 const DEFAULT_IMPORTED_SKIN_ID = "imported-skin-01";
 const DEFAULT_PROGRAM_STYLE_GROUP_ID = "style-group-03";
 const IMPORTED_SKIN_LIBRARY_STYLE_GROUP_PREFIX = "style-group-imported-";
+const DEDICATED_BUTTON_STYLE_GROUP_PREFIX = "button-style-";
+const DEDICATED_BUTTON_IMPORTED_SKIN_PREFIX = "button-skin-";
 const DEFAULT_SURFACE_STYLE_ASSIGNMENTS: SurfaceStyleAssignment[] = [
   {
     surface_id: "main-panels",
+    style_group_id: ""
+  },
+  {
+    surface_id: "main-program-buttons",
     style_group_id: ""
   },
   {
@@ -53,6 +59,10 @@ const DEFAULT_SURFACE_STYLE_ASSIGNMENTS: SurfaceStyleAssignment[] = [
   },
   {
     surface_id: "main-misc",
+    style_group_id: ""
+  },
+  {
+    surface_id: "main-window-buttons",
     style_group_id: ""
   },
   {
@@ -118,6 +128,18 @@ function buildImportedSkinLibraryStyleGroupId(importedSkinId: string): string {
 function buildImportedSkinLibraryStyleGroupName(importedSkin: ImportedSkin): string {
   const skinName = importedSkin.name.trim() || importedSkin.id;
   return `Skin · ${skinName}`;
+}
+
+function isImportedSkinLibraryStyleGroupId(styleGroupId: string): boolean {
+  return styleGroupId.startsWith(IMPORTED_SKIN_LIBRARY_STYLE_GROUP_PREFIX);
+}
+
+function isDedicatedButtonImportedSkinId(importedSkinId: string): boolean {
+  return importedSkinId.startsWith(DEDICATED_BUTTON_IMPORTED_SKIN_PREFIX);
+}
+
+function isDedicatedButtonStyleGroupId(styleGroupId: string): boolean {
+  return styleGroupId.startsWith(DEDICATED_BUTTON_STYLE_GROUP_PREFIX);
 }
 
 const DEFAULT_ALIGNMENT_MODIFIERS: AlignmentToolStateRecord["Modifiers"] = {
@@ -554,25 +576,58 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
     }
   });
 
-  const normalizedStyleGroups = styleGroupsSource.map((styleGroup) =>
-    styleGroup.skinId === "imported-skin" && !(styleGroup.importedSkinId ?? "").trim()
-      ? {
-          ...styleGroup,
-          importedSkinId: defaultImportedSkinId
-        }
-      : styleGroup
-  );
+  const normalizedStyleGroups = styleGroupsSource
+    .map((styleGroup) =>
+      styleGroup.skinId === "imported-skin" && !(styleGroup.importedSkinId ?? "").trim()
+        ? {
+            ...styleGroup,
+            importedSkinId: defaultImportedSkinId
+          }
+        : styleGroup
+    )
+    .filter((styleGroup, _index, allStyleGroups) => {
+      if (!isImportedSkinLibraryStyleGroupId(styleGroup.id)) {
+        return true;
+      }
+
+      const importedSkinId = (styleGroup.importedSkinId ?? "").trim();
+      if (!importedSkinId || isDedicatedButtonImportedSkinId(importedSkinId)) {
+        return false;
+      }
+
+      return !allStyleGroups.some(
+        (otherStyleGroup) =>
+          otherStyleGroup.id !== styleGroup.id &&
+          !isImportedSkinLibraryStyleGroupId(otherStyleGroup.id) &&
+          !isDedicatedButtonStyleGroupId(otherStyleGroup.id) &&
+          (otherStyleGroup.importedSkinId ?? "").trim() === importedSkinId
+      );
+    });
   const styleGroups = [...normalizedStyleGroups];
   let nextStyleGroupIndex =
     styleGroups.reduce((maxIndex, styleGroup) => Math.max(maxIndex, styleGroup.index ?? 0), 0) + 1;
 
   importedSkins.forEach((importedSkin) => {
+    if (isDedicatedButtonImportedSkinId(importedSkin.id)) {
+      return;
+    }
+
+    const hasExplicitStyleGroup = styleGroups.some(
+      (styleGroup) =>
+        !isImportedSkinLibraryStyleGroupId(styleGroup.id) &&
+        !isDedicatedButtonStyleGroupId(styleGroup.id) &&
+        (styleGroup.importedSkinId ?? "").trim() === importedSkin.id
+    );
+    if (hasExplicitStyleGroup) {
+      return;
+    }
+
     const autoStyleGroupId = buildImportedSkinLibraryStyleGroupId(importedSkin.id);
     const existingIndex = styleGroups.findIndex((styleGroup) => styleGroup.id === autoStyleGroupId);
     const nextStyleGroup: StyleGroup = {
       id: autoStyleGroupId,
       index: existingIndex >= 0 ? styleGroups[existingIndex].index : nextStyleGroupIndex++,
-      name: buildImportedSkinLibraryStyleGroupName(importedSkin),
+      name: `Skin - ${importedSkin.name.trim() || importedSkin.id}`,
       skinId: "imported-skin",
       importedSkinId: importedSkin.id,
       accent: existingIndex >= 0 ? styleGroups[existingIndex].accent : "#ffb870"

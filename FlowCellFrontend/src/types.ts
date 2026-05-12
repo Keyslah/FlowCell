@@ -114,11 +114,13 @@ export interface StyleGroup {
 
 export type SurfaceStyleSectionId =
   | "main-panels"
+  | "main-program-buttons"
   | "main-rails"
   | "main-panel-surface"
   | "main-buttons"
   | "main-cards"
   | "main-misc"
+  | "main-window-buttons"
   | "popout-regular-buttons"
   | "popout-tools";
 
@@ -361,6 +363,7 @@ export interface WindowContext {
     | "tool-popout"
     | "panel-fan-options"
     | "button-appearance"
+    | "button-options"
     | "layout-picker";
   programId?: number;
   panelId?: string;

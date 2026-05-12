@@ -61,6 +61,10 @@ function buildButtonAppearanceLabel(programId: number, panelId: string): string 
   return `button-appearance-${programId}-${sanitizeWindowToken(panelId)}`;
 }
 
+function buildButtonOptionsLabel(programId: number, panelId: string): string {
+  return `button-options-${programId}-${sanitizeWindowToken(panelId)}`;
+}
+
 function buildLayoutPickerLabel(): string {
   return "flowcell-layout-picker";
 }
@@ -165,6 +169,13 @@ function resolveButtonAppearanceWindowOptions() {
   return {
     width: 960,
     height: 860
+  };
+}
+
+function resolveButtonOptionsWindowOptions() {
+  return {
+    width: 1120,
+    height: 900
   };
 }
 
@@ -579,6 +590,42 @@ export function openButtonAppearanceWindow(args: {
         buttonId: args.buttonId
       }),
       title: `FlowCell - Button Appearance - ${args.panelName}`,
+      ...placement,
+      resizable: true,
+      decorations: false,
+      visible: true,
+      focus: true,
+      alwaysOnTop: true
+    });
+
+    await waitForWindowCreated(window);
+    await applyWindowPlacement(window, placement);
+  })();
+}
+
+export function openButtonOptionsWindow(args: {
+  programId: number;
+  panelId: string;
+  panelName: string;
+  buttonIds: string[];
+}): Promise<void> {
+  const label = buildButtonOptionsLabel(args.programId, args.panelId);
+  return (async () => {
+    const placement = resolveButtonOptionsWindowOptions();
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      await existing.close().catch(() => {});
+    }
+
+    const window = new WebviewWindow(label, {
+      url: buildWindowContextUrl({
+        kind: "button-options",
+        programId: args.programId,
+        panelId: args.panelId,
+        panelName: args.panelName,
+        buttonIds: args.buttonIds
+      }),
+      title: `FlowCell - Button Options - ${args.panelName}`,
       ...placement,
       resizable: true,
       decorations: false,

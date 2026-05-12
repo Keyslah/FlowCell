@@ -34,6 +34,26 @@ export function normalizeImportedSkinHtmlMarkup(markup: string): string {
   return markup;
 }
 
+export function ensureImportedSkinLabelPlaceholder(skin: ImportedSkin): ImportedSkin {
+  const currentHtml = skin.html ?? "";
+  if (
+    !currentHtml.trim() ||
+    currentHtml.includes(IMPORTED_SKIN_LABEL_PLACEHOLDER)
+  ) {
+    return skin;
+  }
+
+  const normalizedHtml = normalizeImportedSkinHtmlMarkup(currentHtml);
+  if (normalizedHtml === currentHtml) {
+    return skin;
+  }
+
+  return {
+    ...skin,
+    html: normalizedHtml
+  };
+}
+
 function hasSkinContent(value: string | undefined): boolean {
   return Boolean(value?.trim());
 }

@@ -1,0 +1,119 @@
+[2m10:49:22 AM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Cannot read properties of undefined (reading 'invoke')
+[39m > invoke node_modules/@tauri-apps/api/core.js:202:38
+ > getWindowContext src/lib/tauri.ts:429:9
+    427 |  
+    428 |  export function getWindowContext(): Promise<WindowContext> {
+    429 |    return invoke("get_window_context");
+        |           ^
+    430 |  }
+    431 |  
+ > boot src/App.tsx:1580:61
+ > src/App.tsx:1589:9
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25989:19
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > commitHookEffectListMount node_modules/react-dom/cjs/react-dom-client.development.js:13249:28
+ > commitHookPassiveMountEffects node_modules/react-dom/cjs/react-dom-client.development.js:13336:10
+ > commitPassiveMountOnFiber node_modules/react-dom/cjs/react-dom-client.development.js:15484:12
+ > recursivelyTraversePassiveMountEffects node_modules/react-dom/cjs/react-dom-client.development.js:15439:10
+
+[2m10:49:22 AM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Cannot read properties of undefined (reading 'invoke')
+[39m > invoke node_modules/@tauri-apps/api/core.js:202:38
+ > getWindowContext src/lib/tauri.ts:429:9
+    427 |  
+    428 |  export function getWindowContext(): Promise<WindowContext> {
+    429 |    return invoke("get_window_context");
+        |           ^
+    430 |  }
+    431 |  
+ > boot src/App.tsx:1580:61
+ > src/App.tsx:1589:9
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25989:19
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > commitHookEffectListMount node_modules/react-dom/cjs/react-dom-client.development.js:13249:28
+ > commitHookPassiveMountEffects node_modules/react-dom/cjs/react-dom-client.development.js:13336:10
+ > reconnectPassiveEffects node_modules/react-dom/cjs/react-dom-client.development.js:15832:10
+ > recursivelyTraverseReconnectPassiveEffects node_modules/react-dom/cjs/react-dom-client.development.js:15784:8
+
+[2m10:49:28 AM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Cannot read properties of undefined (reading 'invoke')
+[39m > invoke node_modules/@tauri-apps/api/core.js:202:38
+ > getWindowContext src/lib/tauri.ts:429:9
+    427 |  
+    428 |  export function getWindowContext(): Promise<WindowContext> {
+    429 |    return invoke("get_window_context");
+        |           ^
+    430 |  }
+    431 |  
+ > boot src/App.tsx:1580:61
+ > src/App.tsx:1589:9
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25989:19
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > commitHookEffectListMount node_modules/react-dom/cjs/react-dom-client.development.js:13249:28
+ > commitHookPassiveMountEffects node_modules/react-dom/cjs/react-dom-client.development.js:13336:10
+ > commitPassiveMountOnFiber node_modules/react-dom/cjs/react-dom-client.development.js:15484:12
+ > recursivelyTraversePassiveMountEffects node_modules/react-dom/cjs/react-dom-client.development.js:15439:10
+
+[2m10:49:28 AM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Cannot read properties of undefined (reading 'invoke')
+[39m > invoke node_modules/@tauri-apps/api/core.js:202:38
+ > getWindowContext src/lib/tauri.ts:429:9
+    427 |  
+    428 |  export function getWindowContext(): Promise<WindowContext> {
+    429 |    return invoke("get_window_context");
+        |           ^
+    430 |  }
+    431 |  
+ > boot src/App.tsx:1580:61
+ > src/App.tsx:1589:9
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25989:19
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > commitHookEffectListMount node_modules/react-dom/cjs/react-dom-client.development.js:13249:28
+ > commitHookPassiveMountEffects node_modules/react-dom/cjs/react-dom-client.development.js:13336:10
+ > reconnectPassiveEffects node_modules/react-dom/cjs/react-dom-client.development.js:15832:10
+ > recursivelyTraverseReconnectPassiveEffects node_modules/react-dom/cjs/react-dom-client.development.js:15784:8
+
+[2m11:29:05 AM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Cannot read properties of undefined (reading 'invoke')
+[39m > invoke node_modules/@tauri-apps/api/core.js:202:38
+ > getWindowContext src/lib/tauri.ts:429:9
+    427 |  
+    428 |  export function getWindowContext(): Promise<WindowContext> {
+    429 |    return invoke("get_window_context");
+        |           ^
+    430 |  }
+    431 |  
+ > boot src/App.tsx:1580:61
+ > src/App.tsx:1589:9
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25989:19
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > commitHookEffectListMount node_modules/react-dom/cjs/react-dom-client.development.js:13249:28
+ > commitHookPassiveMountEffects node_modules/react-dom/cjs/react-dom-client.development.js:13336:10
+ > commitPassiveMountOnFiber node_modules/react-dom/cjs/react-dom-client.development.js:15484:12
+ > recursivelyTraversePassiveMountEffects node_modules/react-dom/cjs/react-dom-client.development.js:15439:10
+
+[2m11:29:05 AM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Cannot read properties of undefined (reading 'invoke')
+[39m > invoke node_modules/@tauri-apps/api/core.js:202:38
+ > getWindowContext src/lib/tauri.ts:429:9
+    427 |  
+    428 |  export function getWindowContext(): Promise<WindowContext> {
+    429 |    return invoke("get_window_context");
+        |           ^
+    430 |  }
+    431 |  
+ > boot src/App.tsx:1580:61
+ > src/App.tsx:1589:9
+ > Object.react_stack_bottom_frame node_modules/react-dom/cjs/react-dom-client.development.js:25989:19
+ > runWithFiberInDEV node_modules/react-dom/cjs/react-dom-client.development.js:871:29
+ > commitHookEffectListMount node_modules/react-dom/cjs/react-dom-client.development.js:13249:28
+ > commitHookPassiveMountEffects node_modules/react-dom/cjs/react-dom-client.development.js:13336:10
+ > reconnectPassiveEffects node_modules/react-dom/cjs/react-dom-client.development.js:15832:10
+ > recursivelyTraverseReconnectPassiveEffects node_modules/react-dom/cjs/react-dom-client.development.js:15784:8
+
+[2m11:30:07 AM[22m [31m[1m[vite][22m[39m [31m[2m(client)[22m[39m [31m[Unhandled rejection] [1mTypeError[22m: Cannot read properties of null (reading 'request_id')
+[39m > dispatchEnvelope src/App.tsx:3980:82
+    3978 |      }
+    3979 |  
+    3980 |  ...age = `Frontend received command result. RequestId=${result.request_id}; Ok=${String(result.ok)}; Message=${result...
+         |                                                                 ^
+    3981 |      pushFrontendEvent(surface, receivedMessage);
+    3982 |      startTransition(() => {
+ > handlePanelButtonActivate src/App.tsx:4417:4
+ > handleHostButtonActivate src/App.tsx:4421:4
+

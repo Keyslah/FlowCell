@@ -1,5 +1,6 @@
 ﻿param(
     [string[]]$SelectedPaths = @(),
+    [string]$SelectedPathsJson = '',
     [Parameter(Mandatory = $true)]
     [string]$PanelName,
     [string]$ConfigPath = '',
@@ -9,6 +10,24 @@
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if (-not [string]::IsNullOrWhiteSpace($SelectedPathsJson)) {
+    try {
+        $decodedSelectedPaths = ConvertFrom-Json -InputObject $SelectedPathsJson -ErrorAction Stop
+        if ($decodedSelectedPaths -is [System.Array]) {
+            $SelectedPaths = @($decodedSelectedPaths | ForEach-Object { [string]$_ })
+        }
+        elseif ($null -eq $decodedSelectedPaths) {
+            $SelectedPaths = @()
+        }
+        else {
+            $SelectedPaths = @([string]$decodedSelectedPaths)
+        }
+    }
+    catch {
+        throw "Could not parse -SelectedPathsJson for Blender Add Button."
+    }
+}
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 $projectRoot = Join-Path $repoRoot 'Blender'
@@ -374,6 +393,24 @@ function Get-PreferredActionDescription([string]$ActionName, [string]$CurrentDes
     return [string]$CurrentDescription
 }
 
+function Get-FriendlyBlenderButtonLabel([string]$RawLabel) {
+    if ([string]::IsNullOrWhiteSpace($RawLabel)) {
+        return 'button'
+    }
+
+    $label = [string]$RawLabel
+    $match = [System.Text.RegularExpressions.Regex]::Match(
+        $label,
+        '^(?:util_)?(?:flowtest_custom_)?util_boolsafe_(?<shape>cylinder|cone|cube|sphere|triangle)(?:_\d+)?$',
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+    )
+    if ($match.Success) {
+        return $match.Groups['shape'].Value.ToLowerInvariant()
+    }
+
+    return $label
+}
+
 function Get-SourceMetadataForAction([string]$ActionName) {
     $map = Get-BridgeActionFunctionMap
     if ([string]::IsNullOrWhiteSpace($ActionName) -or -not $map.ContainsKey($ActionName)) { return $null }
@@ -529,7 +566,7 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             continue
         }
 
-        $label = [System.IO.Path]::GetFileNameWithoutExtension($fullPath)
+        $label = Get-FriendlyBlenderButtonLabel ([System.IO.Path]::GetFileNameWithoutExtension($fullPath))
         if ([string]::IsNullOrWhiteSpace($label)) { $label = 'button' }
         $safeLabel = Get-SafeName $label
         $actionName = Get-UniqueActionName -BaseName ('{0}{1}' -f [string]$bridgeLayout.GeneratedActionPrefix, $safeLabel) -Taken $takenActionNames

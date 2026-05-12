@@ -774,10 +774,8 @@ export function FanOutButtonCluster({
   const closeTimerRef = useRef<number | undefined>(undefined);
   const postExpandHoverTimerRef = useRef<number | undefined>(undefined);
   const pendingCollapseAfterExpandRef = useRef(false);
-  const ownerMeasureRef = useRef<HTMLButtonElement | null>(null);
-  const ownerVisibleRef = useRef<HTMLButtonElement | null>(null);
-  const measureChildRefs = useRef(new Map<string, HTMLButtonElement>());
-  const visibleChildRefs = useRef(new Map<string, HTMLButtonElement>());
+  const ownerVisibleRef = useRef<HTMLElement | null>(null);
+  const visibleChildRefs = useRef(new Map<string, HTMLElement>());
   const lastPanelLayoutRef = useRef<FanClusterPanelLayout | null>(null);
   const lastFloatingLayoutRef = useRef<FanClusterFloatingLayout | null>(null);
   const [panelLayout, setPanelLayout] = useState<FanClusterPanelLayout | null>(null);
@@ -926,9 +924,9 @@ export function FanOutButtonCluster({
   }, [childrenVisible, onCollapseRequest, windowExpanded]);
 
   useLayoutEffect(() => {
-    const ownerMetrics = readStableNodeSize(ownerMeasureRef.current);
+    const ownerMetrics = readStableNodeSize(ownerVisibleRef.current);
     const childSizes = childVisuals.map((entry) =>
-      readStableNodeSize(measureChildRefs.current.get(entry.key), ownerMetrics)
+      readStableNodeSize(visibleChildRefs.current.get(entry.key), ownerMetrics)
     );
 
     if (variant === "panel-fan") {
@@ -986,11 +984,11 @@ export function FanOutButtonCluster({
     }
 
     const observeTargets: HTMLElement[] = [];
-    if (ownerMeasureRef.current) {
-      observeTargets.push(ownerMeasureRef.current);
+    if (ownerVisibleRef.current) {
+      observeTargets.push(ownerVisibleRef.current);
     }
     childVisuals.forEach((entry) => {
-      const node = measureChildRefs.current.get(entry.key);
+      const node = visibleChildRefs.current.get(entry.key);
       if (node) {
         observeTargets.push(node);
       }
@@ -1000,9 +998,9 @@ export function FanOutButtonCluster({
     }
 
     const observer = new ResizeObserver(() => {
-      const ownerMetrics = readStableNodeSize(ownerMeasureRef.current);
+      const ownerMetrics = readStableNodeSize(ownerVisibleRef.current);
       const childSizes = childVisuals.map((entry) =>
-        readStableNodeSize(measureChildRefs.current.get(entry.key), ownerMetrics)
+        readStableNodeSize(visibleChildRefs.current.get(entry.key), ownerMetrics)
       );
 
       if (variant === "panel-fan") {
@@ -1080,48 +1078,6 @@ export function FanOutButtonCluster({
         .join(" ")}
       style={rootStyle}
     >
-      <div className="fan-cluster__measure" aria-hidden="true">
-        <HostSkinButton
-          ref={ownerMeasureRef}
-          type="button"
-          className={ownerClassName}
-          label={ownerButton.Label}
-          styleGroup={ownerStyleGroup}
-          importedSkin={ownerImportedSkin}
-          skinCompact
-          tabIndex={-1}
-        />
-        {childVisuals.map((entry) => (
-          (() => {
-            const childVisuals = resolveButtonVisuals(entry.entry.button);
-            return (
-              <HostSkinButton
-                key={`measure-${entry.key}`}
-                ref={(node) => {
-                  if (!node) {
-                    measureChildRefs.current.delete(entry.key);
-                    return;
-                  }
-                  measureChildRefs.current.set(entry.key, node);
-                }}
-                type="button"
-                className={[
-                  "fan-cluster__child",
-                  `fan-cluster__child--${variant}`,
-                  variant === "panel-fan" ? "panel-rail__popout" : ""
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-                label={entry.entry.button.Label}
-                styleGroup={childVisuals.styleGroup}
-                importedSkin={childVisuals.importedSkin}
-                skinCompact
-                tabIndex={-1}
-              />
-            );
-          })()
-        ))}
-      </div>
       <div className="fan-cluster__stage">
         <HostSkinButton
           ref={ownerVisibleRef}
