@@ -118,22 +118,69 @@ def _perform_transform(context, objects, pivot, axis, angle_deg):
     }
 
 
-def _perform_distribute(context, objects, pivot, axis, angle_deg):
-    ordered = _ordered_selection(context)
-    if len(ordered) < 2:
-        result = _perform_transform(context, objects, pivot, axis, angle_deg)
-        result["message"] = (
-            f"{result['message']} Distribute used normal rotate because fewer than two objects were selected."
-        )
-        return result
-    for index, obj in enumerate(ordered):
-        rotation = _rotation_quaternion(axis, angle_deg * index)
-        _apply_world_rotation(obj, pivot, rotation)
+def _duplicate_object_set(context, source_objects):
+    duplicates = []
+    scene_collection = _ctx(context).scene.collection
+    for obj in source_objects:
+        duplicate = obj.copy()
+        if getattr(obj, "data", None) is not None:
+            duplicate.data = obj.data.copy()
+        collections = list(getattr(obj, "users_collection", []) or [])
+        if not collections:
+            collections = [scene_collection]
+        for collection in collections:
+            collection.objects.link(duplicate)
+        duplicates.append(duplicate)
+    return duplicates
+
+
+def _set_selection(context, objects, active=None):
+    view_layer = _ctx(context).view_layer
+    for obj in getattr(view_layer, "objects", []):
+        try:
+            obj.select_set(False)
+        except Exception:
+            pass
+    for obj in objects:
+        try:
+            obj.select_set(True)
+        except Exception:
+            pass
+    if active is not None:
+        try:
+            view_layer.objects.active = active
+        except Exception:
+            pass
+
+
+def _perform_distribute(context, objects, pivot, axis, angle_deg, distribute_count):
+    source_objects = _ordered_selection(context)
+    selected_count = len(source_objects)
+    total_sets = max(1, int(round(float(distribute_count or 1))))
+    step_angle = 0.0 if total_sets <= 0 else float(angle_deg) / float(total_sets)
+    distributed_objects = list(source_objects)
+    for set_index in range(1, total_sets):
+        duplicated_set = _duplicate_object_set(context, source_objects)
+        rotation = _rotation_quaternion(axis, step_angle * set_index)
+        for obj in duplicated_set:
+            _apply_world_rotation(obj, pivot, rotation)
+        distributed_objects.extend(duplicated_set)
+    _set_selection(context, distributed_objects, active=source_objects[0] if source_objects else None)
+    if total_sets == 1:
+        return {
+            "message": (
+                f"Distribute count 1 kept {selected_count} selected object(s) unchanged around {axis}."
+            ),
+            "changed": len(distributed_objects),
+        }
+    spacing = abs(step_angle)
+    copy_sets = max(total_sets - 1, 0)
     return {
         "message": (
-            f"Distributed {len(ordered)} object(s) around {axis} in {angle_deg:.2f} degree steps."
+            f"Distributed {selected_count} selected object(s) into {total_sets} total positions "
+            f"by creating {copy_sets} duplicate set(s) at {spacing:.2f} degree spacing around {axis}."
         ),
-        "changed": len(ordered),
+        "changed": len(distributed_objects),
     }
 
 
@@ -154,11 +201,13 @@ def run_flowcell_action(context=None, data=None):
         str(payload.get("operation_mode", "TRANSFORM") or "TRANSFORM").strip().upper()
     )
     angle_deg = float(payload.get("angle_deg", 15.0) or 15.0)
+    distribute_count = max(1, int(round(float(payload.get("distribute_count", 3) or 3))))
 
     if operation_mode not in SUPPORTED_OPERATION_MODES:
         raise ValueError(f"Unsupported operation mode: {operation_mode}")
 
     pivot = _pivot_point(context, objects, center_mode)
     if operation_mode == "DISTRIBUTE":
-        return _perform_distribute(context, objects, pivot, axis, angle_deg)
+        full_turn = 360.0 if angle_deg >= 0 else -360.0
+        return _perform_distribute(context, objects, pivot, axis, full_turn, distribute_count)
     return _perform_transform(context, objects, pivot, axis, angle_deg)

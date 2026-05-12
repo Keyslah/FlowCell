@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ClipboardEvent as ReactClipboardEvent } from "react";
 import type {
   AppTheme,
   FlowCellState,
@@ -14,6 +14,8 @@ import {
 } from "../lib/theme";
 import {
   getImportedSkin,
+  IMPORTED_SKIN_LABEL_PLACEHOLDER,
+  normalizeImportedSkinHtmlMarkup,
   renderButtonSkin,
   renderSurfaceSkin,
   resolveStyleGroup
@@ -136,6 +138,30 @@ function readAssignment(
   return (
     state.SurfaceStyleAssignments?.find((assignment) => assignment.surface_id === surfaceId)
       ?.style_group_id ?? ""
+  );
+}
+
+function applyNormalizedHtmlPaste(args: {
+  event: ReactClipboardEvent<HTMLTextAreaElement>;
+  currentValue: string;
+  onValue: (value: string) => void;
+}): void {
+  const pastedMarkup = args.event.clipboardData.getData("text");
+  if (!pastedMarkup) {
+    return;
+  }
+
+  const normalizedMarkup = normalizeImportedSkinHtmlMarkup(pastedMarkup);
+  if (normalizedMarkup === pastedMarkup) {
+    return;
+  }
+
+  args.event.preventDefault();
+  const textarea = args.event.currentTarget;
+  const selectionStart = textarea.selectionStart ?? args.currentValue.length;
+  const selectionEnd = textarea.selectionEnd ?? selectionStart;
+  args.onValue(
+    `${args.currentValue.slice(0, selectionStart)}${normalizedMarkup}${args.currentValue.slice(selectionEnd)}`
   );
 }
 
@@ -519,7 +545,9 @@ export function AppearanceTab({
         <p className="caption">
           Edit render-only code only. Button sections read the button HTML/CSS/SVG fields below.
           Card, panel-surface, and pop-out surface sections read the Card HTML/CSS/SVG fields.
-          Previews update live as you type.
+          Previews update live as you type. The button label placeholder is{" "}
+          <code>{IMPORTED_SKIN_LABEL_PLACEHOLDER}</code>, and pasted button HTML automatically
+          converts the first visible text chunk to that placeholder.
         </p>
         <div className="style-group-list">
           <article className="style-group-card">
@@ -639,6 +667,17 @@ export function AppearanceTab({
               <textarea
                 rows={7}
                 value={editorDraft.html}
+                onPaste={(event) =>
+                  applyNormalizedHtmlPaste({
+                    event,
+                    currentValue: editorDraft.html,
+                    onValue: (value) =>
+                      setEditorDraft({
+                        ...editorDraft,
+                        html: value
+                      })
+                  })
+                }
                 onChange={(event) =>
                   setEditorDraft({
                     ...editorDraft,

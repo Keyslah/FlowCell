@@ -49,6 +49,7 @@ interface FlattenRevolveToolSurfaceProps {
 interface QuickRotateGroupValues {
   Axis: string;
   AngleDeg: number;
+  DistributeCount: number;
   CenterMode: string;
   OperationMode: string;
 }
@@ -65,7 +66,7 @@ interface QuickRotateGroupToolSurfaceProps {
     value: string | number
   ) => void;
   onPresetApply: (angleDeg: number) => void;
-  onApply: (direction: "negative" | "positive") => void;
+  onApply: (direction: "negative" | "positive", values: QuickRotateGroupValues) => void;
 }
 
 interface SmartAxisVisualState {
@@ -364,6 +365,8 @@ export function QuickRotateGroupToolSurface({
   onPresetApply,
   onApply
 }: QuickRotateGroupToolSurfaceProps) {
+  const isDistributeMode = values.OperationMode === "DISTRIBUTE";
+  const quantityValue = Math.max(1, Math.round(values.DistributeCount || 1));
   const content = (
     <div
       className={
@@ -386,7 +389,10 @@ export function QuickRotateGroupToolSurface({
             className: `tool-chip ${Math.abs(values.AngleDeg - angle) < 0.001 ? "is-active" : ""}`,
             selected: Math.abs(values.AngleDeg - angle) < 0.001,
             styleGroup,
-            importedSkin
+            importedSkin,
+            title: isDistributeMode
+              ? "Stores the transform angle preset. Distribute uses the total count below."
+              : `Rotate ${angle} degrees`
           })
         )}
       </div>
@@ -417,53 +423,95 @@ export function QuickRotateGroupToolSurface({
           <input
             className="quick-rotate-field__input"
             type="number"
-            step="0.01"
-            value={Number.isFinite(values.AngleDeg) ? values.AngleDeg : 0}
-            onChange={(event) => onValueChange("AngleDeg", Number(event.target.value))}
+            step={isDistributeMode ? "1" : "0.01"}
+            min={isDistributeMode ? "1" : undefined}
+            title={
+              isDistributeMode
+                ? "Total positions to end up with, including the original selection."
+                : "Angle in degrees."
+            }
+            value={
+              isDistributeMode
+                ? quantityValue
+                : Number.isFinite(values.AngleDeg)
+                  ? values.AngleDeg
+                  : 0
+            }
+            onChange={(event) =>
+              onValueChange(
+                isDistributeMode ? "DistributeCount" : "AngleDeg",
+                Number(event.target.value)
+              )
+            }
           />
           {renderToolChip("Negative", {
-            onClick: () => onApply("negative"),
+            onClick: () => onApply("negative", values),
             className: "tool-chip",
             styleGroup,
             importedSkin,
-            title: "Rotate by the entered negative angle"
+            title: isDistributeMode
+              ? "Duplicate and distribute in the negative direction"
+              : "Rotate by the entered negative angle"
           })}
           {renderToolChip("Positive", {
-            onClick: () => onApply("positive"),
+            onClick: () => onApply("positive", values),
             className: "tool-chip",
             styleGroup,
             importedSkin,
-            title: "Rotate by the entered positive angle"
+            title: isDistributeMode
+              ? "Duplicate and distribute in the positive direction"
+              : "Rotate by the entered positive angle"
           })}
         </div>
       ) : (
         <div className="quick-rotate-row quick-rotate-row--apply">
           <label className="compound-field quick-rotate-field">
-            <span>Angle</span>
+            <span>{isDistributeMode ? "Total Count" : "Angle"}</span>
             <input
               type="number"
-              step="0.01"
-              value={Number.isFinite(values.AngleDeg) ? values.AngleDeg : 0}
-              onChange={(event) => onValueChange("AngleDeg", Number(event.target.value))}
+              step={isDistributeMode ? "1" : "0.01"}
+              min={isDistributeMode ? "1" : undefined}
+              title={
+                isDistributeMode
+                  ? "Total positions to end up with, including the original selection."
+                  : "Angle in degrees."
+              }
+              value={
+                isDistributeMode
+                  ? quantityValue
+                  : Number.isFinite(values.AngleDeg)
+                    ? values.AngleDeg
+                    : 0
+              }
+              onChange={(event) =>
+                onValueChange(
+                  isDistributeMode ? "DistributeCount" : "AngleDeg",
+                  Number(event.target.value)
+                )
+              }
             />
           </label>
           <div className="quick-rotate-apply-pair">
             <div className="quick-rotate-apply-slot">
               {renderToolChip("Negative", {
-                onClick: () => onApply("negative"),
+                onClick: () => onApply("negative", values),
                 className: "tool-chip",
                 styleGroup,
                 importedSkin,
-                title: "Rotate by the entered negative angle"
+                title: isDistributeMode
+                  ? "Duplicate and distribute in the negative direction"
+                  : "Rotate by the entered negative angle"
               })}
             </div>
             <div className="quick-rotate-apply-slot">
               {renderToolChip("Positive", {
-                onClick: () => onApply("positive"),
+                onClick: () => onApply("positive", values),
                 className: "tool-chip",
                 styleGroup,
                 importedSkin,
-                title: "Rotate by the entered positive angle"
+                title: isDistributeMode
+                  ? "Duplicate and distribute in the positive direction"
+                  : "Rotate by the entered positive angle"
               })}
             </div>
           </div>

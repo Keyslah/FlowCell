@@ -8,6 +8,7 @@ import type {
   FlowCellPanel,
   FlowCellProgram,
   FlowCellState,
+  ImportedSkin,
   LayoutSnapshot,
   PanelFanOptions,
   RuntimeInfo,
@@ -28,6 +29,7 @@ import {
 
 const DEFAULT_IMPORTED_SKIN_ID = "imported-skin-01";
 const DEFAULT_PROGRAM_STYLE_GROUP_ID = "style-group-03";
+const IMPORTED_SKIN_LIBRARY_STYLE_GROUP_PREFIX = "style-group-imported-";
 const DEFAULT_SURFACE_STYLE_ASSIGNMENTS: SurfaceStyleAssignment[] = [
   {
     surface_id: "main-panels",
@@ -103,6 +105,20 @@ const DEFAULT_STYLE_GROUPS: StyleGroup[] = [
     accent: "#d8dee8"
   }
 ];
+
+function sanitizeStyleGroupToken(value: string): string {
+  const sanitized = value.replace(/[^a-zA-Z0-9\-/:_]/g, "_");
+  return sanitized.length > 0 ? sanitized : "imported-skin";
+}
+
+function buildImportedSkinLibraryStyleGroupId(importedSkinId: string): string {
+  return `${IMPORTED_SKIN_LIBRARY_STYLE_GROUP_PREFIX}${sanitizeStyleGroupToken(importedSkinId)}`;
+}
+
+function buildImportedSkinLibraryStyleGroupName(importedSkin: ImportedSkin): string {
+  const skinName = importedSkin.name.trim() || importedSkin.id;
+  return `Skin · ${skinName}`;
+}
 
 const DEFAULT_ALIGNMENT_MODIFIERS: AlignmentToolStateRecord["Modifiers"] = {
   X: "",
@@ -538,7 +554,7 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
     }
   });
 
-  const styleGroups = styleGroupsSource.map((styleGroup) =>
+  const normalizedStyleGroups = styleGroupsSource.map((styleGroup) =>
     styleGroup.skinId === "imported-skin" && !(styleGroup.importedSkinId ?? "").trim()
       ? {
           ...styleGroup,
@@ -546,6 +562,29 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
         }
       : styleGroup
   );
+  const styleGroups = [...normalizedStyleGroups];
+  let nextStyleGroupIndex =
+    styleGroups.reduce((maxIndex, styleGroup) => Math.max(maxIndex, styleGroup.index ?? 0), 0) + 1;
+
+  importedSkins.forEach((importedSkin) => {
+    const autoStyleGroupId = buildImportedSkinLibraryStyleGroupId(importedSkin.id);
+    const existingIndex = styleGroups.findIndex((styleGroup) => styleGroup.id === autoStyleGroupId);
+    const nextStyleGroup: StyleGroup = {
+      id: autoStyleGroupId,
+      index: existingIndex >= 0 ? styleGroups[existingIndex].index : nextStyleGroupIndex++,
+      name: buildImportedSkinLibraryStyleGroupName(importedSkin),
+      skinId: "imported-skin",
+      importedSkinId: importedSkin.id,
+      accent: existingIndex >= 0 ? styleGroups[existingIndex].accent : "#ffb870"
+    };
+
+    if (existingIndex >= 0) {
+      styleGroups[existingIndex] = nextStyleGroup;
+      return;
+    }
+
+    styleGroups.push(nextStyleGroup);
+  });
 
   const surfaceStyleAssignments =
     state.SurfaceStyleAssignments && state.SurfaceStyleAssignments.length > 0

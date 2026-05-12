@@ -222,6 +222,13 @@ interface ProgramContextMenuState {
   top: number;
 }
 
+interface ContextMenuTriggerEvent {
+  clientX: number;
+  clientY: number;
+  preventDefault(): void;
+  stopPropagation(): void;
+}
+
 interface ProgramManagerState {
   programName: string;
   exePath: string;
@@ -288,6 +295,7 @@ interface FlattenRevolveValues {
 interface QuickRotateGroupValues {
   Axis: string;
   AngleDeg: number;
+  DistributeCount: number;
   CenterMode: string;
   OperationMode: string;
 }
@@ -331,6 +339,7 @@ const DEFAULT_FLATTEN_REVOLVE_VALUES: FlattenRevolveValues = {
 const DEFAULT_QUICK_ROTATE_GROUP_VALUES: QuickRotateGroupValues = {
   Axis: "Z",
   AngleDeg: 15,
+  DistributeCount: 3,
   CenterMode: "WORLD",
   OperationMode: "TRANSFORM"
 };
@@ -824,6 +833,7 @@ function normalizeQuickRotateGroupValues(values?: Record<string, unknown>): Quic
   return {
     Axis: readString(values, "Axis", "Z").toUpperCase() || "Z",
     AngleDeg: readNumber(values, "AngleDeg", 15),
+    DistributeCount: Math.max(1, Math.round(readNumber(values, "DistributeCount", 3))),
     CenterMode: readString(values, "CenterMode", "WORLD").toUpperCase() || "WORLD",
     OperationMode:
       readString(values, "OperationMode", "TRANSFORM").toUpperCase() || "TRANSFORM"
@@ -1047,6 +1057,20 @@ async function captureLivePopoutBounds(state: FlowCellState): Promise<FlowCellSt
   const existingToolPopouts = new Map<string, ToolPopoutRecord>(existingToolPopoutEntries);
   const openToolPopouts = new Map<string, ToolPopoutRecord>();
 
+  const resolvePanelIdFromWindowToken = (
+    programId: number,
+    panelToken: string
+  ): string | null => {
+    const program = state.Programs.find((entry) => entry.ProgramTabId === programId);
+    if (!program || !panelToken) {
+      return null;
+    }
+
+    return (
+      program.Panels.find((panel) => sanitizeWindowToken(panel.Id) === panelToken)?.Id ?? null
+    );
+  };
+
   const parseToolPopoutLabel = (
     label: string
   ): { programId: number; panelId: string; ownerButtonId: string } | null => {
@@ -1104,8 +1128,12 @@ async function captureLivePopoutBounds(state: FlowCellState): Promise<FlowCellSt
       return null;
     }
     const programId = Number(match[1]);
-    const panelId = match[2];
-    if (!Number.isFinite(programId) || !panelId) {
+    const panelToken = match[2] ?? "";
+    if (!Number.isFinite(programId) || !panelToken) {
+      return null;
+    }
+    const panelId = resolvePanelIdFromWindowToken(programId, panelToken);
+    if (!panelId) {
       return null;
     }
     return {
@@ -1287,6 +1315,69 @@ function formatProgramDisplayLabel(
   return program.ProgramConfig?.NormalizedName?.trim() || `Program ${program.ProgramTabId}`;
 }
 
+function mergePersistedPopoutState(
+  baseState: FlowCellState,
+  localState: FlowCellState | null | undefined,
+  openWindowLabels?: ReadonlySet<string>
+): FlowCellState {
+  if (!localState) {
+    return baseState;
+  }
+
+  const isWindowOpen = (label: string) => !openWindowLabels || openWindowLabels.has(label);
+  const mergedToolPopouts = [...(baseState.ToolPopouts ?? [])];
+  const seenToolPopoutKeys = new Set(
+    mergedToolPopouts.map(
+      (entry) => `${entry.ProgramTabId}:${entry.PanelId}:${entry.ButtonIds[0] ?? ""}`
+    )
+  );
+
+  for (const entry of localState.ToolPopouts ?? []) {
+    const ownerButtonId = entry.ButtonIds[0] ?? "";
+    const label = `popout-tool-${entry.ProgramTabId}-${sanitizeWindowToken(entry.PanelId)}-${sanitizeWindowToken(ownerButtonId)}`;
+    if (!ownerButtonId || !isWindowOpen(label)) {
+      continue;
+    }
+    const key = `${entry.ProgramTabId}:${entry.PanelId}:${entry.ButtonIds[0] ?? ""}`;
+    if (seenToolPopoutKeys.has(key)) {
+      continue;
+    }
+    mergedToolPopouts.push(entry);
+    seenToolPopoutKeys.add(key);
+  }
+
+  return {
+    ...baseState,
+    Programs: baseState.Programs.map((program) => {
+      const localProgram = findProgram(localState, program.ProgramTabId);
+      if (!localProgram) {
+        return program;
+      }
+
+      return {
+        ...program,
+        Panels: program.Panels.map((panel) => {
+          const localPanel = findPanel(localState, program.ProgramTabId, panel.Id);
+          if (!localPanel) {
+            return panel;
+          }
+
+          const panelLabel = `popout-panel-${program.ProgramTabId}-${sanitizeWindowToken(panel.Id)}`;
+          const preserveLocalPopout = localPanel.IsPoppedOut && isWindowOpen(panelLabel);
+          return {
+            ...panel,
+            IsPoppedOut: panel.IsPoppedOut || preserveLocalPopout,
+            PopoutBounds:
+              panel.PopoutBounds ??
+              (preserveLocalPopout ? localPanel.PopoutBounds ?? null : null)
+          };
+        })
+      };
+    }),
+    ToolPopouts: mergedToolPopouts
+  };
+}
+
 function formatSavedProgramTimestamp(savedAt: string): string {
   const parsed = new Date(savedAt);
   if (Number.isNaN(parsed.getTime())) {
@@ -1414,6 +1505,7 @@ export default function App() {
   const [panelFanMetrics, setPanelFanMetrics] = useState<FanClusterPanelMetrics | null>(null);
   const [panelFanWindowMetrics, setPanelFanWindowMetrics] =
     useState<FanClusterPanelMetrics | null>(null);
+  const latestStateRef = useRef<FlowCellState | null>(null);
   const closingWindowRef = useRef(false);
   const activeOwnerFanoutRef = useRef<ActiveOwnerFanoutState | null>(null);
   const ownerFanoutCloseTimerRef = useRef<number | undefined>(undefined);
@@ -1436,9 +1528,9 @@ export default function App() {
   const startupPanelRestoreRef = useRef(false);
   const startupToolRestoreRef = useRef(false);
   const toolPopoutAutoFitKeyRef = useRef<string | null>(null);
-  const transparentToolPopoutMeasureRef = useRef<HTMLDivElement | null>(null);
   const programmaticWindowPlacementUntilRef = useRef(0);
   const layoutLoadInFlightRef = useRef(false);
+  const forcedPopoutPlacementUntilRef = useRef(0);
 
   floatingFanoutClusterOpenRef.current = floatingFanoutClusterOpen;
   floatingFanoutMetricsRef.current = floatingFanoutMetrics;
@@ -1446,6 +1538,10 @@ export default function App() {
   panelFanClusterOpenRef.current = panelFanClusterOpen;
   panelFanMetricsRef.current = panelFanMetrics;
   panelFanWindowMetricsRef.current = panelFanWindowMetrics;
+
+  useEffect(() => {
+    latestStateRef.current = state;
+  }, [state]);
 
   const markProgrammaticWindowPlacement = (suppressMs = 900) => {
     programmaticWindowPlacementUntilRef.current = Math.max(
@@ -1529,13 +1625,18 @@ export default function App() {
         if (disposed || sourceWindowLabel === currentWindowLabel) {
           return;
         }
+        if (sourceWindowLabel === "flowcell-layout-picker") {
+          forcedPopoutPlacementUntilRef.current = Date.now() + 2500;
+        }
         const payload = await loadState();
         if (disposed) {
           return;
         }
+        const nextState = applyBindingsToState(ensureStateDefaults(payload.state), payload.bindings);
+        latestStateRef.current = nextState;
         setRuntime(payload.runtime);
         setBindingsState(payload.bindings);
-        setState(applyBindingsToState(ensureStateDefaults(payload.state), payload.bindings));
+        setState(nextState);
       });
     })();
 
@@ -1645,15 +1746,6 @@ export default function App() {
     windowContext?.kind === "tool-popout" && toolPopoutLayoutMode === "Fanout";
   const isPanelFanPopout =
     windowContext?.kind === "tool-popout" && toolPopoutLayoutMode === "PanelFan";
-  const isTransparentSingleButtonPopout =
-    windowContext?.kind === "tool-popout" &&
-    toolPopoutLayoutMode === "Individual" &&
-    toolPopoutButtons.length === 1 &&
-    toolPopoutOwnerButton?.transparent_popout === true;
-  const isTransparentPanelPopout =
-    windowContext?.kind === "panel-popout" &&
-    Boolean(selectedPanel && selectedPanel.Buttons.length) &&
-    (selectedPanel ? selectedPanel.Buttons.every((button) => button.transparent_popout === true) : false);
 
   const selectedButton =
     state && selectedButtonRef
@@ -1698,20 +1790,7 @@ export default function App() {
   const selectedToolOwnerButtons = selectedPopButtons.filter((button) =>
     isToolOwnerPopCandidate(button)
   );
-  const selectedPanelButtonForAppearance =
-    selectedButtonRef &&
-    selectedButtonRef.programId === selectedProgram?.ProgramTabId &&
-    selectedButtonRef.panelId === selectedPanel?.Id
-      ? selectedPanel?.Buttons.find((button) => button.Id === selectedButtonRef.buttonId)
-      : undefined;
   const buttonAppearanceButtons = selectedPanel?.Buttons ?? [];
-  const buttonAppearanceSelectionIsAll =
-    buttonAppearanceButtonId === BUTTON_APPEARANCE_ALL_BUTTONS_ID;
-  const buttonAppearanceTargetButton = buttonAppearanceSelectionIsAll
-    ? buttonAppearanceButtons[0]
-    : buttonAppearanceButtons.find((button) => button.Id === buttonAppearanceButtonId) ??
-      selectedPanelButtonForAppearance ??
-      buttonAppearanceButtons[0];
   const allButtons = state ? collectAllButtons(state) : [];
   const programOptions = state
     ? state.Programs.map((program) => ({
@@ -1965,10 +2044,10 @@ export default function App() {
       if (current && selectableIds.includes(current)) {
         return current;
       }
-      if (requestedButtonId && candidateIds.includes(requestedButtonId)) {
+      if (requestedButtonId && selectableIds.includes(requestedButtonId)) {
         return requestedButtonId;
       }
-      return candidateIds[0];
+      return "";
     });
   }, [selectedPanel, windowContext?.buttonId, windowContext?.kind]);
 
@@ -2719,9 +2798,7 @@ export default function App() {
           layoutMode,
           buttonLabel:
             layoutMode === "PanelFan" ? panel.Name : ownerButton!.Label,
-          bounds: toolPopout.Bounds ?? null,
-          transparentWindow:
-            layoutMode === "Individual" && ownerButton?.transparent_popout === true
+          bounds: toolPopout.Bounds ?? null
         });
       });
     })();
@@ -2750,42 +2827,11 @@ export default function App() {
     }
     toolPopoutAutoFitKeyRef.current = autoFitKey;
 
-    if (
-      !isTransparentSingleButtonPopout &&
-      activeToolPopout?.Bounds &&
-      isPersistablePopoutBounds(activeToolPopout.Bounds)
-    ) {
+    if (activeToolPopout?.Bounds && isPersistablePopoutBounds(activeToolPopout.Bounds)) {
       return;
     }
 
     const ensureWindowCoversButtonSpread = async () => {
-      if (isTransparentSingleButtonPopout) {
-        await new Promise<void>((resolve) => {
-          window.requestAnimationFrame(() => resolve());
-        });
-        const targetNode = transparentToolPopoutMeasureRef.current;
-        const measuredRect = targetNode?.getBoundingClientRect();
-        if (!measuredRect || measuredRect.width <= 0 || measuredRect.height <= 0 || cancelled) {
-          toolPopoutAutoFitKeyRef.current = null;
-          return;
-        }
-        const currentSize = await currentWindow.innerSize().catch(() => null);
-        if (!currentSize || cancelled) {
-          return;
-        }
-        const requiredWidth = Math.ceil(measuredRect.width);
-        const requiredHeight = Math.ceil(measuredRect.height);
-        if (
-          Math.abs(currentSize.width - requiredWidth) <= 1 &&
-          Math.abs(currentSize.height - requiredHeight) <= 1
-        ) {
-          return;
-        }
-        markProgrammaticWindowPlacement(700);
-        await currentWindow.setSize(new LogicalSize(requiredWidth, requiredHeight));
-        return;
-      }
-
       const currentBounds = await readLogicalWindowBounds(currentWindow);
       if (!currentBounds || cancelled) {
         return;
@@ -2854,7 +2900,6 @@ export default function App() {
     hasCompactSmartAxisPanelRow,
     regularPanelRenderItemCount,
     activeToolPopout?.Bounds,
-    isTransparentSingleButtonPopout,
     selectedPanel?.Id,
     selectedProgram?.ProgramTabId,
     toolPopoutButtons,
@@ -2905,6 +2950,90 @@ export default function App() {
         if (!expectedLabels.has(candidate.label)) {
           await candidate.close().catch(() => {});
         }
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, [state, windowContext]);
+
+  useEffect(() => {
+    if (!state || !windowContext || windowContext.kind !== "main") {
+      return;
+    }
+
+    let disposed = false;
+
+    void (async () => {
+      const windows = await getAllWebviewWindows().catch(() => []);
+      if (disposed) {
+        return;
+      }
+
+      const openLabels = new Set(windows.map((window) => window.label));
+      const forcePlacement = Date.now() < forcedPopoutPlacementUntilRef.current;
+
+      for (const program of state.Programs) {
+        for (const panel of program.Panels) {
+          if (!panel.IsPoppedOut) {
+            continue;
+          }
+
+          const label = `popout-panel-${program.ProgramTabId}-${sanitizeWindowToken(panel.Id)}`;
+          if (openLabels.has(label) && !forcePlacement) {
+            continue;
+          }
+
+          await openPanelPopout({
+            programId: program.ProgramTabId,
+            panelId: panel.Id,
+            panelName: panel.Name,
+            buttonCount: panel.Buttons.length,
+            bounds: panel.PopoutBounds
+          }).catch(() => {});
+          openLabels.add(label);
+        }
+      }
+
+      for (const toolPopout of state.ToolPopouts ?? []) {
+        const ownerButtonId = toolPopout.ButtonIds[0];
+        if (!ownerButtonId) {
+          continue;
+        }
+
+        const label = `popout-tool-${toolPopout.ProgramTabId}-${sanitizeWindowToken(toolPopout.PanelId)}-${sanitizeWindowToken(ownerButtonId)}`;
+        if (openLabels.has(label) && !forcePlacement) {
+          continue;
+        }
+
+        const panel = findPanel(state, toolPopout.ProgramTabId, toolPopout.PanelId);
+        const ownerButton = findButton(
+          state,
+          toolPopout.ProgramTabId,
+          toolPopout.PanelId,
+          ownerButtonId
+        );
+        if (!panel || (toolPopout.LayoutMode !== "PanelFan" && !ownerButton)) {
+          continue;
+        }
+
+        const layoutMode = resolveEffectiveToolPopoutLayoutMode(
+          toolPopout.LayoutMode,
+          ownerButton ?? undefined
+        );
+
+        await openToolPopout({
+          programId: toolPopout.ProgramTabId,
+          panelId: toolPopout.PanelId,
+          panelName: panel.Name,
+          ownerButtonId,
+          buttonIds: toolPopout.ButtonIds,
+          layoutMode,
+          buttonLabel: layoutMode === "PanelFan" ? panel.Name : ownerButton!.Label,
+          bounds: toolPopout.Bounds ?? null
+        }).catch(() => {});
+        openLabels.add(label);
       }
     })();
 
@@ -3601,8 +3730,17 @@ export default function App() {
     options?: { broadcast?: boolean; syncLocalState?: boolean }
   ) => {
     const latest = await loadState();
-    const currentState = applyBindingsToState(ensureStateDefaults(latest.state), latest.bindings);
+    const loadedState = applyBindingsToState(ensureStateDefaults(latest.state), latest.bindings);
+    const openWindowLabels = new Set(
+      (await getAllWebviewWindows().catch(() => [])).map((window) => window.label)
+    );
+    const currentState = mergePersistedPopoutState(
+      loadedState,
+      latestStateRef.current ?? state,
+      openWindowLabels
+    );
     const nextState = mutator(currentState);
+    latestStateRef.current = nextState;
     if (options?.syncLocalState !== false) {
       setRuntime(latest.runtime);
       setBindingsState(latest.bindings);
@@ -3616,6 +3754,7 @@ export default function App() {
     mutator: (currentState: FlowCellState) => FlowCellState
   ) => {
     const optimisticState = mutator(state);
+    latestStateRef.current = optimisticState;
     setState(optimisticState);
     void persistLatestMutation(mutator, { broadcast: false }).catch((error) => {
       pushFrontendEvent(
@@ -3706,9 +3845,7 @@ export default function App() {
         buttonIds: toolPopout.ButtonIds,
         layoutMode,
         buttonLabel: layoutMode === "PanelFan" ? panel.Name : ownerButton!.Label,
-        bounds: toolPopout.Bounds ?? null,
-        transparentWindow:
-          layoutMode === "Individual" && ownerButton?.transparent_popout === true
+        bounds: toolPopout.Bounds ?? null
       }).catch(() => {});
       openLabels.add(label);
     }
@@ -4022,9 +4159,6 @@ export default function App() {
         panelId: panel.Id,
         panelName: panel.Name,
         buttonCount: panel.Buttons.length,
-        transparentWindow:
-          panel.Buttons.length > 0 &&
-          panel.Buttons.every((button) => button.transparent_popout === true),
         bounds: panel.PopoutBounds
       });
     }
@@ -4080,10 +4214,7 @@ export default function App() {
       buttonIds: resolvedRecord.ButtonIds,
       layoutMode: resolvedRecord.LayoutMode,
       buttonLabel: args.buttonLabel,
-      bounds: resolvedRecord.Bounds,
-      transparentWindow:
-        resolvedRecord.LayoutMode === "Individual" &&
-        args.ownerButton.transparent_popout === true
+      bounds: resolvedRecord.Bounds
     });
     pushFrontendEvent(
       surface,
@@ -4349,18 +4480,22 @@ export default function App() {
   const handleQuickRotateGroupApply = async (
     ownerButton: FlowCellButton,
     direction: "negative" | "positive",
-    angleOverride?: number
+    angleOverride?: number,
+    valuesOverride?: QuickRotateGroupValues
   ) => {
     setPopoutContextMenu(null);
-    const values = normalizeQuickRotateGroupValues(
-      getToolOptionState(
-        state,
-        selectedProgram.ProgramTabId,
-        selectedPanel.Id,
-        ownerButton.Id,
-        "quick_rotate_group"
-      )?.Values
-    );
+    const currentState = latestStateRef.current ?? state;
+    const values = valuesOverride
+      ? normalizeQuickRotateGroupValues({ ...valuesOverride })
+      : normalizeQuickRotateGroupValues(
+          getToolOptionState(
+            currentState,
+            selectedProgram.ProgramTabId,
+            selectedPanel.Id,
+            ownerButton.Id,
+            "quick_rotate_group"
+          )?.Values
+        );
     const resolvedAngle = Math.abs(
       Number.isFinite(angleOverride ?? NaN) ? Number(angleOverride) : values.AngleDeg
     );
@@ -4393,7 +4528,8 @@ export default function App() {
         axis: values.Axis,
         center_mode: values.CenterMode,
         operation_mode: values.OperationMode,
-        angle_deg: signedAngle
+        angle_deg: signedAngle,
+        distribute_count: values.DistributeCount
       }
     });
   };
@@ -4403,7 +4539,20 @@ export default function App() {
     angleDeg: number
   ) => {
     setPopoutContextMenu(null);
+    const currentState = latestStateRef.current ?? state;
+    const values = normalizeQuickRotateGroupValues(
+      getToolOptionState(
+        currentState,
+        selectedProgram.ProgramTabId,
+        selectedPanel.Id,
+        ownerButton.Id,
+        "quick_rotate_group"
+      )?.Values
+    );
     updateQuickRotateGroupValue(ownerButton, "AngleDeg", angleDeg);
+    if (values.OperationMode === "DISTRIBUTE") {
+      return;
+    }
     await handleQuickRotateGroupApply(ownerButton, "positive", angleDeg);
   };
 
@@ -4698,7 +4847,7 @@ export default function App() {
   };
 
   const handleOpenButtonAppearanceAction = async () => {
-    if (!selectedProgram || !selectedPanel || !buttonAppearanceTargetButton) {
+    if (!selectedProgram || !selectedPanel || buttonAppearanceButtons.length === 0) {
       return;
     }
 
@@ -4706,7 +4855,7 @@ export default function App() {
       programId: selectedProgram.ProgramTabId,
       panelId: selectedPanel.Id,
       panelName: selectedPanel.Name,
-      buttonId: buttonAppearanceTargetButton.Id
+      buttonId: ""
     });
   };
 
@@ -5269,9 +5418,17 @@ export default function App() {
       applyBindingsToState(ensureStateDefaults(refreshed.state), refreshed.bindings)
     );
     await saveState(latestState, { broadcast: false });
+    const snapshot = buildLayoutSnapshot(latestState, refreshed.runtime);
+    if ((snapshot.PanelPopouts?.length ?? 0) === 0 && (snapshot.ToolPopouts?.length ?? 0) === 0) {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        "Save Layout skipped because no open popouts were captured."
+      );
+      return;
+    }
     const layoutPath = await saveLayoutSnapshot(
       nameInput.trim() || null,
-      buildLayoutSnapshot(latestState, refreshed.runtime)
+      snapshot
     );
     pushFrontendEvent(
       inferSurfaceName(windowContext),
@@ -5306,6 +5463,7 @@ export default function App() {
     try {
       const snapshot = (await loadLayoutSnapshot(selectedPath)) as LayoutSnapshot;
       const nextState = applyLayoutSnapshot(state, snapshot);
+      forcedPopoutPlacementUntilRef.current = Date.now() + 2500;
       if (windowContext.kind === "main") {
         setLayoutPicker(null);
       }
@@ -5370,7 +5528,7 @@ export default function App() {
   };
 
   const openButtonContextMenu = (
-    event: ReactMouseEvent<HTMLElement>,
+    event: ContextMenuTriggerEvent,
     button: FlowCellButton
   ) => {
     if (windowContext.kind !== "main" || !selectedProgram || !selectedPanel) {
@@ -5394,7 +5552,7 @@ export default function App() {
   };
 
   const openProgramContextMenu = (
-    event: ReactMouseEvent<HTMLElement>,
+    event: ContextMenuTriggerEvent,
     program: FlowCellProgram
   ) => {
     if (windowContext.kind !== "main") {
@@ -5410,6 +5568,26 @@ export default function App() {
       left: clamp(event.clientX, 8, Math.max(window.innerWidth - 204, 8)),
       top: clamp(event.clientY, 8, Math.max(window.innerHeight - 144, 8))
     });
+  };
+
+  const handleWorkspaceButtonPointerDownCapture = (
+    event: ReactPointerEvent<HTMLElement>,
+    button: FlowCellButton
+  ) => {
+    if (event.button !== 2) {
+      return;
+    }
+    openButtonContextMenu(event, button);
+  };
+
+  const handleProgramButtonPointerDownCapture = (
+    event: ReactPointerEvent<HTMLElement>,
+    program: FlowCellProgram
+  ) => {
+    if (event.button !== 2) {
+      return;
+    }
+    openProgramContextMenu(event, program);
   };
 
   const handleRenameButton = async (button: FlowCellButton) => {
@@ -5535,6 +5713,9 @@ export default function App() {
                 panelId: selectedPanel.Id,
                 buttonId: button.Id
               })
+            }
+            onPointerDownCapture={(event) =>
+              handleWorkspaceButtonPointerDownCapture(event, button)
             }
             onClick={() => void handleHostButtonActivate(button)}
             onContextMenuCapture={(event) => openButtonContextMenu(event, button)}
@@ -6187,8 +6368,8 @@ export default function App() {
               onPresetApply={(angleDeg) => {
                 void handleQuickRotateGroupPreset(toolPopoutOwnerButton, angleDeg);
               }}
-              onApply={(direction) => {
-                void handleQuickRotateGroupApply(toolPopoutOwnerButton, direction);
+              onApply={(direction, values) => {
+                void handleQuickRotateGroupApply(toolPopoutOwnerButton, direction, undefined, values);
               }}
             />
           </div>
@@ -6236,18 +6417,7 @@ export default function App() {
       );
     }
 
-    return (
-      <div
-        ref={isTransparentSingleButtonPopout ? transparentToolPopoutMeasureRef : undefined}
-        className={
-          isTransparentSingleButtonPopout
-            ? "single-popout-button single-popout-button--transparent"
-            : "single-popout-button"
-        }
-      >
-        {renderButtonHost(toolPopoutOwnerButton, true)}
-      </div>
-    );
+    return <div className="single-popout-button">{renderButtonHost(toolPopoutOwnerButton, true)}</div>;
   };
 
   const renderPanelFanOptionsSurface = () => {
@@ -6293,7 +6463,7 @@ export default function App() {
       importedSkins={state.ImportedSkins ?? []}
       styleGroups={state.StyleGroups ?? []}
       blackTintOpacity={appTheme.blackTintOpacity}
-      selectedButtonId={buttonAppearanceButtonId || buttonAppearanceTargetButton?.Id || ""}
+      selectedButtonId={buttonAppearanceButtonId}
       onSelectedButtonChange={setButtonAppearanceButtonId}
       onSave={(buttonId, draft, transparentPopout) => {
         void handleSaveButtonAppearance(buttonId, draft, transparentPopout);
@@ -6304,7 +6474,9 @@ export default function App() {
           ? existingImportedSkins.map((entry) => (entry.id === skin.id ? skin : entry))
           : [...existingImportedSkins, skin];
         void persistState(
-          updateImportedSkins(state, syncBlackTintImportedSkins(nextImportedSkins, appTheme))
+          ensureStateDefaults(
+            updateImportedSkins(state, syncBlackTintImportedSkins(nextImportedSkins, appTheme))
+          )
         );
       }}
       onClose={() => {
@@ -6408,9 +6580,6 @@ export default function App() {
     surfaceMode !== "appearance";
 
   if (windowContext.kind === "panel-popout") {
-    if (isTransparentPanelPopout) {
-      return renderBareFanoutShell(renderPanelButtonGrid(true), "transparent-panel");
-    }
     return renderSlimPopoutShell(renderPanelButtonGrid(true), "panel");
   }
 
@@ -6433,10 +6602,6 @@ export default function App() {
 
     if (toolPopoutLayoutMode === "Fanout") {
       return renderBareFanoutShell(renderToolPopoutSurface(), "floating-fanout");
-    }
-
-    if (isTransparentSingleButtonPopout) {
-      return renderBareFanoutShell(renderToolPopoutSurface(), "transparent-button");
     }
 
     return renderSlimPopoutShell(
@@ -6594,6 +6759,9 @@ export default function App() {
                         selected
                           ? "program-rail__button is-active"
                           : "program-rail__button"
+                      }
+                      onPointerDownCapture={(event) =>
+                        handleProgramButtonPointerDownCapture(event, program)
                       }
                       onContextMenuCapture={(event) => openProgramContextMenu(event, program)}
                       onClick={() =>
@@ -6761,7 +6929,9 @@ export default function App() {
                     ? existingImportedSkins.map((entry) => (entry.id === skin.id ? skin : entry))
                     : [...existingImportedSkins, skin];
                   void persistState(
-                    updateImportedSkins(state, syncBlackTintImportedSkins(nextImportedSkins, appTheme))
+                    ensureStateDefaults(
+                      updateImportedSkins(state, syncBlackTintImportedSkins(nextImportedSkins, appTheme))
+                    )
                   );
                 }}
               />
@@ -6821,7 +6991,7 @@ export default function App() {
                         className="surface-action"
                         styleGroup={miscStyleGroup}
                         importedSkin={miscImportedSkin}
-                        disabled={!buttonAppearanceTargetButton}
+                        disabled={buttonAppearanceButtons.length === 0}
                         onClick={() => void handleOpenButtonAppearanceAction()}
                       />
                       <HostSkinButton
@@ -6975,7 +7145,7 @@ export default function App() {
               handleBindButtonShortcut(contextMenuButton);
             }}
           >
-            Bind Shortcut
+            Open In Binds
           </button>
           <button
             type="button"

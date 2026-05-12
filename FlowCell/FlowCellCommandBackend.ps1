@@ -520,6 +520,7 @@ function Invoke-FlowCellToolCommand($Envelope) {
                 center_mode = [string]$payload.center_mode
                 operation_mode = [string]$payload.operation_mode
                 angle_deg = [double]$payload.angle_deg
+                distribute_count = [int]$(if ($payload.PSObject.Properties['distribute_count']) { $payload.distribute_count } else { 3 })
             }
             $statusText = if ($response.PSObject.Properties['message']) { [string]$response.message } else { 'Quick rotate complete.' }
             Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText

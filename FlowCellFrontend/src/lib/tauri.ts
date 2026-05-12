@@ -267,22 +267,15 @@ function resolveToolWindowOptions(args: {
               maxWidth: 2200,
               maxHeight: 1800
             };
-  const storedMinWidth =
-    isPanelFan || isFloatingFanout || isAlignment || isFlattenRevolve || isSmartAxis
-      ? defaults.minWidth
-      : 120;
-  const storedMinHeight =
-    isPanelFan || isFloatingFanout || isAlignment || isFlattenRevolve || isSmartAxis
-      ? defaults.minHeight
-      : 72;
+  const restoredBounds = isValidStoredBounds(args.bounds, 40, 24) ? args.bounds : null;
 
   if (isPanelFan) {
-    if (isValidStoredBounds(args.bounds, storedMinWidth, storedMinHeight)) {
+    if (restoredBounds) {
       return {
-        x: args.bounds.Left,
-        y: args.bounds.Top,
-        width: clamp(args.bounds.Width, storedMinWidth, defaults.maxWidth),
-        height: clamp(args.bounds.Height, storedMinHeight, defaults.maxHeight)
+        x: restoredBounds.Left,
+        y: restoredBounds.Top,
+        width: clamp(restoredBounds.Width, 40, defaults.maxWidth),
+        height: clamp(restoredBounds.Height, 24, defaults.maxHeight)
       };
     }
     return {
@@ -291,7 +284,7 @@ function resolveToolWindowOptions(args: {
     };
   }
 
-  if (!isValidStoredBounds(args.bounds, storedMinWidth, storedMinHeight)) {
+  if (!restoredBounds) {
     return {
       width: defaults.width,
       height: defaults.height
@@ -299,10 +292,10 @@ function resolveToolWindowOptions(args: {
   }
 
   return {
-    x: args.bounds.Left,
-    y: args.bounds.Top,
-    width: clamp(args.bounds.Width, storedMinWidth, defaults.maxWidth),
-    height: clamp(args.bounds.Height, storedMinHeight, defaults.maxHeight)
+    x: restoredBounds.Left,
+    y: restoredBounds.Top,
+    width: clamp(restoredBounds.Width, 40, defaults.maxWidth),
+    height: clamp(restoredBounds.Height, 24, defaults.maxHeight)
   };
 }
 
@@ -480,22 +473,14 @@ export function openPanelPopout(args: {
   panelId: string;
   panelName: string;
   buttonCount: number;
-  transparentWindow?: boolean;
   bounds?: FlowCellBounds | null;
 }): Promise<void> {
   const label = buildPanelPopoutLabel(args.programId, args.panelId);
   return (async () => {
     const placement = resolvePanelWindowOptions(args.buttonCount, args.bounds);
-    const isTransparentWindow = args.transparentWindow === true;
     const existing = await WebviewWindow.getByLabel(label);
     if (existing) {
-      if (isTransparentWindow) {
-        await applyTransparentFanoutWindowAppearance(existing);
-      }
-      await applyWindowPlacement(existing, placement, {
-        focus: !isTransparentWindow,
-        moveBeforeResize: isTransparentWindow
-      });
+      await applyWindowPlacement(existing, placement);
       return;
     }
 
@@ -508,24 +493,18 @@ export function openPanelPopout(args: {
       }),
       title: `FlowCell - ${args.panelName}`,
       ...placement,
-      resizable: !isTransparentWindow,
+      resizable: true,
       decorations: false,
-      transparent: isTransparentWindow,
+      transparent: false,
       visible: true,
-      focus: !isTransparentWindow,
+      focus: true,
       skipTaskbar: false,
       alwaysOnTop: true,
-      shadow: !isTransparentWindow
+      shadow: true
     });
 
     await waitForWindowCreated(window);
-    if (isTransparentWindow) {
-      await applyTransparentFanoutWindowAppearance(window);
-    }
-    await applyWindowPlacement(window, placement, {
-      focus: !isTransparentWindow,
-      moveBeforeResize: isTransparentWindow
-    });
+    await applyWindowPlacement(window, placement);
   })();
 }
 
@@ -664,14 +643,13 @@ export function openToolPopout(args: {
   buttonIds: string[];
   layoutMode: ToolPopoutLayoutMode;
   buttonLabel: string;
-  transparentWindow?: boolean;
   bounds?: FlowCellBounds | null;
 }): Promise<void> {
   const label = `popout-tool-${args.programId}-${sanitizeWindowToken(args.panelId)}-${sanitizeWindowToken(args.ownerButtonId)}`;
   return (async () => {
     const isPanelFan = args.layoutMode === "PanelFan";
     const isFloatingFanout = args.layoutMode === "Fanout";
-    const isTransparentWindow = isPanelFan || isFloatingFanout || args.transparentWindow === true;
+    const isTransparentWindow = isPanelFan || isFloatingFanout;
     const placement = resolveToolWindowOptions(args);
     const placementOptions = {
       focus: !isTransparentWindow,

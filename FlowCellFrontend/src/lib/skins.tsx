@@ -1,6 +1,8 @@
 import type { ReactElement } from "react";
 import type { ImportedSkin, StyleGroup } from "../types";
 
+export const IMPORTED_SKIN_LABEL_PLACEHOLDER = "{{label}}";
+
 function sanitizeMarkup(markup: string): string {
   return markup
     .replace(/<script[\s\S]*?>[\s\S]*?<\/script>/gi, "")
@@ -9,6 +11,27 @@ function sanitizeMarkup(markup: string): string {
 
 function renderImportedTemplate(markup: string, label: string): string {
   return sanitizeMarkup(markup).replace(/\{\{label\}\}/g, label);
+}
+
+export function normalizeImportedSkinHtmlMarkup(markup: string): string {
+  if (typeof document === "undefined") {
+    return markup;
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = markup;
+  const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT);
+
+  for (let current = walker.nextNode(); current; current = walker.nextNode()) {
+    const textContent = current.textContent ?? "";
+    if (!textContent.trim()) {
+      continue;
+    }
+    current.textContent = textContent.replace(textContent.trim(), IMPORTED_SKIN_LABEL_PLACEHOLDER);
+    return template.innerHTML;
+  }
+
+  return markup;
 }
 
 function hasSkinContent(value: string | undefined): boolean {

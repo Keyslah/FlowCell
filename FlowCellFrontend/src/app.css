@@ -197,26 +197,8 @@ button {
 }
 
 .fanout-popout-root__content--panel-fan,
-.fanout-popout-root__content--floating-fanout,
-.fanout-popout-root__content--transparent-button,
-.fanout-popout-root__content--transparent-panel {
+.fanout-popout-root__content--floating-fanout {
   background: transparent;
-}
-
-.fanout-popout-root--transparent-button,
-.fanout-popout-root--transparent-panel {
-  width: auto;
-  height: auto;
-  pointer-events: auto;
-}
-
-.fanout-popout-root__content--transparent-button,
-.fanout-popout-root__content--transparent-panel {
-  display: inline-flex;
-  width: auto;
-  height: auto;
-  min-height: 0;
-  pointer-events: auto;
 }
 
 .slim-popout-shell--panel-fan {
@@ -1177,6 +1159,47 @@ button {
   color: var(--fc-theme-page-foreground) !important;
   text-shadow:
     0 0.18em 0.08em color-mix(in srgb, var(--fc-theme-surface-shadow) 34%, transparent) !important;
+}
+
+/* Imported button demos commonly arrive wrapped in a full-page `.body` shell.
+   Constrain that wrapper to the host button frame so saved skins do not overflow/clamp the FlowTest grid. */
+.button-skin .imported-html > .body {
+  width: 100% !important;
+  height: 100% !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  display: flex !important;
+  align-items: stretch !important;
+  justify-content: stretch !important;
+  font-size: 0.875rem !important;
+  background: transparent !important;
+  overflow: hidden !important;
+}
+
+.button-skin.is-compact .imported-html > .body {
+  font-size: 0.72rem !important;
+}
+
+.button-skin .imported-html > .body > * {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.button-skin .imported-html > .body > .button-wrap,
+.button-skin .imported-html > .body > .button,
+.button-skin .imported-html > .body .button {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+}
+
+.button-skin .imported-html,
+.button-skin .imported-html *,
+.button-skin .imported-svg,
+.button-skin .imported-svg * {
+  pointer-events: none !important;
 }
 
 .button-skin.is-compact .button-skin__label {
@@ -2235,6 +2258,18 @@ button {
   display: grid;
   gap: 6px;
   font-size: 0.85rem;
+}
+
+.button-appearance-window__save-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: end;
+  gap: 10px;
+}
+
+.button-appearance-window__save-controls label {
+  min-width: min(260px, 100%);
 }
 
 .button-appearance-window__preview-card {

@@ -1,14 +1,22 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ClipboardEvent as ReactClipboardEvent } from "react";
 import {
   DEFAULT_IMPORTED_SKINS,
   buildBlackTintImportedSkin,
   getImportedSkinPreset,
   IMPORTED_SKIN_PRESETS
 } from "../lib/theme";
-import { getImportedSkin, renderButtonSkin, resolveStyleGroup } from "../lib/skins";
+import {
+  getImportedSkin,
+  IMPORTED_SKIN_LABEL_PLACEHOLDER,
+  normalizeImportedSkinHtmlMarkup,
+  renderButtonSkin,
+  resolveStyleGroup
+} from "../lib/skins";
 import type { FlowCellButton, ImportedSkin, StyleGroup } from "../types";
 
 export const BUTTON_APPEARANCE_ALL_BUTTONS_ID = "__all_buttons__";
+const DEFAULT_BUTTON_PREVIEW_LABEL = "Preview Button";
+const DEFAULT_BUTTON_SKIN_NAME = "New Button Skin";
 
 interface ButtonAppearanceWindowProps {
   panelName: string;
@@ -38,7 +46,7 @@ function buildFallbackDraft(buttonLabel: string): ImportedSkin {
   const baseSkin = DEFAULT_IMPORTED_SKINS[0];
   return {
     ...baseSkin,
-    id: baseSkin.id,
+    id: "",
     name: `${buttonLabel} Skin`
   };
 }
@@ -76,6 +84,10 @@ function buildDraftFromSelection(
 ): ImportedSkin | null {
   if (buttons.length === 0) {
     return null;
+  }
+
+  if (!selectedButtonId.trim()) {
+    return buildFallbackDraft("New Button");
   }
 
   if (selectedButtonId === BUTTON_APPEARANCE_ALL_BUTTONS_ID) {
@@ -121,6 +133,30 @@ function createDraftSkinId(): string {
   return `imported-skin-${randomPart}`;
 }
 
+function applyNormalizedHtmlPaste(args: {
+  event: ReactClipboardEvent<HTMLTextAreaElement>;
+  currentValue: string;
+  onValue: (value: string) => void;
+}): void {
+  const pastedMarkup = args.event.clipboardData.getData("text");
+  if (!pastedMarkup) {
+    return;
+  }
+
+  const normalizedMarkup = normalizeImportedSkinHtmlMarkup(pastedMarkup);
+  if (normalizedMarkup === pastedMarkup) {
+    return;
+  }
+
+  args.event.preventDefault();
+  const textarea = args.event.currentTarget;
+  const selectionStart = textarea.selectionStart ?? args.currentValue.length;
+  const selectionEnd = textarea.selectionEnd ?? selectionStart;
+  args.onValue(
+    `${args.currentValue.slice(0, selectionStart)}${normalizedMarkup}${args.currentValue.slice(selectionEnd)}`
+  );
+}
+
 export function ButtonAppearanceWindow({
   panelName,
   buttons,
@@ -134,16 +170,20 @@ export function ButtonAppearanceWindow({
   onClose
 }: ButtonAppearanceWindowProps) {
   const isAllButtonsSelection = selectedButtonId === BUTTON_APPEARANCE_ALL_BUTTONS_ID;
-  const previewButton =
-    buttons.find((button) => button.Id === selectedButtonId) ?? buttons[0] ?? null;
+  const selectedTargetButton =
+    buttons.find((button) => button.Id === selectedButtonId) ?? null;
+  const previewButton = selectedTargetButton ?? buttons[0] ?? null;
+  const hasSelectedTarget = isAllButtonsSelection || selectedTargetButton !== null;
   const [draft, setDraft] = useState<ImportedSkin | null>(() =>
     buildDraftFromSelection(buttons, selectedButtonId, styleGroups, importedSkins)
   );
   const [transparentPopout, setTransparentPopout] = useState(false);
 
   useEffect(() => {
-    setDraft(buildDraftFromSelection(buttons, selectedButtonId, styleGroups, importedSkins));
-  }, [buttons, importedSkins, selectedButtonId, styleGroups]);
+    if (!draft && buttons.length > 0) {
+      setDraft(buildDraftFromSelection(buttons, selectedButtonId, styleGroups, importedSkins));
+    }
+  }, [buttons, draft, importedSkins, selectedButtonId, styleGroups]);
 
   useEffect(() => {
     if (buttons.length === 0) {
@@ -154,7 +194,7 @@ export function ButtonAppearanceWindow({
       setTransparentPopout(buttons.every((button) => button.transparent_popout === true));
       return;
     }
-    const selectedButton = buttons.find((button) => button.Id === selectedButtonId) ?? buttons[0];
+    const selectedButton = buttons.find((button) => button.Id === selectedButtonId) ?? null;
     setTransparentPopout(selectedButton?.transparent_popout === true);
   }, [buttons, selectedButtonId]);
 
@@ -191,13 +231,18 @@ export function ButtonAppearanceWindow({
           ? resolveStyleLabel(uniqueStyleGroupIds[0], styleGroups)
           : "Mixed button styles";
       })()
-    : resolveStyleLabel(previewButton.style_group_id ?? "", styleGroups);
-  const previewLabel = isAllButtonsSelection ? "All Buttons" : previewButton.Label;
+    : selectedTargetButton
+      ? resolveStyleLabel(selectedTargetButton.style_group_id ?? "", styleGroups)
+      : "No target selected";
+  const previewLabel = isAllButtonsSelection
+    ? "All Buttons"
+    : selectedTargetButton?.Label ?? DEFAULT_BUTTON_PREVIEW_LABEL;
   const saveDraftToSkinLibrary = () => {
     const nextDraft: ImportedSkin = {
       ...draft,
       id: draft.id.trim() || createDraftSkinId(),
-      name: draft.name.trim() || `${previewLabel} Skin`
+      name:
+        draft.name.trim() || (hasSelectedTarget ? `${previewLabel} Skin` : DEFAULT_BUTTON_SKIN_NAME)
     };
     setDraft(nextDraft);
     onSaveImportedSkin(nextDraft);
@@ -225,6 +270,7 @@ export function ButtonAppearanceWindow({
             <button
               type="button"
               className="surface-action"
+              disabled={!hasSelectedTarget}
               onClick={() => onSave(selectedButtonId || previewButton.Id, draft, transparentPopout)}
             >
               {isAllButtonsSelection ? "Save To Panel Buttons" : "Save To Button"}
@@ -237,7 +283,9 @@ export function ButtonAppearanceWindow({
         <p className="caption">
           {isAllButtonsSelection
             ? "This editor saves one dedicated imported skin onto every regular button in this panel, including pop-outs and fanouts."
-            : "This editor saves a dedicated imported skin onto one button at a time, including its pop-out and fanout renders."}{" "}
+            : hasSelectedTarget
+              ? "This editor saves a dedicated imported skin onto one button at a time, including its pop-out and fanout renders."
+              : "Build the skin first, then choose which button should receive it."}{" "}
           The current style source is <strong>{currentStyleLabel}</strong>.
         </p>
       </section>
@@ -247,11 +295,12 @@ export function ButtonAppearanceWindow({
           <div className="button-appearance-window__sidebar">
             <div className="button-appearance-window__controls">
               <label>
-                Button
+                Apply To
                 <select
-                  value={selectedButtonId || previewButton.Id}
+                  value={selectedButtonId}
                   onChange={(event) => onSelectedButtonChange(event.target.value)}
                 >
+                  <option value="">Choose button...</option>
                   <option value={BUTTON_APPEARANCE_ALL_BUTTONS_ID}>All Buttons In Panel</option>
                   {buttons.map((button) => (
                     <option key={button.Id} value={button.Id}>
@@ -259,22 +308,6 @@ export function ButtonAppearanceWindow({
                     </option>
                   ))}
                 </select>
-              </label>
-              <label>
-                Skin Name
-                <input
-                  value={draft.name}
-                  onChange={(event) =>
-                    setDraft((current) =>
-                      current
-                        ? {
-                            ...current,
-                            name: event.target.value
-                          }
-                        : current
-                    )
-                  }
-                />
               </label>
               <label>
                 <input
@@ -320,16 +353,31 @@ export function ButtonAppearanceWindow({
                     </>
                   ) : (
                     <>
-                      <strong>{previewButton.Label}</strong>
-                      <span className="caption">
-                        {previewButton.Tooltip || "No description set."}
-                      </span>
-                      <span className="caption">{previewButton.Target || "No target."}</span>
-                      <span className="caption">
-                        {transparentPopout
-                          ? "Single-button pop-out window will be transparent."
-                          : "Single-button pop-out window will use the regular framed shell."}
-                      </span>
+                      <strong>{selectedTargetButton?.Label ?? "No button selected yet"}</strong>
+                      {selectedTargetButton ? (
+                        <>
+                          <span className="caption">
+                            {selectedTargetButton.Tooltip || "No description set."}
+                          </span>
+                          <span className="caption">
+                            {selectedTargetButton.Target || "No target."}
+                          </span>
+                          <span className="caption">
+                            {transparentPopout
+                              ? "Single-button pop-out window will be transparent."
+                              : "Single-button pop-out window will use the regular framed shell."}
+                          </span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="caption">
+                            The preview stays editable while no button is selected.
+                          </span>
+                          <span className="caption">
+                            Pick a target here only when you are ready to apply the skin.
+                          </span>
+                        </>
+                      )}
                     </>
                   )}
                 </div>
@@ -343,14 +391,34 @@ export function ButtonAppearanceWindow({
                 <span className="eyebrow">Render Code</span>
                 <h2>HTML + CSS + SVG</h2>
               </div>
-              <div className="surface-actions">
+              <div className="button-appearance-window__save-controls">
+                <label>
+                  Skin Name
+                  <input
+                    value={draft.name}
+                    placeholder={DEFAULT_BUTTON_SKIN_NAME}
+                    onChange={(event) =>
+                      setDraft((current) =>
+                        current
+                          ? {
+                              ...current,
+                              name: event.target.value
+                            }
+                          : current
+                      )
+                    }
+                  />
+                </label>
                 <button type="button" className="surface-action" onClick={saveDraftToSkinLibrary}>
                   Save Code Preset
                 </button>
               </div>
             </div>
             <p className="caption">
-              Render-only code only. The label placeholder is <code>{"{{label}}"}</code>.
+              Render-only code only. The label placeholder is{" "}
+              <code>{IMPORTED_SKIN_LABEL_PLACEHOLDER}</code>. When pasted HTML includes a visible
+              caption, the first visible text chunk is converted to that placeholder automatically.
+              Saved Code loads your own stored skins. Built-in Preset loads FlowCell starter skins.
             </p>
             <div className="appearance-editor-controls">
               <label>
@@ -410,6 +478,21 @@ export function ButtonAppearanceWindow({
                 <textarea
                   rows={7}
                   value={draft.html}
+                  onPaste={(event) =>
+                    applyNormalizedHtmlPaste({
+                      event,
+                      currentValue: draft.html,
+                      onValue: (value) =>
+                        setDraft((current) =>
+                          current
+                            ? {
+                                ...current,
+                                html: value
+                              }
+                            : current
+                        )
+                    })
+                  }
                   onChange={(event) =>
                     setDraft((current) =>
                       current
