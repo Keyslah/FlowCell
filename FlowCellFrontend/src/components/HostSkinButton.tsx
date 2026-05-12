@@ -1,4 +1,5 @@
-import { forwardRef, type ButtonHTMLAttributes } from "react";
+import { forwardRef, type ButtonHTMLAttributes, type CSSProperties } from "react";
+import { resolveGreenHighlightColor } from "../lib/highlightPalette";
 import type { ImportedSkin, StyleGroup } from "../types";
 import { renderButtonSkin } from "../lib/skins";
 
@@ -9,6 +10,7 @@ interface HostSkinButtonProps
   importedSkin?: ImportedSkin;
   selected?: boolean;
   skinCompact?: boolean;
+  highlightKey?: string;
 }
 
 export const HostSkinButton = forwardRef<HTMLButtonElement, HostSkinButtonProps>(
@@ -19,30 +21,40 @@ export const HostSkinButton = forwardRef<HTMLButtonElement, HostSkinButtonProps>
       importedSkin,
       selected = false,
       skinCompact = false,
+      highlightKey,
       className,
+      style,
       ...buttonProps
     },
     ref
   ) => {
-    const resolvedClassName = [className, styleGroup ? "host-skin-button" : ""]
-      .filter(Boolean)
-      .join(" ");
+    const resolvedClassName = [className, "host-skin-button"].filter(Boolean).join(" ");
+    const resolvedStyle: CSSProperties = {
+      ...(style ?? {}),
+      ...(highlightKey
+        ? {
+            ["--fc-selected-highlight" as const]: resolveGreenHighlightColor(highlightKey)
+          }
+        : {})
+    };
 
     return (
-      <button ref={ref} className={resolvedClassName} {...buttonProps}>
-        {styleGroup ? (
-          <span className="host-skin-button__frame">
-            {renderButtonSkin({
-              label,
-              styleGroup,
-              importedSkin,
-              selected,
-              compact: skinCompact
-            })}
-          </span>
-        ) : (
-          <span className="host-skin-button__fallback">{label}</span>
-        )}
+      <button
+        ref={ref}
+        className={resolvedClassName}
+        data-selected={selected ? "true" : "false"}
+        style={resolvedStyle}
+        {...buttonProps}
+      >
+        <span className="host-skin-button__frame">
+          {renderButtonSkin({
+            label,
+            styleGroup,
+            importedSkin,
+            selected,
+            compact: skinCompact
+          })}
+        </span>
       </button>
     );
   }

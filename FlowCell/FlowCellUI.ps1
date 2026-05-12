@@ -1,4 +1,5 @@
 # Description: Main FlowCell desktop shell for program tabs, panel tools, popouts, and script/macro execution.
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 

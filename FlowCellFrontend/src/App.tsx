@@ -1,9 +1,12 @@
 import {
+  startTransition,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
+  type SetStateAction,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode
@@ -19,6 +22,7 @@ import { emitCommand } from "./lib/emitCommand";
 import {
   broadcastStateSync,
   closePanelPopout,
+  clearButtonBinding,
   closeToolPopout,
   getForegroundProcessInfo,
   getWindowContext,
@@ -33,6 +37,7 @@ import {
   openPanelFanOptionsWindow,
   openPanelPopout,
   openToolPopout,
+  saveButtonBinding,
   saveLayoutSnapshot,
   saveState,
   showOpenExeDialog,
@@ -42,6 +47,7 @@ import {
   addButtonsToPanel,
   addPanel,
   addProgram,
+  applyBindingsToState,
   applyLayoutSnapshot,
   buildCommandEnvelope,
   buildLayoutSnapshot,
@@ -62,6 +68,7 @@ import {
   getToolPopoutButtons,
   isAlignmentOwnerButton,
   isFlattenRevolveOwnerButton,
+  isQuickRotateGroupOwnerButton,
   isRegularPopCandidate,
   isSmartAxisButton,
   isSmartAxisOwnerButton,
@@ -82,6 +89,14 @@ import {
   upsertToolPopout
 } from "./lib/state";
 import {
+  buildAvailableCandidateShortcuts,
+  buildUsedShortcutMap,
+  formatShortcutForDisplay,
+  normalizeShortcut,
+  parseShortcutInput
+} from "./lib/bindings";
+import { resolveGreenHighlightColor } from "./lib/highlightPalette";
+import {
   getImportedSkin,
   renderButtonSkin,
   renderSurfaceSkin,
@@ -94,6 +109,7 @@ import {
   normalizeAppTheme
 } from "./lib/theme";
 import { ButtonCard } from "./components/ButtonCard";
+import { MacroLabPage } from "./components/MacroLabPage";
 import {
   FanOutButtonCluster,
   type FanClusterEntry,
@@ -111,6 +127,7 @@ import { PanelFanOptionsWindow } from "./components/PanelFanOptionsWindow";
 import {
   AlignmentToolSurface,
   FlattenRevolveToolSurface,
+  QuickRotateGroupToolSurface,
   SmartAxisStrip
 } from "./components/ToolSurfaces";
 import { DEFAULT_PANEL_FAN_OPTIONS } from "./types";
@@ -118,6 +135,7 @@ import type {
   CommandEnvelope,
   CommandResult,
   FlowCellButton,
+  FlowCellBindingsState,
   FlowCellBounds,
   PanelFanOptions,
   FlowCellPanel,
@@ -135,7 +153,7 @@ import type {
   WindowContext
 } from "./types";
 
-type SurfaceMode = "panel" | "appearance";
+type SurfaceMode = "panel" | "appearance" | "binds" | "macro-lab";
 
 interface SelectedButtonRef {
   programId: number;
@@ -164,6 +182,7 @@ interface LayoutPickerState {
 interface MacroPickerState {
   options: RecordedMacroChoice[];
   selectedId: string;
+  purpose: "add-button" | "bind-target";
 }
 
 interface PopoutContextMenuState {
@@ -175,6 +194,25 @@ interface ButtonContextMenuState {
   buttonId: string;
   left: number;
   top: number;
+}
+
+interface BindTargetState {
+  button: FlowCellButton;
+  programId: number;
+  panelId?: string;
+  source: "workspace" | "script" | "macro";
+}
+
+interface BindListItem {
+  id: string;
+  button: FlowCellButton;
+  programId: number;
+  panelId?: string;
+  programLabel: string;
+  label: string;
+  target: string;
+  shortcut: string;
+  source: "workspace" | "macro";
 }
 
 interface AnchoredPopoutMetrics {
@@ -215,6 +253,17 @@ interface FlattenRevolveValues {
   MergeDistance: number;
 }
 
+interface QuickRotateGroupValues {
+  Axis: string;
+  AngleDeg: number;
+  CenterMode: string;
+  OperationMode: string;
+}
+
+interface BuildPanelRenderItemsOptions {
+  collapseSmartAxisToOwnerButton?: boolean;
+}
+
 type PanelRenderItem =
   | {
       kind: "button";
@@ -245,6 +294,13 @@ const DEFAULT_FLATTEN_REVOLVE_VALUES: FlattenRevolveValues = {
   AngleDeg: 360,
   RevolveSteps: 128,
   MergeDistance: 0.0001
+};
+
+const DEFAULT_QUICK_ROTATE_GROUP_VALUES: QuickRotateGroupValues = {
+  Axis: "Z",
+  AngleDeg: 15,
+  CenterMode: "WORLD",
+  OperationMode: "TRANSFORM"
 };
 
 const FLOWCELL_WINDOW_PROCESS_NAMES = ["flowcell_frontend", "flowcellfrontend"];
@@ -603,6 +659,43 @@ function createClientId(prefix: string): string {
   return `${prefix}${randomPart}`;
 }
 
+function getButtonBindingNumericId(binding: FlowCellBindingsState["scriptBindings"][number]): number {
+  return binding.id ?? binding.bindingId ?? 0;
+}
+
+function labelFromTargetPath(target: string): string {
+  const fileName = target.split(/[\\/]/).pop() ?? target;
+  const withoutExtension = fileName.replace(/\.[^.]+$/, "");
+  const strippedPrefix = withoutExtension.replace(/^(org_|file_|util_)/i, "");
+  return strippedPrefix.replace(/[_-]+/g, " ").trim() || withoutExtension;
+}
+
+function buildDirectScriptBindButton(target: string): FlowCellButton {
+  return {
+    Id: `bind_script_${createClientId("")}`,
+    Kind: "script",
+    command_id: "flowcell.run_script",
+    Label: labelFromTargetPath(target),
+    Target: target,
+    Shortcut: "",
+    BindingId: 0,
+    style_group_id: ""
+  };
+}
+
+function buildDirectMacroBindButton(choice: RecordedMacroChoice): FlowCellButton {
+  return {
+    Id: `bind_macro_${choice.id}`,
+    Kind: "macro",
+    command_id: "flowcell.run_macro",
+    Label: choice.label,
+    Target: choice.id,
+    Shortcut: "",
+    BindingId: 0,
+    style_group_id: ""
+  };
+}
+
 function toObjectRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -671,6 +764,16 @@ function normalizeFlattenRevolveValues(values?: Record<string, unknown>): Flatte
   };
 }
 
+function normalizeQuickRotateGroupValues(values?: Record<string, unknown>): QuickRotateGroupValues {
+  return {
+    Axis: readString(values, "Axis", "Z").toUpperCase() || "Z",
+    AngleDeg: readNumber(values, "AngleDeg", 15),
+    CenterMode: readString(values, "CenterMode", "WORLD").toUpperCase() || "WORLD",
+    OperationMode:
+      readString(values, "OperationMode", "TRANSFORM").toUpperCase() || "TRANSFORM"
+  };
+}
+
 function buildVirtualToolButton(
   ownerButton: FlowCellButton,
   suffix: string,
@@ -688,7 +791,10 @@ function buildVirtualToolButton(
   };
 }
 
-function buildPanelRenderItems(buttons: FlowCellButton[]): PanelRenderItem[] {
+function buildPanelRenderItems(
+  buttons: FlowCellButton[],
+  options?: BuildPanelRenderItemsOptions
+): PanelRenderItem[] {
   const smartAxisButtons = buttons.filter(isSmartAxisButton);
   const orderedSmartAxisButtons = [
     smartAxisButtons.find((button) => getSmartAxisCommandForButton(button) === "baseline"),
@@ -700,6 +806,9 @@ function buildPanelRenderItems(buttons: FlowCellButton[]): PanelRenderItem[] {
 
   const items: PanelRenderItem[] = [];
   let smartAxisRendered = false;
+  const smartAxisOwnerButton =
+    orderedSmartAxisButtons.find((entry) => isSmartAxisOwnerButton(entry)) ??
+    orderedSmartAxisButtons[0];
 
   buttons.forEach((button) => {
     if (isSmartAxisButton(button)) {
@@ -707,12 +816,17 @@ function buildPanelRenderItems(buttons: FlowCellButton[]): PanelRenderItem[] {
         return;
       }
       smartAxisRendered = true;
-      if (orderedSmartAxisButtons.length > 0) {
+      if (smartAxisOwnerButton) {
+        if (options?.collapseSmartAxisToOwnerButton) {
+          items.push({
+            kind: "button",
+            button: smartAxisOwnerButton
+          });
+          return;
+        }
         items.push({
           kind: "smart-axis",
-          ownerButton:
-            orderedSmartAxisButtons.find((entry) => isSmartAxisOwnerButton(entry)) ??
-            orderedSmartAxisButtons[0],
+          ownerButton: smartAxisOwnerButton,
           buttons: orderedSmartAxisButtons
         });
       }
@@ -735,6 +849,25 @@ function extractToolOptionState(result: CommandResult): Record<string, unknown> 
   }
   const legacyResult = toObjectRecord(result.details?.legacy_result);
   return toObjectRecord(legacyResult?.ToolOptionState);
+}
+
+function isBlenderToolSetPanel(program: FlowCellProgram | null, panel: FlowCellPanel | null): boolean {
+  if (!program || !panel) {
+    return false;
+  }
+
+  const normalizedProgram =
+    program.ProgramConfig?.NormalizedName?.trim().toLowerCase() ?? "";
+  return normalizedProgram === "blender" && panel.Name.trim().toLowerCase() === "tool set";
+}
+
+function isToolOwnerPopCandidate(button: FlowCellButton): boolean {
+  return (
+    isAlignmentOwnerButton(button) ||
+    isFlattenRevolveOwnerButton(button) ||
+    isQuickRotateGroupOwnerButton(button) ||
+    isSmartAxisOwnerButton(button)
+  );
 }
 
 function isPersistablePopoutBounds(bounds: FlowCellBounds): boolean {
@@ -1177,6 +1310,7 @@ export default function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [windowContext, setWindowContext] = useState<WindowContext | null>(null);
   const [state, setState] = useState<FlowCellState | null>(null);
+  const [bindingsState, setBindingsState] = useState<FlowCellBindingsState | null>(null);
   const [surfaceMode, setSurfaceMode] = useState<SurfaceMode>("panel");
   const [selectedButtonRef, setSelectedButtonRef] = useState<SelectedButtonRef | null>(null);
   const [status, setStatus] = useState<CommandResult | null>(null);
@@ -1187,6 +1321,10 @@ export default function App() {
   const [macroPicker, setMacroPicker] = useState<MacroPickerState | null>(null);
   const [buttonContextMenu, setButtonContextMenu] = useState<ButtonContextMenuState | null>(null);
   const [popoutContextMenu, setPopoutContextMenu] = useState<PopoutContextMenuState | null>(null);
+  const [bindTarget, setBindTarget] = useState<BindTargetState | null>(null);
+  const [bindProgramFilter, setBindProgramFilter] = useState("all");
+  const [bindShortcutInput, setBindShortcutInput] = useState("");
+  const [bindFeedback, setBindFeedback] = useState("Choose a button, script, or macro to bind.");
   const [activeOwnerFanout, setActiveOwnerFanout] = useState<ActiveOwnerFanoutState | null>(null);
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragInProgress, setSpaceDragInProgress] = useState(false);
@@ -1222,6 +1360,7 @@ export default function App() {
   const transparentFanoutIgnoreCursorRef = useRef<boolean | null>(null);
   const startupPanelRestoreRef = useRef(false);
   const startupToolRestoreRef = useRef(false);
+  const toolPopoutAutoFitKeyRef = useRef<string | null>(null);
   const programmaticWindowPlacementUntilRef = useRef(0);
   const layoutLoadInFlightRef = useRef(false);
 
@@ -1242,6 +1381,26 @@ export default function App() {
   const isProgrammaticWindowPlacementActive = () =>
     Date.now() < programmaticWindowPlacementUntilRef.current;
 
+  const hydrateLoadedState = async (
+    payload: LoadStateResponse,
+    context: WindowContext,
+    options?: { captureLiveBounds?: boolean }
+  ): Promise<FlowCellState> => {
+    const normalizedState = applyBindingsToState(
+      ensureStateDefaults(payload.state),
+      payload.bindings
+    );
+    const nextState =
+      context.kind === "main" && options?.captureLiveBounds !== false
+        ? await captureLivePopoutBounds(normalizedState)
+        : normalizedState;
+    setWindowContext(context);
+    setRuntime(payload.runtime);
+    setBindingsState(payload.bindings);
+    setState(nextState);
+    return nextState;
+  };
+
   useEffect(() => {
     const boot = async () => {
       const locationContext = readWindowContextFromLocation();
@@ -1250,14 +1409,7 @@ export default function App() {
         loadState()
       ]);
       const payload = loaded as LoadStateResponse;
-      const baseState = ensureStateDefaults(payload.state);
-      const nextState =
-        context.kind === "main"
-          ? await captureLivePopoutBounds(baseState)
-          : baseState;
-      setWindowContext(context);
-      setRuntime(payload.runtime);
-      setState(nextState);
+      const nextState = await hydrateLoadedState(payload, context);
       if (context.kind === "main") {
         void saveState(nextState, { broadcast: false }).catch(() => {});
       }
@@ -1284,7 +1436,8 @@ export default function App() {
           return;
         }
         setRuntime(payload.runtime);
-        setState(ensureStateDefaults(payload.state));
+        setBindingsState(payload.bindings);
+        setState(applyBindingsToState(ensureStateDefaults(payload.state), payload.bindings));
       });
     })();
 
@@ -1392,18 +1545,216 @@ export default function App() {
           buttonContextMenu.buttonId
         )
       : undefined;
-  const inspectedButton = selectedButton ?? toolPopoutOwnerButton;
 
-  const panelRenderItems = selectedPanel ? buildPanelRenderItems(selectedPanel.Buttons) : [];
+  const collapseSmartAxisToOwnerButton =
+    windowContext?.kind === "main" &&
+    isBlenderToolSetPanel(selectedProgram ?? null, selectedPanel ?? null);
+  const panelRenderItems = selectedPanel
+    ? buildPanelRenderItems(selectedPanel.Buttons, {
+        collapseSmartAxisToOwnerButton
+      })
+    : [];
   const regularPanelRenderItemCount = panelRenderItems.filter((item) => item.kind === "button").length;
   const hasCompactSmartAxisPanelRow = panelRenderItems.some((item) => item.kind === "smart-axis");
-  const selectedRegularButtons = selectedPanel
-    ? selectedPanel.Buttons.filter(
-        (button) =>
-          selectedPopButtonIds.includes(button.Id) && isRegularPopCandidate(button)
-      )
+  const selectedPopButtons = selectedPanel
+    ? selectedPanel.Buttons.filter((button) => selectedPopButtonIds.includes(button.Id))
     : [];
+  const selectedRegularButtons = selectedPopButtons.filter((button) => isRegularPopCandidate(button));
+  const selectedToolOwnerButtons = selectedPopButtons.filter((button) =>
+    isToolOwnerPopCandidate(button)
+  );
   const allButtons = state ? collectAllButtons(state) : [];
+  const programOptions = state
+    ? state.Programs.map((program) => ({
+        id: program.ProgramTabId,
+        label:
+          program.ProgramConfig?.NormalizedName?.trim() || `Program ${program.ProgramTabId}`,
+        scriptFolder: program.ProgramConfig?.ScriptFolder
+      }))
+    : [];
+  const findScriptBindingForTarget = (target: string, programId: number) =>
+    bindingsState?.scriptBindings.find(
+      (binding) =>
+        binding.target === target &&
+        ((binding.programTabId ?? 0) === programId || (binding.programTabId ?? 0) <= 0)
+    ) ?? null;
+  const refreshBindTargetState = (
+    targetState: BindTargetState,
+    nextBindings: FlowCellBindingsState | null = bindingsState,
+    nextState: FlowCellState | null = state
+  ): BindTargetState => {
+    if (targetState.source === "workspace" && nextState) {
+      const matchedButton = findButton(
+        nextState,
+        targetState.programId,
+        targetState.panelId ?? "",
+        targetState.button.Id
+      );
+      if (matchedButton) {
+        return {
+          ...targetState,
+          button: matchedButton
+        };
+      }
+    }
+
+    if (!nextBindings) {
+      return targetState;
+    }
+
+    if (targetState.button.Kind === "macro") {
+      const shortcut = nextBindings.actionHotkeys[targetState.button.Target?.trim() ?? ""] ?? "";
+      return {
+        ...targetState,
+        button: {
+          ...targetState.button,
+          Shortcut: shortcut,
+          BindingId: 0
+        }
+      };
+    }
+
+    if (targetState.button.Kind !== "script") {
+      return targetState;
+    }
+
+    const binding = findScriptBindingForTarget(
+      targetState.button.Target?.trim() ?? "",
+      targetState.programId
+    );
+    return {
+      ...targetState,
+      button: {
+        ...targetState.button,
+        Shortcut: binding?.shortcut ?? "",
+        BindingId: binding ? getButtonBindingNumericId(binding) : 0
+      }
+    };
+  };
+  const currentBindTarget = bindTarget ? refreshBindTargetState(bindTarget) : null;
+  const currentBindShortcut = currentBindTarget?.button.Shortcut?.trim() ?? "";
+  const parsedBindShortcut = parseShortcutInput(bindShortcutInput);
+  const bindUsedShortcuts = useMemo(
+    () => buildUsedShortcutMap(bindingsState, currentBindShortcut),
+    [bindingsState, currentBindShortcut]
+  );
+  const bindAvailableShortcuts = useMemo(
+    () => buildAvailableCandidateShortcuts(bindingsState, parsedBindShortcut || currentBindShortcut),
+    [bindingsState, currentBindShortcut, parsedBindShortcut]
+  );
+  const bindConflict =
+    parsedBindShortcut.length > 0 && bindUsedShortcuts.has(normalizeShortcut(parsedBindShortcut));
+  const bindFilterProgramId =
+    bindProgramFilter === "all" ? 0 : Number.parseInt(bindProgramFilter, 10) || 0;
+  const bindListItems = useMemo<BindListItem[]>(() => {
+    if (!state || !bindingsState) {
+      return [];
+    }
+
+    const programLabelById = new Map(
+      state.Programs.map((program) => [
+        program.ProgramTabId,
+        program.ProgramConfig?.NormalizedName?.trim() || `Program ${program.ProgramTabId}`
+      ])
+    );
+    const buttonEntries = collectAllButtons(state);
+    const items: BindListItem[] = [];
+
+    bindingsState.scriptBindings.forEach((binding) => {
+      const programId = binding.programTabId ?? 0;
+      if (bindFilterProgramId > 0 && programId > 0 && programId !== bindFilterProgramId) {
+        return;
+      }
+      if (bindFilterProgramId > 0 && programId <= 0) {
+        return;
+      }
+
+      const matchedButton =
+        buttonEntries.find(
+          (entry) =>
+            entry.programId === programId &&
+            entry.button.Kind === "script" &&
+            entry.button.Target === binding.target
+        ) ??
+        buttonEntries.find(
+          (entry) => entry.button.Kind === "script" && entry.button.Target === binding.target
+        );
+      const button =
+        matchedButton?.button ??
+        ({
+          ...buildDirectScriptBindButton(binding.target),
+          Shortcut: binding.shortcut,
+          BindingId: getButtonBindingNumericId(binding)
+        } satisfies FlowCellButton);
+      items.push({
+        id: `script:${programId}:${binding.target}`,
+        button: {
+          ...button,
+          Shortcut: binding.shortcut,
+          BindingId: getButtonBindingNumericId(binding)
+        },
+        programId: matchedButton?.programId ?? programId,
+        panelId: matchedButton?.panelId,
+        programLabel:
+          programLabelById.get(matchedButton?.programId ?? programId) ??
+          (programId > 0 ? `Program ${programId}` : "Global"),
+        label: matchedButton?.button.Label ?? labelFromTargetPath(binding.target),
+        target: binding.target,
+        shortcut: binding.shortcut,
+        source: matchedButton ? "workspace" : "workspace"
+      });
+    });
+
+    Object.entries(bindingsState.actionHotkeys).forEach(([actionId, shortcut]) => {
+      const matchedButton = buttonEntries.find(
+        (entry) => entry.button.Kind === "macro" && entry.button.Target === actionId
+      );
+      if (bindFilterProgramId > 0 && matchedButton?.programId !== bindFilterProgramId) {
+        return;
+      }
+      if (bindFilterProgramId > 0 && !matchedButton) {
+        return;
+      }
+
+      const button =
+        matchedButton?.button ??
+        ({
+          Id: `macro_bind_${actionId}`,
+          Kind: "macro",
+          command_id: "flowcell.run_macro",
+          Label: actionId,
+          Target: actionId,
+          Shortcut: shortcut,
+          BindingId: 0,
+          style_group_id: ""
+        } satisfies FlowCellButton);
+      items.push({
+        id: `macro:${actionId}`,
+        button: {
+          ...button,
+          Shortcut: shortcut,
+          BindingId: 0
+        },
+        programId: matchedButton?.programId ?? 0,
+        panelId: matchedButton?.panelId,
+        programLabel:
+          matchedButton?.programId
+            ? programLabelById.get(matchedButton.programId) ?? `Program ${matchedButton.programId}`
+            : "Global",
+        label: matchedButton?.button.Label ?? actionId,
+        target: actionId,
+        shortcut,
+        source: "macro"
+      });
+    });
+
+    return items.sort((left, right) => {
+      if (left.programLabel !== right.programLabel) {
+        return left.programLabel.localeCompare(right.programLabel);
+      }
+      return left.label.localeCompare(right.label);
+    });
+  }, [bindFilterProgramId, bindingsState, state]);
   const resolveFanoutChildEntries = (
     programId: number,
     panelId: string,
@@ -2196,14 +2547,30 @@ export default function App() {
 
   useLayoutEffect(() => {
     if (!windowContext || windowContext.kind !== "tool-popout") {
+      toolPopoutAutoFitKeyRef.current = null;
+      return;
+    }
+    if (!selectedProgram || !selectedPanel) {
+      toolPopoutAutoFitKeyRef.current = null;
       return;
     }
     if (toolPopoutLayoutMode === "PanelFan" || toolPopoutLayoutMode === "Fanout") {
+      toolPopoutAutoFitKeyRef.current = null;
       return;
     }
 
     let cancelled = false;
     const currentWindow = getCurrentWindow();
+    const autoFitKey = `${selectedProgram.ProgramTabId}:${selectedPanel.Id}:${toolPopoutOwnerButton?.Id ?? ""}:${toolPopoutLayoutMode}`;
+
+    if (toolPopoutAutoFitKeyRef.current === autoFitKey) {
+      return;
+    }
+    toolPopoutAutoFitKeyRef.current = autoFitKey;
+
+    if (activeToolPopout?.Bounds && isPersistablePopoutBounds(activeToolPopout.Bounds)) {
+      return;
+    }
 
     const ensureWindowCoversButtonSpread = async () => {
       const currentBounds = await readLogicalWindowBounds(currentWindow);
@@ -2233,6 +2600,9 @@ export default function App() {
         } else if (toolPopoutOwnerButton && isFlattenRevolveOwnerButton(toolPopoutOwnerButton)) {
           requiredWidth = 360;
           requiredHeight = 240;
+        } else if (toolPopoutOwnerButton && isQuickRotateGroupOwnerButton(toolPopoutOwnerButton)) {
+          requiredWidth = 560;
+          requiredHeight = 170;
         } else if (toolPopoutButtons.some((button) => isSmartAxisButton(button))) {
           requiredWidth = COMPACT_SMART_AXIS_WIDTH + COMPACT_POPOUT_SHELL_PADDING;
           requiredHeight = 72;
@@ -2270,6 +2640,9 @@ export default function App() {
   }, [
     hasCompactSmartAxisPanelRow,
     regularPanelRenderItemCount,
+    activeToolPopout?.Bounds,
+    selectedPanel?.Id,
+    selectedProgram?.ProgramTabId,
     toolPopoutButtons,
     toolPopoutLayoutMode,
     toolPopoutOwnerButton,
@@ -2872,8 +3245,18 @@ export default function App() {
     await saveState(nextState, options);
   };
 
+  const scheduleSelectedButtonRef = (
+    nextSelectedButtonRef: SetStateAction<SelectedButtonRef | null>
+  ) => {
+    startTransition(() => {
+      setSelectedButtonRef(nextSelectedButtonRef);
+    });
+  };
+
   const pushFrontendEvent = (surface: string, message: string) => {
-    setFrontendEvents((current) => [message, ...current].slice(0, 12));
+    startTransition(() => {
+      setFrontendEvents((current) => [message, ...current].slice(0, 12));
+    });
     void logFrontendEvent(surface, message);
   };
 
@@ -2882,10 +3265,11 @@ export default function App() {
     options?: { broadcast?: boolean; syncLocalState?: boolean }
   ) => {
     const latest = await loadState();
-    const currentState = ensureStateDefaults(latest.state);
+    const currentState = applyBindingsToState(ensureStateDefaults(latest.state), latest.bindings);
     const nextState = mutator(currentState);
     if (options?.syncLocalState !== false) {
       setRuntime(latest.runtime);
+      setBindingsState(latest.bindings);
       setState(nextState);
     }
     await saveState(nextState, options);
@@ -3003,7 +3387,7 @@ export default function App() {
   ): Promise<CommandResult> => {
     const surface = inferSurfaceName(windowContext);
 
-    setSelectedButtonRef({
+    scheduleSelectedButtonRef({
       programId: commandEnvelope.program_id,
       panelId: commandEnvelope.panel_id,
       buttonId: selectedButtonId
@@ -3033,7 +3417,9 @@ export default function App() {
 
     const receivedMessage = `Frontend received command result. RequestId=${result.request_id}; Ok=${String(result.ok)}; Message=${result.message}`;
     pushFrontendEvent(surface, receivedMessage);
-    setStatus(result);
+    startTransition(() => {
+      setStatus(result);
+    });
     pushFrontendEvent(
       surface,
       `Final UI status updated. RequestId=${result.request_id}; Status=${result.status}; Message=${result.message}`
@@ -3225,12 +3611,6 @@ export default function App() {
       args.layoutMode === "Individual" && (args.ownerButton.fanout?.child_button_ids?.length ?? 0) > 0
         ? "Fanout"
         : args.layoutMode;
-    const existing = findToolPopoutByOwner(
-      state,
-      args.program.ProgramTabId,
-      args.panel.Id,
-      args.ownerButton.Id
-    );
     const buttonIds =
       resolvedLayoutMode === "PanelFan"
         ? [args.ownerButton.Id, ...args.buttons.map((button) => button.Id)]
@@ -3238,50 +3618,66 @@ export default function App() {
             args.ownerButton.Id,
             args.buttons.map((button) => button.Id)
           );
-    const record = {
-      ProgramTabId: args.program.ProgramTabId,
-      PanelId: args.panel.Id,
-      ButtonIds: buttonIds,
-      LayoutMode: resolvedLayoutMode,
-      Bounds: existing?.Bounds ?? null
-    };
+    let resolvedRecord!: ToolPopoutRecord;
+    await persistLatestMutation((currentState) => {
+      const existing = findToolPopoutByOwner(
+        currentState,
+        args.program.ProgramTabId,
+        args.panel.Id,
+        args.ownerButton.Id
+      );
+      const nextRecord: ToolPopoutRecord = {
+        ProgramTabId: args.program.ProgramTabId,
+        PanelId: args.panel.Id,
+        ButtonIds: buttonIds,
+        LayoutMode: resolvedLayoutMode,
+        Bounds: existing?.Bounds ?? null
+      };
+      resolvedRecord = nextRecord;
+      return upsertToolPopout(currentState, nextRecord);
+    });
     pushFrontendEvent(
       surface,
-      `Opening tool popout. Owner=${args.ownerButton.Id}; Buttons=${record.ButtonIds.join(",")}; Layout=${record.LayoutMode}`
+      `Opening tool popout. Owner=${args.ownerButton.Id}; Buttons=${resolvedRecord.ButtonIds.join(",")}; Layout=${resolvedRecord.LayoutMode}`
     );
-    const nextState = upsertToolPopout(state, record);
-    await persistState(nextState);
     await openToolPopout({
       programId: args.program.ProgramTabId,
       panelId: args.panel.Id,
       panelName: args.panel.Name,
       ownerButtonId: args.ownerButton.Id,
-      buttonIds: record.ButtonIds,
-      layoutMode: record.LayoutMode,
+      buttonIds: resolvedRecord.ButtonIds,
+      layoutMode: resolvedRecord.LayoutMode,
       buttonLabel: args.buttonLabel,
-      bounds: record.Bounds
+      bounds: resolvedRecord.Bounds
     });
     pushFrontendEvent(
       surface,
-      `Tool popout opened. Owner=${args.ownerButton.Id}; Layout=${record.LayoutMode}`
+      `Tool popout opened. Owner=${args.ownerButton.Id}; Layout=${resolvedRecord.LayoutMode}`
     );
+  };
+
+  const openIndividualPopoutsForButtons = async (buttons: FlowCellButton[]) => {
+    for (const button of buttons) {
+      const popoutButtons = isSmartAxisOwnerButton(button)
+        ? selectedPanel.Buttons.filter((entry) => isSmartAxisButton(entry))
+        : [button];
+      await openToolWindow({
+        program: selectedProgram,
+        panel: selectedPanel,
+        ownerButton: button,
+        buttons: popoutButtons,
+        layoutMode: "Individual",
+        buttonLabel: button.Label
+      });
+    }
   };
 
   const openSelectedIndividualPopouts = async () => {
     pushFrontendEvent(
       inferSurfaceName(windowContext),
-      `Pop Tools Individual requested. Count=${selectedRegularButtons.length}`
+      `Pop Tools Individual requested. Count=${selectedPopButtons.length}`
     );
-    for (const button of selectedRegularButtons) {
-      await openToolWindow({
-        program: selectedProgram,
-        panel: selectedPanel,
-        ownerButton: button,
-        buttons: [button],
-        layoutMode: "Individual",
-        buttonLabel: button.Label
-      });
-    }
+    await openIndividualPopoutsForButtons(selectedPopButtons);
     setSelectedPopButtonIds([]);
   };
 
@@ -3306,6 +3702,37 @@ export default function App() {
           : `${selectedRegularButtons.length} Buttons`
     });
     setSelectedPopButtonIds([]);
+  };
+
+  const openSelectedPopoutsIfAny = async (): Promise<boolean> => {
+    if (selectedPopButtons.length === 0) {
+      return false;
+    }
+    if (selectedToolOwnerButtons.length > 0 || selectedRegularButtons.length <= 1) {
+      await openSelectedIndividualPopouts();
+      return true;
+    }
+    await openSelectedGroupedPopout();
+    return true;
+  };
+
+  const openAllToolSetPopoutsIfEligible = async (panel: FlowCellPanel): Promise<boolean> => {
+    if (windowContext.kind !== "main" || !isBlenderToolSetPanel(selectedProgram, panel)) {
+      return false;
+    }
+
+    const toolOwnerButtons = panel.Buttons.filter((button) => isToolOwnerPopCandidate(button));
+    if (toolOwnerButtons.length === 0) {
+      return false;
+    }
+
+    pushFrontendEvent(
+      inferSurfaceName(windowContext),
+      `Pop Tool Set requested. Count=${toolOwnerButtons.length}`
+    );
+    await openIndividualPopoutsForButtons(toolOwnerButtons);
+    setSelectedPopButtonIds([]);
+    return true;
   };
 
   const openPanelFanPopout = async (panel: FlowCellPanel) => {
@@ -3361,11 +3788,14 @@ export default function App() {
     panel: FlowCellPanel,
     button: FlowCellButton
   ) => {
+    const popoutButtons = isSmartAxisOwnerButton(button)
+      ? panel.Buttons.filter((entry) => isSmartAxisButton(entry))
+      : [button];
     await openToolWindow({
       program,
       panel,
       ownerButton: button,
-      buttons: [button],
+      buttons: popoutButtons,
       layoutMode: "Individual",
       buttonLabel: button.Label
     });
@@ -3404,7 +3834,12 @@ export default function App() {
     panel: FlowCellPanel,
     button: FlowCellButton
   ) => {
-    if (isAlignmentOwnerButton(button) || isFlattenRevolveOwnerButton(button)) {
+    if (
+      isAlignmentOwnerButton(button) ||
+      isFlattenRevolveOwnerButton(button) ||
+      isQuickRotateGroupOwnerButton(button) ||
+      isSmartAxisOwnerButton(button)
+    ) {
       await openCompoundToolPopout(program, panel, button);
       return;
     }
@@ -3444,10 +3879,100 @@ export default function App() {
     );
   };
 
+  const updateQuickRotateGroupValue = (
+    ownerButton: FlowCellButton,
+    field: keyof QuickRotateGroupValues,
+    value: string | number
+  ) => {
+    persistLatestLocalMutation((currentState) =>
+      updateToolOptionState(
+        currentState,
+        selectedProgram.ProgramTabId,
+        selectedPanel.Id,
+        ownerButton.Id,
+        "quick_rotate_group",
+        {
+          ...normalizeQuickRotateGroupValues(
+            getToolOptionState(
+              currentState,
+              selectedProgram.ProgramTabId,
+              selectedPanel.Id,
+              ownerButton.Id,
+              "quick_rotate_group"
+            )?.Values
+          ),
+          [field]: value
+        }
+      )
+    );
+  };
+
+  const handleQuickRotateGroupApply = async (
+    ownerButton: FlowCellButton,
+    direction: "negative" | "positive",
+    angleOverride?: number
+  ) => {
+    setPopoutContextMenu(null);
+    const values = normalizeQuickRotateGroupValues(
+      getToolOptionState(
+        state,
+        selectedProgram.ProgramTabId,
+        selectedPanel.Id,
+        ownerButton.Id,
+        "quick_rotate_group"
+      )?.Values
+    );
+    const resolvedAngle = Math.abs(
+      Number.isFinite(angleOverride ?? NaN) ? Number(angleOverride) : values.AngleDeg
+    );
+    const signedAngle = direction === "negative" ? -resolvedAngle : resolvedAngle;
+    const sourceButton = buildVirtualToolButton(
+      ownerButton,
+      `${ownerButton.Id}_quick_rotate_group_go_${direction}`,
+      direction === "negative" ? "Negative" : "Positive",
+      direction === "negative"
+        ? "Rotate by the entered negative angle."
+        : "Rotate by the entered positive angle."
+    );
+    await activateToolAction({
+      program: selectedProgram,
+      panel: selectedPanel,
+      ownerButton,
+      sourceButton,
+      toolId: "quick_rotate_group",
+      toolCommand: "apply",
+      childSlotId: `quick-rotate-${direction}`,
+      toolAction: `quick_rotate_group.${direction}`,
+      selectedButtonId: ownerButton.Id,
+      kind: "tool_surface",
+      toolOptionState: {
+        ...values,
+        AngleDeg: resolvedAngle
+      },
+      payload: {
+        command: "apply",
+        axis: values.Axis,
+        center_mode: values.CenterMode,
+        operation_mode: values.OperationMode,
+        angle_deg: signedAngle
+      }
+    });
+  };
+
+  const handleQuickRotateGroupPreset = async (
+    ownerButton: FlowCellButton,
+    angleDeg: number
+  ) => {
+    setPopoutContextMenu(null);
+    updateQuickRotateGroupValue(ownerButton, "AngleDeg", angleDeg);
+    await handleQuickRotateGroupApply(ownerButton, "positive", angleDeg);
+  };
+
   const handleFlattenRevolveAction = async (
     ownerButton: FlowCellButton,
     action: "flatten_profile" | "generate_revolve"
   ) => {
+    setPopoutContextMenu(null);
     const values = normalizeFlattenRevolveValues(
       getToolOptionState(
         state,
@@ -3498,6 +4023,7 @@ export default function App() {
     axis: "X" | "Y" | "Z" | "ALL",
     action: "min" | "center" | "max" | "surface" | "geo" | "center_everything"
   ) => {
+    setPopoutContextMenu(null);
     const currentModifiers = getAlignmentToolModifiers(
       state,
       selectedProgram.ProgramTabId,
@@ -3609,6 +4135,7 @@ export default function App() {
     buttons: FlowCellButton[],
     action: "baseline" | "cycle_x" | "cycle_y" | "cycle_z" | "toggle_live"
   ) => {
+    setPopoutContextMenu(null);
     const ownerButton = buttons.find((button) => isSmartAxisOwnerButton(button)) ?? buttons[0];
     if (!ownerButton) {
       return;
@@ -3704,17 +4231,13 @@ export default function App() {
   };
 
   const handlePanelPopAction = async (panel: FlowCellPanel) => {
-    if (
-      windowContext.kind === "main" &&
-      panel.Id === selectedPanel.Id &&
-      selectedRegularButtons.length > 0
-    ) {
-      if (selectedRegularButtons.length === 1) {
-        await openSelectedIndividualPopouts();
-      } else {
-        await openSelectedGroupedPopout();
+    if (windowContext.kind === "main" && panel.Id === selectedPanel.Id) {
+      if (await openSelectedPopoutsIfAny()) {
+        return;
       }
-      return;
+      if (await openAllToolSetPopoutsIfEligible(panel)) {
+        return;
+      }
     }
 
     await togglePanelPopout(panel);
@@ -3821,8 +4344,11 @@ export default function App() {
               ? installResult["status_message"]
               : `Installed ${Number.isFinite(installedCount) ? installedCount : 0} Blender button(s).`;
         const reloaded = await loadState();
-        setRuntime(reloaded.runtime);
-        setState(ensureStateDefaults(reloaded.state));
+        if (windowContext) {
+          await hydrateLoadedState(reloaded, windowContext, {
+            captureLiveBounds: false
+          });
+        }
         pushFrontendEvent(
           inferSurfaceName(windowContext),
           statusMessage
@@ -3854,7 +4380,31 @@ export default function App() {
     }
   };
 
-  const handleOpenMacroPicker = async () => {
+  const selectBindTarget = (targetState: BindTargetState, message?: string) => {
+    const refreshed = refreshBindTargetState(targetState);
+    setBindTarget(refreshed);
+    setBindProgramFilter(String(refreshed.programId));
+    setBindShortcutInput(formatShortcutForDisplay(refreshed.button.Shortcut?.trim() ?? ""));
+    setBindFeedback(
+      message ??
+        `Binding target: ${refreshed.button.Label || refreshed.button.Target || "Unnamed target"}.`
+    );
+    setSurfaceMode("binds");
+  };
+
+  const handleSelectWorkspaceBindTarget = (button: FlowCellButton) => {
+    selectBindTarget(
+      {
+        button,
+        programId: selectedProgram.ProgramTabId,
+        panelId: selectedPanel.Id,
+        source: "workspace"
+      },
+      `Binding target: ${button.Label}.`
+    );
+  };
+
+  const handleOpenMacroPicker = async (purpose: MacroPickerState["purpose"]) => {
     const options = await listRecordedMacros();
     if (options.length === 0) {
       pushFrontendEvent(
@@ -3866,17 +4416,31 @@ export default function App() {
 
     setMacroPicker({
       options,
-      selectedId: options[0].id
+      selectedId: options[0].id,
+      purpose
     });
   };
 
-  const handleAddMacroButton = async () => {
+  const handleConfirmMacroPicker = async () => {
     if (!macroPicker) {
       return;
     }
     const choice =
       macroPicker.options.find((entry) => entry.id === macroPicker.selectedId) ?? null;
     if (!choice) {
+      return;
+    }
+
+    if (macroPicker.purpose === "bind-target") {
+      setMacroPicker(null);
+      selectBindTarget(
+        {
+          button: buildDirectMacroBindButton(choice),
+          programId: selectedProgram.ProgramTabId,
+          source: "macro"
+        },
+        `Binding target: ${choice.label}.`
+      );
       return;
     }
 
@@ -3906,11 +4470,107 @@ export default function App() {
     );
   };
 
+  const handleChooseScriptBindTarget = async () => {
+    try {
+      const selectedPaths = await showOpenFileDialog({
+        title: `Choose ${selectedProgram.ProgramConfig?.NormalizedName ?? "Program"} script to bind`,
+        filter: buildProgramScriptDialogFilter(selectedProgram),
+        initialDirectory: selectedProgram.ProgramConfig?.ScriptFolder,
+        multiselect: false
+      });
+      if (selectedPaths.length === 0) {
+        return;
+      }
+
+      selectBindTarget(
+        {
+          button: buildDirectScriptBindButton(selectedPaths[0]),
+          programId: selectedProgram.ProgramTabId,
+          source: "script"
+        },
+        `Binding target: ${labelFromTargetPath(selectedPaths[0])}.`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setBindFeedback(message);
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Choose bind script failed. ${message}`
+      );
+    }
+  };
+
+  const reloadAppFromDisk = async (options?: {
+    captureLiveBounds?: boolean;
+  }): Promise<LoadStateResponse> => {
+    const payload = await loadState();
+    if (windowContext) {
+      await hydrateLoadedState(payload, windowContext, options);
+    }
+    return payload;
+  };
+
+  const handleSaveCurrentBind = async () => {
+    if (!currentBindTarget) {
+      setBindFeedback("Choose a button, script, or macro first.");
+      return;
+    }
+    if (!parsedBindShortcut.trim()) {
+      setBindFeedback("Enter a shortcut before binding.");
+      return;
+    }
+    if (bindConflict) {
+      setBindFeedback("That shortcut is already in use.");
+      return;
+    }
+
+    try {
+      const shortcut = normalizeShortcut(parsedBindShortcut);
+      const result = await saveButtonBinding({
+        button: currentBindTarget.button,
+        programId: currentBindTarget.programId,
+        shortcut
+      });
+      await reloadAppFromDisk({ captureLiveBounds: false });
+      setBindTarget((current) => (current ? refreshBindTargetState(current) : current));
+      setBindShortcutInput(formatShortcutForDisplay(shortcut));
+      setBindFeedback(result.message);
+      pushFrontendEvent(inferSurfaceName(windowContext), result.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setBindFeedback(message);
+      pushFrontendEvent(inferSurfaceName(windowContext), `Save bind failed. ${message}`);
+    }
+  };
+
+  const handleClearCurrentBind = async () => {
+    if (!currentBindTarget) {
+      setBindFeedback("Choose a button, script, or macro first.");
+      return;
+    }
+
+    try {
+      const result = await clearButtonBinding({
+        button: currentBindTarget.button,
+        programId: currentBindTarget.programId
+      });
+      await reloadAppFromDisk({ captureLiveBounds: false });
+      setBindTarget((current) => (current ? refreshBindTargetState(current) : current));
+      setBindShortcutInput("");
+      setBindFeedback(result.message);
+      pushFrontendEvent(inferSurfaceName(windowContext), result.message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setBindFeedback(message);
+      pushFrontendEvent(inferSurfaceName(windowContext), `Clear bind failed. ${message}`);
+    }
+  };
+
   const handleSaveLayout = async () => {
     const nameInput = window.prompt("Save Layout As (optional)", "") ?? "";
     const refreshed = await loadState();
     const latestState = await captureLivePopoutBounds(
-      ensureStateDefaults(refreshed.state)
+      applyBindingsToState(ensureStateDefaults(refreshed.state), refreshed.bindings)
     );
     await saveState(latestState, { broadcast: false });
     const layoutPath = await saveLayoutSnapshot(
@@ -4017,7 +4677,7 @@ export default function App() {
 
     event.preventDefault();
     event.stopPropagation();
-    setSelectedButtonRef({
+    scheduleSelectedButtonRef({
       programId: selectedProgram.ProgramTabId,
       panelId: selectedPanel.Id,
       buttonId: button.Id
@@ -4026,7 +4686,7 @@ export default function App() {
     setButtonContextMenu({
       buttonId: button.Id,
       left: clamp(event.clientX, 8, Math.max(window.innerWidth - 204, 8)),
-      top: clamp(event.clientY, 8, Math.max(window.innerHeight - 148, 8))
+      top: clamp(event.clientY, 8, Math.max(window.innerHeight - 188, 8))
     });
   };
 
@@ -4070,6 +4730,11 @@ export default function App() {
     );
   };
 
+  const handleBindButtonShortcut = (button: FlowCellButton) => {
+    setButtonContextMenu(null);
+    handleSelectWorkspaceBindTarget(button);
+  };
+
   const handleDeleteButton = async (button: FlowCellButton) => {
     setButtonContextMenu(null);
     if (!window.confirm(`Delete "${button.Label}" from ${selectedPanel.Name}?`)) {
@@ -4086,14 +4751,18 @@ export default function App() {
     );
 
     setSelectedPopButtonIds((current) => current.filter((entry) => entry !== button.Id));
-    setSelectedButtonRef((current) =>
+    scheduleSelectedButtonRef((current) =>
       current?.buttonId === button.Id ? null : current
     );
   };
 
   const renderButtonHost = (button: FlowCellButton, compact = false) => {
     const checkedForPop = selectedPopButtonIds.includes(button.Id);
-    const canPop = !compact && windowContext.kind === "main" && isRegularPopCandidate(button);
+    const canPop =
+      !compact &&
+      windowContext.kind === "main" &&
+      (isRegularPopCandidate(button) ||
+        (isBlenderToolSetPanel(selectedProgram, selectedPanel) && isToolOwnerPopCandidate(button)));
     const popoutStyleOverride = compact ? popoutRegularStyleGroup : undefined;
     const popoutImportedSkinOverride = compact ? popoutRegularImportedSkin : undefined;
     const buttonStyleGroup =
@@ -4105,7 +4774,7 @@ export default function App() {
     return (
       <div
         key={button.Id}
-        className={`button-host ${isAlignmentOwnerButton(button) || isFlattenRevolveOwnerButton(button) ? "button-host--compound" : ""} ${compact ? "button-host--compact" : ""}`}
+        className={`button-host ${isAlignmentOwnerButton(button) || isFlattenRevolveOwnerButton(button) || isQuickRotateGroupOwnerButton(button) || isSmartAxisOwnerButton(button) ? "button-host--compound" : ""} ${compact ? "button-host--compact" : ""}`}
       >
         {!compact && canPop ? (
           <div className="button-host__toolbar">
@@ -4132,8 +4801,9 @@ export default function App() {
             styleGroup={buttonStyleGroup}
             importedSkin={buttonImportedSkin}
             selected={selectedButton?.Id === button.Id}
+            highlightKey={`button:${selectedProgram.ProgramTabId}:${selectedPanel.Id}:${button.Id}`}
             onFocus={() =>
-              setSelectedButtonRef({
+              scheduleSelectedButtonRef({
                 programId: selectedProgram.ProgramTabId,
                 panelId: selectedPanel.Id,
                 buttonId: button.Id
@@ -4151,13 +4821,13 @@ export default function App() {
             importedSkins={state.ImportedSkins}
             styleGroupOverride={popoutStyleOverride}
             importedSkinOverride={popoutImportedSkinOverride}
-            onSelect={() =>
-              setSelectedButtonRef({
-                programId: selectedProgram.ProgramTabId,
-                panelId: selectedPanel.Id,
-                buttonId: button.Id
-              })
-            }
+              onSelect={() =>
+                scheduleSelectedButtonRef({
+                  programId: selectedProgram.ProgramTabId,
+                  panelId: selectedPanel.Id,
+                  buttonId: button.Id
+                })
+              }
             onActivate={() => void handleHostButtonActivate(button)}
           />
         )}
@@ -4210,6 +4880,185 @@ export default function App() {
           renderButtonHost(item.button, compact)
         )
       )}
+    </div>
+  );
+
+  const renderBindsSurface = () => (
+    <div className="binds-page">
+      <div className="surface-header">
+        <div className="surface-header__meta">
+          <h1>Binds</h1>
+          <span className="surface-header__panel-name">
+            {currentBindTarget?.button.Label ?? "No target selected"}
+          </span>
+        </div>
+        <div className="surface-toolbar">
+          <HostSkinButton
+            type="button"
+            label="Add Script"
+            className="surface-action"
+            styleGroup={miscStyleGroup}
+            importedSkin={miscImportedSkin}
+            onClick={() => void handleChooseScriptBindTarget()}
+          />
+          <HostSkinButton
+            type="button"
+            label="Add Macro"
+            className="surface-action"
+            styleGroup={miscStyleGroup}
+            importedSkin={miscImportedSkin}
+            onClick={() => void handleOpenMacroPicker("bind-target")}
+          />
+        </div>
+      </div>
+
+      <section className="surface-card binds-card">
+        <div className="binds-toolbar">
+          <label className="bind-editor-field">
+            <span>Show</span>
+            <select
+              value={bindProgramFilter}
+              onChange={(event) => setBindProgramFilter(event.target.value)}
+            >
+              <option value="all">All Binds</option>
+              {state.Programs.map((program) => (
+                <option key={program.ProgramTabId} value={String(program.ProgramTabId)}>
+                  {program.ProgramConfig?.NormalizedName?.trim() ||
+                    `Program ${program.ProgramTabId}`}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="bind-editor-field binds-toolbar__target">
+            <span>Target</span>
+            <input
+              type="text"
+              readOnly
+              value={currentBindTarget?.button.Label ?? ""}
+              title={currentBindTarget?.button.Target ?? ""}
+              placeholder="Right-click a button or choose Add Script / Add Macro"
+            />
+          </label>
+          <label className="bind-editor-field binds-toolbar__shortcut">
+            <span>Shortcut Input</span>
+            <input
+              type="text"
+              value={bindShortcutInput}
+              placeholder="Control + Alt + K"
+              onChange={(event) => setBindShortcutInput(event.target.value)}
+            />
+          </label>
+          <label className="bind-editor-field binds-toolbar__available">
+            <span>Available Shortcuts</span>
+            <select
+              value=""
+              onChange={(event) => {
+                if (!event.target.value) {
+                  return;
+                }
+                setBindShortcutInput(formatShortcutForDisplay(event.target.value));
+              }}
+            >
+              <option value="">Pick an available shortcut</option>
+              {bindAvailableShortcuts.map((shortcut) => (
+                <option key={shortcut} value={shortcut}>
+                  {formatShortcutForDisplay(shortcut)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="binds-toolbar__status">
+            <span>Current {formatShortcutForDisplay(currentBindShortcut) || "None"}</span>
+            <span>{currentBindTarget?.button.Kind ?? "No target"}</span>
+          </div>
+          <div className="bind-editor-actions">
+            <button
+              type="button"
+              className="surface-action"
+              disabled={!currentBindTarget || !bindShortcutInput.trim()}
+              onClick={() => void handleSaveCurrentBind()}
+            >
+              Bind Shortcut
+            </button>
+            <button
+              type="button"
+              className="surface-action"
+              disabled={!currentBindTarget || !currentBindShortcut}
+              onClick={() => void handleClearCurrentBind()}
+            >
+              Clear Shortcut
+            </button>
+          </div>
+        </div>
+        <div className="binds-feedback-row">
+          <span className="caption">
+            {currentBindTarget?.button.Target ??
+              "Select a workspace button, or add a direct script or macro target."}
+          </span>
+          <span
+            className={bindConflict ? "caption bind-editor-feedback is-error" : "caption bind-editor-feedback"}
+          >
+            {bindConflict ? "That shortcut is already in use." : bindFeedback}
+          </span>
+        </div>
+      </section>
+
+      <section className="surface-card binds-card binds-list-card">
+        <div className="binds-list-header">
+          <div>
+            <span className="eyebrow">Saved Binds</span>
+            <h2>{bindListItems.length} Entry{bindListItems.length === 1 ? "" : "ies"}</h2>
+          </div>
+          <span className="caption">
+            {bindProgramFilter === "all"
+              ? "Showing every saved script and macro shortcut."
+              : "Showing saved binds for the selected program."}
+          </span>
+        </div>
+        {bindListItems.length > 0 ? (
+          <div className="binds-list">
+            {bindListItems.map((item) => {
+              const isSelected =
+                currentBindTarget?.button.Target === item.button.Target &&
+                currentBindTarget?.button.Kind === item.button.Kind &&
+                currentBindTarget?.programId === item.programId;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={isSelected ? "binds-list__item is-selected" : "binds-list__item"}
+                  onClick={() =>
+                    selectBindTarget(
+                      {
+                        button: item.button,
+                        programId: item.programId,
+                        panelId: item.panelId,
+                        source: item.source
+                      },
+                      `Binding target: ${item.label}.`
+                    )
+                  }
+                >
+                  <span className="binds-list__label">{item.label}</span>
+                  <span className="binds-list__meta">{item.programLabel}</span>
+                  <span className="binds-list__shortcut">
+                    {formatShortcutForDisplay(item.shortcut) || "None"}
+                  </span>
+                  <span className="binds-list__target" title={item.target}>
+                    {item.target}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="binds-empty">
+            <span className="caption">
+              No binds match this filter yet.
+            </span>
+          </div>
+        )}
+      </section>
     </div>
   );
 
@@ -4547,6 +5396,47 @@ export default function App() {
       );
     }
 
+    if (isQuickRotateGroupOwnerButton(toolPopoutOwnerButton)) {
+      return (
+        <div
+          className="tool-popout-surface"
+          onPointerDownCapture={() => {
+            if (popoutContextMenu) {
+              setPopoutContextMenu(null);
+            }
+          }}
+        >
+          <div className="surface-skin-content">
+            <QuickRotateGroupToolSurface
+              ownerLabel={toolPopoutOwnerButton.Label}
+              panelName={selectedPanel.Name}
+              compact
+              styleGroup={popoutToolStyleGroup}
+              importedSkin={popoutToolImportedSkin}
+              values={normalizeQuickRotateGroupValues(
+                getToolOptionState(
+                  state,
+                  selectedProgram.ProgramTabId,
+                  selectedPanel.Id,
+                  toolPopoutOwnerButton.Id,
+                  "quick_rotate_group"
+                )?.Values
+              )}
+              onValueChange={(field, value) => {
+                updateQuickRotateGroupValue(toolPopoutOwnerButton, field, value);
+              }}
+              onPresetApply={(angleDeg) => {
+                void handleQuickRotateGroupPreset(toolPopoutOwnerButton, angleDeg);
+              }}
+              onApply={(direction) => {
+                void handleQuickRotateGroupApply(toolPopoutOwnerButton, direction);
+              }}
+            />
+          </div>
+        </div>
+      );
+    }
+
     if (toolPopoutButtons.some((button) => isSmartAxisButton(button))) {
       const smartAxisOwnerButton =
         toolPopoutButtons.find((button) => isSmartAxisOwnerButton(button)) ??
@@ -4628,6 +5518,9 @@ export default function App() {
     );
   };
 
+  const showMainRails = windowContext.kind === "main" && surfaceMode !== "macro-lab";
+  const showStatusRail = windowContext.kind === "main" && surfaceMode !== "macro-lab";
+
   if (windowContext.kind === "panel-popout") {
     return renderSlimPopoutShell(renderPanelButtonGrid(true), "panel");
   }
@@ -4668,6 +5561,50 @@ export default function App() {
       }}
     >
       <header className="chrome-bar">
+        {windowContext.kind === "main" ? (
+          <div className="chrome-bar__layout-actions">
+            <HostSkinButton
+              type="button"
+              label="Save Layout"
+              className="chrome-action"
+              styleGroup={miscStyleGroup}
+              importedSkin={miscImportedSkin}
+              onClick={() => void handleSaveLayout()}
+            />
+            <HostSkinButton
+              type="button"
+              label="Load Layout"
+              className="chrome-action"
+              styleGroup={miscStyleGroup}
+              importedSkin={miscImportedSkin}
+              onClick={() => void handleOpenLayoutPicker()}
+            />
+            <HostSkinButton
+              type="button"
+              label="Binds"
+              className={surfaceMode === "binds" ? "chrome-action is-active" : "chrome-action"}
+              styleGroup={miscStyleGroup}
+              importedSkin={miscImportedSkin}
+              selected={surfaceMode === "binds"}
+              onClick={() =>
+                setSurfaceMode((current) => (current === "binds" ? "panel" : "binds"))
+              }
+            />
+            <HostSkinButton
+              type="button"
+              label="Macro Lab"
+              className={
+                surfaceMode === "macro-lab" ? "chrome-action is-active" : "chrome-action"
+              }
+              styleGroup={miscStyleGroup}
+              importedSkin={miscImportedSkin}
+              selected={surfaceMode === "macro-lab"}
+              onClick={() =>
+                setSurfaceMode((current) => (current === "macro-lab" ? "panel" : "macro-lab"))
+              }
+            />
+          </div>
+        ) : null}
         <div className="chrome-bar__drag-region" data-tauri-drag-region="true">
           <div className="chrome-bar__title">
             <span className="eyebrow">FlowCell</span>
@@ -4703,8 +5640,14 @@ export default function App() {
         </div>
       </header>
 
-      <div className="workspace-grid">
-        {windowContext.kind === "main" ? (
+      <div
+        className={
+          surfaceMode === "macro-lab"
+            ? "workspace-grid workspace-grid--macro-lab"
+            : "workspace-grid"
+        }
+      >
+        {showMainRails ? (
           <>
             <aside className="program-rail surface-card">
               <h2>Programs</h2>
@@ -4718,13 +5661,19 @@ export default function App() {
                     state.ImportedSkins,
                     styleGroup?.importedSkinId
                   );
+                  const selected = program.ProgramTabId === selectedProgram.ProgramTabId;
+                  const highlightStyle = {
+                    ["--fc-selected-highlight" as string]: resolveGreenHighlightColor(
+                      `program:${program.ProgramTabId}`
+                    )
+                  } as CSSProperties;
 
                   return (
                     <button
                       key={program.ProgramTabId}
                       type="button"
                       className={
-                        program.ProgramTabId === selectedProgram.ProgramTabId
+                        selected
                           ? "program-rail__button is-active"
                           : "program-rail__button"
                       }
@@ -4732,14 +5681,18 @@ export default function App() {
                         void persistState(updateProgramSelection(state, program.ProgramTabId))
                       }
                     >
-                      <div className="program-rail__skin">
+                      <div
+                        className="program-rail__skin"
+                        data-selected={selected ? "true" : "false"}
+                        style={highlightStyle}
+                      >
                         {renderButtonSkin({
                           label:
                             program.ProgramConfig?.NormalizedName ??
                             `Program ${program.ProgramTabId}`,
                           styleGroup,
                           importedSkin,
-                          selected: program.ProgramTabId === selectedProgram.ProgramTabId
+                          selected
                         })}
                       </div>
                     </button>
@@ -4764,13 +5717,13 @@ export default function App() {
                     type="button"
                     label={panel.Name}
                     className={
-                      surfaceMode === "panel" && selectedPanel.Id === panel.Id
+                      surfaceMode !== "appearance" && selectedPanel.Id === panel.Id
                         ? "rail-button is-active"
                         : "rail-button"
                     }
                     styleGroup={panelsStyleGroup}
                     importedSkin={panelsImportedSkin}
-                    selected={surfaceMode === "panel" && selectedPanel.Id === panel.Id}
+                    selected={surfaceMode !== "appearance" && selectedPanel.Id === panel.Id}
                     onClick={() => {
                       void selectPanel(panel);
                     }}
@@ -4824,7 +5777,9 @@ export default function App() {
           className={
             surfaceMode === "panel" && panelSurfaceStyleGroup
               ? "main-surface surface-card has-surface-skin"
-              : "main-surface surface-card"
+              : surfaceMode === "macro-lab"
+                ? "main-surface main-surface--macro-lab surface-card"
+                : "main-surface surface-card"
           }
           style={surfaceMode === "panel" ? buildSurfaceSkinStyle(panelSurfaceStyleGroup) : undefined}
           data-surface-skin={surfaceMode === "panel" ? panelSurfaceStyleGroup?.skinId ?? "" : ""}
@@ -4866,11 +5821,28 @@ export default function App() {
                 void persistState(updateImportedSkins(state, nextImportedSkins));
               }}
             />
+          ) : surfaceMode === "macro-lab" && windowContext.kind === "main" ? (
+            <MacroLabPage
+              bindingsState={bindingsState}
+              selectedProgramId={selectedProgram.ProgramTabId}
+              selectedProgramName={selectedProgram.ProgramConfig?.NormalizedName ?? "Program"}
+              selectedProgramScriptFolder={selectedProgram.ProgramConfig?.ScriptFolder}
+              programOptions={programOptions}
+              onSelectProgram={(programId) => {
+                void persistState(updateProgramSelection(state, programId));
+              }}
+              onReloadAppFromDisk={() => reloadAppFromDisk({ captureLiveBounds: false })}
+              onFrontendEvent={(message) => {
+                pushFrontendEvent(inferSurfaceName(windowContext), message);
+              }}
+            />
+          ) : surfaceMode === "binds" && windowContext.kind === "main" ? (
+            renderBindsSurface()
           ) : (
             <>
               <div className="surface-header">
                 <div className="surface-header__meta">
-                  <h1>Workspace</h1>
+                  <h1>Buttons</h1>
                   <span className="surface-header__panel-name">{selectedPanel.Name}</span>
                 </div>
                 {windowContext.kind === "main" ? (
@@ -4897,23 +5869,7 @@ export default function App() {
                       className="surface-action"
                       styleGroup={miscStyleGroup}
                       importedSkin={miscImportedSkin}
-                      onClick={() => void handleOpenMacroPicker()}
-                    />
-                    <HostSkinButton
-                      type="button"
-                      label="Save Layout"
-                      className="surface-action"
-                      styleGroup={miscStyleGroup}
-                      importedSkin={miscImportedSkin}
-                      onClick={() => void handleSaveLayout()}
-                    />
-                    <HostSkinButton
-                      type="button"
-                      label="Load Layout"
-                      className="surface-action"
-                      styleGroup={miscStyleGroup}
-                      importedSkin={miscImportedSkin}
-                      onClick={() => void handleOpenLayoutPicker()}
+                      onClick={() => void handleOpenMacroPicker("add-button")}
                     />
                   </div>
                 ) : null}
@@ -4924,29 +5880,9 @@ export default function App() {
           </div>
         </main>
 
+        {showStatusRail ? (
         <aside className="status-rail surface-card">
           <h2>Info</h2>
-          <div
-            className={cardsStyleGroup ? "status-block has-surface-skin" : "status-block"}
-            style={buildSurfaceSkinStyle(cardsStyleGroup)}
-            data-surface-skin={cardsStyleGroup?.skinId ?? ""}
-          >
-            {renderSurfaceSkinBackdrop("Bind Area", cardsStyleGroup, cardsImportedSkin)}
-            <div className="status-block__content">
-              <span className="eyebrow">Bind Area</span>
-              <strong>{inspectedButton?.Label ?? "No button selected"}</strong>
-              <div className="status-bind-strip">
-                <span>Bind {inspectedButton?.BindingId ?? 0}</span>
-                <span>Key {inspectedButton?.Shortcut?.trim() || "None"}</span>
-                <span>Kind {inspectedButton?.Kind ?? "n/a"}</span>
-                <span>Cmd {inspectedButton?.command_id ?? "n/a"}</span>
-              </div>
-              <span className="caption">
-                {inspectedButton?.Target ??
-                  "Select or run a button to inspect its binding and target."}
-              </span>
-            </div>
-          </div>
           <div
             className={cardsStyleGroup ? "status-block has-surface-skin" : "status-block"}
             style={buildSurfaceSkinStyle(cardsStyleGroup)}
@@ -4966,7 +5902,22 @@ export default function App() {
               ) : null}
             </div>
           </div>
+          <div
+            className={cardsStyleGroup ? "status-block has-surface-skin" : "status-block"}
+            style={buildSurfaceSkinStyle(cardsStyleGroup)}
+            data-surface-skin={cardsStyleGroup?.skinId ?? ""}
+          >
+            {renderSurfaceSkinBackdrop("Recent", cardsStyleGroup, cardsImportedSkin)}
+            <div className="status-block__content">
+              <span className="eyebrow">Recent</span>
+              <strong>{frontendEvents[0] ? "Latest Event" : "No Events Yet"}</strong>
+              <span className="caption">
+                {frontendEvents[0] ?? "Frontend actions will appear here."}
+              </span>
+            </div>
+          </div>
         </aside>
+        ) : null}
       </div>
 
       {windowContext.kind === "main" && buttonContextMenu && contextMenuButton ? (
@@ -5003,6 +5954,16 @@ export default function App() {
             }}
           >
             Edit Description
+          </button>
+          <button
+            type="button"
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              handleBindButtonShortcut(contextMenuButton);
+            }}
+          >
+            Bind Shortcut
           </button>
           <button
             type="button"
@@ -5095,12 +6056,18 @@ export default function App() {
             className="modal-card"
             role="dialog"
             aria-modal="true"
-            aria-label="Add FlowCell macro button"
+            aria-label={
+              macroPicker.purpose === "bind-target"
+                ? "Choose FlowCell macro bind target"
+                : "Add FlowCell macro button"
+            }
             onClick={(event) => event.stopPropagation()}
           >
             <div className="modal-card__header">
               <div>
-                <span className="eyebrow">Add Macro</span>
+                <span className="eyebrow">
+                  {macroPicker.purpose === "bind-target" ? "Bind Macro" : "Add Macro"}
+                </span>
                 <h2>Recorded Macros</h2>
               </div>
               <button
@@ -5145,9 +6112,9 @@ export default function App() {
               <button
                 type="button"
                 className="surface-action"
-                onClick={() => void handleAddMacroButton()}
+                onClick={() => void handleConfirmMacroPicker()}
               >
-                Add Macro
+                {macroPicker.purpose === "bind-target" ? "Use Macro Target" : "Add Macro"}
               </button>
               <button
                 type="button"

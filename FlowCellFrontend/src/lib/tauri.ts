@@ -7,13 +7,16 @@ import {
 } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type {
+  BindingMutationResult,
   CommandEnvelope,
   CommandResult,
+  FlowCellButton,
   FlowCellBounds,
   FlowCellState,
   LayoutSnapshot,
   LoadStateResponse,
   RecordedMacroChoice,
+  RecordedMacroDefinition,
   SavedLayoutFile,
   ToolPopoutLayoutMode,
   WindowContext
@@ -587,6 +590,38 @@ export function emitBackendEnvelope(
   return invoke("emit_command", { envelope });
 }
 
+export function saveButtonBinding(args: {
+  button: FlowCellButton;
+  programId: number;
+  shortcut: string;
+}): Promise<BindingMutationResult> {
+  return invoke("save_button_binding", {
+    request: {
+      kind: args.button.Kind,
+      programTabId: args.programId,
+      target: args.button.Target,
+      shortcut: args.shortcut,
+      bindingId: args.button.BindingId ?? 0,
+      label: args.button.Label
+    }
+  });
+}
+
+export function clearButtonBinding(args: {
+  button: FlowCellButton;
+  programId: number;
+}): Promise<BindingMutationResult> {
+  return invoke("clear_button_binding", {
+    request: {
+      kind: args.button.Kind,
+      programTabId: args.programId,
+      target: args.button.Target,
+      bindingId: args.button.BindingId ?? 0,
+      label: args.button.Label
+    }
+  });
+}
+
 export function showOpenFileDialog(args: {
   title: string;
   filter: string;
@@ -630,9 +665,41 @@ export function listRecordedMacros(): Promise<RecordedMacroChoice[]> {
   return invoke("list_recorded_macros");
 }
 
+export function createRecordedMacroDraft(label?: string): Promise<RecordedMacroDefinition> {
+  return invoke("create_recorded_macro_draft", { label });
+}
+
+export function loadRecordedMacro(id: string): Promise<RecordedMacroDefinition> {
+  return invoke("load_recorded_macro", { actionId: id });
+}
+
+export function saveRecordedMacro(
+  definition: RecordedMacroDefinition
+): Promise<RecordedMacroDefinition> {
+  return invoke("save_recorded_macro", { definition });
+}
+
+export function deleteRecordedMacro(id: string): Promise<string> {
+  return invoke("delete_recorded_macro", { actionId: id });
+}
+
+export function recordMacro(label: string): Promise<RecordedMacroDefinition> {
+  return invoke("record_macro", { label });
+}
+
+export function runRecordedMacro(id: string): Promise<string> {
+  return invoke("run_recorded_macro", { actionId: id });
+}
+
 export function installBlenderButtons(args: {
   selectedPaths: string[];
   panelName: string;
 }): Promise<Record<string, unknown>> {
   return invoke("install_blender_buttons", args);
+}
+
+export function deleteBlenderButton(args: {
+  buttonTarget: string;
+}): Promise<Record<string, unknown>> {
+  return invoke("delete_blender_button", args);
 }

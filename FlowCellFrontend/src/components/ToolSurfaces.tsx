@@ -46,6 +46,28 @@ interface FlattenRevolveToolSurfaceProps {
   onAction: (action: "flatten_profile" | "generate_revolve") => void;
 }
 
+interface QuickRotateGroupValues {
+  Axis: string;
+  AngleDeg: number;
+  CenterMode: string;
+  OperationMode: string;
+}
+
+interface QuickRotateGroupToolSurfaceProps {
+  ownerLabel: string;
+  panelName: string;
+  compact?: boolean;
+  styleGroup?: StyleGroup;
+  importedSkin?: ImportedSkin;
+  values: QuickRotateGroupValues;
+  onValueChange: (
+    field: keyof QuickRotateGroupValues,
+    value: string | number
+  ) => void;
+  onPresetApply: (angleDeg: number) => void;
+  onApply: (direction: "negative" | "positive") => void;
+}
+
 interface SmartAxisVisualState {
   Modes: {
     X: string;
@@ -74,6 +96,8 @@ interface SmartAxisStripProps {
 const ALIGNMENT_AXES: Array<"Z" | "Y" | "X"> = ["Z", "Y", "X"];
 const CENTER_MODE_OPTIONS = ["GEOMETRY", "ORIGIN", "WORLD", "CURSOR", "OBJECT"];
 const AXIS_OPTIONS = ["X", "Y", "Z"];
+const QUICK_ROTATE_PRESET_ANGLES = [30, 45, 90, 180, 270];
+const QUICK_ROTATE_OPERATION_OPTIONS = ["TRANSFORM", "DISTRIBUTE"];
 
 function renderToolChip(
   label: string,
@@ -82,41 +106,51 @@ function renderToolChip(
     className?: string;
     selected?: boolean;
     title?: string;
+    highlightKey?: string;
   }
 ) {
-  const { styleGroup, importedSkin, onClick, className, selected = false, title } = args;
+  const {
+    styleGroup,
+    importedSkin,
+    onClick,
+    className,
+    selected = false,
+    title,
+    highlightKey
+  } = args;
   const baseClassName = className ?? "tool-chip";
-  const resolvedClassName = styleGroup
-    ? baseClassName
-        .replace(/\bis-active\b/g, "")
-        .replace(/\btool-chip--armed\b/g, "")
-        .replace(/\btool-chip--live-active\b/g, "")
-        .replace(/\s+/g, " ")
-        .trim()
-    : baseClassName;
 
   return (
     <HostSkinButton
       type="button"
       label={label}
-      className={resolvedClassName}
+      className={baseClassName}
       styleGroup={styleGroup}
       importedSkin={importedSkin}
       selected={selected}
       skinCompact
       onClick={onClick}
       title={title ?? label}
+      highlightKey={selected ? highlightKey ?? `${baseClassName}:${label}` : undefined}
     />
   );
 }
 
 function formatSmartAxisLabel(axis: "X" | "Y" | "Z", mode: string): string {
-  switch (mode) {
+  switch (mode.trim().toUpperCase()) {
     case "MIN":
+    case "MINUS":
+    case "NEGATIVE":
+    case "-":
       return `${axis}-`;
     case "MAX":
+    case "PLUS":
+    case "POSITIVE":
+    case "+":
       return `${axis}+`;
     case "CENTER":
+    case "ZERO":
+    case "0":
       return `${axis}0`;
     default:
       return axis;
@@ -162,6 +196,7 @@ export function AlignmentToolSurface({
             onClick: () => onAction(axis, "surface"),
             className: `tool-chip ${modifiers[axis] === "SURFACE" ? "is-active" : ""}`,
             selected: modifiers[axis] === "SURFACE",
+            highlightKey: `alignment:${panelName}:${ownerLabel}:${axis}:surface`,
             styleGroup,
             importedSkin
           })}
@@ -169,6 +204,7 @@ export function AlignmentToolSurface({
             onClick: () => onAction(axis, "geo"),
             className: `tool-chip ${modifiers[axis] === "GEOCENTER" ? "is-active" : ""}`,
             selected: modifiers[axis] === "GEOCENTER",
+            highlightKey: `alignment:${panelName}:${ownerLabel}:${axis}:geo`,
             styleGroup,
             importedSkin
           })}
@@ -317,6 +353,143 @@ export function FlattenRevolveToolSurface({
   );
 }
 
+export function QuickRotateGroupToolSurface({
+  ownerLabel,
+  panelName,
+  compact = false,
+  styleGroup,
+  importedSkin,
+  values,
+  onValueChange,
+  onPresetApply,
+  onApply
+}: QuickRotateGroupToolSurfaceProps) {
+  const content = (
+    <div
+      className={
+        compact ? "quick-rotate-grid quick-rotate-grid--compact" : "quick-rotate-grid"
+      }
+    >
+      <div className="quick-rotate-row quick-rotate-row--angles">
+        {AXIS_OPTIONS.map((axis) =>
+          renderToolChip(axis, {
+            onClick: () => onValueChange("Axis", axis),
+            className: `tool-chip ${values.Axis === axis ? "is-active" : ""}`,
+            selected: values.Axis === axis,
+            styleGroup,
+            importedSkin
+          })
+        )}
+        {QUICK_ROTATE_PRESET_ANGLES.map((angle) =>
+          renderToolChip(`${angle}\u00b0`, {
+            onClick: () => onPresetApply(angle),
+            className: `tool-chip ${Math.abs(values.AngleDeg - angle) < 0.001 ? "is-active" : ""}`,
+            selected: Math.abs(values.AngleDeg - angle) < 0.001,
+            styleGroup,
+            importedSkin
+          })
+        )}
+      </div>
+      <div className="quick-rotate-row quick-rotate-row--centers">
+        {CENTER_MODE_OPTIONS.map((option) =>
+          renderToolChip(option[0] + option.slice(1).toLowerCase(), {
+            onClick: () => onValueChange("CenterMode", option),
+            className: `tool-chip ${values.CenterMode === option ? "is-active" : ""}`,
+            selected: values.CenterMode === option,
+            styleGroup,
+            importedSkin
+          })
+        )}
+      </div>
+      <div className="quick-rotate-row quick-rotate-row--modes">
+        {QUICK_ROTATE_OPERATION_OPTIONS.map((option) =>
+          renderToolChip(option[0] + option.slice(1).toLowerCase(), {
+            onClick: () => onValueChange("OperationMode", option),
+            className: `tool-chip ${values.OperationMode === option ? "is-active" : ""}`,
+            selected: values.OperationMode === option,
+            styleGroup,
+            importedSkin
+          })
+        )}
+      </div>
+      {compact ? (
+        <div className="quick-rotate-row quick-rotate-row--apply">
+          <input
+            className="quick-rotate-field__input"
+            type="number"
+            step="0.01"
+            value={Number.isFinite(values.AngleDeg) ? values.AngleDeg : 0}
+            onChange={(event) => onValueChange("AngleDeg", Number(event.target.value))}
+          />
+          {renderToolChip("Negative", {
+            onClick: () => onApply("negative"),
+            className: "tool-chip",
+            styleGroup,
+            importedSkin,
+            title: "Rotate by the entered negative angle"
+          })}
+          {renderToolChip("Positive", {
+            onClick: () => onApply("positive"),
+            className: "tool-chip",
+            styleGroup,
+            importedSkin,
+            title: "Rotate by the entered positive angle"
+          })}
+        </div>
+      ) : (
+        <div className="quick-rotate-row quick-rotate-row--apply">
+          <label className="compound-field quick-rotate-field">
+            <span>Angle</span>
+            <input
+              type="number"
+              step="0.01"
+              value={Number.isFinite(values.AngleDeg) ? values.AngleDeg : 0}
+              onChange={(event) => onValueChange("AngleDeg", Number(event.target.value))}
+            />
+          </label>
+          <div className="quick-rotate-apply-pair">
+            <div className="quick-rotate-apply-slot">
+              {renderToolChip("Negative", {
+                onClick: () => onApply("negative"),
+                className: "tool-chip",
+                styleGroup,
+                importedSkin,
+                title: "Rotate by the entered negative angle"
+              })}
+            </div>
+            <div className="quick-rotate-apply-slot">
+              {renderToolChip("Positive", {
+                onClick: () => onApply("positive"),
+                className: "tool-chip",
+                styleGroup,
+                importedSkin,
+                title: "Rotate by the entered positive angle"
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+
+  if (compact) {
+    return <div className="compound-surface compound-surface--compact">{content}</div>;
+  }
+
+  return (
+    <>
+      <div className="surface-header">
+        <div>
+          <span className="eyebrow">Rotate</span>
+          <h1>{ownerLabel}</h1>
+        </div>
+        <span className="caption">{panelName}</span>
+      </div>
+      <div className="compound-surface">{content}</div>
+    </>
+  );
+}
+
 export function SmartAxisStrip({
   label,
   panelName,
@@ -342,6 +515,7 @@ export function SmartAxisStrip({
         onClick: () => onAction("cycle_x"),
         className: `tool-chip ${state.Modes.X !== "NONE" ? "tool-chip--armed" : ""}`,
         selected: state.Modes.X !== "NONE",
+        highlightKey: `smart-axis:${panelName ?? label}:x`,
         styleGroup,
         importedSkin
       })}
@@ -349,6 +523,7 @@ export function SmartAxisStrip({
         onClick: () => onAction("cycle_y"),
         className: `tool-chip ${state.Modes.Y !== "NONE" ? "tool-chip--armed" : ""}`,
         selected: state.Modes.Y !== "NONE",
+        highlightKey: `smart-axis:${panelName ?? label}:y`,
         styleGroup,
         importedSkin
       })}
@@ -356,6 +531,7 @@ export function SmartAxisStrip({
         onClick: () => onAction("cycle_z"),
         className: `tool-chip ${state.Modes.Z !== "NONE" ? "tool-chip--armed" : ""}`,
         selected: state.Modes.Z !== "NONE",
+        highlightKey: `smart-axis:${panelName ?? label}:z`,
         styleGroup,
         importedSkin
       })}
@@ -363,6 +539,7 @@ export function SmartAxisStrip({
         onClick: () => onAction("toggle_live"),
         className: `tool-chip ${state.LiveEnabled ? "tool-chip--live-active" : ""}`,
         selected: state.LiveEnabled,
+        highlightKey: `smart-axis:${panelName ?? label}:live`,
         styleGroup,
         importedSkin
       })}

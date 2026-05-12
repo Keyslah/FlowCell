@@ -268,6 +268,51 @@ function Get-FlowCellCustomEntrypointMetadata([string]$Path, [string]$PreferredF
     return $baseFailure
 }
 
+function Get-FlowCellPythonBootstrapHint([string]$Path, [string[]]$AvailableFunctions = @()) {
+    $leafName = if ([string]::IsNullOrWhiteSpace($Path)) { '' } else { [System.IO.Path]::GetFileName($Path) }
+    $normalizedLeaf = $leafName.ToLowerInvariant()
+    $normalizedFunctions = @($AvailableFunctions | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | ForEach-Object { $_.Trim().ToLowerInvariant() })
+    $bootstrapNames = @(
+        'bootstrap',
+        'listener',
+        'server',
+        'daemon',
+        'startup',
+        'watcher'
+    )
+    $bootstrapFunctions = @(
+        'register',
+        'unregister',
+        'handle',
+        'server',
+        'bootstrap',
+        'start_listener',
+        'run_listener'
+    )
+
+    $looksLikeBootstrapName = $false
+    foreach ($namePart in $bootstrapNames) {
+        if ($normalizedLeaf -like "*$namePart*") {
+            $looksLikeBootstrapName = $true
+            break
+        }
+    }
+
+    $looksLikeBootstrapFunctions = $false
+    foreach ($functionName in $normalizedFunctions) {
+        if ($bootstrapFunctions -contains $functionName) {
+            $looksLikeBootstrapFunctions = $true
+            break
+        }
+    }
+
+    if ($looksLikeBootstrapName -or $looksLikeBootstrapFunctions) {
+        return 'This file looks like a Blender bootstrap/listener helper, not a FlowCell action source. Pick the actual tool `.py` file that exposes run_flowcell_action, main, or perform_*.'
+    }
+
+    return ''
+}
+
 function Get-BridgeActionFunctionMap {
     return @{
         'make_layers' = 'perform_make_layers'
@@ -428,6 +473,8 @@ function Update-WrapperMetadata([string]$WrapperPath, [string]$FallbackDescripti
     $header = @(
         ('# Description: {0}' -f $description),
         '',
+        ('# Source Bridge Action: {0}' -f [string]$actionName),
+        ('# Source Python Filename: {0}' -f ([System.IO.Path]::GetFileName([string]$sourceMeta.PythonPath))),
         ('# Source Python File: {0}' -f [string]$sourceMeta.PythonPath),
         '',
         ('# Source Action Function: {0}' -f [string]$sourceMeta.FunctionName),
@@ -498,6 +545,13 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             $entrypointMeta = Get-FlowCellCustomEntrypointMetadata -Path $fullPath
             if ([string]::IsNullOrWhiteSpace([string]$entrypointMeta.FunctionName)) {
                 $availableFunctions = @($entrypointMeta.AvailableFunctions)
+                $bootstrapHint = Get-FlowCellPythonBootstrapHint -Path $fullPath -AvailableFunctions $availableFunctions
+                $baseReason = if (-not [string]::IsNullOrWhiteSpace($bootstrapHint)) {
+                    $bootstrapHint
+                }
+                else {
+                    [string]$entrypointMeta.Reason
+                }
                 $availableSummary = if ($availableFunctions.Count -gt 0) {
                     ' Found top-level functions: ' + (($availableFunctions | ForEach-Object { "'$_'" }) -join ', ') + '.'
                 }
@@ -507,7 +561,7 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
                 $installResults.Add([pscustomobject]@{
                     Source = $fullPath
                     Installed = $false
-                    Message = ([string]$entrypointMeta.Reason + $availableSummary)
+                    Message = ($baseReason + $availableSummary)
                 }) | Out-Null
                 continue
             }
@@ -667,12 +721,19 @@ if (@($firstInstalled).Count -gt 0) {
 $installedCount = @($installResults | Where-Object { [bool]$_.Installed }).Count
 $failedCount = @($installResults | Where-Object { -not [bool]$_.Installed }).Count
 $buttonWord = if ($installedCount -eq 1) { 'button' } else { 'buttons' }
+$firstFailedResult = @($installResults | Where-Object { -not [bool]$_.Installed } | Select-Object -First 1)
+$firstFailureMessage = if (@($firstFailedResult).Count -gt 0) { [string]$firstFailedResult[0].Message } else { '' }
 
 if ($installedCount -le 0) {
-    $statusMessage = 'No Blender buttons were installed. Check logs for skipped files.'
+    if (-not [string]::IsNullOrWhiteSpace($firstFailureMessage)) {
+        $statusMessage = ('No Blender buttons were installed. First failure: {0}' -f $firstFailureMessage)
+    }
+    else {
+        $statusMessage = 'No Blender buttons were installed.'
+    }
 }
 else {
-    $phaseMessage = 'Installed {0} Blender {1} on {2}. Registered the {3} sandbox action, regenerated {4}, synced FlowTest buttons only,' -f $installedCount, $buttonWord, $PanelName, [string]$bridgeLayout.BridgeFolderName, [string]$bridgeLayout.AddonActionsFileName
+    $phaseMessage = 'Installed {0} Blender {1} on {2}. Registered the {3} sandbox action, regenerated {4}, and re-synced FlowTest button state/layout,' -f $installedCount, $buttonWord, $PanelName, [string]$bridgeLayout.BridgeFolderName, [string]$bridgeLayout.AddonActionsFileName
     switch ([string]$callableCheckStatus) {
         'callable' {
             $statusMessage = $phaseMessage + ' and verified the action is callable.'
@@ -686,6 +747,9 @@ else {
     }
     if ($failedCount -gt 0) {
         $statusMessage += (' Skipped {0} file(s).' -f $failedCount)
+        if (-not [string]::IsNullOrWhiteSpace($firstFailureMessage)) {
+            $statusMessage += (' First failure: {0}' -f $firstFailureMessage)
+        }
     }
 }
 
@@ -702,6 +766,7 @@ else {
     RegistryPath = $customRegistryPath
     ReloadRequired = $reloadRequired
     ReloadReason = $reloadReason
+    FirstFailureMessage = $firstFailureMessage
     StatusMessage = $statusMessage
     AddonActionsFileName = [string]$bridgeLayout.AddonActionsFileName
     BridgeFolder = [string]$BridgeFolder

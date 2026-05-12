@@ -3,7 +3,7 @@
 ## Public Source
 
 - `FlowCell/`: PowerShell UI, AutoHotkey backend, helpers, and vendored libraries.
-- `Blender/`: Blender bridge config and FlowCell button wrappers.
+- `Blender/`: Blender bridge config plus `ScriptBank/` shareable sources, `ManagedActions/` installed action code, `FlowCellButtons/` user-facing wrappers, `SupportScripts/` install/sync plumbing, `AddonScripts/` Blender helpers, and `ScriptDump/` ignored loose/test files.
 - `Illustrator/`: public Illustrator scripts.
 - `Illustrator/HelperScripts/`: internal Illustrator helpers only.
 - `Windows/`: public Windows scripts.
@@ -37,3 +37,5 @@ The main FlowCell `Add Script` button now:
 - creates one button per selected script
 - applies changes only to the currently selected panel
 - strips `file_`, `util_`, and `org_` from the displayed button label only
+
+On the Blender tab, the same control presents as `Add Button` and installs one or more downloaded `.py` action files into the Blender bridge pipeline instead of adding raw file-path buttons directly.

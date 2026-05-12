@@ -12,7 +12,7 @@ Put a one-line Description: comment at the top. Keep helper functions the action
 
 ## What To Hand FlowCell
 
-- one normal Blender `.py` file
+- one or more normal Blender `.py` files
 - top-level `run_flowcell_action`, `main`, or `perform_*`
 - scene-driven logic that works from the current Blender context
 
@@ -23,22 +23,52 @@ Do not hand FlowCell:
 - a script that only works from Blender's Text Editor
 - a file with only helpers like `handle`, `server`, `bootstrap`, or `register`
 
+## Public Sharing Flow
 
+1. download one `.py` tool or a zip of `.py` tools
+2. extract the zip if needed
+3. open the Blender tab in FlowTest
+4. click `Add Button`
+5. select one or more `.py` files
+6. let FlowTest install/register them and sync the panel buttons
+7. reload the Blender FlowTest add-on or restart Blender if FlowTest says runtime reload is required
+8. use the new button
 
 ## What Add Button Does
 
-1. asks for a Blender `.py` file
-2. validates the entrypoint shape
-3. installs or registers the action
-4. copies the code into the configured live Blender runtime file, which is `...\scripts\addons\flowtest_actions.py` for this FlowTest sandbox
-5. creates the matching wrapper in `Blender\FlowCellButtons`
-6. adds the button to the current panel
-7. tells you whether Blender needs a reload or restart
+1. asks for one or more Blender `.py` files
+2. validates the entrypoint shape and rejects obvious bootstrap/listener files
+3. copies each valid tool into `Blender\ManagedActions`
+4. registers each tool in the FlowTest Blender bridge custom-action registry
+5. regenerates the live custom section in the installed `...\scripts\addons\flowtest_actions.py`
+6. creates or updates the matching wrapper in `Blender\FlowCellButtons`
+7. adds the button to the current FlowTest panel
+8. syncs `flowcell_state.json` and the saved Blender layout files
+9. tells you whether Blender must reload the FlowTest add-on or restart before runtime verification reflects the new code
+
+## Folder Roles
+
+- `Blender\ScriptBank` = public/shareable downloadable tools and examples
+- `Blender\ManagedActions` = installed Python action source
+- `Blender\FlowCellButtons` = user-facing clickable wrapper scripts only
+- `Blender\SupportScripts` = dispatcher/sync plumbing only
+- `Blender\AddonScripts` = Blender refresh/sidebar helper scripts only
+- `Blender\ScriptDump` and nested ScriptDump folders = ignored loose/testing/old scripts
+
+## Delete Behavior
+
+Deleting a Blender button from FlowTest is host-owned cleanup, not just a state edit. FlowTest removes the matching button/config entry, prunes orphaned custom-action registry entries, moves orphaned managed-action files to the Recycle Bin when safe, regenerates the live custom `flowtest_actions.py` section, and re-syncs the Blender button panels/layouts so deleted buttons do not reappear.
+
+## Runtime Reload Rule
+
+After Blender bridge, add-on, registry, generated-action, or managed-action changes, Blender must reload the FlowTest add-on or restart before runtime verification reflects the new code. FlowTest reports this when it can detect that the action is not yet callable in the current Blender session.
 
 ## Main Paths
 
+- `Blender\ScriptBank` for shareable source tools and example downloads
 - `Blender\FlowCellButtons` for generated wrappers
 - `Blender\SupportScripts` for bridge helpers
 - `Blender\ManagedActions` for managed custom action sources
+- `Blender\AddonScripts` for Blender-side helper/refresh scripts
 - `Blender\config.json` and `FlowCell\local\private\blender.config.local.json` for config
 - `Blender\ScriptDump` for rough or private test files, not normal button sources

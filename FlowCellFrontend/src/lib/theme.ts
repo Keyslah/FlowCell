@@ -13,7 +13,7 @@ export interface ImportedSkinPreset {
   skin: ImportedSkin;
 }
 
-export const DEFAULT_APP_THEME: AppTheme = {
+export const FLOW_GLASS_APP_THEME: AppTheme = {
   name: "Flow Glass",
   fontFamily: "\"Segoe UI\", sans-serif",
   pageBackground:
@@ -28,8 +28,30 @@ export const DEFAULT_APP_THEME: AppTheme = {
   inputColor: "#07131d",
   accentColor: "#68d9ff",
   successColor: "#9cf667",
-  dangerColor: "#ff5969"
+  dangerColor: "#ff5969",
+  mainCardBlurPx: 18
 };
+
+export const NATURE_FROST_APP_THEME: AppTheme = {
+  name: "Nature Frost",
+  fontFamily: "\"Segoe UI\", sans-serif",
+  pageBackground:
+    "radial-gradient(circle at top right, color-mix(in srgb, #f3ff9f 26%, transparent), transparent 28%), radial-gradient(circle at center left, color-mix(in srgb, #7ec769 18%, transparent), transparent 32%), linear-gradient(145deg, rgba(6, 19, 7, 0.84), rgba(18, 46, 17, 0.44) 42%, rgba(43, 74, 22, 0.24) 100%)",
+  pageForeground: "#f7ffe5",
+  mutedForeground: "#d7e8bb",
+  surfaceColor: "#17311f",
+  surfaceBorder: "#f1ffbf",
+  surfaceShadow: "#050b04",
+  controlColor: "#29452a",
+  buttonColor: "#2e4c2f",
+  inputColor: "#122615",
+  accentColor: "#d4f06a",
+  successColor: "#9de870",
+  dangerColor: "#ff7c72",
+  mainCardBlurPx: 18
+};
+
+export const DEFAULT_APP_THEME: AppTheme = NATURE_FROST_APP_THEME;
 
 export const APP_THEME_PRESETS: AppThemePreset[] = [
   {
@@ -50,13 +72,19 @@ export const APP_THEME_PRESETS: AppThemePreset[] = [
       inputColor: "#fffaf2",
       accentColor: "#b89b74",
       successColor: "#96ab7f",
-      dangerColor: "#c08375"
+      dangerColor: "#c08375",
+      mainCardBlurPx: 12
     }
   },
   {
     id: "flow-glass",
     name: "Flow Glass",
-    theme: DEFAULT_APP_THEME
+    theme: FLOW_GLASS_APP_THEME
+  },
+  {
+    id: "nature-frost",
+    name: "Nature Frost",
+    theme: NATURE_FROST_APP_THEME
   },
   {
     id: "ember-console",
@@ -76,7 +104,8 @@ export const APP_THEME_PRESETS: AppThemePreset[] = [
       inputColor: "#170b09",
       accentColor: "#ffb469",
       successColor: "#d8ff72",
-      dangerColor: "#ff6c67"
+      dangerColor: "#ff6c67",
+      mainCardBlurPx: 14
     }
   },
   {
@@ -97,7 +126,8 @@ export const APP_THEME_PRESETS: AppThemePreset[] = [
       inputColor: "#07121c",
       accentColor: "#6effd6",
       successColor: "#92ff7a",
-      dangerColor: "#ff5c7a"
+      dangerColor: "#ff5c7a",
+      mainCardBlurPx: 16
     }
   }
 ];
@@ -151,6 +181,13 @@ function readThemeField(value: string | undefined, fallback: string): string {
   return trimmed && trimmed.length > 0 ? trimmed : fallback;
 }
 
+function readThemeNumber(value: number | undefined, fallback: number): number {
+  if (typeof value !== "number" || Number.isNaN(value)) {
+    return fallback;
+  }
+  return Math.min(48, Math.max(0, value));
+}
+
 export function normalizeAppTheme(theme?: Partial<AppTheme> | null): AppTheme {
   return {
     name: readThemeField(theme?.name, DEFAULT_APP_THEME.name),
@@ -166,13 +203,20 @@ export function normalizeAppTheme(theme?: Partial<AppTheme> | null): AppTheme {
     inputColor: readThemeField(theme?.inputColor, DEFAULT_APP_THEME.inputColor),
     accentColor: readThemeField(theme?.accentColor, DEFAULT_APP_THEME.accentColor),
     successColor: readThemeField(theme?.successColor, DEFAULT_APP_THEME.successColor),
-    dangerColor: readThemeField(theme?.dangerColor, DEFAULT_APP_THEME.dangerColor)
+    dangerColor: readThemeField(theme?.dangerColor, DEFAULT_APP_THEME.dangerColor),
+    mainCardBlurPx: readThemeNumber(theme?.mainCardBlurPx, DEFAULT_APP_THEME.mainCardBlurPx)
   };
 }
 
 export function getAppThemePreset(presetId: string): AppTheme | undefined {
   const preset = APP_THEME_PRESETS.find((entry) => entry.id === presetId);
   return preset ? normalizeAppTheme(preset.theme) : undefined;
+}
+
+export function getAppThemeVariant(theme: AppTheme): "nature-frost" | "standard" {
+  return normalizeAppTheme(theme).name === NATURE_FROST_APP_THEME.name
+    ? "nature-frost"
+    : "standard";
 }
 
 export function buildAppThemeCssVars(theme: AppTheme): CSSProperties {
@@ -190,7 +234,8 @@ export function buildAppThemeCssVars(theme: AppTheme): CSSProperties {
     ["--fc-theme-input-color" as string]: normalized.inputColor,
     ["--fc-theme-accent" as string]: normalized.accentColor,
     ["--fc-theme-success" as string]: normalized.successColor,
-    ["--fc-theme-danger" as string]: normalized.dangerColor
+    ["--fc-theme-danger" as string]: normalized.dangerColor,
+    ["--fc-theme-main-card-blur" as string]: `${normalized.mainCardBlurPx}px`
   };
 }
 

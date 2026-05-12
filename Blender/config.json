@@ -79,6 +79,12 @@
       "panel": "Tool Set"
     },
     {
+      "label": "rotate",
+      "tooltip": "Open Rotate controls for axis, pivot, transform, and distribute rotation steps.",
+      "scriptPath": ".\\FlowCellButtons\\util_quick_rotate_group_tools.ps1",
+      "panel": "Tool Set"
+    },
+    {
       "label": "Cursor Center Hole",
       "tooltip": "With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.",
       "scriptPath": ".\\FlowCellButtons\\util_cursor_center_hole.ps1",

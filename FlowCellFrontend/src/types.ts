@@ -138,6 +138,7 @@ export interface AppTheme {
   accentColor: string;
   successColor: string;
   dangerColor: string;
+  mainCardBlurPx: number;
 }
 
 export type ToolPopoutLayoutMode = "Group" | "Individual" | "PanelFan" | "Fanout";
@@ -148,6 +149,67 @@ export interface ToolOptionStateRecord {
   OwnerButtonId: string;
   ToolId: string;
   Values: Record<string, unknown>;
+}
+
+export interface FlowCellScriptBinding {
+  id?: number;
+  bindingId?: number;
+  kind?: string;
+  label?: string;
+  status?: string;
+  programTabId?: number;
+  shortcut: string;
+  target: string;
+}
+
+export interface FlowCellBindingsState {
+  nextId?: number;
+  scriptBindings: FlowCellScriptBinding[];
+  actionHotkeys: Record<string, string>;
+}
+
+export interface BindingMutationResult {
+  ok?: boolean;
+  message: string;
+  bindingId?: number;
+  shortcut?: string;
+  bindings?: FlowCellBindingsState;
+  [key: string]: unknown;
+}
+
+export type RecordedMacroStepType =
+  | "ActivateIllustrator"
+  | "ActivateBlender"
+  | "ActivatePhotoshop"
+  | "ActivateWindows"
+  | "Click"
+  | "Wheel"
+  | "Text"
+  | "Key"
+  | "Script"
+  | "Macro";
+
+export interface RecordedMacroStep {
+  type: RecordedMacroStepType;
+  delayMs: number;
+  x?: string;
+  y?: string;
+  button?: string;
+  count?: string;
+  direction?: string;
+  text?: string;
+  keys?: string;
+  scriptPath?: string;
+  macroPath?: string;
+}
+
+export interface RecordedMacroDefinition {
+  id: string;
+  label: string;
+  path?: string;
+  steps: RecordedMacroStep[];
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export interface AlignmentToolStateRecord {
@@ -178,6 +240,16 @@ export interface PopoutClusterRecord {
   };
 }
 
+export interface SavedProgramRecord {
+  SourceProgramTabId: number;
+  SavedAt: string;
+  Program: FlowCellProgram;
+  AlignmentToolStates: AlignmentToolStateRecord[];
+  ToolOptionStates: ToolOptionStateRecord[];
+  ToolPopouts: ToolPopoutRecord[];
+  PopoutClusters: PopoutClusterRecord[];
+}
+
 export interface FlowCellState {
   SelectedProgramTabId: number;
   MainWindowBounds?: FlowCellBounds;
@@ -187,6 +259,7 @@ export interface FlowCellState {
   ToolOptionStates?: ToolOptionStateRecord[];
   ToolPopouts?: ToolPopoutRecord[];
   PopoutClusters?: PopoutClusterRecord[];
+  SavedPrograms?: SavedProgramRecord[];
   AppTheme?: AppTheme;
   StyleGroups?: StyleGroup[];
   ImportedSkins?: ImportedSkin[];
@@ -248,6 +321,7 @@ export interface LayoutSnapshot {
 export interface LoadStateResponse {
   state: FlowCellState;
   runtime: RuntimeInfo;
+  bindings: FlowCellBindingsState;
 }
 
 export interface WindowContext {

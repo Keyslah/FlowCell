@@ -505,6 +505,8 @@ function Update-WrapperMetadata([string]$WrapperPath, [string]$FallbackDescripti
     $header = @(
         ('# Description: {0}' -f $description),
         '',
+        ('# Source Bridge Action: {0}' -f [string]$actionName),
+        ('# Source Python Filename: {0}' -f ([System.IO.Path]::GetFileName([string]$sourceMeta.PythonPath))),
         ('# Source Python File: {0}' -f [string]$sourceMeta.PythonPath),
         '',
         ('# Source Action Function: {0}' -f [string]$sourceMeta.FunctionName),

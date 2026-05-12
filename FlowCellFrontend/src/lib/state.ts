@@ -2,6 +2,7 @@ import type {
   AlignmentToolStateRecord,
   AppTheme,
   CommandEnvelope,
+  FlowCellBindingsState,
   FlowCellButton,
   FlowCellBounds,
   FlowCellPanel,
@@ -332,6 +333,85 @@ function cloneAlignmentModifiers(
   };
 }
 
+function normalizePopoutClusters(clusters?: FlowCellState["PopoutClusters"]) {
+  return (clusters ?? []).map((cluster) => ({
+    ...cluster,
+    MemberIds: Array.isArray(cluster.MemberIds)
+      ? cluster.MemberIds.filter(
+          (memberId): memberId is string =>
+            typeof memberId === "string" && memberId.trim().length > 0
+        )
+      : []
+  }));
+}
+
+function normalizeProgram(program: FlowCellProgram): FlowCellProgram {
+  return {
+    ...program,
+    style_group_id:
+      typeof program.style_group_id === "string" && program.style_group_id.trim().length > 0
+        ? program.style_group_id
+        : DEFAULT_PROGRAM_STYLE_GROUP_ID,
+    Panels: program.Panels.map((panel) => ({
+      ...panel,
+      FanOptions: normalizePanelFanOptions(panel.FanOptions),
+      Buttons: panel.Buttons.map((button) => ({
+        ...button,
+        command_id: inferButtonCommandId(button),
+        style_group_id: button.style_group_id ?? "",
+        fanout:
+          button.fanout &&
+          Array.isArray(button.fanout.child_button_ids) &&
+          typeof button.fanout.layout === "string"
+            ? {
+                child_button_ids: button.fanout.child_button_ids.filter(
+                  (buttonId) => typeof buttonId === "string" && buttonId.trim().length > 0
+                ),
+                layout:
+                  button.fanout.layout === "grid" || button.fanout.layout === "radial"
+                    ? button.fanout.layout
+                    : "row",
+                direction: normalizeFanoutDirection(button.fanout.direction)
+              }
+            : undefined
+      }))
+    }))
+  };
+}
+
+function getBindingNumericId(binding: FlowCellBindingsState["scriptBindings"][number]): number {
+  return binding.id ?? binding.bindingId ?? 0;
+}
+
+function findMatchingScriptBinding(
+  button: FlowCellButton,
+  programId: number,
+  bindings: FlowCellBindingsState
+) {
+  const bindingId = button.BindingId ?? 0;
+  if (bindingId > 0) {
+    const byId = bindings.scriptBindings.find(
+      (binding) => getBindingNumericId(binding) === bindingId
+    );
+    if (byId) {
+      return byId;
+    }
+  }
+
+  const buttonTarget = button.Target?.trim();
+  if (!buttonTarget) {
+    return undefined;
+  }
+
+  return (
+    bindings.scriptBindings.find(
+      (binding) =>
+        binding.target === buttonTarget &&
+        (binding.programTabId ?? 0) === programId
+    ) ?? bindings.scriptBindings.find((binding) => binding.target === buttonTarget)
+  );
+}
+
 export function ensureStateDefaults(state: FlowCellState): FlowCellState {
   const importedSkinsSource = state.ImportedSkins ? [...state.ImportedSkins] : [];
 
@@ -384,40 +464,50 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
     AlignmentToolStates: state.AlignmentToolStates ?? [],
     ToolOptionStates: state.ToolOptionStates ?? [],
     ToolPopouts: state.ToolPopouts ?? [],
-    PopoutClusters: state.PopoutClusters ?? [],
+    PopoutClusters: normalizePopoutClusters(state.PopoutClusters),
     AppTheme: normalizeAppTheme(state.AppTheme),
     StyleGroups: styleGroups,
     ImportedSkins: importedSkins,
     SurfaceStyleAssignments: surfaceStyleAssignments,
+    Programs: state.Programs.map((program) => normalizeProgram(program))
+  };
+}
+
+export function applyBindingsToState(
+  state: FlowCellState,
+  bindings: FlowCellBindingsState | null | undefined
+): FlowCellState {
+  if (!bindings) {
+    return state;
+  }
+
+  return {
+    ...state,
     Programs: state.Programs.map((program) => ({
       ...program,
-      style_group_id:
-        typeof program.style_group_id === "string" && program.style_group_id.trim().length > 0
-          ? program.style_group_id
-          : DEFAULT_PROGRAM_STYLE_GROUP_ID,
       Panels: program.Panels.map((panel) => ({
         ...panel,
-        FanOptions: normalizePanelFanOptions(panel.FanOptions),
-        Buttons: panel.Buttons.map((button) => ({
-          ...button,
-          command_id: inferButtonCommandId(button),
-          style_group_id: button.style_group_id ?? "",
-          fanout:
-            button.fanout &&
-            Array.isArray(button.fanout.child_button_ids) &&
-            typeof button.fanout.layout === "string"
-              ? {
-                  child_button_ids: button.fanout.child_button_ids.filter(
-                    (buttonId) => typeof buttonId === "string" && buttonId.trim().length > 0
-                  ),
-                  layout:
-                    button.fanout.layout === "grid" || button.fanout.layout === "radial"
-                      ? button.fanout.layout
-                      : "row",
-                  direction: normalizeFanoutDirection(button.fanout.direction)
-                }
-              : undefined
-        }))
+        Buttons: panel.Buttons.map((button) => {
+          if (button.Kind === "macro") {
+            const shortcut = bindings.actionHotkeys[button.Target?.trim() ?? ""] ?? "";
+            return {
+              ...button,
+              Shortcut: shortcut,
+              BindingId: 0
+            };
+          }
+
+          if (button.Kind !== "script") {
+            return button;
+          }
+
+          const binding = findMatchingScriptBinding(button, program.ProgramTabId, bindings);
+          return {
+            ...button,
+            Shortcut: binding?.shortcut ?? "",
+            BindingId: binding ? getBindingNumericId(binding) : 0
+          };
+        })
       }))
     }))
   };
@@ -535,6 +625,10 @@ export function isFlattenRevolveOwnerButton(button: FlowCellButton): boolean {
   return targetFileName(button.Target) === "util_flatten_revolve_tools.ps1";
 }
 
+export function isQuickRotateGroupOwnerButton(button: FlowCellButton): boolean {
+  return targetFileName(button.Target) === "util_quick_rotate_group_tools.ps1";
+}
+
 export function getSmartAxisCommandForButton(button: FlowCellButton): string {
   return SMART_AXIS_TARGET_TO_COMMAND[targetFileName(button.Target)] ?? "";
 }
@@ -551,6 +645,7 @@ export function isRegularPopCandidate(button: FlowCellButton): boolean {
   return (
     !isAlignmentOwnerButton(button) &&
     !isFlattenRevolveOwnerButton(button) &&
+    !isQuickRotateGroupOwnerButton(button) &&
     !isSmartAxisButton(button)
   );
 }

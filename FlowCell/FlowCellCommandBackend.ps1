@@ -513,6 +513,19 @@ function Invoke-FlowCellToolCommand($Envelope) {
             Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=ok; Message={1}' -f [string]$Envelope.command_id, $statusText)
             return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge')
         }
+        'quick_rotate_group' {
+            $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowtest_custom_quick_rotate_group' -Data @{
+                command = [string]$toolCommand
+                axis = [string]$payload.axis
+                center_mode = [string]$payload.center_mode
+                operation_mode = [string]$payload.operation_mode
+                angle_deg = [double]$payload.angle_deg
+            }
+            $statusText = if ($response.PSObject.Properties['message']) { [string]$response.message } else { 'Quick rotate complete.' }
+            Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
+            Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=ok; Message={1}' -f [string]$Envelope.command_id, $statusText)
+            return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge')
+        }
         'smart_axis_lock' {
             try {
                 $response = Invoke-FlowCellBlenderBridgeRequest -Action 'smart_axis_lock' -Data @{

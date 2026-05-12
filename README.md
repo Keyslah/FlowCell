@@ -1,13 +1,13 @@
 Support FlowCell: [![Donate via Stripe](https://img.shields.io/badge/Donate-Stripe-635BFF?logo=stripe&logoColor=white)](https://buy.stripe.com/aFa3cw2rF5fR7xyauo8AE01)
 # FlowCell
 
-FlowCell uses a PowerShell WPF UI and an AutoHotkey v2 backend to manage program Scripts, hotkeys, and macros.
+FlowCell uses a Tauri + React frontend with a PowerShell and AutoHotkey backend to manage program scripts, hotkeys, macros, panel layouts, and Blender bridge actions.
 
 AutoHotkey v2 is required  https://www.autohotkey.com/
 
 When a script is added through FlowCell's panel UI, the normal Add Script button opens in the current program folder, supports multi-select, adds one button per selected script, and writes those buttons only into the currently selected panel. 
 
-On the Blender tab, Add Button installs or registers the Blender-side action, creates or updates the wrapper in Blender/FlowCellButtons/, adds the button to the selected panel, and reports whether Blender must reload or restart before first use.
+On the Blender tab, `Add Button` installs or registers the Blender-side action, creates or updates the wrapper in `Blender/FlowCellButtons/`, adds the button to the selected panel, syncs FlowTest state/layout, and reports whether Blender must reload or restart before first use.
 
 Preferred script prefix:
 - `org_` for organization actions such as Illustrator layer tools or Blender collection tools
@@ -18,7 +18,7 @@ This repository is structured for public source control. Publishable source stay
 
 ## How Blender buttons work
 
-When you click `Add Button` in the Blender tab, FlowCell asks for one Blender `.py` script.
+When you click `Add Button` in the Blender tab, FlowCell accepts one or more Blender `.py` tool files. That means a downloaded zip can be extracted and imported by selecting multiple `.py` files in one pass.
 
 Use the Ai prompt at the top of [docs/blender-buttons.md](docs/blender-buttons.md) when you want Ai to convert a Blender script for flowcell.
 A valid Blender button script should:
@@ -27,14 +27,22 @@ A valid Blender button script should:
 - expose `run_flowcell_action`, `main`, or `perform_*`
 - preserve the real interaction model, including prompts like file pickers when the source tool needs them
 
-Do not give FlowCell a full add-on package, installer, background listener, or Text Editor-only script.
+Do not give FlowCell a full add-on package, installer, bootstrap/listener file, or Text Editor-only script.
 
-If the file is valid, FlowCell installs the Blender-side action, creates the matching wrapper in `Blender/FlowCellButtons/`, adds the button to the selected panel, and tells you whether Blender needs a reload or restart.
+If the file is valid, FlowCell:
+
+- copies it into `Blender/ManagedActions/`
+- registers it in the FlowTest Blender bridge custom-action registry
+- regenerates the live custom section inside the installed `flowtest_actions.py`
+- creates or updates the matching wrapper in `Blender/FlowCellButtons/`
+- adds the button to the selected panel
+- re-syncs FlowTest state and the saved Blender layouts
+- tells you whether Blender must reload the FlowTest add-on or restart before runtime verification reflects the new code
 
 ## Repository Layout
 
 - `FlowCell/`: main app code, launcher scripts, helpers, vendored dependencies, and ignored local runtime storage under `FlowCell/local/`.
-- `Blender/`: Blender integration files, including `FlowCellButtons/`, `SupportScripts/`, `ManagedActions/`, and the tracked public `config.json`.
+- `Blender/`: Blender integration files, including `ScriptBank/` for shareable source tools, `ManagedActions/` for installed action sources, `FlowCellButtons/` for clickable wrappers, `SupportScripts/` for install/sync plumbing, `AddonScripts/` for Blender refresh/sidebar helpers, and the tracked public `config.json`.
 - `Illustrator/`: user-facing Illustrator scripts.
 - `Illustrator/HelperScripts/`: internal Illustrator helper scripts that are not meant to become user-facing buttons.
 - `Windows/`: user-facing Windows scripts.
