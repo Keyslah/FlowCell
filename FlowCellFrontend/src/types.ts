@@ -100,6 +100,7 @@ export interface ImportedSkin {
   cardHtml?: string;
   cardCss?: string;
   cardSvg?: string;
+  themeBinding?: "black-tint";
 }
 
 export interface StyleGroup {
@@ -113,6 +114,7 @@ export interface StyleGroup {
 
 export type SurfaceStyleSectionId =
   | "main-panels"
+  | "main-rails"
   | "main-panel-surface"
   | "main-buttons"
   | "main-cards"

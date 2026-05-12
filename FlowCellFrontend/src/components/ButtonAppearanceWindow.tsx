@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   DEFAULT_IMPORTED_SKINS,
+  buildBlackTintImportedSkin,
   getImportedSkinPreset,
   IMPORTED_SKIN_PRESETS
 } from "../lib/theme";
@@ -14,9 +15,11 @@ interface ButtonAppearanceWindowProps {
   buttons: FlowCellButton[];
   importedSkins: ImportedSkin[];
   styleGroups: StyleGroup[];
+  blackTintOpacity: number;
   selectedButtonId: string;
   onSelectedButtonChange: (buttonId: string) => void;
   onSave: (buttonId: string, skin: ImportedSkin, transparentPopout: boolean) => void;
+  onSaveImportedSkin: (skin: ImportedSkin) => void;
   onClose: () => void;
 }
 
@@ -110,14 +113,24 @@ function resolveStyleLabel(styleGroupId: string, styleGroups: StyleGroup[]): str
   return resolveStyleGroup(styleGroups, trimmedId)?.name ?? trimmedId;
 }
 
+function createDraftSkinId(): string {
+  const randomPart =
+    typeof crypto !== "undefined" && typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID().replace(/-/g, "")
+      : `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
+  return `imported-skin-${randomPart}`;
+}
+
 export function ButtonAppearanceWindow({
   panelName,
   buttons,
   importedSkins,
   styleGroups,
+  blackTintOpacity,
   selectedButtonId,
   onSelectedButtonChange,
   onSave,
+  onSaveImportedSkin,
   onClose
 }: ButtonAppearanceWindowProps) {
   const isAllButtonsSelection = selectedButtonId === BUTTON_APPEARANCE_ALL_BUTTONS_ID;
@@ -180,6 +193,25 @@ export function ButtonAppearanceWindow({
       })()
     : resolveStyleLabel(previewButton.style_group_id ?? "", styleGroups);
   const previewLabel = isAllButtonsSelection ? "All Buttons" : previewButton.Label;
+  const saveDraftToSkinLibrary = () => {
+    const nextDraft: ImportedSkin = {
+      ...draft,
+      id: draft.id.trim() || createDraftSkinId(),
+      name: draft.name.trim() || `${previewLabel} Skin`
+    };
+    setDraft(nextDraft);
+    onSaveImportedSkin(nextDraft);
+  };
+  const loadSavedSkin = (skinId: string) => {
+    if (!skinId.trim()) {
+      return;
+    }
+    const savedSkin = importedSkins.find((skin) => skin.id === skinId);
+    if (!savedSkin) {
+      return;
+    }
+    setDraft({ ...savedSkin });
+  };
 
   return (
     <div className="button-appearance-window">
@@ -224,36 +256,6 @@ export function ButtonAppearanceWindow({
                   {buttons.map((button) => (
                     <option key={button.Id} value={button.Id}>
                       {button.Label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Preset
-                <select
-                  defaultValue=""
-                  onChange={(event) => {
-                    const presetId = event.target.value;
-                    if (!presetId) {
-                      return;
-                    }
-                    const presetSkin = getImportedSkinPreset(presetId);
-                    if (!presetSkin) {
-                      return;
-                    }
-                    setDraft((current) => ({
-                      ...(current ?? buildFallbackDraft(previewLabel)),
-                      ...presetSkin,
-                      id: current?.id ?? presetSkin.id,
-                      name: presetSkin.name
-                    }));
-                    event.target.value = "";
-                  }}
-                >
-                  <option value="">Load preset...</option>
-                  {IMPORTED_SKIN_PRESETS.map((preset) => (
-                    <option key={preset.id} value={preset.id}>
-                      {preset.name}
                     </option>
                   ))}
                 </select>
@@ -341,10 +343,67 @@ export function ButtonAppearanceWindow({
                 <span className="eyebrow">Render Code</span>
                 <h2>HTML + CSS + SVG</h2>
               </div>
+              <div className="surface-actions">
+                <button type="button" className="surface-action" onClick={saveDraftToSkinLibrary}>
+                  Save Code Preset
+                </button>
+              </div>
             </div>
             <p className="caption">
               Render-only code only. The label placeholder is <code>{"{{label}}"}</code>.
             </p>
+            <div className="appearance-editor-controls">
+              <label>
+                Saved Code
+                <select
+                  value=""
+                  onChange={(event) => {
+                    loadSavedSkin(event.target.value);
+                    event.target.value = "";
+                  }}
+                >
+                  <option value="">Load saved skin...</option>
+                  {importedSkins.map((skin) => (
+                    <option key={skin.id} value={skin.id}>
+                      {skin.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Built-in Preset
+                <select
+                  value=""
+                  onChange={(event) => {
+                    const presetId = event.target.value;
+                    if (!presetId) {
+                      return;
+                    }
+                    const presetSkin =
+                      presetId === "black-tint"
+                        ? buildBlackTintImportedSkin(blackTintOpacity)
+                        : getImportedSkinPreset(presetId);
+                    if (!presetSkin) {
+                      return;
+                    }
+                    setDraft((current) => ({
+                      ...(current ?? buildFallbackDraft(previewLabel)),
+                      ...presetSkin,
+                      id: current?.id ?? "",
+                      name: current?.name?.trim() || presetSkin.name
+                    }));
+                    event.target.value = "";
+                  }}
+                >
+                  <option value="">Load built-in preset...</option>
+                  {IMPORTED_SKIN_PRESETS.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
             <article className="imported-skin-editor">
               <label>
                 HTML

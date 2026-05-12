@@ -48,6 +48,15 @@ interface SectionCardConfig {
 
 const MAIN_PAGE_SECTIONS: SectionCardConfig[] = [
   {
+    id: "main-rails",
+    title: "Rails",
+    description:
+      "The outer Programs, Panels, and Info boxes on the main page. Uses saved card code.",
+    applyLabel: "Apply to Rails",
+    previewKind: "card",
+    previewLabel: "Rail Box"
+  },
+  {
     id: "main-panel-surface",
     title: "Main Page Card",
     description: "The large host-owned card surface behind the current panel. Uses saved card code.",
@@ -184,6 +193,7 @@ export function AppearanceTab({
   };
 
   const [sectionDrafts, setSectionDrafts] = useState<Record<string, string>>({
+    "main-rails": readAssignment(state, "main-rails"),
     "main-panel-surface": readAssignment(state, "main-panel-surface"),
     "main-buttons": readAssignment(state, "main-buttons"),
     "main-cards": readAssignment(state, "main-cards"),
@@ -197,6 +207,7 @@ export function AppearanceTab({
 
   useEffect(() => {
     setSectionDrafts({
+      "main-rails": readAssignment(state, "main-rails"),
       "main-panel-surface": readAssignment(state, "main-panel-surface"),
       "main-buttons": readAssignment(state, "main-buttons"),
       "main-cards": readAssignment(state, "main-cards"),
@@ -350,8 +361,9 @@ export function AppearanceTab({
         </div>
         <p className="caption">
           The shell theme is currently <strong>{appTheme.name}</strong>. Theme preset actions only
-          update the shell page, cards, and host chrome. Button sections use saved button
-          HTML/CSS/SVG. Card and panel-surface sections use the saved card HTML/CSS/SVG.
+          update the shell page plus the host rails, main panel box, cards, and chrome. Button
+          sections use saved button HTML/CSS/SVG. Rail, card, and host-surface sections use the
+          saved card HTML/CSS/SVG.
         </p>
       </section>
 
@@ -363,7 +375,7 @@ export function AppearanceTab({
               Use Dark Theme
             </button>
             <button type="button" className="surface-action" onClick={onApplyBlackTintCards}>
-              Use Black Tint Cards
+              Use Black Tint Shell
             </button>
             <button type="button" className="surface-action" onClick={onApplyNatureTheme}>
               Use Nature Theme
@@ -448,7 +460,7 @@ export function AppearanceTab({
               <input
                 type="range"
                 min="0.35"
-                max="0.98"
+                max="1"
                 step="0.01"
                 value={themeDraft.blackTintOpacity}
                 onChange={(event) =>

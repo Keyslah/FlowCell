@@ -117,6 +117,7 @@ import {
   buildEggshellImportedSkin,
   getAppThemeVariant,
   getAppThemePreset,
+  isBlackTintImportedSkin,
   normalizeAppTheme
 } from "./lib/theme";
 import { ButtonCard } from "./components/ButtonCard";
@@ -1649,6 +1650,10 @@ export default function App() {
     toolPopoutLayoutMode === "Individual" &&
     toolPopoutButtons.length === 1 &&
     toolPopoutOwnerButton?.transparent_popout === true;
+  const isTransparentPanelPopout =
+    windowContext?.kind === "panel-popout" &&
+    Boolean(selectedPanel && selectedPanel.Buttons.length) &&
+    (selectedPanel ? selectedPanel.Buttons.every((button) => button.transparent_popout === true) : false);
 
   const selectedButton =
     state && selectedButtonRef
@@ -3373,11 +3378,20 @@ export default function App() {
   ): ImportedSkin[] => {
     const currentImportedSkins = importedSkins ?? [];
     const nextBlackTintSkin = buildBlackTintImportedSkin(nextTheme.blackTintOpacity);
-    return currentImportedSkins.some((skin) => skin.id === nextBlackTintSkin.id)
-      ? currentImportedSkins.map((skin) =>
-          skin.id === nextBlackTintSkin.id ? nextBlackTintSkin : skin
-        )
-      : [...currentImportedSkins, nextBlackTintSkin];
+    const syncedImportedSkins = currentImportedSkins.map((skin) => {
+      if (!isBlackTintImportedSkin(skin)) {
+        return skin;
+      }
+      const syncedSkin = buildBlackTintImportedSkin(nextTheme.blackTintOpacity, skin.id);
+      return {
+        ...syncedSkin,
+        id: skin.id,
+        name: skin.name
+      };
+    });
+    return syncedImportedSkins.some((skin) => skin.id === nextBlackTintSkin.id)
+      ? syncedImportedSkins
+      : [...syncedImportedSkins, nextBlackTintSkin];
   };
 
   const persistThemeWithBuiltInSkins = async (nextTheme: AppTheme) => {
@@ -3402,7 +3416,27 @@ export default function App() {
   };
 
   const applyBlackTintCards = async () => {
-    await persistState(updateSurfaceStyleAssignment(state, "main-cards", "style-group-05"));
+    const nextState = updateImportedSkins(
+      updateSurfaceStyleAssignment(
+        updateSurfaceStyleAssignment(
+          updateSurfaceStyleAssignment(
+            updateSurfaceStyleAssignment(
+              updateSurfaceStyleAssignment(state, "main-rails", "style-group-05"),
+              "main-panel-surface",
+              "style-group-05"
+            ),
+            "main-buttons",
+            "style-group-05"
+          ),
+          "main-misc",
+          "style-group-05"
+        ),
+        "main-cards",
+        "style-group-05"
+      ),
+      syncBlackTintImportedSkins(state.ImportedSkins, appTheme)
+    );
+    await persistState(nextState);
   };
 
   const applyNatureTheme = async () => {
@@ -3506,6 +3540,8 @@ export default function App() {
 
   const panelsStyleGroup = resolveSectionStyleGroup("main-panels");
   const panelsImportedSkin = resolveSectionImportedSkin("main-panels");
+  const mainRailsStyleGroup = resolveSectionStyleGroup("main-rails");
+  const mainRailsImportedSkin = resolveSectionImportedSkin("main-rails");
   const panelSurfaceStyleGroup = resolveSectionStyleGroup("main-panel-surface");
   const panelSurfaceImportedSkin = resolveSectionImportedSkin("main-panel-surface");
   const mainButtonsStyleGroup = resolveSectionStyleGroup("main-buttons");
@@ -3986,6 +4022,9 @@ export default function App() {
         panelId: panel.Id,
         panelName: panel.Name,
         buttonCount: panel.Buttons.length,
+        transparentWindow:
+          panel.Buttons.length > 0 &&
+          panel.Buttons.every((button) => button.transparent_popout === true),
         bounds: panel.PopoutBounds
       });
     }
@@ -4747,9 +4786,10 @@ export default function App() {
             entry.id === importedSkinId ? nextImportedSkin : entry
           )
         : [...currentImportedSkins, nextImportedSkin];
+      const syncedImportedSkins = syncBlackTintImportedSkins(nextImportedSkins, appTheme);
 
       const nextState = updateStyleGroups(
-        updateImportedSkins(currentState, nextImportedSkins),
+        updateImportedSkins(currentState, syncedImportedSkins),
         nextStyleGroups
       );
       const styleAppliedState = applyToAllButtons
@@ -5912,7 +5952,7 @@ export default function App() {
 
   const renderBareFanoutShell = (
     content: ReactNode,
-    variant: "panel-fan" | "floating-fanout"
+    variant: "panel-fan" | "floating-fanout" | "transparent-button" | "transparent-panel"
   ) => (
     <div
       className={`fanout-popout-root fanout-popout-root--${variant}`}
@@ -5939,6 +5979,9 @@ export default function App() {
         });
       }}
       onContextMenuCapture={(event: ReactMouseEvent<HTMLElement>) => {
+        if (variant === "transparent-button") {
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
       }}
@@ -6249,10 +6292,20 @@ export default function App() {
       buttons={buttonAppearanceButtons}
       importedSkins={state.ImportedSkins ?? []}
       styleGroups={state.StyleGroups ?? []}
+      blackTintOpacity={appTheme.blackTintOpacity}
       selectedButtonId={buttonAppearanceButtonId || buttonAppearanceTargetButton?.Id || ""}
       onSelectedButtonChange={setButtonAppearanceButtonId}
       onSave={(buttonId, draft, transparentPopout) => {
         void handleSaveButtonAppearance(buttonId, draft, transparentPopout);
+      }}
+      onSaveImportedSkin={(skin) => {
+        const existingImportedSkins = state.ImportedSkins ?? [];
+        const nextImportedSkins = existingImportedSkins.some((entry) => entry.id === skin.id)
+          ? existingImportedSkins.map((entry) => (entry.id === skin.id ? skin : entry))
+          : [...existingImportedSkins, skin];
+        void persistState(
+          updateImportedSkins(state, syncBlackTintImportedSkins(nextImportedSkins, appTheme))
+        );
       }}
       onClose={() => {
         void handleWindowClose();
@@ -6355,6 +6408,9 @@ export default function App() {
     surfaceMode !== "appearance";
 
   if (windowContext.kind === "panel-popout") {
+    if (isTransparentPanelPopout) {
+      return renderBareFanoutShell(renderPanelButtonGrid(true), "transparent-panel");
+    }
     return renderSlimPopoutShell(renderPanelButtonGrid(true), "panel");
   }
 
@@ -6379,10 +6435,14 @@ export default function App() {
       return renderBareFanoutShell(renderToolPopoutSurface(), "floating-fanout");
     }
 
+    if (isTransparentSingleButtonPopout) {
+      return renderBareFanoutShell(renderToolPopoutSurface(), "transparent-button");
+    }
+
     return renderSlimPopoutShell(
       renderToolPopoutSurface(),
       "tool",
-      isTransparentSingleButtonPopout ? "transparent-button" : "default"
+      "default"
     );
   }
 
@@ -6495,14 +6555,19 @@ export default function App() {
 
       <div
         className={
-          surfaceMode === "macro-lab"
+          surfaceMode === "macro-lab" || surfaceMode === "appearance"
             ? "workspace-grid workspace-grid--macro-lab"
             : "workspace-grid"
         }
       >
         {showMainRails ? (
           <>
-            <aside className="program-rail surface-card">
+            <aside
+              className={mainRailsStyleGroup ? "program-rail surface-card has-surface-skin" : "program-rail surface-card"}
+              style={buildSurfaceSkinStyle(mainRailsStyleGroup)}
+              data-surface-skin={mainRailsStyleGroup?.skinId ?? ""}
+            >
+              {renderSurfaceSkinBackdrop("Programs", mainRailsStyleGroup, mainRailsImportedSkin)}
               <h2>Programs</h2>
               <div className="program-rail__list">
                 {state.Programs.map((program) => {
@@ -6563,7 +6628,12 @@ export default function App() {
               />
             </aside>
 
-            <aside className="panel-rail surface-card">
+            <aside
+              className={mainRailsStyleGroup ? "panel-rail surface-card has-surface-skin" : "panel-rail surface-card"}
+              style={buildSurfaceSkinStyle(mainRailsStyleGroup)}
+              data-surface-skin={mainRailsStyleGroup?.skinId ?? ""}
+            >
+              {renderSurfaceSkinBackdrop("Panels", mainRailsStyleGroup, mainRailsImportedSkin)}
               <h2>Panels</h2>
               {selectedProgram ? (
                 selectedProgram.Panels.map((panel) => (
@@ -6690,7 +6760,9 @@ export default function App() {
                   const nextImportedSkins = existingImportedSkins.some((entry) => entry.id === skin.id)
                     ? existingImportedSkins.map((entry) => (entry.id === skin.id ? skin : entry))
                     : [...existingImportedSkins, skin];
-                  void persistState(updateImportedSkins(state, nextImportedSkins));
+                  void persistState(
+                    updateImportedSkins(state, syncBlackTintImportedSkins(nextImportedSkins, appTheme))
+                  );
                 }}
               />
             ) : surfaceMode === "macro-lab" && windowContext.kind === "main" ? (
@@ -6778,7 +6850,12 @@ export default function App() {
         </main>
 
         {showStatusRail ? (
-        <aside className="status-rail surface-card">
+        <aside
+          className={mainRailsStyleGroup ? "status-rail surface-card has-surface-skin" : "status-rail surface-card"}
+          style={buildSurfaceSkinStyle(mainRailsStyleGroup)}
+          data-surface-skin={mainRailsStyleGroup?.skinId ?? ""}
+        >
+          {renderSurfaceSkinBackdrop("Info", mainRailsStyleGroup, mainRailsImportedSkin)}
           <h2>Info</h2>
           <div
             className={cardsStyleGroup ? "status-block has-surface-skin" : "status-block"}

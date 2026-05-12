@@ -34,6 +34,10 @@ const DEFAULT_SURFACE_STYLE_ASSIGNMENTS: SurfaceStyleAssignment[] = [
     style_group_id: ""
   },
   {
+    surface_id: "main-rails",
+    style_group_id: ""
+  },
+  {
     surface_id: "main-panel-surface",
     style_group_id: ""
   },

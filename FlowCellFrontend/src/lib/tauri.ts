@@ -480,14 +480,22 @@ export function openPanelPopout(args: {
   panelId: string;
   panelName: string;
   buttonCount: number;
+  transparentWindow?: boolean;
   bounds?: FlowCellBounds | null;
 }): Promise<void> {
   const label = buildPanelPopoutLabel(args.programId, args.panelId);
   return (async () => {
     const placement = resolvePanelWindowOptions(args.buttonCount, args.bounds);
+    const isTransparentWindow = args.transparentWindow === true;
     const existing = await WebviewWindow.getByLabel(label);
     if (existing) {
-      await applyWindowPlacement(existing, placement);
+      if (isTransparentWindow) {
+        await applyTransparentFanoutWindowAppearance(existing);
+      }
+      await applyWindowPlacement(existing, placement, {
+        focus: !isTransparentWindow,
+        moveBeforeResize: isTransparentWindow
+      });
       return;
     }
 
@@ -500,17 +508,24 @@ export function openPanelPopout(args: {
       }),
       title: `FlowCell - ${args.panelName}`,
       ...placement,
-      resizable: true,
+      resizable: !isTransparentWindow,
       decorations: false,
-      transparent: false,
+      transparent: isTransparentWindow,
       visible: true,
-      focus: true,
+      focus: !isTransparentWindow,
       skipTaskbar: false,
-      alwaysOnTop: true
+      alwaysOnTop: true,
+      shadow: !isTransparentWindow
     });
 
     await waitForWindowCreated(window);
-    await applyWindowPlacement(window, placement);
+    if (isTransparentWindow) {
+      await applyTransparentFanoutWindowAppearance(window);
+    }
+    await applyWindowPlacement(window, placement, {
+      focus: !isTransparentWindow,
+      moveBeforeResize: isTransparentWindow
+    });
   })();
 }
 

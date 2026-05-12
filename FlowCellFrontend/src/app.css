@@ -197,8 +197,26 @@ button {
 }
 
 .fanout-popout-root__content--panel-fan,
-.fanout-popout-root__content--floating-fanout {
+.fanout-popout-root__content--floating-fanout,
+.fanout-popout-root__content--transparent-button,
+.fanout-popout-root__content--transparent-panel {
   background: transparent;
+}
+
+.fanout-popout-root--transparent-button,
+.fanout-popout-root--transparent-panel {
+  width: auto;
+  height: auto;
+  pointer-events: auto;
+}
+
+.fanout-popout-root__content--transparent-button,
+.fanout-popout-root__content--transparent-panel {
+  display: inline-flex;
+  width: auto;
+  height: auto;
+  min-height: 0;
+  pointer-events: auto;
 }
 
 .slim-popout-shell--panel-fan {
@@ -2059,13 +2077,20 @@ button {
 
 .appearance-tab {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: stretch;
   gap: 16px;
+  width: 100%;
+  min-width: 0;
 }
 
 .button-appearance-window {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto minmax(0, 1fr);
+  justify-items: stretch;
   gap: 16px;
+  width: 100%;
   min-width: 0;
   min-height: 0;
 }
@@ -2074,6 +2099,8 @@ button {
   padding: 16px;
   display: grid;
   gap: 16px;
+  width: 100%;
+  min-width: 0;
 }
 
 .button-appearance-window__workspace {
@@ -2158,6 +2185,20 @@ button {
   grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   align-items: start;
   gap: 14px;
+}
+
+@media (max-width: 1180px) {
+  .button-appearance-window__editor,
+  .style-group-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .appearance-section-card__header,
+  .surface-header {
+    flex-wrap: wrap;
+  }
 }
 
 .style-group-card,
