@@ -60,12 +60,20 @@ interface HdriWorldToolValues {
   ThemeImagePath: string;
   ThemePaletteHexes: string[];
   ThemeVisualMode: "dark" | "light";
+  ThemeTabsHex: string;
+  ThemeTabsTextHex: string;
   ThemeHeadersHex: string;
+  ThemeHeaderTextHex: string;
   ThemeTextHex: string;
+  ThemeControlTextHex: string;
+  ThemeAccentTextHex: string;
+  ThemeEditorBackgroundHex: string;
+  ThemeSceneHex: string;
   ThemeSectionFillHex: string;
   ThemeControlsHex: string;
   ThemeMiscHex: string;
   ThemeDarksHex: string;
+  ThemeRowAltHex: string;
   ThemeHighlightsHex: string;
   ThemeViewportBackgroundHex: string;
   ThemeViewportGradientEnabled: boolean;
@@ -105,6 +113,7 @@ interface HdriWorldToolSurfaceProps {
   onApply: (
     action:
       | "apply_theme_from_photo_manual_colors"
+      | "set_static_background_image"
       | "set_hdri_path"
       | "clear_world"
       | "reset_world"
@@ -115,7 +124,11 @@ interface HdriWorldToolSurfaceProps {
     values: HdriWorldToolValues
   ) => void;
   onBrowsePath: () => void;
+  onBrowseStaticBackgroundPath: () => void;
   onBrowseThemePath: () => void;
+  onAbsorbTheme: () => void;
+  onSaveTheme: () => void;
+  onLoadTheme: () => void;
   onApplyThemeMode: (
     mode: "dark" | "light",
     values: HdriWorldToolValues
@@ -181,37 +194,60 @@ const HDRI_WORLD_VALUE_ROWS = [
 
 const THEME_PRIMARY_ROLE_ROWS = [
   {
-    label: "Headers",
+    label: "Tab Fill",
+    field: "ThemeTabsHex",
+    placeholder: "#486868",
+  },
+  {
+    label: "Header",
     field: "ThemeHeadersHex",
     placeholder: "#7BA8B7",
   },
   {
-    label: "Text",
+    label: "Light Text",
     field: "ThemeTextHex",
     placeholder: "#F3F3EE",
   },
   {
-    label: "Section Fill",
-    field: "ThemeSectionFillHex",
-    placeholder: "#2B3438",
-  },
-  {
-    label: "Controls",
-    field: "ThemeControlsHex",
-    placeholder: "#5A7A6E",
-  },
-  {
-    label: "Misc",
-    field: "ThemeMiscHex",
-    placeholder: "#A27D55",
+    label: "Dark Text",
+    field: "ThemeControlTextHex",
+    placeholder: "#101010",
   },
 ] as const;
 
 const THEME_SECONDARY_ROLE_ROWS = [
   {
-    label: "Darks",
-    field: "ThemeDarksHex",
+    label: "Accent Text",
+    field: "ThemeAccentTextHex",
+    placeholder: "#D7CC65",
+  },
+  {
+    label: "Panel",
+    field: "ThemeEditorBackgroundHex",
+    placeholder: "#241F2B",
+  },
+  {
+    label: "Scene",
+    field: "ThemeSceneHex",
+    placeholder: "#2B3438",
+  },
+  {
+    label: "List / Tree Fill",
+    field: "ThemeSectionFillHex",
+    placeholder: "#2B3438",
+  },
+  {
+    label: "Alt Row",
+    field: "ThemeRowAltHex",
     placeholder: "#1C2818",
+  },
+] as const;
+
+const THEME_TERTIARY_ROLE_ROWS = [
+  {
+    label: "Control Fill",
+    field: "ThemeControlsHex",
+    placeholder: "#5A7A6E",
   },
   {
     label: "Highlights",
@@ -715,7 +751,11 @@ export function HdriWorldToolSurface({
   onValueChange,
   onApply,
   onBrowsePath,
+  onBrowseStaticBackgroundPath,
   onBrowseThemePath,
+  onAbsorbTheme,
+  onSaveTheme,
+  onLoadTheme,
   onApplyThemeMode
 }: HdriWorldToolSurfaceProps) {
   const content = (
@@ -736,11 +776,32 @@ export function HdriWorldToolSurface({
           importedSkin,
           title: "Pick an image and sample five theme colors."
         })}
+        {renderToolChip("Absorb Theme", {
+          onClick: onAbsorbTheme,
+          className: "tool-chip",
+          styleGroup,
+          importedSkin,
+          title: "Read the current Blender theme and stage all visible buckets."
+        })}
       </div>
       <div className="hdri-world-row hdri-world-row--theme-actions">
+        {renderToolChip("Save Theme", {
+          onClick: onSaveTheme,
+          className: "tool-chip hdri-theme-actions-chip",
+          styleGroup,
+          importedSkin,
+          title: "Save the current staged Blender theme values for later reuse."
+        })}
+        {renderToolChip("Load Theme", {
+          onClick: onLoadTheme,
+          className: "tool-chip hdri-theme-actions-chip",
+          styleGroup,
+          importedSkin,
+          title: "Load a saved Blender theme back into this page."
+        })}
         {renderToolChip("Dark Theme", {
           onClick: () => onApplyThemeMode("dark", values),
-          className: `tool-chip ${values.ThemeVisualMode === "dark" ? "is-active" : ""}`,
+          className: `tool-chip hdri-theme-actions-chip ${values.ThemeVisualMode === "dark" ? "is-active" : ""}`.trim(),
           selected: values.ThemeVisualMode === "dark",
           styleGroup,
           importedSkin,
@@ -748,7 +809,7 @@ export function HdriWorldToolSurface({
         })}
         {renderToolChip("Light Theme", {
           onClick: () => onApplyThemeMode("light", values),
-          className: `tool-chip ${values.ThemeVisualMode === "light" ? "is-active" : ""}`,
+          className: `tool-chip hdri-theme-actions-chip ${values.ThemeVisualMode === "light" ? "is-active" : ""}`.trim(),
           selected: values.ThemeVisualMode === "light",
           styleGroup,
           importedSkin,
@@ -756,7 +817,7 @@ export function HdriWorldToolSurface({
         })}
         {renderToolChip("Apply", {
           onClick: () => onApply("apply_theme_from_photo_manual_colors", values),
-          className: "tool-chip",
+          className: "tool-chip hdri-theme-actions-chip",
           styleGroup,
           importedSkin,
           title: "Apply the currently visible theme role colors."
@@ -773,6 +834,15 @@ export function HdriWorldToolSurface({
       </div>
       <div className="hdri-world-theme-grid hdri-world-theme-grid--secondary">
         {THEME_SECONDARY_ROLE_ROWS.map((row) =>
+          renderThemeRoleField({
+            row,
+            value: values[row.field],
+            onValueChange: (field, value) => onValueChange(field, value),
+          })
+        )}
+      </div>
+      <div className="hdri-world-theme-grid hdri-world-theme-grid--tertiary">
+        {THEME_TERTIARY_ROLE_ROWS.map((row) =>
           renderThemeRoleField({
             row,
             value: values[row.field],
@@ -801,6 +871,41 @@ export function HdriWorldToolSurface({
             <span>Use gradient</span>
           </label>
         </label>
+      </div>
+      <div className="hdri-world-row hdri-world-row--background-path">
+        {renderToolChip("background pic", {
+          onClick: () => onApply("set_static_background_image", values),
+          className: "tool-chip",
+          styleGroup,
+          importedSkin,
+          title: "Apply the current viewport background picture path."
+        })}
+        <input
+          className="hdri-world-field__input"
+          type="text"
+          value={values.StaticBackgroundPath}
+          onChange={(event) => onValueChange("StaticBackgroundPath", event.target.value)}
+          placeholder="Choose a background picture"
+          title="Viewport background picture path to draw behind the Blender scene overlays."
+        />
+        {renderToolChip("Browse", {
+          onClick: onBrowseStaticBackgroundPath,
+          className: "tool-chip",
+          styleGroup,
+          importedSkin,
+          title: "Pick a viewport background picture."
+        })}
+        {renderToolChip("Clear", {
+          onClick: () =>
+            onApply("set_static_background_image", {
+              ...values,
+              StaticBackgroundPath: ""
+            }),
+          className: "tool-chip",
+          styleGroup,
+          importedSkin,
+          title: "Clear the current viewport background picture overlay."
+        })}
       </div>
       <div className="hdri-world-row hdri-world-row--path">
         {renderToolChip("HDRI", {

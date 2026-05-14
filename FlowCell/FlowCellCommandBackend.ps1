@@ -516,13 +516,21 @@ function Invoke-FlowCellToolCommand($Envelope) {
         'hdri_world' {
             $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowtest_custom_hdri_world_tools' -Data @{
                 command = [string]$toolCommand
+                visual_mode = [string]$(if ($payload.PSObject.Properties['visual_mode']) { $payload.visual_mode } else { '' })
                 hdri_path = [string]$(if ($payload.PSObject.Properties['hdri_path']) { $payload.hdri_path } else { '' })
                 static_background_path = [string]$(if ($payload.PSObject.Properties['static_background_path']) { $payload.static_background_path } else { '' })
+                tabs_hex = [string]$(if ($payload.PSObject.Properties['tabs_hex']) { $payload.tabs_hex } else { '' })
+                tabs_text_hex = [string]$(if ($payload.PSObject.Properties['tabs_text_hex']) { $payload.tabs_text_hex } else { '' })
                 headers_hex = [string]$(if ($payload.PSObject.Properties['headers_hex']) { $payload.headers_hex } else { '' })
+                header_text_hex = [string]$(if ($payload.PSObject.Properties['header_text_hex']) { $payload.header_text_hex } else { '' })
                 text_hex = [string]$(if ($payload.PSObject.Properties['text_hex']) { $payload.text_hex } else { '' })
+                control_text_hex = [string]$(if ($payload.PSObject.Properties['control_text_hex']) { $payload.control_text_hex } else { '' })
+                accent_text_hex = [string]$(if ($payload.PSObject.Properties['accent_text_hex']) { $payload.accent_text_hex } else { '' })
+                editor_background_hex = [string]$(if ($payload.PSObject.Properties['editor_background_hex']) { $payload.editor_background_hex } else { '' })
                 section_fill_hex = [string]$(if ($payload.PSObject.Properties['section_fill_hex']) { $payload.section_fill_hex } else { '' })
+                row_alt_hex = [string]$(if ($payload.PSObject.Properties['row_alt_hex']) { $payload.row_alt_hex } else { '' })
                 controls_hex = [string]$(if ($payload.PSObject.Properties['controls_hex']) { $payload.controls_hex } else { '' })
-                misc_hex = [string]$(if ($payload.PSObject.Properties['misc_hex']) { $payload.misc_hex } else { '' })
+                borders_hex = [string]$(if ($payload.PSObject.Properties['borders_hex']) { $payload.borders_hex } else { '' })
                 darks_hex = [string]$(if ($payload.PSObject.Properties['darks_hex']) { $payload.darks_hex } else { '' })
                 highlights_hex = [string]$(if ($payload.PSObject.Properties['highlights_hex']) { $payload.highlights_hex } else { '' })
                 viewport_background_hex = [string]$(if ($payload.PSObject.Properties['viewport_background_hex']) { $payload.viewport_background_hex } else { '' })

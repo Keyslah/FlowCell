@@ -42,11 +42,13 @@ import {
   openPanelPopout,
   openToolPopout,
   samplePhotoThemeColors,
+  saveBlenderThemeFile,
   saveButtonBinding,
   saveLayoutSnapshot,
   saveState,
   showOpenExeDialog,
-  showOpenFileDialog
+  showOpenFileDialog,
+  loadBlenderThemeFile
 } from "./lib/tauri";
 import {
   addButtonsToPanel,
@@ -325,22 +327,41 @@ interface QuickRotateGroupValues {
   OperationMode: string;
 }
 
-interface HdriWorldToolValues {
-  HdriPath: string;
+interface HdriWorldThemeSnapshot {
   StaticBackgroundPath: string;
   ThemeImagePath: string;
   ThemePaletteHexes: string[];
   ThemeVisualMode: "dark" | "light";
+  ThemeTabsHex: string;
+  ThemeTabsTextHex: string;
   ThemeHeadersHex: string;
+  ThemeHeaderTextHex: string;
   ThemeTextHex: string;
+  ThemeControlTextHex: string;
+  ThemeAccentTextHex: string;
+  ThemeEditorBackgroundHex: string;
+  ThemeSceneHex: string;
   ThemeSectionFillHex: string;
   ThemeControlsHex: string;
   ThemeMiscHex: string;
   ThemeDarksHex: string;
+  ThemeRowAltHex: string;
   ThemeHighlightsHex: string;
   ThemeViewportBackgroundHex: string;
   ThemeViewportGradientEnabled: boolean;
   ThemeViewportGradientHex: string;
+}
+
+interface SavedHdriWorldTheme {
+  id: string;
+  name: string;
+  savedAt: string;
+  values: HdriWorldThemeSnapshot;
+}
+
+interface HdriWorldToolValues extends HdriWorldThemeSnapshot {
+  HdriPath: string;
+  SavedThemes: SavedHdriWorldTheme[];
   RotationXDeg: number;
   RotationYDeg: number;
   RotationZDeg: number;
@@ -381,13 +402,22 @@ const DEFAULT_HDRI_WORLD_TOOL_VALUES: HdriWorldToolValues = {
   StaticBackgroundPath: "",
   ThemeImagePath: "",
   ThemePaletteHexes: [],
+  SavedThemes: [],
   ThemeVisualMode: "dark",
+  ThemeTabsHex: "",
+  ThemeTabsTextHex: "",
   ThemeHeadersHex: "",
+  ThemeHeaderTextHex: "",
   ThemeTextHex: "",
+  ThemeControlTextHex: "",
+  ThemeAccentTextHex: "",
+  ThemeEditorBackgroundHex: "",
+  ThemeSceneHex: "",
   ThemeSectionFillHex: "",
   ThemeControlsHex: "",
   ThemeMiscHex: "",
   ThemeDarksHex: "",
+  ThemeRowAltHex: "",
   ThemeHighlightsHex: "",
   ThemeViewportBackgroundHex: "",
   ThemeViewportGradientEnabled: false,
@@ -397,6 +427,47 @@ const DEFAULT_HDRI_WORLD_TOOL_VALUES: HdriWorldToolValues = {
   RotationZDeg: 30,
   WorldStrength: 0.25
 };
+
+function normalizeThemeHexFromDetails(
+  details: Record<string, unknown>,
+  sourceKey: string,
+  fallback: string
+): string {
+  const normalized = readString(details, sourceKey, fallback).trim().toUpperCase();
+  return isValidThemeHex(normalized) ? normalized : fallback;
+}
+
+function normalizeThemeBooleanFromDetails(
+  details: Record<string, unknown>,
+  sourceKey: string,
+  fallback: boolean
+): boolean {
+  const sourceValue = details?.[sourceKey];
+  if (typeof sourceValue === "boolean") {
+    return sourceValue;
+  }
+  if (typeof sourceValue === "number") {
+    return sourceValue !== 0;
+  }
+  if (typeof sourceValue === "string") {
+    const lowered = sourceValue.trim().toLowerCase();
+    switch (lowered) {
+      case "1":
+      case "true":
+      case "on":
+      case "yes":
+        return true;
+      case "0":
+      case "false":
+      case "off":
+      case "no":
+        return false;
+      default:
+        return fallback;
+    }
+  }
+  return fallback;
+}
 
 const FLOWCELL_WINDOW_PROCESS_NAMES = ["flowcell_frontend", "flowcellfrontend"];
 
@@ -898,7 +969,9 @@ function normalizeQuickRotateGroupValues(values?: Record<string, unknown>): Quic
   };
 }
 
-function normalizeHdriWorldToolValues(values?: Record<string, unknown>): HdriWorldToolValues {
+function normalizeHdriWorldThemeSnapshot(
+  values?: Record<string, unknown>
+): HdriWorldThemeSnapshot {
   const paletteSource = values?.ThemePaletteHexes;
   const themePaletteHexes = Array.isArray(paletteSource)
     ? paletteSource
@@ -911,9 +984,6 @@ function normalizeHdriWorldToolValues(values?: Record<string, unknown>): HdriWor
           .filter((value) => /^#[0-9A-F]{6}$/i.test(value))
       : [];
   return {
-    HdriPath:
-      readString(values, "HdriPath", DEFAULT_HDRI_WORLD_TOOL_VALUES.HdriPath) ||
-      DEFAULT_HDRI_WORLD_TOOL_VALUES.HdriPath,
     StaticBackgroundPath: readString(
       values,
       "StaticBackgroundPath",
@@ -930,15 +1000,50 @@ function normalizeHdriWorldToolValues(values?: Record<string, unknown>): HdriWor
         .toLowerCase() === "light"
         ? "light"
         : "dark",
+    ThemeTabsHex: readString(
+      values,
+      "ThemeTabsHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeTabsHex
+    ).toUpperCase(),
+    ThemeTabsTextHex: readString(
+      values,
+      "ThemeTabsTextHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeTabsTextHex
+    ).toUpperCase(),
     ThemeHeadersHex: readString(
       values,
       "ThemeHeadersHex",
       DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeHeadersHex
     ).toUpperCase(),
+    ThemeHeaderTextHex: readString(
+      values,
+      "ThemeHeaderTextHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeHeaderTextHex
+    ).toUpperCase(),
     ThemeTextHex: readString(
       values,
       "ThemeTextHex",
       DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeTextHex
+    ).toUpperCase(),
+    ThemeControlTextHex: readString(
+      values,
+      "ThemeControlTextHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeControlTextHex
+    ).toUpperCase(),
+    ThemeAccentTextHex: readString(
+      values,
+      "ThemeAccentTextHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeAccentTextHex
+    ).toUpperCase(),
+    ThemeEditorBackgroundHex: readString(
+      values,
+      "ThemeEditorBackgroundHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeEditorBackgroundHex
+    ).toUpperCase(),
+    ThemeSceneHex: readString(
+      values,
+      "ThemeSceneHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeSceneHex
     ).toUpperCase(),
     ThemeSectionFillHex: readString(
       values,
@@ -960,6 +1065,11 @@ function normalizeHdriWorldToolValues(values?: Record<string, unknown>): HdriWor
       "ThemeDarksHex",
       DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeDarksHex
     ).toUpperCase(),
+    ThemeRowAltHex: readString(
+      values,
+      "ThemeRowAltHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeRowAltHex
+    ).toUpperCase(),
     ThemeHighlightsHex: readString(
       values,
       "ThemeHighlightsHex",
@@ -978,7 +1088,81 @@ function normalizeHdriWorldToolValues(values?: Record<string, unknown>): HdriWor
       values,
       "ThemeViewportGradientHex",
       DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeViewportGradientHex
-    ).toUpperCase(),
+    ).toUpperCase()
+  };
+}
+
+function buildHdriWorldThemeSnapshot(values: HdriWorldToolValues): HdriWorldThemeSnapshot {
+  return {
+    StaticBackgroundPath: values.StaticBackgroundPath,
+    ThemeImagePath: values.ThemeImagePath,
+    ThemePaletteHexes: [...values.ThemePaletteHexes],
+    ThemeVisualMode: values.ThemeVisualMode,
+    ThemeTabsHex: values.ThemeTabsHex,
+    ThemeTabsTextHex: values.ThemeTabsTextHex,
+    ThemeHeadersHex: values.ThemeHeadersHex,
+    ThemeHeaderTextHex: values.ThemeHeaderTextHex,
+    ThemeTextHex: values.ThemeTextHex,
+    ThemeControlTextHex: values.ThemeControlTextHex,
+    ThemeAccentTextHex: values.ThemeAccentTextHex,
+    ThemeEditorBackgroundHex: values.ThemeEditorBackgroundHex,
+    ThemeSceneHex: values.ThemeSceneHex,
+    ThemeSectionFillHex: values.ThemeSectionFillHex,
+    ThemeControlsHex: values.ThemeControlsHex,
+    ThemeMiscHex: values.ThemeMiscHex,
+    ThemeDarksHex: values.ThemeDarksHex,
+    ThemeRowAltHex: values.ThemeRowAltHex,
+    ThemeHighlightsHex: values.ThemeHighlightsHex,
+    ThemeViewportBackgroundHex: values.ThemeViewportBackgroundHex,
+    ThemeViewportGradientEnabled: values.ThemeViewportGradientEnabled,
+    ThemeViewportGradientHex: values.ThemeViewportGradientHex
+  };
+}
+
+function getBlenderThemeFilesDirectory(runtime: RuntimeInfo | null): string {
+  if (!runtime?.repoRoot?.trim()) {
+    return "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\appearance\\themes";
+  }
+  return `${runtime.repoRoot}\\Blender\\appearance\\themes`;
+}
+
+function normalizeSavedHdriWorldThemes(values?: Record<string, unknown>): SavedHdriWorldTheme[] {
+  const savedThemesSource = values?.SavedThemes;
+  if (!Array.isArray(savedThemesSource)) {
+    return [];
+  }
+  return savedThemesSource.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      return [];
+    }
+    const record = entry as Record<string, unknown>;
+    const themeName = readString(record, "name", "").trim();
+    if (!themeName) {
+      return [];
+    }
+    const nestedValues = record.values;
+    const snapshotSource =
+      nestedValues && typeof nestedValues === "object" && !Array.isArray(nestedValues)
+        ? (nestedValues as Record<string, unknown>)
+        : record;
+    return [
+      {
+        id: readString(record, "id", createClientId("hdri_theme_")),
+        name: themeName,
+        savedAt: readString(record, "savedAt", ""),
+        values: normalizeHdriWorldThemeSnapshot(snapshotSource)
+      }
+    ];
+  });
+}
+
+function normalizeHdriWorldToolValues(values?: Record<string, unknown>): HdriWorldToolValues {
+  return {
+    HdriPath:
+      readString(values, "HdriPath", DEFAULT_HDRI_WORLD_TOOL_VALUES.HdriPath) ||
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.HdriPath,
+    ...normalizeHdriWorldThemeSnapshot(values),
+    SavedThemes: normalizeSavedHdriWorldThemes(values),
     RotationXDeg: readNumber(
       values,
       "RotationXDeg",
@@ -1000,6 +1184,39 @@ function normalizeHdriWorldToolValues(values?: Record<string, unknown>): HdriWor
       DEFAULT_HDRI_WORLD_TOOL_VALUES.WorldStrength
     )
   };
+}
+
+function syncHdriWorldVisibleTextBuckets(
+  values: HdriWorldToolValues,
+  patch?: Partial<HdriWorldToolValues>
+): HdriWorldToolValues {
+  const nextValues = { ...values };
+  nextValues.ThemeMiscHex = nextValues.ThemeEditorBackgroundHex;
+  nextValues.ThemeDarksHex = nextValues.ThemeEditorBackgroundHex;
+
+  if (!patch) {
+    return nextValues;
+  }
+
+  const visibleTextTouched =
+    "ThemeTextHex" in patch ||
+    "ThemeControlTextHex" in patch ||
+    "ThemeAccentTextHex" in patch ||
+    "ThemeVisualMode" in patch;
+
+  if (!visibleTextTouched) {
+    return nextValues;
+  }
+  const darkTextHex = nextValues.ThemeControlTextHex || nextValues.ThemeTextHex;
+
+  if (!("ThemeTabsTextHex" in patch)) {
+    nextValues.ThemeTabsTextHex = darkTextHex;
+  }
+  if (!("ThemeHeaderTextHex" in patch)) {
+    nextValues.ThemeHeaderTextHex = darkTextHex;
+  }
+
+  return nextValues;
 }
 
 function isValidThemeHex(value: string): boolean {
@@ -1053,17 +1270,27 @@ function buildThemeRoleAssignment(
   const middle = palette[2] ?? dark;
   const light = palette[3] ?? middle;
   const lightest = palette[4] ?? light;
+  const blackText = "#000000";
+  const whiteText = "#FFFFFF";
 
   if (mode === "light") {
     return {
       ThemeVisualMode: "light",
-      ThemeTextHex: darkest,
+      ThemeTabsHex: light,
+      ThemeHeadersHex: middle,
+      ThemeTextHex: blackText,
+      ThemeControlTextHex: blackText,
+      ThemeAccentTextHex: blackText,
+      ThemeTabsTextHex: blackText,
+      ThemeHeaderTextHex: blackText,
+      ThemeEditorBackgroundHex: lightest,
+      ThemeSceneHex: light,
       ThemeControlsHex: middle,
       ThemeMiscHex: dark,
-      ThemeHeadersHex: light,
-      ThemeSectionFillHex: lightest,
-      ThemeDarksHex: darkest,
-      ThemeHighlightsHex: dark,
+      ThemeSectionFillHex: light,
+      ThemeDarksHex: dark,
+      ThemeRowAltHex: light,
+      ThemeHighlightsHex: middle,
       ThemeViewportBackgroundHex: light,
       ThemeViewportGradientEnabled: true,
       ThemeViewportGradientHex: lightest,
@@ -1072,12 +1299,20 @@ function buildThemeRoleAssignment(
 
   return {
     ThemeVisualMode: "dark",
+    ThemeTabsHex: dark,
     ThemeSectionFillHex: dark,
     ThemeHeadersHex: middle,
     ThemeMiscHex: dark,
     ThemeControlsHex: middle,
-    ThemeTextHex: lightest,
+    ThemeTextHex: whiteText,
+    ThemeControlTextHex: whiteText,
+    ThemeAccentTextHex: whiteText,
+    ThemeTabsTextHex: whiteText,
+    ThemeHeaderTextHex: whiteText,
+    ThemeEditorBackgroundHex: darkest,
+    ThemeSceneHex: dark,
     ThemeDarksHex: darkest,
+    ThemeRowAltHex: dark,
     ThemeHighlightsHex: light,
     ThemeViewportBackgroundHex: darkest,
     ThemeViewportGradientEnabled: true,
@@ -3075,7 +3310,16 @@ export default function App() {
     }
     toolPopoutAutoFitKeyRef.current = autoFitKey;
 
-    if (activeToolPopout?.Bounds && isPersistablePopoutBounds(activeToolPopout.Bounds)) {
+    const shouldIgnoreStoredBoundsForAutoFit =
+      windowContext.kind === "tool-popout" &&
+      !!toolPopoutOwnerButton &&
+      isHdriWorldOwnerButton(toolPopoutOwnerButton);
+
+    if (
+      activeToolPopout?.Bounds &&
+      isPersistablePopoutBounds(activeToolPopout.Bounds) &&
+      !shouldIgnoreStoredBoundsForAutoFit
+    ) {
       return;
     }
 
@@ -3108,8 +3352,8 @@ export default function App() {
           requiredWidth = 360;
           requiredHeight = 240;
         } else if (toolPopoutOwnerButton && isHdriWorldOwnerButton(toolPopoutOwnerButton)) {
-          requiredWidth = 520;
-          requiredHeight = 320;
+          requiredWidth = 700;
+          requiredHeight = 620;
         } else if (toolPopoutOwnerButton && isQuickRotateGroupOwnerButton(toolPopoutOwnerButton)) {
           requiredWidth = 560;
           requiredHeight = 170;
@@ -4909,10 +5153,11 @@ export default function App() {
     ownerButton: FlowCellButton,
     patch: Partial<HdriWorldToolValues>
   ) => {
-    const nextValues = normalizeHdriWorldToolValues({
+    const normalizedValues = normalizeHdriWorldToolValues({
       ...getLiveHdriWorldToolValues(ownerButton),
       ...patch
     });
+    const nextValues = syncHdriWorldVisibleTextBuckets(normalizedValues, patch);
     latestHdriWorldToolValuesRef.current.set(ownerButton.Id, nextValues);
     persistLatestLocalMutation((currentState) =>
       updateToolOptionState(
@@ -5055,6 +5300,30 @@ export default function App() {
     }
   };
 
+  const handleStaticBackgroundBrowse = async (ownerButton: FlowCellButton) => {
+    try {
+      setPopoutContextMenu(null);
+      const values = getLiveHdriWorldToolValues(ownerButton);
+      const selectedPaths = await showOpenFileDialog({
+        title: "Choose viewport background picture",
+        filter:
+          "Image Files (*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif;*.tif;*.tiff)|*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif;*.tif;*.tiff|All Files (*.*)|*.*",
+        initialDirectory: resolveHdriDialogInitialDirectory(values.StaticBackgroundPath),
+        multiselect: false
+      });
+      if (selectedPaths.length === 0) {
+        return;
+      }
+      updateHdriWorldToolValue(ownerButton, "StaticBackgroundPath", selectedPaths[0]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Viewport background picture picker failed. ${message}`
+      );
+    }
+  };
+
   const handleThemeFromPhotoBrowse = async (ownerButton: FlowCellButton) => {
     try {
       setPopoutContextMenu(null);
@@ -5108,16 +5377,16 @@ export default function App() {
       currentValues.ThemePaletteHexes.length > 0
         ? currentValues.ThemePaletteHexes
         : [
+            currentValues.ThemeTabsHex,
             currentValues.ThemeHeadersHex,
             currentValues.ThemeTextHex,
             currentValues.ThemeSectionFillHex,
             currentValues.ThemeControlsHex,
-            currentValues.ThemeMiscHex,
           ];
-      const nextValues = normalizeHdriWorldToolValues({
-        ...currentValues,
-        ...buildThemeRoleAssignment(paletteHexes, mode)
-      });
+    const nextValues = normalizeHdriWorldToolValues({
+      ...currentValues,
+      ...buildThemeRoleAssignment(paletteHexes, mode)
+    });
     updateHdriWorldToolValues(ownerButton, nextValues);
     pushFrontendEvent(
       inferSurfaceName(windowContext),
@@ -5125,10 +5394,203 @@ export default function App() {
     );
   };
 
+  const handleHdriWorldThemeAbsorb = async (ownerButton: FlowCellButton) => {
+    setPopoutContextMenu(null);
+    const currentValues = getLiveHdriWorldToolValues(ownerButton);
+    const sourceButton = buildVirtualToolButton(
+      ownerButton,
+      `${ownerButton.Id}_absorb_theme`,
+      "Absorb Theme",
+      "Read current Blender theme values and stage them in this tool."
+    );
+    const result = await activateToolAction({
+      program: selectedProgram,
+      panel: selectedPanel,
+      ownerButton,
+      sourceButton,
+      toolId: "hdri_world",
+      toolCommand: "absorb_theme",
+      childSlotId: "hdri-theme-absorb",
+      toolAction: "hdri_world.absorb_theme",
+      selectedButtonId: ownerButton.Id,
+      kind: "tool_surface",
+      payload: {
+        command: "absorb_theme"
+      }
+    });
+
+    if (!result.ok) {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Theme absorb failed: ${result.message ?? "Blender returned an error."}`
+      );
+      return;
+    }
+
+    const absorbResult = toObjectRecord(result.details) ?? {};
+    updateHdriWorldToolValues(ownerButton, {
+      ThemeTabsHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "tabs_hex",
+        currentValues.ThemeTabsHex
+      ),
+      ThemeHeadersHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "headers_hex",
+        currentValues.ThemeHeadersHex
+      ),
+      ThemeTextHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "text_hex",
+        currentValues.ThemeTextHex
+      ),
+      ThemeControlTextHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "control_text_hex",
+        currentValues.ThemeControlTextHex
+      ),
+      ThemeAccentTextHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "accent_text_hex",
+        currentValues.ThemeAccentTextHex
+      ),
+      ThemeTabsTextHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "tabs_text_hex",
+        currentValues.ThemeTabsTextHex
+      ),
+      ThemeHeaderTextHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "header_text_hex",
+        currentValues.ThemeHeaderTextHex
+      ),
+      ThemeEditorBackgroundHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "editor_background_hex",
+        currentValues.ThemeEditorBackgroundHex
+      ),
+      ThemeSceneHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "scene_hex",
+        currentValues.ThemeSceneHex
+      ),
+      ThemeSectionFillHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "section_fill_hex",
+        currentValues.ThemeSectionFillHex
+      ),
+      ThemeRowAltHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "row_alt_hex",
+        currentValues.ThemeRowAltHex
+      ),
+      ThemeControlsHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "controls_hex",
+        currentValues.ThemeControlsHex
+      ),
+      ThemeMiscHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "misc_hex",
+        currentValues.ThemeMiscHex
+      ),
+      ThemeDarksHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "darks_hex",
+        currentValues.ThemeDarksHex
+      ),
+      ThemeHighlightsHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "highlights_hex",
+        currentValues.ThemeHighlightsHex
+      ),
+      ThemeViewportBackgroundHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "viewport_background_hex",
+        currentValues.ThemeViewportBackgroundHex
+      ),
+      ThemeViewportGradientEnabled: normalizeThemeBooleanFromDetails(
+        absorbResult,
+        "viewport_gradient_enabled",
+        currentValues.ThemeViewportGradientEnabled
+      ),
+      ThemeViewportGradientHex: normalizeThemeHexFromDetails(
+        absorbResult,
+        "viewport_gradient_hex",
+        currentValues.ThemeViewportGradientHex
+      )
+    });
+
+    pushFrontendEvent(
+      inferSurfaceName(windowContext),
+      result.message || "Blender theme absorbed into the HDRI theme tool."
+    );
+  };
+
+  const handleHdriWorldThemeSave = async (ownerButton: FlowCellButton) => {
+    const currentValues = getLiveHdriWorldToolValues(ownerButton);
+    const defaultThemeName = currentValues.ThemeImagePath.trim()
+      ? `${labelFromTargetPath(currentValues.ThemeImagePath)} Theme`
+      : `${ownerButton.Label} Theme`;
+    const nextThemeName = window.prompt("Save Blender Theme As", defaultThemeName)?.trim();
+    if (!nextThemeName) {
+      return;
+    }
+
+    try {
+      const savedPath = await saveBlenderThemeFile({
+        suggestedName: nextThemeName,
+        values: buildHdriWorldThemeSnapshot(currentValues) as unknown as Record<string, unknown>
+      });
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Saved Blender theme "${nextThemeName}" to ${savedPath}.`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Save Blender theme failed. ${message}`
+      );
+    }
+  };
+
+  const handleHdriWorldThemeLoad = async (ownerButton: FlowCellButton) => {
+    try {
+      setPopoutContextMenu(null);
+      const selectedPaths = await showOpenFileDialog({
+        title: "Load Blender Theme",
+        filter: "JSON Files (*.json)|*.json|All Files (*.*)|*.*",
+        initialDirectory: getBlenderThemeFilesDirectory(runtime),
+        multiselect: false
+      });
+      if (selectedPaths.length === 0) {
+        return;
+      }
+      const loadedValues = await loadBlenderThemeFile(selectedPaths[0]);
+      const currentValues = getLiveHdriWorldToolValues(ownerButton);
+      updateHdriWorldToolValues(ownerButton, {
+        ...normalizeHdriWorldThemeSnapshot(loadedValues),
+        SavedThemes: currentValues.SavedThemes
+      });
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Loaded Blender theme from ${selectedPaths[0]}.`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Load Blender theme failed. ${message}`
+      );
+    }
+  };
+
   const handleHdriWorldApply = async (
     ownerButton: FlowCellButton,
     action:
       | "apply_theme_from_photo_manual_colors"
+      | "set_static_background_image"
       | "set_hdri_path"
       | "clear_world"
       | "reset_world"
@@ -5160,6 +5622,14 @@ export default function App() {
             tooltip: "Apply the current HDRI path.",
             slot: "hdri-path",
             toolAction: "hdri_world.path"
+          };
+        case "set_static_background_image":
+          return {
+            suffix: "static_background",
+            label: "background pic",
+            tooltip: "Apply the current viewport background picture path.",
+            slot: "hdri-static-background",
+            toolAction: "hdri_world.static_background_image"
           };
         case "clear_world":
           return {
@@ -5233,16 +5703,25 @@ export default function App() {
       toolOptionState: {
         ...values
       },
-      payload:
+              payload:
         action === "apply_theme_from_photo_manual_colors"
           ? {
               command: action,
+              visual_mode: values.ThemeVisualMode,
+              tabs_hex: values.ThemeTabsHex,
               headers_hex: values.ThemeHeadersHex,
               text_hex: values.ThemeTextHex,
+              control_text_hex: values.ThemeControlTextHex,
+              accent_text_hex: values.ThemeAccentTextHex,
+              tabs_text_hex: values.ThemeTabsTextHex,
+              header_text_hex: values.ThemeHeaderTextHex,
+              editor_background_hex: values.ThemeEditorBackgroundHex,
+              scene_hex: values.ThemeSceneHex,
               section_fill_hex: values.ThemeSectionFillHex,
+              row_alt_hex: values.ThemeRowAltHex,
               controls_hex: values.ThemeControlsHex,
-              misc_hex: values.ThemeMiscHex,
-              darks_hex: values.ThemeDarksHex,
+              borders_hex: values.ThemeEditorBackgroundHex,
+              darks_hex: values.ThemeEditorBackgroundHex,
               highlights_hex: values.ThemeHighlightsHex,
               viewport_background_hex: values.ThemeViewportBackgroundHex,
               viewport_gradient_enabled: values.ThemeViewportGradientEnabled,
@@ -7210,24 +7689,34 @@ export default function App() {
               onValueChange={(field, value) => {
                 updateHdriWorldToolValue(toolPopoutOwnerButton, field, value);
               }}
-              onApply={(action, surfaceValues) => {
+              onApply={(action) => {
                 void handleHdriWorldApply(
                   toolPopoutOwnerButton,
-                  action,
-                  surfaceValues
+                  action
                 );
               }}
               onBrowsePath={() => {
                 void handleHdriWorldBrowse(toolPopoutOwnerButton);
               }}
+              onBrowseStaticBackgroundPath={() => {
+                void handleStaticBackgroundBrowse(toolPopoutOwnerButton);
+              }}
               onBrowseThemePath={() => {
                 void handleThemeFromPhotoBrowse(toolPopoutOwnerButton);
               }}
-              onApplyThemeMode={(mode, surfaceValues) => {
+              onAbsorbTheme={() => {
+                void handleHdriWorldThemeAbsorb(toolPopoutOwnerButton);
+              }}
+              onSaveTheme={() => {
+                handleHdriWorldThemeSave(toolPopoutOwnerButton);
+              }}
+              onLoadTheme={() => {
+                handleHdriWorldThemeLoad(toolPopoutOwnerButton);
+              }}
+              onApplyThemeMode={(mode) => {
                 void handleThemeModeApply(
                   toolPopoutOwnerButton,
-                  mode,
-                  surfaceValues
+                  mode
                 );
               }}
             />

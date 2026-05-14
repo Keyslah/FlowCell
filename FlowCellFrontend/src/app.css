@@ -1816,6 +1816,15 @@ button {
 
 .hdri-world-grid--compact {
   gap: 6px;
+  min-height: 0;
+  align-content: start;
+  overflow: auto;
+  scrollbar-width: none;
+}
+
+.hdri-world-grid--compact::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .hdri-world-row {
@@ -1833,7 +1842,95 @@ button {
 }
 
 .hdri-world-row--theme-actions {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.hdri-world-row--theme-actions .hdri-theme-actions-chip {
+  min-height: 36px !important;
+  height: 36px !important;
+  padding: 0 !important;
+}
+
+.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button {
+  min-height: 36px !important;
+  height: 36px !important;
+}
+
+.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame {
+  min-height: 36px !important;
+  height: 36px !important;
+  padding: 0 !important;
+}
+
+.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame > .button-skin,
+.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame .imported-html,
+.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame .imported-svg {
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .button-skin.is-compact .imported-html,
+.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .button-skin.is-compact .button-skin__label {
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.hdri-world-row--theme-actions .tool-chip {
+  min-height: 30px !important;
+  height: 30px !important;
+}
+
+.hdri-world-row--theme-actions .tool-chip.host-skin-button {
+  min-height: 30px !important;
+  height: 30px !important;
+}
+
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame {
+  min-height: 30px !important;
+  height: 30px !important;
+  font-size: 0.64rem;
+}
+
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame > .button-skin.is-compact,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame .imported-html,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame .imported-svg {
+  min-height: 30px !important;
+  height: 30px !important;
+}
+
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-html > .body,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-html > .body > .button-wrap,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-html > .body > .button,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-html > .body .button,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-pill,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .black-tint-pill,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .glass-pill,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .glass-hover-wrap,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .glass-hover-button {
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-html > .body {
+  padding-block: 4px !important;
+}
+
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-pill__label,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .black-tint-pill__label,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .glass-pill__label,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .glass-hover-label,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .button-skin__label {
+  min-height: 100% !important;
+  height: 100% !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding-block: 4px !important;
+}
+
+.hdri-world-row--background-path {
+  grid-template-columns: minmax(120px, auto) minmax(0, 1fr) minmax(80px, auto) minmax(72px, auto);
 }
 
 .hdri-world-row--value {
@@ -1854,16 +1951,20 @@ button {
 
 .hdri-world-theme-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
 }
 
 .hdri-world-theme-grid--secondary {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.hdri-world-theme-grid--tertiary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .hdri-world-theme-grid--viewport {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .hdri-world-theme-role {
@@ -1874,13 +1975,13 @@ button {
 
 .hdri-world-theme-role__controls {
   display: grid;
-  grid-template-columns: 38px minmax(0, 1fr);
-  gap: 6px;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 4px;
   align-items: center;
 }
 
 .hdri-world-theme-role__label {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: color-mix(in srgb, var(--fc-theme-muted-foreground) 88%, white 12%);
@@ -1919,7 +2020,72 @@ button {
 }
 
 .hdri-world-grid--compact .hdri-world-row--theme-actions {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip {
+  min-height: 34px !important;
+  height: 34px !important;
+}
+
+.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame > .button-skin,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame .imported-html,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame .imported-svg {
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip {
+  min-height: 28px !important;
+  height: 28px !important;
+}
+
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button {
+  min-height: 28px !important;
+  height: 28px !important;
+}
+
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame {
+  min-height: 28px !important;
+  height: 28px !important;
+  font-size: 0.6rem;
+}
+
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame > .button-skin.is-compact,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame .imported-html,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame .imported-svg {
+  min-height: 28px !important;
+  height: 28px !important;
+}
+
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-html > .body,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-pill,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .black-tint-pill,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .glass-pill,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .glass-hover-wrap,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .glass-hover-button {
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-html > .body {
+  padding-block: 3px !important;
+}
+
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .imported-pill__label,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .black-tint-pill__label,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .glass-pill__label,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .glass-hover-label,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .button-skin.is-compact .button-skin__label {
+  min-height: 100% !important;
+  height: 100% !important;
+  padding-block: 3px !important;
+}
+
+.hdri-world-grid--compact .hdri-world-row--background-path {
+  grid-template-columns: minmax(90px, auto) minmax(0, 1fr) minmax(58px, auto) minmax(52px, auto);
 }
 
 .hdri-world-grid--compact .hdri-world-row--controls {
@@ -1933,6 +2099,7 @@ button {
 }
 
 .hdri-world-grid--compact .hdri-world-theme-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
 
@@ -1963,8 +2130,8 @@ button {
 }
 
 .hdri-world-color-input {
-  width: 38px;
-  min-width: 38px;
+  width: 32px;
+  min-width: 32px;
   height: 24px;
   padding: 0;
   border: 1px solid color-mix(in srgb, var(--fc-theme-surface-border) 16%, transparent);

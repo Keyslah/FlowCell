@@ -1,4 +1,4 @@
-# Description: Open FlowCell HDRI world controls for path, X/Y/Z rotation, and world strength.
+# Description: Open FlowCell theme, viewport background picture, and HDRI world controls.
 # Source Bridge Action: flowtest_custom_hdri_world_tools
 # Source Python Filename: custom_hdri_world_tools.py
 # Source Python File: D:\Dev\workspace\Codex\FlowTest\Blender\ManagedActions\custom_hdri_world_tools.py
@@ -35,7 +35,7 @@ if ($SelfTest) {
     exit 0
 }
 
-$message = 'Reload FlowCell to use the inline HDRI world controls.'
+$message = 'Reload FlowCell to use the inline theme, background pic, and HDRI controls.'
 Write-Status $message
 Write-Output $message
 exit 0

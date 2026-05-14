@@ -86,7 +86,7 @@
     },
     {
       "label": "theme",
-      "tooltip": "Open Theme and HDRI controls for Blender UI colors, world path, X/Y/Z rotation, and world strength.",
+      "tooltip": "Open Theme, background pic, and HDRI controls for Blender UI colors, viewport background image, world path, X/Y/Z rotation, and world strength.",
       "scriptPath": ".\\FlowCellButtons\\util_hdri_world_tools.ps1",
       "panel": "Tool Set"
     },

@@ -62,6 +62,14 @@ struct SampledPhotoThemeColors {
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct SavedBlenderThemeFile {
+    format: String,
+    saved_at: String,
+    values: Value,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
 struct LoadStateResponse {
     state: Value,
     runtime: RuntimeInfo,
@@ -607,8 +615,39 @@ fn layouts_root(paths: &AppPaths) -> PathBuf {
     paths.local_root.join("layouts")
 }
 
+fn blender_theme_root(paths: &AppPaths) -> PathBuf {
+    paths
+        .repo_root
+        .join("Blender")
+        .join("appearance")
+        .join("themes")
+}
+
 fn recorded_actions_root(paths: &AppPaths) -> PathBuf {
     paths.local_root.join("recorded_actions")
+}
+
+fn sanitize_theme_file_stem(value: &str) -> String {
+    let trimmed = value.trim();
+    let mut sanitized = String::with_capacity(trimmed.len());
+    let mut last_was_separator = false;
+    for character in trimmed.chars() {
+        if character.is_ascii_alphanumeric() {
+            sanitized.push(character);
+            last_was_separator = false;
+            continue;
+        }
+        if matches!(character, ' ' | '-' | '_' | '.') && !last_was_separator {
+            sanitized.push('_');
+            last_was_separator = true;
+        }
+    }
+    let cleaned = sanitized.trim_matches('_').to_string();
+    if cleaned.is_empty() {
+        "blender_theme".to_string()
+    } else {
+        cleaned
+    }
 }
 
 fn bindings_path(paths: &AppPaths) -> PathBuf {
@@ -2242,6 +2281,70 @@ fn sample_photo_theme_colors(
 }
 
 #[tauri::command]
+fn save_blender_theme_file(
+    state: State<'_, RuntimeState>,
+    suggested_name: String,
+    values: Value,
+) -> Result<String, String> {
+    let paths = with_paths(&state)?;
+    let themes_root = blender_theme_root(&paths);
+    ensure_directory(&themes_root)?;
+
+    let file_stem = sanitize_theme_file_stem(&suggested_name);
+    let file_path = themes_root.join(format!("{}.json", file_stem));
+    let payload = SavedBlenderThemeFile {
+        format: "flowtest-blender-theme-v1".to_string(),
+        saved_at: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_secs()
+            .to_string(),
+        values,
+    };
+    let serialized =
+        serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
+    fs::write(&file_path, serialized).map_err(|error| error.to_string())?;
+    let _ = write_frontend_log(
+        &paths,
+        &format!("Saved Blender theme file at {}", file_path.display()),
+    );
+    Ok(file_path.display().to_string())
+}
+
+#[tauri::command]
+fn load_blender_theme_file(
+    state: State<'_, RuntimeState>,
+    path: String,
+) -> Result<Value, String> {
+    let paths = with_paths(&state)?;
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Err("Blender theme file path is required.".to_string());
+    }
+    let file_path = PathBuf::from(trimmed);
+    if !file_path.is_file() {
+        return Err(format!(
+            "Blender theme file was not found: {}",
+            file_path.display()
+        ));
+    }
+    let raw = fs::read_to_string(&file_path).map_err(|error| error.to_string())?;
+    let parsed: Value = serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    let values = parsed
+        .get("values")
+        .cloned()
+        .unwrap_or_else(|| parsed.clone());
+    if !values.is_object() {
+        return Err("Blender theme file did not contain a valid theme object.".to_string());
+    }
+    let _ = write_frontend_log(
+        &paths,
+        &format!("Loaded Blender theme file from {}", file_path.display()),
+    );
+    Ok(values)
+}
+
+#[tauri::command]
 fn list_layout_files(state: State<'_, RuntimeState>) -> Result<Vec<SavedLayoutFile>, String> {
     let paths = with_paths(&state)?;
     let root = layouts_root(&paths);
@@ -2869,6 +2972,8 @@ fn main() {
             get_foreground_process_info,
             show_open_file_dialog,
             sample_photo_theme_colors,
+            save_blender_theme_file,
+            load_blender_theme_file,
             list_layout_files,
             load_layout_snapshot,
             save_layout_snapshot,

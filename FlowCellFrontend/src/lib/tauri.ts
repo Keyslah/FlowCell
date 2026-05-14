@@ -279,10 +279,10 @@ function resolveToolWindowOptions(args: {
       }
     : isAlignment
     ? { width: 336, height: 166, minWidth: 320, minHeight: 150, maxWidth: 356, maxHeight: 196 }
-    : isFlattenRevolve
+      : isFlattenRevolve
       ? { width: 320, height: 220, minWidth: 270, minHeight: 180, maxWidth: 380, maxHeight: 280 }
       : isHdriWorld
-        ? { width: 660, height: 360, minWidth: 560, minHeight: 320, maxWidth: 820, maxHeight: 520 }
+        ? { width: 820, height: 620, minWidth: 700, minHeight: 620, maxWidth: 1080, maxHeight: 840 }
       : isSmartAxis
         ? { width: 292, height: 64, minWidth: 252, minHeight: 52, maxWidth: 340, maxHeight: 96 }
         : isDenseRegularGroup
@@ -331,8 +331,12 @@ function resolveToolWindowOptions(args: {
   return {
     x: restoredBounds.Left,
     y: restoredBounds.Top,
-    width: clamp(restoredBounds.Width, 40, defaults.maxWidth),
-    height: clamp(restoredBounds.Height, 24, defaults.maxHeight)
+    width: clamp(restoredBounds.Width, isHdriWorld ? defaults.minWidth : 40, defaults.maxWidth),
+    height: clamp(
+      restoredBounds.Height,
+      isHdriWorld ? defaults.minHeight : 24,
+      defaults.maxHeight
+    )
   };
 }
 
@@ -871,6 +875,20 @@ export function samplePhotoThemeColors(
   imagePath: string
 ): Promise<SampledPhotoThemeColors> {
   return invoke("sample_photo_theme_colors", { imagePath });
+}
+
+export function saveBlenderThemeFile(args: {
+  suggestedName: string;
+  values: Record<string, unknown>;
+}): Promise<string> {
+  return invoke("save_blender_theme_file", {
+    suggestedName: args.suggestedName,
+    values: args.values
+  });
+}
+
+export function loadBlenderThemeFile(path: string): Promise<Record<string, unknown>> {
+  return invoke("load_blender_theme_file", { path });
 }
 
 export async function showOpenExeDialog(initialDirectory?: string): Promise<string | null> {
