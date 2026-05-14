@@ -29,30 +29,34 @@ Do not hand FlowCell:
 2. extract the zip if needed
 3. open the Blender tab in FlowTest
 4. click `Add Button`
-5. select one or more `.py` files
-6. let FlowTest install/register them and sync the panel buttons
+5. select one or more `.py` files and optional source folders
+6. let FlowTest copy them into `Blender\Blender Active Scripts`, then install/register them and sync the panel buttons
 7. reload the Blender FlowTest add-on or restart Blender if FlowTest says runtime reload is required
 8. use the new button
 
 ## What Add Button Does
 
-1. asks for one or more Blender `.py` files
+1. asks for one or more Blender `.py` files plus optional source folders
 2. validates the entrypoint shape and rejects obvious bootstrap/listener files
-3. copies each valid tool into `Blender\ManagedActions`
-4. registers each tool in the FlowTest Blender bridge custom-action registry
-5. regenerates the live custom section in the installed `...\scripts\addons\flowtest_actions.py`
-6. creates or updates the matching wrapper in `Blender\FlowCellButtons`
-7. adds the button to the current FlowTest panel
-8. syncs `flowcell_state.json` and the saved Blender layout files
-9. tells you whether Blender must reload the FlowTest add-on or restart before runtime verification reflects the new code
+3. copies each selected source into `Blender\Blender Active Scripts`
+4. syncs those managed sources into the existing Blender bridge runtime folders such as `ManagedActions`
+5. registers each tool in the FlowTest Blender bridge custom-action registry
+6. regenerates the live custom section in the installed `...\scripts\addons\flowtest_actions.py`
+7. creates or updates the matching wrapper in `Blender\FlowCellButtons`
+8. adds the button to the current FlowTest panel
+9. stores the managed source path in FlowTest state and keeps the wrapper path as the resolved execution target
+10. syncs `flowcell_state.json` and the saved Blender layout files
+11. tells you whether Blender must reload the FlowTest add-on or restart before runtime verification reflects the new code
 
 ## Folder Roles
 
-- `Blender\ScriptBank` = public/shareable downloadable tools and examples
-- `Blender\ManagedActions` = installed Python action source
+- `Blender\Blender Scripts` = public/shareable downloadable tools and examples
+- `Blender\Blender Active Scripts` = managed installed Blender source copies
+- `Blender\ManagedActions` = bridge-managed runtime action source
 - `Blender\FlowCellButtons` = user-facing clickable wrapper scripts only
 - `Blender\SupportScripts` = dispatcher/sync plumbing only
 - `Blender\AddonScripts` = Blender refresh/sidebar helper scripts only
+- `Blender\ScriptBank` = legacy share folder kept for compatibility
 - `Blender\ScriptDump` and nested ScriptDump folders = ignored loose/testing/old scripts
 
 ## Delete Behavior
@@ -65,10 +69,11 @@ After Blender bridge, add-on, registry, generated-action, or managed-action chan
 
 ## Main Paths
 
-- `Blender\ScriptBank` for shareable source tools and example downloads
+- `Blender\Blender Scripts` for shareable source tools and example downloads
+- `Blender\Blender Active Scripts` for managed installed source copies
 - `Blender\FlowCellButtons` for generated wrappers
 - `Blender\SupportScripts` for bridge helpers
-- `Blender\ManagedActions` for managed custom action sources
+- `Blender\ManagedActions` for bridge-managed custom action runtime sources
 - `Blender\AddonScripts` for Blender-side helper/refresh scripts
 - `Blender\config.json` and `FlowCell\local\private\blender.config.local.json` for config
 - `Blender\ScriptDump` for rough or private test files, not normal button sources

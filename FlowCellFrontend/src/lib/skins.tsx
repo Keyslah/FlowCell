@@ -255,6 +255,7 @@ export function renderButtonSkin(args: {
             __html: renderImportedTemplate(importedSkin.html, label)
           }}
         />
+        {selected ? <span className="button-skin__selected-overlay" aria-hidden="true" /> : null}
       </div>
     );
   }
@@ -263,6 +264,7 @@ export function renderButtonSkin(args: {
     <div className={sharedClassName} style={{ ["--accent" as string]: accent }}>
       <span className="button-skin__glow" aria-hidden="true" />
       <span className="button-skin__label">{label}</span>
+      {selected ? <span className="button-skin__selected-overlay" aria-hidden="true" /> : null}
       {skinId === "signal-strip" ? (
         <svg
           className="button-skin__signal"

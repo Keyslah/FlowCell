@@ -15,6 +15,7 @@ import type {
   FlowCellState,
   LayoutSnapshot,
   LoadStateResponse,
+  ManagedScriptInstallResult,
   RecordedMacroChoice,
   RecordedMacroDefinition,
   SavedLayoutFile,
@@ -830,11 +831,12 @@ export function saveButtonBinding(args: {
   programId: number;
   shortcut: string;
 }): Promise<BindingMutationResult> {
+  const bindingTarget = args.button.ExecutionTarget?.trim() || args.button.Target;
   return invoke("save_button_binding", {
     request: {
       kind: args.button.Kind,
       programTabId: args.programId,
-      target: args.button.Target,
+      target: bindingTarget,
       shortcut: args.shortcut,
       bindingId: args.button.BindingId ?? 0,
       label: args.button.Label
@@ -846,11 +848,12 @@ export function clearButtonBinding(args: {
   button: FlowCellButton;
   programId: number;
 }): Promise<BindingMutationResult> {
+  const bindingTarget = args.button.ExecutionTarget?.trim() || args.button.Target;
   return invoke("clear_button_binding", {
     request: {
       kind: args.button.Kind,
       programTabId: args.programId,
-      target: args.button.Target,
+      target: bindingTarget,
       bindingId: args.button.BindingId ?? 0,
       label: args.button.Label
     }
@@ -871,6 +874,30 @@ export function showOpenFileDialog(args: {
   });
 }
 
+export function showOpenFolderDialog(args: {
+  title: string;
+  initialDirectory?: string;
+  multiselect?: boolean;
+}): Promise<string[]> {
+  return invoke("show_open_folder_dialog", {
+    title: args.title,
+    initialDirectory: args.initialDirectory,
+    multiselect: args.multiselect ?? false
+  });
+}
+
+export function showSaveFileDialog(args: {
+  title: string;
+  filter: string;
+  initialDirectory?: string;
+}): Promise<string | null> {
+  return invoke("show_save_file_dialog", {
+    title: args.title,
+    filter: args.filter,
+    initialDirectory: args.initialDirectory
+  });
+}
+
 export function samplePhotoThemeColors(
   imagePath: string
 ): Promise<SampledPhotoThemeColors> {
@@ -879,10 +906,12 @@ export function samplePhotoThemeColors(
 
 export function saveBlenderThemeFile(args: {
   suggestedName: string;
+  path?: string;
   values: Record<string, unknown>;
 }): Promise<string> {
   return invoke("save_blender_theme_file", {
     suggestedName: args.suggestedName,
+    path: args.path,
     values: args.values
   });
 }
@@ -951,6 +980,14 @@ export function installBlenderButtons(args: {
   panelName: string;
 }): Promise<Record<string, unknown>> {
   return invoke("install_blender_buttons", args);
+}
+
+export function installManagedProgramScripts(args: {
+  programKey: string;
+  selectedPaths: string[];
+  panelName?: string;
+}): Promise<ManagedScriptInstallResult> {
+  return invoke("install_managed_program_scripts", args);
 }
 
 export function deleteBlenderButton(args: {

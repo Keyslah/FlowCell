@@ -375,7 +375,8 @@ function New-BackendResult {
         [string]$ExecutionMethod = '',
         [string]$ClientAction = '',
         [object]$SmartAxisResult = $null,
-        [object]$ToolOptionState = $null
+        [object]$ToolOptionState = $null,
+        [object]$Details = $null
     )
     return [pscustomobject]@{
         Succeeded = [bool]$Succeeded
@@ -385,6 +386,7 @@ function New-BackendResult {
         ClientAction = [string]$ClientAction
         SmartAxisResult = $SmartAxisResult
         ToolOptionState = $ToolOptionState
+        Details = $Details
     }
 }
 
@@ -544,7 +546,7 @@ function Invoke-FlowCellToolCommand($Envelope) {
             $statusText = if ($response.PSObject.Properties['message']) { [string]$response.message } else { 'HDRI world settings applied.' }
             Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
             Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=ok; Message={1}' -f [string]$Envelope.command_id, $statusText)
-            return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge')
+            return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge' -Details $response)
         }
         'quick_rotate_group' {
             $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowtest_custom_quick_rotate_group' -Data @{

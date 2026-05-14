@@ -26,7 +26,7 @@ import {
   closeToolPopout,
   getForegroundProcessInfo,
   getWindowContext,
-  installBlenderButtons,
+  installManagedProgramScripts,
   listenForProgrammaticWindowPlacement,
   listenForStateSync,
   listLayoutFiles,
@@ -48,6 +48,8 @@ import {
   saveState,
   showOpenExeDialog,
   showOpenFileDialog,
+  showOpenFolderDialog,
+  showSaveFileDialog,
   loadBlenderThemeFile
 } from "./lib/tauri";
 import {
@@ -59,7 +61,7 @@ import {
   applyLayoutSnapshot,
   buildCommandEnvelope,
   buildLayoutSnapshot,
-  buildScriptButtonsFromPaths,
+  buildScriptButtonsFromInstallResults,
   buildToolActionEnvelope,
   collectAllButtons,
   deleteProgram,
@@ -85,6 +87,7 @@ import {
   reorderPanelButtons,
   removeToolPopout,
   restoreSavedProgram,
+  resolveButtonExecutionTarget,
   saveProgramSnapshot,
   updateAlignmentToolModifiers,
   updateAppTheme,
@@ -433,8 +436,48 @@ function normalizeThemeHexFromDetails(
   sourceKey: string,
   fallback: string
 ): string {
-  const normalized = readString(details, sourceKey, fallback).trim().toUpperCase();
+  const resolvedValue = readThemeDetailValue(details, sourceKey);
+  const normalized = (typeof resolvedValue === "string" ? resolvedValue : fallback)
+    .trim()
+    .toUpperCase();
   return isValidThemeHex(normalized) ? normalized : fallback;
+}
+
+function readThemeDetailValue(
+  details: Record<string, unknown>,
+  sourceKey: string
+): unknown {
+  const direct = details[sourceKey];
+  if (typeof direct !== "undefined") {
+    return direct;
+  }
+
+  const normalizedSourceKey = sourceKey.trim().toLowerCase();
+  for (const [key, value] of Object.entries(details)) {
+    if (key.trim().toLowerCase() === normalizedSourceKey) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
+function toObjectRecordFromUnknown(value: unknown): Record<string, unknown> | null {
+  const asRecord = toObjectRecord(value);
+  if (asRecord !== undefined && asRecord !== null) {
+    return asRecord;
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return toObjectRecord(parsed) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  return null;
 }
 
 function normalizeThemeBooleanFromDetails(
@@ -442,7 +485,7 @@ function normalizeThemeBooleanFromDetails(
   sourceKey: string,
   fallback: boolean
 ): boolean {
-  const sourceValue = details?.[sourceKey];
+  const sourceValue = readThemeDetailValue(details, sourceKey);
   if (typeof sourceValue === "boolean") {
     return sourceValue;
   }
@@ -470,6 +513,54 @@ function normalizeThemeBooleanFromDetails(
 }
 
 const FLOWCELL_WINDOW_PROCESS_NAMES = ["flowcell_frontend", "flowcellfrontend"];
+const LAST_BLENDER_THEME_DIRECTORY_KEY = "flowcell.last_blender_theme_directory";
+
+function readLocalStringPreference(key: string): string | null {
+  try {
+    const value = window.localStorage.getItem(key);
+    if (!value) {
+      return null;
+    }
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeLocalStringPreference(key: string, value: string | null | undefined): void {
+  try {
+    const trimmed = value?.trim();
+    if (!trimmed) {
+      window.localStorage.removeItem(key);
+      return;
+    }
+    window.localStorage.setItem(key, trimmed);
+  } catch {
+    // Ignore local storage failures in restricted webview contexts.
+  }
+}
+
+function parentDirectoryFromPath(path: string): string | null {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const normalized = trimmed.replace(/[\\/]+$/, "");
+  const separatorIndex = Math.max(normalized.lastIndexOf("\\"), normalized.lastIndexOf("/"));
+  if (separatorIndex <= 0) {
+    return null;
+  }
+  return normalized.slice(0, separatorIndex);
+}
+
+function ensureJsonFileExtension(path: string): string {
+  const trimmed = path.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+  return /\.json$/i.test(trimmed) ? trimmed : `${trimmed}.json`;
+}
 
 function inferSurfaceName(context: WindowContext): string {
   switch (context.kind) {
@@ -1374,8 +1465,8 @@ function isPersistablePopoutBounds(bounds: FlowCellBounds): boolean {
     Number.isFinite(bounds.Height) &&
     bounds.Left > -20000 &&
     bounds.Top > -20000 &&
-    bounds.Width >= 140 &&
-    bounds.Height >= 60
+    bounds.Width >= 40 &&
+    bounds.Height >= 24
   );
 }
 
@@ -1840,6 +1931,57 @@ function buildProgramScriptDialogFilter(program: FlowCellProgram): string {
   }
 }
 
+function getProgramScriptSourceFolder(program: FlowCellProgram): string {
+  return program.ProgramConfig?.ScriptFolder?.trim() ?? "";
+}
+
+function getButtonBindingMatchTargets(button: FlowCellButton): string[] {
+  return Array.from(
+    new Set(
+      [resolveButtonExecutionTarget(button), button.Target?.trim() ?? ""].filter(
+        (value) => value.length > 0
+      )
+    )
+  );
+}
+
+async function pickProgramInstallPaths(program: FlowCellProgram): Promise<string[]> {
+  const isBlender = getProgramTemplateKey(program) === "blender";
+  const title = isBlender
+    ? `Choose ${program.ProgramConfig?.NormalizedName ?? "Blender"} button source files`
+    : `Choose ${program.ProgramConfig?.NormalizedName ?? `Program ${program.ProgramTabId}`} script source files`;
+  const initialDirectory = getProgramScriptSourceFolder(program);
+  const selectedFiles = await showOpenFileDialog({
+    title,
+    filter: buildProgramScriptDialogFilter(program),
+    initialDirectory,
+    multiselect: true
+  });
+
+  const wantsFolders = window.confirm(
+    isBlender
+      ? "Select one or more source folders too? Click OK to choose folders, or Cancel to keep file-only selection."
+      : "Select one or more source folders too? Click OK to choose folders, or Cancel to keep file-only selection."
+  );
+  const selectedFolders = wantsFolders
+    ? await showOpenFolderDialog({
+        title: isBlender
+          ? `Choose ${program.ProgramConfig?.NormalizedName ?? "Blender"} source folders`
+          : `Choose ${program.ProgramConfig?.NormalizedName ?? `Program ${program.ProgramTabId}`} script source folders`,
+        initialDirectory,
+        multiselect: true
+      })
+    : [];
+
+  return Array.from(
+    new Set(
+      [...selectedFiles, ...selectedFolders]
+        .map((value) => value.trim())
+        .filter((value) => value.length > 0)
+    )
+  );
+}
+
 function resolveProgramProcessTargets(program: FlowCellProgram): {
   names: string[];
   path: string;
@@ -2259,12 +2401,20 @@ export default function App() {
         scriptFolder: program.ProgramConfig?.ScriptFolder
       }))
     : [];
-  const findScriptBindingForTarget = (target: string, programId: number) =>
-    bindingsState?.scriptBindings.find(
-      (binding) =>
-        binding.target === target &&
-        ((binding.programTabId ?? 0) === programId || (binding.programTabId ?? 0) <= 0)
-    ) ?? null;
+  const findScriptBindingForTarget = (button: FlowCellButton, programId: number) => {
+    for (const target of getButtonBindingMatchTargets(button)) {
+      const binding =
+        bindingsState?.scriptBindings.find(
+          (candidate) =>
+            candidate.target === target &&
+            ((candidate.programTabId ?? 0) === programId || (candidate.programTabId ?? 0) <= 0)
+        ) ?? null;
+      if (binding) {
+        return binding;
+      }
+    }
+    return null;
+  };
   const refreshBindTargetState = (
     targetState: BindTargetState,
     nextBindings: FlowCellBindingsState | null = bindingsState,
@@ -2305,10 +2455,7 @@ export default function App() {
       return targetState;
     }
 
-    const binding = findScriptBindingForTarget(
-      targetState.button.Target?.trim() ?? "",
-      targetState.programId
-    );
+    const binding = findScriptBindingForTarget(targetState.button, targetState.programId);
     return {
       ...targetState,
       button: {
@@ -2361,10 +2508,12 @@ export default function App() {
           (entry) =>
             entry.programId === programId &&
             entry.button.Kind === "script" &&
-            entry.button.Target === binding.target
+            getButtonBindingMatchTargets(entry.button).includes(binding.target)
         ) ??
         buttonEntries.find(
-          (entry) => entry.button.Kind === "script" && entry.button.Target === binding.target
+          (entry) =>
+            entry.button.Kind === "script" &&
+            getButtonBindingMatchTargets(entry.button).includes(binding.target)
         );
       const button =
         matchedButton?.button ??
@@ -2622,6 +2771,12 @@ export default function App() {
       return;
     }
 
+    const storedBounds = activeToolPopout?.Bounds;
+    if (storedBounds && isPersistableFloatingFanoutBounds(storedBounds)) {
+      floatingFanoutCollapsedBoundsRef.current = storedBounds;
+      return;
+    }
+
     const currentWindow = getCurrentWindow();
     let cancelled = false;
 
@@ -2645,7 +2800,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [isFloatingFanoutPopout]);
+  }, [activeToolPopout?.Bounds, isFloatingFanoutPopout]);
 
   useEffect(() => {
     if (!isPanelFanPopout) {
@@ -2666,6 +2821,12 @@ export default function App() {
 
   useEffect(() => {
     if (!isPanelFanPopout) {
+      return;
+    }
+
+    const storedBounds = activeToolPopout?.Bounds;
+    if (storedBounds && isPersistablePanelFanBounds(storedBounds)) {
+      panelFanCollapsedBoundsRef.current = storedBounds;
       return;
     }
 
@@ -2692,7 +2853,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [isPanelFanPopout]);
+  }, [activeToolPopout?.Bounds, isPanelFanPopout]);
 
   useEffect(() => {
     if (!isFloatingFanoutPopout || !floatingFanoutMetrics || spaceDragInProgress) {
@@ -4942,10 +5103,8 @@ export default function App() {
   };
 
   const openPanelFanPopout = async (panel: FlowCellPanel) => {
-    const fanButtons =
-      selectedPanel?.Id === panel.Id && selectedPopButtons.length > 0
-        ? selectedPopButtons
-        : panel.Buttons;
+    // Panel fan should mirror the visible Buttons-page order, not transient pop selections.
+    const fanButtons = panel.Buttons;
     if (fanButtons.length === 0) {
       pushFrontendEvent(
         inferSurfaceName(windowContext),
@@ -5159,7 +5318,7 @@ export default function App() {
     });
     const nextValues = syncHdriWorldVisibleTextBuckets(normalizedValues, patch);
     latestHdriWorldToolValuesRef.current.set(ownerButton.Id, nextValues);
-    persistLatestLocalMutation((currentState) =>
+    const applyHdriWorldToolValues = (currentState: FlowCellState) =>
       updateToolOptionState(
         currentState,
         selectedProgram.ProgramTabId,
@@ -5178,8 +5337,16 @@ export default function App() {
         ),
           ...nextValues
         }
-      )
-    );
+      );
+    const optimisticState = applyHdriWorldToolValues(latestStateRef.current ?? state);
+    latestStateRef.current = optimisticState;
+    setState(optimisticState);
+    void saveState(optimisticState, { broadcast: false }).catch((error) => {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Local state save failed. ${error instanceof Error ? error.message : String(error)}`
+      );
+    });
   };
 
   const handleQuickRotateGroupApply = async (
@@ -5427,95 +5594,101 @@ export default function App() {
       return;
     }
 
-    const absorbResult = toObjectRecord(result.details) ?? {};
+    const detailRecord = toObjectRecord(result.details) ?? {};
+    const legacyRecord = toObjectRecord(detailRecord.legacy_result);
+    const bridgeDetails =
+      toObjectRecordFromUnknown(detailRecord.details) ??
+      toObjectRecordFromUnknown(legacyRecord?.Details) ??
+      toObjectRecordFromUnknown(legacyRecord?.details) ??
+      detailRecord;
     updateHdriWorldToolValues(ownerButton, {
       ThemeTabsHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "tabs_hex",
         currentValues.ThemeTabsHex
       ),
       ThemeHeadersHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "headers_hex",
         currentValues.ThemeHeadersHex
       ),
       ThemeTextHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "text_hex",
         currentValues.ThemeTextHex
       ),
       ThemeControlTextHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "control_text_hex",
         currentValues.ThemeControlTextHex
       ),
       ThemeAccentTextHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "accent_text_hex",
         currentValues.ThemeAccentTextHex
       ),
       ThemeTabsTextHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "tabs_text_hex",
         currentValues.ThemeTabsTextHex
       ),
       ThemeHeaderTextHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "header_text_hex",
         currentValues.ThemeHeaderTextHex
       ),
       ThemeEditorBackgroundHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "editor_background_hex",
         currentValues.ThemeEditorBackgroundHex
       ),
       ThemeSceneHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "scene_hex",
         currentValues.ThemeSceneHex
       ),
       ThemeSectionFillHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "section_fill_hex",
         currentValues.ThemeSectionFillHex
       ),
       ThemeRowAltHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "row_alt_hex",
         currentValues.ThemeRowAltHex
       ),
       ThemeControlsHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "controls_hex",
         currentValues.ThemeControlsHex
       ),
       ThemeMiscHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "misc_hex",
         currentValues.ThemeMiscHex
       ),
       ThemeDarksHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "darks_hex",
         currentValues.ThemeDarksHex
       ),
       ThemeHighlightsHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "highlights_hex",
         currentValues.ThemeHighlightsHex
       ),
       ThemeViewportBackgroundHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "viewport_background_hex",
         currentValues.ThemeViewportBackgroundHex
       ),
       ThemeViewportGradientEnabled: normalizeThemeBooleanFromDetails(
-        absorbResult,
+        bridgeDetails,
         "viewport_gradient_enabled",
         currentValues.ThemeViewportGradientEnabled
       ),
       ThemeViewportGradientHex: normalizeThemeHexFromDetails(
-        absorbResult,
+        bridgeDetails,
         "viewport_gradient_hex",
         currentValues.ThemeViewportGradientHex
       )
@@ -5538,10 +5711,27 @@ export default function App() {
     }
 
     try {
+      const fallbackDirectory = getBlenderThemeFilesDirectory(runtime);
+      const initialDirectory =
+        readLocalStringPreference(LAST_BLENDER_THEME_DIRECTORY_KEY) ?? fallbackDirectory;
+      const selectedPath = await showSaveFileDialog({
+        title: "Save Blender Theme",
+        filter: "JSON Files (*.json)|*.json|All Files (*.*)|*.*",
+        initialDirectory
+      });
+      if (!selectedPath) {
+        return;
+      }
+      const resolvedPath = ensureJsonFileExtension(selectedPath);
       const savedPath = await saveBlenderThemeFile({
         suggestedName: nextThemeName,
+        path: resolvedPath,
         values: buildHdriWorldThemeSnapshot(currentValues) as unknown as Record<string, unknown>
       });
+      writeLocalStringPreference(
+        LAST_BLENDER_THEME_DIRECTORY_KEY,
+        parentDirectoryFromPath(savedPath) ?? parentDirectoryFromPath(resolvedPath)
+      );
       pushFrontendEvent(
         inferSurfaceName(windowContext),
         `Saved Blender theme "${nextThemeName}" to ${savedPath}.`
@@ -5558,15 +5748,22 @@ export default function App() {
   const handleHdriWorldThemeLoad = async (ownerButton: FlowCellButton) => {
     try {
       setPopoutContextMenu(null);
+      const fallbackDirectory = getBlenderThemeFilesDirectory(runtime);
+      const initialDirectory =
+        readLocalStringPreference(LAST_BLENDER_THEME_DIRECTORY_KEY) ?? fallbackDirectory;
       const selectedPaths = await showOpenFileDialog({
         title: "Load Blender Theme",
         filter: "JSON Files (*.json)|*.json|All Files (*.*)|*.*",
-        initialDirectory: getBlenderThemeFilesDirectory(runtime),
+        initialDirectory,
         multiselect: false
       });
       if (selectedPaths.length === 0) {
         return;
       }
+      writeLocalStringPreference(
+        LAST_BLENDER_THEME_DIRECTORY_KEY,
+        parentDirectoryFromPath(selectedPaths[0])
+      );
       const loadedValues = await loadBlenderThemeFile(selectedPaths[0]);
       const currentValues = getLiveHdriWorldToolValues(ownerButton);
       updateHdriWorldToolValues(ownerButton, {
@@ -6509,15 +6706,7 @@ export default function App() {
     try {
       pushFrontendEvent(inferSurfaceName(windowContext), "Add Script dialog opened.");
       const isBlender = getProgramTemplateKey(selectedProgram) === "blender";
-      const title = isBlender
-        ? `Choose ${selectedProgram.ProgramConfig?.NormalizedName ?? "Blender"} button source (.py or .ps1)`
-        : `Choose ${selectedProgram.ProgramConfig?.NormalizedName ?? `Program ${selectedProgram.ProgramTabId}`} script`;
-      const selectedPaths = await showOpenFileDialog({
-        title,
-        filter: buildProgramScriptDialogFilter(selectedProgram),
-        initialDirectory: selectedProgram.ProgramConfig?.ScriptFolder,
-        multiselect: true
-      });
+      const selectedPaths = await pickProgramInstallPaths(selectedProgram);
 
       if (selectedPaths.length === 0) {
         pushFrontendEvent(
@@ -6532,51 +6721,77 @@ export default function App() {
         `Add Script dialog returned ${selectedPaths.length} path(s).`
       );
 
+      const installResult = await installManagedProgramScripts({
+        programKey: getProgramTemplateKey(selectedProgram),
+        selectedPaths,
+        panelName: selectedPanel.Name
+      });
+      const installedResults = installResult.results.filter((result) => result.installed);
+
       if (isBlender) {
-        const installResult = await installBlenderButtons({
-          selectedPaths,
-          panelName: selectedPanel.Name
-        });
-        const installedCountValue = installResult["InstalledCount"];
-        const installedCount =
-          typeof installedCountValue === "number"
-            ? installedCountValue
-            : Number(installedCountValue ?? 0);
-        const statusMessage =
-          typeof installResult["StatusMessage"] === "string"
-            ? installResult["StatusMessage"]
-            : typeof installResult["status_message"] === "string"
-              ? installResult["status_message"]
-              : `Installed ${Number.isFinite(installedCount) ? installedCount : 0} Blender button(s).`;
-        const reloaded = await loadState();
-        if (windowContext) {
-          await hydrateLoadedState(reloaded, windowContext, {
-            captureLiveBounds: false
-          });
+        let latest = await reloadAppFromDisk({ captureLiveBounds: false });
+        if (installedResults.length > 0) {
+          let didNormalizeTargets = false;
+          const normalizedState = {
+            ...latest.state,
+            Programs: latest.state.Programs.map((program) =>
+              program.ProgramTabId !== selectedProgram.ProgramTabId
+                ? program
+                : {
+                    ...program,
+                    Panels: program.Panels.map((panel) =>
+                      panel.Id !== selectedPanel.Id
+                        ? panel
+                        : {
+                            ...panel,
+                            Buttons: panel.Buttons.map((button) => {
+                              if (button.Kind !== "script") {
+                                return button;
+                              }
+                              const installedMatch = installedResults.find(
+                                (result) =>
+                                  button.Target === result.executionTarget ||
+                                  button.ExecutionTarget === result.executionTarget
+                              );
+                              if (!installedMatch) {
+                                return button;
+                              }
+                              didNormalizeTargets = true;
+                              return {
+                                ...button,
+                                Target: installedMatch.sourcePath,
+                                ExecutionTarget: installedMatch.executionTarget
+                              };
+                            })
+                          }
+                    )
+                  }
+            )
+          };
+          if (didNormalizeTargets) {
+            await persistState(normalizedState);
+            latest = await reloadAppFromDisk({ captureLiveBounds: false });
+          }
         }
-        pushFrontendEvent(
-          inferSurfaceName(windowContext),
-          statusMessage
-        );
+        pushFrontendEvent(inferSurfaceName(windowContext), installResult.statusMessage);
         return;
       }
 
-      const nextButtons = buildScriptButtonsFromPaths(
-        selectedPaths,
+      const nextButtons = buildScriptButtonsFromInstallResults(
+        installedResults,
         "flowcell.run_script"
       );
-      await persistState(
-        addButtonsToPanel(
-          state,
-          selectedProgram.ProgramTabId,
-          selectedPanel.Id,
-          nextButtons
-        )
-      );
-      pushFrontendEvent(
-        inferSurfaceName(windowContext),
-        `Added ${nextButtons.length} script button(s) to ${selectedPanel.Name}.`
-      );
+      if (nextButtons.length > 0) {
+        await persistState(
+          addButtonsToPanel(
+            state,
+            selectedProgram.ProgramTabId,
+            selectedPanel.Id,
+            nextButtons
+          )
+        );
+      }
+      pushFrontendEvent(inferSurfaceName(windowContext), installResult.statusMessage);
     } catch (error) {
       pushFrontendEvent(
         inferSurfaceName(windowContext),
@@ -7246,8 +7461,11 @@ export default function App() {
         {bindListItems.length > 0 ? (
           <div className="binds-list">
             {bindListItems.map((item) => {
+              const currentTargets = currentBindTarget
+                ? getButtonBindingMatchTargets(currentBindTarget.button)
+                : [];
               const isSelected =
-                currentBindTarget?.button.Target === item.button.Target &&
+                currentTargets.some((target) => getButtonBindingMatchTargets(item.button).includes(target)) &&
                 currentBindTarget?.button.Kind === item.button.Kind &&
                 currentBindTarget?.programId === item.programId;
               return (
@@ -7677,15 +7895,7 @@ export default function App() {
               compact
               styleGroup={popoutToolStyleGroup}
               importedSkin={popoutToolImportedSkin}
-              values={normalizeHdriWorldToolValues(
-                getToolOptionState(
-                  state,
-                  selectedProgram.ProgramTabId,
-                  selectedPanel.Id,
-                  toolPopoutOwnerButton.Id,
-                  "hdri_world"
-                )?.Values
-              )}
+              values={getLiveHdriWorldToolValues(toolPopoutOwnerButton)}
               onValueChange={(field, value) => {
                 updateHdriWorldToolValue(toolPopoutOwnerButton, field, value);
               }}

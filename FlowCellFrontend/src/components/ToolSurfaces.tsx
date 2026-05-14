@@ -204,12 +204,12 @@ const THEME_PRIMARY_ROLE_ROWS = [
     placeholder: "#7BA8B7",
   },
   {
-    label: "Light Text",
+    label: "random text",
     field: "ThemeTextHex",
     placeholder: "#F3F3EE",
   },
   {
-    label: "Dark Text",
+    label: "tool text",
     field: "ThemeControlTextHex",
     placeholder: "#101010",
   },
@@ -217,7 +217,7 @@ const THEME_PRIMARY_ROLE_ROWS = [
 
 const THEME_SECONDARY_ROLE_ROWS = [
   {
-    label: "Accent Text",
+    label: "scene/header text",
     field: "ThemeAccentTextHex",
     placeholder: "#D7CC65",
   },
@@ -277,6 +277,7 @@ function renderToolChip(
     selected?: boolean;
     title?: string;
     highlightKey?: string;
+    highlightColor?: string;
   }
 ) {
   const {
@@ -286,7 +287,8 @@ function renderToolChip(
     className,
     selected = false,
     title,
-    highlightKey
+    highlightKey,
+    highlightColor
   } = args;
   const baseClassName = className ?? "tool-chip";
 
@@ -302,6 +304,7 @@ function renderToolChip(
       onClick={onClick}
       title={title ?? label}
       highlightKey={selected ? highlightKey ?? `${baseClassName}:${label}` : undefined}
+      highlightColor={selected ? highlightColor : undefined}
     />
   );
 }
@@ -1048,6 +1051,7 @@ export function SmartAxisStrip({
         className: `tool-chip ${state.LiveEnabled ? "tool-chip--live-active" : ""}`,
         selected: state.LiveEnabled,
         highlightKey: `smart-axis:${panelName ?? label}:live`,
+        highlightColor: "var(--fc-theme-danger)",
         styleGroup,
         importedSkin
       })}

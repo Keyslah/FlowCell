@@ -5,9 +5,9 @@ FlowCell uses a Tauri + React frontend with a PowerShell and AutoHotkey backend 
 
 AutoHotkey v2 is required  https://www.autohotkey.com/
 
-When a script is added through FlowCell's panel UI, the normal Add Script button opens in the current program folder, supports multi-select, adds one button per selected script, and writes those buttons only into the currently selected panel. 
+When a script is added through FlowCell's panel UI, `Add Script` or Blender `Add Button` can pick one or many files plus one or many folders from anywhere. FlowTest copies the selected sources into that program's managed `Active Scripts` folder first, then creates the button from the managed copy instead of the original picked path.
 
-On the Blender tab, `Add Button` installs or registers the Blender-side action, creates or updates the wrapper in `Blender/FlowCellButtons/`, adds the button to the selected panel, syncs FlowTest state/layout, and reports whether Blender must reload or restart before first use.
+On the Blender tab, `Add Button` stages Blender source files into `Blender/Blender Active Scripts/`, installs or registers the Blender-side action, creates or updates the live wrapper in `Blender/FlowCellButtons/`, adds the button to the selected panel, syncs FlowTest state/layout, and reports whether Blender must reload or restart before first use.
 
 Preferred script prefix:
 - `org_` for organization actions such as Illustrator layer tools or Blender collection tools
@@ -31,8 +31,9 @@ Do not give FlowCell a full add-on package, installer, bootstrap/listener file, 
 
 If the file is valid, FlowCell:
 
-- copies it into `Blender/ManagedActions/`
+- copies it into `Blender/Blender Active Scripts/`
 - registers it in the FlowTest Blender bridge custom-action registry
+- syncs the managed runtime code into `Blender/ManagedActions/`
 - regenerates the live custom section inside the installed `flowtest_actions.py`
 - creates or updates the matching wrapper in `Blender/FlowCellButtons/`
 - adds the button to the selected panel
@@ -42,11 +43,11 @@ If the file is valid, FlowCell:
 ## Repository Layout
 
 - `FlowCell/`: main app code, launcher scripts, helpers, vendored dependencies, and ignored local runtime storage under `FlowCell/local/`.
-- `Blender/`: Blender integration files, including `ScriptBank/` for shareable source tools, `ManagedActions/` for installed action sources, `FlowCellButtons/` for clickable wrappers, `SupportScripts/` for install/sync plumbing, `AddonScripts/` for Blender refresh/sidebar helpers, and the tracked public `config.json`.
-- `Illustrator/`: user-facing Illustrator scripts.
+- `Blender/`: Blender integration files, including `Blender Scripts/` for public downloadable sources, `Blender Active Scripts/` for managed source installs, `ManagedActions/` for bridge-managed runtime sources, `FlowCellButtons/` for clickable wrappers, `SupportScripts/` for install/sync plumbing, `AddonScripts/` for Blender refresh/sidebar helpers, and the tracked public `config.json`.
+- `Illustrator/`: public Illustrator library and managed install area.
 - `Illustrator/HelperScripts/`: internal Illustrator helper scripts that are not meant to become user-facing buttons.
-- `Windows/`: user-facing Windows scripts.
-- `Photoshop/`: public Photoshop script area for repo-safe defaults.
+- `Windows/`: public Windows library and managed install area.
+- `Photoshop/`: public Photoshop library and managed install area for repo-safe defaults.
 - `docs/`: repository and maintenance documentation.
 - `examples/`: public example configs with safe placeholders.
 - `tools/`: source-only tooling, including the optional C# launcher source.

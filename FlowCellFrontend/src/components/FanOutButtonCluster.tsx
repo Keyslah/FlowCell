@@ -1096,10 +1096,7 @@ export function FanOutButtonCluster({
         <div className="fan-cluster__children" aria-hidden={!childrenVisible}>
           {childVisuals.map((entry, index) => {
             const childLayout = activeLayout?.childLayouts[index];
-            const childVisuals =
-              variant === "panel-fan"
-                ? ownerVisuals
-                : resolveButtonVisuals(entry.entry.button);
+            const childVisuals = resolveButtonVisuals(entry.entry.button);
             const childStyle =
               childLayout
                 ? ({

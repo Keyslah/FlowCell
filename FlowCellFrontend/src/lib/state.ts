@@ -10,6 +10,7 @@ import type {
   FlowCellState,
   ImportedSkin,
   LayoutSnapshot,
+  ManagedScriptInstallResultItem,
   PanelFanOptions,
   RuntimeInfo,
   SavedProgramRecord,
@@ -33,6 +34,10 @@ const DEFAULT_PROGRAM_STYLE_GROUP_ID = "style-group-03";
 const IMPORTED_SKIN_LIBRARY_STYLE_GROUP_PREFIX = "style-group-imported-";
 const DEDICATED_BUTTON_STYLE_GROUP_PREFIX = "button-style-";
 const DEDICATED_BUTTON_IMPORTED_SKIN_PREFIX = "button-skin-";
+const ILLUSTRATOR_RUNTIME_SCRIPT_FOLDER =
+  "C:\\Program Files\\Adobe\\Adobe Illustrator 2026\\Presets\\en_US\\Scripts";
+const PHOTOSHOP_RUNTIME_SCRIPT_FOLDER =
+  "C:\\Program Files\\Adobe\\Adobe Photoshop 2026\\Presets\\Scripts";
 const DEFAULT_SURFACE_STYLE_ASSIGNMENTS: SurfaceStyleAssignment[] = [
   {
     surface_id: "main-panels",
@@ -242,6 +247,20 @@ function buttonDisplayLabelFromPath(target: string): string {
   return strippedPrefix.replace(/[_-]+/g, " ").trim() || withoutExtension;
 }
 
+function getButtonBindingTargets(button: FlowCellButton): string[] {
+  return Array.from(
+    new Set(
+      [button.ExecutionTarget, button.Target]
+        .map((value) => value?.trim() ?? "")
+        .filter((value) => value.length > 0)
+    )
+  );
+}
+
+export function resolveButtonExecutionTarget(button: FlowCellButton): string {
+  return getButtonBindingTargets(button)[0] ?? "";
+}
+
 function inferButtonCommandId(
   button: Pick<FlowCellButton, "Kind"> & Partial<Pick<FlowCellButton, "command_id">>
 ): CommandEnvelope["command_id"] {
@@ -272,6 +291,145 @@ function inferProgramTemplateKey(programName: string, exePath: string): string {
   return "generic";
 }
 
+function normalizeWindowsPath(value: string): string {
+  return value.replace(/\//g, "\\").replace(/[\\]+$/, "");
+}
+
+function pathsEqual(left: string, right: string): boolean {
+  return normalizeWindowsPath(left).toLowerCase() === normalizeWindowsPath(right).toLowerCase();
+}
+
+function isPathWithinFolder(path: string, folder: string): boolean {
+  const normalizedPath = normalizeWindowsPath(path);
+  const normalizedFolder = normalizeWindowsPath(folder);
+  if (!normalizedPath || !normalizedFolder) {
+    return false;
+  }
+  const pathLower = normalizedPath.toLowerCase();
+  const folderLower = normalizedFolder.toLowerCase();
+  return pathLower === folderLower || pathLower.startsWith(`${folderLower}\\`);
+}
+
+function joinWindowsPath(root: string, ...segments: string[]): string {
+  const trimmedRoot = normalizeWindowsPath(root);
+  const trimmedSegments = segments.map((segment) =>
+    segment.replace(/^[/\\]+|[/\\]+$/g, "")
+  );
+  return [trimmedRoot, ...trimmedSegments].filter((segment) => segment.length > 0).join("\\");
+}
+
+function inferRepoRootFromKnownPath(path: string): string {
+  const normalizedPath = normalizeWindowsPath(path);
+  const pathLower = normalizedPath.toLowerCase();
+  const rootSegments = ["\\blender\\", "\\illustrator\\", "\\photoshop\\", "\\windows\\"];
+
+  for (const segment of rootSegments) {
+    const index = pathLower.lastIndexOf(segment);
+    if (index > 0) {
+      return normalizedPath.slice(0, index);
+    }
+  }
+
+  return "";
+}
+
+interface ProgramManagedFolders {
+  templateKey: string;
+  repoRoot: string;
+  // Library folders are public/downloadable sources. Active folders are FlowTest-managed copies.
+  libraryFolder: string;
+  activeFolder: string;
+  // Runtime folders are where the actual runnable copy or wrapper lives for that program.
+  runtimeFolder: string;
+  legacyScriptFolders: string[];
+  wrapperFolder?: string;
+}
+
+function resolveProgramManagedFolders(program: FlowCellProgram): ProgramManagedFolders | null {
+  const programConfig = program.ProgramConfig ?? {};
+  const templateKey = inferProgramTemplateKey(
+    programConfig.NormalizedName ?? "",
+    programConfig.ExePath ?? ""
+  );
+  if (templateKey === "generic") {
+    return null;
+  }
+
+  const repoRootCandidates = [
+    programConfig.ScriptFolder ?? "",
+    programConfig.ActiveScriptFolder ?? "",
+    programConfig.RuntimeScriptFolder ?? "",
+    programConfig.BridgeFolder ?? "",
+    ...program.Panels.flatMap((panel) =>
+      panel.Buttons.flatMap((button) => [button.Target ?? "", button.ExecutionTarget ?? ""])
+    )
+  ]
+    .map((value) => inferRepoRootFromKnownPath(value))
+    .filter((value) => value.length > 0);
+  const repoRoot = repoRootCandidates[0] ?? "";
+  if (!repoRoot) {
+    return null;
+  }
+
+  switch (templateKey) {
+    case "illustrator":
+      return {
+        templateKey,
+        repoRoot,
+        libraryFolder: joinWindowsPath(repoRoot, "Illustrator", "Illustrator Scripts"),
+        activeFolder: joinWindowsPath(repoRoot, "Illustrator", "Illustrator Active Scripts"),
+        runtimeFolder: ILLUSTRATOR_RUNTIME_SCRIPT_FOLDER,
+        legacyScriptFolders: [
+          joinWindowsPath(repoRoot, "Illustrator"),
+          joinWindowsPath(repoRoot, "Illustrator", "ScriptBank"),
+          ILLUSTRATOR_RUNTIME_SCRIPT_FOLDER
+        ]
+      };
+    case "photoshop":
+      return {
+        templateKey,
+        repoRoot,
+        libraryFolder: joinWindowsPath(repoRoot, "Photoshop", "Photoshop Scripts"),
+        activeFolder: joinWindowsPath(repoRoot, "Photoshop", "Photoshop Active Scripts"),
+        runtimeFolder: PHOTOSHOP_RUNTIME_SCRIPT_FOLDER,
+        legacyScriptFolders: [
+          joinWindowsPath(repoRoot, "Photoshop"),
+          joinWindowsPath(repoRoot, "Photoshop", "ScriptBank"),
+          PHOTOSHOP_RUNTIME_SCRIPT_FOLDER
+        ]
+      };
+    case "blender":
+      return {
+        templateKey,
+        repoRoot,
+        libraryFolder: joinWindowsPath(repoRoot, "Blender", "Blender Scripts"),
+        activeFolder: joinWindowsPath(repoRoot, "Blender", "Blender Active Scripts"),
+        runtimeFolder: joinWindowsPath(repoRoot, "Blender", "FlowCellButtons"),
+        wrapperFolder: joinWindowsPath(repoRoot, "Blender", "FlowCellButtons"),
+        legacyScriptFolders: [
+          joinWindowsPath(repoRoot, "Blender"),
+          joinWindowsPath(repoRoot, "Blender", "ScriptBank"),
+          joinWindowsPath(repoRoot, "Blender", "ManagedActions"),
+          joinWindowsPath(repoRoot, "Blender", "FlowCellButtons")
+        ]
+      };
+    case "windows":
+      return {
+        templateKey,
+        repoRoot,
+        libraryFolder: joinWindowsPath(repoRoot, "Windows", "Windows Scripts"),
+        activeFolder: joinWindowsPath(repoRoot, "Windows", "Windows Active Scripts"),
+        runtimeFolder: joinWindowsPath(repoRoot, "Windows", "Windows Active Scripts"),
+        legacyScriptFolders: [
+          joinWindowsPath(repoRoot, "Windows"),
+          joinWindowsPath(repoRoot, "Windows", "ScriptBank")
+        ]
+      };
+    default:
+      return null;
+  }
+}
+
 function buildDefaultPanels(panelNames: string[]): FlowCellPanel[] {
   return panelNames.map((panelName) => ({
     Id: `panel_${createId("")}`,
@@ -298,7 +456,9 @@ function buildProgramConfig(args: {
         NormalizedName: args.programName.trim().toLowerCase(),
         ProgramType: "adobe_direct_script_runner",
         ExePath: args.exePath,
-        ScriptFolder: `${args.repoRoot}\\Illustrator`,
+        ScriptFolder: `${args.repoRoot}\\Illustrator\\Illustrator Scripts`,
+        ActiveScriptFolder: `${args.repoRoot}\\Illustrator\\Illustrator Active Scripts`,
+        RuntimeScriptFolder: ILLUSTRATOR_RUNTIME_SCRIPT_FOLDER,
         RunMethod: "illustrator_direct",
         AllowedScriptExtensions: [".jsx", ".js"],
         BridgeFolder: "",
@@ -310,7 +470,9 @@ function buildProgramConfig(args: {
         NormalizedName: args.programName.trim().toLowerCase(),
         ProgramType: "adobe_direct_script_runner",
         ExePath: args.exePath,
-        ScriptFolder: `${args.repoRoot}\\Photoshop`,
+        ScriptFolder: `${args.repoRoot}\\Photoshop\\Photoshop Scripts`,
+        ActiveScriptFolder: `${args.repoRoot}\\Photoshop\\Photoshop Active Scripts`,
+        RuntimeScriptFolder: PHOTOSHOP_RUNTIME_SCRIPT_FOLDER,
         RunMethod: "photoshop_direct",
         AllowedScriptExtensions: [".jsx", ".js"],
         BridgeFolder: "",
@@ -322,7 +484,9 @@ function buildProgramConfig(args: {
         NormalizedName: args.programName.trim().toLowerCase(),
         ProgramType: "bridge_runner",
         ExePath: args.exePath,
-        ScriptFolder: `${args.repoRoot}\\Blender\\FlowCellButtons`,
+        ScriptFolder: `${args.repoRoot}\\Blender\\Blender Scripts`,
+        ActiveScriptFolder: `${args.repoRoot}\\Blender\\Blender Active Scripts`,
+        RuntimeScriptFolder: `${args.repoRoot}\\Blender\\FlowCellButtons`,
         RunMethod: "blender_bridge",
         AllowedScriptExtensions: [".ps1", ".py", ".blend", ".exe", ".lnk"],
         BridgeFolder: "",
@@ -337,7 +501,9 @@ function buildProgramConfig(args: {
         NormalizedName: args.programName.trim().toLowerCase(),
         ProgramType: "generic",
         ExePath: args.exePath,
-        ScriptFolder: `${args.repoRoot}\\Windows`,
+        ScriptFolder: `${args.repoRoot}\\Windows\\Windows Scripts`,
+        ActiveScriptFolder: `${args.repoRoot}\\Windows\\Windows Active Scripts`,
+        RuntimeScriptFolder: `${args.repoRoot}\\Windows\\Windows Active Scripts`,
         RunMethod: "generic",
         AllowedScriptExtensions: [],
         BridgeFolder: "",
@@ -441,12 +607,134 @@ function matchesProgramClusterMember(memberId: string, programId: number): boole
   );
 }
 
+function normalizeProgramConfig(
+  programConfig: FlowCellProgram["ProgramConfig"],
+  folders: ProgramManagedFolders | null
+): FlowCellProgram["ProgramConfig"] {
+  if (!programConfig) {
+    if (!folders) {
+      return programConfig;
+    }
+    return {
+      ScriptFolder: folders.libraryFolder,
+      ActiveScriptFolder: folders.activeFolder,
+      RuntimeScriptFolder: folders.runtimeFolder
+    };
+  }
+
+  if (!folders) {
+    return programConfig;
+  }
+
+  const currentScriptFolder = normalizeWindowsPath(programConfig.ScriptFolder ?? "");
+  const shouldNormalizeScriptFolder =
+    currentScriptFolder.length === 0 ||
+    folders.legacyScriptFolders.some((folder) => isPathWithinFolder(currentScriptFolder, folder));
+
+  return {
+    ...programConfig,
+    ScriptFolder: shouldNormalizeScriptFolder ? folders.libraryFolder : currentScriptFolder,
+    ActiveScriptFolder: normalizeWindowsPath(programConfig.ActiveScriptFolder ?? "") || folders.activeFolder,
+    RuntimeScriptFolder:
+      normalizeWindowsPath(programConfig.RuntimeScriptFolder ?? "") || folders.runtimeFolder
+  };
+}
+
+function normalizeScriptButtonForProgram(
+  button: FlowCellButton,
+  folders: ProgramManagedFolders | null
+): FlowCellButton {
+  const normalizedExecutionTarget = normalizeWindowsPath(button.ExecutionTarget ?? "");
+  if (!folders || button.Kind !== "script") {
+    return {
+      ...button,
+      ExecutionTarget: normalizedExecutionTarget || undefined
+    };
+  }
+
+  const normalizedTarget = normalizeWindowsPath(button.Target ?? "");
+  const targetName = normalizedTarget.split("\\").pop() ?? "";
+  if (!targetName) {
+    return {
+      ...button,
+      ExecutionTarget: normalizedExecutionTarget || undefined
+    };
+  }
+
+  switch (folders.templateKey) {
+    case "illustrator":
+    case "photoshop": {
+      const runtimeTarget = joinWindowsPath(folders.runtimeFolder, targetName);
+      if (isPathWithinFolder(normalizedTarget, folders.activeFolder)) {
+        return {
+          ...button,
+          Target: normalizedTarget,
+          ExecutionTarget: normalizedExecutionTarget || runtimeTarget
+        };
+      }
+      if (folders.legacyScriptFolders.some((folder) => isPathWithinFolder(normalizedTarget, folder))) {
+        return {
+          ...button,
+          Target: joinWindowsPath(folders.activeFolder, targetName),
+          ExecutionTarget: normalizedExecutionTarget || runtimeTarget
+        };
+      }
+      return {
+        ...button,
+        ExecutionTarget: normalizedExecutionTarget || undefined
+      };
+    }
+    case "windows": {
+      const activeTarget = joinWindowsPath(folders.activeFolder, targetName);
+      if (isPathWithinFolder(normalizedTarget, folders.activeFolder)) {
+        return {
+          ...button,
+          Target: normalizedTarget,
+          ExecutionTarget: normalizedTarget
+        };
+      }
+      if (
+        folders.legacyScriptFolders.some((folder) => isPathWithinFolder(normalizedTarget, folder)) &&
+        !isPathWithinFolder(normalizedTarget, folders.libraryFolder)
+      ) {
+        return {
+          ...button,
+          Target: activeTarget,
+          ExecutionTarget: activeTarget
+        };
+      }
+      return {
+        ...button,
+        ExecutionTarget: normalizedExecutionTarget || undefined
+      };
+    }
+    case "blender": {
+      if (folders.wrapperFolder && isPathWithinFolder(normalizedTarget, folders.wrapperFolder)) {
+        return {
+          ...button,
+          ExecutionTarget: normalizedExecutionTarget || normalizedTarget
+        };
+      }
+      return {
+        ...button,
+        ExecutionTarget: normalizedExecutionTarget || undefined
+      };
+    }
+    default:
+      return {
+        ...button,
+        ExecutionTarget: normalizedExecutionTarget || undefined
+      };
+  }
+}
+
 function normalizeProgram(program: FlowCellProgram): FlowCellProgram {
+  const folders = resolveProgramManagedFolders(program);
   const normalizedPanels = program.Panels.map((panel) => ({
     ...panel,
     FanOptions: normalizePanelFanOptions(panel.FanOptions),
     Buttons: panel.Buttons.map((button) => ({
-      ...button,
+      ...normalizeScriptButtonForProgram(button, folders),
       command_id: inferButtonCommandId(button),
       style_group_id: button.style_group_id ?? "",
       transparent_popout: button.transparent_popout === true,
@@ -470,6 +758,7 @@ function normalizeProgram(program: FlowCellProgram): FlowCellProgram {
   }));
   return {
     ...program,
+    ProgramConfig: normalizeProgramConfig(program.ProgramConfig, folders),
     style_group_id:
       typeof program.style_group_id === "string" && program.style_group_id.trim().length > 0
         ? program.style_group_id
@@ -497,18 +786,24 @@ function findMatchingScriptBinding(
     }
   }
 
-  const buttonTarget = button.Target?.trim();
-  if (!buttonTarget) {
+  const bindingTargets = getButtonBindingTargets(button);
+  if (bindingTargets.length === 0) {
     return undefined;
   }
 
-  return (
-    bindings.scriptBindings.find(
-      (binding) =>
-        binding.target === buttonTarget &&
-        (binding.programTabId ?? 0) === programId
-    ) ?? bindings.scriptBindings.find((binding) => binding.target === buttonTarget)
-  );
+  for (const buttonTarget of bindingTargets) {
+    const binding =
+      bindings.scriptBindings.find(
+        (candidate) =>
+          candidate.target === buttonTarget &&
+          (candidate.programTabId ?? 0) === programId
+      ) ?? bindings.scriptBindings.find((candidate) => candidate.target === buttonTarget);
+    if (binding) {
+      return binding;
+    }
+  }
+
+  return undefined;
 }
 
 export function ensureStateDefaults(state: FlowCellState): FlowCellState {
@@ -792,6 +1087,10 @@ export function getToolPopoutButtons(
   state: FlowCellState,
   toolPopout: ToolPopoutRecord
 ): FlowCellButton[] {
+  if (toolPopout.LayoutMode === "PanelFan") {
+    return findPanel(state, toolPopout.ProgramTabId, toolPopout.PanelId)?.Buttons ?? [];
+  }
+
   return toolPopout.ButtonIds.map((buttonId) =>
     findButton(
       state,
@@ -805,24 +1104,33 @@ export function getToolPopoutButtons(
 export function isAlignmentOwnerButton(button: FlowCellButton): boolean {
   return (
     (button.compound_tool_id ?? "").toLowerCase() === "alignment" ||
-    targetFileName(button.Target) === "util_alignment_tools.ps1"
+    targetFileName(resolveButtonExecutionTarget(button) || button.Target) === "util_alignment_tools.ps1"
   );
 }
 
 export function isFlattenRevolveOwnerButton(button: FlowCellButton): boolean {
-  return targetFileName(button.Target) === "util_flatten_revolve_tools.ps1";
+  return (
+    targetFileName(resolveButtonExecutionTarget(button) || button.Target) ===
+    "util_flatten_revolve_tools.ps1"
+  );
 }
 
 export function isQuickRotateGroupOwnerButton(button: FlowCellButton): boolean {
-  return targetFileName(button.Target) === "util_quick_rotate_group_tools.ps1";
+  return (
+    targetFileName(resolveButtonExecutionTarget(button) || button.Target) ===
+    "util_quick_rotate_group_tools.ps1"
+  );
 }
 
 export function isHdriWorldOwnerButton(button: FlowCellButton): boolean {
-  return targetFileName(button.Target) === "util_hdri_world_tools.ps1";
+  return (
+    targetFileName(resolveButtonExecutionTarget(button) || button.Target) ===
+    "util_hdri_world_tools.ps1"
+  );
 }
 
 export function getSmartAxisCommandForButton(button: FlowCellButton): string {
-  return SMART_AXIS_TARGET_TO_COMMAND[targetFileName(button.Target)] ?? "";
+  return SMART_AXIS_TARGET_TO_COMMAND[targetFileName(resolveButtonExecutionTarget(button) || button.Target)] ?? "";
 }
 
 export function isSmartAxisButton(button: FlowCellButton): boolean {
@@ -1249,6 +1557,25 @@ export function buildScriptButtonsFromPaths(paths: string[], commandId: CommandE
   }));
 }
 
+export function buildScriptButtonsFromInstallResults(
+  results: ManagedScriptInstallResultItem[],
+  commandId: CommandEnvelope["command_id"]
+): FlowCellButton[] {
+  return results
+    .filter((result) => result.installed && result.sourcePath.trim().length > 0)
+    .map((result) => ({
+      Id: `button_${createId("")}`,
+      Kind: commandId === "flowcell.run_macro" ? "macro" : "script",
+      command_id: commandId,
+      Label: result.label?.trim() || buttonDisplayLabelFromPath(result.sourcePath),
+      Target: result.sourcePath,
+      ExecutionTarget: result.executionTarget?.trim() || undefined,
+      Shortcut: "",
+      BindingId: 0,
+      style_group_id: ""
+    }));
+}
+
 export function buildLayoutSnapshot(
   state: FlowCellState,
   runtime: RuntimeInfo
@@ -1577,7 +1904,7 @@ export function buildCommandEnvelope(args: {
     toolOptionState
   } = args;
   const programConfig = program.ProgramConfig ?? {};
-  const resolvedTarget = mapRepoPath(button.Target, runtime);
+  const resolvedTarget = mapRepoPath(resolveButtonExecutionTarget(button) || button.Target, runtime);
   const programLabel = programConfig.NormalizedName
     ? programConfig.NormalizedName.replace(/(^|-)([a-z])/g, (_, sep, char) =>
         `${sep}${char.toUpperCase()}`
@@ -1589,6 +1916,7 @@ export function buildCommandEnvelope(args: {
     kind: button.Kind,
     label: button.Label,
     target: button.Target,
+    execution_target: button.ExecutionTarget ?? "",
     resolved_target: resolvedTarget,
     tooltip: button.Tooltip ?? "",
     shortcut: button.Shortcut ?? "",
@@ -1622,6 +1950,8 @@ export function buildCommandEnvelope(args: {
       program_type: programConfig.ProgramType ?? "",
       run_method: programConfig.RunMethod ?? "",
       script_folder: mapRepoPath(programConfig.ScriptFolder ?? "", runtime),
+      active_script_folder: mapRepoPath(programConfig.ActiveScriptFolder ?? "", runtime),
+      runtime_script_folder: mapRepoPath(programConfig.RuntimeScriptFolder ?? "", runtime),
       bridge_folder: mapRepoPath(programConfig.BridgeFolder ?? "", runtime),
       exe_path: mapRepoPath(programConfig.ExePath ?? "", runtime),
       requires_restart: programConfig.RequiresRestart ?? false,
@@ -1874,7 +2204,7 @@ export function reorderPanelButtons(
         );
         const nextButtonIds =
           toolPopout.LayoutMode === "PanelFan"
-            ? [ownerButtonId, ...orderedChildIds]
+            ? [ownerButtonId, ...reorderedButtons.map((button) => button.Id)]
             : ownerButtonId
               ? [ownerButtonId, ...orderedChildIds]
               : reorderedButtonIds;

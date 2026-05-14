@@ -103,6 +103,15 @@ function isToolOwnerPopCandidate(button: FlowCellButton): boolean {
   );
 }
 
+function isBlenderToolSetPanel(
+  program: FlowCellProgram,
+  panel: FlowCellPanel
+): boolean {
+  const normalizedProgram =
+    program.ProgramConfig?.NormalizedName?.trim().toLowerCase() ?? "";
+  return normalizedProgram === "blender" && panel.Name.trim().toLowerCase() === "tool set";
+}
+
 export function buildPanelRenderItems(
   buttons: FlowCellButton[],
   options?: BuildPanelRenderItemsOptions
@@ -177,9 +186,10 @@ export function ButtonGrid({
   const panelRenderItems = buildPanelRenderItems(selectedPanel.Buttons, {
     collapseSmartAxisToOwnerButton
   });
+  const toolSetPanel = isBlenderToolSetPanel(selectedProgram, selectedPanel);
 
   return (
-    <div className="button-grid">
+    <div className={toolSetPanel ? "button-grid button-grid--tool-set" : "button-grid"}>
       {panelRenderItems.map((item) =>
         item.kind === "smart-axis" ? (
           <div
@@ -327,7 +337,10 @@ function MainButtonHost({
         hostMode="neutral"
         highlightKey={`button:${selectedProgram.ProgramTabId}:${selectedPanel.Id}:${button.Id}`}
         onFocus={() => onFocusButton(button)}
-        onClick={() => onActivateButton(button)}
+        onClick={() => {
+          onFocusButton(button);
+          onActivateButton(button);
+        }}
       />
     </div>
   );

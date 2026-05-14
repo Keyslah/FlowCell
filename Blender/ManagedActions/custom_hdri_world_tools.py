@@ -839,17 +839,30 @@ def _set_theme_text_property(
     background_hex = _resolve_theme_text_background_hex(
         target, attribute, role_hexes, context_name
     )
-    hex_value = _prefer_contrasting_text_hex(
-        preferred_hex,
-        background_hex,
-        (
-            role_hexes["text_hex"],
-            role_hexes["control_text_hex"],
-            role_hexes["accent_text_hex"],
-            role_hexes["header_text_hex"],
-            role_hexes["tabs_text_hex"],
-        ),
+    lowered = attribute.lower()
+    is_selected_like = (
+        lowered.endswith("_hi")
+        or "_hi" in lowered
+        or lowered.endswith("_sel")
+        or "_sel" in lowered
+        or "selected" in lowered
+        or "match" in lowered
     )
+
+    if is_selected_like:
+        hex_value, _ = _contrast_safe_text_hex(preferred_hex, background_hex)
+    else:
+        hex_value = _prefer_contrasting_text_hex(
+            preferred_hex,
+            background_hex,
+            (
+                role_hexes["text_hex"],
+                role_hexes["control_text_hex"],
+                role_hexes["accent_text_hex"],
+                role_hexes["header_text_hex"],
+                role_hexes["tabs_text_hex"],
+            ),
+        )
     return _set_theme_color_property(
         target,
         attribute,
@@ -1415,8 +1428,6 @@ def _absorb_current_theme(context):
             ("user_interface", "tab_active"),
             ("user_interface.wcol_tab", "inner"),
             ("user_interface.wcol_tab", "text"),
-            *[(section_name, "tab_back") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "tab_active") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1429,9 +1440,6 @@ def _absorb_current_theme(context):
             ("user_interface", "title"),
             ("user_interface", "navigation_bar"),
             ("user_interface", "panel_title"),
-            *[(section_name, "header") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "title") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "navigation_bar") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1444,8 +1452,6 @@ def _absorb_current_theme(context):
             ("user_interface.wcol_text", "text"),
             ("user_interface.wcol_text", "text_hi"),
             ("user_interface.wcol_tooltip", "text"),
-            *[(section_name, "text") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "text_hi") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1458,8 +1464,6 @@ def _absorb_current_theme(context):
             ("user_interface.wcol_regular", "text_hi"),
             ("user_interface.wcol_tool", "text"),
             ("user_interface.wcol_tooltip", "text_hi"),
-            *[(section_name, "list") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "item") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1470,18 +1474,14 @@ def _absorb_current_theme(context):
             ("user_interface", "button_title"),
             ("user_interface.wcol_pie_menu", "text"),
             ("user_interface.wcol_option", "text"),
-            *[(section_name, "selected_highlight") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "active") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
     tabs_text_hex = _sample_theme_hex_from_paths(
         theme,
         [
-            ("user_interface", "text"),
             ("user_interface.wcol_tab", "text"),
             ("user_interface.panel", "header"),  # legacy compatibility
-            *[(section_name, "tab_text") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1491,8 +1491,6 @@ def _absorb_current_theme(context):
             ("user_interface", "header_text"),
             ("user_interface", "header_text_hi"),
             ("user_interface", "panel_text"),
-            *[(section_name, "header_text") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "text_hi") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1503,8 +1501,6 @@ def _absorb_current_theme(context):
             ("user_interface", "sub_back"),
             ("user_interface", "panel_back"),
             ("user_interface", "panel_sub_back"),
-            *[(section_name, "back") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "sub_back") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1526,8 +1522,6 @@ def _absorb_current_theme(context):
             ("user_interface", "list"),
             ("user_interface", "item"),
             ("user_interface.wcol_list_item", "item"),
-            *[(section_name, "list") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "item") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1540,9 +1534,6 @@ def _absorb_current_theme(context):
             ("user_interface.wcol_regular", "item"),
             ("user_interface.wcol_regular", "inner"),
             ("user_interface.wcol_box", "inner"),
-            *[(section_name, "button") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "button_title") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "execution_buts") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1552,7 +1543,6 @@ def _absorb_current_theme(context):
             ("user_interface", "row_alternate"),
             ("user_interface", "row_alt"),
             ("user_interface.wcol_list_item", "inner_sel"),
-            *[(section_name, "row_alternate") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1563,8 +1553,6 @@ def _absorb_current_theme(context):
             ("user_interface", "active"),
             ("user_interface.wcol_state", "inner_sel"),
             ("user_interface.wcol_state", "item"),
-            *[(section_name, "selected_highlight") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "active") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1576,8 +1564,6 @@ def _absorb_current_theme(context):
             ("user_interface", "menu_item"),
             ("user_interface.wcol_regular", "outline"),
             ("user_interface.wcol_box", "outline"),
-            *[(section_name, "outline") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "separator") for section_name in THEME_EDITOR_SECTION_NAMES],
             ("user_interface.wcol_state", "outline"),
         ],
     )
@@ -1588,8 +1574,6 @@ def _absorb_current_theme(context):
             ("user_interface", "sub_back"),
             ("user_interface", "menu_back"),
             ("user_interface", "back"),
-            *[(section_name, "sub_back") for section_name in THEME_EDITOR_SECTION_NAMES],
-            *[(section_name, "menu_back") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 
@@ -1599,7 +1583,6 @@ def _absorb_current_theme(context):
             ("user_interface", "panel_back"),
             ("user_interface", "panel_sub_back"),
             ("user_interface", "outline"),
-            *[(section_name, "sub_back") for section_name in THEME_EDITOR_SECTION_NAMES],
         ],
     )
 

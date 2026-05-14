@@ -1,7 +1,6 @@
 # Photoshop ScriptBank
 
-Community-submitted Photoshop scripts can be placed here for GitHub sharing, review, and later promotion into the active Photoshop script area when appropriate.
+This legacy share folder remains on disk so older references still resolve.
 
-Use this folder for scripts that should sync through GitHub but are not yet treated as normal FlowCell button candidates.
-
-Active repo-safe Photoshop scripts still belong directly in `Photoshop`.
+New public Photoshop source files should live in `Photoshop\Photoshop Scripts`.
+Managed installed copies belong in `Photoshop\Photoshop Active Scripts`.

@@ -18,6 +18,7 @@ interface HostSkinButtonProps
   selected?: boolean;
   skinCompact?: boolean;
   highlightKey?: string;
+  highlightColor?: string;
   hostMode?: "native-button" | "neutral";
 }
 
@@ -30,6 +31,7 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       selected = false,
       skinCompact = false,
       highlightKey,
+      highlightColor,
       hostMode = "native-button",
       className,
       style,
@@ -46,7 +48,11 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
     const resolvedClassName = [className, "host-skin-button"].filter(Boolean).join(" ");
     const resolvedStyle: CSSProperties = {
       ...(style ?? {}),
-      ...(highlightKey
+      ...(highlightColor
+        ? {
+            ["--fc-selected-highlight" as const]: highlightColor
+          }
+        : highlightKey
         ? {
             ["--fc-selected-highlight" as const]: resolveGreenHighlightColor(highlightKey)
           }

@@ -16,6 +16,8 @@ export interface FlowCellProgramConfig {
   ProgramType?: string;
   ExePath?: string;
   ScriptFolder?: string;
+  ActiveScriptFolder?: string;
+  RuntimeScriptFolder?: string;
   RunMethod?: string;
   AllowedScriptExtensions?: string[];
   BridgeFolder?: string;
@@ -61,6 +63,7 @@ export interface FlowCellButton {
   command_id: CommandId;
   Label: string;
   Target: string;
+  ExecutionTarget?: string;
   Tooltip?: string;
   Shortcut?: string;
   BindingId?: number;
@@ -182,6 +185,24 @@ export interface BindingMutationResult {
   shortcut?: string;
   bindings?: FlowCellBindingsState;
   [key: string]: unknown;
+}
+
+export interface ManagedScriptInstallResultItem {
+  label?: string;
+  sourcePath: string;
+  activePath: string;
+  executionTarget: string;
+  installed: boolean;
+  message?: string;
+}
+
+export interface ManagedScriptInstallResult {
+  installedCount: number;
+  failedCount: number;
+  statusMessage: string;
+  reloadRequired?: boolean;
+  reloadReason?: string;
+  results: ManagedScriptInstallResultItem[];
 }
 
 export type RecordedMacroStepType =
@@ -397,6 +418,8 @@ export interface CommandEnvelope {
     program_type: string;
     run_method: string;
     script_folder: string;
+    active_script_folder: string;
+    runtime_script_folder: string;
     bridge_folder: string;
     exe_path: string;
     requires_restart: boolean;

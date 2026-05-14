@@ -265,8 +265,225 @@ struct BindingsConfig {
     other_sections: Vec<RawIniSection>,
 }
 
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct ManagedScriptInstallResultItem {
+    label: Option<String>,
+    source_path: String,
+    active_path: String,
+    execution_target: String,
+    installed: bool,
+    message: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct ManagedScriptInstallResult {
+    installed_count: usize,
+    failed_count: usize,
+    status_message: String,
+    reload_required: bool,
+    reload_reason: Option<String>,
+    results: Vec<ManagedScriptInstallResultItem>,
+}
+
+#[derive(Clone)]
+struct ManagedProgramFolders {
+    // active_root stores FlowTest-managed source copies; runtime_root is the actual execution layer.
+    active_root: PathBuf,
+    runtime_root: PathBuf,
+    source_root: Option<PathBuf>,
+    allowed_extensions: Vec<&'static str>,
+}
+
+#[derive(Clone, Default)]
+struct ManagedInstallOptions {
+    blender_bridge_folder: Option<PathBuf>,
+    blender_skip_sync: bool,
+}
+
 fn ensure_directory(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|error| error.to_string())
+}
+
+fn normalize_path_key(path: &Path) -> String {
+    path.display()
+        .to_string()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_lowercase()
+}
+
+fn path_is_within(path: &Path, root: &Path) -> bool {
+    let normalized_path = normalize_path_key(path);
+    let normalized_root = normalize_path_key(root);
+    normalized_path == normalized_root || normalized_path.starts_with(&(normalized_root + "\\"))
+}
+
+fn copy_file_overwrite(source: &Path, destination: &Path) -> Result<(), String> {
+    if let Some(parent) = destination.parent() {
+        ensure_directory(parent)?;
+    }
+    fs::copy(source, destination).map(|_| ()).map_err(|error| {
+        format!(
+            "Could not copy {} to {}: {}",
+            source.display(),
+            destination.display(),
+            error
+        )
+    })
+}
+
+fn copy_directory_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    ensure_directory(destination)?;
+    for entry in fs::read_dir(source).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_directory_recursive(&source_path, &destination_path)?;
+        } else if source_path.is_file() {
+            copy_file_overwrite(&source_path, &destination_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn stage_selected_path(
+    source: &Path,
+    target_root: &Path,
+    source_root: Option<&Path>,
+) -> Result<PathBuf, String> {
+    let source_path = source
+        .canonicalize()
+        .unwrap_or_else(|_| source.to_path_buf());
+    if path_is_within(&source_path, target_root) {
+        return Ok(source_path);
+    }
+
+    if let Some(root) = source_root {
+        let source_root_path = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        if path_is_within(&source_path, &source_root_path) {
+            if let Ok(relative_path) = source_path.strip_prefix(&source_root_path) {
+                let destination_path = target_root.join(relative_path);
+                if source_path.is_dir() {
+                    copy_directory_recursive(&source_path, &destination_path)?;
+                } else if source_path.is_file() {
+                    copy_file_overwrite(&source_path, &destination_path)?;
+                } else {
+                    return Err(format!(
+                        "Selected path was not a file or folder: {}",
+                        source.display()
+                    ));
+                }
+                return Ok(destination_path);
+            }
+        }
+    }
+
+    let leaf_name = source_path.file_name().ok_or_else(|| {
+        format!(
+            "Could not determine a file or folder name for {}",
+            source.display()
+        )
+    })?;
+    let destination_path = target_root.join(leaf_name);
+    if source_path.is_dir() {
+        copy_directory_recursive(&source_path, &destination_path)?;
+    } else if source_path.is_file() {
+        copy_file_overwrite(&source_path, &destination_path)?;
+    } else {
+        return Err(format!(
+            "Selected path was not a file or folder: {}",
+            source.display()
+        ));
+    }
+    Ok(destination_path)
+}
+
+fn collect_files_recursive(root: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    if root.is_file() {
+        files.push(root.to_path_buf());
+        return Ok(());
+    }
+    if !root.is_dir() {
+        return Ok(());
+    }
+
+    for entry in fs::read_dir(root).map_err(|error| error.to_string())? {
+        let entry = entry.map_err(|error| error.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_files_recursive(&path, files)?;
+        } else if path.is_file() {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn is_allowed_script_file(path: &Path, allowed_extensions: &[&str]) -> bool {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| format!(".{}", value).to_lowercase())
+        .map(|value| {
+            allowed_extensions
+                .iter()
+                .any(|candidate| *candidate == value)
+        })
+        .unwrap_or(false)
+}
+
+fn button_label_from_path(path: &Path) -> String {
+    let file_stem = path
+        .file_stem()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_else(|| path.display().to_string());
+    let without_prefix = file_stem
+        .strip_prefix("org_")
+        .or_else(|| file_stem.strip_prefix("file_"))
+        .or_else(|| file_stem.strip_prefix("util_"))
+        .unwrap_or(&file_stem);
+    without_prefix.replace(['_', '-'], " ").trim().to_string()
+}
+
+fn managed_program_folders(
+    repo_root: &Path,
+    program_key: &str,
+) -> Result<ManagedProgramFolders, String> {
+    match program_key.trim().to_lowercase().as_str() {
+        "blender" => Ok(ManagedProgramFolders {
+            active_root: repo_root.join("Blender").join("Blender Active Scripts"),
+            runtime_root: repo_root.join("Blender").join("FlowCellButtons"),
+            source_root: Some(repo_root.join("Blender").join("Blender Scripts")),
+            allowed_extensions: vec![".py", ".ps1"],
+        }),
+        "windows" => Ok(ManagedProgramFolders {
+            active_root: repo_root.join("Windows").join("Windows Active Scripts"),
+            runtime_root: repo_root.join("Windows").join("Windows Active Scripts"),
+            source_root: None,
+            allowed_extensions: vec![".ps1", ".cmd", ".bat", ".exe", ".lnk", ".vbs", ".ahk"],
+        }),
+        "illustrator" => Ok(ManagedProgramFolders {
+            active_root: repo_root
+                .join("Illustrator")
+                .join("Illustrator Active Scripts"),
+            runtime_root: PathBuf::from(
+                r"C:\Program Files\Adobe\Adobe Illustrator 2026\Presets\en_US\Scripts",
+            ),
+            source_root: None,
+            allowed_extensions: vec![".jsx", ".js"],
+        }),
+        "photoshop" => Ok(ManagedProgramFolders {
+            active_root: repo_root.join("Photoshop").join("Photoshop Active Scripts"),
+            runtime_root: PathBuf::from(
+                r"C:\Program Files\Adobe\Adobe Photoshop 2026\Presets\Scripts",
+            ),
+            source_root: None,
+            allowed_extensions: vec![".jsx", ".js"],
+        }),
+        other => Err(format!("Unsupported program key: {}", other)),
+    }
 }
 
 fn locate_repo_root() -> Result<PathBuf, String> {
@@ -446,8 +663,7 @@ fn pick_photo_theme_colors(path: &Path) -> Result<SampledPhotoThemeColors, Strin
         return Err(format!("Image file was not found: {}", path.display()));
     }
 
-    let image =
-        image::open(path).map_err(|error| format!("Unable to read image: {}", error))?;
+    let image = image::open(path).map_err(|error| format!("Unable to read image: {}", error))?;
     let resized = image.resize(160, 160, FilterType::Triangle).to_rgba8();
     let mut buckets: HashMap<(u8, u8, u8), ColorBucketStats> = HashMap::new();
 
@@ -489,7 +705,10 @@ fn pick_photo_theme_colors(path: &Path) -> Result<SampledPhotoThemeColors, Strin
     let mut distinct = Vec::<PaletteCandidate>::new();
     for threshold in [42_u32, 28_u32, 18_u32, 0_u32] {
         for candidate in &candidates {
-            if distinct.iter().any(|existing| existing.color == candidate.color) {
+            if distinct
+                .iter()
+                .any(|existing| existing.color == candidate.color)
+            {
                 continue;
             }
             if distinct.iter().all(|existing| {
@@ -517,10 +736,8 @@ fn pick_photo_theme_colors(path: &Path) -> Result<SampledPhotoThemeColors, Strin
         .max_by(|(_left_index, left), (_right_index, right)| {
             let left_luma = relative_luminance(left.color);
             let right_luma = relative_luminance(right.color);
-            let left_score = f64::from(left.count)
-                - ((left_luma - 0.45).abs() * 120.0);
-            let right_score = f64::from(right.count)
-                - ((right_luma - 0.45).abs() * 120.0);
+            let left_score = f64::from(left.count) - ((left_luma - 0.45).abs() * 120.0);
+            let right_score = f64::from(right.count) - ((right_luma - 0.45).abs() * 120.0);
             left_score
                 .partial_cmp(&right_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -550,8 +767,7 @@ fn pick_photo_theme_colors(path: &Path) -> Result<SampledPhotoThemeColors, Strin
         .enumerate()
         .max_by(|(_left_index, left), (_right_index, right)| {
             let left_score = color_saturation(left.color) * 100.0 + f64::from(left.count) * 0.01;
-            let right_score =
-                color_saturation(right.color) * 100.0 + f64::from(right.count) * 0.01;
+            let right_score = color_saturation(right.color) * 100.0 + f64::from(right.count) * 0.01;
             left_score
                 .partial_cmp(&right_score)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -795,84 +1011,90 @@ fn parse_bindings_config(path: &Path) -> Result<BindingsConfig, String> {
     };
     let mut discovered_program_tabs: BTreeMap<i64, Vec<(String, String)>> = BTreeMap::new();
 
-    sections.into_iter().for_each(|section| match section.name.as_str() {
-        "Meta" => {
-            section.entries.iter().for_each(|(key, value)| match key.as_str() {
-                "NextId" => {
-                    if let Some(parsed) = parse_i64(value) {
-                        config.next_id = parsed.max(1);
-                    }
-                }
-                "ProgramTabNextId" => {
-                    if let Some(parsed) = parse_i64(value) {
-                        config.program_tab_next_id = parsed.max(1);
-                    }
-                }
-                "SelectedProgramTabId" => {
-                    if let Some(parsed) = parse_i64(value) {
-                        config.selected_program_tab_id = parsed.max(1);
-                    }
-                }
-                "ProgramTabIds" => {
-                    config.program_tab_ids = value
-                        .split('|')
-                        .filter_map(parse_i64)
-                        .collect::<Vec<_>>();
-                }
-                _ => {}
-            });
-        }
-        "ActionHotkeys" => {
-            config.action_hotkeys = section
-                .entries
-                .iter()
-                .filter_map(|(key, value)| {
-                    let shortcut = canonicalize_shortcut(value);
-                    if key.trim().is_empty() || shortcut.is_empty() {
-                        None
-                    } else {
-                        Some((key.clone(), shortcut))
-                    }
-                })
-                .collect::<BTreeMap<_, _>>();
-        }
-        "MacroEditorColumns" => {
-            if !section.entries.is_empty() {
-                config.macro_editor_columns = section.entries.clone();
-            }
-        }
-        _ if section.name.starts_with("Binding_") => {
-            if let Some(id) = parse_i64(section.name.trim_start_matches("Binding_")) {
-                let mut shortcut = String::new();
-                let mut target = String::new();
-                let mut program_tab_id = 0_i64;
-                section.entries.iter().for_each(|(key, value)| match key.as_str() {
-                    "Shortcut" => shortcut = canonicalize_shortcut(value),
-                    "ScriptPath" => target = value.clone(),
-                    "ProgramTabId" => {
-                        if let Some(parsed) = parse_i64(value) {
-                            program_tab_id = parsed;
+    sections
+        .into_iter()
+        .for_each(|section| match section.name.as_str() {
+            "Meta" => {
+                section
+                    .entries
+                    .iter()
+                    .for_each(|(key, value)| match key.as_str() {
+                        "NextId" => {
+                            if let Some(parsed) = parse_i64(value) {
+                                config.next_id = parsed.max(1);
+                            }
                         }
-                    }
-                    _ => {}
-                });
-                if !shortcut.is_empty() && !target.trim().is_empty() {
-                    config.script_bindings.push(ScriptBindingEntry {
-                        id,
-                        shortcut,
-                        target,
-                        program_tab_id,
+                        "ProgramTabNextId" => {
+                            if let Some(parsed) = parse_i64(value) {
+                                config.program_tab_next_id = parsed.max(1);
+                            }
+                        }
+                        "SelectedProgramTabId" => {
+                            if let Some(parsed) = parse_i64(value) {
+                                config.selected_program_tab_id = parsed.max(1);
+                            }
+                        }
+                        "ProgramTabIds" => {
+                            config.program_tab_ids =
+                                value.split('|').filter_map(parse_i64).collect::<Vec<_>>();
+                        }
+                        _ => {}
                     });
+            }
+            "ActionHotkeys" => {
+                config.action_hotkeys = section
+                    .entries
+                    .iter()
+                    .filter_map(|(key, value)| {
+                        let shortcut = canonicalize_shortcut(value);
+                        if key.trim().is_empty() || shortcut.is_empty() {
+                            None
+                        } else {
+                            Some((key.clone(), shortcut))
+                        }
+                    })
+                    .collect::<BTreeMap<_, _>>();
+            }
+            "MacroEditorColumns" => {
+                if !section.entries.is_empty() {
+                    config.macro_editor_columns = section.entries.clone();
                 }
             }
-        }
-        _ if section.name.starts_with("ProgramTab_") => {
-            if let Some(id) = parse_i64(section.name.trim_start_matches("ProgramTab_")) {
-                discovered_program_tabs.insert(id, section.entries.clone());
+            _ if section.name.starts_with("Binding_") => {
+                if let Some(id) = parse_i64(section.name.trim_start_matches("Binding_")) {
+                    let mut shortcut = String::new();
+                    let mut target = String::new();
+                    let mut program_tab_id = 0_i64;
+                    section
+                        .entries
+                        .iter()
+                        .for_each(|(key, value)| match key.as_str() {
+                            "Shortcut" => shortcut = canonicalize_shortcut(value),
+                            "ScriptPath" => target = value.clone(),
+                            "ProgramTabId" => {
+                                if let Some(parsed) = parse_i64(value) {
+                                    program_tab_id = parsed;
+                                }
+                            }
+                            _ => {}
+                        });
+                    if !shortcut.is_empty() && !target.trim().is_empty() {
+                        config.script_bindings.push(ScriptBindingEntry {
+                            id,
+                            shortcut,
+                            target,
+                            program_tab_id,
+                        });
+                    }
+                }
             }
-        }
-        _ => config.other_sections.push(section),
-    });
+            _ if section.name.starts_with("ProgramTab_") => {
+                if let Some(id) = parse_i64(section.name.trim_start_matches("ProgramTab_")) {
+                    discovered_program_tabs.insert(id, section.entries.clone());
+                }
+            }
+            _ => config.other_sections.push(section),
+        });
 
     if config.program_tab_ids.is_empty() {
         config.program_tab_ids = discovered_program_tabs.keys().copied().collect::<Vec<_>>();
@@ -881,7 +1103,11 @@ fn parse_bindings_config(path: &Path) -> Result<BindingsConfig, String> {
     config.program_tabs = config
         .program_tab_ids
         .iter()
-        .filter_map(|id| discovered_program_tabs.remove(id).map(|entries| (*id, entries)))
+        .filter_map(|id| {
+            discovered_program_tabs
+                .remove(id)
+                .map(|entries| (*id, entries))
+        })
         .collect::<Vec<_>>();
     discovered_program_tabs
         .into_iter()
@@ -954,7 +1180,10 @@ fn write_bindings_config(path: &Path, config: &BindingsConfig) -> Result<(), Str
     lines.push("[Meta]".to_string());
     lines.push(format!("NextId={}", config.next_id.max(1)));
     lines.push(format!("Ids={}", binding_ids.join("|")));
-    lines.push(format!("ProgramTabNextId={}", config.program_tab_next_id.max(1)));
+    lines.push(format!(
+        "ProgramTabNextId={}",
+        config.program_tab_next_id.max(1)
+    ));
     lines.push(format!("ProgramTabIds={}", program_tab_ids.join("|")));
     lines.push(format!(
         "SelectedProgramTabId={}",
@@ -1034,7 +1263,9 @@ fn resolve_existing_script_binding_index(
     config
         .script_bindings
         .iter()
-        .position(|binding| binding.target == trimmed_target && binding.program_tab_id == program_tab_id)
+        .position(|binding| {
+            binding.target == trimmed_target && binding.program_tab_id == program_tab_id
+        })
         .or_else(|| {
             config
                 .script_bindings
@@ -1057,8 +1288,20 @@ fn powershell_single_quote(value: &str) -> String {
 }
 
 fn restart_headless_backend(paths: &AppPaths) -> Result<(), String> {
-    let backend_script = powershell_single_quote(&paths.flowcell_root.join("FlowCellBackend.ahk").display().to_string());
-    let launcher_path = powershell_single_quote(&paths.flowcell_root.join("run_backend_hidden.vbs").display().to_string());
+    let backend_script = powershell_single_quote(
+        &paths
+            .flowcell_root
+            .join("FlowCellBackend.ahk")
+            .display()
+            .to_string(),
+    );
+    let launcher_path = powershell_single_quote(
+        &paths
+            .flowcell_root
+            .join("run_backend_hidden.vbs")
+            .display()
+            .to_string(),
+    );
     let script = format!(
         "$backendScript = '{backend_script}'; \
          $launcherPath = '{launcher_path}'; \
@@ -1138,7 +1381,9 @@ fn get_section_value(entries: &[(String, String)], key: &str) -> Option<String> 
 
 fn is_step_section_name(name: &str) -> bool {
     name.strip_prefix("Step_")
-        .map(|suffix| !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit()))
+        .map(|suffix| {
+            !suffix.is_empty() && suffix.chars().all(|character| character.is_ascii_digit())
+        })
         .unwrap_or(false)
 }
 
@@ -1218,8 +1463,7 @@ fn build_recorded_action_id(label: &str) -> String {
 }
 
 fn default_recorded_macro_created_at() -> Option<String> {
-    powershell_date_string("yyyy-MM-dd HH:mm:ss")
-        .or_else(|| system_time_string(SystemTime::now()))
+    powershell_date_string("yyyy-MM-dd HH:mm:ss").or_else(|| system_time_string(SystemTime::now()))
 }
 
 fn clean_ini_value(value: &str) -> String {
@@ -1267,10 +1511,10 @@ fn parse_recorded_macro_definition(
             .filter(|section| is_step_section_name(&section.name))
             .filter_map(|section| {
                 let raw_type = get_section_value(&section.entries, "Type")?;
-                let script_path =
-                    get_section_value(&section.entries, "ScriptPath").filter(|value| !value.trim().is_empty());
-                let macro_path =
-                    get_section_value(&section.entries, "MacroPath").filter(|value| !value.trim().is_empty());
+                let script_path = get_section_value(&section.entries, "ScriptPath")
+                    .filter(|value| !value.trim().is_empty());
+                let macro_path = get_section_value(&section.entries, "MacroPath")
+                    .filter(|value| !value.trim().is_empty());
                 let step_type = if macro_path.is_some() {
                     "Macro".to_string()
                 } else if script_path.is_some() {
@@ -1344,9 +1588,8 @@ fn write_recorded_macro_definition(
     }
 
     ensure_directory(root)?;
-    let path = find_recorded_macro_path_by_id(root, id)?.unwrap_or_else(|| {
-        root.join(format!("{}.ini", sanitize_macro_file_token(id)))
-    });
+    let path = find_recorded_macro_path_by_id(root, id)?
+        .unwrap_or_else(|| root.join(format!("{}.ini", sanitize_macro_file_token(id))));
 
     let created_at = definition
         .created_at
@@ -1391,7 +1634,10 @@ fn write_recorded_macro_definition(
                     "Button={}",
                     step.button.as_deref().unwrap_or("Left").trim()
                 ));
-                lines.push(format!("Count={}", step.count.as_deref().unwrap_or("1").trim()));
+                lines.push(format!(
+                    "Count={}",
+                    step.count.as_deref().unwrap_or("1").trim()
+                ));
             }
             "Wheel" => {
                 lines.push(format!("X={}", step.x.as_deref().unwrap_or("0").trim()));
@@ -1400,7 +1646,10 @@ fn write_recorded_macro_definition(
                     "Direction={}",
                     step.direction.as_deref().unwrap_or("Down").trim()
                 ));
-                lines.push(format!("Count={}", step.count.as_deref().unwrap_or("1").trim()));
+                lines.push(format!(
+                    "Count={}",
+                    step.count.as_deref().unwrap_or("1").trim()
+                ));
             }
             "Text" => {
                 lines.push(format!(
@@ -1948,7 +2197,11 @@ fn load_state(state: State<'_, RuntimeState>) -> Result<LoadStateResponse, Strin
         Err(error) => {
             let _ = write_frontend_log(
                 &paths,
-                &format!("Bindings load failed. Path={}; Error={}", bindings_path(&paths).display(), error),
+                &format!(
+                    "Bindings load failed. Path={}; Error={}",
+                    bindings_path(&paths).display(),
+                    error
+                ),
             );
             FlowCellBindingsState {
                 next_id: 1,
@@ -2024,7 +2277,10 @@ fn save_button_binding(
             if normalize_shortcut(&binding.shortcut) == normalized_shortcut
                 && Some(index) != existing_index
             {
-                return Err(format!("That shortcut is already bound to:\n{}", binding.target));
+                return Err(format!(
+                    "That shortcut is already bound to:\n{}",
+                    binding.target
+                ));
             }
         }
         for existing_shortcut in config.action_hotkeys.values() {
@@ -2057,7 +2313,11 @@ fn save_button_binding(
             config.script_bindings.sort_by_key(|binding| binding.id);
         }
 
-        format!("Saved shortcut {} for {}.", shortcut, binding_label(&request))
+        format!(
+            "Saved shortcut {} for {}.",
+            shortcut,
+            binding_label(&request)
+        )
     } else {
         let action_id = request.target.trim();
         if action_id.is_empty() {
@@ -2066,7 +2326,10 @@ fn save_button_binding(
 
         for binding in &config.script_bindings {
             if normalize_shortcut(&binding.shortcut) == normalized_shortcut {
-                return Err(format!("That shortcut is already bound to:\n{}", binding.target));
+                return Err(format!(
+                    "That shortcut is already bound to:\n{}",
+                    binding.target
+                ));
             }
         }
         for (existing_action_id, existing_shortcut) in &config.action_hotkeys {
@@ -2080,7 +2343,11 @@ fn save_button_binding(
         config
             .action_hotkeys
             .insert(action_id.to_string(), shortcut.clone());
-        format!("Saved shortcut {} for {}.", shortcut, binding_label(&request))
+        format!(
+            "Saved shortcut {} for {}.",
+            shortcut,
+            binding_label(&request)
+        )
     };
 
     write_bindings_config(&path, &config)?;
@@ -2125,7 +2392,11 @@ fn clear_button_binding(
             format!("No shortcut was saved for {}.", binding_label(&request))
         }
     } else {
-        if config.action_hotkeys.remove(request.target.trim()).is_some() {
+        if config
+            .action_hotkeys
+            .remove(request.target.trim())
+            .is_some()
+        {
             changed = true;
             format!("Cleared shortcut for {}.", binding_label(&request))
         } else {
@@ -2237,6 +2508,89 @@ fn show_open_file_dialog(
 }
 
 #[tauri::command]
+fn show_open_folder_dialog(
+    window: WebviewWindow,
+    title: String,
+    initial_directory: Option<String>,
+    multiselect: Option<bool>,
+) -> Result<Vec<String>, String> {
+    let mut builder = window.dialog().file().set_title(title);
+
+    if let Some(directory) = initial_directory
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        if Path::new(directory).is_dir() {
+            builder = builder.set_directory(directory);
+        }
+    }
+
+    let selected = if multiselect.unwrap_or(false) {
+        builder
+            .blocking_pick_folders()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|entry| {
+                entry
+                    .into_path()
+                    .map(|path| path.display().to_string())
+                    .map_err(|error| error.to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        builder
+            .blocking_pick_folder()
+            .map(|entry| {
+                entry
+                    .into_path()
+                    .map(|path| vec![path.display().to_string()])
+                    .map_err(|error| error.to_string())
+            })
+            .transpose()?
+            .unwrap_or_default()
+    };
+
+    Ok(selected)
+}
+
+#[tauri::command]
+fn show_save_file_dialog(
+    window: WebviewWindow,
+    title: String,
+    filter: String,
+    initial_directory: Option<String>,
+) -> Result<Option<String>, String> {
+    let mut builder = window.dialog().file().set_title(title);
+
+    if let Some(directory) = initial_directory
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+    {
+        if Path::new(directory).is_dir() {
+            builder = builder.set_directory(directory);
+        }
+    }
+
+    let parsed_filters = parse_dialog_filters(&filter);
+    for (name, extensions) in parsed_filters {
+        let ext_refs = extensions.iter().map(String::as_str).collect::<Vec<_>>();
+        builder = builder.add_filter(name, &ext_refs);
+    }
+
+    let selected = builder
+        .blocking_save_file()
+        .map(|entry| {
+            entry
+                .into_path()
+                .map(|path| path.display().to_string())
+                .map_err(|error| error.to_string())
+        })
+        .transpose()?;
+
+    Ok(selected)
+}
+
+#[tauri::command]
 fn sample_photo_theme_colors(
     state: State<'_, RuntimeState>,
     image_path: String,
@@ -2284,14 +2638,31 @@ fn sample_photo_theme_colors(
 fn save_blender_theme_file(
     state: State<'_, RuntimeState>,
     suggested_name: String,
+    path: Option<String>,
     values: Value,
 ) -> Result<String, String> {
     let paths = with_paths(&state)?;
-    let themes_root = blender_theme_root(&paths);
-    ensure_directory(&themes_root)?;
-
-    let file_stem = sanitize_theme_file_stem(&suggested_name);
-    let file_path = themes_root.join(format!("{}.json", file_stem));
+    let file_path = if let Some(raw_path) = path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let mut explicit_path = PathBuf::from(raw_path);
+        if explicit_path.extension().is_none() {
+            explicit_path.set_extension("json");
+        }
+        if let Some(parent) = explicit_path.parent() {
+            if !parent.as_os_str().is_empty() {
+                ensure_directory(parent)?;
+            }
+        }
+        explicit_path
+    } else {
+        let themes_root = blender_theme_root(&paths);
+        ensure_directory(&themes_root)?;
+        let file_stem = sanitize_theme_file_stem(&suggested_name);
+        themes_root.join(format!("{}.json", file_stem))
+    };
     let payload = SavedBlenderThemeFile {
         format: "flowtest-blender-theme-v1".to_string(),
         saved_at: SystemTime::now()
@@ -2301,8 +2672,7 @@ fn save_blender_theme_file(
             .to_string(),
         values,
     };
-    let serialized =
-        serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
+    let serialized = serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
     fs::write(&file_path, serialized).map_err(|error| error.to_string())?;
     let _ = write_frontend_log(
         &paths,
@@ -2312,10 +2682,7 @@ fn save_blender_theme_file(
 }
 
 #[tauri::command]
-fn load_blender_theme_file(
-    state: State<'_, RuntimeState>,
-    path: String,
-) -> Result<Value, String> {
+fn load_blender_theme_file(state: State<'_, RuntimeState>, path: String) -> Result<Value, String> {
     let paths = with_paths(&state)?;
     let trimmed = path.trim();
     if trimmed.is_empty() {
@@ -2442,7 +2809,9 @@ fn save_layout_snapshot(
 }
 
 #[tauri::command]
-fn list_recorded_macros(state: State<'_, RuntimeState>) -> Result<Vec<RecordedMacroChoice>, String> {
+fn list_recorded_macros(
+    state: State<'_, RuntimeState>,
+) -> Result<Vec<RecordedMacroChoice>, String> {
     let paths = with_paths(&state)?;
     let root = recorded_actions_root(&paths);
     let mut macros: Vec<RecordedMacroChoice> = list_recorded_macro_paths(&root)?
@@ -2510,7 +2879,10 @@ fn save_recorded_macro(
     let saved = write_recorded_macro_definition(&root, &definition)?;
     write_frontend_log(
         &paths,
-        &format!("Saved recorded macro. Id={}; Label={}", saved.id, saved.label),
+        &format!(
+            "Saved recorded macro. Id={}; Label={}",
+            saved.id, saved.label
+        ),
     )?;
     Ok(saved)
 }
@@ -2551,7 +2923,10 @@ fn delete_recorded_macro(
 
     write_frontend_log(
         &paths,
-        &format!("Deleted recorded macro. Id={}; Label={}", definition.id, definition.label),
+        &format!(
+            "Deleted recorded macro. Id={}; Label={}",
+            definition.id, definition.label
+        ),
     )?;
     Ok(message)
 }
@@ -2585,7 +2960,11 @@ fn record_macro(
             &format!("--name={}", normalized_label),
             &format!("--id={}", action_id),
         ])
-        .current_dir(helper_path.parent().unwrap_or(paths.flowcell_root.as_path()))
+        .current_dir(
+            helper_path
+                .parent()
+                .unwrap_or(paths.flowcell_root.as_path()),
+        )
         .creation_flags(CREATE_NO_WINDOW)
         .output()
         .map_err(|error| error.to_string())?;
@@ -2595,7 +2974,10 @@ fn record_macro(
             let definition = parse_recorded_macro_definition(&output_path, true)?;
             write_frontend_log(
                 &paths,
-                &format!("Recorded macro saved. Id={}; Label={}", definition.id, definition.label),
+                &format!(
+                    "Recorded macro saved. Id={}; Label={}",
+                    definition.id, definition.label
+                ),
             )?;
             Ok(definition)
         }
@@ -2613,10 +2995,7 @@ fn record_macro(
 }
 
 #[tauri::command]
-fn run_recorded_macro(
-    state: State<'_, RuntimeState>,
-    action_id: String,
-) -> Result<String, String> {
+fn run_recorded_macro(state: State<'_, RuntimeState>, action_id: String) -> Result<String, String> {
     let paths = with_paths(&state)?;
     let normalized_action_id = action_id.trim();
     if normalized_action_id.is_empty() {
@@ -2654,9 +3033,266 @@ fn run_recorded_macro(
             .unwrap_or_else(|| "Recorded macro run failed.".to_string()));
     }
 
-    Ok(status_text.unwrap_or_else(|| {
-        format!("Ran recorded macro {}.", normalized_action_id)
-    }))
+    Ok(status_text.unwrap_or_else(|| format!("Ran recorded macro {}.", normalized_action_id)))
+}
+
+#[tauri::command]
+fn install_managed_program_scripts(
+    state: State<'_, RuntimeState>,
+    program_key: String,
+    selected_paths: Vec<String>,
+    panel_name: Option<String>,
+) -> Result<ManagedScriptInstallResult, String> {
+    let paths = with_paths(&state)?;
+    let folders = managed_program_folders(&paths.repo_root, &program_key)?;
+    install_managed_program_scripts_with_folders(
+        &paths,
+        &program_key,
+        &folders,
+        &selected_paths,
+        panel_name.as_deref(),
+        &ManagedInstallOptions::default(),
+    )
+}
+
+fn install_managed_program_scripts_with_folders(
+    paths: &AppPaths,
+    program_key: &str,
+    folders: &ManagedProgramFolders,
+    selected_paths: &[String],
+    panel_name: Option<&str>,
+    options: &ManagedInstallOptions,
+) -> Result<ManagedScriptInstallResult, String> {
+    ensure_directory(&folders.active_root)?;
+    if normalize_path_key(&folders.runtime_root) != normalize_path_key(&folders.active_root) {
+        ensure_directory(&folders.runtime_root)?;
+    }
+
+    let mut staged_roots = Vec::new();
+    let mut failures = Vec::new();
+
+    for selected_path in selected_paths {
+        let trimmed = selected_path.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let source_path = PathBuf::from(trimmed);
+        if !source_path.exists() {
+            failures.push(ManagedScriptInstallResultItem {
+                label: None,
+                source_path: trimmed.to_string(),
+                active_path: String::new(),
+                execution_target: String::new(),
+                installed: false,
+                message: Some("Selected path was not found.".to_string()),
+            });
+            continue;
+        }
+
+        match stage_selected_path(
+            &source_path,
+            &folders.active_root,
+            folders.source_root.as_deref(),
+        ) {
+            Ok(staged_root) => staged_roots.push(staged_root),
+            Err(error) => failures.push(ManagedScriptInstallResultItem {
+                label: Some(button_label_from_path(&source_path)),
+                source_path: source_path.display().to_string(),
+                active_path: String::new(),
+                execution_target: String::new(),
+                installed: false,
+                message: Some(error),
+            }),
+        }
+    }
+
+    let mut staged_files = Vec::new();
+    for staged_root in &staged_roots {
+        collect_files_recursive(staged_root, &mut staged_files)?;
+    }
+    staged_files.sort();
+    staged_files.dedup();
+
+    let eligible_files = staged_files
+        .into_iter()
+        .filter(|path| is_allowed_script_file(path, &folders.allowed_extensions))
+        .collect::<Vec<_>>();
+
+    if program_key.trim().eq_ignore_ascii_case("blender") {
+        let installer_path = paths
+            .repo_root
+            .join("Blender")
+            .join("SupportScripts")
+            .join("Install-BlenderFlowCellButtons.ps1");
+        let selected_paths_json = serde_json::to_string(
+            &eligible_files
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>(),
+        )
+        .map_err(|error| format!("Could not serialize staged Blender paths: {}", error))?;
+
+        let mut command = Command::new(powershell_exe());
+        command.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            &installer_path.display().to_string(),
+            "-PanelName",
+            panel_name
+                .filter(|value| !value.trim().is_empty())
+                .or(Some("Utility"))
+                .unwrap_or("Utility"),
+            "-SelectedPathsJson",
+            &selected_paths_json,
+        ]);
+
+        if let Some(bridge_folder) = options.blender_bridge_folder.as_ref() {
+            command.args(["-BridgeFolder", &bridge_folder.display().to_string()]);
+        }
+        if options.blender_skip_sync {
+            command.arg("-SkipSync");
+        }
+
+        command.creation_flags(CREATE_NO_WINDOW);
+        let output = command.output().map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                "Blender Add Button installer failed.".to_string()
+            } else {
+                stderr
+            });
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let parsed: Value = serde_json::from_str(strip_utf8_bom(&stdout)).map_err(|error| {
+            if stdout.trim().is_empty() {
+                "Blender Add Button installer returned no JSON output.".to_string()
+            } else {
+                format!(
+                    "{}. Raw installer output: {}",
+                    error,
+                    stdout.chars().take(240).collect::<String>()
+                )
+            }
+        })?;
+
+        let mut results = failures;
+        if let Some(entries) = parsed.get("Results").and_then(Value::as_array) {
+            for entry in entries {
+                let source_path = entry
+                    .get("Source")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let execution_target = entry
+                    .get("WrapperPath")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let installed = entry
+                    .get("Installed")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let message = entry
+                    .get("Message")
+                    .and_then(Value::as_str)
+                    .map(|value| value.to_string());
+                results.push(ManagedScriptInstallResultItem {
+                    label: (!source_path.is_empty())
+                        .then(|| button_label_from_path(Path::new(&source_path))),
+                    source_path: source_path.clone(),
+                    active_path: source_path,
+                    execution_target,
+                    installed,
+                    message,
+                });
+            }
+        }
+
+        let installed_count = results.iter().filter(|item| item.installed).count();
+        let failed_count = results.iter().filter(|item| !item.installed).count();
+        return Ok(ManagedScriptInstallResult {
+            installed_count,
+            failed_count,
+            status_message: parsed
+                .get("StatusMessage")
+                .and_then(Value::as_str)
+                .unwrap_or("Blender install completed.")
+                .to_string(),
+            reload_required: parsed
+                .get("ReloadRequired")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            reload_reason: parsed
+                .get("ReloadReason")
+                .and_then(Value::as_str)
+                .map(|value| value.to_string())
+                .filter(|value| !value.trim().is_empty()),
+            results,
+        });
+    }
+
+    if normalize_path_key(&folders.runtime_root) != normalize_path_key(&folders.active_root) {
+        for staged_root in &staged_roots {
+            let relative = staged_root
+                .strip_prefix(&folders.active_root)
+                .map_err(|error| error.to_string())?;
+            let runtime_path = folders.runtime_root.join(relative);
+            if staged_root.is_dir() {
+                copy_directory_recursive(staged_root, &runtime_path)?;
+            } else if staged_root.is_file() {
+                copy_file_overwrite(staged_root, &runtime_path)?;
+            }
+        }
+    }
+
+    let mut results = failures;
+    for active_path in eligible_files {
+        let relative = active_path
+            .strip_prefix(&folders.active_root)
+            .map_err(|error| error.to_string())?;
+        let execution_target = if normalize_path_key(&folders.runtime_root)
+            == normalize_path_key(&folders.active_root)
+        {
+            active_path.clone()
+        } else {
+            folders.runtime_root.join(relative)
+        };
+
+        results.push(ManagedScriptInstallResultItem {
+            label: Some(button_label_from_path(&active_path)),
+            source_path: active_path.display().to_string(),
+            active_path: active_path.display().to_string(),
+            execution_target: execution_target.display().to_string(),
+            installed: true,
+            message: None,
+        });
+    }
+
+    let installed_count = results.iter().filter(|item| item.installed).count();
+    let failed_count = results.iter().filter(|item| !item.installed).count();
+    let status_message = if installed_count == 0 {
+        format!("No {} scripts were installed.", program_key.trim())
+    } else {
+        format!(
+            "Installed {} {} script(s) into Active Scripts and synced the runtime target.",
+            installed_count,
+            program_key.trim()
+        )
+    };
+
+    Ok(ManagedScriptInstallResult {
+        installed_count,
+        failed_count,
+        status_message,
+        reload_required: false,
+        reload_reason: None,
+        results,
+    })
 }
 
 #[tauri::command]
@@ -2672,8 +3308,12 @@ fn install_blender_buttons(
         .join("SupportScripts")
         .join("Install-BlenderFlowCellButtons.ps1");
 
-    let selected_paths_json = serde_json::to_string(&selected_paths)
-        .map_err(|error| format!("Could not serialize selected Blender button paths: {}", error))?;
+    let selected_paths_json = serde_json::to_string(&selected_paths).map_err(|error| {
+        format!(
+            "Could not serialize selected Blender button paths: {}",
+            error
+        )
+    })?;
 
     let mut command = Command::new(powershell_exe());
     command
@@ -2929,6 +3569,227 @@ fn emit_command(
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_temp_root(name: &str) -> PathBuf {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system time")
+            .as_nanos();
+        std::env::temp_dir().join(format!("flowtest-managed-install-{}-{}", name, stamp))
+    }
+
+    fn write_text_file(path: &Path, value: &str) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).expect("create parent");
+        }
+        fs::write(path, value).expect("write file");
+    }
+
+    fn build_test_paths(root: &Path) -> AppPaths {
+        let flowcell_root = root.join("FlowCell");
+        let local_root = flowcell_root.join("local");
+        let logs_root = local_root.join("logs");
+        fs::create_dir_all(&logs_root).expect("create logs");
+        AppPaths {
+            repo_root: root.to_path_buf(),
+            flowcell_root,
+            local_root,
+            logs_root: logs_root.clone(),
+            frontend_log_path: logs_root.join("frontend-tauri.log"),
+        }
+    }
+
+    fn copy_tree(source: &Path, destination: &Path) {
+        if source.is_dir() {
+            fs::create_dir_all(destination).expect("create destination dir");
+            for entry in fs::read_dir(source).expect("read dir") {
+                let entry = entry.expect("dir entry");
+                copy_tree(&entry.path(), &destination.join(entry.file_name()));
+            }
+        } else {
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent).expect("create file parent");
+            }
+            fs::copy(source, destination).expect("copy file");
+        }
+    }
+
+    fn run_adobe_install_test(program_key: &str, extension: &'static str) {
+        let root = unique_temp_root(program_key);
+        let source_root = root.join("picked");
+        let active_root = root
+            .join(program_key)
+            .join(format!("{} Active Scripts", program_key));
+        let runtime_root = root.join("runtime");
+        let picked_file = source_root.join(format!("sample{}", extension));
+        let nested_file = source_root
+            .join("nested")
+            .join(format!("nested{}", extension));
+        write_text_file(&picked_file, "// source");
+        write_text_file(&nested_file, "// nested");
+
+        let paths = build_test_paths(&root);
+        let folders = ManagedProgramFolders {
+            active_root: active_root.clone(),
+            runtime_root: runtime_root.clone(),
+            source_root: None,
+            allowed_extensions: vec![extension],
+        };
+        let selected = vec![source_root.display().to_string()];
+        let result = install_managed_program_scripts_with_folders(
+            &paths,
+            program_key,
+            &folders,
+            &selected,
+            Some("Utility"),
+            &ManagedInstallOptions::default(),
+        )
+        .expect("install should succeed");
+
+        assert_eq!(result.failed_count, 0);
+        assert_eq!(result.installed_count, 2);
+        assert!(active_root
+            .join("picked")
+            .join(format!("sample{}", extension))
+            .exists());
+        assert!(active_root
+            .join("picked")
+            .join("nested")
+            .join(format!("nested{}", extension))
+            .exists());
+        assert!(runtime_root
+            .join("picked")
+            .join(format!("sample{}", extension))
+            .exists());
+        assert!(runtime_root
+            .join("picked")
+            .join("nested")
+            .join(format!("nested{}", extension))
+            .exists());
+        assert!(result.results.iter().all(|entry| entry
+            .source_path
+            .starts_with(&active_root.display().to_string())));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn windows_install_copies_source_and_executes_from_active_scripts() {
+        let root = unique_temp_root("windows");
+        let source_root = root.join("picked");
+        let active_root = root.join("Windows").join("Windows Active Scripts");
+        let picked_file = source_root.join("sample.ps1");
+        write_text_file(&picked_file, "Write-Output 'test'");
+
+        let paths = build_test_paths(&root);
+        let folders = ManagedProgramFolders {
+            active_root: active_root.clone(),
+            runtime_root: active_root.clone(),
+            source_root: None,
+            allowed_extensions: vec![".ps1"],
+        };
+        let selected = vec![picked_file.display().to_string()];
+        let result = install_managed_program_scripts_with_folders(
+            &paths,
+            "windows",
+            &folders,
+            &selected,
+            Some("Utility"),
+            &ManagedInstallOptions::default(),
+        )
+        .expect("install should succeed");
+
+        let installed = result
+            .results
+            .iter()
+            .find(|entry| entry.installed)
+            .expect("installed result");
+        let expected_active = active_root.join("sample.ps1").display().to_string();
+        assert_eq!(installed.source_path, expected_active);
+        assert_eq!(installed.execution_target, expected_active);
+        assert!(active_root.join("sample.ps1").exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn illustrator_install_copies_to_active_and_runtime_targets() {
+        run_adobe_install_test("Illustrator", ".jsx");
+    }
+
+    #[test]
+    fn photoshop_install_copies_to_active_and_runtime_targets() {
+        run_adobe_install_test("Photoshop", ".js");
+    }
+
+    #[test]
+    fn blender_install_copies_source_and_returns_wrapper_execution_target() {
+        let root = unique_temp_root("blender");
+        copy_tree(
+            Path::new("..").join("..").join("Blender").as_path(),
+            &root.join("Blender"),
+        );
+        fs::create_dir_all(root.join("FlowCell").join("local").join("private"))
+            .expect("create blender local private");
+        write_text_file(&root.join("PROGRAM_SUMMARY.txt"), "test");
+
+        let picked_root = root.join("picked");
+        let picked_file = picked_root.join("util_temp_button.py");
+        write_text_file(
+            &picked_file,
+            "def run_flowcell_action(*args, **kwargs):\n    return {'ok': True}\n",
+        );
+        let bridge_root = root.join("addons").join("blender_bridge_flowtest");
+        let addon_root = bridge_root.parent().expect("addon root").to_path_buf();
+        write_text_file(
+            &addon_root.join("flowcell_actions.py"),
+            "from pathlib import Path\nimport runpy\n\ndef _call_custom_action_callable(callback, context, data):\n    return callback(context, data)\n",
+        );
+        write_text_file(&addon_root.join("flowcell_bridge.py"), "# test bridge\n");
+
+        let paths = build_test_paths(&root);
+        let folders = ManagedProgramFolders {
+            active_root: root.join("Blender").join("Blender Active Scripts"),
+            runtime_root: root.join("Blender").join("FlowCellButtons"),
+            source_root: None,
+            allowed_extensions: vec![".py", ".ps1"],
+        };
+        let selected = vec![picked_file.display().to_string()];
+        let options = ManagedInstallOptions {
+            blender_bridge_folder: Some(bridge_root),
+            blender_skip_sync: true,
+        };
+        let result = install_managed_program_scripts_with_folders(
+            &paths,
+            "blender",
+            &folders,
+            &selected,
+            Some("Utility"),
+            &options,
+        )
+        .expect("blender install should succeed");
+
+        let installed = result
+            .results
+            .iter()
+            .find(|entry| entry.installed)
+            .expect("installed blender result");
+        assert!(installed
+            .source_path
+            .starts_with(&folders.active_root.display().to_string()));
+        assert!(installed
+            .execution_target
+            .starts_with(&folders.runtime_root.display().to_string()));
+        assert!(Path::new(&installed.source_path).exists());
+        assert!(Path::new(&installed.execution_target).exists());
+
+        let _ = fs::remove_dir_all(&root);
+    }
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -2971,6 +3832,8 @@ fn main() {
             log_frontend_event,
             get_foreground_process_info,
             show_open_file_dialog,
+            show_open_folder_dialog,
+            show_save_file_dialog,
             sample_photo_theme_colors,
             save_blender_theme_file,
             load_blender_theme_file,
@@ -2984,6 +3847,7 @@ fn main() {
             delete_recorded_macro,
             record_macro,
             run_recorded_macro,
+            install_managed_program_scripts,
             install_blender_buttons,
             delete_blender_button,
             open_panel_popout,

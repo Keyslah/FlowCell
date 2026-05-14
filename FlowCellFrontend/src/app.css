@@ -514,6 +514,7 @@ button {
 
 .host-skin-button__frame {
   position: relative;
+  isolation: isolate;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -993,6 +994,36 @@ button {
   padding: 0 10px;
 }
 
+.button-grid--tool-set .button-host__surface-button.host-skin-button[data-selected="true"] .button-skin__selected-overlay,
+.tool-chip.host-skin-button[data-selected="true"] .button-skin__selected-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  z-index: 8;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--fc-selected-highlight, #73ff70) 34%, transparent),
+      color-mix(in srgb, var(--fc-selected-highlight, #73ff70) 18%, transparent)
+    );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--fc-selected-highlight, #73ff70) 56%, transparent),
+    0 0 20px color-mix(in srgb, var(--fc-selected-highlight, #73ff70) 22%, transparent);
+  pointer-events: none;
+}
+
+.tool-chip.host-skin-button.tool-chip--live-active[data-selected="true"] .button-skin__selected-overlay {
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--fc-selected-highlight, var(--fc-theme-danger)) 38%, transparent),
+      color-mix(in srgb, var(--fc-selected-highlight, var(--fc-theme-danger)) 22%, transparent)
+    );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--fc-selected-highlight, var(--fc-theme-danger)) 62%, transparent),
+    0 0 20px color-mix(in srgb, var(--fc-selected-highlight, var(--fc-theme-danger)) 26%, transparent);
+}
+
 .button-host__toggle {
   display: inline-flex;
   align-items: center;
@@ -1131,6 +1162,7 @@ button {
 
 .button-skin {
   position: relative;
+  isolation: isolate;
   min-height: 118px;
   display: grid;
   place-items: center;
@@ -1838,7 +1870,7 @@ button {
 }
 
 .hdri-world-row--theme-path {
-  grid-template-columns: minmax(72px, auto) minmax(0, 1fr) minmax(80px, auto);
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr) minmax(0, auto);
 }
 
 .hdri-world-row--theme-actions {
@@ -2016,7 +2048,14 @@ button {
 }
 
 .hdri-world-grid--compact .hdri-world-row--theme-path {
-  grid-template-columns: minmax(52px, auto) minmax(0, 1fr) minmax(58px, auto);
+  grid-template-columns: minmax(52px, auto) minmax(0, 1fr) minmax(0, auto);
+}
+
+.hdri-world-row--theme-path .tool-chip.host-skin-button .button-skin__label,
+.hdri-world-row--theme-path .tool-chip .button-skin__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .hdri-world-grid--compact .hdri-world-row--theme-actions {

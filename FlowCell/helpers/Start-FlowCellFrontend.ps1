@@ -6,6 +6,8 @@ $projectRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent $projectRoot
 $frontendRoot = Join-Path $repoRoot 'FlowCellFrontend'
 $frontendExePath = Join-Path $frontendRoot 'src-tauri\target\debug\flowcell_frontend.exe'
+$frontendSourceCommitPath = Join-Path $frontendRoot 'src-tauri\target\debug\.flowcell_frontend_source_commit'
+$frontendSourceStampPath = Join-Path $frontendRoot 'src-tauri\target\debug\.flowcell_frontend_source_stamp'
 $logsRoot = Join-Path $projectRoot 'local\logs'
 $launcherLogPath = Join-Path $logsRoot 'frontend-launcher.log'
 $backendLauncherPath = Join-Path $projectRoot 'run_backend_hidden.vbs'
@@ -38,25 +40,26 @@ function Resolve-CargoCommand {
 }
 
 function Test-FlowCellFrontendBuildRequired {
+    $sourceRoots = Get-FlowCellFrontendSourceRoots
+
+    $sourceCommit = Get-FlowCellFrontendGitCommit
+    $sourceStamp = Get-FlowCellFrontendSourceStamp -SourceRoots $sourceRoots
+
+    if ([string]::IsNullOrWhiteSpace($sourceCommit) -or -not (Test-Path -LiteralPath $frontendSourceCommitPath -PathType Leaf)) {
+        return $true
+    }
+    if ((Get-Content -LiteralPath $frontendSourceCommitPath -ErrorAction SilentlyContinue | Select-Object -First 1).Trim() -ne $sourceCommit) {
+        return $true
+    }
+    if ((Get-Content -LiteralPath $frontendSourceStampPath -ErrorAction SilentlyContinue -Raw).Trim() -ne $sourceStamp) {
+        return $true
+    }
+
     if (-not (Test-Path -LiteralPath $frontendExePath -PathType Leaf)) {
         return $true
     }
 
     $exeWriteTime = (Get-Item -LiteralPath $frontendExePath).LastWriteTimeUtc
-    $sourceRoots = @(
-        (Join-Path $frontendRoot 'src'),
-        (Join-Path $frontendRoot 'src-tauri\src'),
-        (Join-Path $frontendRoot 'src-tauri\capabilities'),
-        (Join-Path $frontendRoot 'src-tauri\icons'),
-        (Join-Path $frontendRoot 'src-tauri\Cargo.toml'),
-        (Join-Path $frontendRoot 'src-tauri\Cargo.lock'),
-        (Join-Path $frontendRoot 'src-tauri\build.rs'),
-        (Join-Path $frontendRoot 'src-tauri\tauri.conf.json'),
-        (Join-Path $frontendRoot 'package.json'),
-        (Join-Path $frontendRoot 'vite.config.ts'),
-        (Join-Path $frontendRoot 'index.html'),
-        (Join-Path $frontendRoot 'tsconfig.json')
-    )
 
     foreach ($sourceRoot in $sourceRoots) {
         if (-not (Test-Path -LiteralPath $sourceRoot)) {
@@ -77,6 +80,74 @@ function Test-FlowCellFrontendBuildRequired {
     }
 
     return $false
+}
+
+function Get-FlowCellFrontendSourceRoots {
+    return @(
+        (Join-Path $frontendRoot 'src'),
+        (Join-Path $frontendRoot 'src-tauri\src'),
+        (Join-Path $frontendRoot 'src-tauri\capabilities'),
+        (Join-Path $frontendRoot 'src-tauri\icons'),
+        (Join-Path $frontendRoot 'src-tauri\Cargo.toml'),
+        (Join-Path $frontendRoot 'src-tauri\Cargo.lock'),
+        (Join-Path $frontendRoot 'src-tauri\build.rs'),
+        (Join-Path $frontendRoot 'src-tauri\tauri.conf.json'),
+        (Join-Path $frontendRoot 'package.json'),
+        (Join-Path $frontendRoot 'vite.config.ts'),
+        (Join-Path $frontendRoot 'index.html'),
+        (Join-Path $frontendRoot 'tsconfig.json')
+    )
+}
+
+function Get-FlowCellFrontendSourceStamp {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$SourceRoots
+    )
+
+    $entries = [System.Collections.Generic.List[string]]::new()
+    foreach ($sourceRoot in $SourceRoots) {
+        if (-not (Test-Path -LiteralPath $sourceRoot)) {
+            continue
+        }
+
+        $rootItem = Get-Item -LiteralPath $sourceRoot
+        if (-not $rootItem.PSIsContainer) {
+            $entries.Add(('{0}|{1}|{2}' -f $rootItem.FullName.Substring($frontendRoot.Length), $rootItem.Length, $rootItem.LastWriteTimeUtc.Ticks))
+            continue
+        }
+
+        $files = Get-ChildItem -LiteralPath $sourceRoot -Recurse -File -ErrorAction SilentlyContinue
+        foreach ($file in $files) {
+            $entries.Add(('{0}|{1}|{2}' -f $file.FullName.Substring($frontendRoot.Length), $file.Length, $file.LastWriteTimeUtc.Ticks))
+        }
+    }
+
+    return [string]::Join("`n", ($entries | Sort-Object))
+}
+
+function Get-FlowCellFrontendGitCommit {
+    $wasInRepo = Test-Path -LiteralPath (Join-Path $frontendRoot '.git')
+    if (-not $wasInRepo) {
+        return $null
+    }
+
+    try {
+        Push-Location $frontendRoot
+        try {
+            $commit = (& git rev-parse HEAD) 2>$null
+            if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) {
+                return $null
+            }
+            return $commit.Trim()
+        }
+        finally {
+            Pop-Location
+        }
+    }
+    catch {
+        return $null
+    }
 }
 
 function Get-FlowCellFrontendProcess {
@@ -247,6 +318,13 @@ try {
         if ($LASTEXITCODE -ne 0) {
             throw "Tauri frontend build exited with code $LASTEXITCODE."
         }
+
+        $sourceCommit = Get-FlowCellFrontendGitCommit
+        if (-not [string]::IsNullOrWhiteSpace($sourceCommit)) {
+            Set-Content -LiteralPath $frontendSourceCommitPath -Value $sourceCommit -Encoding UTF8
+        }
+        $sourceStamp = Get-FlowCellFrontendSourceStamp -SourceRoots (Get-FlowCellFrontendSourceRoots)
+        Set-Content -LiteralPath $frontendSourceStampPath -Value $sourceStamp -Encoding UTF8
     }
 
     if (-not (Test-Path -LiteralPath $frontendExePath -PathType Leaf)) {
