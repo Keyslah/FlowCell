@@ -874,9 +874,12 @@ $blenderProgram.Panels = @(
 $currentSelectedPanelId = if ($blenderProgram.PSObject.Properties['SelectedPanelId']) { [string]$blenderProgram.SelectedPanelId } else { '' }
 $panelPreservedButtons = @{}
 $panelExistingBlenderButtons = @{}
+$allExistingManagedBlenderButtons = @()
 foreach ($panel in @($blenderProgram.Panels)) {
     $panelPreservedButtons[[string]$panel.Id] = @(Get-PreservedPanelButtons -Panel $panel)
-    $panelExistingBlenderButtons[[string]$panel.Id] = @(Get-ManagedBlenderPanelButtons -Panel $panel)
+    $existingManagedButtons = @(Get-ManagedBlenderPanelButtons -Panel $panel)
+    $panelExistingBlenderButtons[[string]$panel.Id] = $existingManagedButtons
+    $allExistingManagedBlenderButtons += @($existingManagedButtons)
 }
 
 $importedButtons = @(
@@ -946,6 +949,9 @@ foreach ($entry in @($importedPanelButtonMap.GetEnumerator())) {
     }
     foreach ($button in @($entry.Value.Buttons)) {
         $existingButton = Get-ExistingBlenderPanelButton -Buttons $existingManagedButtons -ButtonId ([string]$button.Id) -Target ([string]$button.Target)
+        if ($null -eq $existingButton) {
+            $existingButton = Get-ExistingBlenderPanelButton -Buttons $allExistingManagedBlenderButtons -ButtonId ([string]$button.Id) -Target ([string]$button.Target)
+        }
         $normalizedTarget = Get-NormalizedPathKey ([string]$button.Target)
         if ($null -eq $existingButton -and -not $allowedNewButtonTargets.Contains($normalizedTarget)) {
             continue

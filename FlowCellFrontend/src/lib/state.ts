@@ -13,6 +13,7 @@ import type {
   PanelFanOptions,
   RuntimeInfo,
   SavedProgramRecord,
+  SavedVisualTheme,
   SurfaceStyleAssignment,
   SurfaceStyleSectionId,
   StyleGroup,
@@ -467,56 +468,13 @@ function normalizeProgram(program: FlowCellProgram): FlowCellProgram {
           : undefined
     }))
   }));
-  const normalizedProgramName =
-    program.ProgramConfig?.NormalizedName?.trim().toLowerCase() ?? "";
-  const panels =
-    normalizedProgramName === "blender"
-      ? (() => {
-          const toolSetIndex = normalizedPanels.findIndex(
-            (panel) => panel.Name.trim().toLowerCase() === "tool set"
-          );
-          const utilityIndex = normalizedPanels.findIndex(
-            (panel) => panel.Id === "panel_utility" || panel.Name.trim().toLowerCase() === "utility"
-          );
-          if (toolSetIndex < 0 || utilityIndex < 0) {
-            return normalizedPanels;
-          }
-          const toolSetPanel = normalizedPanels[toolSetIndex];
-          const utilityPanel = normalizedPanels[utilityIndex];
-          const toolSetOwnerButtonIds = new Set([
-            "button_blender_flowcell_alignment_tools",
-            "button_blender_flowcell_flatten_revolve"
-          ]);
-          const movedButtons = utilityPanel.Buttons.filter((button) =>
-            toolSetOwnerButtonIds.has(button.Id)
-          );
-          if (movedButtons.length === 0) {
-            return normalizedPanels;
-          }
-          const existingToolSetButtonIds = new Set(toolSetPanel.Buttons.map((button) => button.Id));
-          const nextPanels = [...normalizedPanels];
-          nextPanels[toolSetIndex] = {
-            ...toolSetPanel,
-            Buttons: [
-              ...movedButtons.filter((button) => !existingToolSetButtonIds.has(button.Id)),
-              ...toolSetPanel.Buttons
-            ]
-          };
-          nextPanels[utilityIndex] = {
-            ...utilityPanel,
-            Buttons: utilityPanel.Buttons.filter((button) => !toolSetOwnerButtonIds.has(button.Id))
-          };
-          return nextPanels;
-        })()
-      : normalizedPanels;
-
   return {
     ...program,
     style_group_id:
       typeof program.style_group_id === "string" && program.style_group_id.trim().length > 0
         ? program.style_group_id
         : DEFAULT_PROGRAM_STYLE_GROUP_ID,
-    Panels: panels
+    Panels: normalizedPanels
   };
 }
 
@@ -859,6 +817,10 @@ export function isQuickRotateGroupOwnerButton(button: FlowCellButton): boolean {
   return targetFileName(button.Target) === "util_quick_rotate_group_tools.ps1";
 }
 
+export function isHdriWorldOwnerButton(button: FlowCellButton): boolean {
+  return targetFileName(button.Target) === "util_hdri_world_tools.ps1";
+}
+
 export function getSmartAxisCommandForButton(button: FlowCellButton): string {
   return SMART_AXIS_TARGET_TO_COMMAND[targetFileName(button.Target)] ?? "";
 }
@@ -876,6 +838,7 @@ export function isRegularPopCandidate(button: FlowCellButton): boolean {
     !isAlignmentOwnerButton(button) &&
     !isFlattenRevolveOwnerButton(button) &&
     !isQuickRotateGroupOwnerButton(button) &&
+    !isHdriWorldOwnerButton(button) &&
     !isSmartAxisButton(button)
   );
 }
@@ -1756,6 +1719,174 @@ export function updatePanelPopout(
   };
 }
 
+function getSmartAxisGroupButtonIds(buttons: FlowCellButton[]): string[] {
+  return [
+    buttons.find((button) => getSmartAxisCommandForButton(button) === "baseline"),
+    buttons.find((button) => getSmartAxisCommandForButton(button) === "cycle_x"),
+    buttons.find((button) => getSmartAxisCommandForButton(button) === "cycle_y"),
+    buttons.find((button) => getSmartAxisCommandForButton(button) === "cycle_z"),
+    buttons.find((button) => getSmartAxisCommandForButton(button) === "toggle_live")
+  ]
+    .filter((button): button is FlowCellButton => Boolean(button))
+    .map((button) => button.Id);
+}
+
+function getReorderGroupButtonIds(
+  buttons: FlowCellButton[],
+  buttonId: string
+): string[] {
+  const button = buttons.find((entry) => entry.Id === buttonId);
+  if (!button) {
+    return [];
+  }
+
+  if (!isSmartAxisButton(button)) {
+    return [buttonId];
+  }
+
+  return getSmartAxisGroupButtonIds(buttons);
+}
+
+function movePanelButton(
+  buttons: FlowCellButton[],
+  sourceButtonId: string,
+  targetButtonId: string,
+  placement: "before" | "after"
+): FlowCellButton[] {
+  const sourceGroupButtonIds = getReorderGroupButtonIds(buttons, sourceButtonId);
+  const targetGroupButtonIds = getReorderGroupButtonIds(buttons, targetButtonId);
+  if (
+    sourceGroupButtonIds.length === 0 ||
+    targetGroupButtonIds.length === 0 ||
+    sourceGroupButtonIds.some((buttonId) => targetGroupButtonIds.includes(buttonId))
+  ) {
+    return buttons;
+  }
+
+  const sourceButtonIdSet = new Set(sourceGroupButtonIds);
+  const targetButtonIdSet = new Set(targetGroupButtonIds);
+  const movedButtons = buttons.filter((button) => sourceButtonIdSet.has(button.Id));
+  const remainingButtons = buttons.filter((button) => !sourceButtonIdSet.has(button.Id));
+  if (movedButtons.length === 0) {
+    return buttons;
+  }
+
+  const targetStartIndex = remainingButtons.findIndex((button) =>
+    targetButtonIdSet.has(button.Id)
+  );
+  if (targetStartIndex < 0) {
+    return [...remainingButtons, ...movedButtons];
+  }
+
+  const targetEndIndex = remainingButtons.reduce(
+    (lastMatchIndex, button, index) =>
+      targetButtonIdSet.has(button.Id) ? index : lastMatchIndex,
+    -1
+  );
+  const insertIndex = placement === "after" ? targetEndIndex + 1 : targetStartIndex;
+  const nextButtons = [...remainingButtons];
+  nextButtons.splice(insertIndex, 0, ...movedButtons);
+  return nextButtons;
+}
+
+function sortButtonIdsByPanelOrder(
+  orderedButtons: FlowCellButton[],
+  buttonIds: string[]
+): string[] {
+  const orderLookup = new Map(
+    orderedButtons.map((button, index) => [button.Id, index] as const)
+  );
+
+  return buttonIds
+    .filter((buttonId) => orderLookup.has(buttonId))
+    .sort((left, right) => (orderLookup.get(left) ?? 0) - (orderLookup.get(right) ?? 0));
+}
+
+export function reorderPanelButtons(
+  state: FlowCellState,
+  programId: number,
+  panelId: string,
+  sourceButtonId: string,
+  targetButtonId: string,
+  placement: "before" | "after" = "before"
+): FlowCellState {
+  const currentPanel = findPanel(state, programId, panelId);
+  if (!currentPanel) {
+    return state;
+  }
+
+  const reorderedButtons = movePanelButton(
+    currentPanel.Buttons,
+    sourceButtonId,
+    targetButtonId,
+    placement
+  );
+  if (reorderedButtons === currentPanel.Buttons) {
+    return state;
+  }
+
+  const reorderedButtonIds = sortButtonIdsByPanelOrder(
+    reorderedButtons,
+    reorderedButtons.map((button) => button.Id)
+  );
+  const nextButtons = reorderedButtons.map((button) =>
+    button.fanout?.child_button_ids?.length
+      ? {
+          ...button,
+          fanout: {
+            ...button.fanout,
+            child_button_ids: sortButtonIdsByPanelOrder(
+              reorderedButtons,
+              button.fanout.child_button_ids
+            )
+          }
+        }
+      : button
+  );
+
+  return {
+    ...state,
+    Programs: state.Programs.map((program) =>
+      program.ProgramTabId === programId
+        ? {
+            ...program,
+            Panels: program.Panels.map((panel) =>
+              panel.Id === panelId
+                ? {
+                    ...panel,
+                    Buttons: nextButtons
+                  }
+                : panel
+            )
+          }
+        : program
+    ),
+    ToolPopouts:
+      state.ToolPopouts?.map((toolPopout) => {
+        if (toolPopout.ProgramTabId !== programId || toolPopout.PanelId !== panelId) {
+          return toolPopout;
+        }
+
+        const ownerButtonId = toolPopout.ButtonIds[0] ?? "";
+        const orderedChildIds = sortButtonIdsByPanelOrder(
+          reorderedButtons,
+          toolPopout.ButtonIds.filter((buttonId) => buttonId !== ownerButtonId)
+        );
+        const nextButtonIds =
+          toolPopout.LayoutMode === "PanelFan"
+            ? [ownerButtonId, ...orderedChildIds]
+            : ownerButtonId
+              ? [ownerButtonId, ...orderedChildIds]
+              : reorderedButtonIds;
+
+        return {
+          ...toolPopout,
+          ButtonIds: nextButtonIds
+        };
+      }) ?? []
+  };
+}
+
 export function updatePanelFanOptions(
   state: FlowCellState,
   programId: number,
@@ -1960,6 +2091,48 @@ export function updateImportedSkins(
     ...state,
     ImportedSkins: importedSkins
   };
+}
+
+export function applySavedVisualTheme(
+  state: FlowCellState,
+  savedTheme: SavedVisualTheme
+): FlowCellState {
+  const programStyleAssignments = new Map(
+    (savedTheme.programStyleAssignments ?? []).map((assignment) => [
+      assignment.programId,
+      assignment.style_group_id ?? ""
+    ])
+  );
+  const buttonStyleAssignments = new Map(
+    (savedTheme.buttonStyleAssignments ?? []).map((assignment) => [
+      `${assignment.programId}::${assignment.panelId}::${assignment.buttonId}`,
+      assignment.style_group_id ?? ""
+    ])
+  );
+
+  return ensureStateDefaults({
+    ...state,
+    AppTheme: normalizeAppTheme(savedTheme.appTheme),
+    StyleGroups: (savedTheme.styleGroups ?? []).map((styleGroup) => ({ ...styleGroup })),
+    ImportedSkins: (savedTheme.importedSkins ?? []).map((skin) => ({ ...skin })),
+    SurfaceStyleAssignments: (savedTheme.surfaceStyleAssignments ?? []).map((assignment) => ({
+      ...assignment
+    })),
+    Programs: state.Programs.map((program) => ({
+      ...program,
+      style_group_id: programStyleAssignments.get(program.ProgramTabId) ?? "",
+      Panels: program.Panels.map((panel) => ({
+        ...panel,
+        Buttons: panel.Buttons.map((button) => ({
+          ...button,
+          style_group_id:
+            buttonStyleAssignments.get(
+              `${program.ProgramTabId}::${panel.Id}::${button.Id}`
+            ) ?? ""
+        }))
+      }))
+    }))
+  });
 }
 
 export function updateAppTheme(state: FlowCellState, appTheme: AppTheme): FlowCellState {

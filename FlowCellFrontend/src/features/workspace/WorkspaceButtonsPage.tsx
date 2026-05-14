@@ -39,6 +39,7 @@ interface WorkspaceButtonsPageProps {
   onPanelFan: () => void;
   onPanelPop: () => void;
   onOpenButtonAppearance: () => void;
+  onOpenButtonReorder: () => void;
   onOpenButtonOptions: () => void;
   onPanelFanOptions: () => void;
   onToggleAllWorkspaceButtons: (checked: boolean) => void;
@@ -83,6 +84,7 @@ export function WorkspaceButtonsPage({
   onPanelFan,
   onPanelPop,
   onOpenButtonAppearance,
+  onOpenButtonReorder,
   onOpenButtonOptions,
   onPanelFanOptions,
   onToggleAllWorkspaceButtons,
@@ -146,6 +148,15 @@ export function WorkspaceButtonsPage({
             importedSkin={miscImportedSkin}
             disabled={buttonAppearanceDisabled}
             onClick={onOpenButtonAppearance}
+          />
+          <HostSkinButton
+            type="button"
+            label="Reorder"
+            className="surface-action"
+            styleGroup={miscStyleGroup}
+            importedSkin={miscImportedSkin}
+            disabled={selectedPanel.Buttons.length <= 1}
+            onClick={onOpenButtonReorder}
           />
           <HostSkinButton
             type="button"

@@ -1,5 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+use image::imageops::FilterType;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap};
@@ -48,6 +49,16 @@ struct RuntimeInfo {
 struct ForegroundProcessInfo {
     process_name: String,
     process_path: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct SampledPhotoThemeColors {
+    headers_hex: String,
+    text_hex: String,
+    section_fill_hex: String,
+    controls_hex: String,
+    misc_hex: String,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -212,6 +223,27 @@ struct RawIniSection {
     entries: Vec<(String, String)>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SampleRgb {
+    r: u8,
+    g: u8,
+    b: u8,
+}
+
+#[derive(Default)]
+struct ColorBucketStats {
+    count: u32,
+    r_sum: u64,
+    g_sum: u64,
+    b_sum: u64,
+}
+
+#[derive(Clone, Copy)]
+struct PaletteCandidate {
+    color: SampleRgb,
+    count: u32,
+}
+
 #[derive(Clone, Default)]
 struct BindingsConfig {
     next_id: i64,
@@ -296,6 +328,275 @@ fn write_frontend_log(paths: &AppPaths, message: &str) -> Result<(), String> {
         .open(&paths.frontend_log_path)
         .map_err(|error| error.to_string())?;
     writeln!(handle, "[{}] {}", timestamp, message).map_err(|error| error.to_string())
+}
+
+fn rgb_to_hex(color: SampleRgb) -> String {
+    format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b)
+}
+
+fn srgb_channel_to_linear(value: u8) -> f64 {
+    let normalized = f64::from(value) / 255.0;
+    if normalized <= 0.04045 {
+        normalized / 12.92
+    } else {
+        ((normalized + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn relative_luminance(color: SampleRgb) -> f64 {
+    0.2126 * srgb_channel_to_linear(color.r)
+        + 0.7152 * srgb_channel_to_linear(color.g)
+        + 0.0722 * srgb_channel_to_linear(color.b)
+}
+
+fn contrast_ratio(left: SampleRgb, right: SampleRgb) -> f64 {
+    let left_luma = relative_luminance(left);
+    let right_luma = relative_luminance(right);
+    let (lighter, darker) = if left_luma >= right_luma {
+        (left_luma, right_luma)
+    } else {
+        (right_luma, left_luma)
+    };
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+fn color_distance_sq(left: SampleRgb, right: SampleRgb) -> u32 {
+    let dr = i32::from(left.r) - i32::from(right.r);
+    let dg = i32::from(left.g) - i32::from(right.g);
+    let db = i32::from(left.b) - i32::from(right.b);
+    (dr * dr + dg * dg + db * db) as u32
+}
+
+fn color_saturation(color: SampleRgb) -> f64 {
+    let red = f64::from(color.r) / 255.0;
+    let green = f64::from(color.g) / 255.0;
+    let blue = f64::from(color.b) / 255.0;
+    let max_value = red.max(green).max(blue);
+    let min_value = red.min(green).min(blue);
+    if max_value <= 0.0 {
+        0.0
+    } else {
+        (max_value - min_value) / max_value
+    }
+}
+
+fn quantize_channel(value: u8) -> u8 {
+    value / 24
+}
+
+fn resolve_sampled_text_color(text_color: SampleRgb, section_fill_color: SampleRgb) -> SampleRgb {
+    if contrast_ratio(text_color, section_fill_color) >= 4.5 {
+        return text_color;
+    }
+    let black = SampleRgb {
+        r: 12,
+        g: 12,
+        b: 12,
+    };
+    let white = SampleRgb {
+        r: 244,
+        g: 244,
+        b: 244,
+    };
+    if contrast_ratio(black, section_fill_color) >= contrast_ratio(white, section_fill_color) {
+        black
+    } else {
+        white
+    }
+}
+
+fn fill_palette_to_five(colors: &mut Vec<SampleRgb>) {
+    let fallbacks = [
+        SampleRgb {
+            r: 32,
+            g: 32,
+            b: 32,
+        },
+        SampleRgb {
+            r: 240,
+            g: 240,
+            b: 240,
+        },
+        SampleRgb {
+            r: 96,
+            g: 96,
+            b: 96,
+        },
+    ];
+    let seed = colors.first().copied().unwrap_or(fallbacks[0]);
+    while colors.len() < 5 {
+        let next = fallbacks
+            .get(colors.len().saturating_sub(1))
+            .copied()
+            .unwrap_or(seed);
+        colors.push(next);
+    }
+}
+
+fn pick_photo_theme_colors(path: &Path) -> Result<SampledPhotoThemeColors, String> {
+    if !path.is_file() {
+        return Err(format!("Image file was not found: {}", path.display()));
+    }
+
+    let image =
+        image::open(path).map_err(|error| format!("Unable to read image: {}", error))?;
+    let resized = image.resize(160, 160, FilterType::Triangle).to_rgba8();
+    let mut buckets: HashMap<(u8, u8, u8), ColorBucketStats> = HashMap::new();
+
+    for pixel in resized.pixels() {
+        if pixel[3] < 24 {
+            continue;
+        }
+        let key = (
+            quantize_channel(pixel[0]),
+            quantize_channel(pixel[1]),
+            quantize_channel(pixel[2]),
+        );
+        let entry = buckets.entry(key).or_default();
+        entry.count += 1;
+        entry.r_sum += u64::from(pixel[0]);
+        entry.g_sum += u64::from(pixel[1]);
+        entry.b_sum += u64::from(pixel[2]);
+    }
+
+    if buckets.is_empty() {
+        return Err("Image did not contain enough readable opaque pixels.".to_string());
+    }
+
+    let mut candidates = buckets
+        .into_iter()
+        .filter_map(|(_key, bucket)| {
+            (bucket.count > 0).then_some(PaletteCandidate {
+                color: SampleRgb {
+                    r: (bucket.r_sum / u64::from(bucket.count)) as u8,
+                    g: (bucket.g_sum / u64::from(bucket.count)) as u8,
+                    b: (bucket.b_sum / u64::from(bucket.count)) as u8,
+                },
+                count: bucket.count,
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by(|left, right| right.count.cmp(&left.count));
+
+    let mut distinct = Vec::<PaletteCandidate>::new();
+    for threshold in [42_u32, 28_u32, 18_u32, 0_u32] {
+        for candidate in &candidates {
+            if distinct.iter().any(|existing| existing.color == candidate.color) {
+                continue;
+            }
+            if distinct.iter().all(|existing| {
+                color_distance_sq(existing.color, candidate.color) >= threshold * threshold
+            }) {
+                distinct.push(*candidate);
+            }
+            if distinct.len() >= 8 {
+                break;
+            }
+        }
+        if distinct.len() >= 5 {
+            break;
+        }
+    }
+
+    if distinct.is_empty() {
+        return Err("Image sampling did not produce a usable palette.".to_string());
+    }
+
+    let mut available = distinct;
+    let section_fill_index = available
+        .iter()
+        .enumerate()
+        .max_by(|(_left_index, left), (_right_index, right)| {
+            let left_luma = relative_luminance(left.color);
+            let right_luma = relative_luminance(right.color);
+            let left_score = f64::from(left.count)
+                - ((left_luma - 0.45).abs() * 120.0);
+            let right_score = f64::from(right.count)
+                - ((right_luma - 0.45).abs() * 120.0);
+            left_score
+                .partial_cmp(&right_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let section_fill_color = available.remove(section_fill_index).color;
+
+    let text_index = available
+        .iter()
+        .enumerate()
+        .max_by(|(_left_index, left), (_right_index, right)| {
+            contrast_ratio(left.color, section_fill_color)
+                .partial_cmp(&contrast_ratio(right.color, section_fill_color))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let text_color = if available.is_empty() {
+        resolve_sampled_text_color(section_fill_color, section_fill_color)
+    } else {
+        resolve_sampled_text_color(available.remove(text_index).color, section_fill_color)
+    };
+
+    let controls_index = available
+        .iter()
+        .enumerate()
+        .max_by(|(_left_index, left), (_right_index, right)| {
+            let left_score = color_saturation(left.color) * 100.0 + f64::from(left.count) * 0.01;
+            let right_score =
+                color_saturation(right.color) * 100.0 + f64::from(right.count) * 0.01;
+            left_score
+                .partial_cmp(&right_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let controls_color = if available.is_empty() {
+        section_fill_color
+    } else {
+        available.remove(controls_index).color
+    };
+
+    let headers_index = available
+        .iter()
+        .enumerate()
+        .max_by(|(_left_index, left), (_right_index, right)| {
+            let left_score =
+                f64::from(left.count) + contrast_ratio(left.color, section_fill_color) * 10.0;
+            let right_score =
+                f64::from(right.count) + contrast_ratio(right.color, section_fill_color) * 10.0;
+            left_score
+                .partial_cmp(&right_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(index, _)| index)
+        .unwrap_or(0);
+    let headers_color = if available.is_empty() {
+        controls_color
+    } else {
+        available.remove(headers_index).color
+    };
+
+    let misc_color = available
+        .first()
+        .map(|candidate| candidate.color)
+        .unwrap_or(headers_color);
+
+    let mut palette = vec![
+        headers_color,
+        text_color,
+        section_fill_color,
+        controls_color,
+        misc_color,
+    ];
+    fill_palette_to_five(&mut palette);
+
+    Ok(SampledPhotoThemeColors {
+        headers_hex: rgb_to_hex(palette[0]),
+        text_hex: rgb_to_hex(palette[1]),
+        section_fill_hex: rgb_to_hex(palette[2]),
+        controls_hex: rgb_to_hex(palette[3]),
+        misc_hex: rgb_to_hex(palette[4]),
+    })
 }
 
 fn state_path(paths: &AppPaths) -> PathBuf {
@@ -1897,6 +2198,50 @@ fn show_open_file_dialog(
 }
 
 #[tauri::command]
+fn sample_photo_theme_colors(
+    state: State<'_, RuntimeState>,
+    image_path: String,
+) -> Result<SampledPhotoThemeColors, String> {
+    let paths = with_paths(&state)?;
+    let trimmed = image_path.trim();
+    if trimmed.is_empty() {
+        let message = "Theme sampling failed: image path was empty.".to_string();
+        let _ = write_frontend_log(&paths, &message);
+        return Err("Image path is required.".to_string());
+    }
+
+    let resolved_path = PathBuf::from(trimmed);
+    match pick_photo_theme_colors(&resolved_path) {
+        Ok(sampled) => {
+            let _ = write_frontend_log(
+                &paths,
+                &format!(
+                    "Theme photo sampled. Path={}; Headers={}; Text={}; SectionFill={}; Controls={}; Misc={}",
+                    resolved_path.display(),
+                    sampled.headers_hex,
+                    sampled.text_hex,
+                    sampled.section_fill_hex,
+                    sampled.controls_hex,
+                    sampled.misc_hex
+                ),
+            );
+            Ok(sampled)
+        }
+        Err(error) => {
+            let _ = write_frontend_log(
+                &paths,
+                &format!(
+                    "Theme photo sampling failed. Path={}; Error={}",
+                    resolved_path.display(),
+                    error
+                ),
+            );
+            Err(error)
+        }
+    }
+}
+
+#[tauri::command]
 fn list_layout_files(state: State<'_, RuntimeState>) -> Result<Vec<SavedLayoutFile>, String> {
     let paths = with_paths(&state)?;
     let root = layouts_root(&paths);
@@ -2523,6 +2868,7 @@ fn main() {
             log_frontend_event,
             get_foreground_process_info,
             show_open_file_dialog,
+            sample_photo_theme_colors,
             list_layout_files,
             load_layout_snapshot,
             save_layout_snapshot,

@@ -40,6 +40,14 @@ export interface ForegroundProcessInfo {
   processPath: string;
 }
 
+export interface SampledPhotoThemeColors {
+  headersHex: string;
+  textHex: string;
+  sectionFillHex: string;
+  controlsHex: string;
+  miscHex: string;
+}
+
 function sanitizeWindowToken(value: string): string {
   const sanitized = value.replace(/[^a-zA-Z0-9\-/:_]/g, "_");
   return sanitized.length > 0 ? sanitized : "flowcell";
@@ -60,6 +68,10 @@ function buildPanelFanOptionsLabel(programId: number, panelId: string): string {
 
 function buildButtonAppearanceLabel(programId: number, panelId: string): string {
   return `button-appearance-${programId}-${sanitizeWindowToken(panelId)}`;
+}
+
+function buildButtonReorderLabel(programId: number, panelId: string): string {
+  return `button-reorder-${programId}-${sanitizeWindowToken(panelId)}`;
 }
 
 function buildButtonOptionsLabel(programId: number, panelId: string): string {
@@ -173,6 +185,13 @@ function resolveButtonAppearanceWindowOptions() {
   };
 }
 
+function resolveButtonReorderWindowOptions() {
+  return {
+    width: 680,
+    height: 840
+  };
+}
+
 function resolveButtonOptionsWindowOptions() {
   return {
     width: 1120,
@@ -218,6 +237,10 @@ function resolveToolWindowOptions(args: {
   const isFloatingFanout = args.layoutMode === "Fanout";
   const isAlignment = ownerId.includes("alignment");
   const isFlattenRevolve = ownerId.includes("flatten") || ownerId.includes("revolve");
+  const isHdriWorld =
+    ownerId.includes("button_blender_flowcell_hdri") ||
+    ownerId.includes("flowcell_hdri") ||
+    ownerId.includes("hdri_world");
   const isSmartAxis =
     ownerId.includes("flowcell_base") ||
     args.buttonIds.some((buttonId) =>
@@ -258,6 +281,8 @@ function resolveToolWindowOptions(args: {
     ? { width: 336, height: 166, minWidth: 320, minHeight: 150, maxWidth: 356, maxHeight: 196 }
     : isFlattenRevolve
       ? { width: 320, height: 220, minWidth: 270, minHeight: 180, maxWidth: 380, maxHeight: 280 }
+      : isHdriWorld
+        ? { width: 660, height: 360, minWidth: 560, minHeight: 320, maxWidth: 820, maxHeight: 520 }
       : isSmartAxis
         ? { width: 292, height: 64, minWidth: 252, minHeight: 52, maxWidth: 340, maxHeight: 96 }
         : isDenseRegularGroup
@@ -604,6 +629,42 @@ export function openButtonAppearanceWindow(args: {
   })();
 }
 
+export function openButtonReorderWindow(args: {
+  programId: number;
+  panelId: string;
+  panelName: string;
+}): Promise<void> {
+  const label = buildButtonReorderLabel(args.programId, args.panelId);
+  return (async () => {
+    const placement = resolveButtonReorderWindowOptions();
+    const existing = await WebviewWindow.getByLabel(label);
+    if (existing) {
+      await applyWindowPlacement(existing, placement, { focus: true });
+      await existing.show().catch(() => {});
+      return;
+    }
+
+    const window = new WebviewWindow(label, {
+      url: buildWindowContextUrl({
+        kind: "button-reorder",
+        programId: args.programId,
+        panelId: args.panelId,
+        panelName: args.panelName
+      }),
+      title: `FlowCell - Reorder Buttons - ${args.panelName}`,
+      ...placement,
+      resizable: true,
+      decorations: false,
+      visible: true,
+      focus: true,
+      alwaysOnTop: true
+    });
+
+    await waitForWindowCreated(window);
+    await applyWindowPlacement(window, placement);
+  })();
+}
+
 export function openButtonOptionsWindow(args: {
   programId: number;
   panelId: string;
@@ -804,6 +865,12 @@ export function showOpenFileDialog(args: {
     initialDirectory: args.initialDirectory,
     multiselect: args.multiselect ?? false
   });
+}
+
+export function samplePhotoThemeColors(
+  imagePath: string
+): Promise<SampledPhotoThemeColors> {
+  return invoke("sample_photo_theme_colors", { imagePath });
 }
 
 export async function showOpenExeDialog(initialDirectory?: string): Promise<string | null> {

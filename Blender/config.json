@@ -40,13 +40,13 @@
       "label": "alignment tools",
       "tooltip": "Open FlowCell alignment controls for active-object min, center, max, surface, and geocenter alignment.",
       "scriptPath": ".\\FlowCellButtons\\util_alignment_tools.ps1",
-      "panel": "utility"
+      "panel": "Tool Set"
     },
     {
       "label": "flatten revolve",
       "tooltip": "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.",
       "scriptPath": ".\\FlowCellButtons\\util_flatten_revolve_tools.ps1",
-      "panel": "utility"
+      "panel": "Tool Set"
     },
     {
       "label": "Base",
@@ -82,6 +82,12 @@
       "label": "rotate",
       "tooltip": "Open Rotate controls for axis, pivot, transform, and distribute rotation steps.",
       "scriptPath": ".\\FlowCellButtons\\util_quick_rotate_group_tools.ps1",
+      "panel": "Tool Set"
+    },
+    {
+      "label": "theme",
+      "tooltip": "Open Theme and HDRI controls for Blender UI colors, world path, X/Y/Z rotation, and world strength.",
+      "scriptPath": ".\\FlowCellButtons\\util_hdri_world_tools.ps1",
       "panel": "Tool Set"
     },
     {

@@ -35,11 +35,13 @@ import {
   loadState,
   logFrontendEvent,
   openButtonAppearanceWindow,
+  openButtonReorderWindow,
   openButtonOptionsWindow,
   openLayoutPickerWindow,
   openPanelFanOptionsWindow,
   openPanelPopout,
   openToolPopout,
+  samplePhotoThemeColors,
   saveButtonBinding,
   saveLayoutSnapshot,
   saveState,
@@ -50,6 +52,7 @@ import {
   addButtonsToPanel,
   addPanel,
   addProgram,
+  applySavedVisualTheme,
   applyBindingsToState,
   applyLayoutSnapshot,
   buildCommandEnvelope,
@@ -72,10 +75,12 @@ import {
   getToolPopoutButtons,
   isAlignmentOwnerButton,
   isFlattenRevolveOwnerButton,
+  isHdriWorldOwnerButton,
   isQuickRotateGroupOwnerButton,
   isRegularPopCandidate,
   isSmartAxisButton,
   isSmartAxisOwnerButton,
+  reorderPanelButtons,
   removeToolPopout,
   restoreSavedProgram,
   saveProgramSnapshot,
@@ -127,6 +132,7 @@ import {
   BUTTON_APPEARANCE_ALL_BUTTONS_ID,
   ButtonAppearanceWindow
 } from "./components/ButtonAppearanceWindow";
+import { ButtonReorderWindow } from "./components/ButtonReorderWindow";
 import { ButtonOptionsWindow } from "./components/ButtonOptionsWindow";
 import { MacroLabPage } from "./components/MacroLabPage";
 import {
@@ -151,6 +157,7 @@ import { WorkspaceButtonsPage } from "./features/workspace/WorkspaceButtonsPage"
 import {
   AlignmentToolSurface,
   FlattenRevolveToolSurface,
+  HdriWorldToolSurface,
   QuickRotateGroupToolSurface,
   SmartAxisStrip
 } from "./components/ToolSurfaces";
@@ -318,6 +325,28 @@ interface QuickRotateGroupValues {
   OperationMode: string;
 }
 
+interface HdriWorldToolValues {
+  HdriPath: string;
+  StaticBackgroundPath: string;
+  ThemeImagePath: string;
+  ThemePaletteHexes: string[];
+  ThemeVisualMode: "dark" | "light";
+  ThemeHeadersHex: string;
+  ThemeTextHex: string;
+  ThemeSectionFillHex: string;
+  ThemeControlsHex: string;
+  ThemeMiscHex: string;
+  ThemeDarksHex: string;
+  ThemeHighlightsHex: string;
+  ThemeViewportBackgroundHex: string;
+  ThemeViewportGradientEnabled: boolean;
+  ThemeViewportGradientHex: string;
+  RotationXDeg: number;
+  RotationYDeg: number;
+  RotationZDeg: number;
+  WorldStrength: number;
+}
+
 const DEFAULT_SMART_AXIS_STATE: SmartAxisVisualState = {
   Modes: {
     X: "NONE",
@@ -347,6 +376,28 @@ const DEFAULT_QUICK_ROTATE_GROUP_VALUES: QuickRotateGroupValues = {
   OperationMode: "TRANSFORM"
 };
 
+const DEFAULT_HDRI_WORLD_TOOL_VALUES: HdriWorldToolValues = {
+  HdriPath: "Blender\\appearance\\mossy_forest_4k.exr",
+  StaticBackgroundPath: "",
+  ThemeImagePath: "",
+  ThemePaletteHexes: [],
+  ThemeVisualMode: "dark",
+  ThemeHeadersHex: "",
+  ThemeTextHex: "",
+  ThemeSectionFillHex: "",
+  ThemeControlsHex: "",
+  ThemeMiscHex: "",
+  ThemeDarksHex: "",
+  ThemeHighlightsHex: "",
+  ThemeViewportBackgroundHex: "",
+  ThemeViewportGradientEnabled: false,
+  ThemeViewportGradientHex: "",
+  RotationXDeg: 90,
+  RotationYDeg: 0,
+  RotationZDeg: 30,
+  WorldStrength: 0.25
+};
+
 const FLOWCELL_WINDOW_PROCESS_NAMES = ["flowcell_frontend", "flowcellfrontend"];
 
 function inferSurfaceName(context: WindowContext): string {
@@ -357,6 +408,8 @@ function inferSurfaceName(context: WindowContext): string {
       return "PanelFanOptions";
     case "button-appearance":
       return "ButtonAppearance";
+    case "button-reorder":
+      return "ButtonReorder";
     case "button-options":
       return "ButtonOptions";
     case "layout-picker":
@@ -845,6 +898,193 @@ function normalizeQuickRotateGroupValues(values?: Record<string, unknown>): Quic
   };
 }
 
+function normalizeHdriWorldToolValues(values?: Record<string, unknown>): HdriWorldToolValues {
+  const paletteSource = values?.ThemePaletteHexes;
+  const themePaletteHexes = Array.isArray(paletteSource)
+    ? paletteSource
+        .map((value) => String(value ?? "").trim().toUpperCase())
+        .filter((value) => /^#[0-9A-F]{6}$/i.test(value))
+    : typeof paletteSource === "string"
+      ? paletteSource
+          .split("|")
+          .map((value) => value.trim().toUpperCase())
+          .filter((value) => /^#[0-9A-F]{6}$/i.test(value))
+      : [];
+  return {
+    HdriPath:
+      readString(values, "HdriPath", DEFAULT_HDRI_WORLD_TOOL_VALUES.HdriPath) ||
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.HdriPath,
+    StaticBackgroundPath: readString(
+      values,
+      "StaticBackgroundPath",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.StaticBackgroundPath
+    ),
+    ThemeImagePath: readString(
+      values,
+      "ThemeImagePath",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeImagePath
+    ),
+    ThemePaletteHexes: themePaletteHexes,
+    ThemeVisualMode:
+      readString(values, "ThemeVisualMode", DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeVisualMode)
+        .toLowerCase() === "light"
+        ? "light"
+        : "dark",
+    ThemeHeadersHex: readString(
+      values,
+      "ThemeHeadersHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeHeadersHex
+    ).toUpperCase(),
+    ThemeTextHex: readString(
+      values,
+      "ThemeTextHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeTextHex
+    ).toUpperCase(),
+    ThemeSectionFillHex: readString(
+      values,
+      "ThemeSectionFillHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeSectionFillHex
+    ).toUpperCase(),
+    ThemeControlsHex: readString(
+      values,
+      "ThemeControlsHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeControlsHex
+    ).toUpperCase(),
+    ThemeMiscHex: readString(
+      values,
+      "ThemeMiscHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeMiscHex
+    ).toUpperCase(),
+    ThemeDarksHex: readString(
+      values,
+      "ThemeDarksHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeDarksHex
+    ).toUpperCase(),
+    ThemeHighlightsHex: readString(
+      values,
+      "ThemeHighlightsHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeHighlightsHex
+    ).toUpperCase(),
+    ThemeViewportBackgroundHex: readString(
+      values,
+      "ThemeViewportBackgroundHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeViewportBackgroundHex
+    ).toUpperCase(),
+    ThemeViewportGradientEnabled: Boolean(
+      values?.ThemeViewportGradientEnabled ??
+        DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeViewportGradientEnabled
+    ),
+    ThemeViewportGradientHex: readString(
+      values,
+      "ThemeViewportGradientHex",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.ThemeViewportGradientHex
+    ).toUpperCase(),
+    RotationXDeg: readNumber(
+      values,
+      "RotationXDeg",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.RotationXDeg
+    ),
+    RotationYDeg: readNumber(
+      values,
+      "RotationYDeg",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.RotationYDeg
+    ),
+    RotationZDeg: readNumber(
+      values,
+      "RotationZDeg",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.RotationZDeg
+    ),
+    WorldStrength: readNumber(
+      values,
+      "WorldStrength",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.WorldStrength
+    )
+  };
+}
+
+function isValidThemeHex(value: string): boolean {
+  return /^#[0-9A-F]{6}$/i.test(value.trim());
+}
+
+function hexChannelToLinear(value: number): number {
+  const normalized = value / 255;
+  return normalized <= 0.04045
+    ? normalized / 12.92
+    : ((normalized + 0.055) / 1.055) ** 2.4;
+}
+
+function hexLuminance(value: string): number {
+  const normalized = value.trim().replace("#", "");
+  if (normalized.length !== 6) {
+    return 0;
+  }
+  const red = parseInt(normalized.slice(0, 2), 16);
+  const green = parseInt(normalized.slice(2, 4), 16);
+  const blue = parseInt(normalized.slice(4, 6), 16);
+  return (
+    0.2126 * hexChannelToLinear(red) +
+    0.7152 * hexChannelToLinear(green) +
+    0.0722 * hexChannelToLinear(blue)
+  );
+}
+
+function buildThemeRoleAssignment(
+  paletteHexes: string[],
+  mode: "dark" | "light"
+): Partial<HdriWorldToolValues> {
+  const palette = Array.from(
+    new Set(
+      paletteHexes
+        .map((value) => value.trim().toUpperCase())
+        .filter((value) => isValidThemeHex(value))
+    )
+  ).sort((left, right) => hexLuminance(left) - hexLuminance(right));
+
+  if (palette.length === 0) {
+    return { ThemeVisualMode: mode };
+  }
+
+  while (palette.length < 5) {
+    palette.push(palette[palette.length - 1] ?? palette[0]);
+  }
+
+  const darkest = palette[0];
+  const dark = palette[1] ?? darkest;
+  const middle = palette[2] ?? dark;
+  const light = palette[3] ?? middle;
+  const lightest = palette[4] ?? light;
+
+  if (mode === "light") {
+    return {
+      ThemeVisualMode: "light",
+      ThemeTextHex: darkest,
+      ThemeControlsHex: middle,
+      ThemeMiscHex: dark,
+      ThemeHeadersHex: light,
+      ThemeSectionFillHex: lightest,
+      ThemeDarksHex: darkest,
+      ThemeHighlightsHex: dark,
+      ThemeViewportBackgroundHex: light,
+      ThemeViewportGradientEnabled: true,
+      ThemeViewportGradientHex: lightest,
+    };
+  }
+
+  return {
+    ThemeVisualMode: "dark",
+    ThemeSectionFillHex: dark,
+    ThemeHeadersHex: middle,
+    ThemeMiscHex: dark,
+    ThemeControlsHex: middle,
+    ThemeTextHex: lightest,
+    ThemeDarksHex: darkest,
+    ThemeHighlightsHex: light,
+    ThemeViewportBackgroundHex: darkest,
+    ThemeViewportGradientEnabled: true,
+    ThemeViewportGradientHex: dark,
+  };
+}
+
 function buildVirtualToolButton(
   ownerButton: FlowCellButton,
   suffix: string,
@@ -885,6 +1125,7 @@ function isToolOwnerPopCandidate(button: FlowCellButton): boolean {
   return (
     isAlignmentOwnerButton(button) ||
     isFlattenRevolveOwnerButton(button) ||
+    isHdriWorldOwnerButton(button) ||
     isQuickRotateGroupOwnerButton(button) ||
     isSmartAxisOwnerButton(button)
   );
@@ -1483,6 +1724,7 @@ export default function App() {
   const transparentFanoutIgnoreCursorRef = useRef<boolean | null>(null);
   const startupPanelRestoreRef = useRef(false);
   const startupToolRestoreRef = useRef(false);
+  const latestHdriWorldToolValuesRef = useRef(new Map<string, HdriWorldToolValues>());
   const toolPopoutAutoFitKeyRef = useRef<string | null>(null);
   const programmaticWindowPlacementUntilRef = useRef(0);
   const layoutLoadInFlightRef = useRef(false);
@@ -1680,6 +1922,7 @@ export default function App() {
     windowContext?.kind === "tool-popout" ||
     windowContext?.kind === "panel-fan-options" ||
     windowContext?.kind === "button-appearance" ||
+    windowContext?.kind === "button-reorder" ||
     windowContext?.kind === "button-options" ||
     windowContext?.kind === "layout-picker";
   const toolPopoutButtons =
@@ -1758,6 +2001,19 @@ export default function App() {
             findButton(state, selectedProgram.ProgramTabId, selectedPanel.Id, buttonId)
           )
           .filter((button): button is FlowCellButton => Boolean(button))
+      : [];
+  const buttonReorderRenderItems = selectedPanel
+    ? buildPanelRenderItems(selectedPanel.Buttons, {
+        collapseSmartAxisToOwnerButton: isToolSetPanelSelection
+      })
+    : [];
+  const buttonReorderButtons =
+    windowContext?.kind === "button-reorder"
+      ? buttonReorderRenderItems
+          .filter(
+            (item): item is { kind: "button"; button: FlowCellButton } => item.kind === "button"
+          )
+          .map((item) => item.button)
       : [];
   const allButtons = state ? collectAllButtons(state) : [];
   const programOptions = state
@@ -2851,6 +3107,9 @@ export default function App() {
         } else if (toolPopoutOwnerButton && isFlattenRevolveOwnerButton(toolPopoutOwnerButton)) {
           requiredWidth = 360;
           requiredHeight = 240;
+        } else if (toolPopoutOwnerButton && isHdriWorldOwnerButton(toolPopoutOwnerButton)) {
+          requiredWidth = 520;
+          requiredHeight = 320;
         } else if (toolPopoutOwnerButton && isQuickRotateGroupOwnerButton(toolPopoutOwnerButton)) {
           requiredWidth = 560;
           requiredHeight = 170;
@@ -2937,6 +3196,9 @@ export default function App() {
           continue;
         }
         if (candidate.label.startsWith("button-appearance-")) {
+          continue;
+        }
+        if (candidate.label.startsWith("button-reorder-")) {
           continue;
         }
         if (candidate.label.startsWith("button-options-")) {
@@ -3701,6 +3963,32 @@ export default function App() {
     );
   };
 
+  const handleApplyVisualTheme = async (themeId: string) => {
+    const trimmedThemeId = themeId.trim();
+    if (!trimmedThemeId) {
+      return;
+    }
+
+    let appliedThemeName: string | null = null;
+    await persistLatestMutation((currentState) => {
+      const savedTheme = (currentState.SavedVisualThemes ?? []).find(
+        (theme) => theme.id === trimmedThemeId
+      );
+      if (!savedTheme) {
+        return currentState;
+      }
+      appliedThemeName = savedTheme.name;
+      return applySavedVisualTheme(currentState, savedTheme);
+    });
+
+    if (appliedThemeName) {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Loaded visual theme snapshot "${appliedThemeName}".`
+      );
+    }
+  };
+
   const resolveSectionStyleGroup = (surfaceId: SurfaceStyleSectionId) =>
     resolveStyleGroup(
       state.StyleGroups,
@@ -3868,6 +4156,7 @@ export default function App() {
             candidate.label.startsWith(`popout-tool-${programId}-`) ||
             candidate.label.startsWith(`panel-fan-options-${programId}-`) ||
             candidate.label.startsWith(`button-appearance-${programId}-`) ||
+            candidate.label.startsWith(`button-reorder-${programId}-`) ||
             candidate.label.startsWith(`button-options-${programId}-`)
         )
         .map((candidate) => candidate.close().catch(() => {}))
@@ -4123,6 +4412,7 @@ export default function App() {
       if (
         windowContext.kind === "panel-fan-options" ||
         windowContext.kind === "button-appearance" ||
+        windowContext.kind === "button-reorder" ||
         windowContext.kind === "button-options" ||
         windowContext.kind === "layout-picker"
       ) {
@@ -4519,6 +4809,7 @@ export default function App() {
     if (
       isAlignmentOwnerButton(button) ||
       isFlattenRevolveOwnerButton(button) ||
+      isHdriWorldOwnerButton(button) ||
       isQuickRotateGroupOwnerButton(button) ||
       isSmartAxisOwnerButton(button)
     ) {
@@ -4584,6 +4875,63 @@ export default function App() {
             )?.Values
           ),
           [field]: value
+        }
+      )
+    );
+  };
+
+  const updateHdriWorldToolValue = (
+    ownerButton: FlowCellButton,
+    field: keyof HdriWorldToolValues,
+    value: string | number | boolean
+  ) => {
+    updateHdriWorldToolValues(ownerButton, { [field]: value } as Partial<HdriWorldToolValues>);
+  };
+
+  const getLiveHdriWorldToolValues = (ownerButton: FlowCellButton): HdriWorldToolValues => {
+    const liveValues = latestHdriWorldToolValuesRef.current.get(ownerButton.Id);
+    if (liveValues) {
+      return normalizeHdriWorldToolValues({ ...liveValues });
+    }
+
+    return normalizeHdriWorldToolValues(
+      getToolOptionState(
+        latestStateRef.current ?? state,
+        selectedProgram.ProgramTabId,
+        selectedPanel.Id,
+        ownerButton.Id,
+        "hdri_world"
+      )?.Values
+    );
+  };
+
+  const updateHdriWorldToolValues = (
+    ownerButton: FlowCellButton,
+    patch: Partial<HdriWorldToolValues>
+  ) => {
+    const nextValues = normalizeHdriWorldToolValues({
+      ...getLiveHdriWorldToolValues(ownerButton),
+      ...patch
+    });
+    latestHdriWorldToolValuesRef.current.set(ownerButton.Id, nextValues);
+    persistLatestLocalMutation((currentState) =>
+      updateToolOptionState(
+        currentState,
+        selectedProgram.ProgramTabId,
+        selectedPanel.Id,
+        ownerButton.Id,
+        "hdri_world",
+        {
+          ...normalizeHdriWorldToolValues(
+            getToolOptionState(
+            currentState,
+            selectedProgram.ProgramTabId,
+            selectedPanel.Id,
+            ownerButton.Id,
+            "hdri_world"
+          )?.Values
+        ),
+          ...nextValues
         }
       )
     );
@@ -4666,6 +5014,250 @@ export default function App() {
       return;
     }
     await handleQuickRotateGroupApply(ownerButton, "positive", angleDeg);
+  };
+
+  const resolveHdriDialogInitialDirectory = (pathValue: string) => {
+    const trimmedPath = pathValue.trim();
+    if (trimmedPath.length > 0) {
+      const normalized = trimmedPath.replace(/[\\/]+$/, "");
+      const separatorIndex = Math.max(
+        normalized.lastIndexOf("\\"),
+        normalized.lastIndexOf("/")
+      );
+      if (separatorIndex > 0) {
+        return normalized.slice(0, separatorIndex);
+      }
+    }
+
+    return selectedProgram.ProgramConfig?.ScriptFolder;
+  };
+
+  const handleHdriWorldBrowse = async (ownerButton: FlowCellButton) => {
+    try {
+      setPopoutContextMenu(null);
+      const values = getLiveHdriWorldToolValues(ownerButton);
+      const selectedPaths = await showOpenFileDialog({
+        title: "Choose HDRI file",
+        filter: "HDRI Files (*.exr;*.hdr)|*.exr;*.hdr|All Files (*.*)|*.*",
+        initialDirectory: resolveHdriDialogInitialDirectory(values.HdriPath),
+        multiselect: false
+      });
+      if (selectedPaths.length === 0) {
+        return;
+      }
+      updateHdriWorldToolValue(ownerButton, "HdriPath", selectedPaths[0]);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `HDRI file picker failed. ${message}`
+      );
+    }
+  };
+
+  const handleThemeFromPhotoBrowse = async (ownerButton: FlowCellButton) => {
+    try {
+      setPopoutContextMenu(null);
+      const values = getLiveHdriWorldToolValues(ownerButton);
+      const selectedPaths = await showOpenFileDialog({
+        title: "Choose theme image",
+        filter:
+          "Image Files (*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif;*.tif;*.tiff)|*.png;*.jpg;*.jpeg;*.webp;*.bmp;*.gif;*.tif;*.tiff|All Files (*.*)|*.*",
+        initialDirectory: resolveHdriDialogInitialDirectory(values.ThemeImagePath),
+        multiselect: false
+      });
+      if (selectedPaths.length === 0) {
+        return;
+      }
+
+      const sampled = await samplePhotoThemeColors(selectedPaths[0]);
+      const paletteHexes = [
+        sampled.headersHex,
+        sampled.textHex,
+        sampled.sectionFillHex,
+        sampled.controlsHex,
+        sampled.miscHex
+      ].map((value) => value.toUpperCase());
+      updateHdriWorldToolValues(ownerButton, {
+        ThemeImagePath: selectedPaths[0],
+        ThemePaletteHexes: paletteHexes,
+        ...buildThemeRoleAssignment(paletteHexes, "dark")
+      });
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Theme photo sampled. Headers=${sampled.headersHex}, Text=${sampled.textHex}, Section Fill=${sampled.sectionFillHex}, Controls=${sampled.controlsHex}, Misc=${sampled.miscHex}`
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Theme photo sampling failed. ${message}`
+      );
+    }
+  };
+
+  const handleThemeModeApply = async (
+    ownerButton: FlowCellButton,
+    mode: "dark" | "light",
+    valuesOverride?: HdriWorldToolValues
+  ) => {
+    const currentValues = valuesOverride
+      ? normalizeHdriWorldToolValues({ ...valuesOverride })
+      : getLiveHdriWorldToolValues(ownerButton);
+    const paletteHexes =
+      currentValues.ThemePaletteHexes.length > 0
+        ? currentValues.ThemePaletteHexes
+        : [
+            currentValues.ThemeHeadersHex,
+            currentValues.ThemeTextHex,
+            currentValues.ThemeSectionFillHex,
+            currentValues.ThemeControlsHex,
+            currentValues.ThemeMiscHex,
+          ];
+      const nextValues = normalizeHdriWorldToolValues({
+        ...currentValues,
+        ...buildThemeRoleAssignment(paletteHexes, mode)
+      });
+    updateHdriWorldToolValues(ownerButton, nextValues);
+    pushFrontendEvent(
+      inferSurfaceName(windowContext),
+      `${mode === "dark" ? "Dark" : "Light"} theme preset staged. Press Apply to send it to Blender.`
+    );
+  };
+
+  const handleHdriWorldApply = async (
+    ownerButton: FlowCellButton,
+    action:
+      | "apply_theme_from_photo_manual_colors"
+      | "set_hdri_path"
+      | "clear_world"
+      | "reset_world"
+      | "set_rotation_x"
+      | "set_rotation_y"
+      | "set_rotation_z"
+      | "set_world_strength",
+    valuesOverride?: HdriWorldToolValues
+  ) => {
+    setPopoutContextMenu(null);
+    const values = valuesOverride
+      ? normalizeHdriWorldToolValues({ ...valuesOverride })
+      : getLiveHdriWorldToolValues(ownerButton);
+
+    const actionMeta = (() => {
+      switch (action) {
+        case "apply_theme_from_photo_manual_colors":
+          return {
+            suffix: "theme_from_photo_manual_colors",
+            label: "Theme",
+            tooltip: "Apply the current sampled theme colors to the Blender UI theme.",
+            slot: "theme-from-photo-manual-colors",
+            toolAction: "hdri_world.theme_from_photo_manual_colors"
+          };
+        case "set_hdri_path":
+          return {
+            suffix: "hdri_path",
+            label: "HDRI",
+            tooltip: "Apply the current HDRI path.",
+            slot: "hdri-path",
+            toolAction: "hdri_world.path"
+          };
+        case "clear_world":
+          return {
+            suffix: "clear_world",
+            label: "Clear",
+            tooltip: "Clear the current HDRI world from this file.",
+            slot: "hdri-clear-world",
+            toolAction: "hdri_world.clear_world"
+          };
+        case "reset_world":
+          return {
+            suffix: "reset_world",
+            label: "Reset",
+            tooltip: "Rebuild a clean Blender world and reapply the current HDRI values.",
+            slot: "hdri-reset-world",
+            toolAction: "hdri_world.reset_world"
+          };
+        case "set_rotation_x":
+          return {
+            suffix: "rotation_x",
+            label: "X",
+            tooltip: "Apply the current HDRI X rotation.",
+            slot: "hdri-rotation-x",
+            toolAction: "hdri_world.rotation_x"
+          };
+        case "set_rotation_y":
+          return {
+            suffix: "rotation_y",
+            label: "Y",
+            tooltip: "Apply the current HDRI Y rotation.",
+            slot: "hdri-rotation-y",
+            toolAction: "hdri_world.rotation_y"
+          };
+        case "set_rotation_z":
+          return {
+            suffix: "rotation_z",
+            label: "Z",
+            tooltip: "Apply the current HDRI Z rotation.",
+            slot: "hdri-rotation-z",
+            toolAction: "hdri_world.rotation_z"
+          };
+        default:
+          return {
+            suffix: "world_strength",
+            label: "WS",
+            tooltip: "Apply the current HDRI world strength.",
+            slot: "hdri-world-strength",
+            toolAction: "hdri_world.world_strength"
+          };
+      }
+    })();
+
+    const sourceButton = buildVirtualToolButton(
+      ownerButton,
+      `${ownerButton.Id}_${actionMeta.suffix}`,
+      actionMeta.label,
+      actionMeta.tooltip
+    );
+
+    await activateToolAction({
+      program: selectedProgram,
+      panel: selectedPanel,
+      ownerButton,
+      sourceButton,
+      toolId: "hdri_world",
+      toolCommand: action,
+      childSlotId: actionMeta.slot,
+      toolAction: actionMeta.toolAction,
+      selectedButtonId: ownerButton.Id,
+      kind: "tool_surface",
+      toolOptionState: {
+        ...values
+      },
+      payload:
+        action === "apply_theme_from_photo_manual_colors"
+          ? {
+              command: action,
+              headers_hex: values.ThemeHeadersHex,
+              text_hex: values.ThemeTextHex,
+              section_fill_hex: values.ThemeSectionFillHex,
+              controls_hex: values.ThemeControlsHex,
+              misc_hex: values.ThemeMiscHex,
+              darks_hex: values.ThemeDarksHex,
+              highlights_hex: values.ThemeHighlightsHex,
+              viewport_background_hex: values.ThemeViewportBackgroundHex,
+              viewport_gradient_enabled: values.ThemeViewportGradientEnabled,
+              viewport_gradient_hex: values.ThemeViewportGradientHex
+            }
+          : {
+              command: action,
+              hdri_path: values.HdriPath,
+              static_background_path: values.StaticBackgroundPath,
+              rotation_x_deg: values.RotationXDeg,
+              rotation_y_deg: values.RotationYDeg,
+              rotation_z_deg: values.RotationZDeg,
+              world_strength: values.WorldStrength
+            }
+    });
   };
 
   const handleFlattenRevolveAction = async (
@@ -4971,6 +5563,18 @@ export default function App() {
     });
   };
 
+  const handleOpenButtonReorderAction = async () => {
+    if (!selectedProgram || !selectedPanel || selectedPanel.Buttons.length <= 1) {
+      return;
+    }
+
+    await openButtonReorderWindow({
+      programId: selectedProgram.ProgramTabId,
+      panelId: selectedPanel.Id,
+      panelName: selectedPanel.Name
+    });
+  };
+
   const handleOpenButtonOptionsAction = async () => {
     if (!selectedProgram || !selectedPanel || selectedPopButtons.length === 0) {
       return;
@@ -4982,6 +5586,31 @@ export default function App() {
       panelName: selectedPanel.Name,
       buttonIds: selectedPopButtons.map((button) => button.Id)
     });
+  };
+
+  const handleButtonReorderDrop = async (
+    sourceButtonId: string,
+    targetButtonId: string,
+    placement: "before" | "after"
+  ) => {
+    if (!selectedProgram || !selectedPanel || sourceButtonId === targetButtonId) {
+      return;
+    }
+
+    await persistLatestMutation((currentState) =>
+      reorderPanelButtons(
+        currentState,
+        selectedProgram.ProgramTabId,
+        selectedPanel.Id,
+        sourceButtonId,
+        targetButtonId,
+        placement
+      )
+    );
+    pushFrontendEvent(
+      inferSurfaceName(windowContext),
+      `Button order updated. ${sourceButtonId} ${placement} ${targetButtonId}`
+    );
   };
 
   const handleSaveButtonAppearance = async (
@@ -5959,7 +6588,7 @@ export default function App() {
     return (
       <div
         key={button.Id}
-        className={`button-host ${isAlignmentOwnerButton(button) || isFlattenRevolveOwnerButton(button) || isQuickRotateGroupOwnerButton(button) || isSmartAxisOwnerButton(button) ? "button-host--compound" : ""} button-host--compact`}
+        className={`button-host ${isAlignmentOwnerButton(button) || isFlattenRevolveOwnerButton(button) || isHdriWorldOwnerButton(button) || isQuickRotateGroupOwnerButton(button) || isSmartAxisOwnerButton(button) ? "button-host--compound" : ""} button-host--compact`}
       >
         <ButtonCard
           button={button}
@@ -6188,7 +6817,9 @@ export default function App() {
     variant: "default" | "panel-fan" | "floating-fanout" | "transparent-button" = "default"
   ) => {
     const shellModeClass =
-      windowContext.kind === "button-appearance" || windowContext.kind === "button-options"
+      windowContext.kind === "button-appearance" ||
+      windowContext.kind === "button-reorder" ||
+      windowContext.kind === "button-options"
         ? "app-shell--editor-popout"
         : windowContext.kind === "layout-picker"
           ? "app-shell--picker-popout"
@@ -6196,7 +6827,9 @@ export default function App() {
             ? "app-shell--transparent-button-popout"
           : "";
     const contentModeClass =
-      windowContext.kind === "button-appearance" || windowContext.kind === "button-options"
+      windowContext.kind === "button-appearance" ||
+      windowContext.kind === "button-reorder" ||
+      windowContext.kind === "button-options"
         ? "slim-popout-shell__content--editor"
         : windowContext.kind === "layout-picker"
           ? "slim-popout-shell__content--picker"
@@ -6211,7 +6844,7 @@ export default function App() {
       data-theme-variant={appThemeVariant}
     >
       <main
-        className={`slim-popout-shell slim-popout-shell--${kind} ${windowContext.kind === "button-appearance" || windowContext.kind === "button-options" ? "slim-popout-shell--editor" : ""} ${windowContext.kind === "layout-picker" ? "slim-popout-shell--picker" : ""} ${variant === "panel-fan" ? "slim-popout-shell--panel-fan" : ""} ${variant === "floating-fanout" ? "slim-popout-shell--floating-fanout" : ""} ${variant === "transparent-button" ? "slim-popout-shell--transparent-button" : ""}`}
+        className={`slim-popout-shell slim-popout-shell--${kind} ${windowContext.kind === "button-appearance" || windowContext.kind === "button-reorder" || windowContext.kind === "button-options" ? "slim-popout-shell--editor" : ""} ${windowContext.kind === "layout-picker" ? "slim-popout-shell--picker" : ""} ${variant === "panel-fan" ? "slim-popout-shell--panel-fan" : ""} ${variant === "floating-fanout" ? "slim-popout-shell--floating-fanout" : ""} ${variant === "transparent-button" ? "slim-popout-shell--transparent-button" : ""}`}
         onPointerDown={() => {
           if (popoutContextMenu) {
             setPopoutContextMenu(null);
@@ -6548,6 +7181,61 @@ export default function App() {
       );
     }
 
+    if (isHdriWorldOwnerButton(toolPopoutOwnerButton)) {
+      return (
+        <div
+          className="tool-popout-surface"
+          onPointerDownCapture={() => {
+            if (popoutContextMenu) {
+              setPopoutContextMenu(null);
+            }
+          }}
+        >
+          <div className="surface-skin-content">
+            <HdriWorldToolSurface
+              ownerLabel={toolPopoutOwnerButton.Label}
+              panelName={selectedPanel.Name}
+              compact
+              styleGroup={popoutToolStyleGroup}
+              importedSkin={popoutToolImportedSkin}
+              values={normalizeHdriWorldToolValues(
+                getToolOptionState(
+                  state,
+                  selectedProgram.ProgramTabId,
+                  selectedPanel.Id,
+                  toolPopoutOwnerButton.Id,
+                  "hdri_world"
+                )?.Values
+              )}
+              onValueChange={(field, value) => {
+                updateHdriWorldToolValue(toolPopoutOwnerButton, field, value);
+              }}
+              onApply={(action, surfaceValues) => {
+                void handleHdriWorldApply(
+                  toolPopoutOwnerButton,
+                  action,
+                  surfaceValues
+                );
+              }}
+              onBrowsePath={() => {
+                void handleHdriWorldBrowse(toolPopoutOwnerButton);
+              }}
+              onBrowseThemePath={() => {
+                void handleThemeFromPhotoBrowse(toolPopoutOwnerButton);
+              }}
+              onApplyThemeMode={(mode, surfaceValues) => {
+                void handleThemeModeApply(
+                  toolPopoutOwnerButton,
+                  mode,
+                  surfaceValues
+                );
+              }}
+            />
+          </div>
+        </div>
+      );
+    }
+
     if (isQuickRotateGroupOwnerButton(toolPopoutOwnerButton)) {
       return (
         <div
@@ -6721,6 +7409,19 @@ export default function App() {
     />
   );
 
+  const renderButtonReorderSurface = () => (
+    <ButtonReorderWindow
+      panelName={selectedPanel.Name}
+      buttons={buttonReorderButtons}
+      onReorder={(sourceButtonId, targetButtonId, placement) =>
+        handleButtonReorderDrop(sourceButtonId, targetButtonId, placement)
+      }
+      onClose={() => {
+        void handleWindowClose();
+      }}
+    />
+  );
+
   const renderLayoutPickerSurface = () => {
     const closeWindow = () => {
       void getCurrentWindow().close().catch(() => {});
@@ -6825,6 +7526,10 @@ export default function App() {
 
   if (windowContext.kind === "button-appearance") {
     return renderSlimPopoutShell(renderButtonAppearanceSurface(), "tool", "default");
+  }
+
+  if (windowContext.kind === "button-reorder") {
+    return renderSlimPopoutShell(renderButtonReorderSurface(), "tool", "default");
   }
 
   if (windowContext.kind === "button-options") {
@@ -7141,6 +7846,9 @@ export default function App() {
                 appTheme={appTheme}
                 selectedPanelName={selectedPanel.Name}
                 onClose={() => setSurfaceMode("panel")}
+                onLoadTheme={(themeId) => {
+                  void handleApplyVisualTheme(themeId);
+                }}
                 onSaveTheme={() => {
                   void handleSaveVisualTheme();
                 }}
@@ -7219,6 +7927,7 @@ export default function App() {
                 onPanelFan={() => void handlePanelFanAction(selectedPanel)}
                 onPanelPop={() => void handlePanelPopAction(selectedPanel)}
                 onOpenButtonAppearance={() => void handleOpenButtonAppearanceAction()}
+                onOpenButtonReorder={() => void handleOpenButtonReorderAction()}
                 onOpenButtonOptions={() => void handleOpenButtonOptionsAction()}
                 onPanelFanOptions={() => void handlePanelFanOptionsAction(selectedPanel)}
                 onToggleAllWorkspaceButtons={toggleAllWorkspaceSelections}

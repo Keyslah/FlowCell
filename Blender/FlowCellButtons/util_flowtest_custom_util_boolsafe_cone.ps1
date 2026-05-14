@@ -1,4 +1,4 @@
-# Description: Add a Boolean-safe cone using the original low poly objects defaults and cleanup steps.
+# Description: Low poly cone.
 
 # Source Bridge Action: flowtest_custom_util_boolsafe_cone
 # Source Python Filename: flowtest_custom_util_boolsafe_cone.py
@@ -15,5 +15,5 @@
 $ErrorActionPreference = 'Stop'
 $supportRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'SupportScripts'
 $dispatcherPath = Join-Path $supportRoot 'Invoke-BlenderFlowCellAction.ps1'
-& $dispatcherPath -Action 'flowtest_custom_util_boolsafe_cone' -Label 'util_boolsafe_cone'
+& $dispatcherPath -Action 'flowtest_custom_util_boolsafe_cone' -Label 'Cone'
 exit $LASTEXITCODE

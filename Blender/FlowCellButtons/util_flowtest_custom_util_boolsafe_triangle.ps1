@@ -1,4 +1,4 @@
-# Description: Add a Boolean-safe triangular prism using the original low poly objects defaults and cleanup steps.
+# Description: Low poly triangular prism.
 
 # Source Bridge Action: flowtest_custom_util_boolsafe_triangle
 # Source Python Filename: flowtest_custom_util_boolsafe_triangle.py
@@ -15,5 +15,5 @@
 $ErrorActionPreference = 'Stop'
 $supportRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'SupportScripts'
 $dispatcherPath = Join-Path $supportRoot 'Invoke-BlenderFlowCellAction.ps1'
-& $dispatcherPath -Action 'flowtest_custom_util_boolsafe_triangle' -Label 'util_boolsafe_triangle'
+& $dispatcherPath -Action 'flowtest_custom_util_boolsafe_triangle' -Label 'Triangle'
 exit $LASTEXITCODE

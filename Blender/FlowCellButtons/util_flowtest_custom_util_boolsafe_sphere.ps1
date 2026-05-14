@@ -1,4 +1,4 @@
-# Description: Add a Boolean-safe sphere using the original low poly objects defaults and cleanup steps.
+# Description: Low poly sphere.
 
 # Source Bridge Action: flowtest_custom_util_boolsafe_sphere
 # Source Python Filename: flowtest_custom_util_boolsafe_sphere.py
@@ -15,5 +15,5 @@
 $ErrorActionPreference = 'Stop'
 $supportRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'SupportScripts'
 $dispatcherPath = Join-Path $supportRoot 'Invoke-BlenderFlowCellAction.ps1'
-& $dispatcherPath -Action 'flowtest_custom_util_boolsafe_sphere' -Label 'util_boolsafe_sphere'
+& $dispatcherPath -Action 'flowtest_custom_util_boolsafe_sphere' -Label 'Sphere'
 exit $LASTEXITCODE

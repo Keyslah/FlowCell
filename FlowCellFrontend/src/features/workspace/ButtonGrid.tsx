@@ -9,6 +9,7 @@ import {
   getSmartAxisCommandForButton,
   isAlignmentOwnerButton,
   isFlattenRevolveOwnerButton,
+  isHdriWorldOwnerButton,
   isQuickRotateGroupOwnerButton,
   isRegularPopCandidate,
   isSmartAxisButton,
@@ -96,6 +97,7 @@ function isToolOwnerPopCandidate(button: FlowCellButton): boolean {
   return (
     isAlignmentOwnerButton(button) ||
     isFlattenRevolveOwnerButton(button) ||
+    isHdriWorldOwnerButton(button) ||
     isQuickRotateGroupOwnerButton(button) ||
     isSmartAxisOwnerButton(button)
   );
@@ -280,7 +282,7 @@ function MainButtonHost({
 
   return (
     <div
-      className={`button-host ${isAlignmentOwnerButton(button) || isFlattenRevolveOwnerButton(button) || isQuickRotateGroupOwnerButton(button) || isSmartAxisOwnerButton(button) ? "button-host--compound" : ""}`}
+      className={`button-host ${isAlignmentOwnerButton(button) || isFlattenRevolveOwnerButton(button) || isHdriWorldOwnerButton(button) || isQuickRotateGroupOwnerButton(button) || isSmartAxisOwnerButton(button) ? "button-host--compound" : ""}`}
       onPointerDownCapture={(event) => {
         if (isToolbarEventTarget(event.target)) {
           return;

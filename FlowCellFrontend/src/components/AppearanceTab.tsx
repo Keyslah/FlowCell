@@ -3,6 +3,7 @@ import type {
   AppTheme,
   FlowCellState,
   ImportedSkin,
+  SavedVisualTheme,
   StyleGroup,
   SurfaceStyleSectionId
 } from "../types";
@@ -27,6 +28,7 @@ interface AppearanceTabProps {
   appTheme: AppTheme;
   selectedPanelName: string;
   onClose: () => void;
+  onLoadTheme: (themeId: string) => void;
   onSaveTheme: () => void;
   onApplyDarkTheme: () => void;
   onApplyBlackTintCards: () => void;
@@ -89,7 +91,7 @@ const MAIN_PAGE_SECTIONS: SectionCardConfig[] = [
     id: "main-buttons",
     title: "Workspace Buttons",
     description:
-      "Default main-page button surfaces when a button does not have its own Button Appearance. Uses saved button code.",
+      "Default main-page button surfaces when a button does not have its own Button Appearance. This is global across the main page, so use the panel-level Appearance window for one panel only. Uses saved button code.",
     applyLabel: "Apply to Workspace Buttons",
     previewKind: "button",
     previewLabel: "Button"
@@ -228,11 +230,20 @@ function isDedicatedButtonStyleGroup(styleGroup: StyleGroup): boolean {
   );
 }
 
+function formatSavedThemeLabel(theme: SavedVisualTheme): string {
+  const parsedTimestamp = Date.parse(theme.savedAt);
+  if (Number.isNaN(parsedTimestamp)) {
+    return theme.name;
+  }
+  return `${theme.name} (${new Date(parsedTimestamp).toLocaleString()})`;
+}
+
 export function AppearanceTab({
   state,
   appTheme,
   selectedPanelName,
   onClose,
+  onLoadTheme,
   onSaveTheme,
   onApplyDarkTheme,
   onApplyBlackTintCards,
@@ -282,6 +293,14 @@ export function AppearanceTab({
   const [editorSkinId, setEditorSkinId] = useState<string>("");
   const [editorDraft, setEditorDraft] = useState<ImportedSkin>(createBlankImportedSkinDraft());
   const [themeDraft, setThemeDraft] = useState<AppTheme>({ ...appTheme });
+  const [selectedSavedThemeId, setSelectedSavedThemeId] = useState<string>("");
+  const savedThemes = useMemo(
+    () =>
+      [...(state.SavedVisualThemes ?? [])].sort(
+        (left, right) => Date.parse(right.savedAt) - Date.parse(left.savedAt)
+      ),
+    [state.SavedVisualThemes]
+  );
 
   useEffect(() => {
     setSectionDrafts({
@@ -301,6 +320,15 @@ export function AppearanceTab({
   useEffect(() => {
     setThemeDraft({ ...appTheme });
   }, [appTheme]);
+
+  useEffect(() => {
+    if (!selectedSavedThemeId.trim()) {
+      return;
+    }
+    if (!savedThemes.some((theme) => theme.id === selectedSavedThemeId)) {
+      setSelectedSavedThemeId("");
+    }
+  }, [savedThemes, selectedSavedThemeId]);
 
   useEffect(() => {
     if (!editorSkinId.trim()) {
@@ -444,8 +472,36 @@ export function AppearanceTab({
           The shell theme is currently <strong>{appTheme.name}</strong>. Theme preset actions only
           update the shell page plus the host rails, main panel box, cards, and chrome. Button
           sections use saved button HTML/CSS/SVG. Rail, card, and host-surface sections use the
-          saved card HTML/CSS/SVG.
+          saved card HTML/CSS/SVG. For one-panel button styling such as Windows / Files, go back
+          to <strong> Buttons</strong> and use that panel&apos;s <strong>Appearance</strong> window
+          instead of the global Workspace Buttons section here.
         </p>
+        <div className="appearance-theme-grid">
+          <label>
+            Saved Theme
+            <select
+              value={selectedSavedThemeId}
+              onChange={(event) => setSelectedSavedThemeId(event.target.value)}
+            >
+              <option value="">Choose saved theme...</option>
+              {savedThemes.map((theme) => (
+                <option key={theme.id} value={theme.id}>
+                  {formatSavedThemeLabel(theme)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <div className="program-manager__actions">
+            <button
+              type="button"
+              className="surface-action"
+              disabled={!selectedSavedThemeId.trim()}
+              onClick={() => onLoadTheme(selectedSavedThemeId)}
+            >
+              Load Theme
+            </button>
+          </div>
+        </div>
       </section>
 
       <section className="surface-card appearance-card">

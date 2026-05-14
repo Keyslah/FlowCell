@@ -1,4 +1,4 @@
-# Description: Add a Boolean-safe cube using the original low poly objects defaults and cleanup steps.
+# Description: Low poly cube.
 
 # Source Bridge Action: flowtest_custom_util_boolsafe_cube
 # Source Python Filename: flowtest_custom_util_boolsafe_cube.py
@@ -15,5 +15,5 @@
 $ErrorActionPreference = 'Stop'
 $supportRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'SupportScripts'
 $dispatcherPath = Join-Path $supportRoot 'Invoke-BlenderFlowCellAction.ps1'
-& $dispatcherPath -Action 'flowtest_custom_util_boolsafe_cube' -Label 'util_boolsafe_cube'
+& $dispatcherPath -Action 'flowtest_custom_util_boolsafe_cube' -Label 'Cube'
 exit $LASTEXITCODE

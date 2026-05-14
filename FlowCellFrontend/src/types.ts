@@ -363,6 +363,7 @@ export interface WindowContext {
     | "tool-popout"
     | "panel-fan-options"
     | "button-appearance"
+    | "button-reorder"
     | "button-options"
     | "layout-picker";
   programId?: number;

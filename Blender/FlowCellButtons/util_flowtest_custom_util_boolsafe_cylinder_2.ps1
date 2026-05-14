@@ -1,4 +1,4 @@
-# Description: Add a Boolean-safe cylinder using the original low poly objects defaults and cleanup steps.
+# Description: Low poly cylinder.
 
 # Source Bridge Action: flowtest_custom_util_boolsafe_cylinder_2
 # Source Python Filename: flowtest_custom_util_boolsafe_cylinder_2.py
@@ -15,5 +15,5 @@
 $ErrorActionPreference = 'Stop'
 $supportRoot = Join-Path (Split-Path -Parent $PSScriptRoot) 'SupportScripts'
 $dispatcherPath = Join-Path $supportRoot 'Invoke-BlenderFlowCellAction.ps1'
-& $dispatcherPath -Action 'flowtest_custom_util_boolsafe_cylinder_2' -Label 'util_boolsafe_cylinder'
+& $dispatcherPath -Action 'flowtest_custom_util_boolsafe_cylinder_2' -Label 'Cylinder'
 exit $LASTEXITCODE
