@@ -1,9 +1,9 @@
 {
-    "exported_at":  "2026-05-15T20:01:31.4755505-05:00",
+    "exported_at":  "2026-05-16T00:00:23.2107171-05:00",
     "source_state_path":  "D:\\Dev\\workspace\\Codex\\FlowTest\\FlowCell\\local\\flowcell_state.json",
     "output_root":  "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts",
-    "blender_panel_count":  7,
-    "blender_button_count":  43,
+    "blender_panel_count":  8,
+    "blender_button_count":  44,
     "recycled_paths":  [
                            "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\Files\\cura.py",
                            "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\Files\\orca.py",
@@ -47,7 +47,8 @@
                            "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\Shapes\\Cylinder.py",
                            "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\Shapes\\Sphere.py",
                            "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\Shapes\\Triangle.py",
-                           "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\f\\snapshot.py"
+                           "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\f\\snapshot.py",
+                           "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\tool set 2\\alignment tools.py"
                        ],
     "entries":  [
                     {
@@ -608,6 +609,19 @@
                         "state_target":  "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\Collections\\snapshot.py",
                         "execution_target":  "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\FlowCellButtons\\util_flowtest_custom_snapshot_7.ps1",
                         "export_path":  "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\f\\snapshot.py"
+                    },
+                    {
+                        "panel":  "tool set 2",
+                        "button_id":  "button_c3d91417025e4438a5e6304dd5a93c3f",
+                        "label":  "alignment tools",
+                        "tooltip":  "Open FlowCell alignment controls for active-object min, center, max, surface, and geocenter alignment.",
+                        "source_kind":  "copied_source",
+                        "source_path":  "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\ManagedActions\\flowtest_custom_alignment_tools.py",
+                        "action":  "",
+                        "notes":  "",
+                        "state_target":  "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\Tool Set\\alignment tools.py",
+                        "execution_target":  "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\FlowCellButtons\\util_flowtest_custom_alignment_tools.ps1",
+                        "export_path":  "D:\\Dev\\workspace\\Codex\\FlowTest\\Blender\\Blender Active Scripts\\tool set 2\\alignment tools.py"
                     }
                 ]
 }

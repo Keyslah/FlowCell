@@ -271,6 +271,13 @@ interface ProgramManagerState {
   selectedSavedProgramId: number | null;
 }
 
+interface PanelDeleteDialogState {
+  programId: number;
+  panelId: string;
+  panelName: string;
+  programLabel: string;
+}
+
 interface BindTargetState {
   button: FlowCellButton;
   programId: number;
@@ -2048,6 +2055,7 @@ export default function App() {
   const [buttonAppearanceButtonId, setButtonAppearanceButtonId] = useState("");
   const [layoutPicker, setLayoutPicker] = useState<LayoutPickerState | null>(null);
   const [programManager, setProgramManager] = useState<ProgramManagerState | null>(null);
+  const [panelDeleteDialog, setPanelDeleteDialog] = useState<PanelDeleteDialogState | null>(null);
   const [macroPicker, setMacroPicker] = useState<MacroPickerState | null>(null);
   const [programContextMenu, setProgramContextMenu] = useState<ProgramContextMenuState | null>(
     null
@@ -2302,6 +2310,10 @@ export default function App() {
       : selectedProgram
         ? getSelectedPanel(selectedProgram)
         : undefined;
+  const selectedSmartAxisOwnerButton = selectedPanel
+    ? selectedPanel.Buttons.find((button) => isSmartAxisOwnerButton(button)) ??
+      selectedPanel.Buttons.find((button) => isSmartAxisButton(button))
+    : undefined;
   const hasWorkspaceSelection = Boolean(selectedProgram && selectedPanel);
   const savedPrograms = useMemo<SavedProgramRecord[]>(
     () =>
@@ -2321,6 +2333,65 @@ export default function App() {
         (program) => program.ProgramTabId === selectedSavedProgram.SourceProgramTabId
       )
   );
+
+  useEffect(() => {
+    if (!runtime || !selectedProgram || !selectedPanel || !selectedSmartAxisOwnerButton) {
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const nextToolOptionState = await fetchSmartAxisStatus(
+        selectedProgram,
+        selectedPanel,
+        selectedSmartAxisOwnerButton
+      );
+      if (cancelled || !nextToolOptionState) {
+        return;
+      }
+
+      const currentStateSnapshot = latestStateRef.current ?? state;
+      if (!currentStateSnapshot) {
+        return;
+      }
+
+      const currentToolOptionState = toObjectRecord(
+        getToolOptionState(
+          currentStateSnapshot,
+          selectedProgram.ProgramTabId,
+          selectedPanel.Id,
+          selectedSmartAxisOwnerButton.Id,
+          "smart_axis_lock"
+        )?.Values
+      );
+      const currentSmartAxisState = normalizeSmartAxisState(currentToolOptionState);
+      const nextSmartAxisState = normalizeSmartAxisState(nextToolOptionState);
+      if (JSON.stringify(currentSmartAxisState) === JSON.stringify(nextSmartAxisState)) {
+        return;
+      }
+
+      await persistLatestMutation((currentState) =>
+        updateToolOptionState(
+          currentState,
+          selectedProgram.ProgramTabId,
+          selectedPanel.Id,
+          selectedSmartAxisOwnerButton.Id,
+          "smart_axis_lock",
+          nextToolOptionState
+        )
+      );
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    runtime,
+    selectedProgram?.ProgramTabId,
+    selectedPanel?.Id,
+    selectedSmartAxisOwnerButton?.Id,
+    windowContext?.kind
+  ]);
 
   const activeToolPopout =
     state &&
@@ -5003,6 +5074,40 @@ export default function App() {
     return dispatchEnvelope(commandEnvelope, args.selectedButtonId);
   };
 
+  const fetchSmartAxisStatus = async (
+    program: FlowCellProgram,
+    panel: FlowCellPanel,
+    ownerButton: FlowCellButton
+  ) => {
+    if (!runtime) {
+      return null;
+    }
+
+    const commandEnvelope = buildToolActionEnvelope({
+      runtime,
+      program,
+      panel,
+      ownerButton,
+      sourceButton: ownerButton,
+      sourceSurface: inferSurfaceName(windowContext),
+      toolId: "smart_axis_lock",
+      toolCommand: "status",
+      childSlotId: "smart-axis-status",
+      toolAction: "smart_axis_lock.status",
+      kind: "tool_surface"
+    });
+
+    try {
+      const result = await emitCommand(commandEnvelope);
+      if (!result.ok) {
+        return null;
+      }
+      return extractToolOptionState(result) ?? null;
+    } catch {
+      return null;
+    }
+  };
+
   const handleFanoutChildActivate = async (
     ownerButton: FlowCellButton,
     entry: FanClusterEntry
@@ -6191,9 +6296,13 @@ export default function App() {
 
     const sourceButton =
       buttons.find((button) => getSmartAxisCommandForButton(button) === action) ?? ownerButton;
+    const currentStateSnapshot = latestStateRef.current ?? state;
+    if (!currentStateSnapshot) {
+      return;
+    }
     const currentOptionState = toObjectRecord(
       getToolOptionState(
-        state,
+        currentStateSnapshot,
         selectedProgram.ProgramTabId,
         selectedPanel.Id,
         ownerButton.Id,
@@ -6227,7 +6336,7 @@ export default function App() {
                 LiveEnabled: currentSmartAxisState.LiveEnabled
               }
             : nextToolOptionState;
-        persistLatestLocalMutation((currentState) =>
+        const applySmartAxisState = (currentState: FlowCellState) =>
           updateToolOptionState(
             currentState,
             selectedProgram.ProgramTabId,
@@ -6235,8 +6344,12 @@ export default function App() {
             ownerButton.Id,
             "smart_axis_lock",
             resolvedToolOptionState
-          )
-        );
+          );
+        if (action === "toggle_live") {
+          await persistLatestMutation(applySmartAxisState);
+        } else {
+          persistLatestLocalMutation(applySmartAxisState);
+        }
       }
     }
   };
@@ -6736,6 +6849,61 @@ export default function App() {
     await handleDeleteButtonOptionsButtons(selectedPopButtons.map((button) => button.Id));
   };
 
+  const handleDeleteSelectedPanel = () => {
+    if (!selectedProgram || !selectedPanel || selectedProgram.Panels.length <= 1) {
+      return;
+    }
+
+    setPanelDeleteDialog({
+      programId: selectedProgram.ProgramTabId,
+      panelId: selectedPanel.Id,
+      panelName: selectedPanel.Name,
+      programLabel: formatProgramDisplayLabel(selectedProgram)
+    });
+  };
+
+  const handleConfirmDeleteSelectedPanel = async () => {
+    if (!panelDeleteDialog) {
+      return;
+    }
+
+    const { programId, panelId, panelName } = panelDeleteDialog;
+    const programToDeleteFrom =
+      state ? findProgram(latestStateRef.current ?? state, programId) ?? null : null;
+
+    try {
+      await persistLatestMutation((currentState) => deletePanel(currentState, programId, panelId));
+      if (programToDeleteFrom) {
+        await refreshBlenderButtonSourceMirrorsIfNeeded(
+          programToDeleteFrom,
+          "Blender button source"
+        );
+      }
+      await closePanelWindows(programId, panelId);
+      setSelectedPopButtonIds([]);
+      setButtonContextMenu(null);
+      setPopoutContextMenu(null);
+      setPanelDeleteDialog(null);
+      scheduleSelectedButtonRef((current) =>
+        current && current.programId === programId && current.panelId === panelId ? null : current
+      );
+      setBindTarget((current) =>
+        current && current.programId === programId && current.panelId === panelId ? null : current
+      );
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Deleted panel ${panelName}.`
+      );
+    } catch (error) {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Delete Panel failed. ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      setPanelDeleteDialog(null);
+    }
+  };
+
   const handleAddProgram = () => {
     const defaultSavedProgram =
       savedPrograms.find(
@@ -6881,49 +7049,6 @@ export default function App() {
       pushFrontendEvent(
         inferSurfaceName(windowContext),
         `Delete Program failed. ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  };
-
-  const handleDeleteSelectedPanel = async () => {
-    if (!selectedProgram || !selectedPanel || selectedProgram.Panels.length <= 1) {
-      return;
-    }
-
-    const programId = selectedProgram.ProgramTabId;
-    const panelId = selectedPanel.Id;
-    const panelName = selectedPanel.Name;
-    const confirmed = window.confirm(
-      `Delete panel "${panelName}" from ${formatProgramDisplayLabel(selectedProgram)}?`
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    try {
-      await persistLatestMutation((currentState) => deletePanel(currentState, programId, panelId));
-      await refreshBlenderButtonSourceMirrorsIfNeeded(
-        selectedProgram,
-        "Blender button source"
-      );
-      await closePanelWindows(programId, panelId);
-      setSelectedPopButtonIds([]);
-      setButtonContextMenu(null);
-      setPopoutContextMenu(null);
-      scheduleSelectedButtonRef((current) =>
-        current && current.programId === programId && current.panelId === panelId ? null : current
-      );
-      setBindTarget((current) =>
-        current && current.programId === programId && current.panelId === panelId ? null : current
-      );
-      pushFrontendEvent(
-        inferSurfaceName(windowContext),
-        `Deleted panel ${panelName}.`
-      );
-    } catch (error) {
-      pushFrontendEvent(
-        inferSurfaceName(windowContext),
-        `Delete Panel failed. ${error instanceof Error ? error.message : String(error)}`
       );
     }
   };
@@ -9013,6 +9138,56 @@ export default function App() {
           >
             Delete
           </button>
+        </div>
+      ) : null}
+
+      {panelDeleteDialog ? (
+        <div className="modal-backdrop" role="presentation" onClick={() => setPanelDeleteDialog(null)}>
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Delete panel confirmation"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="modal-card__header">
+              <div>
+                <h2>Delete Panel</h2>
+                <span className="caption">
+                  Are you sure you want to delete this panel?
+                </span>
+              </div>
+              <button
+                type="button"
+                className="modal-card__close"
+                onClick={() => setPanelDeleteDialog(null)}
+              >
+                No
+              </button>
+            </div>
+            <div className="status-block">
+              <span className="caption">Panel: {panelDeleteDialog.panelName}</span>
+              <span className="caption">Program: {panelDeleteDialog.programLabel}</span>
+            </div>
+            <div className="modal-card__actions">
+              <HostSkinButton
+                type="button"
+                label="Yes"
+                className="surface-action"
+                styleGroup={miscStyleGroup}
+                importedSkin={miscImportedSkin}
+                onClick={() => void handleConfirmDeleteSelectedPanel()}
+              />
+              <HostSkinButton
+                type="button"
+                label="No"
+                className="surface-action"
+                styleGroup={miscStyleGroup}
+                importedSkin={miscImportedSkin}
+                onClick={() => setPanelDeleteDialog(null)}
+              />
+            </div>
+          </div>
         </div>
       ) : null}
 

@@ -2,7 +2,9 @@ export type CommandId =
   | "flowcell.run_script"
   | "flowcell.run_macro"
   | "flowcell.run_tool_action"
-  | "flowcell.run_builtin";
+  | "flowcell.run_builtin"
+  | "windows.chrome_workspace.save"
+  | "windows.chrome_workspace.open";
 
 export interface FlowCellBounds {
   Left: number;

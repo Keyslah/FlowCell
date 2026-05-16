@@ -1,6 +1,5 @@
 # Description: Delete empty collections while keeping the system roots.
 
-
 # Source Bridge Action: empty_collections
 # Source Python Filename: flowtest_actions.py
 # Source Python File: C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\flowtest_actions.py

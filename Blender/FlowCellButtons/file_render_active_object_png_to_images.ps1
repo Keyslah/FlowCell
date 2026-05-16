@@ -1,6 +1,5 @@
 # Description: Render the active selected object from the current scene camera to 01 src\04 assets\01 images as a transparent PNG cropped exactly to the visible object bounds.
 
-
 # Source Bridge Action: render_active_object_png_to_images
 # Source Python Filename: flowtest_actions.py
 # Source Python File: C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\flowtest_actions.py

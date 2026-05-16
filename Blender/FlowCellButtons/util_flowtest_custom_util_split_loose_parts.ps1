@@ -1,6 +1,5 @@
 # Description: Split joined or physically separated parts into disconnected objects and set each new origin to geometry.
 
-
 # Source Bridge Action: flowtest_custom_util_split_loose_parts
 # Source Python Filename: flowtest_custom_util_split_loose_parts.py
 # Source Python File: D:\Dev\workspace\Codex\FlowTest\Blender\ManagedActions\flowtest_custom_util_split_loose_parts.py

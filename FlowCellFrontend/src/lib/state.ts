@@ -979,6 +979,117 @@ function normalizeScriptButtonForProgram(
   }
 }
 
+function buildWindowsChromeWorkspaceButtons(
+  program: FlowCellProgram,
+  folders: ProgramManagedFolders | null
+): FlowCellButton[] {
+  const activeRoot =
+    normalizeWindowsPath(program.ProgramConfig?.ActiveScriptFolder ?? "") ||
+    normalizeWindowsPath(program.ProgramConfig?.RuntimeScriptFolder ?? "") ||
+    folders?.activeFolder ||
+    "";
+  if (!activeRoot) {
+    return [];
+  }
+
+  return [
+    {
+      Id: "button_windows_save_chrome_workspace",
+      Kind: "script",
+      Label: "Save Chrome Workspace",
+      Target: joinWindowsPath(activeRoot, "save_chrome_workspace.ps1"),
+      ExecutionTarget: joinWindowsPath(activeRoot, "save_chrome_workspace.ps1"),
+      Tooltip: "Capture the current Chrome windows, URLs, and placement into the local Chrome workspace JSON.",
+      Shortcut: "",
+      BindingId: 0,
+      command_id: "windows.chrome_workspace.save",
+      style_group_id: "",
+      transparent_popout: false
+    },
+    {
+      Id: "button_windows_open_chrome_workspace",
+      Kind: "script",
+      Label: "Open Chrome Workspace",
+      Target: joinWindowsPath(activeRoot, "open_chrome_workspace.ps1"),
+      ExecutionTarget: joinWindowsPath(activeRoot, "open_chrome_workspace.ps1"),
+      Tooltip: "Open the saved Chrome workspace and place each Chrome window back on its saved monitor and bounds.",
+      Shortcut: "",
+      BindingId: 0,
+      command_id: "windows.chrome_workspace.open",
+      style_group_id: "",
+      transparent_popout: false
+    }
+  ];
+}
+
+function ensureWindowsChromeWorkspaceButtons(
+  program: FlowCellProgram,
+  folders: ProgramManagedFolders | null
+): FlowCellProgram {
+  if (folders?.templateKey !== "windows") {
+    return program;
+  }
+
+  const utilityPanelIndex = program.Panels.findIndex(
+    (panel) => panel.Id === "panel_utility" || panel.Name.trim().toLowerCase() === "utility"
+  );
+  if (utilityPanelIndex < 0) {
+    return program;
+  }
+
+  const requiredButtons = buildWindowsChromeWorkspaceButtons(program, folders);
+  if (requiredButtons.length === 0) {
+    return program;
+  }
+
+  const utilityPanel = program.Panels[utilityPanelIndex];
+  const nextButtons = [...utilityPanel.Buttons];
+
+  for (const requiredButton of requiredButtons) {
+    const targetName = targetFileName(requiredButton.Target);
+    const existingIndex = nextButtons.findIndex((button) => {
+      if (button.Id === requiredButton.Id) {
+        return true;
+      }
+      const existingTarget = resolveButtonExecutionTarget(button) || button.Target;
+      return targetFileName(existingTarget) === targetName;
+    });
+
+    if (existingIndex >= 0) {
+      const existingButton = nextButtons[existingIndex];
+      nextButtons[existingIndex] = {
+        ...existingButton,
+        Kind: requiredButton.Kind,
+        Target: requiredButton.Target,
+        ExecutionTarget: requiredButton.ExecutionTarget,
+        Tooltip:
+          existingButton.Tooltip && existingButton.Tooltip.trim().length > 0
+            ? existingButton.Tooltip
+            : requiredButton.Tooltip,
+        Label:
+          existingButton.Label && existingButton.Label.trim().length > 0
+            ? existingButton.Label
+            : requiredButton.Label,
+        command_id: requiredButton.command_id
+      };
+      continue;
+    }
+
+    nextButtons.push(requiredButton);
+  }
+
+  const nextPanels = [...program.Panels];
+  nextPanels[utilityPanelIndex] = {
+    ...utilityPanel,
+    Buttons: nextButtons
+  };
+
+  return {
+    ...program,
+    Panels: nextPanels
+  };
+}
+
 function normalizeProgram(program: FlowCellProgram): FlowCellProgram {
   const folders = resolveProgramManagedFolders(program);
   const normalizedPanels = program.Panels.map((panel) => ({
@@ -1007,7 +1118,7 @@ function normalizeProgram(program: FlowCellProgram): FlowCellProgram {
           : undefined
     }))
   }));
-  return {
+  return ensureWindowsChromeWorkspaceButtons({
     ...program,
     ProgramConfig: normalizeProgramConfig(program.ProgramConfig, folders),
     style_group_id:
@@ -1015,7 +1126,7 @@ function normalizeProgram(program: FlowCellProgram): FlowCellProgram {
         ? program.style_group_id
         : DEFAULT_PROGRAM_STYLE_GROUP_ID,
     Panels: normalizedPanels
-  };
+  }, folders);
 }
 
 function getBindingNumericId(binding: FlowCellBindingsState["scriptBindings"][number]): number {

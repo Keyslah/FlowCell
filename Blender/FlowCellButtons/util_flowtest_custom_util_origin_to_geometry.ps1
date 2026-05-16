@@ -1,6 +1,5 @@
 # Description: Set each selected object's origin to its geometry center in Object Mode.
 
-
 # Source Bridge Action: flowtest_custom_util_origin_to_geometry
 # Source Python Filename: flowtest_custom_util_origin_to_geometry.py
 # Source Python File: D:\Dev\workspace\Codex\FlowTest\Blender\ManagedActions\flowtest_custom_util_origin_to_geometry.py

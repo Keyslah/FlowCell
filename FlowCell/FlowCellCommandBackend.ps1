@@ -691,6 +691,8 @@ try {
 
     $result = switch ([string]$envelope.command_id) {
         'flowcell.run_script' { Invoke-FlowCellScriptCommand -Envelope $envelope; break }
+        'windows.chrome_workspace.save' { Invoke-FlowCellScriptCommand -Envelope $envelope; break }
+        'windows.chrome_workspace.open' { Invoke-FlowCellScriptCommand -Envelope $envelope; break }
         'flowcell.run_macro' { Invoke-FlowCellMacroCommand -Envelope $envelope; break }
         'flowcell.run_tool_action' { Invoke-FlowCellToolCommand -Envelope $envelope; break }
         'flowcell.run_builtin' { Invoke-FlowCellBuiltinCommand -Envelope $envelope; break }

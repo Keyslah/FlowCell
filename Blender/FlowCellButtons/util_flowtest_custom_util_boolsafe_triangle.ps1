@@ -1,6 +1,5 @@
 # Description: Low poly triangular prism.
 
-
 # Source Bridge Action: flowtest_custom_util_boolsafe_triangle
 # Source Python Filename: flowtest_custom_util_boolsafe_triangle.py
 # Source Python File: D:\Dev\workspace\Codex\FlowTest\Blender\ManagedActions\flowtest_custom_util_boolsafe_triangle.py

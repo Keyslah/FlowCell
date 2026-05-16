@@ -1,6 +1,5 @@
 # Description: Import an OBJ, rotate it -90 degrees on X, scale it 10x, and apply transforms. (from Illustrator export)
 
-
 # Source Bridge Action: flowtest_custom_util_import_obj_fix_transform
 # Source Python Filename: flowtest_custom_util_import_obj_fix_transform.py
 # Source Python File: D:\Dev\workspace\Codex\FlowTest\Blender\ManagedActions\flowtest_custom_util_import_obj_fix_transform.py

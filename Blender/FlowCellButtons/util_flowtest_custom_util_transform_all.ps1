@@ -1,6 +1,5 @@
 # Description: Apply location, rotation, and scale to all selected objects in Object Mode.
 
-
 # Source Bridge Action: flowtest_custom_util_transform_all
 # Source Python Filename: flowtest_custom_util_transform_all.py
 # Source Python File: D:\Dev\workspace\Codex\FlowTest\Blender\ManagedActions\flowtest_custom_util_transform_all.py
