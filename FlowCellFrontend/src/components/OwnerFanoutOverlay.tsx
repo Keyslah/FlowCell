@@ -118,6 +118,7 @@ export function OwnerFanoutOverlay({
               <HostSkinButton
                 type="button"
                 label={entry.button.Label}
+                flowId={entry.button.Id}
                 title={entry.button.Tooltip || entry.button.Label}
                 className="owner-fanout-overlay__button"
                 styleGroup={styleGroup}

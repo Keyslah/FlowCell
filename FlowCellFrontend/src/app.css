@@ -265,6 +265,7 @@ button {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+  min-width: 0;
 }
 
 .chrome-bar__drag-region {
@@ -300,6 +301,9 @@ button {
 .chrome-bar__window-actions {
   display: flex;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
 }
 
 .chrome-bar__window-actions button,
@@ -472,28 +476,30 @@ button {
   transform: scale(0.97);
 }
 
-.program-rail__skin {
-  position: relative;
+.program-rail__button.host-skin-button {
+  display: block;
+}
+
+.program-rail__button.host-skin-button .host-skin-button__frame {
   min-height: 72px;
   border-radius: inherit;
-  overflow: hidden;
   font-size: 0.9rem;
   transition: box-shadow 180ms ease;
 }
 
-.program-rail__button:hover .program-rail__skin,
-.program-rail__button:focus-visible .program-rail__skin,
-.program-rail__button.is-active .program-rail__skin {
+.program-rail__button.host-skin-button:hover .host-skin-button__frame,
+.program-rail__button.host-skin-button:focus-visible .host-skin-button__frame,
+.program-rail__button.host-skin-button.is-active .host-skin-button__frame {
   box-shadow: 0 10px 24px color-mix(in srgb, var(--fc-theme-surface-shadow) 14%, transparent);
 }
 
-.program-rail__skin > .button-skin {
+.program-rail__button.host-skin-button .host-skin-button__frame > .button-skin {
   min-height: 72px;
   padding: 0;
   border-radius: inherit;
 }
 
-.program-rail__skin .button-skin__label {
+.program-rail__button.host-skin-button .button-skin__label {
   width: 100%;
   padding: 0 28px;
   overflow: hidden;
@@ -504,10 +510,13 @@ button {
 
 .host-skin-button {
   position: relative;
+  display: inline-flex;
+  align-items: stretch;
+  justify-content: stretch;
   padding: 0;
   border: 0;
   background: transparent;
-  overflow: hidden;
+  overflow: visible;
   color: inherit;
   text-align: center;
 }
@@ -515,43 +524,68 @@ button {
 .host-skin-button__frame {
   position: relative;
   isolation: isolate;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
+  display: grid;
+  place-items: center;
+  width: auto;
   min-width: 0;
-  min-height: 100%;
+  height: auto;
+  min-height: 0;
   border-radius: inherit;
-  overflow: hidden;
+  overflow: visible;
   text-align: center;
+}
+
+.host-skin-button__frame[data-flow-sizing="responsive-uniform"] {
+  container-type: size;
 }
 
 .host-skin-button__frame > .button-skin {
   display: flex;
   align-items: center;
   justify-content: center;
+  width: max-content;
+  height: max-content;
+  max-width: 100%;
+  max-height: 100%;
+  min-width: 0;
+  padding: 0;
+  transform: scale(var(--flow-scale, 1));
+  transform-origin: center center;
+}
+
+.host-skin-button__frame[data-flow-sizing="fill-stretch"],
+.host-skin-button__frame[data-flow-sizing="cover-crop"] {
+  overflow: hidden;
+}
+
+.host-skin-button__frame > .button-skin[data-flow-sizing="fill-stretch"] {
   width: 100%;
   min-height: 100%;
   height: 100%;
-  padding: 0;
+  transform: none;
 }
 
-.host-skin-button__frame > .button-skin.is-compact {
+.host-skin-button__frame > .button-skin.is-compact[data-flow-sizing="fill-stretch"] {
   min-height: 100%;
+  height: 100%;
   padding: 0;
 }
 
 .host-skin-button__frame .imported-html,
 .host-skin-button__frame .imported-svg {
-  width: 100%;
-  height: 100%;
+  display: block;
+  max-width: none;
+  max-height: none;
 }
 
 .host-skin-button__frame .imported-html {
-  display: flex;
-  align-items: center;
-  justify-content: center;
   text-align: center;
+}
+
+.host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-html,
+.host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-svg {
+  width: 100%;
+  height: 100%;
 }
 
 .host-skin-button__frame .button-skin__label {
@@ -568,8 +602,8 @@ button {
   min-height: 100%;
 }
 
-.program-rail__skin .imported-html,
-.program-rail__skin .imported-svg {
+.program-rail__button.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-html,
+.program-rail__button.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-svg {
   width: 100%;
   height: 100%;
 }
@@ -664,8 +698,18 @@ button {
 
 .surface-action.host-skin-button .host-skin-button__frame,
 .chrome-action.host-skin-button .host-skin-button__frame {
+  width: auto;
+  height: auto;
+  min-width: 0;
   min-height: 44px;
   font-size: 0.82rem;
+}
+
+.surface-action.host-skin-button,
+.chrome-action.host-skin-button {
+  min-width: 0;
+  flex: 0 0 auto;
+  padding: 0;
 }
 
 .tool-chip.host-skin-button {
@@ -681,6 +725,7 @@ button {
   width: 100%;
   min-width: 0;
   min-height: 24px;
+  height: 100%;
   border-radius: 999px;
   font-size: 0.72rem;
 }
@@ -689,11 +734,13 @@ button {
   width: 100%;
 }
 
-.tool-chip.host-skin-button .host-skin-button__frame > .button-skin,
-.tool-chip.host-skin-button .host-skin-button__frame > .button-skin.is-compact,
-.tool-chip.host-skin-button .host-skin-button__frame .imported-html,
-.tool-chip.host-skin-button .host-skin-button__frame .imported-svg {
+.tool-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin,
+.tool-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin.is-compact,
+.tool-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-html,
+.tool-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-svg {
   width: 100%;
+  height: 100%;
+  min-height: 100%;
 }
 
 .panel-rail__row {
@@ -730,9 +777,10 @@ button {
 
 .surface-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
 .surface-header__meta {
@@ -754,9 +802,11 @@ button {
 .surface-toolbar {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start;
   gap: 10px;
   flex-wrap: wrap;
+  flex: 1 0 100%;
+  min-width: 0;
 }
 
 .surface-host-actions {
@@ -920,6 +970,21 @@ button {
   gap: 8px;
 }
 
+.button-grid--variable-hosts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  align-content: flex-start;
+  justify-content: flex-start;
+  gap: 12px 14px;
+}
+
+.button-grid--variable-hosts > .button-host {
+  flex: 0 0 auto;
+  max-width: 100%;
+  align-items: flex-start;
+}
+
 .button-grid--slim-popout {
   grid-template-columns: repeat(
     auto-fit,
@@ -969,6 +1034,27 @@ button {
   transition: transform 140ms ease;
 }
 
+.button-grid--variable-hosts .button-host__surface-button {
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  align-self: flex-start;
+  overflow: visible;
+}
+
+.button-grid--variable-hosts .button-host__surface-button[data-flow-footprint="default-axis-normalized"] {
+  box-sizing: border-box;
+  display: block;
+  min-width: var(--flow-footprint-width);
+  width: var(--flow-footprint-width);
+  max-width: var(--flow-footprint-width);
+  min-height: var(--flow-footprint-height);
+  height: var(--flow-footprint-height);
+  max-height: var(--flow-footprint-height);
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
 .button-host__surface-button:hover,
 .button-host__surface-button.is-selected {
   transform: translateY(-1px);
@@ -978,23 +1064,48 @@ button {
   width: 100%;
   min-width: 0;
   min-height: 58px;
+  height: 100%;
   border-radius: 18px;
   font-size: 0.78rem;
+  container-type: size;
 }
 
-.button-host__surface-button .host-skin-button__frame > .button-skin,
-.button-host__surface-button .host-skin-button__frame > .button-skin.is-compact,
-.button-host__surface-button .host-skin-button__frame .imported-html,
-.button-host__surface-button .host-skin-button__frame .imported-svg {
+.button-grid--variable-hosts .button-host__surface-button .host-skin-button__frame {
+  width: auto;
+  max-width: 100%;
+  min-height: 0;
+  height: auto;
+  container-type: normal;
+}
+
+.button-grid--variable-hosts .button-host__surface-button[data-flow-footprint="default-axis-normalized"] .host-skin-button__frame {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  container-type: size;
+  overflow: visible;
+}
+
+.button-grid--variable-hosts .button-host__surface-button[data-flow-footprint="default-axis-normalized"] .host-skin-button__frame > .button-skin {
+  transform: none;
+  width: 100%;
+  height: 100%;
+}
+
+.button-host__surface-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin,
+.button-host__surface-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin.is-compact,
+.button-host__surface-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-html,
+.button-host__surface-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-svg {
   width: 100%;
   min-height: 58px;
+  height: 100%;
 }
 
 .button-host__surface-button .host-skin-button__frame .button-skin__label {
   padding: 0 10px;
 }
 
-.button-grid--tool-set .button-host__surface-button.host-skin-button[data-selected="true"] .button-skin__selected-overlay,
+.button-host__surface-button.host-skin-button[data-selected="true"] .button-skin__selected-overlay,
 .tool-chip.host-skin-button[data-selected="true"] .button-skin__selected-overlay {
   position: absolute;
   inset: 0;
@@ -1010,18 +1121,6 @@ button {
     inset 0 0 0 1px color-mix(in srgb, var(--fc-selected-highlight, #73ff70) 56%, transparent),
     0 0 20px color-mix(in srgb, var(--fc-selected-highlight, #73ff70) 22%, transparent);
   pointer-events: none;
-}
-
-.tool-chip.host-skin-button.tool-chip--live-active[data-selected="true"] .button-skin__selected-overlay {
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--fc-selected-highlight, var(--fc-theme-danger)) 38%, transparent),
-      color-mix(in srgb, var(--fc-selected-highlight, var(--fc-theme-danger)) 22%, transparent)
-    );
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, var(--fc-selected-highlight, var(--fc-theme-danger)) 62%, transparent),
-    0 0 20px color-mix(in srgb, var(--fc-selected-highlight, var(--fc-theme-danger)) 26%, transparent);
 }
 
 .button-host__toggle {
@@ -1125,7 +1224,7 @@ button {
   border-color: color-mix(in srgb, var(--fc-theme-accent) 28%, transparent);
 }
 
-.button-card--compact {
+.button-card--compact.host-skin-button {
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -1135,20 +1234,21 @@ button {
   overflow: visible;
 }
 
-.button-card--compact:hover,
-.button-card--compact.is-selected {
+.button-card--compact.host-skin-button:hover,
+.button-card--compact.host-skin-button.is-selected {
   transform: none;
   border-color: transparent;
 }
 
-.button-card--compact > .button-skin,
-.button-card--compact > .button-skin.is-compact,
-.button-card--compact .imported-html,
-.button-card--compact .imported-svg {
+.button-card--compact.host-skin-button .host-skin-button__frame {
   width: 100%;
   height: 100%;
   min-height: 100%;
-  max-width: none;
+  border-radius: 0;
+}
+
+.host-skin-button[data-flow-overflow="true"] {
+  overflow: visible;
 }
 
 .button-card__meta {
@@ -1168,13 +1268,44 @@ button {
   place-items: center;
   padding: 16px;
   color: var(--fc-theme-page-foreground);
-  overflow: hidden;
+  overflow: visible;
 }
 
 .button-skin.is-compact {
+  padding: 0;
+}
+
+.button-skin[data-flow-overflow="false"] {
+  overflow: hidden;
+}
+
+.button-skin[data-flow-sizing="fill-stretch"] {
+  width: 100%;
   min-height: 100%;
   height: 100%;
+}
+
+.button-skin.is-compact[data-flow-sizing="fill-stretch"] {
+  min-height: 100%;
+  height: 100%;
+}
+
+.button-skin--imported-skin {
+  min-height: 0;
   padding: 0;
+  background: transparent;
+}
+
+.button-skin--imported-skin .imported-html {
+  display: inline-block;
+  width: auto;
+  height: auto;
+}
+
+.button-skin--imported-skin[data-flow-sizing="fill-stretch"] .imported-html {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 
 .button-skin--glass-card {
@@ -1228,38 +1359,16 @@ button {
     0 0.18em 0.08em color-mix(in srgb, var(--fc-theme-surface-shadow) 34%, transparent) !important;
 }
 
-/* Imported button demos commonly arrive wrapped in a full-page `.body` shell.
-   Constrain that wrapper to the host button frame so saved skins do not overflow/clamp the FlowTest grid. */
 .button-skin .imported-html > .body {
-  width: 100% !important;
-  height: 100% !important;
   margin: 0 !important;
-  padding: 0 !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-  font-size: 0.875rem !important;
   background: transparent !important;
-  overflow: hidden !important;
-}
-
-.button-skin.is-compact .imported-html > .body {
-  font-size: 0.72rem !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
 }
 
 .button-skin .imported-html > .body > * {
-  flex: 0 1 auto;
   min-width: 0;
   min-height: 0;
-  max-width: 100%;
-  max-height: 100%;
-}
-
-.button-skin .imported-html > .body > .button-wrap,
-.button-skin .imported-html > .body > .button,
-.button-skin .imported-html > .body .button {
-  max-width: 100% !important;
-  max-height: 100% !important;
 }
 
 .button-skin .imported-html,
@@ -1434,8 +1543,38 @@ button {
   font-size: 0.72rem;
 }
 
-.fan-cluster__owner .host-skin-button__frame > .button-skin,
-.fan-cluster__child .host-skin-button__frame > .button-skin {
+.fan-cluster__owner[data-flow-footprint="default-axis-normalized"],
+.fan-cluster__child[data-flow-footprint="default-axis-normalized"] {
+  box-sizing: border-box;
+  display: block;
+  min-width: var(--flow-footprint-width);
+  width: var(--flow-footprint-width);
+  max-width: var(--flow-footprint-width);
+  min-height: var(--flow-footprint-height);
+  height: var(--flow-footprint-height);
+  max-height: var(--flow-footprint-height);
+  flex: 0 0 auto;
+  overflow: visible;
+}
+
+.fan-cluster__owner[data-flow-footprint="default-axis-normalized"] .host-skin-button__frame,
+.fan-cluster__child[data-flow-footprint="default-axis-normalized"] .host-skin-button__frame {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  container-type: size;
+  overflow: visible;
+}
+
+.fan-cluster__owner[data-flow-footprint="default-axis-normalized"] .host-skin-button__frame > .button-skin,
+.fan-cluster__child[data-flow-footprint="default-axis-normalized"] .host-skin-button__frame > .button-skin {
+  transform: none;
+  width: 100%;
+  height: 100%;
+}
+
+.fan-cluster__owner .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin,
+.fan-cluster__child .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin {
   width: 100%;
   min-height: 100%;
   height: 100%;
@@ -1626,10 +1765,10 @@ button {
 }
 
 .alignment-grid--compact .tool-chip.host-skin-button:not(.tool-chip--wide) .host-skin-button__frame,
-.alignment-grid--compact .tool-chip.host-skin-button:not(.tool-chip--wide) .host-skin-button__frame > .button-skin,
-.alignment-grid--compact .tool-chip.host-skin-button:not(.tool-chip--wide) .host-skin-button__frame > .button-skin.is-compact,
-.alignment-grid--compact .tool-chip.host-skin-button:not(.tool-chip--wide) .host-skin-button__frame .imported-html,
-.alignment-grid--compact .tool-chip.host-skin-button:not(.tool-chip--wide) .host-skin-button__frame .imported-svg {
+.alignment-grid--compact .tool-chip.host-skin-button:not(.tool-chip--wide) .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin,
+.alignment-grid--compact .tool-chip.host-skin-button:not(.tool-chip--wide) .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin.is-compact,
+.alignment-grid--compact .tool-chip.host-skin-button:not(.tool-chip--wide) .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-html,
+.alignment-grid--compact .tool-chip.host-skin-button:not(.tool-chip--wide) .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-svg {
   width: 100%;
   height: 100%;
   min-height: 100%;
@@ -1637,10 +1776,10 @@ button {
 }
 
 .alignment-grid--compact .tool-chip.host-skin-button.tool-chip--wide .host-skin-button__frame,
-.alignment-grid--compact .tool-chip.host-skin-button.tool-chip--wide .host-skin-button__frame > .button-skin,
-.alignment-grid--compact .tool-chip.host-skin-button.tool-chip--wide .host-skin-button__frame > .button-skin.is-compact,
-.alignment-grid--compact .tool-chip.host-skin-button.tool-chip--wide .host-skin-button__frame .imported-html,
-.alignment-grid--compact .tool-chip.host-skin-button.tool-chip--wide .host-skin-button__frame .imported-svg {
+.alignment-grid--compact .tool-chip.host-skin-button.tool-chip--wide .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin,
+.alignment-grid--compact .tool-chip.host-skin-button.tool-chip--wide .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin.is-compact,
+.alignment-grid--compact .tool-chip.host-skin-button.tool-chip--wide .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-html,
+.alignment-grid--compact .tool-chip.host-skin-button.tool-chip--wide .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-svg {
   width: 100%;
   height: 100%;
   min-height: 100%;
@@ -1684,19 +1823,19 @@ button {
 }
 
 .tool-chip.is-active {
-  background: color-mix(in srgb, var(--fc-theme-accent) 20%, transparent);
-  border-color: color-mix(in srgb, var(--fc-theme-accent) 34%, transparent);
+  background: transparent;
+  border-color: transparent;
 }
 
 .tool-chip--armed {
-  background: color-mix(in srgb, var(--fc-theme-success) 20%, transparent);
-  border-color: color-mix(in srgb, var(--fc-theme-success) 34%, transparent);
-  color: color-mix(in srgb, var(--fc-theme-success) 24%, white 76%);
+  background: transparent;
+  border-color: transparent;
+  color: inherit;
 }
 
 .tool-chip--live-active {
-  background: color-mix(in srgb, var(--fc-theme-danger) 24%, transparent);
-  border-color: color-mix(in srgb, var(--fc-theme-danger) 42%, transparent);
+  background: transparent;
+  border-color: transparent;
 }
 
 .tool-chip--wide {
@@ -1895,9 +2034,9 @@ button {
   padding: 0 !important;
 }
 
-.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame > .button-skin,
-.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame .imported-html,
-.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame .imported-svg {
+.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin,
+.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-html,
+.hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-svg {
   min-height: 100% !important;
   height: 100% !important;
 }
@@ -1924,9 +2063,9 @@ button {
   font-size: 0.64rem;
 }
 
-.hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame > .button-skin.is-compact,
-.hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame .imported-html,
-.hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame .imported-svg {
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin.is-compact,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-html,
+.hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-svg {
   min-height: 30px !important;
   height: 30px !important;
 }
@@ -2069,9 +2208,9 @@ button {
 }
 
 .hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame,
-.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame > .button-skin,
-.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame .imported-html,
-.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame .imported-svg {
+.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-html,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .hdri-theme-actions-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-svg {
   min-height: 100% !important;
   height: 100% !important;
 }
@@ -2092,9 +2231,9 @@ button {
   font-size: 0.6rem;
 }
 
-.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame > .button-skin.is-compact,
-.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame .imported-html,
-.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame .imported-svg {
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] > .button-skin.is-compact,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-html,
+.hdri-world-grid--compact .hdri-world-row--theme-actions .tool-chip.host-skin-button .host-skin-button__frame[data-flow-sizing="fill-stretch"] .imported-svg {
   min-height: 28px !important;
   height: 28px !important;
 }
@@ -2861,12 +3000,68 @@ button {
   min-width: min(260px, 100%);
 }
 
-.button-appearance-window__preview-card {
-  min-height: 86px;
+.button-appearance-window__preview-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.button-appearance-window__preview-card > .button-skin {
-  min-height: 86px;
+.button-appearance-window__preview-size {
+  display: grid;
+  gap: 6px;
+}
+
+.button-appearance-window__preview-scale-field {
+  display: inline-grid;
+  grid-template-columns: minmax(72px, 88px) auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.button-appearance-window__size-control {
+  align-self: start;
+}
+
+.button-appearance-window__preview-scale-field input {
+  text-align: right;
+}
+
+.button-appearance-window__preview-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.button-appearance-window__preview-card {
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  min-height: 0;
+  padding: 14px;
+}
+
+.button-appearance-window__preview-card .caption {
+  text-align: center;
+}
+
+.button-appearance-window__preview-button {
+  flex: 0 0 auto;
+  max-width: 100%;
+  padding: 0;
+  border-radius: 18px;
+  background: transparent;
+  overflow: visible;
+  cursor: default;
+}
+
+.button-appearance-window__preview-button .host-skin-button__frame {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-radius: 18px;
+  container-type: size;
 }
 
 .button-appearance-window__details {

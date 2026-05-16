@@ -14,7 +14,7 @@ import type {
   StyleGroup
 } from "../types";
 import { getImportedSkin, resolveStyleGroup } from "../lib/skins";
-import { HostSkinButton } from "./HostSkinButton";
+import { HostSkinButton, resolveMainButtonFootprintOverride } from "./HostSkinButton";
 
 export interface FanClusterEntry {
   programId: number;
@@ -61,6 +61,10 @@ interface FanClusterFloatingLayout extends FanClusterFloatingMetrics {
 interface FanClusterVisualSpec {
   key: string;
   entry: FanClusterEntry;
+  explicitFootprint?: {
+    width: number;
+    height: number;
+  };
 }
 
 interface FanOutButtonClusterProps {
@@ -786,10 +790,10 @@ export function FanOutButtonCluster({
     explicitImportedSkinOverride?: ImportedSkin
   ) => {
     const buttonStyleGroup = resolveStyleGroup(styleGroups, button.style_group_id ?? "");
-    const styleGroup = explicitStyleGroupOverride ?? buttonStyleGroup ?? styleGroupOverride;
+    const styleGroup = buttonStyleGroup ?? explicitStyleGroupOverride ?? styleGroupOverride;
     const importedSkin =
-      explicitImportedSkinOverride ??
       getImportedSkin(importedSkins, styleGroup?.importedSkinId) ??
+      explicitImportedSkinOverride ??
       importedSkinOverride;
     return {
       styleGroup,
@@ -803,6 +807,7 @@ export function FanOutButtonCluster({
   );
   const ownerStyleGroup = ownerVisuals.styleGroup;
   const ownerImportedSkin = ownerVisuals.importedSkin;
+  const ownerFootprintMode = ownerImportedSkin ? "default-axis-normalized" : undefined;
   const ownerClassName =
     variant === "panel-fan"
       ? [
@@ -822,14 +827,36 @@ export function FanOutButtonCluster({
   const childVisuals = useMemo<FanClusterVisualSpec[]>(
     () =>
       childButtons.map((entry) => {
+        const specificButtonStyleGroup = resolveStyleGroup(
+          styleGroups,
+          entry.button.style_group_id ?? ""
+        );
+        const specificImportedSkin =
+          specificButtonStyleGroup?.skinId === "imported-skin"
+            ? getImportedSkin(importedSkins, specificButtonStyleGroup.importedSkinId)
+            : undefined;
         return {
           key: `${entry.button.Id}-${entry.childSlotId}`,
-          entry
+          entry,
+          explicitFootprint: resolveMainButtonFootprintOverride(specificImportedSkin)
         };
       }),
-    [childButtons]
+    [childButtons, importedSkins, styleGroups]
   );
   const floatingLayoutMode = layout === "half-radial" ? "radial" : layout;
+  const ownerSpecificImportedSkin =
+    ownerButton.style_group_id?.trim()
+      ? (() => {
+          const ownerSpecificStyleGroup = resolveStyleGroup(
+            styleGroups,
+            ownerButton.style_group_id ?? ""
+          );
+          return ownerSpecificStyleGroup?.skinId === "imported-skin"
+            ? getImportedSkin(importedSkins, ownerSpecificStyleGroup.importedSkinId)
+            : undefined;
+        })()
+      : undefined;
+  const ownerFootprintOverride = resolveMainButtonFootprintOverride(ownerSpecificImportedSkin);
 
   useEffect(() => {
     return () => {
@@ -1084,9 +1111,11 @@ export function FanOutButtonCluster({
           type="button"
           className={ownerClassName}
           label={ownerButton.Label}
+          flowId={ownerButton.Id}
           styleGroup={ownerStyleGroup}
           importedSkin={ownerImportedSkin}
-          skinCompact
+          footprintMode={ownerFootprintMode}
+          footprintOverride={ownerFootprintOverride}
           style={ownerStyle}
           title={ownerButton.Tooltip || ownerButton.Label}
           onMouseEnter={requestExpand}
@@ -1097,6 +1126,9 @@ export function FanOutButtonCluster({
           {childVisuals.map((entry, index) => {
             const childLayout = activeLayout?.childLayouts[index];
             const childVisuals = resolveButtonVisuals(entry.entry.button);
+            const childFootprintMode = childVisuals.importedSkin
+              ? "default-axis-normalized"
+              : undefined;
             const childStyle =
               childLayout
                 ? ({
@@ -1129,9 +1161,11 @@ export function FanOutButtonCluster({
                   .filter(Boolean)
                   .join(" ")}
                 label={entry.entry.button.Label}
+                flowId={entry.entry.button.Id}
                 styleGroup={childVisuals.styleGroup}
                 importedSkin={childVisuals.importedSkin}
-                skinCompact
+                footprintMode={childFootprintMode}
+                footprintOverride={entry.explicitFootprint}
                 style={childStyle}
                 title={entry.entry.button.Tooltip || entry.entry.button.Label}
                 onMouseEnter={requestExpand}

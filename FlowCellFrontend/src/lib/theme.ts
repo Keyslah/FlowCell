@@ -139,6 +139,49 @@ export const APP_THEME_PRESETS: AppThemePreset[] = [
   }
 ];
 
+const DEFAULT_FLOW_IMPORTED_CARD_HTML = `<div class="soft-surface"><span class="soft-surface__label">{{label}}</span></div>`;
+const DEFAULT_FLOW_IMPORTED_CARD_CSS = `.soft-surface{position:relative;width:100%;height:100%;border-radius:inherit;background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(255,255,255,.08));box-shadow:inset 0 1px 0 rgba(255,255,255,.46),inset 0 -24px 40px rgba(95,137,164,.1);overflow:hidden}.soft-surface::before{content:"";position:absolute;inset:0;background:radial-gradient(circle at top right,color-mix(in srgb,var(--accent) 18%,transparent),transparent 34%),linear-gradient(135deg,rgba(255,255,255,.28),rgba(255,255,255,0) 48%)}.soft-surface__label{position:absolute;top:16px;right:20px;font:600 11px/1 "Segoe UI",sans-serif;letter-spacing:.16em;text-transform:uppercase;color:rgba(245,248,250,.54)}`;
+
+export const DEFAULT_FLOW_IMPORTED_SKIN: ImportedSkin = {
+  id: "imported-skin-default",
+  name: "default",
+  sizingMode: "responsive-uniform",
+  allowOverflow: false,
+  html: `<div class="default-root"><div class="button-wrap"><button class="button"><span class="span">{{label}}</span></button><div class="button-shadow"></div></div></div>`,
+  css: `@property --angle-1{syntax:"<angle>";inherits:false;initial-value:-75deg}
+@property --angle-2{syntax:"<angle>";inherits:false;initial-value:-75deg}
+.default-root{--global--size:clamp(.86rem,1.1em,1rem);--anim--hover-time:400ms;--anim--hover-ease:cubic-bezier(0.25,1,0.5,1);width:auto;height:auto;margin:0;padding:0;display:flex;align-items:center;justify-content:center;font-size:var(--global--size);background-color:transparent;font-family:"Inter",sans-serif;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;overflow:visible}
+:host([data-flow-surface~="surface-action"]) .default-root,:host([data-flow-surface~="chrome-action"]) .default-root{--global--size:clamp(.72rem,.96em,.9rem)}
+.button-wrap{position:relative;z-index:2;display:inline-block;border-radius:999px;background:transparent;pointer-events:none;transition:all var(--anim--hover-time) var(--anim--hover-ease)}
+.button-shadow{--shadow-cuttoff-fix:2em;position:absolute;width:calc(100% + var(--shadow-cuttoff-fix));height:calc(100% + var(--shadow-cuttoff-fix));top:calc(0% - var(--shadow-cuttoff-fix) / 2);left:calc(0% - var(--shadow-cuttoff-fix) / 2);filter:blur(clamp(2px,0.125em,12px));-webkit-filter:blur(clamp(2px,0.125em,12px));-moz-filter:blur(clamp(2px,0.125em,12px));-ms-filter:blur(clamp(2px,0.125em,12px));overflow:visible;pointer-events:none}
+.button-shadow::after{content:"";position:absolute;z-index:0;inset:0;border-radius:999px;background:linear-gradient(180deg,rgba(0,0,0,0.44),rgba(0,0,0,0.28));width:calc(100% - var(--shadow-cuttoff-fix) - 0.25em);height:calc(100% - var(--shadow-cuttoff-fix) - 0.25em);top:calc(var(--shadow-cuttoff-fix) - 0.5em);left:calc(var(--shadow-cuttoff-fix) - 0.875em);padding:0.125em;box-sizing:border-box;mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;transition:all var(--anim--hover-time) var(--anim--hover-ease);overflow:visible;opacity:0.96}
+.button{--border-width:clamp(1px,0.0625em,4px);all:unset;display:block;cursor:pointer;position:relative;-webkit-tap-highlight-color:rgba(0,0,0,0);pointer-events:auto;z-index:3;background:linear-gradient(-75deg,rgba(255,255,255,0.04),rgba(12,12,12,0.74),rgba(255,255,255,0.02));border-radius:999px;box-shadow:inset 0 0.125em 0.125em rgba(255,255,255,0.04),inset 0 -0.125em 0.125em rgba(0,0,0,0.66),0 0.25em 0.125em -0.125em rgba(0,0,0,0.42),0 0 0.1em 0.25em inset rgba(0,0,0,0.28),0 0 0 0 rgba(255,255,255,0.08);backdrop-filter:blur(clamp(1px,0.125em,4px));-webkit-backdrop-filter:blur(clamp(1px,0.125em,4px));-moz-backdrop-filter:blur(clamp(1px,0.125em,4px));-ms-backdrop-filter:blur(clamp(1px,0.125em,4px));transition:all var(--anim--hover-time) var(--anim--hover-ease)}
+button:hover{transform:scale(0.975);backdrop-filter:blur(0.01em);-webkit-backdrop-filter:blur(0.01em);-moz-backdrop-filter:blur(0.01em);-ms-backdrop-filter:blur(0.01em);box-shadow:inset 0 0.125em 0.125em rgba(255,255,255,0.05),inset 0 -0.125em 0.125em rgba(0,0,0,0.74),0 0.15em 0.05em -0.1em rgba(0,0,0,0.5),0 0 0.05em 0.1em inset rgba(0,0,0,0.4),0 0 0 0 rgba(255,255,255,0.08)}
+.button .span{position:relative;display:grid;place-items:center;inline-size:11ch;max-inline-size:11ch;margin-inline:auto;user-select:none;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;font-family:"Inter",sans-serif;letter-spacing:-0.03em;font-weight:500;font-size:1em;color:rgba(255,255,255,0.96);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-shadow:0 0.25em 0.05em rgba(0,0,0,0.4);transition:all var(--anim--hover-time) var(--anim--hover-ease);padding-inline:1.5em;padding-block:0.875em;text-align:center;white-space:normal;text-wrap:balance;line-height:0.94}
+:host([data-flow-surface~="surface-action"]) .button .span,:host([data-flow-surface~="chrome-action"]) .button .span{inline-size:14ch;max-inline-size:14ch;padding-inline:1.25em;line-height:0.98}
+button:hover .span{text-shadow:0.025em 0.025em 0.025em rgba(0,0,0,0.5)}
+.button .span::after{content:"";display:block;position:absolute;z-index:3;width:calc(100% - var(--border-width));height:calc(100% - var(--border-width));top:calc(0% + var(--border-width) / 2);left:calc(0% + var(--border-width) / 2);box-sizing:border-box;border-radius:999px;overflow:clip;background:linear-gradient(var(--angle-2),rgba(255,255,255,0) 0%,rgba(255,255,255,0.18) 40% 50%,rgba(255,255,255,0) 55%);mix-blend-mode:screen;pointer-events:none;background-size:200% 200%;background-position:0% 50%;background-repeat:no-repeat;transition:background-position calc(var(--anim--hover-time) * 1.25) var(--anim--hover-ease),--angle-2 calc(var(--anim--hover-time) * 1.25) var(--anim--hover-ease)}
+button:hover .span::after{background-position:25% 50%}
+button:active .span::after{background-position:50% 15%;--angle-2:-15deg}
+.button::after{content:"";position:absolute;z-index:1;inset:0;border-radius:999px;width:calc(100% + var(--border-width));height:calc(100% + var(--border-width));top:calc(0% - var(--border-width) / 2);left:calc(0% - var(--border-width) / 2);padding:var(--border-width);box-sizing:border-box;background:conic-gradient(from var(--angle-1) at 50% 50%,rgba(0,0,0,0.72),rgba(0,0,0,0) 5% 40%,rgba(0,0,0,0.72) 50%,rgba(0,0,0,0) 60% 95%,rgba(0,0,0,0.72)),linear-gradient(180deg,rgba(36,36,36,0.42),rgba(10,10,10,0.72));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;transition:all var(--anim--hover-time) var(--anim--hover-ease),--angle-1 500ms ease;box-shadow:inset 0 0 0 calc(var(--border-width) / 2) rgba(255,255,255,0.06)}
+button:hover::after{--angle-1:-125deg}
+button:active::after{--angle-1:-75deg}
+.button-wrap:has(button:hover) .button-shadow{filter:blur(clamp(2px,0.0625em,6px));-webkit-filter:blur(clamp(2px,0.0625em,6px));-moz-filter:blur(clamp(2px,0.0625em,6px));-ms-filter:blur(clamp(2px,0.0625em,6px));transition:filter var(--anim--hover-time) var(--anim--hover-ease)}
+.button-wrap:has(button:hover) .button-shadow::after{top:calc(var(--shadow-cuttoff-fix) - 0.875em);opacity:1}
+.button-wrap:has(button:active){transform:rotate3d(1,0,0,25deg)}
+.button-wrap:has(button:active) button{box-shadow:inset 0 0.125em 0.125em rgba(255,255,255,0.03),inset 0 -0.125em 0.125em rgba(0,0,0,0.78),0 0.125em 0.125em -0.125em rgba(0,0,0,0.32),0 0 0.1em 0.25em inset rgba(0,0,0,0.32),0 0.225em 0.05em 0 rgba(0,0,0,0.18),0 0.25em 0 0 rgba(255,255,255,0.04),inset 0 0.25em 0.05em 0 rgba(0,0,0,0.2)}
+.button-wrap:has(button:active) .button-shadow{filter:blur(clamp(2px,0.125em,12px));-webkit-filter:blur(clamp(2px,0.125em,12px));-moz-filter:blur(clamp(2px,0.125em,12px));-ms-filter:blur(clamp(2px,0.125em,12px))}
+.button-wrap:has(button:active) .button-shadow::after{top:calc(var(--shadow-cuttoff-fix) - 0.5em);opacity:0.75}
+.button-wrap:has(button:active) span{text-shadow:0.025em 0.25em 0.05em rgba(0,0,0,0.5)}
+.button-skin.is-compact .default-root{--global--size:clamp(0.54rem,0.72em,0.74rem)}
+.button-skin.is-compact .button .span{inline-size:9.5ch;max-inline-size:9.5ch;padding-inline:1.1em;padding-block:0.58em;font-size:1em;line-height:0.92;text-shadow:none}
+.button-skin.is-compact .button{box-shadow:inset 0 0.125em 0.125em rgba(255,255,255,0.03),inset 0 -0.125em 0.125em rgba(0,0,0,0.7),0 0.125em 0.125em -0.125em rgba(0,0,0,0.28),0 0 0.05em 0.12em inset rgba(0,0,0,0.28)}
+.button-skin.is-compact .button-shadow::after{top:calc(var(--shadow-cuttoff-fix) - 0.65em);left:calc(var(--shadow-cuttoff-fix) - 0.7em)}`,
+  cardHtml: DEFAULT_FLOW_IMPORTED_CARD_HTML,
+  cardCss: DEFAULT_FLOW_IMPORTED_CARD_CSS,
+  svg: ""
+};
+
 const LEGACY_GLASS_HOVER_HTML = `<div class="glass-pill"><span class="glass-pill__label">{{label}}</span></div>`;
 const LEGACY_GLASS_HOVER_CSS = `.glass-pill{position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;padding:0 1.5em;border-radius:999px;background:linear-gradient(180deg,rgba(255,255,255,.78),rgba(243,236,224,.88));box-shadow:inset 0 1px 0 rgba(255,255,255,.85),0 12px 28px rgba(99,74,46,.12);backdrop-filter:blur(6px);overflow:hidden;transition:transform 220ms ease,box-shadow 220ms ease}.glass-pill::before{content:"";position:absolute;inset:1px;border-radius:inherit;background:linear-gradient(135deg,rgba(255,255,255,.66),rgba(255,255,255,0) 48%);opacity:.82}.glass-pill::after{content:"";position:absolute;inset:0;border-radius:inherit;padding:1px;background:linear-gradient(135deg,rgba(255,255,255,.9),rgba(187,161,130,.46));mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);mask-composite:exclude;-webkit-mask-composite:xor;opacity:.72}.glass-pill__label{position:relative;z-index:1;display:flex;align-items:center;justify-content:center;width:100%;min-height:100%;padding:.95em 1.5em;font-family:"Segoe UI",sans-serif;letter-spacing:-.04em;font-weight:600;font-size:1em;line-height:1;color:#3f372f;text-align:center;text-transform:none;text-shadow:0 .18em .05em rgba(255,255,255,.35)}.button-skin.is-compact .glass-pill{padding:0 .18em;box-shadow:inset 0 1px 0 rgba(255,255,255,.88),0 3px 8px rgba(99,74,46,.08)}.button-skin.is-compact .glass-pill__label{padding:.12em .26em;font-size:.64em;line-height:1;letter-spacing:-.01em;text-shadow:none}.button-skin:hover .glass-pill,.button-skin.is-selected .glass-pill{transform:scale(.985);box-shadow:inset 0 1px 0 rgba(255,255,255,.92),0 10px 22px rgba(99,74,46,.15)}`;
 const GLASS_HOVER_CARD_HTML = `<div class="glass-surface"><span class="glass-surface__label">{{label}}</span></div>`;
@@ -239,7 +282,18 @@ export function isLegacyGlassHoverImportedSkin(skin: ImportedSkin): boolean {
   );
 }
 
+export function isLegacyShadeImportedSkin(skin: ImportedSkin): boolean {
+  const normalizedName = skin.name.trim().toLowerCase();
+  return (
+    normalizedName === "shade" &&
+    skin.html.includes('class="body"') &&
+    skin.html.includes('class="button-wrap"') &&
+    skin.html.includes('class="button-shadow"')
+  );
+}
+
 export const DEFAULT_IMPORTED_SKINS: ImportedSkin[] = [
+  DEFAULT_FLOW_IMPORTED_SKIN,
   {
     id: "imported-skin-01",
     name: "Imported Skin 01",
@@ -254,6 +308,11 @@ export const DEFAULT_IMPORTED_SKINS: ImportedSkin[] = [
 ];
 
 export const IMPORTED_SKIN_PRESETS: ImportedSkinPreset[] = [
+  {
+    id: "default",
+    name: "default",
+    skin: DEFAULT_FLOW_IMPORTED_SKIN
+  },
   {
     id: "black-tint",
     name: "Black Tint",

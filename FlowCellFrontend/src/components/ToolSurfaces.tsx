@@ -275,6 +275,8 @@ function renderToolChip(
     onClick: () => void;
     className?: string;
     selected?: boolean;
+    active?: boolean;
+    flowId?: string;
     title?: string;
     highlightKey?: string;
     highlightColor?: string;
@@ -286,6 +288,8 @@ function renderToolChip(
     onClick,
     className,
     selected = false,
+    active = selected,
+    flowId,
     title,
     highlightKey,
     highlightColor
@@ -296,15 +300,19 @@ function renderToolChip(
     <HostSkinButton
       type="button"
       label={label}
+      flowId={flowId ?? highlightKey ?? label}
       className={baseClassName}
       styleGroup={styleGroup}
       importedSkin={importedSkin}
       selected={selected}
+      active={active}
       skinCompact
       onClick={onClick}
       title={title ?? label}
-      highlightKey={selected ? highlightKey ?? `${baseClassName}:${label}` : undefined}
-      highlightColor={selected ? highlightColor : undefined}
+      highlightKey={
+        selected || active ? highlightKey ?? `${baseClassName}:${label}` : undefined
+      }
+      highlightColor={selected || active ? highlightColor : undefined}
     />
   );
 }

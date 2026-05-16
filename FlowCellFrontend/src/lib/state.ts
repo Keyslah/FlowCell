@@ -23,13 +23,16 @@ import type {
 } from "../types";
 import { DEFAULT_PANEL_FAN_OPTIONS } from "../types";
 import {
+  DEFAULT_FLOW_IMPORTED_SKIN,
   DEFAULT_GLASS_HOVER_IMPORTED_SKIN,
   DEFAULT_IMPORTED_SKINS,
   isLegacyGlassHoverImportedSkin,
+  isLegacyShadeImportedSkin,
   normalizeAppTheme
 } from "./theme";
 
-const DEFAULT_IMPORTED_SKIN_ID = "imported-skin-01";
+const DEFAULT_IMPORTED_SKIN_ID = DEFAULT_FLOW_IMPORTED_SKIN.id;
+const DEFAULT_IMPORTED_STYLE_GROUP_ID = "style-group-03";
 const DEFAULT_PROGRAM_STYLE_GROUP_ID = "style-group-03";
 const IMPORTED_SKIN_LIBRARY_STYLE_GROUP_PREFIX = "style-group-imported-";
 const DEDICATED_BUTTON_STYLE_GROUP_PREFIX = "button-style-";
@@ -176,6 +179,79 @@ function normalizeDisplayName(value: unknown, fallback: string, maxLength = 120)
     return fallback;
   }
   return normalized.slice(0, maxLength);
+}
+
+function remapStyleGroupId(
+  styleGroupId: string | undefined,
+  aliases: ReadonlyMap<string, string>
+): string {
+  let nextId = (styleGroupId ?? "").trim();
+  if (!nextId) {
+    return "";
+  }
+
+  const visited = new Set<string>();
+  while (nextId && aliases.has(nextId) && !visited.has(nextId)) {
+    visited.add(nextId);
+    nextId = (aliases.get(nextId) ?? "").trim();
+  }
+  return nextId;
+}
+
+function migrateLegacyImportedSkinState(args: {
+  importedSkins: ImportedSkin[];
+  styleGroups: StyleGroup[];
+}): {
+  importedSkins: ImportedSkin[];
+  styleGroups: StyleGroup[];
+  styleGroupAliases: Map<string, string>;
+} {
+  const legacyShadeSkinIds = new Set(
+    args.importedSkins.filter((skin) => isLegacyShadeImportedSkin(skin)).map((skin) => skin.id)
+  );
+  const styleGroupAliases = new Map<string, string>();
+
+  const importedSkins = args.importedSkins
+    .map((skin) => {
+      if (skin.id === DEFAULT_FLOW_IMPORTED_SKIN.id) {
+        return { ...DEFAULT_FLOW_IMPORTED_SKIN };
+      }
+      return isLegacyGlassHoverImportedSkin(skin)
+        ? { ...DEFAULT_GLASS_HOVER_IMPORTED_SKIN }
+        : skin;
+    })
+    .filter((skin) => !legacyShadeSkinIds.has(skin.id));
+
+  const styleGroups = args.styleGroups.flatMap((styleGroup) => {
+    const importedSkinId = (styleGroup.importedSkinId ?? "").trim();
+    const referencesLegacyShade =
+      styleGroup.skinId === "imported-skin" && legacyShadeSkinIds.has(importedSkinId);
+
+    if (referencesLegacyShade && isImportedSkinLibraryStyleGroupId(styleGroup.id)) {
+      styleGroupAliases.set(styleGroup.id, DEFAULT_IMPORTED_STYLE_GROUP_ID);
+      return [];
+    }
+
+    if (
+      styleGroup.skinId === "imported-skin" &&
+      (referencesLegacyShade || styleGroup.id === DEFAULT_IMPORTED_STYLE_GROUP_ID)
+    ) {
+      return [
+        {
+          ...styleGroup,
+          importedSkinId: DEFAULT_IMPORTED_SKIN_ID
+        }
+      ];
+    }
+
+    return [{ ...styleGroup }];
+  });
+
+  return {
+    importedSkins,
+    styleGroups,
+    styleGroupAliases
+  };
 }
 
 function getImportedSkinPayloadChars(importedSkin: ImportedSkin): number {
@@ -360,13 +436,31 @@ function normalizeSavedVisualThemeRecord(
   savedTheme: SavedVisualTheme,
   targets: DedicatedButtonSkinTargets
 ): SavedVisualTheme {
-  const importedSkins = normalizeImportedSkinCollection(
-    (savedTheme.importedSkins ?? []).map((skin) => ({ ...skin })),
-    targets
-  );
-  const defaultImportedSkinId = importedSkins[0]?.id ?? DEFAULT_IMPORTED_SKIN_ID;
+  const importedSkinsSource = (savedTheme.importedSkins ?? []).map((skin) => ({ ...skin }));
+  DEFAULT_IMPORTED_SKINS.forEach((defaultSkin) => {
+    if (!importedSkinsSource.some((skin) => skin.id === defaultSkin.id)) {
+      importedSkinsSource.push({ ...defaultSkin });
+    }
+  });
+
+  const styleGroupsSource = (savedTheme.styleGroups ?? []).map((styleGroup) => ({ ...styleGroup }));
+  DEFAULT_STYLE_GROUPS.forEach((defaultStyleGroup) => {
+    if (!styleGroupsSource.some((styleGroup) => styleGroup.id === defaultStyleGroup.id)) {
+      styleGroupsSource.push({ ...defaultStyleGroup });
+    }
+  });
+
+  const legacyMigration = migrateLegacyImportedSkinState({
+    importedSkins: importedSkinsSource,
+    styleGroups: styleGroupsSource
+  });
+  const importedSkins = normalizeImportedSkinCollection(legacyMigration.importedSkins, targets);
+  const defaultImportedSkinId =
+    importedSkins.find((skin) => skin.id === DEFAULT_IMPORTED_SKIN_ID)?.id ??
+    importedSkins[0]?.id ??
+    DEFAULT_IMPORTED_SKIN_ID;
   const styleGroups = normalizeStyleGroupCollection({
-    styleGroups: (savedTheme.styleGroups ?? []).map((styleGroup) => ({ ...styleGroup })),
+    styleGroups: legacyMigration.styleGroups,
     importedSkins,
     defaultImportedSkinId,
     targets
@@ -382,18 +476,27 @@ function normalizeSavedVisualThemeRecord(
     surfaceStyleAssignments: (savedTheme.surfaceStyleAssignments ?? [])
       .map((assignment) => ({
         ...assignment,
-        style_group_id: resolveValidStyleGroupId(assignment.style_group_id, validStyleGroupIds)
+        style_group_id: resolveValidStyleGroupId(
+          remapStyleGroupId(assignment.style_group_id, legacyMigration.styleGroupAliases),
+          validStyleGroupIds
+        )
       })),
     programStyleAssignments: (savedTheme.programStyleAssignments ?? [])
       .map((assignment) => ({
         ...assignment,
-        style_group_id: resolveValidStyleGroupId(assignment.style_group_id, validStyleGroupIds)
+        style_group_id: resolveValidStyleGroupId(
+          remapStyleGroupId(assignment.style_group_id, legacyMigration.styleGroupAliases),
+          validStyleGroupIds
+        )
       }))
       .filter((assignment) => assignment.style_group_id.length > 0),
     buttonStyleAssignments: (savedTheme.buttonStyleAssignments ?? [])
       .map((assignment) => ({
         ...assignment,
-        style_group_id: resolveValidStyleGroupId(assignment.style_group_id, validStyleGroupIds)
+        style_group_id: resolveValidStyleGroupId(
+          remapStyleGroupId(assignment.style_group_id, legacyMigration.styleGroupAliases),
+          validStyleGroupIds
+        )
       }))
       .filter((assignment) => assignment.style_group_id.length > 0)
   };
@@ -1186,14 +1289,6 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
     }
   });
 
-  const importedSkins = normalizeImportedSkinCollection(
-    importedSkinsSource.map((skin) =>
-      isLegacyGlassHoverImportedSkin(skin) ? { ...DEFAULT_GLASS_HOVER_IMPORTED_SKIN } : skin
-    ),
-    dedicatedButtonSkinTargets
-  );
-
-  const defaultImportedSkinId = importedSkins[0]?.id ?? DEFAULT_IMPORTED_SKIN_ID;
   const styleGroupsSource =
     stateWithoutChildStyles.StyleGroups && stateWithoutChildStyles.StyleGroups.length > 0
       ? [...stateWithoutChildStyles.StyleGroups]
@@ -1205,8 +1300,21 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
     }
   });
 
+  const legacyMigration = migrateLegacyImportedSkinState({
+    importedSkins: importedSkinsSource,
+    styleGroups: styleGroupsSource
+  });
+  const importedSkins = normalizeImportedSkinCollection(
+    legacyMigration.importedSkins,
+    dedicatedButtonSkinTargets
+  );
+
+  const defaultImportedSkinId =
+    importedSkins.find((skin) => skin.id === DEFAULT_IMPORTED_SKIN_ID)?.id ??
+    importedSkins[0]?.id ??
+    DEFAULT_IMPORTED_SKIN_ID;
   const normalizedStyleGroups = normalizeStyleGroupCollection({
-    styleGroups: styleGroupsSource,
+    styleGroups: legacyMigration.styleGroups,
     importedSkins,
     defaultImportedSkinId,
     targets: dedicatedButtonSkinTargets
@@ -1296,7 +1404,10 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
   const validStyleGroupIds = new Set(styleGroups.map((styleGroup) => styleGroup.id));
   const normalizedSurfaceStyleAssignments = surfaceStyleAssignments.map((assignment) => ({
     ...assignment,
-    style_group_id: resolveValidStyleGroupId(assignment.style_group_id, validStyleGroupIds)
+    style_group_id: resolveValidStyleGroupId(
+      remapStyleGroupId(assignment.style_group_id, legacyMigration.styleGroupAliases),
+      validStyleGroupIds
+    )
   }));
 
   return {
@@ -1318,12 +1429,18 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
     Programs: stateWithoutChildStyles.Programs.map((program) =>
       normalizeProgram({
         ...program,
-        style_group_id: resolveValidStyleGroupId(program.style_group_id, validStyleGroupIds),
+        style_group_id: resolveValidStyleGroupId(
+          remapStyleGroupId(program.style_group_id, legacyMigration.styleGroupAliases),
+          validStyleGroupIds
+        ),
         Panels: program.Panels.map((panel) => ({
           ...panel,
           Buttons: panel.Buttons.map((button) => ({
             ...button,
-            style_group_id: resolveValidStyleGroupId(button.style_group_id, validStyleGroupIds)
+            style_group_id: resolveValidStyleGroupId(
+              remapStyleGroupId(button.style_group_id, legacyMigration.styleGroupAliases),
+              validStyleGroupIds
+            )
           }))
         }))
       })

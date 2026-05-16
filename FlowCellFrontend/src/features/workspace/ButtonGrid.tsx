@@ -2,7 +2,10 @@ import type {
   MouseEvent as ReactMouseEvent,
   PointerEvent as ReactPointerEvent
 } from "react";
-import { HostSkinButton } from "../../components/HostSkinButton";
+import {
+  HostSkinButton,
+  resolveMainButtonFootprintOverride
+} from "../../components/HostSkinButton";
 import { SmartAxisStrip } from "../../components/ToolSurfaces";
 import { getImportedSkin, resolveStyleGroup } from "../../lib/skins";
 import {
@@ -189,7 +192,13 @@ export function ButtonGrid({
   const toolSetPanel = isBlenderToolSetPanel(selectedProgram, selectedPanel);
 
   return (
-    <div className={toolSetPanel ? "button-grid button-grid--tool-set" : "button-grid"}>
+    <div
+      className={
+        toolSetPanel
+          ? "button-grid button-grid--tool-set"
+          : "button-grid button-grid--variable-hosts"
+      }
+    >
       {panelRenderItems.map((item) =>
         item.kind === "smart-axis" ? (
           <div
@@ -280,13 +289,14 @@ function MainButtonHost({
   const checkedForPop = selectedPopButtonIds.includes(button.Id);
   const specificButtonStyleGroup = resolveStyleGroup(styleGroups, button.style_group_id ?? "");
   const buttonStyleGroup = specificButtonStyleGroup ?? mainButtonsStyleGroup;
+  const specificButtonImportedSkin =
+    specificButtonStyleGroup?.skinId === "imported-skin"
+      ? getImportedSkin(importedSkins, specificButtonStyleGroup.importedSkinId)
+      : undefined;
   const buttonImportedSkin =
     getImportedSkin(importedSkins, buttonStyleGroup?.importedSkinId) ??
     mainButtonsImportedSkin;
-  const isSelected =
-    selectedButtonRef?.programId === selectedProgram.ProgramTabId &&
-    selectedButtonRef.panelId === selectedPanel.Id &&
-    selectedButtonRef.buttonId === button.Id;
+  const explicitFootprint = resolveMainButtonFootprintOverride(specificButtonImportedSkin);
   const isToolbarEventTarget = (target: EventTarget | null) =>
     target instanceof HTMLElement && Boolean(target.closest(".button-host__toolbar"));
 
@@ -325,15 +335,14 @@ function MainButtonHost({
       <HostSkinButton
         type="button"
         label={button.Label}
+        flowId={button.Id}
         title={button.Tooltip || button.Label}
-        className={
-          isSelected
-            ? "button-host__surface-button is-selected"
-            : "button-host__surface-button"
-        }
+        className="button-host__surface-button"
         styleGroup={buttonStyleGroup}
         importedSkin={buttonImportedSkin}
-        selected={isSelected}
+        footprintMode={buttonImportedSkin ? "default-axis-normalized" : undefined}
+        footprintOverride={explicitFootprint}
+        selected={false}
         hostMode="neutral"
         highlightKey={`button:${selectedProgram.ProgramTabId}:${selectedPanel.Id}:${button.Id}`}
         onFocus={() => onFocusButton(button)}

@@ -106,6 +106,14 @@ export interface ImportedSkin {
   cardCss?: string;
   cardSvg?: string;
   themeBinding?: "black-tint";
+  sizingMode?:
+    | "intrinsic"
+    | "fit-uniform"
+    | "responsive-uniform"
+    | "fill-stretch"
+    | "cover-crop";
+  allowOverflow?: boolean;
+  mainButtonSizePercent?: number;
 }
 
 export interface StyleGroup {

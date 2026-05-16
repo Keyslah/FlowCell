@@ -5,7 +5,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type CSSProperties,
   type SetStateAction,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -121,7 +120,6 @@ import {
   normalizeShortcut,
   parseShortcutInput
 } from "./lib/bindings";
-import { resolveGreenHighlightColor } from "./lib/highlightPalette";
 import {
   ensureImportedSkinLabelPlaceholder,
   getImportedSkin,
@@ -2770,7 +2768,7 @@ export default function App() {
       if (requestedButtonId && selectableIds.includes(requestedButtonId)) {
         return requestedButtonId;
       }
-      return "";
+      return candidateIds[0] ?? "";
     });
   }, [selectedPanel, windowContext?.buttonId, windowContext?.kind]);
 
@@ -4343,21 +4341,22 @@ export default function App() {
       "imported-skin-black-tint",
       nextTheme.mainCardBlurPx
     );
-    const syncedImportedSkins = currentImportedSkins.map((skin) => {
-      if (!isBlackTintImportedSkin(skin)) {
-        return skin;
-      }
-      const syncedSkin = buildBlackTintImportedSkin(
+      const syncedImportedSkins = currentImportedSkins.map((skin) => {
+        if (!isBlackTintImportedSkin(skin)) {
+          return skin;
+        }
+        const syncedSkin = buildBlackTintImportedSkin(
         nextTheme.blackTintOpacity,
         skin.id,
         nextTheme.mainCardBlurPx
-      );
-      return {
-        ...syncedSkin,
-        id: skin.id,
-        name: skin.name
-      };
-    });
+        );
+        return {
+          ...skin,
+          ...syncedSkin,
+          id: skin.id,
+          name: skin.name
+        };
+      });
     return syncedImportedSkins.some((skin) => skin.id === nextBlackTintSkin.id)
       ? syncedImportedSkins
       : [...syncedImportedSkins, nextBlackTintSkin];
@@ -4429,7 +4428,7 @@ export default function App() {
     const targetSkinId =
       state.StyleGroups?.find((entry) => entry.id === "style-group-03")?.importedSkinId ??
       importedSkins[0]?.id ??
-      "imported-skin-01";
+      "imported-skin-default";
     const nextImportedSkins =
       importedSkins.length > 0
         ? importedSkins.map((skin) =>
@@ -6424,11 +6423,21 @@ export default function App() {
       return;
     }
 
+    const selectedAppearanceButtonId =
+      (selectedPopButtons.length === 1
+        ? selectedPopButtons[0]?.Id
+        : selectedButtonRef?.programId === selectedProgram.ProgramTabId &&
+            selectedButtonRef.panelId === selectedPanel.Id
+          ? selectedButtonRef.buttonId
+          : undefined) ??
+      selectedPanel.Buttons[0]?.Id ??
+      "";
+
     await openButtonAppearanceWindow({
       programId: selectedProgram.ProgramTabId,
       panelId: selectedPanel.Id,
       panelName: selectedPanel.Name,
-      buttonId: ""
+      buttonId: selectedAppearanceButtonId
     });
   };
 
@@ -8061,6 +8070,11 @@ export default function App() {
   );
 
   const renderToolPopoutSurface = () => {
+    const fanButtonSectionStyleGroup =
+      mainButtonsStyleGroup ?? popoutRegularStyleGroup;
+    const fanButtonSectionImportedSkin =
+      mainButtonsImportedSkin ?? popoutRegularImportedSkin;
+
     if (toolPopoutLayoutMode === "PanelFan") {
       if (!selectedPanel || !selectedProgram || toolPopoutButtons.length === 0) {
         return (
@@ -8077,7 +8091,7 @@ export default function App() {
         Label: selectedPanel.Name,
         Target: "panel-fan-owner",
         Tooltip: `Fan out ${selectedPanel.Name}`,
-        style_group_id: miscStyleGroup?.id
+        style_group_id: fanButtonSectionStyleGroup?.id
         };
       const panelFanOptions = selectedPanel.FanOptions ?? DEFAULT_PANEL_FAN_OPTIONS;
 
@@ -8104,8 +8118,10 @@ export default function App() {
             }))}
             styleGroups={state.StyleGroups}
             importedSkins={state.ImportedSkins}
-            ownerStyleGroupOverride={miscStyleGroup}
-            ownerImportedSkinOverride={miscImportedSkin}
+            ownerStyleGroupOverride={fanButtonSectionStyleGroup}
+            ownerImportedSkinOverride={fanButtonSectionImportedSkin}
+            styleGroupOverride={fanButtonSectionStyleGroup}
+            importedSkinOverride={fanButtonSectionImportedSkin}
             onOwnerClick={() => {}}
             onChildClick={(entry) => {
               void handlePanelButtonActivate(selectedProgram, selectedPanel, entry.button);
@@ -8149,8 +8165,8 @@ export default function App() {
             childButtons={childEntries}
             styleGroups={state.StyleGroups}
             importedSkins={state.ImportedSkins}
-            styleGroupOverride={popoutRegularStyleGroup}
-            importedSkinOverride={popoutRegularImportedSkin}
+            styleGroupOverride={fanButtonSectionStyleGroup}
+            importedSkinOverride={fanButtonSectionImportedSkin}
             onOwnerClick={() => {
               void handleHostButtonActivate(toolPopoutOwnerButton);
             }}
@@ -8731,21 +8747,26 @@ export default function App() {
                     styleGroup?.importedSkinId ?? programButtonsImportedSkin?.id
                   );
                   const selected = program.ProgramTabId === selectedProgram?.ProgramTabId;
-                  const highlightStyle = {
-                    ["--fc-selected-highlight" as string]: resolveGreenHighlightColor(
-                      `program:${program.ProgramTabId}`
-                    )
-                  } as CSSProperties;
 
                   return (
-                    <button
+                    <HostSkinButton
                       key={program.ProgramTabId}
                       type="button"
+                      flowId={`program:${program.ProgramTabId}`}
                       className={
                         selected
                           ? "program-rail__button is-active"
                           : "program-rail__button"
                       }
+                      label={
+                        program.ProgramConfig?.NormalizedName ??
+                        `Program ${program.ProgramTabId}`
+                      }
+                      styleGroup={styleGroup}
+                      importedSkin={importedSkin}
+                      selected={selected}
+                      active={selected}
+                      highlightKey={`program:${program.ProgramTabId}`}
                       onPointerDownCapture={(event) =>
                         handleProgramButtonPointerDownCapture(event, program)
                       }
@@ -8753,22 +8774,7 @@ export default function App() {
                       onClick={() =>
                         void persistState(updateProgramSelection(state, program.ProgramTabId))
                       }
-                    >
-                      <div
-                        className="program-rail__skin"
-                        data-selected={selected ? "true" : "false"}
-                        style={highlightStyle}
-                      >
-                        {renderButtonSkin({
-                          label:
-                            program.ProgramConfig?.NormalizedName ??
-                            `Program ${program.ProgramTabId}`,
-                          styleGroup,
-                          importedSkin,
-                          selected
-                        })}
-                      </div>
-                    </button>
+                    />
                   );
                 })}
               </div>
@@ -8794,11 +8800,13 @@ export default function App() {
                   <div className="panel-rail__row" key={panel.Id}>
                     <HostSkinButton
                       type="button"
+                      flowId={`panel:${panel.Id}`}
                       label={panel.Name}
                       className={selectedPanel?.Id === panel.Id ? "rail-button is-active" : "rail-button"}
                       styleGroup={panelsStyleGroup}
                       importedSkin={panelsImportedSkin}
                       selected={selectedPanel?.Id === panel.Id}
+                      active={selectedPanel?.Id === panel.Id}
                       onClick={() => {
                         void selectPanel(panel);
                       }}

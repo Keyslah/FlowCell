@@ -1,5 +1,12 @@
-import { useEffect, useMemo, useState, type ClipboardEvent as ReactClipboardEvent } from "react";
 import {
+  useEffect,
+  useMemo,
+  useState,
+  type ClipboardEvent as ReactClipboardEvent,
+  type KeyboardEvent as ReactKeyboardEvent
+} from "react";
+import {
+  DEFAULT_FLOW_IMPORTED_SKIN,
   DEFAULT_IMPORTED_SKINS,
   buildBlackTintImportedSkin,
   getImportedSkinPreset,
@@ -10,14 +17,22 @@ import {
   getImportedSkin,
   IMPORTED_SKIN_LABEL_PLACEHOLDER,
   normalizeImportedSkinHtmlMarkup,
-  renderButtonSkin,
   resolveStyleGroup
 } from "../lib/skins";
+import {
+  HostSkinButton,
+  MAIN_BUTTON_BASELINE_HEIGHT,
+  MAIN_BUTTON_BASELINE_WIDTH
+} from "./HostSkinButton";
 import type { FlowCellButton, ImportedSkin, StyleGroup } from "../types";
 
 export const BUTTON_APPEARANCE_ALL_BUTTONS_ID = "__all_buttons__";
 const DEFAULT_BUTTON_PREVIEW_LABEL = "Preview Button";
 const DEFAULT_BUTTON_SKIN_NAME = "New Button Skin";
+const DEFAULT_MAIN_BUTTON_SIZE_PERCENT = 100;
+const MAIN_BUTTON_SIZE_PERCENT_MIN = 40;
+const MAIN_BUTTON_SIZE_PERCENT_MAX = 220;
+const MAIN_BUTTON_SIZE_PERCENT_STEP = 5;
 
 interface ButtonAppearanceWindowProps {
   panelName: string;
@@ -88,7 +103,7 @@ function buildDraftFromSelection(
   }
 
   if (!selectedButtonId.trim()) {
-    return buildFallbackDraft("New Button");
+    return buildDraftFromButton(buttons[0], styleGroups, importedSkins) ?? buildFallbackDraft("New Button");
   }
 
   if (selectedButtonId === BUTTON_APPEARANCE_ALL_BUTTONS_ID) {
@@ -132,6 +147,16 @@ function createDraftSkinId(): string {
       ? crypto.randomUUID().replace(/-/g, "")
       : `${Date.now().toString(16)}${Math.random().toString(16).slice(2, 10)}`;
   return `imported-skin-${randomPart}`;
+}
+
+function clampMainButtonSizePercent(value: number): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_MAIN_BUTTON_SIZE_PERCENT;
+  }
+  return Math.min(
+    MAIN_BUTTON_SIZE_PERCENT_MAX,
+    Math.max(MAIN_BUTTON_SIZE_PERCENT_MIN, Math.round(value))
+  );
 }
 
 function applyNormalizedHtmlPaste(args: {
@@ -179,12 +204,13 @@ export function ButtonAppearanceWindow({
     buildDraftFromSelection(buttons, selectedButtonId, styleGroups, importedSkins)
   );
   const [transparentPopout, setTransparentPopout] = useState(false);
+  const [mainButtonSizeInput, setMainButtonSizeInput] = useState(
+    String(DEFAULT_MAIN_BUTTON_SIZE_PERCENT)
+  );
 
   useEffect(() => {
-    if (!draft && buttons.length > 0) {
-      setDraft(buildDraftFromSelection(buttons, selectedButtonId, styleGroups, importedSkins));
-    }
-  }, [buttons, draft, importedSkins, selectedButtonId, styleGroups]);
+    setDraft(buildDraftFromSelection(buttons, selectedButtonId, styleGroups, importedSkins));
+  }, [buttons, selectedButtonId]);
 
   useEffect(() => {
     if (buttons.length === 0) {
@@ -203,6 +229,16 @@ export function ButtonAppearanceWindow({
     () => (draft ? buildPreviewStyleGroup(draft.id || "button-appearance-preview") : undefined),
     [draft]
   );
+  const defaultPreviewStyleGroup = useMemo(
+    () => buildPreviewStyleGroup(DEFAULT_FLOW_IMPORTED_SKIN.id),
+    []
+  );
+  const mainButtonSizePercent = clampMainButtonSizePercent(
+    draft?.mainButtonSizePercent ?? DEFAULT_MAIN_BUTTON_SIZE_PERCENT
+  );
+  useEffect(() => {
+    setMainButtonSizeInput(String(mainButtonSizePercent));
+  }, [mainButtonSizePercent, selectedButtonId]);
 
   if (!previewButton || !draft || buttons.length === 0) {
     return (
@@ -238,13 +274,48 @@ export function ButtonAppearanceWindow({
   const previewLabel = isAllButtonsSelection
     ? "All Buttons"
     : selectedTargetButton?.Label ?? DEFAULT_BUTTON_PREVIEW_LABEL;
-  const saveDraftToSkinLibrary = () => {
+  const previewScaleRatio = mainButtonSizePercent / DEFAULT_MAIN_BUTTON_SIZE_PERCENT;
+  const previewHostWidth = Math.round(MAIN_BUTTON_BASELINE_WIDTH * previewScaleRatio);
+  const previewHostHeight = Math.round(MAIN_BUTTON_BASELINE_HEIGHT * previewScaleRatio);
+  const normalizedDraft = ensureImportedSkinLabelPlaceholder({
+    ...draft,
+    mainButtonSizePercent
+  });
+  const saveDraftToTarget = (nextDraft: ImportedSkin, nextTransparentPopout = transparentPopout) => {
+    if (!hasSelectedTarget) {
+      return;
+    }
+    onSave(selectedButtonId || previewButton.Id, nextDraft, nextTransparentPopout);
+  };
+  const commitMainButtonSizePercent = (value: string) => {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) {
+      setMainButtonSizeInput(String(mainButtonSizePercent));
+      return;
+    }
+    const nextPercent = clampMainButtonSizePercent(parsed);
+    setMainButtonSizeInput(String(nextPercent));
     const nextDraft = ensureImportedSkinLabelPlaceholder({
       ...draft,
+      mainButtonSizePercent: nextPercent
+    });
+    setDraft(nextDraft);
+    saveDraftToTarget(nextDraft);
+  };
+  const handleMainButtonSizeInputKeyDown = (event: ReactKeyboardEvent<HTMLInputElement>) => {
+    if (event.key !== "Enter") {
+      return;
+    }
+    event.preventDefault();
+    commitMainButtonSizePercent(mainButtonSizeInput);
+  };
+  const saveDraftToSkinLibrary = () => {
+    const nextDraft = {
+      ...normalizedDraft,
       id: draft.id.trim() || createDraftSkinId(),
       name:
         draft.name.trim() || (hasSelectedTarget ? `${previewLabel} Skin` : DEFAULT_BUTTON_SKIN_NAME)
-    });
+    };
     setDraft(nextDraft);
     onSaveImportedSkin(nextDraft);
   };
@@ -272,13 +343,7 @@ export function ButtonAppearanceWindow({
               type="button"
               className="surface-action"
               disabled={!hasSelectedTarget}
-              onClick={() =>
-                onSave(
-                  selectedButtonId || previewButton.Id,
-                  ensureImportedSkinLabelPlaceholder(draft),
-                  transparentPopout
-                )
-              }
+              onClick={() => saveDraftToTarget(normalizedDraft)}
             >
               {isAllButtonsSelection ? "Save To Panel Buttons" : "Save To Button"}
             </button>
@@ -293,7 +358,8 @@ export function ButtonAppearanceWindow({
             : hasSelectedTarget
               ? "This editor saves a dedicated imported skin onto one button at a time, including its pop-out and fanout renders."
               : "Build the skin first, then choose which button should receive it."}{" "}
-          The current style source is <strong>{currentStyleLabel}</strong>.
+          The current style source is <strong>{currentStyleLabel}</strong>. Buttons Page Size saves
+          the real main Buttons-page footprint, not just this editor preview.
         </p>
       </section>
 
@@ -316,6 +382,24 @@ export function ButtonAppearanceWindow({
                   ))}
                 </select>
               </label>
+              <label className="button-appearance-window__size-control">
+                Buttons Page Size %
+                <div className="button-appearance-window__preview-scale-field">
+                  <input
+                    type="number"
+                    min={MAIN_BUTTON_SIZE_PERCENT_MIN}
+                    max={MAIN_BUTTON_SIZE_PERCENT_MAX}
+                    step="1"
+                    value={mainButtonSizeInput}
+                    inputMode="numeric"
+                    aria-label="Buttons page size percent"
+                    onChange={(event) => setMainButtonSizeInput(event.target.value)}
+                    onBlur={() => commitMainButtonSizePercent(mainButtonSizeInput)}
+                    onKeyDown={handleMainButtonSizeInputKeyDown}
+                  />
+                  <span>%</span>
+                </div>
+              </label>
               <label>
                 <input
                   type="checkbox"
@@ -328,17 +412,80 @@ export function ButtonAppearanceWindow({
 
             <div className="appearance-preview-stack">
               <div className="appearance-preview-panel">
-                <span className="eyebrow">Live Preview</span>
-                <div className="preview-card button-appearance-window__preview-card">
-                  {previewStyleGroup
-                    ? renderButtonSkin({
-                        label: previewLabel,
-                        styleGroup: previewStyleGroup,
-                        importedSkin: draft,
-                        selected: true
-                      })
-                    : null}
+                <div className="button-appearance-window__preview-header">
+                  <span className="eyebrow">Live Preview</span>
+                  <button
+                    type="button"
+                    className="surface-action"
+                    disabled={mainButtonSizePercent === DEFAULT_MAIN_BUTTON_SIZE_PERCENT}
+                    onClick={() =>
+                      commitMainButtonSizePercent(String(DEFAULT_MAIN_BUTTON_SIZE_PERCENT))
+                    }
+                  >
+                    Default Size
+                  </button>
                 </div>
+                <label className="button-appearance-window__preview-size">
+                  Buttons Page Size
+                  <div className="appearance-slider-field">
+                    <input
+                      type="range"
+                      min={MAIN_BUTTON_SIZE_PERCENT_MIN}
+                      max={MAIN_BUTTON_SIZE_PERCENT_MAX}
+                      step={MAIN_BUTTON_SIZE_PERCENT_STEP}
+                      value={mainButtonSizePercent}
+                      onChange={(event) => commitMainButtonSizePercent(event.target.value)}
+                    />
+                    <span>{mainButtonSizePercent}%</span>
+                  </div>
+                </label>
+                <div className="button-appearance-window__preview-compare">
+                  <div className="preview-card button-appearance-window__preview-card">
+                    <span className="caption">
+                      Saved buttons page size - {previewHostWidth} x {previewHostHeight}px
+                    </span>
+                    {previewStyleGroup ? (
+                      <HostSkinButton
+                        label={previewLabel}
+                        className="button-appearance-window__preview-button"
+                        style={{
+                          width: `${previewHostWidth}px`,
+                          height: `${previewHostHeight}px`
+                        }}
+                        styleGroup={previewStyleGroup}
+                        importedSkin={normalizedDraft}
+                        hostMode="neutral"
+                        sizingMode="fit-uniform"
+                        tabIndex={-1}
+                      />
+                    ) : null}
+                  </div>
+                  <div className="preview-card button-appearance-window__preview-card">
+                    <span className="caption">
+                      Default reference - {MAIN_BUTTON_BASELINE_WIDTH} x{" "}
+                      {MAIN_BUTTON_BASELINE_HEIGHT}px
+                    </span>
+                    <HostSkinButton
+                      label={previewLabel}
+                      className="button-appearance-window__preview-button"
+                      style={{
+                        width: `${MAIN_BUTTON_BASELINE_WIDTH}px`,
+                        height: `${MAIN_BUTTON_BASELINE_HEIGHT}px`
+                      }}
+                      styleGroup={defaultPreviewStyleGroup}
+                      importedSkin={DEFAULT_FLOW_IMPORTED_SKIN}
+                      hostMode="neutral"
+                      sizingMode="fit-uniform"
+                      tabIndex={-1}
+                    />
+                  </div>
+                </div>
+                <p className="caption">
+                  This saved size is applied on the main Buttons page. The skin still fits
+                  uniformly inside that host box, so the button gets bigger or smaller without
+                  stretching the render code. Typing a value and pressing Enter, blurring the
+                  field, or dragging the slider applies it to the real button.
+                </p>
               </div>
               <div className="appearance-preview-panel">
                 <span className="eyebrow">Button Details</span>

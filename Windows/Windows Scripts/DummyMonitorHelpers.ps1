@@ -75,7 +75,7 @@ function Get-DummyMonitorTargetDisplay {
         return [string]$env:FLOWCELL_DUMMY_MONITOR_TARGET_DISPLAY
     }
 
-    return '\\.\DISPLAY4'
+    return 'AOC28E850.HDR'
 }
 
 function Get-DummyMonitorLogPath {

@@ -76,6 +76,12 @@ public static class ChromeWorkspaceNative {
     [DllImport("user32.dll")]
     public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
 
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetWindowPos(
         IntPtr hWnd,
@@ -385,6 +391,324 @@ function Write-ChromeWorkspaceStatus {
     $statusPath = Get-ChromeWorkspaceStatusPath
     Ensure-ParentDirectory -Path $statusPath
     Set-Content -LiteralPath $statusPath -Value $Message -Encoding UTF8
+}
+
+function Get-ChromeActiveTabTitleFromWindowTitle {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
+        [string]$WindowTitle
+    )
+
+    $title = $WindowTitle.Trim()
+    if ([string]::IsNullOrWhiteSpace($title)) {
+        return ''
+    }
+
+    $patterns = @(
+        '\s+-\s+Google Chrome$',
+        '\s+-\s+Chrome$'
+    )
+
+    foreach ($pattern in $patterns) {
+        if ($title -match $pattern) {
+            return ($title -replace $pattern, '').Trim()
+        }
+    }
+
+    return $title
+}
+
+function Get-ChromeActiveTabObservation {
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$Handle
+    )
+
+    $windowTitle = ''
+    try {
+        $windowTitle = Get-WindowTitle -Handle $Handle
+    }
+    catch {
+        return $null
+    }
+
+    if ([string]::IsNullOrWhiteSpace($windowTitle)) {
+        return $null
+    }
+
+    $url = ''
+    try {
+        $url = [string](Try-GetChromeActiveUrl -Handle $Handle)
+    }
+    catch {
+        $url = ''
+    }
+
+    $url = $url.Trim()
+    $tabTitle = Get-ChromeActiveTabTitleFromWindowTitle -WindowTitle $windowTitle
+    if ([string]::IsNullOrWhiteSpace($tabTitle) -and [string]::IsNullOrWhiteSpace($url)) {
+        return $null
+    }
+
+    $key = if (-not [string]::IsNullOrWhiteSpace($url)) {
+        "url::$url"
+    }
+    else {
+        "title::$tabTitle"
+    }
+
+    return [pscustomobject]@{
+        key = $key
+        title = $tabTitle
+        url = $url
+        window_title = $windowTitle
+    }
+}
+
+function Get-ChromeGuidedCaptureStatusText {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$WindowRecords,
+        [Parameter(Mandatory = $true)]
+        [hashtable]$CaptureByWindow
+    )
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('Captured tab activations:') | Out-Null
+
+    foreach ($window in $WindowRecords) {
+        $windowKey = [string]$window.hwnd_numeric
+        $capture = $CaptureByWindow[$windowKey]
+        $observationKeys = @($capture.observations | ForEach-Object { $_.key })
+        $recordedCount = $capture.observations.Count
+        if ($null -ne $capture.seed -and $observationKeys -notcontains $capture.seed.key) {
+            $recordedCount++
+        }
+
+        $label = Get-ChromeActiveTabTitleFromWindowTitle -WindowTitle ([string]$window.title)
+        if ([string]::IsNullOrWhiteSpace($label)) {
+            $label = [string]$window.title
+        }
+        if ($label.Length -gt 52) {
+            $label = '{0}...' -f $label.Substring(0, 49)
+        }
+
+        $lines.Add(('{0} tab{1}: {2}' -f $recordedCount, $(if ($recordedCount -eq 1) { '' } else { 's' }), $label)) | Out-Null
+    }
+
+    return ($lines -join [Environment]::NewLine)
+}
+
+function Invoke-ChromeGuidedTabCapture {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
+        [object[]]$WindowRecords
+    )
+
+    if ($WindowRecords.Count -eq 0) {
+        return [pscustomobject]@{
+            cancelled = $false
+            windows = @{}
+        }
+    }
+
+    Write-ChromeWorkspaceLog ("capture guided start | windows={0}" -f $WindowRecords.Count)
+
+    $captureByWindow = @{}
+    foreach ($window in $WindowRecords) {
+        $windowKey = [string]$window.hwnd_numeric
+        $captureByWindow[$windowKey] = [ordered]@{
+            seed = Get-ChromeActiveTabObservation -Handle $window.hwnd
+            observations = (New-Object System.Collections.ArrayList)
+        }
+    }
+
+    $originalForeground = [ChromeWorkspaceNative]::GetForegroundWindow()
+    $form = $null
+    $statusBox = $null
+    $dialogResult = 'cancel'
+
+    try {
+        $form = New-Object System.Windows.Forms.Form
+        $form.Text = 'Save Chrome Workspace'
+        $form.Size = New-Object System.Drawing.Size(520, 300)
+        $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
+        $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+        $form.MaximizeBox = $false
+        $form.MinimizeBox = $false
+        $form.ShowInTaskbar = $true
+        $form.TopMost = $true
+
+        $screen = [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position)
+        $locationX = [math]::Max($screen.WorkingArea.Left, $screen.WorkingArea.Right - $form.Width - 24)
+        $locationY = [math]::Max($screen.WorkingArea.Top, $screen.WorkingArea.Bottom - $form.Height - 24)
+        $form.Location = New-Object System.Drawing.Point($locationX, $locationY)
+
+        $instructionLabel = New-Object System.Windows.Forms.Label
+        $instructionLabel.AutoSize = $false
+        $instructionLabel.Location = New-Object System.Drawing.Point(16, 14)
+        $instructionLabel.Size = New-Object System.Drawing.Size(486, 76)
+        $instructionLabel.Text = "Click each Chrome tab once from left to right in every Chrome window. Include the tab that was already selected. If a window only has one tab, you can leave it alone. When finished, click Continue to save."
+        $instructionLabel.Font = New-Object System.Drawing.Font('Segoe UI', 9)
+        $form.Controls.Add($instructionLabel)
+
+        $statusBox = New-Object System.Windows.Forms.TextBox
+        $statusBox.Location = New-Object System.Drawing.Point(16, 96)
+        $statusBox.Size = New-Object System.Drawing.Size(486, 120)
+        $statusBox.Multiline = $true
+        $statusBox.ReadOnly = $true
+        $statusBox.TabStop = $false
+        $statusBox.ScrollBars = [System.Windows.Forms.ScrollBars]::Vertical
+        $statusBox.BackColor = [System.Drawing.SystemColors]::Window
+        $statusBox.Text = Get-ChromeGuidedCaptureStatusText -WindowRecords $WindowRecords -CaptureByWindow $captureByWindow
+        $form.Controls.Add($statusBox)
+
+        $continueButton = New-Object System.Windows.Forms.Button
+        $continueButton.Text = 'Continue'
+        $continueButton.Size = New-Object System.Drawing.Size(100, 30)
+        $continueButton.Location = New-Object System.Drawing.Point(292, 228)
+        $continueButton.Add_Click({
+            $this.FindForm().Tag = 'continue'
+        })
+        $form.Controls.Add($continueButton)
+
+        $cancelButton = New-Object System.Windows.Forms.Button
+        $cancelButton.Text = 'Cancel'
+        $cancelButton.Size = New-Object System.Drawing.Size(100, 30)
+        $cancelButton.Location = New-Object System.Drawing.Point(402, 228)
+        $cancelButton.Add_Click({
+            $this.FindForm().Tag = 'cancel'
+        })
+        $form.Controls.Add($cancelButton)
+
+        $form.AcceptButton = $continueButton
+        $form.CancelButton = $cancelButton
+        $form.Add_FormClosing({
+            param($sender, $eventArgs)
+
+            if ([string]::IsNullOrWhiteSpace([string]$sender.Tag)) {
+                $sender.Tag = 'cancel'
+            }
+        })
+
+        [void]$form.Show()
+        $form.Activate()
+        $form.BringToFront()
+        [System.Windows.Forms.Application]::DoEvents()
+
+        $lastStatusText = [string]$statusBox.Text
+        while ([string]::IsNullOrWhiteSpace([string]$form.Tag)) {
+            $foregroundWindow = [ChromeWorkspaceNative]::GetForegroundWindow()
+            foreach ($window in $WindowRecords) {
+                if ($foregroundWindow -ne $window.hwnd) {
+                    continue
+                }
+
+                $windowKey = [string]$window.hwnd_numeric
+                $capture = $captureByWindow[$windowKey]
+                $snapshot = Get-ChromeActiveTabObservation -Handle $window.hwnd
+                if ($null -eq $snapshot) {
+                    continue
+                }
+
+                if ($null -eq $capture.seed) {
+                    $capture.seed = $snapshot
+                    continue
+                }
+
+                $lastRecordedKey = ''
+                if ($capture.observations.Count -gt 0) {
+                    $lastRecordedKey = [string]$capture.observations[$capture.observations.Count - 1].key
+                }
+
+                if ($capture.observations.Count -eq 0) {
+                    if ($snapshot.key -ne $capture.seed.key) {
+                        [void]$capture.observations.Add($snapshot)
+                    }
+                }
+                elseif ($snapshot.key -ne $lastRecordedKey) {
+                    [void]$capture.observations.Add($snapshot)
+                }
+            }
+
+            $statusText = Get-ChromeGuidedCaptureStatusText -WindowRecords $WindowRecords -CaptureByWindow $captureByWindow
+            if ($statusText -ne $lastStatusText) {
+                $statusBox.Text = $statusText
+                $lastStatusText = $statusText
+            }
+
+            [System.Windows.Forms.Application]::DoEvents()
+            Start-Sleep -Milliseconds 180
+        }
+
+        $dialogResult = [string]$form.Tag
+    }
+    finally {
+        if ($null -ne $form) {
+            $form.Close()
+            $form.Dispose()
+        }
+
+        if ($originalForeground -ne [IntPtr]::Zero) {
+            [void][ChromeWorkspaceNative]::SetForegroundWindow($originalForeground)
+        }
+    }
+
+    if ($dialogResult -ne 'continue') {
+        Write-ChromeWorkspaceLog 'capture guided result | cancelled by user'
+        return [pscustomobject]@{
+            cancelled = $true
+            windows = @{}
+        }
+    }
+
+    $capturedWindows = @{}
+    foreach ($window in $WindowRecords) {
+        $windowKey = [string]$window.hwnd_numeric
+        $capture = $captureByWindow[$windowKey]
+        $tabs = New-Object System.Collections.Generic.List[object]
+        $observationKeys = @($capture.observations | ForEach-Object { $_.key })
+
+        if ($null -ne $capture.seed -and $observationKeys -notcontains $capture.seed.key) {
+            $tabs.Add([ordered]@{
+                title = [string]$capture.seed.title
+                url = [string]$capture.seed.url
+                is_active = $false
+            }) | Out-Null
+        }
+
+        foreach ($observation in @($capture.observations)) {
+            $tabs.Add([ordered]@{
+                title = [string]$observation.title
+                url = [string]$observation.url
+                is_active = $false
+            }) | Out-Null
+        }
+
+        if ($tabs.Count -eq 0 -and $null -ne $capture.seed) {
+            $tabs.Add([ordered]@{
+                title = [string]$capture.seed.title
+                url = [string]$capture.seed.url
+                is_active = $true
+            }) | Out-Null
+        }
+        elseif ($tabs.Count -gt 0) {
+            for ($index = 0; $index -lt $tabs.Count; $index++) {
+                $tabs[$index].is_active = $false
+            }
+            $tabs[$tabs.Count - 1].is_active = $true
+        }
+
+        $capturedWindows[$windowKey] = @($tabs)
+        Write-ChromeWorkspaceLog ("capture guided result | hwnd={0} | recorded_tabs={1}" -f $window.hwnd_numeric, $tabs.Count)
+    }
+
+    return [pscustomobject]@{
+        cancelled = $false
+        windows = $capturedWindows
+    }
 }
 
 function New-BoundsObject {
@@ -742,7 +1066,7 @@ function Close-ChromeWindowsGracefully {
 
     $deadline = (Get-Date).AddSeconds(12)
     while ((Get-Date) -lt $deadline) {
-        $remainingHandles = @(Get-ChromeWindowRecords).hwnd_numeric
+        $remainingHandles = @((Get-ChromeWindowRecords) | ForEach-Object { $_.hwnd_numeric })
         $stillOpen = @($WindowRecords | Where-Object { $remainingHandles -contains $_.hwnd_numeric })
         if ($stillOpen.Count -eq 0) {
             return @()
@@ -750,7 +1074,7 @@ function Close-ChromeWindowsGracefully {
         Start-Sleep -Milliseconds 250
     }
 
-    $remaining = Get-ChromeWindowRecords
+    $remaining = @(Get-ChromeWindowRecords)
     return @($remaining | Where-Object { $WindowRecords.hwnd_numeric -contains $_.hwnd_numeric })
 }
 
@@ -784,6 +1108,7 @@ function Get-RestoreUrlsForWindow {
 function Normalize-ChromeRestoreUrl {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyString()]
         [string]$Url
     )
 
@@ -930,6 +1255,7 @@ function Select-NewChromeWindow {
 function Wait-ForChromeWindow {
     param(
         [Parameter(Mandatory = $true)]
+        [AllowEmptyCollection()]
         [long[]]$KnownHandles,
         [string]$ExpectedTitle,
         [int]$TimeoutSeconds = 18
@@ -937,7 +1263,7 @@ function Wait-ForChromeWindow {
 
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
     while ((Get-Date) -lt $deadline) {
-        $current = Get-ChromeWindowRecords
+        $current = @(Get-ChromeWindowRecords)
         $newWindows = @($current | Where-Object { $KnownHandles -notcontains $_.hwnd_numeric })
         if ($newWindows.Count -gt 0) {
             return (Select-NewChromeWindow -Candidates $newWindows -ExpectedTitle $ExpectedTitle)
@@ -1015,35 +1341,53 @@ function Read-ChromeWorkspaceFile {
 }
 
 function Invoke-SaveChromeWorkspace {
+    $chromeWindows = @(Get-ChromeWindowRecords)
+    Write-ChromeWorkspaceLog ("capture start | windows={0} | tab_capture_mode=guided_manual" -f $chromeWindows.Count)
+    $guidedCapture = Invoke-ChromeGuidedTabCapture -WindowRecords $chromeWindows
+    if ($guidedCapture.cancelled) {
+        $statusMessage = 'Save Chrome Workspace cancelled.'
+        Write-ChromeWorkspaceStatus -Message $statusMessage
+        Write-ChromeWorkspaceLog 'capture result | cancelled during guided tab capture'
+        return
+    }
+
     $workspacePath = Select-ChromeWorkspaceSavePath
     if ([string]::IsNullOrWhiteSpace([string]$workspacePath)) {
         $statusMessage = 'Save Chrome Workspace cancelled.'
         Write-ChromeWorkspaceStatus -Message $statusMessage
-        Write-ChromeWorkspaceLog 'capture result | cancelled by user'
+        Write-ChromeWorkspaceLog 'capture result | cancelled during save path selection'
         return
     }
 
     Ensure-ParentDirectory -Path $workspacePath
+    Write-ChromeWorkspaceLog ("capture continue | path={0}" -f $workspacePath)
 
-    Write-ChromeWorkspaceLog ("capture start | path={0}" -f $workspacePath)
-    $chromeWindows = Get-ChromeWindowRecords
     $workspaceWindows = @()
     $fullTabCaptureAvailable = $true
 
     foreach ($window in $chromeWindows) {
         $placement = Get-WindowPlacementInfo -Handle $window.hwnd
         $monitorInfo = Get-MonitorInfoForWindow -Handle $window.hwnd
-        $activeUrl = Try-GetChromeActiveUrl -Handle $window.hwnd
-        $tabSnapshot = Get-ChromeTabSnapshot -Handle $window.hwnd -ActiveUrl $activeUrl
-        if (-not $tabSnapshot.fullTabCaptureAvailable) {
+        $windowTabs = @($guidedCapture.windows[[string]$window.hwnd_numeric])
+        $activeTab = @($windowTabs | Where-Object { $_.is_active } | Select-Object -Last 1)
+        $activeUrl = ''
+        if ($activeTab.Count -gt 0) {
+            $activeUrl = [string]$activeTab[0].url
+        }
+
+        if ($windowTabs.Count -eq 0) {
             $fullTabCaptureAvailable = $false
-            Write-ChromeWorkspaceLog ("capture result | hwnd={0} | full tab URL capture unavailable" -f $window.hwnd_numeric)
+            Write-ChromeWorkspaceLog ("capture result | hwnd={0} | guided tab capture recorded 0 tabs" -f $window.hwnd_numeric)
+        }
+        elseif (@($windowTabs | Where-Object { [string]::IsNullOrWhiteSpace([string]$_.url) }).Count -gt 0) {
+            $fullTabCaptureAvailable = $false
+            Write-ChromeWorkspaceLog ("capture result | hwnd={0} | one or more guided tabs did not expose a URL" -f $window.hwnd_numeric)
         }
 
         $workspaceWindows += [ordered]@{
             title = $window.title
             active_url = $activeUrl
-            tabs = @($tabSnapshot.tabs)
+            tabs = @($windowTabs)
             monitor_index = $monitorInfo.monitor_index
             monitor_device_name = $monitorInfo.device_name
             monitor_bounds = $monitorInfo.monitor_bounds
@@ -1063,7 +1407,10 @@ function Invoke-SaveChromeWorkspace {
         workspace_kind = 'chrome'
         workspace_path = $workspacePath
         full_tab_capture_available = $fullTabCaptureAvailable
-        note = if ($fullTabCaptureAvailable) {
+        note = if ($chromeWindows.Count -gt 0) {
+            'Tabs were captured using guided manual activation. Saved tab order matches the order tabs were activated during save.'
+        }
+        elseif ($fullTabCaptureAvailable) {
             ''
         }
         else {
@@ -1075,15 +1422,23 @@ function Invoke-SaveChromeWorkspace {
     $workspace | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $workspacePath -Encoding UTF8
 
     $savedCount = $workspaceWindows.Count
-    $statusMessage = if ($fullTabCaptureAvailable) {
+    $savedTabCount = @($workspaceWindows | ForEach-Object { @($_.tabs).Count } | Measure-Object -Sum).Sum
+    if ($null -eq $savedTabCount) {
+        $savedTabCount = 0
+    }
+
+    $statusMessage = if ($chromeWindows.Count -gt 0 -and $fullTabCaptureAvailable) {
+        "Saved $savedCount Chrome windows and $savedTabCount tabs."
+    }
+    elseif ($fullTabCaptureAvailable) {
         "Saved $savedCount Chrome windows."
     }
     else {
-        "Saved $savedCount Chrome windows. Full tab URL capture was unavailable for one or more windows; active URLs and geometry were saved where possible."
+        "Saved $savedCount Chrome windows. One or more tabs did not expose a URL during guided capture; geometry and captured tabs were still saved."
     }
 
     Write-ChromeWorkspaceStatus -Message $statusMessage
-    Write-ChromeWorkspaceLog ("capture result | saved_windows={0} | full_tab_capture_available={1} | path={2}" -f $savedCount, $fullTabCaptureAvailable, $workspacePath)
+    Write-ChromeWorkspaceLog ("capture result | saved_windows={0} | saved_tabs={1} | full_tab_capture_available={2} | path={3} | tab_capture_mode=guided_manual" -f $savedCount, $savedTabCount, $fullTabCaptureAvailable, $workspacePath)
 }
 
 function Invoke-OpenChromeWorkspace {
@@ -1097,7 +1452,7 @@ function Invoke-OpenChromeWorkspace {
 
     $workspace = Read-ChromeWorkspaceFile -WorkspacePath $workspacePath
     $workspaceWindows = @($workspace.windows)
-    $existingWindows = Get-ChromeWindowRecords
+    $existingWindows = @(Get-ChromeWindowRecords)
     $restoreMode = Get-ChromeRestoreMode -CurrentWindowCount $existingWindows.Count
 
     if ($restoreMode -eq 'cancel') {
@@ -1107,12 +1462,12 @@ function Invoke-OpenChromeWorkspace {
         return
     }
 
+    $replaceRequested = $restoreMode -eq 'replace' -and $existingWindows.Count -gt 0
+    $originalWindowsToClose = @()
+
     if ($restoreMode -eq 'replace' -and $existingWindows.Count -gt 0) {
-        Write-ChromeWorkspaceLog ("launch start | workspace_path={0} | replace current Chrome workspace | current_windows={1}" -f $workspacePath, $existingWindows.Count)
-        $remaining = Close-ChromeWindowsGracefully -WindowRecords $existingWindows
-        if ($remaining.Count -gt 0) {
-            Write-ChromeWorkspaceLog ("launch start | some Chrome windows stayed open after replace request | remaining={0}" -f $remaining.Count)
-        }
+        $originalWindowsToClose = @($existingWindows)
+        Write-ChromeWorkspaceLog ("launch start | workspace_path={0} | replace requested | current_windows={1} | close_original_after_full_restore=true" -f $workspacePath, $existingWindows.Count)
     }
     else {
         Write-ChromeWorkspaceLog ("launch start | workspace_path={0} | preserve current Chrome workspace | current_windows={1}" -f $workspacePath, $existingWindows.Count)
@@ -1128,9 +1483,10 @@ function Invoke-OpenChromeWorkspace {
     $chromePath = Get-ChromeExecutablePath
     $restoredCount = 0
     $failedPlacementCount = 0
+    $requestedWindowCount = $workspaceWindows.Count
 
     foreach ($windowSnapshot in $workspaceWindows) {
-        $knownHandles = @(Get-ChromeWindowRecords).hwnd_numeric
+        $knownHandles = @((Get-ChromeWindowRecords) | ForEach-Object { $_.hwnd_numeric })
         $urls = @(Get-RestoreUrlsForWindow -WindowSnapshot $windowSnapshot)
         Write-ChromeWorkspaceLog ("launch start | title={0} | urls={1}" -f [string]$windowSnapshot.title, $urls.Count)
         Start-Process -FilePath $chromePath -ArgumentList (@('--new-window') + $urls) | Out-Null
@@ -1162,9 +1518,31 @@ function Invoke-OpenChromeWorkspace {
         $restoredCount++
     }
 
+    $fullRestoreSucceeded = ($restoredCount -eq $requestedWindowCount) -and ($failedPlacementCount -eq 0)
+    $leftOriginalWindowsOpen = $false
+
+    if ($replaceRequested) {
+        if ($fullRestoreSucceeded) {
+            $remaining = Close-ChromeWindowsGracefully -WindowRecords $originalWindowsToClose
+            if ($remaining.Count -gt 0) {
+                Write-ChromeWorkspaceLog ("replace cleanup | some original Chrome windows stayed open after successful restore | remaining={0}" -f $remaining.Count)
+            }
+            else {
+                Write-ChromeWorkspaceLog ("replace cleanup | original Chrome windows closed after successful restore | closed={0}" -f $originalWindowsToClose.Count)
+            }
+        }
+        else {
+            $leftOriginalWindowsOpen = $true
+            Write-ChromeWorkspaceLog ("replace cleanup | skipped closing original Chrome windows because restore was incomplete | restored_windows={0} | requested_windows={1} | failed_to_place={2}" -f $restoredCount, $requestedWindowCount, $failedPlacementCount)
+        }
+    }
+
     $statusMessage = "Restored $restoredCount Chrome windows. Failed to place $failedPlacementCount windows."
     if ($workspace.PSObject.Properties['full_tab_capture_available'] -and -not [bool]$workspace.full_tab_capture_available) {
         $statusMessage += ' Some windows were restored with only their active URL because full tab capture was unavailable during save.'
+    }
+    if ($leftOriginalWindowsOpen) {
+        $statusMessage += ' Original Chrome windows were left open because the restore did not complete successfully.'
     }
 
     Write-ChromeWorkspaceStatus -Message $statusMessage
