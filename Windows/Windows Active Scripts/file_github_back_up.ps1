@@ -1,8 +1,31 @@
-# Description: Create a local Git restore point and mirror the clipboard folder into the backup root.
+param(
+    [switch]$BackgroundWorker,
+    [ValidateSet('GitHub', 'FlowCell')]
+    [string]$BackupFlavor = 'GitHub'
+)
+
+# Description: Trigger a background repo backup snapshot and mirror the clipboard folder into the backup root.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+function Get-BackupUiLabel([string]$Flavor) {
+    if ($Flavor -eq 'FlowCell') {
+        return 'FlowCell back up'
+    }
+
+    return 'GitHub back up'
+}
+
+function Get-BackupUiTitle([string]$Flavor) {
+    if ($Flavor -eq 'FlowCell') {
+        return 'FlowCell Back Up'
+    }
+
+    return 'GitHub Back Up'
+}
 
 function Find-FlowTestRoot([string]$StartPath) {
     $currentPath = [System.IO.Path]::GetFullPath($StartPath)
@@ -26,6 +49,8 @@ function Find-FlowTestRoot([string]$StartPath) {
 $repoRoot = Find-FlowTestRoot -StartPath $PSScriptRoot
 $flowCellLocalRoot = Join-Path $repoRoot 'FlowCell\local'
 $statusPath = Join-Path $flowCellLocalRoot 'logs\last_action_status.txt'
+$script:BackupUiLabel = Get-BackupUiLabel -Flavor $BackupFlavor
+$script:BackupUiTitle = Get-BackupUiTitle -Flavor $BackupFlavor
 
 function Write-Status([string]$Message) {
     $directory = Split-Path -Parent $statusPath
@@ -58,6 +83,50 @@ function Show-ResultMessage(
     }
 }
 
+function Show-WindowsNotification(
+    [string]$Message,
+    [string]$Title = 'GitHub Back Up',
+    [System.Windows.Forms.MessageBoxIcon]$Icon = [System.Windows.Forms.MessageBoxIcon]::Information
+) {
+    $suppressUi = [string][Environment]::GetEnvironmentVariable('FLOWCELL_NO_MESSAGE_BOX')
+    if ($suppressUi -and $suppressUi.Trim().ToLowerInvariant() -in @('1','true','yes','on')) {
+        return
+    }
+
+    try {
+        $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
+        $notifyIcon.Icon = switch ($Icon) {
+            ([System.Windows.Forms.MessageBoxIcon]::Error) { [System.Drawing.SystemIcons]::Error; break }
+            ([System.Windows.Forms.MessageBoxIcon]::Warning) { [System.Drawing.SystemIcons]::Warning; break }
+            default { [System.Drawing.SystemIcons]::Information; break }
+        }
+        $notifyIcon.BalloonTipIcon = switch ($Icon) {
+            ([System.Windows.Forms.MessageBoxIcon]::Error) { [System.Windows.Forms.ToolTipIcon]::Error; break }
+            ([System.Windows.Forms.MessageBoxIcon]::Warning) { [System.Windows.Forms.ToolTipIcon]::Warning; break }
+            default { [System.Windows.Forms.ToolTipIcon]::Info; break }
+        }
+        $notifyIcon.BalloonTipTitle = $Title
+        $balloonText = [string]$Message
+        if ([string]::IsNullOrWhiteSpace($balloonText)) {
+            $balloonText = $Title
+        }
+        $balloonText = $balloonText.Trim()
+        if ($balloonText.Length -gt 240) {
+            $balloonText = $balloonText.Substring(0, 237) + '...'
+        }
+        $notifyIcon.BalloonTipText = $balloonText
+        $notifyIcon.Visible = $true
+        $notifyIcon.ShowBalloonTip(5000)
+        Start-Sleep -Seconds 6
+        $notifyIcon.Visible = $false
+        $notifyIcon.Dispose()
+        return
+    }
+    catch {
+        Show-ResultMessage -Message $Message -Title $Title -Icon $Icon
+    }
+}
+
 function Convert-ToProcessArgument([string]$Value) {
     if ($null -eq $Value) {
         return '""'
@@ -75,6 +144,46 @@ function Convert-ToProcessArgument([string]$Value) {
     $escaped = $text -replace '(\\*)"', '$1$1\"'
     $escaped = $escaped -replace '(\\+)$', '$1$1'
     return ('"{0}"' -f $escaped)
+}
+
+function Get-WindowsPowerShellPath {
+    $command = Get-Command 'powershell.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($command -and -not [string]::IsNullOrWhiteSpace([string]$command.Source)) {
+        return [string]$command.Source
+    }
+
+    $fallback = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    if (Test-Path -LiteralPath $fallback -PathType Leaf) {
+        return $fallback
+    }
+
+    throw 'Could not locate powershell.exe.'
+}
+
+function Start-BackgroundBackup {
+    $scriptPath = [string]$PSCommandPath
+    if ([string]::IsNullOrWhiteSpace($scriptPath)) {
+        throw 'Could not determine the current script path for background launch.'
+    }
+
+    $powershellExe = Get-WindowsPowerShellPath
+    $processStartInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $processStartInfo.FileName = $powershellExe
+    $processStartInfo.WorkingDirectory = Split-Path -Parent $scriptPath
+    $processStartInfo.UseShellExecute = $true
+    $processStartInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $processStartInfo.Arguments = ((@(
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        $scriptPath,
+        '-BackgroundWorker',
+        '-BackupFlavor',
+        $BackupFlavor
+    ) | ForEach-Object { Convert-ToProcessArgument -Value ([string]$_) }) -join ' ')
+
+    [void][System.Diagnostics.Process]::Start($processStartInfo)
 }
 
 function Invoke-Process {
@@ -337,13 +446,116 @@ function Test-IsSameOrChildPath([string]$Path, [string]$PossibleAncestor) {
     return $normalizedPath.StartsWith(($normalizedAncestor + '\'), [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function New-ExternalBackupItem(
+    [string]$RepositoryRoot,
+    [string]$SourcePath,
+    [string]$RelativeBackupPath,
+    [string]$Label
+) {
+    if ([string]::IsNullOrWhiteSpace($SourcePath)) {
+        return $null
+    }
+
+    $normalizedSourcePath = Get-NormalizedFullPath -Path $SourcePath
+    if (Test-IsSameOrChildPath -Path $normalizedSourcePath -PossibleAncestor $RepositoryRoot) {
+        return $null
+    }
+
+    return [pscustomobject]@{
+        SourcePath          = $normalizedSourcePath
+        RelativeBackupPath  = $RelativeBackupPath
+        Label               = $Label
+        Exists              = (Test-Path -LiteralPath $normalizedSourcePath -PathType Leaf)
+    }
+}
+
+function Get-FlowCellExternalBackupItems([string]$RepositoryRoot, [string]$BackupDateLabel) {
+    if ([string]::IsNullOrWhiteSpace($RepositoryRoot)) {
+        return @()
+    }
+
+    $localConfigPath = Join-Path $RepositoryRoot 'FlowCell\local\private\blender.config.local.json'
+    if (-not (Test-Path -LiteralPath $localConfigPath -PathType Leaf)) {
+        return @()
+    }
+
+    try {
+        $localConfig = Get-Content -LiteralPath $localConfigPath -Raw | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw ('Could not read Blender local config: {0}' -f $localConfigPath)
+    }
+
+    $automation = $localConfig.automation
+    if ($null -eq $automation) {
+        return @()
+    }
+
+    $bridgeFolderText = [string]$automation.bridgeFolder
+    if ([string]::IsNullOrWhiteSpace($bridgeFolderText)) {
+        return @()
+    }
+
+    $bridgeFolder = Get-NormalizedFullPath -Path $bridgeFolderText
+    $addonsRoot = Get-NormalizedFullPath -Path (Split-Path -Parent $bridgeFolder)
+    $blenderBundleRoot = 'Blender\Blender Scripts\blender addons{0}' -f $BackupDateLabel
+    $items = @()
+    $candidates = @(
+        [pscustomobject]@{
+            Path = Join-Path $addonsRoot ([string]$automation.addonActionsFileName)
+            Relative = $blenderBundleRoot + '\' + [string]$automation.addonActionsFileName
+            Label = 'Blender add-on actions'
+        },
+        [pscustomobject]@{
+            Path = Join-Path $addonsRoot ([string]$automation.addonBridgeFileName)
+            Relative = $blenderBundleRoot + '\' + [string]$automation.addonBridgeFileName
+            Label = 'Blender add-on bridge'
+        },
+        [pscustomobject]@{
+            Path = Join-Path $bridgeFolder ([string]$automation.customActionsFileName)
+            Relative = $blenderBundleRoot + '\blender_bridge_flowtest\' + [string]$automation.customActionsFileName
+            Label = 'Blender custom action registry'
+        },
+        [pscustomobject]@{
+            Path = Join-Path $bridgeFolder ([string]$automation.setupStatusFileName)
+            Relative = $blenderBundleRoot + '\blender_bridge_flowtest\' + [string]$automation.setupStatusFileName
+            Label = 'Blender bridge setup state'
+        },
+        [pscustomobject]@{
+            Path = Join-Path $bridgeFolder 'flowtest_bridge_runtime_status.json'
+            Relative = $blenderBundleRoot + '\blender_bridge_flowtest\flowtest_bridge_runtime_status.json'
+            Label = 'Blender bridge runtime status'
+        }
+    )
+
+    foreach ($candidate in $candidates) {
+        $item = New-ExternalBackupItem -RepositoryRoot $RepositoryRoot -SourcePath ([string]$candidate.Path) -RelativeBackupPath ([string]$candidate.Relative) -Label ([string]$candidate.Label)
+        if ($null -ne $item) {
+            $items += $item
+        }
+    }
+
+    return @($items)
+}
+
+function Copy-ExternalBackupItem([string]$DestinationRoot, [object]$Item) {
+    $destinationPath = Join-Path $DestinationRoot ([string]$Item.RelativeBackupPath)
+    $destinationDirectory = Split-Path -Parent $destinationPath
+    if (-not (Test-Path -LiteralPath $destinationDirectory -PathType Container)) {
+        New-Item -ItemType Directory -Path $destinationDirectory -Force | Out-Null
+    }
+
+    Copy-Item -LiteralPath ([string]$Item.SourcePath) -Destination $destinationPath -Force
+    return $destinationPath
+}
+
 function Test-GitBranchExists([string]$RepositoryRoot, [string]$BranchName) {
     $result = Invoke-Git -RepositoryRoot $RepositoryRoot -Arguments @('show-ref', '--verify', '--quiet', ('refs/heads/{0}' -f $BranchName)) -AllowFailure
     return ($result.ExitCode -eq 0)
 }
 
-function Get-RestoreBranchName([string]$RepositoryRoot, [string]$Stamp) {
-    $baseName = 'codex/restore-{0}' -f $Stamp
+function Get-BackupSnapshotBranchName([string]$RepositoryRoot, [string]$Stamp) {
+    $baseName = 'codex/backup-snapshot-{0}' -f $Stamp
     $candidateName = $baseName
     $suffix = 2
     while (Test-GitBranchExists -RepositoryRoot $RepositoryRoot -BranchName $candidateName) {
@@ -359,14 +571,16 @@ function Get-CurrentGitRef([string]$RepositoryRoot) {
     return $result.Text.Trim()
 }
 
-function New-GitRestorePoint([string]$RepositoryRoot, [string]$Stamp) {
+function New-GitBackupSnapshot([string]$RepositoryRoot, [string]$Stamp) {
     $startingRef = Get-CurrentGitRef -RepositoryRoot $RepositoryRoot
-    $branchName = Get-RestoreBranchName -RepositoryRoot $RepositoryRoot -Stamp $Stamp
+    $headResult = Invoke-Git -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse', 'HEAD') -AllowFailure
+    if ($headResult.ExitCode -ne 0) {
+        throw 'Git backup snapshot skipped because the repository does not have a committed HEAD yet.'
+    }
 
-    [void](Invoke-Git -RepositoryRoot $RepositoryRoot -Arguments @('switch', '-c', $branchName))
-    [void](Invoke-Git -RepositoryRoot $RepositoryRoot -Arguments @('add', '-A'))
-    [void](Invoke-Git -RepositoryRoot $RepositoryRoot -Arguments @('commit', '--allow-empty', '-m', ('restore point {0}' -f $Stamp)))
-    $commitHash = (Invoke-Git -RepositoryRoot $RepositoryRoot -Arguments @('rev-parse', 'HEAD')).Text.Trim()
+    $commitHash = $headResult.Text.Trim()
+    $branchName = Get-BackupSnapshotBranchName -RepositoryRoot $RepositoryRoot -Stamp $Stamp
+    [void](Invoke-Git -RepositoryRoot $RepositoryRoot -Arguments @('branch', $branchName, $commitHash))
 
     return [pscustomobject]@{
         BranchName = $branchName
@@ -471,12 +685,55 @@ function Resolve-BackupSources([string[]]$RequestedFolders) {
     return @($results)
 }
 
+function Get-CompletionNotificationText([object[]]$Results, [bool]$HasIssues) {
+    $lines = @()
+    if ($HasIssues) {
+        $lines += ('{0} finished with issues.' -f $script:BackupUiLabel)
+    }
+    else {
+        $lines += ('{0} completed.' -f $script:BackupUiLabel)
+    }
+
+    if (@($Results).Count -eq 1) {
+        $result = $Results[0]
+        if (-not [string]::IsNullOrWhiteSpace([string]$result.BackupPath)) {
+            $lines += ('Backup: {0}' -f (Split-Path -Leaf ([string]$result.BackupPath)))
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$result.GitBranchName)) {
+            $lines += ('Snapshot: {0}' -f [string]$result.GitBranchName)
+        }
+        if ($BackupFlavor -eq 'FlowCell' -and @($result.ExternalBackupPaths).Count -gt 0) {
+            $lines += ('Extras: {0} file(s)' -f @($result.ExternalBackupPaths).Count)
+        }
+    }
+    elseif (@($Results).Count -gt 1) {
+        $lines += ('Processed: {0} folder(s)' -f @($Results).Count)
+    }
+
+    return ($lines -join [Environment]::NewLine)
+}
+
+if (-not $BackgroundWorker) {
+    try {
+        Start-BackgroundBackup
+        $statusMessage = ('{0} started in the background. Windows will notify you when it finishes.' -f $script:BackupUiLabel)
+        Write-Status $statusMessage
+        exit 0
+    }
+    catch {
+        $statusMessage = $_.Exception.Message
+        Write-Status $statusMessage
+        Show-ResultMessage -Message $statusMessage -Title ($script:BackupUiTitle + ' Failed') -Icon ([System.Windows.Forms.MessageBoxIcon]::Error)
+        exit 1
+    }
+}
+
 try {
     $requestedFolders = @(Get-RequestedSourceFolders)
     if (@($requestedFolders).Count -eq 0) {
-        $statusMessage = 'GitHub back up cancelled. Copy a folder path to the clipboard first, or choose one when prompted.'
+        $statusMessage = ('{0} cancelled. Copy a folder path to the clipboard first, or choose one when prompted.' -f $script:BackupUiLabel)
         Write-Status $statusMessage
-        Show-ResultMessage -Message $statusMessage -Icon ([System.Windows.Forms.MessageBoxIcon]::Warning)
+        Show-WindowsNotification -Message $statusMessage -Title ($script:BackupUiTitle + ' Cancelled') -Icon ([System.Windows.Forms.MessageBoxIcon]::Warning)
         exit 1
     }
 
@@ -489,11 +746,12 @@ try {
     if (@($sourceRecords).Count -eq 0) {
         $statusMessage = 'No valid folders were found in the clipboard or override values.'
         Write-Status $statusMessage
-        Show-ResultMessage -Message $statusMessage -Icon ([System.Windows.Forms.MessageBoxIcon]::Warning)
+        Show-WindowsNotification -Message $statusMessage -Title ($script:BackupUiTitle + ' Failed') -Icon ([System.Windows.Forms.MessageBoxIcon]::Warning)
         exit 1
     }
 
     $stamp = Get-Date -Format 'yyyy-MM-dd_HHmmss'
+    $backupDateLabel = Get-Date -Format 'M-d-yyyy'
     $results = @()
     $failures = @()
 
@@ -508,17 +766,17 @@ try {
             throw ('Refusing to back up a folder that is already inside the backup root: {0}' -f $sourcePath)
         }
 
-        Write-Status ('Creating GitHub back up for:{0}{0}{1}' -f [Environment]::NewLine, $sourcePath)
+        Write-Status ('Creating {0} for:{1}{1}{2}' -f $script:BackupUiLabel, [Environment]::NewLine, $sourcePath)
 
         $gitResult = $null
         $gitError = ''
         if ($sourceRecord.IsGitRepo) {
             try {
-                $gitResult = New-GitRestorePoint -RepositoryRoot ([string]$sourceRecord.RepositoryRoot) -Stamp $stamp
+                $gitResult = New-GitBackupSnapshot -RepositoryRoot ([string]$sourceRecord.RepositoryRoot) -Stamp $stamp
             }
             catch {
                 $gitError = $_.Exception.Message
-                $failures += ('Git restore point failed for {0}: {1}' -f $sourcePath, $gitError)
+                $failures += ('Git backup snapshot failed for {0}: {1}' -f $sourcePath, $gitError)
             }
         }
 
@@ -532,16 +790,49 @@ try {
             $failures += ('RoboCopy failed for {0}: {1}' -f $sourcePath, $copyError)
         }
 
+        $externalBackupPaths = @()
+        $externalBackupErrors = @()
+        if ($BackupFlavor -eq 'FlowCell' -and $sourceRecord.IsGitRepo) {
+            try {
+                $externalItems = @(Get-FlowCellExternalBackupItems -RepositoryRoot ([string]$sourceRecord.RepositoryRoot) -BackupDateLabel $backupDateLabel)
+            }
+            catch {
+                $externalItems = @()
+                $externalBackupErrors += $_.Exception.Message
+                $failures += ('External backup discovery failed for {0}: {1}' -f $sourcePath, $_.Exception.Message)
+            }
+
+            foreach ($externalItem in @($externalItems)) {
+                if (-not [bool]$externalItem.Exists) {
+                    $missingMessage = ('Missing {0}: {1}' -f [string]$externalItem.Label, [string]$externalItem.SourcePath)
+                    $externalBackupErrors += $missingMessage
+                    $failures += ('External backup file missing for {0}: {1}' -f $sourcePath, [string]$externalItem.SourcePath)
+                    continue
+                }
+
+                try {
+                    $externalBackupPaths += (Copy-ExternalBackupItem -DestinationRoot $destinationPath -Item $externalItem)
+                }
+                catch {
+                    $copyMessage = ('Failed to copy {0}: {1}' -f [string]$externalItem.Label, $_.Exception.Message)
+                    $externalBackupErrors += $copyMessage
+                    $failures += ('External backup copy failed for {0}: {1}' -f $sourcePath, $copyMessage)
+                }
+            }
+        }
+
         $results += [pscustomobject]@{
-            SourcePath      = $sourcePath
-            BackupPath      = $destinationPath
-            IsGitRepo       = [bool]$sourceRecord.IsGitRepo
-            GitBranchName   = if ($null -ne $gitResult) { [string]$gitResult.BranchName } else { '' }
-            GitCommitHash   = if ($null -ne $gitResult) { [string]$gitResult.CommitHash } else { '' }
-            GitStartingRef  = if ($null -ne $gitResult) { [string]$gitResult.StartingRef } else { '' }
-            GitError        = $gitError
+            SourcePath       = $sourcePath
+            BackupPath       = $destinationPath
+            IsGitRepo        = [bool]$sourceRecord.IsGitRepo
+            GitBranchName    = if ($null -ne $gitResult) { [string]$gitResult.BranchName } else { '' }
+            GitCommitHash    = if ($null -ne $gitResult) { [string]$gitResult.CommitHash } else { '' }
+            GitStartingRef   = if ($null -ne $gitResult) { [string]$gitResult.StartingRef } else { '' }
+            GitError         = $gitError
             RoboCopyExitCode = if ($null -ne $copyResult) { [int]$copyResult.ExitCode } else { -1 }
-            CopyError       = $copyError
+            CopyError        = $copyError
+            ExternalBackupPaths = @($externalBackupPaths)
+            ExternalBackupErrors = @($externalBackupErrors)
         }
     }
 
@@ -559,14 +850,14 @@ try {
                 if ($shortHash.Length -gt 8) {
                     $shortHash = $shortHash.Substring(0, 8)
                 }
-                $summaryLines += ('Git: {0} from {1} @ {2}' -f [string]$result.GitBranchName, [string]$result.GitStartingRef, $shortHash)
+                $summaryLines += ('Git backup snapshot: {0} from {1} @ {2} (current branch unchanged)' -f [string]$result.GitBranchName, [string]$result.GitStartingRef, $shortHash)
             }
             else {
-                $summaryLines += ('Git: failed - {0}' -f [string]$result.GitError)
+                $summaryLines += ('Git backup snapshot: failed - {0}' -f [string]$result.GitError)
             }
         }
         else {
-            $summaryLines += 'Git: skipped (no repository found above the selected folder)'
+            $summaryLines += 'Git backup snapshot: skipped (no repository found above the selected folder)'
         }
 
         if ([string]::IsNullOrWhiteSpace([string]$result.CopyError)) {
@@ -574,6 +865,24 @@ try {
         }
         else {
             $summaryLines += ('RoboCopy: failed - {0}' -f [string]$result.CopyError)
+        }
+
+        if ($BackupFlavor -eq 'FlowCell') {
+            if (@($result.ExternalBackupPaths).Count -gt 0) {
+                $summaryLines += ('External support files: {0} copied' -f @($result.ExternalBackupPaths).Count)
+                foreach ($externalBackupPath in @($result.ExternalBackupPaths)) {
+                    $summaryLines += ('External: {0}' -f [string]$externalBackupPath)
+                }
+            }
+            elseif (@($result.ExternalBackupErrors).Count -gt 0) {
+                $summaryLines += 'External support files: incomplete'
+                foreach ($externalBackupError in @($result.ExternalBackupErrors)) {
+                    $summaryLines += ('External: {0}' -f [string]$externalBackupError)
+                }
+            }
+            else {
+                $summaryLines += 'External support files: none detected for this source'
+            }
         }
     }
 
@@ -586,20 +895,22 @@ try {
 
         $statusMessage = $summaryLines -join [Environment]::NewLine
         Write-Status $statusMessage
-        Show-ResultMessage -Message $statusMessage -Title 'GitHub Back Up Partial' -Icon ([System.Windows.Forms.MessageBoxIcon]::Warning)
+        $notificationText = Get-CompletionNotificationText -Results $results -HasIssues $true
+        Show-WindowsNotification -Message $notificationText -Title ($script:BackupUiTitle + ' Partial') -Icon ([System.Windows.Forms.MessageBoxIcon]::Warning)
         exit 1
     }
 
     $summaryLines += ''
-    $summaryLines += 'GitHub back up completed.'
+    $summaryLines += ('{0} completed.' -f $script:BackupUiLabel)
     $statusMessage = $summaryLines -join [Environment]::NewLine
     Write-Status $statusMessage
-    Show-ResultMessage -Message $statusMessage
+    $notificationText = Get-CompletionNotificationText -Results $results -HasIssues $false
+    Show-WindowsNotification -Message $notificationText -Title $script:BackupUiTitle
     exit 0
 }
 catch {
     $statusMessage = $_.Exception.Message
     Write-Status $statusMessage
-    Show-ResultMessage -Message $statusMessage -Title 'GitHub Back Up Failed' -Icon ([System.Windows.Forms.MessageBoxIcon]::Error)
+    Show-WindowsNotification -Message $statusMessage -Title ($script:BackupUiTitle + ' Failed') -Icon ([System.Windows.Forms.MessageBoxIcon]::Error)
     exit 1
 }

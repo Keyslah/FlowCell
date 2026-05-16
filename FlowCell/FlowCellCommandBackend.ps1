@@ -363,7 +363,21 @@ function Invoke-FlowCellControllerCli([string[]]$Arguments) {
     }
     $ahkExe = Get-FlowCellAutoHotkeyExePath
     $argumentList = @('/ErrorStdOut', $script:AhkScriptPath) + @($Arguments)
-    $process = Start-Process -FilePath $ahkExe -ArgumentList $argumentList -PassThru -Wait -WindowStyle Hidden
+    $quotedArguments = @(
+        $argumentList | ForEach-Object {
+            $value = [string]$_
+            if ([string]::IsNullOrEmpty($value)) {
+                '""'
+            }
+            elseif ($value -notmatch '[\s"]') {
+                $value
+            }
+            else {
+                '"' + (($value -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
+            }
+        }
+    ) -join ' '
+    $process = Start-Process -FilePath $ahkExe -ArgumentList $quotedArguments -PassThru -Wait -WindowStyle Hidden
     return [int]$process.ExitCode
 }
 
