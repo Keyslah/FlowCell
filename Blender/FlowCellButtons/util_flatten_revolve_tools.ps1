@@ -1,4 +1,5 @@
-# Description: Flattens the active mesh into a centered profile, hides the source object, and generates revolve output in place.
+# Description: Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.
+
 
 # Source Python File: C:\Users\aaron\AppData\Roaming\Blender Foundation\Blender\5.0\scripts\addons\flowcell_actions.py
 

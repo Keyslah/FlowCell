@@ -1,4 +1,5 @@
-# Description: Open FlowCell theme, viewport background picture, and HDRI world controls.
+# Description: Open Theme and HDRI controls for Blender UI colors, world path, X/Y/Z rotation, and world strength.
+
 # Source Bridge Action: flowtest_custom_hdri_world_tools
 # Source Python Filename: custom_hdri_world_tools.py
 # Source Python File: D:\Dev\workspace\Codex\FlowTest\Blender\ManagedActions\custom_hdri_world_tools.py

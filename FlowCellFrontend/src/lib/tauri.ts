@@ -25,11 +25,21 @@ import type {
 
 const FLOWCELL_STATE_SYNC_EVENT = "flowcell://state-saved";
 const FLOWCELL_WINDOW_PLACEMENT_EVENT = "flowcell://window-placement";
+const FLOWCELL_SESSION_POPOUT_BOUNDS_EVENT = "flowcell://session-popout-bounds";
 const pendingToolPopoutOpens = new Map<string, Promise<void>>();
 
 interface FlowCellWindowPlacementEventPayload {
   label?: string;
   suppressMs?: number;
+}
+
+export interface FlowCellSessionPopoutBoundsPayload {
+  sourceWindowLabel?: string;
+  kind: "panel-popout" | "tool-popout";
+  programId: number;
+  panelId: string;
+  ownerButtonId?: string;
+  bounds: FlowCellBounds;
 }
 
 interface SaveStateOptions {
@@ -507,6 +517,56 @@ export function listenForProgrammaticWindowPlacement(
         ? (event.payload as FlowCellWindowPlacementEventPayload)
         : {};
     return handler(payload);
+  });
+}
+
+export function emitSessionPopoutBoundsUpdate(
+  payload: Omit<FlowCellSessionPopoutBoundsPayload, "sourceWindowLabel"> & {
+    sourceWindowLabel?: string;
+  }
+): Promise<void> {
+  return emit(FLOWCELL_SESSION_POPOUT_BOUNDS_EVENT, {
+    ...payload,
+    sourceWindowLabel: payload.sourceWindowLabel ?? getCurrentWindow().label
+  } satisfies FlowCellSessionPopoutBoundsPayload);
+}
+
+export function listenForSessionPopoutBoundsUpdate(
+  handler: (payload: FlowCellSessionPopoutBoundsPayload) => void | Promise<void>
+) {
+  return listen(FLOWCELL_SESSION_POPOUT_BOUNDS_EVENT, (event) => {
+    const payload =
+      event.payload && typeof event.payload === "object"
+        ? (event.payload as Partial<FlowCellSessionPopoutBoundsPayload>)
+        : undefined;
+    const bounds = payload?.bounds;
+    if (
+      (payload?.kind !== "panel-popout" && payload?.kind !== "tool-popout") ||
+      typeof payload?.programId !== "number" ||
+      typeof payload?.panelId !== "string" ||
+      !bounds ||
+      !Number.isFinite(bounds.Left) ||
+      !Number.isFinite(bounds.Top) ||
+      !Number.isFinite(bounds.Width) ||
+      !Number.isFinite(bounds.Height)
+    ) {
+      return;
+    }
+    const normalizedPayload = payload as FlowCellSessionPopoutBoundsPayload;
+    return handler({
+      sourceWindowLabel:
+        typeof normalizedPayload.sourceWindowLabel === "string"
+          ? normalizedPayload.sourceWindowLabel
+          : undefined,
+      kind: normalizedPayload.kind,
+      programId: normalizedPayload.programId,
+      panelId: normalizedPayload.panelId,
+      ownerButtonId:
+        typeof normalizedPayload.ownerButtonId === "string"
+          ? normalizedPayload.ownerButtonId
+          : undefined,
+      bounds
+    });
   });
 }
 
@@ -994,4 +1054,26 @@ export function deleteBlenderButton(args: {
   buttonTarget: string;
 }): Promise<Record<string, unknown>> {
   return invoke("delete_blender_button", args);
+}
+
+export function updateBlenderButtonDescription(args: {
+  buttonTarget: string;
+  executionTarget?: string;
+  description: string;
+}): Promise<Record<string, unknown>> {
+  return invoke("update_blender_button_description", {
+    request: {
+      buttonTarget: args.buttonTarget,
+      executionTarget: args.executionTarget,
+      description: args.description
+    }
+  });
+}
+
+export function syncBlenderButtonSourceMirrors(args?: {
+  refreshDescriptions?: boolean;
+}): Promise<Record<string, unknown>> {
+  return invoke("sync_blender_button_source_mirrors", {
+    refreshDescriptions: args?.refreshDescriptions ?? false
+  });
 }

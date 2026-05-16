@@ -1,4 +1,5 @@
-# Description: Open FlowCell alignment controls for active-object min, center, max, surface, and geocenter alignment.
+# Description: With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.
+
 
 # Source Bridge Action: alignment_tools
 # Source Python Filename: flowtest_actions.py

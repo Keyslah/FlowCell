@@ -15,7 +15,6 @@ $wrapperRoot = Join-Path $projectRoot 'FlowCellButtons'
 $managedActionRoot = Join-Path $projectRoot 'ManagedActions'
 $supportRoot = Join-Path $projectRoot 'SupportScripts'
 $bridgeLayoutPath = Join-Path $supportRoot 'FlowCellBlenderBridgeLayout.ps1'
-$syncScriptPath = Join-Path $supportRoot 'Sync-BlenderButtonsToFlowCell.ps1'
 $customActionSyncPath = Join-Path $supportRoot 'Sync-BlenderCustomActionCode.ps1'
 $localConfigPath = Join-Path $repoRoot 'FlowCell\local\private\blender.config.local.json'
 
@@ -166,6 +165,9 @@ $remainingButtons = New-Object System.Collections.Generic.List[object]
 $removedButtonCount = 0
 
 foreach ($button in @($config.buttons)) {
+    if ($button.PSObject.Properties['panel']) {
+        [void]$button.PSObject.Properties.Remove('panel')
+    }
     $buttonScriptPath = if ($button.PSObject.Properties['scriptPath']) {
         Get-NormalizedPathKey (Resolve-FlowCellButtonScriptPath ([string]$button.scriptPath))
     } else {
@@ -268,14 +270,9 @@ if (Test-Path -LiteralPath $customActionSyncPath -PathType Leaf) {
     & $customActionSyncPath -ConfigPath $ConfigPath -BridgeFolder $BridgeFolder | Out-Null
 }
 
-if (Test-Path -LiteralPath $syncScriptPath -PathType Leaf) {
-    [Environment]::SetEnvironmentVariable('FLOWTEST_ALLOW_NEW_BLENDER_BUTTON_TARGETS_JSON', $null, 'Process')
-    & $syncScriptPath | Out-Null
-}
-
 [pscustomobject]@{
     RemovedButtonCount = $removedButtonCount
     RemovedActionCount = $prunedActionCount
     RemovedActions = @($removedActions.ToArray())
-    StatusMessage = ('Removed Blender button and re-synced FlowTest. Removed config entries: {0}. Pruned custom actions: {1}.' -f $removedButtonCount, $prunedActionCount)
+    StatusMessage = ('Removed Blender button traces. Removed config entries: {0}. Pruned custom actions: {1}.' -f $removedButtonCount, $prunedActionCount)
 } | ConvertTo-Json -Depth 6

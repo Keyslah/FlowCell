@@ -269,6 +269,7 @@ struct BindingsConfig {
 #[serde(rename_all = "camelCase")]
 struct ManagedScriptInstallResultItem {
     label: Option<String>,
+    tooltip: Option<String>,
     source_path: String,
     active_path: String,
     execution_target: String,
@@ -294,6 +295,14 @@ struct ManagedProgramFolders {
     runtime_root: PathBuf,
     source_root: Option<PathBuf>,
     allowed_extensions: Vec<&'static str>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+struct BlenderButtonDescriptionUpdateRequest {
+    button_target: String,
+    execution_target: Option<String>,
+    description: String,
 }
 
 #[derive(Clone, Default)]
@@ -3080,6 +3089,7 @@ fn install_managed_program_scripts_with_folders(
         if !source_path.exists() {
             failures.push(ManagedScriptInstallResultItem {
                 label: None,
+                tooltip: None,
                 source_path: trimmed.to_string(),
                 active_path: String::new(),
                 execution_target: String::new(),
@@ -3097,6 +3107,7 @@ fn install_managed_program_scripts_with_folders(
             Ok(staged_root) => staged_roots.push(staged_root),
             Err(error) => failures.push(ManagedScriptInstallResultItem {
                 label: Some(button_label_from_path(&source_path)),
+                tooltip: None,
                 source_path: source_path.display().to_string(),
                 active_path: String::new(),
                 execution_target: String::new(),
@@ -3193,6 +3204,16 @@ fn install_managed_program_scripts_with_folders(
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string();
+                let label = entry
+                    .get("Label")
+                    .and_then(Value::as_str)
+                    .map(|value| value.to_string())
+                    .filter(|value| !value.trim().is_empty());
+                let tooltip = entry
+                    .get("Tooltip")
+                    .and_then(Value::as_str)
+                    .map(|value| value.to_string())
+                    .filter(|value| !value.trim().is_empty());
                 let installed = entry
                     .get("Installed")
                     .and_then(Value::as_bool)
@@ -3202,8 +3223,11 @@ fn install_managed_program_scripts_with_folders(
                     .and_then(Value::as_str)
                     .map(|value| value.to_string());
                 results.push(ManagedScriptInstallResultItem {
-                    label: (!source_path.is_empty())
-                        .then(|| button_label_from_path(Path::new(&source_path))),
+                    label: label.or_else(|| {
+                        (!source_path.is_empty())
+                            .then(|| button_label_from_path(Path::new(&source_path)))
+                    }),
+                    tooltip,
                     source_path: source_path.clone(),
                     active_path: source_path,
                     execution_target,
@@ -3265,6 +3289,7 @@ fn install_managed_program_scripts_with_folders(
 
         results.push(ManagedScriptInstallResultItem {
             label: Some(button_label_from_path(&active_path)),
+            tooltip: None,
             source_path: active_path.display().to_string(),
             active_path: active_path.display().to_string(),
             execution_target: execution_target.display().to_string(),
@@ -3400,6 +3425,114 @@ fn delete_blender_button(
         } else {
             format!(
                 "{}. Raw delete output: {}",
+                error,
+                sanitized_stdout.chars().take(240).collect::<String>()
+            )
+        }
+    })
+}
+
+#[tauri::command]
+fn update_blender_button_description(
+    state: State<'_, RuntimeState>,
+    request: BlenderButtonDescriptionUpdateRequest,
+) -> Result<Value, String> {
+    let paths = with_paths(&state)?;
+    let updater_path = paths
+        .repo_root
+        .join("Blender")
+        .join("SupportScripts")
+        .join("Update-BlenderFlowCellButtonDescription.ps1");
+
+    let mut command = Command::new(powershell_exe());
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        &updater_path.display().to_string(),
+        "-ButtonTarget",
+        request.button_target.trim(),
+        "-Description",
+        request.description.trim(),
+    ]);
+    if let Some(execution_target) = request.execution_target.as_deref() {
+        if !execution_target.trim().is_empty() {
+            command.args(["-ExecutionTarget", execution_target.trim()]);
+        }
+    }
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command.output().map_err(|error| error.to_string())?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "Blender button description update failed.".to_string()
+        } else {
+            stderr
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let sanitized_stdout = strip_utf8_bom(&stdout).trim();
+    serde_json::from_str(sanitized_stdout).map_err(|error| {
+        if sanitized_stdout.is_empty() {
+            "Blender button description update returned no JSON output.".to_string()
+        } else {
+            format!(
+                "{}. Raw update output: {}",
+                error,
+                sanitized_stdout.chars().take(240).collect::<String>()
+            )
+        }
+    })
+}
+
+#[tauri::command]
+fn sync_blender_button_source_mirrors(
+    state: State<'_, RuntimeState>,
+    refresh_descriptions: Option<bool>,
+) -> Result<Value, String> {
+    let paths = with_paths(&state)?;
+    let sync_path = paths
+        .repo_root
+        .join("Blender")
+        .join("SupportScripts")
+        .join("Sync-BlenderButtonSourceMirrors.ps1");
+
+    let mut command = Command::new(powershell_exe());
+    command.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        &sync_path.display().to_string(),
+    ]);
+    if refresh_descriptions.unwrap_or(false) {
+        command.arg("-RefreshDescriptions");
+    }
+    command.creation_flags(CREATE_NO_WINDOW);
+    let output = command.output().map_err(|error| error.to_string())?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "Blender button source mirror sync failed.".to_string()
+        } else {
+            stderr
+        });
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let sanitized_stdout = strip_utf8_bom(&stdout).trim();
+    serde_json::from_str(sanitized_stdout).map_err(|error| {
+        if sanitized_stdout.is_empty() {
+            "Blender button source mirror sync returned no JSON output.".to_string()
+        } else {
+            format!(
+                "{}. Raw sync output: {}",
                 error,
                 sanitized_stdout.chars().take(240).collect::<String>()
             )
@@ -3850,6 +3983,8 @@ fn main() {
             install_managed_program_scripts,
             install_blender_buttons,
             delete_blender_button,
+            update_blender_button_description,
+            sync_blender_button_source_mirrors,
             open_panel_popout,
             close_panel_popout,
             open_tool_popout,

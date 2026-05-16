@@ -1,4 +1,5 @@
-# Description: Export the selected mesh objects to 01 src\04 assets\03 3d as a uniquely named STL.
+# Description: Export the selected mesh objects as STL files and add them to Cura.
+
 
 # Source Bridge Action: save_selected_stl_to_assets
 # Source Python Filename: flowtest_actions.py

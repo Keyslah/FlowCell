@@ -80,6 +80,7 @@ const DEFAULT_SURFACE_STYLE_ASSIGNMENTS: SurfaceStyleAssignment[] = [
     style_group_id: ""
   }
 ];
+const MAX_DEDICATED_IMPORTED_SKIN_PAYLOAD_CHARS = 200000;
 
 const DEFAULT_STYLE_GROUPS: StyleGroup[] = [
   {
@@ -133,7 +134,7 @@ function buildImportedSkinLibraryStyleGroupId(importedSkinId: string): string {
 
 function buildImportedSkinLibraryStyleGroupName(importedSkin: ImportedSkin): string {
   const skinName = importedSkin.name.trim() || importedSkin.id;
-  return `Skin · ${skinName}`;
+  return `Skin - ${skinName}`;
 }
 
 function isImportedSkinLibraryStyleGroupId(styleGroupId: string): boolean {
@@ -146,6 +147,256 @@ function isDedicatedButtonImportedSkinId(importedSkinId: string): boolean {
 
 function isDedicatedButtonStyleGroupId(styleGroupId: string): boolean {
   return styleGroupId.startsWith(DEDICATED_BUTTON_STYLE_GROUP_PREFIX);
+}
+
+function buildDedicatedButtonStyleGroupId(programId: number, panelId: string, buttonId: string): string {
+  return `button-style-${programId}-${sanitizeStyleGroupToken(panelId)}-${sanitizeStyleGroupToken(buttonId)}`;
+}
+
+function buildDedicatedButtonImportedSkinId(
+  programId: number,
+  panelId: string,
+  buttonId: string
+): string {
+  return `button-skin-${programId}-${sanitizeStyleGroupToken(panelId)}-${sanitizeStyleGroupToken(buttonId)}`;
+}
+
+function buildPanelButtonStyleGroupId(programId: number, panelId: string): string {
+  return `button-style-${programId}-${sanitizeStyleGroupToken(panelId)}-all`;
+}
+
+function buildPanelButtonImportedSkinId(programId: number, panelId: string): string {
+  return `button-skin-${programId}-${sanitizeStyleGroupToken(panelId)}-all`;
+}
+
+function normalizeDisplayName(value: unknown, fallback: string, maxLength = 120): string {
+  const rawValue = typeof value === "string" ? value : "";
+  const normalized = rawValue.replace(/\u00c2?\u00b7/g, "-").replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return fallback;
+  }
+  return normalized.slice(0, maxLength);
+}
+
+function getImportedSkinPayloadChars(importedSkin: ImportedSkin): number {
+  return (
+    (importedSkin.html?.length ?? 0) +
+    (importedSkin.css?.length ?? 0) +
+    (importedSkin.svg?.length ?? 0) +
+    (importedSkin.cardHtml?.length ?? 0) +
+    (importedSkin.cardCss?.length ?? 0) +
+    (importedSkin.cardSvg?.length ?? 0)
+  );
+}
+
+function isOversizedDedicatedImportedSkin(importedSkin: ImportedSkin): boolean {
+  return (
+    isDedicatedButtonImportedSkinId(importedSkin.id) &&
+    getImportedSkinPayloadChars(importedSkin) > MAX_DEDICATED_IMPORTED_SKIN_PAYLOAD_CHARS
+  );
+}
+
+function resolveValidStyleGroupId(
+  styleGroupId: unknown,
+  validStyleGroupIds: Set<string>
+): string {
+  const normalizedId = typeof styleGroupId === "string" ? styleGroupId.trim() : "";
+  return normalizedId.length > 0 && validStyleGroupIds.has(normalizedId) ? normalizedId : "";
+}
+
+interface DedicatedButtonSkinTargets {
+  allowedImportedSkinIds: Set<string>;
+  allowedStyleGroupIds: Set<string>;
+  canonicalStyleGroupNames: Map<string, string>;
+}
+
+function collectDedicatedButtonSkinTargets(programs: FlowCellProgram[]): DedicatedButtonSkinTargets {
+  const allowedImportedSkinIds = new Set<string>();
+  const allowedStyleGroupIds = new Set<string>();
+  const canonicalStyleGroupNames = new Map<string, string>();
+
+  programs.forEach((program) => {
+    program.Panels.forEach((panel) => {
+      const panelStyleGroupId = buildPanelButtonStyleGroupId(program.ProgramTabId, panel.Id);
+      const panelImportedSkinId = buildPanelButtonImportedSkinId(program.ProgramTabId, panel.Id);
+      const panelLabel = normalizeDisplayName(panel.Name, panel.Id, 80);
+      allowedStyleGroupIds.add(panelStyleGroupId);
+      allowedImportedSkinIds.add(panelImportedSkinId);
+      canonicalStyleGroupNames.set(
+        panelStyleGroupId,
+        `Panel - ${panelLabel} / all buttons`
+      );
+
+      panel.Buttons.forEach((button) => {
+        const buttonStyleGroupId = buildDedicatedButtonStyleGroupId(
+          program.ProgramTabId,
+          panel.Id,
+          button.Id
+        );
+        const buttonImportedSkinId = buildDedicatedButtonImportedSkinId(
+          program.ProgramTabId,
+          panel.Id,
+          button.Id
+        );
+        allowedStyleGroupIds.add(buttonStyleGroupId);
+        allowedImportedSkinIds.add(buttonImportedSkinId);
+        canonicalStyleGroupNames.set(
+          buttonStyleGroupId,
+          `Button - ${normalizeDisplayName(button.Label, button.Id, 80)}`
+        );
+      });
+    });
+  });
+
+  return {
+    allowedImportedSkinIds,
+    allowedStyleGroupIds,
+    canonicalStyleGroupNames
+  };
+}
+
+function shouldKeepImportedSkinLibraryStyleGroup(
+  styleGroup: StyleGroup,
+  allStyleGroups: StyleGroup[]
+): boolean {
+  if (!isImportedSkinLibraryStyleGroupId(styleGroup.id)) {
+    return true;
+  }
+
+  const importedSkinId = (styleGroup.importedSkinId ?? "").trim();
+  if (!importedSkinId || isDedicatedButtonImportedSkinId(importedSkinId)) {
+    return false;
+  }
+
+  return !allStyleGroups.some(
+    (otherStyleGroup) =>
+      otherStyleGroup.id !== styleGroup.id &&
+      !isImportedSkinLibraryStyleGroupId(otherStyleGroup.id) &&
+      !isDedicatedButtonStyleGroupId(otherStyleGroup.id) &&
+      (otherStyleGroup.importedSkinId ?? "").trim() === importedSkinId
+  );
+}
+
+function normalizeImportedSkinCollection(
+  importedSkins: ImportedSkin[],
+  targets: DedicatedButtonSkinTargets
+): ImportedSkin[] {
+  return importedSkins
+    .filter(
+      (skin) =>
+        (!isDedicatedButtonImportedSkinId(skin.id) || targets.allowedImportedSkinIds.has(skin.id)) &&
+        !isOversizedDedicatedImportedSkin(skin)
+    )
+    .map((skin) => ({
+      ...skin,
+      name: normalizeDisplayName(skin.name, skin.id || "Imported Skin")
+    }));
+}
+
+function normalizeStyleGroupCollection(args: {
+  styleGroups: StyleGroup[];
+  importedSkins: ImportedSkin[];
+  defaultImportedSkinId: string;
+  targets: DedicatedButtonSkinTargets;
+}): StyleGroup[] {
+  const importedSkinById = new Map(
+    args.importedSkins.map((importedSkin) => [importedSkin.id, importedSkin])
+  );
+
+  return args.styleGroups
+    .map((styleGroup) =>
+      styleGroup.skinId === "imported-skin" && !(styleGroup.importedSkinId ?? "").trim()
+        ? {
+            ...styleGroup,
+            importedSkinId: args.defaultImportedSkinId
+          }
+        : styleGroup
+    )
+    .filter((styleGroup, _index, allStyleGroups) => {
+      if (!shouldKeepImportedSkinLibraryStyleGroup(styleGroup, allStyleGroups)) {
+        return false;
+      }
+
+      if (
+        styleGroup.skinId === "imported-skin" &&
+        (styleGroup.importedSkinId ?? "").trim().length > 0 &&
+        !importedSkinById.has((styleGroup.importedSkinId ?? "").trim())
+      ) {
+        return false;
+      }
+
+      return (
+        !isDedicatedButtonStyleGroupId(styleGroup.id) ||
+        args.targets.allowedStyleGroupIds.has(styleGroup.id)
+      );
+    })
+    .map((styleGroup) => {
+      const canonicalName = args.targets.canonicalStyleGroupNames.get(styleGroup.id);
+      if (canonicalName) {
+        return {
+          ...styleGroup,
+          name: canonicalName
+        };
+      }
+
+      if (isImportedSkinLibraryStyleGroupId(styleGroup.id)) {
+        const importedSkin = importedSkinById.get((styleGroup.importedSkinId ?? "").trim());
+        if (importedSkin) {
+          return {
+            ...styleGroup,
+            name: `Skin - ${importedSkin.name.trim() || importedSkin.id}`
+          };
+        }
+      }
+
+      return {
+        ...styleGroup,
+        name: normalizeDisplayName(styleGroup.name, styleGroup.id || "Style Group")
+      };
+    });
+}
+
+function normalizeSavedVisualThemeRecord(
+  savedTheme: SavedVisualTheme,
+  targets: DedicatedButtonSkinTargets
+): SavedVisualTheme {
+  const importedSkins = normalizeImportedSkinCollection(
+    (savedTheme.importedSkins ?? []).map((skin) => ({ ...skin })),
+    targets
+  );
+  const defaultImportedSkinId = importedSkins[0]?.id ?? DEFAULT_IMPORTED_SKIN_ID;
+  const styleGroups = normalizeStyleGroupCollection({
+    styleGroups: (savedTheme.styleGroups ?? []).map((styleGroup) => ({ ...styleGroup })),
+    importedSkins,
+    defaultImportedSkinId,
+    targets
+  });
+  const validStyleGroupIds = new Set(styleGroups.map((styleGroup) => styleGroup.id));
+
+  return {
+    ...savedTheme,
+    name: normalizeDisplayName(savedTheme.name, savedTheme.id || "Visual Theme"),
+    appTheme: normalizeAppTheme(savedTheme.appTheme),
+    styleGroups,
+    importedSkins,
+    surfaceStyleAssignments: (savedTheme.surfaceStyleAssignments ?? [])
+      .map((assignment) => ({
+        ...assignment,
+        style_group_id: resolveValidStyleGroupId(assignment.style_group_id, validStyleGroupIds)
+      })),
+    programStyleAssignments: (savedTheme.programStyleAssignments ?? [])
+      .map((assignment) => ({
+        ...assignment,
+        style_group_id: resolveValidStyleGroupId(assignment.style_group_id, validStyleGroupIds)
+      }))
+      .filter((assignment) => assignment.style_group_id.length > 0),
+    buttonStyleAssignments: (savedTheme.buttonStyleAssignments ?? [])
+      .map((assignment) => ({
+        ...assignment,
+        style_group_id: resolveValidStyleGroupId(assignment.style_group_id, validStyleGroupIds)
+      }))
+      .filter((assignment) => assignment.style_group_id.length > 0)
+  };
 }
 
 const DEFAULT_ALIGNMENT_MODIFIERS: AlignmentToolStateRecord["Modifiers"] = {
@@ -807,7 +1058,16 @@ function findMatchingScriptBinding(
 }
 
 export function ensureStateDefaults(state: FlowCellState): FlowCellState {
-  const importedSkinsSource = state.ImportedSkins ? [...state.ImportedSkins] : [];
+  const { ToolChildStyleStates: _legacyToolChildStyleStates, ...stateWithoutChildStyles } = state as
+    FlowCellState & {
+      ToolChildStyleStates?: unknown;
+    };
+  const dedicatedButtonSkinTargets = collectDedicatedButtonSkinTargets(
+    stateWithoutChildStyles.Programs ?? []
+  );
+  const importedSkinsSource = stateWithoutChildStyles.ImportedSkins
+    ? [...stateWithoutChildStyles.ImportedSkins]
+    : [];
 
   DEFAULT_IMPORTED_SKINS.forEach((defaultSkin) => {
     if (!importedSkinsSource.some((skin) => skin.id === defaultSkin.id)) {
@@ -815,13 +1075,18 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
     }
   });
 
-  const importedSkins = importedSkinsSource.map((skin) =>
-    isLegacyGlassHoverImportedSkin(skin) ? { ...DEFAULT_GLASS_HOVER_IMPORTED_SKIN } : skin
+  const importedSkins = normalizeImportedSkinCollection(
+    importedSkinsSource.map((skin) =>
+      isLegacyGlassHoverImportedSkin(skin) ? { ...DEFAULT_GLASS_HOVER_IMPORTED_SKIN } : skin
+    ),
+    dedicatedButtonSkinTargets
   );
 
   const defaultImportedSkinId = importedSkins[0]?.id ?? DEFAULT_IMPORTED_SKIN_ID;
   const styleGroupsSource =
-    state.StyleGroups && state.StyleGroups.length > 0 ? [...state.StyleGroups] : [...DEFAULT_STYLE_GROUPS];
+    stateWithoutChildStyles.StyleGroups && stateWithoutChildStyles.StyleGroups.length > 0
+      ? [...stateWithoutChildStyles.StyleGroups]
+      : [...DEFAULT_STYLE_GROUPS];
 
   DEFAULT_STYLE_GROUPS.forEach((defaultStyleGroup) => {
     if (!styleGroupsSource.some((styleGroup) => styleGroup.id === defaultStyleGroup.id)) {
@@ -829,33 +1094,12 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
     }
   });
 
-  const normalizedStyleGroups = styleGroupsSource
-    .map((styleGroup) =>
-      styleGroup.skinId === "imported-skin" && !(styleGroup.importedSkinId ?? "").trim()
-        ? {
-            ...styleGroup,
-            importedSkinId: defaultImportedSkinId
-          }
-        : styleGroup
-    )
-    .filter((styleGroup, _index, allStyleGroups) => {
-      if (!isImportedSkinLibraryStyleGroupId(styleGroup.id)) {
-        return true;
-      }
-
-      const importedSkinId = (styleGroup.importedSkinId ?? "").trim();
-      if (!importedSkinId || isDedicatedButtonImportedSkinId(importedSkinId)) {
-        return false;
-      }
-
-      return !allStyleGroups.some(
-        (otherStyleGroup) =>
-          otherStyleGroup.id !== styleGroup.id &&
-          !isImportedSkinLibraryStyleGroupId(otherStyleGroup.id) &&
-          !isDedicatedButtonStyleGroupId(otherStyleGroup.id) &&
-          (otherStyleGroup.importedSkinId ?? "").trim() === importedSkinId
-      );
-    });
+  const normalizedStyleGroups = normalizeStyleGroupCollection({
+    styleGroups: styleGroupsSource,
+    importedSkins,
+    defaultImportedSkinId,
+    targets: dedicatedButtonSkinTargets
+  });
   const styleGroups = [...normalizedStyleGroups];
   let nextStyleGroupIndex =
     styleGroups.reduce((maxIndex, styleGroup) => Math.max(maxIndex, styleGroup.index ?? 0), 0) + 1;
@@ -895,8 +1139,9 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
   });
 
   const surfaceStyleAssignments =
-    state.SurfaceStyleAssignments && state.SurfaceStyleAssignments.length > 0
-      ? [...state.SurfaceStyleAssignments]
+    stateWithoutChildStyles.SurfaceStyleAssignments &&
+    stateWithoutChildStyles.SurfaceStyleAssignments.length > 0
+      ? [...stateWithoutChildStyles.SurfaceStyleAssignments]
       : [...DEFAULT_SURFACE_STYLE_ASSIGNMENTS];
 
   const legacyMainWorkspaceAssignmentIndex = surfaceStyleAssignments.findIndex(
@@ -937,22 +1182,41 @@ export function ensureStateDefaults(state: FlowCellState): FlowCellState {
       surfaceStyleAssignments.push(defaultAssignment);
     }
   });
+  const validStyleGroupIds = new Set(styleGroups.map((styleGroup) => styleGroup.id));
+  const normalizedSurfaceStyleAssignments = surfaceStyleAssignments.map((assignment) => ({
+    ...assignment,
+    style_group_id: resolveValidStyleGroupId(assignment.style_group_id, validStyleGroupIds)
+  }));
 
   return {
-    ...state,
-    AlignmentToolStates: state.AlignmentToolStates ?? [],
-    ToolOptionStates: state.ToolOptionStates ?? [],
-    ToolPopouts: state.ToolPopouts ?? [],
-    PopoutClusters: normalizePopoutClusters(state.PopoutClusters),
-    SavedPrograms: (state.SavedPrograms ?? []).map((record) =>
+    ...stateWithoutChildStyles,
+    AlignmentToolStates: stateWithoutChildStyles.AlignmentToolStates ?? [],
+    ToolOptionStates: stateWithoutChildStyles.ToolOptionStates ?? [],
+    ToolPopouts: stateWithoutChildStyles.ToolPopouts ?? [],
+    PopoutClusters: normalizePopoutClusters(stateWithoutChildStyles.PopoutClusters),
+    SavedPrograms: (stateWithoutChildStyles.SavedPrograms ?? []).map((record) =>
       normalizeSavedProgramRecord(record)
     ),
-    SavedVisualThemes: (state.SavedVisualThemes ?? []).map((record) => clonePlainValue(record)),
-    AppTheme: normalizeAppTheme(state.AppTheme),
+    SavedVisualThemes: (stateWithoutChildStyles.SavedVisualThemes ?? []).map((record) =>
+      normalizeSavedVisualThemeRecord(record, dedicatedButtonSkinTargets)
+    ),
+    AppTheme: normalizeAppTheme(stateWithoutChildStyles.AppTheme),
     StyleGroups: styleGroups,
     ImportedSkins: importedSkins,
-    SurfaceStyleAssignments: surfaceStyleAssignments,
-    Programs: state.Programs.map((program) => normalizeProgram(program))
+    SurfaceStyleAssignments: normalizedSurfaceStyleAssignments,
+    Programs: stateWithoutChildStyles.Programs.map((program) =>
+      normalizeProgram({
+        ...program,
+        style_group_id: resolveValidStyleGroupId(program.style_group_id, validStyleGroupIds),
+        Panels: program.Panels.map((panel) => ({
+          ...panel,
+          Buttons: panel.Buttons.map((button) => ({
+            ...button,
+            style_group_id: resolveValidStyleGroupId(button.style_group_id, validStyleGroupIds)
+          }))
+        }))
+      })
+    )
   };
 }
 
@@ -1341,6 +1605,81 @@ export function addPanel(
   };
 }
 
+function matchesPanelClusterMember(memberId: string, programId: number, panelId: string): boolean {
+  return (
+    memberId.startsWith(`panel|${programId}|${panelId}`) ||
+    memberId.startsWith(`tool|${programId}|${panelId}|`)
+  );
+}
+
+export function deletePanel(
+  state: FlowCellState,
+  programId: number,
+  panelId: string
+): FlowCellState {
+  const program = findProgram(state, programId);
+  const removedPanelIndex = program?.Panels.findIndex((panel) => panel.Id === panelId) ?? -1;
+  if (!program || removedPanelIndex < 0 || program.Panels.length <= 1) {
+    return state;
+  }
+
+  const removedPanel = program.Panels[removedPanelIndex];
+  const removedButtonIds = new Set(removedPanel.Buttons.map((button) => button.Id));
+  const nextPanels = program.Panels.filter((panel) => panel.Id !== panelId);
+  const currentSelectionStillExists = nextPanels.some(
+    (panel) => panel.Id === program.SelectedPanelId
+  );
+  const fallbackPanel =
+    nextPanels[removedPanelIndex] ??
+    nextPanels[removedPanelIndex - 1] ??
+    nextPanels[0];
+
+  return {
+    ...state,
+    Programs: state.Programs.map((candidateProgram) =>
+      candidateProgram.ProgramTabId === programId
+        ? {
+            ...candidateProgram,
+            SelectedPanelId: currentSelectionStillExists
+              ? candidateProgram.SelectedPanelId
+              : fallbackPanel?.Id,
+            Panels: candidateProgram.Panels
+              .filter((panel) => panel.Id !== panelId)
+              .map((panel) => ({
+                ...panel,
+                Buttons: panel.Buttons.map((button) =>
+                  button.fanout
+                    ? {
+                        ...button,
+                        fanout: {
+                          ...button.fanout,
+                          child_button_ids: button.fanout.child_button_ids.filter(
+                            (childId) => !removedButtonIds.has(childId)
+                          )
+                        }
+                      }
+                    : button
+                )
+              }))
+          }
+        : candidateProgram
+    ),
+    AlignmentToolStates: (state.AlignmentToolStates ?? []).filter(
+      (entry) => !(entry.ProgramTabId === programId && entry.PanelId === panelId)
+    ),
+    ToolOptionStates: (state.ToolOptionStates ?? []).filter(
+      (entry) => !(entry.ProgramTabId === programId && entry.PanelId === panelId)
+    ),
+    ToolPopouts: (state.ToolPopouts ?? []).filter(
+      (entry) => !(entry.ProgramTabId === programId && entry.PanelId === panelId)
+    ),
+    PopoutClusters: (state.PopoutClusters ?? []).filter(
+      (cluster) =>
+        !cluster.MemberIds.some((memberId) => matchesPanelClusterMember(memberId, programId, panelId))
+    )
+  };
+}
+
 export function addProgram(
   state: FlowCellState,
   args: {
@@ -1544,6 +1883,81 @@ export function addButtonsToPanel(
   };
 }
 
+function collectInstalledButtonTargets(button: Pick<FlowCellButton, "Target" | "ExecutionTarget">): string[] {
+  return [button.Target ?? "", button.ExecutionTarget ?? ""]
+    .map((value) => normalizeWindowsPath(value))
+    .filter((value) => value.length > 0);
+}
+
+function doesInstalledButtonMatch(
+  existingButton: Pick<FlowCellButton, "Target" | "ExecutionTarget">,
+  incomingButton: Pick<FlowCellButton, "Target" | "ExecutionTarget">
+): boolean {
+  const existingTargets = new Set(collectInstalledButtonTargets(existingButton));
+  return collectInstalledButtonTargets(incomingButton).some((target) => existingTargets.has(target));
+}
+
+export function upsertButtonsToPanel(
+  state: FlowCellState,
+  programId: number,
+  panelId: string,
+  buttons: FlowCellButton[]
+): FlowCellState {
+  if (buttons.length === 0) {
+    return state;
+  }
+
+  return {
+    ...state,
+    Programs: state.Programs.map((program) =>
+      program.ProgramTabId === programId
+        ? {
+            ...program,
+            SelectedPanelId: panelId,
+            Panels: program.Panels.map((panel) => {
+              if (panel.Id !== panelId) {
+                return panel;
+              }
+
+              const nextButtons = [...panel.Buttons];
+              for (const incomingButton of buttons) {
+                const existingIndex = nextButtons.findIndex((existingButton) =>
+                  doesInstalledButtonMatch(existingButton, incomingButton)
+                );
+                if (existingIndex < 0) {
+                  nextButtons.push(incomingButton);
+                  continue;
+                }
+
+                const existingButton = nextButtons[existingIndex];
+                nextButtons[existingIndex] = {
+                  ...existingButton,
+                  ...incomingButton,
+                  Id: existingButton.Id,
+                  Label: existingButton.Label || incomingButton.Label,
+                  Tooltip:
+                    incomingButton.Tooltip && incomingButton.Tooltip.trim().length > 0
+                      ? incomingButton.Tooltip
+                      : existingButton.Tooltip,
+                  Shortcut: existingButton.Shortcut ?? "",
+                  BindingId: existingButton.BindingId ?? 0,
+                  style_group_id: existingButton.style_group_id ?? "",
+                  fanout: existingButton.fanout,
+                  transparent_popout: existingButton.transparent_popout
+                };
+              }
+
+              return {
+                ...panel,
+                Buttons: nextButtons
+              };
+            })
+          }
+        : program
+    )
+  };
+}
+
 export function buildScriptButtonsFromPaths(paths: string[], commandId: CommandEnvelope["command_id"]): FlowCellButton[] {
   return paths.map((path) => ({
     Id: `button_${createId("")}`,
@@ -1570,6 +1984,7 @@ export function buildScriptButtonsFromInstallResults(
       Label: result.label?.trim() || buttonDisplayLabelFromPath(result.sourcePath),
       Target: result.sourcePath,
       ExecutionTarget: result.executionTarget?.trim() || undefined,
+      Tooltip: result.tooltip?.trim() || "",
       Shortcut: "",
       BindingId: 0,
       style_group_id: ""

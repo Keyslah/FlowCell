@@ -31,6 +31,8 @@ interface WorkspaceButtonsPageProps {
   collapseSmartAxisToOwnerButton?: boolean;
   buttonAppearanceDisabled: boolean;
   buttonOptionsDisabled: boolean;
+  deleteSelectionDisabled: boolean;
+  deletePanelDisabled: boolean;
   allWorkspaceButtonsSelected: boolean;
   workspaceSelectableButtonCount: number;
   getSmartAxisState: (ownerButtonId: string) => WorkspaceSmartAxisVisualState;
@@ -42,6 +44,8 @@ interface WorkspaceButtonsPageProps {
   onOpenButtonReorder: () => void;
   onOpenButtonOptions: () => void;
   onPanelFanOptions: () => void;
+  onDeleteSelection: () => void;
+  onDeletePanel: () => void;
   onToggleAllWorkspaceButtons: (checked: boolean) => void;
   onTogglePopSelection: (buttonId: string) => void;
   onFocusButton: (button: FlowCellButton) => void;
@@ -76,6 +80,8 @@ export function WorkspaceButtonsPage({
   collapseSmartAxisToOwnerButton = false,
   buttonAppearanceDisabled,
   buttonOptionsDisabled,
+  deleteSelectionDisabled,
+  deletePanelDisabled,
   allWorkspaceButtonsSelected,
   workspaceSelectableButtonCount,
   getSmartAxisState,
@@ -87,6 +93,8 @@ export function WorkspaceButtonsPage({
   onOpenButtonReorder,
   onOpenButtonOptions,
   onPanelFanOptions,
+  onDeleteSelection,
+  onDeletePanel,
   onToggleAllWorkspaceButtons,
   onTogglePopSelection,
   onFocusButton,
@@ -116,6 +124,24 @@ export function WorkspaceButtonsPage({
               {allWorkspaceButtonsSelected ? "Uncheck All" : "Select All"}
             </span>
           </label>
+          <HostSkinButton
+            type="button"
+            label="Delete Selection"
+            className="surface-action"
+            styleGroup={miscStyleGroup}
+            importedSkin={miscImportedSkin}
+            disabled={deleteSelectionDisabled}
+            onClick={onDeleteSelection}
+          />
+          <HostSkinButton
+            type="button"
+            label="Delete Panel"
+            className="surface-action"
+            styleGroup={miscStyleGroup}
+            importedSkin={miscImportedSkin}
+            disabled={deletePanelDisabled}
+            onClick={onDeletePanel}
+          />
           <HostSkinButton
             type="button"
             label="Add Script"

@@ -1,4 +1,5 @@
-# Description: Prompt for rename values and batch-rename the selected Blender objects through the FlowCell bridge.
+# Description: Rename all selected Blender objects in one prompt.
+
 
 # Source Bridge Action: rename_selected_objects
 # Source Python Filename: flowtest_bridge.py

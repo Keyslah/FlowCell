@@ -189,6 +189,7 @@ export interface BindingMutationResult {
 
 export interface ManagedScriptInstallResultItem {
   label?: string;
+  tooltip?: string;
   sourcePath: string;
   activePath: string;
   executionTarget: string;

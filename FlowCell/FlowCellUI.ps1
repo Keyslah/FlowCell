@@ -13759,11 +13759,6 @@ function Invoke-FlowCellBlenderButtonDeleteCleanup($Entry) {
         & $customActionSyncPath -ConfigPath $configPath -BridgeFolder $bridgeFolder | Out-Null
     }
 
-    $syncScriptPath = Join-Path $supportRoot 'Sync-BlenderButtonsToFlowCell.ps1'
-    if (Test-Path -LiteralPath $syncScriptPath -PathType Leaf) {
-        & $syncScriptPath | Out-Null
-    }
-
     $script:FlowCellState = Read-FlowCellState
     return $true
 }

@@ -24,10 +24,13 @@ import {
   closePanelPopout,
   clearButtonBinding,
   closeToolPopout,
+  deleteBlenderButton,
+  emitSessionPopoutBoundsUpdate,
   getForegroundProcessInfo,
   getWindowContext,
   installManagedProgramScripts,
   listenForProgrammaticWindowPlacement,
+  listenForSessionPopoutBoundsUpdate,
   listenForStateSync,
   listLayoutFiles,
   listRecordedMacros,
@@ -48,9 +51,10 @@ import {
   saveState,
   showOpenExeDialog,
   showOpenFileDialog,
-  showOpenFolderDialog,
   showSaveFileDialog,
-  loadBlenderThemeFile
+  loadBlenderThemeFile,
+  syncBlenderButtonSourceMirrors,
+  updateBlenderButtonDescription
 } from "./lib/tauri";
 import {
   addButtonsToPanel,
@@ -65,6 +69,7 @@ import {
   buildToolActionEnvelope,
   collectAllButtons,
   deleteProgram,
+  deletePanel,
   deleteButtonFromPanel,
   ensureStateDefaults,
   findButton,
@@ -106,6 +111,7 @@ import {
   updateStyleGroups,
   updateToolOptionState,
   updateToolPopout,
+  upsertButtonsToPanel,
   upsertToolPopout
 } from "./lib/state";
 import {
@@ -1958,26 +1964,13 @@ async function pickProgramInstallPaths(program: FlowCellProgram): Promise<string
     multiselect: true
   });
 
-  const wantsFolders = window.confirm(
-    isBlender
-      ? "Select one or more source folders too? Click OK to choose folders, or Cancel to keep file-only selection."
-      : "Select one or more source folders too? Click OK to choose folders, or Cancel to keep file-only selection."
-  );
-  const selectedFolders = wantsFolders
-    ? await showOpenFolderDialog({
-        title: isBlender
-          ? `Choose ${program.ProgramConfig?.NormalizedName ?? "Blender"} source folders`
-          : `Choose ${program.ProgramConfig?.NormalizedName ?? `Program ${program.ProgramTabId}`} script source folders`,
-        initialDirectory,
-        multiselect: true
-      })
-    : [];
+  if (selectedFiles.length === 0) {
+    return [];
+  }
 
   return Array.from(
     new Set(
-      [...selectedFiles, ...selectedFolders]
-        .map((value) => value.trim())
-        .filter((value) => value.length > 0)
+      selectedFiles.map((value) => value.trim()).filter((value) => value.length > 0)
     )
   );
 }
@@ -2214,6 +2207,57 @@ export default function App() {
         setRuntime(payload.runtime);
         setBindingsState(payload.bindings);
         setState(nextState);
+      });
+    })();
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [windowContext]);
+
+  useEffect(() => {
+    if (!windowContext || windowContext.kind !== "main") {
+      return;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    const currentWindowLabel = getCurrentWindow().label;
+
+    void (async () => {
+      unlisten = await listenForSessionPopoutBoundsUpdate((payload) => {
+        if (
+          disposed ||
+          payload.sourceWindowLabel === currentWindowLabel ||
+          !latestStateRef.current
+        ) {
+          return;
+        }
+        updateLatestLocalState((currentState) => {
+          if (payload.kind === "panel-popout") {
+            return updatePanelPopout(
+              currentState,
+              payload.programId,
+              payload.panelId,
+              (currentPanel) => ({
+                ...currentPanel,
+                IsPoppedOut: true,
+                PopoutBounds: payload.bounds
+              })
+            );
+          }
+          if (!payload.ownerButtonId) {
+            return currentState;
+          }
+          return updateToolPopout(
+            currentState,
+            payload.programId,
+            payload.panelId,
+            payload.ownerButtonId,
+            payload.bounds
+          );
+        }, { syncReactState: false });
       });
     })();
 
@@ -3739,7 +3783,7 @@ export default function App() {
       if (!isPersistablePopoutBounds(nextBounds)) {
         return;
       }
-      await persistLatestMutation(
+      updateLatestLocalState(
         (currentState) =>
           updatePanelPopout(
             currentState,
@@ -3751,8 +3795,14 @@ export default function App() {
               PopoutBounds: nextBounds
             })
           ),
-        { broadcast: false, syncLocalState: false }
+        { syncReactState: false }
       );
+      void emitSessionPopoutBoundsUpdate({
+        kind: "panel-popout",
+        programId: selectedProgram.ProgramTabId,
+        panelId: selectedPanel.Id,
+        bounds: nextBounds
+      }).catch(() => {});
     };
 
     const schedulePersistBounds = () => {
@@ -3910,7 +3960,7 @@ export default function App() {
           `Panel fan move save. CollapsedBounds=${Math.round(nextBounds.Left)},${Math.round(nextBounds.Top)},${Math.round(nextBounds.Width)}x${Math.round(nextBounds.Height)}`
         );
       }
-      await persistLatestMutation(
+      updateLatestLocalState(
         (currentState) =>
           updateToolPopout(
             currentState,
@@ -3919,8 +3969,15 @@ export default function App() {
             windowContext.ownerButtonId!,
             nextBounds
           ),
-        { broadcast: false, syncLocalState: false }
+        { syncReactState: false }
       );
+      void emitSessionPopoutBoundsUpdate({
+        kind: "tool-popout",
+        programId: selectedProgram.ProgramTabId,
+        panelId: selectedPanel.Id,
+        ownerButtonId: windowContext.ownerButtonId!,
+        bounds: nextBounds
+      }).catch(() => {});
     };
 
     const schedulePersistBounds = () => {
@@ -4456,8 +4513,10 @@ export default function App() {
     nextState: FlowCellState,
     options?: { broadcast?: boolean }
   ) => {
-    setState(nextState);
-    await saveState(nextState, options);
+    const normalizedNextState = ensureStateDefaults(nextState);
+    latestStateRef.current = normalizedNextState;
+    setState(normalizedNextState);
+    await saveState(normalizedNextState, options);
   };
 
   const scheduleSelectedButtonRef = (
@@ -4512,6 +4571,19 @@ export default function App() {
     void logFrontendEvent(inferSurfaceName(windowContext), message).catch(() => {});
   };
 
+  const updateLatestLocalState = (
+    mutator: (currentState: FlowCellState) => FlowCellState,
+    options?: { syncReactState?: boolean }
+  ) => {
+    const baseState = latestStateRef.current ?? state;
+    const nextState = ensureStateDefaults(mutator(baseState));
+    latestStateRef.current = nextState;
+    if (options?.syncReactState !== false) {
+      setState(nextState);
+    }
+    return nextState;
+  };
+
   const persistLatestMutation = async (
     mutator: (currentState: FlowCellState) => FlowCellState,
     options?: { broadcast?: boolean; syncLocalState?: boolean }
@@ -4526,7 +4598,7 @@ export default function App() {
       latestStateRef.current ?? state,
       openWindowLabels
     );
-    const nextState = mutator(currentState);
+    const nextState = ensureStateDefaults(mutator(currentState));
     latestStateRef.current = nextState;
     if (options?.syncLocalState !== false) {
       setRuntime(latest.runtime);
@@ -4540,15 +4612,7 @@ export default function App() {
   const persistLatestLocalMutation = (
     mutator: (currentState: FlowCellState) => FlowCellState
   ) => {
-    const optimisticState = mutator(state);
-    latestStateRef.current = optimisticState;
-    setState(optimisticState);
-    void persistLatestMutation(mutator, { broadcast: false }).catch((error) => {
-      pushFrontendEvent(
-        inferSurfaceName(windowContext),
-        `Local state save failed. ${error instanceof Error ? error.message : String(error)}`
-      );
-    });
+    updateLatestLocalState(mutator);
   };
 
   const closeProgramWindows = async (programId: number) => {
@@ -4563,6 +4627,23 @@ export default function App() {
             candidate.label.startsWith(`button-appearance-${programId}-`) ||
             candidate.label.startsWith(`button-reorder-${programId}-`) ||
             candidate.label.startsWith(`button-options-${programId}-`)
+        )
+        .map((candidate) => candidate.close().catch(() => {}))
+    );
+  };
+
+  const closePanelWindows = async (programId: number, panelId: string) => {
+    const panelToken = sanitizeWindowToken(panelId);
+    const windows = await getAllWebviewWindows().catch(() => []);
+    await Promise.all(
+      windows
+        .filter((candidate) =>
+          candidate.label === `popout-panel-${programId}-${panelToken}` ||
+          candidate.label.startsWith(`popout-tool-${programId}-${panelToken}-`) ||
+          candidate.label === `panel-fan-options-${programId}-${panelToken}` ||
+          candidate.label === `button-appearance-${programId}-${panelToken}` ||
+          candidate.label === `button-reorder-${programId}-${panelToken}` ||
+          candidate.label === `button-options-${programId}-${panelToken}`
         )
         .map((candidate) => candidate.close().catch(() => {}))
     );
@@ -4660,7 +4741,7 @@ export default function App() {
     if (persistedKeyRef.current === collapsedKey) {
       return;
     }
-    await persistLatestMutation(
+    updateLatestLocalState(
       (currentState) =>
         updateToolPopout(
           currentState,
@@ -4669,8 +4750,15 @@ export default function App() {
           ownerButtonId,
           collapsedBounds
         ),
-      { broadcast: false, syncLocalState: false }
+      { syncReactState: false }
     );
+    void emitSessionPopoutBoundsUpdate({
+      kind: "tool-popout",
+      programId: selectedProgram.ProgramTabId,
+      panelId: selectedPanel.Id,
+      ownerButtonId,
+      bounds: collapsedBounds
+    }).catch(() => {});
     persistedKeyRef.current = collapsedKey;
   };
 
@@ -5338,15 +5426,7 @@ export default function App() {
           ...nextValues
         }
       );
-    const optimisticState = applyHdriWorldToolValues(latestStateRef.current ?? state);
-    latestStateRef.current = optimisticState;
-    setState(optimisticState);
-    void saveState(optimisticState, { broadcast: false }).catch((error) => {
-      pushFrontendEvent(
-        inferSurfaceName(windowContext),
-        `Local state save failed. ${error instanceof Error ? error.message : String(error)}`
-      );
-    });
+    updateLatestLocalState(applyHdriWorldToolValues);
   };
 
   const handleQuickRotateGroupApply = async (
@@ -6347,7 +6427,9 @@ export default function App() {
           existingDedicatedGroup?.index ??
           currentStyleGroups.reduce((maxIndex, entry) => Math.max(maxIndex, entry.index ?? 0), 0) +
             1,
-        name: `Button · ${targetButton.Label}`,
+        name: applyToAllButtons
+          ? `Panel - ${selectedPanel.Name} / all buttons`
+          : `Button - ${targetButton.Label}`,
         skinId: "imported-skin",
         importedSkinId,
         accent:
@@ -6410,6 +6492,77 @@ export default function App() {
     );
   };
 
+  const syncBlenderButtonDescriptionIfNeeded = async (
+    button: FlowCellButton,
+    nextTooltip: string
+  ) => {
+    if (
+      !selectedProgram ||
+      getProgramTemplateKey(selectedProgram) !== "blender" ||
+      button.Kind !== "script"
+    ) {
+      return;
+    }
+
+    await updateBlenderButtonDescription({
+      buttonTarget: button.Target,
+      executionTarget:
+        resolveButtonExecutionTarget(button) !== button.Target
+          ? resolveButtonExecutionTarget(button)
+          : undefined,
+      description: nextTooltip
+    });
+  };
+
+  const refreshBlenderButtonSourceMirrorsIfNeeded = async (
+    program: FlowCellProgram | null | undefined,
+    reason: string
+  ) => {
+    if (!program || getProgramTemplateKey(program) !== "blender") {
+      return;
+    }
+
+    try {
+      await syncBlenderButtonSourceMirrors();
+    } catch (error) {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `${reason} mirror refresh failed. ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+
+  const cleanupButtonsBeforeDelete = async (buttons: FlowCellButton[]) => {
+    if (!selectedProgram) {
+      return;
+    }
+
+    for (const button of buttons) {
+      if (
+        (button.Kind === "script" || button.Kind === "macro") &&
+        ((button.Shortcut ?? "").trim().length > 0 || (button.BindingId ?? 0) > 0)
+      ) {
+        await clearButtonBinding({
+          button,
+          programId: selectedProgram.ProgramTabId
+        });
+      }
+
+      if (getProgramTemplateKey(selectedProgram) === "blender" && button.Kind === "script") {
+        try {
+          await deleteBlenderButton({
+            buttonTarget: resolveButtonExecutionTarget(button) || button.Target
+          });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (!message.includes("No matching Blender config button was found")) {
+            throw error;
+          }
+        }
+      }
+    }
+  };
+
   const handleSaveButtonOptionDetails = async (
     buttonId: string,
     nextLabel: string,
@@ -6419,19 +6572,33 @@ export default function App() {
       return;
     }
 
+    const currentButton = findButton(
+      state,
+      selectedProgram.ProgramTabId,
+      selectedPanel.Id,
+      buttonId
+    );
+    if (!currentButton) {
+      return;
+    }
+
+    if (nextTooltip !== (currentButton.Tooltip ?? "")) {
+      await syncBlenderButtonDescriptionIfNeeded(currentButton, nextTooltip);
+    }
+
     await persistLatestMutation((currentState) => {
-      const currentButton = findButton(
+      const persistedButton = findButton(
         currentState,
         selectedProgram.ProgramTabId,
         selectedPanel.Id,
         buttonId
       );
-      if (!currentButton) {
+      if (!persistedButton) {
         return currentState;
       }
 
       let nextState = currentState;
-      if (nextLabel !== currentButton.Label) {
+      if (nextLabel !== persistedButton.Label) {
         nextState = updateButtonLabel(
           nextState,
           selectedProgram.ProgramTabId,
@@ -6440,7 +6607,7 @@ export default function App() {
           nextLabel
         );
       }
-      if (nextTooltip !== (currentButton.Tooltip ?? "")) {
+      if (nextTooltip !== (persistedButton.Tooltip ?? "")) {
         nextState = updateButtonTooltip(
           nextState,
           selectedProgram.ProgramTabId,
@@ -6451,6 +6618,10 @@ export default function App() {
       }
       return nextState;
     });
+    await refreshBlenderButtonSourceMirrorsIfNeeded(
+      selectedProgram,
+      "Blender button source"
+    );
 
     pushFrontendEvent(
       inferSurfaceName(windowContext),
@@ -6500,6 +6671,12 @@ export default function App() {
       return;
     }
 
+    const buttonsToDelete = selectedPanel.Buttons.filter((button) => buttonIds.includes(button.Id));
+    const shouldRefreshBlenderMirrors =
+      getProgramTemplateKey(selectedProgram) === "blender" &&
+      buttonsToDelete.some((button) => button.Kind === "script");
+    await cleanupButtonsBeforeDelete(buttonsToDelete);
+
     await persistLatestMutation((currentState) =>
       buttonIds.reduce(
         (nextState, buttonId) =>
@@ -6512,6 +6689,12 @@ export default function App() {
         currentState
       )
     );
+    if (shouldRefreshBlenderMirrors) {
+      await refreshBlenderButtonSourceMirrorsIfNeeded(
+        selectedProgram,
+        "Blender button source"
+      );
+    }
 
     setSelectedPopButtonIds((current) => current.filter((entry) => !buttonIds.includes(entry)));
     scheduleSelectedButtonRef((current) =>
@@ -6535,6 +6718,22 @@ export default function App() {
       inferSurfaceName(windowContext),
       `Deleted ${buttonIds.length} checked button(s) from ${selectedPanel.Name}.`
     );
+  };
+
+  const handleDeleteSelectedWorkspaceButtons = async () => {
+    if (!selectedProgram || !selectedPanel || selectedPopButtons.length === 0) {
+      return;
+    }
+
+    const checkedLabels = selectedPopButtons.map((button) => button.Label);
+    const confirmed = window.confirm(
+      `Delete ${selectedPopButtons.length} checked button(s) from ${selectedPanel.Name}?\n\n${checkedLabels.join("\n")}`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    await handleDeleteButtonOptionsButtons(selectedPopButtons.map((button) => button.Id));
   };
 
   const handleAddProgram = () => {
@@ -6686,6 +6885,49 @@ export default function App() {
     }
   };
 
+  const handleDeleteSelectedPanel = async () => {
+    if (!selectedProgram || !selectedPanel || selectedProgram.Panels.length <= 1) {
+      return;
+    }
+
+    const programId = selectedProgram.ProgramTabId;
+    const panelId = selectedPanel.Id;
+    const panelName = selectedPanel.Name;
+    const confirmed = window.confirm(
+      `Delete panel "${panelName}" from ${formatProgramDisplayLabel(selectedProgram)}?`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await persistLatestMutation((currentState) => deletePanel(currentState, programId, panelId));
+      await refreshBlenderButtonSourceMirrorsIfNeeded(
+        selectedProgram,
+        "Blender button source"
+      );
+      await closePanelWindows(programId, panelId);
+      setSelectedPopButtonIds([]);
+      setButtonContextMenu(null);
+      setPopoutContextMenu(null);
+      scheduleSelectedButtonRef((current) =>
+        current && current.programId === programId && current.panelId === panelId ? null : current
+      );
+      setBindTarget((current) =>
+        current && current.programId === programId && current.panelId === panelId ? null : current
+      );
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Deleted panel ${panelName}.`
+      );
+    } catch (error) {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        `Delete Panel failed. ${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  };
+
   const handleAddPanel = async () => {
     if (!selectedProgram) {
       return;
@@ -6727,60 +6969,30 @@ export default function App() {
         panelName: selectedPanel.Name
       });
       const installedResults = installResult.results.filter((result) => result.installed);
+      const nextButtons = buildScriptButtonsFromInstallResults(
+        installedResults,
+        "flowcell.run_script"
+      );
 
       if (isBlender) {
-        let latest = await reloadAppFromDisk({ captureLiveBounds: false });
-        if (installedResults.length > 0) {
-          let didNormalizeTargets = false;
-          const normalizedState = {
-            ...latest.state,
-            Programs: latest.state.Programs.map((program) =>
-              program.ProgramTabId !== selectedProgram.ProgramTabId
-                ? program
-                : {
-                    ...program,
-                    Panels: program.Panels.map((panel) =>
-                      panel.Id !== selectedPanel.Id
-                        ? panel
-                        : {
-                            ...panel,
-                            Buttons: panel.Buttons.map((button) => {
-                              if (button.Kind !== "script") {
-                                return button;
-                              }
-                              const installedMatch = installedResults.find(
-                                (result) =>
-                                  button.Target === result.executionTarget ||
-                                  button.ExecutionTarget === result.executionTarget
-                              );
-                              if (!installedMatch) {
-                                return button;
-                              }
-                              didNormalizeTargets = true;
-                              return {
-                                ...button,
-                                Target: installedMatch.sourcePath,
-                                ExecutionTarget: installedMatch.executionTarget
-                              };
-                            })
-                          }
-                    )
-                  }
+        if (nextButtons.length > 0) {
+          await persistLatestMutation((currentState) =>
+            upsertButtonsToPanel(
+              currentState,
+              selectedProgram.ProgramTabId,
+              selectedPanel.Id,
+              nextButtons
             )
-          };
-          if (didNormalizeTargets) {
-            await persistState(normalizedState);
-            latest = await reloadAppFromDisk({ captureLiveBounds: false });
-          }
+          );
+          await refreshBlenderButtonSourceMirrorsIfNeeded(
+            selectedProgram,
+            "Blender button source"
+          );
         }
         pushFrontendEvent(inferSurfaceName(windowContext), installResult.statusMessage);
         return;
       }
 
-      const nextButtons = buildScriptButtonsFromInstallResults(
-        installedResults,
-        "flowcell.run_script"
-      );
       if (nextButtons.length > 0) {
         await persistState(
           addButtonsToPanel(
@@ -6988,12 +7200,20 @@ export default function App() {
 
   const handleSaveLayout = async () => {
     const nameInput = window.prompt("Save Layout As (optional)", "") ?? "";
-    const refreshed = await loadState();
+    if (!runtime) {
+      pushFrontendEvent(
+        inferSurfaceName(windowContext),
+        "Save Layout failed because runtime info is unavailable."
+      );
+      return;
+    }
     const latestState = await captureLivePopoutBounds(
-      applyBindingsToState(ensureStateDefaults(refreshed.state), refreshed.bindings)
+      ensureStateDefaults(latestStateRef.current ?? state)
     );
+    latestStateRef.current = latestState;
+    setState(latestState);
     await saveState(latestState, { broadcast: false });
-    const snapshot = buildLayoutSnapshot(latestState, refreshed.runtime);
+    const snapshot = buildLayoutSnapshot(latestState, runtime);
     if ((snapshot.PanelPopouts?.length ?? 0) === 0 && (snapshot.ToolPopouts?.length ?? 0) === 0) {
       pushFrontendEvent(
         inferSurfaceName(windowContext),
@@ -7212,6 +7432,10 @@ export default function App() {
         nextLabel
       )
     );
+    await refreshBlenderButtonSourceMirrorsIfNeeded(
+      selectedProgram,
+      "Blender button source"
+    );
   };
 
   const handleEditButtonDescription = async (button: FlowCellButton) => {
@@ -7225,6 +7449,8 @@ export default function App() {
       return;
     }
 
+    await syncBlenderButtonDescriptionIfNeeded(button, nextTooltip);
+
     await persistLatestMutation((currentState) =>
       updateButtonTooltip(
         currentState,
@@ -7233,6 +7459,10 @@ export default function App() {
         button.Id,
         nextTooltip
       )
+    );
+    await refreshBlenderButtonSourceMirrorsIfNeeded(
+      selectedProgram,
+      "Blender button source"
     );
   };
 
@@ -7247,19 +7477,7 @@ export default function App() {
       return;
     }
 
-    await persistLatestMutation((currentState) =>
-      deleteButtonFromPanel(
-        currentState,
-        selectedProgram.ProgramTabId,
-        selectedPanel.Id,
-        button.Id
-      )
-    );
-
-    setSelectedPopButtonIds((current) => current.filter((entry) => entry !== button.Id));
-    scheduleSelectedButtonRef((current) =>
-      current?.buttonId === button.Id ? null : current
-    );
+    await handleDeleteButtonOptionsButtons([button.Id]);
   };
 
   const getWorkspaceSmartAxisState = (ownerButtonId: string) =>
@@ -8618,6 +8836,8 @@ export default function App() {
                 collapseSmartAxisToOwnerButton={collapseSmartAxisToOwnerButton}
                 buttonAppearanceDisabled={buttonAppearanceButtons.length === 0}
                 buttonOptionsDisabled={selectedPopButtons.length === 0}
+                deleteSelectionDisabled={selectedPopButtons.length === 0}
+                deletePanelDisabled={selectedProgram.Panels.length <= 1}
                 allWorkspaceButtonsSelected={allWorkspaceButtonsSelected}
                 workspaceSelectableButtonCount={workspaceSelectableButtons.length}
                 getSmartAxisState={getWorkspaceSmartAxisState}
@@ -8629,6 +8849,8 @@ export default function App() {
                 onOpenButtonReorder={() => void handleOpenButtonReorderAction()}
                 onOpenButtonOptions={() => void handleOpenButtonOptionsAction()}
                 onPanelFanOptions={() => void handlePanelFanOptionsAction(selectedPanel)}
+                onDeleteSelection={() => void handleDeleteSelectedWorkspaceButtons()}
+                onDeletePanel={() => void handleDeleteSelectedPanel()}
                 onToggleAllWorkspaceButtons={toggleAllWorkspaceSelections}
                 onTogglePopSelection={togglePopSelection}
                 onFocusButton={(button) =>

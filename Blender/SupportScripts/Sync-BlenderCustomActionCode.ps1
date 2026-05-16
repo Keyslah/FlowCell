@@ -309,6 +309,7 @@ foreach ($entry in @($registry.actions)) {
     }
     $resolvedFunctionName = [string]$sourceMeta.FunctionName
     $wrapperFunctionName = New-FlowCellCustomWrapperFunctionName -ActionName $actionName
+    $entryDescription = if ($entry.PSObject.Properties['description']) { [string]$entry.description } else { '' }
 
     $entryMap = [ordered]@{
         action = $actionName
@@ -373,6 +374,9 @@ foreach ($entry in @($registry.actions)) {
 
     [void]$sectionLines.Add('')
     [void]$sectionLines.Add(('# FlowCell Custom Action: {0}' -f $actionName))
+    if (-not [string]::IsNullOrWhiteSpace($entryDescription)) {
+        [void]$sectionLines.Add(('# Description: {0}' -f $entryDescription))
+    }
     [void]$sectionLines.Add(('# Source Python File: {0}' -f $resolvedSourcePythonPath))
     [void]$sectionLines.Add(('# Source Action Function: {0}' -f $resolvedFunctionName))
     [void]$sectionLines.Add(('# Source Action Start Line: {0}' -f [int]$sourceMeta.StartLine))

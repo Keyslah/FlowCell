@@ -1,4 +1,5 @@
-# Description: Open the inline Quick Rotate Group controls inside the FlowCell Tool Set.
+# Description: Open Rotate controls for axis, pivot, transform, and distribute rotation steps.
+
 # Source Bridge Action: flowtest_custom_quick_rotate_group
 # Source Python Filename: custom_quick_rotate_group.py
 # Source Python File: D:\Dev\workspace\Codex\FlowTest\Blender\ManagedActions\custom_quick_rotate_group.py

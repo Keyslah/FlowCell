@@ -35,7 +35,6 @@ $wrapperRoot = Join-Path $projectRoot 'FlowCellButtons'
 $managedActionRoot = Join-Path $projectRoot 'ManagedActions'
 $supportRoot = Join-Path $projectRoot 'SupportScripts'
 $bridgeLayoutPath = Join-Path $supportRoot 'FlowCellBlenderBridgeLayout.ps1'
-$syncScriptPath = Join-Path $supportRoot 'Sync-BlenderButtonsToFlowCell.ps1'
 $customActionSyncPath = Join-Path $supportRoot 'Sync-BlenderCustomActionCode.ps1'
 $localConfigPath = Join-Path $repoRoot 'FlowCell\local\private\blender.config.local.json'
 if (-not (Test-Path -LiteralPath $bridgeLayoutPath -PathType Leaf)) {
@@ -55,6 +54,11 @@ New-Item -ItemType Directory -Path $managedActionRoot -Force | Out-Null
 $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 if ($null -eq $config.buttons) { $config | Add-Member -MemberType NoteProperty -Name buttons -Value @() }
 $config.buttons = @($config.buttons)
+foreach ($button in @($config.buttons)) {
+    if ($button.PSObject.Properties['panel']) {
+        [void]$button.PSObject.Properties.Remove('panel')
+    }
+}
 $bridgeLayout = Get-FlowCellBlenderBridgeLayout -Config $config -BridgeFolder $BridgeFolder
 $BridgeFolder = [string]$bridgeLayout.BridgeFolder
 
@@ -128,6 +132,32 @@ function Write-FlowCellTextFile {
     if ($lastError) {
         throw $lastError
     }
+}
+
+function Get-FlowCellObjectPropertyValue {
+    param(
+        [object]$InputObject,
+        [Parameter(Mandatory = $true)]
+        [string]$Name
+    )
+
+    if ($null -eq $InputObject -or [string]::IsNullOrWhiteSpace($Name)) {
+        return $null
+    }
+
+    if ($InputObject -is [System.Collections.IDictionary]) {
+        if ($InputObject.Contains($Name)) {
+            return $InputObject[$Name]
+        }
+        return $null
+    }
+
+    $property = $InputObject.PSObject.Properties[$Name]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
 }
 
 function Get-UniqueActionName([string]$BaseName, [System.Collections.Generic.HashSet[string]]$Taken) {
@@ -385,6 +415,10 @@ function Get-BuiltInActionDescriptionMap {
 }
 
 function Get-PreferredActionDescription([string]$ActionName, [string]$CurrentDescription = '') {
+    if (-not [string]::IsNullOrWhiteSpace($CurrentDescription)) {
+        return [string]$CurrentDescription
+    }
+
     $builtInDescriptions = Get-BuiltInActionDescriptionMap
     if (-not [string]::IsNullOrWhiteSpace($ActionName) -and $builtInDescriptions.ContainsKey($ActionName)) {
         return [string]$builtInDescriptions[$ActionName]
@@ -452,6 +486,59 @@ function Get-TopDescription([string]$Path) {
     return ''
 }
 
+function Set-TopDescription([string]$Path, [string]$NextDescription) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return }
+
+    $normalizedDescription = if ($null -ne $NextDescription) { [string]$NextDescription.Trim() } else { '' }
+    $lines = [System.Collections.Generic.List[string]]::new()
+    foreach ($line in @(Get-Content -LiteralPath $Path)) {
+        [void]$lines.Add([string]$line)
+    }
+
+    $lineIndex = 0
+    $shebang = ''
+    if ($lines.Count -gt 0 -and [string]$lines[0] -match '^#!') {
+        $shebang = [string]$lines[0]
+        $lineIndex = 1
+    }
+
+    $leadingHeader = [System.Collections.Generic.List[string]]::new()
+    while ($lineIndex -lt $lines.Count) {
+        $currentLine = [string]$lines[$lineIndex]
+        if ([string]::IsNullOrWhiteSpace($currentLine) -or $currentLine -match '^\s*#') {
+            if ($currentLine -notmatch '^\s*#\s*Description\s*:') {
+                [void]$leadingHeader.Add($currentLine)
+            }
+            $lineIndex++
+            continue
+        }
+        break
+    }
+
+    while ($leadingHeader.Count -gt 0 -and [string]::IsNullOrWhiteSpace([string]$leadingHeader[$leadingHeader.Count - 1])) {
+        $leadingHeader.RemoveAt($leadingHeader.Count - 1)
+    }
+
+    $bodyLines = if ($lineIndex -lt $lines.Count) { @($lines[$lineIndex..($lines.Count - 1)]) } else { @() }
+    $nextLines = New-Object System.Collections.Generic.List[string]
+    if (-not [string]::IsNullOrWhiteSpace($shebang)) {
+        [void]$nextLines.Add($shebang)
+    }
+    [void]$nextLines.Add(('# Description: {0}' -f $normalizedDescription))
+    [void]$nextLines.Add('')
+    foreach ($headerLine in @($leadingHeader)) {
+        [void]$nextLines.Add([string]$headerLine)
+    }
+    if ($leadingHeader.Count -gt 0 -and $bodyLines.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace([string]$leadingHeader[$leadingHeader.Count - 1])) {
+        [void]$nextLines.Add('')
+    }
+    foreach ($bodyLine in @($bodyLines)) {
+        [void]$nextLines.Add([string]$bodyLine)
+    }
+
+    Write-FlowCellTextFile -Path $Path -Value (($nextLines -join "`r`n") + "`r`n") -Encoding UTF8
+}
+
 function Convert-TextToCommentLines([string]$Text) {
     if ([string]::IsNullOrWhiteSpace($Text)) { return @('# (No source text was available.)') }
     $normalized = $Text -replace "`r`n", "`n"
@@ -465,16 +552,21 @@ function Update-WrapperMetadata([string]$WrapperPath, [string]$FallbackDescripti
 
     $sourceMeta = $null
     foreach ($entry in @($registry.actions)) {
-        if ([string]$entry.action -ieq $actionName) {
-            $registryPythonPath = if ($entry.PSObject.Properties['sourcePythonPath'] -and -not [string]::IsNullOrWhiteSpace([string]$entry.sourcePythonPath)) {
-                [string]$entry.sourcePythonPath
+        $entryAction = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'action')
+        if ($entryAction -ieq $actionName) {
+            $sourcePythonPath = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'sourcePythonPath')
+            $pythonPath = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'pythonPath')
+            $registryPythonPath = if (-not [string]::IsNullOrWhiteSpace($sourcePythonPath)) {
+                $sourcePythonPath
             } else {
-                [string]$entry.pythonPath
+                $pythonPath
             }
-            $registryFunctionName = if ($entry.PSObject.Properties['sourceFunctionName'] -and -not [string]::IsNullOrWhiteSpace([string]$entry.sourceFunctionName)) {
-                [string]$entry.sourceFunctionName
+            $sourceFunctionName = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'sourceFunctionName')
+            $functionName = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'functionName')
+            $registryFunctionName = if (-not [string]::IsNullOrWhiteSpace($sourceFunctionName)) {
+                $sourceFunctionName
             } else {
-                [string]$entry.functionName
+                $functionName
             }
             $meta = Get-PythonFunctionMetadata -Path $registryPythonPath -PreferredFunctionName $registryFunctionName
             $sourceMeta = [pscustomobject]@{
@@ -528,11 +620,14 @@ function Update-WrapperMetadata([string]$WrapperPath, [string]$FallbackDescripti
 
 $takenActionNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
 foreach ($button in @($config.buttons)) {
-    if ($button.PSObject.Properties['action'] -and -not [string]::IsNullOrWhiteSpace([string]$button.action)) { [void]$takenActionNames.Add([string]$button.action) }
-    if ($button.PSObject.Properties['localAction'] -and -not [string]::IsNullOrWhiteSpace([string]$button.localAction)) { [void]$takenActionNames.Add([string]$button.localAction) }
+    $buttonAction = [string](Get-FlowCellObjectPropertyValue -InputObject $button -Name 'action')
+    if (-not [string]::IsNullOrWhiteSpace($buttonAction)) { [void]$takenActionNames.Add($buttonAction) }
+    $buttonLocalAction = [string](Get-FlowCellObjectPropertyValue -InputObject $button -Name 'localAction')
+    if (-not [string]::IsNullOrWhiteSpace($buttonLocalAction)) { [void]$takenActionNames.Add($buttonLocalAction) }
 }
 foreach ($entry in @($registry.actions)) {
-    if ($entry.PSObject.Properties['action'] -and -not [string]::IsNullOrWhiteSpace([string]$entry.action)) { [void]$takenActionNames.Add([string]$entry.action) }
+    $entryAction = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'action')
+    if (-not [string]::IsNullOrWhiteSpace($entryAction)) { [void]$takenActionNames.Add($entryAction) }
 }
 
 $installResults = New-Object System.Collections.Generic.List[object]
@@ -572,6 +667,8 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
         $actionName = Get-UniqueActionName -BaseName ('{0}{1}' -f [string]$bridgeLayout.GeneratedActionPrefix, $safeLabel) -Taken $takenActionNames
         $description = Get-TopDescription -Path $fullPath
         if ([string]::IsNullOrWhiteSpace($description)) { $description = ('Run {0} through the {1} Blender bridge.' -f $label, [string]$bridgeLayout.AddonDisplayName) }
+        $description = Get-PreferredActionDescription -ActionName $actionName -CurrentDescription $description
+        Set-TopDescription -Path $fullPath -NextDescription $description
 
         $pythonPath = ''
         $functionName = ''
@@ -605,6 +702,7 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
 
             $managedPythonPath = Join-Path $managedActionRoot ('{0}.py' -f $actionName)
             Copy-Item -LiteralPath $fullPath -Destination $managedPythonPath -Force
+            Set-TopDescription -Path $managedPythonPath -NextDescription $description
             $meta = Get-PythonFunctionMetadata -Path $managedPythonPath -PreferredFunctionName ([string]$entrypointMeta.FunctionName)
             $pythonPath = $managedPythonPath
             $functionName = [string]$meta.FunctionName
@@ -628,7 +726,7 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             $sourceMeta = $resolvedMeta
         }
 
-        $wrapperName = ('{0}{1}.ps1' -f (Get-FlowCellButtonPrefix -PanelName $PanelName), $safeLabel)
+        $wrapperName = ('{0}{1}.ps1' -f (Get-FlowCellButtonPrefix -PanelName $PanelName), (Get-SafeName $actionName))
         $wrapperPath = Join-Path $wrapperRoot $wrapperName
         $wrapperLines = @(
             '$ErrorActionPreference = ''Stop''',
@@ -639,24 +737,25 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
         )
         Write-FlowCellTextFile -Path $wrapperPath -Value (($wrapperLines -join "`r`n") + "`r`n") -Encoding ASCII
 
-        $existingButton = @($config.buttons | Where-Object { $_.PSObject.Properties['action'] -and [string]$_.action -ieq $actionName } | Select-Object -First 1)
+        $existingButton = @($config.buttons | Where-Object { [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'action') -ieq $actionName } | Select-Object -First 1)
         if (@($existingButton).Count -gt 0) {
             $existingButton[0].label = [string]$label
-            $existingButton[0].tooltip = [string](Get-PreferredActionDescription -ActionName $actionName -CurrentDescription $description)
-            $existingButton[0].panel = [string]$PanelName
+            $existingButton[0].tooltip = [string]$description
+            if ($existingButton[0].PSObject.Properties['panel']) {
+                [void]$existingButton[0].PSObject.Properties.Remove('panel')
+            }
             $updatedConfigButtons++
         }
         else {
             $config.buttons = @($config.buttons) + @([pscustomobject]@{
                 label = [string]$label
-                tooltip = [string](Get-PreferredActionDescription -ActionName $actionName -CurrentDescription $description)
+                tooltip = [string]$description
                 action = [string]$actionName
-                panel = [string]$PanelName
             })
             $addedConfigButtons++
         }
 
-        $existingEntry = @($registry.actions | Where-Object { $_.PSObject.Properties['action'] -and [string]$_.action -ieq $actionName } | Select-Object -First 1)
+        $existingEntry = @($registry.actions | Where-Object { [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'action') -ieq $actionName } | Select-Object -First 1)
         if (@($existingEntry).Count -gt 0) {
             $existingEntry[0].pythonPath = [string]$pythonPath
             $existingEntry[0].functionName = [string]$functionName
@@ -684,6 +783,8 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             Source = $fullPath
             Installed = $true
             Action = $actionName
+            Label = [string]$label
+            Tooltip = [string]$description
             WrapperPath = $wrapperPath
             PythonPath = $pythonPath
             FunctionName = $functionName
@@ -727,32 +828,6 @@ foreach ($wrapper in @(Get-ChildItem -LiteralPath $wrapperRoot -Filter '*.ps1' -
     }
 }
 
-if (-not $SkipSync -and (Test-Path -LiteralPath $syncScriptPath -PathType Leaf)) {
-    $installedWrapperPaths = @(
-        @($installResults | Where-Object { [bool]$_.Installed }) |
-            ForEach-Object {
-                if ($_.PSObject.Properties['WrapperPath']) {
-                    [string]$_.WrapperPath
-                }
-            } |
-            Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) }
-    )
-    $installedWrapperPathsJson = if ($installedWrapperPaths.Count -gt 0) {
-        $installedWrapperPaths | ConvertTo-Json -Compress
-    }
-    else {
-        ''
-    }
-    [Environment]::SetEnvironmentVariable('FLOWTEST_ALLOW_NEW_BLENDER_BUTTON_TARGETS_JSON', $installedWrapperPathsJson, 'Process')
-    try {
-        & $syncScriptPath | Out-Null
-        $syncedFlowCellButtons = $true
-    }
-    finally {
-        [Environment]::SetEnvironmentVariable('FLOWTEST_ALLOW_NEW_BLENDER_BUTTON_TARGETS_JSON', $null, 'Process')
-    }
-}
-
 $reloadRequired = $false
 $reloadReason = ''
 $firstInstalled = @($installResults | Where-Object { [bool]$_.Installed } | Select-Object -First 1)
@@ -765,13 +840,17 @@ if (@($firstInstalled).Count -gt 0) {
             $reloadReason = ('Blender must reload the addon or restart to use newly registered action ''{0}''.' -f [string]$firstInstalled[0].Action)
             $callableCheckStatus = 'reload_required'
         }
-        elseif ($response -and $response.PSObject.Properties['status'] -and [string]$response.status -ne 'ok') {
-            $reloadRequired = $true
-            $reloadReason = ('Blender addon reported ''{0}'' for action ''{1}'' from {2}. Reload or restart Blender.' -f [string]$response.message, [string]$firstInstalled[0].Action, [string]$bridgeLayout.BridgeFolderName)
-            $callableCheckStatus = 'reload_required'
-        }
         else {
-            $callableCheckStatus = 'callable'
+            $responseStatus = [string](Get-FlowCellObjectPropertyValue -InputObject $response -Name 'status')
+            if ($response -and -not [string]::IsNullOrWhiteSpace($responseStatus) -and $responseStatus -ne 'ok') {
+                $reloadRequired = $true
+                $responseMessage = [string](Get-FlowCellObjectPropertyValue -InputObject $response -Name 'message')
+                $reloadReason = ('Blender addon reported ''{0}'' for action ''{1}'' from {2}. Reload or restart Blender.' -f $responseMessage, [string]$firstInstalled[0].Action, [string]$bridgeLayout.BridgeFolderName)
+                $callableCheckStatus = 'reload_required'
+            }
+            else {
+                $callableCheckStatus = 'callable'
+            }
         }
     }
 }
@@ -791,7 +870,7 @@ if ($installedCount -le 0) {
     }
 }
 else {
-    $phaseMessage = 'Installed {0} Blender {1} on {2}. Registered the {3} sandbox action, regenerated {4}, and re-synced FlowTest button state/layout,' -f $installedCount, $buttonWord, $PanelName, [string]$bridgeLayout.BridgeFolderName, [string]$bridgeLayout.AddonActionsFileName
+    $phaseMessage = 'Installed {0} Blender {1} on {2}. Registered the {3} sandbox action and regenerated {4},' -f $installedCount, $buttonWord, $PanelName, [string]$bridgeLayout.BridgeFolderName, [string]$bridgeLayout.AddonActionsFileName
     switch ([string]$callableCheckStatus) {
         'callable' {
             $statusMessage = $phaseMessage + ' and verified the action is callable.'
@@ -811,7 +890,7 @@ else {
     }
 }
 
-[pscustomobject]@{
+$scriptResult = [pscustomobject]@{
     InstalledCount = $installedCount
     FailedCount = $failedCount
     AddedConfigButtons = $addedConfigButtons
@@ -829,6 +908,9 @@ else {
     AddonActionsFileName = [string]$bridgeLayout.AddonActionsFileName
     BridgeFolder = [string]$BridgeFolder
     Results = @($installResults.ToArray())
-} | ConvertTo-Json -Depth 8
+}
+
+$global:LASTEXITCODE = 0
+$scriptResult | ConvertTo-Json -Depth 8
 
 
