@@ -104,5 +104,5 @@ Design references
 
 Maintenance rule
 ----------------
-- `README.md` is now the compact human overview for FlowCell, with links to the core runtime files, program-specific README files, and relevant Codex maintenance skills.
+- `README.md` is now the compact human overview for FlowCell, with links to the core runtime files, program-specific README files, relevant Codex maintenance skills, and the renamed `docs/blender-scripts.md` Blender setup plus Add Script prompt for both single Blender scripts and toolsets.
 Keep this summary updated whenever FlowCell behavior changes.

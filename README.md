@@ -2,7 +2,7 @@
 
 FlowCell is a desktop app to fire program scripts with big buttons(or small), macros, and hotkeys. It is for turning repeated work into nearby buttons, popouts, and shortcuts without digging through folders and menus or tiny buttons.
 
-Its like a small control deck that stays on top of Blender, Illustrator, Photoshop, Windows, or any added program: pick a program, pick a panel, click or bind a script.
+Its like a small control deck that stays on top of Blender, Illustrator, Photoshop, Windows, or any added program: pick a program, add a panel, click or bind a script.
 
 ## What It Is
 
@@ -21,7 +21,7 @@ The functional backend lives mainly in [FlowCell](FlowCell/): the PowerShell com
 
 - [PROGRAM_SUMMARY.txt](PROGRAM_SUMMARY.txt) for the current architecture and runtime behavior.
 - [Repository layout](docs/repository-layout.md) for the Git/local/panel script workflow.
-- [Blender buttons](docs/blender-buttons.md) for Blender Add Button and bridge behavior.
+- [Blender scripts](docs/blender-scripts.md) for Blender Add Script and bridge behavior.
 - [Root launcher](run.cmd), [command host](FlowCell/FlowCellCommandBackend.ps1), and [AutoHotkey backend](FlowCell/FlowCellBackend.ahk).
 - [Frontend package](FlowCellFrontend/package.json) and [Tauri backend](FlowCellFrontend/src-tauri/src/main.rs).
 - [Agent instructions](AGENTS.md) for repo rules.
