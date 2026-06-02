@@ -12,25 +12,13 @@
 
 - Public source belongs in tracked folders such as `FlowCell/`, `Blender/`, `Illustrator/`, `Windows/`, `Photoshop/`, `docs/`, `examples/`, and `tools/`.
 - Mutable runtime data belongs in `FlowCell/local/`, which is ignored by Git.
-- Blender buttons should be direct bridge actions; do not add new per-button PowerShell wrappers under `Blender/FlowCellButtons/`.
-- Illustrator user-facing scripts should stay directly in `Illustrator/`.
-- Windows user-facing scripts should stay directly in `Windows/`.
-- Photoshop repo-safe public scripts should stay directly in `Photoshop/`.
-- Internal Illustrator helpers belong in `Illustrator/HelperScripts/`.
 - Relative paths inside the repo are expected and normal. If you move files that other scripts resolve by location, update those references in the same change.
-
-## Script Naming
-
-- Optional prefixes are `file_`, `util_`, and `org_`.
-- Use `org_` for organization actions, `file_` for file-oriented scripts, and `util_` for utility scripts.
-- These prefixes are for file organization and display cleanup only.
-- Do not build routing logic around filename prefixes.
 
 ## Issues and Discussions
 
 - Use GitHub Issues for bugs, regressions, broken scripts, and concrete feature requests.
 - Use GitHub Discussions for questions, script ideas, workflow proposals, and early design feedback.
-- If you are proposing a new script, call out the target folder and intended prefix in the issue or discussion.
+- If you are proposing a new script, call out the target folder in the discussion.
 
 ## Validation
 

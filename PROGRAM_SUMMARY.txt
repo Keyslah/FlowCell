@@ -104,4 +104,5 @@ Design references
 
 Maintenance rule
 ----------------
+- `README.md` is now the compact human overview for FlowCell, with links to the core runtime files, program-specific README files, and relevant Codex maintenance skills.
 Keep this summary updated whenever FlowCell behavior changes.
