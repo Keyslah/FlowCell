@@ -1,7 +1,7 @@
 # Blender Structure
 
 Blender keeps its structured bridge integration area.
-
+![alt text](image.png)
 - `Blender Git Scripts/`: tracked shareable `.py` tools, organized by panel subfolder.
 - `Blender Local Scripts/`: ignored flat private backup/core copies. FlowCell never auto-deletes these.
 - `Panels/`: ignored local button records plus panel-local runnable `.py` copies.
