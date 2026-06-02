@@ -795,6 +795,14 @@ def execute_bridge_operator(action: str, data: dict) -> dict[str, object]:
         message = actions.perform_restore(bpy.context)
         set_bridge_result(message)
         result["message"] = message
+    elif normalized == "baseline_visibility":
+        message = actions.perform_baseline_visibility(bpy.context)
+        set_bridge_result(message)
+        result["message"] = message
+    elif normalized == "restore_visibility":
+        message = actions.perform_restore_visibility(bpy.context)
+        set_bridge_result(message)
+        result["message"] = message
     elif normalized == "trash":
         message = actions.perform_trash(bpy.context)
         set_bridge_result(message)

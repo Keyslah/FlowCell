@@ -121,6 +121,14 @@
                         "description":  "Move the current Live version to Trash and restore the newest matching snapshot back into Live."
                     },
                     {
+                        "action":  "flowcell_custom_baseline_visibility",
+                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_baseline_visibility.py",
+                        "functionName":  "",
+                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_baseline_visibility.py",
+                        "sourceFunctionName":  "",
+                        "description":  "Record the objects currently visible in the active view layer."
+                    },
+                    {
                         "action":  "flowcell_custom_boolean",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_boolean.py",
                         "functionName":  "",
@@ -383,6 +391,14 @@
                         "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_restore_2.py",
                         "sourceFunctionName":  "",
                         "description":  "Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first."
+                    },
+                    {
+                        "action":  "flowcell_custom_restore_visibility",
+                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_restore_visibility.py",
+                        "functionName":  "",
+                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_restore_visibility.py",
+                        "sourceFunctionName":  "",
+                        "description":  "Hide every object in the active view layer except the objects recorded by Baseline Visibility."
                     },
                     {
                         "action":  "flowcell_custom_rotate",

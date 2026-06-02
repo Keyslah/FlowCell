@@ -15,7 +15,7 @@ Open the Blender program in FlowCell and use the `theme` owner button from the p
 3. Optionally choose a darkness profile from the dropdown beside `Dark Theme`. `Save Darkness Profile...` stores the current darkness pattern for later dark/light remapping.
 4. Fine-tune the staged colors with the bucket color pickers or hex fields.
 5. Press `Apply` to send the currently visible theme role colors to Blender.
-6. Use `Save Theme` and `Load Theme` to preserve and restore staged theme values.
+6. Use `Save Buckets` and `Load Buckets` to preserve and restore staged bucket values.
 
 ## Theme Controls
 
@@ -23,8 +23,8 @@ Open the Blender program in FlowCell and use the `theme` owner button from the p
 | --- | --- |
 | `Browse` | Pick an image and sample five theme colors. |
 | `Absorb Theme` | Read the current Blender theme and stage all visible buckets. |
-| `Save Theme` | Save the current staged Blender theme values for later reuse. |
-| `Load Theme` | Load a saved Blender theme back into this page. |
+| `Save Buckets` | Save the current staged Blender theme buckets for later reuse. |
+| `Load Buckets` | Load saved Blender theme buckets back into this page. |
 | `Dark Theme` | Stage a dark theme preset on this page. Apply sends it to Blender. |
 | Darkness profile dropdown | Choose a saved darkness profile for Dark Theme. |
 | `Light Theme` | Stage a light theme preset on this page. Apply sends it to Blender. |

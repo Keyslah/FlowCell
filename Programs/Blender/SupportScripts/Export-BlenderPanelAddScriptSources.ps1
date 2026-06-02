@@ -645,64 +645,15 @@ function Get-RenameSelectedPython {
         [string]$Description
     )
 
-    $helper = Get-BridgeHelperPython
-    return @"
-# Description: $Description
+    $sourcePath = Join-Path $projectRoot 'Blender Git Scripts\Collections\rename selected.py'
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+        throw "Rename Selected source script was not found: $sourcePath"
+    }
 
-$helper
-
-import bpy
-
-
-def _ask_string(title, prompt, initial_value):
-    root = None
-    try:
-        import tkinter as tk
-        from tkinter import simpledialog
-
-        root = tk.Tk()
-        root.withdraw()
-        try:
-            root.attributes("-topmost", True)
-        except Exception:
-            pass
-        return simpledialog.askstring(title, prompt, initialvalue=initial_value, parent=root)
-    except Exception:
-        return None
-    finally:
-        if root is not None:
-            try:
-                root.destroy()
-            except Exception:
-                pass
-
-
-def _prompt_rename_items(context):
-    items = []
-    for obj in list(context.selected_objects):
-        current_name = str(getattr(obj, "name", "") or "")
-        if not current_name:
-            continue
-        prompted = _ask_string("Rename Selected", f"New name for '{current_name}':", current_name)
-        if prompted is None:
-            return None
-        new_name = prompted.strip() or current_name
-        items.append({"current_name": current_name, "new_name": new_name})
-    return items
-
-
-def run_flowcell_action(context=None, data=None):
-    ctx = context or bpy.context
-    payload = _merge_payload({}, data)
-    items = payload.get("items")
-    if not items:
-        items = _prompt_rename_items(ctx)
-        if items is None:
-            return {"message": "Cancelled rename."}
-    bridge = _load_flowcell_bridge()
-    message = bridge.perform_batch_rename_selected_objects(ctx, items)
-    return {"message": message}
-"@
+    $content = Get-Content -LiteralPath $sourcePath -Raw
+    $content = $content -replace "`r`n", "`n"
+    $content = Ensure-DescriptionComment -Content $content -Description $Description
+    return $content.TrimEnd() + "`n"
 }
 
 function Get-SlicerLauncherPython {

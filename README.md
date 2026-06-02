@@ -17,6 +17,41 @@ The functional backend lives mainly in [FlowCell](FlowCell/): the PowerShell com
 - [Photoshop](Programs/Photoshop/README.md): JSX script panels using the shared Git/local/panel script workflow.
 - [Windows](Programs/Windows/README.md): utility scripts, repo helpers, monitor tools, Codex usage, and other desktop helpers.
 
+## Organization
+
+The Windows `Files` panel's `Fix This Folder` button uses the folder or file path copied to the clipboard, then normalizes that project folder into this numbered tree:
+
+```text
+<project folder>/
+  01 src/
+    01 Illustrator/
+      01 live/
+      02 snapshots/
+      03 archive/
+      04 trash/
+    02 Photoshop/
+      01 live/
+      02 snapshots/
+      03 archive/
+      04 trash/
+    03 Blender/
+      01 live/
+      02 snapshots/
+      03 archive/
+      04 trash/
+    04 assets/
+      01 images/
+      02 svg/
+      03 3d/
+      04 textures/
+      05 reference/
+  02 builds/
+  03 releases/
+  04 archive/
+```
+
+Known work files move into the matching `01 live` folder, assets move into `04 assets`, and older clear `.ai`, `.psd`, or `.blend` duplicates are stored in `02 snapshots`.
+
 ## Important Links
 
 - [PROGRAM_SUMMARY.txt](PROGRAM_SUMMARY.txt) for the current architecture and runtime behavior.

@@ -3,8 +3,8 @@
 
 # FLOWCELL_CHILD: browse_theme | Browse | Choose a theme source image to sample colors from.
 # FLOWCELL_CHILD: absorb_theme | Absorb Theme | Pull the current Blender theme values back into the tool fields.
-# FLOWCELL_CHILD: save_theme | Save Theme | Save the currently staged Blender theme preset.
-# FLOWCELL_CHILD: load_theme | Load Theme | Load a saved Blender theme preset into the tool fields.
+# FLOWCELL_CHILD: save_theme | Save Buckets | Save the currently staged Blender theme buckets.
+# FLOWCELL_CHILD: load_theme | Load Buckets | Load saved Blender theme buckets into the tool fields.
 # FLOWCELL_CHILD: dark_theme | Dark Theme | Stage the sampled palette as a dark Blender theme.
 # FLOWCELL_CHILD: light_theme | Light Theme | Stage the sampled palette as a light Blender theme.
 # FLOWCELL_CHILD: apply_theme | Apply | Apply the currently visible Blender theme role colors.

@@ -40,6 +40,10 @@ Back: Move the current Live version to Trash and restore the newest matching sna
 
 Restore: Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first.
 
+Baseline Visibility: Record the objects currently visible in the active view layer.
+
+Restore Visibility: Hide every object in the active view layer except the objects recorded by Baseline Visibility.
+
 Add to Live: Copy selected snapshot, trash, or archive objects into Live without replacing the current Live version.
 
 Trash: Move the selected objects into Trash.
@@ -60,6 +64,7 @@ Rename Selected Objects: Prompt for rename values and batch-rename selected Blen
 """
 
 import json
+import importlib
 import math
 import os
 import re
@@ -90,6 +95,7 @@ LAST_BRIDGE_DISPLAY = ""
 VERSION_PREFIX_RE = re.compile(r"^\([sta]\d+\)", re.IGNORECASE)
 TARGET_NAME_PROP = "lls_target_name"
 CYCLE_INDEX_PROP = "lls_cycle_index"
+VISIBILITY_BASELINE_PROP = "flowcell_visibility_baseline_objects"
 HIDDEN_NAME_PAD = "\u200b"
 INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*]+')
 FLOWCELL_LITHO_SIZE_SUFFIX_RE = re.compile(
@@ -1506,6 +1512,43 @@ def object_is_visible(obj: bpy.types.Object, view_layer: bpy.types.ViewLayer) ->
     return obj.visible_get(view_layer=view_layer)
 
 
+def save_visibility_baseline(context: bpy.types.Context) -> list[str]:
+    visible_names = []
+    for obj in context.scene.objects:
+        if object_is_visible(obj, context.view_layer):
+            visible_names.append(obj.name)
+
+    context.scene[VISIBILITY_BASELINE_PROP] = json.dumps(visible_names)
+    return visible_names
+
+
+def load_visibility_baseline(context: bpy.types.Context) -> set[str] | None:
+    raw_value = context.scene.get(VISIBILITY_BASELINE_PROP)
+    if raw_value is None:
+        return None
+
+    try:
+        parsed = json.loads(str(raw_value))
+    except Exception:
+        return None
+
+    if not isinstance(parsed, list):
+        return None
+
+    return {str(name) for name in parsed if isinstance(name, str) and name}
+
+
+def set_object_hidden_in_view_layer(
+    obj: bpy.types.Object,
+    view_layer: bpy.types.ViewLayer,
+    hidden: bool,
+) -> None:
+    try:
+        obj.hide_set(hidden, view_layer=view_layer)
+    except Exception:
+        obj.hide_viewport = hidden
+
+
 def reveal_collection_in_view_layer(
     context: bpy.types.Context,
     target_collection: bpy.types.Collection | None,
@@ -2245,6 +2288,42 @@ def perform_restore(context: bpy.types.Context) -> str:
     prune_empty_collections(trash_collection)
     prune_empty_collections(scene_root, skip_names=set(ROOT_STRUCTURE))
     return f"Restored {restored} object(s) into Live."
+
+
+def perform_baseline_visibility(context: bpy.types.Context) -> str:
+    visible_names = save_visibility_baseline(context)
+    return f"Recorded {len(visible_names)} visible object(s)."
+
+
+def perform_restore_visibility(context: bpy.types.Context) -> str:
+    baseline_names = load_visibility_baseline(context)
+    if baseline_names is None:
+        return "No visibility baseline is recorded."
+
+    scene_objects = list(context.scene.objects)
+    objects_by_name = {obj.name: obj for obj in scene_objects}
+    baseline_objects = [objects_by_name[name] for name in baseline_names if name in objects_by_name]
+    baseline_ids = {obj.as_pointer() for obj in baseline_objects}
+
+    for obj in scene_objects:
+        if obj.as_pointer() in baseline_ids:
+            continue
+        set_object_hidden_in_view_layer(obj, context.view_layer, True)
+
+    for obj in baseline_objects:
+        reveal_object_collection_paths(context, obj)
+        obj.hide_viewport = False
+        set_object_hidden_in_view_layer(obj, context.view_layer, False)
+
+    try:
+        context.view_layer.update()
+    except Exception:
+        pass
+
+    missing_count = len(baseline_names) - len(baseline_objects)
+    if missing_count > 0:
+        return f"Restored {len(baseline_objects)} visible object(s). Missing {missing_count} saved object(s)."
+    return f"Restored {len(baseline_objects)} visible object(s)."
 
 
 def perform_back(context: bpy.types.Context) -> str:
@@ -3457,14 +3536,34 @@ def _safe_unregister_class(cls) -> None:
             raise
 
 
-def register():
+def _load_flowcell_live_bridge_module():
     import flowcell_bridge as flowcell_live_bridge
+
+    try:
+        flowcell_live_bridge = importlib.reload(flowcell_live_bridge)
+    except Exception:
+        pass
+    return flowcell_live_bridge
+
+
+def register():
+    flowcell_live_bridge = _load_flowcell_live_bridge_module()
 
     for cls in CLASSES:
         _safe_register_class(cls)
 
-    flowcell_live_bridge.cleanup_live_tools(clear_registry=True)
-    flowcell_live_bridge.ensure_builtin_live_tools_registered()
+    cleanup_live_tools = getattr(flowcell_live_bridge, "cleanup_live_tools", None)
+    if callable(cleanup_live_tools):
+        cleanup_live_tools(clear_registry=True)
+
+    ensure_builtin_live_tools_registered = getattr(
+        flowcell_live_bridge,
+        "ensure_builtin_live_tools_registered",
+        None,
+    )
+    if callable(ensure_builtin_live_tools_registered):
+        ensure_builtin_live_tools_registered()
+
     get_bridge_directory()
     disable_outliner_alpha_sort()
 
@@ -3473,9 +3572,11 @@ def register():
 
 
 def unregister():
-    import flowcell_bridge as flowcell_live_bridge
+    flowcell_live_bridge = _load_flowcell_live_bridge_module()
 
-    flowcell_live_bridge.cleanup_live_tools(clear_registry=True)
+    cleanup_live_tools = getattr(flowcell_live_bridge, "cleanup_live_tools", None)
+    if callable(cleanup_live_tools):
+        cleanup_live_tools(clear_registry=True)
     if bpy.app.timers.is_registered(poll_bridge_requests):
         bpy.app.timers.unregister(poll_bridge_requests)
 

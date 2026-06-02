@@ -311,6 +311,18 @@
                         "action":  "flowcell_custom_restore_2"
                     },
                     {
+                        "label":  "baseline visibility",
+                        "tooltip":  "Record the objects currently visible in the active view layer.",
+                        "action":  "flowcell_custom_baseline_visibility",
+                        "panel":  "Collections"
+                    },
+                    {
+                        "label":  "restore visibility",
+                        "tooltip":  "Hide every object in the active view layer except the objects recorded by Baseline Visibility.",
+                        "action":  "flowcell_custom_restore_visibility",
+                        "panel":  "Collections"
+                    },
+                    {
                         "label":  "rename selected",
                         "tooltip":  "Rename all selected Blender objects in one prompt.",
                         "action":  "flowcell_custom_rename_selected_2"

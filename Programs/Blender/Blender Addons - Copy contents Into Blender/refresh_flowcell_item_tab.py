@@ -1,6 +1,8 @@
 import json
+import importlib
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -11,7 +13,7 @@ import bpy
 bl_info = {
     "name": "Refresh FlowCell Item Tab",
     "author": "OpenAI Codex",
-    "version": (1, 3, 0),
+    "version": (1, 3, 1),
     "blender": (5, 0, 0),
     "location": "View3D > Sidebar > Item",
     "description": "Add Item-tab buttons that reload the FlowCell or FlowCell bridge add-on and restart the matching desktop UI.",
@@ -117,8 +119,9 @@ def _get_addon_candidates(target_key: str, workspace_root: Path) -> tuple[list[s
 
 def _find_workspace_module_name(target_key: str, workspace_root: Path) -> str:
     module_candidates, display_names = _get_addon_candidates(target_key, workspace_root)
+    installed_modules = list(addon_utils.modules(refresh=True))
 
-    for module in addon_utils.modules(refresh=False):
+    for module in installed_modules:
         module_name = str(getattr(module, "__name__", "") or "").strip()
         if not module_name or module_name == __name__:
             continue
@@ -130,7 +133,7 @@ def _find_workspace_module_name(target_key: str, workspace_root: Path) -> str:
     for module_name in module_candidates:
         if module_name == __name__:
             continue
-        if any(str(getattr(module, "__name__", "") or "") == module_name for module in addon_utils.modules(refresh=False)):
+        if any(str(getattr(module, "__name__", "") or "") == module_name for module in installed_modules):
             return module_name
 
     return ""
@@ -292,8 +295,59 @@ def _reload_workspace_addon(target_key: str, workspace_root: Path) -> str:
     if is_enabled:
         addon_utils.disable(module_name, default_set=False)
 
+    _reload_workspace_runtime_modules(target_key, workspace_root, module_name)
     addon_utils.enable(module_name, default_set=False)
-    return f"Reloaded {target_name} Blender add-on '{module_name}'."
+    _ensure_workspace_bridge_poller(module_name)
+    return f"Reloaded {target_name} Blender add-on '{module_name}' and checked its bridge poller."
+
+
+def _reload_module_if_available(module_name: str):
+    module_name = str(module_name or "").strip()
+    if not module_name or module_name == __name__:
+        return None
+
+    try:
+        if module_name in sys.modules:
+            return importlib.reload(sys.modules[module_name])
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name == module_name:
+            return None
+        raise
+
+
+def _reload_workspace_runtime_modules(target_key: str, workspace_root: Path, addon_module_name: str) -> None:
+    importlib.invalidate_caches()
+    module_candidates, _ = _get_addon_candidates(target_key, workspace_root)
+    for module_name in module_candidates:
+        _reload_module_if_available(module_name)
+    if addon_module_name not in module_candidates:
+        _reload_module_if_available(addon_module_name)
+
+
+def _ensure_workspace_bridge_poller(module_name: str) -> None:
+    module = importlib.import_module(module_name)
+    poller = getattr(module, "poll_bridge_requests", None)
+    register_fn = getattr(module, "register", None)
+
+    poller_registered = False
+    if callable(poller):
+        try:
+            poller_registered = bpy.app.timers.is_registered(poller)
+        except Exception:
+            poller_registered = False
+
+    if not poller_registered and callable(register_fn):
+        register_fn()
+        poller = getattr(module, "poll_bridge_requests", poller)
+
+    if callable(poller):
+        try:
+            poller_registered = bpy.app.timers.is_registered(poller)
+        except Exception:
+            poller_registered = False
+        if not poller_registered:
+            bpy.app.timers.register(poller, first_interval=0.1, persistent=True)
 
 
 def _refresh_workspace(target_key: str) -> str:
@@ -311,7 +365,7 @@ def _refresh_workspace(target_key: str) -> str:
 
 class VIEW3D_OT_refresh_flowcell(bpy.types.Operator):
     bl_idname = "view3d.refresh_flowcell"
-    bl_label = "refresh flowcell"
+    bl_label = "FlowCell Refresh"
     bl_description = "Disable and re-enable the FlowCell bridge add-on, then restart FlowCell"
     bl_options = {"REGISTER"}
 

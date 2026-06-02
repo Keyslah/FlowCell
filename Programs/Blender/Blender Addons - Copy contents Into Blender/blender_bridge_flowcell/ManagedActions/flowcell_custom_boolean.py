@@ -18,7 +18,7 @@ bl_info = {
     "author": "Aaron & GPT-5",
     "version": (2, 2),
     "blender": (3, 0, 0),
-    "location": "View3D > Sidebar > Item Tab",
+    "location": "View3D > Sidebar > Tool Tab",
     "description": "Quick Boolean with backup, cutter hide, and optional Remesh (0.1 mm default, no smoothing)",
     "category": "Object",
 }
@@ -34,7 +34,7 @@ class OBJECT_PT_quick_boolean(bpy.types.Panel):
     bl_idname = "OBJECT_PT_quick_BOOLEAN"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Item'
+    bl_category = 'Tool'
 
     def draw(self, context):
         layout = self.layout

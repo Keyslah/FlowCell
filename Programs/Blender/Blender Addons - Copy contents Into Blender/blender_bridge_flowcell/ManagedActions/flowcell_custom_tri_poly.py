@@ -346,7 +346,7 @@ class FLOWCELL_PT_tri_poly_panel(bpy.types.Panel):
     bl_idname = "FLOWCELL_PT_tri_poly_panel"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
-    bl_category = "Item"
+    bl_category = "Tool"
 
     def draw(self, context):
         _ensure_scene_props()

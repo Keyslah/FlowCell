@@ -820,19 +820,19 @@ export function HdriWorldToolSurface({
         })}
       </div>
       <div className="hdri-world-row hdri-world-row--theme-actions">
-        {renderToolChip("Save Theme", {
+        {renderToolChip("Save Buckets", {
           onClick: onSaveTheme,
           className: "tool-chip hdri-theme-actions-chip",
           styleGroup,
           importedSkin,
-          title: "Save the current staged Blender theme values for later reuse."
+          title: "Save the current staged Blender theme buckets for later reuse."
         })}
-        {renderToolChip("Load Theme", {
+        {renderToolChip("Load Buckets", {
           onClick: onLoadTheme,
           className: "tool-chip hdri-theme-actions-chip",
           styleGroup,
           importedSkin,
-          title: "Load a saved Blender theme back into this page."
+          title: "Load saved Blender theme buckets back into this page."
         })}
         <div className="hdri-theme-profile-control">
           {renderToolChip("Dark Theme", {
