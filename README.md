@@ -1,6 +1,6 @@
 # FlowCell
 
-FlowCell is a desktop app to fire program scripts with big buttons(or small), macros, and hotkeys. It is for turning repeated work into nearby buttons, popouts, and shortcuts without digging through folders and menus or tiny buttons.
+FlowCell is a desktop app to fire program scripts with big buttons(or small), macros, and hotkeys. It is for making repeated work use nearby buttons, popouts, and shortcuts without digging through folders and menus or tiny buttons.
 
 Its like a small control deck that stays on top of Blender, Illustrator, Photoshop, Windows, or any added program: pick a program, add a panel, click or bind a script.
 
@@ -18,6 +18,8 @@ The functional backend lives mainly in [FlowCell](FlowCell/): the PowerShell com
 - [Windows](Programs/Windows/README.md): utility scripts, repo helpers, monitor tools, Codex usage, and other desktop helpers.
 
 ## Organization
+
+In order for the files panel scripts of each program to work you need to have the scripts configured to work with your file structure. I use the one below. If you have a different one, you'll have to change the scripts to work with it.
 
 The Windows `Files` panel's `Organize Folder` button uses the folder or file path copied to the clipboard, then creates the shared project folders without renumbering existing program folders:
 
@@ -41,6 +43,8 @@ The Windows `Files` panel's `Organize Folder` button uses the folder or file pat
 ```
 
 Assets always use `00 assets`. Program folders are created only when matching files are found, and existing numbered program folders keep their current names. Known saved files move into the matching program `01 live` folder, while older clear `.ai`, `.psd`, `.psb`, or `.blend` duplicates are stored in `02 snapshots`.
+
+Each run writes `organize-folder.log.txt` plus `organize-folder.undo.json` in the project folder. The JSON manifest records file moves, structure-folder renames, created folders, recycled empty folders, timestamp stamps, conflicts, and unresolved items for AI/manual rollback. If the selected folder looks like a parent folder containing several separate projects, the organizer prints a warning and stops before writing a log or changing files.
 
 ## Important Links
 

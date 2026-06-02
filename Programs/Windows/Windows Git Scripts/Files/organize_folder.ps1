@@ -106,17 +106,29 @@ try {
     $outputLines = @($output | ForEach-Object { [string]$_ })
 
     $logLine = @($outputLines | Where-Object { $_ -like 'Log:*' } | Select-Object -Last 1)
+    $undoLine = @($outputLines | Where-Object { $_ -like 'Undo manifest:*' } | Select-Object -Last 1)
     $verificationLine = @($outputLines | Where-Object { $_ -like 'Verification:*' } | Select-Object -Last 1)
     $filesMovedLine = @($outputLines | Where-Object { $_ -like 'Files moved:*' } | Select-Object -Last 1)
     $unresolvedLine = @($outputLines | Where-Object { $_ -like 'Unresolved items:*' } | Select-Object -Last 1)
+    $warningLines = @()
+    if (@($outputLines | Where-Object { $_ -like 'Warning:*' } | Select-Object -First 1).Count -gt 0) {
+        $warningLines = @($outputLines | Where-Object {
+            $_ -like 'Warning:*' -or
+            $_ -like 'Project-like child folders:*' -or
+            $_ -like 'No changes were made.' -or
+            $_ -match '^\s{2}.+'
+        } | Select-Object -First 10)
+    }
 
     $statusParts = @(
         ('Project: {0}' -f $projectPath)
     )
+    if (@($warningLines).Count -gt 0) { $statusParts += $warningLines }
     if (@($verificationLine).Count -gt 0) { $statusParts += $verificationLine[0] }
     if (@($filesMovedLine).Count -gt 0) { $statusParts += $filesMovedLine[0] }
     if (@($unresolvedLine).Count -gt 0) { $statusParts += $unresolvedLine[0] }
     if (@($logLine).Count -gt 0) { $statusParts += $logLine[0] }
+    if (@($undoLine).Count -gt 0) { $statusParts += $undoLine[0] }
     if (@($statusParts).Count -eq 1 -and @($outputLines).Count -gt 0) {
         $statusParts += ($outputLines | Select-Object -Last 3)
     }

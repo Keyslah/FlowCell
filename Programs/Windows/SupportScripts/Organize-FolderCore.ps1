@@ -58,7 +58,75 @@ function Test-OrganizerLogFile {
     param([Parameter(Mandatory = $true)][string]$FullPath)
 
     $fileName = [System.IO.Path]::GetFileName($FullPath)
-    return $fileName -match '^(organize-folder|fix-this-folder)(?: \(\d+\))?\.log\.txt$'
+    return $fileName -match '^(organize-folder|fix-this-folder)(?: \(\d+\))?\.(?:log\.txt|undo\.json)$'
+}
+
+function Get-UndoManifestPath {
+    param([Parameter(Mandatory = $true)][string]$LogFullPath)
+
+    $directory = Split-Path -Parent $LogFullPath
+    $fileName = [System.IO.Path]::GetFileName($LogFullPath)
+    if ($fileName -match '^(.*)\.log\.txt$') {
+        return (Join-Path $directory ($Matches[1] + '.undo.json'))
+    }
+
+    return (Join-Path $directory ([System.IO.Path]::GetFileNameWithoutExtension($fileName) + '.undo.json'))
+}
+
+function New-UndoPathRecord {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [string]$Kind = ''
+    )
+
+    $record = [ordered]@{
+        path_relative = Get-ProjectRelativePath -FullPath $Path -RootPath $script:projectRoot
+        path_full     = Get-AbsolutePath -Path $Path
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($Kind)) {
+        $record.kind = $Kind
+    }
+
+    return [PSCustomObject]$record
+}
+
+function Ensure-OrganizerDirectory {
+    param([Parameter(Mandatory = $true)][string]$DirectoryPath)
+
+    $fullPath = Get-AbsolutePath -Path $DirectoryPath
+    if (Test-Path -LiteralPath $fullPath -PathType Container) {
+        return
+    }
+
+    $missingDirectories = New-Object System.Collections.Generic.List[string]
+    $currentPath = $fullPath
+    $projectRootFull = (Get-AbsolutePath -Path $script:projectRoot).TrimEnd('\')
+    while (-not [string]::IsNullOrWhiteSpace($currentPath) -and
+        -not (Test-Path -LiteralPath $currentPath -PathType Container)) {
+        $currentFull = (Get-AbsolutePath -Path $currentPath).TrimEnd('\')
+        if ([string]::Equals($currentFull, $projectRootFull, [System.StringComparison]::OrdinalIgnoreCase)) {
+            break
+        }
+        $missingDirectories.Add($currentPath) | Out-Null
+        $parentPath = Split-Path -Parent $currentPath
+        if ([string]::IsNullOrWhiteSpace($parentPath) -or $parentPath -eq $currentPath) {
+            break
+        }
+        $currentPath = $parentPath
+    }
+
+    $null = New-Item -ItemType Directory -Path $fullPath -Force
+
+    $missingArray = @($missingDirectories)
+    [array]::Reverse($missingArray)
+    foreach ($createdPath in $missingArray) {
+        $createdFull = Get-AbsolutePath -Path $createdPath
+        if ((Test-Path -LiteralPath $createdFull -PathType Container) -and
+            $script:createdDirectorySet.Add($createdFull)) {
+            $script:createdDirectories.Add((New-UndoPathRecord -Path $createdFull -Kind 'directory')) | Out-Null
+        }
+    }
 }
 
 function Send-DirectoryToRecycleBin {
@@ -86,6 +154,9 @@ function Recycle-EmptyDirectory {
 
     Send-DirectoryToRecycleBin -DirectoryPath $DirectoryPath
     $script:recycledDirectories.Add((Get-ProjectRelativePath -FullPath $DirectoryPath -RootPath $script:projectRoot)) | Out-Null
+    $record = New-UndoPathRecord -Path $DirectoryPath -Kind 'empty_directory'
+    $record | Add-Member -NotePropertyName note -NotePropertyValue 'Moved to Recycle Bin; automatic restore is not guaranteed from this manifest alone.'
+    $script:recycledDirectoryRecords.Add($record) | Out-Null
     return $true
 }
 
@@ -149,7 +220,7 @@ function Move-TrackedFile {
 
     $destinationFull = Get-AbsolutePath -Path $DestinationPath
     $destinationDir = Split-Path -Path $destinationFull -Parent
-    $null = New-Item -ItemType Directory -Path $destinationDir -Force
+    Ensure-OrganizerDirectory -DirectoryPath $destinationDir
 
     if (Compare-Path -Left $File.FullName -Right $destinationFull) {
         $script:verified.Add([PSCustomObject]@{
@@ -182,6 +253,15 @@ function Move-TrackedFile {
         Reason      = $Reason
     }) | Out-Null
 
+    $script:undoFileMoves.Add([PSCustomObject][ordered]@{
+        original_path_relative = Get-ProjectRelativePath -FullPath $File.FullName -RootPath $script:projectRoot
+        original_path_full     = Get-AbsolutePath -Path $File.FullName
+        current_path_relative  = Get-ProjectRelativePath -FullPath $destinationFull -RootPath $script:projectRoot
+        current_path_full      = $destinationFull
+        reason                 = $Reason
+        rollback_condition     = 'Move current_path back to original_path only if current_path exists and original_path is free.'
+    }) | Out-Null
+
     $script:verified.Add([PSCustomObject]@{
         Source      = $File.FullName
         Destination = $destinationFull
@@ -210,6 +290,13 @@ function Move-StructureDirectoryIfObvious {
         $script:renamedDirectories.Add(('{0} -> {1}' -f `
             (Get-ProjectRelativePath -FullPath $LegacyPath -RootPath $script:projectRoot), `
             (Get-ProjectRelativePath -FullPath $CanonicalPath -RootPath $script:projectRoot))) | Out-Null
+        $script:undoDirectoryRenames.Add([PSCustomObject][ordered]@{
+            original_path_relative = Get-ProjectRelativePath -FullPath $LegacyPath -RootPath $script:projectRoot
+            original_path_full     = Get-AbsolutePath -Path $LegacyPath
+            current_path_relative  = Get-ProjectRelativePath -FullPath $CanonicalPath -RootPath $script:projectRoot
+            current_path_full      = Get-AbsolutePath -Path $CanonicalPath
+            rollback_condition     = 'Rename current_path back to original_path only if current_path exists and original_path is free.'
+        }) | Out-Null
         return
     }
 
@@ -257,14 +344,14 @@ function Get-ExistingProgramRoot {
         return $null
     }
 
-    $matches = Get-ChildItem -LiteralPath $paths.SrcRoot -Directory -Force | Where-Object {
+    $programMatches = Get-ChildItem -LiteralPath $paths.SrcRoot -Directory -Force | Where-Object {
         $name = Get-UnnumberedFolderName -Name $_.Name
         [string]::Equals($name, $Definition.Name, [System.StringComparison]::OrdinalIgnoreCase)
     } | Sort-Object `
         @{ Expression = { $number = Get-LeadingFolderNumber -Name $_.Name; if ($null -eq $number) { 9999 } else { $number } } }, `
         @{ Expression = { $_.Name } }
 
-    $firstMatch = @($matches | Select-Object -First 1)
+    $firstMatch = @($programMatches | Select-Object -First 1)
     if ($firstMatch.Count -eq 0) {
         return $null
     }
@@ -307,7 +394,7 @@ function Ensure-ProgramSubfolders {
         $legacyPath = Join-Path $ProgramRoot $subfolder.Legacy
         $canonicalPath = Join-Path $ProgramRoot $subfolder.Canonical
         Move-StructureDirectoryIfObvious -LegacyPath $legacyPath -CanonicalPath $canonicalPath
-        $null = New-Item -ItemType Directory -Path $canonicalPath -Force
+        Ensure-OrganizerDirectory -DirectoryPath $canonicalPath
     }
 }
 
@@ -326,7 +413,7 @@ function Resolve-ProgramRoot {
     else {
         $nextNumber = Get-NextProgramFolderNumber
         $programRoot = Join-Path $paths.SrcRoot ('{0:D2} {1}' -f $nextNumber, $Definition.Name)
-        $null = New-Item -ItemType Directory -Path $programRoot -Force
+        Ensure-OrganizerDirectory -DirectoryPath $programRoot
         $script:createdProgramDirectories.Add((Get-ProjectRelativePath -FullPath $programRoot -RootPath $script:projectRoot)) | Out-Null
     }
 
@@ -360,6 +447,71 @@ function Get-DestinationDirectory {
         { $_ -in @('.exr', '.hdr', '.tga', '.dds', '.ktx', '.ktx2') } { return $paths.AssetsTextures }
         default { return $paths.AssetsUnknown }
     }
+}
+
+function Get-ProjectLikeChildFolders {
+    param([Parameter(Mandatory = $true)][string]$RootPath)
+
+    $ignoredChildNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in @('01 src', '02 builds', '03 releases', '04 archive')) {
+        $null = $ignoredChildNames.Add($name)
+    }
+
+    $savedExtensions = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($definition in $script:programDefinitions) {
+        foreach ($extension in $definition.Extensions) {
+            $null = $savedExtensions.Add($extension)
+        }
+    }
+
+    $projectMatches = @()
+    $children = Get-ChildItem -LiteralPath $RootPath -Directory -Force -ErrorAction SilentlyContinue
+    foreach ($child in $children) {
+        if ($ignoredChildNames.Contains($child.Name)) {
+            continue
+        }
+
+        $reasons = New-Object System.Collections.Generic.List[string]
+        if (Test-Path -LiteralPath (Join-Path $child.FullName '01 src') -PathType Container) {
+            $reasons.Add('contains its own 01 src') | Out-Null
+        }
+
+        $savedFile = Get-ChildItem -LiteralPath $child.FullName -Recurse -File -Force -ErrorAction SilentlyContinue |
+            Where-Object { $savedExtensions.Contains($_.Extension) } |
+            Select-Object -First 1
+        if ($null -ne $savedFile) {
+            $reasons.Add(('contains saved program file {0}' -f (Get-ProjectRelativePath -FullPath $savedFile.FullName -RootPath $script:projectRoot))) | Out-Null
+        }
+
+        if ($reasons.Count -gt 0) {
+            $projectMatches += [PSCustomObject][ordered]@{
+                name          = $child.Name
+                path_relative = Get-ProjectRelativePath -FullPath $child.FullName -RootPath $script:projectRoot
+                path_full     = $child.FullName
+                reasons       = @($reasons)
+            }
+        }
+    }
+
+    return $projectMatches
+}
+
+function Stop-IfRiskyParentFolder {
+    $projectLikeChildren = @(Get-ProjectLikeChildFolders -RootPath $script:projectRoot)
+    if ($projectLikeChildren.Count -lt 3) {
+        return
+    }
+
+    'Warning: This looks like a parent folder containing separate projects. Organize one project folder at a time.'
+    ('Project-like child folders: {0}' -f $projectLikeChildren.Count)
+    foreach ($child in ($projectLikeChildren | Select-Object -First 8)) {
+        ('  {0}: {1}' -f $child.path_relative, ($child.reasons -join '; '))
+    }
+    if ($projectLikeChildren.Count -gt 8) {
+        ('  ... and {0} more.' -f ($projectLikeChildren.Count - 8))
+    }
+    'No changes were made.'
+    exit 2
 }
 
 function Test-ExcludedSourceFile {
@@ -428,7 +580,18 @@ function Stamp-StructureDirectories {
         foreach ($directoryPath in $existing) {
             try {
                 $item = Get-Item -LiteralPath $directoryPath
-                $item.LastWriteTime = ([datetime]'2000-01-01T00:00:00').AddMinutes($minute)
+                $oldTimestamp = $item.LastWriteTime
+                $newTimestamp = ([datetime]'2000-01-01T00:00:00').AddMinutes($minute)
+                if ($oldTimestamp -ne $newTimestamp) {
+                    $script:timestampChanges.Add([PSCustomObject][ordered]@{
+                        path_relative       = Get-ProjectRelativePath -FullPath $directoryPath -RootPath $script:projectRoot
+                        path_full           = Get-AbsolutePath -Path $directoryPath
+                        old_last_write_time = $oldTimestamp.ToString('o')
+                        new_last_write_time = $newTimestamp.ToString('o')
+                        rollback_condition  = 'Set path LastWriteTime back to old_last_write_time if the path still exists.'
+                    }) | Out-Null
+                }
+                $item.LastWriteTime = $newTimestamp
                 $minute++
             }
             catch {
@@ -460,6 +623,8 @@ if (Test-Path -LiteralPath $logFullPath) {
     } while (Test-Path -LiteralPath $logFullPath)
 }
 
+$undoManifestFullPath = Get-UndoManifestPath -LogFullPath $logFullPath
+
 $paths = [ordered]@{
     SrcRoot        = Join-Path $script:projectRoot '01 src'
     AssetsRoot     = Join-Path $script:projectRoot '01 src\00 assets'
@@ -486,12 +651,20 @@ $script:conflicts = New-Object System.Collections.Generic.List[string]
 $script:unresolved = New-Object System.Collections.Generic.List[string]
 $script:renamedDirectories = New-Object System.Collections.Generic.List[string]
 $script:recycledDirectories = New-Object System.Collections.Generic.List[string]
+$script:recycledDirectoryRecords = New-Object System.Collections.Generic.List[object]
 $script:createdProgramDirectories = New-Object System.Collections.Generic.List[string]
 $script:usedProgramDirectories = New-Object System.Collections.Generic.List[string]
+$script:createdDirectories = New-Object System.Collections.Generic.List[object]
+$script:createdDirectorySet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+$script:undoFileMoves = New-Object System.Collections.Generic.List[object]
+$script:undoDirectoryRenames = New-Object System.Collections.Generic.List[object]
+$script:timestampChanges = New-Object System.Collections.Generic.List[object]
 $script:verified = New-Object System.Collections.Generic.List[object]
 $script:programRoots = @{}
 $script:excludeRoots = @()
 $script:structureDirectorySet = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+
+Stop-IfRiskyParentFolder
 
 Move-StructureDirectoryIfObvious -LegacyPath (Join-Path $script:projectRoot 'src') -CanonicalPath $paths.SrcRoot
 Move-StructureDirectoryIfObvious -LegacyPath (Join-Path $script:projectRoot 'builds') -CanonicalPath $paths.Builds
@@ -499,7 +672,7 @@ Move-StructureDirectoryIfObvious -LegacyPath (Join-Path $script:projectRoot 'rel
 Move-StructureDirectoryIfObvious -LegacyPath (Join-Path $script:projectRoot 'archive') -CanonicalPath $paths.RootArchive
 
 foreach ($path in @($paths.SrcRoot, $paths.AssetsRoot, $paths.AssetsImages, $paths.AssetsSvg, $paths.Assets3d, $paths.AssetsTextures, $paths.AssetsUnknown, $paths.Builds, $paths.Releases, $paths.RootArchive)) {
-    $null = New-Item -ItemType Directory -Path $path -Force
+    Ensure-OrganizerDirectory -DirectoryPath $path
 }
 
 $initialSourceFiles = Get-ChildItem -LiteralPath $script:projectRoot -Recurse -File -Force | Where-Object {
@@ -671,13 +844,22 @@ foreach ($leftover in $remainingFilesOutsideSrc) {
 }
 
 $verificationPassed = ($script:conflicts.Count -eq 0 -and $script:unresolved.Count -eq 0)
+$verificationStatus = if ($verificationPassed) { 'PASSED' } else { 'ISSUES FOUND' }
 
 $logLines = New-Object System.Collections.Generic.List[string]
 $logLines.Add('Organize Folder Log') | Out-Null
 $logLines.Add(('Project: {0}' -f $script:projectRoot)) | Out-Null
 $logLines.Add(('Log: {0}' -f $logFullPath)) | Out-Null
-$logLines.Add(('Verification: {0}' -f $(if ($verificationPassed) { 'PASSED' } else { 'ISSUES FOUND' }))) | Out-Null
+$logLines.Add(('Undo manifest: {0}' -f $undoManifestFullPath)) | Out-Null
+$logLines.Add(('Verification: {0}' -f $verificationStatus)) | Out-Null
 $logLines.Add(('Generated: {0}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'))) | Out-Null
+$logLines.Add('') | Out-Null
+
+$logLines.Add('Undo Notes:') | Out-Null
+$logLines.Add(('  Use {0} for the safest rollback.' -f [System.IO.Path]::GetFileName($undoManifestFullPath))) | Out-Null
+$logLines.Add('  Do not blindly delete folders if new files were added after organizing.') | Out-Null
+$logLines.Add('  File moves are reversible only when the current file still exists and the original path is free.') | Out-Null
+$logLines.Add('  Recycle Bin entries are noted, but automatic restore is not guaranteed from the manifest alone.') | Out-Null
 $logLines.Add('') | Out-Null
 
 $sections = @(
@@ -762,10 +944,38 @@ else {
     }
 }
 
+$manifest = [ordered]@{
+    format             = 'flowcell-organize-undo-v1'
+    project_path       = $script:projectRoot
+    log_path           = $logFullPath
+    undo_manifest_path = $undoManifestFullPath
+    generated          = (Get-Date).ToString('o')
+    verification       = $verificationStatus
+    rollback_semantics = [ordered]@{
+        file_moves             = 'Move current_path back to original_path only if current_path exists and original_path is free.'
+        directory_renames      = 'Rename current_path back to original_path only if current_path exists and original_path is free.'
+        directories_created    = 'Remove created directories only if they are still empty.'
+        recycled_directories   = 'Recycle Bin entries are informational; automatic restore is not guaranteed from this manifest alone.'
+        timestamp_changes      = 'Set LastWriteTime back to old_last_write_time if the path still exists.'
+    }
+    actions            = [ordered]@{
+        file_moves                  = $script:undoFileMoves.ToArray()
+        structure_directory_renames = $script:undoDirectoryRenames.ToArray()
+        directories_created         = $script:createdDirectories.ToArray()
+        directories_recycled        = $script:recycledDirectoryRecords.ToArray()
+        timestamp_changes           = $script:timestampChanges.ToArray()
+    }
+    conflicts          = $script:conflicts.ToArray()
+    unresolved_items   = $script:unresolved.ToArray()
+}
+
+$manifestJson = $manifest | ConvertTo-Json -Depth 8
+[System.IO.File]::WriteAllText($undoManifestFullPath, $manifestJson, [System.Text.UTF8Encoding]::new($false))
 [System.IO.File]::WriteAllLines($logFullPath, $logLines)
 
 'Project: {0}' -f $script:projectRoot
 'Log: {0}' -f $logFullPath
+'Undo manifest: {0}' -f $undoManifestFullPath
 'Program directories created: {0}' -f $script:createdProgramDirectories.Count
 'Program directories used: {0}' -f $script:usedProgramDirectories.Count
 'Structure directories renamed: {0}' -f $script:renamedDirectories.Count
@@ -775,7 +985,7 @@ else {
 'Empty directories recycled: {0}' -f $script:recycledDirectories.Count
 'Conflicts: {0}' -f $script:conflicts.Count
 'Unresolved items: {0}' -f $script:unresolved.Count
-'Verification: {0}' -f $(if ($verificationPassed) { 'PASSED' } else { 'ISSUES FOUND' })
+'Verification: {0}' -f $verificationStatus
 
 if (-not $verificationPassed) {
     exit 1
