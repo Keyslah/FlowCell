@@ -28,7 +28,4 @@ The functional backend lives mainly in [FlowCell](FlowCell/): the PowerShell com
 
 ## Codex Skills
 
-- [flow-test](C:/Users/aaron/AppData/Local/CodexClean/skills/flow-test/SKILL.md): main FlowCell/FlowTest maintenance workflow.
-- [layout](C:/Users/aaron/AppData/Local/CodexClean/skills/layout/SKILL.md): window, popout, layout, and saved-bounds issues.
-- [blender-theme](C:/Users/aaron/AppData/Local/CodexClean/skills/blender-theme/SKILL.md): Blender theme color mapping and theme/HDRI work.
-- [toolsets](C:/Users/aaron/AppData/Local/CodexClean/skills/flowtest-tool-set-buttons/SKILL.md): FlowCell toolset and popout button work.
+Use [AI skills](docs/ai-skills.md) as the FlowCell prompt reference. It lists the FlowCell/FlowTest skills for maintenance, layouts, toolsets, fanouts, exact SVG toolboxes, Blender theme work, and the button-skin contract.
