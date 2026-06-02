@@ -28,4 +28,4 @@ The functional backend lives mainly in [FlowCell](FlowCell/): the PowerShell com
 
 ## Codex Skills
 
-Use [AI skills](docs/ai-skills.md) as the FlowCell prompt reference. It lists the FlowCell/FlowTest skills for maintenance, layouts, toolsets, fanouts, exact SVG toolboxes, Blender theme work, and the button-skin contract.
+Use [AI skills](docs/ai-skills.md) as the FlowCell prompt reference. It embeds the FlowCell/FlowTest skills for maintenance, layouts, toolsets, fanouts, exact SVG toolboxes, Blender theme work, and the button-skin contract.

@@ -104,5 +104,5 @@ Design references
 
 Maintenance rule
 ----------------
-- `README.md` is now the compact human overview for FlowCell, with links to the core runtime files, program-specific README files, the focused `docs/ai-skills.md` FlowCell AI skills reference, and the renamed `docs/blender-scripts.md` Blender setup plus a real Add Script/toolset prompt contract with metadata directives, required toolset slots, command-routing rules, and copyable Python examples.
+- `README.md` is now the compact human overview for FlowCell, with links to the core runtime files, program-specific README files, the embedded `docs/ai-skills.md` FlowCell AI skills reference with top in-page skill links, and the renamed `docs/blender-scripts.md` Blender setup plus a real Add Script/toolset prompt contract with metadata directives, required toolset slots, command-routing rules, and copyable Python examples.
 Keep this summary updated whenever FlowCell behavior changes.
