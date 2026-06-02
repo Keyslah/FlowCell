@@ -28,6 +28,19 @@ const FOUR_ROW_RECTS: readonly ScriptGroupPopoutRect[] = [
   { x: 126.310526, y: 0.5, width: 62.905263, height: 34.863158, rx: 17.431561, ry: 17.431561 },
   { x: 189.21579, y: 0.5, width: 62.905263, height: 34.863158, rx: 17.431561, ry: 17.431561 }
 ] as const;
+const SINGLE_POPOUT_WIDTH = 162;
+const SINGLE_POPOUT_HEIGHT = 35.863158;
+const SINGLE_POPOUT_RADIUS = SINGLE_POPOUT_HEIGHT / 2;
+const SINGLE_RECTS: readonly ScriptGroupPopoutRect[] = [
+  {
+    x: 0,
+    y: 0,
+    width: SINGLE_POPOUT_WIDTH,
+    height: SINGLE_POPOUT_HEIGHT,
+    rx: SINGLE_POPOUT_RADIUS,
+    ry: SINGLE_POPOUT_RADIUS
+  }
+] as const;
 
 const FOUR_ROW_TEMPLATE: ScriptGroupPopoutTemplate = {
   type: "4row",
@@ -38,11 +51,22 @@ const FOUR_ROW_TEMPLATE: ScriptGroupPopoutTemplate = {
   buttonTextSize: 9.5,
   rowRects: FOUR_ROW_RECTS
 };
+const SINGLE_TEMPLATE: ScriptGroupPopoutTemplate = {
+  type: "single",
+  label: "single",
+  rowWidth: SINGLE_POPOUT_WIDTH,
+  rowHeight: SINGLE_POPOUT_HEIGHT,
+  buttonsPerRow: 1,
+  buttonTextSize: 18,
+  rowRects: SINGLE_RECTS
+};
 
 export function getScriptGroupPopoutTemplate(
   popoutType: ScriptGroupPopoutType
 ): ScriptGroupPopoutTemplate {
   switch (normalizeScriptGroupPopoutType(popoutType)) {
+    case "single":
+      return SINGLE_TEMPLATE;
     case "4row":
     default:
       return FOUR_ROW_TEMPLATE;

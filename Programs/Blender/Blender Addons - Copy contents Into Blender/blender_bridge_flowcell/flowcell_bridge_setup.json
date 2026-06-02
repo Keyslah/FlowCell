@@ -1,0 +1,6 @@
+﻿{
+    "bridgeFolder":  "blender_bridge_flowcell",
+    "customActionsFileName":  "flowcell_custom_actions.json",
+    "managedActionsFolder":  "ManagedActions",
+    "note":  "Paste-ready FlowCell Blender bridge bundle generated from Programs\\Blender\\ManagedActions."
+}

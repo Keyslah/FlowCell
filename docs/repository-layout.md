@@ -18,7 +18,7 @@ Panel deletes and button deletes only remove the panel copy or panel record. The
 - `FlowCellFrontend/`: React/Tauri desktop frontend and native command host.
 - `Programs/<Program>/<Program> Git Scripts/`: shared Git-synced script libraries, organized by panel subfolder.
 - `Programs/Blender/SupportScripts/`: Blender installer, dispatcher, cleanup, and sync plumbing.
-- `Programs/Blender/AddonScripts/`: Blender refresh/sidebar helper scripts only.
+- `Programs/Blender/Blender Addons - Copy contents Into Blender/`: paste-ready Blender add-on files for Blender's `scripts/addons` folder.
 - `Programs/*/ScriptDump/`: ignored loose/testing/old scripts with placeholder folders tracked.
 - `tools/launcher/`: optional launcher source.
 

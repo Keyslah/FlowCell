@@ -47,6 +47,47 @@ type PositionedScriptButton = {
   ry: number;
 };
 
+const SINGLE_BUTTON_LABEL_HORIZONTAL_PADDING = 28;
+const SINGLE_BUTTON_LABEL_MIN_FONT_SIZE = 10;
+
+let textMeasureContext: CanvasRenderingContext2D | null = null;
+
+function getTextMeasureContext(): CanvasRenderingContext2D | null {
+  if (typeof document === "undefined") {
+    return null;
+  }
+
+  if (!textMeasureContext) {
+    textMeasureContext = document.createElement("canvas").getContext("2d");
+  }
+
+  return textMeasureContext;
+}
+
+function measureLabelWidth(label: string, fontSize: number): number {
+  const context = getTextMeasureContext();
+  if (!context) {
+    return label.trim().length * fontSize * 0.56;
+  }
+
+  context.font = `700 ${fontSize}px "Segoe UI", sans-serif`;
+  return context.measureText(label).width;
+}
+
+function resolveSingleButtonFontSize(label: string, buttonWidth: number, baseFontSize: number): number {
+  const availableWidth = Math.max(1, buttonWidth - SINGLE_BUTTON_LABEL_HORIZONTAL_PADDING);
+  const measuredWidth = Math.max(1, measureLabelWidth(label, baseFontSize));
+
+  if (measuredWidth <= availableWidth) {
+    return baseFontSize;
+  }
+
+  return Math.max(
+    SINGLE_BUTTON_LABEL_MIN_FONT_SIZE,
+    Math.floor((baseFontSize * availableWidth * 100) / measuredWidth) / 100
+  );
+}
+
 function splitTwoWordButtonLabel(label: string): [string, string] | null {
   const words = label
     .trim()
@@ -522,14 +563,26 @@ export default function ScriptGroupPopoutWindowPage({
               </svg>
 
               {buttons.map((button) => {
-                const stackedLabelWords = splitTwoWordButtonLabel(button.label);
+                const isSingleButtonTemplate = template.type === "single";
+                const stackedLabelWords = isSingleButtonTemplate
+                  ? null
+                  : splitTwoWordButtonLabel(button.label);
                 const isStackedLabel = stackedLabelWords !== null;
+                const buttonFontSize = isSingleButtonTemplate
+                  ? resolveSingleButtonFontSize(
+                      button.label,
+                      button.width,
+                      template.buttonTextSize
+                    )
+                  : template.buttonTextSize * (isStackedLabel ? 0.82 : 1);
 
                 return (
                   <button
                     key={button.id}
                     type="button"
-                    className="script-group-popout__button"
+                    className={`script-group-popout__button${
+                      isSingleButtonTemplate ? " script-group-popout__button--single" : ""
+                    }`}
                     title={button.label}
                     aria-label={button.label}
                     style={{
@@ -538,7 +591,7 @@ export default function ScriptGroupPopoutWindowPage({
                       width: `${button.width}px`,
                       height: `${button.height}px`,
                       borderRadius: `${Math.min(button.rx, button.ry)}px`,
-                      fontSize: `${template.buttonTextSize * (isStackedLabel ? 0.82 : 1)}px`
+                      fontSize: `${buttonFontSize}px`
                     }}
                     onClick={() => {
                       void handleButtonActivate(button.fileName);
@@ -547,6 +600,8 @@ export default function ScriptGroupPopoutWindowPage({
                     <span
                       className={`script-group-popout__button-label${
                         isStackedLabel ? " script-group-popout__button-label--stacked" : ""
+                      }${
+                        isSingleButtonTemplate ? " script-group-popout__button-label--single" : ""
                       }`}
                     >
                       {isStackedLabel ? (

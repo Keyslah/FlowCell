@@ -102,8 +102,8 @@ function Get-FlowCellBlenderAddonTemplatePath {
 
     $repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
     foreach ($addonScriptsRoot in @(
-        (Join-Path $repoRoot 'Programs\Blender\AddonScripts'),
-        (Join-Path $repoRoot 'Blender\AddonScripts')
+        (Join-Path $repoRoot 'Programs\Blender\Blender Addons - Copy contents Into Blender'),
+        (Join-Path $repoRoot 'Blender\Blender Addons - Copy contents Into Blender')
     )) {
         $candidate = Join-Path $addonScriptsRoot $fileName
         if (Test-Path -LiteralPath $candidate -PathType Leaf) {
@@ -125,7 +125,7 @@ function Get-FlowCellBlenderBridgeLayout {
         $BridgeFolder = Resolve-FlowCellBlenderBridgeFolder -Config $Config
     }
     if ([string]::IsNullOrWhiteSpace($BridgeFolder)) {
-        throw 'Blender bridge folder could not be resolved. Set automation.bridgeFolder or install/reload the FlowCell Blender add-on.'
+        throw 'Blender bridge folder could not be resolved. Install or reload the FlowCell Blender add-on. Use automation.bridgeFolder only for a nonstandard Blender add-ons location.'
     }
 
     try {

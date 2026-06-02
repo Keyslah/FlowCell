@@ -39,7 +39,10 @@ import {
 } from "../pages/smart-axis/smartAxisToolboxGeometry";
 import { buildScriptGroupPopoutWindowSize } from "./scriptGroupPopoutTemplates";
 import { registerLayoutWindow } from "./layoutSnapshots";
-import type { ScriptGroupPopoutType } from "./scriptGroupPopoutSettings";
+import {
+  DEFAULT_SCRIPT_GROUP_POPOUT_TYPE,
+  type ScriptGroupPopoutType
+} from "./scriptGroupPopoutSettings";
 import {
   registerScopedWindowTopmost,
   refreshScopedWindowTopmost,
@@ -1228,10 +1231,16 @@ export async function openScriptGroupPopoutWindow(args: {
   }
 
   const openPromise = (async () => {
+    const effectivePopoutType: ScriptGroupPopoutType =
+      args.scripts.length === 1
+        ? "single"
+        : args.popoutType === "single"
+          ? DEFAULT_SCRIPT_GROUP_POPOUT_TYPE
+          : args.popoutType;
     const placement = applyDuplicateWindowCascade(
       baseWindowLabel,
       resolveSavedBoundsPlacement(
-        await resolveScriptGroupPopoutWindowOptions(args.scripts.length, args.popoutType),
+        await resolveScriptGroupPopoutWindowOptions(args.scripts.length, effectivePopoutType),
         args.bounds
       ),
       args.bounds
@@ -1252,7 +1261,7 @@ export async function openScriptGroupPopoutWindow(args: {
         programName: args.programName,
         panelName: args.panelName,
         scripts: args.scripts,
-        popoutType: args.popoutType,
+        popoutType: effectivePopoutType,
         label: args.label
       }),
       title: `FlowCell - ${args.label}`,

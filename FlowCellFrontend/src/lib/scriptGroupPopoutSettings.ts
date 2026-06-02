@@ -1,4 +1,4 @@
-export type ScriptGroupPopoutType = "4row";
+export type ScriptGroupPopoutType = "4row" | "single";
 
 export const DEFAULT_SCRIPT_GROUP_POPOUT_TYPE: ScriptGroupPopoutType = "4row";
 
@@ -18,7 +18,7 @@ function encodeStorageSegment(value: string): string {
 }
 
 export function normalizeScriptGroupPopoutType(value: unknown): ScriptGroupPopoutType {
-  return value === "4row" ? value : DEFAULT_SCRIPT_GROUP_POPOUT_TYPE;
+  return value === "4row" || value === "single" ? value : DEFAULT_SCRIPT_GROUP_POPOUT_TYPE;
 }
 
 export function getScriptGroupPopoutTypeStorageKey(

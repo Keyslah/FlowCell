@@ -853,13 +853,13 @@ function Copy-FlowCellBlenderAddonBundle([string]$DestinationRoot, [string]$Repo
     $liveBridgeFolder = Resolve-FlowCellBlenderLiveBridgeFolder -Config $config
     $liveAddonRoot = if (-not [string]::IsNullOrWhiteSpace($liveBridgeFolder)) { Split-Path -Parent $liveBridgeFolder } else { '' }
 
-    $bundleRoot = Join-Path $DestinationRoot 'FlowCellBackup\Blender Addons - Copy Into Blender'
+    $bundleRoot = Join-Path $DestinationRoot 'Blender Addons - Copy contents Into Blender'
     $bundleBridgeRoot = Join-Path $bundleRoot $bridgeFolderName
     $managedDestinationRoot = Join-Path $bundleBridgeRoot 'ManagedActions'
     New-Item -ItemType Directory -Path $bundleBridgeRoot -Force | Out-Null
     New-Item -ItemType Directory -Path $managedDestinationRoot -Force | Out-Null
 
-    $repoAddonRoot = Join-Path $RepositoryRoot 'Programs\Blender\AddonScripts'
+    $repoAddonRoot = Join-Path $RepositoryRoot 'Programs\Blender\Blender Addons - Copy contents Into Blender'
     [void](Copy-FlowCellFirstExistingFile -CandidatePaths @(
         (Join-Path $repoAddonRoot $addonActionsFileName),
         $(if (-not [string]::IsNullOrWhiteSpace($liveAddonRoot)) { Join-Path $liveAddonRoot $addonActionsFileName } else { '' })

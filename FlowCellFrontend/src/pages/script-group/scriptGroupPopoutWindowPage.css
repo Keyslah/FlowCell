@@ -84,6 +84,18 @@
   outline: none;
 }
 
+.script-group-popout__button--single {
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.script-group-popout__button--single:hover {
+  background: rgba(0, 0, 0, 0.62);
+}
+
+.script-group-popout__button--single:active {
+  background: rgba(0, 0, 0, 0.72);
+}
+
 .script-group-popout__button-label {
   display: flex;
   align-items: center;
@@ -113,6 +125,14 @@
 .script-group-popout__button-label--stacked > span {
   display: block;
   width: 100%;
+}
+
+.script-group-popout__button-label--single {
+  display: block;
+  height: auto;
+  padding: 0 14px;
+  line-height: 1;
+  letter-spacing: 0;
 }
 
 .script-group-popout__resize-handle {

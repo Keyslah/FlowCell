@@ -8,7 +8,7 @@ Blender keeps its structured bridge integration area.
 - `ManagedActions/`: ignored bridge-managed runtime action sources that FlowCell regenerates.
 - `FlowCellButtons/`: deprecated per-button wrapper compatibility folder; active Blender buttons use direct `bridgeAction` metadata instead.
 - `SupportScripts/`: dispatcher, installer, cleanup, and sync/regeneration plumbing only.
-- `AddonScripts/`: Blender refresh/sidebar helper scripts only.
+- `Blender Addons - Copy contents Into Blender/`: paste-ready Blender add-on files for Blender's `scripts\addons` folder.
 - `ScriptDump/`: ignored loose/testing/old scripts. Nested ScriptDump folders are treated the same way.
 - `config.json`: sanitized public default Blender config.
 - `FlowCell/local/private/blender.config.local.json`: local override for machine-specific bridge paths.
