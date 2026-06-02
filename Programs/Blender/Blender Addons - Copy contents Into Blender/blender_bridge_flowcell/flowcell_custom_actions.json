@@ -1,4 +1,4 @@
-﻿{
+{
     "actions":  [
                     {
                         "action":  "custom_custom_lithophane_tool",
@@ -430,7 +430,7 @@
                         "functionName":  "",
                         "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_save_png.py",
                         "sourceFunctionName":  "",
-                        "description":  "Render the active selected object from the current scene camera to 01 src\\04 assets\\01 images as a transparent PNG cropped exactly to the visible object bounds."
+                        "description":  "Render the active selected object from the current scene camera to 01 src\\00 assets\\01 images as a transparent PNG cropped exactly to the visible object bounds."
                     },
                     {
                         "action":  "flowcell_custom_save_stl",
@@ -438,7 +438,7 @@
                         "functionName":  "",
                         "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_save_stl.py",
                         "sourceFunctionName":  "",
-                        "description":  "Export the selected mesh objects to 01 src\\04 assets\\03 3d as a uniquely named STL."
+                        "description":  "Export the selected mesh objects to 01 src\\00 assets\\03 3d as a uniquely named STL."
                     },
                     {
                         "action":  "flowcell_custom_smart_axis",

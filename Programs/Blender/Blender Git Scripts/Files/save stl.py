@@ -1,4 +1,4 @@
-# Description: Export the selected mesh objects to 01 src\04 assets\03 3d as a uniquely named STL.
+# Description: Export the selected mesh objects to 01 src\00 assets\03 3d as a uniquely named STL.
 
 from __future__ import annotations
 

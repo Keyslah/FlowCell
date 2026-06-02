@@ -428,7 +428,7 @@
         }
 
         if (srcRoot) {
-            imagesFolder = ensureFolder(new Folder(srcRoot.fsName + "/04 assets/01 images"));
+            imagesFolder = ensureFolder(new Folder(srcRoot.fsName + "/00 assets/01 images"));
         } else {
             imagesFolder = readDefaultImagesFolder();
             if (!imagesFolder) {

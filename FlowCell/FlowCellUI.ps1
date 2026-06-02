@@ -354,7 +354,7 @@ $script:BuiltInActions = @(
     [pscustomobject]@{
         Id = 'save_selected_obj_to_project_3d'
         Label = 'save obj'
-        Tooltip = 'Export the current Illustrator selection from a d# sublayer to 01 src\04 assets\03 3d, naming the OBJ after the parent asset layer.'
+        Tooltip = 'Export the current Illustrator selection from a d# sublayer to 01 src\00 assets\03 3d, naming the OBJ after the parent asset layer.'
     },
     [pscustomobject]@{
         Id = 'save_selected_obj_to_blender'

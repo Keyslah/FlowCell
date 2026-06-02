@@ -20,9 +20,9 @@ Flatten Revolve: Flatten the active mesh into a centered profile, hide the sourc
 
 Cursor Center Hole: With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.
 
-Save STL: Export the selected mesh objects to 01 src\04 assets\03 3d as a uniquely named STL.
+Save STL: Export the selected mesh objects to 01 src\00 assets\03 3d as a uniquely named STL.
 
-Save PNG: Render the active selected object from the current scene camera to 01 src\04 assets\01 images as a transparent PNG cropped exactly to the visible object bounds.
+Save PNG: Render the active selected object from the current scene camera to 01 src\00 assets\01 images as a transparent PNG cropped exactly to the visible object bounds.
 
 Cura: Export selected mesh objects as STL files and send them to Cura.
 
@@ -267,7 +267,7 @@ def get_assets_subdirectory_from_current_file(*relative_parts: str) -> Path:
     for candidate in search_roots:
         if candidate.name.casefold() != "01 src":
             continue
-        assets_dir = candidate / "04 assets"
+        assets_dir = candidate / "00 assets"
         for part in relative_parts:
             assets_dir /= part
         assets_dir.mkdir(parents=True, exist_ok=True)
@@ -277,7 +277,7 @@ def get_assets_subdirectory_from_current_file(*relative_parts: str) -> Path:
         src_root = candidate / "01 src"
         if not src_root.is_dir():
             continue
-        assets_dir = src_root / "04 assets"
+        assets_dir = src_root / "00 assets"
         for part in relative_parts:
             assets_dir /= part
         assets_dir.mkdir(parents=True, exist_ok=True)

@@ -14,9 +14,8 @@ import bpy
 
 
 def _load_flowcell_bridge():
-    module_names = ("flowcell_bridge", "flowcell_bridge")
     first_error = None
-    for module_name in module_names:
+    for module_name in ("flowcell_bridge",):
         try:
             module = importlib.import_module(module_name)
             try:
@@ -49,16 +48,15 @@ def _load_flowcell_bridge():
         addon_root_text = str(addon_root)
         if addon_root_text not in sys.path:
             sys.path.insert(0, addon_root_text)
-        for module_name in module_names:
+        try:
+            module = importlib.import_module("flowcell_bridge")
             try:
-                module = importlib.import_module(module_name)
-                try:
-                    module = importlib.reload(module)
-                except Exception:
-                    pass
-                return module
+                module = importlib.reload(module)
             except Exception:
-                continue
+                pass
+            return module
+        except Exception:
+            continue
 
     raise RuntimeError(
         "FlowCell Blender bridge module was not found. Reload the FlowCell add-on or restart Blender."
@@ -101,15 +99,29 @@ def _write_rename_status(event, message="", **payload):
 
 
 def _selected_rename_items(context):
-    items = []
-    for obj in list(context.selected_objects):
-        current_name = str(getattr(obj, "name", "") or "")
-        if not current_name:
-            continue
-        items.append({"current_name": current_name, "new_name": current_name})
-    if not items:
+    selected = [
+        obj
+        for obj in list(getattr(context, "selected_objects", []) or [])
+        if str(getattr(obj, "name", "") or "")
+    ]
+    if not selected:
         raise ValueError("Select at least one object.")
-    return items
+
+    active = getattr(getattr(context, "view_layer", None), "objects", None)
+    active_obj = getattr(active, "active", None) or getattr(context, "active_object", None)
+    ordered = []
+    if active_obj in selected:
+        ordered.append(active_obj)
+    ordered.extend(obj for obj in selected if obj not in ordered)
+
+    return [
+        {
+            "current_name": str(obj.name),
+            "new_name": str(obj.name),
+            "is_active": bool(obj == active_obj),
+        }
+        for obj in ordered
+    ]
 
 
 def _prompt_script_text():
@@ -121,132 +133,251 @@ param(
     [string]$OutputPath
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
 
-$items = @(Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json)
+Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName PresentationCore
+Add-Type -AssemblyName WindowsBase
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class FlowCellWindowNative {
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd);
 
-$form = New-Object System.Windows.Forms.Form
-$form.Text = 'Rename Selected'
-$form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
-$form.Size = New-Object System.Drawing.Size(620, [Math]::Min(760, [Math]::Max(210, 130 + ($items.Count * 34))))
-$form.MinimumSize = New-Object System.Drawing.Size(520, 210)
-$form.TopMost = $true
-$form.KeyPreview = $true
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
+}
+'@
 
-$table = New-Object System.Windows.Forms.TableLayoutPanel
-$table.Dock = [System.Windows.Forms.DockStyle]::Fill
-$table.AutoScroll = $true
-$table.ColumnCount = 2
-$table.RowCount = $items.Count + 1
-$table.Padding = New-Object System.Windows.Forms.Padding(10)
-$table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 45))) | Out-Null
-$table.ColumnStyles.Add((New-Object System.Windows.Forms.ColumnStyle([System.Windows.Forms.SizeType]::Percent, 55))) | Out-Null
-
-$currentHeader = New-Object System.Windows.Forms.Label
-$currentHeader.Text = 'Current'
-$currentHeader.AutoSize = $true
-$currentHeader.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
-$table.Controls.Add($currentHeader, 0, 0)
-
-$newHeader = New-Object System.Windows.Forms.Label
-$newHeader.Text = 'New name'
-$newHeader.AutoSize = $true
-$newHeader.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 9)
-$table.Controls.Add($newHeader, 1, 0)
-
-$textBoxes = New-Object System.Collections.Generic.List[System.Windows.Forms.TextBox]
-for ($index = 0; $index -lt $items.Count; $index++) {
-    $item = $items[$index]
-    $row = $index + 1
-
-    $label = New-Object System.Windows.Forms.Label
-    $label.Text = [string]$item.current_name
-    $label.AutoEllipsis = $true
-    $label.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $label.TextAlign = [System.Drawing.ContentAlignment]::MiddleLeft
-    $table.Controls.Add($label, 0, $row)
-
-    $textBox = New-Object System.Windows.Forms.TextBox
-    $textBox.Text = [string]$item.new_name
-    $textBox.Tag = [string]$item.current_name
-    $textBox.Dock = [System.Windows.Forms.DockStyle]::Fill
-    $table.Controls.Add($textBox, 1, $row)
-    $textBoxes.Add($textBox)
+function Write-PromptResult([object]$Payload) {
+    $Payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
 }
 
-$buttons = New-Object System.Windows.Forms.FlowLayoutPanel
-$buttons.Dock = [System.Windows.Forms.DockStyle]::Bottom
-$buttons.FlowDirection = [System.Windows.Forms.FlowDirection]::RightToLeft
-$buttons.Padding = New-Object System.Windows.Forms.Padding(10)
-$buttons.Height = 56
-
-$okButton = New-Object System.Windows.Forms.Button
-$okButton.Text = 'OK'
-$okButton.Width = 92
-$okButton.Height = 30
-
-$cancelButton = New-Object System.Windows.Forms.Button
-$cancelButton.Text = 'Cancel'
-$cancelButton.Width = 92
-$cancelButton.Height = 30
-
-$buttons.Controls.Add($okButton)
-$buttons.Controls.Add($cancelButton)
-$form.Controls.Add($table)
-$form.Controls.Add($buttons)
-$form.AcceptButton = $okButton
-$form.CancelButton = $cancelButton
-
-$writeCancel = {
-    @{ cancelled = $true } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $OutputPath -Encoding UTF8
+function Get-DefaultRenameValue([string]$BaseName, [int]$Index) {
+    if ($Index -le 0) {
+        return $BaseName
+    }
+    return ('{0} {1}' -f $BaseName, ($Index + 1))
 }
 
-$cancelButton.Add_Click({
-    & $writeCancel
-    $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-    $form.Close()
-})
-
-$form.Add_KeyDown({
-    if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Escape) {
-        & $writeCancel
-        $form.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
-        $form.Close()
+function Show-WindowFront([System.Windows.Window]$Window) {
+    if ($null -eq $Window) { return }
+    try {
+        $helper = New-Object System.Windows.Interop.WindowInteropHelper($Window)
+        $hwnd = $helper.Handle
+        if ($hwnd -eq [IntPtr]::Zero) { return }
+        [FlowCellWindowNative]::ShowWindowAsync($hwnd, 5) | Out-Null
+        [FlowCellWindowNative]::SetForegroundWindow($hwnd) | Out-Null
+        $Window.Activate() | Out-Null
+        $Window.Focus() | Out-Null
     }
-})
+    catch {
+    }
+}
 
-$okButton.Add_Click({
-    $renameItems = @()
-    $newNames = New-Object System.Collections.Generic.HashSet[string]
-    foreach ($textBox in $textBoxes) {
-        $currentName = [string]$textBox.Tag
-        $newName = ([string]$textBox.Text).Trim()
-        if ([string]::IsNullOrWhiteSpace($newName)) {
-            [System.Windows.Forms.MessageBox]::Show("New name is required for '$currentName'.", 'Rename Selected') | Out-Null
-            return
-        }
-        if (-not $newNames.Add($newName)) {
-            [System.Windows.Forms.MessageBox]::Show("Duplicate new name: '$newName'.", 'Rename Selected') | Out-Null
-            return
-        }
-        $renameItems += [pscustomobject]@{
-            current_name = $currentName
-            new_name = $newName
-        }
+try {
+    $selectedObjects = @(Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json)
+    if (@($selectedObjects).Count -eq 0) {
+        Write-PromptResult @{ cancelled = $true }
+        exit 0
     }
 
-    @{ cancelled = $false; items = $renameItems } |
-        ConvertTo-Json -Depth 6 |
-        Set-Content -LiteralPath $OutputPath -Encoding UTF8
-    $form.DialogResult = [System.Windows.Forms.DialogResult]::OK
-    $form.Close()
-})
+    $initialBaseName = if ($selectedObjects[0].PSObject.Properties['new_name']) {
+        [string]$selectedObjects[0].new_name
+    }
+    else {
+        [string]$selectedObjects[0].current_name
+    }
 
-[void]$form.ShowDialog()
-if (-not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) {
-    & $writeCancel
+    $xaml = @'
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Collection Rename Selected"
+        Width="920"
+        Height="680"
+        MinWidth="820"
+        MinHeight="560"
+        WindowStartupLocation="CenterScreen"
+        Background="#FF1D232B"
+        Foreground="#FFF2F2F2">
+    <Border Margin="16" Padding="18" Background="#FF262D36" CornerRadius="18">
+        <DockPanel>
+            <StackPanel DockPanel.Dock="Top">
+                <TextBlock FontSize="24" FontWeight="SemiBold">Rename Selected Objects</TextBlock>
+                <TextBlock Margin="0,8,0,0" Foreground="#FFB6C2CF" TextWrapping="Wrap">Type one base name, then adjust any individual names you want before applying.</TextBlock>
+                <Grid Margin="0,16,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="140" />
+                    </Grid.ColumnDefinitions>
+                    <TextBox x:Name="BaseNameTextBox" Grid.Column="0" Height="36" VerticalContentAlignment="Center" Padding="10,6" />
+                    <Button x:Name="ApplyBaseNameButton" Grid.Column="1" Width="128" Height="36" Margin="12,0,0,0">Apply Name</Button>
+                </Grid>
+                <Grid Margin="0,16,0,8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" FontWeight="SemiBold" Foreground="#FF9FB0C2">Current Name</TextBlock>
+                    <TextBlock Grid.Column="1" FontWeight="SemiBold" Foreground="#FF9FB0C2">New Name</TextBlock>
+                </Grid>
+            </StackPanel>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,0,0,16">
+                <Grid x:Name="NamesGrid" />
+            </ScrollViewer>
+            <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="CancelButton" Width="120" Height="36" Margin="0,0,10,0" Background="#FF586069">Cancel</Button>
+                <Button x:Name="RenameButton" Width="140" Height="36">Apply</Button>
+            </StackPanel>
+        </DockPanel>
+    </Border>
+</Window>
+'@
+
+    $reader = New-Object System.Xml.XmlNodeReader ([xml]$xaml)
+    $window = [Windows.Markup.XamlReader]::Load($reader)
+    $window.Topmost = $true
+    $window.ShowActivated = $true
+    $baseNameTextBox = $window.FindName('BaseNameTextBox')
+    $applyBaseNameButton = $window.FindName('ApplyBaseNameButton')
+    $namesGrid = $window.FindName('NamesGrid')
+    $cancelButton = $window.FindName('CancelButton')
+    $renameButton = $window.FindName('RenameButton')
+
+    $rowControls = New-Object System.Collections.Generic.List[object]
+    $rowIndex = 0
+    foreach ($selectedObject in @($selectedObjects)) {
+        $rowDefinition = New-Object System.Windows.Controls.RowDefinition
+        $rowDefinition.Height = [System.Windows.GridLength]::Auto
+        [void]$namesGrid.RowDefinitions.Add($rowDefinition)
+
+        $currentObjectName = if ($selectedObject.PSObject.Properties['current_name']) {
+            [string]$selectedObject.current_name
+        }
+        elseif ($selectedObject.PSObject.Properties['name']) {
+            [string]$selectedObject.name
+        }
+        else {
+            ''
+        }
+        if ([string]::IsNullOrWhiteSpace($currentObjectName)) {
+            continue
+        }
+
+        $currentName = New-Object System.Windows.Controls.TextBlock
+        $currentName.Text = $currentObjectName
+        $currentName.Margin = '0,0,12,10'
+        $currentName.VerticalAlignment = 'Center'
+        $currentName.TextWrapping = 'Wrap'
+        [System.Windows.Controls.Grid]::SetRow($currentName, $rowIndex)
+        [System.Windows.Controls.Grid]::SetColumn($currentName, 0)
+
+        $newNameBox = New-Object System.Windows.Controls.TextBox
+        $newNameBox.Margin = '0,0,0,10'
+        $newNameBox.MinHeight = 34
+        $newNameBox.Padding = '8,6'
+        $newNameBox.VerticalContentAlignment = 'Center'
+        [System.Windows.Controls.Grid]::SetRow($newNameBox, $rowIndex)
+        [System.Windows.Controls.Grid]::SetColumn($newNameBox, 1)
+
+        if ($namesGrid.ColumnDefinitions.Count -eq 0) {
+            $leftColumn = New-Object System.Windows.Controls.ColumnDefinition
+            $leftColumn.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+            $rightColumn = New-Object System.Windows.Controls.ColumnDefinition
+            $rightColumn.Width = New-Object System.Windows.GridLength(1, [System.Windows.GridUnitType]::Star)
+            [void]$namesGrid.ColumnDefinitions.Add($leftColumn)
+            [void]$namesGrid.ColumnDefinitions.Add($rightColumn)
+        }
+
+        [void]$namesGrid.Children.Add($currentName)
+        [void]$namesGrid.Children.Add($newNameBox)
+        [void]$rowControls.Add([pscustomobject]@{
+            CurrentNameText = $currentName
+            NewNameTextBox  = $newNameBox
+        })
+        $rowIndex += 1
+    }
+
+    $applyBaseName = {
+        $baseName = $baseNameTextBox.Text.Trim()
+        if ([string]::IsNullOrWhiteSpace($baseName)) { return }
+        for ($i = 0; $i -lt $rowControls.Count; $i++) {
+            $rowControls[$i].NewNameTextBox.Text = Get-DefaultRenameValue -BaseName $baseName -Index $i
+        }
+    }
+
+    $baseNameTextBox.Text = $initialBaseName
+    & $applyBaseName
+    $baseNameTextBox.SelectAll()
+    $window.Add_SourceInitialized({
+        Show-WindowFront -Window $window
+    })
+    $window.Add_ContentRendered({
+        Show-WindowFront -Window $window
+        $baseNameTextBox.Focus() | Out-Null
+        $baseNameTextBox.SelectAll()
+    })
+
+    $baseNameTextBox.Add_KeyDown({
+        if ($_.Key -eq [System.Windows.Input.Key]::Return -or $_.Key -eq [System.Windows.Input.Key]::Enter) {
+            & $applyBaseName
+            $_.Handled = $true
+        }
+    })
+    $applyBaseNameButton.Add_Click({
+        & $applyBaseName
+    })
+    $cancelButton.Add_Click({
+        Write-PromptResult @{ cancelled = $true }
+        $window.DialogResult = $false
+        $window.Close()
+    })
+    $window.Add_KeyDown({
+        if ($_.Key -eq [System.Windows.Input.Key]::Escape) {
+            Write-PromptResult @{ cancelled = $true }
+            $window.DialogResult = $false
+            $window.Close()
+        }
+    })
+    $renameButton.Add_Click({
+        try {
+            $items = @()
+            foreach ($row in $rowControls) {
+                $currentName = [string]$row.CurrentNameText.Text
+                $newName = [string]$row.NewNameTextBox.Text.Trim()
+                if ([string]::IsNullOrWhiteSpace($newName)) {
+                    throw "New name is blank for '$currentName'."
+                }
+                $items += [pscustomobject]@{
+                    current_name = $currentName
+                    new_name     = $newName
+                }
+            }
+
+            Write-PromptResult @{ cancelled = $false; items = @($items) }
+            $window.DialogResult = $true
+            $window.Close()
+        }
+        catch {
+            [System.Windows.MessageBox]::Show($window, $_.Exception.Message, 'Collection Rename Selected') | Out-Null
+        }
+    })
+
+    [void]$window.ShowDialog()
+    if (-not (Test-Path -LiteralPath $OutputPath -PathType Leaf)) {
+        Write-PromptResult @{ cancelled = $true }
+    }
+    exit 0
+}
+catch {
+    try {
+        Write-PromptResult @{ cancelled = $true; error = $_.Exception.Message }
+    }
+    catch {
+    }
+    exit 1
 }
 '''
 
@@ -268,84 +399,91 @@ def _start_prompt_process(items):
 
     input_path.write_text(json.dumps(items, indent=2), encoding="utf-8")
     script_path.write_text(_prompt_script_text(), encoding="utf-8")
+    try:
+        output_path.unlink(missing_ok=True)
+    except Exception:
+        pass
 
-    command = [
-        "powershell.exe",
-        "-NoProfile",
-        "-STA",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-File",
-        str(script_path),
-        "-InputPath",
-        str(input_path),
-        "-OutputPath",
-        str(output_path),
-    ]
+    powershell = os.environ.get("SystemRoot", r"C:\Windows")
+    powershell = str(Path(powershell) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe")
+    if not Path(powershell).exists():
+        powershell = "powershell.exe"
+
     process = subprocess.Popen(
-        command,
+        [
+            powershell,
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Sta",
+            "-File",
+            str(script_path),
+            "-InputPath",
+            str(input_path),
+            "-OutputPath",
+            str(output_path),
+        ],
         stdin=subprocess.DEVNULL,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        close_fds=True,
     )
-    return {
-        "process": process,
-        "input_path": input_path,
-        "output_path": output_path,
-        "script_path": script_path,
-    }
+    return process, input_path, output_path, script_path
 
 
-def _finish_prompted_rename(state):
-    process = state["process"]
-    if process.poll() is None:
-        return _PROMPT_POLL_SECONDS
-
-    temp_paths = (state["input_path"], state["output_path"], state["script_path"])
+def _apply_prompt_result(context, output_path):
     try:
-        output_path = state["output_path"]
-        if not output_path.exists():
-            _write_rename_status("error", "Rename Selected prompt closed without a result.")
-            return None
+        result = json.loads(Path(output_path).read_text(encoding="utf-8-sig"))
+    except Exception as exc:
+        _write_rename_status("error", f"Rename Selected prompt result was not readable: {exc}")
+        print(f"FlowCell Rename Selected failed: {exc}")
+        return
 
-        result = json.loads(output_path.read_text(encoding="utf-8-sig"))
-        if result.get("cancelled"):
-            _write_rename_status("cancelled", "Cancelled rename selected.")
-            return None
+    if result.get("cancelled"):
+        message = str(result.get("error") or "Cancelled rename.")
+        _write_rename_status("cancelled", message)
+        print(f"FlowCell Rename Selected: {message}")
+        return
 
-        items = result.get("items") or []
-        ctx = bpy.context
+    items = result.get("items", []) or []
+    if not items:
+        _write_rename_status("cancelled", "Cancelled rename.")
+        print("FlowCell Rename Selected: Cancelled rename.")
+        return
+
+    try:
         bridge = _load_flowcell_bridge()
-        message = bridge.perform_batch_rename_selected_objects(ctx, items)
-        try:
-            bridge.set_bridge_result(message)
-        except Exception:
-            pass
+        message = bridge.perform_batch_rename_selected_objects(context, items)
         _write_rename_status("applied", message, count=len(items))
         print(f"FlowCell Rename Selected: {message}")
     except Exception as exc:
-        _write_rename_status("error", str(exc))
+        _write_rename_status("error", str(exc), count=len(items))
         print(f"FlowCell Rename Selected failed: {exc}")
-    finally:
-        _cleanup_prompt_files(temp_paths)
-    return None
 
 
-def _schedule_prompted_rename(context):
-    items = _selected_rename_items(context)
+def _watch_prompt_process(context, process, input_path, output_path, script_path):
+    def _poll():
+        if Path(output_path).exists():
+            _apply_prompt_result(context, output_path)
+            _cleanup_prompt_files((input_path, output_path, script_path))
+            return None
+        if process.poll() is not None:
+            _write_rename_status("error", "Rename Selected prompt closed without a result.")
+            _cleanup_prompt_files((input_path, output_path, script_path))
+            return None
+        return _PROMPT_POLL_SECONDS
 
+    bpy.app.timers.register(_poll, first_interval=_PROMPT_POLL_SECONDS)
+
+
+def _open_prompt_later(context, items):
     def _open_prompt():
         try:
-            state = _start_prompt_process(items)
+            process, input_path, output_path, script_path = _start_prompt_process(items)
             _write_rename_status("opened", "Opened Rename Selected prompt.", count=len(items))
-
-            def _poll_prompt():
-                return _finish_prompted_rename(state)
-
-            bpy.app.timers.register(_poll_prompt, first_interval=_PROMPT_POLL_SECONDS)
+            _watch_prompt_process(context, process, input_path, output_path, script_path)
         except Exception as exc:
-            _write_rename_status("error", str(exc))
+            _write_rename_status("error", str(exc), count=len(items))
             print(f"FlowCell Rename Selected failed to open prompt: {exc}")
         return None
 
@@ -359,7 +497,10 @@ def run_flowcell_action(context=None, data=None):
     payload = _merge_payload({}, data)
     items = payload.get("items")
     if not items:
-        return {"message": _schedule_prompted_rename(ctx)}
+        items = _selected_rename_items(ctx)
+        return {"message": _open_prompt_later(ctx, items)}
+
     bridge = _load_flowcell_bridge()
     message = bridge.perform_batch_rename_selected_objects(ctx, items)
+    _write_rename_status("applied", message, count=len(items))
     return {"message": message}

@@ -308,7 +308,7 @@
             throw new Error("Could not find the project's 01 src folder from this Illustrator file.");
         }
 
-        assets3dFolder = ensureFolder(new Folder(srcRoot.fsName + "/04 assets/03 3d"));
+        assets3dFolder = ensureFolder(new Folder(srcRoot.fsName + "/00 assets/03 3d"));
         assetName = sanitizeFileName(assetLayer.name);
 
         writeContext({

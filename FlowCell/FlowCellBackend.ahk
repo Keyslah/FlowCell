@@ -1898,7 +1898,7 @@ class FlowCellApp {
         fileName := StrLower(Trim(fileName))
         return InStr(fileName, "rename_selected") > 0
             || InStr(fileName, "update_github") > 0
-            || InStr(fileName, "fix_this_folder_from_explorer") > 0
+            || InStr(fileName, "organize_folder") > 0
             || InStr(fileName, "_dialog") > 0
     }
 
@@ -4798,7 +4798,7 @@ class SaveSelectedPngToBlenderLithoAction extends SaveSelectedObjToProject3DActi
             srcRoot := this.FindSrcRootFromFolder(blendDir)
             if srcRoot = ""
                 continue
-            return srcRoot "\04 assets\01 images"
+            return srcRoot "\00 assets\01 images"
         }
         return ""
     }

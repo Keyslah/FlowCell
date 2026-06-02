@@ -1,4 +1,4 @@
-# Description: Runs fix this folder from explorer.
+# Description: Organizes the copied project folder path.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -24,19 +24,6 @@ function Find-FlowCellRoot([string]$StartPath) {
 $repoRoot = Find-FlowCellRoot -StartPath $PSScriptRoot
 $flowCellLocalRoot = Join-Path $repoRoot 'FlowCell\local'
 $statusPath = Join-Path $flowCellLocalRoot 'logs\last_action_status.txt'
-
-function Get-CodexHomePath {
-    if (-not [string]::IsNullOrWhiteSpace($env:CODEX_HOME)) {
-        return $env:CODEX_HOME
-    }
-
-    return (Join-Path $HOME '.codex')
-}
-
-function Get-FixThisFolderSkillScriptPath {
-    $codexHome = Get-CodexHomePath
-    return (Join-Path $codexHome 'skills\fix-this-folder\scripts\fix_this_folder.ps1')
-}
 
 function Write-Status([string]$Message) {
     $directory = Split-Path -Parent $statusPath
@@ -102,19 +89,19 @@ function Get-TargetProjectFolder {
 }
 
 try {
-    $skillScriptPath = Get-FixThisFolderSkillScriptPath
-    if (-not (Test-Path -LiteralPath $skillScriptPath -PathType Leaf)) {
-        throw "Skill script not found: $skillScriptPath"
+    $organizerPath = Join-Path $repoRoot 'Programs\Windows\SupportScripts\Organize-FolderCore.ps1'
+    if (-not (Test-Path -LiteralPath $organizerPath -PathType Leaf)) {
+        throw "Organize Folder core script not found: $organizerPath"
     }
 
     $projectPath = Get-TargetProjectFolder
     if ([string]::IsNullOrWhiteSpace($projectPath)) {
-        Write-Status 'Fix This Folder failed. No valid clipboard path found. Copy a project folder path to the clipboard first.'
+        Write-Status 'Organize Folder failed. No valid clipboard path found. Copy a project folder path to the clipboard first.'
         exit 1
     }
 
     $powershellExe = Get-WindowsPowerShellPath
-    $output = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $skillScriptPath -ProjectPath $projectPath 2>&1
+    $output = & $powershellExe -NoProfile -ExecutionPolicy Bypass -File $organizerPath -ProjectPath $projectPath 2>&1
     $exitCode = $LASTEXITCODE
     $outputLines = @($output | ForEach-Object { [string]$_ })
 

@@ -19,38 +19,28 @@ The functional backend lives mainly in [FlowCell](FlowCell/): the PowerShell com
 
 ## Organization
 
-The Windows `Files` panel's `Fix This Folder` button uses the folder or file path copied to the clipboard, then normalizes that project folder into this numbered tree:
+The Windows `Files` panel's `Organize Folder` button uses the folder or file path copied to the clipboard, then creates the shared project folders without renumbering existing program folders:
 
 ```text
 <project folder>/
   01 src/
-    01 Illustrator/
-      01 live/
-      02 snapshots/
-      03 archive/
-      04 trash/
-    02 Photoshop/
-      01 live/
-      02 snapshots/
-      03 archive/
-      04 trash/
-    03 Blender/
-      01 live/
-      02 snapshots/
-      03 archive/
-      04 trash/
-    04 assets/
+    00 assets/
       01 images/
       02 svg/
       03 3d/
       04 textures/
-      05 reference/
+      05 unknown/
+    <existing or detected program folders>/
+      01 live/
+      02 snapshots/
+      03 archive/
+      04 trash/
   02 builds/
   03 releases/
   04 archive/
 ```
 
-Known work files move into the matching `01 live` folder, assets move into `04 assets`, and older clear `.ai`, `.psd`, or `.blend` duplicates are stored in `02 snapshots`.
+Assets always use `00 assets`. Program folders are created only when matching files are found, and existing numbered program folders keep their current names. Known saved files move into the matching program `01 live` folder, while older clear `.ai`, `.psd`, `.psb`, or `.blend` duplicates are stored in `02 snapshots`.
 
 ## Important Links
 
