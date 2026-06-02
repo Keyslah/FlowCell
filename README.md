@@ -1,99 +1,11 @@
-Support FlowCell: [![Donate via Stripe](https://img.shields.io/badge/Donate-Stripe-635BFF?logo=stripe&logoColor=white)](https://buy.stripe.com/aFa3cw2rF5fR7xyauo8AE01)
 # FlowCell
 
-FlowCell uses a Tauri + React frontend with a PowerShell and AutoHotkey backend to manage program scripts, hotkeys, macros, panel layouts, and Blender bridge actions.
+FlowCell is the desktop app, command host, program scripts, and Blender bridge.
 
-AutoHotkey v2 is required  https://www.autohotkey.com/
+Core areas:
 
-When a script is added through FlowCell's panel UI, `Add Script` or Blender `Add Button` can pick one or many files plus one or many folders from anywhere. FlowTest copies the selected sources into that program's managed `Active Scripts` folder first, then creates the button from the managed copy instead of the original picked path.
+- backend launcher and command-host files under `FlowCell/`
+- program script folders such as `Blender/`, `Windows/`, `Illustrator/`, and `Photoshop/`
+- Vite + Tauri frontend scaffolding under `FlowCellFrontend/`
 
-On the Blender tab, `Add Button` stages Blender source files into `Blender/Blender Active Scripts/`, installs or registers the Blender-side action, creates or updates the live wrapper in `Blender/FlowCellButtons/`, adds the button to the selected panel, syncs FlowTest state/layout, and reports whether Blender must reload or restart before first use.
-
-Preferred script prefix:
-- `org_` for organization actions such as Illustrator layer tools or Blender collection tools
-- `file_` for file-oriented scripts
-- `util_` for utility scripts
-
-This repository is structured for public source control. Publishable source stays in the repo. User state, bindings, popout layouts, saved panels, logs, generated temp files, private local settings, build output, and EXE artifacts live under `FlowCell/local/`, which is ignored by Git.
-
-## How Blender buttons work
-
-When you click `Add Button` in the Blender tab, FlowCell accepts one or more Blender `.py` tool files. That means a downloaded zip can be extracted and imported by selecting multiple `.py` files in one pass.
-
-Use the Ai prompt at the top of [docs/blender-buttons.md](docs/blender-buttons.md) when you want Ai to convert a Blender script for flowcell.
-A valid Blender button script should:
-
-- be normal Blender Python, usually using `bpy`
-- expose `run_flowcell_action`, `main`, or `perform_*`
-- preserve the real interaction model, including prompts like file pickers when the source tool needs them
-
-Do not give FlowCell a full add-on package, installer, bootstrap/listener file, or Text Editor-only script.
-
-If the file is valid, FlowCell:
-
-- copies it into `Blender/Blender Active Scripts/`
-- registers it in the FlowTest Blender bridge custom-action registry
-- syncs the managed runtime code into `Blender/ManagedActions/`
-- regenerates the live custom section inside the installed `flowtest_actions.py`
-- creates or updates the matching wrapper in `Blender/FlowCellButtons/`
-- adds the button to the selected panel
-- re-syncs FlowTest state and the saved Blender layouts
-- tells you whether Blender must reload the FlowTest add-on or restart before runtime verification reflects the new code
-
-## Repository Layout
-
-- `FlowCell/`: main app code, launcher scripts, helpers, vendored dependencies, and ignored local runtime storage under `FlowCell/local/`.
-- `Blender/`: Blender integration files, including `Blender Scripts/` for public downloadable sources, `Blender Active Scripts/` for managed source installs, `ManagedActions/` for bridge-managed runtime sources, `FlowCellButtons/` for clickable wrappers, `SupportScripts/` for install/sync plumbing, `AddonScripts/` for Blender refresh/sidebar helpers, and the tracked public `config.json`.
-- `Illustrator/`: public Illustrator library and managed install area.
-- `Illustrator/HelperScripts/`: internal Illustrator helper scripts that are not meant to become user-facing buttons.
-- `Windows/`: public Windows library and managed install area.
-- `Photoshop/`: public Photoshop library and managed install area for repo-safe defaults.
-- `docs/`: repository and maintenance documentation.
-- `examples/`: public example configs with safe placeholders.
-- `tools/`: source-only tooling, including the optional C# launcher source.
-- `releases/`: release process notes. Built EXEs are not committed here.
-
-## Local State Model
-
-FlowCell keeps mutable runtime data in `FlowCell/local/`:
-
-- `bindings.ini`
-- `flowcell_state.json`
-- `scan_state.ini`
-- `layouts/`
-- `panel_saves/`
-- `recorded_actions/`
-- `logs/`
-- `private/local.settings.json`
-- `temp/`
-- `bin/`
-
-GitHub pulls should not overwrite panel configuration, hotkeys, bindings, popout layouts, saved panels, or other user changes because those files are local-only.
-
-Blender can also use a local override config at `FlowCell/local/private/blender.config.local.json`. The tracked `Blender/config.json` is the sanitized public default.
-
-Some Windows helper scripts also use local environment overrides for machine-specific tooling. See `examples/Windows/windows.env.example`.
-
-## Running FlowCell
-
-- `run.cmd` at the repo root delegates to `FlowCell/run.cmd`.
-- `FlowCell/run.cmd` launches the PowerShell UI or the AutoHotkey backend.
-- Launcher logs are written to `FlowCell/local/logs/`.
-- AutoHotkey v2 is required for FlowCell's backend automation.
-- If AutoHotkey v2 is missing, FlowCell shows the official AutoHotkey download link.
-
-## Issues and Discussions
-
-- Use [GitHub Issues](https://github.com/Keyslah/Flowcell/issues) for bugs, regressions, broken scripts, and concrete feature work.
-- Use [GitHub Discussions](https://github.com/Keyslah/Flowcell/discussions) for questions, script ideas, workflow proposals, and early feedback before implementation.
-- If you are proposing a new script, mention the target folder and preferred prefix so it can be reviewed in the right place.
-
-## Support FlowCell
-
-[Donate to support FlowCell](https://buy.stripe.com/aFa3cw2rF5fR7xyauo8AE01)
-
-## Releases
-
-This repository does not commit built EXEs. The optional launcher source is kept in `tools/launcher/FlowCellLauncher.cs`. Build outputs belong in ignored local storage during development and should be distributed later through GitHub Releases.
-
-For normal user-facing releases, include a portable AutoHotkey v2 runtime in `FlowCell/runtime/AutoHotkey64.exe`. Source checkouts can also place that runtime in `FlowCell/local/bin/`, or use a normal system install at `C:/Program Files/AutoHotkey/v2/`.
+See `PROGRAM_SUMMARY.txt` for the current architecture and runtime behavior.

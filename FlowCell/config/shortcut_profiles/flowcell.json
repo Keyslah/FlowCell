@@ -1,0 +1,23 @@
+{
+  "id": "flowcell",
+  "displayName": "FlowCell",
+  "platform": "windows",
+  "processNames": [],
+  "blocked": [],
+  "reserved": [],
+  "preferred": [
+    "^+1",
+    "^+2",
+    "^+3",
+    "^!1",
+    "^!2",
+    "^!3",
+    "^!+1",
+    "^!+2",
+    "^!+3",
+    "F6",
+    "F7",
+    "F8"
+  ],
+  "notes": "Fallback FlowCell profile when a program-specific shortcut profile is not available."
+}

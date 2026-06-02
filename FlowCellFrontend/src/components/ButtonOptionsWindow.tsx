@@ -352,7 +352,7 @@ export function ButtonOptionsWindow({
   if (buttons.length === 0) {
     return (
       <div className="button-options-window">
-        <section className="surface-card appearance-card">
+        <section className="surface-card">
           <div className="surface-header">
             <div>
               <span className="eyebrow">Button Options</span>
@@ -373,7 +373,7 @@ export function ButtonOptionsWindow({
 
   return (
     <div className="button-options-window">
-      <section className="surface-card appearance-card">
+      <section className="surface-card">
         <div className="surface-header">
           <div>
             <span className="eyebrow">Button Options</span>
@@ -422,7 +422,7 @@ export function ButtonOptionsWindow({
         ) : null}
       </section>
 
-      <section className="surface-card appearance-card button-options-window__workspace">
+      <section className="surface-card button-options-window__workspace">
         <div className="button-options-window__list">
           {buttons.map((button) => {
             const draft = drafts[button.Id] ?? createDraft(button);

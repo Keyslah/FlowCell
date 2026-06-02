@@ -1,0 +1,546 @@
+.theme-toolbox-window-page {
+  --fc-theme-page-foreground: rgba(244, 248, 244, 0.96);
+  --fc-theme-muted-foreground: rgba(190, 202, 196, 0.84);
+  --fc-theme-input-color: #11181b;
+  --fc-theme-control-color: #182225;
+  --fc-theme-surface-border: #dce8e3;
+  --fc-theme-accent: #86c7ac;
+  position: relative;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  padding: 0;
+  background: rgba(7, 10, 11, 0.01);
+  overflow: hidden;
+  user-select: none;
+  color: var(--fc-theme-page-foreground);
+  font-family: "Segoe UI", sans-serif;
+}
+
+.theme-toolbox-window-page__shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  box-sizing: border-box;
+  touch-action: none;
+}
+
+.theme-toolbox-window-page--space-drag,
+.theme-toolbox-window-page--space-drag * {
+  cursor: grab !important;
+}
+
+.theme-toolbox-window-page--dragging,
+.theme-toolbox-window-page--dragging * {
+  cursor: grabbing !important;
+}
+
+.theme-toolbox-window-page__viewport {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 8px;
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(132, 188, 165, 0.55) rgba(5, 8, 9, 0.2);
+}
+
+.theme-toolbox-window-page__surface-stage {
+  position: relative;
+  min-width: 1px;
+  min-height: 1px;
+}
+
+.theme-toolbox-window-page__surface-content {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  flex-direction: column;
+  width: 904px;
+  min-width: 904px;
+  min-height: min-content;
+  transform-origin: left top;
+}
+
+.theme-toolbox-window-page .compound-surface--compact {
+  display: block;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(222, 233, 227, 0.18);
+  border-radius: 8px;
+  background: rgba(12, 16, 17, 0.92);
+  box-shadow: 0 18px 36px rgba(0, 0, 0, 0.24);
+  box-sizing: border-box;
+}
+
+.theme-toolbox-window-page .tool-chip {
+  position: relative;
+  min-height: 24px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 8px;
+  background: rgba(31, 42, 45, 0.76);
+  border: 1px solid rgba(222, 233, 227, 0.16);
+  cursor: pointer;
+  line-height: 1.05;
+}
+
+.theme-toolbox-window-page .tool-chip--with-instant-tooltip {
+  overflow: visible;
+}
+
+.theme-toolbox-window-page .tool-chip__instant-tooltip {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 20;
+  width: max-content;
+  max-width: 320px;
+  padding: 6px 8px;
+  border: 1px solid rgba(222, 233, 227, 0.22);
+  border-radius: 6px;
+  background: rgba(10, 14, 16, 0.97);
+  color: var(--fc-theme-page-foreground);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.34);
+  font: 700 0.68rem/1.25 "Segoe UI", sans-serif;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.theme-toolbox-window-page .tool-chip--with-instant-tooltip:hover .tool-chip__instant-tooltip,
+.theme-toolbox-window-page .tool-chip--with-instant-tooltip:focus-visible .tool-chip__instant-tooltip {
+  opacity: 1;
+}
+
+.theme-toolbox-window-page .tool-chip.is-active {
+  background: rgba(134, 199, 172, 0.18);
+  border-color: rgba(134, 199, 172, 0.42);
+}
+
+.theme-toolbox-window-page .hdri-world-grid {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  align-content: start;
+}
+
+.theme-toolbox-window-page .hdri-world-grid--compact {
+  gap: 8px;
+  overflow: visible;
+  scrollbar-width: none;
+}
+
+.theme-toolbox-window-page .hdri-world-row {
+  display: grid;
+  gap: 6px;
+  align-items: stretch;
+}
+
+.theme-toolbox-window-page .hdri-world-row--theme-path {
+  grid-template-columns: minmax(58px, auto) minmax(0, 1fr) minmax(104px, auto);
+}
+
+.theme-toolbox-window-page .hdri-world-row--theme-actions {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.theme-toolbox-window-page .hdri-theme-profile-control {
+  display: grid;
+  grid-template-columns: minmax(78px, 1fr) minmax(68px, 0.8fr);
+  gap: 4px;
+  min-width: 0;
+}
+
+.theme-toolbox-window-page .hdri-theme-profile-select {
+  width: 100%;
+  min-width: 0;
+  min-height: 24px;
+  padding: 2px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(222, 233, 227, 0.16);
+  background: rgba(17, 24, 27, 0.92);
+  color: var(--fc-theme-page-foreground);
+  font: 700 0.64rem/1.1 "Segoe UI", sans-serif;
+}
+
+.theme-toolbox-window-page .hdri-theme-profile-select:focus {
+  border-color: rgba(134, 199, 172, 0.62);
+  outline: 1px solid rgba(134, 199, 172, 0.34);
+  outline-offset: 0;
+}
+
+.theme-toolbox-window-page .hdri-world-row--path {
+  grid-template-columns:
+    minmax(58px, auto) minmax(0, 1fr) minmax(58px, auto)
+    minmax(58px, auto) minmax(66px, auto);
+}
+
+.theme-toolbox-window-page .hdri-world-row--background-path {
+  grid-template-columns: minmax(98px, auto) minmax(0, 1fr) minmax(66px, auto) minmax(58px, auto);
+}
+
+.theme-toolbox-window-page .hdri-world-row--controls {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.theme-toolbox-window-page .hdri-world-value-pair {
+  display: grid;
+  grid-template-columns: minmax(38px, auto) minmax(0, 1fr);
+  gap: 4px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.theme-toolbox-window-page .hdri-world-theme-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.theme-toolbox-window-page .hdri-world-theme-grid--secondary,
+.theme-toolbox-window-page .hdri-world-theme-grid--tertiary,
+.theme-toolbox-window-page .hdri-world-theme-grid--viewport {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.theme-toolbox-window-page .hdri-world-theme-role {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.theme-toolbox-window-page .hdri-world-theme-role__controls {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 4px;
+  align-items: center;
+}
+
+.theme-toolbox-window-page .hdri-world-theme-role__label {
+  overflow: hidden;
+  color: var(--fc-theme-muted-foreground);
+  font: 700 0.62rem/1.1 "Segoe UI", sans-serif;
+  text-transform: uppercase;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-toolbox-window-page .hdri-world-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(222, 233, 227, 0.16);
+  background: rgba(17, 24, 27, 0.92);
+  color: var(--fc-theme-page-foreground);
+  font: 600 0.76rem/1.1 "Segoe UI", sans-serif;
+}
+
+.theme-toolbox-window-page .hdri-world-toggle input {
+  margin: 0;
+}
+
+.theme-toolbox-window-page .hdri-world-field__input {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(222, 233, 227, 0.16);
+  background: rgba(17, 24, 27, 0.92);
+  color: var(--fc-theme-page-foreground);
+  font: 600 0.78rem/1.15 "Segoe UI", sans-serif;
+  box-sizing: border-box;
+}
+
+.theme-toolbox-window-page .hdri-world-field__input--small {
+  min-width: 0;
+}
+
+.theme-toolbox-window-page .hdri-world-field__input--hex {
+  min-width: 0;
+  text-transform: uppercase;
+}
+
+.theme-toolbox-window-page .hdri-world-field__input:focus {
+  border-color: rgba(134, 199, 172, 0.62);
+  outline: 1px solid rgba(134, 199, 172, 0.34);
+  outline-offset: 0;
+}
+
+.theme-toolbox-window-page .hdri-world-color-input {
+  width: 30px;
+  min-width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid rgba(222, 233, 227, 0.16);
+  border-radius: 8px;
+  background: rgba(17, 24, 27, 0.92);
+  cursor: pointer;
+}
+
+.theme-toolbox-window-page .hdri-world-row--theme-actions .tool-chip,
+.theme-toolbox-window-page .hdri-theme-actions-chip {
+  min-height: 32px !important;
+  height: 32px !important;
+}
+
+.theme-toolbox-window-page .tool-chip.host-skin-button {
+  min-width: 0;
+}
+
+.theme-toolbox-window-page .tool-chip.host-skin-button .host-skin-button__frame {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 0;
+}
+
+.theme-toolbox-window-page .tool-chip.host-skin-button .host-skin-button__frame > .button-skin,
+.theme-toolbox-window-page .tool-chip.host-skin-button .host-skin-button__frame .imported-html,
+.theme-toolbox-window-page .tool-chip.host-skin-button .host-skin-button__frame .imported-svg {
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  height: 100%;
+}
+
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0) 42%),
+    rgba(20, 29, 32, 0.92);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    inset 0 -12px 22px rgba(0, 0, 0, 0.26);
+}
+
+.theme-toolbox-window-page .tool-chip.host-skin-button:hover .button-skin,
+.theme-toolbox-window-page .tool-chip.host-skin-button:focus-visible .button-skin,
+.theme-toolbox-window-page .tool-chip.host-skin-button.is-active .button-skin {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0) 42%),
+    rgba(26, 40, 42, 0.96);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 0 0 1px rgba(134, 199, 172, 0.28);
+}
+
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin__label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  overflow: hidden;
+  padding: 2px 6px;
+  color: var(--fc-theme-page-foreground);
+  font: 700 0.68rem/1.05 "Segoe UI", sans-serif;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .imported-html > .body,
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .imported-pill,
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .black-tint-pill,
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .glass-pill,
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .glass-hover-wrap,
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .glass-hover-button {
+  width: 100%;
+  min-width: 0;
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .imported-pill__label,
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .black-tint-pill__label,
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .glass-pill__label,
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .glass-hover-label,
+.theme-toolbox-window-page .tool-chip.host-skin-button .button-skin.is-compact .button-skin__label {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 100%;
+  min-width: 0;
+  min-height: 100% !important;
+  height: 100% !important;
+  overflow: hidden;
+  padding: 2px 4px !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.66rem !important;
+}
+
+.theme-toolbox-window-page__status {
+  margin: 0;
+  color: rgba(242, 247, 244, 0.94);
+  font: 600 0.9rem/1.45 "Segoe UI", sans-serif;
+}
+
+.theme-toolbox-window-page__status--error {
+  color: rgba(255, 210, 210, 0.94);
+}
+
+.theme-toolbox-window-page__status--overlay {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 6;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(7, 11, 10, 0.92);
+  border: 1px solid rgba(223, 233, 227, 0.18);
+  pointer-events: none;
+}
+
+.theme-toolbox-window-page__status--settled {
+  color: rgba(215, 235, 226, 0.94);
+}
+
+.theme-toolbox-window-page__dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 12;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  background: rgba(2, 4, 5, 0.42);
+  box-sizing: border-box;
+}
+
+.theme-toolbox-window-page__dialog {
+  display: grid;
+  width: min(360px, 100%);
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(222, 233, 227, 0.22);
+  border-radius: 8px;
+  background: rgba(10, 15, 17, 0.98);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.38);
+  box-sizing: border-box;
+}
+
+.theme-toolbox-window-page__dialog-title {
+  margin: 0;
+  color: var(--fc-theme-page-foreground);
+  font: 700 0.92rem/1.15 "Segoe UI", sans-serif;
+}
+
+.theme-toolbox-window-page__dialog-input {
+  width: 100%;
+  min-height: 30px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(222, 233, 227, 0.18);
+  background: rgba(17, 24, 27, 0.96);
+  color: var(--fc-theme-page-foreground);
+  font: 600 0.78rem/1.15 "Segoe UI", sans-serif;
+  box-sizing: border-box;
+}
+
+.theme-toolbox-window-page__dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.theme-toolbox-window-page__dialog-button {
+  min-width: 72px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid rgba(222, 233, 227, 0.18);
+  background: rgba(28, 38, 41, 0.9);
+  color: var(--fc-theme-page-foreground);
+  font: 700 0.72rem/1 "Segoe UI", sans-serif;
+}
+
+.theme-toolbox-window-page__dialog-button--primary {
+  border-color: rgba(134, 199, 172, 0.45);
+  background: rgba(65, 110, 91, 0.9);
+}
+
+.theme-toolbox-window-page__resize-handle {
+  position: absolute;
+  z-index: 8;
+  background: transparent;
+  pointer-events: auto;
+}
+
+.theme-toolbox-window-page__resize-handle--north {
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: 10px;
+  cursor: n-resize;
+}
+
+.theme-toolbox-window-page__resize-handle--south {
+  bottom: 0;
+  left: 12px;
+  right: 12px;
+  height: 10px;
+  cursor: s-resize;
+}
+
+.theme-toolbox-window-page__resize-handle--east {
+  top: 12px;
+  right: 0;
+  bottom: 12px;
+  width: 10px;
+  cursor: e-resize;
+}
+
+.theme-toolbox-window-page__resize-handle--west {
+  top: 12px;
+  left: 0;
+  bottom: 12px;
+  width: 10px;
+  cursor: w-resize;
+}
+
+.theme-toolbox-window-page__resize-handle--north-east {
+  top: 0;
+  right: 0;
+  width: 16px;
+  height: 16px;
+  cursor: ne-resize;
+}
+
+.theme-toolbox-window-page__resize-handle--north-west {
+  top: 0;
+  left: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nw-resize;
+}
+
+.theme-toolbox-window-page__resize-handle--south-east {
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: se-resize;
+}
+
+.theme-toolbox-window-page__resize-handle--south-west {
+  left: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: sw-resize;
+}

@@ -14,7 +14,12 @@ import type {
   StyleGroup
 } from "../types";
 import { getImportedSkin, resolveStyleGroup } from "../lib/skins";
-import { HostSkinButton, resolveMainButtonFootprintOverride } from "./HostSkinButton";
+import { ButtonHost } from "./ButtonHost";
+import {
+  resolveFanChildFootprintOverride,
+  resolveFanOwnerFootprintOverride
+} from "./HostSkinButton";
+import type { ButtonRecord } from "../pages/main/mainLayout";
 
 export interface FanClusterEntry {
   programId: number;
@@ -61,11 +66,13 @@ interface FanClusterFloatingLayout extends FanClusterFloatingMetrics {
 interface FanClusterVisualSpec {
   key: string;
   entry: FanClusterEntry;
-  explicitFootprint?: {
-    width: number;
-    height: number;
-  };
 }
+
+const FAN_OPEN_POINTER_TRANSFER_MS = 220;
+const FAN_OPEN_COLLAPSE_DELAY_MS = 220;
+const FAN_CLOSED_COLLAPSE_DELAY_MS = 240;
+const PANEL_FAN_OPEN_POINTER_TRANSFER_MS = 650;
+const PANEL_FAN_OPEN_COLLAPSE_DELAY_MS = 650;
 
 interface FanOutButtonClusterProps {
   ownerButton: FlowCellButton;
@@ -73,7 +80,9 @@ interface FanOutButtonClusterProps {
   direction?: FanoutDirection;
   placement?: PanelFanPlacement;
   variant: "panel-fan" | "floating-fanout";
+  pinnedOpen?: boolean;
   layoutMetricsOverride?: FanClusterPanelMetrics | FanClusterFloatingMetrics | null;
+  geometryExpanded?: boolean;
   windowExpanded: boolean;
   childrenVisible: boolean;
   suspendInteraction?: boolean;
@@ -88,6 +97,7 @@ interface FanOutButtonClusterProps {
   ownerImportedSkinOverride?: ImportedSkin;
   styleGroupOverride?: StyleGroup;
   importedSkinOverride?: ImportedSkin;
+  resolveChildImportedSkinOverride?: (entry: FanClusterEntry) => ImportedSkin | undefined;
   onOwnerClick: () => void;
   onChildClick: (entry: FanClusterEntry) => void;
 }
@@ -96,13 +106,61 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+function buildFanButtonRecord(args: {
+  button: FlowCellButton;
+  width: number;
+  height: number;
+}): ButtonRecord {
+  const normalizedWidth = Math.max(1, Math.round(args.width));
+  const normalizedHeight = Math.max(1, Math.round(args.height));
+  return {
+    id: args.button.Id,
+    x: 0,
+    y: 0,
+    width: normalizedWidth,
+    height: normalizedHeight,
+    shapeType: "roundedRect",
+    radius: Math.round(normalizedHeight / 2),
+    strokeWidth: 1,
+    label: args.button.Label,
+    actionId: args.button.command_id || args.button.Kind || "fanout-button",
+    skinId: "imported-skin"
+  };
+}
+
+function resolveInteractiveHoverNode(root: HTMLElement | null | undefined): HTMLElement | null {
+  if (!root) {
+    return null;
+  }
+  if (root.matches("[data-flow-interactive='true']")) {
+    return root;
+  }
+  const lightDomMatch = root.querySelector("[data-flow-interactive='true']") as HTMLElement | null;
+  if (lightDomMatch) {
+    return lightDomMatch;
+  }
+
+  const shadowHosts = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))];
+  for (const host of shadowHosts) {
+    const shadowMatch = host.shadowRoot?.querySelector(
+      "[data-flow-interactive='true']"
+    ) as HTMLElement | null;
+    if (shadowMatch) {
+      return shadowMatch;
+    }
+  }
+
+  return root;
+}
+
 function readStableNodeSize(
   node: HTMLElement | null | undefined,
   fallback?: { width?: number; height?: number }
 ): { width: number; height: number } {
   if (node) {
-    const width = Math.max(node.offsetWidth, node.clientWidth, node.scrollWidth);
-    const height = Math.max(node.offsetHeight, node.clientHeight, node.scrollHeight);
+    const rect = node.getBoundingClientRect();
+    const width = Math.max(Math.round(rect.width), node.offsetWidth, node.clientWidth);
+    const height = Math.max(Math.round(rect.height), node.offsetHeight, node.clientHeight);
     if (width > 0 && height > 0) {
       return {
         width: Math.ceil(width),
@@ -757,7 +815,9 @@ export function FanOutButtonCluster({
   direction = "up",
   placement = "bottom-left",
   variant,
+  pinnedOpen = false,
   layoutMetricsOverride,
+  geometryExpanded = false,
   windowExpanded,
   childrenVisible,
   suspendInteraction = false,
@@ -772,14 +832,15 @@ export function FanOutButtonCluster({
   ownerImportedSkinOverride,
   styleGroupOverride,
   importedSkinOverride,
+  resolveChildImportedSkinOverride,
   onOwnerClick,
   onChildClick
 }: FanOutButtonClusterProps) {
   const closeTimerRef = useRef<number | undefined>(undefined);
   const postExpandHoverTimerRef = useRef<number | undefined>(undefined);
   const pendingCollapseAfterExpandRef = useRef(false);
-  const ownerVisibleRef = useRef<HTMLElement | null>(null);
-  const visibleChildRefs = useRef(new Map<string, HTMLElement>());
+  const ownerVisibleRef = useRef<HTMLDivElement | null>(null);
+  const visibleChildRefs = useRef(new Map<string, HTMLDivElement>());
   const lastPanelLayoutRef = useRef<FanClusterPanelLayout | null>(null);
   const lastFloatingLayoutRef = useRef<FanClusterFloatingLayout | null>(null);
   const [panelLayout, setPanelLayout] = useState<FanClusterPanelLayout | null>(null);
@@ -807,10 +868,11 @@ export function FanOutButtonCluster({
   );
   const ownerStyleGroup = ownerVisuals.styleGroup;
   const ownerImportedSkin = ownerVisuals.importedSkin;
-  const ownerFootprintMode = ownerImportedSkin ? "default-axis-normalized" : undefined;
+  const ownerFootprintOverride = resolveFanOwnerFootprintOverride(ownerImportedSkin);
   const ownerClassName =
     variant === "panel-fan"
       ? [
+          "button-host",
           "fan-cluster__owner",
           "fan-cluster__owner--panel-fan",
           "panel-rail__popout"
@@ -818,6 +880,7 @@ export function FanOutButtonCluster({
           .filter(Boolean)
           .join(" ")
       : [
+          "button-host",
           "fan-cluster__owner",
           "fan-cluster__owner--floating-fanout"
         ]
@@ -827,36 +890,14 @@ export function FanOutButtonCluster({
   const childVisuals = useMemo<FanClusterVisualSpec[]>(
     () =>
       childButtons.map((entry) => {
-        const specificButtonStyleGroup = resolveStyleGroup(
-          styleGroups,
-          entry.button.style_group_id ?? ""
-        );
-        const specificImportedSkin =
-          specificButtonStyleGroup?.skinId === "imported-skin"
-            ? getImportedSkin(importedSkins, specificButtonStyleGroup.importedSkinId)
-            : undefined;
         return {
           key: `${entry.button.Id}-${entry.childSlotId}`,
-          entry,
-          explicitFootprint: resolveMainButtonFootprintOverride(specificImportedSkin)
+          entry
         };
       }),
-    [childButtons, importedSkins, styleGroups]
+    [childButtons]
   );
   const floatingLayoutMode = layout === "half-radial" ? "radial" : layout;
-  const ownerSpecificImportedSkin =
-    ownerButton.style_group_id?.trim()
-      ? (() => {
-          const ownerSpecificStyleGroup = resolveStyleGroup(
-            styleGroups,
-            ownerButton.style_group_id ?? ""
-          );
-          return ownerSpecificStyleGroup?.skinId === "imported-skin"
-            ? getImportedSkin(importedSkins, ownerSpecificStyleGroup.importedSkinId)
-            : undefined;
-        })()
-      : undefined;
-  const ownerFootprintOverride = resolveMainButtonFootprintOverride(ownerSpecificImportedSkin);
 
   useEffect(() => {
     return () => {
@@ -886,10 +927,11 @@ export function FanOutButtonCluster({
   };
 
   const hasHoveredVisiblePill = () => {
-    const ownerHovered = ownerVisibleRef.current?.matches(":hover") ?? false;
-    const childHovered = Array.from(visibleChildRefs.current.values()).some((node) =>
-      node.matches(":hover")
-    );
+    const ownerHovered =
+      resolveInteractiveHoverNode(ownerVisibleRef.current)?.matches(":hover") ?? false;
+    const childHovered = Array.from(visibleChildRefs.current.values()).some((node) => {
+      return resolveInteractiveHoverNode(node)?.matches(":hover") ?? false;
+    });
     return ownerHovered || childHovered;
   };
 
@@ -905,6 +947,9 @@ export function FanOutButtonCluster({
 
   const scheduleCollapse = () => {
     clearCloseTimer();
+    if (pinnedOpen) {
+      return;
+    }
     if (suspendInteraction) {
       onCollapseRequest?.();
       return;
@@ -920,7 +965,11 @@ export function FanOutButtonCluster({
         return;
       }
       onCollapseRequest?.();
-    }, childrenVisible ? 140 : 240);
+    }, childrenVisible
+      ? variant === "panel-fan"
+        ? PANEL_FAN_OPEN_COLLAPSE_DELAY_MS
+        : FAN_OPEN_COLLAPSE_DELAY_MS
+      : FAN_CLOSED_COLLAPSE_DELAY_MS);
   };
 
   useEffect(() => {
@@ -943,12 +992,12 @@ export function FanOutButtonCluster({
       }
       pendingCollapseAfterExpandRef.current = false;
       onCollapseRequest?.();
-    }, 40);
+    }, variant === "panel-fan" ? PANEL_FAN_OPEN_POINTER_TRANSFER_MS : FAN_OPEN_POINTER_TRANSFER_MS);
 
     return () => {
       clearPostExpandHoverTimer();
     };
-  }, [childrenVisible, onCollapseRequest, windowExpanded]);
+  }, [childrenVisible, onCollapseRequest, variant, windowExpanded]);
 
   useLayoutEffect(() => {
     const ownerMetrics = readStableNodeSize(ownerVisibleRef.current);
@@ -1077,7 +1126,10 @@ export function FanOutButtonCluster({
     [layoutMetricsOverride]
   );
   const activeLayout = overriddenLayout ?? (variant === "panel-fan" ? panelLayout : floatingLayout);
-  const contentExpanded = childrenVisible;
+  // Panel fan now keeps one static measured geometry and only toggles child visibility.
+  // Floating fanouts still expand/collapse their geometry with the native window state.
+  const contentExpanded =
+    variant === "panel-fan" ? geometryExpanded && windowExpanded : windowExpanded;
   const rootStyle =
     activeLayout
       ? ({
@@ -1086,12 +1138,17 @@ export function FanOutButtonCluster({
         } satisfies CSSProperties)
       : undefined;
   const ownerStyle =
-    activeLayout
-      ? ({
-          left: `${contentExpanded ? activeLayout.ownerLeft : 0}px`,
-          top: `${contentExpanded ? activeLayout.ownerTop : 0}px`
-        } satisfies CSSProperties)
-      : undefined;
+    ({
+      left: `${contentExpanded ? activeLayout?.ownerLeft ?? 0 : 0}px`,
+      top: `${contentExpanded ? activeLayout?.ownerTop ?? 0 : 0}px`,
+      width: `${activeLayout?.ownerWidth ?? ownerFootprintOverride.width}px`,
+      height: `${activeLayout?.ownerHeight ?? ownerFootprintOverride.height}px`
+    } satisfies CSSProperties);
+  const ownerButtonRecord = buildFanButtonRecord({
+    button: ownerButton,
+    width: activeLayout?.ownerWidth ?? ownerFootprintOverride.width,
+    height: activeLayout?.ownerHeight ?? ownerFootprintOverride.height
+  });
 
   return (
     <div
@@ -1106,29 +1163,32 @@ export function FanOutButtonCluster({
       style={rootStyle}
     >
       <div className="fan-cluster__stage">
-        <HostSkinButton
+        <div
           ref={ownerVisibleRef}
-          type="button"
           className={ownerClassName}
-          label={ownerButton.Label}
-          flowId={ownerButton.Id}
-          styleGroup={ownerStyleGroup}
-          importedSkin={ownerImportedSkin}
-          footprintMode={ownerFootprintMode}
-          footprintOverride={ownerFootprintOverride}
           style={ownerStyle}
-          title={ownerButton.Tooltip || ownerButton.Label}
-          onMouseEnter={requestExpand}
-          onMouseLeave={scheduleCollapse}
-          onClick={onOwnerClick}
-        />
+          onPointerEnter={requestExpand}
+          onPointerLeave={scheduleCollapse}
+        >
+          <ButtonHost
+            button={ownerButtonRecord}
+            absolute={false}
+            importedSkinOverride={ownerImportedSkin}
+            styleGroupOverride={ownerStyleGroup}
+            onActivate={() => onOwnerClick()}
+          />
+        </div>
         <div className="fan-cluster__children" aria-hidden={!childrenVisible}>
           {childVisuals.map((entry, index) => {
             const childLayout = activeLayout?.childLayouts[index];
-            const childVisuals = resolveButtonVisuals(entry.entry.button);
-            const childFootprintMode = childVisuals.importedSkin
-              ? "default-axis-normalized"
-              : undefined;
+            const childVisuals = resolveButtonVisuals(
+              entry.entry.button,
+              undefined,
+              resolveChildImportedSkinOverride?.(entry.entry)
+            );
+            const childFootprintOverride = resolveFanChildFootprintOverride(
+              childVisuals.importedSkin
+            );
             const childStyle =
               childLayout
                 ? ({
@@ -1143,7 +1203,7 @@ export function FanOutButtonCluster({
                 : undefined;
 
             return (
-              <HostSkinButton
+              <div
                 key={entry.key}
                 ref={(node) => {
                   if (!node) {
@@ -1152,7 +1212,6 @@ export function FanOutButtonCluster({
                   }
                   visibleChildRefs.current.set(entry.key, node);
                 }}
-                type="button"
                 className={[
                   "fan-cluster__child",
                   `fan-cluster__child--${variant}`,
@@ -1160,18 +1219,22 @@ export function FanOutButtonCluster({
                 ]
                   .filter(Boolean)
                   .join(" ")}
-                label={entry.entry.button.Label}
-                flowId={entry.entry.button.Id}
-                styleGroup={childVisuals.styleGroup}
-                importedSkin={childVisuals.importedSkin}
-                footprintMode={childFootprintMode}
-                footprintOverride={entry.explicitFootprint}
                 style={childStyle}
-                title={entry.entry.button.Tooltip || entry.entry.button.Label}
-                onMouseEnter={requestExpand}
-                onMouseLeave={scheduleCollapse}
-                onClick={() => onChildClick(entry.entry)}
-              />
+                onPointerEnter={requestExpand}
+                onPointerLeave={scheduleCollapse}
+              >
+                <ButtonHost
+                  button={buildFanButtonRecord({
+                    button: entry.entry.button,
+                    width: childLayout?.width ?? childFootprintOverride.width,
+                    height: childLayout?.height ?? childFootprintOverride.height
+                  })}
+                  absolute={false}
+                  importedSkinOverride={childVisuals.importedSkin}
+                  styleGroupOverride={childVisuals.styleGroup}
+                  onActivate={() => onChildClick(entry.entry)}
+                />
+              </div>
             );
           })}
         </div>

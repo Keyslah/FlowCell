@@ -106,6 +106,66 @@ BoolConfigValue(value, defaultValue := false) {
     return normalizedValue = "1" || normalizedValue = "true" || normalizedValue = "yes"
 }
 
+GetFlowCellWorkspaceRoot() {
+    static workspaceRoot := ""
+    if workspaceRoot != ""
+        return workspaceRoot
+
+    SplitPath A_ScriptDir, , &workspaceRoot
+    return workspaceRoot
+}
+
+ResolveLegacyWindowsProgramPath(path, requireExisting := true) {
+    path := Trim(path "")
+    if path = ""
+        return path
+
+    normalizedPath := StrReplace(path, "/", "\")
+    workspaceRoot := GetFlowCellWorkspaceRoot()
+    legacyRoot := StrReplace(workspaceRoot "\Windows", "/", "\")
+    managedRoot := StrReplace(workspaceRoot "\Programs\Windows", "/", "\")
+    lowerPath := StrLower(normalizedPath)
+    lowerLegacyRoot := StrLower(legacyRoot)
+    candidate := ""
+
+    if lowerPath = lowerLegacyRoot {
+        candidate := managedRoot
+    } else if InStr(lowerPath, lowerLegacyRoot "\") = 1 {
+        candidate := managedRoot SubStr(normalizedPath, StrLen(legacyRoot) + 1)
+    }
+
+    if candidate != "" {
+        if !requireExisting || FileExist(candidate)
+            return candidate
+    }
+
+    return normalizedPath
+}
+
+GetDefaultDummyMonitorHotkeyBinding() {
+    scriptPath := GetFlowCellWorkspaceRoot() "\Programs\Windows\Panels\Utility\Launch-DummyMonitorToggle.vbs"
+    if !FileExist(scriptPath)
+        return ""
+
+    return {
+        shortcut: "^+F2",
+        scriptPath: scriptPath,
+        programTabId: 2
+    }
+}
+
+ShouldRestoreDefaultDummyMonitorBinding(bindingFilePath) {
+    if bindingFilePath = "" || !FileExist(bindingFilePath)
+        return true
+    try {
+        rawValue := IniRead(bindingFilePath, "Meta", "DummyMonitorDefaultEnabled", "1")
+        normalized := StrLower(Trim(rawValue ""))
+        return normalized != "0" && normalized != "false" && normalized != "no"
+    } catch {
+        return true
+    }
+}
+
 class FlowCellApp {
     __New(logger, showUi := true) {
         global flowCellScanStatePath, flowCellBindingsPath, flowCellRecordedActionsDir
@@ -986,6 +1046,11 @@ class FlowCellApp {
         global flowCellLastActionStatusPath
         this.logger.Info("Script hotkey requested. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
         result := this.RunBackendScriptCommand(binding.scriptPath, binding.HasOwnProp("programTabId") ? binding.programTabId : 0, "hotkey " binding.shortcut)
+        if binding.HasOwnProp("sendKeyAfter") && binding.sendKeyAfter != "" && WinActive("ahk_exe Illustrator.exe") {
+            try Send "{" binding.sendKeyAfter "}"
+            catch as sendErr
+                this.logger.Warn("Post-hotkey key pass-through failed. Shortcut=" binding.shortcut " | Error=" sendErr.Message)
+        }
         lines := [
             "Shortcut: " binding.shortcut,
             "Script: " binding.scriptPath,
@@ -1175,7 +1240,7 @@ class FlowCellApp {
             normalizedName := IniRead(bindingFilePath, section, "NormalizedName", "")
             config.label := label
             config.normalizedName := normalizedName != "" ? StrLower(Trim(normalizedName)) : StrLower(Trim(label))
-            config.scriptFolder := IniRead(bindingFilePath, section, "ScriptFolder", "")
+            config.scriptFolder := ResolveLegacyWindowsProgramPath(IniRead(bindingFilePath, section, "ScriptFolder", ""))
             config.programType := IniRead(bindingFilePath, section, "ProgramType", "")
             config.exePath := IniRead(bindingFilePath, section, "ExePath", "")
             config.runMethod := IniRead(bindingFilePath, section, "RunMethod", "")
@@ -1256,6 +1321,43 @@ class FlowCellApp {
         throw Error("Photoshop is running, but no active COM automation handle was available.")
     }
 
+    IsFlowCellIllustratorActiveOnlyScript(scriptPath) {
+        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
+        SplitPath scriptPath, &fileName
+        if StrLower(fileName) = "set illustrator anchor.jsx"
+            return true
+        if StrLower(fileName) = "flowcell_illustrator_setanchorhotkey.jsx"
+            return true
+
+        try {
+            file := FileOpen(scriptPath, "r", "UTF-8")
+            if !IsObject(file)
+                return false
+            header := file.Read(4096)
+            file.Close()
+            return InStr(StrLower(header), "flowcell_requires_active_illustrator") > 0
+        } catch {
+            return false
+        }
+    }
+
+    IsFlowCellIllustratorSelectionToolAnchorHotkey(scriptPath) {
+        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
+        SplitPath scriptPath, &fileName
+        return StrLower(fileName) = "flowcell_illustrator_setanchorhotkey.jsx"
+    }
+
+    ReadFlowCellIllustratorScriptStatus() {
+        global flowCellLogsDir
+        statusPath := flowCellLogsDir "\illustrator-anchor-status.txt"
+        if !FileExist(statusPath)
+            return ""
+        try return Trim(FileRead(statusPath, "UTF-8"))
+        catch {
+            return ""
+        }
+    }
+
     RunIllustratorScript(scriptPath, source, programConfig := 0) {
         result := {
             attempted: false,
@@ -1266,6 +1368,7 @@ class FlowCellApp {
 
         stableHwnd := 0
 
+        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
         this.logger.Info("Script run requested. Source=" source " | Script=" scriptPath)
 
         if scriptPath = "" {
@@ -1277,6 +1380,14 @@ class FlowCellApp {
         if !FileExist(scriptPath) {
             result.detail := "Script file not found."
             this.logger.Warn("Script run blocked because the file was not found. Path=" scriptPath)
+            return result
+        }
+
+        if this.IsFlowCellIllustratorActiveOnlyScript(scriptPath) && !WinActive("ahk_exe Illustrator.exe") {
+            result.succeeded := true
+            result.method := "illustrator_active_target_guard"
+            result.detail := "Set Illustrator Anchor ignored because Illustrator is not the active target app."
+            this.logger.Info(result.detail " Source=" source " | Script=" scriptPath)
             return result
         }
 
@@ -1326,11 +1437,26 @@ class FlowCellApp {
             }
         }
         try {
+            try {
+                WinActivate "ahk_id " stableHwnd
+                WinWaitActive "ahk_id " stableHwnd, , 2
+                Sleep 80
+            } catch as activationErr {
+                this.logger.Warn("Could not activate the stable Illustrator 2026 window before COM. Continuing with COM. " activationErr.Message)
+            }
+
+            if !WinActive("ahk_id " stableHwnd) {
+                this.logger.Warn("Stable Illustrator 2026 window is not foreground before COM. Continuing with COM.")
+            }
+
             app := this.GetIllustratorApplication()
             returnValue := app.DoJavaScriptFile(scriptPath)
             this.IllustratorComRetryAfterTick := 0
             result.succeeded := true
             result.detail := "DoJavaScriptFile returned without raising an error."
+            illustratorStatus := this.ReadFlowCellIllustratorScriptStatus()
+            if illustratorStatus != ""
+                result.detail .= " Status: " illustratorStatus
             if returnValue != ""
                 result.detail .= " Return value: " ValueToText(returnValue)
             this.logger.Info(
@@ -1388,6 +1514,13 @@ class FlowCellApp {
 
         processPath := ""
         if hwnd {
+            try {
+                WinActivate "ahk_id " hwnd
+                WinWaitActive "ahk_id " hwnd, , 2
+                Sleep 80
+            } catch as activationErr {
+                this.logger.Warn("Could not activate Illustrator before process script launch. Continuing with launch. " activationErr.Message)
+            }
             try processPath := WinGetProcessPath("ahk_id " hwnd)
             catch as err {
                 result.detail := "Could not resolve the stable Illustrator executable path. " err.Message
@@ -1420,6 +1553,7 @@ class FlowCellApp {
             detail: ""
         }
 
+        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
         this.logger.Info("Photoshop script run requested. Source=" source " | Script=" scriptPath)
 
         if scriptPath = "" {
@@ -1637,6 +1771,8 @@ class FlowCellApp {
         switch resolvedProgramKey {
             case "illustrator_direct":
                 return this.RunIllustratorScript(scriptPath, source, programConfig)
+            case "illustrator_process":
+                return this.TryRunIllustratorScriptViaProcess(scriptPath, 0, programConfig)
             case "photoshop_direct":
                 return this.RunPhotoshopScript(scriptPath, source, programConfig)
             case "blender_bridge":
@@ -1691,6 +1827,7 @@ class FlowCellApp {
             statusText: ""
         }
 
+        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
         if scriptPath = "" {
             result.detail := "No script path was provided."
             return result
@@ -3190,7 +3327,7 @@ class SaveSelectedObjToProject3DAction extends ThreeDExtrudeDepth16mmAction {
     }
 
     GetWorkspaceHelperScriptPath() {
-        return A_ScriptDir "\..\Illustrator\HelperScripts\18_Prepare_Selected_OBJ_Export.jsx"
+        return A_ScriptDir "\..\Programs\Illustrator\HelperScripts\18_Prepare_Selected_OBJ_Export.jsx"
     }
 
     GetInstalledHelperScriptPath() {
@@ -4394,10 +4531,10 @@ class SaveSelectedObjToBlenderAction extends SaveSelectedObjToProject3DAction {
             return result
         }
 
-        helperPath := A_ScriptDir "\..\Blender\FlowCellButtons\Import-FlowCellObjIntoBlender.ps1"
+        helperPath := A_ScriptDir "\..\Programs\Blender\FlowCellButtons\Import-FlowCellObjIntoBlender.ps1"
         if !FileExist(helperPath) {
             result.detail := "The Blender import helper script was not found."
-            result.note := "The helper should exist under Blender\\FlowCellButtons."
+            result.note := "The helper should exist under Programs\\Blender\\FlowCellButtons."
             return result
         }
 
@@ -4488,7 +4625,7 @@ class SaveSelectedPngToBlenderLithoAction extends SaveSelectedObjToProject3DActi
     }
 
     RunExportPngForLitho(scanResult) {
-        helperPath := A_ScriptDir "\..\Illustrator\HelperScripts\19_Prepare_Selected_Litho_PNG.jsx"
+        helperPath := A_ScriptDir "\..\Programs\Illustrator\HelperScripts\19_Prepare_Selected_Litho_PNG.jsx"
         contextPath := A_Temp "\FlowCell_Selected_Litho_PNG_Context.txt"
         this.PrepareLithoDefaultImagesFolderFile()
 
@@ -4784,10 +4921,10 @@ class SaveSelectedPngToBlenderLithoAction extends SaveSelectedObjToProject3DActi
             return result
         }
 
-        helperPath := A_ScriptDir "\..\Blender\FlowCellButtons\Import-FlowCellPngAsLithophane.ps1"
+        helperPath := A_ScriptDir "\..\Programs\Blender\FlowCellButtons\Import-FlowCellPngAsLithophane.ps1"
         if !FileExist(helperPath) {
             result.detail := "The Blender lithophane import helper script was not found."
-            result.note := "The helper should exist under Blender\\FlowCellButtons."
+            result.note := "The helper should exist under Programs\\Blender\\FlowCellButtons."
             return result
         }
 
@@ -6057,8 +6194,10 @@ class ScriptShortcutManager {
         this.bindings := []
         this.nextId := 1
 
-        if !FileExist(this.bindingFilePath)
+        if !FileExist(this.bindingFilePath) {
+            this.EnsureDefaultDummyMonitorBinding()
             return
+        }
 
         try {
             idText := IniRead(this.bindingFilePath, "Meta", "Ids", "")
@@ -6068,11 +6207,14 @@ class ScriptShortcutManager {
             this.logger.Error("Failed to read the FlowCell bindings file.", err)
             this.bindings := []
             this.nextId := 1
+            this.EnsureDefaultDummyMonitorBinding()
             return
         }
 
-        if idText = ""
+        if idText = "" {
+            this.EnsureDefaultDummyMonitorBinding()
             return
+        }
 
         for idToken in StrSplit(idText, "|") {
             idToken := Trim(idToken)
@@ -6082,7 +6224,7 @@ class ScriptShortcutManager {
             section := "Binding_" idToken
             try {
                 shortcut := CanonicalizeShortcut(IniRead(this.bindingFilePath, section, "Shortcut"))
-                scriptPath := IniRead(this.bindingFilePath, section, "ScriptPath")
+                scriptPath := ResolveLegacyWindowsProgramPath(IniRead(this.bindingFilePath, section, "ScriptPath"))
                 programTabId := IniRead(this.bindingFilePath, section, "ProgramTabId", "0")
                 this.bindings.Push({
                     id: Integer(idToken),
@@ -6095,6 +6237,8 @@ class ScriptShortcutManager {
                 this.logger.Error("Failed to read binding section " section ".", err)
             }
         }
+
+        this.EnsureDefaultDummyMonitorBinding()
     }
 
     SaveToDisk() {
@@ -6120,6 +6264,34 @@ class ScriptShortcutManager {
         return JoinLines(ids, "|")
     }
 
+    EnsureDefaultDummyMonitorBinding() {
+        if !ShouldRestoreDefaultDummyMonitorBinding(this.bindingFilePath)
+            return
+
+        defaultBinding := GetDefaultDummyMonitorHotkeyBinding()
+        if !IsObject(defaultBinding)
+            return
+
+        defaultShortcut := NormalizeShortcut(defaultBinding.shortcut)
+        defaultPath := StrLower(ResolveLegacyWindowsProgramPath(defaultBinding.scriptPath, false))
+        for binding in this.bindings {
+            if NormalizeShortcut(binding.shortcut) = defaultShortcut
+                return
+            if StrLower(ResolveLegacyWindowsProgramPath(binding.scriptPath, false)) = defaultPath
+                return
+        }
+
+        this.bindings.Push({
+            id: this.nextId,
+            shortcut: defaultBinding.shortcut,
+            scriptPath: defaultBinding.scriptPath,
+            programTabId: defaultBinding.programTabId,
+            status: "Loaded"
+        })
+        this.nextId += 1
+        this.logger.Info("Restored default dummy monitor shortcut binding. Shortcut=" defaultBinding.shortcut " | Script=" defaultBinding.scriptPath)
+    }
+
     ApplyHotkeys() {
         this.UnregisterHotkeys()
         for binding in this.bindings
@@ -6129,15 +6301,33 @@ class ScriptShortcutManager {
     TryRegisterBinding(binding) {
         binding.shortcut := CanonicalizeShortcut(binding.shortcut)
         callback := ObjBindMethod(this, "OnHotkeyPressed", binding.id)
+        registrationShortcut := binding.shortcut
+        hotIfWinTitle := ""
+        binding.sendKeyAfter := ""
+        if this.app.IsFlowCellIllustratorSelectionToolAnchorHotkey(binding.scriptPath) && NormalizeShortcut(binding.shortcut) = "~v" {
+            registrationShortcut := "$v"
+            hotIfWinTitle := "ahk_exe Illustrator.exe"
+            binding.sendKeyAfter := "v"
+        }
         try {
-            Hotkey binding.shortcut, callback, "On"
+            if hotIfWinTitle != ""
+                HotIfWinActive hotIfWinTitle
+            Hotkey registrationShortcut, callback, "On"
+            if hotIfWinTitle != ""
+                HotIfWinActive
             this.registered[binding.id] := {
-                shortcut: binding.shortcut,
-                callback: callback
+                shortcut: registrationShortcut,
+                callback: callback,
+                hotIfWinTitle: hotIfWinTitle
             }
-            this.logger.Info("Registered shortcut binding. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
+            this.logger.Info("Registered shortcut binding. Shortcut=" binding.shortcut " | RegisteredShortcut=" registrationShortcut " | Script=" binding.scriptPath)
             return "Active"
         } catch as err {
+            if hotIfWinTitle != "" {
+                try HotIfWinActive
+                catch {
+                }
+            }
             this.logger.Warn(
                 "Failed to register shortcut binding. Shortcut="
                 . binding.shortcut
@@ -6152,8 +6342,16 @@ class ScriptShortcutManager {
 
     UnregisterHotkeys() {
         for _, entry in this.registered {
-            try Hotkey entry.shortcut, entry.callback, "Off"
-            catch {
+            try {
+                if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
+                    HotIfWinActive entry.hotIfWinTitle
+                Hotkey entry.shortcut, entry.callback, "Off"
+                if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
+                    HotIfWinActive
+            } catch {
+                try HotIfWinActive
+                catch {
+                }
             }
         }
         this.registered := Map()
@@ -6168,7 +6366,7 @@ class ScriptShortcutManager {
 
     AddBinding(shortcut, scriptPath) {
         shortcut := CanonicalizeShortcut(Trim(shortcut))
-        scriptPath := Trim(scriptPath)
+        scriptPath := ResolveLegacyWindowsProgramPath(Trim(scriptPath))
         validation := this.ValidateBindingFields(0, shortcut, scriptPath)
         if !validation.ok
             return validation
@@ -6207,7 +6405,7 @@ class ScriptShortcutManager {
 
     UpdateBinding(bindingId, shortcut, scriptPath) {
         shortcut := CanonicalizeShortcut(Trim(shortcut))
-        scriptPath := Trim(scriptPath)
+        scriptPath := ResolveLegacyWindowsProgramPath(Trim(scriptPath))
         validation := this.ValidateBindingFields(bindingId, shortcut, scriptPath)
         if !validation.ok
             return validation
@@ -6657,6 +6855,18 @@ class RecordedMacroStore {
         return actions
     }
 
+    ResolveMacroPathById(actionId) {
+        normalizedId := StrLower(Trim(actionId))
+        if normalizedId = ""
+            return ""
+        Loop Files, this.rootDir "\*.ini" {
+            definition := this.ReadMacroDefinition(A_LoopFileFullPath, false)
+            if IsObject(definition) && StrLower(Trim(definition.id)) = normalizedId
+                return A_LoopFileFullPath
+        }
+        return ""
+    }
+
     ReadMacroDefinition(path, includeSteps := true) {
         if !FileExist(path)
             return ""
@@ -6726,7 +6936,8 @@ class RecordedMacroStore {
 
         scriptPath := stepSection.Has("ScriptPath") ? stepSection["ScriptPath"] : ""
         macroPath := stepSection.Has("MacroPath") ? stepSection["MacroPath"] : ""
-        type := macroPath != "" ? "Macro" : (scriptPath != "" ? "Script" : stepSection["Type"])
+        macroId := stepSection.Has("MacroId") ? stepSection["MacroId"] : ""
+        type := (macroId != "" || macroPath != "") ? "Macro" : (scriptPath != "" ? "Script" : stepSection["Type"])
         if type = "Click" && stepSection.Has("Button") && StrLower(stepSection["Button"]) = "right"
             type := "RightClick"
         step := {
@@ -6758,6 +6969,7 @@ class RecordedMacroStore {
                 step.scriptPath := scriptPath
                 return step
             case "Macro":
+                step.macroId := macroId
                 step.macroPath := macroPath
                 return step
             case "ActivateIllustrator":
@@ -6944,7 +7156,7 @@ class RecordedMacroAction {
             case "Script":
                 return this.RunScriptStep(step.scriptPath)
             case "Macro":
-                return this.RunMacroStep(step.macroPath, hwnd)
+                return this.RunMacroStep(step.HasOwnProp("macroId") ? step.macroId : "", step.macroPath, hwnd)
             default:
                 return {
                     ok: false,
@@ -7093,16 +7305,22 @@ class RecordedMacroAction {
         }
     }
 
-    RunMacroStep(macroPath, hwnd) {
-        if macroPath = "" {
+    RunMacroStep(macroId, macroPath, hwnd) {
+        resolvedMacroPath := macroPath
+        if macroId != "" {
+            resolvedById := this.store.ResolveMacroPathById(macroId)
+            if resolvedById != ""
+                resolvedMacroPath := resolvedById
+        }
+        if resolvedMacroPath = "" {
             return {
                 ok: false,
                 method: "recorded_macro_nested_missing",
-                detail: "The nested macro step did not specify a macro file."
+                detail: "The nested macro step did not specify a macro id or file."
             }
         }
 
-        definition := this.store.ReadMacroDefinition(macroPath, false)
+        definition := this.store.ReadMacroDefinition(resolvedMacroPath, false)
         if !IsObject(definition) {
             return {
                 ok: false,
@@ -7111,7 +7329,7 @@ class RecordedMacroAction {
             }
         }
 
-        nestedAction := RecordedMacroAction(this.app, this.store, definition.id, definition.label, macroPath)
+        nestedAction := RecordedMacroAction(this.app, this.store, definition.id, definition.label, resolvedMacroPath)
         nestedResult := nestedAction.Run({activeWindow: {hwnd: hwnd}})
         return {
             ok: nestedResult.deliverySucceeded,

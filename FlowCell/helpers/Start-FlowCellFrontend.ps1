@@ -1,17 +1,25 @@
 # Description: Starts the FlowCell Tauri frontend and keeps the backend host on the existing path.
+param(
+    [switch]$ForceRestart
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent $projectRoot
 $frontendRoot = Join-Path $repoRoot 'FlowCellFrontend'
-$frontendExePath = Join-Path $frontendRoot 'src-tauri\target\debug\flowcell_frontend.exe'
-$frontendSourceCommitPath = Join-Path $frontendRoot 'src-tauri\target\debug\.flowcell_frontend_source_commit'
-$frontendSourceStampPath = Join-Path $frontendRoot 'src-tauri\target\debug\.flowcell_frontend_source_stamp'
+$frontendReleaseExePath = Join-Path $frontendRoot 'src-tauri\target\release\flowcell_frontend.exe'
+$frontendDebugExePath = Join-Path $frontendRoot 'src-tauri\target\debug\flowcell_frontend.exe'
+$frontendExePath = $frontendReleaseExePath
+$frontendSourceCommitPath = Join-Path $frontendRoot 'src-tauri\target\release\.flowcell_frontend_source_commit'
+$frontendSourceStampPath = Join-Path $frontendRoot 'src-tauri\target\release\.flowcell_frontend_source_stamp'
 $logsRoot = Join-Path $projectRoot 'local\logs'
 $launcherLogPath = Join-Path $logsRoot 'frontend-launcher.log'
 $backendLauncherPath = Join-Path $projectRoot 'run_backend_hidden.vbs'
 $npmCommand = (Get-Command 'npm.cmd' -ErrorAction Stop).Source
+$script:FlowCellFrontendLaunchWaited = $false
+$script:FlowCellFrontendLauncherMutexName = 'Global\FlowCellFrontendLauncher'
 
 function Ensure-Directory([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
@@ -22,7 +30,100 @@ function Ensure-Directory([string]$Path) {
 function Write-LauncherLog([string]$Message) {
     Ensure-Directory -Path $logsRoot
     $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
-    Add-Content -LiteralPath $launcherLogPath -Value ('[{0}] {1}' -f $timestamp, $Message) -Encoding UTF8
+    $entry = ('[{0}] {1}{2}' -f $timestamp, $Message, [Environment]::NewLine)
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+    for ($attempt = 0; $attempt -lt 20; $attempt++) {
+        $fileStream = $null
+        $writer = $null
+        try {
+            $fileStream = [System.IO.File]::Open(
+                $launcherLogPath,
+                [System.IO.FileMode]::Append,
+                [System.IO.FileAccess]::Write,
+                [System.IO.FileShare]::ReadWrite
+            )
+            $writer = New-Object System.IO.StreamWriter($fileStream, $utf8NoBom)
+            $writer.Write($entry)
+            $writer.Flush()
+            return
+        }
+        catch {
+            if ($attempt -ge 19) {
+                throw
+            }
+            Start-Sleep -Milliseconds 50
+        }
+        finally {
+            if ($writer) {
+                $writer.Dispose()
+            }
+            elseif ($fileStream) {
+                $fileStream.Dispose()
+            }
+        }
+    }
+}
+
+function Acquire-FlowCellFrontendLaunchMutex {
+    param(
+        [int]$TimeoutMilliseconds = 30000
+    )
+
+    $mutex = New-Object System.Threading.Mutex($false, $script:FlowCellFrontendLauncherMutexName)
+    try {
+        try {
+            if ($mutex.WaitOne(0)) {
+                return $mutex
+            }
+        }
+        catch [System.Threading.AbandonedMutexException] {
+            Write-LauncherLog 'Recovered an abandoned frontend launcher lock.'
+            return $mutex
+        }
+
+        $script:FlowCellFrontendLaunchWaited = $true
+        Write-LauncherLog 'Another frontend launch is already running; waiting for launcher lock.'
+
+        try {
+            if ($mutex.WaitOne($TimeoutMilliseconds)) {
+                Write-LauncherLog 'Frontend launcher lock acquired after waiting.'
+                return $mutex
+            }
+        }
+        catch [System.Threading.AbandonedMutexException] {
+            Write-LauncherLog 'Recovered an abandoned frontend launcher lock after waiting.'
+            return $mutex
+        }
+
+        throw "Timed out waiting for the FlowCell frontend launcher lock after $TimeoutMilliseconds ms."
+    }
+    catch {
+        try {
+            $mutex.Dispose()
+        }
+        catch {
+        }
+        throw
+    }
+}
+
+function Release-FlowCellFrontendLaunchMutex([System.Threading.Mutex]$Mutex) {
+    if (-not $Mutex) {
+        return
+    }
+
+    try {
+        $Mutex.ReleaseMutex()
+    }
+    catch {
+    }
+
+    try {
+        $Mutex.Dispose()
+    }
+    catch {
+    }
 }
 
 function Resolve-CargoCommand {
@@ -127,13 +228,8 @@ function Get-FlowCellFrontendSourceStamp {
 }
 
 function Get-FlowCellFrontendGitCommit {
-    $wasInRepo = Test-Path -LiteralPath (Join-Path $frontendRoot '.git')
-    if (-not $wasInRepo) {
-        return $null
-    }
-
     try {
-        Push-Location $frontendRoot
+        Push-Location $repoRoot
         try {
             $commit = (& git rev-parse HEAD) 2>$null
             if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($commit)) {
@@ -156,11 +252,13 @@ function Get-FlowCellFrontendProcess {
         return @()
     }
 
-    $resolvedExePath = if (Test-Path -LiteralPath $frontendExePath -PathType Leaf) {
-        [System.IO.Path]::GetFullPath($frontendExePath)
-    }
-    else {
-        $null
+    $knownExePaths = @(
+        $frontendReleaseExePath,
+        $frontendDebugExePath
+    ) | Where-Object {
+        Test-Path -LiteralPath $_ -PathType Leaf
+    } | ForEach-Object {
+        [System.IO.Path]::GetFullPath($_)
     }
 
     $matches = foreach ($process in @($runningFrontend)) {
@@ -173,9 +271,9 @@ function Get-FlowCellFrontendProcess {
         }
 
         if (
-            -not [string]::IsNullOrWhiteSpace($resolvedExePath) -and
+            $knownExePaths.Count -gt 0 -and
             -not [string]::IsNullOrWhiteSpace($processPath) -and
-            ([System.IO.Path]::GetFullPath($processPath) -ne $resolvedExePath)
+            (-not ($knownExePaths -contains [System.IO.Path]::GetFullPath($processPath)))
         ) {
             continue
         }
@@ -201,6 +299,9 @@ public static class FlowCellWindowInterop {
 
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool BringWindowToTop(IntPtr hWnd);
 }
 '@
 }
@@ -218,7 +319,13 @@ function Focus-FlowCellFrontendWindow([System.Diagnostics.Process]$Process) {
     catch {
     }
 
-    $windowHandle = $Process.MainWindowHandle
+    $windowHandle = [IntPtr]::Zero
+    try {
+        $windowHandle = [IntPtr]$Process.MainWindowHandle
+    }
+    catch {
+        $windowHandle = [IntPtr]::Zero
+    }
     if ($windowHandle -eq [IntPtr]::Zero) {
         Start-Sleep -Milliseconds 150
         try {
@@ -226,7 +333,12 @@ function Focus-FlowCellFrontendWindow([System.Diagnostics.Process]$Process) {
         }
         catch {
         }
-        $windowHandle = $Process.MainWindowHandle
+        try {
+            $windowHandle = [IntPtr]$Process.MainWindowHandle
+        }
+        catch {
+            $windowHandle = [IntPtr]::Zero
+        }
     }
 
     if ($windowHandle -eq [IntPtr]::Zero) {
@@ -235,8 +347,21 @@ function Focus-FlowCellFrontendWindow([System.Diagnostics.Process]$Process) {
 
     [FlowCellWindowInterop]::ShowWindowAsync($windowHandle, 9) | Out-Null
     Start-Sleep -Milliseconds 50
-    [FlowCellWindowInterop]::SetForegroundWindow($windowHandle) | Out-Null
-    return $true
+    [FlowCellWindowInterop]::BringWindowToTop($windowHandle) | Out-Null
+    if ([FlowCellWindowInterop]::SetForegroundWindow($windowHandle)) {
+        return $true
+    }
+
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        if ($shell.AppActivate($Process.Id)) {
+            return $true
+        }
+    }
+    catch {
+    }
+
+    return $false
 }
 
 function Stop-FlowCellFrontendProcess {
@@ -248,10 +373,31 @@ function Stop-FlowCellFrontendProcess {
     foreach ($process in @($runningFrontend)) {
         Write-LauncherLog ("Stopping existing FlowCell frontend process {0} before restart/build." -f $process.Id)
         try {
+            if ($process.HasExited) {
+                continue
+            }
+        }
+        catch {
+        }
+
+        try {
             Stop-Process -Id $process.Id -ErrorAction Stop
         }
         catch {
-            Stop-Process -Id $process.Id -Force -ErrorAction Stop
+            if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+                continue
+            }
+
+            try {
+                Stop-Process -Id $process.Id -Force -ErrorAction Stop
+            }
+            catch {
+                if (-not (Get-Process -Id $process.Id -ErrorAction SilentlyContinue)) {
+                    continue
+                }
+
+                throw
+            }
         }
 
         try {
@@ -264,88 +410,138 @@ function Stop-FlowCellFrontendProcess {
 
 Ensure-Directory -Path $logsRoot
 Write-LauncherLog 'Frontend launch requested.'
+$launchMutex = Acquire-FlowCellFrontendLaunchMutex
 
-if (-not (Test-Path -LiteralPath $frontendRoot -PathType Container)) {
-    throw "FlowCell frontend folder was not found: $frontendRoot"
-}
+try {
+    if (-not (Test-Path -LiteralPath $frontendRoot -PathType Container)) {
+        throw "FlowCell frontend folder was not found: $frontendRoot"
+    }
 
-$cargoCommandPath = Resolve-CargoCommand
-$cargoCommandDirectory = Split-Path -Parent $cargoCommandPath
-if ($env:Path -notlike "*$cargoCommandDirectory*") {
-    $env:Path = $cargoCommandDirectory + ';' + $env:Path
-}
+    $cargoCommandPath = Resolve-CargoCommand
+    $cargoCommandDirectory = Split-Path -Parent $cargoCommandPath
+    if ($env:Path -notlike "*$cargoCommandDirectory*") {
+        $env:Path = $cargoCommandDirectory + ';' + $env:Path
+    }
 
-if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot 'node_modules') -PathType Container)) {
-    Write-LauncherLog 'Installing FlowCell frontend npm dependencies.'
+    if (-not (Test-Path -LiteralPath (Join-Path $frontendRoot 'node_modules') -PathType Container)) {
+        Write-LauncherLog 'Installing FlowCell frontend npm dependencies.'
+        Push-Location $frontendRoot
+        try {
+            cmd.exe /d /c ('"{0}" install >> "{1}" 2>&1' -f $npmCommand, $launcherLogPath)
+            if ($LASTEXITCODE -ne 0) {
+                throw "npm install failed with exit code $LASTEXITCODE."
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+
+    if (Test-Path -LiteralPath $backendLauncherPath -PathType Leaf) {
+        Write-LauncherLog 'Ensuring backend stays on the existing hidden launch path.'
+        Start-Process -FilePath 'wscript.exe' -ArgumentList @('//nologo', $backendLauncherPath) -WindowStyle Hidden
+    }
+
+    $buildRequired = Test-FlowCellFrontendBuildRequired
+
+    if ($script:FlowCellFrontendLaunchWaited -and (-not $buildRequired)) {
+        $runningFrontend = @(Get-FlowCellFrontendProcess)
+        if ($runningFrontend.Count -gt 0) {
+            $existingProcess = $runningFrontend[0]
+            if (Focus-FlowCellFrontendWindow -Process $existingProcess) {
+                Write-LauncherLog ("Coalesced overlapping launch request into existing frontend process {0}." -f $existingProcess.Id)
+            }
+            else {
+                Write-LauncherLog ("Overlapping launch request found frontend process {0}; leaving the running instance in place." -f $existingProcess.Id)
+            }
+            return
+        }
+    }
+
+    if ((-not $buildRequired) -and (-not $ForceRestart)) {
+        $runningFrontend = @(Get-FlowCellFrontendProcess)
+        if ($runningFrontend.Count -gt 0) {
+            $existingProcess = $runningFrontend[0]
+            if (Focus-FlowCellFrontendWindow -Process $existingProcess) {
+                Write-LauncherLog ("Frontend already running in process {0}; focused existing window." -f $existingProcess.Id)
+            }
+            else {
+                Write-LauncherLog ("Frontend already running in process {0}; leaving existing instance in place." -f $existingProcess.Id)
+            }
+            return
+        }
+    }
+
     Push-Location $frontendRoot
     try {
-        cmd.exe /d /c ('"{0}" install >> "{1}" 2>&1' -f $npmCommand, $launcherLogPath)
-        if ($LASTEXITCODE -ne 0) {
-            throw "npm install failed with exit code $LASTEXITCODE."
+        $hadRunningFrontendBeforeLaunch = (@(Get-FlowCellFrontendProcess).Count -gt 0)
+        $frontendStoppedForRestart = $false
+        if ($ForceRestart) {
+            Write-LauncherLog 'Force-restart launch requested; bypassing running-frontend reuse.'
+            Stop-FlowCellFrontendProcess
+            $frontendStoppedForRestart = $true
         }
+
+        if ($buildRequired) {
+            Write-LauncherLog 'Frontend source changed; stopping any running compiled frontend before rebuild.'
+            if (-not $frontendStoppedForRestart) {
+                Stop-FlowCellFrontendProcess
+                $frontendStoppedForRestart = $true
+            }
+            Write-LauncherLog 'Building Tauri frontend release binary.'
+            cmd.exe /d /c ('"{0}" run tauri build >> "{1}" 2>&1' -f $npmCommand, $launcherLogPath)
+            $buildExitCode = $LASTEXITCODE
+            if ($buildExitCode -ne 0) {
+                $restoredPreviousFrontend = $false
+                if ($hadRunningFrontendBeforeLaunch -and (Test-Path -LiteralPath $frontendExePath -PathType Leaf)) {
+                    try {
+                        Write-LauncherLog ("Tauri frontend build exited with code {0}; restarting previous compiled frontend." -f $buildExitCode)
+                        Start-Process -FilePath $frontendExePath -WorkingDirectory $frontendRoot
+                        $restoredPreviousFrontend = $true
+                    }
+                    catch {
+                        Write-LauncherLog ("Failed to restart previous compiled frontend after build failure: {0}" -f $_.Exception.Message)
+                    }
+                }
+
+                if ($restoredPreviousFrontend) {
+                    throw "Tauri frontend build exited with code $buildExitCode. Previous compiled frontend was restarted."
+                }
+
+                throw "Tauri frontend build exited with code $buildExitCode."
+            }
+
+            $sourceCommit = Get-FlowCellFrontendGitCommit
+            if (-not [string]::IsNullOrWhiteSpace($sourceCommit)) {
+                Set-Content -LiteralPath $frontendSourceCommitPath -Value $sourceCommit -Encoding UTF8
+            }
+            $sourceStamp = Get-FlowCellFrontendSourceStamp -SourceRoots (Get-FlowCellFrontendSourceRoots)
+            Set-Content -LiteralPath $frontendSourceStampPath -Value $sourceStamp -Encoding UTF8
+        }
+
+        if (-not (Test-Path -LiteralPath $frontendExePath -PathType Leaf)) {
+            throw "Tauri frontend executable was not found after build: $frontendExePath"
+        }
+
+        $runningFrontend = @(Get-FlowCellFrontendProcess)
+        if ((-not $frontendStoppedForRestart) -and $runningFrontend.Count -gt 0) {
+            $existingProcess = $runningFrontend[0]
+            if (Focus-FlowCellFrontendWindow -Process $existingProcess) {
+                Write-LauncherLog ("Frontend already running in process {0}; focused existing window after launch request." -f $existingProcess.Id)
+            }
+            else {
+                Write-LauncherLog ("Frontend already running in process {0}; leaving existing instance in place after launch request." -f $existingProcess.Id)
+            }
+            return
+        }
+
+        Write-LauncherLog 'Starting compiled Tauri frontend.'
+        Start-Process -FilePath $frontendExePath -WorkingDirectory $frontendRoot
     }
     finally {
         Pop-Location
     }
 }
-
-if (Test-Path -LiteralPath $backendLauncherPath -PathType Leaf) {
-    Write-LauncherLog 'Ensuring backend stays on the existing hidden launch path.'
-    Start-Process -FilePath 'wscript.exe' -ArgumentList @('//nologo', $backendLauncherPath) -WindowStyle Hidden
-}
-
-$buildRequired = Test-FlowCellFrontendBuildRequired
-if (-not $buildRequired) {
-    $runningFrontend = @(Get-FlowCellFrontendProcess)
-    if ($runningFrontend.Count -gt 0) {
-        $existingProcess = $runningFrontend[0]
-        if (Focus-FlowCellFrontendWindow -Process $existingProcess) {
-            Write-LauncherLog ("Frontend already running in process {0}; focused existing window." -f $existingProcess.Id)
-        }
-        else {
-            Write-LauncherLog ("Frontend already running in process {0}; leaving existing instance in place." -f $existingProcess.Id)
-        }
-        return
-    }
-}
-
-Push-Location $frontendRoot
-try {
-    if ($buildRequired) {
-        Stop-FlowCellFrontendProcess
-        Write-LauncherLog 'Building Tauri frontend debug binary.'
-        cmd.exe /d /c ('"{0}" run tauri build -- --debug >> "{1}" 2>&1' -f $npmCommand, $launcherLogPath)
-        if ($LASTEXITCODE -ne 0) {
-            throw "Tauri frontend build exited with code $LASTEXITCODE."
-        }
-
-        $sourceCommit = Get-FlowCellFrontendGitCommit
-        if (-not [string]::IsNullOrWhiteSpace($sourceCommit)) {
-            Set-Content -LiteralPath $frontendSourceCommitPath -Value $sourceCommit -Encoding UTF8
-        }
-        $sourceStamp = Get-FlowCellFrontendSourceStamp -SourceRoots (Get-FlowCellFrontendSourceRoots)
-        Set-Content -LiteralPath $frontendSourceStampPath -Value $sourceStamp -Encoding UTF8
-    }
-
-    if (-not (Test-Path -LiteralPath $frontendExePath -PathType Leaf)) {
-        throw "Tauri frontend executable was not found after build: $frontendExePath"
-    }
-
-    $runningFrontend = @(Get-FlowCellFrontendProcess)
-    if ($runningFrontend.Count -gt 0) {
-        $existingProcess = $runningFrontend[0]
-        if (Focus-FlowCellFrontendWindow -Process $existingProcess) {
-            Write-LauncherLog ("Frontend already running in process {0}; focused existing window after launch request." -f $existingProcess.Id)
-        }
-        else {
-            Write-LauncherLog ("Frontend already running in process {0}; leaving existing instance in place after launch request." -f $existingProcess.Id)
-        }
-        return
-    }
-
-    Write-LauncherLog 'Starting compiled Tauri frontend.'
-    Start-Process -FilePath $frontendExePath -WorkingDirectory $frontendRoot
-}
 finally {
-    Pop-Location
+    Release-FlowCellFrontendLaunchMutex -Mutex $launchMutex
 }

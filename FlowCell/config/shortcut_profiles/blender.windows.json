@@ -1,0 +1,25 @@
+{
+  "id": "blender.windows",
+  "displayName": "Blender",
+  "platform": "windows",
+  "processNames": [
+    "blender.exe"
+  ],
+  "blocked": [],
+  "reserved": [],
+  "preferred": [
+    "^+1",
+    "^+2",
+    "^+3",
+    "^+4",
+    "^!1",
+    "^!2",
+    "^!3",
+    "^!4",
+    "F6",
+    "F7",
+    "F8",
+    "F9"
+  ],
+  "notes": "Conservative Blender starter profile for FlowCell bindings."
+}

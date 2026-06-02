@@ -90,6 +90,10 @@ function Get-FlowCellBlenderConfigPath {
     if (Test-Path -LiteralPath $localOverridePath -PathType Leaf) {
         return $localOverridePath
     }
+    $repoProgramsConfigPath = Join-Path $script:FlowCellHomeRoot 'Programs\Blender\config.json'
+    if (Test-Path -LiteralPath $repoProgramsConfigPath -PathType Leaf) {
+        return $repoProgramsConfigPath
+    }
     return (Join-Path $script:FlowCellHomeRoot 'Blender\config.json')
 }
 
@@ -322,7 +326,7 @@ function Convert-FlowCellSmartAxisLockResponseToResult($Response) {
 function New-FlowCellSmartAxisLockFailedResult([string]$Message) {
     $resolvedMessage = [string]$Message
     if ($resolvedMessage -match 'Unsupported action:\s*smart_axis_lock') {
-        $resolvedMessage = 'Reload the FlowTest Blender add-on or restart Blender once.'
+        $resolvedMessage = 'Reload the FlowCell Blender add-on or restart Blender once.'
     }
     return [pscustomobject]@{
         Succeeded = $false
@@ -530,7 +534,7 @@ function Invoke-FlowCellToolCommand($Envelope) {
             return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge')
         }
         'hdri_world' {
-            $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowtest_custom_hdri_world_tools' -Data @{
+            $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowcell_custom_hdri_world_tools' -Data @{
                 command = [string]$toolCommand
                 visual_mode = [string]$(if ($payload.PSObject.Properties['visual_mode']) { $payload.visual_mode } else { '' })
                 hdri_path = [string]$(if ($payload.PSObject.Properties['hdri_path']) { $payload.hdri_path } else { '' })
@@ -543,8 +547,7 @@ function Invoke-FlowCellToolCommand($Envelope) {
                 control_text_hex = [string]$(if ($payload.PSObject.Properties['control_text_hex']) { $payload.control_text_hex } else { '' })
                 accent_text_hex = [string]$(if ($payload.PSObject.Properties['accent_text_hex']) { $payload.accent_text_hex } else { '' })
                 editor_background_hex = [string]$(if ($payload.PSObject.Properties['editor_background_hex']) { $payload.editor_background_hex } else { '' })
-                section_fill_hex = [string]$(if ($payload.PSObject.Properties['section_fill_hex']) { $payload.section_fill_hex } else { '' })
-                row_alt_hex = [string]$(if ($payload.PSObject.Properties['row_alt_hex']) { $payload.row_alt_hex } else { '' })
+                scene_hex = [string]$(if ($payload.PSObject.Properties['scene_hex']) { $payload.scene_hex } else { '' })
                 controls_hex = [string]$(if ($payload.PSObject.Properties['controls_hex']) { $payload.controls_hex } else { '' })
                 borders_hex = [string]$(if ($payload.PSObject.Properties['borders_hex']) { $payload.borders_hex } else { '' })
                 darks_hex = [string]$(if ($payload.PSObject.Properties['darks_hex']) { $payload.darks_hex } else { '' })
@@ -563,7 +566,7 @@ function Invoke-FlowCellToolCommand($Envelope) {
             return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge' -Details $response)
         }
         'quick_rotate_group' {
-            $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowtest_custom_quick_rotate_group' -Data @{
+            $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowcell_custom_quick_rotate_group' -Data @{
                 command = [string]$toolCommand
                 axis = [string]$payload.axis
                 center_mode = [string]$payload.center_mode

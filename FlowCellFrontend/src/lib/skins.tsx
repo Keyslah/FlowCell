@@ -25,6 +25,7 @@ export interface FlowButtonSkinContract {
   flowId: string;
   flowLabel?: string;
   hovered?: boolean;
+  highlighted?: boolean;
   selected?: boolean;
   active?: boolean;
   pressed?: boolean;
@@ -56,6 +57,7 @@ export function buildFlowButtonDataAttributes(contract: FlowButtonSkinContract) 
   const attrs: Record<string, string> = {
     "data-flow-id": contract.flowId,
     "data-hovered": toBooleanData(contract.hovered),
+    "data-highlighted": toBooleanData(contract.highlighted),
     "data-selected": toBooleanData(contract.selected),
     "data-active": toBooleanData(contract.active),
     "data-pressed": toBooleanData(contract.pressed),
@@ -98,6 +100,7 @@ export function buildFlowButtonClassName(
   return [
     ...baseClassNames,
     contract.hovered ? "is-hovered" : "",
+    contract.highlighted ? "is-highlighted" : "",
     contract.selected ? "is-selected" : "",
     contract.active ? "is-active" : "",
     contract.pressed ? "is-pressed" : "",
@@ -146,20 +149,6 @@ function sanitizeScopeToken(value: string): string {
 
 function buildImportedSkinScopeClass(importedSkinId: string | undefined): string {
   return `imported-skin-scope--${sanitizeScopeToken(importedSkinId ?? "")}`;
-}
-
-function prependHostCondition(selector: string, condition: string): string {
-  if (!selector.startsWith(":host")) {
-    return selector;
-  }
-  if (selector.startsWith(":host(")) {
-    const closeIndex = selector.indexOf(")");
-    if (closeIndex > 5) {
-      const existingCondition = selector.slice(6, closeIndex);
-      return `:host(${existingCondition}${condition})${selector.slice(closeIndex + 1)}`;
-    }
-  }
-  return `:host(${condition})${selector.slice(5)}`;
 }
 
 function mapButtonSkinSelectorToHost(selector: string): string {
@@ -238,7 +227,11 @@ function scopeCssSelector(selector: string, scopeSelector: string): string {
 
   const hostMapped =
     scopeSelector === ":host" ? mapButtonSkinSelectorToHost(trimmed) : trimmed;
-  const replacedRoot = hostMapped.replace(/\bhtml\b|\bbody\b|:root/g, scopeSelector);
+  // Replace real root selectors only; do not rewrite class names like `.body`.
+  const replacedRoot = hostMapped.replace(
+    /(^|[\s>+~,(])(:root|html|body)(?=($|[\s>+~.#:[,(]))/g,
+    (_match, prefix: string) => `${prefix}${scopeSelector}`
+  );
   if (replacedRoot.includes(scopeSelector)) {
     return replacedRoot;
   }
@@ -246,37 +239,6 @@ function scopeCssSelector(selector: string, scopeSelector: string): string {
     return `${scopeSelector}${replacedRoot}`;
   }
   return `${scopeSelector} ${replacedRoot}`;
-}
-
-function buildImportedStateSelectors(
-  scopedSelector: string,
-  scopeSelector: string,
-  stateAttribute: string,
-  pseudoSelector: ":hover" | ":active"
-): string[] {
-  if (!scopedSelector.includes(pseudoSelector)) {
-    return [];
-  }
-
-  const strippedSelector = scopedSelector
-    .replaceAll(pseudoSelector, "")
-    .replace(/:has\([^)]*\)/g, "");
-  if (scopeSelector !== ":host") {
-    return [
-      strippedSelector.replace(
-        scopeSelector,
-        `${scopeSelector}[${stateAttribute}]`
-      )
-    ];
-  }
-
-  const selectors = [
-    prependHostCondition(strippedSelector, `[${stateAttribute}]`)
-  ];
-  if (pseudoSelector === ":hover") {
-    selectors.push(prependHostCondition(strippedSelector, ":hover"));
-  }
-  return Array.from(new Set(selectors.filter(Boolean)));
 }
 
 function findMatchingBrace(source: string, openBraceIndex: number): number {
@@ -336,33 +298,7 @@ function scopeImportedCssRules(source: string, scopeSelector: string): string {
     const scopedSelectors = prelude
       .split(",")
       .map((selector) => scopeCssSelector(selector, scopeSelector));
-    const expandedSelectors = scopedSelectors.flatMap((selector) => {
-      const selectors = [selector];
-      const hoveredSelectors = buildImportedStateSelectors(
-        selector,
-        scopeSelector,
-        'data-hovered="true"',
-        ":hover"
-      );
-      for (const hoveredSelector of hoveredSelectors) {
-        if (hoveredSelector !== selector) {
-          selectors.push(hoveredSelector);
-        }
-      }
-      const pressedSelectors = buildImportedStateSelectors(
-        selector,
-        scopeSelector,
-        'data-pressed="true"',
-        ":active"
-      );
-      for (const pressedSelector of pressedSelectors) {
-        if (pressedSelector !== selector) {
-          selectors.push(pressedSelector);
-        }
-      }
-      return selectors;
-    });
-    const scopedPrelude = Array.from(new Set(expandedSelectors)).join(", ");
+    const scopedPrelude = Array.from(new Set(scopedSelectors)).join(", ");
     output += `${scopedPrelude}{${blockContent}}`;
     cursor = closeBraceIndex + 1;
   }
@@ -426,54 +362,560 @@ export function usesLegacyImportedBodyShell(
   );
 }
 
+type ImportedSkinBridgeElement = string | HTMLElement | null | undefined;
+
+type ImportedSkinBridgeMountOptions = {
+  interactive?: ImportedSkinBridgeElement;
+  measure?: ImportedSkinBridgeElement;
+  label?: ImportedSkinBridgeElement;
+  fitLabel?: boolean;
+  maxInlineSize?: string;
+  compactMaxInlineSize?: string;
+  minFontScale?: number;
+  labelScale?: number;
+};
+
+type ImportedSkinBridgeApi = {
+  host: HTMLDivElement;
+  shadowRoot: ShadowRoot;
+  query: (selector: string) => HTMLElement | null;
+  queryAll: (selector: string) => HTMLElement[];
+  firstElement: () => HTMLElement | null;
+  hostSurfaceIncludes: (token: string) => boolean;
+  mountButton: (options?: ImportedSkinBridgeMountOptions) => () => void;
+};
+
+function dispatchImportedSkinCustomEvent(
+  host: HTMLDivElement,
+  name: string,
+  detail: Record<string, unknown> = {}
+) {
+  host.dispatchEvent(
+    new CustomEvent(name, {
+      detail,
+      bubbles: false
+    })
+  );
+}
+
+function resolveImportedSkinElement(args: {
+  shadowRoot: ShadowRoot;
+  htmlNode: HTMLDivElement;
+  svgNode: HTMLDivElement;
+  candidate: ImportedSkinBridgeElement;
+  fallbackSelectors?: string[];
+}): HTMLElement | null {
+  const { shadowRoot, htmlNode, svgNode, candidate, fallbackSelectors } = args;
+  if (candidate instanceof HTMLElement) {
+    return candidate;
+  }
+  if (typeof candidate === "string" && candidate.trim()) {
+    return shadowRoot.querySelector(candidate) as HTMLElement | null;
+  }
+  if (fallbackSelectors) {
+    for (const selector of fallbackSelectors) {
+      const matchedNode = shadowRoot.querySelector(selector) as HTMLElement | null;
+      if (matchedNode) {
+        return matchedNode;
+      }
+    }
+  }
+
+  return (
+    (htmlNode.firstElementChild as HTMLElement | null) ??
+    (svgNode.firstElementChild as HTMLElement | null) ??
+    null
+  );
+}
+
+function captureImportedSkinMeasurement(measureElement: HTMLElement) {
+  measureElement.dataset.flowMeasuredOffsetWidth = String(measureElement.offsetWidth);
+  measureElement.dataset.flowMeasuredOffsetHeight = String(measureElement.offsetHeight);
+  measureElement.dataset.flowMeasuredScrollWidth = String(measureElement.scrollWidth);
+  measureElement.dataset.flowMeasuredScrollHeight = String(measureElement.scrollHeight);
+}
+
+function removeImportedSkinTwoWordLabelOverlay(labelElement: HTMLElement) {
+  labelElement
+    .querySelectorAll("[data-flow-two-word-label-overlay='true']")
+    .forEach((node) => node.remove());
+}
+
+function measureImportedSkinLabelTextWidth(
+  labelElement: HTMLElement,
+  text: string
+): number {
+  const ownerDocument = labelElement.ownerDocument;
+  const ownerBody = ownerDocument.body;
+  if (!ownerBody) {
+    return labelElement.scrollWidth;
+  }
+
+  const computedStyle = window.getComputedStyle(labelElement);
+  const probe = ownerDocument.createElement("span");
+  probe.textContent = text;
+  probe.style.position = "fixed";
+  probe.style.left = "-9999px";
+  probe.style.top = "-9999px";
+  probe.style.visibility = "hidden";
+  probe.style.whiteSpace = "nowrap";
+  probe.style.fontFamily = computedStyle.fontFamily;
+  probe.style.fontSize = computedStyle.fontSize;
+  probe.style.fontStyle = computedStyle.fontStyle;
+  probe.style.fontVariant = computedStyle.fontVariant;
+  probe.style.fontWeight = computedStyle.fontWeight;
+  probe.style.letterSpacing = computedStyle.letterSpacing;
+  probe.style.textTransform = computedStyle.textTransform;
+  ownerBody.appendChild(probe);
+  const width = probe.getBoundingClientRect().width;
+  probe.remove();
+  return width;
+}
+
+function applyImportedSkinTwoWordLabelOverlay(
+  labelElement: HTMLElement,
+  measureElement: HTMLElement
+): boolean {
+  removeImportedSkinTwoWordLabelOverlay(labelElement);
+  const normalizedLabel = (labelElement.textContent ?? "").trim().replace(/\s+/g, " ");
+  const words = normalizedLabel.split(" ").filter(Boolean);
+  if (words.length !== 2) {
+    return false;
+  }
+
+  const visualEdgeInsetPx = 3;
+  const oneLineTextWidth = measureImportedSkinLabelTextWidth(labelElement, normalizedLabel);
+  const measureWidth = measureElement.getBoundingClientRect().width;
+  const availableVisualWidth = Math.max(1, measureWidth - visualEdgeInsetPx * 2);
+  const shouldStack = oneLineTextWidth > availableVisualWidth;
+  const computedStyle = window.getComputedStyle(labelElement);
+  const labelColor =
+    labelElement.dataset.flowTwoWordLabelColor ?? computedStyle.color;
+  const labelTextShadow =
+    labelElement.dataset.flowTwoWordLabelTextShadow ?? computedStyle.textShadow;
+  labelElement.dataset.flowTwoWordLabelColor = labelColor;
+  labelElement.dataset.flowTwoWordLabelTextShadow = labelTextShadow;
+
+  labelElement.style.position = "relative";
+  labelElement.style.setProperty("color", "transparent", "important");
+  labelElement.style.setProperty("text-shadow", "none", "important");
+  labelElement.style.textAlign = "center";
+  labelElement.style.whiteSpace = "nowrap";
+  labelElement.style.textWrap = "nowrap";
+
+  const overlay = document.createElement("span");
+  overlay.setAttribute("data-flow-two-word-label-overlay", "true");
+  overlay.setAttribute("aria-hidden", "true");
+  overlay.style.position = "absolute";
+  overlay.style.left = `${visualEdgeInsetPx}px`;
+  overlay.style.right = `${visualEdgeInsetPx}px`;
+  overlay.style.top = "0";
+  overlay.style.bottom = "0";
+  overlay.style.zIndex = "5";
+  overlay.style.display = "flex";
+  overlay.style.flexDirection = shouldStack ? "column" : "row";
+  overlay.style.alignItems = "center";
+  overlay.style.justifyContent = "center";
+  overlay.style.fontFamily = "inherit";
+  overlay.style.fontSize = "inherit";
+  overlay.style.fontWeight = "inherit";
+  overlay.style.letterSpacing = "inherit";
+  overlay.style.lineHeight = "0.95";
+  overlay.style.textAlign = "center";
+  overlay.style.whiteSpace = "nowrap";
+  overlay.style.pointerEvents = "none";
+  overlay.style.color = labelColor;
+  overlay.style.textShadow = labelTextShadow;
+
+  const visualRows = shouldStack ? words : [normalizedLabel];
+  visualRows.forEach((word) => {
+    const wordNode = document.createElement("span");
+    wordNode.textContent = word;
+    wordNode.style.display = "block";
+    overlay.appendChild(wordNode);
+  });
+  labelElement.appendChild(overlay);
+  return true;
+}
+
+function installImportedSkinLabelSizing(args: {
+  host: HTMLDivElement;
+  measureElement: HTMLElement;
+  labelElement: HTMLElement | null;
+  options: ImportedSkinBridgeMountOptions;
+  hostSurfaceIncludes: (token: string) => boolean;
+}): () => void {
+  const { host, measureElement, labelElement, options, hostSurfaceIncludes } = args;
+  if (!labelElement) {
+    return () => undefined;
+  }
+
+  const isCompact =
+    host.dataset.compact === "true" || host.classList.contains("is-compact");
+  const maxInlineSize =
+    options.maxInlineSize ??
+    (hostSurfaceIncludes("surface-action") || hostSurfaceIncludes("chrome-action")
+      ? "14ch"
+      : "18ch");
+  const compactMaxInlineSize = options.compactMaxInlineSize ?? "11ch";
+  const baseScale = Math.min(3, Math.max(0.3, options.labelScale ?? 1));
+  labelElement.style.width = "fit-content";
+  labelElement.style.maxWidth = "100%";
+  labelElement.style.maxInlineSize = isCompact ? compactMaxInlineSize : maxInlineSize;
+  labelElement.style.whiteSpace = "nowrap";
+  labelElement.style.overflowWrap = "normal";
+  labelElement.style.hyphens = "manual";
+  labelElement.style.textWrap = "nowrap";
+  labelElement.style.wordBreak = "normal";
+
+  const minimumScale = Math.min(1, Math.max(0.58, options.minFontScale ?? 0.72));
+  let resizeObserver: ResizeObserver | null = null;
+  let animationFrameId = 0;
+
+  const fitLabelToHostHeight = () => {
+    removeImportedSkinTwoWordLabelOverlay(labelElement);
+    labelElement.style.fontSize = `${baseScale}em`;
+    const availableWidth = Math.max(0, host.clientWidth - 8);
+    const availableHeight = Math.max(0, host.clientHeight - 4);
+    if (availableWidth <= 0 || availableHeight <= 0) {
+      applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
+      return;
+    }
+
+    let scale = baseScale;
+    while (
+      (measureElement.scrollHeight > availableHeight ||
+        measureElement.scrollWidth > availableWidth) &&
+      scale > minimumScale
+    ) {
+        scale = Math.max(minimumScale, Number((scale - 0.05).toFixed(2)));
+        labelElement.style.fontSize = `${scale}em`;
+        if (scale === minimumScale) {
+          break;
+        }
+    }
+    captureImportedSkinMeasurement(measureElement);
+    applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
+    host.dispatchEvent(new CustomEvent("flow-skin-content-ready"));
+  };
+
+  const scheduleFit = () => {
+    if (animationFrameId) {
+      window.cancelAnimationFrame(animationFrameId);
+    }
+    animationFrameId = window.requestAnimationFrame(() => {
+      fitLabelToHostHeight();
+    });
+  };
+
+  scheduleFit();
+  if (typeof ResizeObserver !== "undefined") {
+    resizeObserver = new ResizeObserver(() => {
+      scheduleFit();
+    });
+    resizeObserver.observe(host);
+    resizeObserver.observe(measureElement);
+    resizeObserver.observe(labelElement);
+  }
+
+  return () => {
+    if (animationFrameId) {
+      window.cancelAnimationFrame(animationFrameId);
+    }
+    resizeObserver?.disconnect();
+  };
+}
+
+function installImportedSkinBridgeButton(args: {
+  host: HTMLDivElement;
+  shadowRoot: ShadowRoot;
+  htmlNode: HTMLDivElement;
+  svgNode: HTMLDivElement;
+  options: ImportedSkinBridgeMountOptions;
+  hostSurfaceIncludes: (token: string) => boolean;
+}): () => void {
+  const { host, shadowRoot, htmlNode, svgNode, options, hostSurfaceIncludes } = args;
+  const interactiveElement = resolveImportedSkinElement({
+    shadowRoot,
+    htmlNode,
+    svgNode,
+    candidate: options.interactive,
+    fallbackSelectors: [
+      "[data-flow-interactive]",
+      ".button",
+      "button",
+      ".glass-hover-button",
+      ".black-tint-pill",
+      ".imported-pill",
+      ".glass-pill"
+    ]
+  });
+  const measureElement =
+    resolveImportedSkinElement({
+      shadowRoot,
+      htmlNode,
+      svgNode,
+      candidate: options.measure,
+      fallbackSelectors: [
+        "[data-flow-measure]",
+        ".button",
+        "button",
+        ".glass-hover-wrap",
+        ".black-tint-pill",
+        ".imported-pill",
+        ".glass-pill",
+        ".default-root",
+        ".body"
+      ]
+    }) ?? interactiveElement;
+  const labelElement = resolveImportedSkinElement({
+    shadowRoot,
+    htmlNode,
+    svgNode,
+    candidate: options.label,
+    fallbackSelectors: [
+      "[data-flow-label-node]",
+      ".span",
+      ".glass-hover-label",
+      ".black-tint-pill__label",
+      ".imported-pill__label",
+      ".glass-pill__label"
+    ]
+  });
+
+  measureElement?.setAttribute("data-flow-measure", "true");
+  if (measureElement) {
+    captureImportedSkinMeasurement(measureElement);
+  }
+  const cleanupLabelSizing =
+    measureElement &&
+    labelElement &&
+    (options.fitLabel === true ||
+      options.maxInlineSize !== undefined ||
+      options.compactMaxInlineSize !== undefined ||
+      options.minFontScale !== undefined)
+      ? installImportedSkinLabelSizing({
+          host,
+          measureElement,
+          labelElement,
+          options,
+          hostSurfaceIncludes
+        })
+      : () => undefined;
+  if (labelElement && measureElement) {
+    applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
+  }
+
+  if (!interactiveElement) {
+    return cleanupLabelSizing;
+  }
+
+  interactiveElement.setAttribute("data-flow-interactive", "true");
+  let pressed = false;
+  const releasePressed = () => {
+    if (!pressed) {
+      return;
+    }
+    pressed = false;
+    dispatchImportedSkinCustomEvent(host, "flow-skin-state", { pressed: false });
+  };
+
+  const handlePointerEnter = () => {
+    dispatchImportedSkinCustomEvent(host, "flow-skin-state", { hovered: true });
+  };
+  const handlePointerLeave = () => {
+    dispatchImportedSkinCustomEvent(host, "flow-skin-state", {
+      hovered: false,
+      pressed: false
+    });
+    pressed = false;
+  };
+  const handlePointerDown = (event: PointerEvent) => {
+    if (event.button !== 0) {
+      return;
+    }
+    pressed = true;
+    dispatchImportedSkinCustomEvent(host, "flow-skin-request-focus");
+    dispatchImportedSkinCustomEvent(host, "flow-skin-state", {
+      hovered: true,
+      pressed: true
+    });
+  };
+  const handlePointerUp = () => {
+    releasePressed();
+  };
+  const handleClick = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dispatchImportedSkinCustomEvent(host, "flow-skin-request-focus");
+    dispatchImportedSkinCustomEvent(host, "flow-skin-activate", {
+      altKey: event.altKey,
+      button: event.button,
+      buttons: event.buttons,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      ctrlKey: event.ctrlKey,
+      detail: event.detail,
+      metaKey: event.metaKey,
+      screenX: event.screenX,
+      screenY: event.screenY,
+      shiftKey: event.shiftKey
+    });
+  };
+  const handleContextMenu = (event: MouseEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    dispatchImportedSkinCustomEvent(host, "flow-skin-request-focus");
+    dispatchImportedSkinCustomEvent(host, "flow-skin-contextmenu", {
+      clientX: event.clientX,
+      clientY: event.clientY
+    });
+  };
+  const handleFocusIn = () => {
+    dispatchImportedSkinCustomEvent(host, "flow-skin-state", { focused: true });
+  };
+  const handleFocusOut = () => {
+    dispatchImportedSkinCustomEvent(host, "flow-skin-state", { focused: false });
+    releasePressed();
+  };
+
+  interactiveElement.addEventListener("pointerenter", handlePointerEnter);
+  interactiveElement.addEventListener("pointerleave", handlePointerLeave);
+  interactiveElement.addEventListener("pointerdown", handlePointerDown);
+  interactiveElement.addEventListener("pointerup", handlePointerUp);
+  interactiveElement.addEventListener("click", handleClick);
+  interactiveElement.addEventListener("contextmenu", handleContextMenu);
+  interactiveElement.addEventListener("focusin", handleFocusIn);
+  interactiveElement.addEventListener("focusout", handleFocusOut);
+  window.addEventListener("pointerup", releasePressed);
+  window.addEventListener("pointercancel", releasePressed);
+
+  return () => {
+    cleanupLabelSizing();
+    interactiveElement.removeEventListener("pointerenter", handlePointerEnter);
+    interactiveElement.removeEventListener("pointerleave", handlePointerLeave);
+    interactiveElement.removeEventListener("pointerdown", handlePointerDown);
+    interactiveElement.removeEventListener("pointerup", handlePointerUp);
+    interactiveElement.removeEventListener("click", handleClick);
+    interactiveElement.removeEventListener("contextmenu", handleContextMenu);
+    interactiveElement.removeEventListener("focusin", handleFocusIn);
+    interactiveElement.removeEventListener("focusout", handleFocusOut);
+    window.removeEventListener("pointerup", releasePressed);
+    window.removeEventListener("pointercancel", releasePressed);
+  };
+}
+
+function runImportedSkinBridge(args: {
+  host: HTMLDivElement;
+  shadowRoot: ShadowRoot;
+  htmlNode: HTMLDivElement;
+  svgNode: HTMLDivElement;
+  importedSkin: ImportedSkin;
+}): () => void {
+  const { host, shadowRoot, htmlNode, svgNode, importedSkin } = args;
+  const hostSurfaceTokens = (host.dataset.flowSurface ?? "")
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  const hostSurfaceIncludes = (token: string) => hostSurfaceTokens.includes(token);
+  let implicitCleanup: () => void = () => undefined;
+  const bridgeApi: ImportedSkinBridgeApi = {
+    host,
+    shadowRoot,
+    query: (selector) => shadowRoot.querySelector(selector) as HTMLElement | null,
+    queryAll: (selector) =>
+      Array.from(shadowRoot.querySelectorAll(selector)).filter(
+        (node): node is HTMLElement => node instanceof HTMLElement
+      ),
+    firstElement: () =>
+      ((htmlNode.firstElementChild as HTMLElement | null) ??
+        (svgNode.firstElementChild as HTMLElement | null) ??
+        null),
+    hostSurfaceIncludes,
+    mountButton: (options = {}) => {
+      const mergedOptions = {
+        ...options,
+        maxInlineSize:
+          typeof importedSkin.labelMaxWidth === "number" &&
+          Number.isFinite(importedSkin.labelMaxWidth) &&
+          importedSkin.labelMaxWidth > 0
+            ? `${Math.round(importedSkin.labelMaxWidth * 1000) / 1000}px`
+            : options.maxInlineSize,
+        minFontScale:
+          typeof importedSkin.labelMinScale === "number" &&
+          Number.isFinite(importedSkin.labelMinScale) &&
+          importedSkin.labelMinScale > 0
+            ? importedSkin.labelMinScale
+            : options.minFontScale,
+        labelScale:
+          typeof importedSkin.labelScale === "number" &&
+          Number.isFinite(importedSkin.labelScale) &&
+          importedSkin.labelScale > 0
+            ? importedSkin.labelScale
+            : options.labelScale
+      };
+      implicitCleanup = installImportedSkinBridgeButton({
+        host,
+        shadowRoot,
+        htmlNode,
+        svgNode,
+        options: mergedOptions,
+        hostSurfaceIncludes
+      });
+      return implicitCleanup;
+    }
+  };
+
+  const bridgeSource = importedSkin.bridgeJs?.trim();
+  if (!bridgeSource) {
+    return bridgeApi.mountButton();
+  }
+
+  try {
+    const bridgeRunner = new Function("bridge", bridgeSource);
+    const bridgeResult = bridgeRunner(bridgeApi);
+    if (typeof bridgeResult === "function") {
+      return bridgeResult as () => void;
+    }
+    return implicitCleanup;
+  } catch (error) {
+    console.error("Imported skin bridge failed.", error, {
+      importedSkinId: importedSkin.id
+    });
+    return bridgeApi.mountButton();
+  }
+
+  return () => undefined;
+}
+
 function buildImportedButtonShadowCss(
   importedSkin: ImportedSkin,
   inlineCssBlocks: string[] = []
 ): string {
-  const usesLegacyBodyShell = usesLegacyImportedBodyShell(importedSkin);
   const scopedCssBlocks = [sanitizeMarkup(importedSkin.css), ...inlineCssBlocks]
     .map((cssBlock) => cssBlock.trim())
     .filter(Boolean)
     .map((cssBlock) => scopeImportedCssRules(cssBlock, ":host"));
   return [
-    ":host{position:relative;display:inline-grid;place-items:center;min-width:0;min-height:0;color:inherit;text-align:center;overflow:visible;}",
+    "@property --angle-1{syntax:\"<angle>\";inherits:false;initial-value:-75deg}",
+    "@property --angle-2{syntax:\"<angle>\";inherits:false;initial-value:-75deg}",
+    ":host{--angle-1:-75deg;--angle-2:-75deg;position:relative;display:inline-grid;place-items:center;min-width:0;min-height:0;color:inherit;text-align:center;overflow:visible;}",
     ":host([data-flow-sizing=\"fill-stretch\"]){width:100%;height:100%;}",
     ":host([data-flow-overflow=\"false\"]){overflow:hidden;}",
     ":host([data-flow-sizing=\"fill-stretch\"]) .imported-html,:host([data-flow-sizing=\"fill-stretch\"]) .imported-svg{width:100%;height:100%;}",
     ".imported-svg{position:absolute;inset:8px;opacity:.6;}",
     ".imported-svg svg{width:100%;height:100%;}",
-    ".imported-html{position:relative;z-index:1;display:inline-grid;place-items:center;width:auto;height:auto;line-height:0;}",
+    ".imported-html{position:relative;z-index:1;display:inline-grid;place-items:center;width:auto;height:auto;line-height:0;pointer-events:none;}",
     ".imported-html>:first-child{margin:0!important;}",
     ".imported-html>button{display:block;margin:0;width:auto;max-width:100%;vertical-align:middle;line-height:normal;box-sizing:border-box;}",
-    ":host([data-flow-footprint=\"default-axis-normalized\"]) .imported-html{display:grid;width:100%;height:100%;place-items:center;overflow:visible;}",
-    ":host([data-flow-footprint=\"default-axis-normalized\"]) .imported-html>:first-child{transform:scale(var(--flow-scale,1));transform-origin:center center;}",
-    usesLegacyBodyShell
-      ? ".imported-html>.body{width:100%!important;height:100%!important;margin:0!important;padding:0!important;display:flex!important;align-items:center!important;justify-content:center!important;font-size:.875rem!important;background:transparent!important;overflow:hidden!important;min-width:0!important;min-height:0!important;}"
-      : ".imported-html>.body{margin:0!important;background:transparent!important;min-width:0!important;min-height:0!important;}",
-    usesLegacyBodyShell
-      ? ":host.is-compact .imported-html>.body{font-size:.72rem!important;}"
-      : "",
-    usesLegacyBodyShell
-      ? ".imported-html>.body>*{flex:0 1 auto;min-width:0;min-height:0;max-width:100%;max-height:100%;}"
-      : ".imported-html>.body>*{min-width:0;min-height:0;}",
-    usesLegacyBodyShell
-      ? ".imported-html>.body>.button-wrap,.imported-html>.body>.button,.imported-html>.body .button{max-width:100%!important;max-height:100%!important;}"
-      : "",
-    usesLegacyBodyShell
-      ? ":host([data-flow-sizing=\"fill-stretch\"]) .imported-html>.body,:host([data-flow-sizing=\"responsive-uniform\"]) .imported-html>.body{width:100%!important;height:100%!important;}"
-      : "",
-    usesLegacyBodyShell
-      ? ":host([data-flow-sizing=\"fill-stretch\"]) .imported-html>.body>.button-wrap,:host([data-flow-sizing=\"responsive-uniform\"]) .imported-html>.body>.button-wrap{display:flex!important;align-items:stretch!important;justify-content:stretch!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;}"
-      : "",
-    usesLegacyBodyShell
-      ? ":host([data-flow-sizing=\"fill-stretch\"]) .imported-html>.body>.button-wrap>.button,:host([data-flow-sizing=\"responsive-uniform\"]) .imported-html>.body>.button-wrap>.button,:host([data-flow-sizing=\"fill-stretch\"]) .imported-html>.body .button,:host([data-flow-sizing=\"responsive-uniform\"]) .imported-html>.body .button{display:flex!important;align-items:stretch!important;justify-content:stretch!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;box-sizing:border-box!important;}"
-      : "",
-    usesLegacyBodyShell
-      ? ":host([data-flow-sizing=\"fill-stretch\"]) .imported-html>.body>.button-wrap>.button>.span,:host([data-flow-sizing=\"responsive-uniform\"]) .imported-html>.body>.button-wrap>.button>.span,:host([data-flow-sizing=\"fill-stretch\"]) .imported-html>.body .button>.span,:host([data-flow-sizing=\"responsive-uniform\"]) .imported-html>.body .button>.span{display:flex!important;align-items:center!important;justify-content:center!important;min-width:0!important;min-height:100%!important;box-sizing:border-box!important;}"
-      : "",
-    ".imported-html,.imported-html *,.imported-svg,.imported-svg *{pointer-events:none!important;}",
+    "[data-flow-interactive='true']{pointer-events:auto!important;}",
+    ":host([data-flow-sizing=\"fit-uniform\"]) .imported-html,:host([data-flow-sizing=\"responsive-uniform\"]) .imported-html,:host([data-flow-footprint=\"default-axis-normalized\"]) .imported-html{display:grid;width:100%;height:100%;place-items:center;overflow:visible;}",
+    ":host([data-flow-sizing=\"fit-uniform\"]) .imported-html>:first-child,:host([data-flow-sizing=\"responsive-uniform\"]) .imported-html>:first-child,:host([data-flow-footprint=\"default-axis-normalized\"]) .imported-html>:first-child{transform:scale(var(--flow-scale,1));transform-origin:center center;}",
+    ".imported-svg,.imported-svg *{pointer-events:none!important;}",
     ".glass-hover-label,.imported-pill__label{color:var(--fc-theme-page-foreground)!important;text-shadow:0 .18em .08em color-mix(in srgb,var(--fc-theme-surface-shadow) 34%,transparent)!important;}",
-    ...scopedCssBlocks
+    ...scopedCssBlocks,
+    ".imported-html>.body{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:auto!important;height:auto!important;min-width:0!important;min-height:0!important;background:transparent!important;overflow:visible!important;}",
+    ".imported-html>.body>*{min-width:0;min-height:0;}"
   ]
     .filter(Boolean)
     .join("\n");
@@ -505,6 +947,23 @@ const ImportedButtonSkinRoot = forwardRef<HTMLDivElement, ImportedButtonSkinRoot
     ref
   ) => {
     const hostRef = useRef<HTMLDivElement | null>(null);
+    const resolvedSizingMode = dataAttributes?.["data-flow-sizing"];
+    const shouldFillHost =
+      resolvedSizingMode === "fill-stretch" ||
+      resolvedSizingMode === "fit-uniform" ||
+      resolvedSizingMode === "responsive-uniform" ||
+      Boolean(dataAttributes?.["data-flow-footprint"]);
+    const hostStyle: CSSProperties = {
+      ...(style ?? {}),
+      display: "inline-grid",
+      width: shouldFillHost ? "100%" : "fit-content",
+      height: shouldFillHost ? "100%" : "fit-content",
+      minWidth: 0,
+      minHeight: 0,
+      justifySelf: shouldFillHost ? "stretch" : "center",
+      alignSelf: shouldFillHost ? "stretch" : "center",
+      pointerEvents: "none"
+    };
 
     const setHostRef = (node: HTMLDivElement | null) => {
       hostRef.current = node;
@@ -565,6 +1024,13 @@ const ImportedButtonSkinRoot = forwardRef<HTMLDivElement, ImportedButtonSkinRoot
       );
       svgNode.innerHTML = importedSkin.svg ? sanitizeMarkup(importedSkin.svg) : "";
       htmlNode.innerHTML = preparedMarkup.markup;
+      const cleanupBridge = runImportedSkinBridge({
+        host,
+        shadowRoot,
+        htmlNode,
+        svgNode,
+        importedSkin
+      });
       host.dispatchEvent(new CustomEvent("flow-skin-content-ready"));
 
       const applyNormalizedFootprintScale = () => {
@@ -622,6 +1088,7 @@ const ImportedButtonSkinRoot = forwardRef<HTMLDivElement, ImportedButtonSkinRoot
 
       if (typeof ResizeObserver === "undefined") {
         return () => {
+          cleanupBridge();
           window.cancelAnimationFrame(animationFrameId);
         };
       }
@@ -634,6 +1101,7 @@ const ImportedButtonSkinRoot = forwardRef<HTMLDivElement, ImportedButtonSkinRoot
         observer.observe(htmlNode.firstElementChild);
       }
       return () => {
+        cleanupBridge();
         window.cancelAnimationFrame(animationFrameId);
         observer.disconnect();
       };
@@ -643,7 +1111,7 @@ const ImportedButtonSkinRoot = forwardRef<HTMLDivElement, ImportedButtonSkinRoot
       <div
         ref={setHostRef}
         className={className}
-        style={style}
+        style={hostStyle}
         onPointerEnter={onPointerEnter}
         onPointerLeave={onPointerLeave}
         {...dataAttributes}

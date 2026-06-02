@@ -1,0 +1,167 @@
+.dimensions-toolbox-window-page {
+  position: relative;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
+
+.dimensions-toolbox-window-page__shell {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  box-sizing: border-box;
+  touch-action: none;
+}
+
+.dimensions-toolbox-window-page--space-drag,
+.dimensions-toolbox-window-page--space-drag * {
+  cursor: grab !important;
+}
+
+.dimensions-toolbox-window-page--dragging,
+.dimensions-toolbox-window-page--dragging * {
+  cursor: grabbing !important;
+}
+
+.dimensions-toolbox-window-page__viewport {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: hidden;
+  z-index: 2;
+}
+
+.dimensions-toolbox-window-page__surface-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.dimensions-toolbox-window-page__surface-scale {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.dimensions-toolbox-window-page__surface {
+  position: relative;
+  display: block;
+  padding: 0;
+  margin: 0;
+}
+
+.dimensions-toolbox-window-page__svg {
+  position: absolute;
+  inset: 0;
+  display: block;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.dimensions-toolbox-window-page__button {
+  position: absolute;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  appearance: none;
+  background: transparent;
+  cursor: default;
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.32);
+  transition: box-shadow 160ms ease;
+}
+
+.dimensions-toolbox-window-page__button:hover {
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.36);
+}
+
+.dimensions-toolbox-window-page__button:focus-visible {
+  outline: 1px solid rgba(255, 255, 255, 0.82);
+  outline-offset: 1px;
+}
+
+.dimensions-toolbox-window-page__resize-handle {
+  position: absolute;
+  z-index: 5;
+  background: transparent;
+  touch-action: none;
+}
+
+.dimensions-toolbox-window-page__resize-handle--north {
+  top: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.dimensions-toolbox-window-page__resize-handle--south {
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.dimensions-toolbox-window-page__resize-handle--east {
+  top: 10px;
+  right: 0;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.dimensions-toolbox-window-page__resize-handle--west {
+  top: 10px;
+  left: 0;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.dimensions-toolbox-window-page__resize-handle--north-east {
+  top: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.dimensions-toolbox-window-page__resize-handle--north-west {
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
+.dimensions-toolbox-window-page__resize-handle--south-east {
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
+.dimensions-toolbox-window-page__resize-handle--south-west {
+  left: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.dimensions-toolbox-window-page__status {
+  margin: 0;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: rgba(7, 11, 10, 0.86);
+  border: 1px solid rgba(223, 233, 227, 0.18);
+  color: rgba(244, 247, 241, 0.96);
+  font: 600 0.95rem/1.45 "Segoe UI", sans-serif;
+}

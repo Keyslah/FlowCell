@@ -27,4 +27,4 @@ If backendFound Then
     WScript.Quit 0
 End If
 
-shell.Run Chr(34) & ahkExe & Chr(34) & " /ErrorStdOut " & Chr(34) & backendScript & Chr(34) & " --headless", 0, False
+shell.Run Chr(34) & ahkExe & Chr(34) & " " & Chr(34) & backendScript & Chr(34) & " --headless", 0, False

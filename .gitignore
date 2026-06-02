@@ -1,49 +1,32 @@
 FlowCell/local/
 
-Illustrator/ScriptDump/**
-!Illustrator/ScriptDump/
-!Illustrator/ScriptDump/Downloaded/
-!Illustrator/ScriptDump/Downloaded/.gitkeep
-!Illustrator/ScriptDump/Testing/
-!Illustrator/ScriptDump/Testing/.gitkeep
-!Illustrator/ScriptDump/OldVersions/
-!Illustrator/ScriptDump/OldVersions/.gitkeep
+# Program-local button/layout state and durable private script copies.
+Programs/*/Panels/**
+Programs/*/* Local Scripts/**
 
-Photoshop/ScriptDump/**
-!Photoshop/ScriptDump/
-!Photoshop/ScriptDump/Downloaded/
-!Photoshop/ScriptDump/Downloaded/.gitkeep
-!Photoshop/ScriptDump/Testing/
-!Photoshop/ScriptDump/Testing/.gitkeep
-!Photoshop/ScriptDump/OldVersions/
-!Photoshop/ScriptDump/OldVersions/.gitkeep
+# Deprecated/generated script locations kept out of Git.
+Programs/*/* Active Scripts/**
+Programs/Blender/Blender Scripts/**
+Programs/Illustrator/Illustrator Scripts/**
+Programs/Photoshop/Photoshop Scripts/**
+Programs/Windows/Windows Scripts/**
+Programs/*/ScriptBank/**
+Programs/*/ManagedActions/**
+Programs/*/**/__pycache__/**
+*.pyc
 
-Windows/ScriptDump/**
-!Windows/ScriptDump/
-!Windows/ScriptDump/Downloaded/
-!Windows/ScriptDump/Downloaded/.gitkeep
-!Windows/ScriptDump/Testing/
-!Windows/ScriptDump/Testing/.gitkeep
-!Windows/ScriptDump/OldVersions/
-!Windows/ScriptDump/OldVersions/.gitkeep
+# Do not track loose program-root scripts; use Git Scripts instead.
+Programs/*/*.ahk
+Programs/*/*.bat
+Programs/*/*.cmd
+Programs/*/*.js
+Programs/*/*.jsx
+Programs/*/*.py
+Programs/*/*.ps1
+Programs/*/*.vbs
 
-Blender/ScriptDump/**
-!Blender/ScriptDump/
-!Blender/ScriptDump/Downloaded/
-!Blender/ScriptDump/Downloaded/.gitkeep
-!Blender/ScriptDump/Testing/
-!Blender/ScriptDump/Testing/.gitkeep
-!Blender/ScriptDump/OldVersions/
-!Blender/ScriptDump/OldVersions/.gitkeep
-
-Blender/FlowCellButtons/ScriptDump/**
-!Blender/FlowCellButtons/ScriptDump/
-!Blender/FlowCellButtons/ScriptDump/Downloaded/
-!Blender/FlowCellButtons/ScriptDump/Downloaded/.gitkeep
-!Blender/FlowCellButtons/ScriptDump/Testing/
-!Blender/FlowCellButtons/ScriptDump/Testing/.gitkeep
-!Blender/FlowCellButtons/ScriptDump/OldVersions/
-!Blender/FlowCellButtons/ScriptDump/OldVersions/.gitkeep
+# Loose/testing/old script dumps stay fully local.
+Programs/*/[Ss]cript[Dd]ump/**
 
 *.exe
 *.dll

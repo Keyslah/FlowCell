@@ -218,7 +218,10 @@ export function canonicalizeShortcut(value: string): string {
 }
 
 export function normalizeShortcut(value: string): string {
-  return canonicalizeShortcut(value).toLowerCase().replace(/\s+/g, "");
+  return canonicalizeShortcut(value)
+    .replace(/\{([^{}]+)\}/g, "$1")
+    .toLowerCase()
+    .replace(/\s+/g, "");
 }
 
 export function parseShortcutInput(value: string): string {
@@ -228,7 +231,7 @@ export function parseShortcutInput(value: string): string {
   }
 
   const looksLikeAhkShortcut =
-    /[\^#!]|<\^|>\^|<!|>!|<\+|>\+|<#|>#|\{.+\}/.test(trimmed) &&
+    /[~\^#!]|<\^|>\^|<!|>!|<\+|>\+|<#|>#|\{.+\}/.test(trimmed) &&
     !/[a-z]+\s+\+\s+[a-z0-9-]/i.test(trimmed);
   if (looksLikeAhkShortcut) {
     return canonicalizeShortcut(trimmed);
@@ -311,6 +314,11 @@ export function formatShortcutForDisplay(value: string): string {
   const shortcut = canonicalizeShortcut(value);
   if (!shortcut) {
     return "";
+  }
+
+  if (shortcut.startsWith("~")) {
+    const passThroughDisplay = formatShortcutForDisplay(shortcut.slice(1));
+    return passThroughDisplay ? `${passThroughDisplay} (pass-through)` : shortcut;
   }
 
   if (/[\^!+#<>]/.test(shortcut)) {

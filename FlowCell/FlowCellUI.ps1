@@ -287,9 +287,10 @@ $script:FlowCellCommandHostTempRoot = Join-Path $script:FlowCellTempRoot 'comman
 $script:FlowCellLastPanelSaveFolder = $script:FlowCellPanelSavesRoot
 $script:FlowCellLastLayoutFolder = $script:FlowCellLayoutsRoot
 $script:LegacyIllustratorScriptsDir = 'C:\Program Files\Adobe\Adobe Illustrator 2026\Presets\en_US\Scripts'
-$script:IllustratorScriptsDir = Join-Path $script:FlowCellHomeRoot 'Illustrator'
-$script:PhotoshopScriptsDir = Join-Path $script:FlowCellHomeRoot 'Photoshop'
-$script:IllustratorHelperScriptsDir = Join-Path $script:FlowCellHomeRoot 'Illustrator\HelperScripts'
+$script:IllustratorScriptsDir = Join-Path $script:FlowCellHomeRoot 'Programs\Illustrator\Illustrator Git Scripts'
+$script:PhotoshopScriptsDir = Join-Path $script:FlowCellHomeRoot 'Programs\Photoshop\Photoshop Git Scripts'
+$script:WindowsScriptsDir = Join-Path $script:FlowCellHomeRoot 'Programs\Windows\Windows Git Scripts'
+$script:IllustratorHelperScriptsDir = Join-Path $script:FlowCellHomeRoot 'Programs\Illustrator\HelperScripts'
 $script:FlowCellCommandHostScriptPath = Join-Path $script:ProjectRoot 'FlowCellCommandBackend.ps1'
 $script:LogsDir = Join-Path $script:FlowCellLocalRoot 'logs'
 $script:ControllerLogPath = Join-Path $script:LogsDir 'controller.log'
@@ -337,8 +338,8 @@ $script:ProgramTabStatus = $null
 $script:FlowCellMainHoverStatusText = $null
 $script:FlowCellMainHoverDelayMs = 2000
 $script:FlowCellMainHoverHintText = 'Hover over a button for 2 seconds to see what it does.'
-$script:FlowCellAppearanceRoot = Join-Path $script:FlowCellLocalRoot 'appearance\style_groups'
-$script:FlowCellDevAppearanceRoot = Join-Path $script:ProjectRoot 'dev\visual-style-sandbox\style_groups'
+$script:FlowCellStyleGroupRoot = Join-Path $script:FlowCellLocalRoot 'style_groups'
+$script:FlowCellDevStyleGroupRoot = Join-Path $script:ProjectRoot 'dev\visual-style-sandbox\style_groups'
 $script:FlowCellStyleGroupCache = @{}
 $script:FlowCellHostLayerVersion = 'state-host-skin-v1'
 $script:State = $null
@@ -1050,11 +1051,19 @@ function Get-FlowCellProgramStorageName([string]$ProgramName) {
 function Get-FlowCellProgramTemplateKey([string]$ProgramName, [string]$ExePath = '') {
     $normalizedExePath = [string]$ExePath
     if (-not [string]::IsNullOrWhiteSpace($normalizedExePath)) {
+        $exeName = ''
         try {
             $normalizedExePath = [System.IO.Path]::GetFullPath($normalizedExePath).ToLowerInvariant()
+            $exeName = [System.IO.Path]::GetFileNameWithoutExtension($normalizedExePath)
         }
         catch {
             $normalizedExePath = $normalizedExePath.Trim().ToLowerInvariant()
+            try {
+                $exeName = [System.IO.Path]::GetFileNameWithoutExtension($normalizedExePath)
+            }
+            catch {
+                $exeName = ''
+            }
         }
 
         switch -Regex ($normalizedExePath) {
@@ -1062,9 +1071,39 @@ function Get-FlowCellProgramTemplateKey([string]$ProgramName, [string]$ExePath =
             '(^|\\)illustrator(\.exe)?$' { return 'illustrator' }
             '(^|\\)photoshop(\.exe)?$' { return 'photoshop' }
         }
+
+        if (-not [string]::IsNullOrWhiteSpace($exeName)) {
+            $normalizedExeName = $exeName.Trim().ToLowerInvariant()
+            if ($normalizedExeName.Contains('blender')) { return 'blender' }
+            if ($normalizedExeName.Contains('illustrator')) { return 'illustrator' }
+            if ($normalizedExeName.Contains('photoshop')) { return 'photoshop' }
+            if ($normalizedExeName.Contains('explorer')) { return 'windows' }
+        }
     }
 
     return (Get-ProgramLabelKey $ProgramName)
+}
+
+function Get-FlowCellSuggestedProgramNameFromExecutable([string]$ExePath) {
+    if ([string]::IsNullOrWhiteSpace($ExePath)) { return '' }
+    switch (Get-FlowCellProgramTemplateKey -ProgramName '' -ExePath $ExePath) {
+        'blender' { return 'Blender' }
+        'illustrator' { return 'Illustrator' }
+        'photoshop' { return 'Photoshop' }
+        'windows' { return 'Windows' }
+    }
+
+    try {
+        $stem = [System.IO.Path]::GetFileNameWithoutExtension([System.IO.Path]::GetFullPath($ExePath))
+    }
+    catch {
+        $stem = [System.IO.Path]::GetFileNameWithoutExtension([string]$ExePath)
+    }
+
+    if ([string]::IsNullOrWhiteSpace($stem)) { return '' }
+    $displayName = ($stem -replace '[_\-]+', ' ').Trim()
+    if ([string]::IsNullOrWhiteSpace($displayName)) { return '' }
+    return [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ToTitleCase($displayName.ToLowerInvariant())
 }
 
 function Get-FlowCellProgramExecutableProcessNames([string]$ExePath) {
@@ -1174,8 +1213,8 @@ function New-FlowCellProgramTab {
 function Get-DefaultProgramTabs {
     return @(
         (New-FlowCellProgramTab -Id 1 -Label 'Illustrator' -ScriptFolder $script:IllustratorScriptsDir -ProgramType 'adobe_direct_script_runner' -RunMethod 'illustrator_direct' -AllowedScriptExtensions @('.jsx', '.js') -DefaultPanels @('Layers', 'Files', 'Utility')),
-        (New-FlowCellProgramTab -Id 2 -Label 'Windows' -ScriptFolder (Join-Path $script:FlowCellHomeRoot 'Windows') -ProgramType 'generic' -RunMethod 'generic' -DefaultPanels @('Files', 'Utility')),
-        (New-FlowCellProgramTab -Id 3 -Label 'Blender' -ScriptFolder (Get-FlowCellBlenderScriptsFolder) -ProgramType 'bridge_runner' -RunMethod 'blender_bridge' -AllowedScriptExtensions @('.ps1', '.py', '.blend', '.exe', '.lnk') -BridgeFolder (Join-Path $script:FlowCellHomeRoot 'Blender') -DefaultPanels @('Collections', 'Files', 'Utility')),
+        (New-FlowCellProgramTab -Id 2 -Label 'Windows' -ScriptFolder $script:WindowsScriptsDir -ProgramType 'generic' -RunMethod 'generic' -DefaultPanels @('Files', 'Utility')),
+        (New-FlowCellProgramTab -Id 3 -Label 'Blender' -ScriptFolder (Get-FlowCellBlenderScriptsFolder) -ProgramType 'bridge_runner' -RunMethod 'blender_bridge' -AllowedScriptExtensions @('.ps1', '.py', '.blend', '.exe', '.lnk') -BridgeFolder (Join-Path $script:FlowCellHomeRoot 'Programs\Blender') -DefaultPanels @('Collections', 'Files', 'Utility')),
         (New-FlowCellProgramTab -Id 4 -Label 'Photoshop' -ScriptFolder $script:PhotoshopScriptsDir -ProgramType 'adobe_direct_script_runner' -RunMethod 'photoshop_direct' -AllowedScriptExtensions @('.jsx', '.js') -DefaultPanels @('Layers', 'Files', 'Utility'))
     )
 }
@@ -1652,11 +1691,11 @@ function Enable-FlowCellTaskbarCloseSupport($Window) {
 }
 
 function Get-FlowCellBlenderScriptsFolder {
-    return (Join-Path $script:FlowCellHomeRoot 'Blender\FlowCellButtons')
+    return (Join-Path $script:FlowCellHomeRoot 'Programs\Blender\Blender Git Scripts')
 }
 
 function Get-FlowCellBlenderSupportFolder {
-    return (Join-Path $script:FlowCellHomeRoot 'Blender\SupportScripts')
+    return (Join-Path $script:FlowCellHomeRoot 'Programs\Blender\SupportScripts')
 }
 
 function Test-FlowCellPathUnderScriptDump([string]$Path) {
@@ -1706,9 +1745,238 @@ function Get-ProgramDefaultScriptFolder([string]$Label) {
         'illustrator' { return $script:IllustratorScriptsDir }
         'blender' { return (Get-FlowCellBlenderScriptsFolder) }
         'photoshop' { return $script:PhotoshopScriptsDir }
-        'windows' { return (Join-Path $script:FlowCellHomeRoot 'Windows') }
+        'windows' { return $script:WindowsScriptsDir }
         default { return $script:ProjectRoot }
     }
+}
+
+function Get-FlowCellProgramsRoot {
+    return (Ensure-FlowCellDirectory -Path (Join-Path $script:FlowCellHomeRoot 'Programs'))
+}
+
+function Test-FlowCellValidFolderName([string]$Name) {
+    $resolvedName = [string]$Name
+    if ([string]::IsNullOrWhiteSpace($resolvedName)) { return $false }
+    $resolvedName = $resolvedName.Trim()
+    if ($resolvedName -eq '.' -or $resolvedName -eq '..') { return $false }
+    return ($resolvedName.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -lt 0)
+}
+
+function Get-FlowCellChildDirectoryItems([string]$RootPath) {
+    if ([string]::IsNullOrWhiteSpace($RootPath) -or -not (Test-Path -LiteralPath $RootPath -PathType Container)) {
+        return @()
+    }
+
+    return @(
+        Get-ChildItem -LiteralPath $RootPath -Directory -ErrorAction SilentlyContinue |
+            Sort-Object Name |
+            ForEach-Object {
+                [pscustomobject]@{
+                    Name = [string]$_.Name
+                    Path = [string]$_.FullName
+                }
+            }
+    )
+}
+
+function Get-FlowCellNamedChildDirectory([string]$RootPath, [string]$Name) {
+    if ([string]::IsNullOrWhiteSpace($RootPath) -or [string]::IsNullOrWhiteSpace($Name) -or -not (Test-Path -LiteralPath $RootPath -PathType Container)) {
+        return $null
+    }
+
+    $match = @(
+        Get-ChildItem -LiteralPath $RootPath -Directory -ErrorAction SilentlyContinue |
+            Where-Object { [string]$_.Name -ieq [string]$Name } |
+            Select-Object -First 1
+    )
+    if (@($match).Count -eq 0) { return $null }
+    return $match[0]
+}
+
+function Get-FlowCellProgramFolderPath([string]$ProgramName, [switch]$Create) {
+    $programsRoot = Get-FlowCellProgramsRoot
+    $existing = Get-FlowCellNamedChildDirectory -RootPath $programsRoot -Name $ProgramName
+    if ($existing) { return [string]$existing.FullName }
+    if (-not $Create) { return '' }
+    return [string](Ensure-FlowCellDirectory -Path (Join-Path $programsRoot ([string]$ProgramName)))
+}
+
+function Get-FlowCellProgramPanelsRoot([string]$ProgramName, [switch]$Create) {
+    $programFolder = Get-FlowCellProgramFolderPath -ProgramName $ProgramName -Create:$Create
+    if ([string]::IsNullOrWhiteSpace($programFolder)) { return '' }
+    $panelsRoot = Join-Path $programFolder 'panels'
+    if ($Create) {
+        return [string](Ensure-FlowCellDirectory -Path $panelsRoot)
+    }
+    if (Test-Path -LiteralPath $panelsRoot -PathType Container) {
+        return [string]$panelsRoot
+    }
+    return ''
+}
+
+function Get-FlowCellPanelFolderPath([string]$ProgramName, [string]$PanelName, [switch]$Create) {
+    $panelsRoot = Get-FlowCellProgramPanelsRoot -ProgramName $ProgramName -Create:$Create
+    if ([string]::IsNullOrWhiteSpace($panelsRoot)) { return '' }
+    $existing = Get-FlowCellNamedChildDirectory -RootPath $panelsRoot -Name $PanelName
+    if ($existing) { return [string]$existing.FullName }
+    if (-not $Create) { return '' }
+    return [string](Ensure-FlowCellDirectory -Path (Join-Path $panelsRoot ([string]$PanelName)))
+}
+
+function Get-FlowCellProgramRailTabs {
+    if (-not $script:State) { return @() }
+
+    $programsRoot = Get-FlowCellProgramsRoot
+    $didStateChange = $false
+    $didFlowCellStateChange = $false
+    $existingProgramFolders = @(Get-FlowCellChildDirectoryItems -RootPath $programsRoot)
+    $retainedProgramTabs = @()
+    foreach ($programTab in @($script:State.ProgramTabs)) {
+        if ($null -eq $programTab -or [string]::IsNullOrWhiteSpace([string]$programTab.Label)) {
+            $didStateChange = $true
+            continue
+        }
+        if (-not (Get-FlowCellNamedChildDirectory -RootPath $programsRoot -Name ([string]$programTab.Label))) {
+            $didStateChange = $true
+            continue
+        }
+        $retainedProgramTabs += $programTab
+    }
+    if ($didStateChange) {
+        $script:State.ProgramTabs = @($retainedProgramTabs)
+    }
+    if ($script:FlowCellState -and $script:FlowCellState.PSObject.Properties['Programs']) {
+        $validProgramTabIds = @($script:State.ProgramTabs | ForEach-Object { [int]$_.Id })
+        $retainedPrograms = @(
+            foreach ($program in @($script:FlowCellState.Programs)) {
+                if ($null -eq $program) {
+                    $didFlowCellStateChange = $true
+                    continue
+                }
+                if (@($validProgramTabIds) -contains [int]$program.ProgramTabId) {
+                    $program
+                }
+                else {
+                    $didFlowCellStateChange = $true
+                }
+            }
+        )
+        if ($didFlowCellStateChange) {
+            $script:FlowCellState.Programs = @($retainedPrograms)
+        }
+    }
+
+    $railTabs = @()
+    foreach ($folder in @($existingProgramFolders)) {
+        $existing = @($script:State.ProgramTabs | Where-Object { [string]$_.Label -ieq [string]$folder.Name } | Select-Object -First 1)
+        $programTab = $null
+        if (@($existing).Count -gt 0) {
+            $programTab = $existing[0]
+        }
+        else {
+            $result = Add-FlowCellProgramTab -ProgramName ([string]$folder.Name) -ExePath '' -Persist:$false -SelectCreatedProgram:$false
+            if (-not [bool]$result.Succeeded -or $null -eq $result.ProgramTab) {
+                Write-UiLog ('Program rail skipped folder because a matching program tab could not be created. Folder={0}; Message={1}' -f [string]$folder.Name, [string]$result.Message)
+                continue
+            }
+            $programTab = $result.ProgramTab
+            $didStateChange = $true
+            $didFlowCellStateChange = $true
+        }
+        $railTabs += $programTab
+    }
+
+    if (@($railTabs).Count -gt 0) {
+        $selectedProgramTabId = if ($script:FlowCellState -and $script:FlowCellState.PSObject.Properties['SelectedProgramTabId']) {
+            [int]$script:FlowCellState.SelectedProgramTabId
+        }
+        else {
+            [int]$script:State.SelectedProgramTabId
+        }
+        if (-not (@($railTabs).Id -contains $selectedProgramTabId)) {
+            $script:State.SelectedProgramTabId = [int]$railTabs[0].Id
+            $didStateChange = $true
+            if ($script:FlowCellState) {
+                $script:FlowCellState.SelectedProgramTabId = [int]$railTabs[0].Id
+                $didFlowCellStateChange = $true
+            }
+        }
+    }
+    else {
+        if ([int]$script:State.SelectedProgramTabId -ne 0) {
+            $script:State.SelectedProgramTabId = 0
+            $didStateChange = $true
+        }
+        if ($script:FlowCellState -and [int]$script:FlowCellState.SelectedProgramTabId -ne 0) {
+            $script:FlowCellState.SelectedProgramTabId = 0
+            $didFlowCellStateChange = $true
+        }
+    }
+
+    if ($didStateChange) {
+        Save-State
+    }
+    if ($didFlowCellStateChange) {
+        Save-FlowCellState
+    }
+
+    return @($railTabs)
+}
+
+function Get-FlowCellPanelRailPanels($ProgramTab) {
+    if ($null -eq $ProgramTab -or -not $ProgramTab.PSObject.Properties['Id']) { return @() }
+
+    $programState = Get-FlowCellProgramState -ProgramTabId ([int]$ProgramTab.Id)
+    if ($null -eq $programState) { return @() }
+
+    $panelsRoot = Get-FlowCellProgramPanelsRoot -ProgramName ([string]$ProgramTab.Label)
+    $panelFolders = @(Get-FlowCellChildDirectoryItems -RootPath $panelsRoot)
+    $didStateChange = $false
+    $retainedPanels = @()
+    foreach ($panel in @($programState.Panels)) {
+        if ($null -eq $panel -or [string]::IsNullOrWhiteSpace([string]$panel.Name)) {
+            $didStateChange = $true
+            continue
+        }
+        if (-not (Get-FlowCellNamedChildDirectory -RootPath $panelsRoot -Name ([string]$panel.Name))) {
+            $didStateChange = $true
+            continue
+        }
+        $retainedPanels += $panel
+    }
+    if ($didStateChange) {
+        $programState.Panels = @($retainedPanels)
+    }
+
+    $railPanels = @()
+    foreach ($folder in @($panelFolders)) {
+        $existing = @($programState.Panels | Where-Object { [string]$_.Name -ieq [string]$folder.Name } | Select-Object -First 1)
+        $panel = $null
+        if (@($existing).Count -gt 0) {
+            $panel = $existing[0]
+        }
+        else {
+            $panel = New-FlowCellPanelState -Name ([string]$folder.Name) -Id (Get-FlowCellDefaultPanelId -Name ([string]$folder.Name))
+            $programState.Panels += $panel
+            $didStateChange = $true
+        }
+        $railPanels += $panel
+    }
+
+    if (@($railPanels).Count -gt 0 -and -not (@($railPanels).Id -contains [string]$programState.SelectedPanelId)) {
+        $programState.SelectedPanelId = [string]$railPanels[0].Id
+        $didStateChange = $true
+    }
+    elseif (@($railPanels).Count -eq 0 -and -not [string]::IsNullOrWhiteSpace([string]$programState.SelectedPanelId)) {
+        $programState.SelectedPanelId = ''
+        $didStateChange = $true
+    }
+
+    if ($didStateChange) {
+        Save-FlowCellState
+    }
+
+    return @($railPanels)
 }
 
 function Get-FlowCellDisplayButtonLabelFromPath([string]$Path) {
@@ -1992,7 +2260,7 @@ function Ensure-FlowCellRequiredButtons($ProgramState) {
         }
         'windows' {
             $resolvedScriptFolder = if ([string]::IsNullOrWhiteSpace($scriptFolder)) {
-                Join-Path $script:FlowCellHomeRoot 'Windows'
+                $script:WindowsScriptsDir
             }
             else {
                 $scriptFolder
@@ -2073,15 +2341,12 @@ function Ensure-FlowCellProgramState($ProgramState, $ProgramTab) {
         }
     }
 
-    if (@($panels).Count -eq 0) {
-        $existingProgramConfig = if ($ProgramState.PSObject.Properties['ProgramConfig']) { $ProgramState.ProgramConfig } else { $null }
-        $resolvedProgramConfig = Get-FlowCellProgramConfig -ProgramTab $ProgramTab -ProgramConfig $existingProgramConfig
-        $panels = @(New-DefaultFlowCellPanels -PanelNames $resolvedProgramConfig.DefaultPanels)
-    }
-
     $selectedPanelId = if ($ProgramState.PSObject.Properties['SelectedPanelId']) { [string]$ProgramState.SelectedPanelId } else { '' }
-    if ([string]::IsNullOrWhiteSpace($selectedPanelId) -or -not (@($panels).Id -contains $selectedPanelId)) {
+    if (@($panels).Count -gt 0 -and ([string]::IsNullOrWhiteSpace($selectedPanelId) -or -not (@($panels).Id -contains $selectedPanelId))) {
         $selectedPanelId = [string]$panels[0].Id
+    }
+    elseif (@($panels).Count -eq 0) {
+        $selectedPanelId = ''
     }
 
     $resolvedProgramConfig = Get-FlowCellProgramConfig -ProgramTab $ProgramTab -ProgramConfig $(if ($ProgramState.PSObject.Properties['ProgramConfig']) { $ProgramState.ProgramConfig } else { $null })
@@ -2513,7 +2778,7 @@ function Ensure-FlowCellAlignmentStateCollection($FlowCellState) {
 function Read-FlowCellState {
     if (-not $script:State) {
         return [pscustomobject]@{
-            SelectedProgramTabId = 1
+            SelectedProgramTabId = 0
             ButtonScale = 1.0
             StartupRestorePopoutsOnly = $true
             MainWindowBounds = $null
@@ -2549,8 +2814,11 @@ function Read-FlowCellState {
     }
 
     $selectedProgramTabId = if ($state -and $state.PSObject.Properties['SelectedProgramTabId']) { [int]$state.SelectedProgramTabId } else { [int]$script:State.SelectedProgramTabId }
-    if (-not (@($script:State.ProgramTabs).Id -contains $selectedProgramTabId)) {
+    if (@($script:State.ProgramTabs).Count -gt 0 -and -not (@($script:State.ProgramTabs).Id -contains $selectedProgramTabId)) {
         $selectedProgramTabId = [int]$script:State.ProgramTabs[0].Id
+    }
+    elseif (@($script:State.ProgramTabs).Count -eq 0) {
+        $selectedProgramTabId = 0
     }
 
     $toolPopouts = @()
@@ -2669,6 +2937,48 @@ function Read-FlowCellState {
 
 function Save-FlowCellState {
     if (-not $script:FlowCellState) { return }
+    $programsRoot = Get-FlowCellProgramsRoot
+    $script:FlowCellState.Programs = @(
+        foreach ($programState in @($script:FlowCellState.Programs)) {
+            if ($null -eq $programState) { continue }
+            $programTab = Get-FlowCellProgramTab -ProgramTabId ([int]$programState.ProgramTabId)
+            if ($null -eq $programTab -or [string]::IsNullOrWhiteSpace([string]$programTab.Label)) {
+                continue
+            }
+            if (-not (Get-FlowCellNamedChildDirectory -RootPath $programsRoot -Name ([string]$programTab.Label))) {
+                continue
+            }
+
+            $programState.Panels = @(
+                foreach ($panel in @($programState.Panels)) {
+                    if ($null -eq $panel -or [string]::IsNullOrWhiteSpace([string]$panel.Name)) {
+                        continue
+                    }
+                    if (-not [string]::IsNullOrWhiteSpace((Get-FlowCellPanelFolderPath -ProgramName ([string]$programTab.Label) -PanelName ([string]$panel.Name)))) {
+                        $panel
+                    }
+                }
+            )
+            if (@($programState.Panels).Count -gt 0) {
+                if (-not (@($programState.Panels).Id -contains [string]$programState.SelectedPanelId)) {
+                    $programState.SelectedPanelId = [string]$programState.Panels[0].Id
+                }
+            }
+            else {
+                $programState.SelectedPanelId = ''
+            }
+
+            $programState
+        }
+    )
+    if (@($script:FlowCellState.Programs).Count -gt 0) {
+        if (-not (@($script:FlowCellState.Programs).ProgramTabId -contains [int]$script:FlowCellState.SelectedProgramTabId)) {
+            $script:FlowCellState.SelectedProgramTabId = [int]$script:FlowCellState.Programs[0].ProgramTabId
+        }
+    }
+    else {
+        $script:FlowCellState.SelectedProgramTabId = 0
+    }
     [void](Ensure-FlowCellAlignmentStateCollection -FlowCellState $script:FlowCellState)
     [void](Ensure-FlowCellToolOptionStateCollection -FlowCellState $script:FlowCellState)
     $stateToolPopouts = if ($script:FlowCellState.PSObject.Properties['ToolPopouts']) { @($script:FlowCellState.ToolPopouts) } else { @() }
@@ -4956,7 +5266,7 @@ function Get-FlowCellButtonCompoundToolId($Button) {
 function Test-FlowCellLegacyAlignmentToolTarget([string]$Target) {
     if ([string]::IsNullOrWhiteSpace($Target)) { return $false }
     $fileName = [string]([System.IO.Path]::GetFileName($Target)).ToLowerInvariant()
-    return ($fileName -in @('util_alignment_tools.ps1', 'util_flowtest_custom_util_alignment_tools.ps1'))
+    return ($fileName -in @('util_alignment_tools.ps1', 'util_flowcell_custom_util_alignment_tools.ps1'))
 }
 
 function Test-FlowCellLegacySmartAxisStateTarget([string]$Target) {
@@ -5295,7 +5605,7 @@ function Write-FlowCellStateLayerValidation($FlowCellState) {
 
 function Get-FlowCellStyleGroupRoots {
     $roots = New-Object System.Collections.Generic.List[string]
-    foreach ($candidate in @([string]$script:FlowCellAppearanceRoot, [string]$script:FlowCellDevAppearanceRoot)) {
+    foreach ($candidate in @([string]$script:FlowCellStyleGroupRoot, [string]$script:FlowCellDevStyleGroupRoot)) {
         if ([string]::IsNullOrWhiteSpace([string]$candidate)) { continue }
         if (-not (Test-Path -LiteralPath $candidate -PathType Container)) { continue }
         if (-not $roots.Contains([string]$candidate)) {
@@ -5592,7 +5902,7 @@ function New-FlowCellHostVisualSkinSurface {
         }
     }
 
-    Write-UiLog ('Visual Skin rendered appearance. HostVersion={0}; Mode={1}; Label={2}; style_group_id={3}; UsedMetadata={4}; RenderOnly=True' -f `
+    Write-UiLog ('Visual Skin rendered host skin. HostVersion={0}; Mode={1}; Label={2}; style_group_id={3}; UsedMetadata={4}; RenderOnly=True' -f `
         $script:FlowCellHostLayerVersion, `
         [string]$Mode, `
         [string]$(if ($VisualState.PSObject.Properties['Label']) { $VisualState.Label } else { '' }), `
@@ -5669,9 +5979,14 @@ function New-FlowCellHostTabItemStyle {
         $defaultBorder = ConvertTo-FlowCellBrushOrNull '#FF79FF33'
     }
 
+    $itemMargin = New-Object System.Windows.Thickness(0,0,0,8)
+    if ([string]$Mode -eq 'ProgramTab' -or [string]$Mode -eq 'PanelTab') {
+        $itemMargin = New-Object System.Windows.Thickness(0,0,0,8)
+    }
+
     $style = New-Object System.Windows.Style([System.Windows.Controls.ListBoxItem])
     [void]$style.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.Control]::PaddingProperty, (New-Object System.Windows.Thickness(18,12,18,12)))))
-    [void]$style.Setters.Add((New-Object System.Windows.Setter([System.Windows.FrameworkElement]::MarginProperty, (New-Object System.Windows.Thickness(0,0,10,0)))))
+    [void]$style.Setters.Add((New-Object System.Windows.Setter([System.Windows.FrameworkElement]::MarginProperty, $itemMargin)))
     [void]$style.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.Control]::BackgroundProperty, $defaultBackground)))
     [void]$style.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.Control]::ForegroundProperty, $defaultForeground)))
     [void]$style.Setters.Add((New-Object System.Windows.Setter([System.Windows.Controls.Control]::BorderThicknessProperty, (New-Object System.Windows.Thickness(0)))))
@@ -6191,6 +6506,7 @@ function Show-RecordActionDialog {
 }
 
 function Read-State {
+    $bindingsFileExists = Test-Path -LiteralPath $script:BindingsPath -PathType Leaf
     $ini = Parse-Ini -Path $script:BindingsPath
     $ids = @()
     $nextId = 1
@@ -6212,7 +6528,7 @@ function Read-State {
                 Kind = 'script'
                 Id = $id
                 Shortcut = Get-CanonicalShortcut -Value ([string]$ini[$section].Shortcut)
-                Target = [string]$ini[$section].ScriptPath
+                Target = Resolve-LegacyWindowsProgramPath -Path ([string]$ini[$section].ScriptPath) -RequireExisting
                 Status = 'Active'
                 ProgramTabId = if ($ini[$section].Contains('ProgramTabId') -and $ini[$section].ProgramTabId -match '^\d+$') { [int]$ini[$section].ProgramTabId } else { 0 }
             }
@@ -6224,7 +6540,7 @@ function Read-State {
         if ($ini.Contains($section)) {
             $programTabs += (New-FlowCellProgramTab -Id $id `
                 -Label $(if ($ini[$section].Contains('Label') -and $ini[$section].Label) { [string]$ini[$section].Label } else { 'Program {0}' -f $id }) `
-                -ScriptFolder $(if ($ini[$section].Contains('ScriptFolder')) { [string]$ini[$section].ScriptFolder } else { '' }) `
+                -ScriptFolder $(if ($ini[$section].Contains('ScriptFolder')) { Resolve-LegacyWindowsProgramPath -Path ([string]$ini[$section].ScriptFolder) -RequireExisting } else { '' }) `
                 -ProgramType $(if ($ini[$section].Contains('ProgramType')) { [string]$ini[$section].ProgramType } else { '' }) `
                 -ExePath $(if ($ini[$section].Contains('ExePath')) { [string]$ini[$section].ExePath } else { '' }) `
                 -RunMethod $(if ($ini[$section].Contains('RunMethod')) { [string]$ini[$section].RunMethod } else { '' }) `
@@ -6236,12 +6552,15 @@ function Read-State {
                 -NormalizedName $(if ($ini[$section].Contains('NormalizedName')) { [string]$ini[$section].NormalizedName } else { '' }))
         }
     }
-    if (@($programTabs).Count -eq 0) {
+    if (@($programTabs).Count -eq 0 -and -not $bindingsFileExists) {
         $programTabs = @(Get-DefaultProgramTabs)
     }
     $programTabNextId = [Math]::Max($programTabNextId, (($programTabs | Measure-Object -Property Id -Maximum).Maximum + 1))
-    if (-not ($programTabIds -contains $selectedProgramTabId)) {
+    if (@($programTabs).Count -gt 0 -and -not ($programTabIds -contains $selectedProgramTabId)) {
         $selectedProgramTabId = [int]$programTabs[0].Id
+    }
+    elseif (@($programTabs).Count -eq 0) {
+        $selectedProgramTabId = 0
     }
     $actionHotkeys = [ordered]@{}
     if ($ini.Contains('ActionHotkeys')) {
@@ -6269,6 +6588,34 @@ function Read-State {
             }
         }
     }
+    $defaultDummyBinding = Get-DefaultDummyMonitorBinding -ProgramTabs @($programTabs)
+    if ($null -ne $defaultDummyBinding) {
+        $defaultShortcut = Normalize-Shortcut -Value ([string]$defaultDummyBinding.Shortcut)
+        $defaultTarget = Resolve-LegacyWindowsProgramPath -Path ([string]$defaultDummyBinding.Target) -RequireExisting
+        $existingDefaultBinding = @(
+            $scriptBindings |
+                Where-Object {
+                    (Normalize-Shortcut -Value ([string]$_.Shortcut)) -eq $defaultShortcut -or
+                    [string]::Equals(
+                        (Resolve-LegacyWindowsProgramPath -Path ([string]$_.Target) -RequireExisting),
+                        $defaultTarget,
+                        [System.StringComparison]::OrdinalIgnoreCase
+                    )
+                } |
+                Select-Object -First 1
+        )
+        if (@($existingDefaultBinding).Count -eq 0) {
+            $scriptBindings += [pscustomobject]@{
+                Kind = 'script'
+                Id = [int]$nextId
+                Shortcut = [string]$defaultDummyBinding.Shortcut
+                Target = [string]$defaultTarget
+                Status = 'Active'
+                ProgramTabId = [int]$defaultDummyBinding.ProgramTabId
+            }
+            $nextId = [int]$nextId + 1
+        }
+    }
     return [pscustomobject]@{
         NextId = [Math]::Max($nextId, 1)
         ScriptBindings = $scriptBindings
@@ -6276,11 +6623,98 @@ function Read-State {
         MacroEditorColumns = $macroEditorColumns
         ProgramTabs = @($programTabs)
         ProgramTabNextId = [Math]::Max($programTabNextId, 1)
-        SelectedProgramTabId = [Math]::Max($selectedProgramTabId, 1)
+        SelectedProgramTabId = if (@($programTabs).Count -gt 0) { [Math]::Max($selectedProgramTabId, 1) } else { 0 }
+    }
+}
+
+function Resolve-LegacyWindowsProgramPath {
+    param(
+        [string]$Path,
+        [switch]$RequireExisting
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return $Path
+    }
+
+    $normalizedPath = [System.IO.Path]::GetFullPath($Path)
+    $legacyRoot = [System.IO.Path]::GetFullPath((Join-Path $script:FlowCellHomeRoot 'Windows'))
+    $managedRoot = [System.IO.Path]::GetFullPath((Join-Path $script:FlowCellHomeRoot 'Programs\Windows'))
+    $comparison = [System.StringComparison]::OrdinalIgnoreCase
+    $candidate = $null
+
+    if ($normalizedPath.Equals($legacyRoot, $comparison)) {
+        $candidate = $managedRoot
+    }
+    elseif ($normalizedPath.StartsWith($legacyRoot + '\', $comparison)) {
+        $suffix = $normalizedPath.Substring($legacyRoot.Length).TrimStart('\')
+        $candidate = Join-Path $managedRoot $suffix
+    }
+
+    if ($candidate) {
+        if (-not $RequireExisting -or (Test-Path -LiteralPath $candidate)) {
+            return [System.IO.Path]::GetFullPath($candidate)
+        }
+    }
+
+    return $normalizedPath
+}
+
+function Get-DefaultDummyMonitorBinding {
+    param(
+        [object[]]$ProgramTabs = @()
+    )
+
+    $targetPath = Join-Path $script:FlowCellHomeRoot 'Programs\Windows\Panels\Utility\Launch-DummyMonitorToggle.vbs'
+    if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
+        return $null
+    }
+
+    $windowsProgramTab = @(
+        $ProgramTabs |
+            Where-Object { (Get-ProgramLabelKey ([string]$_.Label)) -eq 'windows' } |
+            Select-Object -First 1
+    )
+
+    return [pscustomobject]@{
+        Kind = 'script'
+        Shortcut = '^+F2'
+        Target = [string]$targetPath
+        ProgramTabId = if (@($windowsProgramTab).Count -gt 0) { [int]$windowsProgramTab[0].Id } else { 2 }
     }
 }
 
 function Save-State {
+    $programsRoot = Get-FlowCellProgramsRoot
+    $script:State.ProgramTabs = @(
+        foreach ($programTab in @($script:State.ProgramTabs)) {
+            if ($null -eq $programTab -or [string]::IsNullOrWhiteSpace([string]$programTab.Label)) {
+                continue
+            }
+            if (Get-FlowCellNamedChildDirectory -RootPath $programsRoot -Name ([string]$programTab.Label)) {
+                $programTab
+            }
+        }
+    )
+    $validProgramTabIds = @($script:State.ProgramTabs | ForEach-Object { [int]$_.Id })
+    $script:State.ScriptBindings = @(
+        foreach ($binding in @($script:State.ScriptBindings)) {
+            if ($null -eq $binding) { continue }
+            $bindingProgramTabId = if ($binding.PSObject.Properties['ProgramTabId']) { [int]$binding.ProgramTabId } else { 0 }
+            if ($bindingProgramTabId -le 0 -or @($validProgramTabIds) -contains $bindingProgramTabId) {
+                $binding
+            }
+        }
+    )
+    if (@($script:State.ProgramTabs).Count -gt 0) {
+        if (-not (@($script:State.ProgramTabs).Id -contains [int]$script:State.SelectedProgramTabId)) {
+            $script:State.SelectedProgramTabId = [int]$script:State.ProgramTabs[0].Id
+        }
+    }
+    else {
+        $script:State.SelectedProgramTabId = 0
+    }
+
     $lines = New-Object System.Collections.Generic.List[string]
     $ids = @($script:State.ScriptBindings | Sort-Object Id | ForEach-Object { $_.Id })
     $programTabIds = @($script:State.ProgramTabs | Sort-Object Id | ForEach-Object { $_.Id })
@@ -6289,7 +6723,7 @@ function Save-State {
     $lines.Add('Ids=' + (($ids | ForEach-Object { $_.ToString() }) -join '|'))
     $lines.Add('ProgramTabNextId=' + [string]([Math]::Max([int]$script:State.ProgramTabNextId, 1)))
     $lines.Add('ProgramTabIds=' + (($programTabIds | ForEach-Object { $_.ToString() }) -join '|'))
-    $lines.Add('SelectedProgramTabId=' + [string]([Math]::Max([int]$script:State.SelectedProgramTabId, 1)))
+    $lines.Add('SelectedProgramTabId=' + [string]$(if (@($script:State.ProgramTabs).Count -gt 0) { [Math]::Max([int]$script:State.SelectedProgramTabId, 1) } else { 0 }))
     $lines.Add('')
     foreach ($binding in @($script:State.ScriptBindings | Sort-Object Id)) {
         $lines.Add('[Binding_' + [string]$binding.Id + ']')
@@ -10470,6 +10904,10 @@ function Get-FlowCellBlenderConfigPath {
     if (Test-Path -LiteralPath $localOverridePath -PathType Leaf) {
         return $localOverridePath
     }
+    $repoProgramsConfigPath = Join-Path $script:FlowCellHomeRoot 'Programs\Blender\config.json'
+    if (Test-Path -LiteralPath $repoProgramsConfigPath -PathType Leaf) {
+        return $repoProgramsConfigPath
+    }
     return (Join-Path $script:FlowCellHomeRoot 'Blender\config.json')
 }
 
@@ -10537,11 +10975,12 @@ function Install-FlowCellBlenderBridgeTemplate([string]$ExePath, [string]$Bridge
 }
 
 function New-FlowCellProgramTemplateResult([string]$ProgramName, [string]$ExePath) {
-    $normalizedName = [string]$ProgramName
-    if ([string]::IsNullOrWhiteSpace($normalizedName)) {
+    $displayName = [string]$ProgramName
+    if ([string]::IsNullOrWhiteSpace($displayName)) {
         throw 'Program Name is required.'
     }
-    $normalizedName = $normalizedName.Trim().ToLowerInvariant()
+    $displayName = $displayName.Trim()
+    $normalizedName = $displayName.ToLowerInvariant()
     $resolvedExePath = Resolve-FlowCellProgramExecutablePath -ExePath $ExePath
     $templateKey = Get-FlowCellProgramTemplateKey -ProgramName $normalizedName -ExePath $resolvedExePath
     $scriptFolder = ''
@@ -10588,7 +11027,7 @@ function New-FlowCellProgramTemplateResult([string]$ProgramName, [string]$ExePat
             [void](Ensure-FlowCellDirectory -Path (Join-Path $bridgeFolder 'requests'))
             [void](Ensure-FlowCellDirectory -Path (Join-Path $bridgeFolder 'responses'))
             [void](Ensure-FlowCellDirectory -Path (Join-Path $bridgeFolder 'status'))
-            $bridgeSetup = Install-FlowCellBlenderBridgeTemplate -ExePath $resolvedExePath -BridgeFolder $bridgeFolder -ProgramName $normalizedName
+            $bridgeSetup = Install-FlowCellBlenderBridgeTemplate -ExePath $resolvedExePath -BridgeFolder $bridgeFolder -ProgramName $displayName
             $requiresRestart = $true
             $statusMessage = [string]$bridgeSetup.Message
             break
@@ -10603,7 +11042,7 @@ function New-FlowCellProgramTemplateResult([string]$ProgramName, [string]$ExePat
     }
 
     $programTab = New-FlowCellProgramTab -Id 0 `
-        -Label $normalizedName `
+        -Label $displayName `
         -NormalizedName $normalizedName `
         -ScriptFolder $scriptFolder `
         -ProgramType $programType `
@@ -10620,7 +11059,7 @@ function New-FlowCellProgramTemplateResult([string]$ProgramName, [string]$ExePat
     }
 }
 
-function Add-FlowCellProgramTab([string]$ProgramName, [string]$ExePath) {
+function Add-FlowCellProgramTab([string]$ProgramName, [string]$ExePath, [bool]$Persist = $true, [bool]$SelectCreatedProgram = $true) {
     $createdProgramTab = $null
     $createdProgramState = $null
     try {
@@ -10647,11 +11086,15 @@ function Add-FlowCellProgramTab([string]$ProgramName, [string]$ExePath) {
         $createdProgramState = New-FlowCellProgramState -ProgramTab $createdProgramTab
         $script:State.ProgramTabs += $createdProgramTab
         $script:State.ProgramTabNextId = $nextProgramTabId + 1
-        $script:State.SelectedProgramTabId = $nextProgramTabId
         $script:FlowCellState.Programs += $createdProgramState
-        $script:FlowCellState.SelectedProgramTabId = $nextProgramTabId
-        Save-State
-        Save-FlowCellState
+        if ($SelectCreatedProgram) {
+            $script:State.SelectedProgramTabId = $nextProgramTabId
+            $script:FlowCellState.SelectedProgramTabId = $nextProgramTabId
+        }
+        if ($Persist) {
+            Save-State
+            Save-FlowCellState
+        }
         Write-UiLog ('Added FlowCell program tab. ProgramTabId={0}; Label={1}; ProgramType={2}; ExePath={3}' -f $createdProgramTab.Id, $createdProgramTab.Label, $createdProgramTab.ProgramType, $createdProgramTab.ExePath)
         return [pscustomobject]@{
             Succeeded = $true
@@ -10665,13 +11108,13 @@ function Add-FlowCellProgramTab([string]$ProgramName, [string]$ExePath) {
             if ($script:State.ProgramTabNextId -gt 1) {
                 $script:State.ProgramTabNextId = [Math]::Max($script:State.ProgramTabNextId - 1, 1)
             }
-            if ([int]$script:State.SelectedProgramTabId -eq [int]$createdProgramTab.Id -and @($script:State.ProgramTabs).Count -gt 0) {
+            if ($SelectCreatedProgram -and [int]$script:State.SelectedProgramTabId -eq [int]$createdProgramTab.Id -and @($script:State.ProgramTabs).Count -gt 0) {
                 $script:State.SelectedProgramTabId = [int]$script:State.ProgramTabs[0].Id
             }
         }
         if ($createdProgramState) {
             $script:FlowCellState.Programs = @($script:FlowCellState.Programs | Where-Object { $_.ProgramTabId -ne [int]$createdProgramState.ProgramTabId })
-            if ([int]$script:FlowCellState.SelectedProgramTabId -eq [int]$createdProgramState.ProgramTabId -and @($script:FlowCellState.Programs).Count -gt 0) {
+            if ($SelectCreatedProgram -and [int]$script:FlowCellState.SelectedProgramTabId -eq [int]$createdProgramState.ProgramTabId -and @($script:FlowCellState.Programs).Count -gt 0) {
                 $script:FlowCellState.SelectedProgramTabId = [int]$script:FlowCellState.Programs[0].ProgramTabId
             }
         }
@@ -10684,6 +11127,46 @@ function Add-FlowCellProgramTab([string]$ProgramName, [string]$ExePath) {
     }
 }
 
+function Add-FlowCellProgramRailEntry([string]$ProgramName, [string]$ExePath = '') {
+    $resolvedName = [string]$ProgramName
+    if ([string]::IsNullOrWhiteSpace($resolvedName)) {
+        return [pscustomobject]@{
+            Succeeded = $false
+            ProgramTab = $null
+            Message = 'Program name is required.'
+        }
+    }
+
+    $resolvedName = $resolvedName.Trim()
+    $resolvedExePath = if ([string]::IsNullOrWhiteSpace($ExePath)) { '' } else { Resolve-FlowCellProgramExecutablePath -ExePath $ExePath }
+    if (-not (Test-FlowCellValidFolderName -Name $resolvedName)) {
+        return [pscustomobject]@{
+            Succeeded = $false
+            ProgramTab = $null
+            Message = 'Program names must be valid folder names.'
+        }
+    }
+    [void](Get-FlowCellProgramPanelsRoot -ProgramName $resolvedName -Create)
+    $existingTab = @($script:State.ProgramTabs | Where-Object { [string]$_.Label -ieq $resolvedName } | Select-Object -First 1)
+    if (@($existingTab).Count -gt 0) {
+        $programTab = $existingTab[0]
+        $script:State.SelectedProgramTabId = [int]$programTab.Id
+        $script:FlowCellState.SelectedProgramTabId = [int]$programTab.Id
+        Save-State
+        return [pscustomobject]@{
+            Succeeded = $true
+            ProgramTab = $programTab
+            Message = ('Program already exists: {0}' -f [string]$programTab.Label)
+        }
+    }
+
+    $result = Add-FlowCellProgramTab -ProgramName $resolvedName -ExePath $resolvedExePath
+    if ([bool]$result.Succeeded -and $result.ProgramTab) {
+        [void](Get-FlowCellPanelRailPanels -ProgramTab $result.ProgramTab)
+    }
+    return $result
+}
+
 function Rename-FlowCellProgramTab([int]$ProgramTabId, [string]$NewLabel) {
     $trimmedLabel = [string]$NewLabel
     if ([string]::IsNullOrWhiteSpace($trimmedLabel)) { return $false }
@@ -10691,7 +11174,26 @@ function Rename-FlowCellProgramTab([int]$ProgramTabId, [string]$NewLabel) {
     $programTab = Get-FlowCellProgramTab -ProgramTabId $ProgramTabId
     if ($null -eq $programTab) { return $false }
 
-    $programTab.Label = $trimmedLabel.Trim()
+    $trimmedLabel = $trimmedLabel.Trim()
+    if (-not (Test-FlowCellValidFolderName -Name $trimmedLabel)) { return $false }
+    $existingProgram = @($script:State.ProgramTabs | Where-Object { [int]$_.Id -ne $ProgramTabId -and [string]$_.Label -ieq $trimmedLabel } | Select-Object -First 1)
+    if (@($existingProgram).Count -gt 0) { return $false }
+
+    $currentFolderPath = Get-FlowCellProgramFolderPath -ProgramName ([string]$programTab.Label)
+    $targetFolderPath = Get-FlowCellProgramFolderPath -ProgramName $trimmedLabel
+    if (-not [string]::IsNullOrWhiteSpace($targetFolderPath) -and (Get-FlowCellNormalizedPath $targetFolderPath) -ne (Get-FlowCellNormalizedPath $currentFolderPath)) {
+        return $false
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($currentFolderPath) -and (Test-Path -LiteralPath $currentFolderPath -PathType Container) -and [string]$programTab.Label -ne $trimmedLabel) {
+        Rename-Item -LiteralPath $currentFolderPath -NewName $trimmedLabel -Force
+    }
+    else {
+        [void](Get-FlowCellProgramPanelsRoot -ProgramName $trimmedLabel -Create)
+    }
+
+    $programTab.Label = $trimmedLabel
+    $programTab.NormalizedName = $trimmedLabel.ToLowerInvariant()
     Save-State
     Save-FlowCellState
     Write-UiLog ('Renamed FlowCell program tab. ProgramTabId={0}; Label={1}' -f [int]$ProgramTabId, [string]$programTab.Label)
@@ -10710,6 +11212,19 @@ function Remove-FlowCellProgramTab([int]$ProgramTabId) {
         return [pscustomobject]@{
             Succeeded = $false
             Message = 'FlowCell needs at least one program tab.'
+        }
+    }
+
+    $programFolderPath = Get-FlowCellProgramFolderPath -ProgramName ([string]$programTab.Label)
+    if (-not [string]::IsNullOrWhiteSpace($programFolderPath) -and (Test-Path -LiteralPath $programFolderPath -PathType Container)) {
+        try {
+            Move-FlowCellDirectoryToRecycleBin -Path $programFolderPath
+        }
+        catch {
+            return [pscustomobject]@{
+                Succeeded = $false
+                Message = ('Could not move program folder to the Recycle Bin: {0}' -f $_.Exception.Message)
+            }
         }
     }
 
@@ -10859,6 +11374,127 @@ function Remove-FlowCellProgramTab([int]$ProgramTabId) {
     }
 }
 
+function Add-FlowCellPanel([int]$ProgramTabId, [string]$PanelName) {
+    $programTab = Get-FlowCellProgramTab -ProgramTabId $ProgramTabId
+    $programState = Get-FlowCellProgramState -ProgramTabId $ProgramTabId
+    if ($null -eq $programTab -or $null -eq $programState) {
+        return [pscustomobject]@{
+            Succeeded = $false
+            Panel = $null
+            Message = 'Pick a program first.'
+        }
+    }
+
+    $resolvedName = [string]$PanelName
+    if ([string]::IsNullOrWhiteSpace($resolvedName)) {
+        return [pscustomobject]@{
+            Succeeded = $false
+            Panel = $null
+            Message = 'Panel name is required.'
+        }
+    }
+
+    $resolvedName = $resolvedName.Trim()
+    if (-not (Test-FlowCellValidFolderName -Name $resolvedName)) {
+        return [pscustomobject]@{
+            Succeeded = $false
+            Panel = $null
+            Message = 'Panel names must be valid folder names.'
+        }
+    }
+    [void](Get-FlowCellPanelFolderPath -ProgramName ([string]$programTab.Label) -PanelName $resolvedName -Create)
+    $existingPanel = @($programState.Panels | Where-Object { [string]$_.Name -ieq $resolvedName } | Select-Object -First 1)
+    if (@($existingPanel).Count -gt 0) {
+        $programState.SelectedPanelId = [string]$existingPanel[0].Id
+        Save-FlowCellState
+        return [pscustomobject]@{
+            Succeeded = $true
+            Panel = $existingPanel[0]
+            Message = ('Panel already exists: {0}' -f [string]$existingPanel[0].Name)
+        }
+    }
+
+    $panel = New-FlowCellPanelState -Name $resolvedName -Id (Get-FlowCellDefaultPanelId -Name $resolvedName)
+    $programState.Panels += $panel
+    $programState.SelectedPanelId = [string]$panel.Id
+    Save-FlowCellState
+    return [pscustomobject]@{
+        Succeeded = $true
+        Panel = $panel
+        Message = ('Added panel {0}.' -f [string]$panel.Name)
+    }
+}
+
+function Rename-FlowCellPanel([int]$ProgramTabId, [string]$PanelId, [string]$NewName) {
+    $programTab = Get-FlowCellProgramTab -ProgramTabId $ProgramTabId
+    $programState = Get-FlowCellProgramState -ProgramTabId $ProgramTabId
+    $panel = Get-FlowCellPanel -ProgramState $programState -PanelId $PanelId
+    if ($null -eq $programTab -or $null -eq $programState -or $null -eq $panel) { return $false }
+
+    $resolvedName = [string]$NewName
+    if ([string]::IsNullOrWhiteSpace($resolvedName)) { return $false }
+    $resolvedName = $resolvedName.Trim()
+    if (-not (Test-FlowCellValidFolderName -Name $resolvedName)) { return $false }
+    $existingPanel = @($programState.Panels | Where-Object { [string]$_.Id -ne [string]$PanelId -and [string]$_.Name -ieq $resolvedName } | Select-Object -First 1)
+    if (@($existingPanel).Count -gt 0) { return $false }
+
+    $currentFolderPath = Get-FlowCellPanelFolderPath -ProgramName ([string]$programTab.Label) -PanelName ([string]$panel.Name)
+    $targetFolderPath = Get-FlowCellPanelFolderPath -ProgramName ([string]$programTab.Label) -PanelName $resolvedName
+    if (-not [string]::IsNullOrWhiteSpace($targetFolderPath) -and (Get-FlowCellNormalizedPath $targetFolderPath) -ne (Get-FlowCellNormalizedPath $currentFolderPath)) {
+        return $false
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($currentFolderPath) -and (Test-Path -LiteralPath $currentFolderPath -PathType Container) -and [string]$panel.Name -ne $resolvedName) {
+        Rename-Item -LiteralPath $currentFolderPath -NewName $resolvedName -Force
+    }
+    else {
+        [void](Get-FlowCellPanelFolderPath -ProgramName ([string]$programTab.Label) -PanelName $resolvedName -Create)
+    }
+
+    $panel.Name = $resolvedName
+    Save-FlowCellState
+    return $true
+}
+
+function Remove-FlowCellPanel([int]$ProgramTabId, [string]$PanelId) {
+    $programTab = Get-FlowCellProgramTab -ProgramTabId $ProgramTabId
+    $programState = Get-FlowCellProgramState -ProgramTabId $ProgramTabId
+    $panel = Get-FlowCellPanel -ProgramState $programState -PanelId $PanelId
+    if ($null -eq $programTab -or $null -eq $programState -or $null -eq $panel) {
+        return [pscustomobject]@{
+            Succeeded = $false
+            Message = 'Panel not found.'
+        }
+    }
+    if (@($programState.Panels).Count -le 1) {
+        return [pscustomobject]@{
+            Succeeded = $false
+            Message = 'FlowCell needs at least one panel.'
+        }
+    }
+
+    $panelFolderPath = Get-FlowCellPanelFolderPath -ProgramName ([string]$programTab.Label) -PanelName ([string]$panel.Name)
+    if (-not [string]::IsNullOrWhiteSpace($panelFolderPath) -and (Test-Path -LiteralPath $panelFolderPath -PathType Container)) {
+        try {
+            Move-FlowCellDirectoryToRecycleBin -Path $panelFolderPath
+        }
+        catch {
+            return [pscustomobject]@{
+                Succeeded = $false
+                Message = ('Could not move panel folder to the Recycle Bin: {0}' -f $_.Exception.Message)
+            }
+        }
+    }
+
+    $programState.Panels = @($programState.Panels | Where-Object { [string]$_.Id -ne [string]$panel.Id })
+    $programState.SelectedPanelId = [string]$programState.Panels[0].Id
+    Save-FlowCellState
+    return [pscustomobject]@{
+        Succeeded = $true
+        Message = ('Removed panel {0}.' -f [string]$panel.Name)
+    }
+}
+
 function Show-AddProgramDialog {
     $xaml = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
@@ -10943,6 +11579,13 @@ function Show-AddProgramDialog {
         }
         if (-not $dialogBox.ShowDialog($dialog)) { return }
         $exePathBox.Text = [string]$dialogBox.FileName
+        if ([string]::IsNullOrWhiteSpace([string]$nameBox.Text)) {
+            $suggestedName = Get-FlowCellSuggestedProgramNameFromExecutable -ExePath ([string]$dialogBox.FileName)
+            if (-not [string]::IsNullOrWhiteSpace($suggestedName)) {
+                $nameBox.Text = $suggestedName
+                $nameBox.CaretIndex = $nameBox.Text.Length
+            }
+        }
         & $setValidationError ''
     }
 
@@ -10962,7 +11605,7 @@ function Show-AddProgramDialog {
             return
         }
         $script:__flowCellAddProgramResult = [pscustomobject]@{
-            ProgramName = $programName.Trim().ToLowerInvariant()
+            ProgramName = $programName.Trim()
             ExePath = [System.IO.Path]::GetFullPath($exePath.Trim())
         }
         $dialog.DialogResult = $true
@@ -11284,7 +11927,7 @@ function Update-FlowCellAlignmentModifierStateFromIntent($Metadata) {
         ('Alignment {0} modifier cleared.' -f [string]$intent.Axis)
     }
     else {
-        ('Alignment {0} modifier set to {1}.' -f [string]$intent.Axis, [string]$nextModifier.ToLowerInvariant())
+        ('Alignment {0} modifier set to {1}.' -f [string]$intent.Axis, $(if ([string]$nextModifier -eq 'GEOCENTER') { 'origin' } else { [string]$nextModifier.ToLowerInvariant() }))
     }
     Set-Content -LiteralPath $script:LastActionStatusPath -Value $statusText -Encoding UTF8
     Set-ActionStatus $statusText
@@ -12142,7 +12785,7 @@ function Convert-FlowCellSmartAxisLockResponseToResult($Response) {
 function New-FlowCellSmartAxisLockFailedResult([string]$Message) {
     $resolvedMessage = [string]$Message
     if ($resolvedMessage -match 'Unsupported action:\s*smart_axis_lock') {
-        $resolvedMessage = 'Reload the FlowTest Blender add-on or restart Blender once.'
+        $resolvedMessage = 'Reload the FlowCell Blender add-on or restart Blender once.'
     }
     return [pscustomobject]@{
         Succeeded = $false
@@ -12302,7 +12945,7 @@ function Invoke-FlowCellAlignmentToolAction($Button, $ProgramTab) {
                 ('Alignment {0} modifier cleared.' -f [string]$intent.Axis)
             }
             else {
-                ('Alignment {0} modifier set to {1}.' -f [string]$intent.Axis, [string]$nextModifier.ToLowerInvariant())
+                ('Alignment {0} modifier set to {1}.' -f [string]$intent.Axis, $(if ([string]$nextModifier -eq 'GEOCENTER') { 'origin' } else { [string]$nextModifier.ToLowerInvariant() }))
             }
             Set-Content -LiteralPath $script:LastActionStatusPath -Value $statusText -Encoding UTF8
             Set-ActionStatus $statusText
@@ -12507,7 +13150,7 @@ function New-FlowCellAlignmentToolControl {
         $buttons += New-FlowCellAlignmentActionButtonState -OwnerButton $ownerButton -ProgramTab $ProgramTab -PanelId $PanelId -Intent ('alignment.{0}.center' -f $axis.ToLowerInvariant()) -Label 'Center' -Tooltip ('Align the moved object to the active reference object''s {0} center.' -f $axis)
         $buttons += New-FlowCellAlignmentActionButtonState -OwnerButton $ownerButton -ProgramTab $ProgramTab -PanelId $PanelId -Intent ('alignment.{0}.max' -f $axis.ToLowerInvariant()) -Label 'Max' -Tooltip ('Align the moved object to the active reference object''s {0} maximum.' -f $axis)
         $buttons += New-FlowCellAlignmentActionButtonState -OwnerButton $ownerButton -ProgramTab $ProgramTab -PanelId $PanelId -Intent ('alignment.{0}.surface' -f $axis.ToLowerInvariant()) -Label 'Surface' -Tooltip ('Toggle surface alignment for the {0} axis.' -f $axis) -StyleGroupId (Get-FlowCellAlignmentModifierStyleGroupId -CurrentModifier $currentModifier -ButtonModifier 'SURFACE')
-        $buttons += New-FlowCellAlignmentActionButtonState -OwnerButton $ownerButton -ProgramTab $ProgramTab -PanelId $PanelId -Intent ('alignment.{0}.geo' -f $axis.ToLowerInvariant()) -Label 'Geo' -Tooltip ('Toggle geocenter alignment for the {0} axis.' -f $axis) -StyleGroupId (Get-FlowCellAlignmentModifierStyleGroupId -CurrentModifier $currentModifier -ButtonModifier 'GEOCENTER')
+        $buttons += New-FlowCellAlignmentActionButtonState -OwnerButton $ownerButton -ProgramTab $ProgramTab -PanelId $PanelId -Intent ('alignment.{0}.geo' -f $axis.ToLowerInvariant()) -Label 'Origin' -Tooltip ('Toggle origin alignment for the {0} axis.' -f $axis) -StyleGroupId (Get-FlowCellAlignmentModifierStyleGroupId -CurrentModifier $currentModifier -ButtonModifier 'GEOCENTER')
 
         for ($buttonIndex = 0; $buttonIndex -lt $buttons.Count; $buttonIndex++) {
             $buttonElement = New-FlowCellAlignmentActionButtonControl -ActionButton $buttons[$buttonIndex] -ProgramTab $ProgramTab -PanelId $PanelId -Surface $Surface -FontSize $resolvedFontSize
@@ -13649,6 +14292,18 @@ function Move-FlowCellFileToRecycleBin([string]$Path) {
     )
 }
 
+function Move-FlowCellDirectoryToRecycleBin([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Container)) {
+        return
+    }
+
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
+        $Path,
+        [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+        [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+    )
+}
+
 function Invoke-FlowCellBlenderButtonDeleteCleanup($Entry) {
     if ($null -eq $Entry) { return $false }
     $programTab = if ($Entry.PSObject.Properties['ProgramTab'] -and $Entry.ProgramTab) { $Entry.ProgramTab } else { Get-FlowCellProgramTab -ProgramTabId ([int]$Entry.ProgramTabId) }
@@ -13713,7 +14368,7 @@ function Invoke-FlowCellBlenderButtonDeleteCleanup($Entry) {
             }
         }
 
-        $managedRoot = Get-FlowCellNormalizedPath (Join-Path $script:FlowCellHomeRoot 'Blender\ManagedActions')
+        $managedRoot = Get-FlowCellNormalizedPath (Join-Path $script:FlowCellHomeRoot 'Programs\Blender\ManagedActions')
         $liveActionsPath = Get-FlowCellNormalizedPath ([string]$bridgeLayout.AddonActionsPath)
         $prunedSourcePaths = New-Object System.Collections.Generic.List[string]
         $remainingRegistry = New-Object System.Collections.Generic.List[object]
@@ -15106,9 +15761,6 @@ function Start-Ui {
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
-                <RowDefinition Height="Auto" />
                 <RowDefinition Height="*" />
                 <RowDefinition Height="Auto" />
             </Grid.RowDefinitions>
@@ -15119,155 +15771,112 @@ function Start-Ui {
                     <Button x:Name="BindViewerButton" Width="130" Height="38" Background="#FF6EC8FF">Bind Viewer</Button>
                 </StackPanel>
             </DockPanel>
-            <Grid Grid.Row="1" Margin="0,0,0,14">
+            <Grid Grid.Row="1">
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="210" />
+                    <ColumnDefinition Width="210" />
                     <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="420" />
                 </Grid.ColumnDefinitions>
-                <Button x:Name="AddProgramButton" Grid.Column="0" Width="120" Height="40" Margin="0,6,12,6" Background="#FF1F2731" Foreground="#FFF2F2F2" BorderThickness="1" BorderBrush="#FF4C5A6E">+ Add Program</Button>
-                <ListBox x:Name="ProgramTabStrip" Grid.Column="1" Height="52" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False" DisplayMemberPath="Label">
-                    <ListBox.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal" />
-                        </ItemsPanelTemplate>
-                    </ListBox.ItemsPanel>
-                    <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
-                            <Setter Property="Margin" Value="0,0,10,0" />
-                            <Setter Property="Padding" Value="18,12" />
-                            <Setter Property="Background" Value="#FF303743" />
-                            <Setter Property="Foreground" Value="#FFF2F2F2" />
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="ListBoxItem">
-                                        <Border Background="{TemplateBinding Background}" CornerRadius="14" Padding="{TemplateBinding Padding}">
-                                            <ContentPresenter />
-                                        </Border>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                            <Style.Triggers>
-                                <Trigger Property="IsSelected" Value="True">
-                                    <Setter Property="Background" Value="#FF74C4FF" />
-                                    <Setter Property="Foreground" Value="#FF11151A" />
-                                </Trigger>
-                            </Style.Triggers>
-                        </Style>
-                    </ListBox.ItemContainerStyle>
-                </ListBox>
-            </Grid>
-            <Border Grid.Row="2" Background="#FF272E38" CornerRadius="16" Padding="16" Margin="0,0,0,12">
-                <Grid>
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*" />
-                        <ColumnDefinition Width="Auto" />
-                    </Grid.ColumnDefinitions>
-                    <StackPanel Grid.Column="0">
-                        <TextBlock x:Name="ProgramNameText" FontSize="24" FontWeight="SemiBold" />
-                        <Grid Margin="0,12,0,0">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                                <RowDefinition Height="Auto" />
-                            </Grid.RowDefinitions>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="*" />
-                            </Grid.ColumnDefinitions>
-                            <Button x:Name="RenamePanelButton" Grid.Row="0" Grid.Column="0" Height="36" Margin="0,0,10,10">Rename Panel</Button>
-                            <Button x:Name="AddPanelButton" Grid.Row="0" Grid.Column="1" Height="36" Margin="0,0,10,10">Add Panel</Button>
-                            <Button x:Name="RemovePanelButton" Grid.Row="0" Grid.Column="2" Height="36" Margin="0,0,0,10" Background="#FFFF8A65">Remove Panel</Button>
-                            <Button x:Name="SaveLayoutButton" Grid.Row="1" Grid.Column="0" Height="36" Margin="0,0,10,10" Background="#FF74C4FF">Save Layout</Button>
-                            <Button x:Name="LoadLayoutButton" Grid.Row="1" Grid.Column="1" Height="36" Margin="0,0,10,10" Background="#FF74C4FF">Load Layout</Button>
-                            <Button x:Name="BindScriptButton" Grid.Row="1" Grid.Column="2" Height="36" Margin="0,0,0,10">Add Script</Button>
-                            <Button x:Name="SavePanelButton" Grid.Row="2" Grid.Column="0" Height="36" Margin="0,0,10,0">Save Panel</Button>
-                            <Button x:Name="LoadPanelButton" Grid.Row="2" Grid.Column="1" Height="36" Margin="0,0,10,0">Load Panel</Button>
-                            <Button x:Name="BindMacroButton" Grid.Row="2" Grid.Column="2" Height="36" Margin="0">Add Macro</Button>
-                        </Grid>
-                        <WrapPanel Margin="0,12,0,0" VerticalAlignment="Center">
-                            <TextBlock VerticalAlignment="Center" Margin="0,0,10,0" Foreground="#FFB6C2CF">Button Size</TextBlock>
-                            <Slider x:Name="ButtonSizeSlider" Width="180" Minimum="0.2" Maximum="1.0" Value="1.0" TickFrequency="0.1" IsSnapToTickEnabled="False" SmallChange="0.05" LargeChange="0.1" />
-                            <TextBlock x:Name="ButtonSizeValueText" Width="48" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#FFEAF7FF">1.00x</TextBlock>
-                        </WrapPanel>
-                        <CheckBox x:Name="StartupRestorePopoutsOnlyCheckBox"
-                                  Margin="0,12,0,0"
-                                  Foreground="#FFEAF7FF"
-                                  IsChecked="True"
-                                  Content="Start minimized and reopen the last pop-out-only layout" />
-                    </StackPanel>
-                    <Border Grid.Column="1" Background="#FF1D222A" BorderBrush="#FF3C4654" BorderThickness="1" CornerRadius="12" Padding="12" MinWidth="420">
+                <Border x:Name="ProgramRail" Grid.Column="0" Margin="0,0,12,0" Background="#FF272E38" CornerRadius="16" Padding="12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <ListBox x:Name="ProgramTabStrip" Grid.Row="0" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" DisplayMemberPath="Label" />
+                        <Button x:Name="AddProgramButton" Grid.Row="1" Height="40" Margin="0,12,0,0" Background="#FF1F2731" Foreground="#FFF2F2F2" BorderThickness="1" BorderBrush="#FF4C5A6E">Add Program</Button>
+                    </Grid>
+                </Border>
+                <Border x:Name="PanelRail" Grid.Column="1" Margin="0,0,12,0" Background="#FF272E38" CornerRadius="16" Padding="12">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*" />
+                            <RowDefinition Height="Auto" />
+                        </Grid.RowDefinitions>
+                        <ListBox x:Name="PanelTabStrip" Grid.Row="0" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" DisplayMemberPath="Name" />
+                        <Button x:Name="AddPanelButton" Grid.Row="1" Height="40" Margin="0,12,0,0">Add Panel</Button>
+                    </Grid>
+                </Border>
+                <Border x:Name="ButtonsRail" Grid.Column="2" Margin="0,0,12,0" Background="#FF1A1F26" CornerRadius="16" Padding="16">
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock x:Name="PanelStateText" Grid.Row="0" Margin="0,0,0,12" Foreground="#FFB6C2CF" TextWrapping="Wrap" />
+                        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+                            <WrapPanel x:Name="PanelButtonGrid" Background="Transparent" AllowDrop="True" />
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+                <Border x:Name="InfoRail" Grid.Column="3" Background="#FF272E38" CornerRadius="16" Padding="16">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <StackPanel>
-                            <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="#FF9FB0C2">Bind Area</TextBlock>
-                            <WrapPanel Margin="0,8,0,0">
-                                <Button x:Name="BindAreaScriptButton" Width="78" Height="34">Script</Button>
-                                <Button x:Name="BindAreaMacroButton" Width="78" Height="34">Macro</Button>
-                                <TextBlock x:Name="SelectedBindNameText" Width="150" Height="34" Margin="0,0,10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="#FFEAF7FF">Nothing selected</TextBlock>
-                                <ComboBox x:Name="ShortcutDropdown" Width="170" Height="34" Margin="0,0,10,0" VerticalContentAlignment="Center" />
-                                <Button x:Name="ApplyBindButton" Width="84" Height="34">Bind</Button>
-                                <Button x:Name="ShowBindsButton" Width="110" Height="34" Background="#FF74C4FF">Show Binds</Button>
+                            <TextBlock x:Name="ProgramNameText" FontSize="24" FontWeight="SemiBold" />
+                            <Grid Margin="0,12,0,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="RenamePanelButton" Grid.Row="0" Grid.Column="0" Height="36" Margin="0,0,8,10">Rename Panel</Button>
+                                <Button x:Name="RemovePanelButton" Grid.Row="0" Grid.Column="1" Height="36" Margin="0,0,0,10" Background="#FFFF8A65">Remove Panel</Button>
+                                <Button x:Name="SaveLayoutButton" Grid.Row="1" Grid.Column="0" Height="36" Margin="0,0,8,10" Background="#FF74C4FF">Save Layout</Button>
+                                <Button x:Name="LoadLayoutButton" Grid.Row="1" Grid.Column="1" Height="36" Margin="0,0,0,10" Background="#FF74C4FF">Load Layout</Button>
+                                <Button x:Name="BindScriptButton" Grid.Row="2" Grid.Column="0" Height="36" Margin="0,0,8,10">Add Script</Button>
+                                <Button x:Name="BindMacroButton" Grid.Row="2" Grid.Column="1" Height="36" Margin="0,0,0,10">Add Macro</Button>
+                                <Button x:Name="SavePanelButton" Grid.Row="3" Grid.Column="0" Height="36" Margin="0,0,8,0">Save Panel</Button>
+                                <Button x:Name="LoadPanelButton" Grid.Row="3" Grid.Column="1" Height="36" Margin="0">Load Panel</Button>
+                            </Grid>
+                            <Grid Margin="0,12,0,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Button x:Name="PopTabButton" Grid.Row="0" Grid.Column="0" Height="34" Margin="0,0,8,10" Background="#FF74C4FF">Pop Tab</Button>
+                                <Button x:Name="PopToolsButton" Grid.Row="0" Grid.Column="1" Height="34" Margin="0,0,0,10">Pop Tools</Button>
+                                <ComboBox x:Name="PopOutModeBox" Grid.Row="1" Grid.Column="0" Height="34" Margin="0,0,8,0" VerticalContentAlignment="Center" />
+                                <Button x:Name="ArrangeButtonsButton" Grid.Row="1" Grid.Column="1" Height="34" Margin="0" Background="#FF3C4654">Arrange</Button>
+                            </Grid>
+                            <Border Margin="0,12,0,0" Background="#FF1D222A" BorderBrush="#FF3C4654" BorderThickness="1" CornerRadius="12" Padding="12">
+                                <StackPanel>
+                                    <TextBlock FontSize="13" FontWeight="SemiBold" Foreground="#FF9FB0C2">Bind Area</TextBlock>
+                                    <WrapPanel Margin="0,8,0,0">
+                                        <Button x:Name="BindAreaScriptButton" Width="78" Height="34">Script</Button>
+                                        <Button x:Name="BindAreaMacroButton" Width="78" Height="34">Macro</Button>
+                                        <TextBlock x:Name="SelectedBindNameText" Width="150" Height="34" Margin="0,0,10,0" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" Foreground="#FFEAF7FF">Nothing selected</TextBlock>
+                                        <ComboBox x:Name="ShortcutDropdown" Width="170" Height="34" Margin="0,0,10,0" VerticalContentAlignment="Center" />
+                                        <Button x:Name="ApplyBindButton" Width="84" Height="34">Bind</Button>
+                                        <Button x:Name="ShowBindsButton" Width="110" Height="34" Background="#FF74C4FF">Show Binds</Button>
+                                    </WrapPanel>
+                                    <TextBlock x:Name="BindSelectionText" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="#FFEAF7FF">No pending bind.</TextBlock>
+                                </StackPanel>
+                            </Border>
+                            <WrapPanel Margin="0,12,0,0" VerticalAlignment="Center">
+                                <TextBlock VerticalAlignment="Center" Margin="0,0,10,0" Foreground="#FFB6C2CF">Button Size</TextBlock>
+                                <Slider x:Name="ButtonSizeSlider" Width="180" Minimum="0.2" Maximum="1.0" Value="1.0" TickFrequency="0.1" IsSnapToTickEnabled="False" SmallChange="0.05" LargeChange="0.1" />
+                                <TextBlock x:Name="ButtonSizeValueText" Width="48" Margin="10,0,0,0" VerticalAlignment="Center" Foreground="#FFEAF7FF">1.00x</TextBlock>
                             </WrapPanel>
-                            <TextBlock x:Name="BindSelectionText" Margin="0,10,0,0" TextWrapping="Wrap" Foreground="#FFEAF7FF">No pending bind.</TextBlock>
+                            <CheckBox x:Name="StartupRestorePopoutsOnlyCheckBox"
+                                      Margin="0,12,0,0"
+                                      Foreground="#FFEAF7FF"
+                                      IsChecked="True"
+                                      Content="Start minimized and reopen the last pop-out-only layout" />
                         </StackPanel>
-                    </Border>
-                </Grid>
-            </Border>
-            <Grid Grid.Row="3" Height="46" Margin="0,0,0,12">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="Auto" />
-                    <ColumnDefinition Width="*" />
-                </Grid.ColumnDefinitions>
-                <Button x:Name="PopTabButton" Grid.Column="0" Width="96" Height="34" Margin="0,0,8,0" Background="#FF74C4FF">Pop Tab</Button>
-                <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,8,0">
-                    <Button x:Name="PopToolsButton" Width="96" Height="34" Margin="0,0,8,0">Pop Tools</Button>
-                    <ComboBox x:Name="PopOutModeBox" Width="118" Height="34" VerticalContentAlignment="Center" />
-                    <Button x:Name="ArrangeButtonsButton" Width="104" Height="34" Margin="8,0,0,0" Background="#FF3C4654">Arrange</Button>
-                </StackPanel>
-                <ListBox x:Name="PanelTabStrip" Grid.Column="2" Height="46" BorderThickness="0" Background="Transparent" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="False" DisplayMemberPath="HeaderText">
-                    <ListBox.ItemsPanel>
-                        <ItemsPanelTemplate>
-                            <StackPanel Orientation="Horizontal" />
-                        </ItemsPanelTemplate>
-                    </ListBox.ItemsPanel>
-                    <ListBox.ItemContainerStyle>
-                        <Style TargetType="ListBoxItem">
-                            <Setter Property="Margin" Value="0,0,8,0" />
-                            <Setter Property="Padding" Value="16,10" />
-                            <Setter Property="Background" Value="#FF2D333D" />
-                            <Setter Property="Foreground" Value="#FFF2F2F2" />
-                            <Setter Property="Template">
-                                <Setter.Value>
-                                    <ControlTemplate TargetType="ListBoxItem">
-                                        <Border Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}">
-                                            <ContentPresenter />
-                                        </Border>
-                                    </ControlTemplate>
-                                </Setter.Value>
-                            </Setter>
-                            <Style.Triggers>
-                                <Trigger Property="IsSelected" Value="True">
-                                    <Setter Property="Background" Value="#FF79FF33" />
-                                    <Setter Property="Foreground" Value="#FF10140C" />
-                                </Trigger>
-                            </Style.Triggers>
-                        </Style>
-                    </ListBox.ItemContainerStyle>
-                </ListBox>
-            </Grid>
-            <Border Grid.Row="4" Background="#FF1A1F26" CornerRadius="16" Padding="16">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto" />
-                        <RowDefinition Height="*" />
-                    </Grid.RowDefinitions>
-                    <TextBlock x:Name="PanelStateText" Grid.Row="0" Margin="0,0,0,12" Foreground="#FFB6C2CF" TextWrapping="Wrap" />
-                    <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
-                        <WrapPanel x:Name="PanelButtonGrid" Background="Transparent" AllowDrop="True" />
                     </ScrollViewer>
-                </Grid>
-            </Border>
-            <TextBlock x:Name="FlowCellStatusText" Grid.Row="5" Margin="4,12,0,0" Foreground="#FFB6C2CF" TextWrapping="Wrap" />
+                </Border>
+            </Grid>
+            <TextBlock x:Name="FlowCellStatusText" Grid.Row="2" Margin="4,12,0,0" Foreground="#FFB6C2CF" TextWrapping="Wrap" />
         </Grid>
     </Border>
 </Window>
@@ -15443,6 +16052,9 @@ function Start-Ui {
                     & $refreshAll
                     & $setStatus ('Renamed program tab to {0}.' -f [string]$newLabel.Trim())
                 }
+                else {
+                    & $setStatus 'Rename program failed: choose a unique folder-backed program name.'
+                }
             }
         }.GetNewClosure())
         $deleteItem.Add_Click({
@@ -15494,23 +16106,21 @@ function Start-Ui {
     $refreshProgramTabs = {
         $script:__flowCellSuppressProgramSelection = $true
         $programTabStrip.ItemsSource = $null
-        $programTabStrip.ItemsSource = @($script:State.ProgramTabs)
+        $programTabStrip.ItemsSource = @(Get-FlowCellProgramRailTabs)
         $selectedProgram = Get-FlowCellSelectedProgramTab
         if ($selectedProgram) { $programTabStrip.SelectedItem = $selectedProgram }
         $script:__flowCellSuppressProgramSelection = $false
     }
     $refreshPanelTabs = {
+        $programTab = Get-FlowCellSelectedProgramTab
+        if ($null -eq $programTab) { $script:__flowCellSuppressPanelSelection = $true; $panelTabStrip.ItemsSource = $null; $script:__flowCellSuppressPanelSelection = $false; return }
         $programState = Get-FlowCellSelectedProgramState
         if ($null -eq $programState) { $script:__flowCellSuppressPanelSelection = $true; $panelTabStrip.ItemsSource = $null; $script:__flowCellSuppressPanelSelection = $false; return }
         $script:__flowCellSuppressPanelSelection = $true
-        $items = @(
-            foreach ($panel in @($programState.Panels)) {
-                [pscustomobject]@{ Id = [string]$panel.Id; HeaderText = [string]$panel.Name }
-            }
-        )
+        $items = @(Get-FlowCellPanelRailPanels -ProgramTab $programTab)
         $panelTabStrip.ItemsSource = $null
         $panelTabStrip.ItemsSource = $items
-        $selectedItem = $items | Where-Object { $_.Id -eq [string]$programState.SelectedPanelId } | Select-Object -First 1
+        $selectedItem = $items | Where-Object { [string]$_.Id -eq [string]$programState.SelectedPanelId } | Select-Object -First 1
         if ($selectedItem) { $panelTabStrip.SelectedItem = $selectedItem }
         $script:__flowCellSuppressPanelSelection = $false
     }
@@ -15656,7 +16266,9 @@ function Start-Ui {
         else {
             'No panel selected.'
         }
+        if ($addPanelButton) { $addPanelButton.IsEnabled = ($null -ne $programTab) }
         $hasPanel = ($null -ne $panel)
+        $resolvedProgramState = & $getResolvedProgramState
         if ($popTabButton) {
             $popTabButton.IsEnabled = $hasPanel
             $popTabButton.Content = if ($panelIsPoppedOutLive) { 'Show Tab' } else { 'Pop Tab' }
@@ -15671,7 +16283,7 @@ function Start-Ui {
             $arrangeButtonsButton.Foreground = if ($isArrangeModeEnabled) { (New-Object System.Windows.Media.SolidColorBrush ([System.Windows.Media.Color]::FromRgb(24,20,14))) } else { [System.Windows.Media.Brushes]::White }
         }
         $renamePanelButton.IsEnabled = $hasPanel
-        $removePanelButton.IsEnabled = $hasPanel -and (@((& $getResolvedProgramState).Panels).Count -gt 1)
+        $removePanelButton.IsEnabled = $hasPanel -and ($null -ne $resolvedProgramState) -and (@($resolvedProgramState.Panels).Count -gt 1)
         if ($savePanelButton) { $savePanelButton.IsEnabled = $hasPanel }
         if ($loadPanelButton) { $loadPanelButton.IsEnabled = ($null -ne $programTab) }
         if ($bindScriptButton) {
@@ -15759,9 +16371,9 @@ function Start-Ui {
     if ($addProgramButton) {
         $addProgramButton.Add_Click({
             Invoke-UiSafe 'Add Program failed.' {
-                $dialogResult = Show-AddProgramDialog
-                if ($null -eq $dialogResult) { return }
-                $result = Add-FlowCellProgramTab -ProgramName ([string]$dialogResult.ProgramName) -ExePath ([string]$dialogResult.ExePath)
+                $programSelection = Show-AddProgramDialog
+                if ($null -eq $programSelection) { return }
+                $result = Add-FlowCellProgramRailEntry -ProgramName ([string]$programSelection.ProgramName) -ExePath ([string]$programSelection.ExePath)
                 if (-not [bool]$result.Succeeded) {
                     & $setStatus ('Add Program failed: {0}' -f [string]$result.Message)
                     return
@@ -15877,7 +16489,7 @@ function Start-Ui {
         Set-ProgramLastScriptFolder -ProgramTab $programTab -FilePath ([string]$selectedPaths[0])
 
         if ([string]$programKey -eq 'blender') {
-            $installerPath = Join-Path $script:FlowCellHomeRoot 'Blender\SupportScripts\Install-BlenderFlowCellButtons.ps1'
+            $installerPath = Join-Path $script:FlowCellHomeRoot 'Programs\Blender\SupportScripts\Install-BlenderFlowCellButtons.ps1'
             if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
                 & $setStatus ('Blender Add Button installer script was not found: {0}' -f $installerPath)
                 return
@@ -16027,34 +16639,44 @@ function Start-Ui {
         }
     })
     $addPanelButton.Add_Click({
-        $programState = Get-FlowCellSelectedProgramState
-        if ($null -eq $programState) { return }
+        $programTab = Get-FlowCellSelectedProgramTab
+        if ($null -eq $programTab) { return }
         $name = Show-TextEntryDialog -Title 'Add Panel' -Prompt 'Name the new panel.' -InitialValue '' -AcceptText 'Add'
         if ([string]::IsNullOrWhiteSpace($name)) { return }
-        $panel = New-FlowCellPanelState -Name $name.Trim()
-        $programState.Panels += $panel
-        $programState.SelectedPanelId = [string]$panel.Id
-        Save-FlowCellState
+        $result = Add-FlowCellPanel -ProgramTabId ([int]$programTab.Id) -PanelName ([string]$name)
+        if (-not [bool]$result.Succeeded) {
+            & $setStatus ('Add Panel failed: {0}' -f [string]$result.Message)
+            return
+        }
         & $refreshAll
+        & $setStatus ([string]$result.Message)
     })
     $renamePanelButton.Add_Click({
+        $programTab = Get-FlowCellSelectedProgramTab
         $panel = Get-FlowCellSelectedPanel
-        if ($null -eq $panel) { return }
+        if ($null -eq $programTab -or $null -eq $panel) { return }
         $name = Show-TextEntryDialog -Title 'Rename Panel' -Prompt 'Enter the new panel name.' -InitialValue ([string]$panel.Name) -AcceptText 'Rename'
         if ([string]::IsNullOrWhiteSpace($name)) { return }
-        $panel.Name = $name.Trim()
-        Save-FlowCellState
+        if (-not (Rename-FlowCellPanel -ProgramTabId ([int]$programTab.Id) -PanelId ([string]$panel.Id) -NewName ([string]$name))) {
+            & $setStatus 'Rename Panel failed: choose a unique panel name.'
+            return
+        }
         & $refreshAll
+        & $setStatus ('Renamed panel to {0}.' -f $name.Trim())
     })
     $removePanelButton.Add_Click({
+        $programTab = Get-FlowCellSelectedProgramTab
         $programState = Get-FlowCellSelectedProgramState
         $panel = Get-FlowCellSelectedPanel
-        if ($null -eq $programState -or $null -eq $panel -or @($programState.Panels).Count -le 1) { return }
+        if ($null -eq $programTab -or $null -eq $programState -or $null -eq $panel -or @($programState.Panels).Count -le 1) { return }
         if ([System.Windows.MessageBox]::Show($flowWindow, ('Remove panel {0}?' -f $panel.Name), 'FlowCell', 'YesNo', 'Question') -ne 'Yes') { return }
-        $programState.Panels = @($programState.Panels | Where-Object { $_.Id -ne $panel.Id })
-        $programState.SelectedPanelId = [string]$programState.Panels[0].Id
-        Save-FlowCellState
+        $result = Remove-FlowCellPanel -ProgramTabId ([int]$programTab.Id) -PanelId ([string]$panel.Id)
+        if (-not [bool]$result.Succeeded) {
+            & $setStatus ('Remove Panel failed: {0}' -f [string]$result.Message)
+            return
+        }
         & $refreshAll
+        & $setStatus ([string]$result.Message)
     })
     if ($saveLayoutButton) {
         $saveLayoutButton.Add_Click({
@@ -16218,7 +16840,7 @@ function Start-Ui {
     })
     & $clearPendingBinding
     & $refreshAll
-    & $setStatus 'FlowCell is ready. Choose a program tab, pick a panel, and add buttons with Bind Script or Bind Macro.'
+    & $setStatus 'FlowCell is ready. Choose a program rail button, pick a panel rail button, and add buttons with Bind Script or Bind Macro.'
     Write-UiLog 'FlowCell window loaded.'
     if (Test-FlowCellStartupRestorePopoutsOnlyEnabled) {
         $flowWindow.ShowActivated = $false

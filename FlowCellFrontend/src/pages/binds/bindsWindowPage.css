@@ -1,0 +1,422 @@
+.binds-window-page {
+  width: 100vw;
+  height: 100vh;
+  padding: 18px;
+  overflow: hidden;
+  background: #12161a;
+  color: #eef3f8;
+}
+
+.binds-window {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 14px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.binds-window__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.binds-window__title-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.binds-window__eyebrow {
+  font: 700 0.72rem/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #9fb0bf;
+}
+
+.binds-window__title-block h1 {
+  margin: 0;
+  font: 700 1.3rem/1.15 "Segoe UI", sans-serif;
+  color: #f7fbff;
+}
+
+.binds-window__chrome-button,
+.binds-window__bind-button,
+.binds-window__table-row,
+.binds-window__global-button,
+.binds-window__shortcut-option,
+.binds-window__shortcut-toggle {
+  cursor: pointer;
+}
+
+.binds-window__chrome-button,
+.binds-window__bind-button,
+.binds-window__shortcut-toggle {
+  min-height: 42px;
+  border: 1px solid #44515d;
+  border-radius: 10px;
+  background: #1a2128;
+  color: #eef3f8;
+  font: 600 14px/1 "Segoe UI", sans-serif;
+}
+
+.binds-window__chrome-button {
+  min-width: 92px;
+  padding: 0 16px;
+}
+
+.binds-window__station,
+.binds-window__card {
+  min-height: 0;
+  border: 1px solid #2d363f;
+  border-radius: 14px;
+  background: #171c21;
+}
+
+.binds-window__station {
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+}
+
+.binds-window__toolbar {
+  display: grid;
+  grid-template-columns: 112px repeat(3, minmax(0, 1fr)) minmax(150px, 0.8fr) 108px;
+  gap: 12px;
+  align-items: end;
+  position: relative;
+  z-index: 2;
+}
+
+.binds-window__field--wide {
+  grid-column: span 3;
+}
+
+.binds-window__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.binds-window__field-label {
+  font: 700 0.78rem/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #b4c0cb;
+}
+
+.binds-window__input,
+.binds-window__select {
+  width: 100%;
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid #44515d;
+  border-radius: 10px;
+  background: #0f1418;
+  color: #eef3f8;
+  font: 600 14px/1.2 "Segoe UI", sans-serif;
+  outline: none;
+}
+
+.binds-window__input::placeholder {
+  color: #7f8c98;
+}
+
+.binds-window__input:focus,
+.binds-window__select:focus,
+.binds-window__chrome-button:focus,
+.binds-window__bind-button:focus,
+.binds-window__shortcut-toggle:focus,
+.binds-window__table-row:focus,
+.binds-window__global-button:focus,
+.binds-window__shortcut-option:focus {
+  border-color: #62b7ff;
+  box-shadow: 0 0 0 1px rgba(98, 183, 255, 0.28);
+}
+
+.binds-window__select:disabled,
+.binds-window__input:disabled,
+.binds-window__chrome-button:disabled,
+.binds-window__bind-button:disabled,
+.binds-window__shortcut-toggle:disabled {
+  cursor: default;
+  opacity: 0.56;
+}
+
+.binds-window__shortcut-combo {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 42px;
+  gap: 8px;
+}
+
+.binds-window__shortcut-toggle {
+  padding: 0;
+}
+
+.binds-window__shortcut-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 260px;
+  padding: 6px;
+  overflow: auto;
+  border: 1px solid #44515d;
+  border-radius: 10px;
+  background: #0f1418;
+  box-shadow: 0 18px 30px rgba(0, 0, 0, 0.34);
+  z-index: 10;
+}
+
+.binds-window__shortcut-option {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #eef3f8;
+  font: 600 13px/1.15 "Segoe UI", sans-serif;
+  text-align: left;
+}
+
+.binds-window__shortcut-option:hover,
+.binds-window__table-row:hover,
+.binds-window__global-button:hover,
+.binds-window__chrome-button:hover:not(:disabled),
+.binds-window__bind-button:hover:not(:disabled),
+.binds-window__shortcut-toggle:hover:not(:disabled) {
+  border-color: #62b7ff;
+}
+
+.binds-window__shortcut-option.is-selected,
+.binds-window__table-row.is-selected,
+.binds-window__global-button.is-selected {
+  border-color: #62b7ff;
+  background: #1b2530;
+}
+
+.binds-window__bind-button {
+  width: 100%;
+}
+
+.binds-window__toolbar-note,
+.binds-window__status,
+.binds-window__warning,
+.binds-window__empty,
+.binds-window__section-header p {
+  margin: 0;
+  font: 500 0.88rem/1.35 "Segoe UI", sans-serif;
+}
+
+.binds-window__toolbar-note {
+  color: #b4c0cb;
+}
+
+.binds-window__status,
+.binds-window__warning,
+.binds-window__empty {
+  padding: 10px 12px;
+  border: 1px solid #3c4650;
+  border-radius: 10px;
+  background: #12171c;
+}
+
+.binds-window__status.is-success {
+  color: #b7f3bc;
+  border-color: #2f6741;
+  background: #152118;
+}
+
+.binds-window__status.is-error,
+.binds-window__warning {
+  color: #ffd1d1;
+  border-color: #704545;
+  background: #221516;
+}
+
+.binds-window__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+  gap: 14px;
+  min-height: 0;
+}
+
+.binds-window__card {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+}
+
+.binds-window__section-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.binds-window__section-header h2 {
+  margin: 0 0 4px;
+  font: 700 1.02rem/1.2 "Segoe UI", sans-serif;
+  color: #f7fbff;
+}
+
+.binds-window__section-header p {
+  color: #9fb0bf;
+}
+
+.binds-window__table {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  min-height: 0;
+}
+
+.binds-window__table-header,
+.binds-window__table-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 148px;
+  gap: 12px;
+  align-items: center;
+}
+
+.binds-window__table-header {
+  padding: 0 12px;
+  font: 700 0.76rem/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #9fb0bf;
+}
+
+.binds-window__table-body,
+.binds-window__global-list {
+  min-height: 0;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.binds-window__table-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.binds-window__table-row {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #303944;
+  border-radius: 10px;
+  background: #11161a;
+  color: #eef3f8;
+  text-align: left;
+}
+
+.binds-window__table-row span,
+.binds-window__global-button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binds-window__table-row span:last-child {
+  text-align: right;
+  color: #d4e0ec;
+}
+
+.binds-window__global-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.binds-window__global-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.binds-window__global-group h3 {
+  margin: 0;
+  font: 700 0.92rem/1.2 "Segoe UI", sans-serif;
+  color: #f7fbff;
+}
+
+.binds-window__global-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.binds-window__global-button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 110px;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #303944;
+  border-radius: 10px;
+  background: #11161a;
+  color: #eef3f8;
+  text-align: left;
+}
+
+.binds-window__global-button small {
+  color: #c1d0dc;
+  font: 600 0.8rem/1.2 "Segoe UI", sans-serif;
+  text-align: right;
+}
+
+@media (max-width: 1200px) {
+  .binds-window__toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .binds-window__field--wide {
+    grid-column: span 2;
+  }
+
+  .binds-window__grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .binds-window-page {
+    padding: 12px;
+  }
+
+  .binds-window__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .binds-window__toolbar {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .binds-window__field--wide {
+    grid-column: span 1;
+  }
+
+  .binds-window__table-header,
+  .binds-window__table-row,
+  .binds-window__global-button {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .binds-window__table-row span:last-child,
+  .binds-window__global-button small {
+    text-align: left;
+  }
+}

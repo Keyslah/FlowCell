@@ -7,17 +7,13 @@ import {
 } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type {
-  BindingMutationResult,
   CommandEnvelope,
   CommandResult,
-  FlowCellButton,
   FlowCellBounds,
   FlowCellState,
   LayoutSnapshot,
   LoadStateResponse,
   ManagedScriptInstallResult,
-  RecordedMacroChoice,
-  RecordedMacroDefinition,
   SavedLayoutFile,
   ToolPopoutLayoutMode,
   WindowContext
@@ -54,9 +50,10 @@ export interface ForegroundProcessInfo {
 export interface SampledPhotoThemeColors {
   headersHex: string;
   textHex: string;
-  sectionFillHex: string;
+  sceneHex: string;
   controlsHex: string;
   miscHex: string;
+  highlightsHex: string;
 }
 
 function sanitizeWindowToken(value: string): string {
@@ -75,10 +72,6 @@ function buildPanelPopoutLabel(programId: number, panelId: string): string {
 
 function buildPanelFanOptionsLabel(programId: number, panelId: string): string {
   return `panel-fan-options-${programId}-${sanitizeWindowToken(panelId)}`;
-}
-
-function buildButtonAppearanceLabel(programId: number, panelId: string): string {
-  return `button-appearance-${programId}-${sanitizeWindowToken(panelId)}`;
 }
 
 function buildButtonReorderLabel(programId: number, panelId: string): string {
@@ -186,13 +179,6 @@ function resolvePanelFanOptionsWindowOptions() {
   return {
     width: 560,
     height: 680
-  };
-}
-
-function resolveButtonAppearanceWindowOptions() {
-  return {
-    width: 960,
-    height: 860
   };
 }
 
@@ -441,7 +427,7 @@ async function applyWindowPlacement(
   }
 }
 
-async function applyTransparentFanoutWindowAppearance(window: WebviewWindow): Promise<void> {
+async function applyTransparentFanoutWindowChrome(window: WebviewWindow): Promise<void> {
   await window.setDecorations(false).catch(() => {});
   await window.setShadow(false).catch(() => {});
   await window.setIgnoreCursorEvents(false).catch(() => {});
@@ -483,6 +469,30 @@ export function getWindowContext(): Promise<WindowContext> {
 
 export function getForegroundProcessInfo(): Promise<ForegroundProcessInfo> {
   return invoke("get_foreground_process_info");
+}
+
+export function setHostWindowTopmost(
+  label: string,
+  topmost: boolean,
+  promote?: boolean
+): Promise<void> {
+  return invoke("set_host_window_topmost", { label, topmost, promote });
+}
+
+export function registerScopedWindowTopmost(
+  label: string,
+  programName: string,
+  bindOwner?: boolean
+): Promise<void> {
+  return invoke("register_scoped_window_topmost", { label, programName, bindOwner });
+}
+
+export function refreshScopedWindowTopmost(label: string): Promise<void> {
+  return invoke("refresh_scoped_window_topmost", { label });
+}
+
+export function unregisterScopedWindowTopmost(label: string): Promise<void> {
+  return invoke("unregister_scoped_window_topmost", { label });
 }
 
 export function logFrontendEvent(
@@ -600,8 +610,7 @@ export function openPanelPopout(args: {
       transparent: false,
       visible: true,
       focus: true,
-      skipTaskbar: false,
-      alwaysOnTop: true,
+      alwaysOnTop: false,
       shadow: true
     });
 
@@ -648,45 +657,7 @@ export function openPanelFanOptionsWindow(args: {
       decorations: true,
       visible: true,
       focus: true,
-      alwaysOnTop: true
-    });
-
-    await waitForWindowCreated(window);
-    await applyWindowPlacement(window, placement);
-  })();
-}
-
-export function openButtonAppearanceWindow(args: {
-  programId: number;
-  panelId: string;
-  panelName: string;
-  buttonId: string;
-}): Promise<void> {
-  const label = buildButtonAppearanceLabel(args.programId, args.panelId);
-  return (async () => {
-    const placement = resolveButtonAppearanceWindowOptions();
-    const existing = await WebviewWindow.getByLabel(label);
-    if (existing) {
-      await applyWindowPlacement(existing, placement, { focus: true });
-      await existing.show().catch(() => {});
-      return;
-    }
-
-    const window = new WebviewWindow(label, {
-      url: buildWindowContextUrl({
-        kind: "button-appearance",
-        programId: args.programId,
-        panelId: args.panelId,
-        panelName: args.panelName,
-        buttonId: args.buttonId
-      }),
-      title: `FlowCell - Button Appearance - ${args.panelName}`,
-      ...placement,
-      resizable: true,
-      decorations: false,
-      visible: true,
-      focus: true,
-      alwaysOnTop: true
+      alwaysOnTop: false
     });
 
     await waitForWindowCreated(window);
@@ -722,7 +693,7 @@ export function openButtonReorderWindow(args: {
       decorations: false,
       visible: true,
       focus: true,
-      alwaysOnTop: true
+      alwaysOnTop: false
     });
 
     await waitForWindowCreated(window);
@@ -758,7 +729,7 @@ export function openButtonOptionsWindow(args: {
       decorations: false,
       visible: true,
       focus: true,
-      alwaysOnTop: true
+      alwaysOnTop: false
     });
 
     await waitForWindowCreated(window);
@@ -787,7 +758,7 @@ export function openLayoutPickerWindow(): Promise<void> {
       decorations: true,
       visible: true,
       focus: true,
-      alwaysOnTop: true
+      alwaysOnTop: false
     });
 
     await waitForWindowCreated(window);
@@ -837,7 +808,7 @@ export function openToolPopout(args: {
     const existing = await WebviewWindow.getByLabel(label);
     if (existing) {
       if (isTransparentWindow) {
-        await applyTransparentFanoutWindowAppearance(existing);
+        await applyTransparentFanoutWindowChrome(existing);
       }
       await applyWindowPlacement(existing, placement, placementOptions);
       return;
@@ -861,13 +832,12 @@ export function openToolPopout(args: {
       shadow: !isTransparentWindow,
       visible: true,
       focus: !isTransparentWindow,
-      skipTaskbar: isFloatingFanout,
-      alwaysOnTop: true
+      alwaysOnTop: false
     });
 
     await waitForWindowCreated(window);
     if (isTransparentWindow) {
-      await applyTransparentFanoutWindowAppearance(window);
+      await applyTransparentFanoutWindowChrome(window);
     }
     await applyWindowPlacement(window, placement, placementOptions);
   })().finally(() => {
@@ -884,40 +854,6 @@ export function emitBackendEnvelope(
   envelope: CommandEnvelope
 ): Promise<CommandResult> {
   return invoke("emit_command", { envelope });
-}
-
-export function saveButtonBinding(args: {
-  button: FlowCellButton;
-  programId: number;
-  shortcut: string;
-}): Promise<BindingMutationResult> {
-  const bindingTarget = args.button.ExecutionTarget?.trim() || args.button.Target;
-  return invoke("save_button_binding", {
-    request: {
-      kind: args.button.Kind,
-      programTabId: args.programId,
-      target: bindingTarget,
-      shortcut: args.shortcut,
-      bindingId: args.button.BindingId ?? 0,
-      label: args.button.Label
-    }
-  });
-}
-
-export function clearButtonBinding(args: {
-  button: FlowCellButton;
-  programId: number;
-}): Promise<BindingMutationResult> {
-  const bindingTarget = args.button.ExecutionTarget?.trim() || args.button.Target;
-  return invoke("clear_button_binding", {
-    request: {
-      kind: args.button.Kind,
-      programTabId: args.programId,
-      target: bindingTarget,
-      bindingId: args.button.BindingId ?? 0,
-      label: args.button.Label
-    }
-  });
 }
 
 export function showOpenFileDialog(args: {
@@ -1003,36 +939,6 @@ export function saveLayoutSnapshot(
   snapshot: LayoutSnapshot
 ): Promise<string> {
   return invoke("save_layout_snapshot", { suggestedName, snapshot });
-}
-
-export function listRecordedMacros(): Promise<RecordedMacroChoice[]> {
-  return invoke("list_recorded_macros");
-}
-
-export function createRecordedMacroDraft(label?: string): Promise<RecordedMacroDefinition> {
-  return invoke("create_recorded_macro_draft", { label });
-}
-
-export function loadRecordedMacro(id: string): Promise<RecordedMacroDefinition> {
-  return invoke("load_recorded_macro", { actionId: id });
-}
-
-export function saveRecordedMacro(
-  definition: RecordedMacroDefinition
-): Promise<RecordedMacroDefinition> {
-  return invoke("save_recorded_macro", { definition });
-}
-
-export function deleteRecordedMacro(id: string): Promise<string> {
-  return invoke("delete_recorded_macro", { actionId: id });
-}
-
-export function recordMacro(label: string): Promise<RecordedMacroDefinition> {
-  return invoke("record_macro", { label });
-}
-
-export function runRecordedMacro(id: string): Promise<string> {
-  return invoke("run_recorded_macro", { actionId: id });
 }
 
 export function installBlenderButtons(args: {

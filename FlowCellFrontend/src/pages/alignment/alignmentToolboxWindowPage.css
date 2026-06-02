@@ -1,0 +1,277 @@
+.alignment-toolbox-window-page {
+  position: relative;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
+
+.alignment-toolbox-window-page__shell {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  box-sizing: border-box;
+  touch-action: none;
+}
+
+.alignment-toolbox-window-page--space-drag,
+.alignment-toolbox-window-page--space-drag * {
+  cursor: grab !important;
+}
+
+.alignment-toolbox-window-page--dragging,
+.alignment-toolbox-window-page--dragging * {
+  cursor: grabbing !important;
+}
+
+.alignment-toolbox-window-page__viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 2;
+}
+
+.alignment-toolbox-window-page__surface-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.alignment-toolbox-window-page__surface-scale {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}
+
+.alignment-toolbox-window-page__resize-handle {
+  position: absolute;
+  z-index: 5;
+  background: transparent;
+  touch-action: none;
+}
+
+.alignment-toolbox-window-page__resize-handle--north {
+  top: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.alignment-toolbox-window-page__resize-handle--south {
+  bottom: 0;
+  left: 10px;
+  right: 10px;
+  height: 8px;
+  cursor: ns-resize;
+}
+
+.alignment-toolbox-window-page__resize-handle--east {
+  top: 10px;
+  right: 0;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.alignment-toolbox-window-page__resize-handle--west {
+  top: 10px;
+  left: 0;
+  bottom: 10px;
+  width: 8px;
+  cursor: ew-resize;
+}
+
+.alignment-toolbox-window-page__resize-handle--north-east {
+  top: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.alignment-toolbox-window-page__resize-handle--north-west {
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
+.alignment-toolbox-window-page__resize-handle--south-east {
+  right: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nwse-resize;
+}
+
+.alignment-toolbox-window-page__resize-handle--south-west {
+  left: 0;
+  bottom: 0;
+  width: 14px;
+  height: 14px;
+  cursor: nesw-resize;
+}
+
+.alignment-toolbox-window-page__surface-content {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.alignment-toolbox-window-page__surface,
+.alignment-toolbox-window-page__status-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  --toolset-pill-base: rgba(0, 0, 0, 0.85);
+  --toolset-pill-top: rgba(0, 0, 0, 0.91);
+  --toolset-pill-bottom: rgba(0, 0, 0, 0.87);
+  --toolset-pill-hover-top: rgba(0, 0, 0, 0.95);
+  --toolset-pill-hover-bottom: rgba(0, 0, 0, 0.91);
+  --toolset-pill-border: rgba(9, 13, 12, 0.82);
+  --toolset-pill-shadow: 0 10px 20px rgba(0, 0, 0, 0.32);
+  --toolset-pill-shadow-strong: 0 12px 24px rgba(0, 0, 0, 0.36);
+}
+
+.alignment-toolbox-window-page__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.alignment-toolbox-window-page__button {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--toolset-pill-border);
+  background:
+    linear-gradient(180deg, rgba(15, 19, 18, 0.62), rgba(15, 19, 18, 0) 18%),
+    linear-gradient(180deg, var(--toolset-pill-top), var(--toolset-pill-bottom)),
+    var(--toolset-pill-base);
+  box-shadow:
+    inset 0 1px 0 rgba(14, 19, 18, 0.74),
+    inset 0 -18px 32px rgba(0, 0, 0, 0.52),
+    var(--toolset-pill-shadow);
+  backdrop-filter: blur(12px) saturate(115%);
+  -webkit-backdrop-filter: blur(12px) saturate(115%);
+  color: rgba(255, 255, 255, 0.94);
+  text-align: center;
+  transition:
+    background 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+
+.alignment-toolbox-window-page__button {
+  cursor: pointer;
+  font: 700 13px/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.01em;
+}
+
+.alignment-toolbox-window-page__button:hover,
+.alignment-toolbox-window-page__button[data-selected="false"]:hover {
+  border-color: rgba(17, 24, 21, 0.92);
+  background:
+    linear-gradient(180deg, rgba(18, 24, 22, 0.74), rgba(18, 24, 22, 0) 18%),
+    linear-gradient(180deg, var(--toolset-pill-hover-top), var(--toolset-pill-hover-bottom)),
+    var(--toolset-pill-base);
+  box-shadow:
+    inset 0 1px 0 rgba(18, 24, 22, 0.84),
+    inset 0 -20px 34px rgba(0, 0, 0, 0.56),
+    var(--toolset-pill-shadow-strong);
+  color: rgba(255, 255, 255, 0.98);
+}
+
+.alignment-toolbox-window-page__button[data-selected="true"] {
+  border-color: rgba(151, 255, 99, 0.72);
+  background:
+    linear-gradient(180deg, rgba(86, 147, 61, 0.22), rgba(86, 147, 61, 0) 18%),
+    linear-gradient(180deg, rgba(34, 69, 24, 0.94), rgba(18, 45, 14, 0.9)),
+    rgba(19, 49, 15, 0.9);
+  box-shadow:
+    inset 0 1px 0 rgba(74, 128, 54, 0.36),
+    inset 0 -20px 34px rgba(7, 24, 8, 0.56),
+    0 0 0 1px rgba(151, 255, 99, 0.18),
+    0 12px 24px rgba(9, 33, 11, 0.38);
+  color: rgba(238, 255, 230, 0.98);
+}
+
+.alignment-toolbox-window-page__button:focus-visible {
+  outline: 1px solid rgba(151, 255, 99, 0.58);
+  outline-offset: 1px;
+}
+
+.alignment-toolbox-window-page__button-label {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  line-height: 1;
+  text-align: center;
+  white-space: nowrap;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.62);
+}
+
+.alignment-toolbox-window-page__button-label--min {
+  justify-content: flex-start;
+  gap: 6px;
+  padding: 0 7px 0 5px;
+}
+
+.alignment-toolbox-window-page__button-axis-glyph {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  min-width: 14px;
+  text-transform: lowercase;
+}
+
+.alignment-toolbox-window-page__button-min-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex: 0 0 auto;
+}
+
+.alignment-toolbox-window-page__status-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.alignment-toolbox-window-page__status {
+  margin: 0;
+  padding: 16px 18px;
+  border-radius: 14px;
+  background: rgba(7, 11, 10, 0.86);
+  border: 1px solid rgba(223, 233, 227, 0.18);
+  color: rgba(244, 247, 241, 0.96);
+  font: 600 0.95rem/1.45 "Segoe UI", sans-serif;
+}
+
+.alignment-toolbox-window-page__status--overlay {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 6;
+  pointer-events: none;
+}

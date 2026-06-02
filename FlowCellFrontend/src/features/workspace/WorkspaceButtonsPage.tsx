@@ -29,7 +29,6 @@ interface WorkspaceButtonsPageProps {
   mainButtonsStyleGroup?: StyleGroup;
   mainButtonsImportedSkin?: ImportedSkin;
   collapseSmartAxisToOwnerButton?: boolean;
-  buttonAppearanceDisabled: boolean;
   buttonOptionsDisabled: boolean;
   deleteSelectionDisabled: boolean;
   deletePanelDisabled: boolean;
@@ -40,7 +39,6 @@ interface WorkspaceButtonsPageProps {
   onAddMacro: () => void;
   onPanelFan: () => void;
   onPanelPop: () => void;
-  onOpenButtonAppearance: () => void;
   onOpenButtonReorder: () => void;
   onOpenButtonOptions: () => void;
   onPanelFanOptions: () => void;
@@ -78,7 +76,6 @@ export function WorkspaceButtonsPage({
   mainButtonsStyleGroup,
   mainButtonsImportedSkin,
   collapseSmartAxisToOwnerButton = false,
-  buttonAppearanceDisabled,
   buttonOptionsDisabled,
   deleteSelectionDisabled,
   deletePanelDisabled,
@@ -89,7 +86,6 @@ export function WorkspaceButtonsPage({
   onAddMacro,
   onPanelFan,
   onPanelPop,
-  onOpenButtonAppearance,
   onOpenButtonReorder,
   onOpenButtonOptions,
   onPanelFanOptions,
@@ -130,6 +126,8 @@ export function WorkspaceButtonsPage({
             className="surface-action"
             styleGroup={miscStyleGroup}
             importedSkin={miscImportedSkin}
+            autoInlineSize={Boolean(miscImportedSkin)}
+            targetHeight={44}
             disabled={deleteSelectionDisabled}
             onClick={onDeleteSelection}
           />
@@ -139,6 +137,8 @@ export function WorkspaceButtonsPage({
             className="surface-action"
             styleGroup={miscStyleGroup}
             importedSkin={miscImportedSkin}
+            autoInlineSize={Boolean(miscImportedSkin)}
+            targetHeight={44}
             disabled={deletePanelDisabled}
             onClick={onDeletePanel}
           />
@@ -148,6 +148,8 @@ export function WorkspaceButtonsPage({
             className="surface-action"
             styleGroup={miscStyleGroup}
             importedSkin={miscImportedSkin}
+            autoInlineSize={Boolean(miscImportedSkin)}
+            targetHeight={44}
             onClick={onAddScript}
           />
           <HostSkinButton
@@ -156,6 +158,8 @@ export function WorkspaceButtonsPage({
             className="surface-action"
             styleGroup={miscStyleGroup}
             importedSkin={miscImportedSkin}
+            autoInlineSize={Boolean(miscImportedSkin)}
+            targetHeight={44}
             onClick={onPanelFan}
           />
           <HostSkinButton
@@ -164,16 +168,9 @@ export function WorkspaceButtonsPage({
             className="surface-action"
             styleGroup={miscStyleGroup}
             importedSkin={miscImportedSkin}
+            autoInlineSize={Boolean(miscImportedSkin)}
+            targetHeight={44}
             onClick={onPanelPop}
-          />
-          <HostSkinButton
-            type="button"
-            label="Button Appearance"
-            className="surface-action"
-            styleGroup={miscStyleGroup}
-            importedSkin={miscImportedSkin}
-            disabled={buttonAppearanceDisabled}
-            onClick={onOpenButtonAppearance}
           />
           <HostSkinButton
             type="button"
@@ -181,6 +178,8 @@ export function WorkspaceButtonsPage({
             className="surface-action"
             styleGroup={miscStyleGroup}
             importedSkin={miscImportedSkin}
+            autoInlineSize={Boolean(miscImportedSkin)}
+            targetHeight={44}
             disabled={selectedPanel.Buttons.length <= 1}
             onClick={onOpenButtonReorder}
           />
@@ -190,6 +189,8 @@ export function WorkspaceButtonsPage({
             className="surface-action"
             styleGroup={miscStyleGroup}
             importedSkin={miscImportedSkin}
+            autoInlineSize={Boolean(miscImportedSkin)}
+            targetHeight={44}
             disabled={buttonOptionsDisabled}
             onClick={onOpenButtonOptions}
           />
@@ -199,6 +200,8 @@ export function WorkspaceButtonsPage({
             className="surface-action"
             styleGroup={miscStyleGroup}
             importedSkin={miscImportedSkin}
+            autoInlineSize={Boolean(miscImportedSkin)}
+            targetHeight={44}
             onClick={onPanelFanOptions}
           />
           <HostSkinButton
@@ -207,6 +210,8 @@ export function WorkspaceButtonsPage({
             className="surface-action"
             styleGroup={miscStyleGroup}
             importedSkin={miscImportedSkin}
+            autoInlineSize={Boolean(miscImportedSkin)}
+            targetHeight={44}
             onClick={onAddMacro}
           />
         </div>

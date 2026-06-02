@@ -259,6 +259,7 @@ function getImportedSkinPayloadChars(importedSkin: ImportedSkin): number {
     (importedSkin.html?.length ?? 0) +
     (importedSkin.css?.length ?? 0) +
     (importedSkin.svg?.length ?? 0) +
+    (importedSkin.bridgeJs?.length ?? 0) +
     (importedSkin.cardHtml?.length ?? 0) +
     (importedSkin.cardCss?.length ?? 0) +
     (importedSkin.cardSvg?.length ?? 0)
@@ -365,7 +366,8 @@ function normalizeImportedSkinCollection(
     )
     .map((skin) => ({
       ...skin,
-      name: normalizeDisplayName(skin.name, skin.id || "Imported Skin")
+      name: normalizeDisplayName(skin.name, skin.id || "Imported Skin"),
+      bridgeJs: typeof skin.bridgeJs === "string" ? skin.bridgeJs : ""
     }));
 }
 
@@ -649,6 +651,62 @@ function normalizeWindowsPath(value: string): string {
   return value.replace(/\//g, "\\").replace(/[\\]+$/, "");
 }
 
+function resolveWorkspaceRootFromRepoRoot(repoRoot: string): string {
+  const normalizedRepoRoot = normalizeWindowsPath(repoRoot);
+  return normalizedRepoRoot.toLowerCase().endsWith("\\programs")
+    ? normalizedRepoRoot.slice(0, -("\\programs".length))
+    : normalizedRepoRoot;
+}
+
+function resolveProgramsRootFromRepoRoot(repoRoot: string): string {
+  const normalizedRepoRoot = normalizeWindowsPath(repoRoot);
+  return normalizedRepoRoot.toLowerCase().endsWith("\\programs")
+    ? normalizedRepoRoot
+    : joinWindowsPath(normalizedRepoRoot, "Programs");
+}
+
+function resolveWindowsProgramRoot(repoRoot: string): string {
+  return joinWindowsPath(resolveProgramsRootFromRepoRoot(repoRoot), "Windows");
+}
+
+function programScriptsFolderName(programName: string, bucketName: "Git" | "Local"): string {
+  return `${programName} ${bucketName} Scripts`;
+}
+
+function resolveProgramRoot(repoRoot: string, programName: string): string {
+  return joinWindowsPath(resolveProgramsRootFromRepoRoot(repoRoot), programName);
+}
+
+function resolveProgramGitScriptsFolder(repoRoot: string, programName: string): string {
+  return joinWindowsPath(resolveProgramRoot(repoRoot, programName), programScriptsFolderName(programName, "Git"));
+}
+
+function resolveProgramLocalScriptsFolder(repoRoot: string, programName: string): string {
+  return joinWindowsPath(resolveProgramRoot(repoRoot, programName), programScriptsFolderName(programName, "Local"));
+}
+
+function migrateLegacyWindowsProgramPath(path: string, repoRoot: string): string {
+  const normalizedPath = normalizeWindowsPath(path);
+  if (!normalizedPath) {
+    return "";
+  }
+
+  const workspaceRoot = resolveWorkspaceRootFromRepoRoot(repoRoot);
+  const legacyRoot = joinWindowsPath(workspaceRoot, "Windows");
+  const managedRoot = resolveWindowsProgramRoot(repoRoot);
+  const normalizedPathLower = normalizedPath.toLowerCase();
+  const legacyRootLower = legacyRoot.toLowerCase();
+
+  if (normalizedPathLower === legacyRootLower) {
+    return managedRoot;
+  }
+  if (normalizedPathLower.startsWith(`${legacyRootLower}\\`)) {
+    return `${managedRoot}${normalizedPath.slice(legacyRoot.length)}`;
+  }
+
+  return normalizedPath;
+}
+
 function pathsEqual(left: string, right: string): boolean {
   return normalizeWindowsPath(left).toLowerCase() === normalizeWindowsPath(right).toLowerCase();
 }
@@ -672,6 +730,37 @@ function joinWindowsPath(root: string, ...segments: string[]): string {
   return [trimmedRoot, ...trimmedSegments].filter((segment) => segment.length > 0).join("\\");
 }
 
+function normalizeManagedPathForProgram(
+  value: string,
+  folders: ProgramManagedFolders | null
+): string {
+  const normalizedValue = normalizeWindowsPath(value);
+  if (!normalizedValue || !folders) {
+    return normalizedValue;
+  }
+
+  if (folders.templateKey === "windows") {
+    return migrateLegacyWindowsProgramPath(normalizedValue, folders.repoRoot);
+  }
+
+  return normalizedValue;
+}
+
+function normalizeManagedProgramFolderPath(
+  value: string,
+  preferredPath: string,
+  folders: ProgramManagedFolders | null
+): string {
+  const normalizedValue = normalizeManagedPathForProgram(value, folders);
+  if (!normalizedValue || !folders) {
+    return normalizedValue || preferredPath;
+  }
+
+  return folders.legacyScriptFolders.some((folder) => isPathWithinFolder(normalizedValue, folder))
+    ? preferredPath
+    : normalizedValue;
+}
+
 function inferRepoRootFromKnownPath(path: string): string {
   const normalizedPath = normalizeWindowsPath(path);
   const pathLower = normalizedPath.toLowerCase();
@@ -690,7 +779,7 @@ function inferRepoRootFromKnownPath(path: string): string {
 interface ProgramManagedFolders {
   templateKey: string;
   repoRoot: string;
-  // Library folders are public/downloadable sources. Active folders are FlowTest-managed copies.
+  // Library folders are public/downloadable sources. Active folders are FlowCell-managed copies.
   libraryFolder: string;
   activeFolder: string;
   // Runtime folders are where the actual runnable copy or wrapper lives for that program.
@@ -730,12 +819,13 @@ function resolveProgramManagedFolders(program: FlowCellProgram): ProgramManagedF
       return {
         templateKey,
         repoRoot,
-        libraryFolder: joinWindowsPath(repoRoot, "Illustrator", "Illustrator Scripts"),
-        activeFolder: joinWindowsPath(repoRoot, "Illustrator", "Illustrator Active Scripts"),
+        libraryFolder: resolveProgramGitScriptsFolder(repoRoot, "Illustrator"),
+        activeFolder: resolveProgramLocalScriptsFolder(repoRoot, "Illustrator"),
         runtimeFolder: ILLUSTRATOR_RUNTIME_SCRIPT_FOLDER,
         legacyScriptFolders: [
-          joinWindowsPath(repoRoot, "Illustrator"),
-          joinWindowsPath(repoRoot, "Illustrator", "ScriptBank"),
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Illustrator"), "Illustrator Scripts"),
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Illustrator"), "Illustrator Active Scripts"),
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Illustrator"), "ScriptBank"),
           ILLUSTRATOR_RUNTIME_SCRIPT_FOLDER
         ]
       };
@@ -743,12 +833,13 @@ function resolveProgramManagedFolders(program: FlowCellProgram): ProgramManagedF
       return {
         templateKey,
         repoRoot,
-        libraryFolder: joinWindowsPath(repoRoot, "Photoshop", "Photoshop Scripts"),
-        activeFolder: joinWindowsPath(repoRoot, "Photoshop", "Photoshop Active Scripts"),
+        libraryFolder: resolveProgramGitScriptsFolder(repoRoot, "Photoshop"),
+        activeFolder: resolveProgramLocalScriptsFolder(repoRoot, "Photoshop"),
         runtimeFolder: PHOTOSHOP_RUNTIME_SCRIPT_FOLDER,
         legacyScriptFolders: [
-          joinWindowsPath(repoRoot, "Photoshop"),
-          joinWindowsPath(repoRoot, "Photoshop", "ScriptBank"),
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Photoshop"), "Photoshop Scripts"),
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Photoshop"), "Photoshop Active Scripts"),
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Photoshop"), "ScriptBank"),
           PHOTOSHOP_RUNTIME_SCRIPT_FOLDER
         ]
       };
@@ -756,29 +847,37 @@ function resolveProgramManagedFolders(program: FlowCellProgram): ProgramManagedF
       return {
         templateKey,
         repoRoot,
-        libraryFolder: joinWindowsPath(repoRoot, "Blender", "Blender Scripts"),
-        activeFolder: joinWindowsPath(repoRoot, "Blender", "Blender Active Scripts"),
-        runtimeFolder: joinWindowsPath(repoRoot, "Blender", "FlowCellButtons"),
-        wrapperFolder: joinWindowsPath(repoRoot, "Blender", "FlowCellButtons"),
+        libraryFolder: resolveProgramGitScriptsFolder(repoRoot, "Blender"),
+        activeFolder: resolveProgramLocalScriptsFolder(repoRoot, "Blender"),
+        runtimeFolder: joinWindowsPath(resolveProgramRoot(repoRoot, "Blender"), "FlowCellButtons"),
+        wrapperFolder: joinWindowsPath(resolveProgramRoot(repoRoot, "Blender"), "FlowCellButtons"),
         legacyScriptFolders: [
-          joinWindowsPath(repoRoot, "Blender"),
-          joinWindowsPath(repoRoot, "Blender", "ScriptBank"),
-          joinWindowsPath(repoRoot, "Blender", "ManagedActions"),
-          joinWindowsPath(repoRoot, "Blender", "FlowCellButtons")
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Blender"), "Blender Scripts"),
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Blender"), "Blender Active Scripts"),
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Blender"), "ScriptBank"),
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Blender"), "ManagedActions"),
+          joinWindowsPath(resolveProgramRoot(repoRoot, "Blender"), "FlowCellButtons")
         ]
       };
     case "windows":
-      return {
-        templateKey,
-        repoRoot,
-        libraryFolder: joinWindowsPath(repoRoot, "Windows", "Windows Scripts"),
-        activeFolder: joinWindowsPath(repoRoot, "Windows", "Windows Active Scripts"),
-        runtimeFolder: joinWindowsPath(repoRoot, "Windows", "Windows Active Scripts"),
-        legacyScriptFolders: [
-          joinWindowsPath(repoRoot, "Windows"),
-          joinWindowsPath(repoRoot, "Windows", "ScriptBank")
-        ]
-      };
+      {
+        const workspaceRoot = resolveWorkspaceRootFromRepoRoot(repoRoot);
+        const programRoot = resolveWindowsProgramRoot(repoRoot);
+        return {
+          templateKey,
+          repoRoot,
+          libraryFolder: resolveProgramGitScriptsFolder(repoRoot, "Windows"),
+          activeFolder: resolveProgramLocalScriptsFolder(repoRoot, "Windows"),
+          runtimeFolder: resolveProgramLocalScriptsFolder(repoRoot, "Windows"),
+          legacyScriptFolders: [
+            joinWindowsPath(programRoot, "Windows Scripts"),
+            joinWindowsPath(programRoot, "Windows Active Scripts"),
+            joinWindowsPath(programRoot, "ScriptBank"),
+            joinWindowsPath(workspaceRoot, "Windows"),
+            joinWindowsPath(workspaceRoot, "Windows", "ScriptBank")
+          ]
+        };
+      }
     default:
       return null;
   }
@@ -810,8 +909,8 @@ function buildProgramConfig(args: {
         NormalizedName: args.programName.trim().toLowerCase(),
         ProgramType: "adobe_direct_script_runner",
         ExePath: args.exePath,
-        ScriptFolder: `${args.repoRoot}\\Illustrator\\Illustrator Scripts`,
-        ActiveScriptFolder: `${args.repoRoot}\\Illustrator\\Illustrator Active Scripts`,
+        ScriptFolder: resolveProgramGitScriptsFolder(args.repoRoot, "Illustrator"),
+        ActiveScriptFolder: resolveProgramLocalScriptsFolder(args.repoRoot, "Illustrator"),
         RuntimeScriptFolder: ILLUSTRATOR_RUNTIME_SCRIPT_FOLDER,
         RunMethod: "illustrator_direct",
         AllowedScriptExtensions: [".jsx", ".js"],
@@ -824,8 +923,8 @@ function buildProgramConfig(args: {
         NormalizedName: args.programName.trim().toLowerCase(),
         ProgramType: "adobe_direct_script_runner",
         ExePath: args.exePath,
-        ScriptFolder: `${args.repoRoot}\\Photoshop\\Photoshop Scripts`,
-        ActiveScriptFolder: `${args.repoRoot}\\Photoshop\\Photoshop Active Scripts`,
+        ScriptFolder: resolveProgramGitScriptsFolder(args.repoRoot, "Photoshop"),
+        ActiveScriptFolder: resolveProgramLocalScriptsFolder(args.repoRoot, "Photoshop"),
         RuntimeScriptFolder: PHOTOSHOP_RUNTIME_SCRIPT_FOLDER,
         RunMethod: "photoshop_direct",
         AllowedScriptExtensions: [".jsx", ".js"],
@@ -838,9 +937,9 @@ function buildProgramConfig(args: {
         NormalizedName: args.programName.trim().toLowerCase(),
         ProgramType: "bridge_runner",
         ExePath: args.exePath,
-        ScriptFolder: `${args.repoRoot}\\Blender\\Blender Scripts`,
-        ActiveScriptFolder: `${args.repoRoot}\\Blender\\Blender Active Scripts`,
-        RuntimeScriptFolder: `${args.repoRoot}\\Blender\\FlowCellButtons`,
+        ScriptFolder: resolveProgramGitScriptsFolder(args.repoRoot, "Blender"),
+        ActiveScriptFolder: resolveProgramLocalScriptsFolder(args.repoRoot, "Blender"),
+        RuntimeScriptFolder: joinWindowsPath(resolveProgramRoot(args.repoRoot, "Blender"), "FlowCellButtons"),
         RunMethod: "blender_bridge",
         AllowedScriptExtensions: [".ps1", ".py", ".blend", ".exe", ".lnk"],
         BridgeFolder: "",
@@ -851,19 +950,22 @@ function buildProgramConfig(args: {
             : ["blender", "blender-launcher"]
       };
     case "windows":
-      return {
-        NormalizedName: args.programName.trim().toLowerCase(),
-        ProgramType: "generic",
-        ExePath: args.exePath,
-        ScriptFolder: `${args.repoRoot}\\Windows\\Windows Scripts`,
-        ActiveScriptFolder: `${args.repoRoot}\\Windows\\Windows Active Scripts`,
-        RuntimeScriptFolder: `${args.repoRoot}\\Windows\\Windows Active Scripts`,
-        RunMethod: "generic",
-        AllowedScriptExtensions: [],
-        BridgeFolder: "",
-        RequiresRestart: false,
-        ProcessNames: ["explorer", "dopus", "dopusrt"]
-      };
+      {
+        const windowsProgramRoot = resolveWindowsProgramRoot(args.repoRoot);
+        return {
+          NormalizedName: args.programName.trim().toLowerCase(),
+          ProgramType: "generic",
+          ExePath: args.exePath,
+          ScriptFolder: resolveProgramGitScriptsFolder(args.repoRoot, "Windows"),
+          ActiveScriptFolder: resolveProgramLocalScriptsFolder(args.repoRoot, "Windows"),
+          RuntimeScriptFolder: resolveProgramLocalScriptsFolder(args.repoRoot, "Windows"),
+          RunMethod: "generic",
+          AllowedScriptExtensions: [],
+          BridgeFolder: "",
+          RequiresRestart: false,
+          ProcessNames: ["explorer", "dopus", "dopusrt"]
+        };
+      }
     default:
       return {
         NormalizedName: args.programName.trim().toLowerCase(),
@@ -980,17 +1082,23 @@ function normalizeProgramConfig(
     return programConfig;
   }
 
-  const currentScriptFolder = normalizeWindowsPath(programConfig.ScriptFolder ?? "");
-  const shouldNormalizeScriptFolder =
-    currentScriptFolder.length === 0 ||
-    folders.legacyScriptFolders.some((folder) => isPathWithinFolder(currentScriptFolder, folder));
-
   return {
     ...programConfig,
-    ScriptFolder: shouldNormalizeScriptFolder ? folders.libraryFolder : currentScriptFolder,
-    ActiveScriptFolder: normalizeWindowsPath(programConfig.ActiveScriptFolder ?? "") || folders.activeFolder,
-    RuntimeScriptFolder:
-      normalizeWindowsPath(programConfig.RuntimeScriptFolder ?? "") || folders.runtimeFolder
+    ScriptFolder: normalizeManagedProgramFolderPath(
+      programConfig.ScriptFolder ?? "",
+      folders.libraryFolder,
+      folders
+    ),
+    ActiveScriptFolder: normalizeManagedProgramFolderPath(
+      programConfig.ActiveScriptFolder ?? "",
+      folders.activeFolder,
+      folders
+    ),
+    RuntimeScriptFolder: normalizeManagedProgramFolderPath(
+      programConfig.RuntimeScriptFolder ?? "",
+      folders.runtimeFolder,
+      folders
+    )
   };
 }
 
@@ -998,7 +1106,10 @@ function normalizeScriptButtonForProgram(
   button: FlowCellButton,
   folders: ProgramManagedFolders | null
 ): FlowCellButton {
-  const normalizedExecutionTarget = normalizeWindowsPath(button.ExecutionTarget ?? "");
+  const normalizedExecutionTarget = normalizeManagedPathForProgram(
+    button.ExecutionTarget ?? "",
+    folders
+  );
   if (!folders || button.Kind !== "script") {
     return {
       ...button,
@@ -1006,7 +1117,7 @@ function normalizeScriptButtonForProgram(
     };
   }
 
-  const normalizedTarget = normalizeWindowsPath(button.Target ?? "");
+  const normalizedTarget = normalizeManagedPathForProgram(button.Target ?? "", folders);
   const targetName = normalizedTarget.split("\\").pop() ?? "";
   if (!targetName) {
     return {
@@ -1239,7 +1350,8 @@ function getBindingNumericId(binding: FlowCellBindingsState["scriptBindings"][nu
 function findMatchingScriptBinding(
   button: FlowCellButton,
   programId: number,
-  bindings: FlowCellBindingsState
+  bindings: FlowCellBindingsState,
+  folders: ProgramManagedFolders | null
 ) {
   const bindingId = button.BindingId ?? 0;
   if (bindingId > 0) {
@@ -1251,7 +1363,9 @@ function findMatchingScriptBinding(
     }
   }
 
-  const bindingTargets = getButtonBindingTargets(button);
+  const bindingTargets = getButtonBindingTargets(button).map((target) =>
+    normalizeManagedPathForProgram(target, folders)
+  );
   if (bindingTargets.length === 0) {
     return undefined;
   }
@@ -1260,9 +1374,12 @@ function findMatchingScriptBinding(
     const binding =
       bindings.scriptBindings.find(
         (candidate) =>
-          candidate.target === buttonTarget &&
+          normalizeManagedPathForProgram(candidate.target ?? "", folders) === buttonTarget &&
           (candidate.programTabId ?? 0) === programId
-      ) ?? bindings.scriptBindings.find((candidate) => candidate.target === buttonTarget);
+      ) ??
+      bindings.scriptBindings.find(
+        (candidate) => normalizeManagedPathForProgram(candidate.target ?? "", folders) === buttonTarget
+      );
     if (binding) {
       return binding;
     }
@@ -1460,30 +1577,38 @@ export function applyBindingsToState(
     ...state,
     Programs: state.Programs.map((program) => ({
       ...program,
-      Panels: program.Panels.map((panel) => ({
-        ...panel,
-        Buttons: panel.Buttons.map((button) => {
-          if (button.Kind === "macro") {
-            const shortcut = bindings.actionHotkeys[button.Target?.trim() ?? ""] ?? "";
+      Panels: (() => {
+        const folders = resolveProgramManagedFolders(program);
+        return program.Panels.map((panel) => ({
+          ...panel,
+          Buttons: panel.Buttons.map((button) => {
+            if (button.Kind === "macro") {
+              const shortcut = bindings.actionHotkeys[button.Target?.trim() ?? ""] ?? "";
+              return {
+                ...button,
+                Shortcut: shortcut,
+                BindingId: 0
+              };
+            }
+
+            if (button.Kind !== "script") {
+              return button;
+            }
+
+            const binding = findMatchingScriptBinding(
+              button,
+              program.ProgramTabId,
+              bindings,
+              folders
+            );
             return {
               ...button,
-              Shortcut: shortcut,
-              BindingId: 0
+              Shortcut: binding?.shortcut ?? "",
+              BindingId: binding ? getBindingNumericId(binding) : 0
             };
-          }
-
-          if (button.Kind !== "script") {
-            return button;
-          }
-
-          const binding = findMatchingScriptBinding(button, program.ProgramTabId, bindings);
-          return {
-            ...button,
-            Shortcut: binding?.shortcut ?? "",
-            BindingId: binding ? getBindingNumericId(binding) : 0
-          };
-        })
-      }))
+          })
+        }));
+      })()
     }))
   };
 }

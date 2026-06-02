@@ -24,10 +24,13 @@ HasCliFlag(flag) {
 }
 
 class MacroRecorder {
-    __New(outputPath, actionId, actionName) {
+    __New(outputPath, actionId, actionName, targetProcessName, activateStepType, targetDisplayName) {
         this.outputPath := outputPath
         this.actionId := actionId
         this.actionName := actionName
+        this.targetProcessName := targetProcessName
+        this.activateStepType := activateStepType
+        this.targetDisplayName := targetDisplayName
         this.steps := []
         this.stepCount := 0
         this.keyStates := Map()
@@ -46,16 +49,19 @@ class MacroRecorder {
     }
 
     Start() {
-        activateResult := this.ActivateIllustratorWindow()
-        if !activateResult.ok {
-            MsgBox activateResult.detail, "Macro Recorder", "Iconx"
-            ExitApp(1)
+        if !this.IsGlobalTarget() {
+            activateResult := this.ActivateTargetWindow()
+            if !activateResult.ok {
+                MsgBox activateResult.detail, "Macro Recorder", "Iconx"
+                ExitApp(1)
+            }
         }
 
         this.lastCommittedTick := A_TickCount
         this.isActive := true
         this.armTick := A_TickCount + 700
-        this.AddStep({ type: "ActivateIllustrator" }, this.lastCommittedTick)
+        if this.activateStepType != ""
+            this.AddStep({ type: this.activateStepType }, this.lastCommittedTick)
 
         this.RegisterHotkey("~*LButton", ObjBindMethod(this, "HandleMouseEvent", "Left"))
         this.RegisterHotkey("~*RButton", ObjBindMethod(this, "HandleMouseEvent", "Right"))
@@ -112,7 +118,7 @@ class MacroRecorder {
         if !this.isActive
             return
         this.StopRecorder()
-        if this.stepCount <= 1 {
+        if this.GetCapturedStepCount() < 1 {
             ExitApp(3)
         }
         this.WriteMacroFile()
@@ -254,6 +260,16 @@ class MacroRecorder {
         this.lastCommittedTick := endTick ? endTick : startTick
     }
 
+    GetCapturedStepCount() {
+        count := 0
+        for step in this.steps {
+            if step.type = "ActivateIllustrator" || step.type = "ActivateBlender" || step.type = "ActivatePhotoshop" || step.type = "ActivateWindows"
+                continue
+            count += 1
+        }
+        return count
+    }
+
     BuildKeySequence(keyName) {
         token := this.FormatKeyToken(keyName)
         if token = ""
@@ -384,21 +400,50 @@ class MacroRecorder {
             return false
         if A_TickCount < this.armTick
             return false
+        if this.IsGlobalTarget()
+            return true
         try {
             processName := WinGetProcessName("A")
-            return StrLower(processName) = "illustrator.exe"
+            return StrLower(processName) = StrLower(this.targetProcessName)
         } catch {
             return false
         }
     }
 
-    ActivateIllustratorWindow() {
+    IsGlobalTarget() {
+        return Trim(this.targetProcessName) = "" || this.targetProcessName = "*"
+    }
+
+    ActivateTargetWindow() {
+        if this.activateStepType = "ActivateWindows" {
+            hwnd := WinActive("ahk_exe " this.targetProcessName)
+            if !hwnd
+                hwnd := WinExist("ahk_class CabinetWClass")
+            if !hwnd
+                hwnd := WinExist("ahk_class WorkerW")
+            if !hwnd
+                hwnd := WinExist("ahk_class Progman")
+            if !hwnd {
+                return {
+                    ok: false,
+                    detail: "No " this.targetDisplayName " window could be found. Open it first, then start recording."
+                }
+            }
+            try WinActivate "ahk_id " hwnd
+            try WinWaitActive "ahk_id " hwnd, , 2
+            Sleep 180
+            return {
+                ok: true,
+                hwnd: hwnd
+            }
+        }
+
         hwnd := 0
-        try hwnd := WinExist("ahk_exe Illustrator.exe")
+        try hwnd := WinExist("ahk_exe " this.targetProcessName)
         if !hwnd {
             return {
                 ok: false,
-                detail: "Illustrator is not open. Open Illustrator first, then start recording."
+                detail: this.targetDisplayName " is not open. Open " this.targetDisplayName " first, then start recording."
             }
         }
         try WinActivate "ahk_id " hwnd
@@ -481,7 +526,7 @@ class MacroRecorder {
     }
 
     UpdateTooltip(modeText) {
-        ToolTip "Recording: " this.actionName "`nMode: " modeText "`nCaptured steps: " Max(this.stepCount - 1, 0) "`nOnly Illustrator input is recorded`nF8 = save   F12 = cancel", 20, 20
+        ToolTip "Recording: " this.actionName "`nTarget: " this.targetDisplayName "`nMode: " modeText "`nCaptured steps: " this.GetCapturedStepCount() "`nF8 = save   F12 = cancel", 20, 20
     }
 }
 
@@ -491,6 +536,9 @@ Main() {
     outputPath := GetCliValue("--out", "")
     actionName := GetCliValue("--name", "")
     actionId := GetCliValue("--id", "")
+    targetProcessName := GetCliValue("--process", "Illustrator.exe")
+    activateStepType := GetCliValue("--activate", "ActivateIllustrator")
+    targetDisplayName := GetCliValue("--display", targetProcessName)
 
     if HasCliFlag("--validate-only")
         ExitApp(0)
@@ -503,11 +551,11 @@ MsgBox "RecordMacro.ahk requires --out, --name, and --id.", "Macro Recorder", "I
     MsgBox(
         "Recording action:`n"
         . actionName
-        . "`n`nSwitch to Illustrator and do the steps now.`n`nPress F8 to stop and save.`nPress F12 to cancel.",
+        . "`n`nDo the steps in any app or window now.`n`nPress F8 to stop and save.`nPress F12 to cancel.",
         "Macro Recorder",
         "Iconi"
     )
 
-    recorder := MacroRecorder(outputPath, actionId, actionName)
+    recorder := MacroRecorder(outputPath, actionId, actionName, targetProcessName, activateStepType, targetDisplayName)
     recorder.Start()
 }

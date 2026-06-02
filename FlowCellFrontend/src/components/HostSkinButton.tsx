@@ -26,6 +26,7 @@ import {
   type FlowButtonTransition,
   usesLegacyImportedBodyShell
 } from "../lib/skins";
+import { DEFAULT_FLOW_IMPORTED_SKIN } from "../lib/theme";
 import type { ImportedSkin, StyleGroup } from "../types";
 
 const HOLD_DELAY_MS = 280;
@@ -39,6 +40,12 @@ interface FlowButtonFootprintOverride {
 const MAIN_BUTTON_SIZE_PERCENT_DEFAULT = 100;
 const MAIN_BUTTON_SIZE_PERCENT_MIN = 40;
 const MAIN_BUTTON_SIZE_PERCENT_MAX = 220;
+const FAN_CHILD_BASELINE_WIDTH = 132;
+const FAN_CHILD_BASELINE_HEIGHT = 38;
+const FAN_OWNER_BASELINE_WIDTH = 132;
+const FAN_OWNER_BASELINE_HEIGHT = 38;
+const FIXED_FOOTPRINT_MIN = 24;
+const FIXED_FOOTPRINT_MAX = 480;
 
 export function resolveMainButtonFootprintOverride(
   importedSkin: ImportedSkin | undefined
@@ -59,11 +66,41 @@ export function resolveMainButtonFootprintOverride(
   };
 }
 
+function resolveFixedFootprintDimension(
+  value: number | undefined,
+  fallback: number
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return fallback;
+  }
+  return clamp(Math.round(value), FIXED_FOOTPRINT_MIN, FIXED_FOOTPRINT_MAX);
+}
+
+export function resolveFanChildFootprintOverride(
+  importedSkin: ImportedSkin | undefined
+): FlowButtonFootprintOverride {
+  return {
+    width: resolveFixedFootprintDimension(importedSkin?.fanChildWidth, FAN_CHILD_BASELINE_WIDTH),
+    height: resolveFixedFootprintDimension(importedSkin?.fanChildHeight, FAN_CHILD_BASELINE_HEIGHT)
+  };
+}
+
+export function resolveFanOwnerFootprintOverride(
+  importedSkin: ImportedSkin | undefined
+): FlowButtonFootprintOverride {
+  return {
+    width: resolveFixedFootprintDimension(importedSkin?.fanOwnerWidth, FAN_OWNER_BASELINE_WIDTH),
+    height: resolveFixedFootprintDimension(importedSkin?.fanOwnerHeight, FAN_OWNER_BASELINE_HEIGHT)
+  };
+}
+
 interface HostSkinButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, "children"> {
   label: string;
   styleGroup?: StyleGroup;
   importedSkin?: ImportedSkin;
+  hoveredOverride?: boolean;
+  highlighted?: boolean;
   selected?: boolean;
   active?: boolean;
   error?: boolean;
@@ -78,6 +115,8 @@ interface HostSkinButtonProps
   footprintOverride?: FlowButtonFootprintOverride;
   density?: number | string;
   allowOverflow?: boolean;
+  autoInlineSize?: boolean;
+  targetHeight?: number;
   afterContent?: ReactNode;
 }
 
@@ -149,6 +188,17 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
+function parsePixelDimension(value: CSSProperties["height"] | CSSProperties["width"]): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const numericValue = Number.parseFloat(value);
+  return Number.isFinite(numericValue) ? numericValue : undefined;
+}
+
 function computeDefaultAxisNormalizedFootprint(args: {
   skinWidth: number;
   skinHeight: number;
@@ -194,6 +244,8 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       label,
       styleGroup,
       importedSkin,
+      hoveredOverride = false,
+      highlighted = false,
       selected = false,
       active = false,
       error = false,
@@ -208,6 +260,8 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       footprintOverride,
       density,
       allowOverflow,
+      autoInlineSize = false,
+      targetHeight,
       afterContent,
       className,
       style,
@@ -230,10 +284,12 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
     },
     ref
   ) => {
+    const rootRef = useRef<HTMLElement | null>(null);
     const frameRef = useRef<HTMLSpanElement | null>(null);
     const skinRef = useRef<HTMLDivElement | null>(null);
     const holdTimerRef = useRef<number | undefined>(undefined);
     const releaseTimerRef = useRef<number | undefined>(undefined);
+    const bridgeHoveredRef = useRef(false);
     const [hovered, setHovered] = useState(false);
     const [pressed, setPressed] = useState(false);
     const [held, setHeld] = useState(false);
@@ -250,27 +306,31 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
     });
     const resolvedFlowId = sanitizeFlowId(flowId ?? label);
     const resolvedSkinCompact = skinCompact;
-    const usesLegacyBodyShell = usesLegacyImportedBodyShell(importedSkin);
+    const resolvedImportedSkin =
+      importedSkin ??
+      (styleGroup?.skinId === "imported-skin" ? DEFAULT_FLOW_IMPORTED_SKIN : undefined);
+    const usesSkinBridge = Boolean(resolvedImportedSkin);
+    const usesLegacyBodyShell = usesLegacyImportedBodyShell(resolvedImportedSkin);
     const requestedSizingMode =
       sizingMode ??
-      importedSkin?.sizingMode ??
-      (importedSkin ? "fit-uniform" : "fill-stretch");
+      resolvedImportedSkin?.sizingMode ??
+      (resolvedImportedSkin ? "fit-uniform" : "fill-stretch");
     const resolvedSizingMode =
       footprintMode === "default-axis-normalized" &&
-      importedSkin &&
+      resolvedImportedSkin &&
       requestedSizingMode === "intrinsic"
         ? "responsive-uniform"
         : requestedSizingMode;
     const resolvedAllowOverflow =
       allowOverflow ??
-      importedSkin?.allowOverflow ??
+      resolvedImportedSkin?.allowOverflow ??
       (usesLegacyBodyShell
         ? false
         : resolvedSizingMode === "intrinsic" ||
             resolvedSizingMode === "fit-uniform" ||
             resolvedSizingMode === "responsive-uniform");
     const resolvedHostMode =
-      hostMode === "neutral" || importedSkin ? "neutral" : "native-button";
+      hostMode === "neutral" || resolvedImportedSkin ? "neutral" : "native-button";
     const scale = computeFlowScale({
       sizingMode: resolvedSizingMode,
       hostWidth: measurements.width,
@@ -290,10 +350,37 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
           })
         : null;
     const resolvedFootprint = footprintOverride ?? normalizedFootprint;
+    const resolvedTargetHeight =
+      targetHeight ?? parsePixelDimension(style?.height) ?? resolvedFootprint?.height;
+    const resolvedMinInlineWidth = parsePixelDimension(style?.minWidth);
+    const resolvedMaxInlineWidth = parsePixelDimension(style?.maxWidth);
+    const resolvedAutoInlineWidth =
+      autoInlineSize &&
+      !resolvedFootprint &&
+      resolvedTargetHeight &&
+      measurements.skinWidth > 0 &&
+      measurements.skinHeight > 0
+        ? (() => {
+            const computedWidth = Math.max(
+              1,
+              Math.round(
+                measurements.skinWidth * (resolvedTargetHeight / measurements.skinHeight)
+              )
+            );
+            const minWidth = resolvedMinInlineWidth ?? 0;
+            const maxWidth = resolvedMaxInlineWidth;
+            const widenedWidth = Math.max(computedWidth, minWidth);
+            return typeof maxWidth === "number"
+              ? Math.min(widenedWidth, maxWidth)
+              : widenedWidth;
+          })()
+        : undefined;
+    const resolvedHovered = hovered || hoveredOverride;
     const contract = {
       flowId: resolvedFlowId,
       flowLabel: flowLabel ?? label,
-      hovered,
+      hovered: resolvedHovered,
+      highlighted,
       selected,
       active,
       pressed,
@@ -316,6 +403,7 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       [className, "host-skin-button"],
       contract
     );
+    const skinOwnsHitbox = usesSkinBridge;
     const resolvedStyle: CSSProperties = {
       ...(style ?? {}),
       ...buildFlowButtonCssVars(contract),
@@ -338,6 +426,30 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
             ["--flow-footprint-height" as const]: `${resolvedFootprint.height}px`
           }
         : {}),
+      ...(resolvedTargetHeight && !resolvedFootprint
+        ? {
+            minHeight: `${resolvedTargetHeight}px`,
+            height: `${resolvedTargetHeight}px`,
+            maxHeight: `${resolvedTargetHeight}px`
+          }
+        : {}),
+      ...(resolvedAutoInlineWidth
+        ? {
+            display: "inline-flex",
+            boxSizing: "border-box",
+            minWidth: `${resolvedAutoInlineWidth}px`,
+            width: `${resolvedAutoInlineWidth}px`,
+            maxWidth: `${resolvedAutoInlineWidth}px`,
+            flex: "0 0 auto",
+            alignSelf: "flex-start"
+          }
+        : autoInlineSize
+          ? {
+              display: "inline-flex",
+              flex: "0 0 auto",
+              alignSelf: "flex-start"
+            }
+          : {}),
       ...(highlightColor
         ? {
             ["--fc-selected-highlight" as const]: highlightColor
@@ -347,7 +459,12 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
               ["--fc-selected-highlight" as const]:
                 resolveGreenHighlightColor(highlightKey)
             }
-          : {})
+          : {}),
+      ...(skinOwnsHitbox
+        ? {
+            pointerEvents: "none"
+          }
+        : {})
     };
 
     const clearHoldTimer = () => {
@@ -419,6 +536,122 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       };
     }, [pressed, trigger, error]);
 
+    useEffect(() => {
+      if (!usesSkinBridge) {
+        return;
+      }
+
+      const skinNode = skinRef.current;
+      if (!skinNode) {
+        return;
+      }
+
+      const handleSkinState = (
+        event: Event
+      ) => {
+        const detail = (event as CustomEvent<Record<string, unknown>>).detail ?? {};
+        if (typeof detail.hovered === "boolean") {
+          const nextHovered = detail.hovered;
+          if (bridgeHoveredRef.current !== nextHovered) {
+            bridgeHoveredRef.current = nextHovered;
+            const rootNode = rootRef.current;
+            if (rootNode) {
+              const syntheticPointerEvent = {
+                currentTarget: rootNode,
+                target: rootNode
+              } as unknown as ReactPointerEvent<HTMLButtonElement | HTMLDivElement>;
+              if (nextHovered) {
+                onPointerEnter?.(syntheticPointerEvent as ReactPointerEvent<HTMLButtonElement>);
+              } else {
+                onPointerLeave?.(syntheticPointerEvent as ReactPointerEvent<HTMLButtonElement>);
+              }
+            }
+          }
+          setHovered(detail.hovered);
+        }
+        if (typeof detail.pressed === "boolean") {
+          if (detail.pressed) {
+            beginInteraction("pointer");
+          } else {
+            finishInteraction();
+          }
+        }
+      };
+      const handleSkinActivate = (event: Event) => {
+        if (disabled) {
+          return;
+        }
+        const detail = (event as CustomEvent<Record<string, unknown>>).detail ?? {};
+        const clickEvent = new MouseEvent("click", {
+          bubbles: true,
+          cancelable: true,
+          altKey: detail.altKey === true,
+          button: typeof detail.button === "number" ? detail.button : 0,
+          buttons: typeof detail.buttons === "number" ? detail.buttons : 0,
+          clientX: typeof detail.clientX === "number" ? detail.clientX : 0,
+          clientY: typeof detail.clientY === "number" ? detail.clientY : 0,
+          ctrlKey: detail.ctrlKey === true,
+          detail: typeof detail.detail === "number" ? detail.detail : 1,
+          metaKey: detail.metaKey === true,
+          screenX: typeof detail.screenX === "number" ? detail.screenX : 0,
+          screenY: typeof detail.screenY === "number" ? detail.screenY : 0,
+          shiftKey: detail.shiftKey === true,
+          view: window
+        });
+        rootRef.current?.focus();
+        rootRef.current?.dispatchEvent(clickEvent);
+      };
+      const handleSkinContextMenu = (event: Event) => {
+        if (disabled) {
+          return;
+        }
+        const detail = (event as CustomEvent<Record<string, unknown>>).detail ?? {};
+        const contextMenuEvent = new MouseEvent("contextmenu", {
+          bubbles: true,
+          cancelable: true,
+          clientX: typeof detail.clientX === "number" ? detail.clientX : 0,
+          clientY: typeof detail.clientY === "number" ? detail.clientY : 0
+        });
+        rootRef.current?.dispatchEvent(contextMenuEvent);
+      };
+      const handleSkinFocusRequest = () => {
+        rootRef.current?.focus();
+      };
+
+      skinNode.addEventListener("flow-skin-state", handleSkinState as EventListener);
+      skinNode.addEventListener("flow-skin-activate", handleSkinActivate as EventListener);
+      skinNode.addEventListener("flow-skin-contextmenu", handleSkinContextMenu as EventListener);
+      skinNode.addEventListener(
+        "flow-skin-request-focus",
+        handleSkinFocusRequest as EventListener
+      );
+
+      return () => {
+        skinNode.removeEventListener("flow-skin-state", handleSkinState as EventListener);
+        skinNode.removeEventListener(
+          "flow-skin-activate",
+          handleSkinActivate as EventListener
+        );
+        skinNode.removeEventListener(
+          "flow-skin-contextmenu",
+          handleSkinContextMenu as EventListener
+        );
+        skinNode.removeEventListener(
+          "flow-skin-request-focus",
+          handleSkinFocusRequest as EventListener
+        );
+      };
+    }, [
+      disabled,
+      usesSkinBridge,
+      onClick,
+      onPointerDown,
+      onPointerEnter,
+      onPointerLeave,
+      onPointerUp,
+      error
+    ]);
+
     useLayoutEffect(() => {
       const updateMeasurements = () => {
         const frameNode = frameRef.current;
@@ -427,23 +660,50 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
           return;
         }
 
-        const importedHtmlNode = importedSkin
+        const importedHtmlNode = resolvedImportedSkin
           ? (skinNode.shadowRoot?.querySelector(
               "[data-flow-imported-html]"
             ) as HTMLElement | null)
           : null;
+        const importedMeasureNode = resolvedImportedSkin
+          ? (skinNode.shadowRoot?.querySelector(
+              "[data-flow-measure='true']"
+            ) as HTMLElement | null)
+          : null;
         const measurableSkinNode =
+          importedMeasureNode ??
           (importedHtmlNode?.firstElementChild as HTMLElement | null) ??
           importedHtmlNode ??
           skinNode;
         const useIntrinsicScrollMeasurement =
-          Boolean(importedSkin) && footprintMode === "default-axis-normalized";
+          Boolean(resolvedImportedSkin) &&
+          (footprintMode === "default-axis-normalized" || autoInlineSize);
+        const readMeasuredDimension = (key: string, fallback: number) => {
+          const value = Number(measurableSkinNode.dataset[key]);
+          return Number.isFinite(value) && value > 0 ? value : fallback;
+        };
+        const measuredOffsetWidth = readMeasuredDimension(
+          "flowMeasuredOffsetWidth",
+          measurableSkinNode.offsetWidth
+        );
+        const measuredOffsetHeight = readMeasuredDimension(
+          "flowMeasuredOffsetHeight",
+          measurableSkinNode.offsetHeight
+        );
+        const measuredScrollWidth = readMeasuredDimension(
+          "flowMeasuredScrollWidth",
+          measurableSkinNode.scrollWidth
+        );
+        const measuredScrollHeight = readMeasuredDimension(
+          "flowMeasuredScrollHeight",
+          measurableSkinNode.scrollHeight
+        );
         const measuredSkinWidth = useIntrinsicScrollMeasurement
-          ? Math.max(measurableSkinNode.scrollWidth, measurableSkinNode.offsetWidth)
-          : measurableSkinNode.offsetWidth;
+          ? Math.max(measuredScrollWidth, measuredOffsetWidth)
+          : measuredOffsetWidth;
         const measuredSkinHeight = useIntrinsicScrollMeasurement
-          ? Math.max(measurableSkinNode.scrollHeight, measurableSkinNode.offsetHeight)
-          : measurableSkinNode.offsetHeight;
+          ? Math.max(measuredScrollHeight, measuredOffsetHeight)
+          : measuredOffsetHeight;
 
         const nextMeasurements = {
           width: Math.round(frameNode.clientWidth),
@@ -503,13 +763,14 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       active,
       error,
       resolvedSkinCompact,
-      importedSkin,
+      resolvedImportedSkin,
       footprintMode,
       styleGroup,
       resolvedSizingMode
     ]);
 
     const setRootRef = (node: HTMLElement | null) => {
+      rootRef.current = node;
       if (typeof ref === "function") {
         ref(node);
         return;
@@ -695,13 +956,26 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       }
     };
 
-    const frameStyle: CSSProperties | undefined = resolvedFootprint
-      ? {
-          width: "100%",
-          height: "100%",
-          minHeight: 0
-        }
-      : undefined;
+    const frameStyle: CSSProperties | undefined =
+      resolvedFootprint || resolvedTargetHeight || skinOwnsHitbox
+        ? {
+            ...(resolvedFootprint || resolvedTargetHeight
+              ? {
+                  width: "100%",
+                  height: "100%",
+                  minWidth: 0,
+                  minHeight: 0,
+                  justifyItems: "stretch",
+                  alignItems: "stretch"
+                }
+              : {}),
+            ...(skinOwnsHitbox
+              ? {
+                  pointerEvents: "none"
+                }
+              : {})
+          }
+        : undefined;
 
     const frame = (
       <>
@@ -715,15 +989,17 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
           {renderButtonSkin({
             label,
             styleGroup,
-            importedSkin,
+            importedSkin: resolvedImportedSkin,
             selected,
             compact: resolvedSkinCompact,
             contract,
             hostClassName: className,
             footprintMode,
             skinRef: skinRef,
-            onSkinPointerEnter: importedSkin ? handlePointerEnter : undefined,
-            onSkinPointerLeave: importedSkin ? handlePointerLeave : undefined
+            onSkinPointerEnter:
+              resolvedImportedSkin && !usesSkinBridge ? handlePointerEnter : undefined,
+            onSkinPointerLeave:
+              resolvedImportedSkin && !usesSkinBridge ? handlePointerLeave : undefined
           })}
         </span>
         {afterContent}
@@ -746,14 +1022,15 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
           onFocus={onFocus as unknown as HTMLAttributes<HTMLDivElement>["onFocus"]}
           onKeyDown={handleNeutralKeyDown}
           onKeyUp={handleNeutralKeyUp}
-          onPointerCancel={handlePointerCancel}
-          onPointerDown={handlePointerDown}
-          onPointerEnter={handlePointerEnter}
-          onPointerLeave={handlePointerLeave}
-          onPointerOut={handlePointerOut}
-          onPointerOver={handlePointerOver}
-          onPointerUp={handlePointerUp}
+          onPointerCancel={usesSkinBridge ? undefined : handlePointerCancel}
+          onPointerDown={usesSkinBridge ? undefined : handlePointerDown}
+          onPointerEnter={usesSkinBridge ? undefined : handlePointerEnter}
+          onPointerLeave={usesSkinBridge ? undefined : handlePointerLeave}
+          onPointerOut={usesSkinBridge ? undefined : handlePointerOut}
+          onPointerOver={usesSkinBridge ? undefined : handlePointerOver}
+          onPointerUp={usesSkinBridge ? undefined : handlePointerUp}
           data-flow-footprint={footprintMode}
+          data-flow-hitbox-source={skinOwnsHitbox ? "skin" : undefined}
           {...buildFlowButtonDataAttributes(contract)}
         >
           {frame}
@@ -775,14 +1052,15 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
         onFocus={onFocus}
         onKeyDown={handleNativeKeyDown}
         onKeyUp={handleNativeKeyUp}
-        onPointerCancel={handlePointerCancel}
-        onPointerDown={handlePointerDown}
-        onPointerEnter={handlePointerEnter}
-        onPointerLeave={handlePointerLeave}
-        onPointerOut={handlePointerOut}
-        onPointerOver={handlePointerOver}
-        onPointerUp={handlePointerUp}
+        onPointerCancel={usesSkinBridge ? undefined : handlePointerCancel}
+        onPointerDown={usesSkinBridge ? undefined : handlePointerDown}
+        onPointerEnter={usesSkinBridge ? undefined : handlePointerEnter}
+        onPointerLeave={usesSkinBridge ? undefined : handlePointerLeave}
+        onPointerOut={usesSkinBridge ? undefined : handlePointerOut}
+        onPointerOver={usesSkinBridge ? undefined : handlePointerOver}
+        onPointerUp={usesSkinBridge ? undefined : handlePointerUp}
         data-flow-footprint={footprintMode}
+        data-flow-hitbox-source={skinOwnsHitbox ? "skin" : undefined}
         {...buildFlowButtonDataAttributes(contract)}
       >
         {frame}

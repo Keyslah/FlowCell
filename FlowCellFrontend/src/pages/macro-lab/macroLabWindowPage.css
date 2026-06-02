@@ -1,0 +1,369 @@
+.macro-lab-page {
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  padding: 16px;
+  overflow: hidden;
+  background: #101316;
+  color: #eef3f8;
+}
+
+.macro-lab-page *,
+.macro-lab-page *::before,
+.macro-lab-page *::after {
+  box-sizing: border-box;
+}
+
+.macro-lab {
+  display: grid;
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  gap: 12px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+}
+
+.macro-lab__header,
+.macro-lab__toolbar,
+.macro-lab__command-bar,
+.macro-lab__workspace,
+.macro-lab__steps,
+.macro-lab__editor {
+  min-width: 0;
+}
+
+.macro-lab__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.macro-lab__title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.macro-lab__title span,
+.macro-lab label span,
+.macro-lab__mouse-readout span {
+  font: 700 0.72rem/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #aeb9c2;
+}
+
+.macro-lab__title h1 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #f7fbff;
+  font: 700 1.28rem/1.15 "Segoe UI", sans-serif;
+}
+
+.macro-lab__header-actions,
+.macro-lab__command-bar,
+.macro-lab__step-actions,
+.macro-lab__section-header div,
+.macro-lab__target-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.macro-lab__toolbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(140px, 1fr));
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid #2e3942;
+  border-radius: 8px;
+  background: #171c21;
+}
+
+.macro-lab label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.macro-lab input,
+.macro-lab select,
+.macro-lab textarea {
+  width: 100%;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid #43505b;
+  border-radius: 8px;
+  outline: none;
+  background: #0e1317;
+  color: #eef3f8;
+  font: 600 13px/1.2 "Segoe UI", sans-serif;
+}
+
+.macro-lab textarea {
+  min-height: 88px;
+  padding: 10px;
+  resize: vertical;
+}
+
+.macro-lab input:focus,
+.macro-lab select:focus,
+.macro-lab textarea:focus,
+.macro-lab button:focus {
+  border-color: #73c0ff;
+  box-shadow: 0 0 0 1px rgba(115, 192, 255, 0.28);
+}
+
+.macro-lab button {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid #43505b;
+  border-radius: 8px;
+  background: #1a2127;
+  color: #eef3f8;
+  font: 700 13px/1 "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.macro-lab button:hover:not(:disabled) {
+  border-color: #73c0ff;
+  background: #202a32;
+}
+
+.macro-lab button:disabled,
+.macro-lab input:disabled,
+.macro-lab select:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.macro-lab__mouse-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 10px;
+  justify-content: center;
+  border: 1px solid #43505b;
+  border-radius: 8px;
+  background: #0e1317;
+}
+
+.macro-lab__mouse-readout strong {
+  font: 800 14px/1 "Segoe UI", sans-serif;
+  color: #d9f8cf;
+}
+
+.macro-lab__command-bar {
+  flex-wrap: wrap;
+}
+
+.macro-lab__status {
+  min-height: 36px;
+  margin: 0;
+  padding: 9px 12px;
+  border: 1px solid #3c4650;
+  border-radius: 8px;
+  background: #171c21;
+  color: #c7d0d8;
+  font: 600 13px/1.3 "Segoe UI", sans-serif;
+}
+
+.macro-lab__status.is-success {
+  color: #bef2c1;
+  border-color: #326640;
+  background: #132017;
+}
+
+.macro-lab__status.is-error {
+  color: #ffd1d1;
+  border-color: #744149;
+  background: #221416;
+}
+
+.macro-lab__workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(360px, 0.75fr);
+  gap: 12px;
+  min-height: 0;
+}
+
+.macro-lab__steps,
+.macro-lab__editor {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  min-height: 0;
+  padding: 12px;
+  border: 1px solid #2e3942;
+  border-radius: 8px;
+  background: #171c21;
+}
+
+.macro-lab__editor {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.macro-lab__section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.macro-lab__section-header h2 {
+  margin: 0;
+  color: #f7fbff;
+  font: 700 1rem/1.2 "Segoe UI", sans-serif;
+}
+
+.macro-lab__step-table {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #2e3942;
+  border-radius: 8px;
+  background: #0e1317;
+}
+
+.macro-lab__step-head,
+.macro-lab__step-row {
+  display: grid;
+  grid-template-columns: 52px 120px 76px 110px minmax(120px, 0.85fr) minmax(150px, 1fr);
+  gap: 0;
+  align-items: center;
+}
+
+.macro-lab__step-head {
+  min-height: 38px;
+  border-bottom: 1px solid #2e3942;
+  background: #1d252c;
+  color: #aeb9c2;
+  font: 800 11px/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.macro-lab__step-head span,
+.macro-lab__step-row span {
+  min-width: 0;
+  padding: 0 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.macro-lab__step-body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.macro-lab__step-row {
+  width: 100%;
+  min-height: 40px;
+  padding: 0;
+  border-width: 0 0 1px;
+  border-style: solid;
+  border-color: #202932;
+  border-radius: 0;
+  background: transparent;
+  color: #eef3f8;
+  text-align: left;
+  font: 600 13px/1.2 "Segoe UI", sans-serif;
+}
+
+.macro-lab__step-row:hover {
+  background: #1c252d;
+}
+
+.macro-lab__step-row.is-selected {
+  background: #18314a;
+  box-shadow: inset 3px 0 0 #73c0ff;
+}
+
+.macro-lab__empty {
+  margin: 0;
+  padding: 16px;
+  color: #aeb9c2;
+  font: 600 13px/1.3 "Segoe UI", sans-serif;
+}
+
+.macro-lab__step-actions {
+  flex-wrap: wrap;
+}
+
+.macro-lab__editor-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  min-height: 0;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.macro-lab__xy-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto minmax(130px, 160px);
+  gap: 10px;
+  align-items: end;
+  min-width: 0;
+}
+
+.macro-lab__xy-pick {
+  min-width: 72px;
+}
+
+.macro-lab__wide-field {
+  grid-column: 1 / -1;
+}
+
+.macro-lab__target-row {
+  align-items: stretch;
+}
+
+.macro-lab__target-row input {
+  flex: 1 1 auto;
+}
+
+.macro-lab__hint {
+  margin: 0;
+  color: #aeb9c2;
+  font: 600 12px/1.35 "Segoe UI", sans-serif;
+}
+
+@media (max-width: 1100px) {
+  .macro-lab__toolbar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .macro-lab__workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 720px) {
+  .macro-lab-page {
+    padding: 12px;
+  }
+
+  .macro-lab__header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .macro-lab__toolbar,
+  .macro-lab__editor-grid,
+  .macro-lab__xy-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

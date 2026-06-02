@@ -1,0 +1,265 @@
+.main-page {
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+}
+
+.exact-page-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.exact-page-frame__plane {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: top left;
+}
+
+.main-page__page {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+.main-page__background {
+  position: absolute;
+  inset: 0;
+  background-color: #9db678;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.rail-surface {
+  position: absolute;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.button-host {
+  position: absolute;
+  display: inline-flex;
+  align-items: stretch;
+  justify-content: stretch;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  z-index: 1;
+  overflow: visible;
+}
+
+.button-host .host-skin-button__frame {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.main-page__button-group {
+  position: absolute;
+  display: flex;
+  align-items: flex-start;
+  z-index: 1;
+}
+
+.main-page__poptype-control {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  border: 1px solid rgba(226, 234, 236, 0.36);
+  background: rgba(16, 23, 28, 0.84);
+  color: rgba(241, 246, 248, 0.94);
+  z-index: 1;
+}
+
+.main-page__poptype-label {
+  font: 700 10px/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.main-page__poptype-select {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: 700 10px/1 "Segoe UI", sans-serif;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+.main-page__poptype-select:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.main-page__rotate-toolbox {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 6px;
+}
+
+.main-page__rotate-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.main-page__rotate-row--top {
+  gap: 8px;
+}
+
+.main-page__rotate-row--wide {
+  justify-content: space-between;
+}
+
+.main-page__rotate-row--bottom {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.main-page__rotate-button {
+  position: relative;
+  min-height: 44px;
+}
+
+.main-page__rotate-field {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 18px;
+  background: rgba(9, 14, 12, 0.92);
+  border: 1px solid rgba(223, 233, 227, 0.18);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    0 10px 18px rgba(0, 0, 0, 0.18);
+}
+
+.main-page__rotate-field input {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: rgba(244, 247, 241, 0.96);
+  font: 600 30px/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.01em;
+}
+
+.main-page__rotate-field input::selection {
+  background: rgba(180, 211, 125, 0.32);
+}
+
+.main-page__alignment-toolbox {
+  position: relative;
+  display: block;
+}
+
+.main-page__alignment-row {
+  display: block;
+}
+
+.main-page__alignment-axis {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(244, 247, 241, 0.9);
+  font: 700 0.74rem/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.14em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.main-page__alignment-button {
+  position: relative;
+  min-height: 44px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.button-host[data-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: calc(var(--button-radius, 0px) + 3px);
+  border: 1px solid rgba(235, 243, 230, 0.5);
+  box-shadow:
+    0 0 0 1px rgba(157, 182, 120, 0.52),
+    0 0 18px rgba(157, 182, 120, 0.18);
+  pointer-events: none;
+}
+
+.button-host:focus-visible {
+  outline: 2px solid rgba(35, 31, 32, 0.72);
+  outline-offset: 2px;
+}
+
+.button-context-menu__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.button-context-menu {
+  position: fixed;
+  display: grid;
+  gap: 6px;
+  min-width: 168px;
+  padding: 6px;
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.05)),
+    rgba(12, 16, 18, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    0 20px 48px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  z-index: 40;
+  backdrop-filter: blur(18px);
+}
+
+.button-context-menu__item {
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+.button-context-menu__item .host-skin-button__frame {
+  width: 100%;
+  height: 100%;
+}
+

@@ -4,6 +4,7 @@ import type {
 } from "react";
 import {
   HostSkinButton,
+  MAIN_BUTTON_BASELINE_HEIGHT,
   resolveMainButtonFootprintOverride
 } from "../../components/HostSkinButton";
 import { SmartAxisStrip } from "../../components/ToolSurfaces";
@@ -297,6 +298,7 @@ function MainButtonHost({
     getImportedSkin(importedSkins, buttonStyleGroup?.importedSkinId) ??
     mainButtonsImportedSkin;
   const explicitFootprint = resolveMainButtonFootprintOverride(specificButtonImportedSkin);
+  const resolvedTargetHeight = explicitFootprint?.height ?? MAIN_BUTTON_BASELINE_HEIGHT;
   const isToolbarEventTarget = (target: EventTarget | null) =>
     target instanceof HTMLElement && Boolean(target.closest(".button-host__toolbar"));
 
@@ -340,8 +342,8 @@ function MainButtonHost({
         className="button-host__surface-button"
         styleGroup={buttonStyleGroup}
         importedSkin={buttonImportedSkin}
-        footprintMode={buttonImportedSkin ? "default-axis-normalized" : undefined}
-        footprintOverride={explicitFootprint}
+        autoInlineSize={Boolean(buttonImportedSkin)}
+        targetHeight={resolvedTargetHeight}
         selected={false}
         hostMode="neutral"
         highlightKey={`button:${selectedProgram.ProgramTabId}:${selectedPanel.Id}:${button.Id}`}

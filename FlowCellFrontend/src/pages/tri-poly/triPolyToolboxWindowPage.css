@@ -1,0 +1,395 @@
+.tri-poly-toolbox-window-page {
+  position: relative;
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+  user-select: none;
+}
+
+.tri-poly-toolbox-window-page__shell {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  box-sizing: border-box;
+  touch-action: none;
+}
+
+.tri-poly-toolbox-window-page--space-drag,
+.tri-poly-toolbox-window-page--space-drag * {
+  cursor: grab !important;
+}
+
+.tri-poly-toolbox-window-page--dragging,
+.tri-poly-toolbox-window-page--dragging * {
+  cursor: grabbing !important;
+}
+
+.tri-poly-toolbox-window-page__viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.tri-poly-toolbox-window-page__surface-frame {
+  position: relative;
+  box-sizing: border-box;
+}
+
+.tri-poly-toolbox-window-page__surface-scale {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: top left;
+}
+
+.tri-poly-toolbox-window-page__surface-content,
+.tri-poly-toolbox-window-page__surface,
+.tri-poly-toolbox-window-page__status-frame {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.tri-poly-toolbox-window-page__resize-handle {
+  position: absolute;
+  z-index: 50;
+  background: transparent;
+  pointer-events: auto;
+}
+
+.tri-poly-toolbox-window-page__resize-handle--north {
+  top: 0;
+  left: 8px;
+  right: 8px;
+  height: 4px;
+  cursor: n-resize;
+}
+
+.tri-poly-toolbox-window-page__resize-handle--south {
+  bottom: 0;
+  left: 8px;
+  right: 8px;
+  height: 4px;
+  cursor: s-resize;
+}
+
+.tri-poly-toolbox-window-page__resize-handle--east {
+  top: 8px;
+  right: 0;
+  bottom: 8px;
+  width: 4px;
+  cursor: e-resize;
+}
+
+.tri-poly-toolbox-window-page__resize-handle--west {
+  top: 8px;
+  left: 0;
+  bottom: 8px;
+  width: 4px;
+  cursor: w-resize;
+}
+
+.tri-poly-toolbox-window-page__resize-handle--north-east {
+  top: 0;
+  right: 0;
+  width: 8px;
+  height: 8px;
+  cursor: ne-resize;
+}
+
+.tri-poly-toolbox-window-page__resize-handle--north-west {
+  top: 0;
+  left: 0;
+  width: 8px;
+  height: 8px;
+  cursor: nw-resize;
+}
+
+.tri-poly-toolbox-window-page__resize-handle--south-east {
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  height: 8px;
+  cursor: se-resize;
+}
+
+.tri-poly-toolbox-window-page__resize-handle--south-west {
+  left: 0;
+  bottom: 0;
+  width: 8px;
+  height: 8px;
+  cursor: sw-resize;
+}
+
+.tri-poly-toolbox-window-page__surface {
+  --tri-poly-panel: rgba(38, 100, 19, 0.96);
+  --tri-poly-panel-edge: rgba(18, 67, 9, 0.92);
+  --tri-poly-header: rgba(9, 44, 4, 0.96);
+  --tri-poly-button-top: rgba(144, 184, 25, 0.94);
+  --tri-poly-button-bottom: rgba(120, 161, 17, 0.96);
+  --tri-poly-button-hover-top: rgba(164, 203, 37, 0.97);
+  --tri-poly-button-hover-bottom: rgba(135, 177, 25, 0.98);
+  --tri-poly-button-selected-top: rgba(89, 178, 56, 0.98);
+  --tri-poly-button-selected-bottom: rgba(57, 134, 38, 0.98);
+}
+
+.tri-poly-toolbox-window-page__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.tri-poly-toolbox-window-page__panel-shape {
+  fill: var(--tri-poly-panel);
+  stroke: rgba(18, 67, 9, 0.88);
+  stroke-width: 1;
+}
+
+.tri-poly-toolbox-window-page__header-shape {
+  fill: var(--tri-poly-header);
+}
+
+.tri-poly-toolbox-window-page__control-shape {
+  fill: rgba(132, 170, 21, 0.2);
+  stroke: rgba(48, 98, 7, 0.72);
+  stroke-width: 1;
+}
+
+.tri-poly-toolbox-window-page__header-label,
+.tri-poly-toolbox-window-page__row-label,
+.tri-poly-toolbox-window-page__button,
+.tri-poly-toolbox-window-page__sides-control,
+.tri-poly-toolbox-window-page__angle-control {
+  position: absolute;
+  box-sizing: border-box;
+  font-family: "Segoe UI", sans-serif;
+}
+
+.tri-poly-toolbox-window-page__header-label {
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 0 12px;
+  color: rgba(255, 255, 255, 0.96);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.tri-poly-toolbox-window-page__chevron {
+  width: 9px;
+  height: 9px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg) translateY(-2px);
+}
+
+.tri-poly-toolbox-window-page__grip {
+  width: 17px;
+  height: 17px;
+  margin-left: auto;
+  opacity: 0.72;
+  background-image: radial-gradient(currentColor 1px, transparent 1.5px);
+  background-size: 5px 5px;
+}
+
+.tri-poly-toolbox-window-page__row-label {
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  color: rgba(255, 255, 255, 0.95);
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.tri-poly-toolbox-window-page__button,
+.tri-poly-toolbox-window-page__sides-control,
+.tri-poly-toolbox-window-page__angle-control {
+  z-index: 3;
+  border: 1px solid rgba(46, 98, 7, 0.82);
+  background:
+    linear-gradient(180deg, var(--tri-poly-button-top), var(--tri-poly-button-bottom)),
+    rgba(126, 165, 20, 0.96);
+  color: rgba(255, 255, 255, 0.98);
+  box-shadow:
+    inset 0 1px 0 rgba(211, 239, 84, 0.28),
+    inset 0 -10px 18px rgba(37, 93, 8, 0.16);
+}
+
+.tri-poly-toolbox-window-page__button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  cursor: pointer;
+  font-weight: 500;
+  line-height: 1;
+  text-align: center;
+  transition:
+    background 150ms ease,
+    border-color 150ms ease,
+    color 150ms ease;
+}
+
+.tri-poly-toolbox-window-page__button:hover,
+.tri-poly-toolbox-window-page__button[data-selected="false"]:hover,
+.tri-poly-toolbox-window-page__angle-control:hover,
+.tri-poly-toolbox-window-page__sides-control:hover {
+  border-color: rgba(61, 120, 10, 0.94);
+  background:
+    linear-gradient(180deg, var(--tri-poly-button-hover-top), var(--tri-poly-button-hover-bottom)),
+    rgba(140, 180, 26, 0.98);
+}
+
+.tri-poly-toolbox-window-page__button[data-selected="true"],
+.tri-poly-toolbox-window-page__angle-control[data-selected="true"] {
+  border-color: rgba(151, 255, 99, 0.78);
+  background:
+    linear-gradient(
+      180deg,
+      var(--tri-poly-button-selected-top),
+      var(--tri-poly-button-selected-bottom)
+    ),
+    rgba(61, 143, 41, 0.98);
+  box-shadow:
+    inset 0 1px 0 rgba(204, 255, 170, 0.26),
+    inset 0 -10px 18px rgba(15, 61, 11, 0.22),
+    0 0 0 1px rgba(151, 255, 99, 0.16);
+}
+
+.tri-poly-toolbox-window-page__button:disabled,
+.tri-poly-toolbox-window-page__sides-control:has(input:disabled),
+.tri-poly-toolbox-window-page__angle-control:has(input:disabled) {
+  cursor: default;
+  opacity: 0.78;
+}
+
+.tri-poly-toolbox-window-page__button:focus-visible,
+.tri-poly-toolbox-window-page__sides-control input:focus-visible,
+.tri-poly-toolbox-window-page__angle-control input:focus-visible,
+.tri-poly-toolbox-window-page__angle-submit:focus-visible {
+  outline: 1px solid rgba(244, 255, 211, 0.72);
+  outline-offset: 1px;
+}
+
+.tri-poly-toolbox-window-page__button-label {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+  text-shadow: 0 1px 1px rgba(34, 64, 8, 0.62);
+}
+
+.tri-poly-toolbox-window-page__sides-control {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr);
+  align-items: center;
+  overflow: hidden;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.tri-poly-toolbox-window-page__sides-control span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  border-right: 1px solid rgba(55, 105, 8, 0.68);
+  text-shadow: 0 1px 1px rgba(34, 64, 8, 0.62);
+}
+
+.tri-poly-toolbox-window-page__sides-control input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0 6px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.98);
+  font: inherit;
+  text-align: center;
+  outline: none;
+}
+
+.tri-poly-toolbox-window-page__angle-control {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px;
+  align-items: center;
+  overflow: hidden;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.tri-poly-toolbox-window-page__angle-control input {
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  padding: 0 2px 0 8px;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.98);
+  font: inherit;
+  text-align: right;
+  outline: none;
+}
+
+.tri-poly-toolbox-window-page__angle-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid rgba(55, 105, 8, 0.68);
+  background: transparent;
+  color: rgba(255, 255, 255, 0.98);
+  font: inherit;
+  cursor: pointer;
+  text-shadow: 0 1px 1px rgba(34, 64, 8, 0.62);
+}
+
+.tri-poly-toolbox-window-page__angle-submit:disabled {
+  cursor: default;
+}
+
+.tri-poly-toolbox-window-page__sides-control input::-webkit-inner-spin-button,
+.tri-poly-toolbox-window-page__sides-control input::-webkit-outer-spin-button,
+.tri-poly-toolbox-window-page__angle-control input::-webkit-inner-spin-button,
+.tri-poly-toolbox-window-page__angle-control input::-webkit-outer-spin-button {
+  opacity: 0;
+}
+
+.tri-poly-toolbox-window-page__status-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.tri-poly-toolbox-window-page__status {
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: rgba(9, 44, 4, 0.92);
+  border: 1px solid rgba(223, 233, 227, 0.18);
+  color: rgba(244, 247, 241, 0.96);
+  font: 600 0.8rem/1.35 "Segoe UI", sans-serif;
+}

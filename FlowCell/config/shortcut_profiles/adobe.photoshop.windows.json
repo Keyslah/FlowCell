@@ -1,0 +1,149 @@
+{
+  "id": "adobe.photoshop.windows",
+  "displayName": "Adobe Photoshop",
+  "platform": "windows",
+  "processNames": [
+    "Photoshop.exe"
+  ],
+  "blocked": [],
+  "reserved": [
+    {
+      "shortcut": "^S",
+      "display": "Ctrl + S",
+      "reason": "Application Save",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "^Z",
+      "display": "Ctrl + Z",
+      "reason": "Application Undo",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "^C",
+      "display": "Ctrl + C",
+      "reason": "Application Copy",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "^V",
+      "display": "Ctrl + V",
+      "reason": "Application Paste",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "^X",
+      "display": "Ctrl + X",
+      "reason": "Application Cut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "^A",
+      "display": "Ctrl + A",
+      "reason": "Application Select All",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "^D",
+      "display": "Ctrl + D",
+      "reason": "Application Deselect",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "^!+K",
+      "display": "Ctrl + Alt + Shift + K",
+      "reason": "Application keyboard shortcuts dialog",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "B",
+      "display": "B",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "V",
+      "display": "V",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "M",
+      "display": "M",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "L",
+      "display": "L",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "W",
+      "display": "W",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "T",
+      "display": "T",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "I",
+      "display": "I",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "G",
+      "display": "G",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "E",
+      "display": "E",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "R",
+      "display": "R",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "Z",
+      "display": "Z",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "X",
+      "display": "X",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    },
+    {
+      "shortcut": "C",
+      "display": "C",
+      "reason": "Common tool shortcut",
+      "source": "Application default shortcuts"
+    }
+  ],
+  "preferred": [
+    "^+1",
+    "^+2",
+    "^+3",
+    "^!1",
+    "^!2",
+    "^!3",
+    "F6",
+    "F7",
+    "F8"
+  ],
+  "notes": "Conservative Photoshop starter profile. It is not exhaustive."
+}

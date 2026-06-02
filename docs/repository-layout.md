@@ -1,43 +1,38 @@
 # Repository Layout
 
+## Program Script Workflow
+
+`Programs/` is the visible program rail source. Each program folder owns three script areas:
+
+- `Programs/<Program>/Panels/<Panel>/`: local panel buttons and panel-local runnable script copies. This is ignored by Git.
+- `Programs/<Program>/<Program> Local Scripts/`: flat private backup/core copies created by Add Script/Add Button. This is ignored by Git and is never automatically pruned.
+- `Programs/<Program>/<Program> Git Scripts/`: tracked shared script sources. This is the only program script library intended to move through GitHub.
+
+Add Script/Add Button copies selected scripts into both the selected panel folder and the flat Local Scripts folder. If Local Scripts already has a byte-identical file, it reuses that copy; if a same-named file differs, the new copy gets a suffix such as `script__2.py`.
+
+Panel deletes and button deletes only remove the panel copy or panel record. They do not remove files from Local Scripts.
+
 ## Public Source
 
 - `FlowCell/`: PowerShell UI, AutoHotkey backend, helpers, and vendored libraries.
-- `Blender/`: Blender bridge config plus `Blender Scripts/` public library sources, `Blender Active Scripts/` managed source installs, `ManagedActions/` bridge-managed runtime sources, `FlowCellButtons/` user-facing wrappers, `SupportScripts/` install/sync plumbing, `AddonScripts/` Blender helpers, and `ScriptDump/` ignored loose/test files.
-- `Illustrator/`: Illustrator library, managed active copies, runtime sync metadata, and helpers.
-- `Illustrator/HelperScripts/`: internal Illustrator helpers only.
-- `Windows/`: Windows library scripts plus managed active copies.
-- `Photoshop/`: Photoshop library scripts plus managed active copies.
+- `FlowCellFrontend/`: React/Tauri desktop frontend and native command host.
+- `Programs/<Program>/<Program> Git Scripts/`: shared Git-synced script libraries, organized by panel subfolder.
+- `Programs/Blender/SupportScripts/`: Blender installer, dispatcher, cleanup, and sync plumbing.
+- `Programs/Blender/AddonScripts/`: Blender refresh/sidebar helper scripts only.
+- `Programs/*/ScriptDump/`: ignored loose/testing/old scripts with placeholder folders tracked.
 - `tools/launcher/`: optional launcher source.
+
 
 ## Ignored Local Data
 
-`FlowCell/local/` is the local-only runtime area. It stores:
+`FlowCell/local/` stores runtime state such as bindings, layouts, saved panels, recorded macros, logs, private settings, temp files, and build/runtime artifacts.
 
-- bindings
-- panel state
-- popout layouts
-- saved panels
-- recorded macros
-- logs
-- private machine-specific settings
-- temp files
-- build artifacts
-
-This split keeps GitHub updates from overwriting a user's local FlowCell setup.
-
-Machine-specific Windows helper paths should be supplied through local environment overrides. The public example lives at `examples/Windows/windows.env.example`.
+Program-local ignored data includes panel button folders, flat Local Scripts folders, ScriptDump contents, generated Blender actions, and caches.
 
 ## Panel Script Import
 
-The main FlowCell `Add Script` button now:
+The main FlowCell Add Script button opens in the selected program's Git Scripts folder, preferring the current panel's subfolder when present. The selected scripts can still come from anywhere.
 
-- opens in the current program's public `Scripts` library folder by default
-- allows selecting multiple files and optional source folders from anywhere
-- copies selected sources into that program's managed `Active Scripts` folder
-- creates one button per installed managed script source
-- applies changes only to the currently selected panel
-- strips `file_`, `util_`, and `org_` from the displayed button label only
-- stores the managed source path in FlowCell state and keeps the runtime execution target alongside it when the app needs a separate runnable location
+For Windows, Illustrator, and Photoshop, the panel copy is the runnable script. For Blender, Add script creates/keeps the panel-local `.py` copy plus the `.flowcell-panel-item.json` button record, and the record points at the panel-local source.
 
-On the Blender tab, the same control presents as `Add Button`. It stages selected sources into `Blender\Blender Active Scripts`, then reuses the existing Blender bridge pipeline to refresh `ManagedActions`, regenerate `FlowCellButtons`, and sync the live panel state without pointing buttons at random original pick locations.
+Git Scripts are not modified by Add Script/Add Button after the initial migration; they change only through normal repo edits and Git pulls.

@@ -1,7 +1,0 @@
-file,mode,size,min_alpha,max_alpha,center_alpha,corner_alpha,transparent_pixels_alpha_0,semi_transparent_pixels_alpha_1_to_254,opaque_pixels_alpha_255
-button_blue_true_alpha.png,RGBA,900x180,0,249,140,0,1337,160663,0
-button_turquoise_true_alpha.png,RGBA,900x180,0,249,140,0,1337,160663,0
-button_purple_true_alpha.png,RGBA,900x180,0,249,140,0,1337,160663,0
-button_pink_true_alpha.png,RGBA,900x180,0,249,140,0,1337,160663,0
-button_green_true_alpha.png,RGBA,900x180,0,249,140,0,1337,160663,0
-button_lime_green_true_alpha.png,RGBA,900x180,0,249,140,0,1337,160663,0

@@ -12,7 +12,7 @@
 
 - Public source belongs in tracked folders such as `FlowCell/`, `Blender/`, `Illustrator/`, `Windows/`, `Photoshop/`, `docs/`, `examples/`, and `tools/`.
 - Mutable runtime data belongs in `FlowCell/local/`, which is ignored by Git.
-- Blender FlowCell button wrappers belong in `Blender/FlowCellButtons/`.
+- Blender buttons should be direct bridge actions; do not add new per-button PowerShell wrappers under `Blender/FlowCellButtons/`.
 - Illustrator user-facing scripts should stay directly in `Illustrator/`.
 - Windows user-facing scripts should stay directly in `Windows/`.
 - Photoshop repo-safe public scripts should stay directly in `Photoshop/`.

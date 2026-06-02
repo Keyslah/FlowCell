@@ -1,6 +1,8 @@
 import type { ImportedSkin, StyleGroup } from "../types";
 import { HostSkinButton } from "./HostSkinButton";
 
+const SAVE_DARKNESS_PROFILE_OPTION = "__save_darkness_profile__";
+
 interface ToolSkinProps {
   styleGroup?: StyleGroup;
   importedSkin?: ImportedSkin;
@@ -69,11 +71,9 @@ interface HdriWorldToolValues {
   ThemeAccentTextHex: string;
   ThemeEditorBackgroundHex: string;
   ThemeSceneHex: string;
-  ThemeSectionFillHex: string;
   ThemeControlsHex: string;
   ThemeMiscHex: string;
   ThemeDarksHex: string;
-  ThemeRowAltHex: string;
   ThemeHighlightsHex: string;
   ThemeViewportBackgroundHex: string;
   ThemeViewportGradientEnabled: boolean;
@@ -82,6 +82,11 @@ interface HdriWorldToolValues {
   RotationYDeg: number;
   RotationZDeg: number;
   WorldStrength: number;
+}
+
+interface DarknessProfileOption {
+  id: string;
+  name: string;
 }
 
 interface QuickRotateGroupToolSurfaceProps {
@@ -110,10 +115,13 @@ interface HdriWorldToolSurfaceProps {
     field: keyof HdriWorldToolValues,
     value: string | number | boolean
   ) => void;
+  onNativePickerOpen?: () => void;
+  onNativePickerClose?: () => void;
   onApply: (
     action:
       | "apply_theme_from_photo_manual_colors"
-      | "set_static_background_image"
+      | "place_picture"
+      | "clear_place_picture"
       | "set_hdri_path"
       | "clear_world"
       | "reset_world"
@@ -133,6 +141,10 @@ interface HdriWorldToolSurfaceProps {
     mode: "dark" | "light",
     values: HdriWorldToolValues
   ) => void;
+  darknessProfiles?: DarknessProfileOption[];
+  activeDarknessProfileId?: string;
+  onSelectDarknessProfile?: (profileId: string, values: HdriWorldToolValues) => void;
+  onRequestSaveDarknessProfile?: () => void;
 }
 
 interface SmartAxisVisualState {
@@ -227,19 +239,9 @@ const THEME_SECONDARY_ROLE_ROWS = [
     placeholder: "#241F2B",
   },
   {
-    label: "Scene",
+    label: "Collection Row",
     field: "ThemeSceneHex",
     placeholder: "#2B3438",
-  },
-  {
-    label: "List / Tree Fill",
-    field: "ThemeSectionFillHex",
-    placeholder: "#2B3438",
-  },
-  {
-    label: "Alt Row",
-    field: "ThemeRowAltHex",
-    placeholder: "#1C2818",
   },
 ] as const;
 
@@ -278,6 +280,7 @@ function renderToolChip(
     active?: boolean;
     flowId?: string;
     title?: string;
+    instantTooltip?: string;
     highlightKey?: string;
     highlightColor?: string;
   }
@@ -291,10 +294,11 @@ function renderToolChip(
     active = selected,
     flowId,
     title,
+    instantTooltip,
     highlightKey,
     highlightColor
   } = args;
-  const baseClassName = className ?? "tool-chip";
+  const baseClassName = `${className ?? "tool-chip"}${instantTooltip ? " tool-chip--with-instant-tooltip" : ""}`;
 
   return (
     <HostSkinButton
@@ -309,6 +313,11 @@ function renderToolChip(
       skinCompact
       onClick={onClick}
       title={title ?? label}
+      afterContent={
+        instantTooltip ? (
+          <span className="tool-chip__instant-tooltip">{instantTooltip}</span>
+        ) : undefined
+      }
       highlightKey={
         selected || active ? highlightKey ?? `${baseClassName}:${label}` : undefined
       }
@@ -342,8 +351,10 @@ function renderThemeRoleField(args: {
   row: { label: string; field: keyof HdriWorldToolValues; placeholder: string };
   value: string;
   onValueChange: (field: keyof HdriWorldToolValues, value: string) => void;
+  onNativePickerOpen?: () => void;
+  onNativePickerClose?: () => void;
 }) {
-  const { row, value, onValueChange } = args;
+  const { row, value, onValueChange, onNativePickerOpen, onNativePickerClose } = args;
   return (
     <label className="hdri-world-theme-role" key={row.field}>
       <span className="hdri-world-theme-role__label">{row.label}</span>
@@ -352,9 +363,16 @@ function renderThemeRoleField(args: {
           className="hdri-world-color-input"
           type="color"
           value={/^#[0-9A-F]{6}$/i.test(value) ? value : row.placeholder}
-          onChange={(event) =>
-            onValueChange(row.field, event.target.value.toUpperCase())
-          }
+          onPointerDown={onNativePickerOpen}
+          onFocus={onNativePickerOpen}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
+              onNativePickerClose?.();
+            }
+          }}
+          onChange={(event) => {
+            onValueChange(row.field, event.target.value.toUpperCase());
+          }}
           title={`${row.label} theme color picker.`}
         />
         <input
@@ -415,7 +433,7 @@ export function AlignmentToolSurface({
             styleGroup,
             importedSkin
           })}
-          {renderToolChip("Geo", {
+          {renderToolChip("Origin", {
             onClick: () => onAction(axis, "geo"),
             className: `tool-chip ${modifiers[axis] === "GEOCENTER" ? "is-active" : ""}`,
             selected: modifiers[axis] === "GEOCENTER",
@@ -764,10 +782,16 @@ export function HdriWorldToolSurface({
   onBrowsePath,
   onBrowseStaticBackgroundPath,
   onBrowseThemePath,
+  onNativePickerOpen,
+  onNativePickerClose,
   onAbsorbTheme,
   onSaveTheme,
   onLoadTheme,
-  onApplyThemeMode
+  onApplyThemeMode,
+  darknessProfiles = [],
+  activeDarknessProfileId = "",
+  onSelectDarknessProfile,
+  onRequestSaveDarknessProfile
 }: HdriWorldToolSurfaceProps) {
   const content = (
     <div className={compact ? "hdri-world-grid hdri-world-grid--compact" : "hdri-world-grid"}>
@@ -810,14 +834,46 @@ export function HdriWorldToolSurface({
           importedSkin,
           title: "Load a saved Blender theme back into this page."
         })}
-        {renderToolChip("Dark Theme", {
-          onClick: () => onApplyThemeMode("dark", values),
-          className: `tool-chip hdri-theme-actions-chip ${values.ThemeVisualMode === "dark" ? "is-active" : ""}`.trim(),
-          selected: values.ThemeVisualMode === "dark",
-          styleGroup,
-          importedSkin,
-          title: "Stage a dark theme preset on this page. Apply sends it to Blender."
-        })}
+        <div className="hdri-theme-profile-control">
+          {renderToolChip("Dark Theme", {
+            onClick: () => onApplyThemeMode("dark", values),
+            className: `tool-chip hdri-theme-actions-chip ${values.ThemeVisualMode === "dark" ? "is-active" : ""}`.trim(),
+            selected: values.ThemeVisualMode === "dark",
+            styleGroup,
+            importedSkin,
+            title: "Stage a dark theme preset on this page. Apply sends it to Blender."
+          })}
+          <select
+            className="hdri-theme-profile-select"
+            value={activeDarknessProfileId}
+            title="Choose a saved darkness profile for Dark Theme."
+            onPointerDown={onNativePickerOpen}
+            onFocus={onNativePickerOpen}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                onNativePickerClose?.();
+              }
+            }}
+            onChange={(event) => {
+              const selectedValue = event.target.value;
+              if (selectedValue === SAVE_DARKNESS_PROFILE_OPTION) {
+                onRequestSaveDarknessProfile?.();
+                onNativePickerClose?.();
+                return;
+              }
+              onSelectDarknessProfile?.(selectedValue, values);
+              onNativePickerClose?.();
+            }}
+          >
+            <option value="">Default</option>
+            {darknessProfiles.map((profile) => (
+              <option key={profile.id} value={profile.id}>
+                {profile.name}
+              </option>
+            ))}
+            <option value={SAVE_DARKNESS_PROFILE_OPTION}>Save Darkness Profile...</option>
+          </select>
+        </div>
         {renderToolChip("Light Theme", {
           onClick: () => onApplyThemeMode("light", values),
           className: `tool-chip hdri-theme-actions-chip ${values.ThemeVisualMode === "light" ? "is-active" : ""}`.trim(),
@@ -840,6 +896,8 @@ export function HdriWorldToolSurface({
             row,
             value: values[row.field],
             onValueChange: (field, value) => onValueChange(field, value),
+            onNativePickerOpen,
+            onNativePickerClose,
           })
         )}
       </div>
@@ -849,6 +907,8 @@ export function HdriWorldToolSurface({
             row,
             value: values[row.field],
             onValueChange: (field, value) => onValueChange(field, value),
+            onNativePickerOpen,
+            onNativePickerClose,
           })
         )}
       </div>
@@ -858,6 +918,8 @@ export function HdriWorldToolSurface({
             row,
             value: values[row.field],
             onValueChange: (field, value) => onValueChange(field, value),
+            onNativePickerOpen,
+            onNativePickerClose,
           })
         )}
       </div>
@@ -867,6 +929,8 @@ export function HdriWorldToolSurface({
             row,
             value: values[row.field],
             onValueChange: (field, value) => onValueChange(field, value),
+            onNativePickerOpen,
+            onNativePickerClose,
           })
         )}
         <label className="hdri-world-theme-role hdri-world-theme-role--toggle">
@@ -884,38 +948,35 @@ export function HdriWorldToolSurface({
         </label>
       </div>
       <div className="hdri-world-row hdri-world-row--background-path">
-        {renderToolChip("background pic", {
-          onClick: () => onApply("set_static_background_image", values),
+        {renderToolChip("Place Picture", {
+          onClick: () => onApply("place_picture", values),
           className: "tool-chip",
           styleGroup,
           importedSkin,
-          title: "Apply the current viewport background picture path."
+          title: "Creates fake gizmos and a fake grid on top of a background image.",
+          instantTooltip: "Creates fake gizmos and a fake grid on top of a background image."
         })}
         <input
           className="hdri-world-field__input"
           type="text"
           value={values.StaticBackgroundPath}
           onChange={(event) => onValueChange("StaticBackgroundPath", event.target.value)}
-          placeholder="Choose a background picture"
-          title="Viewport background picture path to draw behind the Blender scene overlays."
+          placeholder="Choose a picture"
+          title="Image path used by Place Picture."
         />
         {renderToolChip("Browse", {
           onClick: onBrowseStaticBackgroundPath,
           className: "tool-chip",
           styleGroup,
           importedSkin,
-          title: "Pick a viewport background picture."
+          title: "Pick a Place Picture image."
         })}
         {renderToolChip("Clear", {
-          onClick: () =>
-            onApply("set_static_background_image", {
-              ...values,
-              StaticBackgroundPath: ""
-            }),
+          onClick: () => onApply("clear_place_picture", values),
           className: "tool-chip",
           styleGroup,
           importedSkin,
-          title: "Clear the current viewport background picture overlay."
+          title: "Remove the Place Picture fake background, grid, and gizmos while keeping the path field."
         })}
       </div>
       <div className="hdri-world-row hdri-world-row--path">
@@ -931,7 +992,7 @@ export function HdriWorldToolSurface({
           type="text"
           value={values.HdriPath}
           onChange={(event) => onValueChange("HdriPath", event.target.value)}
-          placeholder="Blender\\appearance\\mossy_forest_4k.exr"
+          placeholder="D:\\path\\to\\world.exr"
           title="HDRI path to load into the Blender world environment."
         />
         {renderToolChip("Clear", {

@@ -24,20 +24,8 @@ Communication rules
 - During complex work, keep updates short.
 - Final summaries must be short and factual.
 
-FlowTest architecture guardrails
-- Because this repository root is `FlowTest`, these FlowTest-specific rules apply repo-wide unless a deeper `AGENTS.md` overrides them.
-- Preserve the three-layer split: State Layer, Functional Host Layer, Visual Skin Layer.
-- State owns identity, persistence, bindings, script targets, panel membership, popout state, selected tabs, and `style_group_id`.
-- Functional Host owns button execution, selection, drag/reorder, context menus, popouts, validation, and dispatch.
-- Visual Skin owns appearance only.
-- Visual Skin must never execute actions, mutate state, own bindings, own script targets, or control behavior.
-- `style_group_id` is the only saved/internal style assignment field.
-- Imported HTML/CSS/React/JSX/TSX/Tailwind/SVG visual code must remain render-only and sandboxed inside host surfaces.
-- Do not create visual preview systems unless explicitly requested.
-- Do not merge visual code with functional button logic.
-- Do not rename architecture fields or invent alternate state fields.
-- Keep FlowTest behavior equal to FlowCell unless the task explicitly says FlowTest should diverge.
+FlowCell implementation notes
 - After changes affecting Blender add-ons, configs, generated actions, wrappers, or bridge files, state the required reload/restart/resync step.
 - Check `FlowCell/local/logs`, status output, or relevant console output before guessing about runtime failures.
-- Update `PROGRAM_SUMMARY.txt` whenever repo structure or FlowCell/FlowTest behavior changes.
+- Update `PROGRAM_SUMMARY.txt` whenever repo structure or FlowCell behavior changes.
 </INSTRUCTIONS>

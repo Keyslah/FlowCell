@@ -102,6 +102,7 @@ export interface ImportedSkin {
   html: string;
   css: string;
   svg?: string;
+  bridgeJs?: string;
   cardHtml?: string;
   cardCss?: string;
   cardSvg?: string;
@@ -114,6 +115,15 @@ export interface ImportedSkin {
     | "cover-crop";
   allowOverflow?: boolean;
   mainButtonSizePercent?: number;
+  fanChildWidth?: number;
+  fanChildHeight?: number;
+  fanOwnerWidth?: number;
+  fanOwnerHeight?: number;
+  fixedWidth?: number;
+  fixedHeight?: number;
+  labelMaxWidth?: number;
+  labelMinScale?: number;
+  labelScale?: number;
 }
 
 export interface StyleGroup {
@@ -188,6 +198,70 @@ export interface FlowCellBindingsState {
   actionHotkeys: Record<string, string>;
 }
 
+export interface BindableButtonRecord {
+  id: string;
+  label: string;
+  kind: string;
+  target: string;
+  executionTarget?: string;
+  bindingId?: number;
+  shortcut?: string;
+}
+
+export interface BindablePanelRecord {
+  name: string;
+  buttons: BindableButtonRecord[];
+}
+
+export interface BindableProgramRecord {
+  name: string;
+  programTabId: number;
+  panels: BindablePanelRecord[];
+}
+
+export interface FrontendMacroSummaryRecord {
+  id: string;
+  label: string;
+  programName: string;
+  panelName: string;
+  fileName: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ShortcutProfileEntry {
+  shortcut: string;
+  display?: string;
+  reason?: string;
+  source?: string;
+}
+
+export interface ShortcutProfileFile {
+  id: string;
+  displayName?: string;
+  platform?: string;
+  processNames?: string[];
+  blocked?: ShortcutProfileEntry[];
+  reserved?: ShortcutProfileEntry[];
+  preferred?: string[];
+  notes?: string;
+}
+
+export interface ShortcutProfileDocument {
+  fileName: string;
+  profileId: string;
+  isLocalOverride: boolean;
+  profile: ShortcutProfileFile;
+}
+
+export interface BindsWorkspaceData {
+  programs: BindableProgramRecord[];
+  macros: FrontendMacroSummaryRecord[];
+  bindings: FlowCellBindingsState;
+  shortcutProfiles: ShortcutProfileDocument[];
+  warnings: string[];
+}
+
 export interface BindingMutationResult {
   ok?: boolean;
   message: string;
@@ -214,41 +288,6 @@ export interface ManagedScriptInstallResult {
   reloadRequired?: boolean;
   reloadReason?: string;
   results: ManagedScriptInstallResultItem[];
-}
-
-export type RecordedMacroStepType =
-  | "ActivateIllustrator"
-  | "ActivateBlender"
-  | "ActivatePhotoshop"
-  | "ActivateWindows"
-  | "Click"
-  | "Wheel"
-  | "Text"
-  | "Key"
-  | "Script"
-  | "Macro";
-
-export interface RecordedMacroStep {
-  type: RecordedMacroStepType;
-  delayMs: number;
-  x?: string;
-  y?: string;
-  button?: string;
-  count?: string;
-  direction?: string;
-  text?: string;
-  keys?: string;
-  scriptPath?: string;
-  macroPath?: string;
-}
-
-export interface RecordedMacroDefinition {
-  id: string;
-  label: string;
-  path?: string;
-  steps: RecordedMacroStep[];
-  createdAt?: string;
-  updatedAt?: string;
 }
 
 export interface AlignmentToolStateRecord {
@@ -346,13 +385,6 @@ export interface SavedLayoutFile {
   modifiedAt?: string;
 }
 
-export interface RecordedMacroChoice {
-  id: string;
-  label: string;
-  path: string;
-  createdAt?: string;
-}
-
 export interface LayoutSnapshotPanelPopout {
   ProgramTabId: number;
   ProgramName?: string;
@@ -372,14 +404,45 @@ export interface LayoutSnapshotToolPopout {
   Bounds?: FlowCellBounds | null;
 }
 
+export type LayoutSnapshotWindowKind =
+  | "flatten-revolve-toolbox"
+  | "generic-toolbox"
+  | "dimensions-toolbox"
+  | "theme-toolbox"
+  | "rotate-toolbox"
+  | "alignment-toolbox"
+  | "boolean-toolbox"
+  | "remesh-toolbox"
+  | "tri-poly-toolbox"
+  | "smart-axis-toolbox"
+  | "panel-fan"
+  | "panel-fan-options"
+  | "script-group-popout"
+  | "codex-usage-popout";
+
+export interface LayoutSnapshotWindow {
+  Kind: LayoutSnapshotWindowKind;
+  ProgramName?: string;
+  PanelName?: string;
+  FileName?: string;
+  Label?: string;
+  SelectedFileNames?: string[];
+  Bounds: FlowCellBounds;
+}
+
 export interface LayoutSnapshot {
   SavedAt?: string;
   Version?: number;
   LayoutKind?: string;
   FlowCellStatePath?: string;
+  SelectedProgramName?: string;
+  SelectedPanelName?: string;
+  SelectedFileNames?: string[];
+  MainWindowBounds?: FlowCellBounds | null;
   PanelPopouts?: LayoutSnapshotPanelPopout[];
   ToolPopouts?: LayoutSnapshotToolPopout[];
   PopoutClusters?: PopoutClusterRecord[];
+  Windows?: LayoutSnapshotWindow[];
 }
 
 export interface LoadStateResponse {
@@ -394,8 +457,8 @@ export interface WindowContext {
     | "panel-popout"
     | "tool-popout"
     | "panel-fan-options"
-    | "button-appearance"
     | "button-reorder"
+    | "binds"
     | "button-options"
     | "layout-picker";
   programId?: number;

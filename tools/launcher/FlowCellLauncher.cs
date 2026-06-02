@@ -4,7 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 
-internal static class FlowTestLauncher
+internal static class FlowCellLauncher
 {
     [STAThread]
     private static int Main(string[] args)
@@ -17,7 +17,7 @@ internal static class FlowTestLauncher
             repoRoot = ResolveRepoRoot(baseDirectory);
             if (string.IsNullOrWhiteSpace(repoRoot))
             {
-                LogLauncherError(baseDirectory, "Could not resolve FlowTest repo root from launcher location.");
+                LogLauncherError(baseDirectory, "Could not resolve FlowCell repo root from launcher location.");
                 return 1;
             }
 
@@ -109,7 +109,7 @@ internal static class FlowTestLauncher
         {
             var logDir = ResolveLogDirectory(repoRootOrBaseDirectory);
             Directory.CreateDirectory(logDir);
-            var logPath = Path.Combine(logDir, "flowtest_launcher.log");
+            var logPath = Path.Combine(logDir, "flowcell_launcher.log");
             var lines = new[]
             {
                 "-----",

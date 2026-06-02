@@ -1,0 +1,102 @@
+{
+  "id": "windows",
+  "displayName": "Windows",
+  "platform": "windows",
+  "processNames": [
+    "explorer.exe"
+  ],
+  "blocked": [
+    {
+      "shortcut": "!Tab",
+      "display": "Alt + Tab",
+      "reason": "Windows task switcher",
+      "source": "Microsoft Windows keyboard shortcuts"
+    },
+    {
+      "shortcut": "!{F4}",
+      "display": "Alt + F4",
+      "reason": "Windows close active app",
+      "source": "Microsoft Windows keyboard shortcuts"
+    },
+    {
+      "shortcut": "#L",
+      "display": "Win + L",
+      "reason": "Windows lock workstation",
+      "source": "Microsoft Windows keyboard shortcuts"
+    },
+    {
+      "shortcut": "#D",
+      "display": "Win + D",
+      "reason": "Windows show desktop",
+      "source": "Microsoft Windows keyboard shortcuts"
+    },
+    {
+      "shortcut": "#I",
+      "display": "Win + I",
+      "reason": "Windows Settings",
+      "source": "Microsoft Windows keyboard shortcuts"
+    },
+    {
+      "shortcut": "#^D",
+      "display": "Win + Ctrl + D",
+      "reason": "Windows new virtual desktop",
+      "source": "Microsoft Windows keyboard shortcuts"
+    },
+    {
+      "shortcut": "#^Left",
+      "display": "Win + Ctrl + Left",
+      "reason": "Windows previous virtual desktop",
+      "source": "Microsoft Windows keyboard shortcuts"
+    },
+    {
+      "shortcut": "#^Right",
+      "display": "Win + Ctrl + Right",
+      "reason": "Windows next virtual desktop",
+      "source": "Microsoft Windows keyboard shortcuts"
+    },
+    {
+      "shortcut": "^!Delete",
+      "display": "Ctrl + Alt + Delete",
+      "reason": "Windows secure attention sequence",
+      "source": "Microsoft Windows keyboard shortcuts"
+    }
+  ],
+  "reserved": [],
+  "preferred": [
+    "^+1",
+    "^+2",
+    "^+3",
+    "^+4",
+    "^+5",
+    "^+6",
+    "^+7",
+    "^+8",
+    "^+9",
+    "^!1",
+    "^!2",
+    "^!3",
+    "^!4",
+    "^!5",
+    "^!6",
+    "^!7",
+    "^!8",
+    "^!9",
+    "^!+1",
+    "^!+2",
+    "^!+3",
+    "^!+4",
+    "^!+5",
+    "^!+6",
+    "^!+7",
+    "^!+8",
+    "^!+9",
+    "F6",
+    "F7",
+    "F8",
+    "F9",
+    "F10",
+    "F11",
+    "F12"
+  ],
+  "notes": "Conservative Windows base profile for FlowCell shortcut suggestions."
+}
