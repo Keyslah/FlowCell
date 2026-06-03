@@ -1051,6 +1051,12 @@ fn allowed_windows_script_extensions() -> &'static [&'static str] {
     &["ps1", "cmd", "bat", "exe", "lnk", "vbs", "ahk"]
 }
 
+fn allowed_generic_script_extensions() -> &'static [&'static str] {
+    &[
+        "ps1", "cmd", "bat", "exe", "lnk", "vbs", "ahk", "jsx", "js", "py",
+    ]
+}
+
 fn allowed_adobe_script_extensions() -> &'static [&'static str] {
     &["jsx", "js"]
 }
@@ -1061,6 +1067,16 @@ fn is_allowed_windows_script_path(path: &Path) -> bool {
     };
 
     allowed_windows_script_extensions()
+        .iter()
+        .any(|allowed| extension.eq_ignore_ascii_case(allowed))
+}
+
+fn is_allowed_generic_script_path(path: &Path) -> bool {
+    let Some(extension) = path.extension().and_then(|value| value.to_str()) else {
+        return false;
+    };
+
+    allowed_generic_script_extensions()
         .iter()
         .any(|allowed| extension.eq_ignore_ascii_case(allowed))
 }
@@ -2881,6 +2897,12 @@ fn list_windows_panel_script_files(
     list_simple_panel_script_files(panel_directory, is_allowed_windows_script_path)
 }
 
+fn list_generic_panel_script_files(
+    panel_directory: &Path,
+) -> Result<Vec<PanelScriptFileRecord>, String> {
+    list_simple_panel_script_files(panel_directory, is_allowed_generic_script_path)
+}
+
 fn classify_adobe_panel_script_kind(
     path: &Path,
     children: &[PanelScriptChildRecord],
@@ -3046,11 +3068,7 @@ fn list_bindable_buttons_for_panel(
     ) {
         list_adobe_panel_script_files(&panel_directory)?
     } else {
-        list_simple_panel_script_files(&panel_directory, |path| {
-            is_allowed_windows_script_path(path)
-                || is_allowed_adobe_script_path(path)
-                || is_allowed_blender_script_path(path)
-        })?
+        list_generic_panel_script_files(&panel_directory)?
     };
 
     let program_tab_id = resolve_program_tab_id(program_name);
@@ -6300,9 +6318,11 @@ fn resolve_blender_remove_button_script_path() -> Result<PathBuf, String> {
     }
 }
 
-fn delete_windows_panel_scripts(
+fn delete_simple_panel_scripts(
     panel_directory: &Path,
     file_names: &[String],
+    is_allowed_path: fn(&Path) -> bool,
+    script_kind_label: &str,
 ) -> Result<(), String> {
     let mut recycle_paths = Vec::with_capacity(file_names.len());
     let mut macro_ids = Vec::new();
@@ -6339,10 +6359,10 @@ fn delete_windows_panel_scripts(
             continue;
         }
 
-        if !is_allowed_windows_script_path(&script_path) {
+        if !is_allowed_path(&script_path) {
             return Err(format!(
-                "Script '{}' does not use a supported Windows Add Script file type.",
-                validated_file_name
+                "Script '{}' does not use a supported {} Add Script file type.",
+                validated_file_name, script_kind_label
             ));
         }
 
@@ -6351,6 +6371,18 @@ fn delete_windows_panel_scripts(
 
     recycle_file_paths(&recycle_paths)?;
     remove_frontend_macro_hotkeys(&macro_ids)
+}
+
+fn delete_windows_panel_scripts(
+    panel_directory: &Path,
+    file_names: &[String],
+) -> Result<(), String> {
+    delete_simple_panel_scripts(
+        panel_directory,
+        file_names,
+        is_allowed_windows_script_path,
+        "Windows",
+    )
 }
 
 fn delete_blender_panel_scripts(
@@ -8118,7 +8150,7 @@ fn list_panel_script_files(
         return list_blender_panel_script_files(&panel_directory);
     }
 
-    Ok(Vec::new())
+    list_generic_panel_script_files(&panel_directory)
 }
 
 #[tauri::command]
@@ -8655,10 +8687,34 @@ fn add_panel_scripts(
         return add_blender_panel_scripts(&panel_directory, &panel_name);
     }
 
-    Err(format!(
-        "Add Script is not wired for '{}' in FlowCell.",
-        program_name
-    ))
+    let initial_directory =
+        resolve_program_git_scripts_picker_directory(&program_name, &panel_name)
+            .unwrap_or_else(|_| panel_directory.clone());
+    let selected_paths = FileDialog::new()
+        .set_title("Add Script")
+        .set_directory(initial_directory)
+        .add_filter("Program Scripts", allowed_generic_script_extensions())
+        .pick_files();
+
+    if let Some(paths) = selected_paths {
+        for source_path in paths {
+            if !source_path.is_file() {
+                continue;
+            }
+
+            if !is_allowed_generic_script_path(&source_path) {
+                return Err(format!(
+                    "Only supported Add Script file types are supported right now. Rejected '{}'.",
+                    source_path.display()
+                ));
+            }
+
+            let (_local_path, _panel_path) =
+                copy_script_into_panel_workflow(&program_name, &panel_directory, &source_path)?;
+        }
+    }
+
+    list_generic_panel_script_files(&panel_directory)
 }
 
 fn update_simple_panel_script_description(
@@ -8760,10 +8816,13 @@ fn update_panel_script_description(
         return list_blender_panel_script_files(&panel_directory);
     }
 
-    Err(format!(
-        "Description updates are not wired for '{}' in FlowCell.",
-        program_name
-    ))
+    update_simple_panel_script_description(
+        &panel_directory,
+        &file_name,
+        is_allowed_generic_script_path,
+        &normalized_description,
+    )?;
+    list_generic_panel_script_files(&panel_directory)
 }
 
 #[tauri::command]
@@ -8795,7 +8854,12 @@ fn delete_panel_scripts(
     }
 
     if is_adobe_program_name(&program_name) {
-        delete_windows_panel_scripts(&panel_directory, &unique_file_names)?;
+        delete_simple_panel_scripts(
+            &panel_directory,
+            &unique_file_names,
+            is_allowed_adobe_script_path,
+            "Adobe",
+        )?;
         return list_adobe_panel_script_files(&panel_directory);
     }
 
@@ -8804,10 +8868,13 @@ fn delete_panel_scripts(
         return list_blender_panel_script_files(&panel_directory);
     }
 
-    Err(format!(
-        "Delete is not wired for '{}' in FlowCell.",
-        program_name
-    ))
+    delete_simple_panel_scripts(
+        &panel_directory,
+        &unique_file_names,
+        is_allowed_generic_script_path,
+        "Program",
+    )?;
+    list_generic_panel_script_files(&panel_directory)
 }
 
 #[tauri::command]
@@ -8895,10 +8962,23 @@ fn run_panel_script(
         };
     }
 
-    Err(format!(
-        "Panel script execution is not wired for '{}'.",
-        program_name
-    ))
+    let script_path = panel_directory.join(&validated_file_name);
+    if !script_path.is_file() {
+        return Err(format!(
+            "Script file '{}' was not found in {}.",
+            validated_file_name,
+            panel_directory.display()
+        ));
+    }
+    if !is_allowed_generic_script_path(&script_path) {
+        return Err(format!(
+            "Script '{}' does not use a supported Add Script file type.",
+            validated_file_name
+        ));
+    }
+
+    run_windows_panel_script_file(&script_path)?;
+    Ok(format!("Started {}.", file_name))
 }
 
 #[tauri::command]
