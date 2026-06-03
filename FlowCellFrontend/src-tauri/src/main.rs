@@ -2089,6 +2089,33 @@ fn parse_dialog_filter_spec(filter: &str) -> Vec<(String, Vec<String>)> {
     filters
 }
 
+fn set_dialog_parent(
+    app: &AppHandle,
+    dialog: FileDialog,
+    parent_label: Option<String>,
+) -> FileDialog {
+    let Some(label) = parent_label
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return dialog;
+    };
+    let Some(parent_window) = app.get_webview_window(label) else {
+        return dialog;
+    };
+
+    let _ = parent_window.set_focus();
+
+    #[cfg(windows)]
+    if let Ok(hwnd) = parent_window.hwnd() {
+        let _ = unsafe { ShowWindowAsync(hwnd, SW_RESTORE) };
+        let _ = unsafe { SetForegroundWindow(hwnd) };
+    }
+
+    dialog.set_parent(&parent_window)
+}
+
 fn rgb_to_hex(color: SampleRgb) -> String {
     format!("#{:02X}{:02X}{:02X}", color.r, color.g, color.b)
 }
@@ -2435,6 +2462,10 @@ fn resolve_default_blender_theme_root() -> Result<PathBuf, String> {
     Ok(root)
 }
 
+fn resolve_blender_theme_darkness_profiles_path() -> Result<PathBuf, String> {
+    Ok(resolve_flowcell_local_root()?.join("blender_theme_darkness_profiles.json"))
+}
+
 fn validate_debug_file_name(raw_name: &str) -> Result<String, String> {
     let name = raw_name.trim();
     if name.is_empty() {
@@ -2491,12 +2522,14 @@ fn show_open_layout_dialog(initial_directory: Option<String>) -> Result<Option<S
 
 #[tauri::command]
 fn show_open_file_dialog(
+    app: AppHandle,
     title: String,
     filter: String,
     initial_directory: Option<String>,
     multiselect: bool,
+    parent_label: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let mut dialog = FileDialog::new().set_title(&title);
+    let mut dialog = set_dialog_parent(&app, FileDialog::new().set_title(&title), parent_label);
     if let Some(directory) = resolve_existing_dialog_directory(initial_directory) {
         dialog = dialog.set_directory(directory);
     }
@@ -2520,11 +2553,13 @@ fn show_open_file_dialog(
 
 #[tauri::command]
 fn show_open_folder_dialog(
+    app: AppHandle,
     title: String,
     initial_directory: Option<String>,
     multiselect: bool,
+    parent_label: Option<String>,
 ) -> Result<Vec<String>, String> {
-    let mut dialog = FileDialog::new().set_title(&title);
+    let mut dialog = set_dialog_parent(&app, FileDialog::new().set_title(&title), parent_label);
     if let Some(directory) = resolve_existing_dialog_directory(initial_directory) {
         dialog = dialog.set_directory(directory);
     }
@@ -2543,11 +2578,13 @@ fn show_open_folder_dialog(
 
 #[tauri::command]
 fn show_save_file_dialog(
+    app: AppHandle,
     title: String,
     filter: String,
     initial_directory: Option<String>,
+    parent_label: Option<String>,
 ) -> Result<Option<String>, String> {
-    let mut dialog = FileDialog::new().set_title(&title);
+    let mut dialog = set_dialog_parent(&app, FileDialog::new().set_title(&title), parent_label);
     if let Some(directory) = resolve_existing_dialog_directory(initial_directory) {
         dialog = dialog.set_directory(directory);
     }
@@ -2568,6 +2605,69 @@ fn sample_photo_theme_colors(image_path: String) -> Result<SampledPhotoThemeColo
     }
 
     pick_photo_theme_colors(Path::new(trimmed_path))
+}
+
+#[tauri::command]
+fn load_blender_theme_darkness_profiles() -> Result<Value, String> {
+    let file_path = resolve_blender_theme_darkness_profiles_path()?;
+    if !file_path.is_file() {
+        return Ok(json!({
+            "profiles": [],
+            "activeProfileId": ""
+        }));
+    }
+
+    let raw = fs::read_to_string(&file_path).map_err(|error| {
+        format!(
+            "Failed to read Blender darkness profiles at {}: {error}",
+            file_path.display()
+        )
+    })?;
+    let parsed = serde_json::from_str::<Value>(&raw).map_err(|error| {
+        format!(
+            "Blender darkness profiles are malformed at {}: {error}",
+            file_path.display()
+        )
+    })?;
+
+    if parsed.is_array() {
+        return Ok(json!({
+            "profiles": parsed,
+            "activeProfileId": ""
+        }));
+    }
+
+    Ok(parsed)
+}
+
+#[tauri::command]
+fn save_blender_theme_darkness_profiles(document: Value) -> Result<(), String> {
+    let file_path = resolve_blender_theme_darkness_profiles_path()?;
+    if let Some(parent) = file_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "Failed to create FlowCell local folder at {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let payload = if document.is_array() {
+        json!({
+            "format": "flowcell-blender-darkness-profiles-v1",
+            "profiles": document,
+            "activeProfileId": ""
+        })
+    } else {
+        document
+    };
+    let serialized = serde_json::to_string_pretty(&payload).map_err(|error| error.to_string())?;
+    fs::write(&file_path, serialized).map_err(|error| {
+        format!(
+            "Failed to write Blender darkness profiles at {}: {error}",
+            file_path.display()
+        )
+    })
 }
 
 #[tauri::command]
@@ -9112,6 +9212,8 @@ fn main() {
             show_open_folder_dialog,
             show_save_file_dialog,
             sample_photo_theme_colors,
+            load_blender_theme_darkness_profiles,
+            save_blender_theme_darkness_profiles,
             save_blender_theme_file,
             load_blender_theme_file,
             save_layout_snapshot,

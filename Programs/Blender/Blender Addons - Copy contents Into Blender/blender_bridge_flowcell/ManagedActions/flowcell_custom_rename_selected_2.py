@@ -159,7 +159,7 @@ function Get-DefaultRenameValue([string]$BaseName, [int]$Index) {
     if ($Index -le 0) {
         return $BaseName
     }
-    return ('{0} {1}' -f $BaseName, ($Index + 1))
+    return ('{0}{1}' -f $BaseName, $Index)
 }
 
 function Show-WindowFront([System.Windows.Window]$Window) {
@@ -178,7 +178,9 @@ function Show-WindowFront([System.Windows.Window]$Window) {
 }
 
 try {
-    $selectedObjects = @(Get-Content -LiteralPath $InputPath -Raw | ConvertFrom-Json)
+    $rawSelectionJson = Get-Content -LiteralPath $InputPath -Raw
+    $parsedSelection = ConvertFrom-Json -InputObject $rawSelectionJson
+    $selectedObjects = if ($parsedSelection -is [System.Array]) { @($parsedSelection) } else { @($parsedSelection) }
     if (@($selectedObjects).Count -eq 0) {
         Write-PromptResult @{ cancelled = $true }
         exit 0
@@ -203,7 +205,7 @@ try {
         Background="#FF1D232B"
         Foreground="#FFF2F2F2">
     <Border Margin="16" Padding="18" Background="#FF262D36" CornerRadius="18">
-        <DockPanel>
+        <DockPanel LastChildFill="True">
             <StackPanel DockPanel.Dock="Top">
                 <TextBlock FontSize="24" FontWeight="SemiBold">Rename Selected Objects</TextBlock>
                 <TextBlock Margin="0,8,0,0" Foreground="#FFB6C2CF" TextWrapping="Wrap">Type one base name, then adjust any individual names you want before applying.</TextBlock>
@@ -224,13 +226,13 @@ try {
                     <TextBlock Grid.Column="1" FontWeight="SemiBold" Foreground="#FF9FB0C2">New Name</TextBlock>
                 </Grid>
             </StackPanel>
-            <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,0,0,16">
-                <Grid x:Name="NamesGrid" />
-            </ScrollViewer>
             <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right">
                 <Button x:Name="CancelButton" Width="120" Height="36" Margin="0,0,10,0" Background="#FF586069">Cancel</Button>
                 <Button x:Name="RenameButton" Width="140" Height="36">Apply</Button>
             </StackPanel>
+            <ScrollViewer VerticalScrollBarVisibility="Auto" Margin="0,0,0,16">
+                <Grid x:Name="NamesGrid" />
+            </ScrollViewer>
         </DockPanel>
     </Border>
 </Window>
@@ -298,6 +300,9 @@ try {
             NewNameTextBox  = $newNameBox
         })
         $rowIndex += 1
+    }
+    if ($rowControls.Count -eq 0) {
+        throw 'No selected object rows were loaded.'
     }
 
     $applyBaseName = {

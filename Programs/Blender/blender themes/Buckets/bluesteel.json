@@ -1,0 +1,33 @@
+{
+  "format": "flowcell-blender-theme-v1",
+  "savedAt": "1780447503",
+  "values": {
+    "StaticBackgroundPath": "",
+    "ThemeAccentTextHex": "#F6F6F6",
+    "ThemeControlTextHex": "#F6F6F6",
+    "ThemeControlsHex": "#373737",
+    "ThemeDarksHex": "#304F4F",
+    "ThemeEditorBackgroundHex": "#304F4F",
+    "ThemeHeaderTextHex": "#F6F6F6",
+    "ThemeHeadersHex": "#1A3B44",
+    "ThemeHighlightsHex": "#256367",
+    "ThemeImagePath": "D:\\pics\\Sun2\\651203120_1312422744274253_3667136504171417693_n.jpg",
+    "ThemeMiscHex": "#304F4F",
+    "ThemePaletteHexes": [
+      "#27686C",
+      "#E4E4E4",
+      "#040505",
+      "#14363F",
+      "#535253",
+      "#E4E4E4"
+    ],
+    "ThemeSceneHex": "#0E262D",
+    "ThemeTabsHex": "#0E262D",
+    "ThemeTabsTextHex": "#F6F6F6",
+    "ThemeTextHex": "#F6F6F6",
+    "ThemeViewportBackgroundHex": "#040505",
+    "ThemeViewportGradientEnabled": true,
+    "ThemeViewportGradientHex": "#0E262D",
+    "ThemeVisualMode": "dark"
+  }
+}

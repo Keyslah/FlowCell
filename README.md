@@ -1,8 +1,12 @@
 # FlowCell
 
-FlowCell is a desktop app to fire program scripts with big buttons(or small), macros, and hotkeys. It is for making repeated work use nearby buttons, popouts, and shortcuts without digging through folders and menus or tiny buttons.
+FlowCell is a desktop app to fire program scripts with buttons, macros, and hotkeys. It is for high usage buttons and shortcuts without digging through folders and menus or tiny buttons.
 
-Its like a small control deck that stays on top of Blender, Illustrator, Photoshop, Windows, or any added program: pick a program, add a panel, click or bind a script.
+Its like a small control deck that stays on top of Blender, Illustrator, Photoshop, or any added program: pick a program, add a panel, click or bind a script.
+
+Requires AutoHotkey V2: 
+[Toggle AutoHotkey for anti-cheat games](docs/toggle-autohotkey-for-anticheat.md): use this to disable AutoHotkey to play anti-cheat video games.
+
 
 ## What It Is
 
@@ -57,4 +61,4 @@ Each run writes `organize-folder.log.txt` plus `organize-folder.undo.json` in th
 
 ## Codex Skills
 
-Use [AI skills](docs/ai-skills.md) as the FlowCell prompt reference. It embeds the FlowCell/FlowTest skills for maintenance, layouts, toolsets, fanouts, exact SVG toolboxes, Blender theme work, and the button-skin contract.
+Use [AI skills](docs/ai-skills.md) as the FlowCell prompt reference. It embeds the FlowCell skills for maintenance, layouts, toolsets, fanouts, exact SVG toolboxes, Blender theme work, and the button-skin contract.

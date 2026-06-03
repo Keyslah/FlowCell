@@ -149,28 +149,88 @@
 }
 
 .theme-toolbox-window-page .hdri-theme-profile-control {
+  position: relative;
   display: grid;
   grid-template-columns: minmax(78px, 1fr) minmax(68px, 0.8fr);
   gap: 4px;
   min-width: 0;
 }
 
-.theme-toolbox-window-page .hdri-theme-profile-select {
+.theme-toolbox-window-page .hdri-theme-profile-menu {
+  position: relative;
+  min-width: 0;
+}
+
+.theme-toolbox-window-page .hdri-theme-profile-trigger {
   width: 100%;
   min-width: 0;
-  min-height: 24px;
+  min-height: 32px;
   padding: 2px 6px;
   border-radius: 8px;
   border: 1px solid rgba(222, 233, 227, 0.16);
   background: rgba(17, 24, 27, 0.92);
   color: var(--fc-theme-page-foreground);
   font: 700 0.64rem/1.1 "Segoe UI", sans-serif;
+  text-align: left;
+  cursor: pointer;
 }
 
-.theme-toolbox-window-page .hdri-theme-profile-select:focus {
+.theme-toolbox-window-page .hdri-theme-profile-trigger span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-toolbox-window-page .hdri-theme-profile-trigger:focus,
+.theme-toolbox-window-page .hdri-theme-profile-trigger[aria-expanded="true"] {
   border-color: rgba(134, 199, 172, 0.62);
   outline: 1px solid rgba(134, 199, 172, 0.34);
   outline-offset: 0;
+}
+
+.theme-toolbox-window-page .hdri-theme-profile-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 80;
+  display: grid;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px;
+  border: 1px solid rgba(222, 233, 227, 0.22);
+  border-radius: 8px;
+  background: rgba(8, 13, 15, 0.98);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.4);
+}
+
+.theme-toolbox-window-page .hdri-theme-profile-option {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fc-theme-page-foreground);
+  font: 700 0.64rem/1.1 "Segoe UI", sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.theme-toolbox-window-page .hdri-theme-profile-option:hover,
+.theme-toolbox-window-page .hdri-theme-profile-option:focus,
+.theme-toolbox-window-page .hdri-theme-profile-option.is-active {
+  outline: none;
+  background: rgba(134, 199, 172, 0.18);
+}
+
+.theme-toolbox-window-page .hdri-theme-profile-option--save {
+  margin-top: 3px;
+  border-top: 1px solid rgba(222, 233, 227, 0.14);
+  border-radius: 0 0 6px 6px;
+  color: rgba(196, 232, 217, 0.96);
 }
 
 .theme-toolbox-window-page .hdri-world-row--path {

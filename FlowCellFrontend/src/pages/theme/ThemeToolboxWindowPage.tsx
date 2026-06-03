@@ -15,11 +15,14 @@ import {
   type PanelScriptFileRecord
 } from "../../lib/programRails";
 import {
+  loadBlenderThemeDarknessProfiles,
   loadBlenderThemeFile,
   samplePhotoThemeColors,
+  saveBlenderThemeDarknessProfiles,
   saveBlenderThemeFile,
   showOpenFileDialog,
   showSaveFileDialog,
+  refreshScopedWindowTopmost,
   registerScopedWindowTopmost,
   setHostWindowTopmost,
   unregisterScopedWindowTopmost
@@ -714,6 +717,80 @@ function normalizeDarknessProfileTarget(value: unknown): number | null {
   return Math.max(0, Math.min(1, value));
 }
 
+function normalizeDarknessProfileList(value: unknown): DarknessProfile[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .map((entry): DarknessProfile | null => {
+      const record = toObjectRecord(entry);
+      if (!record) {
+        return null;
+      }
+
+      const id = readString(record, "id", "").trim();
+      const name = readString(record, "name", "").trim();
+      const targetRecord = toObjectRecord(record.targets);
+      if (!id || !name || !targetRecord) {
+        return null;
+      }
+
+      const targets: Partial<Record<ThemeToneRoleField, number>> = {};
+      for (const field of THEME_TONE_ROLE_FIELDS) {
+        const target = normalizeDarknessProfileTarget(targetRecord[field]);
+        if (target !== null) {
+          targets[field] = target;
+        }
+      }
+
+      return {
+        id,
+        name,
+        targets,
+        createdAt: readNumber(record, "createdAt", Date.now()),
+        updatedAt: readNumber(record, "updatedAt", Date.now())
+      };
+    })
+    .filter((entry): entry is DarknessProfile => Boolean(entry))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function normalizeDarknessProfileDocument(value: unknown): {
+  profiles: DarknessProfile[];
+  activeProfileId: string;
+} {
+  if (Array.isArray(value)) {
+    return {
+      profiles: normalizeDarknessProfileList(value),
+      activeProfileId: ""
+    };
+  }
+
+  const record = toObjectRecord(value);
+  return {
+    profiles: normalizeDarknessProfileList(record?.profiles),
+    activeProfileId: readString(record, "activeProfileId", "").trim()
+  };
+}
+
+function mergeDarknessProfileLists(
+  primaryProfiles: DarknessProfile[],
+  fallbackProfiles: DarknessProfile[]
+): DarknessProfile[] {
+  const profilesById = new Map<string, DarknessProfile>();
+  for (const profile of fallbackProfiles) {
+    profilesById.set(profile.id, profile);
+  }
+  for (const profile of primaryProfiles) {
+    profilesById.set(profile.id, profile);
+  }
+
+  return Array.from(profilesById.values()).sort((left, right) =>
+    left.name.localeCompare(right.name)
+  );
+}
+
 function readStoredDarknessProfiles(): DarknessProfile[] {
   try {
     const raw = window.localStorage.getItem(DARKNESS_PROFILE_STORAGE_KEY);
@@ -721,43 +798,7 @@ function readStoredDarknessProfiles(): DarknessProfile[] {
       return [];
     }
 
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed
-      .map((entry): DarknessProfile | null => {
-        const record = toObjectRecord(entry);
-        if (!record) {
-          return null;
-        }
-
-        const id = readString(record, "id", "").trim();
-        const name = readString(record, "name", "").trim();
-        const targetRecord = toObjectRecord(record.targets);
-        if (!id || !name || !targetRecord) {
-          return null;
-        }
-
-        const targets: Partial<Record<ThemeToneRoleField, number>> = {};
-        for (const field of THEME_TONE_ROLE_FIELDS) {
-          const target = normalizeDarknessProfileTarget(targetRecord[field]);
-          if (target !== null) {
-            targets[field] = target;
-          }
-        }
-
-        return {
-          id,
-          name,
-          targets,
-          createdAt: readNumber(record, "createdAt", Date.now()),
-          updatedAt: readNumber(record, "updatedAt", Date.now())
-        };
-      })
-      .filter((entry): entry is DarknessProfile => Boolean(entry))
-      .sort((left, right) => left.name.localeCompare(right.name));
+    return normalizeDarknessProfileList(JSON.parse(raw));
   } catch {
     return [];
   }
@@ -1008,6 +1049,8 @@ export default function ThemeToolboxWindowPage({
   const latestValuesRef = useRef(values);
   const topmostResumeTimerRef = useRef<number | null>(null);
   const nativePickerOpenRef = useRef(false);
+  const darknessProfileStoreLoadedRef = useRef(false);
+  const darknessProfileStoreSaveTimerRef = useRef<number | null>(null);
   const surfaceScale = useMemo(() => {
     const availableWidth = Math.max(1, viewportSize.width - 16);
     const availableHeight = Math.max(1, viewportSize.height - 16);
@@ -1043,11 +1086,72 @@ export default function ThemeToolboxWindowPage({
   }, [storageKey, values]);
 
   useEffect(() => {
+    let cancelled = false;
+
+    void loadBlenderThemeDarknessProfiles()
+      .then((document) => {
+        if (cancelled) {
+          return;
+        }
+
+        const loadedDocument = normalizeDarknessProfileDocument(document);
+        const localProfiles = readStoredDarknessProfiles();
+        const mergedProfiles = mergeDarknessProfileLists(
+          loadedDocument.profiles,
+          localProfiles
+        );
+        const activeProfileId =
+          loadedDocument.activeProfileId ||
+          readLocalStringPreference(ACTIVE_DARKNESS_PROFILE_STORAGE_KEY) ||
+          "";
+
+        darknessProfileStoreLoadedRef.current = true;
+        setDarknessProfiles(mergedProfiles);
+        setActiveDarknessProfileId(activeProfileId);
+        writeStoredDarknessProfiles(mergedProfiles);
+        writeLocalStringPreference(ACTIVE_DARKNESS_PROFILE_STORAGE_KEY, activeProfileId);
+        void saveBlenderThemeDarknessProfiles({
+          format: "flowcell-blender-darkness-profiles-v1",
+          profiles: mergedProfiles,
+          activeProfileId
+        }).catch(() => {});
+      })
+      .catch(() => {
+        darknessProfileStoreLoadedRef.current = true;
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     writeLocalStringPreference(
       ACTIVE_DARKNESS_PROFILE_STORAGE_KEY,
       activeDarknessProfileId
     );
   }, [activeDarknessProfileId]);
+
+  useEffect(() => {
+    if (!darknessProfileStoreLoadedRef.current) {
+      return;
+    }
+
+    writeStoredDarknessProfiles(darknessProfiles);
+    if (darknessProfileStoreSaveTimerRef.current !== null) {
+      window.clearTimeout(darknessProfileStoreSaveTimerRef.current);
+    }
+    darknessProfileStoreSaveTimerRef.current = window.setTimeout(() => {
+      darknessProfileStoreSaveTimerRef.current = null;
+      void saveBlenderThemeDarknessProfiles({
+        format: "flowcell-blender-darkness-profiles-v1",
+        profiles: darknessProfiles,
+        activeProfileId: activeDarknessProfileId
+      }).catch((error) => {
+        setStatusMessage(`Could not save darkness profiles: ${formatErrorMessage(error)}`);
+      });
+    }, 120);
+  }, [activeDarknessProfileId, darknessProfiles]);
 
   useEffect(() => {
     if (
@@ -1063,6 +1167,9 @@ export default function ThemeToolboxWindowPage({
       if (topmostResumeTimerRef.current !== null) {
         window.clearTimeout(topmostResumeTimerRef.current);
       }
+      if (darknessProfileStoreSaveTimerRef.current !== null) {
+        window.clearTimeout(darknessProfileStoreSaveTimerRef.current);
+      }
     };
   }, []);
 
@@ -1077,6 +1184,12 @@ export default function ThemeToolboxWindowPage({
     await setHostWindowTopmost(windowLabel, false).catch(() => {});
   };
 
+  const refreshThemeScopedTopmost = async () => {
+    const windowLabel = getCurrentWindow().label;
+    await registerScopedWindowTopmost(windowLabel, context.programName, false);
+    await refreshScopedWindowTopmost(windowLabel);
+  };
+
   const resumeScopedTopmost = (delayMs = 200) => {
     if (topmostResumeTimerRef.current !== null) {
       window.clearTimeout(topmostResumeTimerRef.current);
@@ -1084,10 +1197,11 @@ export default function ThemeToolboxWindowPage({
 
     topmostResumeTimerRef.current = window.setTimeout(() => {
       topmostResumeTimerRef.current = null;
-      const windowLabel = getCurrentWindow().label;
-      void registerScopedWindowTopmost(windowLabel, context.programName, false)
-        .then(() => setHostWindowTopmost(windowLabel, false).catch(() => {}))
-        .catch(() => {});
+      void refreshThemeScopedTopmost()
+        .catch(() => {
+          const windowLabel = getCurrentWindow().label;
+          void setHostWindowTopmost(windowLabel, false).catch(() => {});
+        });
     }, delayMs);
   };
 
@@ -1119,6 +1233,7 @@ export default function ThemeToolboxWindowPage({
   useEffect(() => {
     const handleWindowFocus = () => {
       handleNativePickerClose();
+      void refreshThemeScopedTopmost().catch(() => {});
     };
 
     window.addEventListener("focus", handleWindowFocus);
@@ -1299,6 +1414,7 @@ export default function ThemeToolboxWindowPage({
     }
 
     void getCurrentWindow().setFocus().catch(() => {});
+    void refreshThemeScopedTopmost().catch(() => {});
 
     if (!spaceDragActive) {
       return;

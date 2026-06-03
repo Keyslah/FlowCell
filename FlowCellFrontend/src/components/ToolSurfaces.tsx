@@ -1,7 +1,6 @@
+import { useState } from "react";
 import type { ImportedSkin, StyleGroup } from "../types";
 import { HostSkinButton } from "./HostSkinButton";
-
-const SAVE_DARKNESS_PROFILE_OPTION = "__save_darkness_profile__";
 
 interface ToolSkinProps {
   styleGroup?: StyleGroup;
@@ -793,6 +792,11 @@ export function HdriWorldToolSurface({
   onSelectDarknessProfile,
   onRequestSaveDarknessProfile
 }: HdriWorldToolSurfaceProps) {
+  const [darknessProfileMenuOpen, setDarknessProfileMenuOpen] = useState(false);
+  const activeDarknessProfileName =
+    darknessProfiles.find((profile) => profile.id === activeDarknessProfileId)?.name ??
+    "Default";
+
   const content = (
     <div className={compact ? "hdri-world-grid hdri-world-grid--compact" : "hdri-world-grid"}>
       <div className="hdri-world-row hdri-world-row--theme-path">
@@ -843,36 +847,71 @@ export function HdriWorldToolSurface({
             importedSkin,
             title: "Stage a dark theme preset on this page. Apply sends it to Blender."
           })}
-          <select
-            className="hdri-theme-profile-select"
-            value={activeDarknessProfileId}
-            title="Choose a saved darkness profile for Dark Theme."
-            onPointerDown={onNativePickerOpen}
-            onFocus={onNativePickerOpen}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                onNativePickerClose?.();
+          <div
+            className="hdri-theme-profile-menu"
+            onBlur={(event) => {
+              const nextTarget = event.relatedTarget;
+              if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+                setDarknessProfileMenuOpen(false);
               }
-            }}
-            onChange={(event) => {
-              const selectedValue = event.target.value;
-              if (selectedValue === SAVE_DARKNESS_PROFILE_OPTION) {
-                onRequestSaveDarknessProfile?.();
-                onNativePickerClose?.();
-                return;
-              }
-              onSelectDarknessProfile?.(selectedValue, values);
-              onNativePickerClose?.();
             }}
           >
-            <option value="">Default</option>
-            {darknessProfiles.map((profile) => (
-              <option key={profile.id} value={profile.id}>
-                {profile.name}
-              </option>
-            ))}
-            <option value={SAVE_DARKNESS_PROFILE_OPTION}>Save Darkness Profile...</option>
-          </select>
+            <button
+              type="button"
+              className="hdri-theme-profile-trigger"
+              title="Choose a saved darkness profile for Dark Theme."
+              aria-haspopup="menu"
+              aria-expanded={darknessProfileMenuOpen}
+              onClick={() => setDarknessProfileMenuOpen((isOpen) => !isOpen)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setDarknessProfileMenuOpen(false);
+                }
+              }}
+            >
+              <span>{activeDarknessProfileName}</span>
+            </button>
+            {darknessProfileMenuOpen && (
+              <div className="hdri-theme-profile-popover" role="menu">
+                <button
+                  type="button"
+                  className={`hdri-theme-profile-option ${activeDarknessProfileId ? "" : "is-active"}`.trim()}
+                  role="menuitem"
+                  onClick={() => {
+                    onSelectDarknessProfile?.("", values);
+                    setDarknessProfileMenuOpen(false);
+                  }}
+                >
+                  Default
+                </button>
+                {darknessProfiles.map((profile) => (
+                  <button
+                    type="button"
+                    className={`hdri-theme-profile-option ${profile.id === activeDarknessProfileId ? "is-active" : ""}`.trim()}
+                    key={profile.id}
+                    role="menuitem"
+                    onClick={() => {
+                      onSelectDarknessProfile?.(profile.id, values);
+                      setDarknessProfileMenuOpen(false);
+                    }}
+                  >
+                    {profile.name}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  className="hdri-theme-profile-option hdri-theme-profile-option--save"
+                  role="menuitem"
+                  onClick={() => {
+                    onRequestSaveDarknessProfile?.();
+                    setDarknessProfileMenuOpen(false);
+                  }}
+                >
+                  Save Darkness Profile...
+                </button>
+              </div>
+            )}
+          </div>
         </div>
         {renderToolChip("Light Theme", {
           onClick: () => onApplyThemeMode("light", values),

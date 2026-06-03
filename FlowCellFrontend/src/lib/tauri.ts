@@ -861,12 +861,14 @@ export function showOpenFileDialog(args: {
   filter: string;
   initialDirectory?: string;
   multiselect?: boolean;
+  parentLabel?: string;
 }): Promise<string[]> {
   return invoke("show_open_file_dialog", {
     title: args.title,
     filter: args.filter,
     initialDirectory: args.initialDirectory,
-    multiselect: args.multiselect ?? false
+    multiselect: args.multiselect ?? false,
+    parentLabel: args.parentLabel ?? getCurrentWindow().label
   });
 }
 
@@ -874,11 +876,13 @@ export function showOpenFolderDialog(args: {
   title: string;
   initialDirectory?: string;
   multiselect?: boolean;
+  parentLabel?: string;
 }): Promise<string[]> {
   return invoke("show_open_folder_dialog", {
     title: args.title,
     initialDirectory: args.initialDirectory,
-    multiselect: args.multiselect ?? false
+    multiselect: args.multiselect ?? false,
+    parentLabel: args.parentLabel ?? getCurrentWindow().label
   });
 }
 
@@ -886,11 +890,13 @@ export function showSaveFileDialog(args: {
   title: string;
   filter: string;
   initialDirectory?: string;
+  parentLabel?: string;
 }): Promise<string | null> {
   return invoke("show_save_file_dialog", {
     title: args.title,
     filter: args.filter,
-    initialDirectory: args.initialDirectory
+    initialDirectory: args.initialDirectory,
+    parentLabel: args.parentLabel ?? getCurrentWindow().label
   });
 }
 
@@ -910,6 +916,16 @@ export function saveBlenderThemeFile(args: {
     path: args.path,
     values: args.values
   });
+}
+
+export function loadBlenderThemeDarknessProfiles(): Promise<Record<string, unknown>> {
+  return invoke("load_blender_theme_darkness_profiles");
+}
+
+export function saveBlenderThemeDarknessProfiles(
+  document: Record<string, unknown>
+): Promise<void> {
+  return invoke("save_blender_theme_darkness_profiles", { document });
 }
 
 export function loadBlenderThemeFile(path: string): Promise<Record<string, unknown>> {

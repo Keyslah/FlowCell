@@ -26,7 +26,7 @@ After fresh install or added script:
 
 Use this prompt when you want Codex to turn pasted Blender Python into a FlowCell-ready Add Script file. Single script buttons and child-bearing toolsets use the same prompt, but toolsets must include the FlowCell metadata comments and command routing shown below.
 
-Before generating the script, tell Codex: `Use the FlowCell AI skills in docs/ai-skills.md. For Blender Add Script/toolset work, use flow-test and toolsets; add svgtools for exact SVG layouts, blender-theme for theme/HDRI work, and react-tauri-button-skin-contract when button skins, hitboxes, or imported visual code are involved.`
+Before generating the script, tell Codex: `Use the FlowCell AI skills in docs/ai-skills.md. For Blender Add Script/toolset work, use flowcell and toolsets; add svgtools for exact SVG layouts, blender-theme for theme/HDRI work, and react-tauri-button-skin-contract when button skins, hitboxes, or imported visual code are involved.`
 
 Convert the pasted Blender Python functionality into one clean FlowCell-ready Blender `.py` action file. First inspect the source and briefly confirm what the tool actually does, including prompts, file pickers, modal behavior, scene properties, selected-object requirements, and UI controls the user expects.
 

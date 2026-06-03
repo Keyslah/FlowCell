@@ -1,13 +1,13 @@
 # FlowCell AI Skills
 
-This file embeds the FlowCell/FlowTest-family Codex skills directly so prompts can reference this repository doc instead of any local skill-install path.
+This file embeds the FlowCell Codex skills directly so prompts can reference this repository doc instead of any local skill-install path.
 
 ## Skill Links
 
-- [flow-test](#flow-test)
+- [flowcell](#flowcell)
 - [layout](#layout)
 - [toolsets](#toolsets)
-- [flowtest-fanout-buttons](#flowtest-fanout-buttons)
+- [flowcell-fanout-buttons](#flowcell-fanout-buttons)
 - [svgtools](#svgtools)
 - [blender-theme](#blender-theme)
 - [react-tauri-button-skin-contract](#react-tauri-button-skin-contract)
@@ -15,19 +15,19 @@ This file embeds the FlowCell/FlowTest-family Codex skills directly so prompts c
 ## Copy/Paste Prompt
 
 ```text
-Use the FlowCell AI skills in docs/ai-skills.md. For Blender Add Script/toolset work, use flow-test and toolsets; add svgtools for exact SVG layouts, blender-theme for theme/HDRI work, and react-tauri-button-skin-contract when button skins, hitboxes, or imported visual code are involved.
+Use the FlowCell AI skills in docs/ai-skills.md. For Blender Add Script/toolset work, use flowcell and toolsets; add svgtools for exact SVG layouts, blender-theme for theme/HDRI work, and react-tauri-button-skin-contract when button skins, hitboxes, or imported visual code are involved.
 ```
 
-## flow-test
+## flowcell
 
-**Use when:** Use when updating, fixing, or extending the FlowTest desktop app under <repo root>, especially the active Tauri v2 + React + TypeScript frontend in FlowCellFrontend, the FlowCell command/backend host under FlowCell, FlowTest logs and state under FlowCell\local, Blender Add Button or bridge flows, Illustrator/Photoshop scripts or buttons routed through FlowTest actions, popouts, layouts, style-group rendering, or any task that must preserve the State Layer / Functional Host Layer / Visual Skin Layer split.
+**Use when:** Use when updating, fixing, or extending the FlowCell desktop app under <repo root>, especially the active Tauri v2 + React + TypeScript frontend in FlowCellFrontend, the FlowCell command/backend host under FlowCell, FlowCell logs and state under FlowCell\local, Blender Add Button or bridge flows, Illustrator/Photoshop scripts or buttons routed through FlowCell actions, popouts, layouts, style-group rendering, or any task that must preserve the State Layer / Functional Host Layer / Visual Skin Layer split.
 
 
-### FlowTest
+### FlowCell
 
 Work in the live repo at `<repo root>`.
 
-Keep `FlowTest` behavior equal to `FlowCell` unless the user explicitly asks `FlowTest` to diverge.
+Keep `FlowCell` behavior aligned with this repo unless the user explicitly asks it to diverge.
 
 #### Freshness First
 
@@ -46,7 +46,7 @@ Keep `FlowTest` behavior equal to `FlowCell` unless the user explicitly asks `Fl
    - `<repo root>\FlowCell\local\logs\command_host.log`
    - `<repo root>\FlowCell\local\logs\controller.log`
    - `<repo root>\FlowCell\local\logs\last_action_status.txt`
-   - relevant launcher logs such as `flowtest_launcher.log`, `frontend-launcher.log`, or `ui-launcher.log`
+   - relevant launcher logs such as `flowcell_launcher.log`, `frontend-launcher.log`, or `ui-launcher.log`
 4. If the user says something "still" fails, trust the current files and fresh logs over thread memory.
 5. Verify process state and log timestamps before assuming a restart, reload, or rebuild already happened.
 
@@ -58,7 +58,7 @@ Keep `FlowTest` behavior equal to `FlowCell` unless the user explicitly asks `Fl
 - Use `rg`, imports, and references before opening broad files.
 - Cap command output.
 - Move deleted files and folders to the Recycle Bin. Do not permanently delete anything unless the user explicitly asks.
-- Update `PROGRAM_SUMMARY.txt` in the same change whenever `FlowCell` or `FlowTest` is updated, fixed, reorganized, or extended.
+- Update `PROGRAM_SUMMARY.txt` in the same change whenever `FlowCell` is updated, fixed, reorganized, or extended.
 - Keep final summaries short and factual, and always state changed files, validation run, skipped validation reasons, and remaining risks.
 
 #### Architecture Guardrails
@@ -119,13 +119,13 @@ Keep `FlowTest` behavior equal to `FlowCell` unless the user explicitly asks `Fl
    - `<repo root>\Blender\SupportScripts`
    - `<repo root>\Blender\ManagedActions`
    - relevant config or bridge files in the repo
-   - the installed FlowTest Blender add-on only when the issue is runtime-specific
+   - the installed FlowCell Blender add-on only when the issue is runtime-specific
 2. Prefer fixing the sync/generation/bridge path instead of hand-maintaining generated wrappers one by one.
 3. After changes affecting Blender add-ons, configs, generated actions, wrappers, or bridge files, state the required reload, restart, or resync step explicitly.
 
 ##### Illustrator, Photoshop, or external script-button integrations
 
-Use these rules only when Adobe scripts, launcher buttons, or imported script actions are being created, debugged, migrated, or invoked through FlowTest.
+Use these rules only when Adobe scripts, launcher buttons, or imported script actions are being created, debugged, migrated, or invoked through FlowCell.
 
 1. Keep external app execution in the Functional Host Layer and persisted script targets, labels, tooltips, and bindings in the State Layer. Visual skins must only render the button.
 2. Default script install targets:
@@ -134,7 +134,7 @@ Use these rules only when Adobe scripts, launcher buttons, or imported script ac
 3. When importing or reconciling the older Photoshop launcher, treat `%USERPROFILE%\Documents\codexapp\photoshop\config.json` as the source for existing button labels, tooltips, and `scriptPath` values. Prefer updating an existing button when the target `scriptPath` already matches, reject duplicate labels, and keep labels/tooltips short.
 4. For JSX/ExtendScript, prefer the application's native DOM over UI automation. Handle the no-document case with a clear `alert(...)` and early return when a document is required.
 5. Preserve unrelated document state. Temporarily unlock/show only what is needed, restore state afterward, and iterate removable Illustrator collections from the end to avoid index-shift bugs. In Photoshop, prefer native DOM and `layerSets` for top-level groups instead of carrying over Illustrator-specific patterns.
-6. When debugging script failures, identify the exact failing call or assumption before broad rewrites. Check FlowTest logs plus app-specific logs when relevant, such as `%USERPROFILE%\Documents\codexapp\photoshop\PhotoshopLayers.log` or script-specific temp logs.
+6. When debugging script failures, identify the exact failing call or assumption before broad rewrites. Check FlowCell logs plus app-specific logs when relevant, such as `%USERPROFILE%\Documents\codexapp\photoshop\PhotoshopLayers.log` or script-specific temp logs.
 7. Protected `Program Files` installs may need an elevated/manual install step. Do not report an Adobe script as installed until the target file actually exists.
 
 #### Validation
@@ -148,12 +148,12 @@ Use these rules only when Adobe scripts, launcher buttons, or imported script ac
 
 ## layout
 
-**Use when:** Use when debugging FlowTest, FlowTest_BareClone, or FlowCell layout save/load failures, Pop/Fan windows, tool-set/toolbox popouts, wrong window size or position, restore races, closed popouts reopening, native topmost/thumbnail-preview issues, or persisted bounds not matching the live desktop.
+**Use when:** Use when debugging FlowCell layout save/load failures, Pop/Fan windows, tool-set/toolbox popouts, wrong window size or position, restore races, closed popouts reopening, native topmost/thumbnail-preview issues, or persisted bounds not matching the live desktop.
 
 
 ### Layout
 
-Use this skill for layout persistence, popout/toolbox restore, Pop/Fan, native window placement, scale, and topmost bugs in the current FlowTest-family Tauri frontend.
+Use this skill for layout persistence, popout/toolbox restore, Pop/Fan, native window placement, scale, and topmost bugs in the current FlowCell Tauri frontend.
 
 Work in the current workspace first. Common roots:
 - `<repo root>`
@@ -226,7 +226,7 @@ For a generic toolset, inspect:
 - `programRails.ts`: `PanelScriptFileRecord.children`, `runToolsetAction`
 - `MainPage.tsx`: `isToolPopoutRecord`, `isGenericToolboxRecord`, `handleOpenToolPopout`
 - `GenericToolboxWindowPage.tsx`: child buttons and `runToolsetAction`
-- `main.rs`: `parse_flowtest_children`, `validate_toolset_child_slot`, `run_toolset_action`
+- `main.rs`: `parse_flowcell_children`, `validate_toolset_child_slot`, `run_toolset_action`
 
 For a dedicated toolbox, check classifier, context kind, window opener, page route, layout restore, and backend command dispatch.
 
@@ -280,7 +280,7 @@ Do not assume the user mis-clicked. If they say it is still broken, trust curren
 
 - Inspect the newest layout file in `FlowCell\local\layouts`.
 - Inspect registered managed windows via `layoutSnapshots.ts` behavior and `LayoutSnapshot.Windows`.
-- In older FlowTest paths, inspect `flowcell_state.json` for `ToolPopouts`, `PanelPopouts`, `IsPoppedOut`, and saved bounds.
+- In older FlowCell paths, inspect `flowcell_state.json` for `ToolPopouts`, `PanelPopouts`, `IsPoppedOut`, and saved bounds.
 - If persistence is correct, the bug is in reopen, placement, scale conversion, or native topmost.
 
 ##### 3. Check live restore behavior
@@ -336,14 +336,14 @@ Do not assume the user mis-clicked. If they say it is still broken, trust curren
 
 #### Guardrails
 
-- Keep FlowTest behavior aligned with FlowCell unless the task explicitly says otherwise.
+- Keep FlowCell behavior aligned with this repo unless the task explicitly says otherwise.
 - Update `PROGRAM_SUMMARY.txt` whenever repo behavior changes.
 - Never wipe `flowcell_state.json` or delete layout files unless the user explicitly asks.
 - Move deleted files or folders to the Recycle Bin, never permanently delete them unless explicitly requested.
 
 ## toolsets
 
-**Use when:** Use when adding, fixing, or updating FlowTest Bare Clone toolsets, including Add Script owner-button import, Pop/Fan routing, SVG-based toolset windows, resizable SVG scaling, dropdown fanouts, selected-state highlights, program execution blocks, and program-scoped topmost behavior.
+**Use when:** Use when adding, fixing, or updating FlowCell toolsets, including Add Script owner-button import, Pop/Fan routing, SVG-based toolset windows, resizable SVG scaling, dropdown fanouts, selected-state highlights, program execution blocks, and program-scoped topmost behavior.
 
 
 ### Toolsets
@@ -665,14 +665,14 @@ Do not route Illustrator Rotate, Anchor, or other freeze-prone Illustrator tools
   - Toolset windows are frameless, transparent, and resizable.
   - Toolset windows stay topmost only for their owning foreground program.
 
-## flowtest-fanout-buttons
+## flowcell-fanout-buttons
 
-**Use when:** Use when creating, fixing, or extending fanout buttons and panel Fan popout windows in FlowTest-family React/Tauri workspaces, especially when adding a new program fanout, keeping fan windows scoped to their owning program, wiring hover-open or click-pin behavior, or preserving collapsed owner-bounds persistence and skin-driven hitboxes.
+**Use when:** Use when creating, fixing, or extending fanout buttons and panel Fan popout windows in FlowCell React/Tauri workspaces, especially when adding a new program fanout, keeping fan windows scoped to their owning program, wiring hover-open or click-pin behavior, or preserving collapsed owner-bounds persistence and skin-driven hitboxes.
 
 
-### FlowTest Fanout Buttons
+### FlowCell Fanout Buttons
 
-Work in the active FlowTest-family repo, especially `<repo root>` or `<repo root>`.
+Work in the active FlowCell repo, especially `<repo root>`.
 
 #### Quick Start
 
@@ -771,7 +771,7 @@ Do not move fanout behavior into skin code.
 5. If the target app process name differs from the program label, add the alias in both process-name resolvers.
 6. If a duplicate-label or reopen race appears, serialize by the final fan window label instead of changing persistence first.
 7. Add narrow temporary diagnostics only around the suspected edge, then remove them after the fix lands.
-8. Update `PROGRAM_SUMMARY.txt` whenever FlowTest fanout behavior changes.
+8. Update `PROGRAM_SUMMARY.txt` whenever FlowCell fanout behavior changes.
 
 #### Known Failure Patterns
 
@@ -807,12 +807,12 @@ Do not move fanout behavior into skin code.
 
 ## svgtools
 
-**Use when:** Use when building or updating an exact SVG-driven FlowCell or FlowTest toolset popout from a provided SVG, especially when the user wants literal geometry, no styling interpretation, no auto layout, fixed hitboxes, fixed window bounds, or row-level sizing controls. Trigger on requests like "make this toolset from this SVG", "exactly like the SVG", "no interpretation", "use the current hitboxes", or "make the popout match this SVG exactly."
+**Use when:** Use when building or updating an exact SVG-driven FlowCell toolset popout from a provided SVG, especially when the user wants literal geometry, no styling interpretation, no auto layout, fixed hitboxes, fixed window bounds, or row-level sizing controls. Trigger on requests like "make this toolset from this SVG", "exactly like the SVG", "no interpretation", "use the current hitboxes", or "make the popout match this SVG exactly."
 
 
 ### SVG Tools
 
-Work in `<repo root>` unless the user explicitly points to a different FlowCell or FlowTest workspace.
+Work in `<repo root>` unless the user explicitly points to a different FlowCell workspace.
 
 Use this skill when the job is not "design something similar." Use it when the SVG itself is the geometry contract.
 
@@ -834,7 +834,7 @@ Use this skill when the user:
 - provides an SVG for a tool window or button strip
 - asks for "exact dimensions"
 - says "no interpretation"
-- wants a FlowCell or FlowTest toolbox to match an SVG literally
+- wants a FlowCell toolbox to match an SVG literally
 - wants a toolset generated from capsule/button geometry
 - wants top-level scale or per-row text-size controls for an exact SVG toolbox
 
@@ -924,7 +924,7 @@ If scoped-on-top behavior is required:
 
 ##### 6. File map in this workspace
 
-The usual edit owners in `FlowTest_BareClone` are:
+The usual edit owners in this FlowCell workspace are:
 
 - `FlowCellFrontend\src\pages\<tool>\<tool>ToolboxGeometry.ts`
 - `FlowCellFrontend\src\pages\main\<Tool>ToolboxSurface.tsx`
@@ -941,7 +941,7 @@ Update `PROGRAM_SUMMARY.txt` whenever FlowCell behavior changes in the repo.
 
 #### Required code patterns in this workspace
 
-Do not leave these as vague intentions. For `FlowTest_BareClone`, exact SVG toolsets should carry the concrete host code that makes the behavior real.
+Do not leave these as vague intentions. For FlowCell, exact SVG toolsets should carry the concrete host code that makes the behavior real.
 
 ##### Geometry owner pattern
 
@@ -1095,12 +1095,12 @@ When finishing work under this skill, report:
 
 ## blender-theme
 
-**Use when:** Use when diagnosing, fixing, or extending Blender UI theme color mapping, especially when a FlowTest or FlowCell theme bucket is not hitting the expected Blender surface, when Blender 5.x theme RNA paths differ from older assumptions, or when a user reports that a visible header, panel, highlight, tab, widget, or outliner color is not following the intended theme bucket.
+**Use when:** Use when diagnosing, fixing, or extending Blender UI theme color mapping, especially when a FlowCell theme bucket is not hitting the expected Blender surface, when Blender 5.x theme RNA paths differ from older assumptions, or when a user reports that a visible header, panel, highlight, tab, widget, or outliner color is not following the intended theme bucket.
 
 
 ### Blender Theme
 
-Use this skill when a user wants Blender theme buckets mapped correctly, when a screenshot shows the wrong Blender surface color after `Apply`, or when FlowTest/FlowCell theme code under `Blender/ManagedActions/custom_hdri_world_tools.py` needs to be debugged.
+Use this skill when a user wants Blender theme buckets mapped correctly, when a screenshot shows the wrong Blender surface color after `Apply`, or when FlowCell theme code under `Blender/ManagedActions/custom_hdri_world_tools.py` needs to be debugged.
 
 #### Quick Workflow
 
@@ -1114,7 +1114,7 @@ Use this skill when a user wants Blender theme buckets mapped correctly, when a 
    - `<repo root>\FlowCell\local\logs\command_host.log`
    - `<repo root>\FlowCell\local\logs\last_action_status.txt`
 3. Separate the problem:
-   - If the frontend sampled or staged the wrong hex, fix the FlowTest theme-tool payload or preset builder.
+   - If the frontend sampled or staged the wrong hex, fix the FlowCell theme-tool payload or preset builder.
    - If the frontend sent the right hex but Blender still shows the wrong surface, fix the Blender managed action mapping.
 4. Validate with the smallest useful test:
    - `python -m py_compile <repo root>\Blender\ManagedActions\custom_hdri_world_tools.py`
@@ -1138,7 +1138,7 @@ Use this skill when a user wants Blender theme buckets mapped correctly, when a 
 
 Read [references/blender-5-theme-notes.md](./references/blender-5-theme-notes.md) when you need the exact verified RNA fields, bridge paths, or direct diagnostic commands.
 
-#### FlowTest Bridge Model
+#### FlowCell Bridge Model
 
 - The theme tool UI lives in:
   - `FlowCellFrontend\src\App.tsx`
@@ -1178,7 +1178,7 @@ Read [references/blender-5-theme-notes.md](./references/blender-5-theme-notes.md
 
 After changes affecting Blender managed actions, bridge files, or generated runtime paths, explicitly tell the user the required reload step:
 
-- reload/resync the live Blender FlowTest add-on/custom actions
+- reload/resync the live Blender FlowCell add-on/custom actions
 - reopen the `theme` tool if needed
 - press `Apply` again
 
