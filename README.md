@@ -4,7 +4,9 @@ FlowCell is a desktop app to fire program scripts with buttons, macros, and hotk
 
 Its like a small control deck that stays on top of Blender, Illustrator, Photoshop, or any added program: pick a program, add a panel, click or bind a script.
 
-Requires [AutoHotkey V2](https://www.autohotkey.com/download/ahk-v2.exe):
+Requires [AutoHotkey V2](https://www.autohotkey.com/download/ahk-v2.exe)
+
+
 
 [Toggle AutoHotkey for anti-cheat games](docs/toggle-autohotkey-for-anticheat.md): use this to disable AutoHotkey to play anti-cheat video games.
 
