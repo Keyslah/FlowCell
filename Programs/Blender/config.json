@@ -449,7 +449,7 @@
                     },
                     {
                         "label":  "boolean",
-                        "tooltip":  "Quick Boolean with I/U/D operation buttons, solver dropdown, SI/HT/HC/BA toggles, and Run.",
+                        "tooltip":  "Quick Boolean with I/U/D operation buttons, solver dropdown, SI/HT/HC/S toggles, and Run.",
                         "action":  "flowcell_custom_boolean"
                     },
                     {

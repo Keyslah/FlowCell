@@ -134,7 +134,7 @@
                         "functionName":  "",
                         "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_boolean.py",
                         "sourceFunctionName":  "",
-                        "description":  "Quick Boolean with I/U/D operation buttons, solver dropdown, SI/HT/HC/BA toggles, and Run."
+                        "description":  "Quick Boolean with I/U/D operation buttons, solver dropdown, SI/HT/HC/S toggles, and Run."
                     },
                     {
                         "action":  "flowcell_custom_cone",

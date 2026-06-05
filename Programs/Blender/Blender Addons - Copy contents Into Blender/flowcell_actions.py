@@ -76,6 +76,7 @@ from pathlib import Path
 
 import bmesh
 import bpy
+from bpy.app.handlers import persistent
 from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Matrix, Vector
 
@@ -96,6 +97,9 @@ VERSION_PREFIX_RE = re.compile(r"^\([sta]\d+\)", re.IGNORECASE)
 TARGET_NAME_PROP = "lls_target_name"
 CYCLE_INDEX_PROP = "lls_cycle_index"
 VISIBILITY_BASELINE_PROP = "flowcell_visibility_baseline_objects"
+PROJECT_THEME_RESTORE_HANDLER_KEY = "flowcell_project_theme_restore_load_post"
+PROJECT_THEME_RESTORE_ATTEMPTS_KEY = "flowcell_project_theme_restore_attempts"
+PROJECT_THEME_RESTORE_MAX_ATTEMPTS = 24
 HIDDEN_NAME_PAD = "\u200b"
 INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*]+')
 FLOWCELL_LITHO_SIZE_SUFFIX_RE = re.compile(
@@ -3546,6 +3550,110 @@ def _load_flowcell_live_bridge_module():
     return flowcell_live_bridge
 
 
+def _has_flowcell_project_theme_restore_view3d() -> bool:
+    window_manager = getattr(bpy.context, "window_manager", None)
+    if window_manager is None:
+        return False
+
+    for window in getattr(window_manager, "windows", []) or []:
+        screen = getattr(window, "screen", None)
+        if screen is None:
+            continue
+        for area in getattr(screen, "areas", []) or []:
+            if getattr(area, "type", "") == "VIEW_3D":
+                return True
+    return False
+
+
+def _restore_flowcell_project_theme_after_load():
+    namespace = bpy.app.driver_namespace
+    attempts = int(namespace.get(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, 0) or 0)
+    if not _has_flowcell_project_theme_restore_view3d():
+        if attempts < PROJECT_THEME_RESTORE_MAX_ATTEMPTS:
+            namespace[PROJECT_THEME_RESTORE_ATTEMPTS_KEY] = attempts + 1
+            return 0.25
+        print("FlowCell project theme restore continuing without a VIEW_3D area.")
+
+    namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
+
+    try:
+        import flowcell_bridge as flowcell_live_bridge
+
+        execute_custom_action = getattr(flowcell_live_bridge, "execute_custom_action", None)
+        if not callable(execute_custom_action):
+            flowcell_live_bridge = importlib.reload(flowcell_live_bridge)
+            execute_custom_action = getattr(flowcell_live_bridge, "execute_custom_action", None)
+        if not callable(execute_custom_action):
+            print("FlowCell project theme restore skipped: custom action executor is unavailable.")
+            return None
+
+        for action_name in ("flowcell_custom_theme", "custom_hdri_world_tools"):
+            result = execute_custom_action(action_name, {"command": "restore_project_startup_state"})
+            if result is None:
+                continue
+            if isinstance(result, dict):
+                message = str(result.get("message", "") or "")
+                if message:
+                    print(message)
+                for warning in result.get("warnings", []) or []:
+                    print(f"FlowCell project theme restore warning: {warning}")
+            else:
+                print(str(result))
+            return None
+
+        print("FlowCell project theme restore skipped: no registered theme custom action was found.")
+    except Exception as exc:
+        print(f"FlowCell project theme restore failed: {exc}")
+    return None
+
+
+@persistent
+def _restore_flowcell_project_theme_on_load(_dummy=None):
+    namespace = bpy.app.driver_namespace
+    namespace[PROJECT_THEME_RESTORE_ATTEMPTS_KEY] = 0
+    if not bpy.app.timers.is_registered(_restore_flowcell_project_theme_after_load):
+        bpy.app.timers.register(
+            _restore_flowcell_project_theme_after_load,
+            first_interval=0.35,
+            persistent=False,
+        )
+
+
+def _ensure_flowcell_project_theme_restore_handler_registered() -> None:
+    namespace = bpy.app.driver_namespace
+    existing = namespace.get(PROJECT_THEME_RESTORE_HANDLER_KEY)
+    if existing in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(existing)
+    if _restore_flowcell_project_theme_on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_restore_flowcell_project_theme_on_load)
+
+    bpy.app.handlers.load_post.append(_restore_flowcell_project_theme_on_load)
+    namespace[PROJECT_THEME_RESTORE_HANDLER_KEY] = _restore_flowcell_project_theme_on_load
+
+
+def _remove_flowcell_project_theme_restore_handler() -> None:
+    namespace = bpy.app.driver_namespace
+    existing = namespace.get(PROJECT_THEME_RESTORE_HANDLER_KEY)
+    if existing in bpy.app.handlers.load_post:
+        try:
+            bpy.app.handlers.load_post.remove(existing)
+        except Exception:
+            pass
+    if _restore_flowcell_project_theme_on_load in bpy.app.handlers.load_post:
+        try:
+            bpy.app.handlers.load_post.remove(_restore_flowcell_project_theme_on_load)
+        except Exception:
+            pass
+
+    namespace.pop(PROJECT_THEME_RESTORE_HANDLER_KEY, None)
+    namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
+    if bpy.app.timers.is_registered(_restore_flowcell_project_theme_after_load):
+        try:
+            bpy.app.timers.unregister(_restore_flowcell_project_theme_after_load)
+        except Exception:
+            pass
+
+
 def register():
     flowcell_live_bridge = _load_flowcell_live_bridge_module()
 
@@ -3566,6 +3674,7 @@ def register():
 
     get_bridge_directory()
     disable_outliner_alpha_sort()
+    _ensure_flowcell_project_theme_restore_handler_registered()
 
     if not bpy.app.timers.is_registered(poll_bridge_requests):
         bpy.app.timers.register(poll_bridge_requests, first_interval=POLL_INTERVAL_SECONDS, persistent=True)
@@ -3577,6 +3686,7 @@ def unregister():
     cleanup_live_tools = getattr(flowcell_live_bridge, "cleanup_live_tools", None)
     if callable(cleanup_live_tools):
         cleanup_live_tools(clear_registry=True)
+    _remove_flowcell_project_theme_restore_handler()
     if bpy.app.timers.is_registered(poll_bridge_requests):
         bpy.app.timers.unregister(poll_bridge_requests)
 

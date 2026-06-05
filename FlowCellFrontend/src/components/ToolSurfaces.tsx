@@ -134,12 +134,18 @@ interface HdriWorldToolSurfaceProps {
   onBrowseStaticBackgroundPath: () => void;
   onBrowseThemePath: () => void;
   onAbsorbTheme: () => void;
+  onRefillTheme: (values: HdriWorldToolValues) => void;
   onSaveTheme: () => void;
   onLoadTheme: () => void;
   onApplyThemeMode: (
     mode: "dark" | "light",
     values: HdriWorldToolValues
   ) => void;
+  onApplyThemeBucket: (
+    field: keyof HdriWorldToolValues,
+    values: HdriWorldToolValues
+  ) => void;
+  onFlipViewportGradient: (values: HdriWorldToolValues) => void;
   darknessProfiles?: DarknessProfileOption[];
   activeDarknessProfileId?: string;
   onSelectDarknessProfile?: (profileId: string, values: HdriWorldToolValues) => void;
@@ -350,12 +356,20 @@ function renderThemeRoleField(args: {
   row: { label: string; field: keyof HdriWorldToolValues; placeholder: string };
   value: string;
   onValueChange: (field: keyof HdriWorldToolValues, value: string) => void;
+  onApplyBucket: (field: keyof HdriWorldToolValues) => void;
   onNativePickerOpen?: () => void;
   onNativePickerClose?: () => void;
 }) {
-  const { row, value, onValueChange, onNativePickerOpen, onNativePickerClose } = args;
+  const {
+    row,
+    value,
+    onValueChange,
+    onApplyBucket,
+    onNativePickerOpen,
+    onNativePickerClose
+  } = args;
   return (
-    <label className="hdri-world-theme-role" key={row.field}>
+    <div className="hdri-world-theme-role" key={row.field}>
       <span className="hdri-world-theme-role__label">{row.label}</span>
       <div className="hdri-world-theme-role__controls">
         <input
@@ -384,8 +398,16 @@ function renderThemeRoleField(args: {
           placeholder={row.placeholder}
           title={`${row.label} theme color in hex.`}
         />
+        <button
+          className="hdri-world-theme-role__apply"
+          type="button"
+          onClick={() => onApplyBucket(row.field)}
+          title={`Apply only the ${row.label} bucket.`}
+        >
+          Apply
+        </button>
       </div>
-    </label>
+    </div>
   );
 }
 
@@ -784,9 +806,12 @@ export function HdriWorldToolSurface({
   onNativePickerOpen,
   onNativePickerClose,
   onAbsorbTheme,
+  onRefillTheme,
   onSaveTheme,
   onLoadTheme,
   onApplyThemeMode,
+  onApplyThemeBucket,
+  onFlipViewportGradient,
   darknessProfiles = [],
   activeDarknessProfileId = "",
   onSelectDarknessProfile,
@@ -821,6 +846,13 @@ export function HdriWorldToolSurface({
           styleGroup,
           importedSkin,
           title: "Read the current Blender theme and stage all visible buckets."
+        })}
+        {renderToolChip("Refill", {
+          onClick: () => onRefillTheme(values),
+          className: "tool-chip",
+          styleGroup,
+          importedSkin,
+          title: "Randomly remix the staged sampled colors into a different bucket set."
         })}
       </div>
       <div className="hdri-world-row hdri-world-row--theme-actions">
@@ -935,6 +967,7 @@ export function HdriWorldToolSurface({
             row,
             value: values[row.field],
             onValueChange: (field, value) => onValueChange(field, value),
+            onApplyBucket: (field) => onApplyThemeBucket(field, values),
             onNativePickerOpen,
             onNativePickerClose,
           })
@@ -946,6 +979,7 @@ export function HdriWorldToolSurface({
             row,
             value: values[row.field],
             onValueChange: (field, value) => onValueChange(field, value),
+            onApplyBucket: (field) => onApplyThemeBucket(field, values),
             onNativePickerOpen,
             onNativePickerClose,
           })
@@ -957,6 +991,7 @@ export function HdriWorldToolSurface({
             row,
             value: values[row.field],
             onValueChange: (field, value) => onValueChange(field, value),
+            onApplyBucket: (field) => onApplyThemeBucket(field, values),
             onNativePickerOpen,
             onNativePickerClose,
           })
@@ -968,23 +1003,34 @@ export function HdriWorldToolSurface({
             row,
             value: values[row.field],
             onValueChange: (field, value) => onValueChange(field, value),
+            onApplyBucket: (field) => onApplyThemeBucket(field, values),
             onNativePickerOpen,
             onNativePickerClose,
           })
         )}
-        <label className="hdri-world-theme-role hdri-world-theme-role--toggle">
+        <div className="hdri-world-theme-role hdri-world-theme-role--toggle">
           <span className="hdri-world-theme-role__label">Gradient</span>
-          <label className="hdri-world-toggle">
-            <input
-              type="checkbox"
-              checked={values.ThemeViewportGradientEnabled}
-              onChange={(event) =>
-                onValueChange("ThemeViewportGradientEnabled", event.target.checked)
-              }
-            />
-            <span>Use gradient</span>
-          </label>
-        </label>
+          <div className="hdri-world-theme-role__controls hdri-world-theme-role__controls--gradient">
+            <label className="hdri-world-toggle">
+              <input
+                type="checkbox"
+                checked={values.ThemeViewportGradientEnabled}
+                onChange={(event) =>
+                  onValueChange("ThemeViewportGradientEnabled", event.target.checked)
+                }
+              />
+              <span>Use gradient</span>
+            </label>
+            <button
+              className="hdri-world-theme-role__apply hdri-world-theme-role__apply--flip"
+              type="button"
+              onClick={() => onFlipViewportGradient(values)}
+              title="Swap Viewport BG and Gradient 2."
+            >
+              Flip
+            </button>
+          </div>
+        </div>
       </div>
       <div className="hdri-world-row hdri-world-row--background-path">
         {renderToolChip("Place Picture", {

@@ -914,6 +914,8 @@ function buildImportedButtonShadowCss(
     ".imported-svg,.imported-svg *{pointer-events:none!important;}",
     ".glass-hover-label,.imported-pill__label{color:var(--fc-theme-page-foreground)!important;text-shadow:0 .18em .08em color-mix(in srgb,var(--fc-theme-surface-shadow) 34%,transparent)!important;}",
     ...scopedCssBlocks,
+    ":host([data-flow-surface~=\"button-host--skin-profile-highlight\"][data-selected=\"true\"]) [data-flow-measure=\"true\"]{position:relative;overflow:visible;}",
+    ":host([data-flow-surface~=\"button-host--skin-profile-highlight\"][data-selected=\"true\"]) [data-flow-measure=\"true\"]::before{content:\"\";position:absolute;inset:-2px;border:2px solid var(--fc-selected-highlight,rgba(151,255,99,.98));border-radius:inherit;box-shadow:0 0 0 1px color-mix(in srgb,var(--fc-selected-highlight,rgba(151,255,99,.98)) 45%,transparent),0 0 14px color-mix(in srgb,var(--fc-selected-highlight,rgba(151,255,99,.98)) 70%,transparent),0 0 28px color-mix(in srgb,var(--fc-selected-highlight,rgba(151,255,99,.98)) 36%,transparent),inset 0 0 10px color-mix(in srgb,var(--fc-selected-highlight,rgba(151,255,99,.98)) 24%,transparent);pointer-events:none;z-index:4;}",
     ".imported-html>.body{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:auto!important;height:auto!important;min-width:0!important;min-height:0!important;background:transparent!important;overflow:visible!important;}",
     ".imported-html>.body>*{min-width:0;min-height:0;}"
   ]

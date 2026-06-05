@@ -2699,6 +2699,7 @@ export default function MainPage() {
                   button={button}
                   absolute={false}
                   targetHeightOverride={topLeftActionHeight}
+                  skinProfileHighlight
                   onActivate={handleButtonActivate}
                   onDoubleActivate={handleButtonDoubleActivate}
                   onRequestContextMenu={handleButtonContextMenu}
@@ -2720,6 +2721,7 @@ export default function MainPage() {
                   key={button.id}
                   button={button}
                   absolute={false}
+                  skinProfileHighlight
                   onActivate={handleButtonActivate}
                   onDoubleActivate={handleButtonDoubleActivate}
                   onRequestContextMenu={handleButtonContextMenu}
@@ -2731,6 +2733,7 @@ export default function MainPage() {
             <ButtonHost
               key={button.id}
               button={button}
+              skinProfileHighlight
               onActivate={handleButtonActivate}
               onDoubleActivate={handleButtonDoubleActivate}
               onRequestContextMenu={handleButtonContextMenu}

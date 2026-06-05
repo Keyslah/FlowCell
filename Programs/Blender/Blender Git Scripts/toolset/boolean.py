@@ -1,4 +1,4 @@
-# Description: Quick Boolean with I/U/D operation buttons, solver fanout, SI/HT/HC/BA toggles, and Run.
+# Description: Quick Boolean with I/U/D operation buttons, solver fanout, SI/HT/HC/S toggles, and Run.
 # FLOWCELL_CHILD: operation_intersect | I | Set the boolean operation to Intersect.
 # FLOWCELL_CHILD: operation_union | U | Set the boolean operation to Union.
 # FLOWCELL_CHILD: operation_difference | D | Set the boolean operation to Difference.
@@ -8,7 +8,7 @@
 # FLOWCELL_CHILD: toggle_self_intersection | SI | Toggle self-intersection support.
 # FLOWCELL_CHILD: toggle_hole_tolerant | HT | Toggle hole-tolerant solving.
 # FLOWCELL_CHILD: toggle_hide_cutter | HC | Toggle hiding the cutter after running.
-# FLOWCELL_CHILD: toggle_backup_active | BA | Toggle backing up the active object before running.
+# FLOWCELL_CHILD: toggle_backup_active | S | Toggle taking a FlowCell snapshot before running.
 # FLOWCELL_CHILD: run_boolean | Run | Run the quick boolean operation.
 
 bl_info = {
@@ -17,13 +17,103 @@ bl_info = {
     "version": (2, 2),
     "blender": (3, 0, 0),
     "location": "View3D > Sidebar > Tool Tab",
-    "description": "Quick Boolean with backup, cutter hide, and optional Remesh (0.1 mm default, no smoothing)",
+    "description": "Quick Boolean with snapshot, cutter hide, and optional Remesh (0.1 mm default, no smoothing)",
     "category": "Object",
 }
 
+import importlib
+import sys
+from pathlib import Path
+
 import bpy
 
-BACKUP_COLLECTION_NAME = "Backup"
+
+def _load_flowcell_bridge():
+    first_error = None
+    try:
+        module = importlib.import_module("flowcell_bridge")
+        try:
+            module = importlib.reload(module)
+        except Exception:
+            pass
+        return module
+    except Exception as exc:
+        first_error = exc
+
+    search_roots = []
+    user_scripts = bpy.utils.user_resource("SCRIPTS")
+    if user_scripts:
+        search_roots.append(Path(user_scripts) / "addons")
+    for root in bpy.utils.script_paths():
+        if root:
+            search_roots.append(Path(root) / "addons")
+
+    seen = set()
+    for addon_root in search_roots:
+        try:
+            addon_root = addon_root.resolve()
+        except Exception:
+            continue
+        addon_key = str(addon_root)
+        if addon_key in seen or not addon_root.is_dir():
+            continue
+        seen.add(addon_key)
+        addon_root_text = str(addon_root)
+        if addon_root_text not in sys.path:
+            sys.path.insert(0, addon_root_text)
+        try:
+            module = importlib.import_module("flowcell_bridge")
+            try:
+                module = importlib.reload(module)
+            except Exception:
+                pass
+            return module
+        except Exception:
+            continue
+
+    raise RuntimeError(
+        "FlowCell Blender bridge module was not found. Reload the FlowCell add-on or restart Blender."
+    ) from first_error
+
+
+def _snapshot_message_is_failure(message):
+    normalized = str(message or "").strip().lower()
+    return (
+        not normalized
+        or normalized.startswith("no selected objects to snapshot")
+        or normalized.startswith("skipped snapshot")
+    )
+
+
+def _snapshot_active_object_before_boolean(context, active):
+    original_selection = list(context.selected_objects)
+    original_active = context.view_layer.objects.active
+
+    try:
+        for obj in original_selection:
+            if obj != active:
+                obj.select_set(False)
+        active.select_set(True)
+        context.view_layer.objects.active = active
+
+        bridge = _load_flowcell_bridge()
+        result = bridge.execute_bridge_operator("snapshot", {})
+    except Exception as exc:
+        result = {"status": "error", "message": str(exc)}
+    finally:
+        for obj in list(context.selected_objects):
+            if not any(obj == selected for selected in original_selection):
+                obj.select_set(False)
+        for obj in original_selection:
+            obj.select_set(True)
+        if original_active is not None:
+            context.view_layer.objects.active = original_active
+
+    message = str(result.get("message", "") if isinstance(result, dict) else result).strip()
+    status = str(result.get("status", "ok") if isinstance(result, dict) else "ok").strip().lower()
+    if status == "error" or _snapshot_message_is_failure(message):
+        return {"status": "error", "message": message or "Snapshot before Boolean failed."}
+    return {"status": "ok", "message": message}
 
 
 # ───────────────────────────── PANEL ─────────────────────────────
@@ -47,7 +137,7 @@ class OBJECT_PT_quick_boolean(bpy.types.Panel):
         controls.prop(s, "qb_self_intersection", text="SI", toggle=True)
         controls.prop(s, "qb_hole_tolerant", text="HT", toggle=True)
         controls.prop(s, "qb_hide_cutter", text="HC", toggle=True)
-        controls.prop(s, "qb_backup_active", text="BA", toggle=True)
+        controls.prop(s, "qb_backup_active", text="S", toggle=True)
         controls.operator("object.qb_run_auto", text="Run", icon='MOD_BOOLEAN')
 
 
@@ -55,37 +145,12 @@ class OBJECT_PT_quick_boolean(bpy.types.Panel):
 class OBJECT_OT_qb_run_auto(bpy.types.Operator):
     bl_label = "Run Quick Boolean"
     bl_idname = "object.qb_run_auto"
-    bl_description = "Boolean between active and selected objects, auto-apply; optional backup, hide cutter, and Remesh"
+    bl_description = "Boolean between active and selected objects, auto-apply; optional snapshot, hide cutter, and Remesh"
     bl_options = {'REGISTER', 'UNDO'}
 
     def ensure_object_mode(self, context):
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
-
-    def ensure_backup_collection(self, context):
-        col = bpy.data.collections.get(BACKUP_COLLECTION_NAME)
-        if not col:
-            col = bpy.data.collections.new(BACKUP_COLLECTION_NAME)
-            context.scene.collection.children.link(col)
-        return col
-
-    def backup_active_object(self, context, obj):
-        dup = obj.copy()
-        if getattr(obj, "data", None) and hasattr(obj.data, "copy"):
-            dup.data = obj.data.copy()
-        backup_col = self.ensure_backup_collection(context)
-        backup_col.objects.link(dup)
-        for c in list(dup.users_collection):
-            if c != backup_col:
-                try:
-                    c.objects.unlink(dup)
-                except Exception:
-                    pass
-        dup.hide_set(True)
-        dup.hide_render = True
-        dup.select_set(False)
-        obj.select_set(True)
-        context.view_layer.objects.active = obj
 
     def apply_remesh(self, context, obj, s):
         m = obj.modifiers.new(name="QB_Remesh", type='REMESH')
@@ -118,8 +183,16 @@ class OBJECT_OT_qb_run_auto(bpy.types.Operator):
 
         cutter = selected[0]
 
+        snapshot_message = ""
         if s.qb_backup_active:
-            self.backup_active_object(context, active)
+            snapshot_result = _snapshot_active_object_before_boolean(context, active)
+            if snapshot_result.get("status") != "ok":
+                self.report({'ERROR'}, snapshot_result.get("message", "Snapshot before Boolean failed."))
+                return {'CANCELLED'}
+            snapshot_message = str(snapshot_result.get("message", ""))
+            active.select_set(True)
+            cutter.select_set(True)
+            context.view_layer.objects.active = active
 
         mod = active.modifiers.new(name="QuickBoolean", type='BOOLEAN')
         mod.operation = s.qb_operation
@@ -149,7 +222,10 @@ class OBJECT_OT_qb_run_auto(bpy.types.Operator):
         if s.qb_use_remesh:
             self.apply_remesh(context, active, s)
 
-        self.report({'INFO'}, f"{s.qb_operation} Boolean applied successfully.")
+        message = f"{s.qb_operation} Boolean applied successfully."
+        if snapshot_message:
+            message = f"{snapshot_message} {message}"
+        self.report({'INFO'}, message)
         return {'FINISHED'}
 
 
@@ -174,7 +250,7 @@ def _ensure_quick_boolean_scene_props():
     if not hasattr(bpy.types.Scene, "qb_hide_cutter"):
         bpy.types.Scene.qb_hide_cutter = bpy.props.BoolProperty(name="Hide Cutter", default=True)
     if not hasattr(bpy.types.Scene, "qb_backup_active"):
-        bpy.types.Scene.qb_backup_active = bpy.props.BoolProperty(name="Backup Active", default=True)
+        bpy.types.Scene.qb_backup_active = bpy.props.BoolProperty(name="Snapshot Before Run", default=True)
     if not hasattr(bpy.types.Scene, "qb_show_solver_options"):
         bpy.types.Scene.qb_show_solver_options = bpy.props.BoolProperty(name="Show Solver Options", default=False)
     if not hasattr(bpy.types.Scene, "qb_show_remesh"):
@@ -226,25 +302,14 @@ def _run_boolean_operator(context):
 
     cutter = selected[0]
 
+    snapshot_message = ""
     if s.qb_backup_active:
-        dup = active.copy()
-        if getattr(active, "data", None) and hasattr(active.data, "copy"):
-            dup.data = active.data.copy()
-        backup_col = bpy.data.collections.get(BACKUP_COLLECTION_NAME)
-        if not backup_col:
-            backup_col = bpy.data.collections.new(BACKUP_COLLECTION_NAME)
-            context.scene.collection.children.link(backup_col)
-        backup_col.objects.link(dup)
-        for c in list(dup.users_collection):
-            if c != backup_col:
-                try:
-                    c.objects.unlink(dup)
-                except Exception:
-                    pass
-        dup.hide_set(True)
-        dup.hide_render = True
-        dup.select_set(False)
+        snapshot_result = _snapshot_active_object_before_boolean(context, active)
+        if snapshot_result.get("status") != "ok":
+            return snapshot_result
+        snapshot_message = str(snapshot_result.get("message", ""))
         active.select_set(True)
+        cutter.select_set(True)
         context.view_layer.objects.active = active
 
     mod = active.modifiers.new(name="QuickBoolean", type='BOOLEAN')
@@ -292,9 +357,12 @@ def _run_boolean_operator(context):
         if remesh.name in active.modifiers:
             active.modifiers.remove(remesh)
 
+    message = f"{s.qb_operation} Boolean applied successfully."
+    if snapshot_message:
+        message = f"{snapshot_message} {message}"
     return {
         "status": "ok",
-        "message": f"{s.qb_operation} Boolean applied successfully."
+        "message": message
     }
 
 
@@ -365,6 +433,7 @@ def run_flowcell_action(context=None, data=None):
         "hc": "qb_hide_cutter",
         "toggle_backup_active": "qb_backup_active",
         "ba": "qb_backup_active",
+        "s": "qb_backup_active",
     }
     if command in toggle_map:
         prop_name = toggle_map[command]
@@ -394,7 +463,7 @@ def register():
     bpy.types.Scene.qb_self_intersection = bpy.props.BoolProperty(name="Self Intersection", default=False)
     bpy.types.Scene.qb_hole_tolerant = bpy.props.BoolProperty(name="Hole Tolerant", default=False)
     bpy.types.Scene.qb_hide_cutter = bpy.props.BoolProperty(name="Hide Cutter", default=True)
-    bpy.types.Scene.qb_backup_active = bpy.props.BoolProperty(name="Backup Active", default=True)
+    bpy.types.Scene.qb_backup_active = bpy.props.BoolProperty(name="Snapshot Before Run", default=True)
 
     # Foldouts
     bpy.types.Scene.qb_show_solver_options = bpy.props.BoolProperty(name="Show Solver Options", default=False)

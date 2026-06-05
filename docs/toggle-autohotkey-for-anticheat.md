@@ -5,10 +5,10 @@ Use this when a game blocks or warns about running AutoHotkey. The toggle turns 
 Run the hidden launcher from any FlowCell checkout:
 
 ```text
-C:\Windows\System32\wscript.exe "<repo>\Programs\Windows\Windows Git Scripts\Utility\Toggle-AutoHotkey.vbs"
+C:\Windows\System32\wscript.exe "<repo>\tools\autohotkey v2 on off\Toggle-AutoHotkey.vbs"
 ```
 
-The launcher resolves `Toggle-AutoHotkey.ps1` from its own folder, so it works from any GitHub clone path instead of an Aaron-specific shared-script path.
+The launcher resolves `Toggle-AutoHotkey.ps1` from its own folder, so it works from any GitHub clone path instead of an Aaron-specific shared-script path. The toggle source lives in `tools\autohotkey v2 on off`, not the Windows Utility script folder.
 
 ## How it works
 
@@ -39,7 +39,7 @@ If no managed list exists inside a FlowCell checkout, the script starts `FlowCel
 
 ## Full VBS launcher
 
-Tracked source: [Programs/Windows/Windows Git Scripts/Utility/Toggle-AutoHotkey.vbs](../Programs/Windows/Windows%20Git%20Scripts/Utility/Toggle-AutoHotkey.vbs)
+Tracked source: [tools/autohotkey v2 on off/Toggle-AutoHotkey.vbs](../tools/autohotkey%20v2%20on%20off/Toggle-AutoHotkey.vbs)
 
 ```vbscript
 Set fso = CreateObject("Scripting.FileSystemObject")
@@ -53,7 +53,7 @@ shell.Run command, 0, False
 
 ## Full PowerShell script
 
-Tracked source: [Programs/Windows/Windows Git Scripts/Utility/Toggle-AutoHotkey.ps1](../Programs/Windows/Windows%20Git%20Scripts/Utility/Toggle-AutoHotkey.ps1)
+Tracked source: [tools/autohotkey v2 on off/Toggle-AutoHotkey.ps1](../tools/autohotkey%20v2%20on%20off/Toggle-AutoHotkey.ps1)
 
 ```powershell
 # Description: Toggle all AutoHotkey processes off or back on for anti-cheat game sessions.

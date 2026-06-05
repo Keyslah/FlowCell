@@ -91,8 +91,8 @@ export const BOOLEAN_TOOLBOX_TOGGLE_BUTTONS: readonly BooleanToolboxButtonSpec[]
   },
   {
     slot: "toggle_backup_active",
-    fallbackLabel: "BA",
-    tooltip: "Toggle backing up the active object before running.",
+    fallbackLabel: "S",
+    tooltip: "Toggle taking a FlowCell snapshot before running.",
     rect: BOOLEAN_TOOLBOX_SVG_RECTS[8]
   }
 ] as const;

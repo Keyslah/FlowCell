@@ -219,6 +219,10 @@
   pointer-events: none;
 }
 
+.button-host.button-host--skin-profile-highlight[data-selected="true"]::after {
+  content: none;
+}
+
 .button-host:focus-visible {
   outline: 2px solid rgba(35, 31, 32, 0.72);
   outline-offset: 2px;

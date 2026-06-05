@@ -140,7 +140,9 @@
 }
 
 .theme-toolbox-window-page .hdri-world-row--theme-path {
-  grid-template-columns: minmax(58px, auto) minmax(0, 1fr) minmax(104px, auto);
+  grid-template-columns:
+    minmax(0, 1fr) minmax(66px, auto) minmax(104px, auto)
+    minmax(62px, auto);
 }
 
 .theme-toolbox-window-page .hdri-world-row--theme-actions {
@@ -276,9 +278,15 @@
 
 .theme-toolbox-window-page .hdri-world-theme-role__controls {
   display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
+  grid-template-columns: 30px minmax(68px, 132px) minmax(52px, auto);
+  justify-content: start;
   gap: 4px;
   align-items: center;
+}
+
+.theme-toolbox-window-page .hdri-world-theme-role__controls--gradient {
+  grid-template-columns: minmax(0, 1fr) minmax(52px, auto);
+  justify-content: stretch;
 }
 
 .theme-toolbox-window-page .hdri-world-theme-role__label {
@@ -326,7 +334,31 @@
 
 .theme-toolbox-window-page .hdri-world-field__input--hex {
   min-width: 0;
+  max-width: 132px;
   text-transform: uppercase;
+}
+
+.theme-toolbox-window-page .hdri-world-theme-role__apply {
+  min-width: 52px;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid rgba(222, 233, 227, 0.16);
+  border-radius: 8px;
+  background: rgba(18, 28, 31, 0.92);
+  color: var(--fc-theme-page-foreground);
+  font: 700 0.64rem/1.1 "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.theme-toolbox-window-page .hdri-world-theme-role__apply:hover,
+.theme-toolbox-window-page .hdri-world-theme-role__apply:focus {
+  border-color: rgba(134, 199, 172, 0.62);
+  outline: 1px solid rgba(134, 199, 172, 0.28);
+  outline-offset: 0;
+}
+
+.theme-toolbox-window-page .hdri-world-theme-role__apply--flip {
+  min-height: 30px;
 }
 
 .theme-toolbox-window-page .hdri-world-field__input:focus {

@@ -44,6 +44,7 @@ type ResizeDirection =
 type ThemeVisualMode = "dark" | "light";
 type HdriWorldAction =
   | "apply_theme_from_photo_manual_colors"
+  | "apply_theme_bucket"
   | "place_picture"
   | "clear_place_picture"
   | "set_hdri_path"
@@ -109,6 +110,26 @@ const THEME_TONE_ROLE_FIELDS = [
   "ThemeViewportBackgroundHex",
   "ThemeViewportGradientHex"
 ] as const;
+const DEFAULT_DARK_TONE_TARGETS: Record<ThemeToneRoleField, number> = {
+  ThemeTabsHex: 0.035,
+  ThemeHeadersHex: 0.08,
+  ThemeEditorBackgroundHex: 0.018,
+  ThemeSceneHex: 0.04,
+  ThemeControlsHex: 0.09,
+  ThemeHighlightsHex: 0.35,
+  ThemeViewportBackgroundHex: 0.018,
+  ThemeViewportGradientHex: 0.04
+};
+const DEFAULT_LIGHT_TONE_TARGETS: Record<ThemeToneRoleField, number> = {
+  ThemeTabsHex: 0.26,
+  ThemeHeadersHex: 0.22,
+  ThemeEditorBackgroundHex: 0.32,
+  ThemeSceneHex: 0.24,
+  ThemeControlsHex: 0.28,
+  ThemeHighlightsHex: 0.44,
+  ThemeViewportBackgroundHex: 0.24,
+  ThemeViewportGradientHex: 0.34
+};
 const THEME_SIGNATURE_SLOTS = [
   "browse_theme",
   "absorb_theme",
@@ -219,6 +240,52 @@ function parseThemeHexRgb(value: string): [number, number, number] | null {
   return [red, green, blue];
 }
 
+function hexHueDegrees(value: string): number | null {
+  const rgb = parseThemeHexRgb(value);
+  if (!rgb) {
+    return null;
+  }
+
+  const red = rgb[0] / 255;
+  const green = rgb[1] / 255;
+  const blue = rgb[2] / 255;
+  const maxValue = Math.max(red, green, blue);
+  const minValue = Math.min(red, green, blue);
+  const delta = maxValue - minValue;
+  if (delta <= 0.0001 || maxValue <= 0) {
+    return null;
+  }
+
+  let hue = 0;
+  if (maxValue === red) {
+    hue = 60 * (((green - blue) / delta) % 6);
+  } else if (maxValue === green) {
+    hue = 60 * ((blue - red) / delta + 2);
+  } else {
+    hue = 60 * ((red - green) / delta + 4);
+  }
+  return (hue + 360) % 360;
+}
+
+function hexSaturation(value: string): number {
+  const rgb = parseThemeHexRgb(value);
+  if (!rgb) {
+    return 0;
+  }
+
+  const red = rgb[0] / 255;
+  const green = rgb[1] / 255;
+  const blue = rgb[2] / 255;
+  const maxValue = Math.max(red, green, blue);
+  const minValue = Math.min(red, green, blue);
+  return maxValue <= 0 ? 0 : (maxValue - minValue) / maxValue;
+}
+
+function hueDistanceDegrees(left: number, right: number): number {
+  const distance = Math.abs(left - right) % 360;
+  return Math.min(distance, 360 - distance);
+}
+
 function rgbToThemeHex([red, green, blue]: [number, number, number]): string {
   return `#${[red, green, blue]
     .map((channel) =>
@@ -255,6 +322,11 @@ function pickPaletteTextHex(palette: string[], mode: ThemeVisualMode): string {
   const sampledHex =
     mode === "light" ? colorPalette[0] : colorPalette[colorPalette.length - 1];
   return shiftHexTowardLuminance(sampledHex, mode === "light" ? 0.08 : 0.92);
+}
+
+function lightThemeTargetFromDarkTarget(darkTarget: number): number {
+  const boundedDarkTarget = Math.max(0, Math.min(1, darkTarget));
+  return Math.max(0.16, Math.min(0.46, 0.16 + (1 - boundedDarkTarget) * 0.26));
 }
 
 function mixRgb(
@@ -330,6 +402,42 @@ function pickPaletteHexForTone(
   }, palette[0]);
 }
 
+function pickSpectrumPaletteHexForTone(
+  palette: string[],
+  targetLuminance: number,
+  usageCounts: Map<string, number>,
+  usedHues: number[]
+): string {
+  let bestHex = palette[0];
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const candidate of palette) {
+    const hue = hexHueDegrees(candidate);
+    const minHueDistance =
+      hue === null || usedHues.length === 0
+        ? 180
+        : usedHues.reduce(
+            (minimum, existingHue) =>
+              Math.min(minimum, hueDistanceDegrees(hue, existingHue)),
+            180
+          );
+    const huePenalty = (1 - Math.min(1, minHueDistance / 135)) * 0.38;
+    const score =
+      Math.abs(hexLuminance(candidate) - targetLuminance) +
+      huePenalty +
+      (usageCounts.get(candidate) ?? 0) * 0.12 -
+      hexSaturation(candidate) * 0.05 +
+      Math.random() * 0.07;
+
+    if (score < bestScore) {
+      bestHex = candidate;
+      bestScore = score;
+    }
+  }
+
+  return bestHex;
+}
+
 function buildProfiledThemeRoleAssignment(
   palette: string[],
   mode: ThemeVisualMode,
@@ -344,7 +452,7 @@ function buildProfiledThemeRoleAssignment(
       typeof savedTarget === "number" && Number.isFinite(savedTarget)
         ? savedTarget
         : fallbackTarget;
-    return mode === "light" ? 1 - darkTarget : darkTarget;
+    return mode === "light" ? lightThemeTargetFromDarkTarget(darkTarget) : darkTarget;
   };
   const colorForField = (field: ThemeToneRoleField): string => {
     const target = targetForField(field);
@@ -403,7 +511,6 @@ function buildThemeRoleAssignment(
   const dark = rolePalette[1] ?? darkest;
   const middle = rolePalette[2] ?? dark;
   const light = rolePalette[3] ?? middle;
-  const lightest = rolePalette[4] ?? light;
   const highlights =
     options.preferredHighlightsHex && isValidThemeHex(options.preferredHighlightsHex)
       ? options.preferredHighlightsHex.trim().toUpperCase()
@@ -414,24 +521,33 @@ function buildThemeRoleAssignment(
   const lightText = pickPaletteTextHex(rolePalette, "dark");
 
   if (mode === "light") {
+    const usageCounts = new Map<string, number>();
+    const colorForField = (field: ThemeToneRoleField): string => {
+      const target = DEFAULT_LIGHT_TONE_TARGETS[field];
+      const sampledHex = pickPaletteHexForTone(rolePalette, target, usageCounts);
+      usageCounts.set(sampledHex, (usageCounts.get(sampledHex) ?? 0) + 1);
+      return shiftHexTowardLuminance(sampledHex, target);
+    };
+    const editorBackgroundHex = colorForField("ThemeEditorBackgroundHex");
+
     return {
       ThemeVisualMode: "light",
-      ThemeTabsHex: light,
-      ThemeHeadersHex: middle,
+      ThemeTabsHex: colorForField("ThemeTabsHex"),
+      ThemeHeadersHex: colorForField("ThemeHeadersHex"),
       ThemeTextHex: darkText,
       ThemeControlTextHex: darkText,
       ThemeAccentTextHex: darkText,
       ThemeTabsTextHex: darkText,
       ThemeHeaderTextHex: darkText,
-      ThemeEditorBackgroundHex: lightest,
-      ThemeSceneHex: light,
-      ThemeControlsHex: middle,
-      ThemeMiscHex: dark,
-      ThemeDarksHex: dark,
-      ThemeHighlightsHex: highlights,
-      ThemeViewportBackgroundHex: light,
+      ThemeEditorBackgroundHex: editorBackgroundHex,
+      ThemeSceneHex: colorForField("ThemeSceneHex"),
+      ThemeControlsHex: colorForField("ThemeControlsHex"),
+      ThemeMiscHex: editorBackgroundHex,
+      ThemeDarksHex: editorBackgroundHex,
+      ThemeHighlightsHex: colorForField("ThemeHighlightsHex"),
+      ThemeViewportBackgroundHex: colorForField("ThemeViewportBackgroundHex"),
       ThemeViewportGradientEnabled: true,
-      ThemeViewportGradientHex: lightest
+      ThemeViewportGradientHex: colorForField("ThemeViewportGradientHex")
     };
   }
 
@@ -453,6 +569,88 @@ function buildThemeRoleAssignment(
     ThemeViewportBackgroundHex: darkest,
     ThemeViewportGradientEnabled: true,
     ThemeViewportGradientHex: dark
+  };
+}
+
+function buildRefilledThemeRoleAssignment(
+  values: HdriWorldToolValues
+): Partial<HdriWorldToolValues> {
+  const palette = normalizePaletteHexes([
+    ...values.ThemePaletteHexes,
+    values.ThemeTabsHex,
+    values.ThemeHeadersHex,
+    values.ThemeTextHex,
+    values.ThemeControlTextHex,
+    values.ThemeAccentTextHex,
+    values.ThemeEditorBackgroundHex,
+    values.ThemeSceneHex,
+    values.ThemeControlsHex,
+    values.ThemeHighlightsHex,
+    values.ThemeViewportBackgroundHex,
+    values.ThemeViewportGradientHex
+  ]);
+  const rolePalette = preferPaletteColors(palette.length > 0 ? palette : DEFAULT_THEME_PALETTE);
+  while (rolePalette.length < 5) {
+    rolePalette.push(rolePalette[rolePalette.length - 1] ?? rolePalette[0]);
+  }
+
+  const mode = values.ThemeVisualMode;
+  const targets =
+    mode === "light" ? DEFAULT_LIGHT_TONE_TARGETS : DEFAULT_DARK_TONE_TARGETS;
+  const usageCounts = new Map<string, number>();
+  const usedHues: number[] = [];
+  const rememberHue = (hexValue: string) => {
+    const hue = hexHueDegrees(hexValue);
+    if (hue !== null) {
+      usedHues.push(hue);
+    }
+  };
+  const colorForField = (field: ThemeToneRoleField): string => {
+    const baseTarget = targets[field];
+    const jitter = (Math.random() - 0.5) * (mode === "light" ? 0.08 : 0.06);
+    const target = Math.max(0.01, Math.min(0.58, baseTarget + jitter));
+    const sampledHex = pickSpectrumPaletteHexForTone(
+      rolePalette,
+      target,
+      usageCounts,
+      usedHues
+    );
+    usageCounts.set(sampledHex, (usageCounts.get(sampledHex) ?? 0) + 1);
+    rememberHue(sampledHex);
+    return shiftHexTowardLuminance(sampledHex, target);
+  };
+  const textTarget =
+    mode === "light" ? 0.07 + Math.random() * 0.08 : 0.82 + Math.random() * 0.12;
+  const sampledTextHex = pickSpectrumPaletteHexForTone(
+    rolePalette,
+    textTarget,
+    usageCounts,
+    usedHues
+  );
+  usageCounts.set(sampledTextHex, (usageCounts.get(sampledTextHex) ?? 0) + 1);
+  rememberHue(sampledTextHex);
+  const textHex = shiftHexTowardLuminance(sampledTextHex, textTarget);
+  const editorBackgroundHex = colorForField("ThemeEditorBackgroundHex");
+
+  return {
+    ThemePaletteHexes: palette.length > 0 ? palette : DEFAULT_THEME_PALETTE,
+    ThemeVisualMode: mode,
+    ThemeTabsHex: colorForField("ThemeTabsHex"),
+    ThemeHeadersHex: colorForField("ThemeHeadersHex"),
+    ThemeTextHex: textHex,
+    ThemeControlTextHex: textHex,
+    ThemeAccentTextHex: textHex,
+    ThemeTabsTextHex: textHex,
+    ThemeHeaderTextHex: textHex,
+    ThemeEditorBackgroundHex: editorBackgroundHex,
+    ThemeSceneHex: colorForField("ThemeSceneHex"),
+    ThemeControlsHex: colorForField("ThemeControlsHex"),
+    ThemeMiscHex: editorBackgroundHex,
+    ThemeDarksHex: editorBackgroundHex,
+    ThemeHighlightsHex: colorForField("ThemeHighlightsHex"),
+    ThemeViewportBackgroundHex: colorForField("ThemeViewportBackgroundHex"),
+    ThemeViewportGradientEnabled: values.ThemeViewportGradientEnabled,
+    ThemeViewportGradientHex: colorForField("ThemeViewportGradientHex")
   };
 }
 
@@ -923,8 +1121,12 @@ function readDetailValue(details: Record<string, unknown>, key: string): unknown
 function findThemeDetails(response: unknown): Record<string, unknown> {
   const root = toObjectRecord(response) ?? {};
   const detailRecord = toObjectRecord(root.details) ?? toObjectRecord(root.Details) ?? {};
+  const resultRecord = toObjectRecord(root.result) ?? toObjectRecord(root.Result) ?? {};
   const legacyRecord = toObjectRecord(detailRecord.legacy_result);
   const candidates = [
+    toObjectRecord(resultRecord.details),
+    toObjectRecord(resultRecord.Details),
+    resultRecord,
     toObjectRecord(detailRecord.details),
     toObjectRecord(detailRecord.Details),
     toObjectRecord(legacyRecord?.Details),
@@ -974,11 +1176,28 @@ function normalizeThemeBooleanFromDetails(
   return fallback;
 }
 
+const THEME_FIELD_BUCKET_KEYS: Partial<Record<keyof HdriWorldToolValues, string>> = {
+  ThemeTabsHex: "tabs_hex",
+  ThemeHeadersHex: "headers_hex",
+  ThemeTextHex: "text_hex",
+  ThemeControlTextHex: "control_text_hex",
+  ThemeAccentTextHex: "accent_text_hex",
+  ThemeEditorBackgroundHex: "editor_background_hex",
+  ThemeSceneHex: "scene_hex",
+  ThemeControlsHex: "controls_hex",
+  ThemeHighlightsHex: "highlights_hex",
+  ThemeViewportBackgroundHex: "viewport_background_hex",
+  ThemeViewportGradientHex: "viewport_gradient_hex"
+};
+
 function buildThemeActionPayload(
   action: HdriWorldAction,
   values: HdriWorldToolValues
 ): Record<string, unknown> {
-  if (action === "apply_theme_from_photo_manual_colors") {
+  if (
+    action === "apply_theme_from_photo_manual_colors" ||
+    action === "apply_theme_bucket"
+  ) {
     return {
       command: action,
       visual_mode: values.ThemeVisualMode,
@@ -1009,6 +1228,22 @@ function buildThemeActionPayload(
     rotation_y_deg: values.RotationYDeg,
     rotation_z_deg: values.RotationZDeg,
     world_strength: values.WorldStrength
+  };
+}
+
+function buildThemeBucketActionPayload(
+  field: keyof HdriWorldToolValues,
+  values: HdriWorldToolValues
+): Record<string, unknown> {
+  const bucket = THEME_FIELD_BUCKET_KEYS[field];
+  if (!bucket) {
+    throw new Error(`Theme bucket apply is not available for ${String(field)}.`);
+  }
+
+  return {
+    ...buildThemeActionPayload("apply_theme_bucket", values),
+    bucket,
+    bucket_hex: values[field]
   };
 }
 
@@ -1568,14 +1803,67 @@ export default function ThemeToolboxWindowPage({
           currentValues.ThemeViewportGradientHex
         )
       };
-      patch.ThemePaletteHexes = [
+      patch.ThemePaletteHexes = normalizePaletteHexes([
         patch.ThemeTabsHex,
         patch.ThemeHeadersHex,
+        patch.ThemeTextHex,
+        patch.ThemeControlTextHex,
+        patch.ThemeAccentTextHex,
+        patch.ThemeTabsTextHex,
+        patch.ThemeHeaderTextHex,
+        patch.ThemeEditorBackgroundHex,
         patch.ThemeSceneHex,
         patch.ThemeControlsHex,
-        patch.ThemeHighlightsHex
-      ].filter((value): value is string => Boolean(value && isValidThemeHex(value)));
+        patch.ThemeMiscHex,
+        patch.ThemeDarksHex,
+        patch.ThemeHighlightsHex,
+        patch.ThemeViewportBackgroundHex,
+        patch.ThemeViewportGradientHex
+      ].filter((value): value is string => typeof value === "string" && isValidThemeHex(value)));
       updateValues(patch);
+    } catch (error) {
+      setStatusMessage(formatErrorMessage(error));
+    } finally {
+      setPendingCommand(null);
+    }
+  };
+
+  const handleRefillTheme = (valuesOverride: HdriWorldToolValues) => {
+    const currentValues = normalizeHdriWorldToolValues({ ...valuesOverride });
+    updateValues(buildRefilledThemeRoleAssignment(currentValues));
+    setStatusMessage(null);
+  };
+
+  const handleFlipViewportGradient = (valuesOverride: HdriWorldToolValues) => {
+    const currentValues = normalizeHdriWorldToolValues({ ...valuesOverride });
+    updateValues({
+      ThemeViewportBackgroundHex: currentValues.ThemeViewportGradientHex,
+      ThemeViewportGradientHex: currentValues.ThemeViewportBackgroundHex
+    });
+    setStatusMessage(null);
+  };
+
+  const handleApplyThemeBucket = async (
+    field: keyof HdriWorldToolValues,
+    valuesOverride: HdriWorldToolValues
+  ) => {
+    if (!record || pendingCommand) {
+      return;
+    }
+
+    const currentValues = normalizeHdriWorldToolValues({ ...valuesOverride });
+    const commandKey = `apply_theme_bucket:${String(field)}`;
+    setPendingCommand(commandKey);
+    setStatusMessage(null);
+
+    try {
+      await runBlenderToolsetAction({
+        programName: context.programName,
+        panelName: context.panelName,
+        fileName: record.fileName,
+        command: "apply_theme_bucket",
+        payload: buildThemeBucketActionPayload(field, currentValues)
+      });
     } catch (error) {
       setStatusMessage(formatErrorMessage(error));
     } finally {
@@ -1639,7 +1927,7 @@ export default function ThemeToolboxWindowPage({
       }
 
       const sampled = await samplePhotoThemeColors(selectedPaths[0]);
-      const paletteHexes = [
+      const namedPaletteHexes = [
         sampled.headersHex,
         sampled.textHex,
         sampled.sceneHex,
@@ -1647,6 +1935,15 @@ export default function ThemeToolboxWindowPage({
         sampled.miscHex,
         sampled.highlightsHex
       ].map((value) => value.toUpperCase());
+      const sampledPaletteHexes = Array.isArray(sampled.paletteHexes)
+        ? sampled.paletteHexes
+            .map((value) => String(value ?? "").trim().toUpperCase())
+            .filter(isValidThemeHex)
+        : [];
+      const paletteHexes = normalizePaletteHexes([
+        ...sampledPaletteHexes,
+        ...namedPaletteHexes
+      ]);
       updateValues({
         ThemeImagePath: selectedPaths[0],
         ThemePaletteHexes: paletteHexes,
@@ -1901,6 +2198,9 @@ export default function ThemeToolboxWindowPage({
                 onAbsorbTheme={() => {
                   void handleAbsorbTheme();
                 }}
+                onRefillTheme={(nextValues) => {
+                  handleRefillTheme(nextValues);
+                }}
                 onSaveTheme={() => {
                   void handleSaveTheme();
                 }}
@@ -1909,6 +2209,12 @@ export default function ThemeToolboxWindowPage({
                 }}
                 onApplyThemeMode={(mode, nextValues) => {
                   handleThemeModeApply(mode, nextValues);
+                }}
+                onApplyThemeBucket={(field, nextValues) => {
+                  void handleApplyThemeBucket(field, nextValues);
+                }}
+                onFlipViewportGradient={(nextValues) => {
+                  handleFlipViewportGradient(nextValues);
                 }}
                 darknessProfiles={darknessProfiles.map((profile) => ({
                   id: profile.id,

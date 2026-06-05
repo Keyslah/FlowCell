@@ -142,6 +142,7 @@ struct SampledPhotoThemeColors {
     controls_hex: String,
     misc_hex: String,
     highlights_hex: String,
+    palette_hexes: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -2182,6 +2183,111 @@ fn color_saturation(color: SampleRgb) -> f64 {
     }
 }
 
+fn color_hue_degrees(color: SampleRgb) -> Option<f64> {
+    let red = f64::from(color.r) / 255.0;
+    let green = f64::from(color.g) / 255.0;
+    let blue = f64::from(color.b) / 255.0;
+    let max_value = red.max(green).max(blue);
+    let min_value = red.min(green).min(blue);
+    let delta = max_value - min_value;
+    if delta <= 0.0001 || max_value <= 0.0 {
+        return None;
+    }
+
+    let hue = if (max_value - red).abs() <= f64::EPSILON {
+        60.0 * ((green - blue) / delta).rem_euclid(6.0)
+    } else if (max_value - green).abs() <= f64::EPSILON {
+        60.0 * (((blue - red) / delta) + 2.0)
+    } else {
+        60.0 * (((red - green) / delta) + 4.0)
+    };
+    Some(hue)
+}
+
+fn hue_distance_degrees(left: f64, right: f64) -> f64 {
+    let distance = (left - right).abs().rem_euclid(360.0);
+    distance.min(360.0 - distance)
+}
+
+fn select_hue_diverse_candidates(
+    candidates: &[PaletteCandidate],
+    target_len: usize,
+) -> Vec<PaletteCandidate> {
+    let mut selected = Vec::<PaletteCandidate>::new();
+    if candidates.is_empty() {
+        return selected;
+    }
+
+    let first = candidates
+        .iter()
+        .copied()
+        .max_by(|left, right| {
+            let score = |candidate: PaletteCandidate| {
+                let saturation = color_saturation(candidate.color);
+                let luminance = relative_luminance(candidate.color);
+                saturation * 120.0
+                    + f64::from(candidate.count.max(1)).ln() * 3.0
+                    - (luminance - 0.45).abs() * 20.0
+            };
+            score(*left)
+                .partial_cmp(&score(*right))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .unwrap_or(candidates[0]);
+    selected.push(first);
+
+    while selected.len() < target_len && selected.len() < candidates.len() {
+        let next = candidates
+            .iter()
+            .copied()
+            .filter(|candidate| {
+                !selected
+                    .iter()
+                    .any(|existing| existing.color == candidate.color)
+            })
+            .max_by(|left, right| {
+                let score = |candidate: PaletteCandidate| {
+                    let min_rgb_distance = selected
+                        .iter()
+                        .map(|existing| {
+                            f64::from(color_distance_sq(candidate.color, existing.color)).sqrt()
+                        })
+                        .fold(f64::INFINITY, f64::min);
+                    let hue = color_hue_degrees(candidate.color);
+                    let min_hue_distance = hue
+                        .map(|candidate_hue| {
+                            selected
+                                .iter()
+                                .filter_map(|existing| {
+                                    color_hue_degrees(existing.color)
+                                        .map(|existing_hue| hue_distance_degrees(candidate_hue, existing_hue))
+                                })
+                                .fold(180.0, f64::min)
+                        })
+                        .unwrap_or(0.0);
+                    let saturation = color_saturation(candidate.color);
+                    let luminance = relative_luminance(candidate.color);
+                    min_hue_distance * 2.2
+                        + min_rgb_distance * 0.85
+                        + saturation * 75.0
+                        + f64::from(candidate.count.max(1)).ln() * 3.0
+                        - (luminance - 0.48).abs() * 12.0
+                };
+                score(*left)
+                    .partial_cmp(&score(*right))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+
+        if let Some(candidate) = next {
+            selected.push(candidate);
+        } else {
+            break;
+        }
+    }
+
+    selected
+}
+
 fn pick_sampled_highlight_color(
     candidates: &[PaletteCandidate],
     scene_color: SampleRgb,
@@ -2310,33 +2416,38 @@ fn pick_photo_theme_colors(path: &Path) -> Result<SampledPhotoThemeColors, Strin
         .collect::<Vec<_>>();
     candidates.sort_by(|left, right| right.count.cmp(&left.count));
 
-    let mut distinct = Vec::<PaletteCandidate>::new();
+    let mut distance_distinct = Vec::<PaletteCandidate>::new();
     for threshold in [42_u32, 28_u32, 18_u32, 0_u32] {
         for candidate in &candidates {
-            if distinct
+            if distance_distinct
                 .iter()
                 .any(|existing| existing.color == candidate.color)
             {
                 continue;
             }
-            if distinct.iter().all(|existing| {
+            if distance_distinct.iter().all(|existing| {
                 color_distance_sq(existing.color, candidate.color) >= threshold * threshold
             }) {
-                distinct.push(*candidate);
+                distance_distinct.push(*candidate);
             }
-            if distinct.len() >= 8 {
+            if distance_distinct.len() >= 24 {
                 break;
             }
         }
-        if distinct.len() >= 5 {
+        if distance_distinct.len() >= 12 {
             break;
         }
     }
 
+    let distinct = select_hue_diverse_candidates(&distance_distinct, 16);
     if distinct.is_empty() {
         return Err("Image sampling did not produce a usable palette.".to_string());
     }
 
+    let palette_hexes = distinct
+        .iter()
+        .map(|candidate| rgb_to_hex(candidate.color))
+        .collect::<Vec<_>>();
     let highlight_candidates = distinct.clone();
     let mut available = distinct;
     let scene_index = available
@@ -2431,6 +2542,7 @@ fn pick_photo_theme_colors(path: &Path) -> Result<SampledPhotoThemeColors, Strin
         controls_hex: rgb_to_hex(palette[3]),
         misc_hex: rgb_to_hex(palette[4]),
         highlights_hex: rgb_to_hex(highlights_color),
+        palette_hexes,
     })
 }
 

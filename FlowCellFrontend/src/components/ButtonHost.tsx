@@ -13,6 +13,7 @@ type ButtonHostProps = {
   targetHeightOverride?: number;
   importedSkinOverride?: ImportedSkin;
   styleGroupOverride?: StyleGroup;
+  skinProfileHighlight?: boolean;
 };
 
 type StyleWithVars = CSSProperties & Record<`--${string}`, string | number>;
@@ -34,7 +35,8 @@ export function ButtonHost({
   absolute = true,
   targetHeightOverride,
   importedSkinOverride,
-  styleGroupOverride
+  styleGroupOverride,
+  skinProfileHighlight = false
 }: ButtonHostProps) {
   const isChromeAction =
     button.groupId === "top-left-actions" || button.groupId === "top-right-actions";
@@ -99,7 +101,8 @@ export function ButtonHost({
   const hostClassName = [
     "button-host",
     isChromeAction ? "chrome-action" : "",
-    button.railId ? "rail-action" : ""
+    button.railId ? "rail-action" : "",
+    skinProfileHighlight ? "button-host--skin-profile-highlight" : ""
   ]
     .filter(Boolean)
     .join(" ");
@@ -114,6 +117,7 @@ export function ButtonHost({
       styleGroup={resolvedStyleGroup}
       importedSkin={resolvedImportedSkin}
       selected={button.isSelected ?? false}
+      highlightKey={skinProfileHighlight ? `main-page:${button.id}` : undefined}
       targetHeight={resolvedHeight}
       autoInlineSize={allowVariableWidth}
       allowOverflow

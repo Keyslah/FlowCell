@@ -902,6 +902,7 @@ def execute_bridge_operator(action: str, data: dict) -> dict[str, object]:
         pass
 
     return {
+        **result,
         "message": LAST_BRIDGE_MESSAGE or str(result.get("message", "") or f"Completed {normalized}."),
         "display": LAST_BRIDGE_DISPLAY,
         **({"exported_paths": result.get("exported_paths", [])} if normalized == "save_selected_stl_to_assets" else {}),

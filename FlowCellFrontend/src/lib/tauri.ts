@@ -54,6 +54,7 @@ export interface SampledPhotoThemeColors {
   controlsHex: string;
   miscHex: string;
   highlightsHex: string;
+  paletteHexes?: string[];
 }
 
 function sanitizeWindowToken(value: string): string {

@@ -9,6 +9,6 @@ Windows uses the shared Git/local/panel script workflow.
 
 Add Script copies the selected source into both `Windows Local Scripts` and the selected panel folder. Deleting a panel button never deletes the Local Scripts copy.
 
-## Utility scripts
+## Utility notes
 
-- `Windows Git Scripts/Utility/Toggle-AutoHotkey.vbs` launches `Toggle-AutoHotkey.ps1` from the same folder, so a GitHub checkout can toggle AutoHotkey off for anti-cheat games without Aaron-specific paths. Its shortcut icon stays green while AutoHotkey is active and changes to the off icon only after AutoHotkey processes are verified stopped. See [Toggle AutoHotkey for anti-cheat games](../../docs/toggle-autohotkey-for-anticheat.md).
+- The portable AutoHotkey on/off toggle moved out of Windows Utility and now lives in [`tools/autohotkey v2 on off`](../../tools/autohotkey%20v2%20on%20off/). See [Toggle AutoHotkey for anti-cheat games](../../docs/toggle-autohotkey-for-anticheat.md).

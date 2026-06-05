@@ -1,15 +1,38 @@
-# Description: Set the Blender world HDRI image plus X/Y/Z rotation, world strength,
-# and an optional screen-pinned viewport background image.
+# Description: Set Blender UI theme and HDRI values, plus Place Picture fake gizmos and fake grid over a background image.
+
+
+# FLOWCELL_CHILD: browse_theme | Browse | Choose a theme source image to sample colors from.
+# FLOWCELL_CHILD: absorb_theme | Absorb Theme | Pull the current Blender theme values back into the tool fields.
+# FLOWCELL_CHILD: save_theme | Save Theme | Save the currently staged Blender theme preset.
+# FLOWCELL_CHILD: load_theme | Load Theme | Load a saved Blender theme preset into the tool fields.
+# FLOWCELL_CHILD: dark_theme | Dark Theme | Stage the sampled palette as a dark Blender theme.
+# FLOWCELL_CHILD: light_theme | Light Theme | Stage the sampled palette as a light Blender theme.
+# FLOWCELL_CHILD: apply_theme | Apply | Apply the currently visible Blender theme role colors.
+# FLOWCELL_CHILD: apply_background_pic | Place Picture | Creates fake gizmos and a fake grid on top of a background image.
+# FLOWCELL_CHILD: browse_background_pic | Browse | Choose the Place Picture background image path.
+# FLOWCELL_CHILD: clear_background_pic | Clear | Remove the Place Picture fake background, grid, and gizmos while keeping the path field.
+# FLOWCELL_CHILD: apply_hdri | HDRI Apply | Apply the HDRI path in the field.
+# FLOWCELL_CHILD: clear_world | Clear | Reset the current file to a plain world without the staged HDRI.
+# FLOWCELL_CHILD: reset_world | Reset | Rebuild a clean world and reapply the staged HDRI values.
+# FLOWCELL_CHILD: browse_hdri | HDRI Browse | Choose the HDRI file path.
+# FLOWCELL_CHILD: apply_rotation_z | Z | Apply the staged Z rotation value.
+# FLOWCELL_CHILD: apply_rotation_y | Y | Apply the staged Y rotation value.
+# FLOWCELL_CHILD: apply_rotation_x | X | Apply the staged X rotation value.
+# FLOWCELL_CHILD: apply_world_strength | WS | Apply the staged world strength value.
 
 import colorsys
+import importlib
+import json
 import math
+import time
 from pathlib import Path
 
 import bpy
 import gpu
 from bpy.app.handlers import persistent
+from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
-from mathutils import Matrix
+from mathutils import Matrix, Vector
 
 
 DEFAULT_HDRI_PATH = ""
@@ -24,6 +47,96 @@ STATIC_BACKGROUND_FLIP_Y = False
 VIEWPORT_OVERLAY_NAMESPACE_KEY = "flowcell_hdri_world_viewport_overlay"
 VIEWPORT_OVERLAY_LOAD_HANDLER_KEY = "flowcell_hdri_world_viewport_overlay_load_post"
 VIEWPORT_OVERLAY_PATH_KEY = "flowcell_hdri_world_static_background_path"
+PLACE_PICTURE_GENERATION_KEY = "flowcell_place_picture_fake_gizmo_generation"
+PROJECT_THEME_STATE_KEY = "flowcell_theme_project_state_v1"
+PROJECT_THEME_STATE_FORMAT = "flowcell-blender-theme-project-state-v1"
+PROJECT_THEME_STATE_THEME_KEYS = (
+    "visual_mode",
+    "tabs_hex",
+    "tabs_text_hex",
+    "headers_hex",
+    "header_text_hex",
+    "text_hex",
+    "control_text_hex",
+    "accent_text_hex",
+    "editor_background_hex",
+    "scene_hex",
+    "controls_hex",
+    "borders_hex",
+    "darks_hex",
+    "misc_hex",
+    "highlights_hex",
+    "viewport_background_hex",
+    "viewport_gradient_enabled",
+    "viewport_gradient_hex",
+)
+
+PLACE_PICTURE_ENABLE_BACKGROUND = True
+PLACE_PICTURE_ENABLE_FAKE_GRID = True
+PLACE_PICTURE_ENABLE_FAKE_GIZMOS = True
+PLACE_PICTURE_ENABLE_MOVE_GIZMO = True
+PLACE_PICTURE_ENABLE_MOVE_AXIS_HANDLES = True
+PLACE_PICTURE_ENABLE_MOVE_PLANE_HANDLES = True
+PLACE_PICTURE_ENABLE_ROTATE_GIZMO = True
+PLACE_PICTURE_ENABLE_ROTATE_AXIS_RINGS = True
+PLACE_PICTURE_ENABLE_FREE_ROTATE_RING = True
+PLACE_PICTURE_ENABLE_SCALE_GIZMO = True
+PLACE_PICTURE_ENABLE_SCALE_AXIS_HANDLES = True
+PLACE_PICTURE_ENABLE_SCALE_PLANE_HANDLES = True
+PLACE_PICTURE_ENABLE_UNIFORM_SCALE_HANDLE = True
+PLACE_PICTURE_ENABLE_COMBINED_TRANSFORM_GIZMO = True
+
+PLACE_PICTURE_GRID_ALPHA = 0.34
+PLACE_PICTURE_GRID_MAJOR_ALPHA = 0.48
+PLACE_PICTURE_AXIS_ALPHA = 0.95
+PLACE_PICTURE_GRID_MINOR_WIDTH = 1.0
+PLACE_PICTURE_GRID_MAJOR_WIDTH = 1.25
+PLACE_PICTURE_AXIS_WIDTH = 2.4
+PLACE_PICTURE_TARGET_GRID_LINES = 34
+PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS = 90
+PLACE_PICTURE_DRAW_SCREEN_GRID_FALLBACK = True
+
+PLACE_PICTURE_GIZMO_DISPLAY_MODE = "ACTIVE_TOOL"
+PLACE_PICTURE_GIZMO_ORIENTATION = "GLOBAL"
+PLACE_PICTURE_ONLY_DRAW_GIZMOS_FOR_SELECTED_OBJECT = True
+PLACE_PICTURE_HIDE_REAL_BLENDER_TRANSFORM_GIZMOS = True
+
+PLACE_PICTURE_MOVE_PIXEL_LENGTH = 86
+PLACE_PICTURE_MOVE_LINE_WIDTH = 4.0
+PLACE_PICTURE_MOVE_ARROW_SIZE = 15
+PLACE_PICTURE_MOVE_CENTER_DOT_SIZE = 7
+PLACE_PICTURE_MOVE_HIT_RADIUS = 14
+PLACE_PICTURE_MOVE_DRAG_SENSITIVITY = 1.0
+
+PLACE_PICTURE_ROTATE_PIXEL_RADIUS = 82
+PLACE_PICTURE_ROTATE_LINE_WIDTH = 3.0
+PLACE_PICTURE_ROTATE_SEGMENTS = 96
+PLACE_PICTURE_ROTATE_HIT_RADIUS = 11
+PLACE_PICTURE_ROTATE_DRAG_SENSITIVITY = 1.0
+
+PLACE_PICTURE_SCALE_PIXEL_LENGTH = 78
+PLACE_PICTURE_SCALE_LINE_WIDTH = 3.4
+PLACE_PICTURE_SCALE_BOX_SIZE = 12
+PLACE_PICTURE_SCALE_CENTER_BOX_SIZE = 10
+PLACE_PICTURE_SCALE_HIT_RADIUS = 15
+PLACE_PICTURE_SCALE_DRAG_PIXEL_FACTOR = 130.0
+
+PLACE_PICTURE_PLANE_HANDLE_OFFSET = 38
+PLACE_PICTURE_PLANE_HANDLE_SIZE = 20
+PLACE_PICTURE_PLANE_HIT_RADIUS = 18
+PLACE_PICTURE_PLANE_FILL_ALPHA = 0.58
+PLACE_PICTURE_PLANE_EDGE_ALPHA = 0.96
+PLACE_PICTURE_PLANE_DRAG_SENSITIVITY = 1.0
+
+PLACE_PICTURE_FREE_ROTATE_PIXEL_RADIUS = 104
+PLACE_PICTURE_FREE_ROTATE_LINE_WIDTH = 2.8
+PLACE_PICTURE_FREE_ROTATE_HIT_RADIUS = 12
+PLACE_PICTURE_FREE_ROTATE_DRAG_SENSITIVITY = 1.0
+
+PLACE_PICTURE_COMBINED_MOVE_PIXEL_LENGTH = 74
+PLACE_PICTURE_COMBINED_SCALE_PIXEL_LENGTH = 56
+PLACE_PICTURE_COMBINED_ROTATE_PIXEL_RADIUS = 88
+PLACE_PICTURE_COMBINED_FREE_ROTATE_PIXEL_RADIUS = 112
 
 ROTATION_INDEX_BY_COMMAND = {
     "set_rotation_x": 0,
@@ -111,7 +224,7 @@ def _ctx(context=None):
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return _flowcell_script_root()
 
 
 def _result(message: str, **payload):
@@ -285,7 +398,10 @@ def _resolve_optional_image_path(raw_path: str) -> str:
     if not candidate:
         return ""
 
-    path = Path(candidate)
+    if candidate.startswith("//"):
+        path = Path(bpy.path.abspath(candidate))
+    else:
+        path = Path(candidate)
     if not path.is_absolute():
         path = _repo_root() / candidate
 
@@ -348,9 +464,19 @@ def _disable_camera_background_images():
 
 def _get_saved_overlay_path() -> str:
     window_manager = getattr(bpy.context, "window_manager", None)
-    if window_manager is None or VIEWPORT_OVERLAY_PATH_KEY not in window_manager:
-        return ""
-    return str(window_manager[VIEWPORT_OVERLAY_PATH_KEY] or "").strip()
+    if window_manager is not None and VIEWPORT_OVERLAY_PATH_KEY in window_manager:
+        saved_path = str(window_manager[VIEWPORT_OVERLAY_PATH_KEY] or "").strip()
+        if saved_path:
+            return saved_path
+
+    place_picture_state = _read_project_theme_state().get("place_picture", {})
+    if isinstance(place_picture_state, dict) and bool(place_picture_state.get("enabled")):
+        return str(
+            place_picture_state.get("relative_path")
+            or place_picture_state.get("path")
+            or ""
+        ).strip()
+    return ""
 
 
 def _set_saved_overlay_path(path: str):
@@ -362,6 +488,148 @@ def _set_saved_overlay_path(path: str):
         window_manager[VIEWPORT_OVERLAY_PATH_KEY] = normalized
     elif VIEWPORT_OVERLAY_PATH_KEY in window_manager:
         del window_manager[VIEWPORT_OVERLAY_PATH_KEY]
+
+
+def _project_scene(context=None):
+    active_context = _ctx(context)
+    scene = getattr(active_context, "scene", None)
+    if scene is None:
+        scene = getattr(bpy.context, "scene", None)
+    return scene
+
+
+def _empty_project_theme_state():
+    return {
+        "format": PROJECT_THEME_STATE_FORMAT,
+        "theme": {"enabled": False},
+        "place_picture": {
+            "enabled": False,
+            "path": "",
+            "relative_path": "",
+        },
+    }
+
+
+def _normalize_project_theme_state(value):
+    state = _empty_project_theme_state()
+    if not isinstance(value, dict):
+        return state
+    if value.get("format") != PROJECT_THEME_STATE_FORMAT:
+        return state
+
+    theme_state = value.get("theme", {})
+    if isinstance(theme_state, dict):
+        state["theme"].update(theme_state)
+        state["theme"]["enabled"] = bool(theme_state.get("enabled"))
+
+    place_picture_state = value.get("place_picture", {})
+    if isinstance(place_picture_state, dict):
+        state["place_picture"].update(place_picture_state)
+        state["place_picture"]["enabled"] = bool(place_picture_state.get("enabled"))
+        state["place_picture"]["path"] = str(place_picture_state.get("path") or "")
+        state["place_picture"]["relative_path"] = str(
+            place_picture_state.get("relative_path") or ""
+        )
+
+    return state
+
+
+def _read_project_theme_state(context=None):
+    scene = _project_scene(context)
+    if scene is None or PROJECT_THEME_STATE_KEY not in scene:
+        return _empty_project_theme_state()
+    try:
+        parsed = json.loads(str(scene.get(PROJECT_THEME_STATE_KEY) or ""))
+    except Exception:
+        return _empty_project_theme_state()
+    return _normalize_project_theme_state(parsed)
+
+
+def _ensure_project_theme_restore_handler_registered_from_action() -> bool:
+    try:
+        import flowcell_actions
+
+        ensure_handler = getattr(
+            flowcell_actions,
+            "_ensure_flowcell_project_theme_restore_handler_registered",
+            None,
+        )
+        if not callable(ensure_handler):
+            flowcell_actions = importlib.reload(flowcell_actions)
+            ensure_handler = getattr(
+                flowcell_actions,
+                "_ensure_flowcell_project_theme_restore_handler_registered",
+                None,
+            )
+        if callable(ensure_handler):
+            ensure_handler()
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _project_theme_restore_handler_registered() -> bool:
+    for handler in getattr(bpy.app.handlers, "load_post", []) or []:
+        if getattr(handler, "__name__", "") == "_restore_flowcell_project_theme_on_load":
+            return True
+    return False
+
+
+def _write_project_theme_state(context, state):
+    scene = _project_scene(context)
+    if scene is None:
+        raise RuntimeError("No active Blender scene is available for FlowCell project theme state.")
+    normalized = _normalize_project_theme_state(
+        {
+            **(state if isinstance(state, dict) else {}),
+            "format": PROJECT_THEME_STATE_FORMAT,
+        }
+    )
+    normalized["updated_at"] = time.time()
+    scene[PROJECT_THEME_STATE_KEY] = json.dumps(normalized, sort_keys=True)
+    try:
+        scene.update_tag()
+    except Exception:
+        pass
+    _ensure_project_theme_restore_handler_registered_from_action()
+    return normalized
+
+
+def _project_relative_path(path: str) -> str:
+    normalized = str(path or "").strip()
+    if not normalized or not getattr(bpy.data, "filepath", ""):
+        return ""
+    try:
+        relative_path = bpy.path.relpath(normalized)
+    except Exception:
+        return ""
+    return relative_path if str(relative_path).startswith("//") else ""
+
+
+def _set_project_place_picture_state(context, resolved_path: str):
+    state = _read_project_theme_state(context)
+    normalized_path = str(resolved_path or "").strip()
+    state["place_picture"] = {
+        "enabled": bool(normalized_path),
+        "path": normalized_path,
+        "relative_path": _project_relative_path(normalized_path),
+    }
+    return _write_project_theme_state(context, state)
+
+
+def _project_state_payload(state):
+    theme_state = state.get("theme", {}) if isinstance(state, dict) else {}
+    place_picture_state = state.get("place_picture", {}) if isinstance(state, dict) else {}
+    return {
+        "project_state": state,
+        "has_project_theme_state": bool(
+            isinstance(theme_state, dict) and theme_state.get("enabled")
+        ),
+        "has_project_place_picture_state": bool(
+            isinstance(place_picture_state, dict) and place_picture_state.get("enabled")
+        ),
+    }
 
 
 def _iter_view3d_spaces():
@@ -380,14 +648,1136 @@ def _iter_view3d_spaces():
                     yield space
 
 
-def _remove_viewport_overlay_handler():
-    state = _overlay_state()
-    handler = state.get("handler")
-    if handler is not None:
+def _safe_set(obj, attr, value):
+    if obj is None or not hasattr(obj, attr):
+        return
+    try:
+        setattr(obj, attr, value)
+    except Exception:
+        pass
+
+
+def _get_current_3d_context():
+    region = getattr(bpy.context, "region", None)
+    rv3d = getattr(bpy.context, "region_data", None)
+    space = getattr(bpy.context, "space_data", None)
+    if region is None or rv3d is None or space is None:
+        return None, None, None
+    if getattr(region, "type", "") != "WINDOW":
+        return None, None, None
+    if getattr(space, "type", "") != "VIEW_3D":
+        return None, None, None
+    return region, rv3d, space
+
+
+def _find_first_3d_view_context():
+    window_manager = getattr(bpy.context, "window_manager", None)
+    if window_manager is None:
+        return None
+    for window in window_manager.windows:
+        screen = getattr(window, "screen", None)
+        if screen is None:
+            continue
+        for area in screen.areas:
+            if area.type != "VIEW_3D":
+                continue
+            space = area.spaces.active
+            if space is None or getattr(space, "type", "") != "VIEW_3D":
+                continue
+            region = next((item for item in area.regions if item.type == "WINDOW"), None)
+            if region is None:
+                continue
+            return {
+                "window": window,
+                "screen": screen,
+                "area": area,
+                "region": region,
+                "space_data": space,
+                "region_data": space.region_3d,
+            }
+    return None
+
+
+def _snapshot_place_picture_viewports():
+    snapshots = []
+    for space in _iter_view3d_spaces() or []:
+        shading = getattr(space, "shading", None)
+        overlay = getattr(space, "overlay", None)
+        snapshot = {
+            "space": space,
+            "space_attrs": {},
+            "shading": shading,
+            "shading_attrs": {},
+            "overlay": overlay,
+            "overlay_attrs": {},
+        }
+        for attr in (
+            "show_gizmo",
+            "show_gizmo_object_translate",
+            "show_gizmo_object_rotate",
+            "show_gizmo_object_scale",
+        ):
+            if hasattr(space, attr):
+                try:
+                    snapshot["space_attrs"][attr] = getattr(space, attr)
+                except Exception:
+                    pass
+        for attr in (
+            "type",
+            "show_xray",
+            "show_xray_wireframe",
+            "background_type",
+            "use_compositor",
+        ):
+            if shading is not None and hasattr(shading, attr):
+                try:
+                    snapshot["shading_attrs"][attr] = getattr(shading, attr)
+                except Exception:
+                    pass
+        for attr in (
+            "show_overlays",
+            "show_floor",
+            "show_axis_x",
+            "show_axis_y",
+            "show_axis_z",
+            "show_extras",
+        ):
+            if overlay is not None and hasattr(overlay, attr):
+                try:
+                    snapshot["overlay_attrs"][attr] = getattr(overlay, attr)
+                except Exception:
+                    pass
+        snapshots.append(snapshot)
+    return snapshots
+
+
+def _restore_place_picture_viewports(state):
+    for snapshot in state.get("viewport_snapshots", []) or []:
+        for attr, value in snapshot.get("space_attrs", {}).items():
+            _safe_set(snapshot.get("space"), attr, value)
+        for attr, value in snapshot.get("shading_attrs", {}).items():
+            _safe_set(snapshot.get("shading"), attr, value)
+        for attr, value in snapshot.get("overlay_attrs", {}).items():
+            _safe_set(snapshot.get("overlay"), attr, value)
+
+
+def _apply_place_picture_viewport_settings():
+    for space in _iter_view3d_spaces() or []:
+        shading = getattr(space, "shading", None)
+        overlay = getattr(space, "overlay", None)
+        if shading is not None:
+            if hasattr(shading, "use_compositor"):
+                try:
+                    shading.use_compositor = "DISABLED"
+                except Exception:
+                    _safe_set(shading, "use_compositor", False)
+            _safe_set(shading, "type", "SOLID")
+            _safe_set(shading, "show_xray", False)
+            _safe_set(shading, "show_xray_wireframe", False)
+            _safe_set(shading, "background_type", "THEME")
+        if overlay is not None:
+            _safe_set(overlay, "show_overlays", True)
+            _safe_set(overlay, "show_floor", True)
+            _safe_set(overlay, "show_axis_x", True)
+            _safe_set(overlay, "show_axis_y", True)
+            _safe_set(overlay, "show_axis_z", True)
+            _safe_set(overlay, "show_extras", True)
+        _safe_set(space, "show_gizmo", True)
+        if PLACE_PICTURE_HIDE_REAL_BLENDER_TRANSFORM_GIZMOS:
+            _safe_set(space, "show_gizmo_object_translate", False)
+            _safe_set(space, "show_gizmo_object_rotate", False)
+            _safe_set(space, "show_gizmo_object_scale", False)
+
+
+def _nice_step_from_raw(raw):
+    raw = max(float(raw), 0.000001)
+    base = 10.0 ** math.floor(math.log10(raw))
+    for multiplier in (1.0, 2.0, 5.0, 10.0):
+        step = base * multiplier
+        if step >= raw:
+            return step
+    return base * 10.0
+
+
+def _world_units_per_pixel_at(region, rv3d, depth_location, center_2d):
+    try:
+        p0 = view3d_utils.region_2d_to_location_3d(
+            region, rv3d, (center_2d.x, center_2d.y), depth_location
+        )
+        p1 = view3d_utils.region_2d_to_location_3d(
+            region, rv3d, (center_2d.x + 20.0, center_2d.y), depth_location
+        )
+        length = (p1 - p0).length / 20.0
+        if math.isfinite(length) and length > 0.00000001:
+            return length
+    except Exception:
+        pass
+    view_distance = max(float(getattr(rv3d, "view_distance", 10.0)), 0.1)
+    return view_distance / max(float(region.width), 1.0)
+
+
+def _draw_2d_lines(shader, points, color, width):
+    if not points or len(points) < 2:
+        return
+    batch = batch_for_shader(
+        shader,
+        "LINES",
+        {"pos": [(float(point.x), float(point.y), 0.0) for point in points]},
+    )
+    try:
+        gpu.state.line_width_set(width)
+    except Exception:
+        pass
+    shader.bind()
+    shader.uniform_float("color", color)
+    batch.draw(shader)
+    try:
+        gpu.state.line_width_set(1.0)
+    except Exception:
+        pass
+
+
+def _draw_2d_triangles(shader, points, color):
+    if not points or len(points) < 3:
+        return
+    batch = batch_for_shader(
+        shader,
+        "TRIS",
+        {"pos": [(float(point.x), float(point.y), 0.0) for point in points]},
+    )
+    shader.bind()
+    shader.uniform_float("color", color)
+    batch.draw(shader)
+
+
+def _make_circle_triangles(center, radius, segments=28):
+    triangles = []
+    for index in range(segments):
+        angle_a = (index / segments) * math.tau
+        angle_b = ((index + 1) / segments) * math.tau
+        triangles.extend(
+            (
+                center,
+                center + Vector((math.cos(angle_a) * radius, math.sin(angle_a) * radius)),
+                center + Vector((math.cos(angle_b) * radius, math.sin(angle_b) * radius)),
+            )
+        )
+    return triangles
+
+
+def _make_square_triangles(center, size):
+    half = size * 0.5
+    p0 = center + Vector((-half, -half))
+    p1 = center + Vector((half, -half))
+    p2 = center + Vector((half, half))
+    p3 = center + Vector((-half, half))
+    return [p0, p1, p2, p0, p2, p3]
+
+
+def _make_quad_triangles(quad):
+    return [quad[0], quad[1], quad[2], quad[0], quad[2], quad[3]]
+
+
+def _make_circle_lines(center, radius, segments=96):
+    points = []
+    previous = None
+    for index in range(segments + 1):
+        angle = (index / segments) * math.tau
+        point = center + Vector((math.cos(angle) * radius, math.sin(angle) * radius))
+        if previous is not None:
+            points.extend((previous, point))
+        previous = point
+    return points
+
+
+def _make_arrowhead(tip, direction, size):
+    if direction.length <= 0.0001:
+        return []
+    normalized = direction.normalized()
+    perpendicular = Vector((-normalized.y, normalized.x))
+    base = tip - normalized * size
+    return [tip, base + perpendicular * (size * 0.55), base - perpendicular * (size * 0.55)]
+
+
+def _distance_to_segment_2d(point, start, end):
+    segment = end - start
+    denominator = segment.length_squared
+    if denominator <= 0.000001:
+        return (point - start).length
+    t = max(0.0, min(1.0, (point - start).dot(segment) / denominator))
+    return (point - (start + segment * t)).length
+
+
+def _reject_far_offscreen_line(p0, p1, width, height):
+    margin = max(width, height) * 4.0
+    return (
+        (p0.x < -margin and p1.x < -margin)
+        or (p0.x > width + margin and p1.x > width + margin)
+        or (p0.y < -margin and p1.y < -margin)
+        or (p0.y > height + margin and p1.y > height + margin)
+    )
+
+
+def _point_in_convex_quad(point, quad):
+    sign = None
+    for index in range(4):
+        a = quad[index]
+        b = quad[(index + 1) % 4]
+        cross = (b.x - a.x) * (point.y - a.y) - (b.y - a.y) * (point.x - a.x)
+        if abs(cross) <= 0.000001:
+            continue
+        current = cross > 0.0
+        if sign is None:
+            sign = current
+        elif sign != current:
+            return False
+    return True
+
+
+def _distance_to_quad_edges(point, quad):
+    return min(_distance_to_segment_2d(point, quad[i], quad[(i + 1) % 4]) for i in range(4))
+
+
+def _make_plane_handle_quad(origin_2d, dir_a, dir_b, offset, size):
+    if dir_a is None or dir_b is None or dir_a.length <= 0.001 or dir_b.length <= 0.001:
+        return None
+    axis_a = dir_a.normalized()
+    axis_b = dir_b.normalized()
+    center = origin_2d + axis_a * offset + axis_b * offset
+    half = size * 0.5
+    return [
+        center - axis_a * half - axis_b * half,
+        center + axis_a * half - axis_b * half,
+        center + axis_a * half + axis_b * half,
+        center - axis_a * half + axis_b * half,
+    ]
+
+
+def _get_active_tool_kind():
+    try:
+        tool = bpy.context.workspace.tools.from_space_type(
+            "VIEW_3D", mode=bpy.context.mode, create=False
+        )
+        if tool is None:
+            return "NONE"
+        idname = str(tool.idname).lower()
+        if "transform" in idname:
+            return "ALL"
+        if "rotate" in idname:
+            return "ROTATE"
+        if "scale" in idname:
+            return "SCALE"
+        if "move" in idname or "translate" in idname:
+            return "MOVE"
+    except Exception:
+        pass
+    return "NONE"
+
+
+def _should_draw_gizmo_kind(kind):
+    if not PLACE_PICTURE_ENABLE_FAKE_GIZMOS:
+        return False
+    mode = PLACE_PICTURE_GIZMO_DISPLAY_MODE.upper().strip()
+    kind = kind.upper().strip()
+    if mode == "ALL":
+        return True
+    if mode == "ACTIVE_TOOL":
+        active_kind = _get_active_tool_kind()
+        if active_kind == "ALL":
+            return PLACE_PICTURE_ENABLE_COMBINED_TRANSFORM_GIZMO
+        return active_kind == kind
+    return mode == kind
+
+
+def _get_active_gizmo_object():
+    obj = bpy.context.view_layer.objects.active
+    if obj is None:
+        selected = list(getattr(bpy.context, "selected_objects", []) or [])
+        if selected:
+            obj = selected[0]
+    if obj is None:
+        return None
+    if PLACE_PICTURE_ONLY_DRAW_GIZMOS_FOR_SELECTED_OBJECT:
         try:
-            bpy.types.SpaceView3D.draw_handler_remove(handler, "WINDOW")
+            if not obj.select_get():
+                return None
+        except Exception:
+            return None
+    return obj
+
+
+def _get_transform_objects():
+    selected = list(getattr(bpy.context, "selected_objects", []) or [])
+    if not selected:
+        obj = _get_active_gizmo_object()
+        if obj is not None:
+            selected = [obj]
+    usable = []
+    for obj in selected:
+        if obj is None or getattr(obj, "type", None) is None:
+            continue
+        try:
+            if obj.hide_viewport:
+                continue
         except Exception:
             pass
+        usable.append(obj)
+    return usable
+
+
+def _get_axis_vectors(obj):
+    if PLACE_PICTURE_GIZMO_ORIENTATION.upper().strip() == "LOCAL" and obj is not None:
+        matrix = obj.matrix_world.to_3x3()
+        return [
+            (matrix @ Vector((1.0, 0.0, 0.0))).normalized(),
+            (matrix @ Vector((0.0, 1.0, 0.0))).normalized(),
+            (matrix @ Vector((0.0, 0.0, 1.0))).normalized(),
+        ]
+    return [
+        Vector((1.0, 0.0, 0.0)),
+        Vector((0.0, 1.0, 0.0)),
+        Vector((0.0, 0.0, 1.0)),
+    ]
+
+
+def _get_plane_specs(axes):
+    return [
+        {"label": "XY", "axis_indices": (0, 1), "axes": (axes[0], axes[1]), "normal": axes[2], "color": (1.0, 0.88, 0.05, 1.0)},
+        {"label": "XZ", "axis_indices": (0, 2), "axes": (axes[0], axes[2]), "normal": axes[1], "color": (1.0, 0.10, 0.95, 1.0)},
+        {"label": "YZ", "axis_indices": (1, 2), "axes": (axes[1], axes[2]), "normal": axes[0], "color": (0.10, 0.95, 1.0, 1.0)},
+    ]
+
+
+def _project_world_point(region, rv3d, world_point):
+    try:
+        projected = view3d_utils.location_3d_to_region_2d(region, rv3d, world_point)
+    except Exception:
+        return None
+    return None if projected is None else Vector((projected.x, projected.y))
+
+
+def _projected_axis_direction(region, rv3d, origin, axis, center_2d):
+    axis = axis.normalized()
+    test_length = max(float(getattr(rv3d, "view_distance", 10.0)), 0.1) * 0.25
+    projected = view3d_utils.location_3d_to_region_2d(region, rv3d, origin + axis * test_length)
+    if projected is None:
+        return None
+    direction = Vector((projected.x - center_2d.x, projected.y - center_2d.y))
+    if direction.length < 2.0:
+        return None
+    return direction.normalized()
+
+
+def _axis_plane_basis(axis):
+    normal = axis.normalized()
+    temp = Vector((0.0, 0.0, 1.0)) if abs(normal.dot(Vector((0.0, 0.0, 1.0)))) < 0.92 else Vector((0.0, 1.0, 0.0))
+    u = normal.cross(temp).normalized()
+    v = normal.cross(u).normalized()
+    return u, v
+
+
+def _ray_from_mouse(region, rv3d, mouse):
+    try:
+        origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, (mouse.x, mouse.y))
+        direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, (mouse.x, mouse.y)).normalized()
+        return origin, direction
+    except Exception:
+        return None, None
+
+
+def _ray_plane_intersection(region, rv3d, mouse, plane_point, plane_normal):
+    origin, direction = _ray_from_mouse(region, rv3d, mouse)
+    if origin is None or direction is None:
+        return None
+    normal = plane_normal.normalized()
+    denominator = direction.dot(normal)
+    if abs(denominator) < 0.000001:
+        return None
+    t = (plane_point - origin).dot(normal) / denominator
+    if not math.isfinite(t):
+        return None
+    return origin + direction * t
+
+
+def _screen_view_axis(rv3d):
+    try:
+        return (rv3d.view_rotation @ Vector((0.0, 0.0, 1.0))).normalized()
+    except Exception:
+        return Vector((0.0, 0.0, 1.0))
+
+
+def _ray_hit_xy_plane(region, rv3d, coord):
+    try:
+        origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
+        direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, coord).normalized()
+    except Exception:
+        return None
+    if abs(direction.z) < 0.0000001:
+        return None
+    t = -origin.z / direction.z
+    if t < 0.0:
+        return None
+    point = origin + direction * t
+    if not all(math.isfinite(value) for value in (point.x, point.y, point.z)):
+        return None
+    return point
+
+
+def _get_visible_xy_grid_bounds(region, rv3d):
+    width = float(region.width)
+    height = float(region.height)
+    samples = []
+    steps = 8
+    for index in range(steps + 1):
+        t = index / steps
+        x = t * width
+        y = t * height
+        samples.extend(((x, 0.0), (x, height), (0.0, y), (width, y)))
+    samples.append((width * 0.5, height * 0.5))
+    hits = [hit for hit in (_ray_hit_xy_plane(region, rv3d, coord) for coord in samples) if hit is not None]
+    if len(hits) >= 2:
+        min_x = min(point.x for point in hits)
+        max_x = max(point.x for point in hits)
+        min_y = min(point.y for point in hits)
+        max_y = max(point.y for point in hits)
+        extent = max(max_x - min_x, max_y - min_y)
+        if extent > 0.000001 and math.isfinite(extent):
+            step = _nice_step_from_raw(extent / PLACE_PICTURE_TARGET_GRID_LINES)
+            pad = step * 4.0
+            return min_x - pad, max_x + pad, min_y - pad, max_y + pad, step
+    center = getattr(rv3d, "view_location", Vector((0.0, 0.0, 0.0)))
+    step = _nice_step_from_raw(max(float(getattr(rv3d, "view_distance", 10.0)), 0.1) / 8.0)
+    half = step * 40.0
+    return center.x - half, center.x + half, center.y - half, center.y + half, step
+
+
+def _project_world_line_to_2d(region, rv3d, p0, p1):
+    try:
+        start = view3d_utils.location_3d_to_region_2d(region, rv3d, Vector(p0))
+        end = view3d_utils.location_3d_to_region_2d(region, rv3d, Vector(p1))
+    except Exception:
+        return None
+    if start is None or end is None:
+        return None
+    p0_2d = Vector((start.x, start.y))
+    p1_2d = Vector((end.x, end.y))
+    if _reject_far_offscreen_line(p0_2d, p1_2d, float(region.width), float(region.height)):
+        return None
+    return p0_2d, p1_2d
+
+
+def _append_projected_line(bucket, region, rv3d, p0, p1):
+    projected = _project_world_line_to_2d(region, rv3d, p0, p1)
+    if projected is None:
+        return False
+    bucket.extend(projected)
+    return True
+
+
+def _draw_screen_grid_fallback(shader, region):
+    width = float(region.width)
+    height = float(region.height)
+    if width <= 2.0 or height <= 2.0:
+        return
+    step = max(min(width, height) / 14.0, 16.0)
+    minor = []
+    major = []
+    center_x = width * 0.5
+    center_y = height * 0.5
+    x = center_x
+    index = 0
+    while x <= width:
+        (major if index % 5 == 0 else minor).extend((Vector((x, 0.0)), Vector((x, height))))
+        x += step
+        index += 1
+    x = center_x - step
+    index = 1
+    while x >= 0.0:
+        (major if index % 5 == 0 else minor).extend((Vector((x, 0.0)), Vector((x, height))))
+        x -= step
+        index += 1
+    y = center_y
+    index = 0
+    while y <= height:
+        (major if index % 5 == 0 else minor).extend((Vector((0.0, y)), Vector((width, y))))
+        y += step
+        index += 1
+    y = center_y - step
+    index = 1
+    while y >= 0.0:
+        (major if index % 5 == 0 else minor).extend((Vector((0.0, y)), Vector((width, y))))
+        y -= step
+        index += 1
+    _draw_2d_lines(shader, minor, (0.55, 0.55, 0.55, PLACE_PICTURE_GRID_ALPHA * 0.75), PLACE_PICTURE_GRID_MINOR_WIDTH)
+    _draw_2d_lines(shader, major, (0.68, 0.68, 0.68, PLACE_PICTURE_GRID_MAJOR_ALPHA * 0.75), PLACE_PICTURE_GRID_MAJOR_WIDTH)
+    _draw_2d_lines(shader, [Vector((0.0, center_y)), Vector((width, center_y))], (1.0, 0.05, 0.035, PLACE_PICTURE_AXIS_ALPHA * 0.75), PLACE_PICTURE_AXIS_WIDTH)
+    _draw_2d_lines(shader, [Vector((center_x, 0.0)), Vector((center_x, height))], (0.05, 0.95, 0.08, PLACE_PICTURE_AXIS_ALPHA * 0.75), PLACE_PICTURE_AXIS_WIDTH)
+
+
+def _draw_fake_grid_2d(shader, region, rv3d):
+    if not PLACE_PICTURE_ENABLE_FAKE_GRID:
+        return
+    min_x, max_x, min_y, max_y, step = _get_visible_xy_grid_bounds(region, rv3d)
+    if step <= 0.0:
+        return
+    line_count_x = abs((max_x - min_x) / step)
+    line_count_y = abs((max_y - min_y) / step)
+    while line_count_x > PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS or line_count_y > PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS:
+        step = _nice_step_from_raw(step * 2.1)
+        line_count_x = abs((max_x - min_x) / step)
+        line_count_y = abs((max_y - min_y) / step)
+    start_x = math.floor(min_x / step) * step
+    end_x = math.ceil(max_x / step) * step
+    start_y = math.floor(min_y / step) * step
+    end_y = math.ceil(max_y / step) * step
+    eps = step * 0.0001
+    minor = []
+    major = []
+    x_axis = []
+    y_axis = []
+    projected_count = 0
+    for index in range(int(max(0, round((end_x - start_x) / step))) + 1):
+        x = start_x + index * step
+        if abs(x) < eps:
+            projected_count += int(_append_projected_line(y_axis, region, rv3d, (0.0, start_y, 0.0), (0.0, end_y, 0.0)))
+            continue
+        bucket = major if int(round(x / step)) % 10 == 0 else minor
+        projected_count += int(_append_projected_line(bucket, region, rv3d, (x, start_y, 0.0), (x, end_y, 0.0)))
+    for index in range(int(max(0, round((end_y - start_y) / step))) + 1):
+        y = start_y + index * step
+        if abs(y) < eps:
+            projected_count += int(_append_projected_line(x_axis, region, rv3d, (start_x, 0.0, 0.0), (end_x, 0.0, 0.0)))
+            continue
+        bucket = major if int(round(y / step)) % 10 == 0 else minor
+        projected_count += int(_append_projected_line(bucket, region, rv3d, (start_x, y, 0.0), (end_x, y, 0.0)))
+    if projected_count <= 0:
+        if PLACE_PICTURE_DRAW_SCREEN_GRID_FALLBACK:
+            _draw_screen_grid_fallback(shader, region)
+        return
+    _draw_2d_lines(shader, minor, (0.0, 0.0, 0.0, PLACE_PICTURE_GRID_ALPHA * 0.25), PLACE_PICTURE_GRID_MINOR_WIDTH + 1.5)
+    _draw_2d_lines(shader, major, (0.0, 0.0, 0.0, PLACE_PICTURE_GRID_MAJOR_ALPHA * 0.25), PLACE_PICTURE_GRID_MAJOR_WIDTH + 1.5)
+    _draw_2d_lines(shader, minor, (0.55, 0.55, 0.55, PLACE_PICTURE_GRID_ALPHA), PLACE_PICTURE_GRID_MINOR_WIDTH)
+    _draw_2d_lines(shader, major, (0.68, 0.68, 0.68, PLACE_PICTURE_GRID_MAJOR_ALPHA), PLACE_PICTURE_GRID_MAJOR_WIDTH)
+    _draw_2d_lines(shader, x_axis, (0.0, 0.0, 0.0, PLACE_PICTURE_AXIS_ALPHA * 0.28), PLACE_PICTURE_AXIS_WIDTH + 2.0)
+    _draw_2d_lines(shader, y_axis, (0.0, 0.0, 0.0, PLACE_PICTURE_AXIS_ALPHA * 0.28), PLACE_PICTURE_AXIS_WIDTH + 2.0)
+    _draw_2d_lines(shader, x_axis, (1.0, 0.05, 0.035, PLACE_PICTURE_AXIS_ALPHA), PLACE_PICTURE_AXIS_WIDTH)
+    _draw_2d_lines(shader, y_axis, (0.05, 0.95, 0.08, PLACE_PICTURE_AXIS_ALPHA), PLACE_PICTURE_AXIS_WIDTH)
+
+
+def _make_rotate_ring_segments(region, rv3d, origin, axis, radius_world):
+    axis = axis.normalized()
+    u, v = _axis_plane_basis(axis)
+    segments = []
+    previous_2d = None
+    for index in range(PLACE_PICTURE_ROTATE_SEGMENTS + 1):
+        angle = (index / PLACE_PICTURE_ROTATE_SEGMENTS) * math.tau
+        world_point = origin + (u * math.cos(angle) + v * math.sin(angle)) * radius_world
+        p2d = _project_world_point(region, rv3d, world_point)
+        if p2d is not None and previous_2d is not None:
+            if not _reject_far_offscreen_line(previous_2d, p2d, float(region.width), float(region.height)):
+                segments.extend((previous_2d, p2d))
+        previous_2d = p2d
+    return segments
+
+
+def _axis_colors():
+    return [(1.0, 0.05, 0.035, 1.0), (0.05, 0.95, 0.08, 1.0), (0.20, 0.45, 1.0, 1.0)]
+
+
+def _get_axis_screen_dirs(region, rv3d, origin, origin_2d, axes):
+    return [_projected_axis_direction(region, rv3d, origin, axis, origin_2d) for axis in axes]
+
+
+def _current_move_length():
+    return PLACE_PICTURE_COMBINED_MOVE_PIXEL_LENGTH if _get_active_tool_kind() == "ALL" else PLACE_PICTURE_MOVE_PIXEL_LENGTH
+
+
+def _current_scale_length():
+    return PLACE_PICTURE_COMBINED_SCALE_PIXEL_LENGTH if _get_active_tool_kind() == "ALL" else PLACE_PICTURE_SCALE_PIXEL_LENGTH
+
+
+def _current_rotate_radius():
+    return PLACE_PICTURE_COMBINED_ROTATE_PIXEL_RADIUS if _get_active_tool_kind() == "ALL" else PLACE_PICTURE_ROTATE_PIXEL_RADIUS
+
+
+def _current_free_rotate_radius():
+    return PLACE_PICTURE_COMBINED_FREE_ROTATE_PIXEL_RADIUS if _get_active_tool_kind() == "ALL" else PLACE_PICTURE_FREE_ROTATE_PIXEL_RADIUS
+
+
+def _draw_plane_handle(shader, quad, color, fill_alpha, edge_width):
+    if quad is None:
+        return
+    _draw_2d_triangles(shader, _make_quad_triangles(quad), (0.0, 0.0, 0.0, 0.46))
+    center = Vector((0.0, 0.0))
+    for point in quad:
+        center += point
+    center /= 4.0
+    inner = [center + (point - center) * 0.90 for point in quad]
+    _draw_2d_triangles(shader, _make_quad_triangles(inner), (color[0], color[1], color[2], fill_alpha))
+    outline = []
+    for index in range(4):
+        outline.extend((quad[index], quad[(index + 1) % 4]))
+    _draw_2d_lines(shader, outline, (color[0], color[1], color[2], PLACE_PICTURE_PLANE_EDGE_ALPHA), edge_width)
+
+
+def _draw_fake_move_gizmo_2d(shader, region, rv3d, obj, origin_2d, axes):
+    if not (PLACE_PICTURE_ENABLE_MOVE_GIZMO and PLACE_PICTURE_ENABLE_MOVE_AXIS_HANDLES and _should_draw_gizmo_kind("MOVE")):
+        return
+    origin = obj.matrix_world.translation.copy()
+    dirs = _get_axis_screen_dirs(region, rv3d, origin, origin_2d, axes)
+    colors = _axis_colors()
+    _draw_2d_triangles(shader, _make_circle_triangles(origin_2d, PLACE_PICTURE_MOVE_CENTER_DOT_SIZE + 3), (0.0, 0.0, 0.0, 0.72))
+    _draw_2d_triangles(shader, _make_circle_triangles(origin_2d, PLACE_PICTURE_MOVE_CENTER_DOT_SIZE), (1.0, 1.0, 1.0, 0.95))
+    for axis_index, direction in enumerate(dirs):
+        if direction is None:
+            continue
+        tip = origin_2d + direction * _current_move_length()
+        line_end = tip - direction * (PLACE_PICTURE_MOVE_ARROW_SIZE * 0.45)
+        _draw_2d_lines(shader, [origin_2d, line_end], (0.0, 0.0, 0.0, 0.72), PLACE_PICTURE_MOVE_LINE_WIDTH + 3.0)
+        _draw_2d_lines(shader, [origin_2d, line_end], colors[axis_index], PLACE_PICTURE_MOVE_LINE_WIDTH)
+        _draw_2d_triangles(shader, _make_arrowhead(tip, direction, PLACE_PICTURE_MOVE_ARROW_SIZE + 4), (0.0, 0.0, 0.0, 0.72))
+        _draw_2d_triangles(shader, _make_arrowhead(tip, direction, PLACE_PICTURE_MOVE_ARROW_SIZE), colors[axis_index])
+
+
+def _draw_fake_move_plane_handles_2d(shader, region, rv3d, obj, origin_2d, axes):
+    if not (PLACE_PICTURE_ENABLE_MOVE_GIZMO and PLACE_PICTURE_ENABLE_MOVE_PLANE_HANDLES and _should_draw_gizmo_kind("MOVE")):
+        return
+    origin = obj.matrix_world.translation.copy()
+    dirs = _get_axis_screen_dirs(region, rv3d, origin, origin_2d, axes)
+    for spec in _get_plane_specs(axes):
+        ia, ib = spec["axis_indices"]
+        _draw_plane_handle(
+            shader,
+            _make_plane_handle_quad(origin_2d, dirs[ia], dirs[ib], PLACE_PICTURE_PLANE_HANDLE_OFFSET, PLACE_PICTURE_PLANE_HANDLE_SIZE),
+            spec["color"],
+            PLACE_PICTURE_PLANE_FILL_ALPHA,
+            1.6,
+        )
+
+
+def _draw_fake_scale_gizmo_2d(shader, region, rv3d, obj, origin_2d, axes):
+    if not (PLACE_PICTURE_ENABLE_SCALE_GIZMO and PLACE_PICTURE_ENABLE_SCALE_AXIS_HANDLES and _should_draw_gizmo_kind("SCALE")):
+        return
+    origin = obj.matrix_world.translation.copy()
+    dirs = _get_axis_screen_dirs(region, rv3d, origin, origin_2d, axes)
+    colors = _axis_colors()
+    if PLACE_PICTURE_ENABLE_UNIFORM_SCALE_HANDLE:
+        _draw_2d_triangles(shader, _make_square_triangles(origin_2d, PLACE_PICTURE_SCALE_CENTER_BOX_SIZE + 5), (0.0, 0.0, 0.0, 0.70))
+        _draw_2d_triangles(shader, _make_square_triangles(origin_2d, PLACE_PICTURE_SCALE_CENTER_BOX_SIZE), (1.0, 1.0, 1.0, 0.90))
+    for axis_index, direction in enumerate(dirs):
+        if direction is None:
+            continue
+        tip = origin_2d + direction * _current_scale_length()
+        line_end = tip - direction * (PLACE_PICTURE_SCALE_BOX_SIZE * 0.25)
+        _draw_2d_lines(shader, [origin_2d, line_end], (0.0, 0.0, 0.0, 0.72), PLACE_PICTURE_SCALE_LINE_WIDTH + 3.0)
+        _draw_2d_lines(shader, [origin_2d, line_end], colors[axis_index], PLACE_PICTURE_SCALE_LINE_WIDTH)
+        _draw_2d_triangles(shader, _make_square_triangles(tip, PLACE_PICTURE_SCALE_BOX_SIZE + 5), (0.0, 0.0, 0.0, 0.72))
+        _draw_2d_triangles(shader, _make_square_triangles(tip, PLACE_PICTURE_SCALE_BOX_SIZE), colors[axis_index])
+
+
+def _draw_fake_scale_plane_handles_2d(shader, region, rv3d, obj, origin_2d, axes):
+    if not (PLACE_PICTURE_ENABLE_SCALE_GIZMO and PLACE_PICTURE_ENABLE_SCALE_PLANE_HANDLES and _should_draw_gizmo_kind("SCALE")):
+        return
+    origin = obj.matrix_world.translation.copy()
+    dirs = _get_axis_screen_dirs(region, rv3d, origin, origin_2d, axes)
+    for spec in _get_plane_specs(axes):
+        ia, ib = spec["axis_indices"]
+        _draw_plane_handle(
+            shader,
+            _make_plane_handle_quad(origin_2d, dirs[ia], dirs[ib], PLACE_PICTURE_PLANE_HANDLE_OFFSET + 10.0, max(PLACE_PICTURE_PLANE_HANDLE_SIZE - 3.0, 8.0)),
+            spec["color"],
+            max(0.25, PLACE_PICTURE_PLANE_FILL_ALPHA * 0.70),
+            2.4,
+        )
+
+
+def _draw_fake_rotate_gizmo_2d(shader, region, rv3d, obj, origin_2d, axes):
+    if not (PLACE_PICTURE_ENABLE_ROTATE_GIZMO and PLACE_PICTURE_ENABLE_ROTATE_AXIS_RINGS and _should_draw_gizmo_kind("ROTATE")):
+        return
+    origin = obj.matrix_world.translation.copy()
+    radius_world = _world_units_per_pixel_at(region, rv3d, origin, origin_2d) * _current_rotate_radius()
+    if not math.isfinite(radius_world) or radius_world <= 0.0:
+        return
+    colors = _axis_colors()
+    for axis_index, axis in enumerate(axes):
+        ring_segments = _make_rotate_ring_segments(region, rv3d, origin, axis, radius_world)
+        if not ring_segments:
+            continue
+        _draw_2d_lines(shader, ring_segments, (0.0, 0.0, 0.0, 0.72), PLACE_PICTURE_ROTATE_LINE_WIDTH + 3.0)
+        _draw_2d_lines(shader, ring_segments, colors[axis_index], PLACE_PICTURE_ROTATE_LINE_WIDTH)
+
+
+def _draw_free_rotate_ring_2d(shader, obj, origin_2d):
+    if not (PLACE_PICTURE_ENABLE_ROTATE_GIZMO and PLACE_PICTURE_ENABLE_FREE_ROTATE_RING and _should_draw_gizmo_kind("ROTATE")):
+        return
+    ring = _make_circle_lines(origin_2d, _current_free_rotate_radius(), segments=PLACE_PICTURE_ROTATE_SEGMENTS)
+    _draw_2d_lines(shader, ring, (0.0, 0.0, 0.0, 0.68), PLACE_PICTURE_FREE_ROTATE_LINE_WIDTH + 3.0)
+    _draw_2d_lines(shader, ring, (1.0, 1.0, 1.0, 0.88), PLACE_PICTURE_FREE_ROTATE_LINE_WIDTH)
+
+
+def _draw_fake_gizmos_2d(shader, region, rv3d):
+    if not PLACE_PICTURE_ENABLE_FAKE_GIZMOS:
+        return
+    obj = _get_active_gizmo_object()
+    if obj is None:
+        return
+    origin = obj.matrix_world.translation.copy()
+    origin_2d = _project_world_point(region, rv3d, origin)
+    if origin_2d is None:
+        return
+    axes = _get_axis_vectors(obj)
+    _draw_fake_rotate_gizmo_2d(shader, region, rv3d, obj, origin_2d, axes)
+    _draw_free_rotate_ring_2d(shader, obj, origin_2d)
+    _draw_fake_scale_gizmo_2d(shader, region, rv3d, obj, origin_2d, axes)
+    _draw_fake_scale_plane_handles_2d(shader, region, rv3d, obj, origin_2d, axes)
+    _draw_fake_move_gizmo_2d(shader, region, rv3d, obj, origin_2d, axes)
+    _draw_fake_move_plane_handles_2d(shader, region, rv3d, obj, origin_2d, axes)
+
+
+def _hit_quad_handle(mouse, quad):
+    if quad is None:
+        return None
+    distance = 0.0 if _point_in_convex_quad(mouse, quad) else _distance_to_quad_edges(mouse, quad)
+    return distance if distance <= PLACE_PICTURE_PLANE_HIT_RADIUS else None
+
+
+def _hit_test_move(region, rv3d, obj, mouse):
+    if not (PLACE_PICTURE_ENABLE_MOVE_GIZMO and _should_draw_gizmo_kind("MOVE")):
+        return None
+    origin = obj.matrix_world.translation.copy()
+    origin_2d = _project_world_point(region, rv3d, origin)
+    if origin_2d is None:
+        return None
+    axes = _get_axis_vectors(obj)
+    dirs = _get_axis_screen_dirs(region, rv3d, origin, origin_2d, axes)
+    best = None
+    if PLACE_PICTURE_ENABLE_MOVE_AXIS_HANDLES:
+        for axis_index, direction in enumerate(dirs):
+            if direction is None:
+                continue
+            tip = origin_2d + direction * _current_move_length()
+            line_end = tip - direction * (PLACE_PICTURE_MOVE_ARROW_SIZE * 0.45)
+            distance = min(_distance_to_segment_2d(mouse, origin_2d, line_end), (mouse - tip).length)
+            if distance <= PLACE_PICTURE_MOVE_HIT_RADIUS and (best is None or distance < best["distance"]):
+                best = {"kind": "MOVE", "axis_index": axis_index, "axis": axes[axis_index].normalized(), "screen_dir": direction.normalized(), "distance": distance, "origin": origin, "origin_2d": origin_2d}
+    if PLACE_PICTURE_ENABLE_MOVE_PLANE_HANDLES:
+        for spec in _get_plane_specs(axes):
+            ia, ib = spec["axis_indices"]
+            distance = _hit_quad_handle(mouse, _make_plane_handle_quad(origin_2d, dirs[ia], dirs[ib], PLACE_PICTURE_PLANE_HANDLE_OFFSET, PLACE_PICTURE_PLANE_HANDLE_SIZE))
+            if distance is not None and (best is None or distance < best["distance"]):
+                best = {
+                    "kind": "MOVE_PLANE",
+                    "plane": spec["label"],
+                    "plane_axes": spec["axes"],
+                    "plane_normal": spec["normal"].normalized(),
+                    "distance": distance,
+                    "origin": origin,
+                    "origin_2d": origin_2d,
+                    "plane_start": _ray_plane_intersection(region, rv3d, mouse, origin, spec["normal"]),
+                }
+    return best
+
+
+def _hit_test_scale(region, rv3d, obj, mouse):
+    if not (PLACE_PICTURE_ENABLE_SCALE_GIZMO and _should_draw_gizmo_kind("SCALE")):
+        return None
+    origin = obj.matrix_world.translation.copy()
+    origin_2d = _project_world_point(region, rv3d, origin)
+    if origin_2d is None:
+        return None
+    axes = _get_axis_vectors(obj)
+    dirs = _get_axis_screen_dirs(region, rv3d, origin, origin_2d, axes)
+    best = None
+    if PLACE_PICTURE_ENABLE_UNIFORM_SCALE_HANDLE and (mouse - origin_2d).length <= PLACE_PICTURE_SCALE_HIT_RADIUS:
+        best = {"kind": "SCALE", "axis_index": -1, "axis": None, "screen_dir": Vector((0.0, 1.0)), "distance": (mouse - origin_2d).length, "origin": origin, "origin_2d": origin_2d, "uniform": True}
+    if PLACE_PICTURE_ENABLE_SCALE_AXIS_HANDLES:
+        for axis_index, direction in enumerate(dirs):
+            if direction is None:
+                continue
+            tip = origin_2d + direction * _current_scale_length()
+            line_end = tip - direction * (PLACE_PICTURE_SCALE_BOX_SIZE * 0.25)
+            distance = min(_distance_to_segment_2d(mouse, origin_2d, line_end), (mouse - tip).length)
+            if distance <= PLACE_PICTURE_SCALE_HIT_RADIUS and (best is None or distance < best["distance"]):
+                best = {"kind": "SCALE", "axis_index": axis_index, "axis": axes[axis_index].normalized(), "screen_dir": direction.normalized(), "distance": distance, "origin": origin, "origin_2d": origin_2d, "uniform": False}
+    if PLACE_PICTURE_ENABLE_SCALE_PLANE_HANDLES:
+        for spec in _get_plane_specs(axes):
+            ia, ib = spec["axis_indices"]
+            quad = _make_plane_handle_quad(origin_2d, dirs[ia], dirs[ib], PLACE_PICTURE_PLANE_HANDLE_OFFSET + 10.0, max(PLACE_PICTURE_PLANE_HANDLE_SIZE - 3.0, 8.0))
+            distance = _hit_quad_handle(mouse, quad)
+            if distance is None:
+                continue
+            screen_dir = Vector((0.0, 1.0))
+            if dirs[ia] is not None and dirs[ib] is not None:
+                combined = dirs[ia] + dirs[ib]
+                if combined.length > 0.001:
+                    screen_dir = combined.normalized()
+            if best is None or distance < best["distance"]:
+                best = {"kind": "SCALE_PLANE", "plane": spec["label"], "axis_indices": spec["axis_indices"], "plane_axes": spec["axes"], "screen_dir": screen_dir, "distance": distance, "origin": origin, "origin_2d": origin_2d}
+    return best
+
+
+def _hit_test_rotate(region, rv3d, obj, mouse):
+    if not (PLACE_PICTURE_ENABLE_ROTATE_GIZMO and _should_draw_gizmo_kind("ROTATE")):
+        return None
+    origin = obj.matrix_world.translation.copy()
+    origin_2d = _project_world_point(region, rv3d, origin)
+    if origin_2d is None:
+        return None
+    axes = _get_axis_vectors(obj)
+    radius_world = _world_units_per_pixel_at(region, rv3d, origin, origin_2d) * _current_rotate_radius()
+    if not math.isfinite(radius_world) or radius_world <= 0.0:
+        return None
+    best = None
+    if PLACE_PICTURE_ENABLE_ROTATE_AXIS_RINGS:
+        for axis_index, axis in enumerate(axes):
+            ring_segments = _make_rotate_ring_segments(region, rv3d, origin, axis, radius_world)
+            if not ring_segments:
+                continue
+            closest_distance = min(_distance_to_segment_2d(mouse, ring_segments[i], ring_segments[i + 1]) for i in range(0, len(ring_segments), 2))
+            if closest_distance <= PLACE_PICTURE_ROTATE_HIT_RADIUS and (best is None or closest_distance < best["distance"]):
+                best = {
+                    "kind": "ROTATE",
+                    "axis_index": axis_index,
+                    "axis": axis.normalized(),
+                    "distance": closest_distance,
+                    "origin": origin,
+                    "origin_2d": origin_2d,
+                    "angle_start": math.atan2(mouse.y - origin_2d.y, mouse.x - origin_2d.x),
+                }
+    if PLACE_PICTURE_ENABLE_FREE_ROTATE_RING:
+        free_distance = abs((mouse - origin_2d).length - _current_free_rotate_radius())
+        if free_distance <= PLACE_PICTURE_FREE_ROTATE_HIT_RADIUS and (best is None or free_distance < best["distance"]):
+            best = {
+                "kind": "ROTATE_FREE",
+                "axis_index": -1,
+                "axis": _screen_view_axis(rv3d),
+                "distance": free_distance,
+                "origin": origin,
+                "origin_2d": origin_2d,
+                "angle_start": math.atan2(mouse.y - origin_2d.y, mouse.x - origin_2d.x),
+            }
+    return best
+
+
+def _hit_test_fake_gizmo(region, rv3d, mouse):
+    obj = _get_active_gizmo_object()
+    if obj is None:
+        return None
+    active_tool = _get_active_tool_kind()
+    mode = PLACE_PICTURE_GIZMO_DISPLAY_MODE.upper().strip()
+    if mode == "ACTIVE_TOOL":
+        if active_tool == "MOVE":
+            order = ["MOVE"]
+        elif active_tool == "ROTATE":
+            order = ["ROTATE"]
+        elif active_tool == "SCALE":
+            order = ["SCALE"]
+        elif active_tool == "ALL" and PLACE_PICTURE_ENABLE_COMBINED_TRANSFORM_GIZMO:
+            order = ["MOVE", "SCALE", "ROTATE"]
+        else:
+            return None
+    elif mode in {"MOVE", "ROTATE", "SCALE"}:
+        order = [mode]
+    else:
+        order = ["MOVE", "SCALE", "ROTATE"]
+    for kind in order:
+        hit = _hit_test_move(region, rv3d, obj, mouse) if kind == "MOVE" else _hit_test_rotate(region, rv3d, obj, mouse) if kind == "ROTATE" else _hit_test_scale(region, rv3d, obj, mouse)
+        if hit is not None:
+            hit["object"] = obj
+            return hit
+    return None
+
+
+def _wrap_angle_radians(angle):
+    while angle > math.pi:
+        angle -= math.tau
+    while angle < -math.pi:
+        angle += math.tau
+    return angle
+
+
+def _axis_scale_matrix(axis, factor):
+    axis = axis.normalized()
+    matrix = Matrix.Identity(4)
+    offset = factor - 1.0
+    for row in range(3):
+        for column in range(3):
+            matrix[row][column] += offset * axis[row] * axis[column]
+    return matrix
+
+
+def _apply_modal_transform(drag, mouse):
+    kind = drag["kind"]
+    pivot = drag["origin"]
+    if kind == "MOVE":
+        delta_pixels = (mouse - drag["mouse_start"]).dot(drag["screen_dir"])
+        transform = Matrix.Translation(drag["axis"] * delta_pixels * drag["units_per_pixel"] * PLACE_PICTURE_MOVE_DRAG_SENSITIVITY)
+    elif kind == "MOVE_PLANE":
+        current = None
+        if drag.get("region") is not None and drag.get("rv3d") is not None and drag.get("plane_normal") is not None:
+            current = _ray_plane_intersection(drag["region"], drag["rv3d"], mouse, pivot, drag["plane_normal"])
+        if drag.get("plane_start") is not None and current is not None:
+            delta_world = (current - drag["plane_start"]) * PLACE_PICTURE_PLANE_DRAG_SENSITIVITY
+        else:
+            axis_a, axis_b = drag.get("plane_axes", (Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0))))
+            delta = mouse - drag["mouse_start"]
+            delta_world = (axis_a.normalized() * delta.x + axis_b.normalized() * delta.y) * drag["units_per_pixel"] * PLACE_PICTURE_PLANE_DRAG_SENSITIVITY
+        transform = Matrix.Translation(delta_world)
+    elif kind in {"ROTATE", "ROTATE_FREE"}:
+        angle_now = math.atan2(mouse.y - drag["origin_2d"].y, mouse.x - drag["origin_2d"].x)
+        delta_angle = _wrap_angle_radians(angle_now - drag["angle_start"])
+        delta_angle *= PLACE_PICTURE_FREE_ROTATE_DRAG_SENSITIVITY if kind == "ROTATE_FREE" else PLACE_PICTURE_ROTATE_DRAG_SENSITIVITY
+        transform = Matrix.Translation(pivot) @ Matrix.Rotation(delta_angle, 4, drag["axis"]) @ Matrix.Translation(-pivot)
+    elif kind == "SCALE":
+        if drag.get("uniform", False):
+            factor = math.exp((mouse.y - drag["mouse_start"].y) / PLACE_PICTURE_SCALE_DRAG_PIXEL_FACTOR)
+            scale_matrix = Matrix.Diagonal((factor, factor, factor, 1.0))
+        else:
+            delta_pixels = (mouse - drag["mouse_start"]).dot(drag["screen_dir"])
+            factor = max(0.01, 1.0 + (delta_pixels / PLACE_PICTURE_SCALE_DRAG_PIXEL_FACTOR))
+            scale_matrix = _axis_scale_matrix(drag["axis"], factor)
+        transform = Matrix.Translation(pivot) @ scale_matrix @ Matrix.Translation(-pivot)
+    elif kind == "SCALE_PLANE":
+        delta_pixels = (mouse - drag["mouse_start"]).dot(drag.get("screen_dir", Vector((0.0, 1.0))))
+        factor = max(0.01, 1.0 + (delta_pixels / PLACE_PICTURE_SCALE_DRAG_PIXEL_FACTOR))
+        scale_matrix = Matrix.Identity(4)
+        for axis in drag.get("plane_axes", ()):
+            scale_matrix = _axis_scale_matrix(axis, factor) @ scale_matrix
+        transform = Matrix.Translation(pivot) @ scale_matrix @ Matrix.Translation(-pivot)
+    else:
+        return
+    for obj, matrix_start in drag["objects"]:
+        if obj is not None and bpy.data.objects.get(obj.name) is not None:
+            obj.matrix_world = transform @ matrix_start
+
+
+class VIEW3D_OT_flowcell_place_picture_fake_gizmo_modal(bpy.types.Operator):
+    bl_idname = "view3d.flowcell_place_picture_fake_gizmo_modal"
+    bl_label = "FlowCell Place Picture Fake Gizmo Modal"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def invoke(self, context, event):
+        state = bpy.app.driver_namespace.get(VIEWPORT_OVERLAY_NAMESPACE_KEY, {})
+        if not isinstance(state, dict) or not state.get("enabled", False):
+            return {"CANCELLED"}
+        self.generation = state.get("generation", 0)
+        self.drag = None
+        context.window_manager.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        state = bpy.app.driver_namespace.get(VIEWPORT_OVERLAY_NAMESPACE_KEY, {})
+        if not isinstance(state, dict) or not state.get("enabled", False):
+            return {"FINISHED"}
+        if state.get("generation", 0) != getattr(self, "generation", None):
+            return {"FINISHED"}
+        region = context.region
+        rv3d = context.region_data
+        space = context.space_data
+        if region is None or rv3d is None or space is None:
+            return {"PASS_THROUGH"}
+        if region.type != "WINDOW" or getattr(space, "type", None) != "VIEW_3D":
+            return {"PASS_THROUGH"}
+        mouse = Vector((float(event.mouse_region_x), float(event.mouse_region_y)))
+        if event.type in {"ESC", "RIGHTMOUSE"}:
+            if self.drag is not None:
+                for obj, matrix_start in self.drag["objects"]:
+                    if obj is not None and bpy.data.objects.get(obj.name) is not None:
+                        obj.matrix_world = matrix_start
+                self.drag = None
+                _tag_redraw_view3d()
+                return {"RUNNING_MODAL"}
+            return {"PASS_THROUGH"}
+        if event.type == "LEFTMOUSE" and event.value == "PRESS":
+            hit = _hit_test_fake_gizmo(region, rv3d, mouse)
+            if hit is None:
+                return {"PASS_THROUGH"}
+            objects = _get_transform_objects()
+            if not objects:
+                return {"PASS_THROUGH"}
+            self.drag = {
+                "kind": hit["kind"],
+                "axis_index": hit.get("axis_index", None),
+                "axis": hit.get("axis", None),
+                "screen_dir": hit.get("screen_dir", Vector((0.0, 1.0))),
+                "origin": hit["origin"].copy(),
+                "origin_2d": hit["origin_2d"].copy(),
+                "angle_start": hit.get("angle_start", 0.0),
+                "mouse_start": mouse.copy(),
+                "units_per_pixel": _world_units_per_pixel_at(region, rv3d, hit["origin"], hit["origin_2d"]),
+                "uniform": hit.get("uniform", False),
+                "plane": hit.get("plane", None),
+                "plane_axes": hit.get("plane_axes", None),
+                "plane_normal": hit.get("plane_normal", None),
+                "plane_start": hit.get("plane_start", None),
+                "axis_indices": hit.get("axis_indices", None),
+                "region": region,
+                "rv3d": rv3d,
+                "objects": [(obj, obj.matrix_world.copy()) for obj in objects],
+            }
+            return {"RUNNING_MODAL"}
+        if event.type == "MOUSEMOVE":
+            if self.drag is not None:
+                _apply_modal_transform(self.drag, mouse)
+                _tag_redraw_view3d()
+                return {"RUNNING_MODAL"}
+            return {"PASS_THROUGH"}
+        if event.type == "LEFTMOUSE" and event.value == "RELEASE":
+            if self.drag is not None:
+                self.drag = None
+                try:
+                    bpy.ops.ed.undo_push(message="FlowCell Place Picture Fake Gizmo Transform")
+                except Exception:
+                    pass
+                _tag_redraw_view3d()
+                return {"RUNNING_MODAL"}
+            return {"PASS_THROUGH"}
+        return {"PASS_THROUGH"}
+
+
+def _register_place_picture_modal_operator():
+    existing = getattr(bpy.types, "VIEW3D_OT_flowcell_place_picture_fake_gizmo_modal", None)
+    if existing is not None:
+        try:
+            bpy.utils.unregister_class(existing)
+        except Exception:
+            pass
+    try:
+        bpy.utils.register_class(VIEW3D_OT_flowcell_place_picture_fake_gizmo_modal)
+    except Exception as exc:
+        print(f"Could not register Place Picture fake gizmo modal operator: {exc}")
+
+
+def _start_place_picture_modal_operator():
+    override = _find_first_3d_view_context()
+    if not override:
+        print("Could not find a 3D View to start Place Picture fake gizmo handler.")
+        return
+    try:
+        with bpy.context.temp_override(**override):
+            bpy.ops.view3d.flowcell_place_picture_fake_gizmo_modal("INVOKE_DEFAULT")
+    except Exception as exc:
+        print(f"Could not start Place Picture fake gizmo modal handler: {exc}")
+
+
+def _remove_place_picture_draw_handlers(state):
+    state["enabled"] = False
+    handles = []
+    for handle_name in ("handler", "background_handler", "overlay_handler"):
+        handle = state.get(handle_name)
+        if handle is not None and handle not in handles:
+            handles.append(handle)
+    for handle in handles:
+        try:
+            bpy.types.SpaceView3D.draw_handler_remove(handle, "WINDOW")
+        except Exception:
+            pass
+
+
+def _remove_viewport_overlay_handler():
+    state = _overlay_state()
+    _remove_place_picture_draw_handlers(state)
+    _restore_place_picture_viewports(state)
     state.clear()
     _tag_redraw_view3d()
 
@@ -554,10 +1944,13 @@ def _build_viewport_overlay_draw_callback():
 
 
 def _register_viewport_overlay_from_resolved_path(resolved_path: str) -> str:
-    _remove_viewport_overlay_handler()
+    state = _overlay_state()
+    _remove_place_picture_draw_handlers(state)
     _disable_camera_background_images()
 
     if not resolved_path:
+        _restore_place_picture_viewports(state)
+        state.clear()
         _tag_redraw_view3d()
         return ""
 
@@ -569,18 +1962,140 @@ def _register_viewport_overlay_from_resolved_path(resolved_path: str) -> str:
     except Exception:
         pass
 
-    state = _overlay_state()
+    if not state.get("viewport_snapshots"):
+        state["viewport_snapshots"] = _snapshot_place_picture_viewports()
+
+    _apply_place_picture_viewport_settings()
+
+    image_shader = gpu.shader.from_builtin("IMAGE")
+    color_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
+    generation = int(bpy.app.driver_namespace.get(PLACE_PICTURE_GENERATION_KEY, 0)) + 1
+    bpy.app.driver_namespace[PLACE_PICTURE_GENERATION_KEY] = generation
+
     state["image"] = image
     state["path"] = resolved_path
     state["texture"] = None
     state["texture_path"] = ""
-    state["handler"] = bpy.types.SpaceView3D.draw_handler_add(
-        _build_viewport_overlay_draw_callback(),
+    state["image_shader"] = image_shader
+    state["color_shader"] = color_shader
+    state["enabled"] = True
+    state["generation"] = generation
+
+    def draw_background_image():
+        if not PLACE_PICTURE_ENABLE_BACKGROUND:
+            return
+        region, _rv3d, _space = _get_current_3d_context()
+        if region is None:
+            return
+        image_size = getattr(image, "size", None)
+        if not image_size or image_size[0] <= 0 or image_size[1] <= 0:
+            return
+        region_width = max(float(region.width), 1.0)
+        region_height = max(float(region.height), 1.0)
+        x, y, draw_width, draw_height = _fitted_rect(
+            region_width, region_height, float(image_size[0]), float(image_size[1])
+        )
+        z = 0.99999976
+        vertices = (
+            (x, y, z),
+            (x + draw_width, y, z),
+            (x + draw_width, y + draw_height, z),
+            (x, y + draw_height, z),
+        )
+        tex_coords = (
+            ((0.0, 1.0), (1.0, 1.0), (1.0, 0.0), (0.0, 0.0))
+            if STATIC_BACKGROUND_FLIP_Y
+            else ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
+        )
+        try:
+            texture = _ensure_overlay_texture(state, image)
+        except Exception:
+            return
+        batch = batch_for_shader(
+            image_shader,
+            "TRIS",
+            {"pos": vertices, "texCoord": tex_coords},
+            indices=((0, 1, 2), (0, 2, 3)),
+        )
+        old_blend = gpu.state.blend_get() if hasattr(gpu.state, "blend_get") else None
+        old_depth_test = gpu.state.depth_test_get() if hasattr(gpu.state, "depth_test_get") else None
+        old_depth_mask = gpu.state.depth_mask_get() if hasattr(gpu.state, "depth_mask_get") else None
+        try:
+            if hasattr(gpu.state, "depth_test_set"):
+                gpu.state.depth_test_set("LESS_EQUAL")
+            if hasattr(gpu.state, "depth_mask_set"):
+                gpu.state.depth_mask_set(False)
+            gpu.state.blend_set("ALPHA" if STATIC_BACKGROUND_USE_ALPHA else "NONE")
+            with gpu.matrix.push_pop():
+                gpu.matrix.push_projection()
+                try:
+                    gpu.matrix.load_matrix(Matrix.Identity(4))
+                    gpu.matrix.load_projection_matrix(_pixel_projection(region.width, region.height))
+                    image_shader.bind()
+                    image_shader.uniform_sampler("image", texture)
+                    batch.draw(image_shader)
+                finally:
+                    gpu.matrix.pop_projection()
+        finally:
+            if old_blend is not None:
+                gpu.state.blend_set(old_blend)
+            if old_depth_test is not None and hasattr(gpu.state, "depth_test_set"):
+                gpu.state.depth_test_set(old_depth_test)
+            if old_depth_mask is not None and hasattr(gpu.state, "depth_mask_set"):
+                gpu.state.depth_mask_set(old_depth_mask)
+
+    def draw_grid_and_gizmo_overlay():
+        region, rv3d, _space = _get_current_3d_context()
+        if region is None:
+            return
+        old_blend = gpu.state.blend_get() if hasattr(gpu.state, "blend_get") else None
+        old_depth_test = gpu.state.depth_test_get() if hasattr(gpu.state, "depth_test_get") else None
+        old_depth_mask = gpu.state.depth_mask_get() if hasattr(gpu.state, "depth_mask_get") else None
+        try:
+            gpu.state.blend_set("ALPHA")
+            if hasattr(gpu.state, "depth_test_set"):
+                gpu.state.depth_test_set("NONE")
+            if hasattr(gpu.state, "depth_mask_set"):
+                gpu.state.depth_mask_set(False)
+            with gpu.matrix.push_pop():
+                gpu.matrix.push_projection()
+                try:
+                    gpu.matrix.load_matrix(Matrix.Identity(4))
+                    gpu.matrix.load_projection_matrix(_pixel_projection(region.width, region.height))
+                    _draw_fake_grid_2d(color_shader, region, rv3d)
+                    _draw_fake_gizmos_2d(color_shader, region, rv3d)
+                finally:
+                    gpu.matrix.pop_projection()
+        finally:
+            if old_blend is not None:
+                gpu.state.blend_set(old_blend)
+            if old_depth_test is not None and hasattr(gpu.state, "depth_test_set"):
+                gpu.state.depth_test_set(old_depth_test)
+            if old_depth_mask is not None and hasattr(gpu.state, "depth_mask_set"):
+                gpu.state.depth_mask_set(old_depth_mask)
+
+    state["draw_background_image"] = draw_background_image
+    state["draw_grid_and_gizmo_overlay"] = draw_grid_and_gizmo_overlay
+    state["background_handler"] = bpy.types.SpaceView3D.draw_handler_add(
+        draw_background_image,
         (),
         "WINDOW",
         "POST_VIEW",
     )
+    state["overlay_handler"] = bpy.types.SpaceView3D.draw_handler_add(
+        draw_grid_and_gizmo_overlay,
+        (),
+        "WINDOW",
+        "POST_PIXEL",
+    )
+
+    _register_place_picture_modal_operator()
+    _start_place_picture_modal_operator()
     _tag_redraw_view3d()
+    try:
+        bpy.ops.wm.redraw_timer(type="DRAW_WIN_SWAP", iterations=2)
+    except Exception:
+        pass
     return resolved_path
 
 
@@ -599,13 +2114,41 @@ def _restore_viewport_overlay_after_load():
     return None
 
 
-def _set_static_background_image(context, payload):
+def _place_picture_image(context, payload, persist_project_state=True):
     resolved_path = _resolve_optional_image_path(
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
-    _ensure_overlay_load_handler_registered()
-    _set_saved_overlay_path(resolved_path)
-    return _register_viewport_overlay_from_resolved_path(resolved_path)
+    applied_path = _register_viewport_overlay_from_resolved_path(resolved_path)
+    _set_saved_overlay_path(applied_path)
+    if persist_project_state:
+        _set_project_place_picture_state(context, applied_path)
+    return applied_path
+
+
+def _set_static_background_image(context, payload):
+    return _place_picture_image(context, payload)
+
+
+def _clear_place_picture_overlay(context=None, persist_project_state=True):
+    _remove_viewport_overlay_handler()
+    _disable_camera_background_images()
+    _set_saved_overlay_path("")
+    if persist_project_state:
+        _set_project_place_picture_state(context, "")
+    namespace = bpy.app.driver_namespace
+    existing = namespace.get(VIEWPORT_OVERLAY_LOAD_HANDLER_KEY)
+    if existing in bpy.app.handlers.load_post:
+        try:
+            bpy.app.handlers.load_post.remove(existing)
+        except Exception:
+            pass
+    if _clear_viewport_overlay_on_blend_load in bpy.app.handlers.load_post:
+        try:
+            bpy.app.handlers.load_post.remove(_clear_viewport_overlay_on_blend_load)
+        except Exception:
+            pass
+    namespace.pop(VIEWPORT_OVERLAY_LOAD_HANDLER_KEY, None)
+    _tag_redraw_view3d()
 
 
 def _normalize_hex_color(payload, key: str) -> str:
@@ -939,6 +2482,105 @@ def _normalize_hex_color_with_fallback(payload, primary_key: str, fallback_key: 
     if primary_value is not None and str(primary_value).strip():
         return _normalize_hex_color(payload, primary_key)
     return _normalize_hex_color(payload, fallback_key)
+
+
+def _read_theme_role_hexes(payload):
+    role_hexes = {
+        "tabs_hex": _normalize_hex_color_with_fallback(payload, "tabs_hex", "headers_hex"),
+        "tabs_text_hex": _normalize_hex_color_with_fallback(
+            payload, "tabs_text_hex", "text_hex"
+        ),
+        "headers_hex": _normalize_hex_color(payload, "headers_hex"),
+        "header_text_hex": _normalize_hex_color_with_fallback(
+            payload, "header_text_hex", "text_hex"
+        ),
+        "text_hex": _normalize_hex_color(payload, "text_hex"),
+        "control_text_hex": _normalize_hex_color_with_fallback(
+            payload, "control_text_hex", "text_hex"
+        ),
+        "accent_text_hex": _normalize_hex_color_with_fallback(
+            payload, "accent_text_hex", "highlights_hex"
+        ),
+        "editor_background_hex": _normalize_hex_color_with_fallback(
+            payload, "editor_background_hex", "darks_hex"
+        ),
+        "scene_hex": _normalize_hex_color_with_fallback(
+            payload, "scene_hex", "editor_background_hex"
+        ),
+        "controls_hex": _normalize_hex_color(payload, "controls_hex"),
+        "borders_hex": _normalize_hex_color_with_fallback(
+            payload, "borders_hex", "misc_hex"
+        ),
+        "darks_hex": _normalize_hex_color(payload, "darks_hex"),
+        "highlights_hex": _normalize_hex_color(payload, "highlights_hex"),
+        "viewport_background_hex": _normalize_hex_color(
+            payload, "viewport_background_hex"
+        ),
+        "viewport_gradient_hex": _normalize_hex_color(payload, "viewport_gradient_hex"),
+    }
+    role_hexes["borders_hex"] = role_hexes["editor_background_hex"]
+    role_hexes["darks_hex"] = role_hexes["editor_background_hex"]
+    return role_hexes
+
+
+def _theme_project_payload_from_role_hexes(
+    role_hexes, visual_mode: str, viewport_gradient_enabled: bool
+):
+    editor_background_hex = role_hexes["editor_background_hex"]
+    return {
+        "enabled": True,
+        "visual_mode": str(visual_mode or "dark").lower(),
+        "tabs_hex": role_hexes["tabs_hex"],
+        "tabs_text_hex": role_hexes["tabs_text_hex"],
+        "headers_hex": role_hexes["headers_hex"],
+        "header_text_hex": role_hexes["header_text_hex"],
+        "text_hex": role_hexes["text_hex"],
+        "control_text_hex": role_hexes["control_text_hex"],
+        "accent_text_hex": role_hexes["accent_text_hex"],
+        "editor_background_hex": editor_background_hex,
+        "scene_hex": role_hexes["scene_hex"],
+        "controls_hex": role_hexes["controls_hex"],
+        "borders_hex": role_hexes.get("borders_hex", editor_background_hex),
+        "darks_hex": role_hexes.get("darks_hex", editor_background_hex),
+        "misc_hex": role_hexes.get("misc_hex", editor_background_hex),
+        "highlights_hex": role_hexes["highlights_hex"],
+        "viewport_background_hex": role_hexes["viewport_background_hex"],
+        "viewport_gradient_enabled": bool(viewport_gradient_enabled),
+        "viewport_gradient_hex": role_hexes["viewport_gradient_hex"],
+    }
+
+
+def _set_project_theme_state_from_role_hexes(
+    context, payload, role_hexes, viewport_gradient_enabled=None
+):
+    visual_mode = _read_string(payload or {}, "visual_mode", "dark").lower()
+    if viewport_gradient_enabled is None:
+        viewport_gradient_enabled = bool((payload or {}).get("viewport_gradient_enabled", False))
+    state = _read_project_theme_state(context)
+    state["theme"] = _theme_project_payload_from_role_hexes(
+        role_hexes,
+        visual_mode,
+        bool(viewport_gradient_enabled),
+    )
+    return _write_project_theme_state(context, state)
+
+
+def _project_theme_payload_for_restore(theme_state):
+    if not isinstance(theme_state, dict) or not bool(theme_state.get("enabled")):
+        return None
+    payload = {
+        key: theme_state[key]
+        for key in PROJECT_THEME_STATE_THEME_KEYS
+        if key in theme_state
+    }
+    editor_background_hex = str(payload.get("editor_background_hex") or "").strip()
+    if editor_background_hex:
+        payload.setdefault("borders_hex", editor_background_hex)
+        payload.setdefault("darks_hex", editor_background_hex)
+        payload.setdefault("misc_hex", editor_background_hex)
+    payload.setdefault("visual_mode", "dark")
+    payload.setdefault("viewport_gradient_enabled", False)
+    return payload
 
 
 def _set_theme_widget_colors(
@@ -1412,6 +3054,293 @@ def _apply_theme_user_interface(theme_ui, role_hexes):
     _apply_theme_text_sweep(theme_ui, role_hexes, "general")
 
 
+def _set_theme_hex_property(target, attribute: str, hex_value: str) -> int:
+    if _set_theme_color_property(
+        target,
+        attribute,
+        _hex_to_rgb_floats(hex_value),
+        _hex_to_rgba_floats(hex_value),
+    ):
+        return 1
+    return 0
+
+
+def _set_theme_hex_attributes(target, attributes, hex_value: str) -> int:
+    changed = 0
+    for attribute in attributes:
+        changed += _set_theme_hex_property(target, attribute, hex_value)
+    return changed
+
+
+def _iter_theme_sections(theme):
+    for section_name in THEME_EDITOR_SECTION_NAMES:
+        section = getattr(theme, section_name, None)
+        if section is not None:
+            yield section_name, section
+
+
+def _apply_theme_bucket(context, payload):
+    bucket = _read_string(payload, "bucket", "").lower().replace("-", "_")
+    bucket_aliases = {
+        "tab_fill": "tabs_hex",
+        "tabs": "tabs_hex",
+        "header": "headers_hex",
+        "headers": "headers_hex",
+        "random_text": "text_hex",
+        "text": "text_hex",
+        "tool_text": "control_text_hex",
+        "control_text": "control_text_hex",
+        "scene_header_text": "accent_text_hex",
+        "accent_text": "accent_text_hex",
+        "panel": "editor_background_hex",
+        "editor_background": "editor_background_hex",
+        "collection_row": "scene_hex",
+        "scene": "scene_hex",
+        "control_fill": "controls_hex",
+        "controls": "controls_hex",
+        "highlights": "highlights_hex",
+        "viewport_bg": "viewport_background_hex",
+        "viewport_background": "viewport_background_hex",
+        "gradient_2": "viewport_gradient_hex",
+        "viewport_gradient": "viewport_gradient_hex",
+    }
+    bucket_key = bucket_aliases.get(bucket, bucket)
+    role_hexes = _read_theme_role_hexes(payload)
+    if payload.get("bucket_hex") is not None and bucket_key in role_hexes:
+        role_hexes[bucket_key] = _normalize_hex_color(payload, "bucket_hex")
+
+    theme = _ctx(context).preferences.themes[0]
+    theme_ui = getattr(theme, "user_interface", None)
+    changed = 0
+
+    if bucket_key == "tabs_hex":
+        hex_value = role_hexes["tabs_hex"]
+        for widget_name in ("wcol_tab", "wcol_toolbar_item"):
+            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
+            changed += _set_theme_hex_attributes(
+                widget, ("inner", "inner_sel", "outline_sel"), hex_value
+            )
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(section, ("tab_back", "tab_active"), hex_value)
+        message = "Applied Tab Fill bucket."
+    elif bucket_key == "headers_hex":
+        hex_value = role_hexes["headers_hex"]
+        changed += _set_theme_hex_attributes(
+            theme_ui,
+            ("panel_header", "panel_active", "header", "title", "navigation_bar"),
+            hex_value,
+        )
+        widget = getattr(theme_ui, "wcol_box", None) if theme_ui is not None else None
+        changed += _set_theme_hex_attributes(widget, ("inner_sel", "outline_sel"), hex_value)
+        panel = getattr(theme_ui, "panel", None) if theme_ui is not None else None
+        changed += _set_theme_hex_attributes(panel, ("header", "active"), hex_value)
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(section, ("header", "title", "navigation_bar"), hex_value)
+            changed += _set_theme_hex_attributes(getattr(section, "space", None), ("header", "title", "navigation_bar"), hex_value)
+            changed += _set_theme_hex_attributes(getattr(section, "panelcolors", None), ("header", "active"), hex_value)
+            changed += _set_theme_hex_attributes(
+                getattr(getattr(section, "space", None), "panelcolors", None),
+                ("header", "active"),
+                hex_value,
+            )
+        message = "Applied Header bucket."
+    elif bucket_key == "editor_background_hex":
+        hex_value = role_hexes["editor_background_hex"]
+        changed += _set_theme_hex_attributes(
+            theme_ui,
+            ("back", "sub_back", "menu_back", "panel_back", "panel_sub_back", "panel_outline"),
+            hex_value,
+        )
+        for widget_name in ("wcol_box", "wcol_menu_back", "wcol_menu", "wcol_menu_item"):
+            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
+            changed += _set_theme_hex_attributes(widget, ("inner", "outline"), hex_value)
+        panel = getattr(theme_ui, "panel", None) if theme_ui is not None else None
+        changed += _set_theme_hex_attributes(panel, ("back", "sub_back", "outline"), hex_value)
+        for section_name, section in _iter_theme_sections(theme):
+            if section_name == "outliner":
+                continue
+            changed += _set_theme_hex_attributes(
+                section, ("back", "sub_back", "list", "row_alternate"), hex_value
+            )
+            changed += _set_theme_hex_attributes(getattr(section, "space", None), ("back",), hex_value)
+            changed += _set_theme_hex_attributes(
+                getattr(section, "panelcolors", None),
+                ("back", "sub_back", "outline"),
+                hex_value,
+            )
+            changed += _set_theme_hex_attributes(
+                getattr(getattr(section, "space", None), "panelcolors", None),
+                ("back", "sub_back", "outline"),
+                hex_value,
+            )
+        message = "Applied Panel bucket."
+    elif bucket_key == "scene_hex":
+        hex_value = role_hexes["scene_hex"]
+        outliner = getattr(theme, "outliner", None)
+        changed += _set_theme_hex_attributes(outliner, ("back", "list", "row_alternate"), hex_value)
+        widget = getattr(theme_ui, "wcol_list_item", None) if theme_ui is not None else None
+        changed += _set_theme_hex_attributes(widget, ("inner", "inner_sel"), hex_value)
+        message = "Applied Collection Row bucket."
+    elif bucket_key == "controls_hex":
+        hex_value = role_hexes["controls_hex"]
+        skipped_widgets = {
+            "wcol_box",
+            "wcol_list_item",
+            "wcol_menu",
+            "wcol_menu_back",
+            "wcol_menu_item",
+            "wcol_option",
+            "wcol_pie_menu",
+            "wcol_progress",
+            "wcol_radio",
+            "wcol_state",
+            "wcol_tab",
+            "wcol_toolbar_item",
+            "wcol_toggle",
+            "wcol_tooltip",
+        }
+        if theme_ui is not None:
+            for widget_name in _iter_theme_ui_widget_names(theme_ui):
+                if widget_name in skipped_widgets:
+                    continue
+                changed += _set_theme_hex_attributes(
+                    getattr(theme_ui, widget_name, None),
+                    ("inner", "inner_sel"),
+                    hex_value,
+                )
+        changed += _set_theme_hex_attributes(theme_ui, ("button", "execution_buts"), hex_value)
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(
+                section,
+                ("button", "execution_buts", "button_animated", "button_key"),
+                hex_value,
+            )
+            changed += _set_theme_hex_attributes(
+                getattr(section, "space", None),
+                ("button", "execution_buts"),
+                hex_value,
+            )
+        message = "Applied Control Fill bucket."
+    elif bucket_key == "highlights_hex":
+        hex_value = role_hexes["highlights_hex"]
+        changed += _set_theme_hex_attributes(theme_ui, ("active", "selected_highlight"), hex_value)
+        for widget_name in ("wcol_option", "wcol_radio", "wcol_toggle", "wcol_progress"):
+            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
+            changed += _set_theme_hex_attributes(
+                widget, ("inner", "inner_sel", "outline_sel"), hex_value
+            )
+        state_widget = getattr(theme_ui, "wcol_state", None) if theme_ui is not None else None
+        changed += _set_theme_hex_attributes(
+            state_widget,
+            (
+                "error",
+                "inner_anim_sel",
+                "inner_changed_sel",
+                "inner_driven_sel",
+                "inner_key_sel",
+                "inner_overridden_sel",
+                "inner_red_alert",
+                "inner_red_alert_sel",
+            ),
+            hex_value,
+        )
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(
+                section,
+                (
+                    "edge_select",
+                    "face_select",
+                    "vertex_select",
+                    "active",
+                    "grid",
+                    "selected_highlight",
+                    "button_key_sel",
+                ),
+                hex_value,
+            )
+        message = "Applied Highlights bucket."
+    elif bucket_key == "viewport_background_hex":
+        hex_value = role_hexes["viewport_background_hex"]
+        view3d_space = getattr(getattr(theme, "view_3d", None), "space", None)
+        gradients = getattr(view3d_space, "gradients", None) if view3d_space else None
+        changed += _set_theme_hex_property(gradients, "gradient", hex_value)
+        message = "Applied Viewport BG bucket."
+    elif bucket_key == "viewport_gradient_hex":
+        hex_value = role_hexes["viewport_gradient_hex"]
+        view3d_space = getattr(getattr(theme, "view_3d", None), "space", None)
+        gradients = getattr(view3d_space, "gradients", None) if view3d_space else None
+        changed += _set_theme_hex_property(gradients, "high_gradient", hex_value)
+        message = "Applied Gradient 2 bucket."
+    elif bucket_key == "text_hex":
+        hex_value = role_hexes["text_hex"]
+        changed += _set_theme_hex_attributes(theme_ui, ("text", "text_hi", "panel_text"), hex_value)
+        for widget_name in ("wcol_text", "wcol_tooltip"):
+            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
+            changed += _set_theme_hex_attributes(widget, ("text", "text_sel"), hex_value)
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(section, ("text", "text_hi", "list_text"), hex_value)
+            changed += _set_theme_hex_attributes(getattr(section, "space", None), ("text", "text_hi"), hex_value)
+        message = "Applied Random Text bucket."
+    elif bucket_key == "control_text_hex":
+        hex_value = role_hexes["control_text_hex"]
+        if theme_ui is not None:
+            for widget_name in _iter_theme_ui_widget_names(theme_ui):
+                if widget_name in ("wcol_tab", "wcol_toolbar_item", "wcol_pie_menu", "wcol_tooltip"):
+                    continue
+                changed += _set_theme_hex_attributes(
+                    getattr(theme_ui, widget_name, None),
+                    ("text", "text_sel"),
+                    hex_value,
+                )
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(section, ("button_text", "button_text_hi"), hex_value)
+            changed += _set_theme_hex_attributes(
+                getattr(section, "space", None),
+                ("button_text", "button_text_hi"),
+                hex_value,
+            )
+        message = "Applied Tool Text bucket."
+    elif bucket_key == "accent_text_hex":
+        hex_value = role_hexes["accent_text_hex"]
+        changed += _set_theme_hex_attributes(theme_ui, ("button_title", "panel_title"), hex_value)
+        for widget_name in ("wcol_pie_menu", "wcol_option"):
+            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
+            changed += _set_theme_hex_attributes(widget, ("text", "text_sel"), hex_value)
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(section, ("button_title",), hex_value)
+            changed += _set_theme_hex_attributes(getattr(section, "space", None), ("button_title",), hex_value)
+        outliner = getattr(theme, "outliner", None)
+        changed += _set_theme_hex_attributes(
+            outliner, ("match", "active_object", "selected_object"), hex_value
+        )
+        message = "Applied Scene/Header Text bucket."
+    elif bucket_key == "tabs_text_hex":
+        hex_value = role_hexes["tabs_text_hex"]
+        for widget_name in ("wcol_tab", "wcol_toolbar_item"):
+            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
+            changed += _set_theme_hex_attributes(widget, ("text", "text_sel"), hex_value)
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(section, ("tab_text", "tab_text_hi"), hex_value)
+        message = "Applied Tab Text bucket."
+    elif bucket_key == "header_text_hex":
+        hex_value = role_hexes["header_text_hex"]
+        changed += _set_theme_hex_attributes(
+            theme_ui, ("header_text", "header_text_hi", "panel_text"), hex_value
+        )
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(section, ("header_text", "header_text_hi"), hex_value)
+        message = "Applied Header Text bucket."
+    else:
+        raise ValueError(f"Unsupported theme bucket: {bucket or '[blank]'}")
+
+    if changed <= 0:
+        raise ValueError(f"Theme bucket did not match any Blender theme fields: {bucket_key}")
+
+    _set_project_theme_state_from_role_hexes(context, payload, role_hexes)
+    _tag_redraw_view3d()
+    return _result(message, bucket=bucket_key, applied_count=changed)
+
+
 def _absorb_current_theme(context):
     theme = _ctx(context).preferences.themes[0]
 
@@ -1501,9 +3430,11 @@ def _absorb_current_theme(context):
     scene_hex = _sample_theme_hex_from_paths(
         theme,
         [
-            ("outliner", "back"),
+            ("outliner", "row_alternate"),
             ("outliner", "list"),
-            ("outliner", "scene"),
+            ("outliner", "back"),
+            ("user_interface.wcol_list_item", "inner"),
+            ("user_interface.wcol_list_item", "inner_sel"),
             ("view_3d", "back"),
             ("view_3d", "list"),
             ("properties", "back"),
@@ -1513,20 +3444,30 @@ def _absorb_current_theme(context):
     controls_hex = _sample_theme_hex_from_paths(
         theme,
         [
+            ("user_interface.wcol_regular", "inner"),
+            ("user_interface.wcol_num", "inner"),
+            ("user_interface.wcol_numslider", "inner"),
+            ("user_interface.wcol_tool", "inner"),
+            ("user_interface.wcol_regular", "item"),
+            ("user_interface.wcol_box", "inner"),
             ("user_interface", "button"),
             ("user_interface", "button_title"),
             ("user_interface", "execution_buts"),
-            ("user_interface.wcol_regular", "item"),
-            ("user_interface.wcol_regular", "inner"),
-            ("user_interface.wcol_box", "inner"),
         ],
     )
 
     highlights_hex = _sample_theme_hex_from_paths(
         theme,
         [
+            ("view_3d", "selected_highlight"),
+            ("preferences", "selected_highlight"),
+            ("outliner", "selected_highlight"),
             ("user_interface", "selected_highlight"),
             ("user_interface", "active"),
+            ("user_interface.wcol_option", "inner_sel"),
+            ("user_interface.wcol_radio", "inner_sel"),
+            ("user_interface.wcol_toggle", "inner_sel"),
+            ("user_interface.wcol_progress", "inner_sel"),
             ("user_interface.wcol_state", "inner_sel"),
             ("user_interface.wcol_state", "item"),
         ],
@@ -1601,43 +3542,9 @@ def _absorb_current_theme(context):
     )
 
 
-def _apply_theme_from_photo_manual_colors(context, payload):
+def _apply_theme_from_photo_manual_colors(context, payload, persist_project_state=True):
     visual_mode = _read_string(payload, "visual_mode", "dark").lower()
-    role_hexes = {
-        "tabs_hex": _normalize_hex_color_with_fallback(payload, "tabs_hex", "headers_hex"),
-        "tabs_text_hex": _normalize_hex_color_with_fallback(
-            payload, "tabs_text_hex", "text_hex"
-        ),
-        "headers_hex": _normalize_hex_color(payload, "headers_hex"),
-        "header_text_hex": _normalize_hex_color_with_fallback(
-            payload, "header_text_hex", "text_hex"
-        ),
-        "text_hex": _normalize_hex_color(payload, "text_hex"),
-        "control_text_hex": _normalize_hex_color_with_fallback(
-            payload, "control_text_hex", "text_hex"
-        ),
-        "accent_text_hex": _normalize_hex_color_with_fallback(
-            payload, "accent_text_hex", "highlights_hex"
-        ),
-        "editor_background_hex": _normalize_hex_color_with_fallback(
-            payload, "editor_background_hex", "darks_hex"
-        ),
-        "scene_hex": _normalize_hex_color_with_fallback(
-            payload, "scene_hex", "editor_background_hex"
-        ),
-        "controls_hex": _normalize_hex_color(payload, "controls_hex"),
-        "borders_hex": _normalize_hex_color_with_fallback(
-            payload, "borders_hex", "misc_hex"
-        ),
-        "darks_hex": _normalize_hex_color(payload, "darks_hex"),
-        "highlights_hex": _normalize_hex_color(payload, "highlights_hex"),
-        "viewport_background_hex": _normalize_hex_color(
-            payload, "viewport_background_hex"
-        ),
-        "viewport_gradient_hex": _normalize_hex_color(payload, "viewport_gradient_hex"),
-    }
-    role_hexes["borders_hex"] = role_hexes["editor_background_hex"]
-    role_hexes["darks_hex"] = role_hexes["editor_background_hex"]
+    role_hexes = _read_theme_role_hexes(payload)
     viewport_gradient_enabled = bool(payload.get("viewport_gradient_enabled", False))
 
     theme = _ctx(context).preferences.themes[0]
@@ -1673,6 +3580,13 @@ def _apply_theme_from_photo_manual_colors(context, payload):
     # buckets even if another theme sub-structure overlaps them.
     _apply_exact_user_interface_panel_paths(theme, role_hexes)
 
+    if persist_project_state:
+        _set_project_theme_state_from_role_hexes(
+            context,
+            payload,
+            role_hexes,
+            viewport_gradient_enabled=viewport_gradient_enabled,
+        )
     _tag_redraw_view3d()
     return _result(
         "Blender UI theme updated from sampled photo colors.",
@@ -1696,13 +3610,125 @@ def _apply_theme_from_photo_manual_colors(context, payload):
     )
 
 
+def _read_project_startup_state(context):
+    _ensure_project_theme_restore_handler_registered_from_action()
+    state = _read_project_theme_state(context)
+    return _result(
+        "FlowCell project startup state read.",
+        restore_handler_registered=_project_theme_restore_handler_registered(),
+        **_project_state_payload(state),
+    )
+
+
+def _resolve_project_place_picture_path(place_picture_state):
+    if not isinstance(place_picture_state, dict) or not bool(place_picture_state.get("enabled")):
+        return "", ""
+
+    candidates = [
+        str(place_picture_state.get("relative_path") or "").strip(),
+        str(place_picture_state.get("path") or "").strip(),
+    ]
+    last_error = ""
+    seen = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            return _resolve_optional_image_path(candidate), ""
+        except Exception as exc:
+            last_error = str(exc)
+
+    return "", last_error or "No saved Place Picture path was available."
+
+
+def _restore_project_startup_state(context):
+    _ensure_project_theme_restore_handler_registered_from_action()
+    state = _read_project_theme_state(context)
+    theme_state = state.get("theme", {})
+    place_picture_state = state.get("place_picture", {})
+    warnings = []
+    restored_theme = False
+    restored_place_picture = False
+
+    theme_payload = _project_theme_payload_for_restore(theme_state)
+    if theme_payload:
+        try:
+            _apply_theme_from_photo_manual_colors(
+                context,
+                theme_payload,
+                persist_project_state=False,
+            )
+            restored_theme = True
+        except Exception as exc:
+            warnings.append(f"Theme restore failed: {exc}")
+
+    resolved_picture_path, picture_warning = _resolve_project_place_picture_path(place_picture_state)
+    if resolved_picture_path:
+        try:
+            _place_picture_image(
+                context,
+                {"static_background_path": resolved_picture_path},
+                persist_project_state=False,
+            )
+            restored_place_picture = True
+        except Exception as exc:
+            warnings.append(f"Place Picture restore failed: {exc}")
+    elif picture_warning:
+        warnings.append(f"Place Picture restore skipped: {picture_warning}")
+
+    if restored_theme and restored_place_picture:
+        message = "FlowCell project theme and Place Picture restored."
+    elif restored_theme:
+        message = "FlowCell project theme restored."
+    elif restored_place_picture:
+        message = "FlowCell project Place Picture restored."
+    elif warnings:
+        message = "FlowCell project startup restore completed with warnings."
+    else:
+        message = "No FlowCell project startup state to restore."
+
+    return _result(
+        message,
+        restored_theme=restored_theme,
+        restored_place_picture=restored_place_picture,
+        warnings=warnings,
+        **_project_state_payload(state),
+    )
+
+
 def run_flowcell_action(context=None, data=None):
     payload = data or {}
     command = _read_string(payload, "command", "apply_all").lower()
+    if command == "read_project_startup_state":
+        return _read_project_startup_state(context)
+    if command == "restore_project_startup_state":
+        return _restore_project_startup_state(context)
     if command == "apply_theme_from_photo_manual_colors":
         return _apply_theme_from_photo_manual_colors(context, payload)
+    if command == "apply_theme_bucket":
+        return _apply_theme_bucket(context, payload)
     if command == "absorb_theme":
         return _absorb_current_theme(context)
+    if command == "place_picture":
+        resolved_path = _place_picture_image(context, payload)
+        if resolved_path:
+            return _result(
+                f"Place Picture installed from {resolved_path}.",
+                static_background_path=resolved_path,
+            )
+        return _result("Place Picture cleared.", static_background_path="")
+    if command == "set_static_background_image":
+        resolved_path = _set_static_background_image(context, payload)
+        if resolved_path:
+            return _result(
+                f"Place Picture installed from {resolved_path}.",
+                static_background_path=resolved_path,
+            )
+        return _result("Place Picture cleared.", static_background_path="")
+    if command == "clear_place_picture":
+        _clear_place_picture_overlay(context)
+        return _result("Place Picture cleared.", static_background_path="")
 
     state = _ensure_world_state(context)
     mapping = state["mapping"]
@@ -1724,15 +3750,6 @@ def run_flowcell_action(context=None, data=None):
             hdri_path=resolved_path,
         )
 
-    if command == "set_static_background_image":
-        resolved_path = _set_static_background_image(context, payload)
-        if resolved_path:
-            return _result(
-                f"Viewport background image set to {resolved_path}.",
-                static_background_path=resolved_path,
-            )
-        return _result("Static background image cleared.", static_background_path="")
-
     if command in ROTATION_INDEX_BY_COMMAND:
         _ensure_hdri_image_if_missing(env, payload)
         axis_index = ROTATION_INDEX_BY_COMMAND[command]
@@ -1750,7 +3767,7 @@ def run_flowcell_action(context=None, data=None):
         )
         _set_rotation(mapping, axis_index, degrees)
         axis_label = ROTATION_LABEL_BY_INDEX[axis_index]
-        return _result(f"HDRI {axis_label} rotation set to {degrees:.2f}°.")
+        return _result(f"HDRI {axis_label} rotation set to {degrees:.2f} degrees.")
 
     if command == "set_world_strength":
         _ensure_hdri_image_if_missing(env, payload)
@@ -1760,7 +3777,6 @@ def run_flowcell_action(context=None, data=None):
 
     if command == "apply_all":
         resolved_path = _apply_hdri_image(env, payload)
-        static_background_path = _set_static_background_image(context, payload)
         _set_rotation(
             mapping,
             0,
@@ -1783,7 +3799,6 @@ def run_flowcell_action(context=None, data=None):
         return _result(
             "HDRI world settings applied.",
             hdri_path=resolved_path,
-            static_background_path=static_background_path,
         )
 
     raise ValueError(f"Unsupported HDRI world command: {command}")
