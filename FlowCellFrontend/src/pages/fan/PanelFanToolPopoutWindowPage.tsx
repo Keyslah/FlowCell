@@ -53,6 +53,11 @@ interface ScreenRect {
   bottom: number;
 }
 
+type ScriptRunErrorState = {
+  title: string;
+  detail: string;
+};
+
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -333,6 +338,7 @@ export default function PanelFanToolPopoutWindowPage({
   const [hoverReady, setHoverReady] = useState(true);
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const [scriptRunError, setScriptRunError] = useState<ScriptRunErrorState | null>(null);
   const [metrics, setMetrics] = useState<FanClusterPanelMetrics | null>(null);
   const [fanOptions, setFanOptions] = useState(() =>
     readPanelFanOptions(context.programName, context.panelName)
@@ -1237,13 +1243,17 @@ export default function PanelFanToolPopoutWindowPage({
     }
 
     try {
+      setScriptRunError(null);
       await runPanelScript(context.programName, context.panelName, entry.childSlotId);
     } catch (error) {
       console.error(
         `Failed to run panel fan child ${entry.childSlotId} for ${context.programName}/${context.panelName}.`,
         error
       );
-      window.alert(`Panel script could not be run.\n\n${formatErrorMessage(error)}`);
+      setScriptRunError({
+        title: "Panel script could not be run.",
+        detail: formatErrorMessage(error)
+      });
     }
   };
 
@@ -1314,6 +1324,20 @@ export default function PanelFanToolPopoutWindowPage({
             onChildClick={handleChildClick}
           />
         )}
+        {scriptRunError ? (
+          <section className="panel-fan-window-page__script-error" role="alert">
+            <button
+              type="button"
+              className="panel-fan-window-page__script-error-close"
+              aria-label="Dismiss script error"
+              onClick={() => setScriptRunError(null)}
+            >
+              X
+            </button>
+            <strong>{scriptRunError.title}</strong>
+            <p>{scriptRunError.detail}</p>
+          </section>
+        ) : null}
       </div>
     </main>
   );

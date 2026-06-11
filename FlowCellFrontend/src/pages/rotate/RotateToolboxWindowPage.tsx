@@ -24,9 +24,9 @@ import "../main/mainPage.css";
 import "./rotateToolboxWindowPage.css";
 
 const DEFAULT_ROTATE_TOOLBOX_STATE: RotateToolboxState = {
-  axis: "X",
+  axis: "Z",
   angleDeg: 30,
-  centerMode: "ORIGIN",
+  centerMode: "WORLD",
   operationMode: "TRANSFORM",
   distributeCount: 5
 };

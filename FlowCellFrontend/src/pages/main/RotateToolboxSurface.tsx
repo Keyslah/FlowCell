@@ -444,7 +444,7 @@ export function RotateToolboxSurface({
                 onStateChange(nextState);
               }
 
-              if (isIllustratorVariant && presetAngleForSlot(spec.slot) !== null) {
+              if (presetAngleForSlot(spec.slot) !== null) {
                 onApply("positive", nextState);
               }
             }}

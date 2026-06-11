@@ -16,6 +16,12 @@ flowCellRecordedActionsDir := EnsureFlowCellDir(flowCellLocalRoot "\recorded_act
 flowCellCommandTempDir := EnsureFlowCellDir(flowCellLocalRoot "\temp\command_host_ahk")
 flowCellLastActionStatusPath := flowCellLogsDir "\last_action_status.txt"
 flowCellCommandBackendPath := A_ScriptDir "\FlowCellCommandBackend.ps1"
+flowCellDirectScriptReceiverTitle := "FlowCellBackendDirectScriptReceiver"
+flowCellDirectScriptCopyDataId := 0x46435344
+flowCellDirectScriptAccepted := 1
+flowCellDirectScriptBusy := 2
+flowCellDirectScriptBadPayload := 3
+flowCellDirectScriptBadScript := 4
 
 logger := ControllerLogger(flowCellLogsDir)
 
@@ -74,6 +80,57 @@ GetCliIntValue(prefix, defaultValue) {
     try return Integer(value)
     catch
         return defaultValue
+}
+
+JsonStringValue(raw, key) {
+    pattern := '"' key '"\s*:\s*"((?:\\.|[^"\\])*)"'
+    if RegExMatch(raw, pattern, &match)
+        return JsonUnescape(match[1])
+    return ""
+}
+
+JsonUnescape(value) {
+    output := ""
+    index := 1
+    length := StrLen(value)
+    while index <= length {
+        char := SubStr(value, index, 1)
+        if char != "\" {
+            output .= char
+            index += 1
+            continue
+        }
+
+        index += 1
+        if index > length {
+            output .= "\"
+            break
+        }
+
+        escaped := SubStr(value, index, 1)
+        switch escaped {
+            case '"':
+                output .= '"'
+            case "\":
+                output .= "\"
+            case "/":
+                output .= "/"
+            case "b":
+                output .= Chr(8)
+            case "f":
+                output .= Chr(12)
+            case "n":
+                output .= "`n"
+            case "r":
+                output .= "`r"
+            case "t":
+                output .= "`t"
+            default:
+                output .= escaped
+        }
+        index += 1
+    }
+    return output
 }
 
 JsonEscape(value) {
@@ -1064,7 +1121,7 @@ class FlowCellApp {
         this.logger.Info("Script hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
     }
 
-    RunBackendCommand(commandId, payloadJson, programTabId := 0, programName := "", sourceButtonId := "") {
+    RunBackendCommand(commandId, payloadJson, programTabId := 0, programName := "", sourceButtonId := "", runAsync := false) {
         global flowCellCommandBackendPath, flowCellCommandTempDir, flowCellLastActionStatusPath
         result := {
             attempted: false,
@@ -1122,6 +1179,35 @@ class FlowCellApp {
         }
 
         result.attempted := true
+        if runAsync {
+            psScript := "& { try { & " PowerShellSingleQuote(flowCellCommandBackendPath)
+                . " -EnvelopePath " PowerShellSingleQuote(envelopePath)
+                . " -ResultPath " PowerShellSingleQuote(resultPath)
+                . " } finally { Remove-Item -LiteralPath "
+                . PowerShellSingleQuote(envelopePath)
+                . ","
+                . PowerShellSingleQuote(resultPath)
+                . " -Force -ErrorAction SilentlyContinue } }"
+            command := 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "' psScript '"'
+            try {
+                Run(command, , "Hide")
+            } catch as err {
+                try FileDelete envelopePath
+                catch {
+                }
+                try FileDelete resultPath
+                catch {
+                }
+                result.detail := "Launching the async command backend failed. " err.Message
+                return result
+            }
+            result.succeeded := true
+            result.method := "command_host_async"
+            result.detail := "Command queued."
+            result.statusText := result.detail
+            return result
+        }
+
         command := 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' flowCellCommandBackendPath '" -EnvelopePath "' envelopePath '" -ResultPath "' resultPath '"'
         try exitCode := RunWait(command, , "Hide")
         catch as err {
@@ -1151,7 +1237,7 @@ class FlowCellApp {
         return result
     }
 
-    RunBackendScriptCommand(scriptPath, programTabId := 0, source := "") {
+    RunBackendScriptCommand(scriptPath, programTabId := 0, source := "", runAsync := false) {
         programName := this.GetProgramNameFromBinding(programTabId, scriptPath)
         resolvedScriptPath := scriptPath
         label := scriptPath
@@ -1172,7 +1258,8 @@ class FlowCellApp {
             . '"style_group_id":"",'
             . '"compound_tool_id":""'
             . "}"
-        return this.RunBackendCommand("flowcell.run_script", payloadJson, programTabId, programName, "hotkey_script")
+        sourceButtonId := runAsync ? "hotkey_script_async" : "hotkey_script"
+        return this.RunBackendCommand("flowcell.run_script", payloadJson, programTabId, programName, sourceButtonId, runAsync)
     }
 
     RunBackendActionCommand(actionId, shortcut := "") {
@@ -1347,6 +1434,21 @@ class FlowCellApp {
         return StrLower(fileName) = "flowcell_illustrator_setanchorhotkey.jsx"
     }
 
+    IsFlowCellIllustratorModalDialogScript(scriptPath) {
+        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
+        try {
+            file := FileOpen(scriptPath, "r", "UTF-8")
+            if !IsObject(file)
+                return false
+            source := StrLower(file.Read(32768))
+            file.Close()
+            return InStr(source, "flowcell_illustrator_modal_dialog") > 0
+                || RegExMatch(source, "\b(prompt|alert|confirm)\s*\(")
+        } catch {
+            return false
+        }
+    }
+
     ReadFlowCellIllustratorScriptStatus() {
         global flowCellLogsDir
         statusPath := flowCellLogsDir "\illustrator-anchor-status.txt"
@@ -1358,7 +1460,145 @@ class FlowCellApp {
         }
     }
 
-    RunIllustratorScript(scriptPath, source, programConfig := 0) {
+    StartDirectScriptReceiver() {
+        global flowCellDirectScriptReceiverTitle
+        if this.HasProp("directScriptReceiverGui") && IsObject(this.directScriptReceiverGui)
+            return
+
+        this.directScriptBusy := false
+        this.directScriptTimer := ""
+        this.directScriptReceiverGui := Gui("+ToolWindow -Caption", flowCellDirectScriptReceiverTitle)
+        this.directScriptReceiverGui.Show("Hide")
+        this.directScriptCopyDataHandler := ObjBindMethod(this, "HandleDirectScriptCopyData")
+        OnMessage(0x004A, this.directScriptCopyDataHandler)
+        this.logger.Info(
+            "Direct script receiver started. Hwnd=0x"
+            . Format("{:X}", this.directScriptReceiverGui.Hwnd)
+        )
+    }
+
+    HandleDirectScriptCopyData(wParam, lParam, msg, hwnd) {
+        global flowCellDirectScriptCopyDataId
+        global flowCellDirectScriptAccepted, flowCellDirectScriptBusy
+        global flowCellDirectScriptBadPayload, flowCellDirectScriptBadScript
+
+        if !this.HasProp("directScriptReceiverGui") || hwnd != this.directScriptReceiverGui.Hwnd
+            return 0
+
+        try {
+            copyDataId := NumGet(lParam, 0, "UPtr")
+            if copyDataId != flowCellDirectScriptCopyDataId
+                return 0
+
+            byteCount := NumGet(lParam, A_PtrSize, "UInt")
+            dataPtr := NumGet(lParam, 2 * A_PtrSize, "Ptr")
+            if byteCount <= 0 || !dataPtr
+                return flowCellDirectScriptBadPayload
+
+            payload := RTrim(StrGet(dataPtr, byteCount // 2, "UTF-16"), Chr(0))
+            command := JsonStringValue(payload, "command")
+            scriptPath := JsonStringValue(payload, "scriptPath")
+            programKey := JsonStringValue(payload, "programKey")
+            requestId := JsonStringValue(payload, "requestId")
+            if command != "run_script_now" || scriptPath = ""
+                return flowCellDirectScriptBadPayload
+            if programKey = ""
+                programKey := "illustrator_automation"
+            if requestId = ""
+                requestId := "direct-ipc-" A_TickCount
+
+            if this.directScriptBusy
+                return flowCellDirectScriptBusy
+
+            scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
+            if !FileExist(scriptPath)
+                return flowCellDirectScriptBadScript
+
+            this.directScriptBusy := true
+            request := {
+                scriptPath: scriptPath,
+                programKey: programKey,
+                requestId: requestId
+            }
+            this.directScriptTimer := ObjBindMethod(this, "RunDirectScriptRequest", request)
+            SetTimer this.directScriptTimer, -1
+            this.logger.Info(
+                "Direct script accepted. RequestId="
+                . requestId
+                . " | ProgramKey="
+                . programKey
+                . " | Script="
+                . scriptPath
+            )
+            return flowCellDirectScriptAccepted
+        } catch as err {
+            this.logger.Error("Direct script request could not be accepted.", err)
+            return flowCellDirectScriptBadPayload
+        }
+    }
+
+    BuildDirectScriptStatusText(scriptPath, result) {
+        return JoinLines([
+            "Script: " scriptPath,
+            "Attempted: " BoolToWord(result.attempted),
+            "Succeeded: " BoolToWord(result.succeeded),
+            "Method: " result.method,
+            "Details: " result.detail
+        ])
+    }
+
+    RunDirectScriptRequest(request, *) {
+        global flowCellLastActionStatusPath
+        try {
+            result := this.RunBoundScript(
+                request.scriptPath,
+                "direct ipc " request.requestId,
+                0,
+                request.programKey
+            )
+            statusText := this.BuildDirectScriptStatusText(request.scriptPath, result)
+            if result.succeeded {
+                try FileDelete flowCellLastActionStatusPath
+                catch {
+                }
+                this.logger.Info(
+                    "Direct script completed. RequestId="
+                    . request.requestId
+                    . " | Succeeded=yes | Method="
+                    . result.method
+                    . " | Script="
+                    . request.scriptPath
+                )
+            } else {
+                WriteTextFile(flowCellLastActionStatusPath, statusText)
+                this.logger.Warn(
+                    "Direct script failed. RequestId="
+                    . request.requestId
+                    . " | Method="
+                    . result.method
+                    . " | Details="
+                    . result.detail
+                    . " | Script="
+                    . request.scriptPath
+                )
+            }
+        } catch as err {
+            errorText := "Direct script failed.`r`n" err.Message
+            WriteTextFile(flowCellLastActionStatusPath, errorText)
+            this.logger.Error(
+                "Direct script failed with an exception. RequestId="
+                . request.requestId
+                . " | Script="
+                . request.scriptPath,
+                err
+            )
+        } finally {
+            this.directScriptBusy := false
+            this.directScriptTimer := ""
+        }
+    }
+
+    RunIllustratorScript(scriptPath, source, programConfig := 0, allowProcessFallback := true) {
         result := {
             attempted: false,
             succeeded: false,
@@ -1391,8 +1631,14 @@ class FlowCellApp {
             return result
         }
 
+        modalDialogScript := !allowProcessFallback && this.IsFlowCellIllustratorModalDialogScript(scriptPath)
         stableHwnd := this.FindStableIllustratorWindow(programConfig)
         if !stableHwnd {
+            if !allowProcessFallback {
+                result.detail := "Stable Illustrator 2026 is not running. Open Illustrator before using this FlowCell tool."
+                this.logger.Warn("Automation-only script run blocked because no stable Illustrator 2026 window was found.")
+                return result
+            }
             configuredExePath := this.ResolveConfiguredProgramExePath(programConfig)
             if configuredExePath != "" {
                 try {
@@ -1415,14 +1661,16 @@ class FlowCellApp {
         }
 
         result.attempted := true
-        result.method := "illustrator_com_activeobject"
+        result.method := allowProcessFallback
+            ? "illustrator_com_activeobject"
+            : (modalDialogScript ? "illustrator_com_automation_modal" : "illustrator_com_automation_only")
         skipComProbe := false
         try {
             if this.HasProp("IllustratorComRetryAfterTick") && Integer(this.IllustratorComRetryAfterTick) > A_TickCount
                 skipComProbe := true
         } catch {
         }
-        if skipComProbe {
+        if skipComProbe && allowProcessFallback {
             fallback := this.TryRunIllustratorScriptViaProcess(scriptPath, stableHwnd, programConfig)
             if fallback.succeeded {
                 this.logger.Info(
@@ -1437,19 +1685,21 @@ class FlowCellApp {
             }
         }
         try {
-            try {
-                WinActivate "ahk_id " stableHwnd
-                WinWaitActive "ahk_id " stableHwnd, , 2
-                Sleep 80
-            } catch as activationErr {
-                this.logger.Warn("Could not activate the stable Illustrator 2026 window before COM. Continuing with COM. " activationErr.Message)
+            if allowProcessFallback || modalDialogScript {
+                try {
+                    WinActivate "ahk_id " stableHwnd
+                    WinWaitActive "ahk_id " stableHwnd, , 2
+                    Sleep 80
+                } catch as activationErr {
+                    this.logger.Warn("Could not activate the stable Illustrator 2026 window before COM. Continuing with COM. " activationErr.Message)
+                }
+
+                if !WinActive("ahk_id " stableHwnd) {
+                    this.logger.Warn("Stable Illustrator 2026 window is not foreground before COM. Continuing with COM.")
+                }
             }
 
-            if !WinActive("ahk_id " stableHwnd) {
-                this.logger.Warn("Stable Illustrator 2026 window is not foreground before COM. Continuing with COM.")
-            }
-
-            app := this.GetIllustratorApplication()
+            app := this.GetIllustratorApplication(250, allowProcessFallback || modalDialogScript)
             returnValue := app.DoJavaScriptFile(scriptPath)
             this.IllustratorComRetryAfterTick := 0
             result.succeeded := true
@@ -1470,17 +1720,20 @@ class FlowCellApp {
             return result
         } catch as err {
             this.IllustratorComRetryAfterTick := A_TickCount + 12000
-            fallback := this.TryRunIllustratorScriptViaProcess(scriptPath, stableHwnd, programConfig)
-            if fallback.succeeded {
-                this.logger.Info(
-                    "Script run succeeded via fallback. Source="
-                    . source
-                    . " | Script="
-                    . scriptPath
-                    . " | Method="
-                    . fallback.method
-                )
-                return fallback
+            fallback := { method: "", detail: "" }
+            if allowProcessFallback {
+                fallback := this.TryRunIllustratorScriptViaProcess(scriptPath, stableHwnd, programConfig)
+                if fallback.succeeded {
+                    this.logger.Info(
+                        "Script run succeeded via fallback. Source="
+                        . source
+                        . " | Script="
+                        . scriptPath
+                        . " | Method="
+                        . fallback.method
+                    )
+                    return fallback
+                }
             }
 
             result.succeeded := false
@@ -1769,6 +2022,8 @@ class FlowCellApp {
             resolvedProgramKey := StrLower(Trim(resolvedProgramName))
 
         switch resolvedProgramKey {
+            case "illustrator_automation":
+                return this.RunIllustratorScript(scriptPath, source, programConfig, false)
             case "illustrator_direct":
                 return this.RunIllustratorScript(scriptPath, source, programConfig)
             case "illustrator_process":
@@ -1934,12 +2189,12 @@ class FlowCellApp {
         }
     }
 
-    GetIllustratorApplication(timeoutMs := 250) {
+    GetIllustratorApplication(timeoutMs := 250, activateWindow := true) {
         deadline := A_TickCount + Max(timeoutMs, 120)
         while A_TickCount <= deadline {
             hwnd := this.FindStableIllustratorWindow()
 
-            if hwnd {
+            if hwnd && activateWindow {
                 try WinActivate "ahk_id " hwnd
                 catch {
                 }
@@ -1958,10 +2213,12 @@ class FlowCellApp {
             for candidateHwnd in WinGetList("ahk_exe Illustrator.exe") {
                 if !this.IsStableIllustratorWindow(candidateHwnd)
                     continue
-                try WinActivate "ahk_id " candidateHwnd
-                catch {
+                if activateWindow {
+                    try WinActivate "ahk_id " candidateHwnd
+                    catch {
+                    }
+                    Sleep(20)
                 }
-                Sleep(20)
 
                 for progId in ["Illustrator.Application.30", "Illustrator.Application"] {
                     try {
@@ -6156,6 +6413,8 @@ class ScriptShortcutManager {
         this.bindings := []
         this.nextId := 1
         this.registered := Map()
+        this.pendingAsyncScriptHotkeys := Map()
+        this.asyncScriptDebounceMs := 80
         this.candidateShortcuts := this.BuildCandidateShortcuts()
     }
 
@@ -6304,10 +6563,13 @@ class ScriptShortcutManager {
         registrationShortcut := binding.shortcut
         hotIfWinTitle := ""
         binding.sendKeyAfter := ""
+        binding.sendKeyBefore := ""
+        binding.runScriptAfterSendAsync := false
         if this.app.IsFlowCellIllustratorSelectionToolAnchorHotkey(binding.scriptPath) && NormalizeShortcut(binding.shortcut) = "~v" {
             registrationShortcut := "$v"
             hotIfWinTitle := "ahk_exe Illustrator.exe"
-            binding.sendKeyAfter := "v"
+            binding.sendKeyBefore := "v"
+            binding.runScriptAfterSendAsync := true
         }
         try {
             if hotIfWinTitle != ""
@@ -6341,6 +6603,13 @@ class ScriptShortcutManager {
     }
 
     UnregisterHotkeys() {
+        for _, timer in this.pendingAsyncScriptHotkeys {
+            try SetTimer timer, 0
+            catch {
+            }
+        }
+        this.pendingAsyncScriptHotkeys := Map()
+
         for _, entry in this.registered {
             try {
                 if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
@@ -6361,7 +6630,60 @@ class ScriptShortcutManager {
         binding := this.GetBindingById(bindingId)
         if !IsObject(binding)
             return
+        if binding.HasOwnProp("runScriptAfterSendAsync") && binding.runScriptAfterSendAsync {
+            this.HandlePassThroughAsyncScriptHotkey(binding)
+            return
+        }
         this.app.HandleShortcutInvocation(binding)
+    }
+
+    HandlePassThroughAsyncScriptHotkey(binding) {
+        if binding.HasOwnProp("sendKeyBefore") && binding.sendKeyBefore != "" && WinActive("ahk_exe Illustrator.exe") {
+            try Send "{" binding.sendKeyBefore "}"
+            catch as sendErr
+                this.logger.Warn("Immediate hotkey key pass-through failed. Shortcut=" binding.shortcut " | Error=" sendErr.Message)
+        }
+        this.QueueAsyncScriptHotkey(binding)
+    }
+
+    QueueAsyncScriptHotkey(binding) {
+        key := binding.id ""
+        if this.pendingAsyncScriptHotkeys.Has(key) {
+            try SetTimer this.pendingAsyncScriptHotkeys[key], 0
+            catch {
+            }
+        }
+
+        timer := ObjBindMethod(this, "RunQueuedAsyncScriptHotkey", binding.id)
+        this.pendingAsyncScriptHotkeys[key] := timer
+        debouncePeriod := -1 * this.asyncScriptDebounceMs
+        SetTimer timer, debouncePeriod
+    }
+
+    RunQueuedAsyncScriptHotkey(bindingId, *) {
+        global flowCellLastActionStatusPath
+        key := bindingId ""
+        if this.pendingAsyncScriptHotkeys.Has(key)
+            this.pendingAsyncScriptHotkeys.Delete(key)
+
+        binding := this.GetBindingById(bindingId)
+        if !IsObject(binding)
+            return
+
+        this.logger.Info("Script hotkey queued after immediate pass-through. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
+        result := this.app.RunBackendScriptCommand(binding.scriptPath, binding.HasOwnProp("programTabId") ? binding.programTabId : 0, "hotkey " binding.shortcut " async", true)
+        lines := [
+            "Shortcut: " binding.shortcut,
+            "Script: " binding.scriptPath,
+            "Pass-through: sent before script",
+            "Queued: " BoolToWord(result.succeeded),
+            "Method: " result.method,
+            "Details: " result.detail
+        ]
+        statusText := JoinLines(lines)
+        this.app.SetShortcutStatus(statusText)
+        WriteTextFile(flowCellLastActionStatusPath, statusText)
+        this.logger.Info("Script hotkey async dispatch completed. Shortcut=" binding.shortcut " | Queued=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
     }
 
     AddBinding(shortcut, scriptPath) {
@@ -7460,6 +7782,10 @@ NormalizeShortcut(value) {
     return RegExReplace(StrLower(CanonicalizeShortcut(value)), "\s+", "")
 }
 
+PowerShellSingleQuote(value) {
+    return "'" StrReplace(value "", "'", "''") "'"
+}
+
 CloneBindings(bindings) {
     clone := []
     for binding in bindings {
@@ -7537,6 +7863,8 @@ if runScriptPath != "" {
         ExitApp(1)
     }
 }
+
+app.StartDirectScriptReceiver()
 
 if HasCliFlag("--headless") {
     logger.Info("Macro backend started in headless mode.")

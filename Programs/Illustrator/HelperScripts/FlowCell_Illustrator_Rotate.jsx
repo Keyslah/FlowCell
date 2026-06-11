@@ -8,6 +8,7 @@
     var MAX_ANCHOR_SCAN_ITEMS = 1500;
     var MAX_SELECTION_ITEMS = 250;
     var MAX_DISTRIBUTE_POSITIONS = 72;
+    var MAX_COMMAND_AGE_MS = 15000;
 
     function nowStamp() {
         var date = new Date();
@@ -136,6 +137,14 @@
         writeLog("command requested: " + String(record && record.command ? record.command : "status"));
 
         var payload = record && record.payload ? record.payload : {};
+        if (record && record.createdAtMs) {
+            var commandAgeMs = new Date().getTime() - Number(record.createdAtMs);
+            if (isFiniteNumber(commandAgeMs) && commandAgeMs > MAX_COMMAND_AGE_MS) {
+                return { command: "status", payload: {}, error: "stale rotate command ignored" };
+            }
+        } else if (record && record.command && String(record.command).toLowerCase() !== "status") {
+            return { command: "status", payload: {}, error: "undated rotate command ignored" };
+        }
         return {
             command: record && record.command ? String(record.command) : "status",
             payload: payload
@@ -449,18 +458,6 @@
         return { kind: "fixed", x: selectionBounds.centerX, y: selectionBounds.centerY };
     }
 
-    function rotatePoint(point, pivot, angleDeg) {
-        var radians = angleDeg * Math.PI / 180;
-        var cosA = Math.cos(radians);
-        var sinA = Math.sin(radians);
-        var dx = point.x - pivot.x;
-        var dy = point.y - pivot.y;
-        return {
-            x: pivot.x + dx * cosA - dy * sinA,
-            y: pivot.y + dx * sinA + dy * cosA
-        };
-    }
-
     function pivotForItem(item, pivot) {
         if (pivot.kind !== "each") {
             return pivot;
@@ -469,13 +466,24 @@
         return { kind: "fixed", x: bounds.centerX, y: bounds.centerY };
     }
 
+    function rotationMatrixAboutPivot(pivot, angleDeg) {
+        var matrix = app.getRotationMatrix(angleDeg);
+        matrix.mValueTX = pivot.x - (matrix.mValueA * pivot.x + matrix.mValueC * pivot.y);
+        matrix.mValueTY = pivot.y - (matrix.mValueB * pivot.x + matrix.mValueD * pivot.y);
+        return matrix;
+    }
+
     function transformItem(item, pivot, angleDeg) {
         var itemPivot = pivotForItem(item, pivot);
-        var before = boundsForItem(item);
-        var targetCenter = rotatePoint({ x: before.centerX, y: before.centerY }, itemPivot, angleDeg);
-        item.rotate(angleDeg, true, true, true, true, Transformation.CENTER);
-        var after = boundsForItem(item);
-        item.translate(targetCenter.x - after.centerX, targetCenter.y - after.centerY);
+        item.transform(
+            rotationMatrixAboutPivot(itemPivot, angleDeg),
+            true,
+            true,
+            true,
+            true,
+            100,
+            Transformation.DOCUMENTORIGIN
+        );
     }
 
     function applyTransform(items, pivot, angleDeg) {

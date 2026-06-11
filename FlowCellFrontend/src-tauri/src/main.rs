@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::collections::{HashMap, HashSet};
 use std::env;
+#[cfg(windows)]
+use std::ffi::c_void;
 use std::fs;
-use std::io::{ErrorKind, Read, Seek, SeekFrom};
+use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -36,16 +38,19 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_SHOWWINDOW, SW_SHOWNOACTIVATE,
 };
 #[cfg(windows)]
-use windows_sys::Win32::Foundation::{CloseHandle, POINT};
+use windows_sys::Win32::Foundation::{CloseHandle, HWND, POINT};
+#[cfg(windows)]
+use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindow, GetWindowLongPtrW,
-    GetWindowThreadProcessId, IsIconic, IsWindowVisible, SetWindowLongPtrW, WindowFromPoint,
-    GA_ROOT, GWLP_HWNDPARENT, GW_HWNDNEXT,
+    FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindow,
+    GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SendMessageTimeoutW,
+    SetWindowLongPtrW, WindowFromPoint, GA_ROOT, GWLP_HWNDPARENT, GW_HWNDNEXT, SMTO_ABORTIFHUNG,
+    WM_COPYDATA,
 };
 
 #[cfg(windows)]
@@ -77,6 +82,26 @@ const DEFAULT_BLENDER_BRIDGE_TIMEOUT_SECONDS: u64 = 20;
 const BLENDER_BRIDGE_RESPONSE_POLL_MS: u64 = 4;
 const BLENDER_BRIDGE_STATUS_TIMEOUT_MS: u64 = 450;
 const FLOWCELL_CONTROLLER_SCRIPT_TIMEOUT_SECONDS: u64 = 25;
+#[cfg(windows)]
+const FLOWCELL_DIRECT_SCRIPT_RECEIVER_TITLE: &str = "FlowCellBackendDirectScriptReceiver";
+#[cfg(windows)]
+const FLOWCELL_DIRECT_SCRIPT_RECEIVER_CLASS: &str = "AutoHotkeyGUI";
+#[cfg(windows)]
+const FLOWCELL_DIRECT_SCRIPT_COPYDATA_ID: usize = 0x4643_5344;
+#[cfg(windows)]
+const FLOWCELL_DIRECT_SCRIPT_ACCEPTED: usize = 1;
+#[cfg(windows)]
+const FLOWCELL_DIRECT_SCRIPT_BUSY: usize = 2;
+#[cfg(windows)]
+const FLOWCELL_DIRECT_SCRIPT_BAD_PAYLOAD: usize = 3;
+#[cfg(windows)]
+const FLOWCELL_DIRECT_SCRIPT_BAD_SCRIPT: usize = 4;
+#[cfg(windows)]
+const FLOWCELL_DIRECT_SCRIPT_SEND_TIMEOUT_MS: u32 = 160;
+#[cfg(windows)]
+const FLOWCELL_DIRECT_SCRIPT_STARTUP_WAIT_MS: u64 = 3500;
+#[cfg(windows)]
+const FLOWCELL_DIRECT_SCRIPT_RECEIVER_POLL_MS: u64 = 40;
 const ILLUSTRATOR_ALIGNMENT_ACTIONS_ENABLED: bool = true;
 const CODEX_SESSION_SCAN_LIMIT: usize = 96;
 const CODEX_SESSION_TAIL_BYTES: u64 = 8_388_608;
@@ -5874,23 +5899,35 @@ fn read_last_action_status_message() -> Option<String> {
     }
 }
 
-fn run_flowcell_controller_script(script_path: &Path, program_key: &str) -> Result<String, String> {
-    if !script_path.is_file() {
-        return Err(format!(
-            "Script file was not found at {}.",
-            script_path.display()
-        ));
+fn append_flowcell_local_log(file_name: &str, message: &str) {
+    let Ok(local_root) = resolve_flowcell_local_root() else {
+        return;
+    };
+    let log_root = local_root.join("logs");
+    if fs::create_dir_all(&log_root).is_err() {
+        return;
     }
+    let log_path = log_root.join(file_name);
+    let Ok(mut file) = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)
+    else {
+        return;
+    };
+    let _ = writeln!(file, "[{}] {}", current_timestamp_string(), message);
+}
 
+fn build_flowcell_controller_script_command(
+    script_path: &Path,
+    program_key: &str,
+    pipe_output: bool,
+) -> Result<Command, String> {
     let backend_script_path = resolve_flowcell_backend_script_path()?;
     let ahk_exe = resolve_flowcell_autohotkey_exe_path()?;
     let flowcell_root = backend_script_path
         .parent()
         .ok_or_else(|| "FlowCell backend root could not be resolved.".to_string())?;
-    let status_path = resolve_flowcell_local_root()?
-        .join("logs")
-        .join("last_action_status.txt");
-    let _ = fs::remove_file(&status_path);
 
     let mut command = Command::new(ahk_exe);
     command
@@ -5899,12 +5936,180 @@ fn run_flowcell_controller_script(script_path: &Path, program_key: &str) -> Resu
         .arg(format!("--run-script-path={}", script_path.display()))
         .arg(format!("--run-script-program={program_key}"))
         .arg("--run-script-program-tab-id=0")
-        .current_dir(flowcell_root)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+        .current_dir(flowcell_root);
+
+    if pipe_output {
+        command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    } else {
+        command.stdout(Stdio::null()).stderr(Stdio::null());
+    }
 
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
+
+    Ok(command)
+}
+
+#[cfg(windows)]
+fn wide_null(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(windows)]
+fn find_flowcell_direct_script_receiver() -> HWND {
+    let class_name = wide_null(FLOWCELL_DIRECT_SCRIPT_RECEIVER_CLASS);
+    let title = wide_null(FLOWCELL_DIRECT_SCRIPT_RECEIVER_TITLE);
+    unsafe { FindWindowW(class_name.as_ptr(), title.as_ptr()) }
+}
+
+#[cfg(windows)]
+fn wait_for_flowcell_direct_script_receiver(timeout: Duration) -> HWND {
+    let start = Instant::now();
+    loop {
+        let hwnd = find_flowcell_direct_script_receiver();
+        if !hwnd.is_null() {
+            return hwnd;
+        }
+        if start.elapsed() >= timeout {
+            return std::ptr::null_mut();
+        }
+        thread::sleep(Duration::from_millis(
+            FLOWCELL_DIRECT_SCRIPT_RECEIVER_POLL_MS,
+        ));
+    }
+}
+
+#[cfg(windows)]
+fn send_flowcell_direct_script_copydata(hwnd: HWND, payload: &str) -> Result<usize, String> {
+    let mut payload_wide: Vec<u16> = payload.encode_utf16().collect();
+    let byte_count = payload_wide
+        .len()
+        .checked_mul(std::mem::size_of::<u16>())
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| "FlowCell direct script request was too large.".to_string())?;
+
+    let mut copy_data = COPYDATASTRUCT {
+        dwData: FLOWCELL_DIRECT_SCRIPT_COPYDATA_ID,
+        cbData: byte_count,
+        lpData: payload_wide.as_mut_ptr() as *mut c_void,
+    };
+    let mut response: usize = 0;
+    let send_result = unsafe {
+        SendMessageTimeoutW(
+            hwnd,
+            WM_COPYDATA,
+            0,
+            &mut copy_data as *mut COPYDATASTRUCT as isize,
+            SMTO_ABORTIFHUNG,
+            FLOWCELL_DIRECT_SCRIPT_SEND_TIMEOUT_MS,
+            &mut response as *mut usize,
+        )
+    };
+
+    if send_result == 0 {
+        return Err(
+            "FlowCell backend is busy or did not answer. Nothing was queued; wait for the current Illustrator action to finish and click again."
+                .to_string(),
+        );
+    }
+
+    Ok(response)
+}
+
+fn run_illustrator_backend_script_direct(
+    script_path: &Path,
+    program_key: &str,
+) -> Result<String, String> {
+    if !script_path.is_file() {
+        return Err(format!(
+            "Script file was not found at {}.",
+            script_path.display()
+        ));
+    }
+
+    #[cfg(windows)]
+    {
+        let dispatch_started = Instant::now();
+        let mut hwnd = find_flowcell_direct_script_receiver();
+        if hwnd.is_null() {
+            restart_flowcell_headless_backend()?;
+            hwnd = wait_for_flowcell_direct_script_receiver(Duration::from_millis(
+                FLOWCELL_DIRECT_SCRIPT_STARTUP_WAIT_MS,
+            ));
+        }
+        if hwnd.is_null() {
+            return Err(
+                "FlowCell backend receiver is not available. Restart FlowCell so the hidden backend can load the direct script receiver."
+                    .to_string(),
+            );
+        }
+
+        let script_name = script_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("script");
+        let payload = serde_json::to_string(&json!({
+            "command": "run_script_now",
+            "scriptPath": script_path.display().to_string(),
+            "programKey": program_key,
+            "requestId": format!("illustrator-script-{}", current_timestamp_token())
+        }))
+        .map_err(|error| format!("Failed to serialize FlowCell direct script request: {error}"))?;
+
+        let response = send_flowcell_direct_script_copydata(hwnd, &payload)?;
+        match response {
+            FLOWCELL_DIRECT_SCRIPT_ACCEPTED => {
+                append_flowcell_local_log(
+                    "command_host.log",
+                    &format!(
+                        "Illustrator script accepted by live backend in {} ms. ProgramKey={program_key}; Script={}",
+                        dispatch_started.elapsed().as_millis(),
+                        script_path.display()
+                    ),
+                );
+                Ok(format!("Started {script_name}."))
+            }
+            FLOWCELL_DIRECT_SCRIPT_BUSY => Err(
+                "FlowCell backend is already running an Illustrator script. Nothing was queued; wait for it to finish and click again."
+                    .to_string(),
+            ),
+            FLOWCELL_DIRECT_SCRIPT_BAD_PAYLOAD => {
+                Err("FlowCell backend could not read the direct script request.".to_string())
+            }
+            FLOWCELL_DIRECT_SCRIPT_BAD_SCRIPT => Err(format!(
+                "FlowCell backend rejected the script path for {}.",
+                script_path.display()
+            )),
+            other => Err(format!(
+                "FlowCell backend returned an unexpected direct script response: {other}."
+            )),
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        run_flowcell_controller_script(script_path, program_key)
+    }
+}
+
+fn clear_last_action_status_file() -> Result<(), String> {
+    let status_path = resolve_flowcell_local_root()?
+        .join("logs")
+        .join("last_action_status.txt");
+    let _ = fs::remove_file(&status_path);
+    Ok(())
+}
+
+fn run_flowcell_controller_script(script_path: &Path, program_key: &str) -> Result<String, String> {
+    if !script_path.is_file() {
+        return Err(format!(
+            "Script file was not found at {}.",
+            script_path.display()
+        ));
+    }
+
+    clear_last_action_status_file()?;
+    let mut command = build_flowcell_controller_script_command(script_path, program_key, true)?;
 
     let child = command
         .spawn()
@@ -7115,7 +7320,7 @@ fn run_illustrator_alignment_tool_action(
         group_mode,
     )?;
     let script_path = resolve_illustrator_anchor_engine_script_path()?;
-    run_flowcell_controller_script(&script_path, "illustrator_process")
+    run_illustrator_backend_script_direct(&script_path, "illustrator_automation")
 }
 
 fn toolset_message_response(message: String) -> Value {
@@ -7249,17 +7454,34 @@ fn write_illustrator_rotate_command_file(
     fs::create_dir_all(&local_root)
         .map_err(|error| format!("Failed to create {}: {error}", local_root.display()))?;
     let command_path = local_root.join("illustrator_rotate_command.json");
+    let created_at_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
     let content = serde_json::to_string_pretty(&json!({
         "programName": program_name,
         "panelName": panel_name,
         "fileName": file_name,
         "command": command,
+        "createdAtMs": created_at_ms,
         "payload": payload.unwrap_or_else(|| Value::Object(Map::new()))
     }))
     .map_err(|error| format!("Failed to serialize Illustrator rotate command payload: {error}"))?;
     fs::write(&command_path, content)
         .map_err(|error| format!("Failed to write {}: {error}", command_path.display()))?;
     Ok(command_path)
+}
+
+fn clear_illustrator_rotate_command_file() -> Result<(), String> {
+    let command_path = resolve_flowcell_local_root()?.join("illustrator_rotate_command.json");
+    match fs::remove_file(&command_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "Failed to remove {}: {error}",
+            command_path.display()
+        )),
+    }
 }
 
 fn run_illustrator_toolset_action(
@@ -7296,6 +7518,7 @@ fn run_illustrator_toolset_action(
             "Illustrator Rotate action is still running. Wait for it to finish before pressing another button."
                 .to_string()
         })?;
+        clear_illustrator_rotate_command_file()?;
         write_illustrator_rotate_command_file(
             program_name,
             panel_name,
@@ -7303,7 +7526,9 @@ fn run_illustrator_toolset_action(
             normalized_command,
             payload,
         )?;
-        let message = run_flowcell_controller_script(&script_path, "illustrator_process")?;
+        let result = run_flowcell_controller_script(&script_path, "illustrator_automation");
+        let _ = clear_illustrator_rotate_command_file();
+        let message = result?;
         return Ok(toolset_message_response(message));
     }
 
@@ -7314,7 +7539,7 @@ fn run_illustrator_toolset_action(
         normalized_command,
         payload,
     )?;
-    let message = run_flowcell_controller_script(&script_path, "illustrator_direct")?;
+    let message = run_flowcell_controller_script(&script_path, "illustrator_automation")?;
     Ok(toolset_message_response(message))
 }
 
@@ -9042,11 +9267,11 @@ fn run_panel_script(
             ));
         }
 
-        let program_key = if is_illustrator_program_name(&program_name) {
-            "illustrator_direct"
-        } else {
-            "photoshop_direct"
-        };
+        if is_illustrator_program_name(&program_name) {
+            return run_illustrator_backend_script_direct(&script_path, "illustrator_automation");
+        }
+
+        let program_key = "photoshop_direct";
         return run_flowcell_controller_script(&script_path, program_key);
     }
 

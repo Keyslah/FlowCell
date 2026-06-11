@@ -8,11 +8,14 @@
  * objects into Snapshots > [sublayer name] > sN.
  */
 (function () {
-    var SCRIPT_VERSION = "2026-03-25 01:34";
+    var SCRIPT_VERSION = "2026-06-11 14:18";
     var LOG_PATH = Folder.temp.fsName + "/Illustrator_Save_Snapshot_Debug.log";
+    var runStartedAt = new Date().getTime();
+    var debugLogLines = [];
 
     if (app.documents.length === 0) {
         logLine("Run " + SCRIPT_VERSION + " aborted: no open document.");
+        flushLog();
         return;
     }
 
@@ -27,8 +30,11 @@
 
     try {
         resetLog(doc);
+        markTime("reset log");
         roots = ensureRootLayers(doc);
+        markTime("ensure root layers");
         var targets = resolveTargets(doc);
+        markTime("resolve targets");
         var report = [];
         var i;
 
@@ -57,14 +63,22 @@
 
                 if (target.kind === "layer") {
                     sourceState = captureBranchState(target.layer);
+                    markTime("capture branch state: " + getTargetName(target));
                     unlockBranchFromState(sourceState);
+                    markTime("unlock branch: " + getTargetName(target));
                     copyLayerContents(target.layer, snapshotEntry, sourceState);
+                    markTime("copy layer contents: " + getTargetName(target));
                     restoreBranchState(sourceState);
+                    markTime("restore branch: " + getTargetName(target));
                 } else if (target.kind === "item") {
                     sourceState = captureItemState(target.item);
+                    markTime("capture item state: " + getTargetName(target));
                     unlockItemFromState(sourceState);
+                    markTime("unlock item: " + getTargetName(target));
                     copySingleItem(target.item, snapshotEntry, sourceState);
+                    markTime("copy item: " + getTargetName(target));
                     restoreItemFromState(sourceState);
+                    markTime("restore item: " + getTargetName(target));
                 } else {
                     throw new Error("Unsupported target kind: " + target.kind);
                 }
@@ -79,6 +93,7 @@
         }
 
         syncSnapshotOrderToLive(roots.snapshots, roots.live);
+        markTime("sync snapshot order");
 
         roots.snapshots.visible = true;
         roots.snapshots.locked = false;
@@ -93,6 +108,8 @@
             setSystemLayerState(roots.snapshots, true, false);
         }
         restoreActiveLayer(doc, originalActiveLayer);
+        markTime("final cleanup");
+        flushLog();
     }
 
     function resetLog(documentRef) {
@@ -111,12 +128,27 @@
     }
 
     function logLine(message) {
+        debugLogLines.push(message);
+    }
+
+    function markTime(label) {
+        logLine("Timing " + label + ": " + (new Date().getTime() - runStartedAt) + " ms");
+    }
+
+    function flushLog() {
         var file = new File(LOG_PATH);
+        var i;
+
+        if (debugLogLines.length === 0) {
+            return;
+        }
 
         try {
             file.encoding = "UTF-8";
-            file.open("a");
-            file.writeln(message);
+            file.open("w");
+            for (i = 0; i < debugLogLines.length; i += 1) {
+                file.writeln(debugLogLines[i]);
+            }
             file.close();
         } catch (ignore) {}
     }

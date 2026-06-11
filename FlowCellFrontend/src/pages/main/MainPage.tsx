@@ -109,6 +109,11 @@ type ButtonContextMenuState = {
   y: number;
 };
 
+type ScriptRunErrorState = {
+  title: string;
+  detail: string;
+};
+
 type MacroPanelChangedPayload = {
   programName?: string;
   panelName?: string;
@@ -538,6 +543,7 @@ export default function MainPage() {
   const [panelScripts, setPanelScripts] = useState<PanelScriptFileRecord[]>([]);
   const [panelButtonOrder, setPanelButtonOrder] = useState<string[]>([]);
   const [selectedPanelScriptFileNames, setSelectedPanelScriptFileNames] = useState<string[]>([]);
+  const [scriptRunError, setScriptRunError] = useState<ScriptRunErrorState | null>(null);
   const [selectedScriptGroupPopoutType, setSelectedScriptGroupPopoutType] =
     useState<ScriptGroupPopoutType>(DEFAULT_SCRIPT_GROUP_POPOUT_TYPE);
 
@@ -1148,7 +1154,10 @@ export default function MainPage() {
 
   const handleRunPanelScript = async (fileName: string) => {
     if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before running a script.");
+      setScriptRunError({
+        title: "Script could not be run.",
+        detail: "Select a program and panel before running a script."
+      });
       return;
     }
 
@@ -1166,10 +1175,14 @@ export default function MainPage() {
     }
 
     try {
+      setScriptRunError(null);
       await runPanelScript(selectedProgramName, selectedPanelName, fileName);
     } catch (error) {
       console.error(`Failed to run panel script for ${selectedProgramName}.`, error);
-      window.alert(`Script could not be run.\n\n${formatErrorMessage(error)}`);
+      setScriptRunError({
+        title: "Script could not be run.",
+        detail: formatErrorMessage(error)
+      });
     }
   };
 
@@ -2890,6 +2903,20 @@ export default function MainPage() {
                 ) : null}
               </div>
             </>
+          ) : null}
+          {scriptRunError ? (
+            <section className="main-page__script-error" role="alert">
+              <button
+                type="button"
+                className="main-page__script-error-close"
+                aria-label="Dismiss script error"
+                onClick={() => setScriptRunError(null)}
+              >
+                X
+              </button>
+              <strong>{scriptRunError.title}</strong>
+              <p>{scriptRunError.detail}</p>
+            </section>
           ) : null}
         </div>
       </ExactPageFrame>

@@ -93,6 +93,11 @@ POLL_INTERVAL_SECONDS = 0.1
 LAST_REQUEST_ID = None
 LAST_BRIDGE_MESSAGE = ""
 LAST_BRIDGE_DISPLAY = ""
+PENDING_UNDO_BRIDGE_ACTION = ""
+PENDING_UNDO_BRIDGE_DATA = {}
+PENDING_UNDO_BRIDGE_RESULT = None
+PENDING_UNDO_BRIDGE_ERROR = ""
+READ_ONLY_BRIDGE_COMMANDS = {"status", "state", "get_state", "read_state", "query"}
 VERSION_PREFIX_RE = re.compile(r"^\([sta]\d+\)", re.IGNORECASE)
 TARGET_NAME_PROP = "lls_target_name"
 CYCLE_INDEX_PROP = "lls_cycle_index"
@@ -2917,7 +2922,7 @@ def perform_import_png_as_lithophane_result(
                 pass
 
 
-def execute_bridge_operator(action: str, data: dict) -> dict[str, str]:
+def _execute_bridge_operator_direct(action: str, data: dict) -> dict[str, object]:
     set_bridge_result("", "")
     normalized = str(action or "").strip().lower()
     result = None
@@ -3071,6 +3076,49 @@ def execute_bridge_operator(action: str, data: dict) -> dict[str, str]:
         "message": LAST_BRIDGE_MESSAGE or f"Completed {normalized}.",
         "display": LAST_BRIDGE_DISPLAY,
     }
+
+
+def _should_run_bridge_action_undoably(action: str, data: dict) -> bool:
+    if not isinstance(data, dict):
+        return True
+
+    for key in ("command", "action", "tool_command"):
+        command = str(data.get(key, "") or "").strip().lower()
+        if command in READ_ONLY_BRIDGE_COMMANDS:
+            return False
+
+    return True
+
+
+def execute_bridge_operator(action: str, data: dict) -> dict[str, object]:
+    global PENDING_UNDO_BRIDGE_ACTION
+    global PENDING_UNDO_BRIDGE_DATA
+    global PENDING_UNDO_BRIDGE_RESULT
+    global PENDING_UNDO_BRIDGE_ERROR
+
+    if not _should_run_bridge_action_undoably(action, data):
+        return _execute_bridge_operator_direct(action, data if isinstance(data, dict) else {})
+
+    PENDING_UNDO_BRIDGE_ACTION = str(action or "")
+    PENDING_UNDO_BRIDGE_DATA = data if isinstance(data, dict) else {}
+    PENDING_UNDO_BRIDGE_RESULT = None
+    PENDING_UNDO_BRIDGE_ERROR = ""
+
+    try:
+        result = bpy.ops.object.flowcell_bridge_undoable_action("EXEC_DEFAULT")
+        if result is None or "FINISHED" not in result:
+            error = PENDING_UNDO_BRIDGE_ERROR or f"Action did not finish: {action or '[blank]'}"
+            raise ValueError(error)
+        if PENDING_UNDO_BRIDGE_ERROR:
+            raise ValueError(PENDING_UNDO_BRIDGE_ERROR)
+        if not isinstance(PENDING_UNDO_BRIDGE_RESULT, dict):
+            raise ValueError(f"Action returned no result: {action or '[blank]'}")
+        return PENDING_UNDO_BRIDGE_RESULT
+    finally:
+        PENDING_UNDO_BRIDGE_ACTION = ""
+        PENDING_UNDO_BRIDGE_DATA = {}
+        PENDING_UNDO_BRIDGE_RESULT = None
+        PENDING_UNDO_BRIDGE_ERROR = ""
 
 
 def get_bridge_directory() -> Path:
@@ -3505,7 +3553,33 @@ class OBJECT_OT_flowcell_live_snapshot_cycle_live_versions(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class OBJECT_OT_flowcell_bridge_undoable_action(bpy.types.Operator):
+    bl_idname = "object.flowcell_bridge_undoable_action"
+    bl_label = "FlowCell Bridge Action"
+    bl_description = "Run a FlowCell bridge action as one Blender undo step"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context: bpy.types.Context):
+        global PENDING_UNDO_BRIDGE_RESULT
+        global PENDING_UNDO_BRIDGE_ERROR
+
+        try:
+            PENDING_UNDO_BRIDGE_RESULT = _execute_bridge_operator_direct(
+                PENDING_UNDO_BRIDGE_ACTION,
+                PENDING_UNDO_BRIDGE_DATA,
+            )
+            message = str(PENDING_UNDO_BRIDGE_RESULT.get("message", ""))
+            if message:
+                self.report({"INFO"}, message)
+            return {"FINISHED"}
+        except Exception as exc:
+            PENDING_UNDO_BRIDGE_ERROR = str(exc)
+            self.report({"ERROR"}, str(exc))
+            return {"CANCELLED"}
+
+
 CLASSES = (
+    OBJECT_OT_flowcell_bridge_undoable_action,
     OBJECT_OT_flowcell_live_snapshot_make_layers,
     OBJECT_OT_flowcell_live_snapshot_sort,
     OBJECT_OT_flowcell_live_snapshot_sort_live,
@@ -3607,16 +3681,20 @@ def _restore_flowcell_project_theme_after_load():
     return None
 
 
-@persistent
-def _restore_flowcell_project_theme_on_load(_dummy=None):
+def _schedule_flowcell_project_theme_restore(first_interval: float = 0.35) -> None:
     namespace = bpy.app.driver_namespace
     namespace[PROJECT_THEME_RESTORE_ATTEMPTS_KEY] = 0
     if not bpy.app.timers.is_registered(_restore_flowcell_project_theme_after_load):
         bpy.app.timers.register(
             _restore_flowcell_project_theme_after_load,
-            first_interval=0.35,
+            first_interval=first_interval,
             persistent=False,
         )
+
+
+@persistent
+def _restore_flowcell_project_theme_on_load(_dummy=None):
+    _schedule_flowcell_project_theme_restore(first_interval=0.35)
 
 
 def _ensure_flowcell_project_theme_restore_handler_registered() -> None:
@@ -3675,6 +3753,7 @@ def register():
     get_bridge_directory()
     disable_outliner_alpha_sort()
     _ensure_flowcell_project_theme_restore_handler_registered()
+    _schedule_flowcell_project_theme_restore(first_interval=0.75)
 
     if not bpy.app.timers.is_registered(poll_bridge_requests):
         bpy.app.timers.register(poll_bridge_requests, first_interval=POLL_INTERVAL_SECONDS, persistent=True)

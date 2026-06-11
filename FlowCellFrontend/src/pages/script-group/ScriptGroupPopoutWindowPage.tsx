@@ -47,6 +47,11 @@ type PositionedScriptButton = {
   ry: number;
 };
 
+type ScriptRunErrorState = {
+  title: string;
+  detail: string;
+};
+
 const SINGLE_BUTTON_LABEL_HORIZONTAL_PADDING = 28;
 const SINGLE_BUTTON_LABEL_MIN_FONT_SIZE = 10;
 
@@ -147,6 +152,7 @@ export default function ScriptGroupPopoutWindowPage({
   }));
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const [scriptRunError, setScriptRunError] = useState<ScriptRunErrorState | null>(null);
   const template = useMemo(
     () => getScriptGroupPopoutTemplate(context.popoutType),
     [context.popoutType]
@@ -257,10 +263,14 @@ export default function ScriptGroupPopoutWindowPage({
 
   const handleButtonActivate = async (fileName: string) => {
     try {
+      setScriptRunError(null);
       await runPanelScript(context.programName, context.panelName, fileName);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      window.alert(`Script could not be run.\n\n${detail}`);
+      setScriptRunError({
+        title: "Script could not be run.",
+        detail
+      });
     }
   };
 
@@ -619,6 +629,20 @@ export default function ScriptGroupPopoutWindowPage({
             </section>
           </div>
         </div>
+        {scriptRunError ? (
+          <section className="script-group-popout__script-error" role="alert">
+            <button
+              type="button"
+              className="script-group-popout__script-error-close"
+              aria-label="Dismiss script error"
+              onClick={() => setScriptRunError(null)}
+            >
+              X
+            </button>
+            <strong>{scriptRunError.title}</strong>
+            <p>{scriptRunError.detail}</p>
+          </section>
+        ) : null}
       </div>
     </main>
   );

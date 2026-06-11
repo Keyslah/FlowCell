@@ -153,6 +153,7 @@
 
     function serializeBounds(bounds) {
         var uuid = bounds.uuid ? ",\"uuid\":\"" + escapeJsonString(bounds.uuid) + "\"" : "";
+        var anchorId = bounds.anchorId ? ",\"anchorId\":\"" + escapeJsonString(bounds.anchorId) + "\"" : "";
         return "{" +
             "\"left\":" + String(bounds.left) + "," +
             "\"top\":" + String(bounds.top) + "," +
@@ -161,6 +162,7 @@
             "\"centerX\":" + String(bounds.centerX) + "," +
             "\"centerY\":" + String(bounds.centerY) +
             uuid +
+            anchorId +
             "}";
     }
 
@@ -183,6 +185,9 @@
         }
         if (value.uuid) {
             bounds.uuid = String(value.uuid);
+        }
+        if (value.anchorId) {
+            bounds.anchorId = String(value.anchorId);
         }
         return bounds;
     }
@@ -257,8 +262,34 @@
         return null;
     }
 
+    function getAnchorTag(item) {
+        return getTag(item, ANCHOR_TAG);
+    }
+
+    function getAnchorTagValue(item) {
+        var tag = getAnchorTag(item);
+        try {
+            if (tag && tag.value) {
+                return String(tag.value);
+            }
+        } catch (error) {
+        }
+        return "";
+    }
+
     function hasAnchorTag(item) {
-        return getTag(item, ANCHOR_TAG) !== null;
+        return getAnchorTag(item) !== null;
+    }
+
+    function anchorTagMatches(item, anchorBounds) {
+        var tagValue = getAnchorTagValue(item);
+        if (!tagValue) {
+            return false;
+        }
+        if (anchorBounds && anchorBounds.anchorId) {
+            return tagValue === String(anchorBounds.anchorId);
+        }
+        return true;
     }
 
     function getItemUuid(item) {
@@ -271,14 +302,14 @@
         return "";
     }
 
-    function resolveAnchorByUuid(uuid) {
+    function resolveAnchorByUuid(uuid, anchorId) {
         if (!uuid) {
             return null;
         }
         try {
             if (app.getPageItemFromUuid) {
                 var item = app.getPageItemFromUuid(String(uuid));
-                if (isPageItem(item) && hasAnchorTag(item)) {
+                if (isPageItem(item) && anchorTagMatches(item, { anchorId: anchorId })) {
                     return item;
                 }
             }
@@ -328,7 +359,7 @@
         tag.value = "FlowCell anchor " + String(new Date().getTime());
     }
 
-    function findAnchor(doc) {
+    function findAnchor(doc, anchorId) {
         var count = 0;
         try {
             count = Number(doc.pageItems.length);
@@ -342,7 +373,11 @@
         }
         for (var i = 0; i < count; i += 1) {
             var item = doc.pageItems[i];
-            if (hasAnchorTag(item)) {
+            if (anchorId) {
+                if (getAnchorTagValue(item) === String(anchorId)) {
+                    return item;
+                }
+            } else if (hasAnchorTag(item)) {
                 return item;
             }
         }
@@ -351,11 +386,18 @@
 
     function findExistingAnchor(doc) {
         var storedBounds = readAnchorBounds();
-        var anchor = resolveAnchorByUuid(storedBounds && storedBounds.uuid);
+        var anchor = findAnchor(doc, storedBounds && storedBounds.anchorId);
         if (anchor) {
             return anchor;
         }
-        return findAnchor(doc);
+        anchor = resolveAnchorByUuid(
+            storedBounds && storedBounds.uuid,
+            storedBounds && storedBounds.anchorId
+        );
+        if (anchor) {
+            return anchor;
+        }
+        return findAnchor(doc, "");
     }
 
     function resolveAnchorBounds(doc) {
@@ -371,6 +413,7 @@
 
         var liveBounds = getBounds(anchor);
         liveBounds.uuid = getItemUuid(anchor) || (storedBounds && storedBounds.uuid) || "";
+        liveBounds.anchorId = getAnchorTagValue(anchor) || (storedBounds && storedBounds.anchorId) || "";
         writeAnchorBounds(liveBounds);
         return liveBounds;
     }
@@ -381,7 +424,7 @@
         var top = Number(bounds[1]);
         var right = Number(bounds[2]);
         var bottom = Number(bounds[3]);
-        return {
+        var result = {
             left: left,
             top: top,
             right: right,
@@ -390,6 +433,11 @@
             centerY: (top + bottom) / 2,
             uuid: getItemUuid(item)
         };
+        var anchorId = getAnchorTagValue(item);
+        if (anchorId) {
+            result.anchorId = anchorId;
+        }
+        return result;
     }
 
     function moveItemBy(item, dx, dy) {
@@ -459,14 +507,30 @@
         return items;
     }
 
+    function boundsNearlyMatch(first, second) {
+        if (!first || !second) {
+            return false;
+        }
+        return Math.abs(Number(first.left) - Number(second.left)) < 0.01 &&
+            Math.abs(Number(first.top) - Number(second.top)) < 0.01 &&
+            Math.abs(Number(first.right) - Number(second.right)) < 0.01 &&
+            Math.abs(Number(first.bottom) - Number(second.bottom)) < 0.01;
+    }
+
     function isAnchorItem(item, anchorBounds) {
         if (!item) {
             return false;
         }
-        if (anchorBounds && anchorBounds.uuid) {
-            return getItemUuid(item) === String(anchorBounds.uuid);
+        if (anchorTagMatches(item, anchorBounds)) {
+            return true;
         }
-        return hasAnchorTag(item);
+        if (anchorBounds && anchorBounds.uuid) {
+            var itemUuid = getItemUuid(item);
+            if (itemUuid && itemUuid === String(anchorBounds.uuid)) {
+                return boundsNearlyMatch(getBounds(item), anchorBounds);
+            }
+        }
+        return false;
     }
 
     function movablePageItems(items, anchorBounds) {
@@ -685,10 +749,9 @@
         var centerX = (Number(artboardBounds[0]) + Number(artboardBounds[2])) / 2;
         var centerY = (Number(artboardBounds[1]) + Number(artboardBounds[3])) / 2;
 
-        var anchorBounds = resolveAnchorBounds(doc);
-        var movableItems = movablePageItems(items, anchorBounds);
+        var movableItems = items;
         if (movableItems.length === 0) {
-            return status("only anchor selected; nothing moved");
+            return status("no movable selection");
         }
 
         if (isGroupMode(commandData)) {
@@ -705,7 +768,7 @@
             moved += 1;
         }
         if (moved === 0) {
-            return status("only anchor selected; nothing moved");
+            return status("no movable selection");
         }
         return status("centered " + moved + " object(s) on active artboard using " + BOUNDS_MODE);
     }

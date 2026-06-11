@@ -4,7 +4,7 @@ Order follows the current local Illustrator Layers panel.
 
 | Button | Description |
 | --- | --- |
-| `snapshot` | Copies the selected Live target into `Snapshots > [target name] > sN` and hides the saved snapshot entry. |
+| `snapshot` | Copies the selected Live target into `Snapshots > [target name] > sN`, hides the saved snapshot entry, keeps Snapshots ordered against Live, and writes its debug log once at the end with step timings. |
 | `restore` | Restores a selected source from outside `Live` into `Live`, moving the current Live version into `Trash` first. |
 | `back` | Replaces the selected Live target with its newest saved snapshot, moves the current Live content into `Trash`, and removes that snapshot entry so repeated runs step backward. |
 | `3D test` | Requires exactly three selected Live layer targets in one branch, saves them into `3D > [branch name] > dN`, runs the 3D test macros, hides the matching Live branch, and leaves the new 3D entry visible. |

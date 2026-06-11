@@ -109,6 +109,51 @@
   opacity: 0.58;
 }
 
+.main-page__script-error {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: 64;
+  display: grid;
+  gap: 8px;
+  width: min(420px, calc(100vw - 36px));
+  padding: 14px 44px 16px 16px;
+  border: 1px solid rgba(255, 134, 120, 0.44);
+  border-radius: 8px;
+  background: rgba(24, 25, 26, 0.96);
+  color: rgba(255, 247, 244, 0.96);
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+  font: 600 13px/1.35 "Segoe UI", sans-serif;
+}
+
+.main-page__script-error strong {
+  font-size: 14px;
+}
+
+.main-page__script-error p {
+  margin: 0;
+  color: rgba(255, 232, 227, 0.9);
+  white-space: pre-wrap;
+}
+
+.main-page__script-error-close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 247, 244, 0.96);
+  font: 800 13px/1 "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.main-page__script-error-close:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
 .main-page__rotate-toolbox {
   position: relative;
   display: flex;

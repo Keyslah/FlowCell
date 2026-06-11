@@ -8,11 +8,11 @@
 # FLOWCELL_CHILD: axis_z | Z | Set the quick-rotate axis to Z.
 # FLOWCELL_CHILD: axis_y | Y | Set the quick-rotate axis to Y.
 # FLOWCELL_CHILD: axis_x | X | Set the quick-rotate axis to X.
-# FLOWCELL_CHILD: preset_30 | 30 deg | Stage a 30 degree quick-rotate angle.
-# FLOWCELL_CHILD: preset_45 | 45 deg | Stage a 45 degree quick-rotate angle.
-# FLOWCELL_CHILD: preset_90 | 90 deg | Stage a 90 degree quick-rotate angle.
-# FLOWCELL_CHILD: preset_180 | 180 deg | Stage a 180 degree quick-rotate angle.
-# FLOWCELL_CHILD: preset_270 | 270 deg | Stage a 270 degree quick-rotate angle.
+# FLOWCELL_CHILD: preset_30 | 30 deg | Apply a 30 degree positive quick-rotate immediately and stage the angle.
+# FLOWCELL_CHILD: preset_45 | 45 deg | Apply a 45 degree positive quick-rotate immediately and stage the angle.
+# FLOWCELL_CHILD: preset_90 | 90 deg | Apply a 90 degree positive quick-rotate immediately and stage the angle.
+# FLOWCELL_CHILD: preset_180 | 180 deg | Apply a 180 degree positive quick-rotate immediately and stage the angle.
+# FLOWCELL_CHILD: preset_270 | 270 deg | Apply a 270 degree positive quick-rotate immediately and stage the angle.
 # FLOWCELL_CHILD: center_geometry | Geometry | Use geometry center as the quick-rotate pivot.
 # FLOWCELL_CHILD: center_origin | Origin | Use object origin as the quick-rotate pivot.
 # FLOWCELL_CHILD: center_world | World | Use world origin as the quick-rotate pivot.

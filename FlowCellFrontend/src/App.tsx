@@ -4,6 +4,7 @@ import { getWindowContextFromLocation } from "./lib/windowContext";
 import {
   getForegroundProcessInfo,
   registerScopedWindowTopmost,
+  refreshScopedWindowTopmost,
   setHostWindowTopmost,
   unregisterScopedWindowTopmost
 } from "./lib/tauri";
@@ -175,8 +176,24 @@ export default function App() {
 
     void registerScopedTopmost();
 
+    const refreshScopedTopmost = () => {
+      void refreshScopedWindowTopmost(currentWindowLabel).catch(() => {});
+    };
+    const refreshTimers = [
+      window.setTimeout(refreshScopedTopmost, 60),
+      window.setTimeout(refreshScopedTopmost, 240)
+    ];
+
+    window.addEventListener("focus", refreshScopedTopmost);
+    window.addEventListener("pointerdown", refreshScopedTopmost, { capture: true });
+
     return () => {
       disposed = true;
+      refreshTimers.forEach((timer) => {
+        window.clearTimeout(timer);
+      });
+      window.removeEventListener("focus", refreshScopedTopmost);
+      window.removeEventListener("pointerdown", refreshScopedTopmost, { capture: true });
       void unregisterScopedWindowTopmost(currentWindowLabel).catch(() => {});
       void applyTopmost(false);
     };

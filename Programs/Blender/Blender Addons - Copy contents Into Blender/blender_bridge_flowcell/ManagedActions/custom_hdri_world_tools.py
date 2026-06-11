@@ -50,6 +50,7 @@ VIEWPORT_OVERLAY_PATH_KEY = "flowcell_hdri_world_static_background_path"
 PLACE_PICTURE_GENERATION_KEY = "flowcell_place_picture_fake_gizmo_generation"
 PROJECT_THEME_STATE_KEY = "flowcell_theme_project_state_v1"
 PROJECT_THEME_STATE_FORMAT = "flowcell-blender-theme-project-state-v1"
+GLOBAL_THEME_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
 PROJECT_THEME_STATE_THEME_KEYS = (
     "visual_mode",
     "tabs_hex",
@@ -469,6 +470,17 @@ def _get_saved_overlay_path() -> str:
         if saved_path:
             return saved_path
 
+    global_place_picture_state = _read_global_theme_state().get("place_picture", {})
+    if (
+        isinstance(global_place_picture_state, dict)
+        and bool(global_place_picture_state.get("enabled"))
+    ):
+        return str(
+            global_place_picture_state.get("path")
+            or global_place_picture_state.get("relative_path")
+            or ""
+        ).strip()
+
     place_picture_state = _read_project_theme_state().get("place_picture", {})
     if isinstance(place_picture_state, dict) and bool(place_picture_state.get("enabled")):
         return str(
@@ -545,6 +557,43 @@ def _read_project_theme_state(context=None):
     return _normalize_project_theme_state(parsed)
 
 
+def _global_theme_state_path() -> Path:
+    config_root = bpy.utils.user_resource("CONFIG", path="", create=True)
+    if not config_root:
+        config_root = str(Path.home())
+    return Path(config_root) / GLOBAL_THEME_STATE_FILE_NAME
+
+
+def _read_global_theme_state():
+    path = _global_theme_state_path()
+    if not path.is_file():
+        return _empty_project_theme_state()
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return _empty_project_theme_state()
+    return _normalize_project_theme_state(parsed)
+
+
+def _global_theme_state_exists() -> bool:
+    return _global_theme_state_path().is_file()
+
+
+def _write_global_theme_state(state):
+    normalized = _normalize_project_theme_state(
+        {
+            **(state if isinstance(state, dict) else {}),
+            "format": PROJECT_THEME_STATE_FORMAT,
+        }
+    )
+    normalized["updated_at"] = time.time()
+    path = _global_theme_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")
+    _ensure_project_theme_restore_handler_registered_from_action()
+    return normalized
+
+
 def _ensure_project_theme_restore_handler_registered_from_action() -> bool:
     try:
         import flowcell_actions
@@ -596,6 +645,12 @@ def _write_project_theme_state(context, state):
     return normalized
 
 
+def _write_theme_state(context, state):
+    normalized = _write_project_theme_state(context, state)
+    _write_global_theme_state(normalized)
+    return normalized
+
+
 def _project_relative_path(path: str) -> str:
     normalized = str(path or "").strip()
     if not normalized or not getattr(bpy.data, "filepath", ""):
@@ -615,7 +670,7 @@ def _set_project_place_picture_state(context, resolved_path: str):
         "path": normalized_path,
         "relative_path": _project_relative_path(normalized_path),
     }
-    return _write_project_theme_state(context, state)
+    return _write_theme_state(context, state)
 
 
 def _project_state_payload(state):
@@ -627,6 +682,23 @@ def _project_state_payload(state):
             isinstance(theme_state, dict) and theme_state.get("enabled")
         ),
         "has_project_place_picture_state": bool(
+            isinstance(place_picture_state, dict) and place_picture_state.get("enabled")
+        ),
+    }
+
+
+def _startup_state_payload(global_state):
+    theme_state = global_state.get("theme", {}) if isinstance(global_state, dict) else {}
+    place_picture_state = (
+        global_state.get("place_picture", {}) if isinstance(global_state, dict) else {}
+    )
+    return {
+        "startup_state": global_state,
+        "startup_state_path": str(_global_theme_state_path()),
+        "has_startup_theme_state": bool(
+            isinstance(theme_state, dict) and theme_state.get("enabled")
+        ),
+        "has_startup_place_picture_state": bool(
             isinstance(place_picture_state, dict) and place_picture_state.get("enabled")
         ),
     }
@@ -2562,7 +2634,7 @@ def _set_project_theme_state_from_role_hexes(
         visual_mode,
         bool(viewport_gradient_enabled),
     )
-    return _write_project_theme_state(context, state)
+    return _write_theme_state(context, state)
 
 
 def _project_theme_payload_for_restore(theme_state):
@@ -3613,21 +3685,26 @@ def _apply_theme_from_photo_manual_colors(context, payload, persist_project_stat
 def _read_project_startup_state(context):
     _ensure_project_theme_restore_handler_registered_from_action()
     state = _read_project_theme_state(context)
+    global_state = _read_global_theme_state()
     return _result(
         "FlowCell project startup state read.",
         restore_handler_registered=_project_theme_restore_handler_registered(),
         **_project_state_payload(state),
+        **_startup_state_payload(global_state),
     )
 
 
-def _resolve_project_place_picture_path(place_picture_state):
+def _resolve_project_place_picture_path(place_picture_state, prefer_absolute=False):
     if not isinstance(place_picture_state, dict) or not bool(place_picture_state.get("enabled")):
         return "", ""
 
-    candidates = [
-        str(place_picture_state.get("relative_path") or "").strip(),
-        str(place_picture_state.get("path") or "").strip(),
-    ]
+    relative_path = str(place_picture_state.get("relative_path") or "").strip()
+    absolute_path = str(place_picture_state.get("path") or "").strip()
+    candidates = (
+        [absolute_path, relative_path]
+        if prefer_absolute
+        else [relative_path, absolute_path]
+    )
     last_error = ""
     seen = set()
     for candidate in candidates:
@@ -3642,11 +3719,31 @@ def _resolve_project_place_picture_path(place_picture_state):
     return "", last_error or "No saved Place Picture path was available."
 
 
+def _restore_state_for_startup(context):
+    project_state = _read_project_theme_state(context)
+    global_state_exists = _global_theme_state_exists()
+    global_state = _read_global_theme_state()
+    project_theme = project_state.get("theme", {})
+    project_place_picture = project_state.get("place_picture", {})
+    global_theme = global_state.get("theme", {})
+    global_place_picture = global_state.get("place_picture", {})
+
+    theme_state = global_theme if global_state_exists else project_theme
+    place_picture_state = (
+        global_place_picture if global_state_exists else project_place_picture
+    )
+    return project_state, global_state, theme_state, place_picture_state, global_state_exists
+
+
 def _restore_project_startup_state(context):
     _ensure_project_theme_restore_handler_registered_from_action()
-    state = _read_project_theme_state(context)
-    theme_state = state.get("theme", {})
-    place_picture_state = state.get("place_picture", {})
+    (
+        state,
+        global_state,
+        theme_state,
+        place_picture_state,
+        global_state_exists,
+    ) = _restore_state_for_startup(context)
     warnings = []
     restored_theme = False
     restored_place_picture = False
@@ -3663,7 +3760,10 @@ def _restore_project_startup_state(context):
         except Exception as exc:
             warnings.append(f"Theme restore failed: {exc}")
 
-    resolved_picture_path, picture_warning = _resolve_project_place_picture_path(place_picture_state)
+    resolved_picture_path, picture_warning = _resolve_project_place_picture_path(
+        place_picture_state,
+        prefer_absolute=global_state_exists,
+    )
     if resolved_picture_path:
         try:
             _place_picture_image(
@@ -3694,6 +3794,7 @@ def _restore_project_startup_state(context):
         restored_place_picture=restored_place_picture,
         warnings=warnings,
         **_project_state_payload(state),
+        **_startup_state_payload(global_state),
     )
 
 
@@ -3703,6 +3804,10 @@ def run_flowcell_action(context=None, data=None):
     if command == "read_project_startup_state":
         return _read_project_startup_state(context)
     if command == "restore_project_startup_state":
+        return _restore_project_startup_state(context)
+    if command == "read_startup_state":
+        return _read_project_startup_state(context)
+    if command == "restore_startup_state":
         return _restore_project_startup_state(context)
     if command == "apply_theme_from_photo_manual_colors":
         return _apply_theme_from_photo_manual_colors(context, payload)

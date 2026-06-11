@@ -4,9 +4,9 @@ This note describes FlowCell's Illustrator `Ill Align` toolset. The tool moves s
 
 ## How It Works
 
-Select one Illustrator object and press the FlowCell anchor hotkey (`v`) to store it as the anchor. The helper tags that object with `FLOWCELL_ANCHOR` and caches its current visible bounds in `FlowCell/local/illustrator_anchor_bounds.json`.
+Select one Illustrator object and press the FlowCell anchor hotkey (`v`) to store it as the anchor. FlowCell sends `v` to Illustrator immediately for the Selection Tool, then queues anchor capture in the background. The helper tags that object with `FLOWCELL_ANCHOR` and caches its current visible bounds, Illustrator UUID, and anchor tag identity in `FlowCell/local/illustrator_anchor_bounds.json`.
 
-After the anchor is set, select the object or objects you want to move and press an align button. The anchor itself is excluded from movement if it is also selected. If the live tagged anchor cannot be found later, FlowCell falls back to the cached anchor bounds.
+After the anchor is set, select the object or objects you want to move and press an align button. Anchor-based moves exclude the anchor itself if it is also selected. The `Art` button targets the active artboard directly, so it moves every selected page item, including the stored anchor when that anchor is selected. If the live tagged anchor cannot be found later, FlowCell falls back to the cached anchor bounds; UUID-only exclusion is guarded by matching bounds so stale or duplicated UUIDs do not make target objects look like the stored anchor.
 
 ## Button Reference
 
@@ -22,9 +22,9 @@ After the anchor is set, select the object or objects you want to move and press
 | `Y Max` | Moves each selected object so its top visible edge matches the anchor's top visible edge. |
 | `Y Surface` | Toggles surface mode for the Y row. With surface mode active, `Y Min` places the selected object's top edge against the anchor's bottom edge, `Y Max` places the selected object's bottom edge against the anchor's top edge, and `Y Center` chooses the nearest outside side based on whether the object is below or above the anchor. |
 | `Y Origin` | Toggles origin mode for the Y row. In the Illustrator variant this uses the same vertical center move as normal Y center alignment. |
-| `Art` | Centers selected movable objects on the active Illustrator artboard instead of the stored anchor. |
+| `Art` | Centers every selected page item on the active Illustrator artboard instead of the stored anchor. |
 | `Anchor` | Centers selected movable objects on the stored FlowCell anchor in both X and Y. |
-| `Group` | Toggles virtual group movement. When active, FlowCell calculates one combined visible-bounds box for the selected movable objects and moves all selected items by the same delta, preserving their spacing. When inactive, each selected object is aligned individually. |
+| `Group` | Toggles virtual group movement. When active, FlowCell calculates one combined visible-bounds box and moves the participating items by the same delta, preserving their spacing. `Art` includes every selected page item; anchor-based moves keep the stored anchor as the reference. |
 
 ## Notes
 
