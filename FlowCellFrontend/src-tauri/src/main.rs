@@ -3097,28 +3097,32 @@ fn list_adobe_panel_script_files(
         }
 
         let file_name = entry.file_name().to_string_lossy().to_string();
-        let tooltip = read_top_description(&path).filter(|value| !value.trim().is_empty());
-        let children = parse_flowcell_children(&path).unwrap_or_default();
-        let kind = classify_adobe_panel_script_kind(&path, &children);
-        records.push(PanelScriptFileRecord {
-            label: format_panel_script_label(&file_name),
-            file_name,
-            tooltip,
-            kind,
-            execution_target: None,
-            bridge_action: None,
-            bridge_data: None,
-            children: if children.is_empty() {
-                None
-            } else {
-                Some(children)
-            },
-            macro_id: None,
-        });
+        records.push(read_adobe_panel_script_record(&path, file_name));
     }
 
     records.sort_by_cached_key(|record| record.label.to_ascii_lowercase());
     Ok(records)
+}
+
+fn read_adobe_panel_script_record(path: &Path, file_name: String) -> PanelScriptFileRecord {
+    let tooltip = read_top_description(path).filter(|value| !value.trim().is_empty());
+    let children = parse_flowcell_children(path).unwrap_or_default();
+    let kind = classify_adobe_panel_script_kind(path, &children);
+    PanelScriptFileRecord {
+        label: format_panel_script_label(&file_name),
+        file_name,
+        tooltip,
+        kind,
+        execution_target: None,
+        bridge_action: None,
+        bridge_data: None,
+        children: if children.is_empty() {
+            None
+        } else {
+            Some(children)
+        },
+        macro_id: None,
+    }
 }
 
 fn resolve_bindable_button_target(
@@ -7405,16 +7409,7 @@ fn resolve_illustrator_toolset_record(
         ));
     }
 
-    let records = list_adobe_panel_script_files(&panel_directory)?;
-    let record = records
-        .into_iter()
-        .find(|entry| entry.file_name.eq_ignore_ascii_case(&validated_file_name))
-        .ok_or_else(|| {
-            format!(
-                "Illustrator toolset '{}' was not registered.",
-                validated_file_name
-            )
-        })?;
+    let record = read_adobe_panel_script_record(&script_path, validated_file_name);
 
     Ok((script_path, record))
 }
@@ -9403,16 +9398,7 @@ fn run_illustrator_alignment_tool(
         ));
     }
 
-    let records = list_adobe_panel_script_files(&panel_directory)?;
-    let record = records
-        .iter()
-        .find(|entry| entry.file_name.eq_ignore_ascii_case(&validated_file_name))
-        .ok_or_else(|| {
-            format!(
-                "Illustrator alignment toolbox '{}' was not registered.",
-                validated_file_name
-            )
-        })?;
+    let record = read_adobe_panel_script_record(&script_path, validated_file_name);
     if !record
         .kind
         .as_deref()

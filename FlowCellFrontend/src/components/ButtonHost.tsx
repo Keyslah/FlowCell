@@ -71,20 +71,10 @@ export function ButtonHost({
   };
 
   const activate = (event: MouseEvent<HTMLElement>) => {
-    console.info("button-activate", {
-      buttonId: button.id,
-      actionId: button.actionId
-    });
-
     onActivate?.(button, event);
   };
 
   const handleDoubleClick = (event: MouseEvent<HTMLElement>) => {
-    console.info("button-double-activate", {
-      buttonId: button.id,
-      actionId: button.actionId
-    });
-
     onDoubleActivate?.(button, event);
   };
 

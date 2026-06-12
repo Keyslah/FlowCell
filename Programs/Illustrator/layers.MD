@@ -11,7 +11,7 @@ Order follows the current local Illustrator Layers panel.
 | `3D` | Copies selected Live targets into `3D > [target name] > dN`, hides the matching Live target and older 3D versions, and shows the new 3D entry. |
 | `trash` | Moves selected eligible Live sublayers or direct Live objects into numbered `Trash > [target name] > TN` entries. |
 | `archive` | Stores selected eligible targets in numbered `Archive > [target name] > AN` entries for longer-term storage. |
-| `delete sublayer` | Deletes the deepest eligible selected sublayer; if a selected item is directly under `Live`, deletes that item instead, then removes emptied ancestors. |
+| `delete sublayer` | Deletes the selected object's immediate owning layer only; if the item is directly under protected roots like `Live` or `Snapshots`, deletes only the item instead. |
 | `new sub` | Prompts for a name and creates a visible, unlocked child layer under the selected object's layer or the active layer. |
 | `flatten top sub` | Moves selected resolved sublayer contents into the topmost selected real sublayer and removes emptied source layers. |
 | `Add to Live` | Duplicates selected artwork from outside `Live` back into `Live`, deriving the target layer name from the source target and version. |

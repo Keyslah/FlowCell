@@ -114,6 +114,14 @@ export default function AlignmentToolboxWindowPage({
     setGroupMode(nextValue);
   };
 
+  const dispatchIllustratorAlignmentTool = (
+    args: Parameters<typeof runIllustratorAlignmentTool>[0]
+  ) => {
+    void runIllustratorAlignmentTool(args).catch((error) => {
+      console.error("Failed to run Illustrator alignment tool action.", error);
+    });
+  };
+
   useEffect(() => {
     let cancelled = false;
 
@@ -263,7 +271,7 @@ export default function AlignmentToolboxWindowPage({
       if (isIllustratorAlignmentToolboxRecord(record)) {
         if (action === "center_artboard") {
           commitModifiers(DEFAULT_ALIGNMENT_MODIFIERS);
-          await runIllustratorAlignmentTool({
+          dispatchIllustratorAlignmentTool({
             programName: context.programName,
             panelName: context.panelName,
             fileName: record.fileName,
@@ -278,7 +286,7 @@ export default function AlignmentToolboxWindowPage({
 
         if (axis === "ALL" || action === "center_everything") {
           commitModifiers(DEFAULT_ALIGNMENT_MODIFIERS);
-          await runIllustratorAlignmentTool({
+          dispatchIllustratorAlignmentTool({
             programName: context.programName,
             panelName: context.panelName,
             fileName: record.fileName,
@@ -293,7 +301,7 @@ export default function AlignmentToolboxWindowPage({
 
         if (axis === "XY" || action === "center_xy") {
           commitModifiers(DEFAULT_ALIGNMENT_MODIFIERS);
-          await runIllustratorAlignmentTool({
+          dispatchIllustratorAlignmentTool({
             programName: context.programName,
             panelName: context.panelName,
             fileName: record.fileName,
@@ -306,7 +314,7 @@ export default function AlignmentToolboxWindowPage({
           return;
         }
 
-        await runIllustratorAlignmentTool({
+        dispatchIllustratorAlignmentTool({
           programName: context.programName,
           panelName: context.panelName,
           fileName: record.fileName,

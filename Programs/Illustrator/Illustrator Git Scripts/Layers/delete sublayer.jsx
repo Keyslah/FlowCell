@@ -1,14 +1,13 @@
-// Description: delete sublayer with selected objects.
-
+// Description: Runs delete sublayer.
 #target illustrator
 
 /*
- * Deletes the deepest eligible real sublayer for each selected item.
- * If a selected item lives directly on top-level Live with no real sublayer,
- * deletes the item itself instead.
+ * Deletes the immediate owning layer for each selected item.
+ * If a selected item lives directly on a protected root layer, deletes only
+ * the item itself instead of deleting the root.
  */
 (function () {
-    var SCRIPT_VERSION = "delete sublayer 2026-03-23";
+    var SCRIPT_VERSION = "delete sublayer 2026-06-12 native-menu true-remove-timing";
     var LOG_PATH = Folder.temp.fsName + "/Illustrator_Delete_Sublayer_Debug.log";
     var ROOT_LIVE = "Live";
     var ROOT_SNAPSHOTS = "Snapshots";
@@ -132,7 +131,6 @@
     function resolveTargetForItem(item) {
         var ownerLayer = getItemOwningLayer(item);
         var deletionLayer;
-        var topLayer;
 
         if (!item) {
             return {
@@ -156,24 +154,22 @@
             };
         }
 
-        topLayer = getTopLevelAncestor(ownerLayer);
-        if (topLayer && topLayer.name === ROOT_LIVE && ownerLayer === topLayer) {
+        if (isSystemRoot(ownerLayer)) {
             return {
                 target: makeItemTarget(item),
-                warning: "Selected object is a direct child of Live, so only the object will be deleted: " + describeShortItem(item)
+                warning: "Selected object is a direct child of a protected root, so only the object will be deleted: " + describeShortItem(item)
             };
         }
 
         return {
             target: null,
-            warning: "Selected item is not inside a deletable Live or Snapshots sublayer: " + describeShortItem(item)
+            warning: "Selected item is not inside a deletable sublayer: " + describeShortItem(item)
         };
     }
 
     function getDeletionLayerForItem(item) {
         var ownerLayer = getItemOwningLayer(item);
         var topLayer;
-        var current;
 
         if (!ownerLayer) {
             return null;
@@ -184,37 +180,15 @@
             return null;
         }
 
-        if (topLayer.name === ROOT_LIVE) {
-            if (ownerLayer === topLayer) {
-                return null;
-            }
-
-            current = ownerLayer;
-            while (current.parent && current.parent.typename === "Layer" && current.parent !== topLayer) {
-                current = current.parent;
-            }
-
-            return current;
-        }
-
-        if (topLayer.name === ROOT_SNAPSHOTS) {
-            if (ownerLayer === topLayer) {
-                return null;
-            }
-
-            current = ownerLayer;
-            while (current.parent && current.parent.typename === "Layer" && current.parent !== topLayer) {
-                current = current.parent;
-            }
-
-            return current;
+        if (isSystemRoot(ownerLayer)) {
+            return null;
         }
 
         if (topLayer.name === ROOT_TRASH || topLayer.name === ROOT_ARCHIVE) {
             return null;
         }
 
-        return null;
+        return ownerLayer;
     }
 
     function isTopLevelLiveLayer(layer) {
@@ -235,19 +209,25 @@
 
     function deleteLayerTarget(target) {
         var state = captureBranchState(target.layer);
-        var cleanupLayer = target.layer.parent && target.layer.parent.typename === "Layer" ? target.layer.parent : null;
+        var removeStartedAt;
 
         unlockBranchFromState(state);
+        removeStartedAt = new Date().getTime();
+        logLine("About to true-delete layer target with layer.remove(): " + target.displayName);
         target.layer.remove();
-        removeEmptyAncestors(cleanupLayer);
+        logLine("layer.remove() returned for " + target.displayName + " in " + (new Date().getTime() - removeStartedAt) + " ms");
     }
 
     function deleteItemTarget(target) {
         var state = captureItemState(target.item);
         var cleanupLayer = getItemOwningLayer(target.item);
+        var removeStartedAt;
 
         unlockItemFromState(state);
+        removeStartedAt = new Date().getTime();
+        logLine("About to true-delete item target with item.remove(): " + target.displayName);
         target.item.remove();
+        logLine("item.remove() returned for " + target.displayName + " in " + (new Date().getTime() - removeStartedAt) + " ms");
         removeEmptyAncestors(cleanupLayer);
     }
 
@@ -261,7 +241,10 @@
             }
 
             parentLayer = current.parent && current.parent.typename === "Layer" ? current.parent : null;
+            logLine("About to true-delete empty ancestor layer with layer.remove(): " + getLayerPath(current));
+            var removeStartedAt = new Date().getTime();
             current.remove();
+            logLine("empty ancestor layer.remove() returned in " + (new Date().getTime() - removeStartedAt) + " ms");
             current = parentLayer;
         }
     }

@@ -199,6 +199,10 @@ ResolveLegacyWindowsProgramPath(path, requireExisting := true) {
     return normalizedPath
 }
 
+GetFlowCellIllustratorPrewarmScriptPath() {
+    return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_Prewarm.jsx"
+}
+
 GetDefaultDummyMonitorHotkeyBinding() {
     scriptPath := GetFlowCellWorkspaceRoot() "\Programs\Windows\Panels\Utility\Launch-DummyMonitorToggle.vbs"
     if !FileExist(scriptPath)
@@ -234,6 +238,12 @@ class FlowCellApp {
         this.actionHotkeyManager := ActionHotkeyManager(this, flowCellBindingsPath, this.logger, this.shortcutManager.candidateShortcuts)
         this.recordedActionStore := RecordedMacroStore(flowCellRecordedActionsDir, this.logger)
         this.macroExecutionStack := []
+        this.illustratorAutomationWarmed := false
+        this.illustratorAutomationPrewarmInProgress := false
+        this.illustratorAutomationPrewarmPid := 0
+        this.illustratorAutomationLastPrewarmTick := 0
+        this.illustratorAutomationLastDirectActionTick := 0
+        this.illustratorAutomationPrewarmTimer := ""
         this.actions := []
         this.actions.Push(SaveSelectedObjToProject3DAction(this))
         this.actions.Push(SaveSelectedObjToBlenderAction(this))
@@ -1477,6 +1487,111 @@ class FlowCellApp {
         )
     }
 
+    StartIllustratorAutomationPrewarm() {
+        if this.illustratorAutomationPrewarmTimer = ""
+            this.illustratorAutomationPrewarmTimer := ObjBindMethod(this, "RunIllustratorAutomationPrewarm")
+        SetTimer this.illustratorAutomationPrewarmTimer, -250
+    }
+
+    ScheduleIllustratorAutomationPrewarm(delayMs := 5000) {
+        if this.illustratorAutomationPrewarmTimer = ""
+            this.illustratorAutomationPrewarmTimer := ObjBindMethod(this, "RunIllustratorAutomationPrewarm")
+        SetTimer this.illustratorAutomationPrewarmTimer, -Max(delayMs, 250)
+    }
+
+    MarkIllustratorAutomationWarm() {
+        try {
+            hwnd := this.FindStableIllustratorWindow()
+            if hwnd {
+                this.illustratorAutomationPrewarmPid := WinGetPID("ahk_id " hwnd)
+                this.illustratorAutomationWarmed := true
+                this.illustratorAutomationLastPrewarmTick := A_TickCount
+            }
+        } catch {
+            this.illustratorAutomationWarmed := true
+            this.illustratorAutomationLastPrewarmTick := A_TickCount
+        }
+    }
+
+    RunIllustratorAutomationPrewarm(*) {
+        if this.illustratorAutomationPrewarmInProgress {
+            this.ScheduleIllustratorAutomationPrewarm(1000)
+            return
+        }
+
+        if this.illustratorAutomationLastDirectActionTick > 0
+            && A_TickCount - this.illustratorAutomationLastDirectActionTick < 2500 {
+            this.ScheduleIllustratorAutomationPrewarm(2500)
+            return
+        }
+
+        stableHwnd := this.FindStableIllustratorWindow()
+        if !stableHwnd {
+            if !ProcessExist("Illustrator.exe") {
+                this.illustratorAutomationWarmed := false
+                this.illustratorAutomationPrewarmPid := 0
+            }
+            this.ScheduleIllustratorAutomationPrewarm(2000)
+            return
+        }
+
+        stablePid := 0
+        try stablePid := WinGetPID("ahk_id " stableHwnd)
+        catch {
+            stablePid := 0
+        }
+        if stablePid && stablePid != this.illustratorAutomationPrewarmPid {
+            this.illustratorAutomationWarmed := false
+            this.illustratorAutomationPrewarmPid := stablePid
+        }
+
+        keepWarmIntervalMs := 300000
+        if this.illustratorAutomationWarmed
+            && this.illustratorAutomationLastPrewarmTick > 0
+            && A_TickCount - this.illustratorAutomationLastPrewarmTick < keepWarmIntervalMs {
+            this.ScheduleIllustratorAutomationPrewarm(5000)
+            return
+        }
+
+        if this.HasProp("directScriptBusy") && this.directScriptBusy {
+            this.ScheduleIllustratorAutomationPrewarm(1000)
+            return
+        }
+
+        scriptPath := GetFlowCellIllustratorPrewarmScriptPath()
+        if !FileExist(scriptPath) {
+            this.logger.Warn("Illustrator automation prewarm script is missing. Path=" scriptPath)
+            this.ScheduleIllustratorAutomationPrewarm(30000)
+            return
+        }
+
+        this.illustratorAutomationPrewarmInProgress := true
+        startedAt := A_TickCount
+        try {
+            wasAlreadyWarm := this.illustratorAutomationWarmed
+            result := this.RunBoundScript(scriptPath, "illustrator automation prewarm", 0, "illustrator_automation")
+            elapsedMs := A_TickCount - startedAt
+            if result.succeeded {
+                this.illustratorAutomationWarmed := true
+                this.illustratorAutomationPrewarmPid := stablePid
+                this.illustratorAutomationLastPrewarmTick := A_TickCount
+                if !wasAlreadyWarm || elapsedMs >= 250
+                    this.logger.Info("Illustrator automation prewarm completed in " elapsedMs " ms.")
+                this.ScheduleIllustratorAutomationPrewarm(5000)
+            } else {
+                this.illustratorAutomationWarmed := false
+                this.logger.Warn("Illustrator automation prewarm did not complete. Method=" result.method " | Details=" result.detail)
+                this.ScheduleIllustratorAutomationPrewarm(3000)
+            }
+        } catch as err {
+            this.illustratorAutomationWarmed := false
+            this.logger.Error("Illustrator automation prewarm failed.", err)
+            this.ScheduleIllustratorAutomationPrewarm(3000)
+        } finally {
+            this.illustratorAutomationPrewarmInProgress := false
+        }
+    }
+
     HandleDirectScriptCopyData(wParam, lParam, msg, hwnd) {
         global flowCellDirectScriptCopyDataId
         global flowCellDirectScriptAccepted, flowCellDirectScriptBusy
@@ -1507,6 +1622,8 @@ class FlowCellApp {
             if requestId = ""
                 requestId := "direct-ipc-" A_TickCount
 
+            if this.illustratorAutomationPrewarmInProgress
+                return flowCellDirectScriptBusy
             if this.directScriptBusy
                 return flowCellDirectScriptBusy
 
@@ -1537,6 +1654,60 @@ class FlowCellApp {
         }
     }
 
+    RunDirectScriptFromSelf(scriptPath, programKey := "illustrator_automation", requestId := "") {
+        result := {
+            attempted: false,
+            succeeded: false,
+            method: "direct_self_not_started",
+            detail: ""
+        }
+
+        if requestId = ""
+            requestId := "direct-self-" A_TickCount
+        if programKey = ""
+            programKey := "illustrator_automation"
+
+        if !this.HasProp("directScriptBusy")
+            this.directScriptBusy := false
+
+        if this.illustratorAutomationPrewarmInProgress {
+            result.detail := "Illustrator automation prewarm is in progress."
+            return result
+        }
+        if this.directScriptBusy {
+            result.detail := "FlowCell backend is already running an Illustrator script."
+            return result
+        }
+
+        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
+        if !FileExist(scriptPath) {
+            result.detail := "Script file not found."
+            return result
+        }
+
+        this.directScriptBusy := true
+        request := {
+            scriptPath: scriptPath,
+            programKey: programKey,
+            requestId: requestId
+        }
+        this.directScriptTimer := ObjBindMethod(this, "RunDirectScriptRequest", request)
+        SetTimer this.directScriptTimer, -1
+        this.logger.Info(
+            "Direct script accepted. RequestId="
+            . requestId
+            . " | ProgramKey="
+            . programKey
+            . " | Script="
+            . scriptPath
+        )
+        result.attempted := true
+        result.succeeded := true
+        result.method := "direct_self"
+        result.detail := "Accepted by live backend."
+        return result
+    }
+
     BuildDirectScriptStatusText(scriptPath, result) {
         return JoinLines([
             "Script: " scriptPath,
@@ -1549,6 +1720,7 @@ class FlowCellApp {
 
     RunDirectScriptRequest(request, *) {
         global flowCellLastActionStatusPath
+        startedAt := A_TickCount
         try {
             result := this.RunBoundScript(
                 request.scriptPath,
@@ -1564,7 +1736,9 @@ class FlowCellApp {
                 this.logger.Info(
                     "Direct script completed. RequestId="
                     . request.requestId
-                    . " | Succeeded=yes | Method="
+                    . " | Succeeded=yes | RuntimeMs="
+                    . (A_TickCount - startedAt)
+                    . " | Method="
                     . result.method
                     . " | Script="
                     . request.scriptPath
@@ -1574,6 +1748,8 @@ class FlowCellApp {
                 this.logger.Warn(
                     "Direct script failed. RequestId="
                     . request.requestId
+                    . " | RuntimeMs="
+                    . (A_TickCount - startedAt)
                     . " | Method="
                     . result.method
                     . " | Details="
@@ -1593,6 +1769,7 @@ class FlowCellApp {
                 err
             )
         } finally {
+            this.illustratorAutomationLastDirectActionTick := A_TickCount
             this.directScriptBusy := false
             this.directScriptTimer := ""
         }
@@ -1633,6 +1810,16 @@ class FlowCellApp {
 
         modalDialogScript := !allowProcessFallback && this.IsFlowCellIllustratorModalDialogScript(scriptPath)
         stableHwnd := this.FindStableIllustratorWindow(programConfig)
+        if this.IsFlowCellIllustratorLayersPanelScript(scriptPath) {
+            if !stableHwnd {
+                result.detail := "Stable Illustrator 2026 is not running. Layers panel scripts require native File > Scripts dispatch and will not fall back to COM."
+                this.logger.Warn("Illustrator Layers native menu dispatch blocked because no stable Illustrator 2026 window was found. Script=" scriptPath)
+                return result
+            }
+
+            return this.RunFlowCellIllustratorLayersScriptViaMenu(scriptPath, source, programConfig, stableHwnd)
+        }
+
         if !stableHwnd {
             if !allowProcessFallback {
                 result.detail := "Stable Illustrator 2026 is not running. Open Illustrator before using this FlowCell tool."
@@ -1703,6 +1890,7 @@ class FlowCellApp {
             returnValue := app.DoJavaScriptFile(scriptPath)
             this.IllustratorComRetryAfterTick := 0
             result.succeeded := true
+            this.MarkIllustratorAutomationWarm()
             result.detail := "DoJavaScriptFile returned without raising an error."
             illustratorStatus := this.ReadFlowCellIllustratorScriptStatus()
             if illustratorStatus != ""
@@ -1752,6 +1940,207 @@ class FlowCellApp {
             )
             return result
         }
+    }
+
+    IsFlowCellIllustratorLayersPanelScript(scriptPath) {
+        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath, false)
+        if scriptPath = ""
+            return false
+
+        normalizedPath := StrLower(StrReplace(scriptPath, "/", "\"))
+        layersRoot := StrLower(StrReplace(GetFlowCellWorkspaceRoot() "\Programs\Illustrator\Panels\Layers", "/", "\"))
+        return InStr(normalizedPath, layersRoot "\") = 1
+    }
+
+    GetFlowCellIllustratorInstalledScriptsDir() {
+        return "C:\Program Files\Adobe\Adobe Illustrator 2026\Presets\en_US\Scripts"
+    }
+
+    GetFlowCellIllustratorLayersInstalledScriptName(scriptPath) {
+        SplitPath scriptPath, &scriptFileName
+        scriptFileName := StrLower(Trim(scriptFileName))
+        switch scriptFileName {
+            case "new sub.jsx":
+                return "00 new sub layer.jsx"
+            case "make layers.jsx":
+                return "00_Init_Live_Snapshots_Trash_Archive.jsx"
+            case "snapshot.jsx":
+                return "01_Save_Snapshot.jsx"
+            case "back.jsx":
+                return "02_Back_From_Previous_Snapshot.jsx"
+            case "restore.jsx":
+                return "03_Restore_Latest_Snapshot.jsx"
+            case "trash.jsx":
+                return "04_Move_To_Trash.jsx"
+            case "archive.jsx":
+                return "05_Archive.jsx"
+            case "empty trash.jsx":
+                return "06_Empty_Trash.jsx"
+            case "add to live.jsx":
+                return "07_Add_Selected_To_Live.jsx"
+            case "sort.jsx":
+                return "08_Sort_Layers_Into_Live_Snapshots_Trash.jsx"
+            case "b vis.jsx":
+                return "09_Baseline_Visibility.jsx"
+            case "set vis.jsx":
+                return "10_Set_Visibility.jsx"
+            case "b lock.jsx":
+                return "11_Baseline_Lock.jsx"
+            case "set lock.jsx":
+                return "12_Set_Lock.jsx"
+            case "flatten top sub.jsx":
+                return "13_Flatten_Selected_Into_Top_Sublayer.jsx"
+            case "3d.jsx":
+                return "14_Save_3D.jsx"
+            case "copy live.jsx":
+                return "15_Copy_Selected_To_New_Live_Sublayer.jsx"
+            case "3d test.jsx":
+                return "16_Save_3D_Test.jsx"
+            case "empty sublayers.jsx":
+                return "Delete Empty Sublayers.jsx"
+            case "delete sublayer.jsx":
+                return "delete sublayer.jsx"
+            default:
+                return ""
+        }
+    }
+
+    SyncFlowCellIllustratorLayersInstalledScript(scriptPath) {
+        result := {
+            succeeded: false,
+            installedPath: "",
+            installedName: "",
+            detail: ""
+        }
+
+        installedName := this.GetFlowCellIllustratorLayersInstalledScriptName(scriptPath)
+        if installedName = "" {
+            result.detail := "No installed Illustrator Scripts menu name is mapped for this Layers script."
+            return result
+        }
+
+        installedDir := this.GetFlowCellIllustratorInstalledScriptsDir()
+        installedPath := installedDir "\" installedName
+        result.installedName := installedName
+        result.installedPath := installedPath
+
+        if !FileExist(scriptPath) {
+            result.detail := "Panel-local Layers script was not found. Script=" scriptPath
+            return result
+        }
+
+        if !InStr(FileExist(installedDir), "D") {
+            result.detail := "Illustrator installed Scripts folder was not found. Folder=" installedDir
+            return result
+        }
+
+        needsCopy := true
+        if FileExist(installedPath) {
+            try {
+                needsCopy := FileGetSize(scriptPath) != FileGetSize(installedPath)
+                    || FileGetTime(scriptPath, "M") != FileGetTime(installedPath, "M")
+            } catch {
+                needsCopy := true
+            }
+        }
+
+        if needsCopy {
+            try {
+                FileCopy scriptPath, installedPath, 1
+                result.detail := "Synced panel-local Layers script to Illustrator Scripts menu file " installedName "."
+            } catch as err {
+                result.detail := "Failed to sync panel-local Layers script to Illustrator Scripts menu file " installedName ". " err.Message
+                return result
+            }
+        } else {
+            result.detail := "Illustrator Scripts menu file " installedName " is already current."
+        }
+
+        result.succeeded := true
+        return result
+    }
+
+    RunFlowCellIllustratorLayersScriptViaMenu(scriptPath, source, programConfig := 0, stableHwnd := 0) {
+        result := {
+            attempted: false,
+            succeeded: false,
+            method: "illustrator_layers_native_menu_not_started",
+            detail: ""
+        }
+
+        startedAt := A_TickCount
+        syncResult := this.SyncFlowCellIllustratorLayersInstalledScript(scriptPath)
+        if !syncResult.succeeded {
+            result.method := "illustrator_layers_native_menu_sync_failed"
+            result.detail := syncResult.detail
+            this.logger.Error(
+                "Illustrator Layers native menu dispatch blocked before COM. Source="
+                . source
+                . " | Script="
+                . scriptPath
+                . " | Detail="
+                . syncResult.detail
+            )
+            return result
+        }
+
+        if !stableHwnd
+            stableHwnd := this.FindStableIllustratorWindow(programConfig)
+
+        if !stableHwnd {
+            result.detail := "Stable Illustrator 2026 is not running. Layers panel scripts require native File > Scripts dispatch and will not fall back to COM."
+            this.logger.Warn("Illustrator Layers native menu dispatch blocked because no stable Illustrator 2026 window was found. Script=" scriptPath)
+            return result
+        }
+
+        result.attempted := true
+        this.logger.Info(
+            "Illustrator Layers native menu dispatch requested. Source="
+            . source
+            . " | Script="
+            . scriptPath
+            . " | InstalledScript="
+            . syncResult.installedPath
+        )
+
+        menuResult := this.TryRunIllustratorScriptViaMenu(syncResult.installedPath, stableHwnd)
+        elapsedMs := A_TickCount - startedAt
+        if menuResult.succeeded {
+            result.succeeded := true
+            result.method := "illustrator_layers_native_menu"
+            result.detail := syncResult.detail " Native File > Scripts dispatch returned in " elapsedMs " ms via " menuResult.method ". " menuResult.detail
+            this.logger.Info(
+                "Illustrator Layers native menu dispatch succeeded. Source="
+                . source
+                . " | Script="
+                . scriptPath
+                . " | InstalledScript="
+                . syncResult.installedPath
+                . " | DispatchMs="
+                . elapsedMs
+                . " | MenuMethod="
+                . menuResult.method
+            )
+            return result
+        }
+
+        result.method := "illustrator_layers_native_menu_failed"
+        result.detail := syncResult.detail " Native File > Scripts dispatch failed after " elapsedMs " ms via " menuResult.method ". " menuResult.detail
+        this.logger.Error(
+            "Illustrator Layers native menu dispatch failed before COM fallback. Source="
+            . source
+            . " | Script="
+            . scriptPath
+            . " | InstalledScript="
+            . syncResult.installedPath
+            . " | DispatchMs="
+            . elapsedMs
+            . " | MenuMethod="
+            . menuResult.method
+            . " | Detail="
+            . menuResult.detail
+        )
+        return result
     }
 
     TryRunIllustratorScriptViaProcess(scriptPath, hwnd := 0, programConfig := 0) {
@@ -6670,20 +7059,31 @@ class ScriptShortcutManager {
         if !IsObject(binding)
             return
 
-        this.logger.Info("Script hotkey queued after immediate pass-through. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
-        result := this.app.RunBackendScriptCommand(binding.scriptPath, binding.HasOwnProp("programTabId") ? binding.programTabId : 0, "hotkey " binding.shortcut " async", true)
-        lines := [
-            "Shortcut: " binding.shortcut,
-            "Script: " binding.scriptPath,
-            "Pass-through: sent before script",
-            "Queued: " BoolToWord(result.succeeded),
-            "Method: " result.method,
-            "Details: " result.detail
-        ]
-        statusText := JoinLines(lines)
-        this.app.SetShortcutStatus(statusText)
-        WriteTextFile(flowCellLastActionStatusPath, statusText)
-        this.logger.Info("Script hotkey async dispatch completed. Shortcut=" binding.shortcut " | Queued=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
+        this.logger.Info("Script hotkey dispatch after immediate pass-through. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
+        if this.app.IsFlowCellIllustratorSelectionToolAnchorHotkey(binding.scriptPath) {
+            result := this.app.RunDirectScriptFromSelf(
+                binding.scriptPath,
+                "illustrator_automation",
+                "hotkey-" A_TickCount
+            )
+        } else {
+            result := this.app.RunBackendScriptCommand(binding.scriptPath, binding.HasOwnProp("programTabId") ? binding.programTabId : 0, "hotkey " binding.shortcut " async", true)
+        }
+
+        if !result.succeeded {
+            lines := [
+                "Shortcut: " binding.shortcut,
+                "Script: " binding.scriptPath,
+                "Pass-through: sent before script",
+                "Accepted: " BoolToWord(result.succeeded),
+                "Method: " result.method,
+                "Details: " result.detail
+            ]
+            statusText := JoinLines(lines)
+            this.app.SetShortcutStatus(statusText)
+            WriteTextFile(flowCellLastActionStatusPath, statusText)
+        }
+        this.logger.Info("Script hotkey dispatch completed. Shortcut=" binding.shortcut " | Accepted=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
     }
 
     AddBinding(shortcut, scriptPath) {
@@ -7865,6 +8265,7 @@ if runScriptPath != "" {
 }
 
 app.StartDirectScriptReceiver()
+app.StartIllustratorAutomationPrewarm()
 
 if HasCliFlag("--headless") {
     logger.Info("Macro backend started in headless mode.")

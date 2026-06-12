@@ -168,6 +168,10 @@ function inferProgramNameFromExePath(exePath: string): string {
   }
 }
 
+function isIllustratorProgramName(programName: string | null | undefined): boolean {
+  return (programName ?? "").trim().toLowerCase().includes("illustrator");
+}
+
 function clampContextMenuPosition(x: number, y: number) {
   if (typeof window === "undefined") {
     return { x, y };
@@ -2666,6 +2670,14 @@ export default function MainPage() {
         return;
       }
 
+      if (isIllustratorProgramName(selectedProgramName)) {
+        clearPendingPanelScriptAction(button.scriptFileName);
+        const matchedRecord =
+          resolvedPanelScriptsByFileName.get(button.scriptFileName) ?? null;
+        void handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord);
+        return;
+      }
+
       queuePanelScriptSelectionToggle(button.scriptFileName);
     }
   };
@@ -2681,7 +2693,7 @@ export default function MainPage() {
     clearPendingPanelScriptAction(button.scriptFileName);
     const matchedRecord =
       resolvedPanelScriptsByFileName.get(button.scriptFileName) ?? null;
-    await handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord);
+    void handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord);
   };
 
   return (
