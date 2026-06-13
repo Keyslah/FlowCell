@@ -1,5 +1,5 @@
 //@target illustrator
-// Description: FlowCell Illustrator anchor backend. Uses PageItem tags and visibleBounds.
+// Description: FlowCell Illustrator anchor backend. Fast cached anchor path for set/snapshot/align.
 
 (function () {
     var ANCHOR_TAG = "FLOWCELL_ANCHOR";
@@ -8,796 +8,310 @@
     var MAX_ANCHOR_SCAN_ITEMS = 1500;
     var MAX_SELECTION_ITEMS = 250;
 
+    function pad(value) { return value < 10 ? "0" + value : String(value); }
     function nowStamp() {
         var date = new Date();
-        function pad(value) {
-            return value < 10 ? "0" + value : String(value);
-        }
         return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) +
             " " + pad(date.getHours()) + ":" + pad(date.getMinutes()) + ":" + pad(date.getSeconds());
     }
-
     function findProgramRoot() {
         var folder = new File($.fileName).parent;
         for (var i = 0; i < 8 && folder; i += 1) {
-            var helper = new Folder(folder.fsName + "/HelperScripts");
-            var panels = new Folder(folder.fsName + "/Panels");
-            if (helper.exists && panels.exists) {
+            if (new Folder(folder.fsName + "/HelperScripts").exists && new Folder(folder.fsName + "/Panels").exists) {
                 return folder;
             }
             folder = folder.parent;
         }
         return new File($.fileName).parent.parent;
     }
-
     function findRepoRoot() {
         var programRoot = findProgramRoot();
-        if (programRoot && programRoot.parent && programRoot.parent.parent) {
-            return programRoot.parent.parent;
-        }
-        return programRoot;
+        return programRoot && programRoot.parent && programRoot.parent.parent ? programRoot.parent.parent : programRoot;
     }
-
-    function getLocalPath(fileName) {
-        var repoRoot = findRepoRoot();
-        var localFolder = new Folder(repoRoot.fsName + "/FlowCell/local");
-        if (!localFolder.exists) {
-            localFolder.create();
-        }
-        return new File(localFolder.fsName + "/" + fileName);
+    function localFile(name) {
+        var folder = new Folder(findRepoRoot().fsName + "/FlowCell/local");
+        if (!folder.exists) { folder.create(); }
+        return new File(folder.fsName + "/" + name);
     }
-
-    function writeLog(message) {
-        try {
-            var repoRoot = findRepoRoot();
-            var logFolder = new Folder(repoRoot.fsName + "/FlowCell/local/logs");
-            if (!logFolder.exists) {
-                logFolder.create();
-            }
-            var logFile = new File(logFolder.fsName + "/illustrator-anchor.log");
-            logFile.encoding = "UTF-8";
-            if (logFile.open("a")) {
-                logFile.writeln(nowStamp() + " | " + message);
-                logFile.close();
-            }
-        } catch (ignored) {
-        }
-        try {
-            $.writeln("[FlowCell Illustrator Anchor] " + message);
-        } catch (ignoredToo) {
-        }
+    function logFile(name) {
+        var folder = new Folder(findRepoRoot().fsName + "/FlowCell/local/logs");
+        if (!folder.exists) { folder.create(); }
+        return new File(folder.fsName + "/" + name);
     }
-
-    function status(message) {
-        writeLog(message);
-        try {
-            var statusFile = new File(findRepoRoot().fsName + "/FlowCell/local/logs/illustrator-anchor-status.txt");
-            statusFile.encoding = "UTF-8";
-            if (statusFile.open("w")) {
-                statusFile.writeln(message);
-                statusFile.close();
-            }
-        } catch (ignored) {
-        }
-        return message;
+    function writeText(file, text, append) {
+        file.encoding = "UTF-8";
+        if (!file.open(append ? "a" : "w")) { return false; }
+        file.write(text);
+        file.close();
+        return true;
     }
-
-    function readTextFile(file) {
-        if (!file.exists || !file.open("r")) {
-            return "";
-        }
+    function readText(file) {
+        if (!file.exists || !file.open("r")) { return ""; }
         file.encoding = "UTF-8";
         var text = file.read();
         file.close();
         return text;
     }
-
+    function writeLog(message) {
+        try { writeText(logFile("illustrator-anchor.log"), nowStamp() + " | " + message + "\n", true); } catch (ignored) {}
+        try { $.writeln("[FlowCell Illustrator Anchor] " + message); } catch (ignoredToo) {}
+    }
+    function status(message) {
+        writeLog(message);
+        try { writeText(logFile("illustrator-anchor-status.txt"), message + "\n", false); } catch (ignored) {}
+        return message;
+    }
+    function parseJson(raw) {
+        if (!raw) { return null; }
+        try { return JSON.parse(raw); } catch (error) { writeLog("json parse failed: " + String(error)); return null; }
+    }
     function readCommand() {
-        if (typeof FLOWCELL_ILLUSTRATOR_ANCHOR_COMMAND !== "undefined" &&
-                FLOWCELL_ILLUSTRATOR_ANCHOR_COMMAND) {
+        if (typeof FLOWCELL_ILLUSTRATOR_ANCHOR_COMMAND !== "undefined" && FLOWCELL_ILLUSTRATOR_ANCHOR_COMMAND) {
             var inlineCommand = FLOWCELL_ILLUSTRATOR_ANCHOR_COMMAND;
-            try {
-                FLOWCELL_ILLUSTRATOR_ANCHOR_COMMAND = null;
-            } catch (ignored) {
-            }
+            try { FLOWCELL_ILLUSTRATOR_ANCHOR_COMMAND = null; } catch (ignored) {}
             return inlineCommand;
         }
-
-        var commandFile = getLocalPath("illustrator_anchor_command.json");
-        var raw = readTextFile(commandFile);
-        if (!raw) {
-            return { command: "status" };
-        }
-        try {
-            commandFile.remove();
-        } catch (ignoredRemove) {
-        }
-
-        try {
-            return eval("(" + raw + ")");
-        } catch (error) {
-            return { command: "status", error: String(error) };
-        }
+        var file = localFile("illustrator_anchor_command.json");
+        var raw = readText(file);
+        if (!raw) { return { command: "status" }; }
+        try { file.remove(); } catch (ignoredRemove) {}
+        return parseJson(raw) || { command: "status", error: "invalid json" };
     }
-
-    function writeTextFile(file, text) {
-        file.encoding = "UTF-8";
-        if (!file.open("w")) {
-            return false;
-        }
-        file.write(text);
-        file.close();
-        return true;
+    function finite(value) { return typeof value === "number" && isFinite(value); }
+    function esc(value) { return String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\""); }
+    function boundsJson(b) {
+        return "{\"left\":" + b.left + ",\"top\":" + b.top + ",\"right\":" + b.right + ",\"bottom\":" + b.bottom +
+            ",\"centerX\":" + b.centerX + ",\"centerY\":" + b.centerY +
+            (b.uuid ? ",\"uuid\":\"" + esc(b.uuid) + "\"" : "") +
+            (b.anchorId ? ",\"anchorId\":\"" + esc(b.anchorId) + "\"" : "") + "}";
     }
-
-    function readJsonFile(file) {
-        var raw = readTextFile(file);
-        if (!raw) {
-            return null;
-        }
-        try {
-            return eval("(" + raw + ")");
-        } catch (error) {
-            writeLog("json read failed for " + file.fsName + ": " + String(error));
-            return null;
-        }
-    }
-
-    function isFiniteNumber(value) {
-        return typeof value === "number" && isFinite(value);
-    }
-
-    function escapeJsonString(value) {
-        return String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
-    }
-
-    function serializeBounds(bounds) {
-        var uuid = bounds.uuid ? ",\"uuid\":\"" + escapeJsonString(bounds.uuid) + "\"" : "";
-        var anchorId = bounds.anchorId ? ",\"anchorId\":\"" + escapeJsonString(bounds.anchorId) + "\"" : "";
-        return "{" +
-            "\"left\":" + String(bounds.left) + "," +
-            "\"top\":" + String(bounds.top) + "," +
-            "\"right\":" + String(bounds.right) + "," +
-            "\"bottom\":" + String(bounds.bottom) + "," +
-            "\"centerX\":" + String(bounds.centerX) + "," +
-            "\"centerY\":" + String(bounds.centerY) +
-            uuid +
-            anchorId +
-            "}";
-    }
-
     function normalizeBounds(value) {
-        if (!value) {
-            return null;
-        }
-        var bounds = {
-            left: Number(value.left),
-            top: Number(value.top),
-            right: Number(value.right),
-            bottom: Number(value.bottom),
-            centerX: Number(value.centerX),
-            centerY: Number(value.centerY)
-        };
-        if (!isFiniteNumber(bounds.left) || !isFiniteNumber(bounds.top) ||
-                !isFiniteNumber(bounds.right) || !isFiniteNumber(bounds.bottom) ||
-                !isFiniteNumber(bounds.centerX) || !isFiniteNumber(bounds.centerY)) {
-            return null;
-        }
-        if (value.uuid) {
-            bounds.uuid = String(value.uuid);
-        }
-        if (value.anchorId) {
-            bounds.anchorId = String(value.anchorId);
-        }
-        return bounds;
+        if (!value) { return null; }
+        var b = { left: Number(value.left), top: Number(value.top), right: Number(value.right), bottom: Number(value.bottom), centerX: Number(value.centerX), centerY: Number(value.centerY) };
+        if (!finite(b.left) || !finite(b.top) || !finite(b.right) || !finite(b.bottom) || !finite(b.centerX) || !finite(b.centerY)) { return null; }
+        if (value.uuid) { b.uuid = String(value.uuid); }
+        if (value.anchorId) { b.anchorId = String(value.anchorId); }
+        return b;
     }
-
-    function writeAnchorBounds(bounds) {
-        var anchorFile = getLocalPath(ANCHOR_BOUNDS_FILE);
-        if (!writeTextFile(anchorFile, serializeBounds(bounds))) {
-            writeLog("anchor bounds write failed");
-        }
-    }
-
-    function readAnchorBounds() {
-        return normalizeBounds(readJsonFile(getLocalPath(ANCHOR_BOUNDS_FILE)));
-    }
-
-    function getActiveDocumentOrNull() {
-        if (app.documents.length < 1) {
-            return null;
-        }
-        return app.activeDocument;
-    }
-
-    function getSelection(doc) {
-        try {
-            if (app.selection && app.selection.length > 0) {
-                return app.selection;
-            }
-        } catch (error) {
-        }
-        try {
-            if (doc.selection && doc.selection.length > 0) {
-                return doc.selection;
-            }
-        } catch (docError) {
-        }
-        try {
-            if (app.selection && app.selection.length === 0) {
-                return app.selection;
-            }
-        } catch (emptyAppSelectionError) {
-        }
-        try {
-            if (doc.selection && doc.selection.length === 0) {
-                return doc.selection;
-            }
-        } catch (emptyDocSelectionError) {
-        }
+    function readAnchorBounds() { return normalizeBounds(parseJson(readText(localFile(ANCHOR_BOUNDS_FILE)))); }
+    function writeAnchorBounds(bounds) { writeText(localFile(ANCHOR_BOUNDS_FILE), boundsJson(bounds), false); }
+    function docOrNull() { return app.documents.length < 1 ? null : app.activeDocument; }
+    function selectionOf(doc) {
+        try { if (app.selection && app.selection.length >= 0) { return app.selection; } } catch (ignored) {}
+        try { if (doc.selection && doc.selection.length >= 0) { return doc.selection; } } catch (ignoredDoc) {}
         return [];
     }
-
-    function isPageItem(item) {
-        try {
-            return item && item.typename && item.tags && item[BOUNDS_MODE];
-        } catch (error) {
-            return false;
-        }
-    }
-
-    function getTag(item, tagName) {
-        if (!isPageItem(item)) {
-            return null;
-        }
+    function isPageItem(item) { try { return item && item.typename && item.tags && item[BOUNDS_MODE]; } catch (error) { return false; } }
+    function tagValue(item) {
+        if (!isPageItem(item)) { return ""; }
         try {
             for (var i = item.tags.length - 1; i >= 0; i -= 1) {
                 var tag = item.tags[i];
-                if (tag && tag.name === tagName) {
-                    return tag;
-                }
+                if (tag && tag.name === ANCHOR_TAG && tag.value) { return String(tag.value); }
             }
-        } catch (error) {
-        }
-        return null;
-    }
-
-    function getAnchorTag(item) {
-        return getTag(item, ANCHOR_TAG);
-    }
-
-    function getAnchorTagValue(item) {
-        var tag = getAnchorTag(item);
-        try {
-            if (tag && tag.value) {
-                return String(tag.value);
-            }
-        } catch (error) {
-        }
+        } catch (ignored) {}
         return "";
     }
-
-    function hasAnchorTag(item) {
-        return getAnchorTag(item) !== null;
-    }
-
-    function anchorTagMatches(item, anchorBounds) {
-        var tagValue = getAnchorTagValue(item);
-        if (!tagValue) {
-            return false;
-        }
-        if (anchorBounds && anchorBounds.anchorId) {
-            return tagValue === String(anchorBounds.anchorId);
-        }
-        return true;
-    }
-
-    function getItemUuid(item) {
-        try {
-            if (item && item.uuid) {
-                return String(item.uuid);
-            }
-        } catch (error) {
-        }
-        return "";
-    }
-
-    function resolveAnchorByUuid(uuid, anchorId) {
-        if (!uuid) {
-            return null;
-        }
+    function hasAnchorTag(item) { return tagValue(item) !== ""; }
+    function uuidOf(item) { try { return item && item.uuid ? String(item.uuid) : ""; } catch (ignored) { return ""; } }
+    function byUuid(uuid) {
+        if (!uuid) { return null; }
         try {
             if (app.getPageItemFromUuid) {
                 var item = app.getPageItemFromUuid(String(uuid));
-                if (isPageItem(item) && anchorTagMatches(item, { anchorId: anchorId })) {
-                    return item;
-                }
+                if (isPageItem(item)) { return item; }
             }
-        } catch (error) {
-            writeLog("anchor uuid lookup skipped: " + String(error));
-        }
+        } catch (error) { writeLog("uuid lookup skipped: " + String(error)); }
         return null;
     }
-
+    function boundsOf(item) {
+        var r = item[BOUNDS_MODE];
+        var left = Number(r[0]);
+        var top = Number(r[1]);
+        var right = Number(r[2]);
+        var bottom = Number(r[3]);
+        var b = { left: left, top: top, right: right, bottom: bottom, centerX: (left + right) / 2, centerY: (top + bottom) / 2, uuid: uuidOf(item) };
+        var id = tagValue(item);
+        if (id) { b.anchorId = id; }
+        return b;
+    }
     function removeAnchorTag(item) {
-        if (!isPageItem(item)) {
-            return;
-        }
+        if (!isPageItem(item)) { return; }
         try {
             for (var i = item.tags.length - 1; i >= 0; i -= 1) {
-                var tag = item.tags[i];
-                if (tag && tag.name === ANCHOR_TAG) {
-                    tag.remove();
-                }
+                if (item.tags[i] && item.tags[i].name === ANCHOR_TAG) { item.tags[i].remove(); }
             }
-        } catch (error) {
-            writeLog("anchor tag removal skipped: " + String(error));
-        }
+        } catch (error) { writeLog("tag removal skipped: " + String(error)); }
     }
-
-    function removePreviousAnchors(doc) {
+    function scanAnchorByTag(doc) {
         var count = 0;
-        try {
-            count = Number(doc.pageItems.length);
-        } catch (error) {
-            writeLog("previous anchor cleanup skipped: " + String(error));
-            return;
-        }
-        if (count > MAX_ANCHOR_SCAN_ITEMS) {
-            writeLog("previous anchor cleanup skipped for " + count + " page items");
-            return;
-        }
-        for (var i = doc.pageItems.length - 1; i >= 0; i -= 1) {
-            removeAnchorTag(doc.pageItems[i]);
-        }
-    }
-
-    function setAnchorTag(item) {
-        removeAnchorTag(item);
-        var tag = item.tags.add();
-        tag.name = ANCHOR_TAG;
-        tag.value = "FlowCell anchor " + String(new Date().getTime());
-    }
-
-    function findAnchor(doc, anchorId) {
-        var count = 0;
-        try {
-            count = Number(doc.pageItems.length);
-        } catch (error) {
-            writeLog("anchor scan skipped: " + String(error));
-            return null;
-        }
-        if (count > MAX_ANCHOR_SCAN_ITEMS) {
-            writeLog("anchor scan skipped for " + count + " page items");
-            return null;
-        }
-        for (var i = 0; i < count; i += 1) {
-            var item = doc.pageItems[i];
-            if (anchorId) {
-                if (getAnchorTagValue(item) === String(anchorId)) {
-                    return item;
-                }
-            } else if (hasAnchorTag(item)) {
-                return item;
-            }
-        }
+        try { count = Number(doc.pageItems.length); } catch (error) { writeLog("anchor scan skipped: " + String(error)); return null; }
+        if (count > MAX_ANCHOR_SCAN_ITEMS) { writeLog("anchor scan skipped for " + count + " page items"); return null; }
+        for (var i = 0; i < count; i += 1) { if (hasAnchorTag(doc.pageItems[i])) { return doc.pageItems[i]; } }
         return null;
     }
-
-    function findExistingAnchor(doc) {
-        var storedBounds = readAnchorBounds();
-        var anchor = findAnchor(doc, storedBounds && storedBounds.anchorId);
-        if (anchor) {
-            return anchor;
-        }
-        anchor = resolveAnchorByUuid(
-            storedBounds && storedBounds.uuid,
-            storedBounds && storedBounds.anchorId
-        );
-        if (anchor) {
-            return anchor;
-        }
-        return findAnchor(doc, "");
-    }
-
     function resolveAnchorBounds(doc) {
-        var storedBounds = readAnchorBounds();
-        var anchor = findExistingAnchor(doc);
-        if (!anchor) {
-            if (storedBounds) {
-                writeLog("anchor live tag not found; using cached " + BOUNDS_MODE);
-                return storedBounds;
+        var stored = readAnchorBounds();
+        if (stored) {
+            var live = byUuid(stored.uuid);
+            if (live) {
+                var liveBounds = boundsOf(live);
+                liveBounds.anchorId = liveBounds.anchorId || stored.anchorId || "";
+                writeAnchorBounds(liveBounds);
+                return liveBounds;
             }
-            return null;
+            writeLog("using cached anchor bounds without document scan");
+            return stored;
         }
-
-        var liveBounds = getBounds(anchor);
-        liveBounds.uuid = getItemUuid(anchor) || (storedBounds && storedBounds.uuid) || "";
-        liveBounds.anchorId = getAnchorTagValue(anchor) || (storedBounds && storedBounds.anchorId) || "";
-        writeAnchorBounds(liveBounds);
-        return liveBounds;
+        var scanned = scanAnchorByTag(doc);
+        if (!scanned) { return null; }
+        var scannedBounds = boundsOf(scanned);
+        writeAnchorBounds(scannedBounds);
+        return scannedBounds;
     }
-
-    function getBounds(item) {
-        var bounds = item[BOUNDS_MODE];
-        var left = Number(bounds[0]);
-        var top = Number(bounds[1]);
-        var right = Number(bounds[2]);
-        var bottom = Number(bounds[3]);
-        var result = {
-            left: left,
-            top: top,
-            right: right,
-            bottom: bottom,
-            centerX: (left + right) / 2,
-            centerY: (top + bottom) / 2,
-            uuid: getItemUuid(item)
-        };
-        var anchorId = getAnchorTagValue(item);
-        if (anchorId) {
-            result.anchorId = anchorId;
-        }
-        return result;
-    }
-
-    function moveItemBy(item, dx, dy) {
-        if (Math.abs(dx) < 0.0001 && Math.abs(dy) < 0.0001) {
-            return;
-        }
-        item.translate(dx, dy);
-    }
-
-    function shouldReplaceAnchor(commandData) {
-        if (!commandData || typeof commandData.replace === "undefined") {
-            return true;
-        }
+    function shouldReplace(commandData) {
+        if (!commandData || typeof commandData.replace === "undefined") { return true; }
         return !(commandData.replace === false || String(commandData.replace).toLowerCase() === "false");
     }
-
     function setAnchor(commandData) {
-        var doc = getActiveDocumentOrNull();
-        if (!doc) {
-            return status("no document");
+        var doc = docOrNull();
+        if (!doc) { return status("no document"); }
+        var sel = selectionOf(doc);
+        if (sel.length === 0) { return status("no selection"); }
+        if (sel.length > 1) { return status("multiple selection ignored"); }
+        var item = sel[0];
+        if (!isPageItem(item)) { return status("selection is not a PageItem; anchor ignored"); }
+        if (!shouldReplace(commandData)) {
+            if (hasAnchorTag(item)) { writeAnchorBounds(boundsOf(item)); return status("anchor already set"); }
+            if (readAnchorBounds()) { return status("anchor already set; hotkey ignored"); }
         }
-
-        var selection = getSelection(doc);
-        if (selection.length === 0) {
-            return status("no selection");
-        }
-        if (selection.length > 1) {
-            return status("multiple selection ignored");
-        }
-
-        var item = selection[0];
-        if (!isPageItem(item)) {
-            return status("selection is not a PageItem; anchor ignored");
-        }
-
-        if (!shouldReplaceAnchor(commandData)) {
-            if (hasAnchorTag(item)) {
-                writeAnchorBounds(getBounds(item));
-                return status("anchor already set");
-            }
-
-            var existingAnchor = findExistingAnchor(doc);
-            if (existingAnchor) {
-                writeAnchorBounds(getBounds(existingAnchor));
-                return status("anchor already set; hotkey ignored");
-            }
-        }
-
-        removePreviousAnchors(doc);
-        setAnchorTag(item);
-        writeAnchorBounds(getBounds(item));
+        var old = readAnchorBounds();
+        var oldItem = old ? byUuid(old.uuid) : null;
+        if (oldItem) { removeAnchorTag(oldItem); }
+        removeAnchorTag(item);
+        var anchorId = "FlowCell anchor " + new Date().getTime() + "-" + Math.floor(Math.random() * 1000000);
+        var tag = item.tags.add();
+        tag.name = ANCHOR_TAG;
+        tag.value = anchorId;
+        var b = boundsOf(item);
+        b.uuid = uuidOf(item) || b.uuid || "";
+        b.anchorId = anchorId;
+        writeAnchorBounds(b);
         return status("anchor set");
     }
-
-    function selectedPageItems(doc) {
-        var selection = getSelection(doc);
-        var selectionLength = Number(selection.length);
-        if (selectionLength > MAX_SELECTION_ITEMS) {
-            throw new Error("selection too large (" + selectionLength + " items); select " + MAX_SELECTION_ITEMS + " or fewer");
-        }
-        var items = [];
-        for (var i = 0; i < selectionLength; i += 1) {
-            if (isPageItem(selection[i])) {
-                items.push(selection[i]);
-            }
-        }
-        return items;
+    function selectedItems(doc) {
+        var sel = selectionOf(doc);
+        var n = Number(sel.length);
+        if (n > MAX_SELECTION_ITEMS) { throw new Error("selection too large (" + n + " items); select " + MAX_SELECTION_ITEMS + " or fewer"); }
+        var out = [];
+        for (var i = 0; i < n; i += 1) { if (isPageItem(sel[i])) { out.push(sel[i]); } }
+        return out;
     }
-
-    function boundsNearlyMatch(first, second) {
-        if (!first || !second) {
-            return false;
-        }
-        return Math.abs(Number(first.left) - Number(second.left)) < 0.01 &&
-            Math.abs(Number(first.top) - Number(second.top)) < 0.01 &&
-            Math.abs(Number(first.right) - Number(second.right)) < 0.01 &&
-            Math.abs(Number(first.bottom) - Number(second.bottom)) < 0.01;
+    function sameBounds(a, b) { return a && b && Math.abs(a.left - b.left) < 0.01 && Math.abs(a.top - b.top) < 0.01 && Math.abs(a.right - b.right) < 0.01 && Math.abs(a.bottom - b.bottom) < 0.01; }
+    function isAnchorItem(item, anchor) {
+        if (!item || !anchor) { return false; }
+        var uuid = uuidOf(item);
+        if (anchor.uuid && uuid && uuid === String(anchor.uuid)) { return true; }
+        if (anchor.anchorId && tagValue(item) === String(anchor.anchorId)) { return true; }
+        return !anchor.uuid && sameBounds(boundsOf(item), anchor);
     }
-
-    function isAnchorItem(item, anchorBounds) {
-        if (!item) {
-            return false;
-        }
-        if (anchorTagMatches(item, anchorBounds)) {
-            return true;
-        }
-        if (anchorBounds && anchorBounds.uuid) {
-            var itemUuid = getItemUuid(item);
-            if (itemUuid && itemUuid === String(anchorBounds.uuid)) {
-                return boundsNearlyMatch(getBounds(item), anchorBounds);
-            }
-        }
-        return false;
+    function movable(items, anchor) {
+        var out = [];
+        for (var i = 0; i < items.length; i += 1) { if (!isAnchorItem(items[i], anchor)) { out.push(items[i]); } }
+        return out;
     }
-
-    function movablePageItems(items, anchorBounds) {
-        var movableItems = [];
-        for (var i = 0; i < items.length; i += 1) {
-            if (!isAnchorItem(items[i], anchorBounds)) {
-                movableItems.push(items[i]);
-            }
-        }
-        return movableItems;
-    }
-
-    function isGroupMode(commandData) {
-        var value = commandData && commandData.group;
-        return value === true || String(value).toLowerCase() === "true";
-    }
-
+    function groupMode(data) { var v = data && data.group; return v === true || String(v).toLowerCase() === "true"; }
     function combinedBounds(items) {
-        if (items.length === 0) {
-            return null;
-        }
-        var firstBounds = getBounds(items[0]);
-        var left = firstBounds.left;
-        var top = firstBounds.top;
-        var right = firstBounds.right;
-        var bottom = firstBounds.bottom;
+        if (items.length === 0) { return null; }
+        var b = boundsOf(items[0]);
+        var left = b.left, top = b.top, right = b.right, bottom = b.bottom;
         for (var i = 1; i < items.length; i += 1) {
-            var bounds = getBounds(items[i]);
-            left = Math.min(left, bounds.left);
-            top = Math.max(top, bounds.top);
-            right = Math.max(right, bounds.right);
-            bottom = Math.min(bottom, bounds.bottom);
+            b = boundsOf(items[i]);
+            left = Math.min(left, b.left); top = Math.max(top, b.top); right = Math.max(right, b.right); bottom = Math.min(bottom, b.bottom);
         }
-        return {
-            left: left,
-            top: top,
-            right: right,
-            bottom: bottom,
-            centerX: (left + right) / 2,
-            centerY: (top + bottom) / 2
-        };
+        return { left: left, top: top, right: right, bottom: bottom, centerX: (left + right) / 2, centerY: (top + bottom) / 2 };
     }
-
-    function moveItemsBy(items, dx, dy) {
-        for (var i = 0; i < items.length; i += 1) {
-            moveItemBy(items[i], dx, dy);
-        }
-        return items.length;
-    }
-
-    function alignmentDelta(axis, mode, modifier, bounds, anchorBounds) {
-        var source = 0;
-        var target = 0;
+    function moveBy(item, dx, dy) { if (Math.abs(dx) >= 0.0001 || Math.abs(dy) >= 0.0001) { item.translate(dx, dy); } }
+    function moveAll(items, dx, dy) { for (var i = 0; i < items.length; i += 1) { moveBy(items[i], dx, dy); } return items.length; }
+    function delta(axis, mode, mod, b, a) {
         if (axis === "X") {
-            if (modifier === "SURFACE") {
-                if (mode === "MIN") {
-                    source = bounds.right;
-                    target = anchorBounds.left;
-                } else if (mode === "MAX") {
-                    source = bounds.left;
-                    target = anchorBounds.right;
-                } else if (bounds.centerX <= anchorBounds.centerX) {
-                    source = bounds.right;
-                    target = anchorBounds.left;
-                } else {
-                    source = bounds.left;
-                    target = anchorBounds.right;
-                }
-            } else if (mode === "MIN") {
-                source = bounds.left;
-                target = anchorBounds.left;
-            } else if (mode === "MAX") {
-                source = bounds.right;
-                target = anchorBounds.right;
-            } else {
-                source = bounds.centerX;
-                target = anchorBounds.centerX;
+            if (mod === "SURFACE") {
+                if (mode === "MIN") { return { dx: a.left - b.right, dy: 0 }; }
+                if (mode === "MAX") { return { dx: a.right - b.left, dy: 0 }; }
+                return b.centerX <= a.centerX ? { dx: a.left - b.right, dy: 0 } : { dx: a.right - b.left, dy: 0 };
             }
-            return { dx: target - source, dy: 0 };
+            if (mode === "MIN") { return { dx: a.left - b.left, dy: 0 }; }
+            if (mode === "MAX") { return { dx: a.right - b.right, dy: 0 }; }
+            return { dx: a.centerX - b.centerX, dy: 0 };
         }
-        if (axis === "Y") {
-            if (modifier === "SURFACE") {
-                if (mode === "MIN") {
-                    source = bounds.top;
-                    target = anchorBounds.bottom;
-                } else if (mode === "MAX") {
-                    source = bounds.bottom;
-                    target = anchorBounds.top;
-                } else if (bounds.centerY <= anchorBounds.centerY) {
-                    source = bounds.top;
-                    target = anchorBounds.bottom;
-                } else {
-                    source = bounds.bottom;
-                    target = anchorBounds.top;
-                }
-            } else if (mode === "MIN") {
-                source = bounds.bottom;
-                target = anchorBounds.bottom;
-            } else if (mode === "MAX") {
-                source = bounds.top;
-                target = anchorBounds.top;
-            } else {
-                source = bounds.centerY;
-                target = anchorBounds.centerY;
-            }
-            return { dx: 0, dy: target - source };
+        if (mod === "SURFACE") {
+            if (mode === "MIN") { return { dx: 0, dy: a.bottom - b.top }; }
+            if (mode === "MAX") { return { dx: 0, dy: a.top - b.bottom }; }
+            return b.centerY <= a.centerY ? { dx: 0, dy: a.bottom - b.top } : { dx: 0, dy: a.top - b.bottom };
         }
-        return { dx: 0, dy: 0 };
+        if (mode === "MIN") { return { dx: 0, dy: a.bottom - b.bottom }; }
+        if (mode === "MAX") { return { dx: 0, dy: a.top - b.top }; }
+        return { dx: 0, dy: a.centerY - b.centerY };
     }
-
     function alignAxis(commandData) {
-        var doc = getActiveDocumentOrNull();
-        if (!doc) {
-            return status("no document");
-        }
-
-        var anchorBounds = resolveAnchorBounds(doc);
-        if (!anchorBounds) {
-            return status("no anchor set");
-        }
-
-        var items = selectedPageItems(doc);
-        if (items.length === 0) {
-            return status("no selection");
-        }
-
+        var doc = docOrNull();
+        if (!doc) { return status("no document"); }
+        var anchor = resolveAnchorBounds(doc);
+        if (!anchor) { return status("no anchor set"); }
+        var items = movable(selectedItems(doc), anchor);
+        if (items.length === 0) { return status("only anchor selected; nothing moved"); }
         var axis = String(commandData.axis || "X").toUpperCase();
         var mode = String(commandData.mode || "CENTER").toUpperCase();
-        var modifier = String(commandData.modifier || "").toUpperCase();
-        var movableItems = movablePageItems(items, anchorBounds);
-        var moved = 0;
-
-        if (movableItems.length === 0) {
-            return status("only anchor selected; nothing moved");
+        var mod = String(commandData.modifier || "").toUpperCase();
+        if (groupMode(commandData)) {
+            var g = combinedBounds(items);
+            var gd = delta(axis, mode, mod, g, anchor);
+            return status("aligned group " + moveAll(items, gd.dx, gd.dy) + " object(s) to anchor using " + BOUNDS_MODE);
         }
-
-        if (isGroupMode(commandData)) {
-            var groupBounds = combinedBounds(movableItems);
-            var groupDelta = alignmentDelta(axis, mode, modifier, groupBounds, anchorBounds);
-            moved = moveItemsBy(movableItems, groupDelta.dx, groupDelta.dy);
-            return status("aligned group " + moved + " object(s) to anchor using " + BOUNDS_MODE);
-        }
-
-        for (var i = 0; i < movableItems.length; i += 1) {
-            var item = movableItems[i];
-            var bounds = getBounds(item);
-            var delta = alignmentDelta(axis, mode, modifier, bounds, anchorBounds);
-            moveItemBy(item, delta.dx, delta.dy);
-            moved += 1;
-        }
-
-        if (moved === 0) {
-            return status("only anchor selected; nothing moved");
-        }
-        return status("aligned " + moved + " object(s) to anchor using " + BOUNDS_MODE);
+        for (var i = 0; i < items.length; i += 1) { var d = delta(axis, mode, mod, boundsOf(items[i]), anchor); moveBy(items[i], d.dx, d.dy); }
+        return status("aligned " + items.length + " object(s) to anchor using " + BOUNDS_MODE);
     }
-
     function centerOnAnchor(commandData) {
-        var doc = getActiveDocumentOrNull();
-        if (!doc) {
-            return status("no document");
+        var doc = docOrNull();
+        if (!doc) { return status("no document"); }
+        var anchor = resolveAnchorBounds(doc);
+        if (!anchor) { return status("no anchor set"); }
+        var items = movable(selectedItems(doc), anchor);
+        if (items.length === 0) { return status("only anchor selected; nothing moved"); }
+        if (groupMode(commandData)) {
+            var g = combinedBounds(items);
+            return status("centered group " + moveAll(items, anchor.centerX - g.centerX, anchor.centerY - g.centerY) + " object(s) on anchor using " + BOUNDS_MODE);
         }
-
-        var anchorBounds = resolveAnchorBounds(doc);
-        if (!anchorBounds) {
-            return status("no anchor set");
-        }
-
-        var items = selectedPageItems(doc);
-        if (items.length === 0) {
-            return status("no selection");
-        }
-
-        var movableItems = movablePageItems(items, anchorBounds);
-        if (movableItems.length === 0) {
-            return status("only anchor selected; nothing moved");
-        }
-
-        if (isGroupMode(commandData)) {
-            var groupBounds = combinedBounds(movableItems);
-            var groupMoved = moveItemsBy(
-                movableItems,
-                anchorBounds.centerX - groupBounds.centerX,
-                anchorBounds.centerY - groupBounds.centerY
-            );
-            return status("centered group " + groupMoved + " object(s) on anchor using " + BOUNDS_MODE);
-        }
-
-        var moved = 0;
-        for (var i = 0; i < movableItems.length; i += 1) {
-            var item = movableItems[i];
-            var bounds = getBounds(item);
-            moveItemBy(item, anchorBounds.centerX - bounds.centerX, anchorBounds.centerY - bounds.centerY);
-            moved += 1;
-        }
-
-        if (moved === 0) {
-            return status("only anchor selected; nothing moved");
-        }
-        return status("centered " + moved + " object(s) on anchor using " + BOUNDS_MODE);
+        for (var i = 0; i < items.length; i += 1) { var b = boundsOf(items[i]); moveBy(items[i], anchor.centerX - b.centerX, anchor.centerY - b.centerY); }
+        return status("centered " + items.length + " object(s) on anchor using " + BOUNDS_MODE);
     }
-
     function centerOnArtboard(commandData) {
-        var doc = getActiveDocumentOrNull();
-        if (!doc) {
-            return status("no document");
+        var doc = docOrNull();
+        if (!doc) { return status("no document"); }
+        var items = selectedItems(doc);
+        if (items.length === 0) { return status("no selection"); }
+        var r = doc.artboards[doc.artboards.getActiveArtboardIndex()].artboardRect;
+        var cx = (Number(r[0]) + Number(r[2])) / 2;
+        var cy = (Number(r[1]) + Number(r[3])) / 2;
+        if (groupMode(commandData)) {
+            var g = combinedBounds(items);
+            return status("centered group " + moveAll(items, cx - g.centerX, cy - g.centerY) + " object(s) on active artboard using " + BOUNDS_MODE);
         }
-
-        var items = selectedPageItems(doc);
-        if (items.length === 0) {
-            return status("no selection");
-        }
-
-        var artboardIndex = doc.artboards.getActiveArtboardIndex();
-        var artboardBounds = doc.artboards[artboardIndex].artboardRect;
-        var centerX = (Number(artboardBounds[0]) + Number(artboardBounds[2])) / 2;
-        var centerY = (Number(artboardBounds[1]) + Number(artboardBounds[3])) / 2;
-
-        var movableItems = items;
-        if (movableItems.length === 0) {
-            return status("no movable selection");
-        }
-
-        if (isGroupMode(commandData)) {
-            var groupBounds = combinedBounds(movableItems);
-            var groupMoved = moveItemsBy(movableItems, centerX - groupBounds.centerX, centerY - groupBounds.centerY);
-            return status("centered group " + groupMoved + " object(s) on active artboard using " + BOUNDS_MODE);
-        }
-
-        var moved = 0;
-        for (var i = 0; i < movableItems.length; i += 1) {
-            var item = movableItems[i];
-            var bounds = getBounds(item);
-            moveItemBy(item, centerX - bounds.centerX, centerY - bounds.centerY);
-            moved += 1;
-        }
-        if (moved === 0) {
-            return status("no movable selection");
-        }
-        return status("centered " + moved + " object(s) on active artboard using " + BOUNDS_MODE);
+        for (var i = 0; i < items.length; i += 1) { var b = boundsOf(items[i]); moveBy(items[i], cx - b.centerX, cy - b.centerY); }
+        return status("centered " + items.length + " object(s) on active artboard using " + BOUNDS_MODE);
     }
-
     function main() {
-        var commandData = readCommand();
-        var command = String(commandData.command || "status").toLowerCase();
+        var data = readCommand();
+        var command = String(data.command || "status").toLowerCase();
         writeLog("command requested: " + command);
         try {
-            if (command === "set_anchor") {
-                return setAnchor(commandData);
-            }
-            if (command === "align_axis") {
-                return alignAxis(commandData);
-            }
-            if (command === "center_all") {
-                return centerOnAnchor(commandData);
-            }
-            if (command === "center_artboard") {
-                return centerOnArtboard(commandData);
-            }
-        } catch (error) {
-            return status("anchor command failed: " + String(error));
-        }
-        if (commandData.error) {
-            return status("command payload error: " + commandData.error);
-        }
-        return status("Illustrator anchor backend ready; bounds mode is " + BOUNDS_MODE);
+            if (command === "set_anchor") { return setAnchor(data); }
+            if (command === "align_axis") { return alignAxis(data); }
+            if (command === "center_all") { return centerOnAnchor(data); }
+            if (command === "center_artboard") { return centerOnArtboard(data); }
+        } catch (error) { return status("anchor command failed: " + String(error)); }
+        if (data.error) { return status("command payload error: " + data.error); }
+        return status("Illustrator anchor backend ready; cached bounds mode is " + BOUNDS_MODE);
     }
-
     return main();
 }());
