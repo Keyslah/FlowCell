@@ -4,7 +4,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -550,6 +551,21 @@ export default function MainPage() {
   const [scriptRunError, setScriptRunError] = useState<ScriptRunErrorState | null>(null);
   const [selectedScriptGroupPopoutType, setSelectedScriptGroupPopoutType] =
     useState<ScriptGroupPopoutType>(DEFAULT_SCRIPT_GROUP_POPOUT_TYPE);
+
+  useEffect(() => {
+    const currentWindow = getCurrentWindow();
+    const restoreCursorEvents = () => {
+      void currentWindow.setIgnoreCursorEvents(false).catch(() => {});
+    };
+
+    restoreCursorEvents();
+    window.addEventListener("focus", restoreCursorEvents);
+    window.addEventListener("pointerenter", restoreCursorEvents);
+    return () => {
+      window.removeEventListener("focus", restoreCursorEvents);
+      window.removeEventListener("pointerenter", restoreCursorEvents);
+    };
+  }, []);
 
   useEffect(() => {
     writeButtonLabelOverrides(labelOverrides);
@@ -2409,7 +2425,7 @@ export default function MainPage() {
 
   const handleButtonActivate = async (
     button: ButtonRecord,
-    event: ReactMouseEvent<HTMLElement>
+    event: ReactMouseEvent<HTMLElement> | ReactPointerEvent<HTMLElement>
   ) => {
     if (button.actionId === "top-left-button-1") {
       try {
@@ -2759,6 +2775,10 @@ export default function MainPage() {
               key={button.id}
               button={button}
               skinProfileHighlight
+              activateOnPointerDown={
+                isIllustratorProgramName(selectedProgramName) &&
+                isPanelScriptButtonAction(button.actionId)
+              }
               onActivate={handleButtonActivate}
               onDoubleActivate={handleButtonDoubleActivate}
               onRequestContextMenu={handleButtonContextMenu}

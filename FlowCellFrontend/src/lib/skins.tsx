@@ -736,6 +736,18 @@ function installImportedSkinBridgeButton(args: {
     }
     pressed = true;
     dispatchImportedSkinCustomEvent(host, "flow-skin-request-focus");
+    dispatchImportedSkinCustomEvent(host, "flow-skin-pointerdown", {
+      altKey: event.altKey,
+      button: event.button,
+      buttons: event.buttons,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      ctrlKey: event.ctrlKey,
+      metaKey: event.metaKey,
+      screenX: event.screenX,
+      screenY: event.screenY,
+      shiftKey: event.shiftKey
+    });
     dispatchImportedSkinCustomEvent(host, "flow-skin-state", {
       hovered: true,
       pressed: true

@@ -314,11 +314,24 @@ async function resolveRotateToolboxWindowOptions(programName = ""): Promise<{
   const logicalTop = position.y / scaleFactor;
   const logicalWidth = size.width / scaleFactor;
   const logicalHeight = size.height / scaleFactor;
+  const centeredX = logicalLeft + Math.max((logicalWidth - defaults.width) / 2, 24);
+  const centeredY = logicalTop + Math.max((logicalHeight - defaults.height) / 2, 24);
+  const rightInsetX =
+    logicalLeft + Math.max(logicalWidth - defaults.width - 24, 24);
+  const stackedY =
+    logicalTop +
+    Math.max(
+      Math.min(
+        120 + ILLUSTRATOR_ALIGNMENT_TOOLBOX_WINDOW_HEIGHT + 16,
+        logicalHeight - defaults.height - 24
+      ),
+      24
+    );
 
   return {
     ...defaults,
-    x: logicalLeft + Math.max((logicalWidth - defaults.width) / 2, 24),
-    y: logicalTop + Math.max((logicalHeight - defaults.height) / 2, 24)
+    x: isIllustrator ? rightInsetX : centeredX,
+    y: isIllustrator ? stackedY : centeredY
   };
 }
 
@@ -350,11 +363,21 @@ async function resolveAlignmentToolboxWindowOptions(programName = ""): Promise<{
   const logicalTop = position.y / scaleFactor;
   const logicalWidth = size.width / scaleFactor;
   const logicalHeight = size.height / scaleFactor;
+  const centeredX = logicalLeft + Math.max((logicalWidth - defaults.width) / 2, 24);
+  const centeredY = logicalTop + Math.max((logicalHeight - defaults.height) / 2, 24);
+  const rightInsetX =
+    logicalLeft + Math.max(logicalWidth - defaults.width - 24, 24);
+  const stackedY =
+    logicalTop +
+    Math.max(
+      Math.min(120, logicalHeight - defaults.height - 24),
+      24
+    );
 
   return {
     ...defaults,
-    x: logicalLeft + Math.max((logicalWidth - defaults.width) / 2, 24),
-    y: logicalTop + Math.max((logicalHeight - defaults.height) / 2, 24)
+    x: isIllustrator ? rightInsetX : centeredX,
+    y: isIllustrator ? stackedY : centeredY
   };
 }
 

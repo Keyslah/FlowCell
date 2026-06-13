@@ -4842,6 +4842,14 @@ fn current_timestamp_token() -> String {
         .to_string()
 }
 
+fn current_precise_timestamp_token() -> String {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos()
+        .to_string()
+}
+
 fn current_command_timestamp() -> String {
     current_timestamp_token()
 }
@@ -6056,7 +6064,7 @@ fn run_illustrator_backend_script_direct(
             "command": "run_script_now",
             "scriptPath": script_path.display().to_string(),
             "programKey": program_key,
-            "requestId": format!("illustrator-script-{}", current_timestamp_token())
+            "requestId": format!("illustrator-script-{}", current_precise_timestamp_token())
         }))
         .map_err(|error| format!("Failed to serialize FlowCell direct script request: {error}"))?;
 
@@ -7521,8 +7529,7 @@ fn run_illustrator_toolset_action(
             normalized_command,
             payload,
         )?;
-        let result = run_flowcell_controller_script(&script_path, "illustrator_automation");
-        let _ = clear_illustrator_rotate_command_file();
+        let result = run_illustrator_backend_script_direct(&script_path, "illustrator_automation");
         let message = result?;
         return Ok(toolset_message_response(message));
     }

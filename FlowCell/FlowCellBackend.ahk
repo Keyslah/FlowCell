@@ -1810,16 +1810,6 @@ class FlowCellApp {
 
         modalDialogScript := !allowProcessFallback && this.IsFlowCellIllustratorModalDialogScript(scriptPath)
         stableHwnd := this.FindStableIllustratorWindow(programConfig)
-        if this.IsFlowCellIllustratorLayersPanelScript(scriptPath) {
-            if !stableHwnd {
-                result.detail := "Stable Illustrator 2026 is not running. Layers panel scripts require native File > Scripts dispatch and will not fall back to COM."
-                this.logger.Warn("Illustrator Layers native menu dispatch blocked because no stable Illustrator 2026 window was found. Script=" scriptPath)
-                return result
-            }
-
-            return this.RunFlowCellIllustratorLayersScriptViaMenu(scriptPath, source, programConfig, stableHwnd)
-        }
-
         if !stableHwnd {
             if !allowProcessFallback {
                 result.detail := "Stable Illustrator 2026 is not running. Open Illustrator before using this FlowCell tool."

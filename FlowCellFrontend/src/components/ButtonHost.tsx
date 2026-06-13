@@ -1,4 +1,8 @@
-import type { CSSProperties, MouseEvent } from "react";
+import type {
+  CSSProperties,
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent
+} from "react";
 import { HostSkinButton } from "./HostSkinButton";
 import { DEFAULT_FLOW_IMPORTED_SKIN } from "../lib/theme";
 import type { ImportedSkin, StyleGroup } from "../types";
@@ -6,14 +10,18 @@ import type { ButtonRecord } from "../pages/main/mainLayout";
 
 type ButtonHostProps = {
   button: ButtonRecord;
-  onActivate?: (button: ButtonRecord, event: MouseEvent<HTMLElement>) => void;
-  onDoubleActivate?: (button: ButtonRecord, event: MouseEvent<HTMLElement>) => void;
-  onRequestContextMenu?: (button: ButtonRecord, event: MouseEvent<HTMLElement>) => void;
+  onActivate?: (
+    button: ButtonRecord,
+    event: ReactMouseEvent<HTMLElement> | ReactPointerEvent<HTMLElement>
+  ) => void;
+  onDoubleActivate?: (button: ButtonRecord, event: ReactMouseEvent<HTMLElement>) => void;
+  onRequestContextMenu?: (button: ButtonRecord, event: ReactMouseEvent<HTMLElement>) => void;
   absolute?: boolean;
   targetHeightOverride?: number;
   importedSkinOverride?: ImportedSkin;
   styleGroupOverride?: StyleGroup;
   skinProfileHighlight?: boolean;
+  activateOnPointerDown?: boolean;
 };
 
 type StyleWithVars = CSSProperties & Record<`--${string}`, string | number>;
@@ -36,7 +44,8 @@ export function ButtonHost({
   targetHeightOverride,
   importedSkinOverride,
   styleGroupOverride,
-  skinProfileHighlight = false
+  skinProfileHighlight = false,
+  activateOnPointerDown = false
 }: ButtonHostProps) {
   const isChromeAction =
     button.groupId === "top-left-actions" || button.groupId === "top-right-actions";
@@ -70,15 +79,41 @@ export function ButtonHost({
     "--button-radius": `${(button.radius ?? 0) * heightRatio}px`
   };
 
-  const activate = (event: MouseEvent<HTMLElement>) => {
+  const activate = (event: ReactMouseEvent<HTMLElement>) => {
+    if (activateOnPointerDown && event.detail !== 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
     onActivate?.(button, event);
   };
 
-  const handleDoubleClick = (event: MouseEvent<HTMLElement>) => {
+  const handlePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+    if (
+      !activateOnPointerDown ||
+      event.button !== 0 ||
+      event.ctrlKey ||
+      event.metaKey ||
+      event.shiftKey
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    onActivate?.(button, event);
+  };
+
+  const handleDoubleClick = (event: ReactMouseEvent<HTMLElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
     onDoubleActivate?.(button, event);
   };
 
-  const handleContextMenu = (event: MouseEvent<HTMLElement>) => {
+  const handleContextMenu = (event: ReactMouseEvent<HTMLElement>) => {
     if (!supportsContextMenu || !onRequestContextMenu) {
       return;
     }
@@ -123,6 +158,7 @@ export function ButtonHost({
       data-group-id={button.groupId ?? ""}
       data-rail-id={button.railId ?? ""}
       data-shape-type={button.shapeType}
+      onPointerDown={handlePointerDown}
       onClick={activate}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}

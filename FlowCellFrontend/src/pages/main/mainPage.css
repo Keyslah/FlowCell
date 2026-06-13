@@ -47,6 +47,7 @@
   display: inline-flex;
   align-items: stretch;
   justify-content: stretch;
+  pointer-events: auto;
   min-width: 0;
   min-height: 0;
   padding: 0;
@@ -69,6 +70,7 @@
   position: absolute;
   display: flex;
   align-items: flex-start;
+  pointer-events: auto;
   z-index: 1;
 }
 
@@ -76,6 +78,7 @@
   position: absolute;
   display: flex;
   align-items: center;
+  pointer-events: auto;
   gap: 8px;
   padding: 0 10px 0 12px;
   border: 1px solid rgba(226, 234, 236, 0.36);
@@ -111,6 +114,7 @@
 
 .main-page__script-error {
   position: fixed;
+  pointer-events: auto;
   right: 18px;
   bottom: 18px;
   z-index: 64;

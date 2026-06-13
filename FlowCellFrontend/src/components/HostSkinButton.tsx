@@ -460,11 +460,7 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
                 resolveGreenHighlightColor(highlightKey)
             }
           : {}),
-      ...(skinOwnsHitbox
-        ? {
-            pointerEvents: "none"
-          }
-        : {})
+      pointerEvents: "auto"
     };
 
     const clearHoldTimer = () => {
@@ -601,6 +597,41 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
         rootRef.current?.focus();
         rootRef.current?.dispatchEvent(clickEvent);
       };
+      const handleSkinPointerDown = (event: Event) => {
+        if (disabled) {
+          return;
+        }
+
+        const rootNode = rootRef.current;
+        if (!rootNode) {
+          return;
+        }
+
+        const detail = (event as CustomEvent<Record<string, unknown>>).detail ?? {};
+        let defaultPrevented = false;
+        const syntheticPointerEvent = {
+          altKey: detail.altKey === true,
+          button: typeof detail.button === "number" ? detail.button : 0,
+          buttons: typeof detail.buttons === "number" ? detail.buttons : 0,
+          clientX: typeof detail.clientX === "number" ? detail.clientX : 0,
+          clientY: typeof detail.clientY === "number" ? detail.clientY : 0,
+          ctrlKey: detail.ctrlKey === true,
+          currentTarget: rootNode,
+          get defaultPrevented() {
+            return defaultPrevented;
+          },
+          metaKey: detail.metaKey === true,
+          preventDefault: () => {
+            defaultPrevented = true;
+          },
+          screenX: typeof detail.screenX === "number" ? detail.screenX : 0,
+          screenY: typeof detail.screenY === "number" ? detail.screenY : 0,
+          shiftKey: detail.shiftKey === true,
+          stopPropagation: () => undefined,
+          target: rootNode
+        } as unknown as ReactPointerEvent<HTMLButtonElement>;
+        onPointerDown?.(syntheticPointerEvent);
+      };
       const handleSkinContextMenu = (event: Event) => {
         if (disabled) {
           return;
@@ -620,6 +651,7 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
 
       skinNode.addEventListener("flow-skin-state", handleSkinState as EventListener);
       skinNode.addEventListener("flow-skin-activate", handleSkinActivate as EventListener);
+      skinNode.addEventListener("flow-skin-pointerdown", handleSkinPointerDown as EventListener);
       skinNode.addEventListener("flow-skin-contextmenu", handleSkinContextMenu as EventListener);
       skinNode.addEventListener(
         "flow-skin-request-focus",
@@ -631,6 +663,10 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
         skinNode.removeEventListener(
           "flow-skin-activate",
           handleSkinActivate as EventListener
+        );
+        skinNode.removeEventListener(
+          "flow-skin-pointerdown",
+          handleSkinPointerDown as EventListener
         );
         skinNode.removeEventListener(
           "flow-skin-contextmenu",

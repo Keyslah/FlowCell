@@ -1,4 +1,8 @@
-import type { ReactNode } from "react";
+import type {
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent,
+  ReactNode
+} from "react";
 import type { PanelScriptChildRecord, PanelScriptFileRecord } from "../../lib/programRails";
 import {
   ALIGNMENT_TOOLBOX_AXIS_TEXT_SIZE,
@@ -89,7 +93,24 @@ function renderButton(args: {
         borderRadius: `${Math.min(rect.rx, rect.ry)}px`,
         fontSize: `${fontSize}px`
       }}
-      onClick={onClick}
+      onPointerDown={(event: ReactPointerEvent<HTMLButtonElement>) => {
+        if (event.button !== 0) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        onClick();
+      }}
+      onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
+        if (event.detail === 0) {
+          onClick();
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+      }}
     >
       <span
         className={[

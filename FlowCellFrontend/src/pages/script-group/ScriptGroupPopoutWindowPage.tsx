@@ -603,8 +603,23 @@ export default function ScriptGroupPopoutWindowPage({
                       borderRadius: `${Math.min(button.rx, button.ry)}px`,
                       fontSize: `${buttonFontSize}px`
                     }}
-                    onClick={() => {
+                    onPointerDown={(event) => {
+                      if (event.button !== 0) {
+                        return;
+                      }
+
+                      event.preventDefault();
+                      event.stopPropagation();
                       void handleButtonActivate(button.fileName);
+                    }}
+                    onClick={(event) => {
+                      if (event.detail === 0) {
+                        void handleButtonActivate(button.fileName);
+                        return;
+                      }
+
+                      event.preventDefault();
+                      event.stopPropagation();
                     }}
                   >
                     <span

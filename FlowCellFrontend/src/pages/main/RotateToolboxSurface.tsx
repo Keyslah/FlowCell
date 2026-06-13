@@ -1,3 +1,7 @@
+import type {
+  MouseEvent as ReactMouseEvent,
+  PointerEvent as ReactPointerEvent
+} from "react";
 import type { PanelScriptChildRecord, PanelScriptFileRecord } from "../../lib/programRails";
 import {
   ILLUSTRATOR_ROTATE_TOOLBOX_APPLY_ROW_TEXT_SIZE,
@@ -324,6 +328,30 @@ export function RotateToolboxSurface({
   const quantityValue = usesDistributeCountInput
     ? String(state.distributeCount)
     : String(normalizeAngle(state.angleDeg));
+  const handleButtonActivate = (slot: RotateSlot) => {
+    if (disabled) {
+      return;
+    }
+
+    if (slot === "apply_negative") {
+      onApply("negative");
+      return;
+    }
+
+    if (slot === "apply_positive") {
+      onApply("positive");
+      return;
+    }
+
+    const nextState = nextStateForSlot(state, slot, variant);
+    if (nextState !== state) {
+      onStateChange(nextState);
+    }
+
+    if (presetAngleForSlot(slot) !== null) {
+      onApply("positive", nextState);
+    }
+  };
 
   return (
     <section
@@ -424,29 +452,23 @@ export function RotateToolboxSurface({
               borderRadius: `${Math.min(spec.rect.rx, spec.rect.ry)}px`,
               fontSize: `${resolveRotateButtonTextSize(spec.slot, variant)}px`
             }}
-            onClick={() => {
-              if (disabled) {
+            onPointerDown={(event: ReactPointerEvent<HTMLButtonElement>) => {
+              if (event.button !== 0) {
                 return;
               }
 
-              if (spec.slot === "apply_negative") {
-                onApply("negative");
+              event.preventDefault();
+              event.stopPropagation();
+              handleButtonActivate(spec.slot);
+            }}
+            onClick={(event: ReactMouseEvent<HTMLButtonElement>) => {
+              if (event.detail === 0) {
+                handleButtonActivate(spec.slot);
                 return;
               }
 
-              if (spec.slot === "apply_positive") {
-                onApply("positive");
-                return;
-              }
-
-              const nextState = nextStateForSlot(state, spec.slot, variant);
-              if (nextState !== state) {
-                onStateChange(nextState);
-              }
-
-              if (presetAngleForSlot(spec.slot) !== null) {
-                onApply("positive", nextState);
-              }
+              event.preventDefault();
+              event.stopPropagation();
             }}
             disabled={disabled}
           >
