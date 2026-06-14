@@ -10,6 +10,7 @@
 # FLOWCELL_CHILD: apply_theme | Apply | Apply the currently visible Blender theme role colors.
 # FLOWCELL_CHILD: apply_background_pic | Place Picture | Creates fake gizmos and a fake grid on top of a background image.
 # FLOWCELL_CHILD: browse_background_pic | Browse | Choose the Place Picture background image path.
+# FLOWCELL_CHILD: startup_background_pic | Startup | Save the current Place Picture image so Blender restores it on startup.
 # FLOWCELL_CHILD: clear_background_pic | Clear | Remove the Place Picture fake background, grid, and gizmos while keeping the path field.
 # FLOWCELL_CHILD: apply_hdri | HDRI Apply | Apply the HDRI path in the field.
 # FLOWCELL_CHILD: clear_world | Clear | Reset the current file to a plain world without the staged HDRI.
@@ -671,6 +672,24 @@ def _set_project_place_picture_state(context, resolved_path: str):
         "relative_path": _project_relative_path(normalized_path),
     }
     return _write_theme_state(context, state)
+
+
+def _set_startup_place_picture_state(context, payload):
+    resolved_path = _resolve_optional_image_path(
+        _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
+    )
+    state = _read_global_theme_state()
+    state["place_picture"] = {
+        "enabled": True,
+        "path": resolved_path,
+        "relative_path": _project_relative_path(resolved_path),
+    }
+    normalized = _write_global_theme_state(state)
+    return _result(
+        f"Place Picture startup image saved from {resolved_path}.",
+        static_background_path=resolved_path,
+        **_startup_state_payload(normalized),
+    )
 
 
 def _project_state_payload(state):
@@ -3823,6 +3842,8 @@ def run_flowcell_action(context=None, data=None):
                 static_background_path=resolved_path,
             )
         return _result("Place Picture cleared.", static_background_path="")
+    if command == "set_place_picture_startup":
+        return _set_startup_place_picture_state(context, payload)
     if command == "set_static_background_image":
         resolved_path = _set_static_background_image(context, payload)
         if resolved_path:

@@ -25,6 +25,11 @@ LIVE_TOOL_TIMER_MIN_INTERVAL_SECONDS = 0.01
 LIVE_TOOL_DEFAULT_INTERVAL_SECONDS = 0.10
 LIVE_TOOL_REGISTRY: dict[str, dict[str, object]] = {}
 RUNTIME_STATUS_FILE_NAME = "flowcell_bridge_runtime_status.json"
+PROJECT_THEME_POLL_RESTORE_DONE_KEY = "flowcell_project_theme_poll_restore_done"
+PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY = "flowcell_project_theme_poll_restore_attempts"
+PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY = "flowcell_project_theme_poll_restore_next_time"
+PROJECT_THEME_POLL_RESTORE_MAX_ATTEMPTS = 240
+PROJECT_THEME_STARTUP_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
 SMART_AXIS_LOCK_TOOL_ID = "smart_axis_lock"
 SMART_AXIS_SUPPORTED_TYPES = {"MESH", "CURVE", "SURFACE", "FONT", "META"}
 SMART_AXIS_AXES = "XYZ"
@@ -1060,8 +1065,92 @@ def write_bridge_response(payload: dict) -> None:
     response_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _has_view3d_area() -> bool:
+    window_manager = getattr(bpy.context, "window_manager", None)
+    if window_manager is None:
+        return False
+    for window in getattr(window_manager, "windows", []) or []:
+        screen = getattr(window, "screen", None)
+        if screen is None:
+            continue
+        for area in getattr(screen, "areas", []) or []:
+            if getattr(area, "type", "") == "VIEW_3D":
+                return True
+    return False
+
+
+def _startup_place_picture_state_enabled() -> bool:
+    config_root = bpy.utils.user_resource("CONFIG", path="", create=True)
+    if not config_root:
+        return False
+    state_path = Path(config_root) / PROJECT_THEME_STARTUP_STATE_FILE_NAME
+    if not state_path.is_file():
+        return False
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return False
+    if not isinstance(state, dict):
+        return False
+    place_picture = state.get("place_picture", {})
+    if not isinstance(place_picture, dict) or not bool(place_picture.get("enabled")):
+        return False
+    return bool(str(place_picture.get("path") or place_picture.get("relative_path") or "").strip())
+
+
+def _maybe_restore_startup_place_picture() -> None:
+    namespace = bpy.app.driver_namespace
+    if bool(namespace.get(PROJECT_THEME_POLL_RESTORE_DONE_KEY)):
+        return
+
+    now = time.monotonic()
+    next_time = float(namespace.get(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, 0.0) or 0.0)
+    if now < next_time:
+        return
+
+    attempts = int(namespace.get(PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY, 0) or 0)
+    if attempts >= PROJECT_THEME_POLL_RESTORE_MAX_ATTEMPTS:
+        namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
+        namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
+        _write_runtime_status("startup_place_picture_restore_retry_limit")
+        return
+
+    namespace[PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY] = attempts + 1
+    namespace[PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY] = now + 0.5
+
+    if not _startup_place_picture_state_enabled() or not _has_view3d_area():
+        return
+
+    try:
+        runtime_state = execute_custom_action(
+            "flowcell_custom_theme",
+            {"command": "read_place_picture_runtime_state"},
+        )
+        if isinstance(runtime_state, dict) and bool(runtime_state.get("place_picture_runtime_enabled")):
+            namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
+            namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
+            _write_runtime_status("startup_place_picture_already_restored")
+            return
+
+        result = execute_custom_action(
+            "flowcell_custom_theme",
+            {"command": "restore_project_startup_state"},
+        )
+        if isinstance(result, dict) and bool(result.get("restored_place_picture")):
+            namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
+            namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
+            _write_runtime_status(
+                "startup_place_picture_restored",
+                message=str(result.get("message", "") or ""),
+            )
+    except Exception as exc:
+        _write_runtime_status("startup_place_picture_restore_error", error=str(exc))
+
+
 def poll_bridge_requests() -> float:
     global LAST_REQUEST_ID
+
+    _maybe_restore_startup_place_picture()
 
     request_path = get_request_path()
     if not request_path.exists():

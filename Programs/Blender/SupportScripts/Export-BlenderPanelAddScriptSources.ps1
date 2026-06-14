@@ -398,6 +398,7 @@ function Get-FlowCellChildMetadataLines {
         '# FLOWCELL_CHILD: apply_theme | Apply | Apply the currently visible Blender theme role colors.',
         '# FLOWCELL_CHILD: apply_background_pic | Place Picture | Creates fake gizmos and a fake grid on top of a background image.',
         '# FLOWCELL_CHILD: browse_background_pic | Browse | Choose the Place Picture background image path.',
+        '# FLOWCELL_CHILD: startup_background_pic | Startup | Save the current Place Picture image so Blender restores it on startup.',
         '# FLOWCELL_CHILD: clear_background_pic | Clear | Remove the Place Picture fake background, grid, and gizmos while keeping the path field.',
         '# FLOWCELL_CHILD: apply_hdri | HDRI Apply | Apply the HDRI path in the field.',
         '# FLOWCELL_CHILD: clear_world | Clear | Reset the current file to a plain world without the staged HDRI.',

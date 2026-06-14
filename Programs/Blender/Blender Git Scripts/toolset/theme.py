@@ -10,6 +10,7 @@
 # FLOWCELL_CHILD: apply_theme | Apply | Apply the currently visible Blender theme role colors.
 # FLOWCELL_CHILD: apply_background_pic | Place Picture | Creates fake gizmos and a fake grid on top of a background image.
 # FLOWCELL_CHILD: browse_background_pic | Browse | Choose the Place Picture background image path.
+# FLOWCELL_CHILD: startup_background_pic | Startup | Save the current Place Picture image so Blender restores it on startup.
 # FLOWCELL_CHILD: clear_background_pic | Clear | Remove the Place Picture fake background, grid, and gizmos while keeping the path field.
 # FLOWCELL_CHILD: apply_hdri | HDRI Apply | Apply the HDRI path in the field.
 # FLOWCELL_CHILD: clear_world | Clear | Reset the current file to a plain world without the staged HDRI.
@@ -21,7 +22,10 @@
 # FLOWCELL_CHILD: apply_world_strength | WS | Apply the staged world strength value.
 
 import colorsys
+import importlib
+import json
 import math
+import time
 from pathlib import Path
 
 import bpy
@@ -45,6 +49,8 @@ VIEWPORT_OVERLAY_NAMESPACE_KEY = "flowcell_hdri_world_viewport_overlay"
 VIEWPORT_OVERLAY_LOAD_HANDLER_KEY = "flowcell_hdri_world_viewport_overlay_load_post"
 VIEWPORT_OVERLAY_PATH_KEY = "flowcell_hdri_world_static_background_path"
 PLACE_PICTURE_GENERATION_KEY = "flowcell_place_picture_fake_gizmo_generation"
+PROJECT_THEME_STATE_FORMAT = "flowcell-blender-theme-project-state-v1"
+GLOBAL_THEME_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
 
 PLACE_PICTURE_ENABLE_BACKGROUND = True
 PLACE_PICTURE_ENABLE_FAKE_GRID = True
@@ -436,9 +442,19 @@ def _disable_camera_background_images():
 
 def _get_saved_overlay_path() -> str:
     window_manager = getattr(bpy.context, "window_manager", None)
-    if window_manager is None or VIEWPORT_OVERLAY_PATH_KEY not in window_manager:
-        return ""
-    return str(window_manager[VIEWPORT_OVERLAY_PATH_KEY] or "").strip()
+    if window_manager is not None and VIEWPORT_OVERLAY_PATH_KEY in window_manager:
+        saved_path = str(window_manager[VIEWPORT_OVERLAY_PATH_KEY] or "").strip()
+        if saved_path:
+            return saved_path
+
+    place_picture_state = _read_global_theme_state().get("place_picture", {})
+    if isinstance(place_picture_state, dict) and bool(place_picture_state.get("enabled")):
+        return str(
+            place_picture_state.get("path")
+            or place_picture_state.get("relative_path")
+            or ""
+        ).strip()
+    return ""
 
 
 def _set_saved_overlay_path(path: str):
@@ -450,6 +466,139 @@ def _set_saved_overlay_path(path: str):
         window_manager[VIEWPORT_OVERLAY_PATH_KEY] = normalized
     elif VIEWPORT_OVERLAY_PATH_KEY in window_manager:
         del window_manager[VIEWPORT_OVERLAY_PATH_KEY]
+
+
+def _empty_global_theme_state():
+    return {
+        "format": PROJECT_THEME_STATE_FORMAT,
+        "theme": {"enabled": False},
+        "place_picture": {
+            "enabled": False,
+            "path": "",
+            "relative_path": "",
+        },
+    }
+
+
+def _normalize_global_theme_state(value):
+    state = _empty_global_theme_state()
+    if not isinstance(value, dict) or value.get("format") != PROJECT_THEME_STATE_FORMAT:
+        return state
+
+    theme_state = value.get("theme", {})
+    if isinstance(theme_state, dict):
+        state["theme"].update(theme_state)
+        state["theme"]["enabled"] = bool(theme_state.get("enabled"))
+
+    place_picture_state = value.get("place_picture", {})
+    if isinstance(place_picture_state, dict):
+        state["place_picture"].update(place_picture_state)
+        state["place_picture"]["enabled"] = bool(place_picture_state.get("enabled"))
+        state["place_picture"]["path"] = str(place_picture_state.get("path") or "")
+        state["place_picture"]["relative_path"] = str(
+            place_picture_state.get("relative_path") or ""
+        )
+
+    return state
+
+
+def _global_theme_state_path() -> Path:
+    config_root = bpy.utils.user_resource("CONFIG", path="", create=True)
+    if not config_root:
+        config_root = str(Path.home())
+    return Path(config_root) / GLOBAL_THEME_STATE_FILE_NAME
+
+
+def _read_global_theme_state():
+    path = _global_theme_state_path()
+    if not path.is_file():
+        return _empty_global_theme_state()
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return _empty_global_theme_state()
+    return _normalize_global_theme_state(parsed)
+
+
+def _ensure_project_theme_restore_handler_registered_from_action() -> bool:
+    try:
+        import flowcell_actions
+
+        ensure_handler = getattr(
+            flowcell_actions,
+            "_ensure_flowcell_project_theme_restore_handler_registered",
+            None,
+        )
+        if not callable(ensure_handler):
+            flowcell_actions = importlib.reload(flowcell_actions)
+            ensure_handler = getattr(
+                flowcell_actions,
+                "_ensure_flowcell_project_theme_restore_handler_registered",
+                None,
+            )
+        if callable(ensure_handler):
+            ensure_handler()
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _write_global_theme_state(state):
+    normalized = _normalize_global_theme_state(
+        {
+            **(state if isinstance(state, dict) else {}),
+            "format": PROJECT_THEME_STATE_FORMAT,
+        }
+    )
+    normalized["updated_at"] = time.time()
+    path = _global_theme_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")
+    _ensure_project_theme_restore_handler_registered_from_action()
+    return normalized
+
+
+def _project_relative_path(path: str) -> str:
+    normalized = str(path or "").strip()
+    if not normalized or not getattr(bpy.data, "filepath", ""):
+        return ""
+    try:
+        relative_path = bpy.path.relpath(normalized)
+    except Exception:
+        return ""
+    return relative_path if str(relative_path).startswith("//") else ""
+
+
+def _startup_state_payload(global_state):
+    place_picture_state = (
+        global_state.get("place_picture", {}) if isinstance(global_state, dict) else {}
+    )
+    return {
+        "startup_state": global_state,
+        "startup_state_path": str(_global_theme_state_path()),
+        "has_startup_place_picture_state": bool(
+            isinstance(place_picture_state, dict) and place_picture_state.get("enabled")
+        ),
+    }
+
+
+def _set_startup_place_picture_state(context, payload):
+    resolved_path = _resolve_optional_image_path(
+        _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
+    )
+    state = _read_global_theme_state()
+    state["place_picture"] = {
+        "enabled": True,
+        "path": resolved_path,
+        "relative_path": _project_relative_path(resolved_path),
+    }
+    normalized = _write_global_theme_state(state)
+    return _result(
+        f"Place Picture startup image saved from {resolved_path}.",
+        static_background_path=resolved_path,
+        **_startup_state_payload(normalized),
+    )
 
 
 def _iter_view3d_spaces():
@@ -3080,6 +3229,8 @@ def run_flowcell_action(context=None, data=None):
                 static_background_path=resolved_path,
             )
         return _result("Place Picture cleared.", static_background_path="")
+    if command == "set_place_picture_startup":
+        return _set_startup_place_picture_state(context, payload)
     if command == "set_static_background_image":
         resolved_path = _set_static_background_image(context, payload)
         if resolved_path:

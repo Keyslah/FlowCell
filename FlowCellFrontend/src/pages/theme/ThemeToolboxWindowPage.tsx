@@ -46,6 +46,7 @@ type HdriWorldAction =
   | "apply_theme_from_photo_manual_colors"
   | "apply_theme_bucket"
   | "place_picture"
+  | "set_place_picture_startup"
   | "clear_place_picture"
   | "set_hdri_path"
   | "clear_world"

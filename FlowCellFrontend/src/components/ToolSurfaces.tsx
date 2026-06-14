@@ -120,6 +120,7 @@ interface HdriWorldToolSurfaceProps {
     action:
       | "apply_theme_from_photo_manual_colors"
       | "place_picture"
+      | "set_place_picture_startup"
       | "clear_place_picture"
       | "set_hdri_path"
       | "clear_world"
@@ -1055,6 +1056,13 @@ export function HdriWorldToolSurface({
           styleGroup,
           importedSkin,
           title: "Pick a Place Picture image."
+        })}
+        {renderToolChip("Startup", {
+          onClick: () => onApply("set_place_picture_startup", values),
+          className: "tool-chip",
+          styleGroup,
+          importedSkin,
+          title: "Save the current Place Picture image so Blender restores it on startup."
         })}
         {renderToolChip("Clear", {
           onClick: () => onApply("clear_place_picture", values),

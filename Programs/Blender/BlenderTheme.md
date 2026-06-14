@@ -62,6 +62,7 @@ Place Picture draws a temporary viewport picture layer with a fake grid and acti
 | `Place Picture` | Creates fake gizmos and a fake grid on top of a background image. |
 | Picture path field | Image path used by Place Picture. |
 | `Browse` | Pick a Place Picture image. |
+| `Startup` | Save the current Place Picture image so Blender restores it on startup. |
 | `Clear` | Remove the Place Picture fake background, grid, and gizmos while keeping the path field. |
 
 ## HDRI World
@@ -85,6 +86,6 @@ Rotation fields are degrees. `WS` is world background strength. The default stag
 ## Quick Notes
 
 - `Dark Theme`, `Light Theme`, color bucket edits, path edits, and numeric edits stage values in the toolbox.
-- `Apply`, `Place Picture`, `HDRI`, `Clear`, `Reset`, `X`, `Y`, `Z`, and `WS` are the controls that send their current values to Blender.
+- `Apply`, `Place Picture`, `Startup`, `HDRI`, `Clear`, `Reset`, `X`, `Y`, `Z`, and `WS` are the controls that send their current values to Blender.
 - Place Picture `Clear` keeps the picture path in the toolbox. HDRI `Clear` resets the world in the current Blender file.
 - If the theme tool code or bridge action is changed, refresh/resync the Blender FlowCell add-on/custom actions and reopen the theme toolbox before testing the new behavior.

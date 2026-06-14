@@ -242,7 +242,9 @@
 }
 
 .theme-toolbox-window-page .hdri-world-row--background-path {
-  grid-template-columns: minmax(98px, auto) minmax(0, 1fr) minmax(66px, auto) minmax(58px, auto);
+  grid-template-columns:
+    minmax(98px, auto) minmax(0, 1fr) minmax(66px, auto)
+    minmax(72px, auto) minmax(58px, auto);
 }
 
 .theme-toolbox-window-page .hdri-world-row--controls {

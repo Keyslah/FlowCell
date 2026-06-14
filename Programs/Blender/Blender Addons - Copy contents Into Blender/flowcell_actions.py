@@ -104,7 +104,12 @@ CYCLE_INDEX_PROP = "lls_cycle_index"
 VISIBILITY_BASELINE_PROP = "flowcell_visibility_baseline_objects"
 PROJECT_THEME_RESTORE_HANDLER_KEY = "flowcell_project_theme_restore_load_post"
 PROJECT_THEME_RESTORE_ATTEMPTS_KEY = "flowcell_project_theme_restore_attempts"
-PROJECT_THEME_RESTORE_MAX_ATTEMPTS = 24
+PROJECT_THEME_RESTORE_MAX_ATTEMPTS = 240
+PROJECT_THEME_POLL_RESTORE_DONE_KEY = "flowcell_project_theme_poll_restore_done"
+PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY = "flowcell_project_theme_poll_restore_attempts"
+PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY = "flowcell_project_theme_poll_restore_next_time"
+PROJECT_THEME_POLL_RESTORE_MAX_ATTEMPTS = 240
+PROJECT_THEME_STARTUP_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
 HIDDEN_NAME_PAD = "\u200b"
 INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*]+')
 FLOWCELL_LITHO_SIZE_SUFFIX_RE = re.compile(
@@ -3271,8 +3276,78 @@ def write_bridge_response(payload: dict) -> None:
     response_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
+def _startup_place_picture_state_enabled() -> bool:
+    config_root = bpy.utils.user_resource("CONFIG", path="", create=True)
+    if not config_root:
+        return False
+    state_path = Path(config_root) / PROJECT_THEME_STARTUP_STATE_FILE_NAME
+    if not state_path.is_file():
+        return False
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8-sig"))
+    except Exception:
+        return False
+    if not isinstance(state, dict):
+        return False
+    place_picture = state.get("place_picture", {})
+    if not isinstance(place_picture, dict) or not bool(place_picture.get("enabled")):
+        return False
+    return bool(str(place_picture.get("path") or place_picture.get("relative_path") or "").strip())
+
+
+def _maybe_restore_startup_place_picture_from_poll() -> None:
+    namespace = bpy.app.driver_namespace
+    if bool(namespace.get(PROJECT_THEME_POLL_RESTORE_DONE_KEY)):
+        return
+
+    now = time.monotonic()
+    next_time = float(namespace.get(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, 0.0) or 0.0)
+    if now < next_time:
+        return
+
+    attempts = int(namespace.get(PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY, 0) or 0)
+    if attempts >= PROJECT_THEME_POLL_RESTORE_MAX_ATTEMPTS:
+        namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
+        namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
+        print("FlowCell startup Place Picture restore stopped after retry limit.")
+        return
+
+    namespace[PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY] = attempts + 1
+    namespace[PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY] = now + 0.5
+
+    if not _startup_place_picture_state_enabled():
+        return
+
+    if not _has_flowcell_project_theme_restore_view3d():
+        return
+
+    try:
+        runtime_state = execute_custom_action(
+            "flowcell_custom_theme",
+            {"command": "read_place_picture_runtime_state"},
+        )
+        if isinstance(runtime_state, dict) and bool(runtime_state.get("place_picture_runtime_enabled")):
+            namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
+            namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
+            return
+
+        result = execute_custom_action(
+            "flowcell_custom_theme",
+            {"command": "restore_project_startup_state"},
+        )
+        if isinstance(result, dict) and bool(result.get("restored_place_picture")):
+            namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
+            namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
+            message = str(result.get("message", "") or "")
+            print(message or "FlowCell startup Place Picture restored.")
+    except Exception as exc:
+        print(f"FlowCell startup Place Picture restore retry failed: {exc}")
+
+
 def poll_bridge_requests() -> float:
     global LAST_REQUEST_ID
+
+    _maybe_restore_startup_place_picture_from_poll()
 
     request_path = get_request_path()
     if not request_path.exists():
@@ -3642,13 +3717,11 @@ def _has_flowcell_project_theme_restore_view3d() -> bool:
 def _restore_flowcell_project_theme_after_load():
     namespace = bpy.app.driver_namespace
     attempts = int(namespace.get(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, 0) or 0)
+    namespace[PROJECT_THEME_RESTORE_ATTEMPTS_KEY] = attempts + 1
     if not _has_flowcell_project_theme_restore_view3d():
         if attempts < PROJECT_THEME_RESTORE_MAX_ATTEMPTS:
-            namespace[PROJECT_THEME_RESTORE_ATTEMPTS_KEY] = attempts + 1
-            return 0.25
+            return 0.5
         print("FlowCell project theme restore continuing without a VIEW_3D area.")
-
-    namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
 
     try:
         import flowcell_bridge as flowcell_live_bridge
@@ -3671,13 +3744,21 @@ def _restore_flowcell_project_theme_after_load():
                     print(message)
                 for warning in result.get("warnings", []) or []:
                     print(f"FlowCell project theme restore warning: {warning}")
+                has_startup_place_picture = bool(result.get("has_startup_place_picture_state"))
+                restored_place_picture = bool(result.get("restored_place_picture"))
+                if has_startup_place_picture and not restored_place_picture and attempts < PROJECT_THEME_RESTORE_MAX_ATTEMPTS:
+                    return 0.5
             else:
                 print(str(result))
+            namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
             return None
 
         print("FlowCell project theme restore skipped: no registered theme custom action was found.")
     except Exception as exc:
         print(f"FlowCell project theme restore failed: {exc}")
+        if attempts < PROJECT_THEME_RESTORE_MAX_ATTEMPTS:
+            return 0.5
+    namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
     return None
 
 
@@ -3688,7 +3769,7 @@ def _schedule_flowcell_project_theme_restore(first_interval: float = 0.35) -> No
         bpy.app.timers.register(
             _restore_flowcell_project_theme_after_load,
             first_interval=first_interval,
-            persistent=False,
+            persistent=True,
         )
 
 
@@ -3725,6 +3806,9 @@ def _remove_flowcell_project_theme_restore_handler() -> None:
 
     namespace.pop(PROJECT_THEME_RESTORE_HANDLER_KEY, None)
     namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
+    namespace.pop(PROJECT_THEME_POLL_RESTORE_DONE_KEY, None)
+    namespace.pop(PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY, None)
+    namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
     if bpy.app.timers.is_registered(_restore_flowcell_project_theme_after_load):
         try:
             bpy.app.timers.unregister(_restore_flowcell_project_theme_after_load)
@@ -3734,6 +3818,10 @@ def _remove_flowcell_project_theme_restore_handler() -> None:
 
 def register():
     flowcell_live_bridge = _load_flowcell_live_bridge_module()
+    namespace = bpy.app.driver_namespace
+    namespace.pop(PROJECT_THEME_POLL_RESTORE_DONE_KEY, None)
+    namespace.pop(PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY, None)
+    namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
 
     for cls in CLASSES:
         _safe_register_class(cls)
@@ -3753,7 +3841,7 @@ def register():
     get_bridge_directory()
     disable_outliner_alpha_sort()
     _ensure_flowcell_project_theme_restore_handler_registered()
-    _schedule_flowcell_project_theme_restore(first_interval=0.75)
+    _schedule_flowcell_project_theme_restore(first_interval=1.25)
 
     if not bpy.app.timers.is_registered(poll_bridge_requests):
         bpy.app.timers.register(poll_bridge_requests, first_interval=POLL_INTERVAL_SECONDS, persistent=True)
