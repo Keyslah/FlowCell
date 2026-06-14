@@ -2,10 +2,8 @@
 // Description: FlowCell Illustrator anchor backend. Fast cached anchor path for set/snapshot/align.
 
 (function () {
-    var ANCHOR_TAG = "FLOWCELL_ANCHOR";
     var BOUNDS_MODE = "visibleBounds";
     var ANCHOR_BOUNDS_FILE = "illustrator_anchor_bounds.json";
-    var MAX_ANCHOR_SCAN_ITEMS = 1500;
     var MAX_SELECTION_ITEMS = 250;
 
     function pad(value) { return value < 10 ? "0" + value : String(value); }
@@ -63,7 +61,19 @@
     }
     function parseJson(raw) {
         if (!raw) { return null; }
-        try { return JSON.parse(raw); } catch (error) { writeLog("json parse failed: " + String(error)); return null; }
+        try {
+            if (typeof JSON !== "undefined" && JSON.parse) {
+                return JSON.parse(raw);
+            }
+        } catch (jsonError) {
+            writeLog("json parse failed: " + String(jsonError));
+        }
+        try {
+            return eval("(" + raw + ")");
+        } catch (evalError) {
+            writeLog("json parse failed: " + String(evalError));
+            return null;
+        }
     }
     function readCommand() {
         if (typeof FLOWCELL_ILLUSTRATOR_ANCHOR_COMMAND !== "undefined" && FLOWCELL_ILLUSTRATOR_ANCHOR_COMMAND) {
@@ -78,19 +88,14 @@
         return parseJson(raw) || { command: "status", error: "invalid json" };
     }
     function finite(value) { return typeof value === "number" && isFinite(value); }
-    function esc(value) { return String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\""); }
     function boundsJson(b) {
         return "{\"left\":" + b.left + ",\"top\":" + b.top + ",\"right\":" + b.right + ",\"bottom\":" + b.bottom +
-            ",\"centerX\":" + b.centerX + ",\"centerY\":" + b.centerY +
-            (b.uuid ? ",\"uuid\":\"" + esc(b.uuid) + "\"" : "") +
-            (b.anchorId ? ",\"anchorId\":\"" + esc(b.anchorId) + "\"" : "") + "}";
+            ",\"centerX\":" + b.centerX + ",\"centerY\":" + b.centerY + "}";
     }
     function normalizeBounds(value) {
         if (!value) { return null; }
         var b = { left: Number(value.left), top: Number(value.top), right: Number(value.right), bottom: Number(value.bottom), centerX: Number(value.centerX), centerY: Number(value.centerY) };
         if (!finite(b.left) || !finite(b.top) || !finite(b.right) || !finite(b.bottom) || !finite(b.centerX) || !finite(b.centerY)) { return null; }
-        if (value.uuid) { b.uuid = String(value.uuid); }
-        if (value.anchorId) { b.anchorId = String(value.anchorId); }
         return b;
     }
     function readAnchorBounds() { return normalizeBounds(parseJson(readText(localFile(ANCHOR_BOUNDS_FILE)))); }
@@ -101,101 +106,26 @@
         try { if (doc.selection && doc.selection.length >= 0) { return doc.selection; } } catch (ignoredDoc) {}
         return [];
     }
-    function isPageItem(item) { try { return item && item.typename && item.tags && item[BOUNDS_MODE]; } catch (error) { return false; } }
-    function tagValue(item) {
-        if (!isPageItem(item)) { return ""; }
-        try {
-            for (var i = item.tags.length - 1; i >= 0; i -= 1) {
-                var tag = item.tags[i];
-                if (tag && tag.name === ANCHOR_TAG && tag.value) { return String(tag.value); }
-            }
-        } catch (ignored) {}
-        return "";
-    }
-    function hasAnchorTag(item) { return tagValue(item) !== ""; }
-    function uuidOf(item) { try { return item && item.uuid ? String(item.uuid) : ""; } catch (ignored) { return ""; } }
-    function byUuid(uuid) {
-        if (!uuid) { return null; }
-        try {
-            if (app.getPageItemFromUuid) {
-                var item = app.getPageItemFromUuid(String(uuid));
-                if (isPageItem(item)) { return item; }
-            }
-        } catch (error) { writeLog("uuid lookup skipped: " + String(error)); }
-        return null;
-    }
+    function isPageItem(item) { try { return item && item.typename && item[BOUNDS_MODE] && item.translate; } catch (error) { return false; } }
     function boundsOf(item) {
         var r = item[BOUNDS_MODE];
         var left = Number(r[0]);
         var top = Number(r[1]);
         var right = Number(r[2]);
         var bottom = Number(r[3]);
-        var b = { left: left, top: top, right: right, bottom: bottom, centerX: (left + right) / 2, centerY: (top + bottom) / 2, uuid: uuidOf(item) };
-        var id = tagValue(item);
-        if (id) { b.anchorId = id; }
-        return b;
+        return { left: left, top: top, right: right, bottom: bottom, centerX: (left + right) / 2, centerY: (top + bottom) / 2 };
     }
-    function removeAnchorTag(item) {
-        if (!isPageItem(item)) { return; }
-        try {
-            for (var i = item.tags.length - 1; i >= 0; i -= 1) {
-                if (item.tags[i] && item.tags[i].name === ANCHOR_TAG) { item.tags[i].remove(); }
-            }
-        } catch (error) { writeLog("tag removal skipped: " + String(error)); }
-    }
-    function scanAnchorByTag(doc) {
-        var count = 0;
-        try { count = Number(doc.pageItems.length); } catch (error) { writeLog("anchor scan skipped: " + String(error)); return null; }
-        if (count > MAX_ANCHOR_SCAN_ITEMS) { writeLog("anchor scan skipped for " + count + " page items"); return null; }
-        for (var i = 0; i < count; i += 1) { if (hasAnchorTag(doc.pageItems[i])) { return doc.pageItems[i]; } }
+    function resolveAnchorBounds() {
+        var stored = readAnchorBounds();
+        if (stored) { return stored; }
         return null;
     }
-    function resolveAnchorBounds(doc) {
-        var stored = readAnchorBounds();
-        if (stored) {
-            var live = byUuid(stored.uuid);
-            if (live) {
-                var liveBounds = boundsOf(live);
-                liveBounds.anchorId = liveBounds.anchorId || stored.anchorId || "";
-                writeAnchorBounds(liveBounds);
-                return liveBounds;
-            }
-            writeLog("using cached anchor bounds without document scan");
-            return stored;
-        }
-        var scanned = scanAnchorByTag(doc);
-        if (!scanned) { return null; }
-        var scannedBounds = boundsOf(scanned);
-        writeAnchorBounds(scannedBounds);
-        return scannedBounds;
-    }
-    function shouldReplace(commandData) {
-        if (!commandData || typeof commandData.replace === "undefined") { return true; }
-        return !(commandData.replace === false || String(commandData.replace).toLowerCase() === "false");
-    }
-    function setAnchor(commandData) {
+    function setAnchor() {
         var doc = docOrNull();
         if (!doc) { return status("no document"); }
-        var sel = selectionOf(doc);
-        if (sel.length === 0) { return status("no selection"); }
-        if (sel.length > 1) { return status("multiple selection ignored"); }
-        var item = sel[0];
-        if (!isPageItem(item)) { return status("selection is not a PageItem; anchor ignored"); }
-        if (!shouldReplace(commandData)) {
-            if (hasAnchorTag(item)) { writeAnchorBounds(boundsOf(item)); return status("anchor already set"); }
-            if (readAnchorBounds()) { return status("anchor already set; hotkey ignored"); }
-        }
-        var old = readAnchorBounds();
-        var oldItem = old ? byUuid(old.uuid) : null;
-        if (oldItem) { removeAnchorTag(oldItem); }
-        removeAnchorTag(item);
-        var anchorId = "FlowCell anchor " + new Date().getTime() + "-" + Math.floor(Math.random() * 1000000);
-        var tag = item.tags.add();
-        tag.name = ANCHOR_TAG;
-        tag.value = anchorId;
-        var b = boundsOf(item);
-        b.uuid = uuidOf(item) || b.uuid || "";
-        b.anchorId = anchorId;
+        var items = selectedItems(doc);
+        if (items.length === 0) { return status("no selection"); }
+        var b = items.length === 1 ? boundsOf(items[0]) : combinedBounds(items);
         writeAnchorBounds(b);
         return status("anchor set");
     }
@@ -205,19 +135,6 @@
         if (n > MAX_SELECTION_ITEMS) { throw new Error("selection too large (" + n + " items); select " + MAX_SELECTION_ITEMS + " or fewer"); }
         var out = [];
         for (var i = 0; i < n; i += 1) { if (isPageItem(sel[i])) { out.push(sel[i]); } }
-        return out;
-    }
-    function sameBounds(a, b) { return a && b && Math.abs(a.left - b.left) < 0.01 && Math.abs(a.top - b.top) < 0.01 && Math.abs(a.right - b.right) < 0.01 && Math.abs(a.bottom - b.bottom) < 0.01; }
-    function isAnchorItem(item, anchor) {
-        if (!item || !anchor) { return false; }
-        var uuid = uuidOf(item);
-        if (anchor.uuid && uuid && uuid === String(anchor.uuid)) { return true; }
-        if (anchor.anchorId && tagValue(item) === String(anchor.anchorId)) { return true; }
-        return !anchor.uuid && sameBounds(boundsOf(item), anchor);
-    }
-    function movable(items, anchor) {
-        var out = [];
-        for (var i = 0; i < items.length; i += 1) { if (!isAnchorItem(items[i], anchor)) { out.push(items[i]); } }
         return out;
     }
     function groupMode(data) { var v = data && data.group; return v === true || String(v).toLowerCase() === "true"; }
@@ -256,10 +173,10 @@
     function alignAxis(commandData) {
         var doc = docOrNull();
         if (!doc) { return status("no document"); }
-        var anchor = resolveAnchorBounds(doc);
+        var anchor = resolveAnchorBounds();
         if (!anchor) { return status("no anchor set"); }
-        var items = movable(selectedItems(doc), anchor);
-        if (items.length === 0) { return status("only anchor selected; nothing moved"); }
+        var items = selectedItems(doc);
+        if (items.length === 0) { return status("no selection"); }
         var axis = String(commandData.axis || "X").toUpperCase();
         var mode = String(commandData.mode || "CENTER").toUpperCase();
         var mod = String(commandData.modifier || "").toUpperCase();
@@ -274,10 +191,10 @@
     function centerOnAnchor(commandData) {
         var doc = docOrNull();
         if (!doc) { return status("no document"); }
-        var anchor = resolveAnchorBounds(doc);
+        var anchor = resolveAnchorBounds();
         if (!anchor) { return status("no anchor set"); }
-        var items = movable(selectedItems(doc), anchor);
-        if (items.length === 0) { return status("only anchor selected; nothing moved"); }
+        var items = selectedItems(doc);
+        if (items.length === 0) { return status("no selection"); }
         if (groupMode(commandData)) {
             var g = combinedBounds(items);
             return status("centered group " + moveAll(items, anchor.centerX - g.centerX, anchor.centerY - g.centerY) + " object(s) on anchor using " + BOUNDS_MODE);
@@ -305,7 +222,7 @@
         var command = String(data.command || "status").toLowerCase();
         writeLog("command requested: " + command);
         try {
-            if (command === "set_anchor") { return setAnchor(data); }
+            if (command === "set_anchor") { return setAnchor(); }
             if (command === "align_axis") { return alignAxis(data); }
             if (command === "center_all") { return centerOnAnchor(data); }
             if (command === "center_artboard") { return centerOnArtboard(data); }

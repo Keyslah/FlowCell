@@ -2,10 +2,8 @@
 // Description: FlowCell Illustrator rotate backend. Uses visibleBounds and FlowCell toolset commands.
 
 (function () {
-    var ANCHOR_TAG = "FLOWCELL_ANCHOR";
     var TOOLSET_COMMAND_FILE = "illustrator_rotate_command.json";
     var ANCHOR_BOUNDS_FILE = "illustrator_anchor_bounds.json";
-    var MAX_ANCHOR_SCAN_ITEMS = 1500;
     var MAX_SELECTION_ITEMS = 250;
     var MAX_DISTRIBUTE_POSITIONS = 72;
     var MAX_COMMAND_AGE_MS = 15000;
@@ -94,16 +92,6 @@
         return text;
     }
 
-    function writeTextFile(file, text) {
-        file.encoding = "UTF-8";
-        if (!file.open("w")) {
-            return false;
-        }
-        file.write(text);
-        file.close();
-        return true;
-    }
-
     function readJsonFile(file) {
         var raw = readTextFile(file);
         if (!raw) {
@@ -153,30 +141,6 @@
 
     function isFiniteNumber(value) {
         return typeof value === "number" && isFinite(value);
-    }
-
-    function escapeJsonString(value) {
-        return String(value).replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
-    }
-
-    function serializeBounds(bounds) {
-        var uuid = bounds.uuid ? ",\"uuid\":\"" + escapeJsonString(bounds.uuid) + "\"" : "";
-        return "{" +
-            "\"left\":" + String(bounds.left) + "," +
-            "\"top\":" + String(bounds.top) + "," +
-            "\"right\":" + String(bounds.right) + "," +
-            "\"bottom\":" + String(bounds.bottom) + "," +
-            "\"centerX\":" + String(bounds.centerX) + "," +
-            "\"centerY\":" + String(bounds.centerY) +
-            uuid +
-            "}";
-    }
-
-    function writeAnchorBounds(bounds) {
-        var anchorFile = getLocalPath(ANCHOR_BOUNDS_FILE);
-        if (!writeTextFile(anchorFile, serializeBounds(bounds))) {
-            writeLog("anchor bounds write failed");
-        }
     }
 
     function finiteNumber(value, fallback) {
@@ -299,9 +263,6 @@
                 !isFiniteNumber(bounds.centerX) || !isFiniteNumber(bounds.centerY)) {
             return null;
         }
-        if (value.uuid) {
-            bounds.uuid = String(value.uuid);
-        }
         return bounds;
     }
 
@@ -309,110 +270,12 @@
         return normalizeCachedBounds(readJsonFile(getLocalPath(ANCHOR_BOUNDS_FILE)));
     }
 
-    function getTag(item, tagName) {
-        if (!isPageItem(item)) {
-            return null;
-        }
-        try {
-            for (var i = item.tags.length - 1; i >= 0; i -= 1) {
-                var tag = item.tags[i];
-                if (tag && tag.name === tagName) {
-                    return tag;
-                }
-            }
-        } catch (error) {
-        }
-        return null;
-    }
-
-    function hasAnchorTag(item) {
-        return getTag(item, ANCHOR_TAG) !== null;
-    }
-
-    function getItemUuid(item) {
-        try {
-            if (item && item.uuid) {
-                return String(item.uuid);
-            }
-        } catch (error) {
-        }
-        return "";
-    }
-
-    function resolveAnchorByUuid(uuid) {
-        if (!uuid) {
-            return null;
-        }
-        try {
-            if (app.getPageItemFromUuid) {
-                var item = app.getPageItemFromUuid(String(uuid));
-                if (isPageItem(item) && hasAnchorTag(item)) {
-                    return item;
-                }
-            }
-        } catch (error) {
-            writeLog("anchor uuid lookup skipped: " + String(error));
-        }
-        return null;
-    }
-
-    function findAnchor(doc) {
-        var count = 0;
-        try {
-            count = Number(doc.pageItems.length);
-        } catch (error) {
-            writeLog("anchor scan skipped: " + String(error));
-            return null;
-        }
-        if (count > MAX_ANCHOR_SCAN_ITEMS) {
-            writeLog("anchor scan skipped for " + count + " page items");
-            return null;
-        }
-        for (var i = 0; i < doc.pageItems.length; i += 1) {
-            var item = doc.pageItems[i];
-            if (isPageItem(item) && hasAnchorTag(item)) {
-                return item;
-            }
-        }
-        return null;
-    }
-
-    function resolveAnchorBounds(doc) {
+    function resolveAnchorBounds() {
         var cachedBounds = readAnchorBounds();
-        var liveAnchor = cachedBounds && cachedBounds.uuid ? resolveAnchorByUuid(cachedBounds.uuid) : null;
-        if (!liveAnchor) {
-            liveAnchor = findAnchor(doc);
-        }
-        if (liveAnchor) {
-            var liveBounds = boundsForItem(liveAnchor);
-            liveBounds.uuid = getItemUuid(liveAnchor) || (cachedBounds && cachedBounds.uuid) || "";
-            writeAnchorBounds(liveBounds);
-            return liveBounds;
-        }
         if (cachedBounds) {
-            writeLog("anchor live tag not found; using cached visibleBounds");
+            return cachedBounds;
         }
-        return cachedBounds;
-    }
-
-    function isAnchorItem(item, anchorBounds) {
-        if (!item) {
-            return false;
-        }
-        if (anchorBounds && anchorBounds.uuid) {
-            return getItemUuid(item) === String(anchorBounds.uuid);
-        }
-        return hasAnchorTag(item);
-    }
-
-    function movablePageItems(items, anchorBounds) {
-        var movableItems = [];
-        for (var i = 0; i < items.length; i += 1) {
-            if (!isAnchorItem(items[i], anchorBounds)) {
-                movableItems.push(items[i]);
-            }
-        }
-        return movableItems;
+        return null;
     }
 
     function activeArtboardCenter(doc) {
@@ -569,14 +432,10 @@
         var angleBase = Math.abs(finiteNumber(payloadValue(payload, "angleDeg", "angle_deg", 30), 30));
         var distributeCount = finiteNumber(payloadValue(payload, "distributeCount", "distribute_count", 3), 3);
         var directionSign = command === "apply_negative" ? -1 : 1;
-        var anchorBounds = centerMode === "CURSOR" ? resolveAnchorBounds(doc) : null;
+        var anchorBounds = centerMode === "CURSOR" ? resolveAnchorBounds() : null;
         if (centerMode === "CURSOR") {
             if (!anchorBounds) {
                 throw new Error("Set Illustrator Anchor before using Anchor pivot.");
-            }
-            items = movablePageItems(items, anchorBounds);
-            if (items.length < 1) {
-                throw new Error("Only the anchor is selected; nothing rotated.");
             }
         }
         var pivot = resolvePivot(doc, items, centerMode, anchorBounds);
