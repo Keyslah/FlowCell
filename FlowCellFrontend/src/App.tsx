@@ -101,9 +101,9 @@ function resolveScopedTopmostProgramName(
 }
 
 function shouldBindScopedNativeOwner(
-  _windowContext: ReturnType<typeof getWindowContextFromLocation>
+  windowContext: ReturnType<typeof getWindowContextFromLocation>
 ): boolean {
-  return false;
+  return normalizeProcessToken(resolveScopedTopmostProgramName(windowContext)).includes("illustrator");
 }
 
 export default function App() {
