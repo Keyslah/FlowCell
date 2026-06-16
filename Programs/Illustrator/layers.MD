@@ -4,10 +4,11 @@ Order follows the current local Illustrator Layers panel.
 
 | Button | Description |
 | --- | --- |
+| `make layers` | Ensures top-level `Live`, `Snapshots`, `3D`, `Trash`, and `Archive` layers exist and are ordered `Live`, `Snapshots`, `3D`, `Trash`, `Archive`; hides and locks `Trash` and `Archive`. |
+| `Sort` | Builds the standard root structure and routes top-level source layers: visible layers to `Live`, hidden copies with a Live family match to `Snapshots`, and everything else to `Trash`, while preserving locked folder states under `Live`. |
 | `snapshot` | Copies the selected Live target into `Snapshots > [target name] > sN`, hides the saved snapshot entry, keeps Snapshots ordered against Live, and writes its debug log once at the end with step timings. |
 | `restore` | Restores a selected source from outside `Live` into `Live`, moving the current Live version into `Trash` first. |
 | `back` | Replaces the selected Live target with its newest saved snapshot, moves the current Live content into `Trash`, removes that snapshot entry so repeated runs step backward, and leaves the restored Live layer active with its artwork selected. |
-| `3D test` | Requires exactly three selected Live layer targets in one branch, saves them into `3D > [branch name] > dN`, runs the 3D test macros, hides the matching Live branch, and leaves the new 3D entry visible. |
 | `3D` | Copies selected Live targets into `3D > [target name] > dN`, hides the matching Live target and older 3D versions, and shows the new 3D entry. |
 | `trash` | Moves each selected object's immediate owning layer from any non-Trash root, or direct root-level selected objects, into numbered `Trash > [target name] > TN` entries; versioned roots such as `Snapshots > name > s3` use the version prefix plus owner name, like `s3name`, for the Trash family. |
 | `archive` | Stores selected eligible targets in numbered `Archive > [target name] > AN` entries for longer-term storage. |
@@ -20,7 +21,5 @@ Order follows the current local Illustrator Layers panel.
 | `set vis` | Restores layer visibility from the saved visibility baseline for the active document. |
 | `b vis` | Saves the current visible/hidden state of every layer for the active document as the visibility baseline. |
 | `set lock` | Restores layer lock state from the saved lock baseline, briefly unlocking layers so states can be reapplied, verifies whether each lock write stuck, redraws Illustrator, and writes a temp debug log. |
-| `make layers` | Ensures top-level `Live`, `Snapshots`, `3D`, `Trash`, and `Archive` layers exist and are ordered `Live`, `Snapshots`, `3D`, `Trash`, `Archive`; hides and locks `Trash` and `Archive`. |
-| `Sort` | Builds the standard root structure and routes top-level source layers: visible layers to `Live`, hidden copies with a Live family match to `Snapshots`, and everything else to `Trash`, while preserving locked folder states under `Live`. |
 | `empty sublayers` | Recursively removes empty child layers from the document and reports how many were deleted. |
 | `empty trash` | Deletes everything inside the top-level `Trash` layer while leaving the `Trash` root layer in place. |
