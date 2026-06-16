@@ -1,4 +1,4 @@
-// Description: Go back to baseline visibility
+// Description: Restore layer visibility from the saved baseline.
 
 #target illustrator
 

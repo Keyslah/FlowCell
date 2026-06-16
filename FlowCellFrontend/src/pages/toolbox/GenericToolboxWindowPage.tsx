@@ -402,7 +402,7 @@ export default function GenericToolboxWindowPage({
     >
       <div
         className="generic-toolbox-window-page__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}

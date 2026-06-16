@@ -405,7 +405,7 @@ export default function SmartAxisToolboxWindowPage({
     <main className={pageClassName}>
       <div
         className="smart-axis-toolbox-window-page__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}

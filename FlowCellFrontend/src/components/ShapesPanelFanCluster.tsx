@@ -359,6 +359,7 @@ export function ShapesPanelFanCluster({
           style={ownerStyle}
           aria-label={ownerLabel}
           title={ownerLabel}
+          data-flow-tooltip={ownerLabel}
           onPointerEnter={requestExpand}
           onPointerLeave={requestCollapse}
           onClick={onOwnerClick}
@@ -387,6 +388,7 @@ export function ShapesPanelFanCluster({
               }
               aria-label={layout.entry.button.Label}
               title={layout.entry.button.Tooltip || layout.entry.button.Label}
+              data-flow-tooltip={layout.entry.button.Tooltip || layout.entry.button.Label}
               onPointerEnter={requestExpand}
               onPointerLeave={requestCollapse}
               onClick={() => onChildClick(layout.entry)}

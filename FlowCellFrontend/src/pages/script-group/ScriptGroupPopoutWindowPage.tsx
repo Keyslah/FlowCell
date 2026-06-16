@@ -39,6 +39,7 @@ type PositionedScriptButton = {
   id: string;
   fileName: string;
   label: string;
+  tooltip?: string;
   x: number;
   y: number;
   width: number;
@@ -123,6 +124,7 @@ function buildScriptButtons(context: ScriptGroupPopoutWindowContext): Positioned
       ].join("::"),
       fileName: script.fileName,
       label: script.label,
+      tooltip: script.tooltip,
       x: rect.x,
       y: rect.y + template.rowHeight * rowIndex,
       width: rect.width,
@@ -225,7 +227,8 @@ export default function ScriptGroupPopoutWindowPage({
           buildPanelScriptButtonId(context.programName, context.panelName, script.fileName),
           script.label,
           labelOverrides
-        )
+        ),
+        tooltip: script.tooltip?.trim() || undefined
       }))
     }),
     [context, labelOverrides]
@@ -489,7 +492,7 @@ export default function ScriptGroupPopoutWindowPage({
     <main className={pageClassName} aria-label={`${resolvedContext.label ?? resolvedContext.panelName} popout`}>
       <div
         className="script-group-popout__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}
@@ -593,8 +596,8 @@ export default function ScriptGroupPopoutWindowPage({
                     className={`script-group-popout__button${
                       isSingleButtonTemplate ? " script-group-popout__button--single" : ""
                     }`}
-                    title={button.label}
                     aria-label={button.label}
+                    data-flow-tooltip={button.tooltip?.trim() || button.label}
                     style={{
                       left: `${button.x}px`,
                       top: `${button.y}px`,

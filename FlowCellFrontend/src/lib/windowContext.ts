@@ -119,6 +119,7 @@ export type MacroLabWindowContext = {
 export type ScriptGroupPopoutScript = {
   fileName: string;
   label: string;
+  tooltip?: string;
 };
 
 export type ScriptGroupPopoutWindowContext = {
@@ -138,10 +139,16 @@ export type CodexUsagePopoutWindowContext = {
   initialSnapshot?: CodexUsageSnapshot | null;
 };
 
+export type TooltipWindowContext = {
+  kind: "tooltip";
+  text?: string;
+};
+
 export type FlowCellWindowContext =
   | {
       kind: "main";
     }
+  | TooltipWindowContext
   | FlattenRevolveToolboxWindowContext
   | GenericToolboxWindowContext
   | DimensionsToolboxWindowContext
@@ -446,7 +453,11 @@ export function getWindowContextFromLocation(): FlowCellWindowContext {
           )
           .map((entry) => ({
             fileName: entry.fileName.trim(),
-            label: entry.label.trim()
+            label: entry.label.trim(),
+            tooltip:
+              typeof entry.tooltip === "string" && entry.tooltip.trim().length > 0
+                ? entry.tooltip.trim()
+                : undefined
           })),
         popoutType: normalizeScriptGroupPopoutType(parsed.popoutType),
         label: typeof parsed.label === "string" ? parsed.label : undefined
@@ -463,6 +474,12 @@ export function getWindowContextFromLocation(): FlowCellWindowContext {
         panelName: parsed.panelName,
         label: typeof parsed.label === "string" ? parsed.label : undefined,
         initialSnapshot: normalizeCodexUsageSnapshot(parsed.initialSnapshot)
+      };
+    }
+    if (parsed.kind === "tooltip") {
+      return {
+        kind: "tooltip",
+        text: typeof parsed.text === "string" ? parsed.text : undefined
       };
     }
   } catch {
@@ -508,6 +525,7 @@ export function resolveWindowContextAfterBootstrap(
       nextContext.kind === "button-reorder" ||
       nextContext.kind === "script-group-popout" ||
       nextContext.kind === "codex-usage-popout" ||
+      nextContext.kind === "tooltip" ||
       readCurrentTauriWindowLabel() ||
       attempts >= WINDOW_CONTEXT_BOOTSTRAP_RETRY_COUNT
     ) {

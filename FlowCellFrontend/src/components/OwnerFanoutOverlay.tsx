@@ -120,6 +120,8 @@ export function OwnerFanoutOverlay({
                 label={entry.button.Label}
                 flowId={entry.button.Id}
                 title={entry.button.Tooltip || entry.button.Label}
+                aria-label={entry.button.Label}
+                data-flow-tooltip={entry.button.Tooltip || entry.button.Label}
                 className="owner-fanout-overlay__button"
                 styleGroup={styleGroup}
                 importedSkin={importedSkin}

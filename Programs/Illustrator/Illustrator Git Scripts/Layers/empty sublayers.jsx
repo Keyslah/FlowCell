@@ -1,4 +1,4 @@
-// Description: Delete Empty Sublayers.
+// Description: Remove empty sublayers from the active layer structure.
 
 #target illustrator
 

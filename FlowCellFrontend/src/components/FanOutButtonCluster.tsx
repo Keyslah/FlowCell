@@ -123,6 +123,7 @@ function buildFanButtonRecord(args: {
     radius: Math.round(normalizedHeight / 2),
     strokeWidth: 1,
     label: args.button.Label,
+    tooltip: args.button.Tooltip,
     actionId: args.button.command_id || args.button.Kind || "fanout-button",
     skinId: "imported-skin"
   };

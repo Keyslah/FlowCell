@@ -387,7 +387,7 @@ export function RotateToolboxSurface({
 
       <label
         className="rotate-toolbox-window-page__field"
-        title={quantityTitle}
+        data-flow-tooltip={quantityTitle}
         style={{
           left: `${inputRect.x}px`,
           top: `${inputRect.y}px`,
@@ -403,7 +403,6 @@ export function RotateToolboxSurface({
           disabled={disabled}
           inputMode={usesDistributeCountInput ? "numeric" : "decimal"}
           pattern={usesDistributeCountInput ? "[0-9]*" : "[0-9]*[.]?[0-9]*"}
-          title={quantityTitle}
           style={{ fontSize: `${inputTextSize}px` }}
           value={quantityValue}
           onChange={(event) => {
@@ -438,10 +437,10 @@ export function RotateToolboxSurface({
           <button
             key={spec.slot}
             type="button"
-            title={tooltip}
             aria-label={label}
             aria-pressed={selected ? true : undefined}
             className="rotate-toolbox-window-page__button"
+            data-flow-tooltip={tooltip}
             data-size={resolveButtonSize(spec.rect.width)}
             data-selected={selected ? "true" : "false"}
             style={{

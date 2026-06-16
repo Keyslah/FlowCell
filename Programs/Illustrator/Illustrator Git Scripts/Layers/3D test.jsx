@@ -1,4 +1,4 @@
-// Description: Runs 16 Save 3D Test.
+// Description: Export the current selection through the 3D test workflow.
 #target illustrator
 
 /*

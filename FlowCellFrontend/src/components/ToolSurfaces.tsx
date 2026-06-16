@@ -318,7 +318,7 @@ function renderToolChip(
       active={active}
       skinCompact
       onClick={onClick}
-      title={title ?? label}
+      data-flow-tooltip={title ?? label}
       afterContent={
         instantTooltip ? (
           <span className="tool-chip__instant-tooltip">{instantTooltip}</span>

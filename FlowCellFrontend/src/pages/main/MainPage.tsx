@@ -4,8 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent,
-  type PointerEvent as ReactPointerEvent
+  type MouseEvent as ReactMouseEvent
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -167,10 +166,6 @@ function inferProgramNameFromExePath(exePath: string): string {
         .replace(/[_-]+/g, " ")
         .replace(/\b\w/g, (character) => character.toUpperCase());
   }
-}
-
-function isIllustratorProgramName(programName: string | null | undefined): boolean {
-  return (programName ?? "").trim().toLowerCase().includes("illustrator");
 }
 
 function clampContextMenuPosition(x: number, y: number) {
@@ -1557,10 +1552,16 @@ export default function MainPage() {
               return matchedRecord && !isToolPopoutRecord(matchedRecord)
                 ? {
                     fileName: matchedRecord.fileName,
-                    label: matchedRecord.label
+                    label: matchedRecord.label,
+                    tooltip: matchedRecord.tooltip
                   }
                 : null;
-            }).filter((record): record is { fileName: string; label: string } => Boolean(record));
+            }).filter(
+              (
+                record
+              ): record is { fileName: string; label: string; tooltip: string | undefined } =>
+                Boolean(record)
+            );
 
             if (selectedScripts.length > 0) {
               const popoutType = readScriptGroupPopoutType(
@@ -2369,7 +2370,8 @@ export default function MainPage() {
         panelName: selectedPanelName,
         scripts: selectedRegularPanelScriptRecords.map((record) => ({
           fileName: record.fileName,
-          label: record.label
+          label: record.label,
+          tooltip: record.tooltip
         })),
         popoutType: selectedScriptGroupPopoutType,
         label:
@@ -2425,7 +2427,7 @@ export default function MainPage() {
 
   const handleButtonActivate = async (
     button: ButtonRecord,
-    event: ReactMouseEvent<HTMLElement> | ReactPointerEvent<HTMLElement>
+    event: ReactMouseEvent<HTMLElement>
   ) => {
     if (button.actionId === "top-left-button-1") {
       try {
@@ -2686,14 +2688,6 @@ export default function MainPage() {
         return;
       }
 
-      if (isIllustratorProgramName(selectedProgramName)) {
-        clearPendingPanelScriptAction(button.scriptFileName);
-        const matchedRecord =
-          resolvedPanelScriptsByFileName.get(button.scriptFileName) ?? null;
-        void handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord);
-        return;
-      }
-
       queuePanelScriptSelectionToggle(button.scriptFileName);
     }
   };
@@ -2775,10 +2769,6 @@ export default function MainPage() {
               key={button.id}
               button={button}
               skinProfileHighlight
-              activateOnPointerDown={
-                isIllustratorProgramName(selectedProgramName) &&
-                isPanelScriptButtonAction(button.actionId)
-              }
               onActivate={handleButtonActivate}
               onDoubleActivate={handleButtonDoubleActivate}
               onRequestContextMenu={handleButtonContextMenu}

@@ -2104,7 +2104,7 @@ export default function ThemeToolboxWindowPage({
     <main className={shellClassName} aria-label="Theme toolbox window">
       <div
         className="theme-toolbox-window-page__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}

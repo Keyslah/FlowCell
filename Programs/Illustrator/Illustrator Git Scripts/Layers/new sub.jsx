@@ -1,4 +1,4 @@
-// Description: New sub Layer
+// Description: Create a new sublayer for the current selection.
 
 #target illustrator
 

@@ -365,7 +365,7 @@ export function SmartAxisToolboxSurface({
           type="button"
           aria-label={tooltip}
           aria-pressed={isSelected(state, spec.slot)}
-          title={tooltip}
+          data-flow-tooltip={tooltip}
           data-smart-axis-slot={spec.slot}
           data-selected={isSelected(state, spec.slot) ? "true" : "false"}
           className="main-page__smart-axis-button"

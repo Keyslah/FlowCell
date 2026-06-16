@@ -1,4 +1,4 @@
-// Description: Brings back last snapshot and deletes current.
+// Description: Replace the current Live target with the newest saved snapshot and move the current version to Trash.
 
 #target illustrator
 
@@ -24,6 +24,7 @@
 
     var doc = app.activeDocument;
     var originalActiveLayer = doc.activeLayer;
+    var postRestoreLayer = null;
     var roots = null;
 
     try {
@@ -101,6 +102,7 @@
                     }
                     layerDestination.visible = true;
                     layerDestination.locked = false;
+                    postRestoreLayer = layerDestination;
                     restored.push(targetName + " <- " + latestSnapshotName);
                     continue;
                 }
@@ -137,6 +139,7 @@
 
                 destinationLayer.visible = true;
                 destinationLayer.locked = false;
+                postRestoreLayer = destinationLayer;
                 restored.push(targetName + " <- " + latestSnapshotName);
             } catch (targetErr) {
                 logLine("Target exception: " + targetErr);
@@ -161,7 +164,11 @@
             setSystemLayerState(roots.archive, false, true);
             setSystemLayerState(roots.snapshots, true, false);
         }
-        restoreActiveLayer(doc, originalActiveLayer);
+        if (postRestoreLayer && layerExists(postRestoreLayer)) {
+            focusRestoredLayer(doc, postRestoreLayer);
+        } else {
+            restoreActiveLayer(doc, originalActiveLayer);
+        }
     }
 
     function resetLog(documentRef) {
@@ -1114,6 +1121,53 @@
                 documentRef.activeLayer = layerRef;
             }
         } catch (ignore) {}
+    }
+
+    function focusRestoredLayer(documentRef, layerRef) {
+        try {
+            documentRef.selection = null;
+        } catch (ignore1) {}
+
+        restoreActiveLayer(documentRef, layerRef);
+        selectLayerArtwork(layerRef);
+
+        try {
+            app.redraw();
+        } catch (ignore2) {}
+    }
+
+    function selectLayerArtwork(layerRef) {
+        var directItems;
+        var i;
+
+        if (!layerRef) {
+            return;
+        }
+
+        try {
+            layerRef.locked = false;
+        } catch (ignore) {}
+
+        directItems = getDirectPageItems(layerRef);
+        for (i = 0; i < directItems.length; i += 1) {
+            selectPageItem(directItems[i]);
+        }
+
+        for (i = 0; i < layerRef.layers.length; i += 1) {
+            selectLayerArtwork(layerRef.layers[i]);
+        }
+    }
+
+    function selectPageItem(item) {
+        try {
+            if (!item || item.hidden || item.locked) {
+                return;
+            }
+        } catch (ignore1) {}
+
+        try {
+            item.selected = true;
+        } catch (ignore2) {}
     }
 
     function writeDebug(message) {

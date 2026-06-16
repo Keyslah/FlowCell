@@ -416,7 +416,7 @@ export default function TriPolyToolboxWindowPage({
     <main className={pageClassName} aria-label="Tri & Poly toolbox window">
       <div
         className="tri-poly-toolbox-window-page__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}

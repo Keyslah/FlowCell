@@ -1,9 +1,10 @@
 import type {
   CSSProperties,
-  MouseEvent as ReactMouseEvent,
-  PointerEvent as ReactPointerEvent
+  FocusEvent as ReactFocusEvent,
+  MouseEvent as ReactMouseEvent
 } from "react";
 import { HostSkinButton } from "./HostSkinButton";
+import { hideFlowTooltip, showFlowTooltipForElement } from "../lib/flowTooltip";
 import { DEFAULT_FLOW_IMPORTED_SKIN } from "../lib/theme";
 import type { ImportedSkin, StyleGroup } from "../types";
 import type { ButtonRecord } from "../pages/main/mainLayout";
@@ -12,7 +13,7 @@ type ButtonHostProps = {
   button: ButtonRecord;
   onActivate?: (
     button: ButtonRecord,
-    event: ReactMouseEvent<HTMLElement> | ReactPointerEvent<HTMLElement>
+    event: ReactMouseEvent<HTMLElement>
   ) => void;
   onDoubleActivate?: (button: ButtonRecord, event: ReactMouseEvent<HTMLElement>) => void;
   onRequestContextMenu?: (button: ButtonRecord, event: ReactMouseEvent<HTMLElement>) => void;
@@ -21,7 +22,6 @@ type ButtonHostProps = {
   importedSkinOverride?: ImportedSkin;
   styleGroupOverride?: StyleGroup;
   skinProfileHighlight?: boolean;
-  activateOnPointerDown?: boolean;
 };
 
 type StyleWithVars = CSSProperties & Record<`--${string}`, string | number>;
@@ -44,8 +44,7 @@ export function ButtonHost({
   targetHeightOverride,
   importedSkinOverride,
   styleGroupOverride,
-  skinProfileHighlight = false,
-  activateOnPointerDown = false
+  skinProfileHighlight = false
 }: ButtonHostProps) {
   const isChromeAction =
     button.groupId === "top-left-actions" || button.groupId === "top-right-actions";
@@ -58,7 +57,7 @@ export function ButtonHost({
   const renderedLabel = isChromeAction
     ? button.label.replace(/ /g, "\u00A0")
     : button.label;
-  const hoverTitle = button.tooltip?.trim() || button.label || button.actionId;
+  const hoverDescription = button.tooltip?.trim() ?? "";
   const resolvedHeight = targetHeightOverride ?? button.height;
   const resolvedImportedSkin = importedSkinOverride ?? DEFAULT_FLOW_IMPORTED_SKIN;
   const resolvedStyleGroup = styleGroupOverride ?? MAIN_PAGE_IMPORTED_STYLE_GROUP;
@@ -80,28 +79,6 @@ export function ButtonHost({
   };
 
   const activate = (event: ReactMouseEvent<HTMLElement>) => {
-    if (activateOnPointerDown && event.detail !== 0) {
-      event.preventDefault();
-      event.stopPropagation();
-      return;
-    }
-
-    event.preventDefault();
-    event.stopPropagation();
-    onActivate?.(button, event);
-  };
-
-  const handlePointerDown = (event: ReactPointerEvent<HTMLElement>) => {
-    if (
-      !activateOnPointerDown ||
-      event.button !== 0 ||
-      event.ctrlKey ||
-      event.metaKey ||
-      event.shiftKey
-    ) {
-      return;
-    }
-
     event.preventDefault();
     event.stopPropagation();
     onActivate?.(button, event);
@@ -123,6 +100,29 @@ export function ButtonHost({
     onRequestContextMenu(button, event);
   };
 
+  const showTooltip = (element: HTMLElement) => {
+    if (!hoverDescription) {
+      return;
+    }
+    void showFlowTooltipForElement(hoverDescription, element);
+  };
+
+  const handleTooltipPointerEnter = (event: ReactMouseEvent<HTMLElement>) => {
+    showTooltip(event.currentTarget);
+  };
+
+  const handleTooltipPointerLeave = () => {
+    void hideFlowTooltip();
+  };
+
+  const handleTooltipFocus = (event: ReactFocusEvent<HTMLElement>) => {
+    showTooltip(event.currentTarget);
+  };
+
+  const handleTooltipBlur = () => {
+    void hideFlowTooltip();
+  };
+
   const hostClassName = [
     "button-host",
     isChromeAction ? "chrome-action" : "",
@@ -137,7 +137,6 @@ export function ButtonHost({
       type="button"
       label={renderedLabel}
       flowId={button.id}
-      title={hoverTitle}
       className={hostClassName}
       styleGroup={resolvedStyleGroup}
       importedSkin={resolvedImportedSkin}
@@ -152,13 +151,18 @@ export function ButtonHost({
       aria-label={button.label || button.actionId}
       aria-description={button.tooltip?.trim() || undefined}
       aria-pressed={isSelectablePanelScript ? (button.isSelected ?? false) : undefined}
+      title={hoverDescription || undefined}
       disabled={button.disabled ?? false}
       data-button-id={button.id}
       data-action-id={button.actionId}
       data-group-id={button.groupId ?? ""}
       data-rail-id={button.railId ?? ""}
       data-shape-type={button.shapeType}
-      onPointerDown={handlePointerDown}
+      data-flow-tooltip={hoverDescription || undefined}
+      onPointerEnter={handleTooltipPointerEnter}
+      onPointerLeave={handleTooltipPointerLeave}
+      onFocus={handleTooltipFocus}
+      onBlur={handleTooltipBlur}
       onClick={activate}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}

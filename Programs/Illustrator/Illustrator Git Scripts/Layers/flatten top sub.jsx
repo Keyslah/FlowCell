@@ -1,4 +1,4 @@
-// Description: Runs 13 Flatten Selected Into Top Sublayer.
+// Description: Flatten the selected artwork into its top-level Live sublayer.
 #target illustrator
 
 /*

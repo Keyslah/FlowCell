@@ -429,7 +429,7 @@ export default function AlignmentToolboxWindowPage({
     <main className={pageClassName} aria-label="Alignment toolbox window">
       <div
         className="alignment-toolbox-window-page__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}

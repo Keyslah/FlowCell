@@ -1,4 +1,4 @@
-// Description: Runs delete sublayer.
+// Description: Delete the selected object's immediate parent layer while protecting root folders.
 #target illustrator
 
 /*

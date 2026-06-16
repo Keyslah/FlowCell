@@ -239,6 +239,10 @@ function buildFolderRailButtons(
     height: railButtonGeometry.height,
     radius: railButtonGeometry.radius,
     label: definition.footerLabel,
+    tooltip:
+      definition.footerActionId === "add-program-folder"
+        ? "Add a program by selecting its executable."
+        : "Add a panel folder to the selected program.",
     actionId: definition.footerActionId,
     allowRename: false,
     ...defaultButtonVisual
@@ -257,6 +261,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "Save Layout",
+    tooltip: "Save the main window and open popout positions to a layout file.",
     actionId: "top-left-button-1",
     ...defaultButtonVisual
   },
@@ -269,6 +274,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "Load Layout",
+    tooltip: "Load a saved FlowCell layout and reopen its saved popout windows.",
     actionId: "top-left-button-2",
     ...defaultButtonVisual
   },
@@ -281,6 +287,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "Binds",
+    tooltip: "Open the shortcut binding window for panel buttons and macros.",
     actionId: "top-left-button-3",
     ...defaultButtonVisual
   },
@@ -293,6 +300,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "Macro Lab",
+    tooltip: "Open Macro Lab for the selected program and panel.",
     actionId: "open-macro-lab",
     ...defaultButtonVisual
   },
@@ -305,6 +313,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "Refresh",
+    tooltip: "Reload the FlowCell frontend after file, script, or layout changes.",
     actionId: "top-left-button-7",
     ...defaultButtonVisual
   },
@@ -317,6 +326,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "min",
+    tooltip: "Minimize the main FlowCell window.",
     actionId: "top-right-button-1",
     ...defaultButtonVisual
   },
@@ -329,6 +339,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "max",
+    tooltip: "Maximize or restore the main FlowCell window.",
     actionId: "top-right-button-2",
     ...defaultButtonVisual
   },
@@ -341,6 +352,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "close",
+    tooltip: "Close the main FlowCell window.",
     actionId: "top-right-button-3",
     ...defaultButtonVisual
   }
@@ -383,6 +395,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Add Script",
+      tooltip: "Add one or more script buttons to the selected panel.",
       actionId: "add-panel-script",
       allowRename: false,
       ...defaultButtonVisual
@@ -396,6 +409,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Add Macro",
+      tooltip: "Create or attach a macro button to the selected panel.",
       actionId: "add-panel-macro",
       allowRename: false,
       ...defaultButtonVisual
@@ -409,6 +423,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Fan",
+      tooltip: "Open the selected buttons as a panel fan popout.",
       actionId: "fan-panel-script-selection",
       allowRename: false,
       disabled: options.fanDisabled ?? true,
@@ -423,6 +438,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Fan Options",
+      tooltip: "Choose how the selected panel fan opens and lays out.",
       actionId: "open-panel-fan-options",
       allowRename: false,
       disabled: options.fanOptionsDisabled ?? true,
@@ -437,6 +453,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Order",
+      tooltip: "Open the selected panel's button ordering window.",
       actionId: "open-button-order",
       allowRename: false,
       disabled: options.orderDisabled ?? true,
@@ -451,6 +468,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Delete",
+      tooltip: "Move the selected panel buttons and backing files to the Recycle Bin.",
       actionId: "delete-selected-panel-scripts",
       allowRename: false,
       disabled: options.deleteSelectionDisabled ?? true,
@@ -465,6 +483,9 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: options.allSelectableScriptsSelected ? "Clear All" : "Select All",
+      tooltip: options.allSelectableScriptsSelected
+        ? "Clear the current button selection."
+        : "Select every visible script button in this panel.",
       actionId: "toggle-all-panel-scripts",
       allowRename: false,
       disabled: options.selectAllDisabled ?? true,
@@ -479,6 +500,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Pop",
+      tooltip: "Open the selected regular buttons or toolsets as popout windows.",
       actionId: "pop-panel-script",
       allowRename: false,
       disabled: options.popDisabled ?? true,

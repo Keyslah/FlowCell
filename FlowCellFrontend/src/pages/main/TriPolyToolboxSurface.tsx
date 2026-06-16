@@ -58,10 +58,10 @@ function renderButton(args: {
     <button
       key={key}
       type="button"
-      title={title}
       aria-label={ariaLabel}
       aria-pressed={selected ? true : undefined}
       className="tri-poly-toolbox-window-page__button"
+      data-flow-tooltip={title}
       data-selected={selected ? "true" : "false"}
       disabled={disabled}
       style={{
@@ -94,9 +94,9 @@ function renderAngleControl(args: {
   return (
     <div
       key={key}
-      title={title}
       aria-label={ariaLabel}
       className="tri-poly-toolbox-window-page__angle-control"
+      data-flow-tooltip={title}
       data-selected={selected ? "true" : "false"}
       style={{
         left: `${rect.x}px`,

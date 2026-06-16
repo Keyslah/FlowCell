@@ -434,7 +434,7 @@ export default function BooleanToolboxWindowPage({
     <main className={pageClassName} aria-label="Boolean toolbox window">
       <div
         className="boolean-toolbox-window-page__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}

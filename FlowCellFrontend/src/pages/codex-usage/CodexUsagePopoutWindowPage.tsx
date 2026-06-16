@@ -398,7 +398,7 @@ export default function CodexUsagePopoutWindowPage({
     <main className={pageClassName} aria-label={context.label ?? "Codex usage"}>
       <div
         className="codex-usage-popout__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}

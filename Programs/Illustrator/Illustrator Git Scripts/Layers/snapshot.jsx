@@ -1,4 +1,4 @@
-// Description: Selection copied into snapshot layer with the prefix (S#)
+// Description: Save a hidden snapshot copy of the selected Live target under Snapshots.
 
 
 #target illustrator

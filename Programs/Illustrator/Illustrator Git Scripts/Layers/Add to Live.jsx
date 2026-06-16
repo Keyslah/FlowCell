@@ -1,4 +1,4 @@
-// Description: Selected to live
+// Description: Move the selected layer or object back into the Live root.
 
 #target illustrator
 

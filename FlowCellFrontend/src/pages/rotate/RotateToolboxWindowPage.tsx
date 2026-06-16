@@ -325,7 +325,7 @@ export default function RotateToolboxWindowPage({
     <main className={pageClassName} aria-label="Rotate toolbox window">
       <div
         className="rotate-toolbox-window-page__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}

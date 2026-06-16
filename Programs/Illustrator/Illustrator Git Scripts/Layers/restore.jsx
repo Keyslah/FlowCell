@@ -1,4 +1,4 @@
-// Description: Brings back snapshot and puts current into trash
+// Description: Restore the selected snapshot while moving the current Live version to Trash.
 
 #target illustrator
 

@@ -1,4 +1,4 @@
-// Description: Runs 08 Sort Layers Into Live Snapshots Trash.
+// Description: Sort top-level layers into Live, Snapshots, and Trash.
 #target illustrator
 
 /*
@@ -11,7 +11,7 @@
  * original even if its name contains "copy".
  */
 (function () {
-    var SCRIPT_VERSION = "2026-03-23 15:45";
+    var SCRIPT_VERSION = "2026-06-15 10:35";
     var LOG_PATH = Folder.temp.fsName + "/Illustrator_Sort_Layers_Into_Live_Snapshots_Trash_Debug.log";
     var ROOT_LIVE = "Live";
     var ROOT_SNAPSHOTS = "Snapshots";
@@ -25,10 +25,12 @@
     var doc = app.activeDocument;
     var originalActiveLayer = doc.activeLayer;
     var roots = null;
+    var liveLockState = null;
 
     try {
         resetLog(doc);
         roots = ensureRootLayers(doc);
+        liveLockState = captureLayerLockState(roots.live, false);
         prepareRoots(roots);
 
         var sourceLayers = collectSourceLayers(doc);
@@ -56,6 +58,7 @@
             setSystemLayerState(roots.trash, false, true);
             setSystemLayerState(roots.archive, false, true);
             setSystemLayerState(roots.snapshots, true, false);
+            restoreLayerLocksFromState(liveLockState);
         }
         restoreActiveLayer(doc, originalActiveLayer);
     }
@@ -77,14 +80,22 @@
     }
 
     function moveSourceToLive(sourceLayer, liveRoot, info) {
+        var liveLayerExisted = !!findChildLayerByName(liveRoot, info.liveName);
         var liveLayer = ensureChildLayer(liveRoot, info.liveName);
         var state = captureBranchState(sourceLayer);
+        var sourceLockState = captureLayerLockState(sourceLayer, true);
+        var sourceLayerLocked = safeRead(sourceLayer, "locked", false);
 
         logLine("Live <- " + sourceLayer.name + " => " + getLayerPath(liveLayer));
 
         unlockBranchFromState(state);
         moveLayerContents(sourceLayer, liveLayer);
         removeLayer(sourceLayer);
+        restoreLayerLocksFromState(sourceLockState);
+
+        if (!liveLayerExisted) {
+            setLayerLocked(liveLayer, sourceLayerLocked);
+        }
     }
 
     function moveSourceToSnapshots(sourceLayer, snapshotsRoot, info, liveName) {
@@ -329,6 +340,74 @@
         captureLayerStatesRecursive(rootLayer, state.layers);
         captureItemStates(rootLayer, state.items);
         return state;
+    }
+
+    function captureLayerLockState(rootLayer, includeRoot) {
+        var state = [];
+        var i;
+
+        if (!rootLayer) {
+            return state;
+        }
+
+        if (includeRoot) {
+            captureLayerLockStateRecursive(rootLayer, state, 0);
+            return state;
+        }
+
+        for (i = 0; i < rootLayer.layers.length; i += 1) {
+            captureLayerLockStateRecursive(rootLayer.layers[i], state, 1);
+        }
+
+        return state;
+    }
+
+    function captureLayerLockStateRecursive(layer, store, depth) {
+        var i;
+
+        store.push({
+            ref: layer,
+            locked: safeRead(layer, "locked", false),
+            depth: depth
+        });
+
+        for (i = 0; i < layer.layers.length; i += 1) {
+            captureLayerLockStateRecursive(layer.layers[i], store, depth + 1);
+        }
+    }
+
+    function restoreLayerLocksFromState(state) {
+        var ordered;
+        var i;
+
+        if (!state || !state.length) {
+            return;
+        }
+
+        ordered = state.slice(0);
+        ordered.sort(function (a, b) {
+            return a.depth - b.depth;
+        });
+
+        for (i = 0; i < ordered.length; i += 1) {
+            setLayerLocked(ordered[i].ref, false);
+        }
+
+        ordered.sort(function (a, b) {
+            return b.depth - a.depth;
+        });
+
+        for (i = 0; i < ordered.length; i += 1) {
+            setLayerLocked(ordered[i].ref, ordered[i].locked);
+        }
+    }
+
+    function setLayerLocked(layer, locked) {
+        try {
+            if (layer) {
+                layer.locked = !!locked;
+            }
+        } catch (ignore) {}
     }
 
     function captureLayerStatesRecursive(layer, store) {

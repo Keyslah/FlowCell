@@ -1,4 +1,4 @@
-// Description: Empty Trash
+// Description: Delete all contents currently stored in Trash.
 
 
 #target illustrator

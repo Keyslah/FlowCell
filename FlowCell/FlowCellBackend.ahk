@@ -1861,12 +1861,17 @@ class FlowCellApp {
                 return fallback
             }
         }
+        foregroundAutomationOnly := !allowProcessFallback && !modalDialogScript && StrLower(Trim(source)) != "illustrator automation prewarm"
         try {
-            if allowProcessFallback || modalDialogScript {
+            if allowProcessFallback || modalDialogScript || foregroundAutomationOnly {
                 try {
                     WinActivate "ahk_id " stableHwnd
-                    WinWaitActive "ahk_id " stableHwnd, , 2
-                    Sleep 80
+                    if foregroundAutomationOnly {
+                        Sleep 20
+                    } else {
+                        WinWaitActive "ahk_id " stableHwnd, , 2
+                        Sleep 80
+                    }
                 } catch as activationErr {
                     this.logger.Warn("Could not activate the stable Illustrator 2026 window before COM. Continuing with COM. " activationErr.Message)
                 }
@@ -1876,7 +1881,7 @@ class FlowCellApp {
                 }
             }
 
-            app := this.GetIllustratorApplication(250, allowProcessFallback || modalDialogScript)
+            app := this.GetIllustratorApplication(250, allowProcessFallback || modalDialogScript || foregroundAutomationOnly)
             returnValue := app.DoJavaScriptFile(scriptPath)
             this.IllustratorComRetryAfterTick := 0
             result.succeeded := true

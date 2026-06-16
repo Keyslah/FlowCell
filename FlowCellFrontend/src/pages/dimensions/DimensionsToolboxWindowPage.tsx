@@ -400,7 +400,7 @@ export default function DimensionsToolboxWindowPage({
     <main className={pageClassName} aria-label="XYZ Dimensions toolbox window">
       <div
         className="dimensions-toolbox-window-page__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}

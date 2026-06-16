@@ -1,13 +1,13 @@
-// Description: Selection to trash
+// Description: Move selected owning layers to Trash.
 
 #target illustrator
 
 /*
- * Moves selected real sublayers, or selected named objects directly under
- * Live, into Trash > [target name] > TN.
+ * Moves each selected object's immediate owning layer, or direct root object,
+ * into Trash > [target name] > TN.
  */
 (function () {
-    var SCRIPT_VERSION = "2026-03-23 16:18";
+    var SCRIPT_VERSION = "2026-06-15 15:05";
     var LOG_PATH = Folder.temp.fsName + "/Illustrator_Move_To_Trash_Debug.log";
 
     if (app.documents.length === 0) {
@@ -16,6 +16,7 @@
 
     var ROOT_LIVE = "Live";
     var ROOT_SNAPSHOTS = "Snapshots";
+    var ROOT_3D = "3D";
     var ROOT_TRASH = "Trash";
     var ROOT_ARCHIVE = "Archive";
 
@@ -87,6 +88,7 @@
             var itemState = captureItemState(target.item);
             cleanupStartLayer = getItemOwningLayer(target.item);
             unlockItemFromState(itemState);
+            unlockAncestorLayers(cleanupStartLayer);
             unlockAncestorLayers(trashEntry);
             target.item.move(trashEntry, ElementPlacement.PLACEATEND);
             restoreItemFromState(itemState);
@@ -274,29 +276,20 @@
     }
 
     function addPreferredItemTarget(targets, item) {
-        var ownerLayer = getDeepestEligibleLayerForItem(item);
-        var externalTarget;
+        var ownerLayer = getImmediateTrashLayerForItem(item);
 
         if (ownerLayer) {
-            addUniqueTarget(targets, makeLayerTarget(ownerLayer));
+            addUniqueTarget(targets, makeTrashLayerTarget(ownerLayer));
             return;
         }
 
-        externalTarget = getExternalLayerTargetForItem(item);
-        if (externalTarget) {
-            addUniqueTarget(targets, externalTarget);
-            return;
-        }
-
-        if (isSnapshotEligibleItem(item)) {
+        if (isDirectRootItemTarget(item)) {
             addUniqueTarget(targets, makeItemTarget(item));
         }
     }
 
-    function getDeepestEligibleLayerForItem(item) {
+    function getImmediateTrashLayerForItem(item) {
         var ownerLayer = getItemOwningLayer(item);
-        var topLayer;
-        var resolvedLayer;
 
         if (!ownerLayer) {
             return null;
@@ -304,12 +297,6 @@
 
         if (isEligibleTargetLayer(ownerLayer)) {
             return ownerLayer;
-        }
-
-        topLayer = getTopLevelAncestor(ownerLayer);
-        resolvedLayer = findDeepestContainingEligibleLayer(topLayer, item);
-        if (resolvedLayer) {
-            return resolvedLayer;
         }
 
         return null;
@@ -400,6 +387,16 @@
         };
     }
 
+    function makeTrashLayerTarget(layer) {
+        var versionedName = getVersionedOwnerTargetName(layer);
+
+        if (versionedName) {
+            return makeNamedLayerTarget(layer, versionedName);
+        }
+
+        return makeLayerTarget(layer);
+    }
+
     function makeNamedLayerTarget(layer, targetName) {
         return {
             kind: "layer",
@@ -435,6 +432,65 @@
 
     function getTargetName(target) {
         return sanitizeName(getCanonicalTargetName(target.name));
+    }
+
+    function getVersionedOwnerTargetName(layer) {
+        var topLayer = getTopLevelAncestor(layer);
+        var ownerLayer;
+        var versionPrefix;
+
+        if (!topLayer || (topLayer.name !== ROOT_SNAPSHOTS &&
+                topLayer.name !== ROOT_ARCHIVE && topLayer.name !== ROOT_3D)) {
+            return null;
+        }
+
+        ownerLayer = getRootChildForLayer(layer, topLayer);
+        if (!ownerLayer || ownerLayer === layer) {
+            return null;
+        }
+
+        versionPrefix = getNearestOperationalLayerPrefix(layer, topLayer);
+        if (!versionPrefix) {
+            return null;
+        }
+
+        return versionPrefix + ownerLayer.name;
+    }
+
+    function getRootChildForLayer(layer, topLayer) {
+        var current = layer;
+        var child = null;
+
+        while (current && current !== topLayer) {
+            child = current;
+            try {
+                current = current.parent;
+            } catch (ignore) {
+                current = null;
+            }
+        }
+
+        return current === topLayer ? child : null;
+    }
+
+    function getNearestOperationalLayerPrefix(layer, stopLayer) {
+        var current = layer;
+        var prefix;
+
+        while (current && current !== stopLayer) {
+            prefix = getOperationalLayerPrefix(current.name);
+            if (prefix) {
+                return prefix;
+            }
+
+            try {
+                current = current.parent;
+            } catch (ignore) {
+                current = null;
+            }
+        }
+
+        return null;
     }
 
     function getExternalLayerTargetForItem(item) {
@@ -482,11 +538,18 @@
     }
 
     function isOperationalLayerName(name) {
+        return !!getOperationalLayerPrefix(name);
+    }
+
+    function getOperationalLayerPrefix(name) {
+        var match;
+
         if (!name) {
-            return false;
+            return null;
         }
 
-        return /^(?:T\d+|A\d+|s\d+)(?:\s.*)?$/i.test(name);
+        match = String(name).match(/^(T\d+|A\d+|s\d+|d\d+)(?:\s.*)?$/i);
+        return match ? match[1] : null;
     }
 
     function isEligibleTargetLayer(layer) {
@@ -501,39 +564,27 @@
             return false;
         }
 
-        if (top.name === ROOT_SNAPSHOTS || top.name === ROOT_TRASH || top.name === ROOT_ARCHIVE) {
+        if (top.name === ROOT_TRASH) {
             return false;
         }
 
-        if (layer.parent && layer.parent.typename === "Document" &&
-                (layer.name === ROOT_LIVE || layer.name === ROOT_SNAPSHOTS ||
-                 layer.name === ROOT_TRASH || layer.name === ROOT_ARCHIVE)) {
+        if (isSystemRoot(layer)) {
             return false;
         }
 
         return true;
     }
 
-    function isSnapshotEligibleItem(item) {
-        var layer;
+    function isDirectRootItemTarget(item) {
+        var layer = getItemOwningLayer(item);
         var top;
 
-        if (!item) {
-            return false;
-        }
-
-        try {
-            layer = item.layer;
-        } catch (ignore1) {
-            layer = null;
-        }
-
-        if (!layer) {
+        if (!layer || !isSystemRoot(layer)) {
             return false;
         }
 
         top = getTopLevelAncestor(layer);
-        return top && top.name === ROOT_LIVE;
+        return top && top.name !== ROOT_TRASH;
     }
 
     function getTopLevelAncestor(layer) {
@@ -850,6 +901,7 @@
         }
 
         return layer.name === ROOT_LIVE || layer.name === ROOT_SNAPSHOTS ||
-            layer.name === ROOT_TRASH || layer.name === ROOT_ARCHIVE;
+            layer.name === ROOT_3D || layer.name === ROOT_TRASH ||
+            layer.name === ROOT_ARCHIVE;
     }
 }());

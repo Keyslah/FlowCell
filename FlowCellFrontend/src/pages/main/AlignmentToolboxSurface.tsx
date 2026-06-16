@@ -80,10 +80,10 @@ function renderButton(args: {
     <button
       key={key}
       type="button"
-      title={title}
       aria-label={ariaLabel}
       aria-pressed={selected ? true : undefined}
       className="alignment-toolbox-window-page__button"
+      data-flow-tooltip={title}
       data-selected={selected ? "true" : "false"}
       style={{
         left: `${rect.x}px`,

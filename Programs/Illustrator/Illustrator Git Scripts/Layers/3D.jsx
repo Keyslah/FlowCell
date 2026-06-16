@@ -1,4 +1,4 @@
-// Description: Runs 14 Save 3D.
+// Description: Export the current selection as the layer panel's 3D asset.
 #target illustrator
 
 /*

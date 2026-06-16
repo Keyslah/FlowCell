@@ -1,19 +1,28 @@
-// Description: Baseline of locked layers
+// Description: Record the current layer lock states as the baseline.
 
 #target illustrator
 
 (function () {
+    var SCRIPT_VERSION = "2026-06-15 11:20";
+    var LOG_PATH = Folder.temp.fsName + "/Illustrator_LayerState_lock_Debug.log";
+
     if (app.documents.length === 0) {
+        resetLog(null);
+        logLine("No open document; lock baseline not saved.");
         return;
     }
 
     var doc = app.activeDocument;
+    resetLog(doc);
+
     var payload = {
         documentKey: getDocumentKey(doc),
         entries: captureLayerState(doc, "locked", false)
     };
 
-    writeStateFile("lock", payload);
+    if (writeStateFile("lock", payload)) {
+        logLine("Saved lock baseline entries: " + payload.entries.length);
+    }
 
     function captureLayerState(documentRef, propertyName, fallbackValue) {
         var state = [];
@@ -93,10 +102,52 @@
 
     function writeStateFile(kind, payload) {
         var file = new File(Folder.temp.fsName + "/Illustrator_LayerState_" + kind + "_" + payload.documentKey + ".txt");
-        file.encoding = "UTF-8";
-        file.open("w");
-        file.write(payload.toSource());
-        file.close();
+        try {
+            file.encoding = "UTF-8";
+            file.open("w");
+            file.write(payload.toSource());
+            file.close();
+            logLine("Wrote baseline file: " + file.fsName);
+            return true;
+        } catch (err) {
+            logLine("Failed to write baseline file: " + err);
+            return false;
+        }
+    }
+
+    function resetLog(documentRef) {
+        var file = new File(LOG_PATH);
+
+        if (file.exists) {
+            try {
+                file.remove();
+            } catch (ignore) {}
+        }
+
+        logLine("Baseline Lock version: " + SCRIPT_VERSION);
+        if (documentRef) {
+            logLine("Document: " + safeDocName(documentRef));
+            logLine("Document key: " + getDocumentKey(documentRef));
+        }
+    }
+
+    function logLine(message) {
+        var file = new File(LOG_PATH);
+
+        try {
+            file.encoding = "UTF-8";
+            file.open("a");
+            file.writeln(message);
+            file.close();
+        } catch (ignore) {}
+    }
+
+    function safeDocName(documentRef) {
+        try {
+            return documentRef.name;
+        } catch (ignore) {
+            return "[unknown document]";
+        }
     }
 
     function sanitizeToken(value) {

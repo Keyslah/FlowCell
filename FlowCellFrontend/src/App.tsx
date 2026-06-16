@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { hideFlowTooltip, showFlowTooltipForElement } from "./lib/flowTooltip";
 import { getWindowContextFromLocation } from "./lib/windowContext";
 import {
   getForegroundProcessInfo,
@@ -24,6 +25,7 @@ import RotateToolboxWindowPage from "./pages/rotate/RotateToolboxWindowPage";
 import SmartAxisToolboxWindowPage from "./pages/smart-axis/SmartAxisToolboxWindowPage";
 import ScriptGroupPopoutWindowPage from "./pages/script-group/ScriptGroupPopoutWindowPage";
 import ThemeToolboxWindowPage from "./pages/theme/ThemeToolboxWindowPage";
+import TooltipWindowPage from "./pages/tooltip/TooltipWindowPage";
 import TriPolyToolboxWindowPage from "./pages/tri-poly/TriPolyToolboxWindowPage";
 import GenericToolboxWindowPage from "./pages/toolbox/GenericToolboxWindowPage";
 
@@ -91,6 +93,7 @@ function resolveScopedTopmostProgramName(
 ): string {
   if (
     windowContext.kind === "main" ||
+    windowContext.kind === "tooltip" ||
     windowContext.kind === "binds" ||
     windowContext.kind === "macro-lab"
   ) {
@@ -106,12 +109,94 @@ function shouldBindScopedNativeOwner(
   return normalizeProcessToken(resolveScopedTopmostProgramName(windowContext)).includes("illustrator");
 }
 
+function resolveTooltipElement(target: EventTarget | null): HTMLElement | null {
+  if (!(target instanceof Element)) {
+    return null;
+  }
+
+  const element = target.closest<HTMLElement>("[data-flow-tooltip]");
+  if (!element) {
+    return null;
+  }
+
+  return element;
+}
+
 export default function App() {
   const windowContext = getWindowContextFromLocation();
   const programName = resolveScopedTopmostProgramName(windowContext);
   const bindNativeOwner = shouldBindScopedNativeOwner(windowContext);
 
   useEffect(() => {
+    if (windowContext.kind === "tooltip") {
+      return;
+    }
+
+    let activeTooltipElement: HTMLElement | null = null;
+
+    const showTooltip = (element: HTMLElement | null) => {
+      const text = element?.dataset.flowTooltip?.trim() ?? "";
+      if (!element || !text) {
+        activeTooltipElement = null;
+        void hideFlowTooltip();
+        return;
+      }
+
+      activeTooltipElement = element;
+      void showFlowTooltipForElement(text, element);
+    };
+
+    const handlePointerOver = (event: PointerEvent) => {
+      const element = resolveTooltipElement(event.target);
+      if (!element || element === activeTooltipElement) {
+        return;
+      }
+      showTooltip(element);
+    };
+
+    const handlePointerOut = (event: PointerEvent) => {
+      const activeElement = activeTooltipElement;
+      if (!activeElement) {
+        return;
+      }
+
+      const relatedTarget = event.relatedTarget;
+      if (relatedTarget instanceof Node && activeElement.contains(relatedTarget)) {
+        return;
+      }
+
+      activeTooltipElement = null;
+      void hideFlowTooltip();
+    };
+
+    const handleFocusIn = (event: FocusEvent) => {
+      showTooltip(resolveTooltipElement(event.target));
+    };
+
+    const handleFocusOut = () => {
+      activeTooltipElement = null;
+      void hideFlowTooltip();
+    };
+
+    document.addEventListener("pointerover", handlePointerOver, { capture: true });
+    document.addEventListener("pointerout", handlePointerOut, { capture: true });
+    document.addEventListener("focusin", handleFocusIn, { capture: true });
+    document.addEventListener("focusout", handleFocusOut, { capture: true });
+
+    return () => {
+      document.removeEventListener("pointerover", handlePointerOver, { capture: true });
+      document.removeEventListener("pointerout", handlePointerOut, { capture: true });
+      document.removeEventListener("focusin", handleFocusIn, { capture: true });
+      document.removeEventListener("focusout", handleFocusOut, { capture: true });
+      void hideFlowTooltip();
+    };
+  }, [windowContext.kind]);
+
+  useEffect(() => {
+    if (windowContext.kind === "tooltip") {
+      return;
+    }
+
     const currentWindow = getCurrentWindow();
     const currentWindowLabel = currentWindow.label;
     let disposed = false;
@@ -249,6 +334,9 @@ export default function App() {
   }
   if (windowContext.kind === "codex-usage-popout") {
     return <CodexUsagePopoutWindowPage context={windowContext} />;
+  }
+  if (windowContext.kind === "tooltip") {
+    return <TooltipWindowPage context={windowContext} />;
   }
 
   return <MainPage />;

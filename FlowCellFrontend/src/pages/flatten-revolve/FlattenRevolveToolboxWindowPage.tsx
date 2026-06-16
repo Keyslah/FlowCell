@@ -456,7 +456,7 @@ export default function FlattenRevolveToolboxWindowPage({
     >
       <div
         className="flatten-revolve-toolbox-window-page__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}

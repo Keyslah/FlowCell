@@ -1,4 +1,4 @@
-// Description: Selection to Archive
+// Description: Move the selected Live target into Archive.
 
 #target illustrator
 

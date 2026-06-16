@@ -1,4 +1,4 @@
-// Description: Creates Live Snapshots Trash Archive layers. Visible layers go to Live layer
+// Description: Create and order the Live, Snapshots, 3D, Trash, and Archive root layers.
 
 #target illustrator
 

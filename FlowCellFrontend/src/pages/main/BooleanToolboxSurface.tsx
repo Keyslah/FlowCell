@@ -127,10 +127,10 @@ function renderButton(args: {
     <button
       key={key}
       type="button"
-      title={title}
       aria-label={ariaLabel}
       aria-pressed={selected ? true : undefined}
       className="boolean-toolbox-window-page__button"
+      data-flow-tooltip={title}
       data-selected={selected ? "true" : "false"}
       disabled={disabled}
       style={{
@@ -304,7 +304,7 @@ export function BooleanToolboxSurface({
               key={option.value}
               type="button"
               className="boolean-toolbox-window-page__solver-option"
-              title={option.tooltip}
+              data-flow-tooltip={option.tooltip}
               role="menuitemradio"
               aria-checked={state.solver === option.value}
               data-selected={state.solver === option.value ? "true" : "false"}

@@ -1,4 +1,4 @@
-// Description: Baseline Visibility of layers
+// Description: Record the current layer visibility states as the baseline.
 
 #target illustrator
 

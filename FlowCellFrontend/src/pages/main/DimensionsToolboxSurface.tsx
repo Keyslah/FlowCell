@@ -251,7 +251,7 @@ export function DimensionsToolboxSurface({
           key={spec.slot}
           type="button"
           aria-label={`${label} dimension ${value}`}
-          title={tooltip}
+          data-flow-tooltip={tooltip}
           data-dimensions-slot={spec.slot}
           className="dimensions-toolbox-window-page__button"
           style={{

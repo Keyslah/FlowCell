@@ -545,7 +545,7 @@ export default function RemeshToolboxWindowPage({
     <main className={pageClassName} aria-label="Remesh toolbox window">
       <div
         className="remesh-toolbox-window-page__shell"
-        onPointerDown={handleShellPointerDown}
+        onPointerDownCapture={handleShellPointerDown}
         onPointerUp={() => {
           setSpaceDragging(false);
         }}
