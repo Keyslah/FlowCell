@@ -1,8 +1,8 @@
 # FlowCell
 
-FlowCell is a desktop app to fire program scripts with buttons, macros, and hotkeys. It is for high usage buttons and shortcuts without digging through folders and menus or tiny buttons.
+FlowCell is a desktop app to fire scripts with buttons, macros, and hotkeys without digging through menus or using tiny buttons.
 
-Its like a small control deck that stays on top of Blender, Illustrator, Photoshop, or any added program: pick a program, add a panel, click or bind a script.
+Its like a small control deck that only stays on top of its respective program.
 
 Requires [AutoHotkey V2](https://www.autohotkey.com/download/ahk-v2.exe)
 
