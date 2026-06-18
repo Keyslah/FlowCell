@@ -1,3 +1,6 @@
+# Generated release output.
+dist/
+
 FlowCell/local/
 
 # Program-local button/layout state and durable private script copies.
