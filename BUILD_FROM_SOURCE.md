@@ -1,6 +1,6 @@
 # Build FlowCell From Source
 
-This is the developer path. Use this when you want to edit FlowCell, test code changes, build the frontend app, or create a portable release ZIP.
+This is the developer path. Use this when you want to edit FlowCell, test code changes, build the frontend app, or create portable release ZIPs.
 
 Normal users should use the GitHub Releases download instead of this path.
 
@@ -50,9 +50,9 @@ The built executable is expected at:
 FlowCellFrontend/src-tauri/target/release/flowcell_frontend.exe
 ```
 
-## Create the portable ZIP from the already-built app
+## Create portable ZIPs from the already-built app
 
-The packaging script does not build the app. It only wraps an already-built executable into the portable folder and ZIP.
+The packaging script does not build the app. It only wraps an already-built executable into release folders and ZIPs.
 
 From the repo root:
 
@@ -66,14 +66,20 @@ If the AutoHotkey license file is not found automatically, pass it explicitly:
 .\release-tools\package-portable.ps1 -BuiltExe ".\FlowCellFrontend\src-tauri\target\release\flowcell_frontend.exe" -AutoHotkeyExe "C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe" -AutoHotkeyLicenseFile "C:\path\to\GPL-2.0.txt"
 ```
 
-The generated output is:
+The generated release assets are:
 
 ```text
-dist/FlowCell-portable/
-dist/FlowCell-portable.zip
+dist/FlowCell-Core.zip
+dist/FlowCell-Blender.zip
+dist/FlowCell-Illustrator.zip
+dist/FlowCell-Photoshop.zip
+dist/FlowCell-Windows.zip
+dist/FlowCell-All.zip
 ```
 
-Upload `dist/FlowCell-portable.zip` to GitHub Releases as a release asset. Do not commit `dist/` into the repo.
+Program ZIPs are generated from the folders currently under `Programs/`, so the exact list follows the repo's program folders.
+
+Upload the ZIP files from `dist/` to GitHub Releases as release assets. Do not commit `dist/` into the repo.
 
 ## Launch path separation
 
