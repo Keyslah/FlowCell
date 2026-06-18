@@ -4,29 +4,50 @@ FlowCell is a desktop app to fire scripts with buttons, macros, and hotkeys with
 
 Its like a small control deck that only stays on top of its respective program.
 
-## Two Ways To Use FlowCell
+## Download
 
-### Just use FlowCell
-
-Download the portable ZIP from GitHub Releases:
+Use the GitHub Releases page, not GitHub's automatic source-code ZIP:
 
 ```text
-FlowCell-portable.zip
+https://github.com/Keyslah/FlowCell/releases/latest
 ```
 
-Extract it, open the extracted folder, and double-click:
+Pick the download that matches what you want:
+
+```text
+FlowCell-Core.zip
+```
+
+Base app only. Use this when you want the smallest FlowCell package.
+
+```text
+FlowCell-Blender.zip
+FlowCell-Illustrator.zip
+FlowCell-Photoshop.zip
+FlowCell-Windows.zip
+```
+
+Base app plus one program.
+
+```text
+FlowCell-All.zip
+```
+
+Base app plus every included program.
+
+After downloading, extract the ZIP, open the extracted folder, and double-click:
 
 ```text
 Start FlowCell.cmd
 ```
 
-The portable package includes the built FlowCell app and bundled AutoHotkey v2 runtime. Normal users do not need Node, npm, Rust, Cargo, Tauri build tools, or a separate AutoHotkey install.
+Normal users do not need Node, npm, Rust, Cargo, Tauri build tools, or a separate AutoHotkey install. The portable packages include the built FlowCell app and bundled AutoHotkey v2 runtime.
 
 Do not use GitHub's automatic `Source code (zip)` download as the app download. That source archive is for developers.
 
 See [SETUP.md](SETUP.md) for normal-user setup.
 
-### Build or develop FlowCell
+## Build or develop FlowCell
 
 Developers should use the existing source launcher and build path.
 
