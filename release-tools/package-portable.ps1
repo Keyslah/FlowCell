@@ -10,11 +10,10 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $DistRoot = Join-Path $RepoRoot 'dist'
-$PortableRoot = Join-Path $DistRoot 'FlowCell-portable'
-$ZipPath = Join-Path $DistRoot 'FlowCell-portable.zip'
+$ProgramsRoot = Join-Path $RepoRoot 'Programs'
 
 function Stop-Package([string]$Message) {
-  throw "[FlowCell portable package] $Message"
+  throw "[FlowCell package] $Message"
 }
 
 function Resolve-BuiltExe([string]$RequestedPath) {
@@ -80,6 +79,9 @@ function Copy-Folder([string]$Source, [string]$Destination) {
   if (-not (Test-Path -LiteralPath $Source -PathType Container)) {
     Stop-Package "Required folder missing: $Source"
   }
+  $destinationParent = Split-Path -Parent $Destination
+  New-Item -ItemType Directory -Path $destinationParent -Force | Out-Null
+
   $excludeDirs = @('.git', 'dist', 'local', 'node_modules', 'target', 'bin', 'obj', '.vs')
   $excludeFiles = @('*.pdb', '*.log', '*.tmp')
   $robocopyArgs = @($Source, $Destination, '/E', '/NFL', '/NDL', '/NJH', '/NJS', '/NC', '/NS', '/NP', '/XD') + $excludeDirs + @('/XF') + $excludeFiles
@@ -89,45 +91,100 @@ function Copy-Folder([string]$Source, [string]$Destination) {
   }
 }
 
-function Copy-RootFile([string]$Name) {
+function Copy-RootFile([string]$Name, [string]$PackageRoot) {
   $source = Join-Path $RepoRoot $Name
   if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
     Stop-Package "Required file missing: $Name"
   }
-  Copy-Item -LiteralPath $source -Destination (Join-Path $PortableRoot $Name) -Force
+  Copy-Item -LiteralPath $source -Destination (Join-Path $PackageRoot $Name) -Force
+}
+
+function Convert-ToAssetName([string]$Name) {
+  $assetName = $Name.Trim() -replace '[^A-Za-z0-9._-]+', '-'
+  $assetName = $assetName.Trim('-')
+  if (-not $assetName) {
+    Stop-Package "Program folder name cannot be converted into an asset name: $Name"
+  }
+  return $assetName
+}
+
+function Copy-PortableCore([string]$PackageRoot, [string]$BuiltExePath, [string]$AhkPath, [string]$AhkLicensePath) {
+  New-Item -ItemType Directory -Path $PackageRoot -Force | Out-Null
+
+  Copy-Item -LiteralPath $BuiltExePath -Destination (Join-Path $PackageRoot 'FlowCell.exe') -Force
+  Copy-RootFile 'Start FlowCell.cmd' $PackageRoot
+  Copy-RootFile 'README.md' $PackageRoot
+  Copy-RootFile 'SETUP.md' $PackageRoot
+  Copy-RootFile 'BUILD_FROM_SOURCE.md' $PackageRoot
+  Copy-RootFile 'PROGRAM_SUMMARY.txt' $PackageRoot
+
+  Copy-Folder (Join-Path $RepoRoot 'FlowCell') (Join-Path $PackageRoot 'FlowCell')
+  Copy-Folder (Join-Path $RepoRoot 'tools') (Join-Path $PackageRoot 'tools')
+  Copy-Folder (Join-Path $RepoRoot 'docs') (Join-Path $PackageRoot 'docs')
+  New-Item -ItemType Directory -Path (Join-Path $PackageRoot 'Programs') -Force | Out-Null
+
+  $runtime = Join-Path $PackageRoot 'FlowCell\runtime'
+  New-Item -ItemType Directory -Path $runtime -Force | Out-Null
+  Copy-Item -LiteralPath $AhkPath -Destination (Join-Path $runtime 'AutoHotkey64.exe') -Force
+  Copy-Item -LiteralPath $AhkLicensePath -Destination (Join-Path $runtime 'AutoHotkey-LICENSE.txt') -Force
+
+  @'
+This package includes AutoHotkey v2, licensed under GPL-2.0.
+AutoHotkey is third-party software and is not owned by FlowCell.
+AutoHotkey project/source code:
+https://github.com/AutoHotkey/AutoHotkey
+'@ | Set-Content -LiteralPath (Join-Path $runtime 'AutoHotkey-SOURCE.txt') -Encoding UTF8
+}
+
+function Copy-ProgramsIntoPackage([string]$PackageRoot, [string[]]$ProgramNames) {
+  foreach ($programName in $ProgramNames) {
+    $source = Join-Path $ProgramsRoot $programName
+    $destination = Join-Path (Join-Path $PackageRoot 'Programs') $programName
+    Copy-Folder $source $destination
+  }
+}
+
+function New-FlowCellPackage([string]$PackageName, [string[]]$ProgramNames, [string]$BuiltExePath, [string]$AhkPath, [string]$AhkLicensePath) {
+  $packageRoot = Join-Path $DistRoot $PackageName
+  $zipPath = Join-Path $DistRoot "$PackageName.zip"
+
+  if (Test-Path -LiteralPath $packageRoot) { Remove-Item -LiteralPath $packageRoot -Recurse -Force }
+  if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+
+  Copy-PortableCore $packageRoot $BuiltExePath $AhkPath $AhkLicensePath
+  Copy-ProgramsIntoPackage $packageRoot $ProgramNames
+
+  Compress-Archive -LiteralPath $packageRoot -DestinationPath $zipPath -Force
+  Write-Host "Created: $zipPath"
+}
+
+if (-not (Test-Path -LiteralPath $ProgramsRoot -PathType Container)) {
+  Stop-Package "Required folder missing: $ProgramsRoot"
 }
 
 $builtExePath = Resolve-BuiltExe $BuiltExe
 $ahk = Get-AhkPath $AutoHotkeyExe
 $ahkLicense = Get-AhkLicense $AutoHotkeyLicenseFile $ahk
 
-if (Test-Path -LiteralPath $PortableRoot) { Remove-Item -LiteralPath $PortableRoot -Recurse -Force }
-if (Test-Path -LiteralPath $ZipPath) { Remove-Item -LiteralPath $ZipPath -Force }
-New-Item -ItemType Directory -Path $PortableRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
 
-Copy-Item -LiteralPath $builtExePath -Destination (Join-Path $PortableRoot 'FlowCell.exe') -Force
-Copy-RootFile 'Start FlowCell.cmd'
-Copy-RootFile 'README.md'
-Copy-RootFile 'SETUP.md'
-Copy-RootFile 'BUILD_FROM_SOURCE.md'
-Copy-RootFile 'PROGRAM_SUMMARY.txt'
+$programDirs = Get-ChildItem -LiteralPath $ProgramsRoot -Directory | Sort-Object Name
+$programNames = @($programDirs | ForEach-Object { $_.Name })
 
-Copy-Folder (Join-Path $RepoRoot 'FlowCell') (Join-Path $PortableRoot 'FlowCell')
-Copy-Folder (Join-Path $RepoRoot 'Programs') (Join-Path $PortableRoot 'Programs')
-Copy-Folder (Join-Path $RepoRoot 'tools') (Join-Path $PortableRoot 'tools')
-Copy-Folder (Join-Path $RepoRoot 'docs') (Join-Path $PortableRoot 'docs')
+New-FlowCellPackage 'FlowCell-Core' @() $builtExePath $ahk $ahkLicense
 
-$runtime = Join-Path $PortableRoot 'FlowCell\runtime'
-New-Item -ItemType Directory -Path $runtime -Force | Out-Null
-Copy-Item -LiteralPath $ahk -Destination (Join-Path $runtime 'AutoHotkey64.exe') -Force
-Copy-Item -LiteralPath $ahkLicense -Destination (Join-Path $runtime 'AutoHotkey-LICENSE.txt') -Force
+foreach ($programDir in $programDirs) {
+  $assetName = Convert-ToAssetName $programDir.Name
+  New-FlowCellPackage "FlowCell-$assetName" @($programDir.Name) $builtExePath $ahk $ahkLicense
+}
 
-@'
-This package includes AutoHotkey v2, licensed under GPL-2.0.
-AutoHotkey is third-party software and is not owned by FlowCell.
-AutoHotkey project/source code:
-https://github.com/AutoHotkey/AutoHotkey
-'@ | Set-Content -LiteralPath (Join-Path $runtime 'AutoHotkey-SOURCE.txt') -Encoding UTF8
+New-FlowCellPackage 'FlowCell-All' $programNames $builtExePath $ahk $ahkLicense
 
-Compress-Archive -LiteralPath $PortableRoot -DestinationPath $ZipPath -Force
-Write-Host "Portable package created: $ZipPath"
+Write-Host ''
+Write-Host 'FlowCell release assets are ready in dist:'
+Write-Host '  FlowCell-Core.zip'
+foreach ($programDir in $programDirs) {
+  $assetName = Convert-ToAssetName $programDir.Name
+  Write-Host "  FlowCell-$assetName.zip"
+}
+Write-Host '  FlowCell-All.zip'
