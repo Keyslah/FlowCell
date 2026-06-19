@@ -1,6 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LayoutSnapshot } from "../types";
-import { deleteFrontendMacro, runFrontendMacro, saveFrontendMacro } from "./macros";
 
 export interface PanelScriptChildRecord {
   slot: string;
@@ -45,67 +44,12 @@ export interface ToolsetActionResponse {
   [key: string]: unknown;
 }
 
-const BLENDER_ADDON_INSTALL_SCRIPT_TARGET =
-  "..\\Programs\\Blender\\SupportScripts\\Install-FlowCellBlenderAddon.ps1";
-
 function isTauriWindowHost(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 function formatInvokeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isBlenderProgramName(programName: string): boolean {
-  return programName.trim().toLowerCase() === "blender";
-}
-
-function appendStatusMessage(
-  result: CreateProgramFolderResult,
-  message: string
-): CreateProgramFolderResult {
-  const statusMessage = [result.statusMessage?.trim(), message.trim()]
-    .filter(Boolean)
-    .join("\n\n");
-  return {
-    ...result,
-    statusMessage: statusMessage || undefined
-  };
-}
-
-async function runBlenderAddonInstallAfterCreate(
-  programName: string
-): Promise<string> {
-  const panelFolders = await listPanelFolders(programName);
-  const panelName =
-    panelFolders.find((name) => name.trim().toLowerCase() === "utility") ?? panelFolders[0];
-  if (!panelName) {
-    throw new Error(
-      "Blender was added, but no panel folder exists yet to host the temporary setup macro."
-    );
-  }
-
-  const macro = await saveFrontendMacro({
-    currentId: null,
-    programName,
-    panelName,
-    label: "FlowCell Blender Add-on Setup",
-    steps: [
-      {
-        id: "step_001",
-        type: "Script",
-        delayMs: 0,
-        target: BLENDER_ADDON_INSTALL_SCRIPT_TARGET
-      }
-    ],
-    forceNewId: true
-  });
-
-  try {
-    return await runFrontendMacro(macro.id);
-  } finally {
-    await deleteFrontendMacro(macro.id).catch(() => undefined);
-  }
 }
 
 async function invokeProgramRailCommand<T>(
@@ -143,24 +87,10 @@ export async function createProgramFolder(
     throw new Error("Program folders can only be created from the desktop host.");
   }
 
-  const result = await invokeProgramRailCommand<CreateProgramFolderResult>("create_program_folder", {
+  return invokeProgramRailCommand<CreateProgramFolderResult>("create_program_folder", {
     name,
     exePath: exePath?.trim() ? exePath.trim() : null
   });
-
-  if (!isBlenderProgramName(result.programName)) {
-    return result;
-  }
-
-  try {
-    const installMessage = await runBlenderAddonInstallAfterCreate(result.programName);
-    return appendStatusMessage(result, installMessage);
-  } catch (error) {
-    return appendStatusMessage(
-      result,
-      `Blender add-on auto-install failed: ${formatInvokeError(error)}`
-    );
-  }
 }
 
 export async function renameProgramFolder(
