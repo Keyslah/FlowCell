@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LayoutSnapshot } from "../types";
+import { deleteFrontendMacro, runFrontendMacro, saveFrontendMacro } from "./macros";
 
 export interface PanelScriptChildRecord {
   slot: string;
@@ -44,12 +45,67 @@ export interface ToolsetActionResponse {
   [key: string]: unknown;
 }
 
+const BLENDER_ADDON_INSTALL_SCRIPT_TARGET =
+  "..\\Programs\\Blender\\SupportScripts\\Install-FlowCellBlenderAddon.ps1";
+
 function isTauriWindowHost(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 function formatInvokeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function isBlenderProgramName(programName: string): boolean {
+  return programName.trim().toLowerCase() === "blender";
+}
+
+function appendStatusMessage(
+  result: CreateProgramFolderResult,
+  message: string
+): CreateProgramFolderResult {
+  const statusMessage = [result.statusMessage?.trim(), message.trim()]
+    .filter(Boolean)
+    .join("\n\n");
+  return {
+    ...result,
+    statusMessage: statusMessage || undefined
+  };
+}
+
+async function runBlenderAddonInstallAfterCreate(
+  programName: string
+): Promise<string> {
+  const panelFolders = await listPanelFolders(programName);
+  const panelName =
+    panelFolders.find((name) => name.trim().toLowerCase() === "utility") ?? panelFolders[0];
+  if (!panelName) {
+    throw new Error(
+      "Blender was added, but no panel folder exists yet to host the temporary setup macro."
+    );
+  }
+
+  const macro = await saveFrontendMacro({
+    currentId: null,
+    programName,
+    panelName,
+    label: "FlowCell Blender Add-on Setup",
+    steps: [
+      {
+        id: "step_001",
+        type: "Script",
+        delayMs: 0,
+        target: BLENDER_ADDON_INSTALL_SCRIPT_TARGET
+      }
+    ],
+    forceNewId: true
+  });
+
+  try {
+    return await runFrontendMacro(macro.id);
+  } finally {
+    await deleteFrontendMacro(macro.id).catch(() => undefined);
+  }
 }
 
 async function invokeProgramRailCommand<T>(
@@ -87,10 +143,24 @@ export async function createProgramFolder(
     throw new Error("Program folders can only be created from the desktop host.");
   }
 
-  return invokeProgramRailCommand<CreateProgramFolderResult>("create_program_folder", {
+  const result = await invokeProgramRailCommand<CreateProgramFolderResult>("create_program_folder", {
     name,
     exePath: exePath?.trim() ? exePath.trim() : null
   });
+
+  if (!isBlenderProgramName(result.programName)) {
+    return result;
+  }
+
+  try {
+    const installMessage = await runBlenderAddonInstallAfterCreate(result.programName);
+    return appendStatusMessage(result, installMessage);
+  } catch (error) {
+    return appendStatusMessage(
+      result,
+      `Blender add-on auto-install failed: ${formatInvokeError(error)}`
+    );
+  }
 }
 
 export async function renameProgramFolder(
@@ -259,18 +329,15 @@ export async function saveLayoutSnapshot(
   snapshot: LayoutSnapshot
 ): Promise<string> {
   if (!isTauriWindowHost()) {
-    throw new Error("Layout files can only be saved from the desktop host.");
+    throw new Error("Layout snapshots can only be saved from the desktop host.");
   }
 
-  return invokeProgramRailCommand<string>("save_layout_snapshot", {
-    path,
-    snapshot
-  });
+  return invokeProgramRailCommand<string>("save_layout_snapshot", { path, snapshot });
 }
 
 export async function loadLayoutSnapshot(path: string): Promise<LayoutSnapshot> {
   if (!isTauriWindowHost()) {
-    throw new Error("Layout files can only be loaded from the desktop host.");
+    throw new Error("Layout snapshots can only be loaded from the desktop host.");
   }
 
   return invokeProgramRailCommand<LayoutSnapshot>("load_layout_snapshot", { path });
@@ -287,7 +354,7 @@ export async function runBlenderRotateTool(args: {
   distributeCount: number;
 }): Promise<string> {
   if (!isTauriWindowHost()) {
-    throw new Error("Blender tool actions can only be run from the desktop host.");
+    throw new Error("Blender tools can only be run from the desktop host.");
   }
 
   return invokeProgramRailCommand<string>("run_blender_rotate_tool", args);
@@ -297,13 +364,13 @@ export async function runBlenderAlignmentTool(args: {
   programName: string;
   panelName: string;
   fileName: string;
-  command: "align_axis" | "center_all";
+  command: string;
   axis: string;
   mode: string;
   modifier: string;
 }): Promise<string> {
   if (!isTauriWindowHost()) {
-    throw new Error("Blender tool actions can only be run from the desktop host.");
+    throw new Error("Blender tools can only be run from the desktop host.");
   }
 
   return invokeProgramRailCommand<string>("run_blender_alignment_tool", args);
@@ -313,14 +380,14 @@ export async function runIllustratorAlignmentTool(args: {
   programName: string;
   panelName: string;
   fileName: string;
-  command: "align_axis" | "center_all" | "center_artboard";
+  command: string;
   axis: string;
   mode: string;
   modifier: string;
   groupMode: boolean;
 }): Promise<string> {
   if (!isTauriWindowHost()) {
-    throw new Error("Illustrator tool actions can only be run from the desktop host.");
+    throw new Error("Illustrator tools can only be run from the desktop host.");
   }
 
   return invokeProgramRailCommand<string>("run_illustrator_alignment_tool", args);
@@ -330,10 +397,10 @@ export async function runBlenderSmartAxisTool(args: {
   programName: string;
   panelName: string;
   fileName: string;
-  command: "baseline" | "cycle_x" | "cycle_y" | "cycle_z" | "toggle_live" | "status";
+  command: string;
 }): Promise<SmartAxisToolStateResponse> {
   if (!isTauriWindowHost()) {
-    throw new Error("Blender tool actions can only be run from the desktop host.");
+    throw new Error("Blender tools can only be run from the desktop host.");
   }
 
   return invokeProgramRailCommand<SmartAxisToolStateResponse>("run_blender_smart_axis_tool", args);
@@ -347,7 +414,7 @@ export async function runBlenderToolsetAction(args: {
   payload?: Record<string, unknown>;
 }): Promise<ToolsetActionResponse> {
   if (!isTauriWindowHost()) {
-    throw new Error("Blender tool actions can only be run from the desktop host.");
+    throw new Error("Blender tools can only be run from the desktop host.");
   }
 
   return invokeProgramRailCommand<ToolsetActionResponse>("run_blender_toolset_action", args);
