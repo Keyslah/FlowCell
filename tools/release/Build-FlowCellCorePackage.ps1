@@ -1,0 +1,72 @@
+param(
+    [string]$RepoRoot = (Get-Location).Path,
+    [string]$OutputPath = (Join-Path (Get-Location).Path 'FlowCell-Core.zip')
+)
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$repo = [System.IO.Path]::GetFullPath($RepoRoot)
+$stage = Join-Path ([System.IO.Path]::GetTempPath()) ('flowcell-core-package-' + [guid]::NewGuid().ToString('N'))
+$coreRoot = Join-Path $stage 'FlowCell-Core'
+$programsRoot = Join-Path $stage 'Programs'
+
+New-Item -ItemType Directory -Path $coreRoot -Force | Out-Null
+
+$coreDirs = @('FlowCell', 'FlowCellFrontend', 'docs')
+foreach ($dir in $coreDirs) {
+    $src = Join-Path $repo $dir
+    if (Test-Path -LiteralPath $src -PathType Container) {
+        Copy-Item -LiteralPath $src -Destination $coreRoot -Recurse -Force
+    }
+}
+
+$coreFiles = @('README.md', 'CHANGELOG.md', 'SECURITY.md', 'CONTRIBUTING.md', 'PROGRAM_SUMMARY.txt', '.gitattributes')
+foreach ($file in $coreFiles) {
+    $src = Join-Path $repo $file
+    if (Test-Path -LiteralPath $src -PathType Leaf) {
+        Copy-Item -LiteralPath $src -Destination $coreRoot -Force
+    }
+}
+
+$programsSrc = Join-Path $repo 'Programs'
+if (-not (Test-Path -LiteralPath $programsSrc -PathType Container)) {
+    throw "Missing required Programs folder at repo root: $programsSrc"
+}
+Copy-Item -LiteralPath $programsSrc -Destination $stage -Recurse -Force
+
+$badPaths = @(
+    (Join-Path $coreRoot 'FlowCell-Core'),
+    (Join-Path $coreRoot 'Programs'),
+    (Join-Path $programsRoot 'FlowCell-Blender'),
+    (Join-Path $programsRoot 'FlowCell-Blender\FlowCell-Blender')
+)
+foreach ($bad in $badPaths) {
+    if (Test-Path -LiteralPath $bad) {
+        throw "Bad package layout detected: $bad"
+    }
+}
+
+$expected = @(
+    (Join-Path $coreRoot 'FlowCell'),
+    (Join-Path $coreRoot 'FlowCellFrontend'),
+    (Join-Path $programsRoot 'Blender')
+)
+foreach ($path in $expected) {
+    if (-not (Test-Path -LiteralPath $path)) {
+        throw "Expected package path missing: $path"
+    }
+}
+
+$out = [System.IO.Path]::GetFullPath($OutputPath)
+$outParent = Split-Path -Parent $out
+if ($outParent) {
+    New-Item -ItemType Directory -Path $outParent -Force | Out-Null
+}
+Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
+Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $out -Force
+
+Write-Host "Built package: $out"
+Write-Host 'Expected ZIP root layout:'
+Write-Host '  FlowCell-Core/'
+Write-Host '  Programs/'
