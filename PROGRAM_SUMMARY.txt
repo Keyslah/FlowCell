@@ -76,6 +76,7 @@ Layout and windows
 ------------------
 - `Save Layout` and `Load Layout` still persist and restore main-window and popout bounds through the layout snapshot path under `FlowCell\local\layouts`, including every duplicate grouped Pop, panel Fan, Codex Usage instance, and current toolbox window kind at its own saved bounds.
 - The main page top-right chrome buttons are wired to the native main Tauri window: `min` minimizes only the `main` window, `max` toggles maximize/restore, and `close` closes the main window.
+- The Core frontend resolves shared runtime values from `src/types.ts`; the stale CommonJS `src/types.js` shadow module has been removed so React mounts and Core button/window actions can run.
 - The Tauri frontend still uses transparent undecorated resizable windows with source-owned window routing in `FlowCellFrontend/src-tauri/src/main.rs` and `FlowCellFrontend/src/lib/windowing.ts`; toolbox open paths no longer use `window.open` OS-framed fallbacks, and toolbox chrome is allowed to set a transparent native background color so resized tool windows do not expose a white webview underlay.
 - Space-drag handling for grouped Pop, Codex Usage, generic toolbox, and exact toolbox windows now runs on the shell capture path, so holding Space and dragging a button surface starts native window movement before child controls can consume pointer-down events; resize handles still keep their resize behavior.
 - Window contexts now cover the main page, Binds, Macro Lab, Codex Usage, and the active toolbox/fan/script popout families.
