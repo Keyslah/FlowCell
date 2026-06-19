@@ -47,6 +47,43 @@ function Copy-AddonBundle {
     }
 }
 
+function Write-StartupBootstrap {
+    param([string]$VersionFolderPath)
+
+    $startupRoot = Join-Path $VersionFolderPath 'scripts\startup'
+    New-Item -ItemType Directory -Path $startupRoot -Force | Out-Null
+    $bootstrapPath = Join-Path $startupRoot 'flowcell_startup_bootstrap.py'
+    $bootstrap = @'
+from __future__ import annotations
+
+import importlib
+import pathlib
+import sys
+import traceback
+
+try:
+    import addon_utils
+
+    addons_path = pathlib.Path(__file__).resolve().parents[1] / "addons"
+    addons_text = str(addons_path)
+    if addons_text not in sys.path:
+        sys.path.insert(0, addons_text)
+
+    try:
+        addon_utils.enable("flowcell_actions", default_set=True, persistent=True)
+    except Exception:
+        flowcell_actions = importlib.import_module("flowcell_actions")
+        flowcell_actions = importlib.reload(flowcell_actions)
+        register = getattr(flowcell_actions, "register", None)
+        if callable(register):
+            register()
+except Exception:
+    traceback.print_exc()
+'@
+    Write-TextFile -Path $bootstrapPath -Text $bootstrap
+    return $bootstrapPath
+}
+
 $repoRoot = Get-RepoRoot
 $logRoot = Join-Path $repoRoot 'FlowCell\local\logs'
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
@@ -63,21 +100,25 @@ try {
 
     $versionFolders = @(Get-BlenderVersionFolders)
     if ($versionFolders.Count -eq 0) {
-        throw 'No Blender user settings folders were found. Open Blender once, close it, then click this button again.'
+        throw 'No Blender user settings folders were found. Open Blender once, close it, then start FlowCell again.'
     }
 
     $installedPaths = New-Object System.Collections.Generic.List[string]
+    $bootstrapPaths = New-Object System.Collections.Generic.List[string]
     foreach ($versionFolder in $versionFolders) {
         $addonPath = Join-Path $versionFolder.FullName 'scripts\addons'
         Copy-AddonBundle -SourceRoot $sourceRoot -AddonPath $addonPath
         [void]$installedPaths.Add($addonPath)
+        [void]$bootstrapPaths.Add((Write-StartupBootstrap -VersionFolderPath $versionFolder.FullName))
     }
 
     $message = @(
         'FlowCell Blender add-on files installed/repaired.',
         'Installed into:',
         ($installedPaths.ToArray() -join "`r`n"),
-        'Close and reopen Blender. FlowCell should now appear in Blender Preferences > Add-ons / Extensions > Installed. Enable FlowCell once if Blender did not auto-enable it.'
+        'Startup bootstrap written:',
+        ($bootstrapPaths.ToArray() -join "`r`n"),
+        'Close and reopen Blender once. The FlowCell bridge should auto-enable and buttons should respond after Blender restarts.'
     ) -join "`r`n"
     Write-Status -Text $message
     exit 0
