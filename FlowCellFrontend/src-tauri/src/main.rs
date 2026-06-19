@@ -81,6 +81,8 @@ const SCOPED_TOPMOST_POLL_MS: u64 = 180;
 const DEFAULT_BLENDER_BRIDGE_TIMEOUT_SECONDS: u64 = 20;
 const BLENDER_BRIDGE_RESPONSE_POLL_MS: u64 = 4;
 const BLENDER_BRIDGE_STATUS_TIMEOUT_MS: u64 = 450;
+const BLENDER_BRIDGE_NOT_RUNNING_MESSAGE: &str =
+    "Blender bridge is not running. Restart Blender once after adding Blender in FlowCell.";
 const FLOWCELL_CONTROLLER_SCRIPT_TIMEOUT_SECONDS: u64 = 25;
 #[cfg(windows)]
 const FLOWCELL_DIRECT_SCRIPT_RECEIVER_TITLE: &str = "FlowCellBackendDirectScriptReceiver";
@@ -231,8 +233,6 @@ struct BlenderAutomationConfig {
     #[serde(default)]
     bridge_folder: String,
     response_timeout_seconds: Option<u64>,
-    #[serde(default)]
-    setup_status_file_name: String,
     #[serde(default)]
     custom_actions_file_name: String,
     #[serde(default)]
@@ -1062,17 +1062,6 @@ fn infer_program_template_key(program_name: &str, exe_path: Option<&str>) -> &'s
     "generic"
 }
 
-fn default_program_panel_names(
-    program_name: &str,
-    exe_path: Option<&str>,
-) -> &'static [&'static str] {
-    match infer_program_template_key(program_name, exe_path) {
-        "blender" => &["Collections", "Files", "Utility"],
-        "illustrator" | "photoshop" => &["Layers", "Files", "Utility"],
-        _ => &["Files", "Utility"],
-    }
-}
-
 fn allowed_windows_script_extensions() -> &'static [&'static str] {
     &["ps1", "cmd", "bat", "exe", "lnk", "vbs", "ahk"]
 }
@@ -1498,6 +1487,12 @@ fn resolve_program_git_scripts_picker_directory(
     panel_name: &str,
 ) -> Result<PathBuf, String> {
     let scripts_directory = resolve_program_git_scripts_directory(program_name)?;
+    if !scripts_directory.is_dir() {
+        return Err(format!(
+            "Program Git Scripts folder was not found at {}.",
+            scripts_directory.display()
+        ));
+    }
     if panel_name.trim().is_empty() {
         return Ok(scripts_directory);
     }
@@ -2250,8 +2245,7 @@ fn select_hue_diverse_candidates(
             let score = |candidate: PaletteCandidate| {
                 let saturation = color_saturation(candidate.color);
                 let luminance = relative_luminance(candidate.color);
-                saturation * 120.0
-                    + f64::from(candidate.count.max(1)).ln() * 3.0
+                saturation * 120.0 + f64::from(candidate.count.max(1)).ln() * 3.0
                     - (luminance - 0.45).abs() * 20.0
             };
             score(*left)
@@ -2284,8 +2278,9 @@ fn select_hue_diverse_candidates(
                             selected
                                 .iter()
                                 .filter_map(|existing| {
-                                    color_hue_degrees(existing.color)
-                                        .map(|existing_hue| hue_distance_degrees(candidate_hue, existing_hue))
+                                    color_hue_degrees(existing.color).map(|existing_hue| {
+                                        hue_distance_degrees(candidate_hue, existing_hue)
+                                    })
                                 })
                                 .fold(180.0, f64::min)
                         })
@@ -6364,53 +6359,6 @@ fn restart_flowcell_headless_backend() -> Result<(), String> {
     }
 }
 
-fn copy_matching_files(
-    source_directory: &Path,
-    target_directory: &Path,
-    extension: &str,
-) -> Result<(), String> {
-    if !source_directory.is_dir() {
-        return Ok(());
-    }
-
-    fs::create_dir_all(target_directory)
-        .map_err(|error| format!("Failed to create {}: {error}", target_directory.display()))?;
-    let entries = fs::read_dir(source_directory)
-        .map_err(|error| format!("Failed to read {}: {error}", source_directory.display()))?;
-
-    for entry in entries {
-        let entry = entry
-            .map_err(|error| format!("Failed to read {}: {error}", source_directory.display()))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("Failed to inspect {}: {error}", entry.path().display()))?;
-        if !file_type.is_file() {
-            continue;
-        }
-
-        let source_path = entry.path();
-        let Some(source_extension) = source_path.extension().and_then(|value| value.to_str())
-        else {
-            continue;
-        };
-        if !source_extension.eq_ignore_ascii_case(extension) {
-            continue;
-        }
-
-        let file_name = entry.file_name();
-        let target_path = target_directory.join(file_name);
-        fs::copy(&source_path, &target_path).map_err(|error| {
-            format!(
-                "Failed to copy {} into {}: {error}",
-                source_path.display(),
-                target_path.display()
-            )
-        })?;
-    }
-
-    Ok(())
-}
-
 fn file_name_for_copy(source_path: &Path) -> Result<String, String> {
     source_path
         .file_name()
@@ -6547,78 +6495,60 @@ fn copy_script_into_panel_workflow(
     Ok((local_path, panel_path))
 }
 
-fn resolve_flowcell_local_app_data_root() -> Result<PathBuf, String> {
-    let local_app_data = env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            "LOCALAPPDATA could not be resolved for FlowCell bootstrap setup.".to_string()
-        })?;
-    Ok(local_app_data.join("FlowCell"))
-}
-
-fn resolve_blender_bootstrap_bridge_root(
-    config: &BlenderAutomationConfig,
-) -> Result<PathBuf, String> {
-    let configured_bridge_root = config.bridge_folder.trim();
-    if !configured_bridge_root.is_empty() {
-        return Ok(PathBuf::from(configured_bridge_root));
-    }
-
-    Ok(resolve_flowcell_local_app_data_root()?
-        .join("Bridges")
-        .join("Blender"))
-}
-
-fn resolve_blender_setup_status_file_name(config: &BlenderAutomationConfig) -> String {
-    let file_name = config.setup_status_file_name.trim();
-    if file_name.is_empty() {
-        "flowcell_bridge_setup.json".to_string()
-    } else {
-        file_name.to_string()
-    }
-}
-
 fn bootstrap_blender_program(program_name: &str, exe_path: Option<&str>) -> Result<String, String> {
     let blender_program_directory = resolve_program_directory("Blender")?;
-    let blender_scripts_source = resolve_program_git_scripts_directory("Blender")
-        .unwrap_or_else(|_| blender_program_directory.join("Blender Git Scripts"));
-    let blender_support_source = blender_program_directory.join("SupportScripts");
-    let local_program_root = resolve_flowcell_local_app_data_root()?
-        .join("Programs")
-        .join("Blender");
-    let local_scripts_root = local_program_root.join("Scripts");
-    let local_support_root = local_program_root.join("SupportScripts");
-    copy_matching_files(&blender_scripts_source, &local_scripts_root, "ps1")?;
-    copy_matching_files(&blender_support_source, &local_support_root, "ps1")?;
+    let installer_path = blender_program_directory
+        .join("SupportScripts")
+        .join("Install-FlowCellBlenderAddon.ps1");
+    if !installer_path.is_file() {
+        return Ok(format!(
+            "{} was added, but the Blender payload installer is missing. Extract FlowCell-Blender.zip into the FlowCell Core root, then add Blender again.",
+            program_name
+        ));
+    }
 
-    let config = read_blender_bridge_config().unwrap_or_default();
-    let bridge_root = resolve_blender_bootstrap_bridge_root(&config)?;
-    fs::create_dir_all(bridge_root.join("requests"))
-        .map_err(|error| format!("Failed to create Blender bridge requests folder: {error}"))?;
-    fs::create_dir_all(bridge_root.join("responses"))
-        .map_err(|error| format!("Failed to create Blender bridge responses folder: {error}"))?;
-    fs::create_dir_all(bridge_root.join("status"))
-        .map_err(|error| format!("Failed to create Blender bridge status folder: {error}"))?;
+    let mut command = Command::new(resolve_powershell_path());
+    command
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-File")
+        .arg(&installer_path);
+    if let Some(exe_path) = exe_path.map(str::trim).filter(|value| !value.is_empty()) {
+        command.arg("-BlenderExePath").arg(exe_path);
+    }
 
-    let setup_status_path = bridge_root.join(resolve_blender_setup_status_file_name(&config));
-    let payload = json!({
-        "programName": program_name,
-        "blenderExePath": exe_path.unwrap_or("").trim(),
-        "bridgeFolder": bridge_root.display().to_string(),
-        "createdAt": current_timestamp_string(),
-        "status": "pending_restart",
-    });
-    let raw = serde_json::to_string_pretty(&payload).map_err(|error| {
-        format!("Failed to serialize Blender bridge bootstrap payload: {error}")
-    })?;
-    fs::write(&setup_status_path, raw).map_err(|error| {
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = command.output().map_err(|error| {
         format!(
-            "Failed to write Blender bridge bootstrap record at {}: {error}",
-            setup_status_path.display()
+            "Failed to start the Blender bridge installer at {}: {error}",
+            installer_path.display()
         )
     })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let message = if !stdout.is_empty() { stdout } else { stderr };
 
-    Ok("Blender connected. Restart Blender to complete setup.".to_string())
+    if output.status.success() {
+        if message.is_empty() {
+            Ok(
+                "Blender bridge installed. Restart Blender once after adding Blender in FlowCell."
+                    .to_string(),
+            )
+        } else {
+            Ok(message)
+        }
+    } else if message.is_empty() {
+        Err(format!(
+            "Blender bridge installation failed with exit code {:?}.",
+            output.status.code()
+        ))
+    } else {
+        Err(message)
+    }
 }
 
 fn current_timestamp_string() -> String {
@@ -8092,10 +8022,10 @@ fn run_blender_bridge_action_direct_with_options(
     };
 
     let config = read_blender_bridge_config()?;
-    let bridge_root = resolve_blender_bridge_root(&config).ok_or_else(|| {
-        "FlowCell could not resolve the Blender bridge folder for tool actions.".to_string()
-    })?;
-    let target_blender_process_id = resolve_target_blender_process_id(&bridge_root)?;
+    let bridge_root = resolve_blender_bridge_root(&config)
+        .ok_or_else(|| BLENDER_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
+    let target_blender_process_id = resolve_target_blender_process_id(&bridge_root)
+        .map_err(|_| BLENDER_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
     let bridge_folder = bridge_root.join(target_blender_process_id.to_string());
     fs::create_dir_all(&bridge_folder).map_err(|error| {
         format!(
@@ -8137,13 +8067,7 @@ fn run_blender_bridge_action_direct_with_options(
         )
     });
     let response = wait_for_blender_bridge_response(&response_path, &request_id, timeout_duration)
-        .ok_or_else(|| {
-            format!(
-                "Timed out waiting for Blender. Target PID {}. Checked bridge path {}",
-                target_blender_process_id,
-                bridge_folder.display()
-            )
-        })?;
+        .ok_or_else(|| BLENDER_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
 
     let message = extract_blender_bridge_response_message(&response);
     write_last_action_status_message(&message);
@@ -8363,7 +8287,10 @@ fn get_foreground_process_info() -> Result<ForegroundProcessInfo, String> {
 #[tauri::command]
 fn list_program_folders() -> Result<Vec<String>, String> {
     let programs_root = resolve_programs_root()?;
-    list_child_directory_names(&programs_root)
+    Ok(list_child_directory_names(&programs_root)?
+        .into_iter()
+        .filter(|name| !name.to_ascii_lowercase().starts_with("flowcell-"))
+        .collect())
 }
 
 #[tauri::command]
@@ -8380,40 +8307,33 @@ fn create_program_folder(
     name: String,
     exe_path: Option<String>,
 ) -> Result<CreateProgramFolderResult, String> {
-    let program_name = validate_folder_name(&name, "Program")?;
-    let program_path = resolve_programs_root()?.join(&program_name);
-    fs::create_dir(&program_path).map_err(|error| match error.kind() {
-        ErrorKind::AlreadyExists => format!("Program folder '{}' already exists.", program_name),
-        _ => format!("Failed to create {}: {error}", program_path.display()),
-    })?;
-
-    let panels_root = program_path.join("Panels");
-    fs::create_dir_all(&panels_root)
-        .map_err(|error| format!("Failed to create {}: {error}", panels_root.display()))?;
-    let git_scripts_root = program_path.join(program_scripts_folder_name(&program_name, "Git")?);
-    let local_scripts_root =
-        program_path.join(program_scripts_folder_name(&program_name, "Local")?);
-    fs::create_dir_all(&git_scripts_root)
-        .map_err(|error| format!("Failed to create {}: {error}", git_scripts_root.display()))?;
-    fs::create_dir_all(&local_scripts_root)
-        .map_err(|error| format!("Failed to create {}: {error}", local_scripts_root.display()))?;
-    for panel_name in default_program_panel_names(&program_name, exe_path.as_deref()) {
-        let panel_path = panels_root.join(panel_name);
-        fs::create_dir_all(&panel_path)
-            .map_err(|error| format!("Failed to create {}: {error}", panel_path.display()))?;
-        let git_panel_path = git_scripts_root.join(panel_name);
-        fs::create_dir_all(&git_panel_path)
-            .map_err(|error| format!("Failed to create {}: {error}", git_panel_path.display()))?;
-    }
-
-    let status_message = if is_blender_program_name(&program_name) {
-        Some(bootstrap_blender_program(
-            &program_name,
-            exe_path.as_deref(),
-        )?)
+    let requested_program_name = validate_folder_name(&name, "Program")?;
+    let programs_root = resolve_programs_root()?;
+    let program_path = if let Some(existing_path) =
+        find_named_child_directory(&programs_root, &requested_program_name)?
+    {
+        existing_path
     } else {
-        None
+        let program_path = programs_root.join(&requested_program_name);
+        fs::create_dir(&program_path)
+            .map_err(|error| format!("Failed to create {}: {error}", program_path.display()))?;
+        program_path
     };
+    let program_name = program_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&requested_program_name)
+        .to_string();
+
+    let status_message =
+        if infer_program_template_key(&program_name, exe_path.as_deref()) == "blender" {
+            Some(bootstrap_blender_program(
+                &program_name,
+                exe_path.as_deref(),
+            )?)
+        } else {
+            None
+        };
 
     Ok(CreateProgramFolderResult {
         program_name,

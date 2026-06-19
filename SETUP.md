@@ -27,29 +27,23 @@ FlowCell-Photoshop.zip
 FlowCell-Windows.zip
 ```
 
-Base app plus one program.
-
-```text
-FlowCell-All.zip
-```
-
-Base app plus every included program.
+Optional program payloads. Start with `FlowCell-Core.zip`, then download whichever payload ZIPs you want.
 
 ## Install
 
-1. Right-click the ZIP you downloaded.
-2. Choose `Extract All`.
-3. Open the extracted `FlowCell-*` folder.
+1. Extract `FlowCell-Core.zip`.
+2. Extract each optional program payload ZIP into that same FlowCell Core folder and allow its `Programs` folder to merge.
+3. Open the extracted FlowCell Core folder.
 4. Double-click `Start FlowCell.cmd`.
 
-AutoHotkey v2 is bundled inside each portable package, so normal users do not need to install AutoHotkey separately.
+AutoHotkey v2 is bundled inside the Core package, so normal users do not need to install AutoHotkey separately.
 
 Normal users also do not need Node, npm, Rust, Cargo, or Tauri build tools.
 
 ## Expected portable folder
 
 ```text
-FlowCell-*/
+<FlowCell Core folder>/
   Start FlowCell.cmd
   FlowCell.exe
   FlowCell/
@@ -64,19 +58,11 @@ FlowCell-*/
   docs/
 ```
 
-`FlowCell-Core.zip` has an empty `Programs` folder. `FlowCell-Blender.zip`, `FlowCell-Illustrator.zip`, `FlowCell-Photoshop.zip`, and `FlowCell-Windows.zip` include only that matching program folder. `FlowCell-All.zip` includes every program folder.
+`FlowCell-Core.zip` has an empty `Programs` folder. Each program payload ZIP contains only `Programs\<ProgramName>`, so extracting it into the Core root adds that program without replacing Core files.
 
 ## Blender tools
 
-Blender integration still needs the FlowCell Blender add-on files installed into Blender.
-
-Use the paste-ready Blender add-on folder in:
-
-```text
-Programs/Blender/Blender Addons - Copy contents Into Blender/
-```
-
-Copy those files into Blender's user `scripts/addons` folder, enable the FlowCell add-on in Blender, then restart or reload Blender so the bridge is available.
+After merging the Blender payload, use `Add Program` and select `blender.exe`. FlowCell installs or repairs the bridge from `Programs\Blender`, writes the Blender startup bootstrap, and keeps panel creation separate. Restart Blender once after adding Blender. If Blender has never created its user settings folder, open Blender once, close it, then restart FlowCell and add Blender again.
 
 ## If FlowCell does not start
 

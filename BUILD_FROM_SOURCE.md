@@ -74,10 +74,9 @@ dist/FlowCell-Blender.zip
 dist/FlowCell-Illustrator.zip
 dist/FlowCell-Photoshop.zip
 dist/FlowCell-Windows.zip
-dist/FlowCell-All.zip
 ```
 
-Program ZIPs are generated from the folders currently under `Programs/`, so the exact list follows the repo's program folders.
+Program ZIPs are generated from the direct folders currently under `Programs/`, so the exact list follows the repo's program folders. `FlowCell-Core.zip` contains the full app with an empty `Programs` folder. Each program ZIP contains only `Programs\<ProgramName>` and is meant to be extracted into the Core root.
 
 Upload the ZIP files from `dist/` to GitHub Releases as release assets. Do not commit `dist/` into the repo.
 

@@ -27,13 +27,7 @@ FlowCell-Photoshop.zip
 FlowCell-Windows.zip
 ```
 
-Base app plus one program.
-
-```text
-FlowCell-All.zip
-```
-
-Base app plus every included program.
+Optional program payloads. Download `FlowCell-Core.zip`, then extract any payload ZIPs you want into the extracted FlowCell Core folder. Each payload merges into `Programs\<ProgramName>` and does not contain the Core app.
 
 After downloading, extract the ZIP, open the extracted folder, and double-click:
 
@@ -41,7 +35,7 @@ After downloading, extract the ZIP, open the extracted folder, and double-click:
 Start FlowCell.cmd
 ```
 
-Normal users do not need Node, npm, Rust, Cargo, Tauri build tools, or a separate AutoHotkey install. The portable packages include the built FlowCell app and bundled AutoHotkey v2 runtime.
+Normal users do not need Node, npm, Rust, Cargo, Tauri build tools, or a separate AutoHotkey install. The Core package includes the built FlowCell app and bundled AutoHotkey v2 runtime.
 
 Do not use GitHub's automatic `Source code (zip)` download as the app download. That source archive is for developers.
 

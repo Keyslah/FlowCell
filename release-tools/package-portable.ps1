@@ -7,10 +7,13 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName Microsoft.VisualBasic
+Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $DistRoot = Join-Path $RepoRoot 'dist'
 $ProgramsRoot = Join-Path $RepoRoot 'Programs'
+$StagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("FlowCell-package-" + [guid]::NewGuid().ToString('N'))
 
 function Stop-Package([string]$Message) {
   throw "[FlowCell package] $Message"
@@ -136,25 +139,62 @@ https://github.com/AutoHotkey/AutoHotkey
 '@ | Set-Content -LiteralPath (Join-Path $runtime 'AutoHotkey-SOURCE.txt') -Encoding UTF8
 }
 
-function Copy-ProgramsIntoPackage([string]$PackageRoot, [string[]]$ProgramNames) {
-  foreach ($programName in $ProgramNames) {
-    $source = Join-Path $ProgramsRoot $programName
-    $destination = Join-Path (Join-Path $PackageRoot 'Programs') $programName
-    Copy-Folder $source $destination
+function Move-ExistingZipToRecycleBin([string]$Path) {
+  if (Test-Path -LiteralPath $Path -PathType Leaf) {
+    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile(
+      $Path,
+      [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
+      [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
+    )
   }
 }
 
-function New-FlowCellPackage([string]$PackageName, [string[]]$ProgramNames, [string]$BuiltExePath, [string]$AhkPath, [string]$AhkLicensePath) {
-  $packageRoot = Join-Path $DistRoot $PackageName
-  $zipPath = Join-Path $DistRoot "$PackageName.zip"
+function New-ZipFromDirectory([string]$SourceRoot, [string]$ZipPath) {
+  Move-ExistingZipToRecycleBin $ZipPath
+  [System.IO.Compression.ZipFile]::CreateFromDirectory(
+    $SourceRoot,
+    $ZipPath,
+    [System.IO.Compression.CompressionLevel]::Optimal,
+    $false
+  )
+}
 
-  if (Test-Path -LiteralPath $packageRoot) { Remove-Item -LiteralPath $packageRoot -Recurse -Force }
-  if (Test-Path -LiteralPath $zipPath) { Remove-Item -LiteralPath $zipPath -Force }
+function Ensure-ZipDirectoryEntry([string]$ZipPath, [string]$EntryName) {
+  $archive = [System.IO.Compression.ZipFile]::Open(
+    $ZipPath,
+    [System.IO.Compression.ZipArchiveMode]::Update
+  )
+  try {
+    $existingEntry = $archive.Entries | Where-Object { $_.FullName -eq $EntryName } | Select-Object -First 1
+    if ($null -eq $existingEntry) {
+      [void]$archive.CreateEntry($EntryName)
+    }
+  } finally {
+    $archive.Dispose()
+  }
+}
+
+function New-FlowCellCorePackage([string]$BuiltExePath, [string]$AhkPath, [string]$AhkLicensePath) {
+  $packageRoot = Join-Path $StagingRoot 'Core'
+  $zipPath = Join-Path $DistRoot 'FlowCell-Core.zip'
 
   Copy-PortableCore $packageRoot $BuiltExePath $AhkPath $AhkLicensePath
-  Copy-ProgramsIntoPackage $packageRoot $ProgramNames
+  New-ZipFromDirectory $packageRoot $zipPath
+  Ensure-ZipDirectoryEntry $zipPath 'Programs/'
+  Write-Host "Created: $zipPath"
+}
 
-  Compress-Archive -LiteralPath $packageRoot -DestinationPath $zipPath -Force
+function New-FlowCellProgramPackage([System.IO.DirectoryInfo]$ProgramDirectory) {
+  $assetName = Convert-ToAssetName $ProgramDirectory.Name
+  $packageRoot = Join-Path $StagingRoot $assetName
+  $programsPackageRoot = Join-Path $packageRoot 'Programs'
+  $destination = Join-Path $programsPackageRoot $ProgramDirectory.Name
+  $zipPath = Join-Path $DistRoot "FlowCell-$assetName.zip"
+
+  New-Item -ItemType Directory -Path $programsPackageRoot -Force | Out-Null
+  Copy-Folder $ProgramDirectory.FullName $destination
+
+  New-ZipFromDirectory $packageRoot $zipPath
   Write-Host "Created: $zipPath"
 }
 
@@ -167,24 +207,25 @@ $ahk = Get-AhkPath $AutoHotkeyExe
 $ahkLicense = Get-AhkLicense $AutoHotkeyLicenseFile $ahk
 
 New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $StagingRoot -Force | Out-Null
 
 $programDirs = Get-ChildItem -LiteralPath $ProgramsRoot -Directory | Sort-Object Name
-$programNames = @($programDirs | ForEach-Object { $_.Name })
+try {
+  New-FlowCellCorePackage $builtExePath $ahk $ahkLicense
 
-New-FlowCellPackage 'FlowCell-Core' @() $builtExePath $ahk $ahkLicense
+  foreach ($programDir in $programDirs) {
+    New-FlowCellProgramPackage $programDir
+  }
 
-foreach ($programDir in $programDirs) {
-  $assetName = Convert-ToAssetName $programDir.Name
-  New-FlowCellPackage "FlowCell-$assetName" @($programDir.Name) $builtExePath $ahk $ahkLicense
+  Write-Host ''
+  Write-Host 'FlowCell release assets are ready in dist:'
+  Write-Host '  FlowCell-Core.zip'
+  foreach ($programDir in $programDirs) {
+    $assetName = Convert-ToAssetName $programDir.Name
+    Write-Host "  FlowCell-$assetName.zip"
+  }
+} finally {
+  if (Test-Path -LiteralPath $StagingRoot) {
+    Remove-Item -LiteralPath $StagingRoot -Recurse -Force
+  }
 }
-
-New-FlowCellPackage 'FlowCell-All' $programNames $builtExePath $ahk $ahkLicense
-
-Write-Host ''
-Write-Host 'FlowCell release assets are ready in dist:'
-Write-Host '  FlowCell-Core.zip'
-foreach ($programDir in $programDirs) {
-  $assetName = Convert-ToAssetName $programDir.Name
-  Write-Host "  FlowCell-$assetName.zip"
-}
-Write-Host '  FlowCell-All.zip'

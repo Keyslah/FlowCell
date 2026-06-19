@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [string]$BlenderExePath = ''
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -24,15 +26,67 @@ function Get-RepoRoot {
     Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
 }
 
-function Get-BlenderVersionFolders {
-    $settingsRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Blender Foundation\Blender'
-    if (-not (Test-Path -LiteralPath $settingsRoot -PathType Container)) {
-        return @()
+function Get-BlenderVersionFromExecutablePath {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ''
     }
 
-    return @(Get-ChildItem -LiteralPath $settingsRoot -Directory -ErrorAction SilentlyContinue |
+    $directory = Split-Path -Parent $Path.Trim()
+    while (-not [string]::IsNullOrWhiteSpace($directory)) {
+        $name = Split-Path -Leaf $directory
+        if ($name -match '(?i)(?:^|[^0-9])(?<version>\d+\.\d+(?:\.\d+)*)') {
+            return $Matches.version
+        }
+
+        $parent = Split-Path -Parent $directory
+        if ($parent -eq $directory) {
+            break
+        }
+        $directory = $parent
+    }
+
+    return ''
+}
+
+function Get-BlenderTargetVersionFolder {
+    param(
+        [string]$SettingsRoot,
+        [string]$ExecutablePath
+    )
+
+    $detectedVersion = Get-BlenderVersionFromExecutablePath -Path $ExecutablePath
+    if (-not [string]::IsNullOrWhiteSpace($detectedVersion)) {
+        return (Join-Path $SettingsRoot $detectedVersion)
+    }
+
+    $newestVersionFolder = Get-ChildItem -LiteralPath $SettingsRoot -Directory -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -match '^\d+(\.\d+)+$' } |
-        Sort-Object @{ Expression = { try { [version]$_.Name } catch { [version]'0.0' } } }, Name -Descending)
+        Sort-Object @{ Expression = { try { [version]$_.Name } catch { [version]'0.0' } } }, Name -Descending |
+        Select-Object -First 1
+    if ($null -eq $newestVersionFolder) {
+        return ''
+    }
+
+    return $newestVersionFolder.FullName
+}
+
+function Copy-DirectoryContents {
+    param(
+        [string]$SourceRoot,
+        [string]$DestinationRoot
+    )
+
+    New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null
+    Get-ChildItem -LiteralPath $SourceRoot -Force | ForEach-Object {
+        $destination = Join-Path $DestinationRoot $_.Name
+        if ($_.PSIsContainer) {
+            Copy-DirectoryContents -SourceRoot $_.FullName -DestinationRoot $destination
+        } else {
+            Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
+        }
+    }
 }
 
 function Copy-AddonBundle {
@@ -41,10 +95,7 @@ function Copy-AddonBundle {
         [string]$AddonPath
     )
 
-    New-Item -ItemType Directory -Path $AddonPath -Force | Out-Null
-    Get-ChildItem -LiteralPath $SourceRoot -Force | ForEach-Object {
-        Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $AddonPath $_.Name) -Recurse -Force
-    }
+    Copy-DirectoryContents -SourceRoot $SourceRoot -DestinationRoot $AddonPath
 }
 
 function Write-StartupBootstrap {
@@ -98,27 +149,29 @@ try {
         }
     }
 
-    $versionFolders = @(Get-BlenderVersionFolders)
-    if ($versionFolders.Count -eq 0) {
-        throw 'No Blender user settings folders were found. Open Blender once, close it, then start FlowCell again.'
+    $settingsRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Blender Foundation\Blender'
+    if (-not (Test-Path -LiteralPath $settingsRoot -PathType Container)) {
+        Write-Status -Text 'Blender was added, but no Blender settings folder exists yet. Open Blender once, close it, then restart FlowCell.'
+        exit 0
     }
 
-    $installedPaths = New-Object System.Collections.Generic.List[string]
-    $bootstrapPaths = New-Object System.Collections.Generic.List[string]
-    foreach ($versionFolder in $versionFolders) {
-        $addonPath = Join-Path $versionFolder.FullName 'scripts\addons'
-        Copy-AddonBundle -SourceRoot $sourceRoot -AddonPath $addonPath
-        [void]$installedPaths.Add($addonPath)
-        [void]$bootstrapPaths.Add((Write-StartupBootstrap -VersionFolderPath $versionFolder.FullName))
+    $versionFolderPath = Get-BlenderTargetVersionFolder -SettingsRoot $settingsRoot -ExecutablePath $BlenderExePath
+    if ([string]::IsNullOrWhiteSpace($versionFolderPath)) {
+        Write-Status -Text 'Blender was added, but no Blender settings version folder could be determined. Open Blender once, close it, then restart FlowCell.'
+        exit 0
     }
+
+    $addonPath = Join-Path $versionFolderPath 'scripts\addons'
+    Copy-AddonBundle -SourceRoot $sourceRoot -AddonPath $addonPath
+    $bootstrapPath = Write-StartupBootstrap -VersionFolderPath $versionFolderPath
 
     $message = @(
         'FlowCell Blender add-on files installed/repaired.',
         'Installed into:',
-        ($installedPaths.ToArray() -join "`r`n"),
+        $addonPath,
         'Startup bootstrap written:',
-        ($bootstrapPaths.ToArray() -join "`r`n"),
-        'Close and reopen Blender once. The FlowCell bridge should auto-enable and buttons should respond after Blender restarts.'
+        $bootstrapPath,
+        'Restart Blender once after adding Blender in FlowCell. The bridge will auto-enable and start its request timer.'
     ) -join "`r`n"
     Write-Status -Text $message
     exit 0

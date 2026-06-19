@@ -44,26 +44,12 @@ export interface ToolsetActionResponse {
   [key: string]: unknown;
 }
 
-const AUTO_CREATED_PANEL_NAMES = ["Collections", "Files", "Utility", "Layers"];
-
 function isTauriWindowHost(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 function formatInvokeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function isPackageWrapperProgramName(programName: string): boolean {
-  return /^FlowCell-[A-Za-z0-9._ -]+$/.test(programName.trim());
-}
-
-async function removeAutoCreatedPanelFolders(programName: string): Promise<void> {
-  await Promise.all(
-    AUTO_CREATED_PANEL_NAMES.map((panelName) =>
-      deletePanelFolder(programName, panelName).catch(() => undefined)
-    )
-  );
 }
 
 async function invokeProgramRailCommand<T>(
@@ -82,8 +68,7 @@ export async function listProgramFolders(): Promise<string[]> {
     return [];
   }
 
-  const programNames = await invokeProgramRailCommand<string[]>("list_program_folders");
-  return programNames.filter((programName) => !isPackageWrapperProgramName(programName));
+  return invokeProgramRailCommand<string[]>("list_program_folders");
 }
 
 export async function listPanelFolders(programName: string): Promise<string[]> {
@@ -102,12 +87,10 @@ export async function createProgramFolder(
     throw new Error("Program folders can only be created from the desktop host.");
   }
 
-  const result = await invokeProgramRailCommand<CreateProgramFolderResult>("create_program_folder", {
+  return invokeProgramRailCommand<CreateProgramFolderResult>("create_program_folder", {
     name,
     exePath: exePath?.trim() ? exePath.trim() : null
   });
-  await removeAutoCreatedPanelFolders(result.programName);
-  return result;
 }
 
 export async function renameProgramFolder(
