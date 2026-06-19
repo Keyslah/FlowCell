@@ -1,5 +1,5 @@
 FlowCell Program Summary
-Last updated: 2026-06-15
+Last updated: 2026-06-18
 
 Purpose
 -------
@@ -117,6 +117,7 @@ Design references
 
 Maintenance rule
 ----------------
+- `tools/release/Build-FlowCellCorePackage.ps1` builds `FlowCell-Core.zip` from the existing packaged app at `dist\FlowCell-Core`, keeps `FlowCell.exe` byte-identical, excludes `Programs`, and rejects nested `FlowCell-Core` package roots.
 - `README.md` is now the compact human overview for FlowCell, with links to the core runtime files, program-specific README files, the embedded `docs/ai-skills.md` FlowCell-only AI skills reference with top in-page skill links, and the renamed `docs/blender-scripts.md` Blender setup plus a real Add Script/toolset prompt contract with metadata directives, required toolset slots, command-routing rules, and copyable Python examples.
 - `README.md` line 7 links `AutoHotkey V2` directly to the official AutoHotkey v2 installer, while line 8 links the anti-cheat AutoHotkey toggle documentation.
 - `README.md` also documents the Windows Files panel `Organize Folder` structure, including `01 src\00 assets`, preserved program folders, builds, releases, and root archive behavior.
