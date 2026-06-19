@@ -19,6 +19,11 @@ $flowCellLocalRoot = Join-Path $repoRoot 'FlowCell\local'
 $localConfigPath = Join-Path $flowCellLocalRoot 'private\blender.config.local.json'
 $repoProgramsConfigPath = Join-Path $repoRoot 'Programs\Blender\config.json'
 $legacyConfigPath = Join-Path $repoRoot 'Blender\config.json'
+$bridgeLayoutPath = Join-Path $PSScriptRoot 'FlowCellBlenderBridgeLayout.ps1'
+if (-not (Test-Path -LiteralPath $bridgeLayoutPath -PathType Leaf)) {
+    throw "Blender bridge layout helper not found: $bridgeLayoutPath"
+}
+. $bridgeLayoutPath
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = if (Test-Path -LiteralPath $localConfigPath -PathType Leaf) {
         $localConfigPath
@@ -203,7 +208,11 @@ function Resolve-FlowCellConfiguredBridgeFolder([object]$Config) {
     }
 
     $bridgeFolderLeafName = Get-FlowCellConfiguredBridgeFolderLeafName -Config $Config
-    $blenderAppDataRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Blender Foundation\Blender'
+    $applicationDataRoot = [string]$env:APPDATA
+    if ([string]::IsNullOrWhiteSpace($applicationDataRoot)) {
+        $applicationDataRoot = [Environment]::GetFolderPath('ApplicationData')
+    }
+    $blenderAppDataRoot = Join-Path $applicationDataRoot 'Blender Foundation\Blender'
     if (-not (Test-Path -LiteralPath $blenderAppDataRoot -PathType Container)) {
         return ''
     }
@@ -231,19 +240,20 @@ function Read-ConfigFile([string]$Path) {
     }
 
     $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json
-    if ($null -eq $config.automation) {
+    if (-not $config.PSObject.Properties['automation'] -or $null -eq $config.automation) {
         $config | Add-Member -MemberType NoteProperty -Name automation -Value ([pscustomobject]@{}) -Force
     }
 
-    if ([string]::IsNullOrWhiteSpace([string]$config.automation.bridgeFolder)) {
-        $resolvedBridgeFolder = Resolve-FlowCellConfiguredBridgeFolder -Config $config
-        if (-not [string]::IsNullOrWhiteSpace($resolvedBridgeFolder)) {
-            $config.automation | Add-Member -MemberType NoteProperty -Name bridgeFolder -Value $resolvedBridgeFolder -Force
-        }
+    $resolvedBridgeFolder = Resolve-FlowCellBlenderBridgeFolder -Config $config
+    if ([string]::IsNullOrWhiteSpace($resolvedBridgeFolder)) {
+        $diagnostics = Resolve-FlowCellBlenderBridgeFolder -Config $config -IncludeDiagnostics
+        $checkedSummary = if (@($diagnostics.CheckedPaths).Count -gt 0) { @($diagnostics.CheckedPaths) -join '; ' } else { '(none; Blender AppData root was not found)' }
+        throw "Blender bridge folder could not be resolved. Config path: $Path. Checked path(s): $checkedSummary"
     }
+    $config.automation | Add-Member -MemberType NoteProperty -Name bridgeFolder -Value $resolvedBridgeFolder -Force
 
-    if ($null -eq $config.automation.responseTimeoutSeconds) {
-        $config.automation | Add-Member -MemberType NoteProperty -Name responseTimeoutSeconds -Value 20
+    if (-not $config.automation.PSObject.Properties['responseTimeoutSeconds'] -or $null -eq $config.automation.responseTimeoutSeconds) {
+        $config.automation | Add-Member -MemberType NoteProperty -Name responseTimeoutSeconds -Value 20 -Force
     }
 
     return $config
@@ -356,7 +366,11 @@ function Get-BridgeFolderCandidates([object]$Config, [int]$TargetBlenderProcessI
     $rootCandidates = New-Object System.Collections.Generic.List[object]
     $configuredBridgeRoot = [string]$Config.automation.bridgeFolder
     $bridgeFolderLeafName = Get-ConfiguredBridgeFolderLeafName -Config $Config
-    $blenderAppDataRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Blender Foundation\Blender'
+    $applicationDataRoot = [string]$env:APPDATA
+    if ([string]::IsNullOrWhiteSpace($applicationDataRoot)) {
+        $applicationDataRoot = [Environment]::GetFolderPath('ApplicationData')
+    }
+    $blenderAppDataRoot = Join-Path $applicationDataRoot 'Blender Foundation\Blender'
 
     $addRootCandidate = {
         param([string]$BridgeRoot)
@@ -533,7 +547,7 @@ try {
     }
 
     $targetBlenderProcessId = Get-TargetBlenderProcessId
-    $requestId = [guid]::NewGuid().ToString()
+    $requestId = [guid]::NewGuid().ToString('N')
     $timeoutSeconds = [Math]::Max([int]$config.automation.responseTimeoutSeconds, 1)
     if ([string]$Action -eq 'render_active_object_png_to_images') {
         $timeoutSeconds = [Math]::Max($timeoutSeconds, 60)
@@ -596,8 +610,19 @@ try {
         if (Test-Path -LiteralPath $responsePath -PathType Leaf) {
             Remove-Item -LiteralPath $responsePath -Force -ErrorAction SilentlyContinue
         }
+        if (Test-Path -LiteralPath $requestPath -PathType Leaf) {
+            Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue
+        }
 
-        [System.IO.File]::WriteAllText($requestPath, $json, $utf8NoBom)
+        $temporaryRequestPath = '{0}.{1}.tmp' -f $requestPath, $requestId
+        [System.IO.File]::WriteAllText($temporaryRequestPath, $json, $utf8NoBom)
+        Move-Item -LiteralPath $temporaryRequestPath -Destination $requestPath -Force
+
+        $waitForResponse = [bool]$PassThruResponse -or (Test-ActionToastEnabled -Action $Action)
+        if (-not $waitForResponse) {
+            Write-Status ('Queued Blender action: {0}' -f $Label)
+            exit 0
+        }
 
         $attemptDeadline = if ($index -lt (@($bridgeFolders).Count - 1)) {
             (Get-Date).AddSeconds($firstAttemptSeconds)

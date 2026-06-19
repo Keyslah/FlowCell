@@ -71,6 +71,7 @@ import re
 import inspect
 import runpy
 import tempfile
+import time
 import traceback
 from pathlib import Path
 
@@ -2155,8 +2156,27 @@ def perform_snapshot(context: bpy.types.Context) -> str:
 
 
 def perform_make_layers(context: bpy.types.Context) -> str:
-    ensure_root_structure(context.scene.collection)
-    return "Ensured Live, Snapshots, Trash, and Archive."
+    scene_root = context.scene.collection
+    root_collections = ensure_root_structure(scene_root)
+    live_collection = root_collections["Live"]
+    archive_collection = root_collections["Archive"]
+    parent_map = build_collection_parent_map(scene_root)
+    moved_to_live = 0
+
+    for obj in list(context.scene.objects):
+        if not object_is_visible(obj, context.view_layer):
+            continue
+        if object_is_exclusively_in_root(obj, archive_collection, parent_map):
+            continue
+        if not object_is_in_root(obj, live_collection, parent_map):
+            moved_to_live += 1
+        move_object_to_target(obj, live_collection, archive_collection, parent_map)
+        obj[TARGET_NAME_PROP] = strip_version_prefix(obj.name) or obj.name
+
+    return (
+        "Ensured Live, Snapshots, Trash, and Archive. "
+        f"Moved {moved_to_live} visible object(s) to Live."
+    )
 
 
 def perform_sort_live(context: bpy.types.Context) -> str:
@@ -3863,11 +3883,6 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
-
-
-
-
 
 
 

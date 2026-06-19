@@ -770,8 +770,6 @@ def perform_batch_rename_selected_objects(
 
 
 def execute_bridge_operator(action: str, data: dict) -> dict[str, object]:
-    global actions
-    actions = importlib.reload(actions)
     set_bridge_result("", "")
     normalized = str(action or "").strip().lower()
     result: dict[str, object] = {}
