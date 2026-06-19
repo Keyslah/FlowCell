@@ -5,6 +5,7 @@ set "ROOT=%~dp0"
 set "APP_EXE=%ROOT%FlowCell.exe"
 set "AHK_EXE=%ROOT%FlowCell\runtime\AutoHotkey64.exe"
 set "AHK_SCRIPT=%ROOT%FlowCell\FlowCellBackend.ahk"
+set "PREFLIGHT=%ROOT%FlowCell\helpers\Start-FlowCellPreflight.ps1"
 
 if not exist "%APP_EXE%" (
   echo [FlowCell] Missing FlowCell.exe next to Start FlowCell.cmd.
@@ -27,6 +28,10 @@ if not exist "%AHK_SCRIPT%" (
   echo [FlowCell] Re-extract the portable ZIP or rebuild the portable package.
   pause
   exit /b 1
+)
+
+if exist "%PREFLIGHT%" (
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREFLIGHT%"
 )
 
 start "FlowCell Backend" "%AHK_EXE%" "%AHK_SCRIPT%"
