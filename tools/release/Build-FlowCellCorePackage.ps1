@@ -9,7 +9,6 @@ $ErrorActionPreference = 'Stop'
 $repo = [System.IO.Path]::GetFullPath($RepoRoot)
 $stage = Join-Path ([System.IO.Path]::GetTempPath()) ('flowcell-core-package-' + [guid]::NewGuid().ToString('N'))
 $coreRoot = Join-Path $stage 'FlowCell-Core'
-$programsRoot = Join-Path $stage 'Programs'
 
 New-Item -ItemType Directory -Path $coreRoot -Force | Out-Null
 
@@ -29,32 +28,24 @@ foreach ($file in $coreFiles) {
     }
 }
 
-$programsSrc = Join-Path $repo 'Programs'
-if (-not (Test-Path -LiteralPath $programsSrc -PathType Container)) {
-    throw "Missing required Programs folder at repo root: $programsSrc"
-}
-Copy-Item -LiteralPath $programsSrc -Destination $stage -Recurse -Force
-
 $badPaths = @(
-    (Join-Path $coreRoot 'FlowCell-Core'),
+    (Join-Path $stage 'Programs'),
     (Join-Path $coreRoot 'Programs'),
-    (Join-Path $programsRoot 'FlowCell-Blender'),
-    (Join-Path $programsRoot 'FlowCell-Blender\FlowCell-Blender')
+    (Join-Path $coreRoot 'FlowCell-Core')
 )
 foreach ($bad in $badPaths) {
     if (Test-Path -LiteralPath $bad) {
-        throw "Bad package layout detected: $bad"
+        throw "Bad FlowCell-Core package layout detected: $bad"
     }
 }
 
 $expected = @(
     (Join-Path $coreRoot 'FlowCell'),
-    (Join-Path $coreRoot 'FlowCellFrontend'),
-    (Join-Path $programsRoot 'Blender')
+    (Join-Path $coreRoot 'FlowCellFrontend')
 )
 foreach ($path in $expected) {
     if (-not (Test-Path -LiteralPath $path)) {
-        throw "Expected package path missing: $path"
+        throw "Expected FlowCell-Core package path missing: $path"
     }
 }
 
@@ -64,9 +55,9 @@ if ($outParent) {
     New-Item -ItemType Directory -Path $outParent -Force | Out-Null
 }
 Remove-Item -LiteralPath $out -Force -ErrorAction SilentlyContinue
-Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $out -Force
+Compress-Archive -Path $coreRoot -DestinationPath $out -Force
 
 Write-Host "Built package: $out"
 Write-Host 'Expected ZIP root layout:'
 Write-Host '  FlowCell-Core/'
-Write-Host '  Programs/'
+Write-Host 'No Programs folder is included in this ZIP.'
