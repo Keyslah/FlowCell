@@ -203,6 +203,30 @@ GetFlowCellIllustratorPrewarmScriptPath() {
     return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_Prewarm.jsx"
 }
 
+GetDefaultIllustratorAnchorHotkeyBinding() {
+    scriptPath := GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_SetAnchorHotkey.jsx"
+    if !FileExist(scriptPath)
+        return ""
+
+    return {
+        shortcut: "~v",
+        scriptPath: scriptPath,
+        programTabId: 0
+    }
+}
+
+ShouldRestoreDefaultIllustratorAnchorBinding(bindingFilePath) {
+    if bindingFilePath = "" || !FileExist(bindingFilePath)
+        return true
+    try {
+        rawValue := IniRead(bindingFilePath, "Meta", "IllustratorAnchorDefaultEnabled", "1")
+        normalized := StrLower(Trim(rawValue ""))
+        return normalized != "0" && normalized != "false" && normalized != "no"
+    } catch {
+        return true
+    }
+}
+
 GetDefaultDummyMonitorHotkeyBinding() {
     scriptPath := GetFlowCellWorkspaceRoot() "\Programs\Windows\Panels\Utility\Launch-DummyMonitorToggle.vbs"
     if !FileExist(scriptPath)
@@ -6838,7 +6862,7 @@ class ScriptShortcutManager {
         this.nextId := 1
 
         if !FileExist(this.bindingFilePath) {
-            this.EnsureDefaultDummyMonitorBinding()
+            this.EnsureDefaultBindings()
             return
         }
 
@@ -6850,12 +6874,12 @@ class ScriptShortcutManager {
             this.logger.Error("Failed to read the FlowCell bindings file.", err)
             this.bindings := []
             this.nextId := 1
-            this.EnsureDefaultDummyMonitorBinding()
+            this.EnsureDefaultBindings()
             return
         }
 
         if idText = "" {
-            this.EnsureDefaultDummyMonitorBinding()
+            this.EnsureDefaultBindings()
             return
         }
 
@@ -6881,7 +6905,7 @@ class ScriptShortcutManager {
             }
         }
 
-        this.EnsureDefaultDummyMonitorBinding()
+        this.EnsureDefaultBindings()
     }
 
     SaveToDisk() {
@@ -6905,6 +6929,41 @@ class ScriptShortcutManager {
         for binding in this.bindings
             ids.Push(binding.id)
         return JoinLines(ids, "|")
+    }
+
+    EnsureDefaultBindings() {
+        this.EnsureDefaultIllustratorAnchorBinding()
+        this.EnsureDefaultDummyMonitorBinding()
+    }
+
+    EnsureDefaultIllustratorAnchorBinding() {
+        if !ShouldRestoreDefaultIllustratorAnchorBinding(this.bindingFilePath)
+            return
+
+        defaultBinding := GetDefaultIllustratorAnchorHotkeyBinding()
+        if !IsObject(defaultBinding)
+            return
+
+        defaultShortcut := NormalizeShortcut(defaultBinding.shortcut)
+        defaultPath := StrLower(ResolveLegacyWindowsProgramPath(defaultBinding.scriptPath, false))
+        for binding in this.bindings {
+            ; Preserve an explicit user choice for V, and do not duplicate an
+            ; anchor helper that the user already assigned to another key.
+            if NormalizeShortcut(binding.shortcut) = defaultShortcut
+                return
+            if StrLower(ResolveLegacyWindowsProgramPath(binding.scriptPath, false)) = defaultPath
+                return
+        }
+
+        this.bindings.Push({
+            id: this.nextId,
+            shortcut: defaultBinding.shortcut,
+            scriptPath: defaultBinding.scriptPath,
+            programTabId: defaultBinding.programTabId,
+            status: "Loaded"
+        })
+        this.nextId += 1
+        this.logger.Info("Restored default Illustrator V anchor binding. Shortcut=" defaultBinding.shortcut " | Script=" defaultBinding.scriptPath)
     }
 
     EnsureDefaultDummyMonitorBinding() {
