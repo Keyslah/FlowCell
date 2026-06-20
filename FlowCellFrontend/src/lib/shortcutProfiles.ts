@@ -171,6 +171,9 @@ function buildButtonLabelLookup(workspace: BindsWorkspaceData): Map<string, stri
     program.panels.forEach((panel) => {
       panel.buttons.forEach((button) => {
         labels.set(buildBindingOwnerKey(program.programTabId, button.target), button.label);
+        if (button.kind?.trim().toLowerCase() === "core_action") {
+          labels.set(buildBindingOwnerKey(0, button.target), button.label);
+        }
         if (button.executionTarget?.trim()) {
           labels.set(
             buildBindingOwnerKey(program.programTabId, button.executionTarget),
@@ -197,9 +200,10 @@ function buildUsedShortcutOwnerMap(args: {
   const selectedTargetKey = selectedButton
     ? buildBindingOwnerKey(args.selectedProgramTabId, selectedButton.target)
     : "";
+  const selectedButtonKind = selectedButton?.kind?.trim().toLowerCase() ?? "";
   const selectedActionId =
-    selectedButton?.kind?.trim().toLowerCase() === "macro"
-      ? selectedButton.target.trim()
+    selectedButtonKind === "macro" || selectedButtonKind === "core_action"
+      ? selectedButton?.target.trim() ?? ""
       : "";
   const selectedExecutionTargetKey =
     selectedButton?.executionTarget?.trim()

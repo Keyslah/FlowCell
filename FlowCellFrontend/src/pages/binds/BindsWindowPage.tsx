@@ -1,7 +1,11 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { loadBindsWorkspace, saveBindShortcut } from "../../lib/binds";
+import {
+  loadBindsWorkspace,
+  saveBindShortcut,
+  saveCoreActionShortcut
+} from "../../lib/binds";
 import { formatShortcutForDisplay, parseShortcutInput } from "../../lib/bindings";
 import {
   MACRO_PANEL_CHANGED_EVENT,
@@ -421,6 +425,16 @@ export default function BindsWindowPage({
     try {
       if (activeButton.kind.trim().toLowerCase() === "macro") {
         const result = await saveMacroShortcut({
+          actionId: activeButton.target,
+          shortcut: validation.shortcut
+        });
+        await reloadWorkspace(selection);
+        setStatusMessage(result.message);
+        return;
+      }
+
+      if (activeButton.kind.trim().toLowerCase() === "core_action") {
+        const result = await saveCoreActionShortcut({
           actionId: activeButton.target,
           shortcut: validation.shortcut
         });

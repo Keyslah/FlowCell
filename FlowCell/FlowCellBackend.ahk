@@ -203,28 +203,8 @@ GetFlowCellIllustratorPrewarmScriptPath() {
     return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_Prewarm.jsx"
 }
 
-GetDefaultIllustratorAnchorHotkeyBinding() {
-    scriptPath := GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_SetAnchorHotkey.jsx"
-    if !FileExist(scriptPath)
-        return ""
-
-    return {
-        shortcut: "~v",
-        scriptPath: scriptPath,
-        programTabId: 0
-    }
-}
-
-ShouldRestoreDefaultIllustratorAnchorBinding(bindingFilePath) {
-    if bindingFilePath = "" || !FileExist(bindingFilePath)
-        return true
-    try {
-        rawValue := IniRead(bindingFilePath, "Meta", "IllustratorAnchorDefaultEnabled", "1")
-        normalized := StrLower(Trim(rawValue ""))
-        return normalized != "0" && normalized != "false" && normalized != "no"
-    } catch {
-        return true
-    }
+GetFlowCellIllustratorAnchorScriptPath() {
+    return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_SetAnchorHotkey.jsx"
 }
 
 GetDefaultDummyMonitorHotkeyBinding() {
@@ -269,6 +249,8 @@ class FlowCellApp {
         this.illustratorAutomationLastDirectActionTick := 0
         this.illustratorAutomationPrewarmTimer := ""
         this.actions := []
+        if FileExist(GetFlowCellIllustratorAnchorScriptPath())
+            this.actions.Push(SetIllustratorAnchorAction(this))
         this.actions.Push(SaveSelectedObjToProject3DAction(this))
         this.actions.Push(SaveSelectedObjToBlenderAction(this))
         this.actions.Push(SaveSelectedPngToBlenderLithoAction(this))
@@ -1313,11 +1295,39 @@ class FlowCellApp {
     }
 
     HandleActionHotkeyInvocation(actionId, shortcut) {
+        global flowCellLastActionStatusPath
         action := this.GetActionById(actionId)
         if !IsObject(action)
             return
 
         this.logger.Info("Action hotkey requested. Action=" actionId " | Shortcut=" shortcut)
+        if action.HasOwnProp("RunFromHotkeyDirect") && action.RunFromHotkeyDirect {
+            try {
+                result := action.Run("")
+                statusText := this.BuildActionStatus(action, result)
+                WriteTextFile(flowCellLastActionStatusPath, statusText)
+                this.SetActionStatus(statusText)
+                this.logger.Info(
+                    "Action hotkey result: "
+                    . action.Id
+                    . " | Attempted="
+                    . BoolToWord(result.attempted)
+                    . " | DeliverySucceeded="
+                    . BoolToWord(result.deliverySucceeded)
+                    . " | EffectConfirmed="
+                    . BoolToWord(result.effectConfirmed)
+                    . " | Method="
+                    . result.method
+                )
+            } catch as err {
+                statusText := action.Label " failed.`r`n" err.Message
+                WriteTextFile(flowCellLastActionStatusPath, statusText)
+                this.SetActionStatus(statusText)
+                this.logger.Error("Action hotkey failed: " action.Id, err)
+            }
+            return
+        }
+
         result := this.RunBackendActionCommand(actionId, shortcut)
         statusText := Trim(result.statusText) != "" ? result.statusText : result.detail
         this.logger.Info("Action hotkey result: " action.Id " | Attempted=" BoolToWord(result.attempted) " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method)
@@ -3877,6 +3887,39 @@ class ThreeDExtrudeDepth16mmAction {
             return value != "" ? value : ""
         } catch {
             return ""
+        }
+    }
+}
+
+class SetIllustratorAnchorAction {
+    __New(app) {
+        this.app := app
+        this.Id := "illustrator_set_anchor"
+        this.Label := "Set Anchor"
+        this.RequiresExactLayersScan := false
+        this.RunFromHotkeyDirect := true
+        this.HotIfWinTitle := "ahk_exe Illustrator.exe"
+    }
+
+    Run(scanResult) {
+        helperPath := GetFlowCellIllustratorAnchorScriptPath()
+        helperResult := this.app.RunIllustratorScript(
+            helperPath,
+            "action " this.Id,
+            0,
+            false
+        )
+        normalizedDetail := StrLower(helperResult.detail)
+        effectConfirmed := helperResult.succeeded && InStr(normalizedDetail, "anchor set") > 0
+        return {
+            attempted: helperResult.attempted,
+            deliverySucceeded: helperResult.succeeded,
+            effectConfirmed: effectConfirmed,
+            method: helperResult.method,
+            detail: helperResult.detail,
+            note: effectConfirmed
+                ? "The current Illustrator selection is now the shared FlowCell anchor."
+                : "Select one or more unlocked Illustrator objects, then run Set Anchor again."
         }
     }
 }
@@ -6932,38 +6975,7 @@ class ScriptShortcutManager {
     }
 
     EnsureDefaultBindings() {
-        this.EnsureDefaultIllustratorAnchorBinding()
         this.EnsureDefaultDummyMonitorBinding()
-    }
-
-    EnsureDefaultIllustratorAnchorBinding() {
-        if !ShouldRestoreDefaultIllustratorAnchorBinding(this.bindingFilePath)
-            return
-
-        defaultBinding := GetDefaultIllustratorAnchorHotkeyBinding()
-        if !IsObject(defaultBinding)
-            return
-
-        defaultShortcut := NormalizeShortcut(defaultBinding.shortcut)
-        defaultPath := StrLower(ResolveLegacyWindowsProgramPath(defaultBinding.scriptPath, false))
-        for binding in this.bindings {
-            ; Preserve an explicit user choice for V, and do not duplicate an
-            ; anchor helper that the user already assigned to another key.
-            if NormalizeShortcut(binding.shortcut) = defaultShortcut
-                return
-            if StrLower(ResolveLegacyWindowsProgramPath(binding.scriptPath, false)) = defaultPath
-                return
-        }
-
-        this.bindings.Push({
-            id: this.nextId,
-            shortcut: defaultBinding.shortcut,
-            scriptPath: defaultBinding.scriptPath,
-            programTabId: defaultBinding.programTabId,
-            status: "Loaded"
-        })
-        this.nextId += 1
-        this.logger.Info("Restored default Illustrator V anchor binding. Shortcut=" defaultBinding.shortcut " | Script=" defaultBinding.scriptPath)
     }
 
     EnsureDefaultDummyMonitorBinding() {
@@ -7359,15 +7371,29 @@ class ActionHotkeyManager {
 
     TryRegisterHotkey(actionId, shortcut) {
         callback := ObjBindMethod(this, "OnHotkeyPressed", actionId)
+        action := this.app.GetActionById(actionId)
+        hotIfWinTitle := IsObject(action) && action.HasOwnProp("HotIfWinTitle")
+            ? Trim(action.HotIfWinTitle)
+            : ""
         try {
+            if hotIfWinTitle != ""
+                HotIfWinActive hotIfWinTitle
             Hotkey shortcut, callback, "On"
+            if hotIfWinTitle != ""
+                HotIfWinActive
             this.registered[actionId] := {
                 shortcut: shortcut,
-                callback: callback
+                callback: callback,
+                hotIfWinTitle: hotIfWinTitle
             }
-            this.logger.Info("Registered action hotkey. Action=" actionId " | Shortcut=" shortcut)
+            this.logger.Info("Registered action hotkey. Action=" actionId " | Shortcut=" shortcut " | Scope=" hotIfWinTitle)
             return "Active"
         } catch as err {
+            if hotIfWinTitle != "" {
+                try HotIfWinActive
+                catch {
+                }
+            }
             this.logger.Warn(
                 "Failed to register action hotkey. Action="
                 . actionId
@@ -7382,8 +7408,16 @@ class ActionHotkeyManager {
 
     UnregisterHotkeys() {
         for _, entry in this.registered {
-            try Hotkey entry.shortcut, entry.callback, "Off"
-            catch {
+            try {
+                if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
+                    HotIfWinActive entry.hotIfWinTitle
+                Hotkey entry.shortcut, entry.callback, "Off"
+                if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
+                    HotIfWinActive
+            } catch {
+                try HotIfWinActive
+                catch {
+                }
             }
         }
         this.registered := Map()
