@@ -85,6 +85,83 @@ function Get-FlowCellSmartAxisLockCommandForScriptPath([string]$ScriptPath) {
     }
 }
 
+function Get-FlowCellBlenderProgramRoot {
+    $programsRoot = Join-Path $script:FlowCellHomeRoot 'Programs\Blender'
+    if (Test-Path -LiteralPath $programsRoot -PathType Container) {
+        return $programsRoot
+    }
+
+    return (Join-Path $script:FlowCellHomeRoot 'Blender')
+}
+
+function Get-FlowCellJsonStringProperty($Source, [string]$Name) {
+    if ($null -eq $Source -or [string]::IsNullOrWhiteSpace($Name)) {
+        return ''
+    }
+
+    $property = $Source.PSObject.Properties[$Name]
+    if ($null -eq $property -or $null -eq $property.Value) {
+        return ''
+    }
+
+    return [string]$property.Value
+}
+
+function Resolve-FlowCellBlenderBridgeActionForScriptPath([string]$ScriptPath) {
+    $normalizedScriptPath = Get-FlowCellNormalizedPath $ScriptPath
+    if ([string]::IsNullOrWhiteSpace($normalizedScriptPath)) {
+        return ''
+    }
+
+    if ([string]$ScriptPath -imatch '\.flowcell-panel-item\.json$' -and (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
+        try {
+            $record = Get-Content -LiteralPath $ScriptPath -Raw | ConvertFrom-Json
+            $action = Get-FlowCellJsonStringProperty -Source $record -Name 'bridgeAction'
+            if (-not [string]::IsNullOrWhiteSpace($action)) {
+                return $action.Trim()
+            }
+        }
+        catch {
+        }
+    }
+
+    $blenderRoot = Get-FlowCellBlenderProgramRoot
+    $panelsRoot = Join-Path $blenderRoot 'Panels'
+    if (Test-Path -LiteralPath $panelsRoot -PathType Container) {
+        foreach ($recordPath in @(Get-ChildItem -LiteralPath $panelsRoot -Recurse -Filter '*.flowcell-panel-item.json' -File -ErrorAction SilentlyContinue)) {
+            try {
+                $record = Get-Content -LiteralPath $recordPath.FullName -Raw | ConvertFrom-Json
+                $sourcePath = Get-FlowCellJsonStringProperty -Source $record -Name 'sourcePath'
+                $executionTarget = Get-FlowCellJsonStringProperty -Source $record -Name 'executionTarget'
+                if (
+                    (Get-FlowCellNormalizedPath $sourcePath) -eq $normalizedScriptPath -or
+                    (Get-FlowCellNormalizedPath $executionTarget) -eq $normalizedScriptPath
+                ) {
+                    $action = Get-FlowCellJsonStringProperty -Source $record -Name 'bridgeAction'
+                    if (-not [string]::IsNullOrWhiteSpace($action)) {
+                        return $action.Trim()
+                    }
+                }
+            }
+            catch {
+            }
+        }
+    }
+
+    $managedRoot = Join-Path $blenderRoot 'ManagedActions'
+    if (Test-Path -LiteralPath $managedRoot -PathType Container) {
+        $normalizedManagedRoot = Get-FlowCellNormalizedPath $managedRoot
+        if ($normalizedScriptPath -eq $normalizedManagedRoot -or $normalizedScriptPath.StartsWith($normalizedManagedRoot + '\')) {
+            $stem = [System.IO.Path]::GetFileNameWithoutExtension([string]$ScriptPath)
+            if (-not [string]::IsNullOrWhiteSpace($stem)) {
+                return $stem
+            }
+        }
+    }
+
+    return ''
+}
+
 function Get-FlowCellBlenderConfigPath {
     $localOverridePath = Join-Path $script:FlowCellPrivateRoot 'blender.config.local.json'
     if (Test-Path -LiteralPath $localOverridePath -PathType Leaf) {
@@ -95,22 +172,6 @@ function Get-FlowCellBlenderConfigPath {
         return $repoProgramsConfigPath
     }
     return (Join-Path $script:FlowCellHomeRoot 'Blender\config.json')
-}
-
-function Get-FlowCellBlenderConfig {
-    $configPath = Get-FlowCellBlenderConfigPath
-    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-        throw "Blender config not found: $configPath"
-    }
-
-    $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
-    if ($null -eq $config.automation -or [string]::IsNullOrWhiteSpace([string]$config.automation.bridgeFolder)) {
-        throw 'Blender config is missing automation.bridgeFolder.'
-    }
-    if ($null -eq $config.automation.responseTimeoutSeconds) {
-        $config.automation | Add-Member -MemberType NoteProperty -Name responseTimeoutSeconds -Value 20
-    }
-    return $config
 }
 
 function Get-FlowCellBlenderAutomationStringValue {
@@ -141,6 +202,153 @@ function Get-FlowCellBlenderAutomationStringValue {
     return $value.Trim()
 }
 
+function Get-FlowCellBlenderVersionSortRecord([System.IO.DirectoryInfo]$Directory, [string[]]$ActiveVersionNames) {
+    $parts = @([regex]::Matches([string]$Directory.Name, '\d+') | ForEach-Object { [int]$_.Value })
+    $major = if ($parts.Count -gt 0) { $parts[0] } else { -1 }
+    $minor = if ($parts.Count -gt 1) { $parts[1] } else { -1 }
+    $patch = if ($parts.Count -gt 2) { $parts[2] } else { -1 }
+    $revision = if ($parts.Count -gt 3) { $parts[3] } else { -1 }
+    $isActive = $false
+    foreach ($activeVersionName in @($ActiveVersionNames)) {
+        if (
+            [string]$Directory.Name -ieq [string]$activeVersionName -or
+            [string]$Directory.Name -like (([string]$activeVersionName) + '.*')
+        ) {
+            $isActive = $true
+            break
+        }
+    }
+
+    return [pscustomobject]@{
+        Directory = $Directory
+        IsActive = $isActive
+        Major = $major
+        Minor = $minor
+        Patch = $patch
+        Revision = $revision
+    }
+}
+
+function Get-FlowCellRunningBlenderVersionNames {
+    $versions = New-Object System.Collections.Generic.List[string]
+    foreach ($process in @(Get-Process blender -ErrorAction SilentlyContinue)) {
+        foreach ($value in @(
+            [string]$(try { $process.MainModule.FileVersionInfo.ProductVersion } catch { '' }),
+            [string]$(try { $process.MainModule.FileVersionInfo.FileVersion } catch { '' }),
+            [string]$(try { Split-Path -Leaf (Split-Path -Parent $process.MainModule.FileName) } catch { '' })
+        )) {
+            if ($value -match '(?<!\d)(\d+\.\d+)(?!\d)') {
+                $version = [string]$Matches[1]
+                if (-not $versions.Contains($version)) {
+                    [void]$versions.Add($version)
+                }
+            }
+        }
+    }
+    return @($versions)
+}
+
+function Test-FlowCellBlenderBridgeFolder([object]$Config, [string]$BridgeFolder) {
+    if ([string]::IsNullOrWhiteSpace($BridgeFolder) -or -not (Test-Path -LiteralPath $BridgeFolder -PathType Container)) {
+        return $false
+    }
+
+    $addonRoot = Split-Path -Parent $BridgeFolder
+
+    return (
+        (Test-Path -LiteralPath (Join-Path $BridgeFolder 'flowcell_custom_actions.json') -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $BridgeFolder 'ManagedActions') -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $addonRoot 'flowcell_actions.py') -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $addonRoot 'flowcell_bridge.py') -PathType Leaf)
+    )
+}
+
+function Resolve-FlowCellBlenderBridgeFolder([object]$Config, [string]$ConfigPath) {
+    $checkedPaths = New-Object System.Collections.Generic.List[string]
+    $configuredBridgeFolder = Get-FlowCellBlenderAutomationStringValue -Config $Config -Name 'bridgeFolder' -DefaultValue ''
+
+    if (-not [string]::IsNullOrWhiteSpace($configuredBridgeFolder)) {
+        try { $configuredBridgeFolder = [System.IO.Path]::GetFullPath($configuredBridgeFolder) } catch { $configuredBridgeFolder = $configuredBridgeFolder.Trim() }
+        [void]$checkedPaths.Add($configuredBridgeFolder)
+        if (Test-FlowCellBlenderBridgeFolder -Config $Config -BridgeFolder $configuredBridgeFolder) {
+            return [pscustomobject]@{
+                BridgeFolder = $configuredBridgeFolder
+                Source = 'config'
+                CheckedPaths = @($checkedPaths)
+                VersionFolders = @()
+            }
+        }
+    }
+
+    $applicationDataRoot = [string]$env:APPDATA
+    if ([string]::IsNullOrWhiteSpace($applicationDataRoot)) {
+        $applicationDataRoot = [Environment]::GetFolderPath('ApplicationData')
+    }
+    $blenderAppDataRoot = Join-Path $applicationDataRoot 'Blender Foundation\Blender'
+    $versionDirectories = if (Test-Path -LiteralPath $blenderAppDataRoot -PathType Container) {
+        @(Get-ChildItem -LiteralPath $blenderAppDataRoot -Directory -ErrorAction SilentlyContinue)
+    }
+    else {
+        @()
+    }
+    $activeVersionNames = @(Get-FlowCellRunningBlenderVersionNames)
+    $sortedVersionRecords = @(
+        $versionDirectories |
+            ForEach-Object { Get-FlowCellBlenderVersionSortRecord -Directory $_ -ActiveVersionNames $activeVersionNames } |
+            Sort-Object @{ Expression = { $_.IsActive }; Descending = $true },
+                @{ Expression = { $_.Major }; Descending = $true },
+                @{ Expression = { $_.Minor }; Descending = $true },
+                @{ Expression = { $_.Patch }; Descending = $true },
+                @{ Expression = { $_.Revision }; Descending = $true },
+                @{ Expression = { $_.Directory.Name }; Descending = $true }
+    )
+
+    foreach ($versionRecord in $sortedVersionRecords) {
+        $candidate = Join-Path $versionRecord.Directory.FullName 'scripts\addons\blender_bridge_flowcell'
+        if (-not $checkedPaths.Contains($candidate)) {
+            [void]$checkedPaths.Add($candidate)
+        }
+        if (Test-FlowCellBlenderBridgeFolder -Config $Config -BridgeFolder $candidate) {
+            return [pscustomobject]@{
+                BridgeFolder = $candidate
+                Source = 'runtime auto-resolve'
+                CheckedPaths = @($checkedPaths)
+                VersionFolders = @($sortedVersionRecords | ForEach-Object { $_.Directory.FullName })
+            }
+        }
+    }
+
+    $checkedSummary = if ($checkedPaths.Count -gt 0) { $checkedPaths -join '; ' } else { '(none; Blender AppData root was not found)' }
+    $message = "Blender bridge folder could not be resolved. Config path: $ConfigPath. Checked path(s): $checkedSummary"
+    Write-CommandHostLog $message
+    throw $message
+}
+
+function Get-FlowCellBlenderConfig {
+    $configPath = Get-FlowCellBlenderConfigPath
+    Write-CommandHostLog ('Blender config read. Path={0}' -f $configPath)
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        throw "Blender config not found: $configPath"
+    }
+
+    $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+    if (-not $config.PSObject.Properties['automation'] -or $null -eq $config.automation) {
+        $config | Add-Member -MemberType NoteProperty -Name automation -Value ([pscustomobject]@{}) -Force
+    }
+    if (-not $config.automation.PSObject.Properties['responseTimeoutSeconds'] -or $null -eq $config.automation.responseTimeoutSeconds) {
+        $config.automation | Add-Member -MemberType NoteProperty -Name responseTimeoutSeconds -Value 20 -Force
+    }
+
+    $resolution = Resolve-FlowCellBlenderBridgeFolder -Config $config -ConfigPath $configPath
+    $config.automation | Add-Member -MemberType NoteProperty -Name bridgeFolder -Value ([string]$resolution.BridgeFolder) -Force
+    $config | Add-Member -MemberType NoteProperty -Name FlowCellConfigPath -Value $configPath -Force
+    $config | Add-Member -MemberType NoteProperty -Name FlowCellBridgeFolderSource -Value ([string]$resolution.Source) -Force
+    $config | Add-Member -MemberType NoteProperty -Name FlowCellBridgePathsChecked -Value @($resolution.CheckedPaths) -Force
+    Write-CommandHostLog ('Blender bridge folder source. Source={0}' -f [string]$resolution.Source)
+    Write-CommandHostLog ('Blender bridge folder final path. Path={0}' -f [string]$resolution.BridgeFolder)
+    return $config
+}
+
 function Get-FlowCellBlenderBridgeLayout {
     param(
         [Parameter(Mandatory = $true)]
@@ -152,7 +360,7 @@ function Get-FlowCellBlenderBridgeLayout {
         $BridgeFolder = Get-FlowCellBlenderAutomationStringValue -Config $Config -Name 'bridgeFolder' -DefaultValue ''
     }
     if ([string]::IsNullOrWhiteSpace($BridgeFolder)) {
-        throw 'Blender config is missing automation.bridgeFolder.'
+        throw 'Blender bridge folder was not resolved.'
     }
 
     try {
@@ -164,7 +372,7 @@ function Get-FlowCellBlenderBridgeLayout {
 
     $bridgeFolderName = Split-Path -Path $BridgeFolder -Leaf
     if ([string]::IsNullOrWhiteSpace($bridgeFolderName)) {
-        $bridgeFolderName = 'blender_bridge'
+        $bridgeFolderName = 'blender_bridge_flowcell'
     }
 
     return [pscustomobject]@{
@@ -214,25 +422,6 @@ function Get-FlowCellBridgeFolderCandidates([object]$Config, [int]$TargetBlender
 
     & $addBridgeRootCandidates $configuredBridgeRoot
 
-    if (-not [string]::IsNullOrWhiteSpace($configuredBridgeRoot)) {
-        return @($candidates)
-    }
-
-    $blenderAppDataRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Blender Foundation\Blender'
-    if (Test-Path -LiteralPath $blenderAppDataRoot -PathType Container) {
-        Get-ChildItem -LiteralPath $blenderAppDataRoot -Directory -ErrorAction SilentlyContinue |
-            Sort-Object Name -Descending |
-            ForEach-Object {
-                $fallbackBridgeRoot = Join-Path $_.FullName ('scripts\addons\{0}' -f $bridgeFolderName)
-                if (
-                    (Test-Path -LiteralPath $fallbackBridgeRoot -PathType Container) -and
-                    ((Get-FlowCellNormalizedPath $fallbackBridgeRoot) -ne (Get-FlowCellNormalizedPath $configuredBridgeRoot))
-                ) {
-                    & $addBridgeRootCandidates $fallbackBridgeRoot
-                }
-            }
-    }
-
     return @($candidates)
 }
 
@@ -253,10 +442,10 @@ function Wait-FlowCellBridgeResponse([string]$ResponsePath, [string]$RequestId, 
     return $null
 }
 
-function Invoke-FlowCellBlenderBridgeRequest([string]$Action, [hashtable]$Data = @{}, [int]$TimeoutSeconds = 0) {
+function Invoke-FlowCellBlenderBridgeRequest([string]$Action, [hashtable]$Data = @{}, [int]$TimeoutSeconds = 0, [switch]$NoWait) {
     $config = Get-FlowCellBlenderConfig
     $targetBlenderProcessId = Get-FlowCellTargetBlenderProcessId
-    $requestId = [guid]::NewGuid().ToString()
+    $requestId = [guid]::NewGuid().ToString('N')
     if ([int]$TimeoutSeconds -gt 0) {
         $timeoutSeconds = [Math]::Max([int]$TimeoutSeconds, 1)
     }
@@ -280,7 +469,21 @@ function Invoke-FlowCellBlenderBridgeRequest([string]$Action, [hashtable]$Data =
         $requestPath = Join-Path $bridgeFolder 'request.json'
         $responsePath = Join-Path $bridgeFolder 'response.json'
         New-Item -ItemType Directory -Path $bridgeFolder -Force | Out-Null
-        [System.IO.File]::WriteAllText($requestPath, $json, $utf8NoBom)
+        Remove-Item -LiteralPath $responsePath -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $requestPath -Force -ErrorAction SilentlyContinue
+        $temporaryRequestPath = '{0}.{1}.tmp' -f $requestPath, $requestId
+        [System.IO.File]::WriteAllText($temporaryRequestPath, $json, $utf8NoBom)
+        Move-Item -LiteralPath $temporaryRequestPath -Destination $requestPath -Force
+        Write-CommandHostLog ('Blender bridge request written. RequestId={0}; Action={1}; Path={2}; WaitForResponse={3}' -f $requestId, $Action, $requestPath, (-not [bool]$NoWait))
+
+        if ($NoWait) {
+            return [pscustomobject]@{
+                id = $requestId
+                status = 'queued'
+                message = 'Blender action queued.'
+                bridge_folder = $bridgeFolder
+            }
+        }
 
         $response = Wait-FlowCellBridgeResponse -ResponsePath $responsePath -RequestId $requestId -Deadline $finalDeadline
         if ($null -eq $response) {
@@ -634,6 +837,21 @@ function Invoke-FlowCellScriptCommand($Envelope) {
 
     $programLabel = if ($Envelope.program.PSObject.Properties['label']) { [string]$Envelope.program.label } else { '' }
     $programKey = Get-ProgramLabelKey $programLabel
+
+    if ($programKey -eq 'blender') {
+        $bridgeAction = Resolve-FlowCellBlenderBridgeActionForScriptPath -ScriptPath $resolvedTarget
+        if ([string]::IsNullOrWhiteSpace($bridgeAction)) {
+            throw ("Blender script target is missing bridge metadata and will not be opened through Windows defaults: {0}" -f $resolvedTarget)
+        }
+
+        Write-CommandHostLog ('Resolved execution target. CommandId={0}; Method=blender_bridge_fire_and_forget; Target={1}; Action={2}' -f [string]$Envelope.command_id, $resolvedTarget, $bridgeAction)
+        $queuedRequest = Invoke-FlowCellBlenderBridgeRequest -Action $bridgeAction -Data @{} -NoWait
+        $statusText = 'Blender action queued.'
+        Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
+        Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge_fire_and_forget; Status=queued; RequestId={1}; Message={2}' -f [string]$Envelope.command_id, [string]$queuedRequest.id, $statusText)
+        return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget $resolvedTarget -ExecutionMethod 'blender_bridge_fire_and_forget' -Details $queuedRequest)
+    }
+
     Write-CommandHostLog ('Resolved execution target. CommandId={0}; Method=controller_cli; Target={1}; Program={2}' -f [string]$Envelope.command_id, $resolvedTarget, $programKey)
     $exitCode = Invoke-FlowCellControllerCli -Arguments @(
         ('--run-script-path={0}' -f $resolvedTarget),

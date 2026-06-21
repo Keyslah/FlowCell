@@ -4,18 +4,58 @@ FlowCell is a desktop app to fire scripts with buttons, macros, and hotkeys with
 
 Its like a small control deck that only stays on top of its respective program.
 
-Requires [AutoHotkey V2](https://www.autohotkey.com/download/ahk-v2.exe)
+## Download
 
+Use the GitHub Releases page, not GitHub's automatic source-code ZIP:
 
+```text
+https://github.com/Keyslah/FlowCell/releases/latest
+```
 
-[Toggle AutoHotkey for anti-cheat games](docs/toggle-autohotkey-for-anticheat.md): use this to disable AutoHotkey to play anti-cheat video games.
+Pick the download that matches what you want:
 
+```text
+FlowCell-Core.zip
+```
+
+Base app only. Use this when you want the smallest FlowCell package.
+
+```text
+FlowCell-Blender.zip
+FlowCell-Illustrator.zip
+FlowCell-Photoshop.zip
+FlowCell-Windows.zip
+```
+
+Optional program payloads. Download `FlowCell-Core.zip`, then extract any payload ZIPs you want into the extracted FlowCell Core folder. Each payload merges into `Programs\<ProgramName>` and does not contain the Core app.
+
+After downloading, extract the ZIP, open the extracted folder, and double-click:
+
+```text
+Start FlowCell.cmd
+```
+
+Normal users do not need Node, npm, Rust, Cargo, Tauri build tools, or a separate AutoHotkey install. The Core package includes the built FlowCell app and bundled AutoHotkey v2 runtime.
+
+Do not use GitHub's automatic `Source code (zip)` download as the app download. That source archive is for developers.
+
+See [SETUP.md](SETUP.md) for normal-user setup.
+
+## Build or develop FlowCell
+
+Developers should use the existing source launcher and build path.
+
+See [BUILD_FROM_SOURCE.md](BUILD_FROM_SOURCE.md) for the developer setup and portable package build command.
 
 ## What It Is
 
 FlowCell has a React, TypeScript, and Vite frontend in [FlowCellFrontend](FlowCellFrontend/) running inside Tauri. That frontend draws the main window, panels, binds station, macro lab, popouts, and tool windows.
 
 The functional backend lives mainly in [FlowCell](FlowCell/): the PowerShell command host, AutoHotkey hotkey backend, launch helpers, logs, bindings, layouts, and local runtime state. Program scripts live under [Programs](Programs/), where each program keeps shared Git scripts, private local backups, and panel copies for the buttons you actually run.
+
+Source/dev mode still uses [AutoHotkey V2](https://www.autohotkey.com/download/ahk-v2.exe). Portable release mode bundles AutoHotkey inside the generated release package.
+
+[Toggle AutoHotkey for anti-cheat games](docs/toggle-autohotkey-for-anticheat.md): use this to disable AutoHotkey to play anti-cheat video games.
 
 ## Programs
 
@@ -55,6 +95,8 @@ Each run writes `organize-folder.log.txt` plus `organize-folder.undo.json` in th
 
 ## Important Links
 
+- [SETUP.md](SETUP.md) for normal-user portable setup.
+- [BUILD_FROM_SOURCE.md](BUILD_FROM_SOURCE.md) for developer setup and portable ZIP creation.
 - [PROGRAM_SUMMARY.txt](PROGRAM_SUMMARY.txt) for the current architecture and runtime behavior.
 - [Repository layout](docs/repository-layout.md) for the Git/local/panel script workflow.
 - [Blender scripts](docs/blender-scripts.md) for Blender Add Script and bridge behavior.

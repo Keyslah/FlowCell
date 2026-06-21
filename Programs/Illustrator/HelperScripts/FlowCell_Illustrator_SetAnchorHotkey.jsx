@@ -1,5 +1,5 @@
 //@target illustrator
-// Description: FlowCell Illustrator anchor capture for the V hotkey.
+// Description: FlowCell Illustrator anchor capture for the Core Set Anchor action.
 // FLOWCELL_REQUIRES_ACTIVE_ILLUSTRATOR: true
 
 (function () {

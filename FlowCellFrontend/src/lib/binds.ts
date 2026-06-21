@@ -25,3 +25,18 @@ export async function saveBindShortcut(args: {
     }
   });
 }
+
+export async function saveCoreActionShortcut(args: {
+  actionId: string;
+  shortcut: string;
+}): Promise<{
+  message: string;
+  bindings: FlowCellBindingsState;
+}> {
+  return invoke("save_core_action_shortcut", {
+    request: {
+      actionId: args.actionId,
+      shortcut: args.shortcut
+    }
+  });
+}

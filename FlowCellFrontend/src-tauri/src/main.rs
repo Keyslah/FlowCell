@@ -64,6 +64,9 @@ const TOOLSET_KIND: &str = "toolset";
 const ALIGNMENT_TOOL_KIND: &str = "alignment_toolset";
 const ILLUSTRATOR_ALIGNMENT_TOOL_KIND: &str = "illustrator_alignment_toolset";
 const ILLUSTRATOR_ROTATE_TOOL_KIND: &str = "illustrator_rotate_toolset";
+const CORE_ACTION_KIND: &str = "core_action";
+const ILLUSTRATOR_SET_ANCHOR_ACTION_ID: &str = "illustrator_set_anchor";
+const CORE_ACTIONS_PANEL_NAME: &str = "Actions";
 const BOOLEAN_TOOL_KIND: &str = "boolean_toolset";
 const DIMENSIONS_TOOL_KIND: &str = "dimensions_toolset";
 const REMESH_TOOL_KIND: &str = "remesh_toolset";
@@ -81,6 +84,8 @@ const SCOPED_TOPMOST_POLL_MS: u64 = 180;
 const DEFAULT_BLENDER_BRIDGE_TIMEOUT_SECONDS: u64 = 20;
 const BLENDER_BRIDGE_RESPONSE_POLL_MS: u64 = 4;
 const BLENDER_BRIDGE_STATUS_TIMEOUT_MS: u64 = 450;
+const BLENDER_BRIDGE_NOT_RUNNING_MESSAGE: &str =
+    "Blender bridge is not running. Restart Blender once after adding Blender in FlowCell.";
 const FLOWCELL_CONTROLLER_SCRIPT_TIMEOUT_SECONDS: u64 = 25;
 #[cfg(windows)]
 const FLOWCELL_DIRECT_SCRIPT_RECEIVER_TITLE: &str = "FlowCellBackendDirectScriptReceiver";
@@ -231,8 +236,6 @@ struct BlenderAutomationConfig {
     #[serde(default)]
     bridge_folder: String,
     response_timeout_seconds: Option<u64>,
-    #[serde(default)]
-    setup_status_file_name: String,
     #[serde(default)]
     custom_actions_file_name: String,
     #[serde(default)]
@@ -468,6 +471,13 @@ struct SaveBindShortcutRequest {
     program_tab_id: i64,
     target: String,
     binding_id: Option<u64>,
+    shortcut: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveCoreActionShortcutRequest {
+    action_id: String,
     shortcut: String,
 }
 
@@ -1062,17 +1072,6 @@ fn infer_program_template_key(program_name: &str, exe_path: Option<&str>) -> &'s
     "generic"
 }
 
-fn default_program_panel_names(
-    program_name: &str,
-    exe_path: Option<&str>,
-) -> &'static [&'static str] {
-    match infer_program_template_key(program_name, exe_path) {
-        "blender" => &["Collections", "Files", "Utility"],
-        "illustrator" | "photoshop" => &["Layers", "Files", "Utility"],
-        _ => &["Files", "Utility"],
-    }
-}
-
 fn allowed_windows_script_extensions() -> &'static [&'static str] {
     &["ps1", "cmd", "bat", "exe", "lnk", "vbs", "ahk"]
 }
@@ -1456,7 +1455,7 @@ fn resolve_shortcut_profiles_local_root() -> Result<PathBuf, String> {
     Ok(resolve_flowcell_local_root()?.join("shortcut_profiles"))
 }
 
-fn resolve_program_tab_id(program_name: &str) -> i64 {
+fn canonical_program_tab_id(program_name: &str) -> i64 {
     match infer_program_template_key(program_name, None) {
         "illustrator" => 1,
         "windows" => 2,
@@ -1464,6 +1463,18 @@ fn resolve_program_tab_id(program_name: &str) -> i64 {
         "photoshop" => 4,
         _ => 0,
     }
+}
+
+fn resolve_program_tab_id(program_name: &str) -> i64 {
+    let registered_id = resolve_bindings_file_path()
+        .ok()
+        .filter(|path| path.is_file())
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|contents| parse_ini_document(&contents))
+        .and_then(|document| {
+            find_registered_program(&document, program_name).map(|program| program.id)
+        });
+    registered_id.unwrap_or_else(|| canonical_program_tab_id(program_name))
 }
 
 fn resolve_shortcut_profile_id_from_file_name(file_name: &str) -> Option<String> {
@@ -1498,6 +1509,12 @@ fn resolve_program_git_scripts_picker_directory(
     panel_name: &str,
 ) -> Result<PathBuf, String> {
     let scripts_directory = resolve_program_git_scripts_directory(program_name)?;
+    if !scripts_directory.is_dir() {
+        return Err(format!(
+            "Program Git Scripts folder was not found at {}.",
+            scripts_directory.display()
+        ));
+    }
     if panel_name.trim().is_empty() {
         return Ok(scripts_directory);
     }
@@ -2250,8 +2267,7 @@ fn select_hue_diverse_candidates(
             let score = |candidate: PaletteCandidate| {
                 let saturation = color_saturation(candidate.color);
                 let luminance = relative_luminance(candidate.color);
-                saturation * 120.0
-                    + f64::from(candidate.count.max(1)).ln() * 3.0
+                saturation * 120.0 + f64::from(candidate.count.max(1)).ln() * 3.0
                     - (luminance - 0.45).abs() * 20.0
             };
             score(*left)
@@ -2284,8 +2300,9 @@ fn select_hue_diverse_candidates(
                             selected
                                 .iter()
                                 .filter_map(|existing| {
-                                    color_hue_degrees(existing.color)
-                                        .map(|existing_hue| hue_distance_degrees(candidate_hue, existing_hue))
+                                    color_hue_degrees(existing.color).map(|existing_hue| {
+                                        hue_distance_degrees(candidate_hue, existing_hue)
+                                    })
                                 })
                                 .fold(180.0, f64::min)
                         })
@@ -3257,6 +3274,129 @@ fn list_bindable_buttons_for_panel(
         .collect::<Vec<_>>();
     buttons.sort_by_cached_key(|button| button.label.to_ascii_lowercase());
     Ok(buttons)
+}
+
+fn append_core_bind_actions_for_program(
+    program_name: &str,
+    panels: &mut Vec<BindablePanelRecord>,
+    bindings: &FrontendBindingsState,
+) {
+    let helper_is_available = resolve_program_directory(program_name)
+        .map(|directory| {
+            directory
+                .join("HelperScripts")
+                .join("FlowCell_Illustrator_SetAnchorHotkey.jsx")
+                .is_file()
+        })
+        .unwrap_or(false);
+    append_core_bind_actions_for_program_with_availability(
+        program_name,
+        helper_is_available,
+        panels,
+        bindings,
+    );
+}
+
+fn append_core_bind_actions_for_program_with_availability(
+    program_name: &str,
+    helper_is_available: bool,
+    panels: &mut Vec<BindablePanelRecord>,
+    bindings: &FrontendBindingsState,
+) {
+    if !is_illustrator_program_name(program_name) || !helper_is_available {
+        return;
+    }
+
+    let button = BindableButtonRecord {
+        id: format!("{program_name}::core-action::{ILLUSTRATOR_SET_ANCHOR_ACTION_ID}"),
+        label: String::from("Set Anchor"),
+        kind: String::from(CORE_ACTION_KIND),
+        target: String::from(ILLUSTRATOR_SET_ANCHOR_ACTION_ID),
+        execution_target: None,
+        binding_id: None,
+        shortcut: bindings
+            .action_hotkeys
+            .get(ILLUSTRATOR_SET_ANCHOR_ACTION_ID)
+            .cloned(),
+    };
+
+    if let Some(panel) = panels
+        .iter_mut()
+        .find(|panel| panel.name.eq_ignore_ascii_case(CORE_ACTIONS_PANEL_NAME))
+    {
+        panel.buttons.push(button);
+        panel
+            .buttons
+            .sort_by_cached_key(|entry| entry.label.to_ascii_lowercase());
+        return;
+    }
+
+    panels.insert(
+        0,
+        BindablePanelRecord {
+            name: String::from(CORE_ACTIONS_PANEL_NAME),
+            buttons: vec![button],
+        },
+    );
+}
+
+#[cfg(test)]
+mod core_bind_action_tests {
+    use super::*;
+
+    #[test]
+    fn set_anchor_is_only_added_for_illustrator() {
+        let bindings = FrontendBindingsState::default();
+        let mut photoshop_panels = Vec::new();
+        append_core_bind_actions_for_program_with_availability(
+            "Photoshop",
+            true,
+            &mut photoshop_panels,
+            &bindings,
+        );
+        assert!(photoshop_panels.is_empty());
+
+        let mut missing_payload_panels = Vec::new();
+        append_core_bind_actions_for_program_with_availability(
+            "Illustrator",
+            false,
+            &mut missing_payload_panels,
+            &bindings,
+        );
+        assert!(missing_payload_panels.is_empty());
+
+        let mut illustrator_panels = Vec::new();
+        append_core_bind_actions_for_program_with_availability(
+            "Illustrator",
+            true,
+            &mut illustrator_panels,
+            &bindings,
+        );
+        assert_eq!(illustrator_panels.len(), 1);
+        assert_eq!(illustrator_panels[0].name, CORE_ACTIONS_PANEL_NAME);
+        assert_eq!(illustrator_panels[0].buttons.len(), 1);
+        assert_eq!(
+            illustrator_panels[0].buttons[0].target,
+            ILLUSTRATOR_SET_ANCHOR_ACTION_ID
+        );
+    }
+
+    #[test]
+    fn set_anchor_uses_the_saved_action_shortcut() {
+        let mut bindings = FrontendBindingsState::default();
+        bindings.action_hotkeys.insert(
+            String::from(ILLUSTRATOR_SET_ANCHOR_ACTION_ID),
+            String::from("^!a"),
+        );
+        let mut panels = Vec::new();
+        append_core_bind_actions_for_program_with_availability(
+            "Illustrator",
+            true,
+            &mut panels,
+            &bindings,
+        );
+        assert_eq!(panels[0].buttons[0].shortcut.as_deref(), Some("^!a"));
+    }
 }
 
 fn read_shortcut_profile_documents(
@@ -4558,6 +4698,319 @@ fn path_is_under_directory(path: &Path, directory: &Path) -> bool {
 }
 
 type IniDocument = HashMap<String, HashMap<String, String>>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RegisteredProgram {
+    id: i64,
+    label: String,
+}
+
+fn parse_program_tab_section_id(section_name: &str) -> Option<i64> {
+    section_name
+        .strip_prefix("ProgramTab_")?
+        .parse::<i64>()
+        .ok()
+        .filter(|id| *id > 0)
+}
+
+fn registered_programs_from_document(document: &IniDocument) -> Vec<RegisteredProgram> {
+    let mut programs = document
+        .iter()
+        .filter_map(|(section_name, section)| {
+            let id = parse_program_tab_section_id(section_name)?;
+            let label = section.get("Label")?.trim();
+            if label.is_empty() {
+                return None;
+            }
+            Some(RegisteredProgram {
+                id,
+                label: label.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    programs.sort_by_key(|program| program.id);
+    programs
+}
+
+fn find_registered_program(
+    document: &IniDocument,
+    program_name: &str,
+) -> Option<RegisteredProgram> {
+    registered_programs_from_document(document)
+        .into_iter()
+        .find(|program| program.label.eq_ignore_ascii_case(program_name.trim()))
+}
+
+fn registered_program_folder_names(
+    available_folder_names: &[String],
+    document: &IniDocument,
+) -> Vec<String> {
+    registered_programs_from_document(document)
+        .into_iter()
+        .filter_map(|program| {
+            available_folder_names
+                .iter()
+                .find(|folder_name| {
+                    !folder_name.to_ascii_lowercase().starts_with("flowcell-")
+                        && folder_name.eq_ignore_ascii_case(&program.label)
+                })
+                .cloned()
+        })
+        .collect()
+}
+
+fn sync_program_registration_meta(document: &mut IniDocument, selected_program_id: Option<i64>) {
+    let program_ids = registered_programs_from_document(document)
+        .into_iter()
+        .map(|program| program.id)
+        .collect::<Vec<_>>();
+    let next_id = program_ids.iter().copied().max().unwrap_or(0) + 1;
+    let meta = document.entry(String::from("Meta")).or_default();
+    meta.insert(
+        String::from("ProgramTabIds"),
+        program_ids
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("|"),
+    );
+    meta.insert(String::from("ProgramTabNextId"), next_id.max(1).to_string());
+    let existing_selected_id = meta
+        .get("SelectedProgramTabId")
+        .and_then(|value| value.parse::<i64>().ok());
+    let effective_selected_id = selected_program_id
+        .filter(|program_id| program_ids.contains(program_id))
+        .or_else(|| existing_selected_id.filter(|program_id| program_ids.contains(program_id)))
+        .or_else(|| program_ids.first().copied())
+        .unwrap_or(0);
+    meta.insert(
+        String::from("SelectedProgramTabId"),
+        effective_selected_id.to_string(),
+    );
+}
+
+fn program_registration_id(document: &IniDocument, program_name: &str) -> i64 {
+    if let Some(program) = find_registered_program(document, program_name) {
+        return program.id;
+    }
+
+    let used_ids = registered_programs_from_document(document)
+        .into_iter()
+        .map(|program| program.id)
+        .collect::<HashSet<_>>();
+    let preferred_id = canonical_program_tab_id(program_name);
+    if preferred_id > 0 && !used_ids.contains(&preferred_id) {
+        return preferred_id;
+    }
+
+    document
+        .get("Meta")
+        .and_then(|section| section.get("ProgramTabNextId"))
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_else(|| used_ids.iter().copied().max().unwrap_or(0) + 1)
+        .max(used_ids.iter().copied().max().unwrap_or(0) + 1)
+        .max(1)
+}
+
+fn write_program_registration_section(
+    document: &mut IniDocument,
+    program_id: i64,
+    program_name: &str,
+    program_path: &Path,
+    exe_path: &str,
+) {
+    let template_key = infer_program_template_key(program_name, Some(exe_path));
+    let process_name = Path::new(exe_path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let git_scripts_path = program_path.join(format!("{program_name} Git Scripts"));
+    let script_folder = match template_key {
+        "illustrator" | "photoshop" | "blender" | "windows" => git_scripts_path,
+        _ => Path::new(exe_path)
+            .parent()
+            .unwrap_or(program_path)
+            .to_path_buf(),
+    };
+    let (program_type, run_method, extensions, default_panels, process_names) = match template_key {
+        "illustrator" => (
+            "adobe_direct_script_runner",
+            "illustrator_direct",
+            ".jsx|.js",
+            "Layers|Files|Utility",
+            if process_name.is_empty() {
+                String::from("illustrator")
+            } else {
+                process_name.clone()
+            },
+        ),
+        "photoshop" => (
+            "adobe_direct_script_runner",
+            "photoshop_direct",
+            ".jsx|.js",
+            "Layers|Files|Utility",
+            if process_name.is_empty() {
+                String::from("photoshop")
+            } else {
+                process_name.clone()
+            },
+        ),
+        "blender" => (
+            "bridge_runner",
+            "blender_bridge",
+            ".ps1|.py|.blend|.exe|.lnk",
+            "Collections|Files|Utility",
+            if process_name.is_empty() {
+                String::from("blender")
+            } else {
+                process_name.clone()
+            },
+        ),
+        "windows" => (
+            "generic",
+            "generic",
+            "",
+            "Files|Utility",
+            String::from("explorer|dopus|dopusrt"),
+        ),
+        _ => (
+            "generic",
+            "generic",
+            "",
+            "Files|Utility",
+            process_name.clone(),
+        ),
+    };
+
+    let mut section = HashMap::new();
+    section.insert(String::from("Label"), program_name.trim().to_string());
+    section.insert(
+        String::from("NormalizedName"),
+        program_name.trim().to_ascii_lowercase(),
+    );
+    section.insert(
+        String::from("ScriptFolder"),
+        script_folder.to_string_lossy().to_string(),
+    );
+    section.insert(String::from("ProgramType"), program_type.to_string());
+    section.insert(String::from("ExePath"), exe_path.trim().to_string());
+    section.insert(String::from("RunMethod"), run_method.to_string());
+    section.insert(
+        String::from("AllowedScriptExtensions"),
+        extensions.to_string(),
+    );
+    section.insert(String::from("BridgeFolder"), String::new());
+    section.insert(String::from("RequiresRestart"), String::from("0"));
+    section.insert(String::from("DefaultPanels"), default_panels.to_string());
+    section.insert(String::from("ProcessNames"), process_names);
+    document.insert(format!("ProgramTab_{program_id}"), section);
+}
+
+fn upsert_program_registration(
+    document: &mut IniDocument,
+    program_name: &str,
+    program_path: &Path,
+    exe_path: &str,
+) -> i64 {
+    let program_id = program_registration_id(document, program_name);
+    write_program_registration_section(document, program_id, program_name, program_path, exe_path);
+    sync_program_registration_meta(document, Some(program_id));
+    program_id
+}
+
+fn remove_program_registration(document: &mut IniDocument, program_name: &str) {
+    let Some(program) = find_registered_program(document, program_name) else {
+        return;
+    };
+    document.remove(&format!("ProgramTab_{}", program.id));
+
+    let binding_sections = document
+        .iter()
+        .filter_map(|(section_name, section)| {
+            if !section_name.starts_with("Binding_") {
+                return None;
+            }
+            let program_tab_id = section
+                .get("ProgramTabId")
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0);
+            (program_tab_id == program.id).then(|| section_name.clone())
+        })
+        .collect::<Vec<_>>();
+    for section_name in binding_sections {
+        document.remove(&section_name);
+    }
+
+    let mut remaining_binding_ids = document
+        .keys()
+        .filter_map(|section_name| section_name.strip_prefix("Binding_"))
+        .filter_map(|value| value.parse::<u64>().ok())
+        .collect::<Vec<_>>();
+    remaining_binding_ids.sort_unstable();
+    let meta = document.entry(String::from("Meta")).or_default();
+    meta.insert(
+        String::from("Ids"),
+        remaining_binding_ids
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("|"),
+    );
+    sync_program_registration_meta(document, None);
+}
+
+#[cfg(test)]
+mod program_registration_tests {
+    use super::*;
+
+    #[test]
+    fn payload_folder_is_hidden_until_program_is_registered() {
+        let available = vec![String::from("Illustrator")];
+        let mut document = IniDocument::new();
+        assert!(registered_program_folder_names(&available, &document).is_empty());
+
+        upsert_program_registration(
+            &mut document,
+            "Illustrator",
+            Path::new(r"D:\FlowCell\Programs\Illustrator"),
+            r"C:\Program Files\Adobe\Adobe Illustrator 2026\Support Files\Contents\Windows\Illustrator.exe",
+        );
+        assert_eq!(
+            registered_program_folder_names(&available, &document),
+            vec![String::from("Illustrator")]
+        );
+    }
+
+    #[test]
+    fn illustrator_registration_persists_selected_executable() {
+        let mut document = IniDocument::new();
+        let exe_path = r"C:\Program Files\Adobe\Adobe Illustrator 2026\Support Files\Contents\Windows\Illustrator.exe";
+        let program_id = upsert_program_registration(
+            &mut document,
+            "Illustrator",
+            Path::new(r"D:\FlowCell\Programs\Illustrator"),
+            exe_path,
+        );
+
+        assert_eq!(program_id, 1);
+        assert_eq!(
+            document
+                .get("ProgramTab_1")
+                .and_then(|section| section.get("ExePath"))
+                .map(String::as_str),
+            Some(exe_path)
+        );
+        assert_eq!(
+            document
+                .get("Meta")
+                .and_then(|section| section.get("ProgramTabIds"))
+                .map(String::as_str),
+            Some("1")
+        );
+    }
+}
 
 fn parse_ini_document(contents: &str) -> IniDocument {
     let mut document = IniDocument::new();
@@ -6364,53 +6817,6 @@ fn restart_flowcell_headless_backend() -> Result<(), String> {
     }
 }
 
-fn copy_matching_files(
-    source_directory: &Path,
-    target_directory: &Path,
-    extension: &str,
-) -> Result<(), String> {
-    if !source_directory.is_dir() {
-        return Ok(());
-    }
-
-    fs::create_dir_all(target_directory)
-        .map_err(|error| format!("Failed to create {}: {error}", target_directory.display()))?;
-    let entries = fs::read_dir(source_directory)
-        .map_err(|error| format!("Failed to read {}: {error}", source_directory.display()))?;
-
-    for entry in entries {
-        let entry = entry
-            .map_err(|error| format!("Failed to read {}: {error}", source_directory.display()))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|error| format!("Failed to inspect {}: {error}", entry.path().display()))?;
-        if !file_type.is_file() {
-            continue;
-        }
-
-        let source_path = entry.path();
-        let Some(source_extension) = source_path.extension().and_then(|value| value.to_str())
-        else {
-            continue;
-        };
-        if !source_extension.eq_ignore_ascii_case(extension) {
-            continue;
-        }
-
-        let file_name = entry.file_name();
-        let target_path = target_directory.join(file_name);
-        fs::copy(&source_path, &target_path).map_err(|error| {
-            format!(
-                "Failed to copy {} into {}: {error}",
-                source_path.display(),
-                target_path.display()
-            )
-        })?;
-    }
-
-    Ok(())
-}
-
 fn file_name_for_copy(source_path: &Path) -> Result<String, String> {
     source_path
         .file_name()
@@ -6547,78 +6953,60 @@ fn copy_script_into_panel_workflow(
     Ok((local_path, panel_path))
 }
 
-fn resolve_flowcell_local_app_data_root() -> Result<PathBuf, String> {
-    let local_app_data = env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .ok_or_else(|| {
-            "LOCALAPPDATA could not be resolved for FlowCell bootstrap setup.".to_string()
-        })?;
-    Ok(local_app_data.join("FlowCell"))
-}
-
-fn resolve_blender_bootstrap_bridge_root(
-    config: &BlenderAutomationConfig,
-) -> Result<PathBuf, String> {
-    let configured_bridge_root = config.bridge_folder.trim();
-    if !configured_bridge_root.is_empty() {
-        return Ok(PathBuf::from(configured_bridge_root));
-    }
-
-    Ok(resolve_flowcell_local_app_data_root()?
-        .join("Bridges")
-        .join("Blender"))
-}
-
-fn resolve_blender_setup_status_file_name(config: &BlenderAutomationConfig) -> String {
-    let file_name = config.setup_status_file_name.trim();
-    if file_name.is_empty() {
-        "flowcell_bridge_setup.json".to_string()
-    } else {
-        file_name.to_string()
-    }
-}
-
 fn bootstrap_blender_program(program_name: &str, exe_path: Option<&str>) -> Result<String, String> {
     let blender_program_directory = resolve_program_directory("Blender")?;
-    let blender_scripts_source = resolve_program_git_scripts_directory("Blender")
-        .unwrap_or_else(|_| blender_program_directory.join("Blender Git Scripts"));
-    let blender_support_source = blender_program_directory.join("SupportScripts");
-    let local_program_root = resolve_flowcell_local_app_data_root()?
-        .join("Programs")
-        .join("Blender");
-    let local_scripts_root = local_program_root.join("Scripts");
-    let local_support_root = local_program_root.join("SupportScripts");
-    copy_matching_files(&blender_scripts_source, &local_scripts_root, "ps1")?;
-    copy_matching_files(&blender_support_source, &local_support_root, "ps1")?;
+    let installer_path = blender_program_directory
+        .join("SupportScripts")
+        .join("Install-FlowCellBlenderAddon.ps1");
+    if !installer_path.is_file() {
+        return Ok(format!(
+            "{} was added, but the Blender payload installer is missing. Extract FlowCell-Blender.zip into the FlowCell Core root, then add Blender again.",
+            program_name
+        ));
+    }
 
-    let config = read_blender_bridge_config().unwrap_or_default();
-    let bridge_root = resolve_blender_bootstrap_bridge_root(&config)?;
-    fs::create_dir_all(bridge_root.join("requests"))
-        .map_err(|error| format!("Failed to create Blender bridge requests folder: {error}"))?;
-    fs::create_dir_all(bridge_root.join("responses"))
-        .map_err(|error| format!("Failed to create Blender bridge responses folder: {error}"))?;
-    fs::create_dir_all(bridge_root.join("status"))
-        .map_err(|error| format!("Failed to create Blender bridge status folder: {error}"))?;
+    let mut command = Command::new(resolve_powershell_path());
+    command
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-File")
+        .arg(&installer_path);
+    if let Some(exe_path) = exe_path.map(str::trim).filter(|value| !value.is_empty()) {
+        command.arg("-BlenderExePath").arg(exe_path);
+    }
 
-    let setup_status_path = bridge_root.join(resolve_blender_setup_status_file_name(&config));
-    let payload = json!({
-        "programName": program_name,
-        "blenderExePath": exe_path.unwrap_or("").trim(),
-        "bridgeFolder": bridge_root.display().to_string(),
-        "createdAt": current_timestamp_string(),
-        "status": "pending_restart",
-    });
-    let raw = serde_json::to_string_pretty(&payload).map_err(|error| {
-        format!("Failed to serialize Blender bridge bootstrap payload: {error}")
-    })?;
-    fs::write(&setup_status_path, raw).map_err(|error| {
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = command.output().map_err(|error| {
         format!(
-            "Failed to write Blender bridge bootstrap record at {}: {error}",
-            setup_status_path.display()
+            "Failed to start the Blender bridge installer at {}: {error}",
+            installer_path.display()
         )
     })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let message = if !stdout.is_empty() { stdout } else { stderr };
 
-    Ok("Blender connected. Restart Blender to complete setup.".to_string())
+    if output.status.success() {
+        if message.is_empty() {
+            Ok(
+                "Blender bridge installed. Restart Blender once after adding Blender in FlowCell."
+                    .to_string(),
+            )
+        } else {
+            Ok(message)
+        }
+    } else if message.is_empty() {
+        Err(format!(
+            "Blender bridge installation failed with exit code {:?}.",
+            output.status.code()
+        ))
+    } else {
+        Err(message)
+    }
 }
 
 fn current_timestamp_string() -> String {
@@ -8092,10 +8480,10 @@ fn run_blender_bridge_action_direct_with_options(
     };
 
     let config = read_blender_bridge_config()?;
-    let bridge_root = resolve_blender_bridge_root(&config).ok_or_else(|| {
-        "FlowCell could not resolve the Blender bridge folder for tool actions.".to_string()
-    })?;
-    let target_blender_process_id = resolve_target_blender_process_id(&bridge_root)?;
+    let bridge_root = resolve_blender_bridge_root(&config)
+        .ok_or_else(|| BLENDER_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
+    let target_blender_process_id = resolve_target_blender_process_id(&bridge_root)
+        .map_err(|_| BLENDER_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
     let bridge_folder = bridge_root.join(target_blender_process_id.to_string());
     fs::create_dir_all(&bridge_folder).map_err(|error| {
         format!(
@@ -8137,13 +8525,7 @@ fn run_blender_bridge_action_direct_with_options(
         )
     });
     let response = wait_for_blender_bridge_response(&response_path, &request_id, timeout_duration)
-        .ok_or_else(|| {
-            format!(
-                "Timed out waiting for Blender. Target PID {}. Checked bridge path {}",
-                target_blender_process_id,
-                bridge_folder.display()
-            )
-        })?;
+        .ok_or_else(|| BLENDER_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
 
     let message = extract_blender_bridge_response_message(&response);
     write_last_action_status_message(&message);
@@ -8363,7 +8745,12 @@ fn get_foreground_process_info() -> Result<ForegroundProcessInfo, String> {
 #[tauri::command]
 fn list_program_folders() -> Result<Vec<String>, String> {
     let programs_root = resolve_programs_root()?;
-    list_child_directory_names(&programs_root)
+    let available_folder_names = list_child_directory_names(&programs_root)?;
+    let (_, document, _) = read_bindings_file_state()?;
+    Ok(registered_program_folder_names(
+        &available_folder_names,
+        &document,
+    ))
 }
 
 #[tauri::command]
@@ -8380,57 +8767,95 @@ fn create_program_folder(
     name: String,
     exe_path: Option<String>,
 ) -> Result<CreateProgramFolderResult, String> {
-    let program_name = validate_folder_name(&name, "Program")?;
-    let program_path = resolve_programs_root()?.join(&program_name);
-    fs::create_dir(&program_path).map_err(|error| match error.kind() {
-        ErrorKind::AlreadyExists => format!("Program folder '{}' already exists.", program_name),
-        _ => format!("Failed to create {}: {error}", program_path.display()),
-    })?;
-
-    let panels_root = program_path.join("Panels");
-    fs::create_dir_all(&panels_root)
-        .map_err(|error| format!("Failed to create {}: {error}", panels_root.display()))?;
-    let git_scripts_root = program_path.join(program_scripts_folder_name(&program_name, "Git")?);
-    let local_scripts_root =
-        program_path.join(program_scripts_folder_name(&program_name, "Local")?);
-    fs::create_dir_all(&git_scripts_root)
-        .map_err(|error| format!("Failed to create {}: {error}", git_scripts_root.display()))?;
-    fs::create_dir_all(&local_scripts_root)
-        .map_err(|error| format!("Failed to create {}: {error}", local_scripts_root.display()))?;
-    for panel_name in default_program_panel_names(&program_name, exe_path.as_deref()) {
-        let panel_path = panels_root.join(panel_name);
-        fs::create_dir_all(&panel_path)
-            .map_err(|error| format!("Failed to create {}: {error}", panel_path.display()))?;
-        let git_panel_path = git_scripts_root.join(panel_name);
-        fs::create_dir_all(&git_panel_path)
-            .map_err(|error| format!("Failed to create {}: {error}", git_panel_path.display()))?;
+    let requested_program_name = validate_folder_name(&name, "Program")?;
+    let exe_path = exe_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Choose the program executable before adding the program.".to_string())?;
+    if !Path::new(exe_path).is_file() {
+        return Err(format!("Program executable was not found: {exe_path}"));
     }
-
-    let status_message = if is_blender_program_name(&program_name) {
-        Some(bootstrap_blender_program(
-            &program_name,
-            exe_path.as_deref(),
-        )?)
+    let programs_root = resolve_programs_root()?;
+    let program_path = if let Some(existing_path) =
+        find_named_child_directory(&programs_root, &requested_program_name)?
+    {
+        existing_path
     } else {
-        None
+        let program_path = programs_root.join(&requested_program_name);
+        fs::create_dir(&program_path)
+            .map_err(|error| format!("Failed to create {}: {error}", program_path.display()))?;
+        program_path
     };
+    let program_name = program_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or(&requested_program_name)
+        .to_string();
+
+    let bootstrap_message =
+        if infer_program_template_key(&program_name, Some(exe_path)) == "blender" {
+            Some(bootstrap_blender_program(&program_name, Some(exe_path))?)
+        } else {
+            None
+        };
+
+    let (_, mut document, bindings_path) = read_bindings_file_state()?;
+    upsert_program_registration(&mut document, &program_name, &program_path, exe_path);
+    write_bindings_file_state(&bindings_path, &document)?;
+    let reload_error = restart_flowcell_headless_backend().err();
+    let mut status_message = format!("{program_name} registered with {exe_path}.");
+    if let Some(message) = bootstrap_message.filter(|message| !message.trim().is_empty()) {
+        status_message.push_str("\n\n");
+        status_message.push_str(&message);
+    }
+    if let Some(error) = reload_error {
+        status_message.push_str("\n\nBackend reload failed: ");
+        status_message.push_str(&error);
+    }
 
     Ok(CreateProgramFolderResult {
         program_name,
-        status_message,
+        status_message: Some(status_message),
     })
 }
 
 #[tauri::command]
 fn rename_program_folder(current_name: String, name: String) -> Result<String, String> {
     let programs_root = resolve_programs_root()?;
-    rename_child_directory(&programs_root, &current_name, &name, "Program")
+    let final_name = rename_child_directory(&programs_root, &current_name, &name, "Program")?;
+    let (_, mut document, bindings_path) = read_bindings_file_state()?;
+    if let Some(program) = find_registered_program(&document, &current_name) {
+        let exe_path = document
+            .get(&format!("ProgramTab_{}", program.id))
+            .and_then(|section| section.get("ExePath"))
+            .cloned()
+            .unwrap_or_default();
+        let program_path = resolve_program_directory(&final_name)?;
+        document.remove(&format!("ProgramTab_{}", program.id));
+        write_program_registration_section(
+            &mut document,
+            program.id,
+            &final_name,
+            &program_path,
+            &exe_path,
+        );
+        sync_program_registration_meta(&mut document, Some(program.id));
+        write_bindings_file_state(&bindings_path, &document)?;
+        let _ = restart_flowcell_headless_backend();
+    }
+    Ok(final_name)
 }
 
 #[tauri::command]
 fn delete_program_folder(name: String) -> Result<(), String> {
     let program_path = resolve_program_directory(&name)?;
-    recycle_directory_path(&program_path)
+    recycle_directory_path(&program_path)?;
+    let (_, mut document, bindings_path) = read_bindings_file_state()?;
+    remove_program_registration(&mut document, &name);
+    write_bindings_file_state(&bindings_path, &document)?;
+    let _ = restart_flowcell_headless_backend();
+    Ok(())
 }
 
 #[tauri::command]
@@ -8508,6 +8933,7 @@ fn load_binds_workspace() -> Result<BindsWorkspaceResponse, String> {
                 buttons: list_bindable_buttons_for_panel(&program_name, &panel_name, &bindings)?,
             });
         }
+        append_core_bind_actions_for_program(&program_name, &mut panels, &bindings);
 
         programs.push(BindableProgramRecord {
             name: program_name.clone(),
@@ -8913,6 +9339,76 @@ fn record_frontend_macro(
             .map(|definition| definition.created_at.as_str()),
     )?;
     load_frontend_macro_document_with_bindings(&action_id)
+}
+
+#[tauri::command]
+fn save_core_action_shortcut(
+    request: SaveCoreActionShortcutRequest,
+) -> Result<SaveBindShortcutResponse, String> {
+    let action_id = request.action_id.trim();
+    if !action_id.eq_ignore_ascii_case(ILLUSTRATOR_SET_ANCHOR_ACTION_ID) {
+        return Err("Unsupported Core bind action.".to_string());
+    }
+
+    let (bindings, mut document, bindings_path) = read_bindings_file_state()?;
+    let normalized_shortcut = request.shortcut.trim().to_ascii_lowercase();
+    if !normalized_shortcut.is_empty() {
+        if bindings.script_bindings.iter().any(|binding| {
+            binding
+                .shortcut
+                .trim()
+                .eq_ignore_ascii_case(&normalized_shortcut)
+        }) {
+            return Err("That shortcut is already in use.".to_string());
+        }
+        if bindings
+            .action_hotkeys
+            .iter()
+            .any(|(existing_action_id, shortcut)| {
+                !existing_action_id.eq_ignore_ascii_case(action_id)
+                    && shortcut.trim().eq_ignore_ascii_case(&normalized_shortcut)
+            })
+        {
+            return Err("That shortcut is already in use.".to_string());
+        }
+    }
+
+    if normalized_shortcut.is_empty() {
+        let mut remove_action_hotkeys_section = false;
+        if let Some(section) = document.get_mut("ActionHotkeys") {
+            section.remove(ILLUSTRATOR_SET_ANCHOR_ACTION_ID);
+            remove_action_hotkeys_section = section.is_empty();
+        }
+        if remove_action_hotkeys_section {
+            document.remove("ActionHotkeys");
+        }
+    } else {
+        document
+            .entry(String::from("ActionHotkeys"))
+            .or_default()
+            .insert(
+                String::from(ILLUSTRATOR_SET_ANCHOR_ACTION_ID),
+                request.shortcut.trim().to_string(),
+            );
+    }
+
+    write_bindings_file_state(&bindings_path, &document)?;
+    let (next_bindings, _, _) = read_bindings_file_state()?;
+    let reload_result = restart_flowcell_headless_backend();
+    let mut message = if normalized_shortcut.is_empty() {
+        String::from("Set Anchor shortcut cleared.")
+    } else {
+        String::from("Set Anchor shortcut saved.")
+    };
+    if let Err(error) = reload_result {
+        message.push_str(" Backend reload failed.");
+        eprintln!("{error}");
+    }
+
+    Ok(SaveBindShortcutResponse {
+        message,
+        bindings: next_bindings,
+    })
 }
 
 #[tauri::command]
@@ -9650,6 +10146,7 @@ fn main() {
             delete_frontend_macro,
             run_frontend_macro,
             record_frontend_macro,
+            save_core_action_shortcut,
             save_macro_shortcut,
             get_codex_usage_snapshot,
             add_panel_scripts,

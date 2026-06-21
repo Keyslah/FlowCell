@@ -28,6 +28,8 @@ type ResolvedShortcutProfiles = {
 
 type ShortcutRestriction = {
   label: string;
+  reason: string;
+  source: string;
 };
 
 const PROGRAM_PROFILE_ID_MAP: Array<{
@@ -171,6 +173,9 @@ function buildButtonLabelLookup(workspace: BindsWorkspaceData): Map<string, stri
     program.panels.forEach((panel) => {
       panel.buttons.forEach((button) => {
         labels.set(buildBindingOwnerKey(program.programTabId, button.target), button.label);
+        if (button.kind?.trim().toLowerCase() === "core_action") {
+          labels.set(buildBindingOwnerKey(0, button.target), button.label);
+        }
         if (button.executionTarget?.trim()) {
           labels.set(
             buildBindingOwnerKey(program.programTabId, button.executionTarget),
@@ -197,9 +202,10 @@ function buildUsedShortcutOwnerMap(args: {
   const selectedTargetKey = selectedButton
     ? buildBindingOwnerKey(args.selectedProgramTabId, selectedButton.target)
     : "";
+  const selectedButtonKind = selectedButton?.kind?.trim().toLowerCase() ?? "";
   const selectedActionId =
-    selectedButton?.kind?.trim().toLowerCase() === "macro"
-      ? selectedButton.target.trim()
+    selectedButtonKind === "macro" || selectedButtonKind === "core_action"
+      ? selectedButton?.target.trim() ?? ""
       : "";
   const selectedExecutionTargetKey =
     selectedButton?.executionTarget?.trim()
@@ -264,14 +270,20 @@ function resolveShortcutRestriction(
   }
 
   if (profiles.windowsRestrictions.has(normalizedShortcut)) {
+    const entry = profiles.windowsRestrictions.get(normalizedShortcut);
     return {
-      label: "Windows"
+      label: "Windows",
+      reason: entry?.reason?.trim() ?? "",
+      source: entry?.source?.trim() ?? ""
     };
   }
 
   if (profiles.programRestrictions.has(normalizedShortcut)) {
+    const entry = profiles.programRestrictions.get(normalizedShortcut);
     return {
-      label: profiles.programProfileLabel
+      label: profiles.programProfileLabel,
+      reason: entry?.reason?.trim() ?? "",
+      source: entry?.source?.trim() ?? ""
     };
   }
 
@@ -314,9 +326,6 @@ export function computeAvailableShortcutChoices(args: {
     if (normalizedShortcut === currentShortcutNormalized) {
       return true;
     }
-    if (resolveShortcutRestriction(shortcut, profiles)) {
-      return false;
-    }
     return !usedShortcutOwners.has(normalizedShortcut);
   });
 
@@ -351,6 +360,7 @@ export function validateShortcutInput(args: {
   | {
       ok: true;
       shortcut: string;
+      warning?: string;
     }
   | {
       ok: false;
@@ -376,19 +386,18 @@ export function validateShortcutInput(args: {
   const selectedCurrentShortcut = canonicalizeShortcut(args.selectedButton?.shortcut ?? "");
   const selectedCurrentShortcutNormalized = normalizeShortcut(selectedCurrentShortcut);
   const shortcutNormalized = normalizeShortcut(shortcut);
+  const profiles = resolveShortcutProfiles(args.workspace.shortcutProfiles, args.programName);
+  const restriction = resolveShortcutRestriction(shortcut, profiles);
+  const warning = restriction
+    ? `Warning: ${formatShortcutForDisplay(shortcut)} is also used by ${restriction.label}${
+        restriction.reason ? ` (${restriction.reason})` : ""
+      }. The FlowCell bind is allowed anyway.`
+    : undefined;
   if (shortcutNormalized && shortcutNormalized === selectedCurrentShortcutNormalized) {
     return {
       ok: true,
-      shortcut: selectedCurrentShortcut
-    };
-  }
-
-  const profiles = resolveShortcutProfiles(args.workspace.shortcutProfiles, args.programName);
-  const restriction = resolveShortcutRestriction(shortcut, profiles);
-  if (restriction) {
-    return {
-      ok: false,
-      message: `Shortcut is reserved by ${restriction.label}.`
+      shortcut: selectedCurrentShortcut,
+      warning
     };
   }
 
@@ -407,6 +416,7 @@ export function validateShortcutInput(args: {
 
   return {
     ok: true,
-    shortcut
+    shortcut,
+    warning
   };
 }

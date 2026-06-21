@@ -45,45 +45,144 @@ function Get-FlowCellBlenderDefaultBridgeFolderName {
         }
     }
 
-    return 'blender_bridge'
+    return 'blender_bridge_flowcell'
+}
+
+function Get-FlowCellBlenderVersionSortRecord([System.IO.DirectoryInfo]$Directory, [string[]]$ActiveVersionNames) {
+    $parts = @([regex]::Matches([string]$Directory.Name, '\d+') | ForEach-Object { [int]$_.Value })
+    $isActive = $false
+    foreach ($activeVersionName in @($ActiveVersionNames)) {
+        if ([string]$Directory.Name -ieq [string]$activeVersionName -or [string]$Directory.Name -like (([string]$activeVersionName) + '.*')) {
+            $isActive = $true
+            break
+        }
+    }
+
+    return [pscustomobject]@{
+        Directory = $Directory
+        IsActive = $isActive
+        Major = if ($parts.Count -gt 0) { $parts[0] } else { -1 }
+        Minor = if ($parts.Count -gt 1) { $parts[1] } else { -1 }
+        Patch = if ($parts.Count -gt 2) { $parts[2] } else { -1 }
+        Revision = if ($parts.Count -gt 3) { $parts[3] } else { -1 }
+    }
+}
+
+function Get-FlowCellRunningBlenderVersionNames {
+    $versions = New-Object System.Collections.Generic.List[string]
+    foreach ($process in @(Get-Process blender -ErrorAction SilentlyContinue)) {
+        foreach ($value in @(
+            [string]$(try { $process.MainModule.FileVersionInfo.ProductVersion } catch { '' }),
+            [string]$(try { $process.MainModule.FileVersionInfo.FileVersion } catch { '' }),
+            [string]$(try { Split-Path -Leaf (Split-Path -Parent $process.MainModule.FileName) } catch { '' })
+        )) {
+            if ($value -match '(?<!\d)(\d+\.\d+)(?!\d)') {
+                $version = [string]$Matches[1]
+                if (-not $versions.Contains($version)) {
+                    [void]$versions.Add($version)
+                }
+            }
+        }
+    }
+    return @($versions)
+}
+
+function Test-FlowCellBlenderBridgeFolder {
+    param(
+        [Parameter(Mandatory = $true)][object]$Config,
+        [Parameter(Mandatory = $true)][string]$BridgeFolder
+    )
+
+    if ([string]::IsNullOrWhiteSpace($BridgeFolder) -or -not (Test-Path -LiteralPath $BridgeFolder -PathType Container)) {
+        return $false
+    }
+
+    $addonRoot = Split-Path -Parent $BridgeFolder
+
+    return (
+        (Test-Path -LiteralPath (Join-Path $BridgeFolder 'flowcell_custom_actions.json') -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $BridgeFolder 'ManagedActions') -PathType Container) -and
+        (Test-Path -LiteralPath (Join-Path $addonRoot 'flowcell_actions.py') -PathType Leaf) -and
+        (Test-Path -LiteralPath (Join-Path $addonRoot 'flowcell_bridge.py') -PathType Leaf)
+    )
 }
 
 function Resolve-FlowCellBlenderBridgeFolder {
     param(
         [Parameter(Mandatory = $true)]
-        [object]$Config
+        [object]$Config,
+        [switch]$IncludeDiagnostics
     )
 
+    $checkedPaths = New-Object System.Collections.Generic.List[string]
     $configuredBridgeRoot = Get-FlowCellBlenderAutomationStringValue -Config $Config -Name 'bridgeFolder' -DefaultValue ''
     if (-not [string]::IsNullOrWhiteSpace($configuredBridgeRoot)) {
         try {
-            return [System.IO.Path]::GetFullPath($configuredBridgeRoot)
+            $configuredBridgeRoot = [System.IO.Path]::GetFullPath($configuredBridgeRoot)
         }
         catch {
-            return $configuredBridgeRoot.Trim()
+            $configuredBridgeRoot = $configuredBridgeRoot.Trim()
         }
-    }
-
-    $defaultFolderName = Get-FlowCellBlenderDefaultBridgeFolderName -Config $Config
-    $blenderAppDataRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Blender Foundation\Blender'
-    if (-not (Test-Path -LiteralPath $blenderAppDataRoot -PathType Container)) {
-        return ''
-    }
-
-    $versionDirectories = @(Get-ChildItem -LiteralPath $blenderAppDataRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending)
-    foreach ($versionDirectory in $versionDirectories) {
-        if (-not [string]::IsNullOrWhiteSpace($defaultFolderName)) {
-            $candidate = Join-Path $versionDirectory.FullName ('scripts\addons\{0}' -f [string]$defaultFolderName)
-            if (Test-Path -LiteralPath $candidate -PathType Container) {
-                return $candidate
+        [void]$checkedPaths.Add($configuredBridgeRoot)
+        if (Test-FlowCellBlenderBridgeFolder -Config $Config -BridgeFolder $configuredBridgeRoot) {
+            $result = [pscustomobject]@{
+                BridgeFolder = $configuredBridgeRoot
+                Source = 'config'
+                CheckedPaths = @($checkedPaths)
+                VersionFolders = @()
             }
+            if ($IncludeDiagnostics) { return $result }
+            return [string]$result.BridgeFolder
         }
     }
 
-    if ($versionDirectories.Count -gt 0 -and -not [string]::IsNullOrWhiteSpace($defaultFolderName)) {
-        return (Join-Path $versionDirectories[0].FullName ('scripts\addons\{0}' -f $defaultFolderName))
+    $applicationDataRoot = [string]$env:APPDATA
+    if ([string]::IsNullOrWhiteSpace($applicationDataRoot)) {
+        $applicationDataRoot = [Environment]::GetFolderPath('ApplicationData')
+    }
+    $blenderAppDataRoot = Join-Path $applicationDataRoot 'Blender Foundation\Blender'
+    $versionDirectories = if (Test-Path -LiteralPath $blenderAppDataRoot -PathType Container) {
+        @(Get-ChildItem -LiteralPath $blenderAppDataRoot -Directory -ErrorAction SilentlyContinue)
+    }
+    else {
+        @()
+    }
+    $activeVersionNames = @(Get-FlowCellRunningBlenderVersionNames)
+    $sortedVersionRecords = @(
+        $versionDirectories |
+            ForEach-Object { Get-FlowCellBlenderVersionSortRecord -Directory $_ -ActiveVersionNames $activeVersionNames } |
+            Sort-Object @{ Expression = { $_.IsActive }; Descending = $true },
+                @{ Expression = { $_.Major }; Descending = $true },
+                @{ Expression = { $_.Minor }; Descending = $true },
+                @{ Expression = { $_.Patch }; Descending = $true },
+                @{ Expression = { $_.Revision }; Descending = $true },
+                @{ Expression = { $_.Directory.Name }; Descending = $true }
+    )
+
+    foreach ($versionRecord in $sortedVersionRecords) {
+        $candidate = Join-Path $versionRecord.Directory.FullName 'scripts\addons\blender_bridge_flowcell'
+        if (-not $checkedPaths.Contains($candidate)) {
+            [void]$checkedPaths.Add($candidate)
+        }
+        if (Test-FlowCellBlenderBridgeFolder -Config $Config -BridgeFolder $candidate) {
+            $result = [pscustomobject]@{
+                BridgeFolder = $candidate
+                Source = 'runtime auto-resolve'
+                CheckedPaths = @($checkedPaths)
+                VersionFolders = @($sortedVersionRecords | ForEach-Object { $_.Directory.FullName })
+            }
+            if ($IncludeDiagnostics) { return $result }
+            return [string]$result.BridgeFolder
+        }
     }
 
+    $unresolved = [pscustomobject]@{
+        BridgeFolder = ''
+        Source = 'unresolved'
+        CheckedPaths = @($checkedPaths)
+        VersionFolders = @($sortedVersionRecords | ForEach-Object { $_.Directory.FullName })
+    }
+    if ($IncludeDiagnostics) { return $unresolved }
     return ''
 }
 

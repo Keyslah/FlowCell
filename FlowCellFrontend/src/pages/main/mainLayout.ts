@@ -208,12 +208,34 @@ function getVisibleFolderRailCount(): number {
   );
 }
 
+function buildVisibleFolderRailNames(
+  names: readonly string[],
+  selectedName: string | null
+): readonly string[] {
+  const visibleCount = getVisibleFolderRailCount();
+  const visibleNames = names.slice(0, visibleCount);
+  if (!selectedName || visibleNames.some((name) => equalsFolderName(selectedName, name))) {
+    return visibleNames;
+  }
+
+  const selectedVisibleName = names.find((name) => equalsFolderName(selectedName, name));
+  if (!selectedVisibleName) {
+    return visibleNames;
+  }
+
+  if (visibleNames.length < visibleCount) {
+    return [...visibleNames, selectedVisibleName];
+  }
+
+  return [...visibleNames.slice(0, Math.max(visibleCount - 1, 0)), selectedVisibleName];
+}
+
 function buildFolderRailButtons(
   definition: FolderRailDefinition,
   names: readonly string[],
   selectedName: string | null
 ): ButtonRecord[] {
-  const visibleNames = names.slice(0, getVisibleFolderRailCount());
+  const visibleNames = buildVisibleFolderRailNames(names, selectedName);
   const buttons: ButtonRecord[] = visibleNames.map((name, index) => ({
     id: `${definition.listButtonIdPrefix}-${index + 1}`,
     railId: definition.railId,

@@ -95,7 +95,7 @@ const shortcutProfiles = [
   }
 ];
 
-test("available shortcuts keep the selected button shortcut but drop reserved and used entries", () => {
+test("available shortcuts keep selected and reserved shortcuts but drop used entries", () => {
   const workspace = createWorkspace(shortcutProfiles);
   const selectedButton = workspace.programs[0].panels[0].buttons[0];
 
@@ -109,10 +109,10 @@ test("available shortcuts keep the selected button shortcut but drop reserved an
   assert.equal(available.includes("^S"), true);
   assert.equal(available.includes("^+1"), false);
   assert.equal(available.includes("^!2"), false);
-  assert.equal(available.includes("!{F4}"), false);
+  assert.equal(available.includes("!{F4}"), true);
 });
 
-test("manual shortcut validation rejects Windows blocked shortcuts", () => {
+test("manual shortcut validation warns for Windows blocked shortcuts", () => {
   const workspace = createWorkspace(shortcutProfiles);
   const result = validateShortcutInput({
     rawValue: "Alt + F4",
@@ -123,12 +123,13 @@ test("manual shortcut validation rejects Windows blocked shortcuts", () => {
   });
 
   assert.deepEqual(result, {
-    ok: false,
-    message: "Shortcut is reserved by Windows."
+    ok: true,
+    shortcut: "!F4",
+    warning: "Warning: Alt + F4 is also used by Windows. The FlowCell bind is allowed anyway."
   });
 });
 
-test("manual shortcut validation rejects program reserved shortcuts", () => {
+test("manual shortcut validation warns for program reserved shortcuts", () => {
   const workspace = createWorkspace(shortcutProfiles);
   const result = validateShortcutInput({
     rawValue: "Ctrl + Z",
@@ -139,8 +140,9 @@ test("manual shortcut validation rejects program reserved shortcuts", () => {
   });
 
   assert.deepEqual(result, {
-    ok: false,
-    message: "Shortcut is reserved by Photoshop."
+    ok: true,
+    shortcut: "^Z",
+    warning: "Warning: Control + Z is also used by Photoshop. The FlowCell bind is allowed anyway."
   });
 });
 
@@ -156,7 +158,7 @@ test("manual shortcut validation rejects duplicate FlowCell binds and allows saf
   });
   assert.deepEqual(duplicate, {
     ok: false,
-    message: "Shortcut is reserved by Photoshop."
+    message: "Shortcut is already bound to Selected."
   });
 
   const selectedButtonWithoutDuplicate = workspace.programs[0].panels[0].buttons[0];
@@ -181,7 +183,8 @@ test("manual shortcut validation rejects duplicate FlowCell binds and allows saf
   });
   assert.deepEqual(custom, {
     ok: true,
-    shortcut: "^!K"
+    shortcut: "^!K",
+    warning: undefined
   });
 });
 

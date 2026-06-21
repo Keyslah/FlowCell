@@ -203,6 +203,10 @@ GetFlowCellIllustratorPrewarmScriptPath() {
     return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_Prewarm.jsx"
 }
 
+GetFlowCellIllustratorAnchorScriptPath() {
+    return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_SetAnchorHotkey.jsx"
+}
+
 GetDefaultDummyMonitorHotkeyBinding() {
     scriptPath := GetFlowCellWorkspaceRoot() "\Programs\Windows\Panels\Utility\Launch-DummyMonitorToggle.vbs"
     if !FileExist(scriptPath)
@@ -245,6 +249,8 @@ class FlowCellApp {
         this.illustratorAutomationLastDirectActionTick := 0
         this.illustratorAutomationPrewarmTimer := ""
         this.actions := []
+        if FileExist(GetFlowCellIllustratorAnchorScriptPath())
+            this.actions.Push(SetIllustratorAnchorAction(this))
         this.actions.Push(SaveSelectedObjToProject3DAction(this))
         this.actions.Push(SaveSelectedObjToBlenderAction(this))
         this.actions.Push(SaveSelectedPngToBlenderLithoAction(this))
@@ -1289,11 +1295,39 @@ class FlowCellApp {
     }
 
     HandleActionHotkeyInvocation(actionId, shortcut) {
+        global flowCellLastActionStatusPath
         action := this.GetActionById(actionId)
         if !IsObject(action)
             return
 
         this.logger.Info("Action hotkey requested. Action=" actionId " | Shortcut=" shortcut)
+        if action.HasOwnProp("RunFromHotkeyDirect") && action.RunFromHotkeyDirect {
+            try {
+                result := action.Run("")
+                statusText := this.BuildActionStatus(action, result)
+                WriteTextFile(flowCellLastActionStatusPath, statusText)
+                this.SetActionStatus(statusText)
+                this.logger.Info(
+                    "Action hotkey result: "
+                    . action.Id
+                    . " | Attempted="
+                    . BoolToWord(result.attempted)
+                    . " | DeliverySucceeded="
+                    . BoolToWord(result.deliverySucceeded)
+                    . " | EffectConfirmed="
+                    . BoolToWord(result.effectConfirmed)
+                    . " | Method="
+                    . result.method
+                )
+            } catch as err {
+                statusText := action.Label " failed.`r`n" err.Message
+                WriteTextFile(flowCellLastActionStatusPath, statusText)
+                this.SetActionStatus(statusText)
+                this.logger.Error("Action hotkey failed: " action.Id, err)
+            }
+            return
+        }
+
         result := this.RunBackendActionCommand(actionId, shortcut)
         statusText := Trim(result.statusText) != "" ? result.statusText : result.detail
         this.logger.Info("Action hotkey result: " action.Id " | Attempted=" BoolToWord(result.attempted) " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method)
@@ -3853,6 +3887,39 @@ class ThreeDExtrudeDepth16mmAction {
             return value != "" ? value : ""
         } catch {
             return ""
+        }
+    }
+}
+
+class SetIllustratorAnchorAction {
+    __New(app) {
+        this.app := app
+        this.Id := "illustrator_set_anchor"
+        this.Label := "Set Anchor"
+        this.RequiresExactLayersScan := false
+        this.RunFromHotkeyDirect := true
+        this.HotIfWinTitle := "ahk_exe Illustrator.exe"
+    }
+
+    Run(scanResult) {
+        helperPath := GetFlowCellIllustratorAnchorScriptPath()
+        helperResult := this.app.RunIllustratorScript(
+            helperPath,
+            "action " this.Id,
+            0,
+            false
+        )
+        normalizedDetail := StrLower(helperResult.detail)
+        effectConfirmed := helperResult.succeeded && InStr(normalizedDetail, "anchor set") > 0
+        return {
+            attempted: helperResult.attempted,
+            deliverySucceeded: helperResult.succeeded,
+            effectConfirmed: effectConfirmed,
+            method: helperResult.method,
+            detail: helperResult.detail,
+            note: effectConfirmed
+                ? "The current Illustrator selection is now the shared FlowCell anchor."
+                : "Select one or more unlocked Illustrator objects, then run Set Anchor again."
         }
     }
 }
@@ -6838,7 +6905,7 @@ class ScriptShortcutManager {
         this.nextId := 1
 
         if !FileExist(this.bindingFilePath) {
-            this.EnsureDefaultDummyMonitorBinding()
+            this.EnsureDefaultBindings()
             return
         }
 
@@ -6850,12 +6917,12 @@ class ScriptShortcutManager {
             this.logger.Error("Failed to read the FlowCell bindings file.", err)
             this.bindings := []
             this.nextId := 1
-            this.EnsureDefaultDummyMonitorBinding()
+            this.EnsureDefaultBindings()
             return
         }
 
         if idText = "" {
-            this.EnsureDefaultDummyMonitorBinding()
+            this.EnsureDefaultBindings()
             return
         }
 
@@ -6881,7 +6948,7 @@ class ScriptShortcutManager {
             }
         }
 
-        this.EnsureDefaultDummyMonitorBinding()
+        this.EnsureDefaultBindings()
     }
 
     SaveToDisk() {
@@ -6905,6 +6972,10 @@ class ScriptShortcutManager {
         for binding in this.bindings
             ids.Push(binding.id)
         return JoinLines(ids, "|")
+    }
+
+    EnsureDefaultBindings() {
+        this.EnsureDefaultDummyMonitorBinding()
     }
 
     EnsureDefaultDummyMonitorBinding() {
@@ -7300,15 +7371,29 @@ class ActionHotkeyManager {
 
     TryRegisterHotkey(actionId, shortcut) {
         callback := ObjBindMethod(this, "OnHotkeyPressed", actionId)
+        action := this.app.GetActionById(actionId)
+        hotIfWinTitle := IsObject(action) && action.HasOwnProp("HotIfWinTitle")
+            ? Trim(action.HotIfWinTitle)
+            : ""
         try {
+            if hotIfWinTitle != ""
+                HotIfWinActive hotIfWinTitle
             Hotkey shortcut, callback, "On"
+            if hotIfWinTitle != ""
+                HotIfWinActive
             this.registered[actionId] := {
                 shortcut: shortcut,
-                callback: callback
+                callback: callback,
+                hotIfWinTitle: hotIfWinTitle
             }
-            this.logger.Info("Registered action hotkey. Action=" actionId " | Shortcut=" shortcut)
+            this.logger.Info("Registered action hotkey. Action=" actionId " | Shortcut=" shortcut " | Scope=" hotIfWinTitle)
             return "Active"
         } catch as err {
+            if hotIfWinTitle != "" {
+                try HotIfWinActive
+                catch {
+                }
+            }
             this.logger.Warn(
                 "Failed to register action hotkey. Action="
                 . actionId
@@ -7323,8 +7408,16 @@ class ActionHotkeyManager {
 
     UnregisterHotkeys() {
         for _, entry in this.registered {
-            try Hotkey entry.shortcut, entry.callback, "Off"
-            catch {
+            try {
+                if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
+                    HotIfWinActive entry.hotIfWinTitle
+                Hotkey entry.shortcut, entry.callback, "Off"
+                if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
+                    HotIfWinActive
+            } catch {
+                try HotIfWinActive
+                catch {
+                }
             }
         }
         this.registered := Map()

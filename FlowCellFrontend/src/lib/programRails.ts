@@ -259,18 +259,15 @@ export async function saveLayoutSnapshot(
   snapshot: LayoutSnapshot
 ): Promise<string> {
   if (!isTauriWindowHost()) {
-    throw new Error("Layout files can only be saved from the desktop host.");
+    throw new Error("Layout snapshots can only be saved from the desktop host.");
   }
 
-  return invokeProgramRailCommand<string>("save_layout_snapshot", {
-    path,
-    snapshot
-  });
+  return invokeProgramRailCommand<string>("save_layout_snapshot", { path, snapshot });
 }
 
 export async function loadLayoutSnapshot(path: string): Promise<LayoutSnapshot> {
   if (!isTauriWindowHost()) {
-    throw new Error("Layout files can only be loaded from the desktop host.");
+    throw new Error("Layout snapshots can only be loaded from the desktop host.");
   }
 
   return invokeProgramRailCommand<LayoutSnapshot>("load_layout_snapshot", { path });
@@ -287,7 +284,7 @@ export async function runBlenderRotateTool(args: {
   distributeCount: number;
 }): Promise<string> {
   if (!isTauriWindowHost()) {
-    throw new Error("Blender tool actions can only be run from the desktop host.");
+    throw new Error("Blender tools can only be run from the desktop host.");
   }
 
   return invokeProgramRailCommand<string>("run_blender_rotate_tool", args);
@@ -297,13 +294,13 @@ export async function runBlenderAlignmentTool(args: {
   programName: string;
   panelName: string;
   fileName: string;
-  command: "align_axis" | "center_all";
+  command: string;
   axis: string;
   mode: string;
   modifier: string;
 }): Promise<string> {
   if (!isTauriWindowHost()) {
-    throw new Error("Blender tool actions can only be run from the desktop host.");
+    throw new Error("Blender tools can only be run from the desktop host.");
   }
 
   return invokeProgramRailCommand<string>("run_blender_alignment_tool", args);
@@ -313,14 +310,14 @@ export async function runIllustratorAlignmentTool(args: {
   programName: string;
   panelName: string;
   fileName: string;
-  command: "align_axis" | "center_all" | "center_artboard";
+  command: string;
   axis: string;
   mode: string;
   modifier: string;
   groupMode: boolean;
 }): Promise<string> {
   if (!isTauriWindowHost()) {
-    throw new Error("Illustrator tool actions can only be run from the desktop host.");
+    throw new Error("Illustrator tools can only be run from the desktop host.");
   }
 
   return invokeProgramRailCommand<string>("run_illustrator_alignment_tool", args);
@@ -330,10 +327,10 @@ export async function runBlenderSmartAxisTool(args: {
   programName: string;
   panelName: string;
   fileName: string;
-  command: "baseline" | "cycle_x" | "cycle_y" | "cycle_z" | "toggle_live" | "status";
+  command: string;
 }): Promise<SmartAxisToolStateResponse> {
   if (!isTauriWindowHost()) {
-    throw new Error("Blender tool actions can only be run from the desktop host.");
+    throw new Error("Blender tools can only be run from the desktop host.");
   }
 
   return invokeProgramRailCommand<SmartAxisToolStateResponse>("run_blender_smart_axis_tool", args);
@@ -347,7 +344,7 @@ export async function runBlenderToolsetAction(args: {
   payload?: Record<string, unknown>;
 }): Promise<ToolsetActionResponse> {
   if (!isTauriWindowHost()) {
-    throw new Error("Blender tool actions can only be run from the desktop host.");
+    throw new Error("Blender tools can only be run from the desktop host.");
   }
 
   return invokeProgramRailCommand<ToolsetActionResponse>("run_blender_toolset_action", args);

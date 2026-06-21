@@ -2514,16 +2514,6 @@ export default function MainPage() {
       }
 
       try {
-        const nextProgramNames = await listProgramFolders();
-        const existingProgramName =
-          nextProgramNames.find((programName) => programName.toLowerCase() === trimmedName.toLowerCase()) ??
-          null;
-        if (existingProgramName) {
-          setProgramNames(nextProgramNames);
-          setSelectedProgramName(resolveFolderSelection(nextProgramNames, existingProgramName));
-          return;
-        }
-
         const createdProgram = await createProgramFolder(trimmedName, exePath);
         const refreshedProgramNames = await listProgramFolders();
         setProgramNames(refreshedProgramNames);
