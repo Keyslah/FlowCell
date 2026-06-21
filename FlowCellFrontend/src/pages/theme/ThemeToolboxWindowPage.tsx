@@ -46,6 +46,7 @@ type HdriWorldAction =
   | "apply_theme_from_photo_manual_colors"
   | "apply_theme_bucket"
   | "place_picture"
+  | "set_grid_spacing"
   | "set_place_picture_startup"
   | "clear_place_picture"
   | "set_hdri_path"
@@ -59,6 +60,7 @@ type HdriWorldAction =
 interface HdriWorldToolValues {
   HdriPath: string;
   StaticBackgroundPath: string;
+  GridSpacing: string;
   ThemeImagePath: string;
   ThemePaletteHexes: string[];
   ThemeVisualMode: ThemeVisualMode;
@@ -658,6 +660,7 @@ function buildRefilledThemeRoleAssignment(
 const DEFAULT_HDRI_WORLD_TOOL_VALUES: HdriWorldToolValues = {
   HdriPath: "",
   StaticBackgroundPath: "",
+  GridSpacing: "1 m",
   ThemeImagePath: "",
   ThemePaletteHexes: DEFAULT_THEME_PALETTE,
   ThemeVisualMode: "dark",
@@ -711,6 +714,11 @@ function normalizeHdriWorldToolValues(
       values,
       "StaticBackgroundPath",
       DEFAULT_HDRI_WORLD_TOOL_VALUES.StaticBackgroundPath
+    ),
+    GridSpacing: readString(
+      values,
+      "GridSpacing",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.GridSpacing
     ),
     ThemeImagePath: readString(
       values,
@@ -856,6 +864,7 @@ function syncHdriWorldVisibleTextBuckets(
 function buildHdriWorldThemeSnapshot(values: HdriWorldToolValues): Record<string, unknown> {
   return {
     StaticBackgroundPath: values.StaticBackgroundPath,
+    GridSpacing: values.GridSpacing,
     ThemeImagePath: values.ThemeImagePath,
     ThemePaletteHexes: [...values.ThemePaletteHexes],
     ThemeVisualMode: values.ThemeVisualMode,
@@ -1225,11 +1234,61 @@ function buildThemeActionPayload(
     command: action,
     hdri_path: values.HdriPath,
     static_background_path: values.StaticBackgroundPath,
+    grid_spacing_m: parseGridSpacingMeters(values.GridSpacing) ?? 1,
     rotation_x_deg: values.RotationXDeg,
     rotation_y_deg: values.RotationYDeg,
     rotation_z_deg: values.RotationZDeg,
     world_strength: values.WorldStrength
   };
+}
+
+function parseGridSpacingMeters(value: string): number | null {
+  const match = value
+    .trim()
+    .toLowerCase()
+    .match(/^([+]?(?:\d+(?:\.\d*)?|\.\d+))\s*(m|meter|meters|in|inch|inches|"|cm|mm|ft|foot|feet|')?$/);
+  if (!match) {
+    return null;
+  }
+
+  const amount = Number(match[1]);
+  const unit = match[2] ?? "m";
+  const multiplier =
+    unit === "in" || unit === "inch" || unit === "inches" || unit === '"'
+      ? 0.0254
+      : unit === "cm"
+        ? 0.01
+        : unit === "mm"
+          ? 0.001
+          : unit === "ft" || unit === "foot" || unit === "feet" || unit === "'"
+            ? 0.3048
+            : 1;
+  const meters = amount * multiplier;
+  return Number.isFinite(meters) && meters > 0 ? meters : null;
+}
+
+function formatGridSpacingMeters(meters: number): string {
+  const normalized = Number(meters.toPrecision(10));
+  return String(normalized) + " m";
+}
+
+function findActionMessage(response: unknown): string | null {
+  const root = toObjectRecord(response);
+  const details = toObjectRecord(root?.details) ?? toObjectRecord(root?.Details);
+  const result = toObjectRecord(root?.result) ?? toObjectRecord(root?.Result);
+  const candidates = [
+    root?.message,
+    root?.Message,
+    result?.message,
+    result?.Message,
+    details?.message,
+    details?.Message
+  ];
+  const message = candidates.find(
+    (candidate): candidate is string =>
+      typeof candidate === "string" && candidate.trim().length > 0
+  );
+  return message?.trim() ?? null;
 }
 
 function buildThemeBucketActionPayload(
@@ -1681,21 +1740,38 @@ export default function ThemeToolboxWindowPage({
       return;
     }
 
-    const currentValues = normalizeHdriWorldToolValues(
+    let currentValues = normalizeHdriWorldToolValues(
       valuesOverride ? { ...valuesOverride } : { ...latestValuesRef.current }
     );
+    if (
+      action === "set_grid_spacing" ||
+      action === "place_picture" ||
+      action === "set_place_picture_startup"
+    ) {
+      const spacingMeters = parseGridSpacingMeters(currentValues.GridSpacing);
+      if (spacingMeters === null) {
+        setStatusMessage(
+          "Grid spacing must be a positive metric value such as 1, 0.25 m, or 8 in."
+        );
+        return;
+      }
+      const normalizedSpacing = formatGridSpacingMeters(spacingMeters);
+      currentValues = { ...currentValues, GridSpacing: normalizedSpacing };
+      updateValues({ GridSpacing: normalizedSpacing });
+    }
     const commandKey = action;
     setPendingCommand(commandKey);
     setStatusMessage(null);
 
     try {
-      await runBlenderToolsetAction({
+      const response = await runBlenderToolsetAction({
         programName: context.programName,
         panelName: context.panelName,
         fileName: record.fileName,
         command: action,
         payload: buildThemeActionPayload(action, currentValues)
       });
+      setStatusMessage(findActionMessage(response));
     } catch (error) {
       setStatusMessage(formatErrorMessage(error));
     } finally {
@@ -1858,13 +1934,14 @@ export default function ThemeToolboxWindowPage({
     setStatusMessage(null);
 
     try {
-      await runBlenderToolsetAction({
+      const response = await runBlenderToolsetAction({
         programName: context.programName,
         panelName: context.panelName,
         fileName: record.fileName,
         command: "apply_theme_bucket",
         payload: buildThemeBucketActionPayload(field, currentValues)
       });
+      setStatusMessage(findActionMessage(response));
     } catch (error) {
       setStatusMessage(formatErrorMessage(error));
     } finally {
