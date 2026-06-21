@@ -423,13 +423,15 @@ export default function BindsWindowPage({
 
     setIsSaving(true);
     try {
+      const statusWithWarning = (message: string) =>
+        validation.warning ? `${message} ${validation.warning}` : message;
       if (activeButton.kind.trim().toLowerCase() === "macro") {
         const result = await saveMacroShortcut({
           actionId: activeButton.target,
           shortcut: validation.shortcut
         });
         await reloadWorkspace(selection);
-        setStatusMessage(result.message);
+        setStatusMessage(statusWithWarning(result.message));
         return;
       }
 
@@ -439,7 +441,7 @@ export default function BindsWindowPage({
           shortcut: validation.shortcut
         });
         await reloadWorkspace(selection);
-        setStatusMessage(result.message);
+        setStatusMessage(statusWithWarning(result.message));
         return;
       }
 
@@ -462,7 +464,7 @@ export default function BindsWindowPage({
         buttonId: selectedButton.id
       };
       await reloadWorkspace(nextSelection);
-      setStatusMessage(result.message);
+      setStatusMessage(statusWithWarning(result.message));
     } catch (error) {
       setStatusMessage(formatErrorMessage(error));
     } finally {
@@ -470,14 +472,18 @@ export default function BindsWindowPage({
     }
   };
 
-  const hasSafeSuggestions =
+  const hasAvailableSuggestions =
     availableShortcutChoices.length > 0 || Boolean(activeButton?.shortcut?.trim());
   const shortcutPickerOptions = useMemo(
     () => buildShortcutPickerOptions(availableShortcutChoices),
     [availableShortcutChoices]
   );
   const statusTone =
-    statusMessage.includes("saved") || statusMessage.includes("cleared") ? "is-success" : "is-error";
+    statusMessage.includes("Warning:")
+      ? "is-warning"
+      : statusMessage.includes("saved") || statusMessage.includes("cleared")
+        ? "is-success"
+        : "is-error";
   const currentPanelPath = selectedProgram && selectedPanel
     ? `${selectedProgram.name} / ${selectedPanel.name}`
     : "Pick a program and panel";
@@ -701,15 +707,15 @@ export default function BindsWindowPage({
           </div>
 
           <p className="binds-window__toolbar-note">
-            Pick one button and one shortcut. Type a custom shortcut if needed, or open the safe
-            suggestions menu.
+            Pick one button and one shortcut. Existing FlowCell conflicts are blocked; Windows or
+            application shortcuts show a warning but are still allowed.
           </p>
 
           {statusMessage ? (
             <p className={`binds-window__status ${statusTone}`}>{statusMessage}</p>
           ) : null}
-          {!hasSafeSuggestions && activeButton ? (
-            <p className="binds-window__status is-error">No safe shortcuts available for this program.</p>
+          {!hasAvailableSuggestions && activeButton ? (
+            <p className="binds-window__status is-error">No available shortcuts for this program.</p>
           ) : null}
           {workspace?.warnings[0] ? (
             <p className="binds-window__warning">{workspace.warnings[0]}</p>

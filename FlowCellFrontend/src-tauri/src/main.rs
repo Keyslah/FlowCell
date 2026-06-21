@@ -1455,7 +1455,7 @@ fn resolve_shortcut_profiles_local_root() -> Result<PathBuf, String> {
     Ok(resolve_flowcell_local_root()?.join("shortcut_profiles"))
 }
 
-fn resolve_program_tab_id(program_name: &str) -> i64 {
+fn canonical_program_tab_id(program_name: &str) -> i64 {
     match infer_program_template_key(program_name, None) {
         "illustrator" => 1,
         "windows" => 2,
@@ -1463,6 +1463,18 @@ fn resolve_program_tab_id(program_name: &str) -> i64 {
         "photoshop" => 4,
         _ => 0,
     }
+}
+
+fn resolve_program_tab_id(program_name: &str) -> i64 {
+    let registered_id = resolve_bindings_file_path()
+        .ok()
+        .filter(|path| path.is_file())
+        .and_then(|path| fs::read_to_string(path).ok())
+        .map(|contents| parse_ini_document(&contents))
+        .and_then(|document| {
+            find_registered_program(&document, program_name).map(|program| program.id)
+        });
+    registered_id.unwrap_or_else(|| canonical_program_tab_id(program_name))
 }
 
 fn resolve_shortcut_profile_id_from_file_name(file_name: &str) -> Option<String> {
@@ -4686,6 +4698,319 @@ fn path_is_under_directory(path: &Path, directory: &Path) -> bool {
 }
 
 type IniDocument = HashMap<String, HashMap<String, String>>;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct RegisteredProgram {
+    id: i64,
+    label: String,
+}
+
+fn parse_program_tab_section_id(section_name: &str) -> Option<i64> {
+    section_name
+        .strip_prefix("ProgramTab_")?
+        .parse::<i64>()
+        .ok()
+        .filter(|id| *id > 0)
+}
+
+fn registered_programs_from_document(document: &IniDocument) -> Vec<RegisteredProgram> {
+    let mut programs = document
+        .iter()
+        .filter_map(|(section_name, section)| {
+            let id = parse_program_tab_section_id(section_name)?;
+            let label = section.get("Label")?.trim();
+            if label.is_empty() {
+                return None;
+            }
+            Some(RegisteredProgram {
+                id,
+                label: label.to_string(),
+            })
+        })
+        .collect::<Vec<_>>();
+    programs.sort_by_key(|program| program.id);
+    programs
+}
+
+fn find_registered_program(
+    document: &IniDocument,
+    program_name: &str,
+) -> Option<RegisteredProgram> {
+    registered_programs_from_document(document)
+        .into_iter()
+        .find(|program| program.label.eq_ignore_ascii_case(program_name.trim()))
+}
+
+fn registered_program_folder_names(
+    available_folder_names: &[String],
+    document: &IniDocument,
+) -> Vec<String> {
+    registered_programs_from_document(document)
+        .into_iter()
+        .filter_map(|program| {
+            available_folder_names
+                .iter()
+                .find(|folder_name| {
+                    !folder_name.to_ascii_lowercase().starts_with("flowcell-")
+                        && folder_name.eq_ignore_ascii_case(&program.label)
+                })
+                .cloned()
+        })
+        .collect()
+}
+
+fn sync_program_registration_meta(document: &mut IniDocument, selected_program_id: Option<i64>) {
+    let program_ids = registered_programs_from_document(document)
+        .into_iter()
+        .map(|program| program.id)
+        .collect::<Vec<_>>();
+    let next_id = program_ids.iter().copied().max().unwrap_or(0) + 1;
+    let meta = document.entry(String::from("Meta")).or_default();
+    meta.insert(
+        String::from("ProgramTabIds"),
+        program_ids
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("|"),
+    );
+    meta.insert(String::from("ProgramTabNextId"), next_id.max(1).to_string());
+    let existing_selected_id = meta
+        .get("SelectedProgramTabId")
+        .and_then(|value| value.parse::<i64>().ok());
+    let effective_selected_id = selected_program_id
+        .filter(|program_id| program_ids.contains(program_id))
+        .or_else(|| existing_selected_id.filter(|program_id| program_ids.contains(program_id)))
+        .or_else(|| program_ids.first().copied())
+        .unwrap_or(0);
+    meta.insert(
+        String::from("SelectedProgramTabId"),
+        effective_selected_id.to_string(),
+    );
+}
+
+fn program_registration_id(document: &IniDocument, program_name: &str) -> i64 {
+    if let Some(program) = find_registered_program(document, program_name) {
+        return program.id;
+    }
+
+    let used_ids = registered_programs_from_document(document)
+        .into_iter()
+        .map(|program| program.id)
+        .collect::<HashSet<_>>();
+    let preferred_id = canonical_program_tab_id(program_name);
+    if preferred_id > 0 && !used_ids.contains(&preferred_id) {
+        return preferred_id;
+    }
+
+    document
+        .get("Meta")
+        .and_then(|section| section.get("ProgramTabNextId"))
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or_else(|| used_ids.iter().copied().max().unwrap_or(0) + 1)
+        .max(used_ids.iter().copied().max().unwrap_or(0) + 1)
+        .max(1)
+}
+
+fn write_program_registration_section(
+    document: &mut IniDocument,
+    program_id: i64,
+    program_name: &str,
+    program_path: &Path,
+    exe_path: &str,
+) {
+    let template_key = infer_program_template_key(program_name, Some(exe_path));
+    let process_name = Path::new(exe_path)
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .trim()
+        .to_ascii_lowercase();
+    let git_scripts_path = program_path.join(format!("{program_name} Git Scripts"));
+    let script_folder = match template_key {
+        "illustrator" | "photoshop" | "blender" | "windows" => git_scripts_path,
+        _ => Path::new(exe_path)
+            .parent()
+            .unwrap_or(program_path)
+            .to_path_buf(),
+    };
+    let (program_type, run_method, extensions, default_panels, process_names) = match template_key {
+        "illustrator" => (
+            "adobe_direct_script_runner",
+            "illustrator_direct",
+            ".jsx|.js",
+            "Layers|Files|Utility",
+            if process_name.is_empty() {
+                String::from("illustrator")
+            } else {
+                process_name.clone()
+            },
+        ),
+        "photoshop" => (
+            "adobe_direct_script_runner",
+            "photoshop_direct",
+            ".jsx|.js",
+            "Layers|Files|Utility",
+            if process_name.is_empty() {
+                String::from("photoshop")
+            } else {
+                process_name.clone()
+            },
+        ),
+        "blender" => (
+            "bridge_runner",
+            "blender_bridge",
+            ".ps1|.py|.blend|.exe|.lnk",
+            "Collections|Files|Utility",
+            if process_name.is_empty() {
+                String::from("blender")
+            } else {
+                process_name.clone()
+            },
+        ),
+        "windows" => (
+            "generic",
+            "generic",
+            "",
+            "Files|Utility",
+            String::from("explorer|dopus|dopusrt"),
+        ),
+        _ => (
+            "generic",
+            "generic",
+            "",
+            "Files|Utility",
+            process_name.clone(),
+        ),
+    };
+
+    let mut section = HashMap::new();
+    section.insert(String::from("Label"), program_name.trim().to_string());
+    section.insert(
+        String::from("NormalizedName"),
+        program_name.trim().to_ascii_lowercase(),
+    );
+    section.insert(
+        String::from("ScriptFolder"),
+        script_folder.to_string_lossy().to_string(),
+    );
+    section.insert(String::from("ProgramType"), program_type.to_string());
+    section.insert(String::from("ExePath"), exe_path.trim().to_string());
+    section.insert(String::from("RunMethod"), run_method.to_string());
+    section.insert(
+        String::from("AllowedScriptExtensions"),
+        extensions.to_string(),
+    );
+    section.insert(String::from("BridgeFolder"), String::new());
+    section.insert(String::from("RequiresRestart"), String::from("0"));
+    section.insert(String::from("DefaultPanels"), default_panels.to_string());
+    section.insert(String::from("ProcessNames"), process_names);
+    document.insert(format!("ProgramTab_{program_id}"), section);
+}
+
+fn upsert_program_registration(
+    document: &mut IniDocument,
+    program_name: &str,
+    program_path: &Path,
+    exe_path: &str,
+) -> i64 {
+    let program_id = program_registration_id(document, program_name);
+    write_program_registration_section(document, program_id, program_name, program_path, exe_path);
+    sync_program_registration_meta(document, Some(program_id));
+    program_id
+}
+
+fn remove_program_registration(document: &mut IniDocument, program_name: &str) {
+    let Some(program) = find_registered_program(document, program_name) else {
+        return;
+    };
+    document.remove(&format!("ProgramTab_{}", program.id));
+
+    let binding_sections = document
+        .iter()
+        .filter_map(|(section_name, section)| {
+            if !section_name.starts_with("Binding_") {
+                return None;
+            }
+            let program_tab_id = section
+                .get("ProgramTabId")
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0);
+            (program_tab_id == program.id).then(|| section_name.clone())
+        })
+        .collect::<Vec<_>>();
+    for section_name in binding_sections {
+        document.remove(&section_name);
+    }
+
+    let mut remaining_binding_ids = document
+        .keys()
+        .filter_map(|section_name| section_name.strip_prefix("Binding_"))
+        .filter_map(|value| value.parse::<u64>().ok())
+        .collect::<Vec<_>>();
+    remaining_binding_ids.sort_unstable();
+    let meta = document.entry(String::from("Meta")).or_default();
+    meta.insert(
+        String::from("Ids"),
+        remaining_binding_ids
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("|"),
+    );
+    sync_program_registration_meta(document, None);
+}
+
+#[cfg(test)]
+mod program_registration_tests {
+    use super::*;
+
+    #[test]
+    fn payload_folder_is_hidden_until_program_is_registered() {
+        let available = vec![String::from("Illustrator")];
+        let mut document = IniDocument::new();
+        assert!(registered_program_folder_names(&available, &document).is_empty());
+
+        upsert_program_registration(
+            &mut document,
+            "Illustrator",
+            Path::new(r"D:\FlowCell\Programs\Illustrator"),
+            r"C:\Program Files\Adobe\Adobe Illustrator 2026\Support Files\Contents\Windows\Illustrator.exe",
+        );
+        assert_eq!(
+            registered_program_folder_names(&available, &document),
+            vec![String::from("Illustrator")]
+        );
+    }
+
+    #[test]
+    fn illustrator_registration_persists_selected_executable() {
+        let mut document = IniDocument::new();
+        let exe_path = r"C:\Program Files\Adobe\Adobe Illustrator 2026\Support Files\Contents\Windows\Illustrator.exe";
+        let program_id = upsert_program_registration(
+            &mut document,
+            "Illustrator",
+            Path::new(r"D:\FlowCell\Programs\Illustrator"),
+            exe_path,
+        );
+
+        assert_eq!(program_id, 1);
+        assert_eq!(
+            document
+                .get("ProgramTab_1")
+                .and_then(|section| section.get("ExePath"))
+                .map(String::as_str),
+            Some(exe_path)
+        );
+        assert_eq!(
+            document
+                .get("Meta")
+                .and_then(|section| section.get("ProgramTabIds"))
+                .map(String::as_str),
+            Some("1")
+        );
+    }
+}
 
 fn parse_ini_document(contents: &str) -> IniDocument {
     let mut document = IniDocument::new();
@@ -8420,10 +8745,12 @@ fn get_foreground_process_info() -> Result<ForegroundProcessInfo, String> {
 #[tauri::command]
 fn list_program_folders() -> Result<Vec<String>, String> {
     let programs_root = resolve_programs_root()?;
-    Ok(list_child_directory_names(&programs_root)?
-        .into_iter()
-        .filter(|name| !name.to_ascii_lowercase().starts_with("flowcell-"))
-        .collect())
+    let available_folder_names = list_child_directory_names(&programs_root)?;
+    let (_, document, _) = read_bindings_file_state()?;
+    Ok(registered_program_folder_names(
+        &available_folder_names,
+        &document,
+    ))
 }
 
 #[tauri::command]
@@ -8441,6 +8768,14 @@ fn create_program_folder(
     exe_path: Option<String>,
 ) -> Result<CreateProgramFolderResult, String> {
     let requested_program_name = validate_folder_name(&name, "Program")?;
+    let exe_path = exe_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "Choose the program executable before adding the program.".to_string())?;
+    if !Path::new(exe_path).is_file() {
+        return Err(format!("Program executable was not found: {exe_path}"));
+    }
     let programs_root = resolve_programs_root()?;
     let program_path = if let Some(existing_path) =
         find_named_child_directory(&programs_root, &requested_program_name)?
@@ -8458,32 +8793,69 @@ fn create_program_folder(
         .unwrap_or(&requested_program_name)
         .to_string();
 
-    let status_message =
-        if infer_program_template_key(&program_name, exe_path.as_deref()) == "blender" {
-            Some(bootstrap_blender_program(
-                &program_name,
-                exe_path.as_deref(),
-            )?)
+    let bootstrap_message =
+        if infer_program_template_key(&program_name, Some(exe_path)) == "blender" {
+            Some(bootstrap_blender_program(&program_name, Some(exe_path))?)
         } else {
             None
         };
 
+    let (_, mut document, bindings_path) = read_bindings_file_state()?;
+    upsert_program_registration(&mut document, &program_name, &program_path, exe_path);
+    write_bindings_file_state(&bindings_path, &document)?;
+    let reload_error = restart_flowcell_headless_backend().err();
+    let mut status_message = format!("{program_name} registered with {exe_path}.");
+    if let Some(message) = bootstrap_message.filter(|message| !message.trim().is_empty()) {
+        status_message.push_str("\n\n");
+        status_message.push_str(&message);
+    }
+    if let Some(error) = reload_error {
+        status_message.push_str("\n\nBackend reload failed: ");
+        status_message.push_str(&error);
+    }
+
     Ok(CreateProgramFolderResult {
         program_name,
-        status_message,
+        status_message: Some(status_message),
     })
 }
 
 #[tauri::command]
 fn rename_program_folder(current_name: String, name: String) -> Result<String, String> {
     let programs_root = resolve_programs_root()?;
-    rename_child_directory(&programs_root, &current_name, &name, "Program")
+    let final_name = rename_child_directory(&programs_root, &current_name, &name, "Program")?;
+    let (_, mut document, bindings_path) = read_bindings_file_state()?;
+    if let Some(program) = find_registered_program(&document, &current_name) {
+        let exe_path = document
+            .get(&format!("ProgramTab_{}", program.id))
+            .and_then(|section| section.get("ExePath"))
+            .cloned()
+            .unwrap_or_default();
+        let program_path = resolve_program_directory(&final_name)?;
+        document.remove(&format!("ProgramTab_{}", program.id));
+        write_program_registration_section(
+            &mut document,
+            program.id,
+            &final_name,
+            &program_path,
+            &exe_path,
+        );
+        sync_program_registration_meta(&mut document, Some(program.id));
+        write_bindings_file_state(&bindings_path, &document)?;
+        let _ = restart_flowcell_headless_backend();
+    }
+    Ok(final_name)
 }
 
 #[tauri::command]
 fn delete_program_folder(name: String) -> Result<(), String> {
     let program_path = resolve_program_directory(&name)?;
-    recycle_directory_path(&program_path)
+    recycle_directory_path(&program_path)?;
+    let (_, mut document, bindings_path) = read_bindings_file_state()?;
+    remove_program_registration(&mut document, &name);
+    write_bindings_file_state(&bindings_path, &document)?;
+    let _ = restart_flowcell_headless_backend();
+    Ok(())
 }
 
 #[tauri::command]

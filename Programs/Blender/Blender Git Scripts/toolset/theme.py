@@ -9,6 +9,7 @@
 # FLOWCELL_CHILD: light_theme | Light Theme | Stage the sampled palette as a light Blender theme.
 # FLOWCELL_CHILD: apply_theme | Apply | Apply the currently visible Blender theme role colors.
 # FLOWCELL_CHILD: apply_background_pic | Place Picture | Creates fake gizmos and a fake grid on top of a background image.
+# FLOWCELL_CHILD: apply_grid | Grid | Show or refresh the metric grid and gizmos using the entered line spacing.
 # FLOWCELL_CHILD: browse_background_pic | Browse | Choose the Place Picture background image path.
 # FLOWCELL_CHILD: startup_background_pic | Startup | Save the current Place Picture image so Blender restores it on startup.
 # FLOWCELL_CHILD: clear_background_pic | Clear | Remove the Place Picture fake background, grid, and gizmos while keeping the path field.
@@ -49,6 +50,7 @@ VIEWPORT_OVERLAY_NAMESPACE_KEY = "flowcell_hdri_world_viewport_overlay"
 VIEWPORT_OVERLAY_LOAD_HANDLER_KEY = "flowcell_hdri_world_viewport_overlay_load_post"
 VIEWPORT_OVERLAY_PATH_KEY = "flowcell_hdri_world_static_background_path"
 PLACE_PICTURE_GENERATION_KEY = "flowcell_place_picture_fake_gizmo_generation"
+PLACE_PICTURE_GRID_SPACING_KEY = "flowcell_place_picture_grid_spacing_m"
 PROJECT_THEME_STATE_FORMAT = "flowcell-blender-theme-project-state-v1"
 GLOBAL_THEME_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
 
@@ -67,12 +69,13 @@ PLACE_PICTURE_ENABLE_SCALE_PLANE_HANDLES = True
 PLACE_PICTURE_ENABLE_UNIFORM_SCALE_HANDLE = True
 PLACE_PICTURE_ENABLE_COMBINED_TRANSFORM_GIZMO = True
 
-PLACE_PICTURE_GRID_ALPHA = 0.34
-PLACE_PICTURE_GRID_MAJOR_ALPHA = 0.48
-PLACE_PICTURE_AXIS_ALPHA = 0.95
-PLACE_PICTURE_GRID_MINOR_WIDTH = 1.0
-PLACE_PICTURE_GRID_MAJOR_WIDTH = 1.25
-PLACE_PICTURE_AXIS_WIDTH = 2.4
+DEFAULT_PLACE_PICTURE_GRID_SPACING_M = 1.0
+PLACE_PICTURE_GRID_ALPHA = 0.42
+PLACE_PICTURE_GRID_MAJOR_ALPHA = 0.62
+PLACE_PICTURE_AXIS_ALPHA = 0.98
+PLACE_PICTURE_GRID_MINOR_WIDTH = 1.1
+PLACE_PICTURE_GRID_MAJOR_WIDTH = 1.5
+PLACE_PICTURE_AXIS_WIDTH = 2.8
 PLACE_PICTURE_TARGET_GRID_LINES = 34
 PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS = 90
 PLACE_PICTURE_DRAW_SCREEN_GRID_FALLBACK = True
@@ -359,6 +362,33 @@ def _read_float(payload, key: str, default: float) -> float:
         return float(default)
 
 
+def _read_grid_spacing_m(payload) -> float:
+    spacing_m = _read_float(
+        payload or {},
+        "grid_spacing_m",
+        DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+    )
+    if not math.isfinite(spacing_m) or spacing_m <= 0.0:
+        raise ValueError("Grid spacing must be a positive number of meters.")
+    return spacing_m
+
+
+def _grid_spacing_blender_units(spacing_m: float) -> float:
+    scene = getattr(bpy.context, "scene", None)
+    unit_settings = getattr(scene, "unit_settings", None)
+    scale_length = float(getattr(unit_settings, "scale_length", 1.0) or 1.0)
+    if not math.isfinite(scale_length) or scale_length <= 0.0:
+        scale_length = 1.0
+    return max(float(spacing_m) / scale_length, 0.000001)
+
+
+def _set_runtime_grid_spacing(spacing_m: float):
+    normalized = float(spacing_m)
+    bpy.app.driver_namespace[PLACE_PICTURE_GRID_SPACING_KEY] = normalized
+    _overlay_state()["grid_spacing_m"] = normalized
+    _tag_redraw_view3d()
+
+
 def _resolve_hdri_path(raw_path: str) -> str:
     candidate = str(raw_path or "").strip()
     if not candidate:
@@ -476,6 +506,7 @@ def _empty_global_theme_state():
             "enabled": False,
             "path": "",
             "relative_path": "",
+            "grid_spacing_m": DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
         },
     }
 
@@ -497,6 +528,19 @@ def _normalize_global_theme_state(value):
         state["place_picture"]["path"] = str(place_picture_state.get("path") or "")
         state["place_picture"]["relative_path"] = str(
             place_picture_state.get("relative_path") or ""
+        )
+        spacing_m = place_picture_state.get(
+            "grid_spacing_m",
+            DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+        )
+        try:
+            spacing_m = float(spacing_m)
+        except (TypeError, ValueError):
+            spacing_m = DEFAULT_PLACE_PICTURE_GRID_SPACING_M
+        state["place_picture"]["grid_spacing_m"] = (
+            spacing_m
+            if math.isfinite(spacing_m) and spacing_m > 0.0
+            else DEFAULT_PLACE_PICTURE_GRID_SPACING_M
         )
 
     return state
@@ -587,11 +631,13 @@ def _set_startup_place_picture_state(context, payload):
     resolved_path = _resolve_optional_image_path(
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
+    spacing_m = _read_grid_spacing_m(payload)
     state = _read_global_theme_state()
     state["place_picture"] = {
         "enabled": True,
         "path": resolved_path,
         "relative_path": _project_relative_path(resolved_path),
+        "grid_spacing_m": spacing_m,
     }
     normalized = _write_global_theme_state(state)
     return _result(
@@ -1143,6 +1189,62 @@ def _append_projected_line(bucket, region, rv3d, p0, p1):
     return True
 
 
+def _project_world_axis_to_viewport(region, rv3d, axis):
+    origin_2d = _project_world_point(region, rv3d, Vector((0.0, 0.0, 0.0)))
+    if origin_2d is None:
+        return None
+
+    test_length = max(float(getattr(rv3d, "view_distance", 10.0)), 1.0) * 8.0
+    directions = []
+    for sign in (-1.0, 1.0):
+        projected = _project_world_point(
+            region,
+            rv3d,
+            Vector((0.0, 0.0, 0.0)) + axis * test_length * sign,
+        )
+        if projected is None:
+            continue
+        direction = projected - origin_2d
+        if direction.length > 0.001:
+            directions.append(direction.normalized())
+
+    if not directions:
+        return None
+    direction = directions[0]
+    width = float(region.width)
+    height = float(region.height)
+    intersections = []
+    if abs(direction.x) > 0.000001:
+        for x in (0.0, width):
+            t = (x - origin_2d.x) / direction.x
+            y = origin_2d.y + direction.y * t
+            if -0.5 <= y <= height + 0.5:
+                intersections.append(Vector((x, min(max(y, 0.0), height))))
+    if abs(direction.y) > 0.000001:
+        for y in (0.0, height):
+            t = (y - origin_2d.y) / direction.y
+            x = origin_2d.x + direction.x * t
+            if -0.5 <= x <= width + 0.5:
+                intersections.append(Vector((min(max(x, 0.0), width), y)))
+
+    unique = []
+    for point in intersections:
+        if not any((point - existing).length < 0.5 for existing in unique):
+            unique.append(point)
+    if len(unique) < 2:
+        return None
+
+    best_pair = None
+    best_distance = -1.0
+    for first_index in range(len(unique)):
+        for second_index in range(first_index + 1, len(unique)):
+            distance = (unique[first_index] - unique[second_index]).length_squared
+            if distance > best_distance:
+                best_distance = distance
+                best_pair = (unique[first_index], unique[second_index])
+    return best_pair
+
+
 def _draw_screen_grid_fallback(shader, region):
     width = float(region.width)
     height = float(region.height)
@@ -1186,9 +1288,17 @@ def _draw_screen_grid_fallback(shader, region):
 def _draw_fake_grid_2d(shader, region, rv3d):
     if not PLACE_PICTURE_ENABLE_FAKE_GRID:
         return
-    min_x, max_x, min_y, max_y, step = _get_visible_xy_grid_bounds(region, rv3d)
-    if step <= 0.0:
-        return
+    min_x, max_x, min_y, max_y, _auto_step = _get_visible_xy_grid_bounds(region, rv3d)
+    spacing_m = float(
+        _overlay_state().get(
+            "grid_spacing_m",
+            bpy.app.driver_namespace.get(
+                PLACE_PICTURE_GRID_SPACING_KEY,
+                DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+            ),
+        )
+    )
+    step = _grid_spacing_blender_units(spacing_m)
     line_count_x = abs((max_x - min_x) / step)
     line_count_y = abs((max_y - min_y) / step)
     while line_count_x > PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS or line_count_y > PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS:
@@ -1219,6 +1329,17 @@ def _draw_fake_grid_2d(shader, region, rv3d):
             continue
         bucket = major if int(round(y / step)) % 10 == 0 else minor
         projected_count += int(_append_projected_line(bucket, region, rv3d, (start_x, y, 0.0), (end_x, y, 0.0)))
+    projected_x_axis = _project_world_axis_to_viewport(
+        region, rv3d, Vector((1.0, 0.0, 0.0))
+    )
+    projected_y_axis = _project_world_axis_to_viewport(
+        region, rv3d, Vector((0.0, 1.0, 0.0))
+    )
+    if projected_x_axis is not None:
+        x_axis = list(projected_x_axis)
+    if projected_y_axis is not None:
+        y_axis = list(projected_y_axis)
+
     if projected_count <= 0:
         if PLACE_PICTURE_DRAW_SCREEN_GRID_FALLBACK:
             _draw_screen_grid_fallback(shader, region)
@@ -1912,31 +2033,36 @@ def _build_viewport_overlay_draw_callback():
     return draw
 
 
-def _register_viewport_overlay_from_resolved_path(resolved_path: str) -> str:
+def _register_viewport_overlay_from_resolved_path(
+    resolved_path: str,
+    grid_only: bool = False,
+) -> str:
     state = _overlay_state()
     _remove_place_picture_draw_handlers(state)
     _disable_camera_background_images()
 
-    if not resolved_path:
+    if not resolved_path and not grid_only:
         _restore_place_picture_viewports(state)
         state.clear()
         _tag_redraw_view3d()
         return ""
 
-    image = bpy.data.images.load(resolved_path, check_existing=True)
-    image.use_fake_user = True
-    try:
-        _ = image.size[:]
-        _ = image.pixels[0]
-    except Exception:
-        pass
+    image = None
+    if resolved_path:
+        image = bpy.data.images.load(resolved_path, check_existing=True)
+        image.use_fake_user = True
+        try:
+            _ = image.size[:]
+            _ = image.pixels[0]
+        except Exception:
+            pass
 
     if not state.get("viewport_snapshots"):
         state["viewport_snapshots"] = _snapshot_place_picture_viewports()
 
     _apply_place_picture_viewport_settings()
 
-    image_shader = gpu.shader.from_builtin("IMAGE")
+    image_shader = gpu.shader.from_builtin("IMAGE") if image is not None else None
     color_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
     generation = int(bpy.app.driver_namespace.get(PLACE_PICTURE_GENERATION_KEY, 0)) + 1
     bpy.app.driver_namespace[PLACE_PICTURE_GENERATION_KEY] = generation
@@ -1951,7 +2077,7 @@ def _register_viewport_overlay_from_resolved_path(resolved_path: str) -> str:
     state["generation"] = generation
 
     def draw_background_image():
-        if not PLACE_PICTURE_ENABLE_BACKGROUND:
+        if image is None or not PLACE_PICTURE_ENABLE_BACKGROUND:
             return
         region, _rv3d, _space = _get_current_3d_context()
         if region is None:
@@ -2045,11 +2171,15 @@ def _register_viewport_overlay_from_resolved_path(resolved_path: str) -> str:
 
     state["draw_background_image"] = draw_background_image
     state["draw_grid_and_gizmo_overlay"] = draw_grid_and_gizmo_overlay
-    state["background_handler"] = bpy.types.SpaceView3D.draw_handler_add(
-        draw_background_image,
-        (),
-        "WINDOW",
-        "POST_VIEW",
+    state["background_handler"] = (
+        bpy.types.SpaceView3D.draw_handler_add(
+            draw_background_image,
+            (),
+            "WINDOW",
+            "POST_VIEW",
+        )
+        if image is not None
+        else None
     )
     state["overlay_handler"] = bpy.types.SpaceView3D.draw_handler_add(
         draw_grid_and_gizmo_overlay,
@@ -2083,7 +2213,25 @@ def _restore_viewport_overlay_after_load():
     return None
 
 
+def _apply_grid_spacing(context, payload):
+    spacing_m = _read_grid_spacing_m(payload)
+    _set_runtime_grid_spacing(spacing_m)
+    state = _overlay_state()
+    if not bool(state.get("enabled")) or state.get("overlay_handler") is None:
+        _register_viewport_overlay_from_resolved_path("", grid_only=True)
+    else:
+        _apply_place_picture_viewport_settings()
+        _tag_redraw_view3d()
+    return _result(
+        f"Grid spacing set to {spacing_m:g} m.",
+        grid_spacing_m=spacing_m,
+        grid_enabled=True,
+    )
+
+
 def _place_picture_image(context, payload):
+    spacing_m = _read_grid_spacing_m(payload)
+    _set_runtime_grid_spacing(spacing_m)
     resolved_path = _resolve_optional_image_path(
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
@@ -3221,6 +3369,8 @@ def run_flowcell_action(context=None, data=None):
         return _apply_theme_from_photo_manual_colors(context, payload)
     if command == "absorb_theme":
         return _absorb_current_theme(context)
+    if command == "set_grid_spacing":
+        return _apply_grid_spacing(context, payload)
     if command == "place_picture":
         resolved_path = _place_picture_image(context, payload)
         if resolved_path:

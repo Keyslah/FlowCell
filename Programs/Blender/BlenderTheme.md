@@ -55,11 +55,13 @@ Blender does not expose every visible UI surface as a simple one-to-one field, s
 
 ## Place Picture
 
-Place Picture draws a temporary viewport picture layer with a fake grid and active-tool fake transform gizmos. It is useful for visual alignment without turning the image into a normal scene object.
+Place Picture draws a temporary viewport picture layer with a metric grid and active-tool fake transform gizmos. The separate Grid control can also show or refresh the grid and gizmos without placing a picture.
 
 | Control | Hover Description |
 | --- | --- |
-| `Place Picture` | Creates fake gizmos and a fake grid on top of a background image. |
+| `Place Picture` | Creates fake gizmos and a metric grid on top of a background image. |
+| `Grid` | Show or refresh the grid and gizmos without requiring a picture. |
+| Grid spacing field | Grid line spacing in meters by default. Bare numbers are meters; values such as `8in` or `8 in` are converted and displayed as `0.2032 m` after applying. |
 | Picture path field | Image path used by Place Picture. |
 | `Browse` | Pick a Place Picture image. |
 | `Startup` | Save the current Place Picture image so Blender restores it on startup. |
@@ -86,6 +88,6 @@ Rotation fields are degrees. `WS` is world background strength. The default stag
 ## Quick Notes
 
 - `Dark Theme`, `Light Theme`, color bucket edits, path edits, and numeric edits stage values in the toolbox.
-- `Apply`, `Place Picture`, `Startup`, `HDRI`, `Clear`, `Reset`, `X`, `Y`, `Z`, and `WS` are the controls that send their current values to Blender.
+- `Apply`, per-bucket `Apply`, `Place Picture`, `Grid`, `Startup`, `HDRI`, `Clear`, `Reset`, `X`, `Y`, `Z`, and `WS` send their current values to Blender.
 - Place Picture `Clear` keeps the picture path in the toolbox. HDRI `Clear` resets the world in the current Blender file.
 - If the theme tool code or bridge action is changed, refresh/resync the Blender FlowCell add-on/custom actions and reopen the theme toolbox before testing the new behavior.

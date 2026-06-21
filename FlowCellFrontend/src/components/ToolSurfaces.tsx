@@ -58,6 +58,7 @@ interface QuickRotateGroupValues {
 interface HdriWorldToolValues {
   HdriPath: string;
   StaticBackgroundPath: string;
+  GridSpacing: string;
   ThemeImagePath: string;
   ThemePaletteHexes: string[];
   ThemeVisualMode: "dark" | "light";
@@ -120,6 +121,7 @@ interface HdriWorldToolSurfaceProps {
     action:
       | "apply_theme_from_photo_manual_colors"
       | "place_picture"
+      | "set_grid_spacing"
       | "set_place_picture_startup"
       | "clear_place_picture"
       | "set_hdri_path"
@@ -1042,6 +1044,26 @@ export function HdriWorldToolSurface({
           title: "Creates fake gizmos and a fake grid on top of a background image.",
           instantTooltip: "Creates fake gizmos and a fake grid on top of a background image."
         })}
+        {renderToolChip("Grid", {
+          onClick: () => onApply("set_grid_spacing", values),
+          className: "tool-chip",
+          styleGroup,
+          importedSkin,
+          title: "Show or refresh the grid and gizmos using the entered metric line spacing."
+        })}
+        <input
+          className="hdri-world-field__input hdri-world-field__input--grid-spacing"
+          type="text"
+          value={values.GridSpacing}
+          onChange={(event) => onValueChange("GridSpacing", event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              onApply("set_grid_spacing", values);
+            }
+          }}
+          placeholder="1 m"
+          title="Grid line spacing. Bare numbers use meters; inputs such as 8in or 8 in are converted to meters."
+        />
         <input
           className="hdri-world-field__input"
           type="text"

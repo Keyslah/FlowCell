@@ -236,6 +236,12 @@
   background: #152118;
 }
 
+.binds-window__status.is-warning {
+  color: #ffe3a3;
+  border-color: #80642e;
+  background: #271f10;
+}
+
 .binds-window__status.is-error,
 .binds-window__warning {
   color: #ffd1d1;
