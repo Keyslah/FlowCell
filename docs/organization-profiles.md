@@ -8,7 +8,7 @@ Organization Profiles are the dynamic Windows Files organization path.
 - `New Organization` reads the active profile by default and moves files whose extension maps to exactly one role.
 - If one extension is assigned to multiple roles, the organizer leaves that file in place and logs it as ambiguous. Role-specific workflow buttons should pass a specific profile/role instead of guessing from extension alone.
 
-To make a profile-specific organization button, copy `Programs/Windows/Windows Git Scripts/Files/new_organization_active_example.ps1`, rename it, and set:
+To make a profile-specific organization button, copy `Programs/Windows/Windows Git Scripts/Files/new_organization_profile_template.ps1`, rename it, and set:
 
 ```powershell
 $ProfileId = 'your-profile-id'
