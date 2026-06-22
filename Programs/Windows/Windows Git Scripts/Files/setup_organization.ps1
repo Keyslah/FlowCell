@@ -35,28 +35,86 @@ function Get-ClipboardFolderForSetup {
 
 function Get-OrganizationProgramRoles {
     return @(
-        [PSCustomObject][ordered]@{ Name = 'Blender'; Extensions = @('.blend'); ProgramFolder = 'Blender' },
-        [PSCustomObject][ordered]@{ Name = 'Illustrator'; Extensions = @('.ai', '.ait'); ProgramFolder = 'Illustrator' },
-        [PSCustomObject][ordered]@{ Name = 'Photoshop'; Extensions = @('.psd', '.psb'); ProgramFolder = 'Photoshop' },
-        [PSCustomObject][ordered]@{ Name = 'Fusion 360'; Extensions = @('.f3d', '.f3z'); ProgramFolder = 'Fusion 360' },
-        [PSCustomObject][ordered]@{ Name = 'InDesign'; Extensions = @('.indd', '.indt'); ProgramFolder = 'InDesign' },
-        [PSCustomObject][ordered]@{ Name = 'Premiere Pro'; Extensions = @('.prproj'); ProgramFolder = 'Premiere Pro' },
-        [PSCustomObject][ordered]@{ Name = 'After Effects'; Extensions = @('.aep', '.aepx'); ProgramFolder = 'After Effects' },
-        [PSCustomObject][ordered]@{ Name = 'Adobe Animate'; Extensions = @('.fla', '.xfl'); ProgramFolder = 'Adobe Animate' },
-        [PSCustomObject][ordered]@{ Name = 'Adobe XD'; Extensions = @('.xd'); ProgramFolder = 'Adobe XD' },
-        [PSCustomObject][ordered]@{ Name = 'Affinity Designer'; Extensions = @('.afdesign'); ProgramFolder = 'Affinity Designer' },
-        [PSCustomObject][ordered]@{ Name = 'Affinity Photo'; Extensions = @('.afphoto'); ProgramFolder = 'Affinity Photo' },
-        [PSCustomObject][ordered]@{ Name = 'Affinity Publisher'; Extensions = @('.afpub'); ProgramFolder = 'Affinity Publisher' },
-        [PSCustomObject][ordered]@{ Name = 'Cinema 4D'; Extensions = @('.c4d'); ProgramFolder = 'Cinema 4D' },
-        [PSCustomObject][ordered]@{ Name = 'Krita'; Extensions = @('.kra'); ProgramFolder = 'Krita' },
-        [PSCustomObject][ordered]@{ Name = 'Clip Studio Paint'; Extensions = @('.clip'); ProgramFolder = 'Clip Studio Paint' },
-        [PSCustomObject][ordered]@{ Name = 'SketchUp'; Extensions = @('.skp'); ProgramFolder = 'SketchUp' },
-        [PSCustomObject][ordered]@{ Name = 'Rhino'; Extensions = @('.3dm'); ProgramFolder = 'Rhino' },
-        [PSCustomObject][ordered]@{ Name = 'ZBrush'; Extensions = @('.ztl', '.zpr'); ProgramFolder = 'ZBrush' },
-        [PSCustomObject][ordered]@{ Name = 'Substance Painter'; Extensions = @('.spp'); ProgramFolder = 'Substance Painter' },
-        [PSCustomObject][ordered]@{ Name = 'Substance Designer'; Extensions = @('.sbs'); ProgramFolder = 'Substance Designer' },
-        [PSCustomObject][ordered]@{ Name = 'DaVinci Resolve'; Extensions = @('.drp'); ProgramFolder = 'DaVinci Resolve' }
+        [PSCustomObject][ordered]@{ Name = 'Blender'; Extensions = @('.blend'); ProgramFolder = 'Blender'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Illustrator'; Extensions = @('.ai', '.ait'); ProgramFolder = 'Illustrator'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Photoshop'; Extensions = @('.psd', '.psb'); ProgramFolder = 'Photoshop'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Fusion 360'; Extensions = @('.f3d', '.f3z'); ProgramFolder = 'Fusion 360'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'InDesign'; Extensions = @('.indd', '.indt'); ProgramFolder = 'InDesign'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Premiere Pro'; Extensions = @('.prproj'); ProgramFolder = 'Premiere Pro'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'After Effects'; Extensions = @('.aep', '.aepx'); ProgramFolder = 'After Effects'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Adobe Animate'; Extensions = @('.fla', '.xfl'); ProgramFolder = 'Adobe Animate'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Adobe XD'; Extensions = @('.xd'); ProgramFolder = 'Adobe XD'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Affinity Designer'; Extensions = @('.afdesign'); ProgramFolder = 'Affinity Designer'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Affinity Photo'; Extensions = @('.afphoto'); ProgramFolder = 'Affinity Photo'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Affinity Publisher'; Extensions = @('.afpub'); ProgramFolder = 'Affinity Publisher'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Cinema 4D'; Extensions = @('.c4d'); ProgramFolder = 'Cinema 4D'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Krita'; Extensions = @('.kra'); ProgramFolder = 'Krita'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Clip Studio Paint'; Extensions = @('.clip'); ProgramFolder = 'Clip Studio Paint'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'SketchUp'; Extensions = @('.skp'); ProgramFolder = 'SketchUp'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Rhino'; Extensions = @('.3dm'); ProgramFolder = 'Rhino'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'ZBrush'; Extensions = @('.ztl', '.zpr'); ProgramFolder = 'ZBrush'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Substance Painter'; Extensions = @('.spp'); ProgramFolder = 'Substance Painter'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'Substance Designer'; Extensions = @('.sbs'); ProgramFolder = 'Substance Designer'; Source = 'built-in' },
+        [PSCustomObject][ordered]@{ Name = 'DaVinci Resolve'; Extensions = @('.drp'); ProgramFolder = 'DaVinci Resolve'; Source = 'built-in' }
     )
+}
+
+function Get-OrganizationRoleLibraryPath {
+    return (Join-Path (Get-OrganizationRoot) 'role_library.json')
+}
+
+function Read-OrganizationCustomRoles {
+    $path = Get-OrganizationRoleLibraryPath
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        return @()
+    }
+
+    $roles = New-Object System.Collections.Generic.List[object]
+    try {
+        $document = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json
+        foreach ($role in @($document.roles)) {
+            $name = [string]$role.Name
+            $extensions = @($role.Extensions | ForEach-Object { Normalize-OrganizationExtension -Value ([string]$_) } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            if ([string]::IsNullOrWhiteSpace($name) -or $extensions.Count -eq 0) { continue }
+            $roles.Add([PSCustomObject][ordered]@{
+                Name       = $name.Trim()
+                Extensions = @($extensions)
+                ProgramFolder = ''
+                Source     = 'custom'
+            }) | Out-Null
+        }
+    }
+    catch {
+        return @()
+    }
+    return @($roles)
+}
+
+function Save-OrganizationCustomRoles {
+    param([object[]]$Roles)
+
+    $path = Get-OrganizationRoleLibraryPath
+    $directory = Split-Path -Parent $path
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+
+    $cleanRoles = New-Object System.Collections.Generic.List[object]
+    foreach ($role in @($Roles)) {
+        $name = [string]$role.Name
+        $extensions = @($role.Extensions | ForEach-Object { Normalize-OrganizationExtension -Value ([string]$_) } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        if ([string]::IsNullOrWhiteSpace($name) -or $extensions.Count -eq 0) { continue }
+        $cleanRoles.Add([PSCustomObject][ordered]@{
+            Name       = $name.Trim()
+            Extensions = @($extensions)
+        }) | Out-Null
+    }
+
+    $document = [ordered]@{
+        format    = 'flowcell-organization-role-library-v1'
+        roles     = @($cleanRoles)
+        updatedAt = (Get-Date).ToString('o')
+    }
+    Set-Content -LiteralPath $path -Value ($document | ConvertTo-Json -Depth 8) -Encoding UTF8
+    return $path
 }
 
 function Show-OrganizationSetupWindow {
@@ -68,6 +126,9 @@ function Show-OrganizationSetupWindow {
     $script:ProfileIndex = @{}
     $script:CurrentProfileId = ''
     $script:IsRefreshingUi = $false
+    $script:RoleDisplayIndex = @{}
+    $script:CustomRoles = New-Object System.Collections.Generic.List[object]
+    foreach ($role in (Read-OrganizationCustomRoles)) { $script:CustomRoles.Add($role) | Out-Null }
 
     $programRoles = @(Get-OrganizationProgramRoles)
     $programStructure = @('Live', 'Snapshots', 'Archive', 'Trash')
@@ -102,15 +163,21 @@ function Show-OrganizationSetupWindow {
     $buttonNew.Size = New-Object System.Drawing.Size(70, 28)
     $form.Controls.Add($buttonNew)
 
+    $buttonManageRoles = New-Object System.Windows.Forms.Button
+    $buttonManageRoles.Text = 'Roles...'
+    $buttonManageRoles.Location = New-Object System.Drawing.Point(504, 8)
+    $buttonManageRoles.Size = New-Object System.Drawing.Size(70, 28)
+    $form.Controls.Add($buttonManageRoles)
+
     $labelProfileName = New-Object System.Windows.Forms.Label
     $labelProfileName.Text = 'Profile name'
-    $labelProfileName.Location = New-Object System.Drawing.Point(515, 14)
-    $labelProfileName.Size = New-Object System.Drawing.Size(90, 20)
+    $labelProfileName.Location = New-Object System.Drawing.Point(584, 14)
+    $labelProfileName.Size = New-Object System.Drawing.Size(88, 20)
     $form.Controls.Add($labelProfileName)
 
     $textProfileName = New-Object System.Windows.Forms.TextBox
-    $textProfileName.Location = New-Object System.Drawing.Point(608, 10)
-    $textProfileName.Size = New-Object System.Drawing.Size(210, 24)
+    $textProfileName.Location = New-Object System.Drawing.Point(675, 10)
+    $textProfileName.Size = New-Object System.Drawing.Size(143, 24)
     $form.Controls.Add($textProfileName)
 
     $buttonSave = New-Object System.Windows.Forms.Button
@@ -190,13 +257,6 @@ function Show-OrganizationSetupWindow {
     $comboAddRole.Size = New-Object System.Drawing.Size(310, 24)
     $form.Controls.Add($comboAddRole)
 
-    $roleDisplayIndex = @{}
-    foreach ($role in $programRoles) {
-        $display = ('{0}    {1}' -f [string]$role.Name, (@($role.Extensions) -join ' '))
-        $roleDisplayIndex[$display] = $role
-        $null = $comboAddRole.Items.Add($display)
-    }
-
     $labelCustom = New-Object System.Windows.Forms.Label
     $labelCustom.Text = 'File types'
     $labelCustom.Location = New-Object System.Drawing.Point(340, 183)
@@ -252,6 +312,216 @@ function Show-OrganizationSetupWindow {
 
     function Set-Status([string]$Message) {
         $labelStatus.Text = $Message
+    }
+
+    function Get-AllRoleDefinitions {
+        $roles = New-Object System.Collections.Generic.List[object]
+        foreach ($role in @($programRoles)) { $roles.Add($role) | Out-Null }
+        foreach ($role in @($script:CustomRoles)) { $roles.Add($role) | Out-Null }
+        return @($roles)
+    }
+
+    function Refresh-RoleDropdown {
+        $script:IsRefreshingUi = $true
+        try {
+            $comboAddRole.Items.Clear()
+            $script:RoleDisplayIndex = @{}
+            foreach ($role in (Get-AllRoleDefinitions)) {
+                $displayBase = ('{0}    {1}' -f [string]$role.Name, (@($role.Extensions) -join ' '))
+                $display = $displayBase
+                $suffix = 2
+                while ($script:RoleDisplayIndex.ContainsKey($display)) {
+                    $display = '{0} ({1})' -f $displayBase, $suffix
+                    $suffix++
+                }
+                $script:RoleDisplayIndex[$display] = $role
+                $null = $comboAddRole.Items.Add($display)
+            }
+            $comboAddRole.SelectedIndex = -1
+        }
+        finally {
+            $script:IsRefreshingUi = $false
+        }
+    }
+
+    function Show-RoleManagerWindow {
+        $roleForm = New-Object System.Windows.Forms.Form
+        $roleForm.Text = 'FlowCell Roles'
+        $roleForm.StartPosition = 'CenterParent'
+        $roleForm.Size = New-Object System.Drawing.Size(560, 390)
+        $roleForm.MinimumSize = New-Object System.Drawing.Size(520, 340)
+
+        $labelRoleList = New-Object System.Windows.Forms.Label
+        $labelRoleList.Text = 'Custom roles'
+        $labelRoleList.Location = New-Object System.Drawing.Point(12, 14)
+        $labelRoleList.Size = New-Object System.Drawing.Size(120, 20)
+        $roleForm.Controls.Add($labelRoleList)
+
+        $listRoles = New-Object System.Windows.Forms.ListBox
+        $listRoles.Location = New-Object System.Drawing.Point(12, 40)
+        $listRoles.Size = New-Object System.Drawing.Size(225, 250)
+        $roleForm.Controls.Add($listRoles)
+
+        $buttonNewRole = New-Object System.Windows.Forms.Button
+        $buttonNewRole.Text = 'New Role'
+        $buttonNewRole.Location = New-Object System.Drawing.Point(12, 302)
+        $buttonNewRole.Size = New-Object System.Drawing.Size(100, 28)
+        $roleForm.Controls.Add($buttonNewRole)
+
+        $buttonDeleteRole = New-Object System.Windows.Forms.Button
+        $buttonDeleteRole.Text = 'Delete Role'
+        $buttonDeleteRole.Location = New-Object System.Drawing.Point(122, 302)
+        $buttonDeleteRole.Size = New-Object System.Drawing.Size(115, 28)
+        $roleForm.Controls.Add($buttonDeleteRole)
+
+        $labelRoleName = New-Object System.Windows.Forms.Label
+        $labelRoleName.Text = 'Role name'
+        $labelRoleName.Location = New-Object System.Drawing.Point(260, 40)
+        $labelRoleName.Size = New-Object System.Drawing.Size(250, 20)
+        $roleForm.Controls.Add($labelRoleName)
+
+        $textRoleName = New-Object System.Windows.Forms.TextBox
+        $textRoleName.Location = New-Object System.Drawing.Point(260, 64)
+        $textRoleName.Size = New-Object System.Drawing.Size(250, 24)
+        $roleForm.Controls.Add($textRoleName)
+
+        $labelRoleExtensions = New-Object System.Windows.Forms.Label
+        $labelRoleExtensions.Text = 'File types'
+        $labelRoleExtensions.Location = New-Object System.Drawing.Point(260, 105)
+        $labelRoleExtensions.Size = New-Object System.Drawing.Size(250, 20)
+        $roleForm.Controls.Add($labelRoleExtensions)
+
+        $textRoleExtensions = New-Object System.Windows.Forms.TextBox
+        $textRoleExtensions.Location = New-Object System.Drawing.Point(260, 129)
+        $textRoleExtensions.Size = New-Object System.Drawing.Size(250, 24)
+        $roleForm.Controls.Add($textRoleExtensions)
+
+        $labelRoleHint = New-Object System.Windows.Forms.Label
+        $labelRoleHint.Text = 'Example: .stl, .3mf, .obj'
+        $labelRoleHint.Location = New-Object System.Drawing.Point(260, 158)
+        $labelRoleHint.Size = New-Object System.Drawing.Size(250, 20)
+        $roleForm.Controls.Add($labelRoleHint)
+
+        $buttonSaveRole = New-Object System.Windows.Forms.Button
+        $buttonSaveRole.Text = 'Save Role'
+        $buttonSaveRole.Location = New-Object System.Drawing.Point(260, 202)
+        $buttonSaveRole.Size = New-Object System.Drawing.Size(110, 28)
+        $roleForm.Controls.Add($buttonSaveRole)
+
+        $buttonCloseRoles = New-Object System.Windows.Forms.Button
+        $buttonCloseRoles.Text = 'Close'
+        $buttonCloseRoles.Location = New-Object System.Drawing.Point(400, 302)
+        $buttonCloseRoles.Size = New-Object System.Drawing.Size(110, 28)
+        $roleForm.Controls.Add($buttonCloseRoles)
+
+        $labelRoleStatus = New-Object System.Windows.Forms.Label
+        $labelRoleStatus.Text = ''
+        $labelRoleStatus.Location = New-Object System.Drawing.Point(260, 244)
+        $labelRoleStatus.Size = New-Object System.Drawing.Size(250, 45)
+        $roleForm.Controls.Add($labelRoleStatus)
+
+        $script:RoleManagerIndex = @{}
+
+        function Refresh-RoleManagerList {
+            $listRoles.Items.Clear()
+            $script:RoleManagerIndex = @{}
+            foreach ($role in @($script:CustomRoles | Sort-Object Name)) {
+                $displayBase = ('{0}    {1}' -f [string]$role.Name, (@($role.Extensions) -join ' '))
+                $display = $displayBase
+                $suffix = 2
+                while ($script:RoleManagerIndex.ContainsKey($display)) {
+                    $display = '{0} ({1})' -f $displayBase, $suffix
+                    $suffix++
+                }
+                $script:RoleManagerIndex[$display] = $role
+                $null = $listRoles.Items.Add($display)
+            }
+        }
+
+        function Clear-RoleEditor {
+            $listRoles.ClearSelected()
+            $textRoleName.Text = ''
+            $textRoleExtensions.Text = ''
+            $labelRoleStatus.Text = 'New custom role.'
+        }
+
+        $listRoles.Add_SelectedIndexChanged({
+            if ($listRoles.SelectedItem -eq $null) { return }
+            $role = $script:RoleManagerIndex[[string]$listRoles.SelectedItem]
+            if ($role -eq $null) { return }
+            $textRoleName.Text = [string]$role.Name
+            $textRoleExtensions.Text = (@($role.Extensions) -join ' ')
+            $labelRoleStatus.Text = ''
+        })
+
+        $buttonNewRole.Add_Click({ Clear-RoleEditor })
+
+        $buttonSaveRole.Add_Click({
+            try {
+                $name = $textRoleName.Text.Trim()
+                if ([string]::IsNullOrWhiteSpace($name)) { throw 'Role name cannot be empty.' }
+                foreach ($builtInRole in @($programRoles)) {
+                    if ([string]::Equals([string]$builtInRole.Name, $name, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        throw 'That role name already exists as a built-in role.'
+                    }
+                }
+
+                $extensions = @(Split-OrganizationExtensions -Value $textRoleExtensions.Text)
+                if ($extensions.Count -eq 0) { throw 'Add at least one file type.' }
+
+                $replacement = [PSCustomObject][ordered]@{
+                    Name       = $name
+                    Extensions = @($extensions)
+                    ProgramFolder = ''
+                    Source     = 'custom'
+                }
+
+                $updated = $false
+                for ($i = 0; $i -lt $script:CustomRoles.Count; $i++) {
+                    if ([string]::Equals([string]$script:CustomRoles[$i].Name, $name, [System.StringComparison]::OrdinalIgnoreCase)) {
+                        $script:CustomRoles[$i] = $replacement
+                        $updated = $true
+                        break
+                    }
+                }
+                if (-not $updated) {
+                    $script:CustomRoles.Add($replacement) | Out-Null
+                }
+
+                Save-OrganizationCustomRoles -Roles @($script:CustomRoles) | Out-Null
+                Refresh-RoleManagerList
+                Refresh-RoleDropdown
+                $labelRoleStatus.Text = ('Saved role: {0}' -f $name)
+                Set-Status ('Saved role: {0}' -f $name)
+            }
+            catch {
+                $labelRoleStatus.Text = $_.Exception.Message
+                Write-FlowCellStatus $_.Exception.Message
+            }
+        })
+
+        $buttonDeleteRole.Add_Click({
+            try {
+                if ($listRoles.SelectedItem -eq $null) { throw 'Select a custom role first.' }
+                $role = $script:RoleManagerIndex[[string]$listRoles.SelectedItem]
+                if ($role -eq $null) { return }
+                $script:CustomRoles.Remove($role) | Out-Null
+                Save-OrganizationCustomRoles -Roles @($script:CustomRoles) | Out-Null
+                Refresh-RoleManagerList
+                Refresh-RoleDropdown
+                Clear-RoleEditor
+                Set-Status 'Deleted custom role.'
+            }
+            catch {
+                $labelRoleStatus.Text = $_.Exception.Message
+                Write-FlowCellStatus $_.Exception.Message
+            }
+        })
+
+        $buttonCloseRoles.Add_Click({ $roleForm.Close() })
+
+        Refresh-RoleManagerList
+        [void]$roleForm.ShowDialog($form)
     }
 
     function Get-SelectedFolderRelative {
@@ -613,8 +883,18 @@ function Show-OrganizationSetupWindow {
         }
     }
 
+    Refresh-RoleDropdown
+
     $treeFolders.Add_AfterSelect({
         Refresh-SelectedFolderPanel
+    })
+
+    $buttonManageRoles.Add_Click({
+        try { Show-RoleManagerWindow }
+        catch {
+            Set-Status $_.Exception.Message
+            Write-FlowCellStatus $_.Exception.Message
+        }
     })
 
     $comboAddRole.Add_SelectedIndexChanged({
@@ -622,8 +902,8 @@ function Show-OrganizationSetupWindow {
         try {
             $folder = Get-SelectedFolderRelative
             $display = [string]$comboAddRole.SelectedItem
-            if ($roleDisplayIndex.ContainsKey($display)) {
-                $role = $roleDisplayIndex[$display]
+            if ($script:RoleDisplayIndex.ContainsKey($display)) {
+                $role = $script:RoleDisplayIndex[$display]
                 $added = Add-AssignmentToFolder -Folder $folder -RoleName ([string]$role.Name) -Extensions @($role.Extensions) -Source 'role-dropdown'
                 if ($added) {
                     Set-Status ('Added {0} to {1}.' -f [string]$role.Name, $folder)
