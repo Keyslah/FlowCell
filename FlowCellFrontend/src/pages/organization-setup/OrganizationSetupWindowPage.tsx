@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   createStarterOrganizationProfile,
+  makeAmbiguousFilePrompt,
   normalizeFileTypes,
   normalizeOrganizationProfile,
   resolveLooseFile
@@ -13,6 +14,7 @@ import {
   type OrganizationProjectScan
 } from "../../features/organization/organizationStore";
 import type {
+  AmbiguousFilePrompt,
   OrganizationProfile,
   OrganizationRole,
   ProgramFolderRule
@@ -21,6 +23,7 @@ import { showOpenFolderDialog } from "../../lib/tauri";
 import "./organizationSetupWindowPage.css";
 
 const LAST_PROJECT_ROOT_KEY = "flowcell.organizationSetup.lastProjectRoot";
+const UNKNOWN_ROLE_ID = "unknown";
 
 type RoleDraft = Omit<OrganizationRole, "fileTypes"> & {
   fileTypesText: string;
@@ -29,6 +32,8 @@ type RoleDraft = Omit<OrganizationRole, "fileTypes"> & {
 type ProgramFolderDraft = Omit<ProgramFolderRule, "roles"> & {
   rolesText: string;
 };
+
+type AmbiguityScope = AmbiguousFilePrompt["scopes"][number];
 
 function roleToDraft(role: OrganizationRole): RoleDraft {
   return {
@@ -59,6 +64,14 @@ function normalizeRoleId(value: string): string {
     .replace(/^[_.-]+|[_.-]+$/g, "");
 }
 
+function roleIdToDisplayName(roleId: string): string {
+  return roleId
+    .split(/[._-]+/)
+    .filter(Boolean)
+    .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+    .join(" ");
+}
+
 function splitRoleIds(value: string): string[] {
   return Array.from(
     new Set(
@@ -72,6 +85,30 @@ function splitRoleIds(value: string): string[] {
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function normalizeFolderPath(value: string): string {
+  return value.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
+}
+
+function getUnknownRoleAssignmentIssue(
+  profile: OrganizationProfile,
+  scan: OrganizationProjectScan | null
+): string {
+  const unknownRole = profile.roles.find((role) => role.roleId === UNKNOWN_ROLE_ID);
+  const assignedFolder = normalizeFolderPath(unknownRole?.folder ?? "");
+  if (!assignedFolder || assignedFolder === ".") {
+    return "Assign the Unknown role to a folder in the Project Tree before saving.";
+  }
+  if (!scan) {
+    return "Scan the project root to confirm the Unknown role's folder assignment.";
+  }
+
+  const scannedFolders = new Set(scan.folders.map(normalizeFolderPath));
+  if (!scannedFolders.has(assignedFolder)) {
+    return `The Unknown role is assigned to "${assignedFolder}", but that folder is not in the Project Tree. Assign Unknown to a scanned folder.`;
+  }
+  return "";
 }
 
 export default function OrganizationSetupWindowPage() {
@@ -89,6 +126,12 @@ export default function OrganizationSetupWindowPage() {
   const [busy, setBusy] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
   const [programRulesOpen, setProgramRulesOpen] = useState(false);
+  const [fileChoices, setFileChoices] = useState<Record<string, string>>({});
+  const [runChoices, setRunChoices] = useState<Record<string, string>>({});
+  const [ambiguityScope, setAmbiguityScope] = useState<AmbiguityScope>("file");
+  const [roleInput, setRoleInput] = useState("");
+  const [roleFileTypesInput, setRoleFileTypesInput] = useState("");
+  const [warningMessage, setWarningMessage] = useState<string | null>(null);
 
   const currentProfile = useMemo(
     () =>
@@ -110,17 +153,36 @@ export default function OrganizationSetupWindowPage() {
     [programFolders, projectRoot, rememberedChoices, roles]
   );
 
-  const ambiguousFiles = useMemo(
-    () =>
-      (scan?.looseFiles ?? [])
-        .map((file) => ({ file, resolution: resolveLooseFile(currentProfile, file) }))
-        .filter((entry) => entry.resolution.status === "ambiguous"),
+  const unknownRoleAssignmentIssue = useMemo(
+    () => getUnknownRoleAssignmentIssue(currentProfile, scan),
     [currentProfile, scan]
   );
+
+  const pendingAmbiguity = useMemo(() => {
+    for (const file of scan?.looseFiles ?? []) {
+      const extension = normalizeFileTypes([file.extension])[0] ?? "";
+      const selectedRoleId = fileChoices[file.path] ?? runChoices[extension];
+      if (selectedRoleId && currentProfile.roles.some((role) => role.roleId === selectedRoleId)) {
+        continue;
+      }
+
+      const resolution = resolveLooseFile(currentProfile, file);
+      if (resolution.status === "ambiguous") {
+        return {
+          file,
+          prompt: makeAmbiguousFilePrompt(file, resolution.choices)
+        };
+      }
+    }
+    return null;
+  }, [currentProfile, fileChoices, runChoices, scan]);
 
   const selectedFolderRoles = currentProfile.roles.filter(
     (role) => role.folder.replace(/\\/g, "/") === selectedFolder
   );
+  const selectedFolderRoleEntries = roles
+    .map((role, index) => ({ role, index }))
+    .filter(({ role }) => normalizeFolderPath(role.folder || ".") === selectedFolder);
   const selectedFolderRoleIds = new Set(selectedFolderRoles.map((role) => role.roleId));
   const selectedFolderPrograms = currentProfile.programFolders.filter(
     (program) =>
@@ -133,6 +195,30 @@ export default function OrganizationSetupWindowPage() {
     setRoles(draft.roles);
     setProgramFolders(draft.programFolders);
     setRememberedChoices(profile.rememberedChoices ?? {});
+  };
+
+  const chooseAmbiguousRole = (roleId: string) => {
+    if (!pendingAmbiguity) {
+      return;
+    }
+
+    const { file } = pendingAmbiguity;
+    const extension = normalizeFileTypes([file.extension])[0] ?? "";
+    if (ambiguityScope === "file") {
+      setFileChoices((current) => ({ ...current, [file.path]: roleId }));
+      setStatus(`Assigned ${file.fileName} for this file.`);
+    } else if (ambiguityScope === "run") {
+      setRunChoices((current) => ({ ...current, [extension]: roleId }));
+      setStatus(`Assigned ${extension || "extensionless files"} for this run.`);
+    } else {
+      setRememberedChoices((current) => ({
+        ...(current ?? {}),
+        [extension]: { roleId, scope: "project" }
+      }));
+      setStatus(`Assigned ${extension || "extensionless files"} for this project. Save to persist it.`);
+    }
+    setStatusTone("is-success");
+    setAmbiguityScope("file");
   };
 
   const loadProject = async (rootValue: string, successMessage = "Project scanned.") => {
@@ -151,11 +237,20 @@ export default function OrganizationSetupWindowPage() {
         scanOrganizationProject(root),
         readOrganizationProfile(root)
       ]);
-      const profile = savedProfile ?? createStarterOrganizationProfile(root);
+      const profile = normalizeOrganizationProfile(
+        savedProfile ?? createStarterOrganizationProfile(root)
+      );
+      const assignmentIssue = getUnknownRoleAssignmentIssue(profile, nextScan);
       setProjectRoot(root);
       window.localStorage.setItem(LAST_PROJECT_ROOT_KEY, root);
       setScan(nextScan);
-      setSelectedFolder(null);
+      setSelectedFolder(".");
+      setFileChoices({});
+      setRunChoices({});
+      setAmbiguityScope("file");
+      setProgramRulesOpen(false);
+      setRoleInput("");
+      setRoleFileTypesInput("");
       applyProfile(profile);
       setStatus(
         savedProfile
@@ -163,6 +258,7 @@ export default function OrganizationSetupWindowPage() {
           : `${successMessage} No saved profile yet; showing the starter profile.`
       );
       setStatusTone("is-success");
+      setWarningMessage(assignmentIssue || null);
     } catch (error) {
       setStatus(formatError(error));
       setStatusTone("is-error");
@@ -214,6 +310,10 @@ export default function OrganizationSetupWindowPage() {
       setStatusTone("is-error");
       return;
     }
+    if (unknownRoleAssignmentIssue) {
+      setWarningMessage(unknownRoleAssignmentIssue);
+      return;
+    }
 
     setBusy(true);
     setStatus("Saving organization profile…");
@@ -251,10 +351,18 @@ export default function OrganizationSetupWindowPage() {
     try {
       const savedPath = await writeOrganizationProfile(root, starter);
       applyProfile(starter);
-      setScan(await scanOrganizationProject(root));
+      const nextScan = await scanOrganizationProject(root);
+      setScan(nextScan);
+      setSelectedFolder(".");
+      setFileChoices({});
+      setRunChoices({});
+      setAmbiguityScope("file");
+      setRoleInput("");
+      setRoleFileTypesInput("");
       window.localStorage.setItem(LAST_PROJECT_ROOT_KEY, root);
       setStatus(`Starter profile initialized: ${savedPath}`);
       setStatusTone("is-success");
+      setWarningMessage(getUnknownRoleAssignmentIssue(starter, nextScan) || null);
     } catch (error) {
       setStatus(formatError(error));
       setStatusTone("is-error");
@@ -275,6 +383,62 @@ export default function OrganizationSetupWindowPage() {
         programIndex === index ? { ...program, ...patch } : program
       )
     );
+  };
+
+  const assignRoleToSelectedFolder = () => {
+    if (!selectedFolder) {
+      setStatus("Select a folder in the Project Tree first.");
+      setStatusTone("is-error");
+      return;
+    }
+
+    const roleId = normalizeRoleId(roleInput);
+    const fileTypesText = normalizeFileTypes(roleFileTypesInput).join(", ");
+    if (!roleId) {
+      setStatus("Enter or choose a role first.");
+      setStatusTone("is-error");
+      return;
+    }
+    if (roleId === "project_root" && selectedFolder !== ".") {
+      setStatus("Project Root can only stay assigned to the project root.");
+      setStatusTone("is-error");
+      return;
+    }
+
+    setRoles((current) => {
+      const existingIndex = current.findIndex((role) => role.roleId === roleId);
+      if (existingIndex >= 0) {
+        return current.map((role, index) =>
+          index === existingIndex
+            ? {
+                ...role,
+                folder: selectedFolder,
+                fileTypesText:
+                  roleId === UNKNOWN_ROLE_ID || !fileTypesText
+                    ? role.fileTypesText
+                    : fileTypesText
+              }
+            : role
+        );
+      }
+      return [
+        ...current,
+        {
+          roleId,
+          displayName: roleIdToDisplayName(roleId) || roleId,
+          folder: selectedFolder,
+          fileTypesText,
+          description: ""
+        }
+      ];
+    });
+    setRoleInput("");
+    setRoleFileTypesInput("");
+    if (roleId === UNKNOWN_ROLE_ID) {
+      setWarningMessage(null);
+    }
+    setStatus(`Assigned ${roleId} to ${selectedFolder}.`);
+    setStatusTone("is-success");
   };
 
   return (
@@ -328,46 +492,75 @@ export default function OrganizationSetupWindowPage() {
                   className={folder === selectedFolder ? "is-selected" : ""}
                   key={folder}
                   role="listitem"
-                  onClick={() => setSelectedFolder(folder)}
+                  onClick={() => {
+                    setSelectedFolder(folder);
+                    setRoleInput("");
+                    setRoleFileTypesInput("");
+                  }}
                 >
                   {folder}
                 </button>
               ))}
             </div>
-
-            <div className="organization-setup__ambiguity">
-              <div className="organization-setup__section-heading">
-                <div>
-                  <span>Unresolved / needs choice</span>
-                  <h2>Ambiguous loose files</h2>
-                </div>
-                <strong>{ambiguousFiles.length}</strong>
-              </div>
-              {ambiguousFiles.length === 0 ? (
-                <p>No ambiguous loose files.</p>
-              ) : (
-                <ul>
-                  {ambiguousFiles.map(({ file, resolution }) => (
-                    <li key={file.path}>
-                      <strong>{file.fileName}</strong>
-                      <span>
-                        {resolution.status === "ambiguous"
-                          ? resolution.choices.map((choice) => choice.displayName).join(" or ")
-                          : "Needs choice"}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
           </aside>
 
           <div className="organization-setup__editors">
             {selectedFolder ? (
-            <section className="organization-setup__editor-card">
+            <section className="organization-setup__editor-card organization-setup__role-editor">
+              <div className="organization-setup__role-input-row">
+                <label>
+                  <span>Role</span>
+                  <input
+                    value={roleInput}
+                    list="organization-role-options"
+                    placeholder="Type or choose a role"
+                    disabled={busy}
+                    onChange={(event) => setRoleInput(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        assignRoleToSelectedFolder();
+                      }
+                    }}
+                  />
+                </label>
+                <label>
+                  <span>File types</span>
+                  <input
+                    value={roleFileTypesInput}
+                    placeholder="stl, obj, 3mf"
+                    disabled={busy || normalizeRoleId(roleInput) === UNKNOWN_ROLE_ID}
+                    onChange={(event) => setRoleFileTypesInput(event.target.value)}
+                    onBlur={() =>
+                      setRoleFileTypesInput(normalizeFileTypes(roleFileTypesInput).join(", "))
+                    }
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={assignRoleToSelectedFolder}
+                  disabled={busy || !roleInput.trim()}
+                >
+                  Add role
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setProgramRulesOpen(true)}
+                  disabled={busy}
+                >
+                  Program folder rules
+                </button>
+                <datalist id="organization-role-options">
+                  {roles.map((role) => (
+                    <option key={role.roleId} value={role.roleId}>
+                      {role.displayName}
+                    </option>
+                  ))}
+                </datalist>
+              </div>
               <div className="organization-setup__section-heading">
                 <div>
-                  <span>Folder settings</span>
+                  <span>Roles</span>
                   <h2>{selectedFolder}</h2>
                   <p className="organization-setup__folder-meta">
                     {selectedFolderRoles.length} assigned role(s) · {selectedFolderPrograms.length}
@@ -404,11 +597,12 @@ export default function OrganizationSetupWindowPage() {
                 </div>
               </div>
               <div className="organization-setup__role-list">
-                {roles.map((role, index) => {
+                {selectedFolderRoleEntries.map(({ role, index }) => {
                   const isPreset = role.roleId === "project_root" || role.roleId === "unknown";
+                  const isUnknown = role.roleId === UNKNOWN_ROLE_ID;
                   const folderOptions = Array.from(
                     new Set([...(scan?.folders ?? ["."]), role.folder || "."])
-                  );
+                  ).filter((folder) => !isUnknown || folder !== ".");
                   return (
                     <article className="organization-setup__role-row" key={index}>
                       <label>
@@ -431,10 +625,15 @@ export default function OrganizationSetupWindowPage() {
                       <label>
                         <span>Assigned folder</span>
                         <select
-                          value={role.folder || "."}
+                          value={isUnknown ? role.folder : role.folder || "."}
                           disabled={busy || role.roleId === "project_root"}
                           onChange={(event) => updateRole(index, { folder: event.target.value })}
                         >
+                          {isUnknown ? (
+                            <option value="" disabled>
+                              Assign Unknown to a folder
+                            </option>
+                          ) : null}
                           {folderOptions.map((folder) => (
                             <option key={folder} value={folder}>
                               {folder}
@@ -482,9 +681,8 @@ export default function OrganizationSetupWindowPage() {
             ) : (
               <section className="organization-setup__editor-card organization-setup__empty-settings">
                 <div>
-                  <span>Folder settings</span>
                   <h2>Select a folder</h2>
-                  <p>Click a scanned folder under Project Tree to open its settings here.</p>
+                  <p>Click a folder in the Project Tree.</p>
                 </div>
               </section>
             )}
@@ -601,6 +799,72 @@ export default function OrganizationSetupWindowPage() {
               </div>
             </section>
             </div>
+
+            {warningMessage ? (
+              <div className="organization-setup__warning-overlay">
+                <section
+                  className="organization-setup__warning-dialog"
+                  role="alertdialog"
+                  aria-modal="true"
+                  aria-labelledby="organization-warning-title"
+                >
+                  <span>Warning</span>
+                  <h2 id="organization-warning-title">Unknown role needs a folder</h2>
+                  <p>{warningMessage}</p>
+                  <button type="button" onClick={() => setWarningMessage(null)}>
+                    OK
+                  </button>
+                </section>
+              </div>
+            ) : null}
+
+            {!warningMessage && pendingAmbiguity ? (
+              <div className="organization-setup__ambiguity-overlay">
+                <section
+                  className="organization-setup__ambiguity-dialog"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="organization-ambiguity-title"
+                >
+                  <div>
+                    <span>Loose file needs a choice</span>
+                    <h2 id="organization-ambiguity-title">{pendingAmbiguity.prompt.title}</h2>
+                    <p className="organization-setup__ambiguity-file">
+                      {pendingAmbiguity.prompt.fileName}
+                    </p>
+                  </div>
+
+                  <div className="organization-setup__ambiguity-scopes">
+                    {pendingAmbiguity.prompt.scopes.map((scope) => (
+                      <button
+                        type="button"
+                        className={scope === ambiguityScope ? "is-selected" : ""}
+                        key={scope}
+                        onClick={() => setAmbiguityScope(scope)}
+                      >
+                        {scope === "file" ? "This file" : scope === "run" ? "This run" : "This project"}
+                      </button>
+                    ))}
+                  </div>
+                  <p className="organization-setup__ambiguity-help">
+                    Choose how long FlowCell should remember this decision, then pick the destination role.
+                  </p>
+
+                  <div className="organization-setup__ambiguity-choices">
+                    {pendingAmbiguity.prompt.choices.map((choice) => (
+                      <button
+                        type="button"
+                        key={choice.roleId}
+                        onClick={() => chooseAmbiguousRole(choice.roleId)}
+                      >
+                        <strong>{choice.displayName}</strong>
+                        <span>{choice.folder}</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            ) : null}
           </div>
         </div>
 

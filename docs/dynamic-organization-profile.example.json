@@ -13,11 +13,11 @@
     {
       "roleId": "unknown",
       "displayName": "Unknown Files",
-      "folder": "Unknown Files",
+      "folder": "",
       "fileTypes": [],
       "preset": true,
       "catchAllUnmatched": true,
-      "description": "Unknown Files catches loose files whose file type does not match any other role."
+      "description": "Unknown catches loose files whose file type does not match another role."
     },
     {
       "roleId": "clean_stl",

@@ -130,7 +130,10 @@ export default function App() {
   const bindNativeOwner = shouldBindScopedNativeOwner(windowContext);
 
   useEffect(() => {
-    if (windowContext.kind === "tooltip") {
+    const tauriInternals = (
+      window as Window & { __TAURI_INTERNALS__?: { metadata?: unknown } }
+    ).__TAURI_INTERNALS__;
+    if (windowContext.kind === "tooltip" || !tauriInternals?.metadata) {
       return;
     }
 
@@ -195,7 +198,10 @@ export default function App() {
   }, [windowContext.kind]);
 
   useEffect(() => {
-    if (windowContext.kind === "tooltip") {
+    const tauriInternals = (
+      window as Window & { __TAURI_INTERNALS__?: { metadata?: unknown } }
+    ).__TAURI_INTERNALS__;
+    if (windowContext.kind === "tooltip" || !tauriInternals?.metadata) {
       return;
     }
 

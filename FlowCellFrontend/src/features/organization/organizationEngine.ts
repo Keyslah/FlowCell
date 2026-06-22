@@ -10,7 +10,7 @@ import type {
 const UNKNOWN_ROLE_ID = "unknown";
 const PROJECT_ROOT_ROLE_ID = "project_root";
 const UNKNOWN_ROLE_DESCRIPTION =
-  "Unknown Files catches loose files whose file type does not match any other role.";
+  "Unknown catches loose files whose file type does not match another role.";
 
 export function normalizeFileTypes(value: string | string[] | undefined | null): string[] {
   const rawItems = Array.isArray(value) ? value : String(value ?? "").split(/[,\s;]+/);
@@ -45,7 +45,7 @@ export function createStarterOrganizationProfile(projectRoot: string): Organizat
       {
         roleId: UNKNOWN_ROLE_ID,
         displayName: "Unknown Files",
-        folder: "Unknown Files",
+        folder: "",
         fileTypes: [],
         preset: true,
         catchAllUnmatched: true,
@@ -139,7 +139,8 @@ export function normalizeOrganizationProfile(profile: OrganizationProfile): Orga
       ...role,
       roleId,
       displayName: String(role.displayName || roleId),
-      folder: String(role.folder || roleId),
+      folder:
+        roleId === UNKNOWN_ROLE_ID ? String(role.folder ?? "").trim() : String(role.folder || roleId),
       fileTypes: normalizeFileTypes(role.fileTypes),
       preset: Boolean(role.preset),
       catchAllUnmatched: Boolean(role.catchAllUnmatched),
@@ -164,7 +165,7 @@ export function normalizeOrganizationProfile(profile: OrganizationProfile): Orga
     ...(roles.get(UNKNOWN_ROLE_ID) ?? {}),
     roleId: UNKNOWN_ROLE_ID,
     displayName: "Unknown Files",
-    folder: roles.get(UNKNOWN_ROLE_ID)?.folder || "Unknown Files",
+    folder: roles.get(UNKNOWN_ROLE_ID)?.folder ?? "",
     fileTypes: [],
     preset: true,
     catchAllUnmatched: true,
@@ -199,6 +200,14 @@ export function resolveButtonRole(profile: OrganizationProfile, roleId: string):
       status: "unresolved",
       role: null,
       reason: "role-not-found",
+      choices: [],
+    };
+  }
+  if (role.roleId === UNKNOWN_ROLE_ID && (!role.folder.trim() || role.folder.trim() === ".")) {
+    return {
+      status: "unresolved",
+      role: null,
+      reason: "unknown-role-needs-folder",
       choices: [],
     };
   }
@@ -253,7 +262,7 @@ export function resolveLooseFile(profile: OrganizationProfile, file: LooseFileIn
   }
 
   const unknownRole = getRole(profile, UNKNOWN_ROLE_ID);
-  if (unknownRole) {
+  if (unknownRole && unknownRole.folder.trim() && unknownRole.folder.trim() !== ".") {
     return {
       status: "resolved",
       role: unknownRole,
@@ -265,7 +274,7 @@ export function resolveLooseFile(profile: OrganizationProfile, file: LooseFileIn
   return {
     status: "unresolved",
     role: null,
-    reason: "no-matching-role-and-no-unknown-role",
+    reason: unknownRole ? "unknown-role-needs-folder" : "no-matching-role-and-no-unknown-role",
     choices: [],
   };
 }
@@ -279,6 +288,7 @@ export function roleDestinationPath(
   if (!role) return null;
 
   const folder = role.folder.trim();
+  if (role.roleId === UNKNOWN_ROLE_ID && (!folder || folder === ".")) return null;
   const folderPath =
     !folder || folder === "."
       ? profile.projectRoot

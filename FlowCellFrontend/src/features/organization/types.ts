@@ -53,7 +53,10 @@ export type RoleResolution =
   | {
       status: "unresolved";
       role: null;
-      reason: "role-not-found" | "no-matching-role-and-no-unknown-role";
+      reason:
+        | "role-not-found"
+        | "no-matching-role-and-no-unknown-role"
+        | "unknown-role-needs-folder";
       choices: [];
     };
 
