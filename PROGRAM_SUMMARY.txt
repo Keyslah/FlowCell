@@ -7,7 +7,7 @@ FlowCell is the desktop frontend, command host, program folders, local runtime s
 
 Current frontend state
 ----------------------
-- Dynamic Organization has a role-based backend and frontend resolver. Setup Organization now opens the managed `organization-setup` Tauri/React window, scans project folders, and reads/writes each project's `.flowcell\organization-profile.json`; roles may omit file types, preset `project_root` and `unknown` roles are enforced, and ambiguous loose files are shown without guessing.
+- Dynamic Organization has a role-based backend and frontend resolver. Setup Organization opens the managed `organization-setup` Tauri/React window by intercepting the panel script filename, while the full PowerShell setup UI remains available as a standalone fallback; it scans project folders and reads/writes each project's `.flowcell\organization-profile.json`, roles may omit file types, preset `project_root` and `unknown` roles are enforced, and ambiguous loose files are shown without guessing.
 - Normal repository startup runs `FlowCell\helpers\Start-FlowCellPreflight.ps1` before reusing, building, or starting the frontend. Missing or failed preflight stops both normal and portable startup, core Windows registration failures propagate instead of opening FlowCell without Windows, and successful runs write a completion marker to `FlowCell\local\logs\startup-preflight.log`.
 
 Keep this summary updated whenever FlowCell behavior changes.
