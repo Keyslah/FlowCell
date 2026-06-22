@@ -1,0 +1,64 @@
+{
+  "profileVersion": 1,
+  "projectRoot": "D:/Glass Projects/Sun Disk",
+  "roles": [
+    {
+      "roleId": "project_root",
+      "displayName": "Project Root",
+      "folder": ".",
+      "fileTypes": [],
+      "preset": true,
+      "description": "The project root itself."
+    },
+    {
+      "roleId": "unknown",
+      "displayName": "Unknown Files",
+      "folder": "Unknown Files",
+      "fileTypes": [],
+      "preset": true,
+      "catchAllUnmatched": true,
+      "description": "Catches loose files whose file type does not match any other role."
+    },
+    {
+      "roleId": "clean_stl",
+      "displayName": "Clean STL",
+      "folder": "Meshes/Clean STLs",
+      "fileTypes": []
+    },
+    {
+      "roleId": "dirty_stl",
+      "displayName": "Dirty STL",
+      "folder": "Meshes/Dirty STLs",
+      "fileTypes": []
+    },
+    {
+      "roleId": "svg_export",
+      "displayName": "SVG Export",
+      "folder": "Illustrator/SVG Exports",
+      "fileTypes": [".svg", ".eps"]
+    },
+    {
+      "roleId": "laser_svg",
+      "displayName": "Laser SVG",
+      "folder": "Illustrator/Laser SVG",
+      "fileTypes": [".svg"]
+    }
+  ],
+  "programFolders": [
+    {
+      "programId": "illustrator",
+      "displayName": "Illustrator",
+      "folder": "Illustrator",
+      "createOnlyIfMatchingFilesOrRolesPresent": true,
+      "roles": ["svg_export", "laser_svg"]
+    },
+    {
+      "programId": "meshes",
+      "displayName": "Meshes",
+      "folder": "Meshes",
+      "createOnlyIfMatchingFilesOrRolesPresent": true,
+      "roles": ["clean_stl", "dirty_stl"]
+    }
+  ],
+  "rememberedChoices": {}
+}
