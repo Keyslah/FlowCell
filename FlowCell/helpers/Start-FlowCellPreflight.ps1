@@ -264,6 +264,7 @@ try {
     Ensure-CoreWindowsProgramStructure
 } catch {
     Write-PreflightLog "Core Windows program repair failed: $($_.Exception.Message)"
+    throw
 }
 
 try {
@@ -279,3 +280,5 @@ if ($script:RepairedLegacyBlenderWrapper) {
         Write-PreflightLog "Legacy auto panel cleanup failed: $($_.Exception.Message)"
     }
 }
+
+Write-PreflightLog 'Startup preflight completed.'

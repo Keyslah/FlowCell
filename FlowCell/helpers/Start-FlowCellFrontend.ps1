@@ -16,6 +16,7 @@ $frontendSourceCommitPath = Join-Path $frontendRoot 'src-tauri\target\release\.f
 $frontendSourceStampPath = Join-Path $frontendRoot 'src-tauri\target\release\.flowcell_frontend_source_stamp'
 $logsRoot = Join-Path $projectRoot 'local\logs'
 $launcherLogPath = Join-Path $logsRoot 'frontend-launcher.log'
+$preflightPath = Join-Path $PSScriptRoot 'Start-FlowCellPreflight.ps1'
 $backendLauncherPath = Join-Path $projectRoot 'run_backend_hidden.vbs'
 $npmCommand = (Get-Command 'npm.cmd' -ErrorAction Stop).Source
 $script:FlowCellFrontendLaunchWaited = $false
@@ -413,6 +414,14 @@ Write-LauncherLog 'Frontend launch requested.'
 $launchMutex = Acquire-FlowCellFrontendLaunchMutex
 
 try {
+    if (-not (Test-Path -LiteralPath $preflightPath -PathType Leaf)) {
+        throw "FlowCell startup preflight script was not found: $preflightPath"
+    }
+
+    Write-LauncherLog 'Running startup preflight before frontend load.'
+    & $preflightPath
+    Write-LauncherLog 'Startup preflight completed before frontend load.'
+
     if (-not (Test-Path -LiteralPath $frontendRoot -PathType Container)) {
         throw "FlowCell frontend folder was not found: $frontendRoot"
     }

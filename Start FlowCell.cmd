@@ -30,8 +30,19 @@ if not exist "%AHK_SCRIPT%" (
   exit /b 1
 )
 
-if exist "%PREFLIGHT%" (
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREFLIGHT%"
+if not exist "%PREFLIGHT%" (
+  echo [FlowCell] Missing startup preflight script:
+  echo "%PREFLIGHT%"
+  echo [FlowCell] Re-extract the portable ZIP or rebuild the portable package.
+  pause
+  exit /b 1
+)
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%PREFLIGHT%"
+if errorlevel 1 (
+  echo [FlowCell] Startup preflight failed. FlowCell was not started.
+  pause
+  exit /b 1
 )
 
 start "FlowCell Backend" "%AHK_EXE%" "%AHK_SCRIPT%"
