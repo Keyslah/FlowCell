@@ -44,7 +44,7 @@ function New-StarterProfile {
         projectRoot = $Root
         roles = @(
             [PSCustomObject][ordered]@{ roleId='project_root'; displayName='Project Root'; folder='.'; fileTypes=@(); preset=$true; description='The project root itself.' },
-            [PSCustomObject][ordered]@{ roleId='unknown'; displayName='Unknown Files'; folder='Unknown Files'; fileTypes=@(); preset=$true; catchAllUnmatched=$true; description='Catches loose files whose file type does not match any other role.' },
+            [PSCustomObject][ordered]@{ roleId='unknown'; displayName='Unknown Files'; folder='Unknown Files'; fileTypes=@(); preset=$true; catchAllUnmatched=$true; description='Unknown Files catches loose files whose file type does not match any other role.' },
             [PSCustomObject][ordered]@{ roleId='clean_stl'; displayName='Clean STL'; folder='Meshes\Clean STLs'; fileTypes=@() },
             [PSCustomObject][ordered]@{ roleId='dirty_stl'; displayName='Dirty STL'; folder='Meshes\Dirty STLs'; fileTypes=@() },
             [PSCustomObject][ordered]@{ roleId='svg_export'; displayName='SVG Export'; folder='Illustrator\SVG Exports'; fileTypes=@('.svg','.eps') },
@@ -84,8 +84,26 @@ function Normalize-Profile([object]$Profile) {
             description = [string]$role.description
         }) | Out-Null
     }
-    if (-not ($roles | Where-Object { $_.roleId -eq 'unknown' })) {
-        $roles.Add([PSCustomObject][ordered]@{ roleId='unknown'; displayName='Unknown Files'; folder='Unknown Files'; fileTypes=@(); preset=$true; catchAllUnmatched=$true; description='Catches loose files whose file type does not match any other role.' }) | Out-Null
+    $projectRootRole = @($roles | Where-Object { $_.roleId -eq 'project_root' } | Select-Object -First 1)
+    if (-not $projectRootRole.Count) {
+        $roles.Insert(0, [PSCustomObject][ordered]@{ roleId='project_root'; displayName='Project Root'; folder='.'; fileTypes=@(); preset=$true; catchAllUnmatched=$false; description='The project root itself.' })
+    }
+    else {
+        $projectRootRole[0].folder = '.'
+        $projectRootRole[0].fileTypes = @()
+        $projectRootRole[0].preset = $true
+        $projectRootRole[0].catchAllUnmatched = $false
+    }
+    $unknownRole = @($roles | Where-Object { $_.roleId -eq 'unknown' } | Select-Object -First 1)
+    if (-not $unknownRole.Count) {
+        $roles.Add([PSCustomObject][ordered]@{ roleId='unknown'; displayName='Unknown Files'; folder='Unknown Files'; fileTypes=@(); preset=$true; catchAllUnmatched=$true; description='Unknown Files catches loose files whose file type does not match any other role.' }) | Out-Null
+    }
+    else {
+        $unknownRole[0].displayName = 'Unknown Files'
+        $unknownRole[0].fileTypes = @()
+        $unknownRole[0].preset = $true
+        $unknownRole[0].catchAllUnmatched = $true
+        $unknownRole[0].description = 'Unknown Files catches loose files whose file type does not match any other role.'
     }
     $Profile.roles = @($roles)
     return $Profile

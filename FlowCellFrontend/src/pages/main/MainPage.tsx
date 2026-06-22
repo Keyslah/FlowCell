@@ -76,6 +76,7 @@ import {
   openCodexUsagePopoutWindow,
   openGenericToolboxWindow,
   openMacroLabWindow,
+  openOrganizationSetupWindow,
   openPanelFanOptionsWindow,
   openPanelFanWindow,
   openRemeshToolboxWindow,
@@ -1828,6 +1829,10 @@ export default function MainPage() {
   ) => {
     const matchedRecord =
       record ?? resolvedPanelScriptsByFileName.get(fileName) ?? null;
+    if (fileName.trim().toLowerCase() === "setup_organization.ps1") {
+      await openOrganizationSetupWindow();
+      return;
+    }
     if (matchedRecord?.kind?.trim().toLowerCase() === "macro") {
       await handleRunPanelMacro(matchedRecord.macroId ?? "");
       return;

@@ -20,6 +20,7 @@ import DimensionsToolboxWindowPage from "./pages/dimensions/DimensionsToolboxWin
 import FlattenRevolveToolboxWindowPage from "./pages/flatten-revolve/FlattenRevolveToolboxWindowPage";
 import MacroLabWindowPage from "./pages/macro-lab/MacroLabWindowPage";
 import MainPage from "./pages/main/MainPage";
+import OrganizationSetupWindowPage from "./pages/organization-setup/OrganizationSetupWindowPage";
 import RemeshToolboxWindowPage from "./pages/remesh/RemeshToolboxWindowPage";
 import RotateToolboxWindowPage from "./pages/rotate/RotateToolboxWindowPage";
 import SmartAxisToolboxWindowPage from "./pages/smart-axis/SmartAxisToolboxWindowPage";
@@ -95,6 +96,7 @@ function resolveScopedTopmostProgramName(
     windowContext.kind === "main" ||
     windowContext.kind === "tooltip" ||
     windowContext.kind === "binds" ||
+    windowContext.kind === "organization-setup" ||
     windowContext.kind === "macro-lab"
   ) {
     return "";
@@ -322,6 +324,9 @@ export default function App() {
   }
   if (windowContext.kind === "binds") {
     return <BindsWindowPage context={windowContext} />;
+  }
+  if (windowContext.kind === "organization-setup") {
+    return <OrganizationSetupWindowPage />;
   }
   if (windowContext.kind === "macro-lab") {
     return <MacroLabWindowPage context={windowContext} />;

@@ -17,7 +17,7 @@
       "fileTypes": [],
       "preset": true,
       "catchAllUnmatched": true,
-      "description": "Catches loose files whose file type does not match any other role."
+      "description": "Unknown Files catches loose files whose file type does not match any other role."
     },
     {
       "roleId": "clean_stl",

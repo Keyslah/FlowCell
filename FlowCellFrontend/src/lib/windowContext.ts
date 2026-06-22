@@ -108,6 +108,10 @@ export type BindsWindowContext = {
   kind: "binds";
 };
 
+export type OrganizationSetupWindowContext = {
+  kind: "organization-setup";
+};
+
 export type MacroLabWindowContext = {
   kind: "macro-lab";
   programName: string;
@@ -163,6 +167,7 @@ export type FlowCellWindowContext =
   | PanelFanOptionsWindowContext
   | ButtonReorderWindowContext
   | BindsWindowContext
+  | OrganizationSetupWindowContext
   | MacroLabWindowContext
   | ScriptGroupPopoutWindowContext
   | CodexUsagePopoutWindowContext;
@@ -407,6 +412,11 @@ export function getWindowContextFromLocation(): FlowCellWindowContext {
         kind: "binds"
       };
     }
+    if (parsed.kind === "organization-setup") {
+      return {
+        kind: "organization-setup"
+      };
+    }
     if (
       parsed.kind === "macro-lab" &&
       typeof parsed.programName === "string" &&
@@ -521,6 +531,7 @@ export function resolveWindowContextAfterBootstrap(
       nextContext.kind === "panel-fan" ||
       nextContext.kind === "panel-fan-options" ||
       nextContext.kind === "binds" ||
+      nextContext.kind === "organization-setup" ||
       nextContext.kind === "macro-lab" ||
       nextContext.kind === "button-reorder" ||
       nextContext.kind === "script-group-popout" ||

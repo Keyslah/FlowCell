@@ -9,6 +9,8 @@ import type {
 
 const UNKNOWN_ROLE_ID = "unknown";
 const PROJECT_ROOT_ROLE_ID = "project_root";
+const UNKNOWN_ROLE_DESCRIPTION =
+  "Unknown Files catches loose files whose file type does not match any other role.";
 
 export function normalizeFileTypes(value: string | string[] | undefined | null): string[] {
   const rawItems = Array.isArray(value) ? value : String(value ?? "").split(/[,\s;]+/);
@@ -47,7 +49,7 @@ export function createStarterOrganizationProfile(projectRoot: string): Organizat
         fileTypes: [],
         preset: true,
         catchAllUnmatched: true,
-        description: "Catches loose files whose file type does not match any other role.",
+        description: UNKNOWN_ROLE_DESCRIPTION,
       },
       {
         roleId: "illustrator_source",
@@ -145,16 +147,18 @@ export function normalizeOrganizationProfile(profile: OrganizationProfile): Orga
     });
   }
 
-  if (!roles.has(PROJECT_ROOT_ROLE_ID)) {
-    roles.set(PROJECT_ROOT_ROLE_ID, {
-      roleId: PROJECT_ROOT_ROLE_ID,
-      displayName: "Project Root",
-      folder: ".",
-      fileTypes: [],
-      preset: true,
-      description: "The project root itself. Files may intentionally stay loose here.",
-    });
-  }
+  roles.set(PROJECT_ROOT_ROLE_ID, {
+    ...(roles.get(PROJECT_ROOT_ROLE_ID) ?? {}),
+    roleId: PROJECT_ROOT_ROLE_ID,
+    displayName: roles.get(PROJECT_ROOT_ROLE_ID)?.displayName || "Project Root",
+    folder: ".",
+    fileTypes: [],
+    preset: true,
+    catchAllUnmatched: false,
+    description:
+      roles.get(PROJECT_ROOT_ROLE_ID)?.description ||
+      "The project root itself. Files may intentionally stay loose here.",
+  });
 
   roles.set(UNKNOWN_ROLE_ID, {
     ...(roles.get(UNKNOWN_ROLE_ID) ?? {}),
@@ -164,7 +168,7 @@ export function normalizeOrganizationProfile(profile: OrganizationProfile): Orga
     fileTypes: [],
     preset: true,
     catchAllUnmatched: true,
-    description: "Catches loose files whose file type does not match any other role.",
+    description: UNKNOWN_ROLE_DESCRIPTION,
   });
 
   return {

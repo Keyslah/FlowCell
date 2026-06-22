@@ -144,6 +144,22 @@ struct PanelScriptFileRecord {
     macro_id: Option<String>,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OrganizationLooseFileInfo {
+    path: String,
+    file_name: String,
+    extension: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OrganizationProjectScan {
+    project_root: String,
+    folders: Vec<String>,
+    loose_files: Vec<OrganizationLooseFileInfo>,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct BlenderPanelItemRecord {
@@ -10007,6 +10023,172 @@ fn run_toolset_action(
     ))
 }
 
+fn resolve_organization_project_root(project_root: &str) -> Result<PathBuf, String> {
+    let trimmed = project_root.trim().trim_matches('"');
+    if trimmed.is_empty() {
+        return Err("Choose a project root first.".to_string());
+    }
+
+    let root = PathBuf::from(trimmed);
+    if !root.is_absolute() {
+        return Err("Project root must be an absolute folder path.".to_string());
+    }
+    if !root.is_dir() {
+        return Err(format!("Project folder does not exist: {}", root.display()));
+    }
+
+    Ok(root)
+}
+
+fn organization_profile_path(project_root: &Path) -> PathBuf {
+    project_root
+        .join(".flowcell")
+        .join("organization-profile.json")
+}
+
+#[tauri::command]
+fn scan_organization_project(project_root: String) -> Result<OrganizationProjectScan, String> {
+    let root = resolve_organization_project_root(&project_root)?;
+    let mut folders = vec![".".to_string()];
+    let mut loose_files = Vec::new();
+    let mut pending_directories = vec![root.clone()];
+
+    while let Some(directory) = pending_directories.pop() {
+        let mut entries = fs::read_dir(&directory)
+            .map_err(|error| format!("Unable to scan {}: {error}", directory.display()))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| format!("Unable to scan {}: {error}", directory.display()))?;
+        entries.sort_by_key(|entry| entry.file_name().to_string_lossy().to_lowercase());
+
+        for entry in entries {
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("Unable to inspect {}: {error}", path.display()))?;
+
+            if file_type.is_dir() && !file_type.is_symlink() {
+                let relative = path
+                    .strip_prefix(&root)
+                    .map_err(|error| {
+                        format!("Unable to make {} relative: {error}", path.display())
+                    })?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                folders.push(relative);
+                pending_directories.push(path);
+                continue;
+            }
+
+            if directory == root && file_type.is_file() {
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                let extension = path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .map(|value| format!(".{}", value.to_lowercase()))
+                    .unwrap_or_default();
+                loose_files.push(OrganizationLooseFileInfo {
+                    path: path.display().to_string(),
+                    file_name,
+                    extension,
+                });
+            }
+        }
+    }
+
+    folders.sort_by_key(|folder| folder.to_lowercase());
+    if let Some(root_index) = folders.iter().position(|folder| folder == ".") {
+        folders.swap(0, root_index);
+    }
+    loose_files.sort_by_key(|file| file.file_name.to_lowercase());
+
+    Ok(OrganizationProjectScan {
+        project_root: root.display().to_string(),
+        folders,
+        loose_files,
+    })
+}
+
+#[tauri::command]
+fn read_organization_profile(project_root: String) -> Result<Option<Value>, String> {
+    let root = resolve_organization_project_root(&project_root)?;
+    let profile_path = organization_profile_path(&root);
+    if !profile_path.is_file() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(&profile_path).map_err(|error| {
+        format!(
+            "Unable to read organization profile at {}: {error}",
+            profile_path.display()
+        )
+    })?;
+    let profile = serde_json::from_str::<Value>(&contents).map_err(|error| {
+        format!(
+            "Organization profile at {} is not valid JSON: {error}",
+            profile_path.display()
+        )
+    })?;
+
+    if !profile.is_object() {
+        return Err(format!(
+            "Organization profile at {} must contain a JSON object.",
+            profile_path.display()
+        ));
+    }
+
+    Ok(Some(profile))
+}
+
+#[tauri::command]
+fn write_organization_profile(project_root: String, mut profile: Value) -> Result<String, String> {
+    let root = resolve_organization_project_root(&project_root)?;
+    let profile_object = profile
+        .as_object_mut()
+        .ok_or_else(|| "Organization profile must be a JSON object.".to_string())?;
+
+    if profile_object.get("profileVersion").and_then(Value::as_u64) != Some(1) {
+        return Err("Organization profileVersion must be 1.".to_string());
+    }
+    if !profile_object.get("roles").is_some_and(Value::is_array) {
+        return Err("Organization profile roles must be an array.".to_string());
+    }
+    if !profile_object
+        .get("programFolders")
+        .is_some_and(Value::is_array)
+    {
+        return Err("Organization profile programFolders must be an array.".to_string());
+    }
+
+    profile_object.insert(
+        "projectRoot".to_string(),
+        Value::String(root.display().to_string()),
+    );
+
+    let profile_path = organization_profile_path(&root);
+    let profile_folder = profile_path
+        .parent()
+        .ok_or_else(|| "Unable to resolve the organization profile folder.".to_string())?;
+    fs::create_dir_all(profile_folder).map_err(|error| {
+        format!(
+            "Unable to create organization profile folder at {}: {error}",
+            profile_folder.display()
+        )
+    })?;
+    let serialized = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&profile)
+            .map_err(|error| format!("Unable to serialize organization profile: {error}"))?
+    );
+    fs::write(&profile_path, serialized).map_err(|error| {
+        format!(
+            "Unable to write organization profile at {}: {error}",
+            profile_path.display()
+        )
+    })?;
+
+    Ok(profile_path.display().to_string())
+}
+
 #[tauri::command]
 fn write_panel_fan_debug_dump(file_name: String, contents: String) -> Result<String, String> {
     let safe_file_name = validate_debug_file_name(&file_name)?;
@@ -10159,6 +10341,9 @@ fn main() {
             run_blender_smart_axis_tool,
             run_blender_toolset_action,
             run_toolset_action,
+            scan_organization_project,
+            read_organization_profile,
+            write_organization_profile,
             write_panel_fan_debug_dump
         ])
         .setup(|app| {

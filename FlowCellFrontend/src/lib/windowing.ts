@@ -60,6 +60,8 @@ const BINDS_WINDOW_WIDTH = 1280;
 const BINDS_WINDOW_HEIGHT = 860;
 const MACRO_LAB_WINDOW_WIDTH = 1320;
 const MACRO_LAB_WINDOW_HEIGHT = 900;
+const ORGANIZATION_SETUP_WINDOW_WIDTH = 1240;
+const ORGANIZATION_SETUP_WINDOW_HEIGHT = 880;
 const BUTTON_REORDER_WINDOW_WIDTH = 720;
 const BUTTON_REORDER_WINDOW_HEIGHT = 840;
 const FLATTEN_REVOLVE_TOOLBOX_WINDOW_WIDTH = 640;
@@ -79,6 +81,7 @@ const pendingRemeshToolboxOpens = new Map<string, Promise<void>>();
 const pendingTriPolyToolboxOpens = new Map<string, Promise<void>>();
 const pendingBindsOpens = new Map<string, Promise<void>>();
 const pendingMacroLabOpens = new Map<string, Promise<void>>();
+const pendingOrganizationSetupOpens = new Map<string, Promise<void>>();
 const pendingButtonReorderOpens = new Map<string, Promise<void>>();
 const pendingFlattenRevolveToolboxOpens = new Map<string, Promise<void>>();
 const pendingGenericToolboxOpens = new Map<string, Promise<void>>();
@@ -810,6 +813,39 @@ async function resolveMacroLabWindowOptions(): Promise<{
   };
 }
 
+async function resolveOrganizationSetupWindowOptions(): Promise<{
+  width: number;
+  height: number;
+  x?: number;
+  y?: number;
+}> {
+  const defaults = {
+    width: ORGANIZATION_SETUP_WINDOW_WIDTH,
+    height: ORGANIZATION_SETUP_WINDOW_HEIGHT
+  };
+  const currentWindow = getCurrentWindow();
+  const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+  const [position, size] = await Promise.all([
+    currentWindow.outerPosition().catch(() => null),
+    currentWindow.innerSize().catch(() => null)
+  ]);
+
+  if (!position || !size) {
+    return defaults;
+  }
+
+  const logicalLeft = position.x / scaleFactor;
+  const logicalTop = position.y / scaleFactor;
+  const logicalWidth = size.width / scaleFactor;
+  const logicalHeight = size.height / scaleFactor;
+
+  return {
+    ...defaults,
+    x: logicalLeft + Math.max((logicalWidth - defaults.width) / 2, 24),
+    y: logicalTop + Math.max((logicalHeight - defaults.height) / 2, 24)
+  };
+}
+
 async function resolveScriptGroupPopoutWindowOptions(
   scriptCount: number,
   popoutType: ScriptGroupPopoutType
@@ -1163,6 +1199,12 @@ export async function openBindsWindow(): Promise<void> {
     });
 
     await waitForWindowCreated(window);
+    await window.setSize(new LogicalSize(placement.width, placement.height)).catch(() => {});
+    if (typeof placement.x === "number" && typeof placement.y === "number") {
+      await window
+        .setPosition(new LogicalPosition(placement.x, placement.y))
+        .catch(() => {});
+    }
     await focusExistingWindow(window);
   })().finally(() => {
     if (pendingBindsOpens.get(windowLabel) === openPromise) {
@@ -1230,6 +1272,65 @@ export async function openMacroLabWindow(args: {
   });
 
   pendingMacroLabOpens.set(windowLabel, openPromise);
+  return openPromise;
+}
+
+export async function openOrganizationSetupWindow(): Promise<void> {
+  const windowLabel = "organization-setup";
+  const pendingOpen = pendingOrganizationSetupOpens.get(windowLabel);
+  if (pendingOpen) {
+    return pendingOpen;
+  }
+
+  const openPromise = (async () => {
+    const placement = await resolveOrganizationSetupWindowOptions();
+    const existing = await WebviewWindow.getByLabel(windowLabel);
+    if (existing) {
+      await existing.setSize(new LogicalSize(placement.width, placement.height)).catch(() => {});
+      if (typeof placement.x === "number" && typeof placement.y === "number") {
+        await existing
+          .setPosition(new LogicalPosition(placement.x, placement.y))
+          .catch(() => {});
+      }
+      await focusExistingWindow(existing);
+      return;
+    }
+
+    const window = new WebviewWindow(windowLabel, {
+      url: buildWindowContextUrl({
+        kind: "organization-setup"
+      }),
+      title: "FlowCell - Setup Organization",
+      width: placement.width,
+      height: placement.height,
+      x: placement.x,
+      y: placement.y,
+      minWidth: 820,
+      minHeight: 640,
+      resizable: true,
+      decorations: false,
+      transparent: false,
+      shadow: true,
+      visible: true,
+      focus: true,
+      alwaysOnTop: false
+    });
+
+    await waitForWindowCreated(window);
+    await window.setSize(new LogicalSize(placement.width, placement.height)).catch(() => {});
+    if (typeof placement.x === "number" && typeof placement.y === "number") {
+      await window
+        .setPosition(new LogicalPosition(placement.x, placement.y))
+        .catch(() => {});
+    }
+    await focusExistingWindow(window);
+  })().finally(() => {
+    if (pendingOrganizationSetupOpens.get(windowLabel) === openPromise) {
+      pendingOrganizationSetupOpens.delete(windowLabel);
+    }
+  });
+
+  pendingOrganizationSetupOpens.set(windowLabel, openPromise);
   return openPromise;
 }
 
