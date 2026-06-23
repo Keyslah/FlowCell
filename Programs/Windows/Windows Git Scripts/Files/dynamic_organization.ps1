@@ -73,6 +73,11 @@ try {
         "Profile: $($result.profilePath)"
     )
     if ($result.PSObject.Properties.Name.Contains('moves')) { $status += "Moved: $(@($result.moves).Count)" }
+    if ($null -ne $result.programOrganization) {
+        $status += "Program files moved: $($result.programOrganization.filesMoved)"
+        $status += "Program snapshots: $($result.programOrganization.snapshotsCreated)"
+        $status += "Program conflicts: $(@($result.programOrganization.conflicts).Count)"
+    }
     if ($result.PSObject.Properties.Name.Contains('ambiguous')) { $status += "Ambiguous: $(@($result.ambiguous).Count)" }
     if ($result.PSObject.Properties.Name.Contains('unresolved')) { $status += "Unresolved: $(@($result.unresolved).Count)" }
     $message = $status -join [Environment]::NewLine

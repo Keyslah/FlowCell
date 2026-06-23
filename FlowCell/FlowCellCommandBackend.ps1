@@ -737,12 +737,14 @@ function Invoke-FlowCellToolCommand($Envelope) {
             return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge')
         }
         'hdri_world' {
-            $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowcell_custom_hdri_world_tools' -Data @{
+            $data = @{
                 command = [string]$toolCommand
                 visual_mode = [string]$(if ($payload.PSObject.Properties['visual_mode']) { $payload.visual_mode } else { '' })
                 hdri_path = [string]$(if ($payload.PSObject.Properties['hdri_path']) { $payload.hdri_path } else { '' })
                 static_background_path = [string]$(if ($payload.PSObject.Properties['static_background_path']) { $payload.static_background_path } else { '' })
                 grid_spacing_m = [double]$(if ($payload.PSObject.Properties['grid_spacing_m']) { $payload.grid_spacing_m } else { 1 })
+                grid_distance_m = [double]$(if ($payload.PSObject.Properties['grid_distance_m']) { $payload.grid_distance_m } else { 5 })
+                grid_far_spacing_m = [double]$(if ($payload.PSObject.Properties['grid_far_spacing_m']) { $payload.grid_far_spacing_m } else { 1 })
                 bucket = [string]$(if ($payload.PSObject.Properties['bucket']) { $payload.bucket } else { '' })
                 bucket_hex = [string]$(if ($payload.PSObject.Properties['bucket_hex']) { $payload.bucket_hex } else { '' })
                 tabs_hex = [string]$(if ($payload.PSObject.Properties['tabs_hex']) { $payload.tabs_hex } else { '' })
@@ -765,6 +767,15 @@ function Invoke-FlowCellToolCommand($Envelope) {
                 rotation_y_deg = [double]$(if ($payload.PSObject.Properties['rotation_y_deg']) { $payload.rotation_y_deg } else { 0 })
                 rotation_z_deg = [double]$(if ($payload.PSObject.Properties['rotation_z_deg']) { $payload.rotation_z_deg } else { 0 })
                 world_strength = [double]$(if ($payload.PSObject.Properties['world_strength']) { $payload.world_strength } else { 0 })
+            }
+            try {
+                $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowcell_custom_hdri_world_tools' -Data $data
+            }
+            catch {
+                if ($_.Exception.Message -notmatch 'Unsupported action:\s*flowcell_custom_hdri_world_tools') {
+                    throw
+                }
+                $response = Invoke-FlowCellBlenderBridgeRequest -Action 'custom_hdri_world_tools' -Data $data
             }
             $statusText = if ($response.PSObject.Properties['message']) { [string]$response.message } else { 'HDRI world settings applied.' }
             Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText

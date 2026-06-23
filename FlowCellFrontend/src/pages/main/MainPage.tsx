@@ -88,7 +88,7 @@ import {
   reloadCurrentHostWindow
 } from "../../lib/windowing";
 import { MACRO_PANEL_CHANGED_EVENT, runFrontendMacro } from "../../lib/macros";
-import { showOpenFileDialog } from "../../lib/tauri";
+import { showOpenFolderDialog } from "../../lib/tauri";
 import { DEFAULT_FLOW_IMPORTED_SKIN } from "../../lib/theme";
 import mainBackground from "../../assets/backgrounds/main-background.jpeg";
 import type { FlowCellBounds, LayoutSnapshot, LayoutSnapshotWindow, StyleGroup } from "../../types";
@@ -2495,18 +2495,24 @@ export default function MainPage() {
     }
 
     if (button.actionId === "add-program-folder") {
-      const selectedPaths = await showOpenFileDialog({
-        title: "Choose Program EXE",
-        filter: "Program EXE (*.exe)|*.exe|All Files (*.*)|*.*"
-      });
-      const exePath = selectedPaths[0]?.trim() ?? "";
-      if (!exePath) {
-        return;
+      const pastedPath = window.prompt(
+        "Paste the full path to the program EXE or the folder containing it.\n\nLeave this blank and choose OK to browse for the folder.",
+        ""
+      );
+      if (pastedPath === null) return;
+
+      let programLocation = pastedPath.trim().replace(/^"+|"+$/g, "");
+      if (!programLocation) {
+        const selectedPaths = await showOpenFolderDialog({
+          title: "Choose the Folder Containing the Program EXE"
+        });
+        programLocation = selectedPaths[0]?.trim() ?? "";
       }
+      if (!programLocation) return;
 
       const requestedName = window.prompt(
         "Name the new program folder.",
-        inferProgramNameFromExePath(exePath)
+        inferProgramNameFromExePath(programLocation)
       );
       if (requestedName === null) {
         return;
@@ -2519,7 +2525,7 @@ export default function MainPage() {
       }
 
       try {
-        const createdProgram = await createProgramFolder(trimmedName, exePath);
+        const createdProgram = await createProgramFolder(trimmedName, programLocation);
         const refreshedProgramNames = await listProgramFolders();
         setProgramNames(refreshedProgramNames);
         setSelectedProgramName(

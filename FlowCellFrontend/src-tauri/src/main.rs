@@ -5026,6 +5026,31 @@ mod program_registration_tests {
             Some("1")
         );
     }
+
+    #[test]
+    fn blender_folder_prefers_blender_exe_over_launcher() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock should be after Unix epoch")
+            .as_nanos();
+        let folder = std::env::temp_dir().join(format!(
+            "flowcell-program-exe-test-{}-{unique}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&folder).expect("test folder should be created");
+        fs::write(folder.join("blender-launcher.exe"), []).expect("launcher fixture should exist");
+        fs::write(folder.join("blender.exe"), []).expect("Blender fixture should exist");
+
+        let resolved = resolve_program_executable("Blender", &folder.to_string_lossy())
+            .expect("Blender folder should resolve");
+        assert_eq!(
+            resolved.file_name().and_then(|value| value.to_str()),
+            Some("blender.exe")
+        );
+
+        fs::remove_dir_all(&folder).expect("temporary test folder should be removed");
+    }
+
 }
 
 fn parse_ini_document(contents: &str) -> IniDocument {
@@ -8778,20 +8803,141 @@ fn list_panel_folders(program_name: String) -> Result<Vec<String>, String> {
     list_child_directory_names(&panels_root)
 }
 
+fn resolve_program_executable(
+    program_name: &str,
+    selected_location: &str,
+) -> Result<PathBuf, String> {
+    let selected_location = selected_location.trim().trim_matches('"');
+    let selected_path = PathBuf::from(selected_location);
+    if selected_path.is_file() {
+        let is_exe = selected_path
+            .extension()
+            .and_then(|value| value.to_str())
+            .is_some_and(|value| value.eq_ignore_ascii_case("exe"));
+        return is_exe.then_some(selected_path).ok_or_else(|| {
+            format!("The selected program file is not an EXE: {selected_location}")
+        });
+    }
+    if !selected_path.is_dir() {
+        return Err(format!(
+            "Program executable or containing folder was not found: {selected_location}"
+        ));
+    }
+
+    let mut candidates = fs::read_dir(&selected_path)
+        .map_err(|error| format!("Unable to inspect {}: {error}", selected_path.display()))?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("exe"))
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|path| {
+        path.file_name()
+            .map(|value| value.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default()
+    });
+    if candidates.is_empty() {
+        return Err(format!(
+            "No EXE was found directly inside {}.",
+            selected_path.display()
+        ));
+    }
+
+    let normalize = |value: &str| {
+        value
+            .chars()
+            .filter(|character| character.is_ascii_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    let stem = |path: &Path| {
+        path.file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_lowercase()
+    };
+    let template_key = infer_program_template_key(program_name, Some(selected_location));
+    let preferred_stem = match template_key {
+        "blender" => Some("blender"),
+        "illustrator" => Some("illustrator"),
+        "photoshop" => Some("photoshop"),
+        "windows" => Some("explorer"),
+        _ => None,
+    };
+    if let Some(preferred_stem) = preferred_stem {
+        if let Some(candidate) = candidates
+            .iter()
+            .find(|candidate| stem(candidate).eq_ignore_ascii_case(preferred_stem))
+        {
+            return Ok(candidate.clone());
+        }
+    }
+
+    let normalized_program_name = normalize(program_name);
+    if let Some(candidate) = candidates
+        .iter()
+        .find(|candidate| normalize(&stem(candidate)) == normalized_program_name)
+    {
+        return Ok(candidate.clone());
+    }
+
+    let auxiliary_terms = [
+        "crash",
+        "helper",
+        "launcher",
+        "setup",
+        "uninstall",
+        "update",
+        "report",
+        "service",
+    ];
+    let primary_candidates = candidates
+        .iter()
+        .filter(|candidate| {
+            let candidate_stem = stem(candidate);
+            !auxiliary_terms
+                .iter()
+                .any(|term| candidate_stem.contains(term))
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if primary_candidates.len() == 1 {
+        return Ok(primary_candidates[0].clone());
+    }
+    if candidates.len() == 1 {
+        return Ok(candidates.remove(0));
+    }
+
+    let candidate_names = candidates
+        .iter()
+        .filter_map(|path| path.file_name().and_then(|value| value.to_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(format!(
+        "Multiple EXEs were found in {}: {}. Run Add Program again and paste the full path to the correct EXE.",
+        selected_path.display(),
+        candidate_names
+    ))
+}
+
 #[tauri::command]
 fn create_program_folder(
     name: String,
     exe_path: Option<String>,
 ) -> Result<CreateProgramFolderResult, String> {
     let requested_program_name = validate_folder_name(&name, "Program")?;
-    let exe_path = exe_path
+    let selected_location = exe_path
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Choose the program executable before adding the program.".to_string())?;
-    if !Path::new(exe_path).is_file() {
-        return Err(format!("Program executable was not found: {exe_path}"));
-    }
+        .ok_or_else(|| "Choose the program executable or its containing folder.".to_string())?;
+    let exe_path = resolve_program_executable(&requested_program_name, selected_location)?;
+    let exe_path = exe_path.to_string_lossy().into_owned();
     let programs_root = resolve_programs_root()?;
     let program_path = if let Some(existing_path) =
         find_named_child_directory(&programs_root, &requested_program_name)?
@@ -8810,14 +8956,14 @@ fn create_program_folder(
         .to_string();
 
     let bootstrap_message =
-        if infer_program_template_key(&program_name, Some(exe_path)) == "blender" {
-            Some(bootstrap_blender_program(&program_name, Some(exe_path))?)
+        if infer_program_template_key(&program_name, Some(&exe_path)) == "blender" {
+            Some(bootstrap_blender_program(&program_name, Some(&exe_path))?)
         } else {
             None
         };
 
     let (_, mut document, bindings_path) = read_bindings_file_state()?;
-    upsert_program_registration(&mut document, &program_name, &program_path, exe_path);
+    upsert_program_registration(&mut document, &program_name, &program_path, &exe_path);
     write_bindings_file_state(&bindings_path, &document)?;
     let reload_error = restart_flowcell_headless_backend().err();
     let mut status_message = format!("{program_name} registered with {exe_path}.");
@@ -10040,10 +10186,27 @@ fn resolve_organization_project_root(project_root: &str) -> Result<PathBuf, Stri
     Ok(root)
 }
 
+// The organization profile is a single visible file at the project root,
+// alongside the organizer's other organize-folder.* sidecars. No hidden
+// .flowcell folder is created.
 fn organization_profile_path(project_root: &Path) -> PathBuf {
+    project_root.join("organize-folder.profile.json")
+}
+
+// Older profiles lived in a .flowcell folder; read them as a fallback so
+// existing setups keep working until the next save migrates them.
+fn legacy_organization_profile_path(project_root: &Path) -> PathBuf {
     project_root
         .join(".flowcell")
         .join("organization-profile.json")
+}
+
+// Files the organizer manages itself — they must never be listed as loose
+// files or organized into folders.
+fn is_organization_sidecar_file(file_name: &str) -> bool {
+    file_name
+        .to_lowercase()
+        .starts_with("organize-folder.")
 }
 
 #[tauri::command]
@@ -10067,6 +10230,11 @@ fn scan_organization_project(project_root: String) -> Result<OrganizationProject
                 .map_err(|error| format!("Unable to inspect {}: {error}", path.display()))?;
 
             if file_type.is_dir() && !file_type.is_symlink() {
+                // Skip FlowCell's legacy metadata folder so it never shows in
+                // the Project Tree.
+                if directory == root && entry.file_name().to_string_lossy() == ".flowcell" {
+                    continue;
+                }
                 let relative = path
                     .strip_prefix(&root)
                     .map_err(|error| {
@@ -10081,6 +10249,9 @@ fn scan_organization_project(project_root: String) -> Result<OrganizationProject
 
             if directory == root && file_type.is_file() {
                 let file_name = entry.file_name().to_string_lossy().to_string();
+                if is_organization_sidecar_file(&file_name) {
+                    continue;
+                }
                 let extension = path
                     .extension()
                     .and_then(|value| value.to_str())
@@ -10111,10 +10282,13 @@ fn scan_organization_project(project_root: String) -> Result<OrganizationProject
 #[tauri::command]
 fn read_organization_profile(project_root: String) -> Result<Option<Value>, String> {
     let root = resolve_organization_project_root(&project_root)?;
-    let profile_path = organization_profile_path(&root);
-    if !profile_path.is_file() {
+    let profile_path = if organization_profile_path(&root).is_file() {
+        organization_profile_path(&root)
+    } else if legacy_organization_profile_path(&root).is_file() {
+        legacy_organization_profile_path(&root)
+    } else {
         return Ok(None);
-    }
+    };
 
     let contents = fs::read_to_string(&profile_path).map_err(|error| {
         format!(
@@ -10122,7 +10296,9 @@ fn read_organization_profile(project_root: String) -> Result<Option<Value>, Stri
             profile_path.display()
         )
     })?;
-    let profile = serde_json::from_str::<Value>(&contents).map_err(|error| {
+    // Strip a leading UTF-8 BOM — PowerShell's Set-Content -Encoding UTF8 writes
+    // one, and serde_json otherwise fails with "expected value at line 1 column 1".
+    let profile = serde_json::from_str::<Value>(contents.trim_start_matches('\u{feff}')).map_err(|error| {
         format!(
             "Organization profile at {} is not valid JSON: {error}",
             profile_path.display()
@@ -10187,6 +10363,516 @@ fn write_organization_profile(project_root: String, mut profile: Value) -> Resul
     })?;
 
     Ok(profile_path.display().to_string())
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OrganizationProfileSummary {
+    name: String,
+    path: String,
+}
+
+// The empty folder skeletons (folder structure only) live here.
+fn resolve_folder_trees_root() -> Result<PathBuf, String> {
+    Ok(resolve_flowcell_local_root()?.join("Folder Trees"))
+}
+
+// The profile data (roles, file-type assignments, etc.) lives here, kept
+// separate from the folder structure on purpose.
+fn resolve_folder_tree_profiles_root() -> Result<PathBuf, String> {
+    Ok(resolve_flowcell_local_root()?.join("Folder Tree Profiles"))
+}
+
+fn folder_tree_profile_path(name: &str) -> Result<PathBuf, String> {
+    Ok(resolve_folder_tree_profiles_root()?.join(format!("{name}.json")))
+}
+
+// Create the empty folder skeleton from an explicit list of relative folder
+// paths (the project's actual folder structure). Nothing else is created here —
+// no .flowcell folder, no per-role folders.
+fn materialize_folder_tree(target: &Path, folders: &[String]) -> Result<(), String> {
+    for folder in folders {
+        let normalized = folder.replace('\\', "/");
+        let mut directory = target.to_path_buf();
+        let mut has_component = false;
+        let mut first = true;
+        let mut skip = false;
+        for component in normalized.split('/') {
+            let part = component.trim();
+            if part.is_empty() || part == "." {
+                continue;
+            }
+            if part == ".." {
+                return Err(format!("Folder path is not allowed: {folder}"));
+            }
+            // Never recreate FlowCell's own metadata folder in the skeleton.
+            if first && part.eq_ignore_ascii_case(".flowcell") {
+                skip = true;
+                break;
+            }
+            first = false;
+            directory.push(part);
+            has_component = true;
+        }
+        if skip || !has_component {
+            continue;
+        }
+        fs::create_dir_all(&directory).map_err(|error| {
+            format!("Unable to create folder at {}: {error}", directory.display())
+        })?;
+    }
+    Ok(())
+}
+
+// Every subdirectory under `base`, as relative forward-slash paths.
+fn list_relative_subdirectories(base: &Path) -> Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut pending = vec![base.to_path_buf()];
+    while let Some(dir) = pending.pop() {
+        let Ok(entries) = fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| format!("Failed to read {}: {error}", dir.display()))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|error| format!("Failed to inspect {}: {error}", entry.path().display()))?;
+            if file_type.is_dir() && !file_type.is_symlink() {
+                let path = entry.path();
+                if let Ok(relative) = path.strip_prefix(base) {
+                    let relative = relative.to_string_lossy().replace('\\', "/");
+                    if !relative.is_empty() {
+                        out.push(relative);
+                    }
+                }
+                pending.push(path);
+            }
+        }
+    }
+    Ok(out)
+}
+
+#[tauri::command]
+fn list_organization_profiles() -> Result<Vec<OrganizationProfileSummary>, String> {
+    let profiles_root = resolve_folder_tree_profiles_root()?;
+    if !profiles_root.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let trees_root = resolve_folder_trees_root()?;
+    let mut summaries = Vec::new();
+    let entries = fs::read_dir(&profiles_root)
+        .map_err(|error| format!("Failed to read {}: {error}", profiles_root.display()))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|error| format!("Failed to read {}: {error}", profiles_root.display()))?;
+        let path = entry.path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
+        let Some(name) = path.file_stem().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        summaries.push(OrganizationProfileSummary {
+            name: name.to_string(),
+            path: trees_root.join(name).display().to_string(),
+        });
+    }
+    summaries.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    Ok(summaries)
+}
+
+#[tauri::command]
+fn read_organization_profile_named(name: String) -> Result<Option<Value>, String> {
+    let safe_name = validate_folder_name(&name, "Profile")?;
+    let profile_path = folder_tree_profile_path(&safe_name)?;
+    if !profile_path.is_file() {
+        return Ok(None);
+    }
+
+    let contents = fs::read_to_string(&profile_path).map_err(|error| {
+        format!(
+            "Unable to read profile at {}: {error}",
+            profile_path.display()
+        )
+    })?;
+    // Strip a leading UTF-8 BOM — PowerShell's Set-Content -Encoding UTF8 writes
+    // one, and serde_json otherwise fails with "expected value at line 1 column 1".
+    let profile = serde_json::from_str::<Value>(contents.trim_start_matches('\u{feff}')).map_err(|error| {
+        format!(
+            "Profile at {} is not valid JSON: {error}",
+            profile_path.display()
+        )
+    })?;
+    if !profile.is_object() {
+        return Err(format!(
+            "Profile at {} must contain a JSON object.",
+            profile_path.display()
+        ));
+    }
+    Ok(Some(profile))
+}
+
+#[tauri::command]
+fn save_organization_profile_as(
+    name: String,
+    mut profile: Value,
+    folders: Vec<String>,
+) -> Result<String, String> {
+    let safe_name = validate_folder_name(&name, "Profile")?;
+
+    // 1. Build the clean, empty folder skeleton from the project's folders.
+    let trees_root = resolve_folder_trees_root()?;
+    fs::create_dir_all(&trees_root).map_err(|error| {
+        format!(
+            "Unable to create Folder Trees folder at {}: {error}",
+            trees_root.display()
+        )
+    })?;
+    let tree_dir = trees_root.join(&safe_name);
+    // Reset the skeleton so re-saving never leaves stale folders. Per AGENTS.md
+    // the old copy goes to the Recycle Bin (recoverable), never a permanent delete.
+    if tree_dir.is_dir() {
+        recycle_directory_path(&tree_dir)?;
+    }
+    fs::create_dir_all(&tree_dir).map_err(|error| {
+        format!(
+            "Unable to create folder tree at {}: {error}",
+            tree_dir.display()
+        )
+    })?;
+    materialize_folder_tree(&tree_dir, &folders)?;
+
+    // 2. Save the profile data separately, pointing its project root at the
+    //    skeleton so loading scans the empty tree.
+    let profiles_root = resolve_folder_tree_profiles_root()?;
+    fs::create_dir_all(&profiles_root).map_err(|error| {
+        format!(
+            "Unable to create Folder Tree Profiles folder at {}: {error}",
+            profiles_root.display()
+        )
+    })?;
+
+    let profile_object = profile
+        .as_object_mut()
+        .ok_or_else(|| "Organization profile must be a JSON object.".to_string())?;
+    if profile_object.get("profileVersion").and_then(Value::as_u64) != Some(1) {
+        return Err("Organization profileVersion must be 1.".to_string());
+    }
+    if !profile_object.get("roles").is_some_and(Value::is_array) {
+        return Err("Organization profile roles must be an array.".to_string());
+    }
+    if !profile_object
+        .get("programFolders")
+        .is_some_and(Value::is_array)
+    {
+        return Err("Organization profile programFolders must be an array.".to_string());
+    }
+    profile_object.insert(
+        "projectRoot".to_string(),
+        Value::String(tree_dir.display().to_string()),
+    );
+
+    let profile_path = folder_tree_profile_path(&safe_name)?;
+    let serialized = format!(
+        "{}\n",
+        serde_json::to_string_pretty(&profile)
+            .map_err(|error| format!("Unable to serialize profile: {error}"))?
+    );
+    fs::write(&profile_path, serialized).map_err(|error| {
+        format!("Unable to write profile at {}: {error}", profile_path.display())
+    })?;
+
+    Ok(tree_dir.display().to_string())
+}
+
+// Apply a saved profile to an arbitrary, existing project root: recreate its
+// skeleton, write organize-folder.profile.json, then run the profile's
+// conditional program-folder organization rules.
+#[tauri::command]
+fn apply_organization_profile_to_root(
+    name: String,
+    project_root: String,
+) -> Result<String, String> {
+    let safe_name = validate_folder_name(&name, "Profile")?;
+    let root = resolve_organization_project_root(&project_root)?;
+
+    if !folder_tree_profile_path(&safe_name)?.is_file() {
+        return Err(format!("Profile \"{safe_name}\" was not found."));
+    }
+
+    let repo_root = resolve_repo_root()
+        .ok_or_else(|| "FlowCell repo root could not be resolved.".to_string())?;
+    let core_path = repo_root
+        .join("Programs")
+        .join("Windows")
+        .join("SupportScripts")
+        .join("Apply-OrganizationProfileCore.ps1");
+    if !core_path.is_file() {
+        return Err(format!(
+            "Apply Organization Profile core was not found: {}",
+            core_path.display()
+        ));
+    }
+
+    let arguments = vec![
+        "-File".to_string(),
+        core_path.display().to_string(),
+        "-ProfileName".to_string(),
+        safe_name,
+        "-ProjectPath".to_string(),
+        root.display().to_string(),
+        "-PassThruJson".to_string(),
+    ];
+    let output = spawn_powershell_output(&arguments)?;
+    if !output.status.success() {
+        return Err(format_process_failure(
+            &output,
+            "Failed to apply the organization profile.",
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let result = serde_json::from_str::<Value>(&stdout)
+        .map_err(|error| format!("Apply Organization Profile returned invalid JSON: {error}"))?;
+    result
+        .get("profilePath")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .ok_or_else(|| "Apply Organization Profile did not return profilePath.".to_string())
+}
+
+// Build a saved profile's folder structure inside any existing folder (no
+// profile file is written). Used to apply a profile to a selected subfolder.
+#[tauri::command]
+fn apply_organization_profile_folders(
+    name: String,
+    target_path: String,
+) -> Result<String, String> {
+    let safe_name = validate_folder_name(&name, "Profile")?;
+    let target = resolve_organization_project_root(&target_path)?;
+    let skeleton = resolve_folder_trees_root()?.join(&safe_name);
+    if skeleton.is_dir() {
+        let folders = list_relative_subdirectories(&skeleton)?;
+        materialize_folder_tree(&target, &folders)?;
+    }
+    Ok(target.display().to_string())
+}
+
+// Generate a Windows Git Script that applies a saved profile to whatever folder
+// path is on the clipboard, so it can be added as a panel button via Add Script.
+#[tauri::command]
+fn make_organization_profile_script(name: String) -> Result<String, String> {
+    let safe_name = validate_folder_name(&name, "Profile")?;
+
+    if !folder_tree_profile_path(&safe_name)?.is_file() {
+        return Err(format!(
+            "Save the profile \"{safe_name}\" first, then Make Script."
+        ));
+    }
+
+    let scripts_dir = resolve_program_git_scripts_directory("Windows")?.join("Files");
+    fs::create_dir_all(&scripts_dir).map_err(|error| {
+        format!(
+            "Unable to create scripts folder at {}: {error}",
+            scripts_dir.display()
+        )
+    })?;
+
+    let slug = {
+        let raw: String = safe_name
+            .to_lowercase()
+            .chars()
+            .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+            .collect();
+        let trimmed = raw.trim_matches('_').to_string();
+        if trimmed.is_empty() {
+            "profile".to_string()
+        } else {
+            trimmed
+        }
+    };
+    let script_path = scripts_dir.join(format!("apply_profile_{slug}.ps1"));
+
+    let escaped_name = safe_name.replace('\'', "''");
+    let template = r##"# Description: Apply "__DESC_NAME__" profile to the clipboard folder.
+param([string]$ProjectPath = '')
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+
+$ProfileName = '__PROFILE_NAME_ESCAPED__'
+
+function Find-FlowCellRoot([string]$StartPath) {
+    $current = [System.IO.Path]::GetFullPath($StartPath)
+    while (-not [string]::IsNullOrWhiteSpace($current) -and (Test-Path -LiteralPath $current -PathType Container)) {
+        if ((Test-Path -LiteralPath (Join-Path $current 'PROGRAM_SUMMARY.txt') -PathType Leaf) -and
+            (Test-Path -LiteralPath (Join-Path $current 'FlowCell') -PathType Container)) { return $current }
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) { break }
+        $current = $parent
+    }
+    throw 'Could not locate the FlowCell repository root from this script location.'
+}
+
+function Get-ClipboardProjectPath {
+    try { $text = Get-Clipboard -Raw -ErrorAction Stop } catch { return '' }
+    $candidate = ([string]$text).Trim().Trim('"')
+    if ([string]::IsNullOrWhiteSpace($candidate)) { return '' }
+    if (Test-Path -LiteralPath $candidate -PathType Container) { return (Get-Item -LiteralPath $candidate).FullName }
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) { return (Split-Path -Parent (Get-Item -LiteralPath $candidate).FullName) }
+    return ''
+}
+
+function Write-FlowCellStatus([string]$Message) {
+    try {
+        $repo = Find-FlowCellRoot -StartPath $PSScriptRoot
+        $statusPath = Join-Path $repo 'FlowCell\local\logs\last_action_status.txt'
+        New-Item -ItemType Directory -Path (Split-Path -Parent $statusPath) -Force | Out-Null
+        Set-Content -LiteralPath $statusPath -Value $Message -Encoding UTF8
+    } catch { }
+}
+
+try {
+    $repo = Find-FlowCellRoot -StartPath $PSScriptRoot
+    $core = Join-Path $repo 'Programs\Windows\SupportScripts\Apply-OrganizationProfileCore.ps1'
+    if (-not (Test-Path -LiteralPath $core -PathType Leaf)) { throw "Apply profile core not found: $core" }
+    if ([string]::IsNullOrWhiteSpace($ProjectPath)) { $ProjectPath = Get-ClipboardProjectPath }
+    if ([string]::IsNullOrWhiteSpace($ProjectPath)) { throw 'Copy a destination folder path to the clipboard first, then run this.' }
+
+    $json = & $core -ProfileName $ProfileName -ProjectPath $ProjectPath -PassThruJson
+    $result = $json | ConvertFrom-Json
+    $message = @(
+        "Applied profile: $ProfileName",
+        "Target: $($result.projectRoot)",
+        "Folders ensured: $($result.foldersCreated)",
+        "Program folders created: $(@($result.programFoldersCreated).Count)",
+        "Program folders reused: $(@($result.programFoldersUsed).Count)",
+        "Files moved: $($result.filesMoved)",
+        "Snapshots created: $($result.snapshotsCreated)",
+        "Conflicts: $(@($result.conflicts).Count)"
+    ) -join [Environment]::NewLine
+    Write-FlowCellStatus $message
+    $message
+    exit 0
+}
+catch {
+    Write-FlowCellStatus $_.Exception.Message
+    Write-Error $_.Exception.Message
+    exit 1
+}
+"##;
+
+    let script = template
+        .replace("__DESC_NAME__", &safe_name)
+        .replace("__PROFILE_NAME_ESCAPED__", &escaped_name);
+
+    fs::write(&script_path, script).map_err(|error| {
+        format!(
+            "Unable to write script at {}: {error}",
+            script_path.display()
+        )
+    })?;
+
+    Ok(script_path.display().to_string())
+}
+
+// Resolve a relative folder path under a project root, rejecting traversal and
+// the root itself.
+fn resolve_organization_subfolder(project_root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let normalized = relative.replace('\\', "/");
+    let mut directory = project_root.to_path_buf();
+    let mut has_component = false;
+    for component in normalized.split('/') {
+        let part = component.trim();
+        if part.is_empty() || part == "." {
+            continue;
+        }
+        if part == ".." {
+            return Err(format!("Folder path is not allowed: {relative}"));
+        }
+        directory.push(part);
+        has_component = true;
+    }
+    if !has_component {
+        return Err("Choose a folder other than the project root.".to_string());
+    }
+    Ok(directory)
+}
+
+#[tauri::command]
+fn create_organization_folder(
+    project_root: String,
+    relative_path: String,
+) -> Result<String, String> {
+    let root = resolve_organization_project_root(&project_root)?;
+    let directory = resolve_organization_subfolder(&root, &relative_path)?;
+    fs::create_dir_all(&directory).map_err(|error| {
+        format!("Unable to create folder at {}: {error}", directory.display())
+    })?;
+    Ok(directory.display().to_string())
+}
+
+// Delete a folder under the project root by sending it to the Recycle Bin.
+#[tauri::command]
+fn recycle_organization_folder(
+    project_root: String,
+    relative_path: String,
+) -> Result<(), String> {
+    let root = resolve_organization_project_root(&project_root)?;
+    let directory = resolve_organization_subfolder(&root, &relative_path)?;
+    if directory.is_dir() {
+        recycle_directory_path(&directory)?;
+    }
+    Ok(())
+}
+
+// Best-effort restore of a folder from the Recycle Bin back to its original
+// location, by absolute path. Used to undo a delete.
+#[tauri::command]
+fn restore_recycled_folder(path: String) -> Result<(), String> {
+    let full = PathBuf::from(path.trim());
+    if full.is_dir() {
+        return Ok(());
+    }
+    let parent = full
+        .parent()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_default();
+    let name = full
+        .file_name()
+        .map(|value| value.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if parent.is_empty() || name.is_empty() {
+        return Err("Invalid path to restore.".to_string());
+    }
+
+    let command = format!(
+        concat!(
+            "$ErrorActionPreference='Stop'; ",
+            "$parent='{parent}'; $name='{name}'; $done=$false; ",
+            "$shell=New-Object -ComObject Shell.Application; ",
+            "$bin=$shell.Namespace(0xA); ",
+            "foreach($item in @($bin.Items())){{ ",
+            "if($item.Name -ne $name){{continue}}; ",
+            "$orig=[string]$bin.GetDetailsOf($item,1); ",
+            "if(-not ($orig -ieq $parent)){{continue}}; ",
+            "foreach($verb in @($item.Verbs())){{ ",
+            "if(($verb.Name -replace '&','') -match 'Restore'){{ $verb.DoIt(); $done=$true; break }} }}; ",
+            "if($done){{break}} }}; ",
+            "if(-not $done){{ throw 'The folder was not found in the Recycle Bin.' }}"
+        ),
+        parent = escape_powershell_single_quoted(&parent),
+        name = escape_powershell_single_quoted(&name),
+    );
+    let output = spawn_powershell_output(&["-Command".to_string(), command])?;
+    if !output.status.success() {
+        return Err(format_process_failure(
+            &output,
+            "Could not restore the folder from the Recycle Bin.",
+        ));
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -10344,6 +11030,15 @@ fn main() {
             scan_organization_project,
             read_organization_profile,
             write_organization_profile,
+            list_organization_profiles,
+            read_organization_profile_named,
+            save_organization_profile_as,
+            apply_organization_profile_to_root,
+            apply_organization_profile_folders,
+            make_organization_profile_script,
+            create_organization_folder,
+            recycle_organization_folder,
+            restore_recycled_folder,
             write_panel_fan_debug_dump
         ])
         .setup(|app| {

@@ -59,6 +59,8 @@ interface HdriWorldToolValues {
   HdriPath: string;
   StaticBackgroundPath: string;
   GridSpacing: string;
+  GridDistance: string;
+  GridFarSpacing: string;
   ThemeImagePath: string;
   ThemePaletteHexes: string[];
   ThemeVisualMode: "dark" | "light";
@@ -1041,29 +1043,9 @@ export function HdriWorldToolSurface({
           className: "tool-chip",
           styleGroup,
           importedSkin,
-          title: "Creates fake gizmos and a fake grid on top of a background image.",
-          instantTooltip: "Creates fake gizmos and a fake grid on top of a background image."
+          title: "Place the picture path in the Blender viewport with the overlay.",
+          instantTooltip: "Place the picture path in the Blender viewport with the overlay."
         })}
-        {renderToolChip("Grid", {
-          onClick: () => onApply("set_grid_spacing", values),
-          className: "tool-chip",
-          styleGroup,
-          importedSkin,
-          title: "Show or refresh the grid and gizmos using the entered metric line spacing."
-        })}
-        <input
-          className="hdri-world-field__input hdri-world-field__input--grid-spacing"
-          type="text"
-          value={values.GridSpacing}
-          onChange={(event) => onValueChange("GridSpacing", event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              onApply("set_grid_spacing", values);
-            }
-          }}
-          placeholder="1 m"
-          title="Grid line spacing. Bare numbers use meters; inputs such as 8in or 8 in are converted to meters."
-        />
         <input
           className="hdri-world-field__input"
           type="text"
@@ -1091,7 +1073,7 @@ export function HdriWorldToolSurface({
           className: "tool-chip",
           styleGroup,
           importedSkin,
-          title: "Remove the Place Picture fake background, grid, and gizmos while keeping the path field."
+          title: "Remove the Place Picture background and overlay while keeping the path field."
         })}
       </div>
       <div className="hdri-world-row hdri-world-row--path">

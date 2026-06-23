@@ -40,7 +40,17 @@ function UnderRoot([string]$Candidate, [string]$Root) {
 $projectRoot = FullPath $ProjectPath
 if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) { throw "Project folder does not exist: $projectRoot" }
 
-if ([string]::IsNullOrWhiteSpace($ProfilePath)) { $ProfilePath = Join-Path $projectRoot '.flowcell\organization-profile.json' }
+if ([string]::IsNullOrWhiteSpace($ProfilePath)) {
+    # Profile is a single visible file at the project root. Fall back to the
+    # legacy .flowcell location only for reading older setups.
+    $newProfilePath = Join-Path $projectRoot 'organize-folder.profile.json'
+    $legacyProfilePath = Join-Path $projectRoot '.flowcell\organization-profile.json'
+    if ((Test-Path -LiteralPath $newProfilePath -PathType Leaf) -or -not (Test-Path -LiteralPath $legacyProfilePath -PathType Leaf)) {
+        $ProfilePath = $newProfilePath
+    } else {
+        $ProfilePath = $legacyProfilePath
+    }
+}
 
 function New-StarterProfile {
     param([string]$Root)
@@ -57,9 +67,11 @@ function New-StarterProfile {
             [PSCustomObject][ordered]@{ roleId='gcode'; displayName='GCode'; folder='Orca\GCode'; fileTypes=@('.gcode','.nc','.tap') }
         )
         programFolders = @(
-            [PSCustomObject][ordered]@{ programId='illustrator'; displayName='Illustrator'; folder='Illustrator'; createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@('svg_export','laser_svg') },
-            [PSCustomObject][ordered]@{ programId='meshes'; displayName='Meshes'; folder='Meshes'; createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@('clean_stl','dirty_stl') },
-            [PSCustomObject][ordered]@{ programId='orca'; displayName='Orca'; folder='Orca'; createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@('gcode') }
+            [PSCustomObject][ordered]@{ programId='blender'; displayName='Blender'; folder='Blender'; fileTypes=@('.blend'); createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@() },
+            [PSCustomObject][ordered]@{ programId='illustrator'; displayName='Illustrator'; folder='Illustrator'; fileTypes=@('.ai','.ait'); createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@('svg_export','laser_svg') },
+            [PSCustomObject][ordered]@{ programId='photoshop'; displayName='Photoshop'; folder='Photoshop'; fileTypes=@('.psd','.psb'); createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@() },
+            [PSCustomObject][ordered]@{ programId='meshes'; displayName='Meshes'; folder='Meshes'; fileTypes=@('.stl','.obj'); createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@('clean_stl','dirty_stl') },
+            [PSCustomObject][ordered]@{ programId='orca'; displayName='Orca'; folder='Orca'; fileTypes=@('.gcode','.nc','.tap'); createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@('gcode') }
         )
         rememberedChoices = [PSCustomObject]@{}
     }
@@ -113,6 +125,36 @@ function Normalize-Profile([object]$Profile) {
         $unknownRole[0].description = 'Unknown catches loose files whose file type does not match another role.'
     }
     $Profile.roles = $roles.ToArray()
+
+    $programFolders = New-Object System.Collections.Generic.List[object]
+    $programSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($program in @(PropertyValue $Profile 'programFolders' @())) {
+        $programId = RoleId ([string](PropertyValue $program 'programId' ''))
+        if (-not $programId -or -not $programSeen.Add($programId)) { continue }
+        $programTypes = New-Object System.Collections.Generic.List[string]
+        $programTypeSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($raw in @(PropertyValue $program 'fileTypes' @())) {
+            $extension = CleanExt ([string]$raw)
+            if ($extension -and $programTypeSeen.Add($extension)) { $programTypes.Add($extension) | Out-Null }
+        }
+        $programRoles = New-Object System.Collections.Generic.List[string]
+        $programRoleSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($raw in @(PropertyValue $program 'roles' @())) {
+            $programRoleId = RoleId ([string]$raw)
+            if ($programRoleId -and $programRoleSeen.Add($programRoleId)) { $programRoles.Add($programRoleId) | Out-Null }
+        }
+        $displayName = [string](PropertyValue $program 'displayName' $programId)
+        $folder = [string](PropertyValue $program 'folder' $displayName)
+        $programFolders.Add([PSCustomObject][ordered]@{
+            programId = $programId
+            displayName = $(if ([string]::IsNullOrWhiteSpace($displayName)) { $programId } else { $displayName.Trim() })
+            folder = $(if ([string]::IsNullOrWhiteSpace($folder)) { $displayName.Trim() } else { $folder.Trim() })
+            fileTypes = $programTypes.ToArray()
+            roles = $programRoles.ToArray()
+            createOnlyIfMatchingFilesOrRolesPresent = [bool](PropertyValue $program 'createOnlyIfMatchingFilesOrRolesPresent' $true)
+        }) | Out-Null
+    }
+    $Profile.programFolders = $programFolders.ToArray()
     return $Profile
 }
 
@@ -154,9 +196,12 @@ function MatchLooseFile([object]$Profile, [System.IO.FileInfo]$File) {
 $profile = Normalize-Profile (Read-Profile)
 
 if ($Mode -eq 'InitProfile') {
-    EnsureDir (Split-Path -Parent $ProfilePath)
-    $profile | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $ProfilePath -Encoding UTF8
-    $result = [PSCustomObject]@{ mode=$Mode; projectRoot=$projectRoot; profilePath=$ProfilePath; created=$true }
+    # Always write the new single-file location, never the legacy .flowcell folder.
+    $writeProfilePath = Join-Path $projectRoot 'organize-folder.profile.json'
+    # UTF-8 without BOM so the Rust reader (serde_json) can parse it.
+    $writeProfileJson = ($profile | ConvertTo-Json -Depth 12) + [Environment]::NewLine
+    [System.IO.File]::WriteAllText($writeProfilePath, $writeProfileJson, (New-Object System.Text.UTF8Encoding $false))
+    $result = [PSCustomObject]@{ mode=$Mode; projectRoot=$projectRoot; profilePath=$writeProfilePath; created=$true }
 }
 elseif ($Mode -eq 'ResolveRole') {
     $role = @($profile.roles | Where-Object { $_.roleId -eq (RoleId $RoleId) } | Select-Object -First 1)
@@ -176,9 +221,22 @@ else {
     if (-not $unknownRole.Count -or [string]::IsNullOrWhiteSpace([string]$unknownRole[0].folder) -or ([string]$unknownRole[0].folder).Trim() -eq '.') {
         throw 'Assign the Unknown role to a project folder before organizing loose files.'
     }
+    $programResult = $null
+    if ($Mode -eq 'OrganizeLooseFiles' -and @($profile.programFolders).Count -gt 0) {
+        $applyCore = Join-Path $PSScriptRoot 'Apply-OrganizationProfileCore.ps1'
+        if (-not (Test-Path -LiteralPath $applyCore -PathType Leaf)) {
+            throw "Apply Organization Profile core not found: $applyCore"
+        }
+        $programJson = & $applyCore -ProfilePath $ProfilePath -ProjectPath $projectRoot -PassThruJson
+        $programResult = $programJson | ConvertFrom-Json
+    }
     $folderArgs = @{ LiteralPath=$projectRoot; File=$true; Force=$true; ErrorAction='SilentlyContinue' }
     if ($LooseFileSearchMode -eq 'Recursive') { $folderArgs.Recurse = $true }
-    $files = @(Get-ChildItem @folderArgs | Where-Object { $_.FullName -notlike '*\.flowcell\*' })
+    $files = @(Get-ChildItem @folderArgs | Where-Object {
+        $_.FullName -notlike '*\.flowcell\*' -and
+        $_.Name -notlike 'organize-folder.*' -and
+        $_.FullName -notmatch '(?i)[\\/](?:01 live|02 snapshots|03 archive|04 trash)[\\/]'
+    })
     $moves = New-Object System.Collections.Generic.List[object]
     $ambiguous = New-Object System.Collections.Generic.List[object]
     $unresolved = New-Object System.Collections.Generic.List[object]
@@ -201,7 +259,7 @@ else {
             }
         }
     }
-    $result = [PSCustomObject]@{ mode=$Mode; projectRoot=$projectRoot; profilePath=$ProfilePath; filesScanned=$files.Count; moves=$moves.ToArray(); ambiguous=$ambiguous.ToArray(); unresolved=$unresolved.ToArray() }
+    $result = [PSCustomObject]@{ mode=$Mode; projectRoot=$projectRoot; profilePath=$ProfilePath; filesScanned=$files.Count; programOrganization=$programResult; moves=$moves.ToArray(); ambiguous=$ambiguous.ToArray(); unresolved=$unresolved.ToArray() }
 }
 
 if ($PassThruJson) { $result | ConvertTo-Json -Depth 12 } else { $result | Format-List | Out-String }

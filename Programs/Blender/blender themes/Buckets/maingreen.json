@@ -1,0 +1,39 @@
+{
+  "format": "flowcell-blender-theme-v1",
+  "savedAt": "1782187076",
+  "values": {
+    "GridDistance": "12.7 m",
+    "GridFarSpacing": "1 m",
+    "GridSpacing": "0.001 m",
+    "StaticBackgroundPath": "D:\\pics\\Sun2\\GJYWew0XkAAigRu.jpeg",
+    "ThemeAccentTextHex": "#FFFFFF",
+    "ThemeControlTextHex": "#FFFFFF",
+    "ThemeControlsHex": "#7B9C14",
+    "ThemeDarksHex": "#2C4D0D",
+    "ThemeEditorBackgroundHex": "#2C4D0D",
+    "ThemeHeaderTextHex": "#FFFFFF",
+    "ThemeHeadersHex": "#173409",
+    "ThemeHighlightsHex": "#88AE3B",
+    "ThemeImagePath": "D:\\pics\\Sun2\\fern.jpeg",
+    "ThemeMiscHex": "#2C4D0D",
+    "ThemePaletteHexes": [
+      "#112006",
+      "#173409",
+      "#2C4D0D",
+      "#235511",
+      "#41651A",
+      "#548323",
+      "#7B9C14",
+      "#88AE3B",
+      "#FFFFFF"
+    ],
+    "ThemeSceneHex": "#41651A",
+    "ThemeTabsHex": "#548323",
+    "ThemeTabsTextHex": "#FFFFFF",
+    "ThemeTextHex": "#FFFFFF",
+    "ThemeViewportBackgroundHex": "#235511",
+    "ThemeViewportGradientEnabled": false,
+    "ThemeViewportGradientHex": "#548323",
+    "ThemeVisualMode": "dark"
+  }
+}

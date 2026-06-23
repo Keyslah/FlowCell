@@ -8,9 +8,19 @@ import {
   resolveLooseFile
 } from "../../features/organization/organizationEngine";
 import {
+  applyOrganizationProfileFolders,
+  applyOrganizationProfileToRoot,
+  createOrganizationFolder,
+  listOrganizationProfiles,
+  makeOrganizationProfileScript,
   readOrganizationProfile,
+  readOrganizationProfileNamed,
+  recycleOrganizationFolder,
+  restoreRecycledFolder,
+  saveOrganizationProfileAs,
   scanOrganizationProject,
   writeOrganizationProfile,
+  type OrganizationProfileSummary,
   type OrganizationProjectScan
 } from "../../features/organization/organizationStore";
 import type {
@@ -24,13 +34,61 @@ import "./organizationSetupWindowPage.css";
 
 const LAST_PROJECT_ROOT_KEY = "flowcell.organizationSetup.lastProjectRoot";
 const UNKNOWN_ROLE_ID = "unknown";
+const PROJECT_ROOT_ROLE_ID = "project_root";
+// Roles created from the per-folder "File Types" input are not reusable, named
+// roles, so they are kept out of the Role dropdown and shown as a "File Types"
+// row instead. They are still ordinary roles in the saved profile.
+const DIRECT_FILE_TYPES_PREFIX = "folder_filetypes_";
+const CUSTOM_GROUPS_KEY = "flowcell.organizationSetup.customFileGroups";
+
+type FileTypeGroup = { label: string; types: string[] };
+
+const FILE_TYPE_GROUPS: FileTypeGroup[] = [
+  {
+    label: "Images",
+    types: [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff", ".svg"]
+  },
+  {
+    label: "3D Files",
+    types: [
+      ".stl", ".obj", ".fbx", ".glb", ".gltf", ".3mf", ".ply", ".dae", ".usd", ".usdz",
+      ".abc", ".x3d", ".step", ".stp", ".iges", ".igs"
+    ]
+  },
+  { label: "Illustrator", types: [".ai", ".ait", ".eps", ".svg", ".pdf"] },
+  {
+    label: "Blender",
+    types: [".blend", ".blend1", ".obj", ".fbx", ".glb", ".gltf", ".stl", ".ply", ".abc", ".dae"]
+  },
+  {
+    label: "Fusion 360",
+    types: [".f3d", ".f3z", ".step", ".stp", ".iges", ".igs", ".sat", ".smt", ".dxf", ".dwg"]
+  },
+  { label: "GCode / CNC", types: [".gcode", ".nc", ".tap", ".cnc", ".ngc", ".iso"] },
+  {
+    label: "Reference / Documents",
+    types: [".pdf", ".txt", ".md", ".doc", ".docx", ".rtf", ".csv", ".json", ".url", ".lnk"]
+  }
+];
+
+// Lifecycle subfolders created inside every program folder on apply.
+const PROGRAM_LIFECYCLE_FOLDERS = ["01 live", "02 snapshots", "03 archive", "04 trash"];
+
+// The only default program folders. Each makes its folder from its native files.
+const PROGRAM_FOLDER_PRESETS: Array<{ name: string; fileTypes: string[] }> = [
+  { name: "Illustrator", fileTypes: [".ai", ".ait"] },
+  { name: "Photoshop", fileTypes: [".psd", ".psb"] },
+  { name: "Blender", fileTypes: [".blend", ".blend1"] },
+  { name: "Fusion 360", fileTypes: [".f3d", ".f3z"] }
+];
 
 type RoleDraft = Omit<OrganizationRole, "fileTypes"> & {
   fileTypesText: string;
 };
 
-type ProgramFolderDraft = Omit<ProgramFolderRule, "roles"> & {
+type ProgramFolderDraft = Omit<ProgramFolderRule, "roles" | "fileTypes"> & {
   rolesText: string;
+  fileTypesText: string;
 };
 
 type AmbiguityScope = AmbiguousFilePrompt["scopes"][number];
@@ -49,10 +107,13 @@ function profileToDraft(profile: OrganizationProfile): {
   const normalized = normalizeOrganizationProfile(profile);
   return {
     roles: normalized.roles.map(roleToDraft),
-    programFolders: normalized.programFolders.map(({ roles: programRoles, ...program }) => ({
+    programFolders: normalized.programFolders.map(
+      ({ roles: programRoles, fileTypes: programFileTypes, ...program }) => ({
       ...program,
-      rolesText: programRoles.join(", ")
-    }))
+      rolesText: programRoles.join(", "),
+      fileTypesText: normalizeFileTypes(programFileTypes).join(", ")
+      })
+    )
   };
 }
 
@@ -91,6 +152,30 @@ function normalizeFolderPath(value: string): string {
   return value.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/$/, "");
 }
 
+// The parent folder of a path, or "." for a top-level folder.
+function parentFolderPath(value: string): string {
+  const normalized = normalizeFolderPath(value);
+  if (!normalized || normalized === ".") {
+    return ".";
+  }
+  const segments = normalized.split("/").filter(Boolean);
+  segments.pop();
+  return segments.length ? segments.join("/") : ".";
+}
+
+function isDirectTypeRole(roleId: string): boolean {
+  return roleId.startsWith(DIRECT_FILE_TYPES_PREFIX);
+}
+
+// Deterministic roleId for the per-folder "File Types" direct assignment.
+function folderTypeRoleId(folder: string): string {
+  const slug = normalizeFolderPath(folder)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return `${DIRECT_FILE_TYPES_PREFIX}${slug || "root"}`;
+}
+
 function getUnknownRoleAssignmentIssue(
   profile: OrganizationProfile,
   scan: OrganizationProjectScan | null
@@ -125,13 +210,57 @@ export default function OrganizationSetupWindowPage() {
   const [statusTone, setStatusTone] = useState<"" | "is-error" | "is-success">("");
   const [busy, setBusy] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  // Add Program Folder popup (folder-scoped).
   const [programRulesOpen, setProgramRulesOpen] = useState(false);
+  const [programPickName, setProgramPickName] = useState("");
+  const [programPickFileTypes, setProgramPickFileTypes] = useState("");
   const [fileChoices, setFileChoices] = useState<Record<string, string>>({});
   const [runChoices, setRunChoices] = useState<Record<string, string>>({});
   const [ambiguityScope, setAmbiguityScope] = useState<AmbiguityScope>("file");
-  const [roleInput, setRoleInput] = useState("");
-  const [roleFileTypesInput, setRoleFileTypesInput] = useState("");
-  const [warningMessage, setWarningMessage] = useState<string | null>(null);
+  const [directFileTypesInput, setDirectFileTypesInput] = useState("");
+
+  // Saved named profiles (skeleton trees under FlowCell/local/Folder Trees).
+  const [savedProfiles, setSavedProfiles] = useState<OrganizationProfileSummary[]>([]);
+  const [profileName, setProfileName] = useState("");
+  // The profile currently loaded into the editor, ready to apply to a root.
+  const [selectedProfileName, setSelectedProfileName] = useState("");
+  // The loaded profile's own folder tree, for side-by-side comparison.
+  const [loadedScan, setLoadedScan] = useState<OrganizationProjectScan | null>(null);
+  // Selected folder in the loaded-profile tree (independent of the project tree).
+  const [selectedLoadedFolder, setSelectedLoadedFolder] = useState<string | null>(null);
+  // Undo stack: each entry can reverse the last folder add/delete.
+  const [undoStack, setUndoStack] = useState<
+    Array<{ label: string; run: () => Promise<void> }>
+  >([]);
+
+  // Add Role popup state.
+  const [addRoleOpen, setAddRoleOpen] = useState(false);
+  const [addRoleName, setAddRoleName] = useState("");
+  const [addRoleFileTypesInput, setAddRoleFileTypesInput] = useState("");
+  const [pickerSelected, setPickerSelected] = useState<string[]>([]);
+  // Tracks the role being edited (by roleId) so saving updates it in place.
+  const [editingRoleId, setEditingRoleId] = useState<string | null>(null);
+
+  // User-defined file-type groups, persisted locally so they survive restarts.
+  const [customGroups, setCustomGroups] = useState<FileTypeGroup[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(CUSTOM_GROUPS_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(parsed)) {
+        return [];
+      }
+      return parsed
+        .filter(
+          (group): group is FileTypeGroup =>
+            group && typeof group.label === "string" && Array.isArray(group.types)
+        )
+        .map((group) => ({ label: group.label, types: normalizeFileTypes(group.types) }));
+    } catch {
+      return [];
+    }
+  });
+  const [groupNameOpen, setGroupNameOpen] = useState(false);
+  const [groupNameInput, setGroupNameInput] = useState("");
 
   const currentProfile = useMemo(
     () =>
@@ -143,9 +272,10 @@ export default function OrganizationSetupWindowPage() {
           roleId: normalizeRoleId(role.roleId),
           fileTypes: normalizeFileTypes(fileTypesText)
         })),
-        programFolders: programFolders.map(({ rolesText, ...program }) => ({
+        programFolders: programFolders.map(({ rolesText, fileTypesText, ...program }) => ({
           ...program,
           programId: normalizeRoleId(program.programId),
+          fileTypes: normalizeFileTypes(fileTypesText),
           roles: splitRoleIds(rolesText)
         })),
         rememberedChoices: rememberedChoices ?? {}
@@ -177,24 +307,51 @@ export default function OrganizationSetupWindowPage() {
     return null;
   }, [currentProfile, fileChoices, runChoices, scan]);
 
-  const selectedFolderRoles = currentProfile.roles.filter(
-    (role) => role.folder.replace(/\\/g, "/") === selectedFolder
+  // Roles available to assign from the dropdown: every named role except the
+  // root preset (locked to ".") and the per-folder direct file-type helpers.
+  const dropdownRoles = roles.filter(
+    (role) => role.roleId !== PROJECT_ROOT_ROLE_ID && !isDirectTypeRole(role.roleId)
   );
-  const selectedFolderRoleEntries = roles
+
+  // Program folders whose parent is the selected folder, shown alongside roles.
+  const assignedProgramEntries = programFolders
+    .map((program, index) => ({ program, index }))
+    .filter(
+      ({ program }) =>
+        selectedFolder !== null && parentFolderPath(program.folder || "") === selectedFolder
+    );
+
+  // The project tree shows the project root's actual folders. Nothing is added
+  // here automatically — folders appear only after you create them (Add Folder)
+  // or they already exist on disk.
+  const treeFolders = [...new Set(["." , ...(scan?.folders ?? ["."])])].sort((a, b) =>
+    a === "." ? -1 : b === "." ? 1 : a.toLowerCase().localeCompare(b.toLowerCase())
+  );
+
+  // Roles currently assigned to the selected folder, shown as compact rows.
+  const assignedRoleEntries = roles
     .map((role, index) => ({ role, index }))
-    .filter(({ role }) => normalizeFolderPath(role.folder || ".") === selectedFolder);
-  const selectedFolderRoleIds = new Set(selectedFolderRoles.map((role) => role.roleId));
-  const selectedFolderPrograms = currentProfile.programFolders.filter(
-    (program) =>
-      program.folder.replace(/\\/g, "/") === selectedFolder ||
-      program.roles.some((roleId) => selectedFolderRoleIds.has(roleId))
-  );
+    .filter(({ role }) => {
+      if (role.roleId === PROJECT_ROOT_ROLE_ID) {
+        return false;
+      }
+      return selectedFolder !== null && normalizeFolderPath(role.folder || "") === selectedFolder;
+    });
 
   const applyProfile = (profile: OrganizationProfile) => {
     const draft = profileToDraft(profile);
     setRoles(draft.roles);
     setProgramFolders(draft.programFolders);
     setRememberedChoices(profile.rememberedChoices ?? {});
+  };
+
+  const refreshSavedProfiles = async () => {
+    try {
+      setSavedProfiles(await listOrganizationProfiles());
+    } catch (error) {
+      setStatus(formatError(error));
+      setStatusTone("is-error");
+    }
   };
 
   const chooseAmbiguousRole = (roleId: string) => {
@@ -221,6 +378,15 @@ export default function OrganizationSetupWindowPage() {
     setAmbiguityScope("file");
   };
 
+  const resetTransientState = () => {
+    setFileChoices({});
+    setRunChoices({});
+    setAmbiguityScope("file");
+    setDirectFileTypesInput("");
+    setProgramRulesOpen(false);
+    cancelAddRole();
+  };
+
   const loadProject = async (rootValue: string, successMessage = "Project scanned.") => {
     const root = rootValue.trim().replace(/^"+|"+$/g, "");
     if (!root) {
@@ -240,25 +406,18 @@ export default function OrganizationSetupWindowPage() {
       const profile = normalizeOrganizationProfile(
         savedProfile ?? createStarterOrganizationProfile(root)
       );
-      const assignmentIssue = getUnknownRoleAssignmentIssue(profile, nextScan);
       setProjectRoot(root);
       window.localStorage.setItem(LAST_PROJECT_ROOT_KEY, root);
       setScan(nextScan);
       setSelectedFolder(".");
-      setFileChoices({});
-      setRunChoices({});
-      setAmbiguityScope("file");
-      setProgramRulesOpen(false);
-      setRoleInput("");
-      setRoleFileTypesInput("");
+      resetTransientState();
       applyProfile(profile);
       setStatus(
         savedProfile
-          ? `${successMessage} Loaded .flowcell/organization-profile.json.`
+          ? `${successMessage} Loaded organize-folder.profile.json.`
           : `${successMessage} No saved profile yet; showing the starter profile.`
       );
       setStatusTone("is-success");
-      setWarningMessage(assignmentIssue || null);
     } catch (error) {
       setStatus(formatError(error));
       setStatusTone("is-error");
@@ -268,12 +427,17 @@ export default function OrganizationSetupWindowPage() {
   };
 
   useEffect(() => {
+    void refreshSavedProfiles();
     if (projectRoot.trim()) {
       void loadProject(projectRoot, "Project reopened.");
     }
     // Load only the remembered root at window startup.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(CUSTOM_GROUPS_KEY, JSON.stringify(customGroups));
+  }, [customGroups]);
 
   const chooseProjectRoot = async () => {
     try {
@@ -311,7 +475,8 @@ export default function OrganizationSetupWindowPage() {
       return;
     }
     if (unknownRoleAssignmentIssue) {
-      setWarningMessage(unknownRoleAssignmentIssue);
+      setStatus(unknownRoleAssignmentIssue);
+      setStatusTone("is-error");
       return;
     }
 
@@ -354,15 +519,10 @@ export default function OrganizationSetupWindowPage() {
       const nextScan = await scanOrganizationProject(root);
       setScan(nextScan);
       setSelectedFolder(".");
-      setFileChoices({});
-      setRunChoices({});
-      setAmbiguityScope("file");
-      setRoleInput("");
-      setRoleFileTypesInput("");
+      resetTransientState();
       window.localStorage.setItem(LAST_PROJECT_ROOT_KEY, root);
       setStatus(`Starter profile initialized: ${savedPath}`);
       setStatusTone("is-success");
-      setWarningMessage(getUnknownRoleAssignmentIssue(starter, nextScan) || null);
     } catch (error) {
       setStatus(formatError(error));
       setStatusTone("is-error");
@@ -371,37 +531,546 @@ export default function OrganizationSetupWindowPage() {
     }
   };
 
-  const updateRole = (index: number, patch: Partial<RoleDraft>) => {
-    setRoles((current) =>
-      current.map((role, roleIndex) => (roleIndex === index ? { ...role, ...patch } : role))
-    );
+  // Loading a profile only brings its roles/structure into the editor. It does
+  // NOT touch the project root — you then apply it to a root of your choosing.
+  const loadNamedProfile = async (name: string) => {
+    if (!name) {
+      return;
+    }
+
+    setBusy(true);
+    setStatus("Loading profile…");
+    setStatusTone("");
+    try {
+      const saved = await readOrganizationProfileNamed(name);
+      if (!saved) {
+        throw new Error(`Profile "${name}" was not found.`);
+      }
+      const profile = normalizeOrganizationProfile(saved);
+      resetTransientState();
+      applyProfile(profile);
+      setSelectedProfileName(name);
+      // Load the profile's own folder tree (the saved skeleton) for comparison.
+      setSelectedLoadedFolder(null);
+      try {
+        const skeletonRoot = profile.projectRoot.trim();
+        setLoadedScan(skeletonRoot ? await scanOrganizationProject(skeletonRoot) : null);
+      } catch {
+        setLoadedScan(null);
+      }
+      setStatus(
+        projectRoot.trim()
+          ? `Loaded profile "${name}". Click "Apply profile to root" to build it in ${projectRoot.trim()}.`
+          : `Loaded profile "${name}". Choose a project root, then "Apply profile to root".`
+      );
+      setStatusTone("is-success");
+    } catch (error) {
+      setStatus(formatError(error));
+      setStatusTone("is-error");
+    } finally {
+      setBusy(false);
+    }
   };
 
-  const updateProgram = (index: number, patch: Partial<ProgramFolderDraft>) => {
-    setProgramFolders((current) =>
-      current.map((program, programIndex) =>
-        programIndex === index ? { ...program, ...patch } : program
-      )
-    );
+  const pushUndo = (label: string, run: () => Promise<void>) => {
+    setUndoStack((current) => [...current, { label, run }]);
   };
 
-  const assignRoleToSelectedFolder = () => {
+  const runUndo = async () => {
+    const entry = undoStack[undoStack.length - 1];
+    if (!entry) {
+      return;
+    }
+    setUndoStack((current) => current.slice(0, -1));
+    setBusy(true);
+    setStatus(`Undoing: ${entry.label}…`);
+    setStatusTone("");
+    try {
+      await entry.run();
+      setStatus(`Undid: ${entry.label}.`);
+      setStatusTone("is-success");
+    } catch (error) {
+      setStatus(formatError(error));
+      setStatusTone("is-error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Apply the loaded profile's folder structure into the selected folder. At the
+  // project root it also writes the profile; in a subfolder it only builds folders.
+  const applyProfileToSelected = async (profileNameToApply = selectedProfileName) => {
+    const root = projectRoot.trim();
+    if (!profileNameToApply) {
+      setStatus("Load or pick a profile first.");
+      setStatusTone("is-error");
+      return;
+    }
+    if (!root) {
+      setStatus("Choose a project root first.");
+      setStatusTone("is-error");
+      return;
+    }
+    if (!selectedFolder) {
+      setStatus("Select a folder to apply the profile into.");
+      setStatusTone("is-error");
+      return;
+    }
+
+    const targetPath =
+      selectedFolder === "." ? root : `${root.replace(/[\\/]+$/, "")}/${selectedFolder}`;
+    setBusy(true);
+    setStatus(`Applying "${profileNameToApply}" to ${selectedFolder}…`);
+    setStatusTone("");
+    try {
+      if (selectedFolder === ".") {
+        await applyOrganizationProfileToRoot(profileNameToApply, root);
+      } else {
+        await applyOrganizationProfileFolders(profileNameToApply, targetPath);
+      }
+      setScan(await scanOrganizationProject(root));
+      setStatus(`Applied "${profileNameToApply}" to ${selectedFolder}.`);
+      setStatusTone("is-success");
+    } catch (error) {
+      setStatus(formatError(error));
+      setStatusTone("is-error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Save the current editor state into a named profile. Used by Save Profile
+  // (typed name) and Apply to profile (the loaded profile).
+  const saveCurrentToProfile = async (name: string, label: string) => {
+    if (!name) {
+      setStatus("Enter or load a profile name first.");
+      setStatusTone("is-error");
+      return;
+    }
+
+    setBusy(true);
+    setStatus(`${label} "${name}"…`);
+    setStatusTone("");
+    try {
+      const profile = buildProfile();
+      // Capture the planned structure: scanned folders plus added program folders.
+      const folders = treeFolders.filter((folder) => folder !== ".");
+      const savedPath = await saveOrganizationProfileAs(name, profile, folders);
+      await refreshSavedProfiles();
+      setSelectedProfileName(name);
+      setStatus(`${label} "${name}". Folder tree: ${savedPath}`);
+      setStatusTone("is-success");
+    } catch (error) {
+      setStatus(formatError(error));
+      setStatusTone("is-error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveNamedProfile = () => saveCurrentToProfile(profileName.trim(), "Saved profile");
+
+  // Apply to profile: write the current setup into the loaded profile so you can
+  // build a profile up incrementally.
+  const applyToProfile = () =>
+    saveCurrentToProfile((selectedProfileName || profileName.trim()).trim(), "Updated profile");
+
+  // Generate a Windows Git Script that applies this profile to a clipboard
+  // folder path, so it can be added as a panel button via Add Script.
+  const makeScript = async () => {
+    const name = (profileName.trim() || selectedProfileName).trim();
+    if (!name) {
+      setStatus("Save or load a profile first, then Make Script.");
+      setStatusTone("is-error");
+      return;
+    }
+
+    setBusy(true);
+    setStatus(`Making script for "${name}"…`);
+    setStatusTone("");
+    try {
+      const scriptPath = await makeOrganizationProfileScript(name);
+      setStatus(
+        `Made script: ${scriptPath}. Use "Add Script" on any panel to add the button.`
+      );
+      setStatusTone("is-success");
+    } catch (error) {
+      setStatus(formatError(error));
+      setStatusTone("is-error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const roleDisplayName = (roleId: string): string =>
+    roles.find((role) => role.roleId === roleId)?.displayName || roleId;
+
+  const openAddProgramFolder = () => {
+    setProgramPickName("");
+    setProgramPickFileTypes("");
+    setProgramRulesOpen(true);
+  };
+
+  const cancelAddProgramFolder = () => {
+    setProgramRulesOpen(false);
+    setProgramPickName("");
+    setProgramPickFileTypes("");
+  };
+
+  // Add a folder to the selected folder. `addNow` creates it on disk right away
+  // (so it shows in the tree); otherwise it's a conditional rule created on apply
+  // only when its file types show up.
+  const addProgramFolderToSelected = async (addNow: boolean) => {
     if (!selectedFolder) {
       setStatus("Select a folder in the Project Tree first.");
       setStatusTone("is-error");
       return;
     }
-
-    const roleId = normalizeRoleId(roleInput);
-    const fileTypesText = normalizeFileTypes(roleFileTypesInput).join(", ");
-    if (!roleId) {
-      setStatus("Enter or choose a role first.");
+    const name = programPickName.trim();
+    if (!name) {
+      setStatus("Name the folder first.");
       setStatusTone("is-error");
       return;
     }
-    if (roleId === "project_root" && selectedFolder !== ".") {
+    const programId = normalizeRoleId(name);
+    const fileTypesText = normalizeFileTypes(programPickFileTypes).join(", ");
+    // The new folder lives inside the selected folder.
+    const folderPath = selectedFolder === "." ? name : `${selectedFolder}/${name}`;
+
+    setProgramFolders((current) => {
+      const existingIndex = current.findIndex(
+        (program) =>
+          program.programId === programId &&
+          parentFolderPath(program.folder || "") === selectedFolder
+      );
+      const next: ProgramFolderDraft = {
+        programId,
+        displayName: name,
+        folder: folderPath,
+        fileTypesText,
+        rolesText: "",
+        createOnlyIfMatchingFilesOrRolesPresent: !addNow
+      };
+      if (existingIndex >= 0) {
+        return current.map((program, index) => (index === existingIndex ? next : program));
+      }
+      return [...current, next];
+    });
+    cancelAddProgramFolder();
+
+    if (addNow && projectRoot.trim()) {
+      const root = projectRoot.trim();
+      setBusy(true);
+      setStatus(`Creating ${folderPath}…`);
+      setStatusTone("");
+      try {
+        await createOrganizationFolder(root, folderPath);
+        setScan(await scanOrganizationProject(root));
+        setSelectedFolder(folderPath);
+        pushUndo(`Add ${folderPath}`, async () => {
+          await recycleOrganizationFolder(root, folderPath);
+          setProgramFolders((current) =>
+            current.filter(
+              (program) =>
+                normalizeFolderPath(program.folder || "") !== normalizeFolderPath(folderPath)
+            )
+          );
+          setScan(await scanOrganizationProject(root));
+          setSelectedFolder(".");
+        });
+        setStatus(`Created ${folderPath}.`);
+        setStatusTone("is-success");
+      } catch (error) {
+        setStatus(formatError(error));
+        setStatusTone("is-error");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    setStatus(`Added ${name} under ${selectedFolder} (created when matching files are present).`);
+    setStatusTone("is-success");
+  };
+
+  // Delete the selected project-tree folder (to the Recycle Bin) and drop any
+  // program rules under it.
+  const deleteSelectedProjectFolder = async () => {
+    const root = projectRoot.trim();
+    if (!root || !selectedFolder || selectedFolder === ".") {
+      setStatus("Select a folder (not the project root) to delete.");
+      setStatusTone("is-error");
+      return;
+    }
+    const target = selectedFolder;
+    const fullPath = `${root.replace(/[\\/]+$/, "")}/${target}`;
+    const removedPrograms = programFolders.filter((program) => {
+      const folder = normalizeFolderPath(program.folder || "");
+      return folder === target || folder.startsWith(`${target}/`);
+    });
+    setBusy(true);
+    setStatus(`Deleting ${target}…`);
+    setStatusTone("");
+    try {
+      await recycleOrganizationFolder(root, target);
+      setProgramFolders((current) =>
+        current.filter((program) => !removedPrograms.includes(program))
+      );
+      setScan(await scanOrganizationProject(root));
+      setSelectedFolder(".");
+      pushUndo(`Delete ${target}`, async () => {
+        await restoreRecycledFolder(fullPath);
+        if (removedPrograms.length) {
+          setProgramFolders((current) => [...current, ...removedPrograms]);
+        }
+        setScan(await scanOrganizationProject(root));
+      });
+      setStatus(`Sent ${target} to the Recycle Bin.`);
+      setStatusTone("is-success");
+    } catch (error) {
+      setStatus(formatError(error));
+      setStatusTone("is-error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Delete the selected loaded-profile folder from the saved skeleton.
+  const deleteSelectedLoadedFolder = async () => {
+    if (!loadedScan || !selectedLoadedFolder || selectedLoadedFolder === ".") {
+      setStatus("Select a folder (not the root) in the loaded profile to delete.");
+      setStatusTone("is-error");
+      return;
+    }
+    const root = loadedScan.projectRoot;
+    const target = selectedLoadedFolder;
+    const fullPath = `${root.replace(/[\\/]+$/, "")}/${target}`;
+    setBusy(true);
+    setStatus(`Deleting ${target} from the profile…`);
+    setStatusTone("");
+    try {
+      await recycleOrganizationFolder(root, target);
+      setLoadedScan(await scanOrganizationProject(root));
+      setSelectedLoadedFolder(null);
+      pushUndo(`Delete ${target} (profile)`, async () => {
+        await restoreRecycledFolder(fullPath);
+        setLoadedScan(await scanOrganizationProject(root));
+      });
+      setStatus(`Removed ${target} from the profile tree.`);
+      setStatusTone("is-success");
+    } catch (error) {
+      setStatus(formatError(error));
+      setStatusTone("is-error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeProgramFolder = (index: number) => {
+    setProgramFolders((current) => current.filter((_, programIndex) => programIndex !== index));
+  };
+
+  // Selecting a role from the dropdown assigns it to the selected folder
+  // immediately — there is no separate confirm step.
+  const assignRoleFromDropdown = (roleId: string) => {
+    if (!roleId || !selectedFolder) {
+      return;
+    }
+    if (roleId === PROJECT_ROOT_ROLE_ID && selectedFolder !== ".") {
       setStatus("Project Root can only stay assigned to the project root.");
       setStatusTone("is-error");
+      return;
+    }
+
+    setRoles((current) =>
+      current.map((role) => (role.roleId === roleId ? { ...role, folder: selectedFolder } : role))
+    );
+    setStatus(`Assigned ${roleDisplayName(roleId)} to ${selectedFolder}.`);
+    setStatusTone("is-success");
+  };
+
+  // X on a normal role unassigns it (it stays available in the dropdown).
+  const unassignRole = (index: number) => {
+    setRoles((current) =>
+      current.map((role, roleIndex) => (roleIndex === index ? { ...role, folder: "" } : role))
+    );
+  };
+
+  // X on a per-folder "File Types" row removes that helper role entirely.
+  const removeDirectTypeRole = (index: number) => {
+    setRoles((current) => current.filter((_, roleIndex) => roleIndex !== index));
+  };
+
+  // Delete removes the role from the profile entirely (dropdown included).
+  const deleteRole = (index: number) => {
+    setRoles((current) => current.filter((_, roleIndex) => roleIndex !== index));
+  };
+
+  // Edit reopens the Add Role popup pre-filled; saving updates this role.
+  const editRole = (role: RoleDraft) => {
+    setEditingRoleId(role.roleId);
+    setAddRoleName(role.displayName);
+    setAddRoleFileTypesInput(normalizeFileTypes(role.fileTypesText).join(", "));
+    setPickerSelected([]);
+    setGroupNameOpen(false);
+    setGroupNameInput("");
+    setAddRoleOpen(true);
+  };
+
+  const openAddRole = () => {
+    setEditingRoleId(null);
+    setAddRoleName("");
+    setAddRoleFileTypesInput("");
+    setPickerSelected([]);
+    setGroupNameOpen(false);
+    setGroupNameInput("");
+    setAddRoleOpen(true);
+  };
+
+  const assignDirectFileTypes = () => {
+    if (!selectedFolder) {
+      setStatus("Select a folder in the Project Tree first.");
+      setStatusTone("is-error");
+      return;
+    }
+    const types = normalizeFileTypes(directFileTypesInput);
+    if (!types.length) {
+      setStatus("Enter file types to assign first.");
+      setStatusTone("is-error");
+      return;
+    }
+
+    const roleId = folderTypeRoleId(selectedFolder);
+    setRoles((current) => {
+      const existingIndex = current.findIndex((role) => role.roleId === roleId);
+      if (existingIndex >= 0) {
+        return current.map((role, index) =>
+          index === existingIndex
+            ? {
+                ...role,
+                folder: selectedFolder,
+                fileTypesText: normalizeFileTypes([
+                  ...normalizeFileTypes(role.fileTypesText),
+                  ...types
+                ]).join(", ")
+              }
+            : role
+        );
+      }
+      return [
+        ...current,
+        {
+          roleId,
+          displayName: "File Types",
+          folder: selectedFolder,
+          fileTypesText: types.join(", "),
+          description: ""
+        }
+      ];
+    });
+    setDirectFileTypesInput("");
+    setStatus(`Assigned file types to ${selectedFolder}.`);
+    setStatusTone("is-success");
+  };
+
+  // --- Add Role popup helpers ---
+  const togglePickerType = (type: string) => {
+    setPickerSelected((current) =>
+      current.includes(type) ? current.filter((value) => value !== type) : [...current, type]
+    );
+  };
+
+  const toggleGroup = (types: string[]) => {
+    setPickerSelected((current) => {
+      const allSelected = types.every((type) => current.includes(type));
+      if (allSelected) {
+        return current.filter((value) => !types.includes(value));
+      }
+      const next = new Set(current);
+      types.forEach((type) => next.add(type));
+      return [...next];
+    });
+  };
+
+  const addPickerToInput = () => {
+    if (!pickerSelected.length) {
+      return;
+    }
+    setAddRoleFileTypesInput((previous) =>
+      normalizeFileTypes([...normalizeFileTypes(previous), ...pickerSelected]).join(", ")
+    );
+    setPickerSelected([]);
+  };
+
+  // Save File Group turns the currently selected picker buttons into a named,
+  // reusable group shown at the bottom of the picker.
+  const confirmSaveFileGroup = () => {
+    const label = groupNameInput.trim();
+    if (!label) {
+      return;
+    }
+    if (!pickerSelected.length) {
+      setGroupNameOpen(false);
+      setGroupNameInput("");
+      return;
+    }
+
+    const types = normalizeFileTypes(pickerSelected);
+    setCustomGroups((current) => {
+      const existingIndex = current.findIndex(
+        (group) => group.label.toLowerCase() === label.toLowerCase()
+      );
+      if (existingIndex >= 0) {
+        return current.map((group, index) =>
+          index === existingIndex ? { label, types } : group
+        );
+      }
+      return [...current, { label, types }];
+    });
+    setGroupNameOpen(false);
+    setGroupNameInput("");
+    setStatus(`Saved file group "${label}".`);
+    setStatusTone("is-success");
+  };
+
+  const removeCustomGroup = (label: string) => {
+    setCustomGroups((current) => current.filter((group) => group.label !== label));
+  };
+
+  function cancelAddRole() {
+    setAddRoleOpen(false);
+    setAddRoleName("");
+    setAddRoleFileTypesInput("");
+    setPickerSelected([]);
+    setEditingRoleId(null);
+    setGroupNameOpen(false);
+    setGroupNameInput("");
+  }
+
+  const saveRole = () => {
+    const name = addRoleName.trim();
+    const roleId = normalizeRoleId(name);
+    if (!roleId) {
+      setStatus("Enter a role name first.");
+      setStatusTone("is-error");
+      return;
+    }
+
+    const fileTypes = normalizeFileTypes(addRoleFileTypesInput);
+
+    // Editing: update the existing role in place, keeping its id and folder so
+    // current assignments are preserved even if the display name changed.
+    if (editingRoleId) {
+      setRoles((current) =>
+        current.map((role) =>
+          role.roleId === editingRoleId
+            ? { ...role, displayName: name, fileTypesText: fileTypes.join(", ") }
+            : role
+        )
+      );
+      setStatus(`Updated role "${name}".`);
+      setStatusTone("is-success");
+      cancelAddRole();
       return;
     }
 
@@ -412,33 +1081,27 @@ export default function OrganizationSetupWindowPage() {
           index === existingIndex
             ? {
                 ...role,
-                folder: selectedFolder,
-                fileTypesText:
-                  roleId === UNKNOWN_ROLE_ID || !fileTypesText
-                    ? role.fileTypesText
-                    : fileTypesText
+                displayName: name || role.displayName,
+                fileTypesText: fileTypes.join(", ")
               }
             : role
         );
       }
+      // New roles start unassigned; the user assigns them from the dropdown.
       return [
         ...current,
         {
           roleId,
-          displayName: roleIdToDisplayName(roleId) || roleId,
-          folder: selectedFolder,
-          fileTypesText,
+          displayName: name || roleIdToDisplayName(roleId) || roleId,
+          folder: "",
+          fileTypesText: fileTypes.join(", "),
           description: ""
         }
       ];
     });
-    setRoleInput("");
-    setRoleFileTypesInput("");
-    if (roleId === UNKNOWN_ROLE_ID) {
-      setWarningMessage(null);
-    }
-    setStatus(`Assigned ${roleId} to ${selectedFolder}.`);
+    setStatus(`Saved role "${name}". Select it from the dropdown to assign it.`);
     setStatusTone("is-success");
+    cancelAddRole();
   };
 
   return (
@@ -454,230 +1117,369 @@ export default function OrganizationSetupWindowPage() {
           </button>
         </header>
 
-        <section className="organization-setup__root-card">
-          <label>
-            <span>Project root</span>
-            <input
-              value={projectRoot}
-              onChange={(event) => setProjectRoot(event.target.value)}
-              placeholder="Choose the project folder to organize"
-              disabled={busy}
-            />
-          </label>
-          <button type="button" onClick={() => void chooseProjectRoot()} disabled={busy}>
-            Browse
-          </button>
-          <button
-            type="button"
-            onClick={() => void loadProject(projectRoot)}
-            disabled={busy || !projectRoot.trim()}
-          >
-            Rescan
-          </button>
-        </section>
-
         <div className="organization-setup__workspace">
-          <aside className="organization-setup__folder-card">
-            <div className="organization-setup__section-heading">
-              <div>
-                <span>Project tree</span>
-                <h2>Folders</h2>
-              </div>
-              <strong>{scan?.folders.length ?? 0}</strong>
-            </div>
-            <div className="organization-setup__folder-list" role="list">
-              {(scan?.folders ?? ["."]).map((folder) => (
+          <aside className="organization-setup__sidebar">
+            <section className="organization-setup__panel">
+              <div className="organization-setup__rail organization-setup__root-rail">
+                <span>Project root</span>
+                <input
+                  value={projectRoot}
+                  onChange={(event) => setProjectRoot(event.target.value)}
+                  placeholder="Choose a project folder"
+                  disabled={busy}
+                />
+                <div className="organization-setup__rail-actions">
+                  <button type="button" onClick={() => void chooseProjectRoot()} disabled={busy}>
+                    Browse
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void loadProject(projectRoot)}
+                    disabled={busy || !projectRoot.trim()}
+                  >
+                    Rescan
+                  </button>
+                </div>
                 <button
                   type="button"
-                  className={folder === selectedFolder ? "is-selected" : ""}
-                  key={folder}
-                  role="listitem"
-                  onClick={() => {
-                    setSelectedFolder(folder);
-                    setRoleInput("");
-                    setRoleFileTypesInput("");
-                  }}
+                  className="organization-setup__apply-profile"
+                  onClick={() => void applyProfileToSelected()}
+                  disabled={busy || !selectedProfileName || !selectedFolder || !projectRoot.trim()}
+                  title={
+                    selectedProfileName
+                      ? `Build "${selectedProfileName}" into ${selectedFolder ?? "the selected folder"}`
+                      : "Load a profile first"
+                  }
                 >
-                  {folder}
+                  Apply profile to {selectedFolder === "." ? "root" : selectedFolder ?? "folder"}
                 </button>
-              ))}
-            </div>
+              </div>
+
+              <div className="organization-setup__section-heading">
+                <div>
+                  <span>Tree</span>
+                  <h2>Structure</h2>
+                </div>
+                <strong>{treeFolders.length}</strong>
+              </div>
+              <div className="organization-setup__folder-list" role="list">
+                {treeFolders.map((folder) => (
+                  <button
+                    type="button"
+                    className={folder === selectedFolder ? "is-selected" : ""}
+                    key={folder}
+                    role="listitem"
+                    onClick={() => {
+                      setSelectedFolder(folder);
+                      setDirectFileTypesInput("");
+                    }}
+                  >
+                    {folder}
+                  </button>
+                ))}
+              </div>
+              <div className="organization-setup__folder-actions">
+                <button
+                  type="button"
+                  className="organization-setup__delete-folder"
+                  onClick={() => void deleteSelectedProjectFolder()}
+                  disabled={busy || !selectedFolder || selectedFolder === "."}
+                  title="Send the selected folder to the Recycle Bin"
+                >
+                  Delete folder
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runUndo()}
+                  disabled={busy || undoStack.length === 0}
+                  title={
+                    undoStack.length
+                      ? `Undo: ${undoStack[undoStack.length - 1].label}`
+                      : "Nothing to undo"
+                  }
+                >
+                  Undo
+                </button>
+              </div>
+            </section>
+
+            <section className="organization-setup__panel">
+              <div className="organization-setup__rail organization-setup__profiles">
+                <span>Load profile</span>
+                <select
+                  value=""
+                  disabled={busy}
+                  onChange={(event) => void loadNamedProfile(event.target.value)}
+                >
+                  <option value="" disabled>
+                    {savedProfiles.length ? "Choose a saved profile…" : "No saved profiles yet"}
+                  </option>
+                  {savedProfiles.map((profile) => (
+                    <option key={profile.path} value={profile.name}>
+                      {profile.name}
+                    </option>
+                  ))}
+                </select>
+                <div className="organization-setup__profile-save">
+                  <input
+                    value={profileName}
+                    placeholder="Profile name"
+                    disabled={busy}
+                    onChange={(event) => setProfileName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        void saveNamedProfile();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void saveNamedProfile()}
+                    disabled={busy || !profileName.trim()}
+                  >
+                    Save Profile
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="organization-setup__make-script"
+                  onClick={() => void makeScript()}
+                  disabled={busy || !(profileName.trim() || selectedProfileName)}
+                  title="Generate a Windows Git Script that applies this profile to a clipboard folder"
+                >
+                  Make script
+                </button>
+              </div>
+
+              <div className="organization-setup__section-heading">
+                <div>
+                  <span>Profile</span>
+                  <h2>{selectedProfileName || "—"}</h2>
+                </div>
+                <strong>{loadedScan?.folders.length ?? 0}</strong>
+              </div>
+              <div className="organization-setup__folder-list" role="list">
+                {selectedProfileName && loadedScan ? (
+                  loadedScan.folders.map((folder) => (
+                    <button
+                      type="button"
+                      className={folder === selectedLoadedFolder ? "is-selected" : ""}
+                      key={folder}
+                      role="listitem"
+                      onClick={() => setSelectedLoadedFolder(folder)}
+                    >
+                      {folder}
+                    </button>
+                  ))
+                ) : (
+                  <p className="organization-setup__assigned-empty">
+                    Load a profile to compare its tree.
+                  </p>
+                )}
+              </div>
+              <div className="organization-setup__folder-actions">
+                <button
+                  type="button"
+                  className="organization-setup__delete-folder"
+                  onClick={() => void deleteSelectedLoadedFolder()}
+                  disabled={busy || !selectedLoadedFolder || selectedLoadedFolder === "."}
+                  title="Send the selected profile folder to the Recycle Bin"
+                >
+                  Delete folder
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runUndo()}
+                  disabled={busy || undoStack.length === 0}
+                  title={
+                    undoStack.length
+                      ? `Undo: ${undoStack[undoStack.length - 1].label}`
+                      : "Nothing to undo"
+                  }
+                >
+                  Undo
+                </button>
+              </div>
+            </section>
           </aside>
 
           <div className="organization-setup__editors">
             {selectedFolder ? (
-            <section className="organization-setup__editor-card organization-setup__role-editor">
-              <div className="organization-setup__role-input-row">
-                <label>
-                  <span>Role</span>
-                  <input
-                    value={roleInput}
-                    list="organization-role-options"
-                    placeholder="Type or choose a role"
-                    disabled={busy}
-                    onChange={(event) => setRoleInput(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        assignRoleToSelectedFolder();
-                      }
-                    }}
-                  />
-                </label>
-                <label>
-                  <span>File types</span>
-                  <input
-                    value={roleFileTypesInput}
-                    placeholder="stl, obj, 3mf"
-                    disabled={busy || normalizeRoleId(roleInput) === UNKNOWN_ROLE_ID}
-                    onChange={(event) => setRoleFileTypesInput(event.target.value)}
-                    onBlur={() =>
-                      setRoleFileTypesInput(normalizeFileTypes(roleFileTypesInput).join(", "))
-                    }
-                  />
-                </label>
-                <button
-                  type="button"
-                  onClick={assignRoleToSelectedFolder}
-                  disabled={busy || !roleInput.trim()}
-                >
-                  Add role
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setProgramRulesOpen(true)}
-                  disabled={busy}
-                >
-                  Program folder rules
-                </button>
-                <datalist id="organization-role-options">
-                  {roles.map((role) => (
-                    <option key={role.roleId} value={role.roleId}>
-                      {role.displayName}
-                    </option>
-                  ))}
-                </datalist>
-              </div>
-              <div className="organization-setup__section-heading">
-                <div>
-                  <span>Roles</span>
-                  <h2>{selectedFolder}</h2>
-                  <p className="organization-setup__folder-meta">
-                    {selectedFolderRoles.length} assigned role(s) · {selectedFolderPrograms.length}
-                    {" "}program rule(s)
-                    {selectedFolder === "." ? ` · ${scan?.looseFiles.length ?? 0} loose file(s)` : ""}
-                  </p>
+              <section className="organization-setup__editor-card organization-setup__folder-settings">
+                <div className="organization-setup__section-heading">
+                  <div>
+                    <span>Folder</span>
+                    <h2>{selectedFolder === "." ? "Project Root (.)" : selectedFolder}</h2>
+                    <p className="organization-setup__folder-meta">
+                      {assignedRoleEntries.length} assigned role(s)
+                      {selectedFolder === "."
+                        ? ` · ${scan?.looseFiles.length ?? 0} loose file(s)`
+                        : ""}
+                    </p>
+                  </div>
                 </div>
-                <div className="organization-setup__heading-actions">
-                  <button
-                    type="button"
-                    onClick={() => setProgramRulesOpen(true)}
-                    disabled={busy}
-                  >
-                    Program folder rules
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setRoles((current) => [
-                        ...current,
-                        {
-                          roleId: `role_${current.length + 1}`,
-                          displayName: `Role ${current.length + 1}`,
-                          folder: ".",
-                          fileTypesText: "",
-                          description: ""
-                        }
-                      ])
-                    }
-                    disabled={busy}
-                  >
-                    Add role
-                  </button>
-                </div>
-              </div>
-              <div className="organization-setup__role-list">
-                {selectedFolderRoleEntries.map(({ role, index }) => {
-                  const isPreset = role.roleId === "project_root" || role.roleId === "unknown";
-                  const isUnknown = role.roleId === UNKNOWN_ROLE_ID;
-                  const folderOptions = Array.from(
-                    new Set([...(scan?.folders ?? ["."]), role.folder || "."])
-                  ).filter((folder) => !isUnknown || folder !== ".");
-                  return (
-                    <article className="organization-setup__role-row" key={index}>
-                      <label>
-                        <span>Role ID</span>
-                        <input
-                          value={role.roleId}
-                          disabled={busy || isPreset}
-                          onChange={(event) => updateRole(index, { roleId: event.target.value })}
-                          onBlur={() => updateRole(index, { roleId: normalizeRoleId(role.roleId) })}
-                        />
-                      </label>
-                      <label>
-                        <span>Display name</span>
-                        <input
-                          value={role.displayName}
-                          disabled={busy || role.roleId === "unknown"}
-                          onChange={(event) => updateRole(index, { displayName: event.target.value })}
-                        />
-                      </label>
-                      <label>
-                        <span>Assigned folder</span>
-                        <select
-                          value={isUnknown ? role.folder : role.folder || "."}
-                          disabled={busy || role.roleId === "project_root"}
-                          onChange={(event) => updateRole(index, { folder: event.target.value })}
-                        >
-                          {isUnknown ? (
-                            <option value="" disabled>
-                              Assign Unknown to a folder
-                            </option>
-                          ) : null}
-                          {folderOptions.map((folder) => (
-                            <option key={folder} value={folder}>
-                              {folder}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="organization-setup__file-types">
-                        <span>Optional file types</span>
-                        <textarea
-                          value={role.roleId === "unknown" ? "Automatic catch-all" : role.fileTypesText}
-                          disabled={busy || isPreset}
-                          placeholder="ai, psd, svg"
-                          onChange={(event) => updateRole(index, { fileTypesText: event.target.value })}
-                          onBlur={() =>
-                            updateRole(index, {
-                              fileTypesText: normalizeFileTypes(role.fileTypesText).join("\n")
-                            })
-                          }
-                        />
-                      </label>
-                      <label className="organization-setup__description">
-                        <span>Description</span>
-                        <input
-                          value={role.description ?? ""}
-                          disabled={busy || role.roleId === "unknown"}
-                          onChange={(event) => updateRole(index, { description: event.target.value })}
-                        />
-                      </label>
-                      <button
-                        type="button"
-                        className="organization-setup__remove"
-                        disabled={busy || isPreset}
-                        onClick={() =>
-                          setRoles((current) => current.filter((_, roleIndex) => roleIndex !== index))
-                        }
+
+                <div className="organization-setup__folder-body">
+                  <div className="organization-setup__assign-controls">
+                    <label className="organization-setup__assign-role">
+                      <span>Assign role</span>
+                      <select
+                        value=""
+                        disabled={busy}
+                        onChange={(event) => assignRoleFromDropdown(event.target.value)}
                       >
-                        Remove
-                      </button>
-                    </article>
-                  );
-                })}
-              </div>
-            </section>
+                        <option value="" disabled>
+                          Select a role to assign…
+                        </option>
+                        {dropdownRoles.map((role) => (
+                          <option key={role.roleId} value={role.roleId}>
+                            {role.displayName}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button type="button" onClick={openAddRole} disabled={busy}>
+                      Add Role
+                    </button>
+                    <button type="button" onClick={openAddProgramFolder} disabled={busy}>
+                      Add Folder
+                    </button>
+                  </div>
+
+                  <div className="organization-setup__assigned-list">
+                    {assignedRoleEntries.length === 0 && assignedProgramEntries.length === 0 ? (
+                      <p className="organization-setup__assigned-empty">
+                        Nothing assigned to this folder yet.
+                      </p>
+                    ) : null}
+                    {assignedRoleEntries.map(({ role, index }) => {
+                        const isDirect = isDirectTypeRole(role.roleId);
+                        const isPreset = role.roleId === UNKNOWN_ROLE_ID;
+                        const name = isDirect ? "File Types" : role.displayName;
+                        const types = normalizeFileTypes(role.fileTypesText);
+                        const typesLabel = isPreset
+                          ? "catch-all"
+                          : types.length
+                            ? types.join(" ")
+                            : "—";
+                        return (
+                          <div className="organization-setup__assigned-row" key={index}>
+                            <span className="organization-setup__assigned-name">{name}</span>
+                            <span className="organization-setup__assigned-types">{typesLabel}</span>
+                            <div className="organization-setup__assigned-actions">
+                              {!isDirect && !isPreset ? (
+                                <button
+                                  type="button"
+                                  className="organization-setup__assigned-action"
+                                  disabled={busy}
+                                  aria-label={`Edit ${name}`}
+                                  title="Edit role"
+                                  onClick={() => editRole(role)}
+                                >
+                                  Edit
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className="organization-setup__assigned-action"
+                                disabled={busy}
+                                aria-label={`Unassign ${name} from this folder`}
+                                title="Remove from this folder"
+                                onClick={() =>
+                                  isDirect ? removeDirectTypeRole(index) : unassignRole(index)
+                                }
+                              >
+                                Unassign
+                              </button>
+                              {!isDirect && !isPreset ? (
+                                <button
+                                  type="button"
+                                  className="organization-setup__remove organization-setup__assigned-action"
+                                  disabled={busy}
+                                  aria-label={`Delete ${name}`}
+                                  title="Delete role entirely"
+                                  onClick={() => deleteRole(index)}
+                                >
+                                  Delete
+                                </button>
+                              ) : null}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    {assignedProgramEntries.map(({ program, index }) => {
+                      const types = normalizeFileTypes(program.fileTypesText);
+                      const isProgram = types.length > 0;
+                      return (
+                        <div className="organization-setup__program-entry" key={`program-${index}`}>
+                          <div className="organization-setup__assigned-row organization-setup__program-assigned">
+                            <span className="organization-setup__assigned-name">
+                              <span className="organization-setup__program-tag">Folder</span>
+                              {program.displayName}
+                            </span>
+                            <span className="organization-setup__assigned-types">
+                              {types.length ? types.join(" ") : "—"}
+                              {program.createOnlyIfMatchingFilesOrRolesPresent ? "" : " · always"}
+                            </span>
+                            <div className="organization-setup__assigned-actions">
+                              <button
+                                type="button"
+                                className="organization-setup__remove organization-setup__assigned-action"
+                                disabled={busy}
+                                aria-label={`Remove folder ${program.displayName}`}
+                                title="Remove this folder"
+                                onClick={() => removeProgramFolder(index)}
+                              >
+                                Remove
+                              </button>
+                            </div>
+                          </div>
+                          {isProgram ? (
+                            <div className="organization-setup__program-preview">
+                              <span className="organization-setup__program-preview-note">
+                                {program.createOnlyIfMatchingFilesOrRolesPresent
+                                  ? "Not made yet — built when matching files appear:"
+                                  : "Will be built:"}
+                              </span>
+                              <div className="organization-setup__program-preview-folders">
+                                {PROGRAM_LIFECYCLE_FOLDERS.map((lifecycle) => (
+                                  <span key={lifecycle}>{lifecycle}</span>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="organization-setup__direct-types">
+                    <label>
+                      <span>File types</span>
+                      <input
+                        value={directFileTypesInput}
+                        placeholder="png, jpg, stl"
+                        disabled={busy}
+                        onChange={(event) => setDirectFileTypesInput(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            assignDirectFileTypes();
+                          }
+                        }}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={assignDirectFileTypes}
+                      disabled={busy || !directFileTypesInput.trim()}
+                    >
+                      Assign File Types
+                    </button>
+                  </div>
+                </div>
+              </section>
             ) : (
               <section className="organization-setup__editor-card organization-setup__empty-settings">
                 <div>
@@ -687,138 +1489,308 @@ export default function OrganizationSetupWindowPage() {
               </section>
             )}
 
-            <div
-              className={`organization-setup__program-overlay ${programRulesOpen ? "is-open" : ""}`}
-              aria-hidden={!programRulesOpen}
-            >
-            <section className="organization-setup__editor-card organization-setup__program-dialog">
-              <div className="organization-setup__section-heading">
-                <div>
-                  <span>Templates</span>
-                  <h2>Program folder rules</h2>
-                </div>
-                <div className="organization-setup__heading-actions">
-                  <button
-                    type="button"
-                    disabled={busy}
-                    onClick={() =>
-                      setProgramFolders((current) => [
-                        ...current,
-                        {
-                          programId: `program_${current.length + 1}`,
-                          displayName: `Program ${current.length + 1}`,
-                          folder: ".",
-                          rolesText: "",
-                          createOnlyIfMatchingFilesOrRolesPresent: true
-                        }
-                      ])
-                    }
+            {programRulesOpen ? (
+              <div
+                className="organization-setup__add-role-overlay"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="organization-add-program-title"
+              >
+                <section className="organization-setup__program-dialog-card">
+                  <h2
+                    id="organization-add-program-title"
+                    className="organization-setup__add-role-title"
                   >
-                    Add program rule
-                  </button>
-                  <button type="button" onClick={() => setProgramRulesOpen(false)}>
-                    Done
-                  </button>
-                </div>
-              </div>
-              <div className="organization-setup__program-list">
-                {programFolders.map((program, index) => (
-                  <article
-                    className="organization-setup__program-row"
-                    key={index}
-                  >
-                    <label>
-                      <span>Program ID</span>
-                      <input
-                        value={program.programId}
+                    Add folder to {selectedFolder === "." ? "Project Root (.)" : selectedFolder}
+                  </h2>
+
+                  <div className="organization-setup__program-presets">
+                    {PROGRAM_FOLDER_PRESETS.map((preset) => (
+                      <button
+                        type="button"
+                        key={preset.name}
+                        className={`organization-setup__program-preset ${
+                          programPickName.trim() === preset.name ? "is-selected" : ""
+                        }`}
                         disabled={busy}
-                        onChange={(event) => updateProgram(index, { programId: event.target.value })}
+                        title="Program preset — fills the name and file types"
+                        onClick={() => {
+                          setProgramPickName(preset.name);
+                          setProgramPickFileTypes(preset.fileTypes.join(", "));
+                        }}
+                      >
+                        <strong>{preset.name}</strong>
+                        <span>{preset.fileTypes.join(" ")}</span>
+                      </button>
+                    ))}
+                  </div>
+
+                  {savedProfiles.length ? (
+                    <div className="organization-setup__program-presets">
+                      {savedProfiles.map((profile) => (
+                        <button
+                          type="button"
+                          key={`profile:${profile.path}`}
+                          className="organization-setup__program-preset organization-setup__profile-preset"
+                          disabled={busy}
+                          title={`Build the "${profile.name}" profile structure into ${selectedFolder}`}
+                          onClick={() => {
+                            cancelAddProgramFolder();
+                            void applyProfileToSelected(profile.name);
+                          }}
+                        >
+                          <strong>{profile.name}</strong>
+                          <span>profile</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  <div className="organization-setup__add-role-top">
+                    <label>
+                      <span>Folder name</span>
+                      <input
+                        value={programPickName}
+                        placeholder="any folder name"
+                        disabled={busy}
+                        autoFocus
+                        onChange={(event) => setProgramPickName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            void addProgramFolderToSelected(true);
+                          }
+                        }}
+                      />
+                    </label>
+                    <label>
+                      <span>File types (optional)</span>
+                      <input
+                        value={programPickFileTypes}
+                        placeholder=".ai, .ait"
+                        disabled={busy}
+                        onChange={(event) => setProgramPickFileTypes(event.target.value)}
                         onBlur={() =>
-                          updateProgram(index, { programId: normalizeRoleId(program.programId) })
+                          setProgramPickFileTypes(
+                            normalizeFileTypes(programPickFileTypes).join(", ")
+                          )
                         }
                       />
-                    </label>
-                    <label>
-                      <span>Display name</span>
-                      <input
-                        value={program.displayName}
-                        disabled={busy}
-                        onChange={(event) => updateProgram(index, { displayName: event.target.value })}
-                      />
-                    </label>
-                    <label>
-                      <span>Folder</span>
-                      <input
-                        value={program.folder}
-                        disabled={busy}
-                        onChange={(event) => updateProgram(index, { folder: event.target.value })}
-                      />
-                    </label>
-                    <label>
-                      <span>Roles</span>
-                      <input
-                        value={program.rolesText}
-                        disabled={busy}
-                        onChange={(event) =>
-                          updateProgram(index, { rolesText: event.target.value })
-                        }
-                        onBlur={() =>
-                          updateProgram(index, {
-                            rolesText: splitRoleIds(program.rolesText).join(", ")
-                          })
-                        }
-                      />
-                    </label>
-                    <label className="organization-setup__checkbox">
-                      <input
-                        type="checkbox"
-                        checked={program.createOnlyIfMatchingFilesOrRolesPresent}
-                        disabled={busy}
-                        onChange={(event) =>
-                          updateProgram(index, {
-                            createOnlyIfMatchingFilesOrRolesPresent: event.target.checked
-                          })
-                        }
-                      />
-                      <span>Only create this program folder if matching files or roles are present</span>
                     </label>
                     <button
                       type="button"
-                      className="organization-setup__remove"
-                      disabled={busy}
-                      onClick={() =>
-                        setProgramFolders((current) =>
-                          current.filter((_, programIndex) => programIndex !== index)
-                        )
-                      }
+                      onClick={() => void addProgramFolderToSelected(true)}
+                      disabled={busy || !programPickName.trim()}
+                      title="Create this folder now under the selected folder"
                     >
-                      Remove
+                      Add folder
                     </button>
-                  </article>
-                ))}
-              </div>
-            </section>
-            </div>
+                    <button
+                      type="button"
+                      onClick={() => void addProgramFolderToSelected(false)}
+                      disabled={busy || !programPickName.trim() || !programPickFileTypes.trim()}
+                      title="Create this folder only when its file types are present"
+                    >
+                      Add when files match
+                    </button>
+                    <button type="button" onClick={cancelAddProgramFolder} disabled={busy}>
+                      Cancel
+                    </button>
+                  </div>
 
-            {warningMessage ? (
-              <div className="organization-setup__warning-overlay">
-                <section
-                  className="organization-setup__warning-dialog"
-                  role="alertdialog"
-                  aria-modal="true"
-                  aria-labelledby="organization-warning-title"
-                >
-                  <span>Warning</span>
-                  <h2 id="organization-warning-title">Unknown role needs a folder</h2>
-                  <p>{warningMessage}</p>
-                  <button type="button" onClick={() => setWarningMessage(null)}>
-                    OK
-                  </button>
+                  <p className="organization-setup__folder-meta">
+                    Add folder adds it now (always created). Add when files match creates it only
+                    if its file types show up. File types are optional — leave them blank for a
+                    plain folder. Either way it goes under the selected folder.
+                  </p>
                 </section>
               </div>
             ) : null}
 
-            {!warningMessage && pendingAmbiguity ? (
+            {addRoleOpen ? (
+              <div
+                className="organization-setup__add-role-overlay"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="organization-add-role-title"
+              >
+                <section className="organization-setup__add-role-dialog">
+                  <h2 id="organization-add-role-title" className="organization-setup__add-role-title">
+                    {editingRoleId ? "Edit role" : "Add role"}
+                  </h2>
+
+                  <div className="organization-setup__add-role-top">
+                    <label>
+                      <span>Role name</span>
+                      <input
+                        value={addRoleName}
+                        placeholder="e.g. Reference"
+                        disabled={busy}
+                        autoFocus
+                        onChange={(event) => setAddRoleName(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            saveRole();
+                          }
+                        }}
+                      />
+                    </label>
+                    <label>
+                      <span>File types</span>
+                      <input
+                        value={addRoleFileTypesInput}
+                        placeholder="png, jpg, stl"
+                        disabled={busy}
+                        onChange={(event) => setAddRoleFileTypesInput(event.target.value)}
+                        onBlur={() =>
+                          setAddRoleFileTypesInput(
+                            normalizeFileTypes(addRoleFileTypesInput).join(", ")
+                          )
+                        }
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={saveRole}
+                      disabled={busy || !addRoleName.trim()}
+                    >
+                      Save Role
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setGroupNameInput("");
+                        setGroupNameOpen(true);
+                      }}
+                      disabled={busy || pickerSelected.length === 0}
+                      title="Save the selected file types as a reusable group"
+                    >
+                      Save File Group
+                    </button>
+                    <button type="button" onClick={cancelAddRole} disabled={busy}>
+                      Cancel
+                    </button>
+                  </div>
+
+                  <div className="organization-setup__type-groups">
+                    {[
+                      ...FILE_TYPE_GROUPS.map((group) => ({ group, custom: false })),
+                      ...customGroups.map((group) => ({ group, custom: true }))
+                    ].map(({ group, custom }) => {
+                      const allSelected =
+                        group.types.length > 0 &&
+                        group.types.every((type) => pickerSelected.includes(type));
+                      return (
+                        <div className="organization-setup__type-group" key={`${custom ? "custom" : "builtin"}:${group.label}`}>
+                          <div className="organization-setup__type-group-head">
+                            <button
+                              type="button"
+                              className={`organization-setup__type-group-btn ${
+                                allSelected ? "is-selected" : ""
+                              }`}
+                              onClick={() => toggleGroup(group.types)}
+                              disabled={busy}
+                            >
+                              {group.label}
+                            </button>
+                            {custom ? (
+                              <button
+                                type="button"
+                                className="organization-setup__remove organization-setup__type-group-remove"
+                                disabled={busy}
+                                aria-label={`Delete group ${group.label}`}
+                                title="Delete this group"
+                                onClick={() => removeCustomGroup(group.label)}
+                              >
+                                ×
+                              </button>
+                            ) : null}
+                          </div>
+                          <div className="organization-setup__type-list">
+                            {group.types.map((type) => (
+                              <button
+                                key={type}
+                                type="button"
+                                className={`organization-setup__type-btn ${
+                                  pickerSelected.includes(type) ? "is-selected" : ""
+                                }`}
+                                onClick={() => togglePickerType(type)}
+                                disabled={busy}
+                              >
+                                {type}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  <div className="organization-setup__add-role-footer">
+                    <button
+                      type="button"
+                      onClick={addPickerToInput}
+                      disabled={busy || pickerSelected.length === 0}
+                    >
+                      Add File Types
+                    </button>
+                  </div>
+
+                  {groupNameOpen ? (
+                    <div
+                      className="organization-setup__group-name-overlay"
+                      role="dialog"
+                      aria-modal="true"
+                      aria-labelledby="organization-group-name-title"
+                    >
+                      <section className="organization-setup__group-name-dialog">
+                        <h2
+                          id="organization-group-name-title"
+                          className="organization-setup__add-role-title"
+                        >
+                          Name file group
+                        </h2>
+                        <input
+                          value={groupNameInput}
+                          placeholder="e.g. My Renders"
+                          disabled={busy}
+                          autoFocus
+                          onChange={(event) => setGroupNameInput(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              confirmSaveFileGroup();
+                            }
+                          }}
+                        />
+                        <div className="organization-setup__group-name-actions">
+                          <button
+                            type="button"
+                            onClick={confirmSaveFileGroup}
+                            disabled={busy || !groupNameInput.trim()}
+                          >
+                            Save Group
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGroupNameOpen(false);
+                              setGroupNameInput("");
+                            }}
+                            disabled={busy}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </section>
+                    </div>
+                  ) : null}
+                </section>
+              </div>
+            ) : null}
+
+            {pendingAmbiguity ? (
               <div className="organization-setup__ambiguity-overlay">
                 <section
                   className="organization-setup__ambiguity-dialog"
@@ -869,13 +1841,31 @@ export default function OrganizationSetupWindowPage() {
         </div>
 
         <footer className="organization-setup__footer">
-          <p className={statusTone}>{status}</p>
+          <div className="organization-setup__footer-status">
+            {unknownRoleAssignmentIssue ? (
+              <p className="organization-setup__bottom-warning">⚠ {unknownRoleAssignmentIssue}</p>
+            ) : null}
+            <p className={statusTone}>{status}</p>
+          </div>
           <div>
-            <button type="button" onClick={() => void saveProfile(false)} disabled={busy}>
-              Save
+            <button
+              type="button"
+              onClick={() => void saveProfile(false)}
+              disabled={busy}
+              title="Write this profile (organize-folder.profile.json) into the current project root"
+            >
+              Apply to tree
+            </button>
+            <button
+              type="button"
+              onClick={() => void applyToProfile()}
+              disabled={busy || !(selectedProfileName || profileName.trim())}
+              title="Save the current setup into the loaded profile (build it up incrementally)"
+            >
+              Apply to profile
             </button>
             <button type="button" onClick={() => void saveProfile(true)} disabled={busy}>
-              Save and Rescan
+              Apply &amp; rescan
             </button>
             <button type="button" onClick={() => void initStarterProfile()} disabled={busy}>
               Init Starter Profile

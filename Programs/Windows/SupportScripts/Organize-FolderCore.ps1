@@ -613,16 +613,10 @@ if ([string]::IsNullOrWhiteSpace($LogPath)) {
     $LogPath = Join-Path $script:projectRoot 'organize-folder.log.txt'
 }
 
+# The organizer no longer writes a .txt log; everything useful is captured in
+# the undo manifest JSON. Keep a stable base name for deriving that path and for
+# excluding the organizer's own files from being organized.
 $logFullPath = Get-AbsolutePath -Path $LogPath
-if (Test-Path -LiteralPath $logFullPath) {
-    $counter = 2
-    do {
-        $candidate = Join-Path $script:projectRoot ('organize-folder ({0}).log.txt' -f $counter)
-        $logFullPath = Get-AbsolutePath -Path $candidate
-        $counter++
-    } while (Test-Path -LiteralPath $logFullPath)
-}
-
 $undoManifestFullPath = Get-UndoManifestPath -LogFullPath $logFullPath
 
 $paths = [ordered]@{
@@ -846,108 +840,19 @@ foreach ($leftover in $remainingFilesOutsideSrc) {
 $verificationPassed = ($script:conflicts.Count -eq 0 -and $script:unresolved.Count -eq 0)
 $verificationStatus = if ($verificationPassed) { 'PASSED' } else { 'ISSUES FOUND' }
 
-$logLines = New-Object System.Collections.Generic.List[string]
-$logLines.Add('Organize Folder Log') | Out-Null
-$logLines.Add(('Project: {0}' -f $script:projectRoot)) | Out-Null
-$logLines.Add(('Log: {0}' -f $logFullPath)) | Out-Null
-$logLines.Add(('Undo manifest: {0}' -f $undoManifestFullPath)) | Out-Null
-$logLines.Add(('Verification: {0}' -f $verificationStatus)) | Out-Null
-$logLines.Add(('Generated: {0}' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss zzz'))) | Out-Null
-$logLines.Add('') | Out-Null
-
-$logLines.Add('Undo Notes:') | Out-Null
-$logLines.Add(('  Use {0} for the safest rollback.' -f [System.IO.Path]::GetFileName($undoManifestFullPath))) | Out-Null
-$logLines.Add('  Do not blindly delete folders if new files were added after organizing.') | Out-Null
-$logLines.Add('  File moves are reversible only when the current file still exists and the original path is free.') | Out-Null
-$logLines.Add('  Recycle Bin entries are noted, but automatic restore is not guaranteed from the manifest alone.') | Out-Null
-$logLines.Add('') | Out-Null
-
-$sections = @(
-    @{ Title = 'Program Directories Created'; Values = $script:createdProgramDirectories },
-    @{ Title = 'Program Directories Used'; Values = $script:usedProgramDirectories },
-    @{ Title = 'Structure Directories Renamed'; Values = $script:renamedDirectories },
-    @{ Title = 'Empty Directories Moved To Recycle Bin'; Values = $script:recycledDirectories }
-)
-
-foreach ($section in $sections) {
-    $logLines.Add($section.Title + ':') | Out-Null
-    if ($section.Values.Count -eq 0) {
-        $logLines.Add('  none') | Out-Null
+# Human-readable summary of what the run did. Folded into the undo manifest JSON
+# so we no longer need a separate organize-folder.log.txt.
+$filesMovedSummary = @($script:moves | ForEach-Object {
+    [ordered]@{
+        source      = Get-ProjectRelativePath -FullPath $_.Source -RootPath $script:projectRoot
+        destination = Get-ProjectRelativePath -FullPath $_.Destination -RootPath $script:projectRoot
+        reason      = $_.Reason
     }
-    else {
-        foreach ($entry in $section.Values) {
-            $logLines.Add(('  {0}' -f $entry)) | Out-Null
-        }
-    }
-    $logLines.Add('') | Out-Null
-}
-
-$logLines.Add('Files Moved:') | Out-Null
-if ($script:moves.Count -eq 0) {
-    $logLines.Add('  none') | Out-Null
-}
-else {
-    foreach ($move in $script:moves) {
-        $logLines.Add(('  {0} -> {1} [{2}]' -f `
-            (Get-ProjectRelativePath -FullPath $move.Source -RootPath $script:projectRoot), `
-            (Get-ProjectRelativePath -FullPath $move.Destination -RootPath $script:projectRoot), `
-            $move.Reason)) | Out-Null
-    }
-}
-
-$logLines.Add('') | Out-Null
-$logLines.Add('Duplicates Detected:') | Out-Null
-if ($script:duplicates.Count -eq 0) {
-    $logLines.Add('  none') | Out-Null
-}
-else {
-    foreach ($duplicate in $script:duplicates) {
-        $members = ($duplicate.Members -join ', ')
-        $logLines.Add(('  {0}{1} -> live: {2}; members: {3}' -f `
-            $duplicate.BaseName, `
-            $duplicate.Extension, `
-            $duplicate.LiveFile, `
-            $members)) | Out-Null
-    }
-}
-
-$logLines.Add('') | Out-Null
-$logLines.Add('Snapshots Created:') | Out-Null
-if ($script:snapshots.Count -eq 0) {
-    $logLines.Add('  none') | Out-Null
-}
-else {
-    foreach ($snapshot in $script:snapshots) {
-        $logLines.Add(('  {0} -> {1}' -f $snapshot.Source, $snapshot.Destination)) | Out-Null
-    }
-}
-
-$logLines.Add('') | Out-Null
-$logLines.Add('Conflicts:') | Out-Null
-if ($script:conflicts.Count -eq 0) {
-    $logLines.Add('  none') | Out-Null
-}
-else {
-    foreach ($conflict in $script:conflicts) {
-        $logLines.Add(('  {0}' -f $conflict)) | Out-Null
-    }
-}
-
-$logLines.Add('') | Out-Null
-$logLines.Add('Unresolved Items:') | Out-Null
-if ($script:unresolved.Count -eq 0) {
-    $logLines.Add('  none') | Out-Null
-}
-else {
-    foreach ($item in $script:unresolved) {
-        $logLines.Add(('  {0}' -f $item)) | Out-Null
-    }
-}
+})
 
 $manifest = [ordered]@{
     format             = 'flowcell-organize-undo-v1'
     project_path       = $script:projectRoot
-    log_path           = $logFullPath
     undo_manifest_path = $undoManifestFullPath
     generated          = (Get-Date).ToString('o')
     verification       = $verificationStatus
@@ -965,16 +870,23 @@ $manifest = [ordered]@{
         directories_recycled        = $script:recycledDirectoryRecords.ToArray()
         timestamp_changes           = $script:timestampChanges.ToArray()
     }
+    summary            = [ordered]@{
+        program_directories_created   = $script:createdProgramDirectories.ToArray()
+        program_directories_used      = $script:usedProgramDirectories.ToArray()
+        structure_directories_renamed = $script:renamedDirectories.ToArray()
+        empty_directories_recycled    = $script:recycledDirectories.ToArray()
+        files_moved                   = $filesMovedSummary
+    }
+    duplicates         = $script:duplicates.ToArray()
+    snapshots          = $script:snapshots.ToArray()
     conflicts          = $script:conflicts.ToArray()
     unresolved_items   = $script:unresolved.ToArray()
 }
 
 $manifestJson = $manifest | ConvertTo-Json -Depth 8
 [System.IO.File]::WriteAllText($undoManifestFullPath, $manifestJson, [System.Text.UTF8Encoding]::new($false))
-[System.IO.File]::WriteAllLines($logFullPath, $logLines)
 
 'Project: {0}' -f $script:projectRoot
-'Log: {0}' -f $logFullPath
 'Undo manifest: {0}' -f $undoManifestFullPath
 'Program directories created: {0}' -f $script:createdProgramDirectories.Count
 'Program directories used: {0}' -f $script:usedProgramDirectories.Count

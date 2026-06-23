@@ -12,6 +12,7 @@ export type ProgramFolderRule = {
   programId: string;
   displayName: string;
   folder: string;
+  fileTypes?: string[];
   roles: string[];
   createOnlyIfMatchingFilesOrRolesPresent: boolean;
 };

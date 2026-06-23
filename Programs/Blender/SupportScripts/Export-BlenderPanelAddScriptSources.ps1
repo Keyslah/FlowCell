@@ -397,7 +397,7 @@ function Get-FlowCellChildMetadataLines {
         '# FLOWCELL_CHILD: light_theme | Light Theme | Stage the sampled palette as a light Blender theme.',
         '# FLOWCELL_CHILD: apply_theme | Apply | Apply the currently visible Blender theme role colors.',
         '# FLOWCELL_CHILD: apply_background_pic | Place Picture | Creates fake gizmos and a fake grid on top of a background image.',
-        '# FLOWCELL_CHILD: apply_grid | Grid | Show or refresh the metric grid and gizmos using the entered line spacing.',
+        '# FLOWCELL_CHILD: apply_grid | Grid | Apply near and far grid spacing using the world-origin distance threshold.',
         '# FLOWCELL_CHILD: browse_background_pic | Browse | Choose the Place Picture background image path.',
         '# FLOWCELL_CHILD: startup_background_pic | Startup | Save the current Place Picture image so Blender restores it on startup.',
         '# FLOWCELL_CHILD: clear_background_pic | Clear | Remove the Place Picture fake background, grid, and gizmos while keeping the path field.',

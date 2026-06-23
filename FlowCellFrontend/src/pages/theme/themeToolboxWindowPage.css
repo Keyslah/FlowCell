@@ -243,8 +243,8 @@
 
 .theme-toolbox-window-page .hdri-world-row--background-path {
   grid-template-columns:
-    minmax(98px, auto) minmax(58px, auto) minmax(82px, 0.32fr)
-    minmax(0, 1fr) minmax(66px, auto) minmax(72px, auto) minmax(58px, auto);
+    minmax(98px, auto) minmax(0, 1fr) minmax(66px, auto)
+    minmax(72px, auto) minmax(58px, auto);
 }
 
 .theme-toolbox-window-page .hdri-world-row--controls {

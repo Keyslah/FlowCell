@@ -9,7 +9,7 @@
 # FLOWCELL_CHILD: light_theme | Light Theme | Stage the sampled palette as a light Blender theme.
 # FLOWCELL_CHILD: apply_theme | Apply | Apply the currently visible Blender theme role colors.
 # FLOWCELL_CHILD: apply_background_pic | Place Picture | Creates fake gizmos and a fake grid on top of a background image.
-# FLOWCELL_CHILD: apply_grid | Grid | Show or refresh the metric grid and gizmos using the entered line spacing.
+# FLOWCELL_CHILD: apply_grid | Grid | Apply near and far grid spacing using the world-origin distance threshold.
 # FLOWCELL_CHILD: browse_background_pic | Browse | Choose the Place Picture background image path.
 # FLOWCELL_CHILD: startup_background_pic | Startup | Save the current Place Picture image so Blender restores it on startup.
 # FLOWCELL_CHILD: clear_background_pic | Clear | Remove the Place Picture fake background, grid, and gizmos while keeping the path field.
@@ -51,6 +51,8 @@ VIEWPORT_OVERLAY_LOAD_HANDLER_KEY = "flowcell_hdri_world_viewport_overlay_load_p
 VIEWPORT_OVERLAY_PATH_KEY = "flowcell_hdri_world_static_background_path"
 PLACE_PICTURE_GENERATION_KEY = "flowcell_place_picture_fake_gizmo_generation"
 PLACE_PICTURE_GRID_SPACING_KEY = "flowcell_place_picture_grid_spacing_m"
+PLACE_PICTURE_GRID_DISTANCE_KEY = "flowcell_place_picture_grid_distance_m"
+PLACE_PICTURE_GRID_FAR_SPACING_KEY = "flowcell_place_picture_grid_far_spacing_m"
 PROJECT_THEME_STATE_KEY = "flowcell_theme_project_state_v1"
 PROJECT_THEME_STATE_FORMAT = "flowcell-blender-theme-project-state-v1"
 GLOBAL_THEME_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
@@ -91,6 +93,8 @@ PLACE_PICTURE_ENABLE_UNIFORM_SCALE_HANDLE = True
 PLACE_PICTURE_ENABLE_COMBINED_TRANSFORM_GIZMO = True
 
 DEFAULT_PLACE_PICTURE_GRID_SPACING_M = 1.0
+DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M = 5.0
+DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M = 1.0
 PLACE_PICTURE_GRID_ALPHA = 0.42
 PLACE_PICTURE_GRID_MAJOR_ALPHA = 0.62
 PLACE_PICTURE_AXIS_ALPHA = 0.98
@@ -99,6 +103,7 @@ PLACE_PICTURE_GRID_MAJOR_WIDTH = 1.5
 PLACE_PICTURE_AXIS_WIDTH = 2.8
 PLACE_PICTURE_TARGET_GRID_LINES = 34
 PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS = 90
+PLACE_PICTURE_MIN_GRID_SPACING_M = 0.001
 PLACE_PICTURE_DRAW_SCREEN_GRID_FALLBACK = True
 
 PLACE_PICTURE_GIZMO_DISPLAY_MODE = "ACTIVE_TOOL"
@@ -394,6 +399,31 @@ def _read_grid_spacing_m(payload) -> float:
     return spacing_m
 
 
+def _read_positive_grid_value(payload, key: str, default: float, label: str) -> float:
+    value = _read_float(payload or {}, key, default)
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(f"{label} must be a positive number of meters.")
+    return value
+
+
+def _read_grid_settings(payload):
+    return (
+        _read_grid_spacing_m(payload),
+        _read_positive_grid_value(
+            payload,
+            "grid_distance_m",
+            DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+            "Grid distance",
+        ),
+        _read_positive_grid_value(
+            payload,
+            "grid_far_spacing_m",
+            DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+            "Far grid spacing",
+        ),
+    )
+
+
 def _grid_spacing_blender_units(spacing_m: float) -> float:
     scene = getattr(bpy.context, "scene", None)
     unit_settings = getattr(scene, "unit_settings", None)
@@ -403,10 +433,15 @@ def _grid_spacing_blender_units(spacing_m: float) -> float:
     return max(float(spacing_m) / scale_length, 0.000001)
 
 
-def _set_runtime_grid_spacing(spacing_m: float):
-    normalized = float(spacing_m)
-    bpy.app.driver_namespace[PLACE_PICTURE_GRID_SPACING_KEY] = normalized
-    _overlay_state()["grid_spacing_m"] = normalized
+def _set_runtime_grid_settings(spacing_m: float, distance_m: float, far_spacing_m: float):
+    namespace = bpy.app.driver_namespace
+    state = _overlay_state()
+    namespace[PLACE_PICTURE_GRID_SPACING_KEY] = float(spacing_m)
+    namespace[PLACE_PICTURE_GRID_DISTANCE_KEY] = float(distance_m)
+    namespace[PLACE_PICTURE_GRID_FAR_SPACING_KEY] = float(far_spacing_m)
+    state["grid_spacing_m"] = float(spacing_m)
+    state["grid_distance_m"] = float(distance_m)
+    state["grid_far_spacing_m"] = float(far_spacing_m)
     _tag_redraw_view3d()
 
 
@@ -550,6 +585,8 @@ def _empty_project_theme_state():
             "path": "",
             "relative_path": "",
             "grid_spacing_m": DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+            "grid_distance_m": DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+            "grid_far_spacing_m": DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
         },
     }
 
@@ -648,6 +685,17 @@ def _ensure_project_theme_restore_handler_registered_from_action() -> bool:
             "_ensure_flowcell_project_theme_restore_handler_registered",
             None,
         )
+        for key, default in (
+            ("grid_distance_m", DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M),
+            ("grid_far_spacing_m", DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M),
+        ):
+            try:
+                value = float(place_picture_state.get(key, default))
+            except (TypeError, ValueError):
+                value = default
+            state["place_picture"][key] = (
+                value if math.isfinite(value) and value > 0.0 else default
+            )
         if not callable(ensure_handler):
             flowcell_actions = importlib.reload(flowcell_actions)
             ensure_handler = getattr(
@@ -711,6 +759,8 @@ def _set_project_place_picture_state(
     context,
     resolved_path: str,
     grid_spacing_m: float = DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+    grid_distance_m: float = DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+    grid_far_spacing_m: float = DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
 ):
     state = _read_project_theme_state(context)
     normalized_path = str(resolved_path or "").strip()
@@ -719,6 +769,8 @@ def _set_project_place_picture_state(
         "path": normalized_path,
         "relative_path": _project_relative_path(normalized_path),
         "grid_spacing_m": float(grid_spacing_m),
+        "grid_distance_m": float(grid_distance_m),
+        "grid_far_spacing_m": float(grid_far_spacing_m),
     }
     return _write_theme_state(context, state)
 
@@ -727,19 +779,23 @@ def _set_startup_place_picture_state(context, payload):
     resolved_path = _resolve_optional_image_path(
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
-    spacing_m = _read_grid_spacing_m(payload)
+    spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
     state = _read_global_theme_state()
     state["place_picture"] = {
         "enabled": True,
         "path": resolved_path,
         "relative_path": _project_relative_path(resolved_path),
         "grid_spacing_m": spacing_m,
+        "grid_distance_m": distance_m,
+        "grid_far_spacing_m": far_spacing_m,
     }
     normalized = _write_global_theme_state(state)
     return _result(
         f"Place Picture startup image saved from {resolved_path}.",
         static_background_path=resolved_path,
         grid_spacing_m=spacing_m,
+        grid_distance_m=distance_m,
+        grid_far_spacing_m=far_spacing_m,
         **_startup_state_payload(normalized),
     )
 
@@ -1061,6 +1117,15 @@ def _reject_far_offscreen_line(p0, p1, width, height):
     )
 
 
+def _line_overlaps_viewport(p0, p1, width, height, margin=12.0):
+    return (
+        max(p0.x, p1.x) >= -margin
+        and min(p0.x, p1.x) <= width + margin
+        and max(p0.y, p1.y) >= -margin
+        and min(p0.y, p1.y) <= height + margin
+    )
+
+
 def _point_in_convex_quad(point, quad):
     sign = None
     for index in range(4):
@@ -1249,6 +1314,14 @@ def _screen_view_axis(rv3d):
         return Vector((0.0, 0.0, 1.0))
 
 
+def _xy_grid_grazing_factor(rv3d) -> float:
+    try:
+        axis = _screen_view_axis(rv3d)
+        return max(0.0, min(1.0, 1.0 - min(abs(float(axis.z)), 1.0)))
+    except Exception:
+        return 0.0
+
+
 def _ray_hit_xy_plane(region, rv3d, coord):
     try:
         origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, coord)
@@ -1269,52 +1342,151 @@ def _ray_hit_xy_plane(region, rv3d, coord):
 def _get_visible_xy_grid_bounds(region, rv3d):
     width = float(region.width)
     height = float(region.height)
-    samples = []
-    steps = 8
-    for index in range(steps + 1):
-        t = index / steps
-        x = t * width
-        y = t * height
-        samples.extend(((x, 0.0), (x, height), (0.0, y), (width, y)))
-    samples.append((width * 0.5, height * 0.5))
+    grazing = _xy_grid_grazing_factor(rv3d)
+    # A light, fixed probe set is enough now that grid lines are clipped to the
+    # camera plane in 3D; dense screen sampling is no longer needed for speed.
+    samples = (
+        (0.0, 0.0), (width, 0.0), (0.0, height), (width, height),
+        (width * 0.5, height * 0.5),
+        (width * 0.5, 0.0), (width * 0.5, height),
+        (0.0, height * 0.5), (width, height * 0.5),
+        (width * 0.25, height * 0.25), (width * 0.75, height * 0.25),
+        (width * 0.25, height * 0.75), (width * 0.75, height * 0.75),
+    )
     hits = [hit for hit in (_ray_hit_xy_plane(region, rv3d, coord) for coord in samples) if hit is not None]
-    if len(hits) >= 2:
-        min_x = min(point.x for point in hits)
-        max_x = max(point.x for point in hits)
-        min_y = min(point.y for point in hits)
-        max_y = max(point.y for point in hits)
-        extent = max(max_x - min_x, max_y - min_y)
-        if extent > 0.000001 and math.isfinite(extent):
-            step = _nice_step_from_raw(extent / PLACE_PICTURE_TARGET_GRID_LINES)
-            pad = step * 4.0
-            return min_x - pad, max_x + pad, min_y - pad, max_y + pad, step
     center = getattr(rv3d, "view_location", Vector((0.0, 0.0, 0.0)))
-    step = _nice_step_from_raw(max(float(getattr(rv3d, "view_distance", 10.0)), 0.1) / 8.0)
-    half = step * 40.0
+    try:
+        view_distance = max(float(getattr(rv3d, "view_distance", 10.0) or 10.0), 0.1)
+    except Exception:
+        view_distance = 10.0
+    # Cap how far the grid is generated. A grazing/horizon view sees an
+    # effectively infinite plane; without this cap the line count explodes and
+    # the viewport stalls. The cap scales with zoom so it still reaches far when
+    # you scroll back to frame large parts.
+    max_radius = view_distance * (14.0 + grazing * 46.0)
+    if len(hits) >= 2:
+        center_x = float(center.x)
+        center_y = float(center.y)
+        min_x = max(min(point.x for point in hits), center_x - max_radius)
+        max_x = min(max(point.x for point in hits), center_x + max_radius)
+        min_y = max(min(point.y for point in hits), center_y - max_radius)
+        max_y = min(max(point.y for point in hits), center_y + max_radius)
+        extent = max(max_x - min_x, max_y - min_y)
+        if extent > 0.000001 and math.isfinite(extent) and max_x > min_x and max_y > min_y:
+            step = _nice_step_from_raw(extent / PLACE_PICTURE_TARGET_GRID_LINES)
+            pad = step * 2.0
+            return min_x - pad, max_x + pad, min_y - pad, max_y + pad, step
+    half = max_radius
+    step = _nice_step_from_raw(view_distance / 8.0)
     return center.x - half, center.x + half, center.y - half, center.y + half, step
 
 
-def _project_world_line_to_2d(region, rv3d, p0, p1):
+def _make_screen_projector(region, rv3d):
+    # Fetch the world->clip matrix once per frame. location_3d_to_region_2d does
+    # this work internally on every single call, which is far too slow for a grid
+    # of hundreds of lines redrawn continuously while dragging the view. Reusing
+    # one matrix lets us project and near-clip every line with C-level math.
     try:
-        start = view3d_utils.location_3d_to_region_2d(region, rv3d, Vector(p0))
-        end = view3d_utils.location_3d_to_region_2d(region, rv3d, Vector(p1))
+        perspective_matrix = rv3d.perspective_matrix.copy()
     except Exception:
         return None
-    if start is None or end is None:
-        return None
-    p0_2d = Vector((start.x, start.y))
-    p1_2d = Vector((end.x, end.y))
-    if _reject_far_offscreen_line(p0_2d, p1_2d, float(region.width), float(region.height)):
-        return None
-    return p0_2d, p1_2d
+    return (
+        perspective_matrix,
+        float(region.width) * 0.5,
+        float(region.height) * 0.5,
+        float(region.width),
+        float(region.height),
+    )
 
 
-def _append_projected_line(bucket, region, rv3d, p0, p1):
-    projected = _project_world_line_to_2d(region, rv3d, p0, p1)
-    if projected is None:
+def _append_projected_line(bucket, proj, p0, p1):
+    if proj is None:
         return False
-    bucket.extend(projected)
+    perspective_matrix, half_w, half_h, width, height = proj
+    try:
+        a = perspective_matrix @ Vector((p0[0], p0[1], p0[2], 1.0))
+        b = perspective_matrix @ Vector((p1[0], p1[1], p1[2], 1.0))
+    except Exception:
+        return False
+    eps = 0.00001
+    a_in = a.w > eps
+    b_in = b.w > eps
+    if not a_in and not b_in:
+        return False
+    if not (a_in and b_in):
+        # Clip against the near plane (w == eps) in homogeneous clip space. The
+        # divide is linear there, so a 4D lerp yields the exact crossing point.
+        denominator = a.w - b.w
+        if abs(denominator) < 1e-12:
+            return False
+        t = (a.w - eps) / denominator
+        if a_in:
+            b = a.lerp(b, t)
+        else:
+            a = a.lerp(b, t)
+    aw = a.w
+    bw = b.w
+    if aw == 0.0 or bw == 0.0:
+        return False
+    sx0 = half_w + half_w * (a.x / aw)
+    sy0 = half_h + half_h * (a.y / aw)
+    sx1 = half_w + half_w * (b.x / bw)
+    sy1 = half_h + half_h * (b.y / bw)
+    if (
+        (sx0 < -12.0 and sx1 < -12.0)
+        or (sx0 > width + 12.0 and sx1 > width + 12.0)
+        or (sy0 < -12.0 and sy1 < -12.0)
+        or (sy0 > height + 12.0 and sy1 > height + 12.0)
+    ):
+        return False
+    bucket.append(Vector((sx0, sy0)))
+    bucket.append(Vector((sx1, sy1)))
     return True
+
+
+def _grid_spacing_for_view(rv3d, bounds=None) -> float:
+    # Keep the threshold literal: only the view/camera distance from world origin
+    # decides near versus far spacing. The optional bounds argument is accepted
+    # for older callers but must not affect grid size.
+    state = _overlay_state()
+    namespace = bpy.app.driver_namespace
+    near_spacing_m = float(
+        state.get(
+            "grid_spacing_m",
+            namespace.get(
+                PLACE_PICTURE_GRID_SPACING_KEY,
+                DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+            ),
+        )
+    )
+    distance_m = float(
+        state.get(
+            "grid_distance_m",
+            namespace.get(
+                PLACE_PICTURE_GRID_DISTANCE_KEY,
+                DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+            ),
+        )
+    )
+    far_spacing_m = float(
+        state.get(
+            "grid_far_spacing_m",
+            namespace.get(
+                PLACE_PICTURE_GRID_FAR_SPACING_KEY,
+                DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+            ),
+        )
+    )
+    try:
+        view_position = rv3d.view_matrix.inverted().translation
+        distance_from_origin = view_position.length
+    except Exception:
+        distance_from_origin = max(
+            float(getattr(rv3d, "view_distance", 0.0) or 0.0),
+            0.0,
+        )
+    threshold = _grid_spacing_blender_units(distance_m)
+    return far_spacing_m if distance_from_origin > threshold else near_spacing_m
 
 
 def _project_world_axis_to_viewport(region, rv3d, axis):
@@ -1416,20 +1588,23 @@ def _draw_screen_grid_fallback(shader, region):
 def _draw_fake_grid_2d(shader, region, rv3d):
     if not PLACE_PICTURE_ENABLE_FAKE_GRID:
         return
-    min_x, max_x, min_y, max_y, _auto_step = _get_visible_xy_grid_bounds(region, rv3d)
-    spacing_m = float(
-        _overlay_state().get(
-            "grid_spacing_m",
-            bpy.app.driver_namespace.get(
-                PLACE_PICTURE_GRID_SPACING_KEY,
-                DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
-            ),
-        )
-    )
-    step = _grid_spacing_blender_units(spacing_m)
+    # Adaptive spacing: the grid step follows the zoom so the on-screen line
+    # count stays bounded -- and the draw stays fast -- at every distance. The
+    # cell refines as you zoom in, down to a 1 mm floor, then coarsens in nice
+    # metric steps as you pull back. It never tries to tile a fixed tiny spacing
+    # across a huge area, which is what used to stall the viewport.
+    min_x, max_x, min_y, max_y, step = _get_visible_xy_grid_bounds(region, rv3d)
+    if not (step > 0.0) or not math.isfinite(step):
+        return
+    min_step = _grid_spacing_blender_units(PLACE_PICTURE_MIN_GRID_SPACING_M)
+    if step < min_step:
+        step = min_step
     line_count_x = abs((max_x - min_x) / step)
     line_count_y = abs((max_y - min_y) / step)
-    while line_count_x > PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS or line_count_y > PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS:
+    while (
+        line_count_x > PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS
+        or line_count_y > PLACE_PICTURE_MAX_GRID_LINES_PER_AXIS
+    ):
         step = _nice_step_from_raw(step * 2.1)
         line_count_x = abs((max_x - min_x) / step)
         line_count_y = abs((max_y - min_y) / step)
@@ -1443,20 +1618,21 @@ def _draw_fake_grid_2d(shader, region, rv3d):
     x_axis = []
     y_axis = []
     projected_count = 0
+    proj = _make_screen_projector(region, rv3d)
     for index in range(int(max(0, round((end_x - start_x) / step))) + 1):
         x = start_x + index * step
         if abs(x) < eps:
-            projected_count += int(_append_projected_line(y_axis, region, rv3d, (0.0, start_y, 0.0), (0.0, end_y, 0.0)))
+            projected_count += int(_append_projected_line(y_axis, proj, (0.0, start_y, 0.0), (0.0, end_y, 0.0)))
             continue
         bucket = major if int(round(x / step)) % 10 == 0 else minor
-        projected_count += int(_append_projected_line(bucket, region, rv3d, (x, start_y, 0.0), (x, end_y, 0.0)))
+        projected_count += int(_append_projected_line(bucket, proj, (x, start_y, 0.0), (x, end_y, 0.0)))
     for index in range(int(max(0, round((end_y - start_y) / step))) + 1):
         y = start_y + index * step
         if abs(y) < eps:
-            projected_count += int(_append_projected_line(x_axis, region, rv3d, (start_x, 0.0, 0.0), (end_x, 0.0, 0.0)))
+            projected_count += int(_append_projected_line(x_axis, proj, (start_x, 0.0, 0.0), (end_x, 0.0, 0.0)))
             continue
         bucket = major if int(round(y / step)) % 10 == 0 else minor
-        projected_count += int(_append_projected_line(bucket, region, rv3d, (start_x, y, 0.0), (end_x, y, 0.0)))
+        projected_count += int(_append_projected_line(bucket, proj, (start_x, y, 0.0), (end_x, y, 0.0)))
     projected_x_axis = _project_world_axis_to_viewport(
         region, rv3d, Vector((1.0, 0.0, 0.0))
     )
@@ -1469,13 +1645,17 @@ def _draw_fake_grid_2d(shader, region, rv3d):
         y_axis = list(projected_y_axis)
 
     if projected_count <= 0:
-        if PLACE_PICTURE_DRAW_SCREEN_GRID_FALLBACK:
-            _draw_screen_grid_fallback(shader, region)
         return
-    _draw_2d_lines(shader, minor, (0.0, 0.0, 0.0, PLACE_PICTURE_GRID_ALPHA * 0.25), PLACE_PICTURE_GRID_MINOR_WIDTH + 1.5)
-    _draw_2d_lines(shader, major, (0.0, 0.0, 0.0, PLACE_PICTURE_GRID_MAJOR_ALPHA * 0.25), PLACE_PICTURE_GRID_MAJOR_WIDTH + 1.5)
-    _draw_2d_lines(shader, minor, (0.55, 0.55, 0.55, PLACE_PICTURE_GRID_ALPHA), PLACE_PICTURE_GRID_MINOR_WIDTH)
-    _draw_2d_lines(shader, major, (0.68, 0.68, 0.68, PLACE_PICTURE_GRID_MAJOR_ALPHA), PLACE_PICTURE_GRID_MAJOR_WIDTH)
+    grazing = _xy_grid_grazing_factor(rv3d)
+    grid_shadow_alpha = 0.25 + grazing * 0.22
+    minor_alpha = min(0.82, PLACE_PICTURE_GRID_ALPHA * (1.0 + grazing * 0.9))
+    major_alpha = min(0.95, PLACE_PICTURE_GRID_MAJOR_ALPHA * (1.0 + grazing * 0.7))
+    minor_width = PLACE_PICTURE_GRID_MINOR_WIDTH + grazing * 0.55
+    major_width = PLACE_PICTURE_GRID_MAJOR_WIDTH + grazing * 0.75
+    _draw_2d_lines(shader, minor, (0.0, 0.0, 0.0, minor_alpha * grid_shadow_alpha), minor_width + 1.8)
+    _draw_2d_lines(shader, major, (0.0, 0.0, 0.0, major_alpha * grid_shadow_alpha), major_width + 1.8)
+    _draw_2d_lines(shader, minor, (0.55, 0.55, 0.55, minor_alpha), minor_width)
+    _draw_2d_lines(shader, major, (0.68, 0.68, 0.68, major_alpha), major_width)
     _draw_2d_lines(shader, x_axis, (0.0, 0.0, 0.0, PLACE_PICTURE_AXIS_ALPHA * 0.28), PLACE_PICTURE_AXIS_WIDTH + 2.0)
     _draw_2d_lines(shader, y_axis, (0.0, 0.0, 0.0, PLACE_PICTURE_AXIS_ALPHA * 0.28), PLACE_PICTURE_AXIS_WIDTH + 2.0)
     _draw_2d_lines(shader, x_axis, (1.0, 0.05, 0.035, PLACE_PICTURE_AXIS_ALPHA), PLACE_PICTURE_AXIS_WIDTH)
@@ -2342,34 +2522,47 @@ def _restore_viewport_overlay_after_load():
 
 
 def _apply_grid_spacing(context, payload):
-    spacing_m = _read_grid_spacing_m(payload)
-    _set_runtime_grid_spacing(spacing_m)
+    spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
+    _set_runtime_grid_settings(spacing_m, distance_m, far_spacing_m)
     state = _overlay_state()
-    if not bool(state.get("enabled")) or state.get("overlay_handler") is None:
-        _register_viewport_overlay_from_resolved_path("", grid_only=True)
-    else:
-        _apply_place_picture_viewport_settings()
-        _tag_redraw_view3d()
     runtime_path = str(state.get("path") or "").strip()
+    _register_viewport_overlay_from_resolved_path(
+        runtime_path,
+        grid_only=not bool(runtime_path),
+    )
     if runtime_path:
-        _set_project_place_picture_state(context, runtime_path, spacing_m)
+        _set_project_place_picture_state(
+            context,
+            runtime_path,
+            spacing_m,
+            distance_m,
+            far_spacing_m,
+        )
     return _result(
-        f"Grid spacing set to {spacing_m:g} m.",
+        f"Grid set to {spacing_m:g} m up to {distance_m:g} m from world origin, then {far_spacing_m:g} m.",
         grid_spacing_m=spacing_m,
+        grid_distance_m=distance_m,
+        grid_far_spacing_m=far_spacing_m,
         grid_enabled=True,
     )
 
 
 def _place_picture_image(context, payload, persist_project_state=True):
-    spacing_m = _read_grid_spacing_m(payload)
-    _set_runtime_grid_spacing(spacing_m)
+    spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
+    _set_runtime_grid_settings(spacing_m, distance_m, far_spacing_m)
     resolved_path = _resolve_optional_image_path(
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
     applied_path = _register_viewport_overlay_from_resolved_path(resolved_path)
     _set_saved_overlay_path(applied_path)
     if persist_project_state:
-        _set_project_place_picture_state(context, applied_path, spacing_m)
+        _set_project_place_picture_state(
+            context,
+            applied_path,
+            spacing_m,
+            distance_m,
+            far_spacing_m,
+        )
     return applied_path
 
 
@@ -3949,6 +4142,14 @@ def _restore_project_startup_state(context):
                     "grid_spacing_m": place_picture_state.get(
                         "grid_spacing_m",
                         DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+                    ),
+                    "grid_distance_m": place_picture_state.get(
+                        "grid_distance_m",
+                        DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+                    ),
+                    "grid_far_spacing_m": place_picture_state.get(
+                        "grid_far_spacing_m",
+                        DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
                     ),
                 },
                 persist_project_state=False,

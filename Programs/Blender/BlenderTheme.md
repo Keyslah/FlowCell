@@ -60,12 +60,17 @@ Place Picture draws a temporary viewport picture layer with a metric grid and ac
 | Control | Hover Description |
 | --- | --- |
 | `Place Picture` | Creates fake gizmos and a metric grid on top of a background image. |
-| `Grid` | Show or refresh the grid and gizmos without requiring a picture. |
-| Grid spacing field | Grid line spacing in meters by default. Bare numbers are meters; values such as `8in` or `8 in` are converted and displayed as `0.2032 m` after applying. |
+| `Grid` | Apply the near/distance/far grid rule and show or refresh the grid and gizmos without requiring a picture. |
+| Near grid spacing field | Grid spacing used while the viewport is at or inside the distance threshold from world origin. |
+| `>` | Apply the rule; it also reads as "farther than the following distance." |
+| Distance field | Distance from world origin where the grid switches from near spacing to far spacing. |
+| Far grid spacing field | Grid spacing used when the viewport is farther from world origin than the distance field. |
 | Picture path field | Image path used by Place Picture. |
 | `Browse` | Pick a Place Picture image. |
 | `Startup` | Save the current Place Picture image so Blender restores it on startup. |
 | `Clear` | Remove the Place Picture fake background, grid, and gizmos while keeping the path field. |
+
+All three grid fields accept meters by default. Bare numbers are meters; values such as `8in` or `8 in` are converted and displayed as `0.2032 m` after applying (the fields are still saved/restored, but the live grid now uses adaptive zoom-based spacing instead of those fixed values). The live grid step follows the visible zoom so the on-screen line count stays bounded and the viewport stays fast: it stays a sparse ~34-line-per-axis grid that refines as you zoom in, reaching a 1 mm floor only when you are zoomed in very close, and coarsens in nice metric steps (1/2/5 mm, cm, …) as you pull back. Grid projection uses one cached per-frame clip-space matrix and near-clips each line in homogeneous space, rather than calling Blender's per-point screen projection (`location_3d_to_region_2d`) for every line, so the grid drags and orbits smoothly; it probes the visible XY footprint with a light fixed sample set, caps the generated grid to a zoom-scaled radius so grazing/horizon views stay fast, lightly boosts grid contrast/width as the plane becomes grazing, only counts segments that overlap the viewport, and bounds the per-axis line budget (target 34, cap 90 — the proven ultra-fast density).
 
 ## HDRI World
 

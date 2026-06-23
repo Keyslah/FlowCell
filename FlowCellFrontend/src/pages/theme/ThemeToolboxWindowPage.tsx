@@ -1,4 +1,4 @@
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import {
   useEffect,
   useMemo,
@@ -61,6 +61,8 @@ interface HdriWorldToolValues {
   HdriPath: string;
   StaticBackgroundPath: string;
   GridSpacing: string;
+  GridDistance: string;
+  GridFarSpacing: string;
   ThemeImagePath: string;
   ThemePaletteHexes: string[];
   ThemeVisualMode: ThemeVisualMode;
@@ -101,6 +103,9 @@ const DARKNESS_PROFILE_STORAGE_KEY = "flowcell.themeToolbox.darknessProfiles.v1"
 const ACTIVE_DARKNESS_PROFILE_STORAGE_KEY = "flowcell.themeToolbox.activeDarknessProfile.v1";
 const DEFAULT_THEME_PALETTE = ["#1E2728", "#F4F4EE", "#4D686B", "#7BA8B7", "#2D383A"];
 const THEME_TOOLBOX_BASE_WIDTH = 904;
+const THEME_TOOLBOX_VIEWPORT_PADDING = 16;
+const THEME_TOOLBOX_AUTO_FIT_MIN_HEIGHT = 320;
+const THEME_TOOLBOX_STATUS_CLEAR_MS = 4200;
 const THEME_TOOLBOX_MIN_SCALE = 0.5;
 const THEME_TOOLBOX_MAX_SCALE = 6;
 const THEME_TONE_ROLE_FIELDS = [
@@ -661,6 +666,8 @@ const DEFAULT_HDRI_WORLD_TOOL_VALUES: HdriWorldToolValues = {
   HdriPath: "",
   StaticBackgroundPath: "",
   GridSpacing: "1 m",
+  GridDistance: "5 m",
+  GridFarSpacing: "1 m",
   ThemeImagePath: "",
   ThemePaletteHexes: DEFAULT_THEME_PALETTE,
   ThemeVisualMode: "dark",
@@ -719,6 +726,16 @@ function normalizeHdriWorldToolValues(
       values,
       "GridSpacing",
       DEFAULT_HDRI_WORLD_TOOL_VALUES.GridSpacing
+    ),
+    GridDistance: readString(
+      values,
+      "GridDistance",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.GridDistance
+    ),
+    GridFarSpacing: readString(
+      values,
+      "GridFarSpacing",
+      DEFAULT_HDRI_WORLD_TOOL_VALUES.GridFarSpacing
     ),
     ThemeImagePath: readString(
       values,
@@ -865,6 +882,8 @@ function buildHdriWorldThemeSnapshot(values: HdriWorldToolValues): Record<string
   return {
     StaticBackgroundPath: values.StaticBackgroundPath,
     GridSpacing: values.GridSpacing,
+    GridDistance: values.GridDistance,
+    GridFarSpacing: values.GridFarSpacing,
     ThemeImagePath: values.ThemeImagePath,
     ThemePaletteHexes: [...values.ThemePaletteHexes],
     ThemeVisualMode: values.ThemeVisualMode,
@@ -1235,6 +1254,8 @@ function buildThemeActionPayload(
     hdri_path: values.HdriPath,
     static_background_path: values.StaticBackgroundPath,
     grid_spacing_m: parseGridSpacingMeters(values.GridSpacing) ?? 1,
+    grid_distance_m: parseGridSpacingMeters(values.GridDistance) ?? 5,
+    grid_far_spacing_m: parseGridSpacingMeters(values.GridFarSpacing) ?? 1,
     rotation_x_deg: values.RotationXDeg,
     rotation_y_deg: values.RotationYDeg,
     rotation_z_deg: values.RotationZDeg,
@@ -1339,9 +1360,11 @@ export default function ThemeToolboxWindowPage({
   });
   const [surfaceContentSize, setSurfaceContentSize] = useState({
     width: THEME_TOOLBOX_BASE_WIDTH,
-    height: 624
+    height: 1
   });
   const latestValuesRef = useRef(values);
+  const autoFitAppliedRef = useRef(false);
+  const statusClearTimerRef = useRef<number | null>(null);
   const topmostResumeTimerRef = useRef<number | null>(null);
   const nativePickerOpenRef = useRef(false);
   const darknessProfileStoreLoadedRef = useRef(false);
@@ -1371,6 +1394,7 @@ export default function ThemeToolboxWindowPage({
 
   useEffect(() => {
     const restoredValues = readStoredThemeToolValues(storageKey);
+    autoFitAppliedRef.current = false;
     latestValuesRef.current = restoredValues;
     setValues(restoredValues);
   }, [storageKey]);
@@ -1465,8 +1489,34 @@ export default function ThemeToolboxWindowPage({
       if (darknessProfileStoreSaveTimerRef.current !== null) {
         window.clearTimeout(darknessProfileStoreSaveTimerRef.current);
       }
+      if (statusClearTimerRef.current !== null) {
+        window.clearTimeout(statusClearTimerRef.current);
+      }
     };
   }, []);
+
+  useEffect(() => {
+    if (statusClearTimerRef.current !== null) {
+      window.clearTimeout(statusClearTimerRef.current);
+      statusClearTimerRef.current = null;
+    }
+
+    if (!statusMessage) {
+      return;
+    }
+
+    statusClearTimerRef.current = window.setTimeout(() => {
+      statusClearTimerRef.current = null;
+      setStatusMessage(null);
+    }, THEME_TOOLBOX_STATUS_CLEAR_MS);
+
+    return () => {
+      if (statusClearTimerRef.current !== null) {
+        window.clearTimeout(statusClearTimerRef.current);
+        statusClearTimerRef.current = null;
+      }
+    };
+  }, [statusMessage]);
 
   const suspendScopedTopmost = async () => {
     if (topmostResumeTimerRef.current !== null) {
@@ -1676,7 +1726,58 @@ export default function ThemeToolboxWindowPage({
     return () => {
       observer.disconnect();
     };
-  }, [loading, loadError, record, statusMessage, values]);
+  }, [loading, loadError, record, values]);
+
+  useEffect(() => {
+    if (
+      autoFitAppliedRef.current ||
+      loading ||
+      loadError ||
+      !record ||
+      surfaceContentSize.height < 120
+    ) {
+      return;
+    }
+
+    let cancelled = false;
+    const targetWidth = Math.ceil(surfaceContentSize.width + THEME_TOOLBOX_VIEWPORT_PADDING);
+    const targetHeight = Math.max(
+      THEME_TOOLBOX_AUTO_FIT_MIN_HEIGHT,
+      Math.ceil(surfaceContentSize.height + THEME_TOOLBOX_VIEWPORT_PADDING)
+    );
+
+    void (async () => {
+      const currentWindow = getCurrentWindow();
+      const rawScaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+      const scaleFactor =
+        Number.isFinite(rawScaleFactor) && rawScaleFactor > 0 ? rawScaleFactor : 1;
+      const currentSize = await currentWindow.innerSize().catch(() => null);
+      if (cancelled || !currentSize) {
+        return;
+      }
+
+      const currentWidth = currentSize.width / scaleFactor;
+      const currentHeight = currentSize.height / scaleFactor;
+      if (
+        Math.abs(currentWidth - targetWidth) <= 4 &&
+        Math.abs(currentHeight - targetHeight) <= 4
+      ) {
+        autoFitAppliedRef.current = true;
+        return;
+      }
+
+      await currentWindow
+        .setSize(new LogicalSize(targetWidth, targetHeight))
+        .catch((error) => {
+          console.error("Failed to auto-fit theme toolbox window.", error);
+        });
+      autoFitAppliedRef.current = true;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loadError, loading, record, surfaceContentSize.height, surfaceContentSize.width]);
 
   const updateValues = (patch: Partial<HdriWorldToolValues>) => {
     setValues((current) => {
@@ -1749,15 +1850,28 @@ export default function ThemeToolboxWindowPage({
       action === "set_place_picture_startup"
     ) {
       const spacingMeters = parseGridSpacingMeters(currentValues.GridSpacing);
-      if (spacingMeters === null) {
+      const distanceMeters = parseGridSpacingMeters(currentValues.GridDistance);
+      const farSpacingMeters = parseGridSpacingMeters(currentValues.GridFarSpacing);
+      if (spacingMeters === null || distanceMeters === null || farSpacingMeters === null) {
         setStatusMessage(
-          "Grid spacing must be a positive metric value such as 1, 0.25 m, or 8 in."
+          "Near spacing, distance, and far spacing must be positive values such as 1, 0.25 m, or 8 in."
         );
         return;
       }
       const normalizedSpacing = formatGridSpacingMeters(spacingMeters);
-      currentValues = { ...currentValues, GridSpacing: normalizedSpacing };
-      updateValues({ GridSpacing: normalizedSpacing });
+      const normalizedDistance = formatGridSpacingMeters(distanceMeters);
+      const normalizedFarSpacing = formatGridSpacingMeters(farSpacingMeters);
+      currentValues = {
+        ...currentValues,
+        GridSpacing: normalizedSpacing,
+        GridDistance: normalizedDistance,
+        GridFarSpacing: normalizedFarSpacing
+      };
+      updateValues({
+        GridSpacing: normalizedSpacing,
+        GridDistance: normalizedDistance,
+        GridFarSpacing: normalizedFarSpacing
+      });
     }
     const commandKey = action;
     setPendingCommand(commandKey);

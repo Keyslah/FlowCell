@@ -33,6 +33,10 @@ export function createStarterOrganizationProfile(projectRoot: string): Organizat
   return normalizeOrganizationProfile({
     profileVersion: 1,
     projectRoot,
+    // The required presets plus exactly three default roles (Images, SVG, 3D).
+    // They are available in the Role dropdown but unassigned (folder ""), so
+    // nothing is added to any folder automatically. No program folders are
+    // auto-assigned — the default programs live only as Add Folder presets.
     roles: [
       {
         roleId: PROJECT_ROOT_ROLE_ID,
@@ -52,78 +56,28 @@ export function createStarterOrganizationProfile(projectRoot: string): Organizat
         description: UNKNOWN_ROLE_DESCRIPTION,
       },
       {
-        roleId: "illustrator_source",
-        displayName: "Illustrator Source",
-        folder: "Illustrator/Source AI",
-        fileTypes: [".ai", ".ait"],
+        roleId: "images",
+        displayName: "Images",
+        folder: "",
+        fileTypes: [".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp", ".tif", ".tiff"],
       },
       {
-        roleId: "svg_export",
-        displayName: "SVG Export",
-        folder: "Illustrator/SVG Exports",
+        roleId: "svg",
+        displayName: "SVG",
+        folder: "",
         fileTypes: [".svg", ".eps"],
       },
       {
-        roleId: "laser_svg",
-        displayName: "Laser SVG",
-        folder: "Illustrator/Laser SVG",
-        fileTypes: [],
-      },
-      {
-        roleId: "dirty_stl",
-        displayName: "Dirty STL",
-        folder: "Meshes/Dirty STLs",
-        fileTypes: [],
-      },
-      {
-        roleId: "clean_stl",
-        displayName: "Clean STL",
-        folder: "Meshes/Clean STLs",
-        fileTypes: [],
-      },
-      {
-        roleId: "gcode",
-        displayName: "GCode",
-        folder: "Orca/GCode",
-        fileTypes: [".gcode", ".nc", ".tap"],
-      },
-      {
-        roleId: "reference",
-        displayName: "Reference",
-        folder: "References",
-        fileTypes: [".pdf", ".txt", ".md"],
+        roleId: "3d",
+        displayName: "3D",
+        folder: "",
+        fileTypes: [
+          ".stl", ".obj", ".fbx", ".glb", ".gltf", ".3mf", ".ply", ".dae", ".usd",
+          ".usdz", ".abc", ".x3d", ".step", ".stp", ".iges", ".igs", ".blend",
+        ],
       },
     ],
-    programFolders: [
-      {
-        programId: "illustrator",
-        displayName: "Illustrator",
-        folder: "Illustrator",
-        createOnlyIfMatchingFilesOrRolesPresent: true,
-        roles: ["illustrator_source", "svg_export", "laser_svg"],
-      },
-      {
-        programId: "meshes",
-        displayName: "Meshes",
-        folder: "Meshes",
-        createOnlyIfMatchingFilesOrRolesPresent: true,
-        roles: ["dirty_stl", "clean_stl"],
-      },
-      {
-        programId: "orca",
-        displayName: "Orca",
-        folder: "Orca",
-        createOnlyIfMatchingFilesOrRolesPresent: true,
-        roles: ["gcode"],
-      },
-      {
-        programId: "reference",
-        displayName: "Reference",
-        folder: "References",
-        createOnlyIfMatchingFilesOrRolesPresent: true,
-        roles: ["reference"],
-      },
-    ],
+    programFolders: [],
     rememberedChoices: {},
   });
 }
@@ -180,6 +134,7 @@ export function normalizeOrganizationProfile(profile: OrganizationProfile): Orga
       programId: String(program.programId),
       displayName: String(program.displayName || program.programId),
       folder: String(program.folder || program.programId),
+      fileTypes: normalizeFileTypes(program.fileTypes),
       roles: [...(program.roles ?? [])],
       createOnlyIfMatchingFilesOrRolesPresent: Boolean(
         program.createOnlyIfMatchingFilesOrRolesPresent,
@@ -324,6 +279,17 @@ export function getProgramFolderDecisions(
     }
 
     for (const file of looseFiles) {
+      const extension = normalizeFileTypes([file.extension])[0] ?? "";
+      if (normalizeFileTypes(program.fileTypes).includes(extension)) {
+        return {
+          programId: program.programId,
+          folder: program.folder,
+          createOnlyIfMatchingFilesOrRolesPresent: true,
+          needed: true,
+          reason: "matching-file",
+        };
+      }
+
       const resolution = resolveLooseFile(profile, file);
       if (resolution.status === "resolved" && program.roles.includes(resolution.role.roleId)) {
         return {
