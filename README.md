@@ -66,32 +66,52 @@ Source/dev mode still uses [AutoHotkey V2](https://www.autohotkey.com/download/a
 
 ## Organization
 
-In order for the files panel scripts of each program to work you need to have the scripts configured to work with your file structure. I use the one below. If you have a different one, you'll have to change the scripts to work with it.
+The Windows `Files` panel `Setup Organization` button is the setup flow. The panel script at `Programs/Windows/Panels/Files/setup_organization.ps1` is only a marker; FlowCell intercepts the `setup_organization.ps1` filename before running a script and opens the native `organization-setup` Tauri/React window instead. The older WinForms script under `Programs/Windows/Windows Git Scripts/Files/setup_organization.ps1` is a standalone fallback, not the normal panel flow.
 
-The Windows `Files` panel's `Organize Folder` button uses the folder or file path copied to the clipboard, then creates the shared project folders without renumbering existing program folders:
+In the setup window:
+
+1. Use `Project root` to browse to the project folder, then `Rescan` if the folder changes on disk.
+2. Select a folder in the Project root tree. The root is shown as `.`.
+3. Assign existing roles from the Role dropdown, use `Add Role` to create or edit a role and its file types, or use the direct `File types` field for one folder.
+4. Use `Add Folder` to add a folder under the selected folder. `Add folder` creates it immediately; `Add when files match` creates it later only when its file types are present. The program presets are Illustrator, Photoshop, Blender, and Fusion 360, and folders with file types preview `01 live`, `02 snapshots`, `03 archive`, and `04 trash`.
+5. Assign the `Unknown Files` role to a scanned folder before saving. It is the catch-all for loose files whose extension does not match another role.
+6. Use `Apply to tree` to write the current setup to the project, or `Apply & rescan` to write it and refresh the scanned tree.
+
+The project profile is written as a visible sidecar at the project root:
+
+```text
+<project folder>/organize-folder.profile.json
+```
+
+Older `.flowcell/organization-profile.json` files are still read as a fallback and migrate on the next save.
+
+The Load profile side of the window is for reusable folder trees. `Save Profile` stores the current setup in two places:
+
+```text
+FlowCell/local/Folder Trees/<profile name>/
+FlowCell/local/Folder Tree Profiles/<profile name>.json
+```
+
+`Load profile` loads that reusable setup into the editor without changing the current project root. `Apply profile to root` builds the loaded profile into the selected project root, writes `organize-folder.profile.json`, and runs the profile's conditional program-folder rules. If a subfolder is selected, it builds only the saved folder structure inside that subfolder and does not write a project profile there. `Apply to profile` saves the current editor state back into the loaded profile so you can build it up incrementally.
+
+Applying a saved profile to a root first rebuilds the saved empty folder skeleton. Program-folder rules are then applied under the shared source area:
 
 ```text
 <project folder>/
   01 src/
     00 assets/
-      01 images/
-      02 svg/
-      03 3d/
-      04 textures/
-      05 unknown/
-    <existing or detected program folders>/
+    <profile program folders>/
       01 live/
       02 snapshots/
       03 archive/
       04 trash/
-  02 builds/
-  03 releases/
-  04 archive/
 ```
 
-Assets always use `00 assets`. Program folders are created only when matching files are found, and existing numbered program folders keep their current names. Known saved files move into the matching program `01 live` folder, while older clear `.ai`, `.psd`, `.psb`, or `.blend` duplicates are stored in `02 snapshots`.
+Program folders are conditional working-file destinations. Applying a profile reuses an existing matching program folder when possible, moves the newest clear version family member to `01 live`, moves older family members to `02 snapshots` as `(S01)`, `(S02)`, and so on, and records conflicts instead of overwriting files.
 
-Each run writes `organize-folder.log.txt` plus `organize-folder.undo.json` in the project folder. The JSON manifest records file moves, structure-folder renames, created folders, recycled empty folders, timestamp stamps, conflicts, and unresolved items for AI/manual rollback. If the selected folder looks like a parent folder containing several separate projects, the organizer prints a warning and stops before writing a log or changing files.
+`Make script` generates a profile-specific script in `Programs/Windows/Windows Git Scripts/Files/apply_profile_<name>.ps1`. That script reads a destination folder or file path from the clipboard, applies the saved profile through `Programs/Windows/SupportScripts/Apply-OrganizationProfileCore.ps1`, and can be added to a panel with Add Script.
+
+The legacy Windows `Files` panel `Organize Folder` button is separate. It still uses the clipboard path and writes `organize-folder.undo.json` in the project folder with file moves, structure renames, created folders, recycled empty folders, timestamp stamps, conflicts, unresolved items, and rollback data. It no longer writes `organize-folder.log.txt`.
 
 ## Important Links
 
