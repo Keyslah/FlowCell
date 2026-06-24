@@ -287,6 +287,10 @@
   width: 100%;
 }
 
+.organization-setup__copy-root {
+  width: 100%;
+}
+
 .organization-setup__profile-save input {
   flex: 1;
 }

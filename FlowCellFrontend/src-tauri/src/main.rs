@@ -85,7 +85,9 @@ const DEFAULT_BLENDER_BRIDGE_TIMEOUT_SECONDS: u64 = 20;
 const BLENDER_BRIDGE_RESPONSE_POLL_MS: u64 = 4;
 const BLENDER_BRIDGE_STATUS_TIMEOUT_MS: u64 = 450;
 const BLENDER_BRIDGE_NOT_RUNNING_MESSAGE: &str =
-    "Blender bridge is not running. Restart Blender once after adding Blender in FlowCell.";
+    "Open Blender first, then run the button again.";
+const ORCA_LAUNCHER_CONFIG_FILE_NAME: &str = "orca_launcher.json";
+const CURA_LAUNCHER_CONFIG_FILE_NAME: &str = "cura_launcher.json";
 const FLOWCELL_CONTROLLER_SCRIPT_TIMEOUT_SECONDS: u64 = 25;
 #[cfg(windows)]
 const FLOWCELL_DIRECT_SCRIPT_RECEIVER_TITLE: &str = "FlowCellBackendDirectScriptReceiver";
@@ -267,6 +269,20 @@ struct BlenderAutomationConfig {
 struct BlenderBridgeConfigFile {
     #[serde(default)]
     automation: BlenderAutomationConfig,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SlicerLauncherConfig {
+    executable: String,
+}
+
+#[derive(Clone, Copy)]
+struct SlicerLauncherSpec {
+    id: &'static str,
+    display_name: &'static str,
+    executable_label: &'static str,
+    config_file_name: &'static str,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -2062,6 +2078,174 @@ fn extract_blender_bridge_response_message(response: &Value) -> String {
         })
         .map(|value| value.trim().to_string())
         .unwrap_or_else(|| "Blender action completed.".to_string())
+}
+
+fn resolve_slicer_launcher_spec(slicer_id: &str) -> Result<SlicerLauncherSpec, String> {
+    match slicer_id.trim().to_ascii_lowercase().as_str() {
+        "orca" | "orcaslicer" | "orca_slicer" | "orca-slicer" => Ok(SlicerLauncherSpec {
+            id: "orca",
+            display_name: "OrcaSlicer",
+            executable_label: "Orca EXE",
+            config_file_name: ORCA_LAUNCHER_CONFIG_FILE_NAME,
+        }),
+        "cura" | "ultimaker_cura" | "ultimaker-cura" => Ok(SlicerLauncherSpec {
+            id: "cura",
+            display_name: "UltiMaker Cura",
+            executable_label: "Cura EXE",
+            config_file_name: CURA_LAUNCHER_CONFIG_FILE_NAME,
+        }),
+        _ => Err("Unknown slicer launcher.".to_string()),
+    }
+}
+
+fn resolve_slicer_launcher_config_path(spec: SlicerLauncherSpec) -> Result<PathBuf, String> {
+    let local_root = resolve_flowcell_local_root()?;
+    fs::create_dir_all(&local_root)
+        .map_err(|error| format!("Failed to create {}: {error}", local_root.display()))?;
+    Ok(local_root.join(spec.config_file_name))
+}
+
+fn validate_slicer_executable_path(
+    path_text: &str,
+    spec: SlicerLauncherSpec,
+) -> Result<PathBuf, String> {
+    let trimmed = path_text.trim().trim_matches('"').trim();
+    if trimmed.is_empty() {
+        return Err(format!("Choose a {} file.", spec.executable_label));
+    }
+
+    let executable = PathBuf::from(trimmed);
+    if !executable.is_file() {
+        return Err(format!(
+            "{} was not found: {}",
+            spec.executable_label,
+            executable.display()
+        ));
+    }
+
+    if executable
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| !extension.eq_ignore_ascii_case("exe"))
+        .unwrap_or(true)
+    {
+        return Err(format!(
+            "{} path must be an .exe file: {}",
+            spec.executable_label,
+            executable.display()
+        ));
+    }
+
+    Ok(executable)
+}
+
+fn read_saved_slicer_executable(slicer_id: &str) -> Result<Option<String>, String> {
+    let spec = resolve_slicer_launcher_spec(slicer_id)?;
+    let config_path = resolve_slicer_launcher_config_path(spec)?;
+    if !config_path.is_file() {
+        return Ok(None);
+    }
+
+    let raw = fs::read_to_string(&config_path)
+        .map_err(|error| format!("Failed to read {}: {error}", config_path.display()))?;
+    let config = serde_json::from_str::<SlicerLauncherConfig>(raw.trim_start_matches('\u{feff}'))
+        .map_err(|error| format!("Failed to parse {}: {error}", config_path.display()))?;
+
+    match validate_slicer_executable_path(&config.executable, spec) {
+        Ok(path) => Ok(Some(path.display().to_string())),
+        Err(_) => Ok(None),
+    }
+}
+
+fn write_slicer_executable(slicer_id: &str, executable: &Path) -> Result<(), String> {
+    let spec = resolve_slicer_launcher_spec(slicer_id)?;
+    let config_path = resolve_slicer_launcher_config_path(spec)?;
+    let payload = SlicerLauncherConfig {
+        executable: executable.display().to_string(),
+    };
+    let content = serde_json::to_string_pretty(&payload)
+        .map_err(|error| format!("Failed to serialize slicer launcher config: {error}"))?;
+    fs::write(&config_path, content)
+        .map_err(|error| format!("Failed to write {}: {error}", config_path.display()))
+}
+
+fn launch_slicer_impl(
+    slicer_id: &str,
+    executable_path: &str,
+    exported_paths: Vec<String>,
+) -> Result<String, String> {
+    let spec = resolve_slicer_launcher_spec(slicer_id)?;
+    let executable = validate_slicer_executable_path(executable_path, spec)?;
+    let stl_paths = exported_paths
+        .iter()
+        .map(|path| PathBuf::from(path.trim().trim_matches('"').trim()))
+        .filter(|path| !path.as_os_str().is_empty())
+        .collect::<Vec<_>>();
+
+    if stl_paths.is_empty() {
+        return Err(format!(
+            "No STL files were exported for {}.",
+            spec.display_name
+        ));
+    }
+
+    for path in &stl_paths {
+        if !path.is_file() {
+            return Err(format!(
+                "Exported STL file was not found: {}",
+                path.display()
+            ));
+        }
+    }
+
+    let mut command = Command::new(&executable);
+    command.args(&stl_paths);
+    if let Some(parent) = executable.parent() {
+        command.current_dir(parent);
+    }
+    command.spawn().map_err(|error| {
+        format!(
+            "Failed to launch {} at {}: {error}",
+            spec.display_name,
+            executable.display()
+        )
+    })?;
+
+    write_slicer_executable(spec.id, &executable)?;
+
+    let count = stl_paths.len();
+    let file_label = if count == 1 { "file" } else { "files" };
+    Ok(format!(
+        "Launched {} with {count} STL {file_label}.",
+        spec.display_name
+    ))
+}
+
+#[tauri::command]
+fn load_slicer_executable(slicer_id: String) -> Result<Option<String>, String> {
+    read_saved_slicer_executable(&slicer_id)
+}
+
+#[tauri::command]
+fn launch_slicer(
+    slicer_id: String,
+    executable_path: String,
+    exported_paths: Vec<String>,
+) -> Result<String, String> {
+    launch_slicer_impl(&slicer_id, &executable_path, exported_paths)
+}
+
+#[tauri::command]
+fn load_orca_slicer_executable() -> Result<Option<String>, String> {
+    read_saved_slicer_executable("orca")
+}
+
+#[tauri::command]
+fn launch_orca_slicer(
+    executable_path: String,
+    exported_paths: Vec<String>,
+) -> Result<String, String> {
+    launch_slicer_impl("orca", &executable_path, exported_paths)
 }
 
 fn resolve_flowcell_layouts_root() -> Result<PathBuf, String> {
@@ -8457,6 +8641,9 @@ fn resolve_target_blender_process_id(bridge_root: &Path) -> Result<u32, String> 
     }
 
     if let Some(runtime_pid) = read_blender_bridge_runtime_pid(bridge_root) {
+        if !is_blender_process_id(runtime_pid) {
+            return Err(BLENDER_BRIDGE_NOT_RUNNING_MESSAGE.to_string());
+        }
         return Ok(runtime_pid);
     }
 
@@ -9874,13 +10061,24 @@ fn delete_panel_scripts(
     list_generic_panel_script_files(&panel_directory)
 }
 
-#[tauri::command]
-fn run_panel_script(
-    app: AppHandle,
+fn panel_script_message_response(message: String) -> Value {
+    json!({ "message": message })
+}
+
+fn extract_panel_script_response_message(response: &Value) -> String {
+    if let Some(message) = response.as_str().filter(|value| !value.trim().is_empty()) {
+        return message.trim().to_string();
+    }
+
+    extract_blender_bridge_response_message(response)
+}
+
+fn run_panel_script_response_impl(
+    app: &AppHandle,
     program_name: String,
     panel_name: String,
     file_name: String,
-) -> Result<String, String> {
+) -> Result<Value, String> {
     let panel_directory = resolve_panel_directory(&program_name, &panel_name)?;
     let validated_file_name = validate_panel_script_file_name(&file_name)?;
     let panel_item_path = panel_directory.join(&validated_file_name);
@@ -9892,23 +10090,28 @@ fn run_panel_script(
         let record = read_panel_item_file(&panel_item_path)?;
         if is_frontend_macro_panel_item(&record) {
             let macro_id = validate_frontend_macro_id(&record.macro_id)?;
-            return run_flowcell_macro_action(&macro_id);
+            return run_flowcell_macro_action(&macro_id).map(panel_script_message_response);
         }
     }
 
     if is_windows_program_name(&program_name) {
         if is_flowcell_window_toggle_launcher(&program_name, &panel_name, &validated_file_name) {
-            return toggle_flowcell_windows_native(&app);
+            return toggle_flowcell_windows_native(app).map(panel_script_message_response);
         }
 
         if is_codex_usage_launcher(&program_name, &panel_name, &validated_file_name) {
-            return Ok("Codex Usage opens as a FlowCell managed popout.".to_string());
+            return Ok(panel_script_message_response(
+                "Codex Usage opens as a FlowCell managed popout.".to_string(),
+            ));
         }
 
         let script_path =
             resolve_windows_panel_script_path(&program_name, &panel_name, &file_name)?;
         run_windows_panel_script_file(&script_path)?;
-        return Ok(format!("Started {}.", file_name));
+        return Ok(panel_script_message_response(format!(
+            "Started {}.",
+            file_name
+        )));
     }
 
     if is_adobe_program_name(&program_name) {
@@ -9928,17 +10131,22 @@ fn run_panel_script(
         }
 
         if is_illustrator_program_name(&program_name) {
-            return run_illustrator_backend_script_direct(&script_path, "illustrator_automation");
+            return run_illustrator_backend_script_direct(&script_path, "illustrator_automation")
+                .map(panel_script_message_response);
         }
 
         let program_key = "photoshop_direct";
-        return run_flowcell_controller_script(&script_path, program_key);
+        return run_flowcell_controller_script(&script_path, program_key)
+            .map(panel_script_message_response);
     }
 
     if is_blender_program_name(&program_name) {
         let item = resolve_blender_panel_item_record(&program_name, &panel_name, &file_name)?;
         if is_blender_toolset_record(&item) {
-            return Ok(format!("Loaded {}.", item.label));
+            return Ok(panel_script_message_response(format!(
+                "Loaded {}.",
+                item.label
+            )));
         }
 
         let bridge_action = item.bridge_action.trim().to_string();
@@ -9951,9 +10159,9 @@ fn run_panel_script(
 
         let data = normalize_blender_bridge_data(item.bridge_data.clone());
         return match run_blender_bridge_action_direct(&bridge_action, data) {
-            Ok(response) => Ok(extract_blender_bridge_response_message(&response)),
+            Ok(response) => Ok(response),
             Err(message) if should_return_blender_bridge_message_without_alert(&message) => {
-                Ok(message)
+                Ok(panel_script_message_response(message))
             }
             Err(message) => Err(message),
         };
@@ -9975,7 +10183,31 @@ fn run_panel_script(
     }
 
     run_windows_panel_script_file(&script_path)?;
-    Ok(format!("Started {}.", file_name))
+    Ok(panel_script_message_response(format!(
+        "Started {}.",
+        file_name
+    )))
+}
+
+#[tauri::command]
+fn run_panel_script_response(
+    app: AppHandle,
+    program_name: String,
+    panel_name: String,
+    file_name: String,
+) -> Result<Value, String> {
+    run_panel_script_response_impl(&app, program_name, panel_name, file_name)
+}
+
+#[tauri::command]
+fn run_panel_script(
+    app: AppHandle,
+    program_name: String,
+    panel_name: String,
+    file_name: String,
+) -> Result<String, String> {
+    let response = run_panel_script_response_impl(&app, program_name, panel_name, file_name)?;
+    Ok(extract_panel_script_response_message(&response))
 }
 
 #[tauri::command]
@@ -10777,6 +11009,38 @@ catch {
     Ok(script_path.display().to_string())
 }
 
+// Create (or refresh) a button in the Windows "Files" panel that applies a saved
+// profile to a clipboard folder. Reuses the apply-profile script generator, then
+// drops the script straight into the panel directory named after the profile, so
+// the panel button is labeled with the profile name without a manual Add Script.
+#[tauri::command]
+fn make_organization_profile_button(name: String) -> Result<String, String> {
+    let safe_name = validate_folder_name(&name, "Profile")?;
+
+    let file_name = format!("{safe_name}.ps1");
+    if file_name.eq_ignore_ascii_case("setup_organization.ps1") {
+        return Err(
+            "Choose a different profile name — \"setup_organization\" is reserved for the Setup Organization launcher button."
+                .to_string(),
+        );
+    }
+
+    let panel_directory = resolve_panel_directory("Windows", "Files")?;
+    let button_path = panel_directory.join(&file_name);
+
+    // Generating the script also validates that the profile has been saved.
+    let library_path = PathBuf::from(make_organization_profile_script(safe_name)?);
+
+    fs::copy(&library_path, &button_path).map_err(|error| {
+        format!(
+            "Unable to add the panel button at {}: {error}",
+            button_path.display()
+        )
+    })?;
+
+    Ok(button_path.display().to_string())
+}
+
 // Resolve a relative folder path under a project root, rejecting traversal and
 // the root itself.
 fn resolve_organization_subfolder(project_root: &Path, relative: &str) -> Result<PathBuf, String> {
@@ -10990,6 +11254,10 @@ fn main() {
             save_blender_theme_darkness_profiles,
             save_blender_theme_file,
             load_blender_theme_file,
+            load_slicer_executable,
+            launch_slicer,
+            load_orca_slicer_executable,
+            launch_orca_slicer,
             save_layout_snapshot,
             load_layout_snapshot,
             list_program_folders,
@@ -11020,6 +11288,7 @@ fn main() {
             add_panel_scripts,
             update_panel_script_description,
             delete_panel_scripts,
+            run_panel_script_response,
             run_panel_script,
             run_blender_rotate_tool,
             run_blender_alignment_tool,
@@ -11036,6 +11305,7 @@ fn main() {
             apply_organization_profile_to_root,
             apply_organization_profile_folders,
             make_organization_profile_script,
+            make_organization_profile_button,
             create_organization_folder,
             recycle_organization_folder,
             restore_recycled_folder,

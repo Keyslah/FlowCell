@@ -12,7 +12,7 @@ import {
   applyOrganizationProfileToRoot,
   createOrganizationFolder,
   listOrganizationProfiles,
-  makeOrganizationProfileScript,
+  makeOrganizationProfileButton,
   readOrganizationProfile,
   readOrganizationProfileNamed,
   recycleOrganizationFolder,
@@ -313,12 +313,22 @@ export default function OrganizationSetupWindowPage() {
     (role) => role.roleId !== PROJECT_ROOT_ROLE_ID && !isDirectTypeRole(role.roleId)
   );
 
-  // Program folders whose parent is the selected folder, shown alongside roles.
+  // A single active folder selection shared across both trees. Selecting a
+  // folder in one tree clears the other, so only one folder is ever active and
+  // its assignments show in the editor card regardless of which tree it's from.
+  const activeFolder = selectedFolder ?? selectedLoadedFolder;
+  const activeFolderSource: "project" | "profile" | null = selectedFolder
+    ? "project"
+    : selectedLoadedFolder
+      ? "profile"
+      : null;
+
+  // Program folders whose parent is the active folder, shown alongside roles.
   const assignedProgramEntries = programFolders
     .map((program, index) => ({ program, index }))
     .filter(
       ({ program }) =>
-        selectedFolder !== null && parentFolderPath(program.folder || "") === selectedFolder
+        activeFolder !== null && parentFolderPath(program.folder || "") === activeFolder
     );
 
   // The project tree shows the project root's actual folders. Nothing is added
@@ -335,7 +345,7 @@ export default function OrganizationSetupWindowPage() {
       if (role.roleId === PROJECT_ROOT_ROLE_ID) {
         return false;
       }
-      return selectedFolder !== null && normalizeFolderPath(role.folder || "") === selectedFolder;
+      return activeFolder !== null && normalizeFolderPath(role.folder || "") === activeFolder;
     });
 
   const applyProfile = (profile: OrganizationProfile) => {
@@ -572,6 +582,28 @@ export default function OrganizationSetupWindowPage() {
     }
   };
 
+  // Copy the current project root's folder structure into the profile section as
+  // an unsaved scratch tree. No profile is saved — it just lets you see and edit
+  // the root's depth structure in the profile panel before saving it as one.
+  const copyRootToProfile = () => {
+    if (!scan) {
+      setStatus("Scan a project root first, then copy it to the profile section.");
+      setStatusTone("is-error");
+      return;
+    }
+    setSelectedProfileName("");
+    setLoadedScan({
+      projectRoot: scan.projectRoot,
+      folders: [...treeFolders],
+      looseFiles: []
+    });
+    setSelectedLoadedFolder(null);
+    setStatus(
+      "Copied the project root structure into the profile section (unsaved). Edit it, then Save Profile to keep it."
+    );
+    setStatusTone("is-success");
+  };
+
   const pushUndo = (label: string, run: () => Promise<void>) => {
     setUndoStack((current) => [...current, { label, run }]);
   };
@@ -653,8 +685,12 @@ export default function OrganizationSetupWindowPage() {
     setStatusTone("");
     try {
       const profile = buildProfile();
-      // Capture the planned structure: scanned folders plus added program folders.
-      const folders = treeFolders.filter((folder) => folder !== ".");
+      // Capture the planned structure. For an unsaved "copy root to profile"
+      // scratch tree, save the (possibly edited) profile-section tree; otherwise
+      // use the project tree's scanned folders plus added program folders.
+      const sourceFolders =
+        loadedScan && !selectedProfileName ? loadedScan.folders : treeFolders;
+      const folders = sourceFolders.filter((folder) => folder !== ".");
       const savedPath = await saveOrganizationProfileAs(name, profile, folders);
       await refreshSavedProfiles();
       setSelectedProfileName(name);
@@ -675,23 +711,23 @@ export default function OrganizationSetupWindowPage() {
   const applyToProfile = () =>
     saveCurrentToProfile((selectedProfileName || profileName.trim()).trim(), "Updated profile");
 
-  // Generate a Windows Git Script that applies this profile to a clipboard
-  // folder path, so it can be added as a panel button via Add Script.
-  const makeScript = async () => {
+  // Create a button in the Windows Files panel that applies this profile to a
+  // clipboard folder path. The button is named after the profile.
+  const makeButton = async () => {
     const name = (profileName.trim() || selectedProfileName).trim();
     if (!name) {
-      setStatus("Save or load a profile first, then Make Script.");
+      setStatus("Save or load a profile first, then Make Button.");
       setStatusTone("is-error");
       return;
     }
 
     setBusy(true);
-    setStatus(`Making script for "${name}"…`);
+    setStatus(`Making button for "${name}"…`);
     setStatusTone("");
     try {
-      const scriptPath = await makeOrganizationProfileScript(name);
+      await makeOrganizationProfileButton(name);
       setStatus(
-        `Made script: ${scriptPath}. Use "Add Script" on any panel to add the button.`
+        `Made button "${name}" in the Windows Files panel. Reselect the Files panel to see it.`
       );
       setStatusTone("is-success");
     } catch (error) {
@@ -842,8 +878,26 @@ export default function OrganizationSetupWindowPage() {
       setStatusTone("is-error");
       return;
     }
-    const root = loadedScan.projectRoot;
     const target = selectedLoadedFolder;
+    // A scratch "copy root to profile" tree has no saved skeleton on disk, so
+    // deletion just drops the folder (and its descendants) from the in-memory list.
+    if (!selectedProfileName) {
+      setLoadedScan((current) =>
+        current
+          ? {
+              ...current,
+              folders: current.folders.filter(
+                (folder) => folder !== target && !folder.startsWith(`${target}/`)
+              )
+            }
+          : current
+      );
+      setSelectedLoadedFolder(null);
+      setStatus(`Removed ${target} from the profile section.`);
+      setStatusTone("is-success");
+      return;
+    }
+    const root = loadedScan.projectRoot;
     const fullPath = `${root.replace(/[\\/]+$/, "")}/${target}`;
     setBusy(true);
     setStatus(`Deleting ${target} from the profile…`);
@@ -873,19 +927,19 @@ export default function OrganizationSetupWindowPage() {
   // Selecting a role from the dropdown assigns it to the selected folder
   // immediately — there is no separate confirm step.
   const assignRoleFromDropdown = (roleId: string) => {
-    if (!roleId || !selectedFolder) {
+    if (!roleId || !activeFolder) {
       return;
     }
-    if (roleId === PROJECT_ROOT_ROLE_ID && selectedFolder !== ".") {
+    if (roleId === PROJECT_ROOT_ROLE_ID && activeFolder !== ".") {
       setStatus("Project Root can only stay assigned to the project root.");
       setStatusTone("is-error");
       return;
     }
 
     setRoles((current) =>
-      current.map((role) => (role.roleId === roleId ? { ...role, folder: selectedFolder } : role))
+      current.map((role) => (role.roleId === roleId ? { ...role, folder: activeFolder } : role))
     );
-    setStatus(`Assigned ${roleDisplayName(roleId)} to ${selectedFolder}.`);
+    setStatus(`Assigned ${roleDisplayName(roleId)} to ${activeFolder}.`);
     setStatusTone("is-success");
   };
 
@@ -928,8 +982,8 @@ export default function OrganizationSetupWindowPage() {
   };
 
   const assignDirectFileTypes = () => {
-    if (!selectedFolder) {
-      setStatus("Select a folder in the Project Tree first.");
+    if (!activeFolder) {
+      setStatus("Select a folder first.");
       setStatusTone("is-error");
       return;
     }
@@ -940,7 +994,7 @@ export default function OrganizationSetupWindowPage() {
       return;
     }
 
-    const roleId = folderTypeRoleId(selectedFolder);
+    const roleId = folderTypeRoleId(activeFolder);
     setRoles((current) => {
       const existingIndex = current.findIndex((role) => role.roleId === roleId);
       if (existingIndex >= 0) {
@@ -948,7 +1002,7 @@ export default function OrganizationSetupWindowPage() {
           index === existingIndex
             ? {
                 ...role,
-                folder: selectedFolder,
+                folder: activeFolder,
                 fileTypesText: normalizeFileTypes([
                   ...normalizeFileTypes(role.fileTypesText),
                   ...types
@@ -962,14 +1016,14 @@ export default function OrganizationSetupWindowPage() {
         {
           roleId,
           displayName: "File Types",
-          folder: selectedFolder,
+          folder: activeFolder,
           fileTypesText: types.join(", "),
           description: ""
         }
       ];
     });
     setDirectFileTypesInput("");
-    setStatus(`Assigned file types to ${selectedFolder}.`);
+    setStatus(`Assigned file types to ${activeFolder}.`);
     setStatusTone("is-success");
   };
 
@@ -1171,6 +1225,7 @@ export default function OrganizationSetupWindowPage() {
                     role="listitem"
                     onClick={() => {
                       setSelectedFolder(folder);
+                      setSelectedLoadedFolder(null);
                       setDirectFileTypesInput("");
                     }}
                   >
@@ -1243,38 +1298,51 @@ export default function OrganizationSetupWindowPage() {
                 </div>
                 <button
                   type="button"
-                  className="organization-setup__make-script"
-                  onClick={() => void makeScript()}
-                  disabled={busy || !(profileName.trim() || selectedProfileName)}
-                  title="Generate a Windows Git Script that applies this profile to a clipboard folder"
+                  className="organization-setup__copy-root"
+                  onClick={copyRootToProfile}
+                  disabled={busy || !scan}
+                  title="Copy the project root's folder structure into the profile section (unsaved) so you can see and edit its tree"
                 >
-                  Make script
+                  Copy root to profile
+                </button>
+                <button
+                  type="button"
+                  className="organization-setup__make-script"
+                  onClick={() => void makeButton()}
+                  disabled={busy || !(profileName.trim() || selectedProfileName)}
+                  title="Create a Windows Files panel button (named after the profile) that applies this profile to a clipboard folder"
+                >
+                  Make button
                 </button>
               </div>
 
               <div className="organization-setup__section-heading">
                 <div>
                   <span>Profile</span>
-                  <h2>{selectedProfileName || "—"}</h2>
+                  <h2>{selectedProfileName || (loadedScan ? "From root (unsaved)" : "—")}</h2>
                 </div>
                 <strong>{loadedScan?.folders.length ?? 0}</strong>
               </div>
               <div className="organization-setup__folder-list" role="list">
-                {selectedProfileName && loadedScan ? (
+                {loadedScan ? (
                   loadedScan.folders.map((folder) => (
                     <button
                       type="button"
                       className={folder === selectedLoadedFolder ? "is-selected" : ""}
                       key={folder}
                       role="listitem"
-                      onClick={() => setSelectedLoadedFolder(folder)}
+                      onClick={() => {
+                        setSelectedLoadedFolder(folder);
+                        setSelectedFolder(null);
+                        setDirectFileTypesInput("");
+                      }}
                     >
                       {folder}
                     </button>
                   ))
                 ) : (
                   <p className="organization-setup__assigned-empty">
-                    Load a profile to compare its tree.
+                    Load a profile or use “Copy root to profile” to show a tree here.
                   </p>
                 )}
               </div>
@@ -1305,15 +1373,15 @@ export default function OrganizationSetupWindowPage() {
           </aside>
 
           <div className="organization-setup__editors">
-            {selectedFolder ? (
+            {activeFolder ? (
               <section className="organization-setup__editor-card organization-setup__folder-settings">
                 <div className="organization-setup__section-heading">
                   <div>
-                    <span>Folder</span>
-                    <h2>{selectedFolder === "." ? "Project Root (.)" : selectedFolder}</h2>
+                    <span>{activeFolderSource === "profile" ? "Profile folder" : "Folder"}</span>
+                    <h2>{activeFolder === "." ? "Project Root (.)" : activeFolder}</h2>
                     <p className="organization-setup__folder-meta">
                       {assignedRoleEntries.length} assigned role(s)
-                      {selectedFolder === "."
+                      {activeFolderSource === "project" && activeFolder === "."
                         ? ` · ${scan?.looseFiles.length ?? 0} loose file(s)`
                         : ""}
                     </p>
@@ -1342,7 +1410,16 @@ export default function OrganizationSetupWindowPage() {
                     <button type="button" onClick={openAddRole} disabled={busy}>
                       Add Role
                     </button>
-                    <button type="button" onClick={openAddProgramFolder} disabled={busy}>
+                    <button
+                      type="button"
+                      onClick={openAddProgramFolder}
+                      disabled={busy || activeFolderSource !== "project"}
+                      title={
+                        activeFolderSource === "project"
+                          ? "Add a folder under the selected project folder"
+                          : "Select a folder in the Project tree to add a folder on disk"
+                      }
+                    >
                       Add Folder
                     </button>
                   </div>
@@ -1484,7 +1561,7 @@ export default function OrganizationSetupWindowPage() {
               <section className="organization-setup__editor-card organization-setup__empty-settings">
                 <div>
                   <h2>Select a folder</h2>
-                  <p>Click a folder in the Project Tree.</p>
+                  <p>Click a folder in the Project tree or the Profile section.</p>
                 </div>
               </section>
             )}

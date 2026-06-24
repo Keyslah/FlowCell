@@ -665,11 +665,90 @@ function Get-SlicerLauncherPython {
         [Parameter(Mandatory = $true)]
         [string]$DisplayName,
         [Parameter(Mandatory = $true)]
-        [string[]]$SearchPatterns
+        [string[]]$SearchPatterns,
+        [Parameter(Mandatory = $true)]
+        [string]$LauncherId,
+        [Parameter(Mandatory = $true)]
+        [string]$ExecutableLabel,
+        [switch]$RequestFlowCellLaunch
     )
 
     $helper = Get-BridgeHelperPython
     $patternBlock = @($SearchPatterns | ForEach-Object { ('    r''{0}'',' -f $_) }) -join "`n"
+    $launchBlock = if ($RequestFlowCellLaunch) {
+        @"
+
+def _request_flowcell_launch(executable, exported_paths, export_message=""):
+    message = export_message or "Saved STL files."
+    return {
+        "message": f"{message} Confirm the $ExecutableLabel in FlowCell to launch the exported STL files.",
+        "requires_flowcell_slicer_launch": True,
+        "requires_flowcell_orca_launch": "$LauncherId" == "orca",
+        "requires_flowcell_cura_launch": "$LauncherId" == "cura",
+        "slicer_id": "$LauncherId",
+        "slicer_display_name": "$DisplayName",
+        "executable_label": "$ExecutableLabel",
+        "detected_executable": str(executable or ""),
+        "exported_paths": exported_paths,
+    }
+"@
+    }
+    else {
+        @"
+
+def _launch_slicer(executable, exported_paths, export_message=""):
+    try:
+        subprocess.Popen([str(executable), *exported_paths], cwd=str(executable.parent))
+    except Exception as exc:
+        prefix = f"{export_message} " if export_message else ""
+        return {
+            "message": f"{prefix}$DisplayName launch failed: {exc}",
+            "exported_paths": exported_paths,
+            "launch_failed": True,
+        }
+
+    count = len(exported_paths)
+    file_label = "file" if count == 1 else "files"
+    return {"message": f"Launched $DisplayName with {count} STL {file_label}.", "exported_paths": exported_paths}
+"@
+    }
+
+    $runBlock = if ($RequestFlowCellLaunch) {
+        @"
+
+def run_flowcell_action(context=None, data=None):
+    del context
+    bridge = _load_flowcell_bridge()
+    result = bridge.execute_bridge_operator("save_selected_stl_to_assets", _merge_payload({}, data))
+    exported_paths = [str(path) for path in result.get("exported_paths", []) if str(path).strip()]
+    if not exported_paths:
+        raise ValueError("STL export did not return any file paths.")
+
+    export_message = str(result.get("message", "Saved STL files."))
+    detected_executable = _find_executable()
+    return _request_flowcell_launch(detected_executable, exported_paths, export_message)
+"@
+    }
+    else {
+        @"
+
+def run_flowcell_action(context=None, data=None):
+    del context
+    bridge = _load_flowcell_bridge()
+    result = bridge.execute_bridge_operator("save_selected_stl_to_assets", _merge_payload({}, data))
+    exported_paths = [str(path) for path in result.get("exported_paths", []) if str(path).strip()]
+    if not exported_paths:
+        raise ValueError("STL export did not return any file paths.")
+
+    executable = _find_executable()
+    if executable is None:
+        message = str(result.get("message", "Saved STL files."))
+        return {"message": f"{message} Could not find $DisplayName.", "exported_paths": exported_paths}
+
+    return _launch_slicer(executable, exported_paths, str(result.get("message", "Saved STL files.")))
+"@
+    }
+
     return @"
 # Description: $Description
 
@@ -706,30 +785,7 @@ def _find_executable():
                 if candidate.is_file():
                     return candidate
     return None
-
-
-def run_flowcell_action(context=None, data=None):
-    del context
-    bridge = _load_flowcell_bridge()
-    result = bridge.execute_bridge_operator("save_selected_stl_to_assets", _merge_payload({}, data))
-    exported_paths = [str(path) for path in result.get("exported_paths", []) if str(path).strip()]
-    if not exported_paths:
-        raise ValueError("STL export did not return any file paths.")
-
-    executable = _find_executable()
-    if executable is None:
-        message = str(result.get("message", "Saved STL files."))
-        return {"message": f"{message} Could not find $DisplayName.", "exported_paths": exported_paths}
-
-    try:
-        subprocess.Popen([str(executable), *exported_paths], cwd=str(executable.parent))
-    except Exception as exc:
-        message = str(result.get("message", "Saved STL files."))
-        return {"message": f"{message} $DisplayName launch failed: {exc}", "exported_paths": exported_paths}
-
-    count = len(exported_paths)
-    file_label = "file" if count == 1 else "files"
-    return {"message": f"Launched $DisplayName with {count} STL {file_label}.", "exported_paths": exported_paths}
+$launchBlock$runBlock
 "@
 }
 
@@ -871,13 +927,13 @@ function Get-GeneratedExportSpec {
             Get-SlicerLauncherPython -Description $Description -DisplayName 'UltiMaker Cura' -SearchPatterns @(
                 'UltiMaker Cura*/UltiMaker-Cura.exe',
                 'Programs/UltiMaker Cura*/UltiMaker-Cura.exe'
-            )
+            ) -LauncherId 'cura' -ExecutableLabel 'Cura EXE' -RequestFlowCellLaunch
         }
         'orca' {
             Get-SlicerLauncherPython -Description $Description -DisplayName 'OrcaSlicer' -SearchPatterns @(
                 'OrcaSlicer*/orca-slicer.exe',
                 'Programs/OrcaSlicer*/orca-slicer.exe'
-            )
+            ) -LauncherId 'orca' -ExecutableLabel 'Orca EXE' -RequestFlowCellLaunch
         }
         default {
             throw "Unsupported export mode: $mode"

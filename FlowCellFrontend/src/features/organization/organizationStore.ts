@@ -80,6 +80,10 @@ export function makeOrganizationProfileScript(name: string): Promise<string> {
   return invokeOrganizationCommand("make_organization_profile_script", { name });
 }
 
+export function makeOrganizationProfileButton(name: string): Promise<string> {
+  return invokeOrganizationCommand("make_organization_profile_button", { name });
+}
+
 export function createOrganizationFolder(
   projectRoot: string,
   relativePath: string
