@@ -1,4 +1,4 @@
-import { showOpenFileDialog, showTextInputDialog } from "./tauri";
+import { showOpenFileDialog } from "./tauri";
 
 type SlicerLauncherId = "orca" | "cura" | "slicer";
 
@@ -56,7 +56,7 @@ interface SlicerLaunchContext {
   fileName: string;
 }
 
-const SLICER_BUTTON_ASSIGNMENTS_STORAGE_KEY = "flowcell.slicer.buttonAssignments.v1";
+const SLICER_BUTTON_ASSIGNMENTS_STORAGE_KEY = "flowcell.slicer.buttonAssignments.v2";
 const SLICER_RECENTS_STORAGE_KEY = "flowcell.slicer.recentExecutables.v1";
 const MAX_RECENT_SLICERS = 8;
 
@@ -222,18 +222,14 @@ async function resolveExecutableForNewSlicerButton(spec: SlicerLauncherSpec, det
   return pickSlicerExecutable(detectedExecutable, spec.executableLabel);
 }
 
-async function promptForSlicerButtonName(executablePath: string, fallback: string): Promise<string> {
+function promptForSlicerButtonName(executablePath: string, fallback: string): string {
   const suggestedName = inferSlicerDisplayName(executablePath, fallback);
-  try {
-    const chosenName = await showTextInputDialog({
-      title: "Name Slicer Button",
-      prompt: "Name this slicer button. This only renames this button instance.",
-      defaultValue: suggestedName
-    });
-    return readString(chosenName) || suggestedName;
-  } catch {
-    return suggestedName;
-  }
+  if (typeof window === "undefined") return suggestedName;
+  const chosenName = window.prompt(
+    "Name this slicer button. This only renames this button instance.",
+    suggestedName
+  );
+  return readString(chosenName) || suggestedName;
 }
 
 function saveSlicerButtonAssignment(context: SlicerLaunchContext, executablePath: string, displayName: string): void {
@@ -285,7 +281,7 @@ export async function handleSlicerLaunchForPanelButton(
   const detectedExecutable = readString(response.detected_executable ?? response.detectedExecutable);
   const executablePath = await resolveExecutableForNewSlicerButton(spec, detectedExecutable);
   if (!executablePath) return `${spec.displayName} launch cancelled.`;
-  const displayName = await promptForSlicerButtonName(executablePath, spec.displayName);
+  const displayName = promptForSlicerButtonName(executablePath, spec.displayName);
   saveSlicerButtonAssignment(context, executablePath, displayName);
   return launchSlicer(spec.id, executablePath, exportedPaths);
 }
