@@ -5,6 +5,7 @@ import {
   clearSlicerButtonAssignments,
   handleSlicerLaunchForPanelButton
 } from "./slicerLauncherAssignments";
+import { openOrganizationSetupWindow } from "./windowing";
 
 export interface PanelScriptChildRecord {
   slot: string;
@@ -52,6 +53,8 @@ export interface ToolsetActionResponse {
 interface PanelScriptRunResponse {
   message?: string;
   display?: string;
+  requires_flowcell_organization_setup_open?: boolean;
+  requiresFlowCellOrganizationSetupOpen?: boolean;
   requires_flowcell_slicer_launch?: boolean;
   requiresFlowCellSlicerLaunch?: boolean;
   requires_flowcell_orca_launch?: boolean;
@@ -119,6 +122,10 @@ export function readPanelScriptStatusMessage(message: string): string {
   return trimmed && trimmed !== "Script completed." ? trimmed : "";
 }
 
+function isOrganizationSetupLauncher(fileName: string): boolean {
+  return fileName.trim().toLowerCase() === "setup_organization.ps1";
+}
+
 type SlicerLauncherId = "orca" | "cura" | "slicer";
 
 function isFlowCellSlicerLaunchResponse(
@@ -132,6 +139,16 @@ function isFlowCellSlicerLaunchResponse(
       response.requiresFlowCellOrcaLaunch === true ||
       response.requires_flowcell_cura_launch === true ||
       response.requiresFlowCellCuraLaunch === true)
+  );
+}
+
+function isFlowCellOrganizationSetupResponse(
+  response: unknown
+): response is PanelScriptRunResponse {
+  return (
+    isRecord(response) &&
+    (response.requires_flowcell_organization_setup_open === true ||
+      response.requiresFlowCellOrganizationSetupOpen === true)
   );
 }
 
@@ -310,11 +327,21 @@ export async function runPanelScript(
     throw new Error("Panel scripts can only be run from the desktop host.");
   }
 
+  if (isOrganizationSetupLauncher(fileName)) {
+    await openOrganizationSetupWindow();
+    return "Script completed.";
+  }
+
   const response = await invokeProgramRailCommand<unknown>("run_panel_script_response", {
     programName,
     panelName,
     fileName
   });
+
+  if (isFlowCellOrganizationSetupResponse(response)) {
+    await openOrganizationSetupWindow();
+    return "Script completed.";
+  }
 
   if (isFlowCellSlicerLaunchResponse(response)) {
     return handleSlicerLaunchForPanelButton(response, { programName, panelName, fileName }, launchSlicer);

@@ -5,6 +5,7 @@ import {
   makeAmbiguousFilePrompt,
   normalizeFileTypes,
   normalizeOrganizationProfile,
+  normalizeProtectedFolders,
   resolveLooseFile
 } from "../../features/organization/organizationEngine";
 import {
@@ -200,15 +201,15 @@ function getUnknownRoleAssignmentIssue(
   const unknownRole = profile.roles.find((role) => role.roleId === UNKNOWN_ROLE_ID);
   const assignedFolder = normalizeFolderPath(unknownRole?.folder ?? "");
   if (!assignedFolder || assignedFolder === ".") {
-    return "Assign the Unknown role to a folder in the Project Tree before saving.";
+    return "Assign the Unknown role to a folder in the Root folder tree before saving.";
   }
   if (!scan) {
-    return "Scan the project root to confirm the Unknown role's folder assignment.";
+    return "Scan the root folder to confirm the Unknown role's folder assignment.";
   }
 
   const scannedFolders = new Set(scan.folders.map(normalizeFolderPath));
   if (!scannedFolders.has(assignedFolder)) {
-    return `The Unknown role is assigned to "${assignedFolder}", but that folder is not in the Project Tree. Assign Unknown to a scanned folder.`;
+    return `The Unknown role is assigned to "${assignedFolder}", but that folder is not in the Root folder tree. Assign Unknown to a scanned folder.`;
   }
   return "";
 }
@@ -219,11 +220,12 @@ export default function OrganizationSetupWindowPage() {
   );
   const [roles, setRoles] = useState<RoleDraft[]>([]);
   const [programFolders, setProgramFolders] = useState<ProgramFolderDraft[]>([]);
+  const [protectedFolders, setProtectedFolders] = useState<string[]>([]);
   const [rememberedChoices, setRememberedChoices] = useState<
     OrganizationProfile["rememberedChoices"]
   >({});
   const [scan, setScan] = useState<OrganizationProjectScan | null>(null);
-  const [status, setStatus] = useState("Choose a project root to begin.");
+  const [status, setStatus] = useState("Choose a root folder to begin.");
   const [statusTone, setStatusTone] = useState<"" | "is-error" | "is-success">("");
   const [busy, setBusy] = useState(false);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
@@ -295,9 +297,10 @@ export default function OrganizationSetupWindowPage() {
           fileTypes: normalizeFileTypes(fileTypesText),
           roles: splitRoleIds(rolesText)
         })),
+        protectedFolders,
         rememberedChoices: rememberedChoices ?? {}
       }),
-    [programFolders, projectRoot, rememberedChoices, roles]
+    [programFolders, projectRoot, protectedFolders, rememberedChoices, roles]
   );
 
   const unknownRoleAssignmentIssue = useMemo(
@@ -371,10 +374,20 @@ export default function OrganizationSetupWindowPage() {
       return activeFolder !== null && normalizeFolderPath(role.folder || "") === activeFolder;
     });
 
+  const activeFolderProtected =
+    activeFolder !== null &&
+    activeFolder !== "." &&
+    protectedFolders.some(
+      (folder) =>
+        normalizeFolderPath(folder).toLowerCase() ===
+        normalizeFolderPath(activeFolder).toLowerCase()
+    );
+
   const applyProfile = (profile: OrganizationProfile) => {
     const draft = profileToDraft(profile);
     setRoles(draft.roles);
     setProgramFolders(draft.programFolders);
+    setProtectedFolders(normalizeProtectedFolders(profile.protectedFolders));
     setRememberedChoices(profile.rememberedChoices ?? {});
   };
 
@@ -423,13 +436,13 @@ export default function OrganizationSetupWindowPage() {
   const loadProject = async (rootValue: string, successMessage = "Project scanned.") => {
     const root = rootValue.trim().replace(/^"+|"+$/g, "");
     if (!root) {
-      setStatus("Choose a project root first.");
+      setStatus("Choose a root folder first.");
       setStatusTone("is-error");
       return;
     }
 
     setBusy(true);
-    setStatus("Scanning project folders...");
+    setStatus("Scanning root folder...");
     setStatusTone("");
     try {
       const [nextScan, savedProfile] = await Promise.all([
@@ -475,7 +488,7 @@ export default function OrganizationSetupWindowPage() {
   const chooseProjectRoot = async () => {
     try {
       const selected = await showOpenFolderDialog({
-        title: "Choose project root",
+        title: "Choose root folder",
         initialDirectory: projectRoot.trim() || undefined
       });
       if (selected[0]) {
@@ -503,7 +516,7 @@ export default function OrganizationSetupWindowPage() {
   const saveProfile = async (rescanAfterSave: boolean) => {
     const root = projectRoot.trim();
     if (!root) {
-      setStatus("Choose a project root first.");
+      setStatus("Choose a root folder first.");
       setStatusTone("is-error");
       return;
     }
@@ -537,7 +550,7 @@ export default function OrganizationSetupWindowPage() {
   const initStarterProfile = async () => {
     const root = projectRoot.trim();
     if (!root) {
-      setStatus("Choose a project root first.");
+      setStatus("Choose a root folder first.");
       setStatusTone("is-error");
       return;
     }
@@ -594,7 +607,7 @@ export default function OrganizationSetupWindowPage() {
       setStatus(
         projectRoot.trim()
           ? `Loaded profile "${name}". Click "Apply profile to root" to build it in ${projectRoot.trim()}.`
-          : `Loaded profile "${name}". Choose a project root, then "Apply profile to root".`
+          : `Loaded profile "${name}". Choose a root folder, then "Apply profile to root".`
       );
       setStatusTone("is-success");
     } catch (error) {
@@ -610,7 +623,7 @@ export default function OrganizationSetupWindowPage() {
   // the root's depth structure in the profile panel before saving it as one.
   const copyRootToProfile = () => {
     if (!scan) {
-      setStatus("Scan a project root first, then copy it to the profile section.");
+      setStatus("Scan a root folder first, then copy it to the profile section.");
       setStatusTone("is-error");
       return;
     }
@@ -622,7 +635,7 @@ export default function OrganizationSetupWindowPage() {
     });
     setSelectedLoadedFolder(null);
     setStatus(
-      "Copied the project root structure into the profile section (unsaved). Edit it, then Save Profile to keep it."
+      "Copied the root folder structure into the profile section (unsaved). Edit it, then Save Profile to keep it."
     );
     setStatusTone("is-success");
   };
@@ -662,7 +675,7 @@ export default function OrganizationSetupWindowPage() {
       return;
     }
     if (!root) {
-      setStatus("Choose a project root first.");
+      setStatus("Choose a root folder first.");
       setStatusTone("is-error");
       return;
     }
@@ -912,7 +925,7 @@ export default function OrganizationSetupWindowPage() {
   const deleteSelectedProjectFolder = async () => {
     const root = projectRoot.trim();
     if (!root || !selectedFolder || selectedFolder === ".") {
-      setStatus("Select a folder (not the project root) to delete.");
+      setStatus("Select a folder (not the root folder) to delete.");
       setStatusTone("is-error");
       return;
     }
@@ -1009,7 +1022,7 @@ export default function OrganizationSetupWindowPage() {
       return;
     }
     if (roleId === PROJECT_ROOT_ROLE_ID && activeFolder !== ".") {
-      setStatus("Project Root can only stay assigned to the project root.");
+      setStatus("Root folder can only stay assigned to the root folder.");
       setStatusTone("is-error");
       return;
     }
@@ -1102,6 +1115,31 @@ export default function OrganizationSetupWindowPage() {
     });
     setDirectFileTypesInput("");
     setStatus(`Assigned file types to ${activeFolder}.`);
+    setStatusTone("is-success");
+  };
+
+  const toggleProtectedFolder = () => {
+    if (!activeFolder || activeFolder === ".") {
+      return;
+    }
+
+    const folder = normalizeFolderPath(activeFolder);
+    setProtectedFolders((current) => {
+      const normalized = normalizeProtectedFolders(current);
+      const exists = normalized.some(
+        (item) => normalizeFolderPath(item).toLowerCase() === folder.toLowerCase()
+      );
+      return exists
+        ? normalized.filter(
+            (item) => normalizeFolderPath(item).toLowerCase() !== folder.toLowerCase()
+          )
+        : normalizeProtectedFolders([folder, ...normalized]);
+    });
+    setStatus(
+      activeFolderProtected
+        ? `${folder} will be organized normally after the profile is saved.`
+        : `${folder} will keep existing files in place after the profile is saved.`
+    );
     setStatusTone("is-success");
   };
 
@@ -1253,11 +1291,11 @@ export default function OrganizationSetupWindowPage() {
           <aside className="organization-setup__sidebar">
             <section className="organization-setup__panel">
               <div className="organization-setup__rail organization-setup__root-rail">
-                <span>Project root</span>
+                <span>Root folder</span>
                 <input
                   value={projectRoot}
                   onChange={(event) => setProjectRoot(event.target.value)}
-                  placeholder="Choose a project folder"
+                  placeholder="Choose a root folder"
                   disabled={busy}
                 />
                 <div className="organization-setup__rail-actions">
@@ -1379,7 +1417,7 @@ export default function OrganizationSetupWindowPage() {
                   className="organization-setup__copy-root"
                   onClick={copyRootToProfile}
                   disabled={busy || !scan}
-                  title="Copy the project root's folder structure into the profile section (unsaved) so you can see and edit its tree"
+                  title="Copy the root folder's folder structure into the profile section (unsaved) so you can see and edit its tree"
                 >
                   Copy root to profile
                 </button>
@@ -1456,7 +1494,7 @@ export default function OrganizationSetupWindowPage() {
                 <div className="organization-setup__section-heading">
                   <div>
                     <span>{activeFolderSource === "profile" ? "Profile folder" : "Folder"}</span>
-                    <h2>{activeFolder === "." ? "Project Root (.)" : activeFolder}</h2>
+                    <h2>{activeFolder === "." ? "Root folder (.)" : activeFolder}</h2>
                     <p className="organization-setup__folder-meta">
                       {assignedRoleEntries.length} assigned role(s)
                       {activeFolderSource === "project" && activeFolder === "."
@@ -1495,18 +1533,54 @@ export default function OrganizationSetupWindowPage() {
                       title={
                         activeFolderSource === "profile"
                           ? "Add a folder into the selected profile folder"
-                          : "Add a folder under the selected project folder"
+                          : "Add a folder under the selected root folder"
                       }
                     >
                       Add Folder
                     </button>
+                    <button
+                      type="button"
+                      className={activeFolderProtected ? "is-selected" : ""}
+                      onClick={toggleProtectedFolder}
+                      disabled={busy || !activeFolder || activeFolder === "."}
+                      title={
+                        activeFolderProtected
+                          ? "Files already in this folder stay put when the profile is reapplied"
+                          : "Keep files in this selected folder from being moved when the profile is reapplied"
+                      }
+                    >
+                      Don't Remove Files
+                    </button>
                   </div>
 
                   <div className="organization-setup__assigned-list">
-                    {assignedRoleEntries.length === 0 && assignedProgramEntries.length === 0 ? (
+                    {assignedRoleEntries.length === 0 &&
+                    assignedProgramEntries.length === 0 &&
+                    !activeFolderProtected ? (
                       <p className="organization-setup__assigned-empty">
                         Nothing assigned to this folder yet.
                       </p>
+                    ) : null}
+                    {activeFolderProtected ? (
+                      <div className="organization-setup__assigned-row organization-setup__protected-row">
+                        <span className="organization-setup__assigned-name">
+                          Don't Remove Files
+                        </span>
+                        <span className="organization-setup__assigned-types">
+                          protected on reapply
+                        </span>
+                        <div className="organization-setup__assigned-actions">
+                          <button
+                            type="button"
+                            className="organization-setup__assigned-action"
+                            disabled={busy}
+                            title="Remove this protection"
+                            onClick={toggleProtectedFolder}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
                     ) : null}
                     {assignedRoleEntries.map(({ role, index }) => {
                         const isDirect = isDirectTypeRole(role.roleId);
@@ -1639,7 +1713,7 @@ export default function OrganizationSetupWindowPage() {
               <section className="organization-setup__editor-card organization-setup__empty-settings">
                 <div>
                   <h2>Select a folder</h2>
-                  <p>Click a folder in the Project tree or the Profile section.</p>
+                  <p>Click a folder in the Root folder tree or the Profile section.</p>
                 </div>
               </section>
             )}
@@ -1656,7 +1730,7 @@ export default function OrganizationSetupWindowPage() {
                     id="organization-add-program-title"
                     className="organization-setup__add-role-title"
                   >
-                    Add folder to {activeFolder === "." ? "Project Root (.)" : activeFolder}
+                    Add folder to {activeFolder === "." ? "Root folder (.)" : activeFolder}
                     {activeFolderSource === "profile"
                       ? selectedProfileName
                         ? ` (profile "${selectedProfileName}")`
@@ -2012,7 +2086,7 @@ export default function OrganizationSetupWindowPage() {
               type="button"
               onClick={() => void saveProfile(false)}
               disabled={busy}
-              title="Write this profile (organize-folder.profile.json) into the current project root"
+              title="Write this profile (organize-folder.profile.json) into the current root folder"
             >
               Apply to tree
             </button>

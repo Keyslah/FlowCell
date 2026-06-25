@@ -10308,6 +10308,17 @@ fn panel_script_message_response(message: String) -> Value {
     json!({ "message": message })
 }
 
+fn organization_setup_launcher_response() -> Value {
+    json!({
+        "message": "Setup Organization opens as a FlowCell managed window.",
+        "requires_flowcell_organization_setup_open": true
+    })
+}
+
+fn is_organization_setup_launcher(file_name: &str) -> bool {
+    file_name.trim().eq_ignore_ascii_case("setup_organization.ps1")
+}
+
 fn extract_panel_script_response_message(response: &Value) -> String {
     if let Some(message) = response.as_str().filter(|value| !value.trim().is_empty()) {
         return message.trim().to_string();
@@ -10338,6 +10349,10 @@ fn run_panel_script_response_impl(
     }
 
     if is_windows_program_name(&program_name) {
+        if is_organization_setup_launcher(&validated_file_name) {
+            return Ok(organization_setup_launcher_response());
+        }
+
         if is_flowcell_window_toggle_launcher(&program_name, &panel_name, &validated_file_name) {
             return toggle_flowcell_windows_native(app).map(panel_script_message_response);
         }

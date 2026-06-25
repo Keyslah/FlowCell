@@ -665,6 +665,12 @@
   flex: 1;
 }
 
+.organization-setup__assign-controls button.is-selected,
+.organization-setup__protected-row {
+  border-color: #7aa7d9;
+  background: #1f3140;
+}
+
 .organization-setup__assigned-list {
   display: flex;
   flex-direction: column;
