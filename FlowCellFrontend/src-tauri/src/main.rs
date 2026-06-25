@@ -286,6 +286,29 @@ struct SlicerLauncherSpec {
     config_file_name: Option<&'static str>,
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DetectedSlicerExecutable {
+    executable_path: String,
+    display_name: String,
+    source: String,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SlicerChoiceDialogChoice {
+    display_name: String,
+    executable_path: String,
+    source: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SlicerChoiceDialogResult {
+    kind: String,
+    executable_path: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase")]
 struct LayoutSnapshotBounds {
@@ -2199,6 +2222,381 @@ fn normalized_path_key(path: &Path) -> String {
         .to_ascii_lowercase()
 }
 
+const SLICER_DIRECTORY_TOKENS: &[&str] = &[
+    "anycubic",
+    "bambu",
+    "chitubox",
+    "creality",
+    "cura",
+    "elegoo",
+    "flashprint",
+    "ideamaker",
+    "lychee",
+    "mattercontrol",
+    "orca",
+    "prusa",
+    "slicer",
+    "superslicer",
+    "ultimaker",
+];
+
+const SLICER_EXECUTABLE_TOKENS: &[&str] = &[
+    "anycubic",
+    "bambu",
+    "chitubox",
+    "creality",
+    "cura",
+    "elegoo",
+    "flashprint",
+    "ideamaker",
+    "lychee",
+    "mattercontrol",
+    "orca",
+    "prusa",
+    "slicer",
+    "superslicer",
+    "ultimaker",
+];
+
+const SLICER_HELPER_EXECUTABLE_TOKENS: &[&str] = &[
+    "arduino",
+    "crash",
+    "crashpad",
+    "dpinst",
+    "driver",
+    "engine",
+    "helper",
+    "maintenancetool",
+    "plugin",
+    "repair",
+    "setup",
+    "unins",
+    "uninstall",
+    "update",
+    "updater",
+    "vc_redist",
+];
+
+fn lower_file_name(path: &Path) -> String {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+}
+
+fn name_contains_any_token(name: &str, tokens: &[&str]) -> bool {
+    tokens.iter().any(|token| name.contains(token))
+}
+
+fn is_slicer_candidate_executable(path: &Path, ancestor_matched: bool) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !extension.eq_ignore_ascii_case("exe") {
+        return false;
+    }
+
+    let file_name = lower_file_name(path);
+    if name_contains_any_token(&file_name, SLICER_HELPER_EXECUTABLE_TOKENS) {
+        return false;
+    }
+
+    let _ = ancestor_matched;
+    name_contains_any_token(&file_name, SLICER_EXECUTABLE_TOKENS)
+}
+
+fn readable_display_stem(path: &Path) -> String {
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("Slicer")
+        .replace(['-', '_'], " ");
+    let mut words = Vec::new();
+    for word in stem.split_whitespace() {
+        let mut chars = word.chars();
+        let Some(first) = chars.next() else {
+            continue;
+        };
+        words.push(format!(
+            "{}{}",
+            first.to_uppercase(),
+            chars.as_str().to_lowercase()
+        ));
+    }
+    if words.is_empty() {
+        "Slicer".to_string()
+    } else {
+        words.join(" ")
+    }
+}
+
+fn infer_detected_slicer_display_name(path: &Path) -> String {
+    let file_name = lower_file_name(path);
+    let parent_name = path.parent().map(lower_file_name).unwrap_or_default();
+    let haystack = format!("{file_name} {parent_name}");
+
+    if haystack.contains("orca") {
+        return "Orca".to_string();
+    }
+    if haystack.contains("ultimaker") || haystack.contains("cura") {
+        return "UltiMaker Cura".to_string();
+    }
+    if haystack.contains("prusa") {
+        return "PrusaSlicer".to_string();
+    }
+    if haystack.contains("bambu") {
+        return "Bambu Studio".to_string();
+    }
+    if haystack.contains("anycubic") {
+        return "Anycubic Slicer".to_string();
+    }
+    if haystack.contains("creality") {
+        return "Creality Print".to_string();
+    }
+    if haystack.contains("superslicer") || haystack.contains("super slicer") {
+        return "SuperSlicer".to_string();
+    }
+    if haystack.contains("chitubox") {
+        return "CHITUBOX".to_string();
+    }
+    if haystack.contains("lychee") {
+        return "Lychee Slicer".to_string();
+    }
+    if haystack.contains("ideamaker") {
+        return "ideaMaker".to_string();
+    }
+    if haystack.contains("flashprint") {
+        return "FlashPrint".to_string();
+    }
+    if haystack.contains("mattercontrol") {
+        return "MatterControl".to_string();
+    }
+    if haystack.contains("elegoo") {
+        return "ELEGOO Slicer".to_string();
+    }
+
+    readable_display_stem(path)
+}
+
+fn detected_slicer_family_key(path: &Path, display_name: &str) -> String {
+    let file_name = lower_file_name(path);
+    let parent_name = path.parent().map(lower_file_name).unwrap_or_default();
+    let haystack = format!("{file_name} {parent_name}");
+
+    for token in [
+        "anycubic",
+        "bambu",
+        "chitubox",
+        "creality",
+        "cura",
+        "elegoo",
+        "flashprint",
+        "ideamaker",
+        "lychee",
+        "mattercontrol",
+        "orca",
+        "prusa",
+        "superslicer",
+        "ultimaker",
+    ] {
+        if haystack.contains(token) {
+            return token.to_string();
+        }
+    }
+
+    display_name.to_ascii_lowercase()
+}
+
+fn version_vector_from_text(text: &str) -> Vec<u32> {
+    let mut best = Vec::new();
+    for token in text.split(|character: char| !(character.is_ascii_digit() || character == '.')) {
+        if !token.contains('.') {
+            continue;
+        }
+        let parts = token
+            .split('.')
+            .filter_map(|part| part.parse::<u32>().ok())
+            .collect::<Vec<_>>();
+        if compare_version_vectors(&parts, &best).is_gt() {
+            best = parts;
+        }
+    }
+    best
+}
+
+fn compare_version_vectors(left: &[u32], right: &[u32]) -> std::cmp::Ordering {
+    let length = left.len().max(right.len());
+    for index in 0..length {
+        let left_part = left.get(index).copied().unwrap_or(0);
+        let right_part = right.get(index).copied().unwrap_or(0);
+        match left_part.cmp(&right_part) {
+            std::cmp::Ordering::Equal => continue,
+            ordering => return ordering,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+fn detected_slicer_version(path: &Path) -> Vec<u32> {
+    version_vector_from_text(&path.display().to_string())
+}
+
+fn latest_detected_slicer_executables(
+    found: Vec<DetectedSlicerExecutable>,
+) -> Vec<DetectedSlicerExecutable> {
+    let mut latest_by_family: HashMap<String, DetectedSlicerExecutable> = HashMap::new();
+
+    for candidate in found {
+        let candidate_path = Path::new(&candidate.executable_path);
+        let family_key = detected_slicer_family_key(candidate_path, &candidate.display_name);
+        let candidate_version = detected_slicer_version(candidate_path);
+        match latest_by_family.get(&family_key) {
+            Some(existing) => {
+                let existing_version =
+                    detected_slicer_version(Path::new(&existing.executable_path));
+                let should_replace = compare_version_vectors(&candidate_version, &existing_version)
+                    .is_gt()
+                    || (candidate_version == existing_version
+                        && candidate.executable_path.len() < existing.executable_path.len());
+                if should_replace {
+                    latest_by_family.insert(family_key, candidate);
+                }
+            }
+            None => {
+                latest_by_family.insert(family_key, candidate);
+            }
+        }
+    }
+
+    latest_by_family.into_values().collect()
+}
+
+fn push_slicer_search_root(roots: &mut Vec<PathBuf>, seen: &mut HashSet<String>, path: PathBuf) {
+    if !path.is_dir() {
+        return;
+    }
+    let key = normalized_path_key(&path);
+    if seen.insert(key) {
+        roots.push(path);
+    }
+}
+
+fn detected_slicer_search_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    let mut seen = HashSet::new();
+
+    for variable in ["ProgramFiles", "ProgramFiles(x86)", "ProgramData"] {
+        if let Ok(value) = env::var(variable) {
+            push_slicer_search_root(&mut roots, &mut seen, PathBuf::from(value));
+        }
+    }
+
+    if let Ok(value) = env::var("LOCALAPPDATA") {
+        let local_app_data = PathBuf::from(value);
+        push_slicer_search_root(&mut roots, &mut seen, local_app_data.join("Programs"));
+        push_slicer_search_root(&mut roots, &mut seen, local_app_data);
+    }
+
+    if let Ok(value) = env::var("APPDATA") {
+        push_slicer_search_root(&mut roots, &mut seen, PathBuf::from(value));
+    }
+
+    roots
+}
+
+fn push_detected_slicer_executable(
+    found: &mut Vec<DetectedSlicerExecutable>,
+    seen: &mut HashSet<String>,
+    path: PathBuf,
+) {
+    let key = normalized_path_key(&path);
+    if !seen.insert(key) {
+        return;
+    }
+    found.push(DetectedSlicerExecutable {
+        display_name: infer_detected_slicer_display_name(&path),
+        executable_path: path.display().to_string(),
+        source: "Detected".to_string(),
+    });
+}
+
+fn collect_detected_slicer_executables_from_root(
+    root: &Path,
+    found: &mut Vec<DetectedSlicerExecutable>,
+    seen: &mut HashSet<String>,
+) {
+    const MAX_DEPTH: usize = 5;
+    const MAX_VISITED_DIRECTORIES: usize = 8000;
+
+    let mut stack = vec![(root.to_path_buf(), 0usize, false)];
+    let mut visited = HashSet::new();
+
+    while let Some((directory, depth, ancestor_matched)) = stack.pop() {
+        if visited.len() >= MAX_VISITED_DIRECTORIES {
+            break;
+        }
+        let directory_key = normalized_path_key(&directory);
+        if !visited.insert(directory_key) {
+            continue;
+        }
+
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+
+            if file_type.is_file() {
+                if is_slicer_candidate_executable(&path, ancestor_matched) {
+                    push_detected_slicer_executable(found, seen, path);
+                }
+                continue;
+            }
+
+            if !file_type.is_dir() || depth >= MAX_DEPTH {
+                continue;
+            }
+
+            let directory_name = lower_file_name(&path);
+            let directory_matched = ancestor_matched
+                || name_contains_any_token(&directory_name, SLICER_DIRECTORY_TOKENS);
+            if depth == 0 || directory_matched {
+                stack.push((path, depth + 1, directory_matched));
+            }
+        }
+    }
+}
+
+fn detect_installed_slicer_executables() -> Vec<DetectedSlicerExecutable> {
+    let mut found = Vec::new();
+    let mut seen = HashSet::new();
+    for root in detected_slicer_search_roots() {
+        collect_detected_slicer_executables_from_root(&root, &mut found, &mut seen);
+    }
+    let mut found = latest_detected_slicer_executables(found);
+    found.sort_by(|a, b| {
+        a.display_name
+            .to_ascii_lowercase()
+            .cmp(&b.display_name.to_ascii_lowercase())
+            .then_with(|| {
+                a.executable_path
+                    .to_ascii_lowercase()
+                    .cmp(&b.executable_path.to_ascii_lowercase())
+            })
+    });
+    found
+}
+
+#[tauri::command]
+fn list_detected_slicer_executables() -> Result<Vec<DetectedSlicerExecutable>, String> {
+    Ok(detect_installed_slicer_executables())
+}
+
 #[cfg(windows)]
 struct RunningExecutableWindowSearch {
     executable_path_key: String,
@@ -3173,6 +3571,176 @@ $value = [Microsoft.VisualBasic.Interaction]::InputBox($Prompt, $Title, $Default
     {
         let _ = (title, prompt, default_value);
         Err("Text input dialog is only available on Windows.".to_string())
+    }
+}
+
+#[tauri::command]
+fn show_slicer_choice_dialog(
+    title: String,
+    choices: Vec<SlicerChoiceDialogChoice>,
+) -> Result<Option<SlicerChoiceDialogResult>, String> {
+    #[cfg(windows)]
+    {
+        let choices_json = serde_json::to_string(&choices)
+            .map_err(|error| format!("Failed to serialize slicer choices: {error}"))?;
+        let script = format!(
+            r#"
+$Title = {title}
+$ChoicesJson = @'
+{choices_json}
+'@
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$choices = @()
+if (-not [string]::IsNullOrWhiteSpace($ChoicesJson)) {{
+    $choices = @(ConvertFrom-Json -InputObject $ChoicesJson)
+}}
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = $Title
+$form.StartPosition = 'CenterScreen'
+$form.TopMost = $true
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.ClientSize = New-Object System.Drawing.Size(760, ([Math]::Min(680, [Math]::Max(220, 132 + ([Math]::Max(1, @($choices).Count) * 50)))))
+
+$header = New-Object System.Windows.Forms.Label
+$header.Dock = 'Top'
+$header.Height = 48
+$header.Padding = New-Object System.Windows.Forms.Padding(12, 10, 12, 4)
+$header.Text = 'Click a slicer button, or browse for another EXE.'
+$header.TextAlign = 'MiddleLeft'
+
+$tooltip = New-Object System.Windows.Forms.ToolTip
+$tooltip.AutoPopDelay = 20000
+$tooltip.InitialDelay = 250
+$tooltip.ReshowDelay = 100
+
+$footer = New-Object System.Windows.Forms.Panel
+$footer.Dock = 'Bottom'
+$footer.Height = 58
+$footer.Padding = New-Object System.Windows.Forms.Padding(12)
+
+$browse = New-Object System.Windows.Forms.Button
+$browse.Text = 'Browse...'
+$browse.Width = 128
+$browse.Height = 34
+$browse.Anchor = 'Right,Top'
+$browse.Left = $footer.ClientSize.Width - $browse.Width - 12
+$browse.Top = 12
+$browse.Add_Click({{
+    $form.Tag = (@{{ kind = 'browse'; executablePath = $null }} | ConvertTo-Json -Compress)
+    $form.Close()
+}})
+$footer.Controls.Add($browse) | Out-Null
+$footer.Add_Resize({{
+    $browse.Left = $footer.ClientSize.Width - $browse.Width - 12
+}})
+
+$list = New-Object System.Windows.Forms.FlowLayoutPanel
+$list.Dock = 'Fill'
+$list.FlowDirection = 'TopDown'
+$list.WrapContents = $false
+$list.AutoScroll = $true
+$list.Padding = New-Object System.Windows.Forms.Padding(12, 4, 12, 4)
+
+foreach ($choice in $choices) {{
+    $displayName = [string]$choice.displayName
+    $executablePath = [string]$choice.executablePath
+    $source = [string]$choice.source
+    if ([string]::IsNullOrWhiteSpace($displayName)) {{
+        $displayName = 'Slicer'
+    }}
+    if ([string]::IsNullOrWhiteSpace($executablePath)) {{
+        continue
+    }}
+
+    $pathLeaf = [System.IO.Path]::GetFileName($executablePath)
+    $parentPath = [System.IO.Path]::GetDirectoryName($executablePath)
+    $parentLeaf = [System.IO.Path]::GetFileName($parentPath)
+    $buttonLabel = $displayName
+    if (-not [string]::IsNullOrWhiteSpace($pathLeaf)) {{
+        $buttonLabel = "$buttonLabel  -  $pathLeaf"
+    }}
+    if (-not [string]::IsNullOrWhiteSpace($parentLeaf) -and $parentLeaf -ne $pathLeaf) {{
+        $buttonLabel = "$buttonLabel  ($parentLeaf)"
+    }}
+    if (-not [string]::IsNullOrWhiteSpace($source)) {{
+        $buttonLabel = "$buttonLabel  [$source]"
+    }}
+
+    $button = New-Object System.Windows.Forms.Button
+    $button.Width = 710
+    $button.Height = 42
+    $button.TextAlign = 'MiddleLeft'
+    $button.AutoEllipsis = $true
+    $button.Text = $buttonLabel
+    $tooltip.SetToolTip($button, $executablePath)
+    $pathForButton = $executablePath
+    $button.Add_Click({{
+        $form.Tag = (@{{ kind = 'path'; executablePath = $pathForButton }} | ConvertTo-Json -Compress)
+        $form.Close()
+    }}.GetNewClosure())
+    $list.Controls.Add($button) | Out-Null
+}}
+
+$form.Controls.Add($list)
+$form.Controls.Add($footer)
+$form.Controls.Add($header)
+$form.Add_Shown({{ $form.Activate() }})
+[void]$form.ShowDialog()
+if ($form.Tag) {{
+    [Console]::Out.Write([string]$form.Tag)
+}}
+"#,
+            title = powershell_single_quoted_string(&title),
+            choices_json = choices_json
+        );
+
+        let mut command = Command::new(resolve_powershell_path());
+        command
+            .args([
+                "-NoProfile",
+                "-Sta",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW);
+
+        let output = command
+            .output()
+            .map_err(|error| format!("Failed to open slicer choice dialog: {error}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                "Slicer choice dialog failed.".to_string()
+            } else {
+                stderr
+            });
+        }
+
+        let raw = String::from_utf8_lossy(&output.stdout)
+            .trim_end_matches(['\r', '\n'])
+            .trim()
+            .to_string();
+        if raw.is_empty() {
+            return Ok(None);
+        }
+
+        let result = serde_json::from_str::<SlicerChoiceDialogResult>(&raw)
+            .map_err(|error| format!("Failed to parse slicer choice dialog result: {error}"))?;
+        return Ok(Some(result));
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (title, choices);
+        Err("Slicer choice dialog is only available on Windows.".to_string())
     }
 }
 
@@ -10316,7 +10884,9 @@ fn organization_setup_launcher_response() -> Value {
 }
 
 fn is_organization_setup_launcher(file_name: &str) -> bool {
-    file_name.trim().eq_ignore_ascii_case("setup_organization.ps1")
+    file_name
+        .trim()
+        .eq_ignore_ascii_case("setup_organization.ps1")
 }
 
 fn extract_panel_script_response_message(response: &Value) -> String {
@@ -11513,11 +12083,13 @@ fn main() {
             show_open_folder_dialog,
             show_save_file_dialog,
             show_text_input_dialog,
+            show_slicer_choice_dialog,
             sample_photo_theme_colors,
             load_blender_theme_darkness_profiles,
             save_blender_theme_darkness_profiles,
             save_blender_theme_file,
             load_blender_theme_file,
+            list_detected_slicer_executables,
             load_slicer_executable,
             launch_slicer,
             load_orca_slicer_executable,

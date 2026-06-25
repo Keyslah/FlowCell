@@ -913,6 +913,30 @@ export function showTextInputDialog(args: {
   });
 }
 
+export interface SlicerExecutableChoice {
+  displayName: string;
+  executablePath: string;
+  source?: string;
+}
+
+export type SlicerChoiceDialogResult =
+  | { kind: "path"; executablePath: string }
+  | { kind: "browse"; executablePath?: null };
+
+export function showSlicerChoiceDialog(args: {
+  title: string;
+  choices: SlicerExecutableChoice[];
+}): Promise<SlicerChoiceDialogResult | null> {
+  return invoke("show_slicer_choice_dialog", {
+    title: args.title,
+    choices: args.choices
+  });
+}
+
+export function listDetectedSlicerExecutables(): Promise<SlicerExecutableChoice[]> {
+  return invoke("list_detected_slicer_executables");
+}
+
 export function samplePhotoThemeColors(
   imagePath: string
 ): Promise<SampledPhotoThemeColors> {

@@ -90,7 +90,7 @@
                     },
                     {
                         "label":  "save stl",
-                        "tooltip":  "Export the selected mesh objects to 01 src\\00 assets\\03 3d as a uniquely named STL.",
+                        "tooltip":  "Export the selected mesh objects to the active organization profile's STL destination as a uniquely named STL.",
                         "action":  "save_selected_stl_to_assets"
                     },
                     {
@@ -399,7 +399,7 @@
                     },
                     {
                         "label":  "save stl",
-                        "tooltip":  "Export the selected mesh objects to 01 src\\00 assets\\03 3d as a uniquely named STL.",
+                        "tooltip":  "Export the selected mesh objects to the active organization profile's STL destination as a uniquely named STL.",
                         "action":  "flowcell_custom_save_stl"
                     },
                     {

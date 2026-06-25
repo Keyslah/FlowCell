@@ -20,7 +20,7 @@ Flatten Revolve: Flatten the active mesh into a centered profile, hide the sourc
 
 Cursor Center Hole: With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.
 
-Save STL: Export the selected mesh objects to 01 src\00 assets\03 3d as a uniquely named STL.
+Save STL: Export the selected mesh objects to the active organization profile's STL destination, falling back to 01 src\00 assets\03 3d.
 
 Save PNG: Render the active selected object from the current scene camera to 01 src\00 assets\01 images as a transparent PNG cropped exactly to the visible object bounds.
 
@@ -270,7 +270,7 @@ def sanitize_export_stem(name: str) -> str:
     return cleaned
 
 
-def get_assets_subdirectory_from_current_file(*relative_parts: str) -> Path:
+def get_project_root_from_current_file() -> Path:
     blend_filepath = str(bpy.data.filepath or "").strip()
     if not blend_filepath:
         raise ValueError(
@@ -280,31 +280,230 @@ def get_assets_subdirectory_from_current_file(*relative_parts: str) -> Path:
     blend_path = Path(blend_filepath)
     search_roots = [blend_path.parent, *blend_path.parent.parents]
     for candidate in search_roots:
-        if candidate.name.casefold() != "01 src":
-            continue
-        assets_dir = candidate / "00 assets"
-        for part in relative_parts:
-            assets_dir /= part
-        assets_dir.mkdir(parents=True, exist_ok=True)
-        return assets_dir
+        if candidate.name.casefold() == "01 src":
+            return candidate.parent
 
     for candidate in search_roots:
         src_root = candidate / "01 src"
         if not src_root.is_dir():
             continue
-        assets_dir = src_root / "00 assets"
-        for part in relative_parts:
-            assets_dir /= part
-        assets_dir.mkdir(parents=True, exist_ok=True)
-        return assets_dir
+        return candidate
 
     raise ValueError(
         "FlowCell could not find '01 src' from the current .blend file path."
     )
 
 
+def get_assets_subdirectory_from_current_file(*relative_parts: str) -> Path:
+    project_root = get_project_root_from_current_file()
+    assets_dir = project_root / "01 src" / "00 assets"
+    for part in relative_parts:
+        assets_dir /= part
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    return assets_dir
+
+
 def get_assets_3d_directory_from_current_file() -> Path:
     return get_assets_subdirectory_from_current_file("03 3d")
+
+
+def normalize_profile_extension(value: object) -> str:
+    extension = str(value or "").strip().lower()
+    if not extension:
+        return ""
+    return extension if extension.startswith(".") else f".{extension}"
+
+
+def normalize_profile_role_id(value: object) -> str:
+    return re.sub(r"[^a-z0-9._-]+", "_", str(value or "").strip().lower()).strip("_.-")
+
+
+def profile_list(value: object) -> list:
+    return value if isinstance(value, list) else []
+
+
+def load_organization_profile(project_root: Path) -> dict | None:
+    for profile_path in (
+        project_root / "organize-folder.profile.json",
+        project_root / ".flowcell" / "organization-profile.json",
+    ):
+        if not profile_path.is_file():
+            continue
+        with profile_path.open("r", encoding="utf-8-sig") as handle:
+            profile = json.load(handle)
+        return profile if isinstance(profile, dict) else None
+    return None
+
+
+def path_is_under_root(path: Path, root: Path) -> bool:
+    try:
+        normalized_path = os.path.normcase(os.path.abspath(str(path)))
+        normalized_root = os.path.normcase(os.path.abspath(str(root)))
+        return os.path.commonpath([normalized_path, normalized_root]) == normalized_root
+    except Exception:
+        return False
+
+
+def resolve_profile_folder(project_root: Path, folder: object) -> Path:
+    folder_text = str(folder or "").strip()
+    if not folder_text or folder_text == ".":
+        return project_root
+    folder_path = Path(folder_text)
+    if folder_path.is_absolute():
+        raise ValueError(f"Organization profile folder must be relative: {folder_text}")
+    destination = project_root / folder_text.replace("\\", "/")
+    if not path_is_under_root(destination, project_root):
+        raise ValueError(f"Organization profile folder escapes the project root: {folder_text}")
+    destination.mkdir(parents=True, exist_ok=True)
+    return destination
+
+
+def role_folder_for_profile(project_root: Path, role: dict) -> Path:
+    folder = str(role.get("folder", "") or "").strip()
+    if not folder and normalize_profile_role_id(role.get("roleId", "")) != "unknown":
+        folder = normalize_profile_role_id(role.get("roleId", ""))
+    return resolve_profile_folder(project_root, folder)
+
+
+def unnumbered_program_folder_name(name: str) -> str:
+    return re.sub(r"^\d+\s+", "", name or "").strip()
+
+
+def next_program_folder_number(src_root: Path) -> int:
+    numbers = []
+    if src_root.is_dir():
+        for child in src_root.iterdir():
+            if not child.is_dir() or child.name.casefold() == "00 assets":
+                continue
+            match = re.match(r"^(\d+)\s+", child.name)
+            if match:
+                numbers.append(int(match.group(1)))
+    return (max(numbers) + 1) if numbers else 1
+
+
+def resolve_program_root(src_root: Path, name: str) -> Path:
+    display_name = str(name or "").strip()
+    if not display_name or display_name in {".", ".."} or INVALID_FILENAME_CHARS_RE.search(display_name):
+        raise ValueError(f"Program folder name is not valid: {display_name or name}")
+    if src_root.is_dir():
+        for child in sorted((item for item in src_root.iterdir() if item.is_dir()), key=lambda item: item.name.lower()):
+            if unnumbered_program_folder_name(child.name).casefold() == display_name.casefold():
+                return child
+    return src_root / f"{next_program_folder_number(src_root):02d} {display_name}"
+
+
+def role_file_types(role: dict) -> set[str]:
+    return {
+        extension
+        for extension in (normalize_profile_extension(raw) for raw in profile_list(role.get("fileTypes", [])))
+        if extension
+    }
+
+
+def resolve_program_live_destination(profile: dict, project_root: Path, extension: str) -> Path | None:
+    roles_by_id = {
+        normalize_profile_role_id(role.get("roleId", "")): role
+        for role in profile_list(profile.get("roles", []))
+        if isinstance(role, dict)
+    }
+    matches = []
+    for program in profile_list(profile.get("programFolders", [])):
+        if not isinstance(program, dict):
+            continue
+        extensions = {
+            item
+            for item in (normalize_profile_extension(raw) for raw in profile_list(program.get("fileTypes", [])))
+            if item
+        }
+        for raw_role_id in profile_list(program.get("roles", [])):
+            role = roles_by_id.get(normalize_profile_role_id(raw_role_id))
+            if role:
+                extensions.update(role_file_types(role))
+        if extension not in extensions:
+            continue
+        display_name = str(
+            program.get("displayName")
+            or program.get("folder")
+            or program.get("programId")
+            or "Slicer"
+        ).strip()
+        if display_name:
+            matches.append(display_name)
+
+    unique_matches = sorted({match.casefold(): match for match in matches}.values(), key=str.lower)
+    if len(unique_matches) > 1:
+        raise ValueError(
+            f"STL is assigned to multiple program folders: {', '.join(unique_matches)}."
+        )
+    if not unique_matches:
+        return None
+
+    src_root = project_root / "01 src"
+    assets_root = src_root / "00 assets"
+    assets_root.mkdir(parents=True, exist_ok=True)
+    program_root = resolve_program_root(src_root, unique_matches[0])
+    live_directory = program_root / "01 live"
+    for directory in (
+        live_directory,
+        program_root / "02 snapshots",
+        program_root / "03 archive",
+        program_root / "04 trash",
+    ):
+        directory.mkdir(parents=True, exist_ok=True)
+    return live_directory
+
+
+def resolve_role_destination(profile: dict, project_root: Path, extension: str) -> Path | None:
+    roles = [role for role in profile_list(profile.get("roles", [])) if isinstance(role, dict)]
+    roles_by_id = {normalize_profile_role_id(role.get("roleId", "")): role for role in roles}
+
+    remembered_role_id = ""
+    remembered_choices = profile.get("rememberedChoices")
+    if isinstance(remembered_choices, dict):
+        remembered = remembered_choices.get(extension)
+        if isinstance(remembered, str):
+            remembered_role_id = normalize_profile_role_id(remembered)
+        elif isinstance(remembered, dict):
+            remembered_role_id = normalize_profile_role_id(remembered.get("roleId", ""))
+    if remembered_role_id and remembered_role_id in roles_by_id:
+        return role_folder_for_profile(project_root, roles_by_id[remembered_role_id])
+
+    matches = [
+        role
+        for role in roles
+        if not bool(role.get("catchAllUnmatched", False)) and extension in role_file_types(role)
+    ]
+    if len(matches) == 1:
+        return role_folder_for_profile(project_root, matches[0])
+    if len(matches) > 1:
+        role_names = ", ".join(str(role.get("displayName") or role.get("roleId") or "Role") for role in matches)
+        raise ValueError(f"STL is assigned to multiple organization roles: {role_names}.")
+
+    unknown = roles_by_id.get("unknown")
+    if unknown:
+        folder = str(unknown.get("folder", "") or "").strip()
+        if folder and folder != ".":
+            return role_folder_for_profile(project_root, unknown)
+
+    return None
+
+
+def get_stl_export_directory_from_current_profile() -> Path:
+    project_root = get_project_root_from_current_file()
+    profile = load_organization_profile(project_root)
+    if not profile:
+        return get_assets_3d_directory_from_current_file()
+
+    extension = ".stl"
+    program_destination = resolve_program_live_destination(profile, project_root, extension)
+    if program_destination:
+        return program_destination
+
+    role_destination = resolve_role_destination(profile, project_root, extension)
+    if role_destination:
+        return role_destination
+
+    return get_assets_3d_directory_from_current_file()
 
 
 def get_assets_images_directory_from_current_file() -> Path:
@@ -1310,7 +1509,7 @@ def perform_save_selected_stl_to_assets_result(
     if not selected_meshes:
         raise ValueError("Select at least one mesh object to export an STL.")
 
-    assets_dir = get_assets_3d_directory_from_current_file()
+    export_dir = get_stl_export_directory_from_current_profile()
     export_scale = get_stl_export_scale_for_millimeters(context.scene)
 
     view_layer = context.view_layer
@@ -1338,7 +1537,7 @@ def perform_save_selected_stl_to_assets_result(
                 if requested_name.strip() and len(selected_meshes) == 1
                 else sanitize_export_stem(strip_hidden_name_pad(strip_version_prefix(obj.name) or obj.name))
             )
-            export_path = get_overwrite_export_path(assets_dir, export_stem, ".stl")
+            export_path = get_overwrite_export_path(export_dir, export_stem, ".stl")
 
             result = bpy.ops.wm.stl_export(
                 filepath=str(export_path),
@@ -1382,7 +1581,7 @@ def perform_save_selected_stl_to_assets_result(
         }
 
     return {
-        "message": f"Saved {exported_count} STL files to {assets_dir}",
+        "message": f"Saved {exported_count} STL files to {export_dir}",
         "exported_paths": [str(path) for path in exported_paths],
     }
 
@@ -3883,8 +4082,6 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
-
 
 
 
