@@ -4,10 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "node scripts/patch-slicer-launcher.mjs && vite --host 127.0.0.1 --port 1420",
-    "build": "node scripts/patch-slicer-launcher.mjs && tsc && vite build",
+    "patch:slicer": "node -e \"const fs=require('node:fs');const p='src-tauri/src/main.rs';let s=fs.readFileSync(p,'utf8');const old=['    let single_instance_handoff = executable_has_running_window(&executable)','        && executable_supports_single_instance_arg(&executable);','','    let mut command = Command::new(&executable);','    if single_instance_handoff {','        command.arg(SLICER_SINGLE_INSTANCE_ARG);','    }','    command.args(&model_paths);'].join('\\n');const neu=['    let was_running = executable_has_running_window(&executable);','','    let mut command = Command::new(&executable);','    command.args(&model_paths);'].join('\\n');let n=s.split(old).join(neu).split('    if single_instance_handoff {').join('    if was_running {');if(n!==s){fs.writeFileSync(p,n);console.log('Patched slicer launcher.')}\"",
+    "predev": "npm run patch:slicer",
+    "prebuild": "npm run patch:slicer",
+    "pretauri": "npm run patch:slicer",
+    "dev": "vite --host 127.0.0.1 --port 1420",
+    "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "node scripts/patch-slicer-launcher.mjs && tauri"
+    "tauri": "tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
