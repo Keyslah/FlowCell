@@ -114,6 +114,11 @@ function responseMessage(response: unknown): string {
   );
 }
 
+export function readPanelScriptStatusMessage(message: string): string {
+  const trimmed = readString(message);
+  return trimmed && trimmed !== "Script completed." ? trimmed : "";
+}
+
 type SlicerLauncherId = "orca" | "cura" | "slicer";
 
 function isFlowCellSlicerLaunchResponse(

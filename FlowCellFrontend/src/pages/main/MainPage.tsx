@@ -44,6 +44,7 @@ import {
   listPanelFolders,
   listPanelScriptFiles,
   listProgramFolders,
+  readPanelScriptStatusMessage,
   renamePanelFolder,
   renameProgramFolder,
   runPanelScript,
@@ -1203,7 +1204,15 @@ export default function MainPage() {
 
     try {
       setScriptRunError(null);
-      await runPanelScript(selectedProgramName, selectedPanelName, fileName);
+      const statusMessage = readPanelScriptStatusMessage(
+        await runPanelScript(selectedProgramName, selectedPanelName, fileName)
+      );
+      if (statusMessage) {
+        setScriptRunError({
+          title: "Script status.",
+          detail: statusMessage
+        });
+      }
     } catch (error) {
       console.error(`Failed to run panel script for ${selectedProgramName}.`, error);
       setScriptRunError({

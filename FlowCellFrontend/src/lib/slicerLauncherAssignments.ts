@@ -1,4 +1,4 @@
-import { showOpenFileDialog } from "./tauri";
+import { showOpenFileDialog, showTextInputDialog } from "./tauri";
 
 type SlicerLauncherId = "orca" | "cura" | "slicer";
 
@@ -189,11 +189,21 @@ function rememberRecentSlicerExecutable(executablePath: string, displayName: str
   writeJsonStorage(SLICER_RECENTS_STORAGE_KEY, next.slice(0, MAX_RECENT_SLICERS));
 }
 
-function chooseRecentSlicerExecutable(): RecentSlicerChoice {
+async function chooseRecentSlicerExecutable(): Promise<RecentSlicerChoice> {
   const recents = readRecentSlicerExecutables();
   if (recents.length === 0 || typeof window === "undefined") return { kind: "browse" };
   const list = recents.map((item, index) => `${index + 1}. ${item.displayName}\n   ${item.executablePath}`).join("\n");
-  const answer = window.prompt(`Use a recent slicer, or browse for a new one.\n\n${list}\n\nEnter a number, B to browse, or leave blank to cancel.`, "B");
+  const prompt = `Use a recent slicer, or browse for a new one.\n\n${list}\n\nEnter a number, B to browse, or leave blank to cancel.`;
+  let answer: string | null = null;
+  try {
+    answer = await showTextInputDialog({
+      title: "Choose Slicer",
+      prompt,
+      defaultValue: "B"
+    });
+  } catch {
+    answer = window.prompt(prompt, "B");
+  }
   if (answer === null || !answer.trim()) return { kind: "cancel" };
   const trimmed = answer.trim().toLowerCase();
   if (trimmed === "b" || trimmed === "browse") return { kind: "browse" };
@@ -216,19 +226,28 @@ async function resolveExecutableForNewSlicerButton(spec: SlicerLauncherSpec, det
     const useDetected = window.confirm(`FlowCell found ${spec.displayName} here:\n\n${detectedExecutable}\n\nUse this slicer for this button?\n\nChoose Cancel to pick a recent slicer or browse for a different ${spec.executableLabel}.`);
     if (useDetected) return detectedExecutable;
   }
-  const recentChoice = chooseRecentSlicerExecutable();
+  const recentChoice = await chooseRecentSlicerExecutable();
   if (recentChoice.kind === "cancel") return "";
   if (recentChoice.kind === "path") return recentChoice.path;
   return pickSlicerExecutable(detectedExecutable, spec.executableLabel);
 }
 
-function promptForSlicerButtonName(executablePath: string, fallback: string): string {
+async function promptForSlicerButtonName(executablePath: string, fallback: string): Promise<string> {
   const suggestedName = inferSlicerDisplayName(executablePath, fallback);
   if (typeof window === "undefined") return suggestedName;
-  const chosenName = window.prompt(
-    "Name this slicer button. This only renames this button instance.",
-    suggestedName
-  );
+  let chosenName: string | null = null;
+  try {
+    chosenName = await showTextInputDialog({
+      title: "Name Slicer Button",
+      prompt: "Name this slicer button. This only renames this button instance.",
+      defaultValue: suggestedName
+    });
+  } catch {
+    chosenName = window.prompt(
+      "Name this slicer button. This only renames this button instance.",
+      suggestedName
+    );
+  }
   return readString(chosenName) || suggestedName;
 }
 
@@ -281,7 +300,7 @@ export async function handleSlicerLaunchForPanelButton(
   const detectedExecutable = readString(response.detected_executable ?? response.detectedExecutable);
   const executablePath = await resolveExecutableForNewSlicerButton(spec, detectedExecutable);
   if (!executablePath) return `${spec.displayName} launch cancelled.`;
-  const displayName = promptForSlicerButtonName(executablePath, spec.displayName);
+  const displayName = await promptForSlicerButtonName(executablePath, spec.displayName);
   saveSlicerButtonAssignment(context, executablePath, displayName);
   return launchSlicer(spec.id, executablePath, exportedPaths);
 }

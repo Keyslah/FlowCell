@@ -19,6 +19,7 @@ import { writePanelFanDiagnostics } from "../../lib/panelFanDiagnostics";
 import { writeRegisteredLayoutWindowSnapshotBounds } from "../../lib/layoutSnapshots";
 import {
   listPanelScriptFiles,
+  readPanelScriptStatusMessage,
   runPanelScript,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
@@ -1238,13 +1239,21 @@ export default function PanelFanToolPopoutWindowPage({
   };
 
   const handleChildClick = async (entry: FanClusterEntry) => {
-    if (!ownerPinnedOpen) {
-      requestCollapse({ force: true });
-    }
+    const collapseAfterRun = !ownerPinnedOpen;
+    let keepOpenForFeedback = false;
 
     try {
       setScriptRunError(null);
-      await runPanelScript(context.programName, context.panelName, entry.childSlotId);
+      const statusMessage = readPanelScriptStatusMessage(
+        await runPanelScript(context.programName, context.panelName, entry.childSlotId)
+      );
+      if (statusMessage) {
+        keepOpenForFeedback = true;
+        setScriptRunError({
+          title: "Script status.",
+          detail: statusMessage
+        });
+      }
     } catch (error) {
       console.error(
         `Failed to run panel fan child ${entry.childSlotId} for ${context.programName}/${context.panelName}.`,
@@ -1254,6 +1263,11 @@ export default function PanelFanToolPopoutWindowPage({
         title: "Panel script could not be run.",
         detail: formatErrorMessage(error)
       });
+      keepOpenForFeedback = true;
+    } finally {
+      if (collapseAfterRun && !keepOpenForFeedback) {
+        requestCollapse({ force: true });
+      }
     }
   };
 
