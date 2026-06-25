@@ -76,8 +76,6 @@ SEARCH_PATTERNS = [
     r'OrcaSlicer*/orca-slicer.exe',
     r'Programs/OrcaSlicer*/orca-slicer.exe',
 ]
-ORCA_SINGLE_INSTANCE_ARG = "--single-instance"
-CREATE_NO_WINDOW = 0x08000000
 
 
 def _find_executable():
@@ -104,46 +102,19 @@ def _find_executable():
     return None
 
 
-def _is_orca_running(executable):
-    if os.name != "nt":
-        return False
-    try:
-        completed = subprocess.run(
-            ["tasklist", "/FI", f"IMAGENAME eq {executable.name}", "/FO", "CSV", "/NH"],
-            capture_output=True,
-            text=True,
-            creationflags=CREATE_NO_WINDOW,
-            check=False,
-        )
-    except Exception:
-        return False
-    output = f"{completed.stdout}\n{completed.stderr}".lower()
-    return executable.name.lower() in output and "no tasks" not in output
-
-
-def _launch_orca(executable, exported_paths, export_message=""):
-    was_running = _is_orca_running(executable)
-    args = [str(executable)]
-    if was_running:
-        args.append(ORCA_SINGLE_INSTANCE_ARG)
-    args.extend(exported_paths)
-
-    try:
-        subprocess.Popen(args, cwd=str(executable.parent))
-    except Exception as exc:
-        prefix = f"{export_message} " if export_message else ""
-        return {
-            "message": f"{prefix}OrcaSlicer launch failed: {exc}",
-            "exported_paths": exported_paths,
-            "launch_failed": True,
-        }
-
-    count = len(exported_paths)
-    file_label = "file" if count == 1 else "files"
-    action = "Sent" if was_running else "Launched"
-    target = "to the open OrcaSlicer window" if was_running else "with OrcaSlicer"
-    prefix = f"{export_message} " if export_message else ""
-    return {"message": f"{prefix}{action} {count} STL {file_label} {target}.", "exported_paths": exported_paths}
+def _request_flowcell_launch(executable, exported_paths, export_message=""):
+    message = export_message or "Saved STL files."
+    return {
+        "message": f"{message} Confirm the Orca EXE in FlowCell to launch the exported STL files.",
+        "requires_flowcell_slicer_launch": True,
+        "requires_flowcell_orca_launch": True,
+        "requires_flowcell_cura_launch": False,
+        "slicer_id": "orca",
+        "slicer_display_name": "OrcaSlicer",
+        "executable_label": "Orca EXE",
+        "detected_executable": str(executable or ""),
+        "exported_paths": exported_paths,
+    }
 
 
 def run_flowcell_action(context=None, data=None):
@@ -154,9 +125,6 @@ def run_flowcell_action(context=None, data=None):
     if not exported_paths:
         raise ValueError("STL export did not return any file paths.")
 
-    executable = _find_executable()
-    if executable is None:
-        message = str(result.get("message", "Saved STL files."))
-        return {"message": f"{message} Could not find OrcaSlicer.", "exported_paths": exported_paths}
-
-    return _launch_orca(executable, exported_paths, str(result.get("message", "Saved STL files.")))
+    export_message = str(result.get("message", "Saved STL files."))
+    detected_executable = _find_executable()
+    return _request_flowcell_launch(detected_executable, exported_paths, export_message)
