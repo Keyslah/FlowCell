@@ -68,6 +68,37 @@ function Normalize-Extension([string]$Value) {
     return $extension
 }
 
+function Normalize-ProtectedFolder([string]$Value) {
+    $folder = $Value.Trim().Replace('\','/').Trim('/')
+    if ($folder.StartsWith('./')) { $folder = $folder.Substring(2) }
+    if ([string]::IsNullOrWhiteSpace($folder) -or $folder -eq '.' -or $folder -match '(^|/)\.\.(/|$)') { return '' }
+    return $folder
+}
+
+function Get-ProtectedFolderRoots([object]$Profile, [string]$TargetRoot) {
+    $roots = New-Object System.Collections.Generic.List[string]
+    $seen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($raw in @(Get-ProfilePropertyValue $Profile 'protectedFolders' @())) {
+        $folder = Normalize-ProtectedFolder ([string]$raw)
+        if (-not $folder) { continue }
+        $full = [System.IO.Path]::GetFullPath((Join-Path $TargetRoot ($folder.Replace('/','\')))).TrimEnd('\','/')
+        $root = [System.IO.Path]::GetFullPath($TargetRoot).TrimEnd('\','/')
+        if (($full.Equals($root, [System.StringComparison]::OrdinalIgnoreCase) -or $full.StartsWith($root + '\', [System.StringComparison]::OrdinalIgnoreCase)) -and $seen.Add($full)) {
+            $roots.Add($full) | Out-Null
+        }
+    }
+    return $roots.ToArray()
+}
+
+function Test-InProtectedFolder([string]$FilePath, [object[]]$ProtectedRoots) {
+    $full = [System.IO.Path]::GetFullPath($FilePath)
+    foreach ($protectedRoot in @($ProtectedRoots)) {
+        $root = ([string]$protectedRoot).TrimEnd('\','/')
+        if ($full.Equals($root, [System.StringComparison]::OrdinalIgnoreCase) -or $full.StartsWith($root + '\', [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
+}
+
 function Get-UnnumberedFolderName([string]$Name) {
     return ([System.Text.RegularExpressions.Regex]::Replace($Name, '^\d+\s+', '')).Trim()
 }
@@ -244,6 +275,7 @@ $profileJson = ($profile | ConvertTo-Json -Depth 12) + [Environment]::NewLine
 $srcRoot = Join-Path $target '01 src'
 $assetsRoot = Join-Path $srcRoot '00 assets'
 $programDefinitions = @(Get-ProgramDefinitions -Profile $profile)
+$protectedFolderRoots = @(Get-ProtectedFolderRoots -Profile $profile -TargetRoot $target)
 
 # Program working files are gathered only from inside 01 src, plus loose files
 # dropped at the project root (which get filed into 01 src). Every 01 src sibling
@@ -256,6 +288,7 @@ $allFiles = @(
     Get-ChildItem -LiteralPath $target -Recurse -File -Force | Where-Object {
         if ($_.Name.ToLowerInvariant().StartsWith('organize-folder.')) { return $false }
         if ($_.FullName -match '(?i)[\\/](?:\d+\s+)?(?:snapshots|archive|trash)[\\/]') { return $false }
+        if (Test-InProtectedFolder -FilePath $_.FullName -ProtectedRoots $protectedFolderRoots) { return $false }
         $parent = Split-Path -Parent $_.FullName
         if ([string]::Equals($parent, $target, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
         return $_.FullName.StartsWith($srcPrefix, [System.StringComparison]::OrdinalIgnoreCase)
