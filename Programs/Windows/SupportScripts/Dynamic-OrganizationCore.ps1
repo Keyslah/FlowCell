@@ -36,6 +36,12 @@ function UnderRoot([string]$Candidate, [string]$Root) {
     $r = (FullPath $Root).TrimEnd('\')
     return $c.Equals($r, [System.StringComparison]::OrdinalIgnoreCase) -or $c.StartsWith($r + '\', [System.StringComparison]::OrdinalIgnoreCase)
 }
+function NormalizeProtectedFolder([string]$Text) {
+    $folder = $Text.Trim().Replace('\','/').Trim('/')
+    if ($folder.StartsWith('./')) { $folder = $folder.Substring(2) }
+    if ([string]::IsNullOrWhiteSpace($folder) -or $folder -eq '.' -or $folder -match '(^|/)\.\.(/|$)') { return '' }
+    return $folder
+}
 
 $projectRoot = FullPath $ProjectPath
 if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) { throw "Project folder does not exist: $projectRoot" }
@@ -60,19 +66,12 @@ function New-StarterProfile {
         roles = @(
             [PSCustomObject][ordered]@{ roleId='project_root'; displayName='Project Root'; folder='.'; fileTypes=@(); preset=$true; description='The project root itself.' },
             [PSCustomObject][ordered]@{ roleId='unknown'; displayName='Unknown Files'; folder=''; fileTypes=@(); preset=$true; catchAllUnmatched=$true; description='Unknown catches loose files whose file type does not match another role.' },
-            [PSCustomObject][ordered]@{ roleId='clean_stl'; displayName='Clean STL'; folder='Meshes\Clean STLs'; fileTypes=@() },
-            [PSCustomObject][ordered]@{ roleId='dirty_stl'; displayName='Dirty STL'; folder='Meshes\Dirty STLs'; fileTypes=@() },
-            [PSCustomObject][ordered]@{ roleId='svg_export'; displayName='SVG Export'; folder='Illustrator\SVG Exports'; fileTypes=@('.svg','.eps') },
-            [PSCustomObject][ordered]@{ roleId='laser_svg'; displayName='Laser SVG'; folder='Illustrator\Laser SVG'; fileTypes=@() },
-            [PSCustomObject][ordered]@{ roleId='gcode'; displayName='GCode'; folder='Orca\GCode'; fileTypes=@('.gcode','.nc','.tap') }
+            [PSCustomObject][ordered]@{ roleId='images'; displayName='Images'; folder=''; fileTypes=@('.png','.jpg','.jpeg','.webp','.gif','.bmp','.tif','.tiff') },
+            [PSCustomObject][ordered]@{ roleId='svg'; displayName='SVG'; folder=''; fileTypes=@('.svg','.eps') },
+            [PSCustomObject][ordered]@{ roleId='3d'; displayName='3D'; folder=''; fileTypes=@('.stl','.obj','.fbx','.glb','.gltf','.3mf','.ply','.dae','.usd','.usdz','.abc','.x3d','.step','.stp','.iges','.igs') }
         )
-        programFolders = @(
-            [PSCustomObject][ordered]@{ programId='blender'; displayName='Blender'; folder='Blender'; fileTypes=@('.blend'); createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@() },
-            [PSCustomObject][ordered]@{ programId='illustrator'; displayName='Illustrator'; folder='Illustrator'; fileTypes=@('.ai','.ait'); createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@('svg_export','laser_svg') },
-            [PSCustomObject][ordered]@{ programId='photoshop'; displayName='Photoshop'; folder='Photoshop'; fileTypes=@('.psd','.psb'); createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@() },
-            [PSCustomObject][ordered]@{ programId='meshes'; displayName='Meshes'; folder='Meshes'; fileTypes=@('.stl','.obj'); createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@('clean_stl','dirty_stl') },
-            [PSCustomObject][ordered]@{ programId='orca'; displayName='Orca'; folder='Orca'; fileTypes=@('.gcode','.nc','.tap'); createOnlyIfMatchingFilesOrRolesPresent=$true; roles=@('gcode') }
-        )
+        programFolders = @()
+        protectedFolders = @()
         rememberedChoices = [PSCustomObject]@{}
     }
 }
@@ -90,7 +89,11 @@ function Normalize-Profile([object]$Profile) {
         if (-not $id -or -not $seen.Add($id)) { continue }
         $exts = New-Object System.Collections.Generic.List[string]
         $extSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-        foreach ($raw in @(PropertyValue $role 'fileTypes' @())) { $e = CleanExt ([string]$raw); if ($e -and $extSeen.Add($e)) { $exts.Add($e) | Out-Null } }
+        foreach ($raw in @(PropertyValue $role 'fileTypes' @())) {
+            $e = CleanExt ([string]$raw)
+            if ($id -eq '3d' -and $e -eq '.blend') { continue }
+            if ($e -and $extSeen.Add($e)) { $exts.Add($e) | Out-Null }
+        }
         $displayName = [string](PropertyValue $role 'displayName' $id)
         $folder = [string](PropertyValue $role 'folder' '')
         $roles.Add([PSCustomObject][ordered]@{
@@ -155,6 +158,14 @@ function Normalize-Profile([object]$Profile) {
         }) | Out-Null
     }
     $Profile.programFolders = $programFolders.ToArray()
+
+    $protectedFolders = New-Object System.Collections.Generic.List[string]
+    $protectedSeen = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($raw in @(PropertyValue $Profile 'protectedFolders' @())) {
+        $folder = NormalizeProtectedFolder ([string]$raw)
+        if ($folder -and $protectedSeen.Add($folder)) { $protectedFolders.Add($folder) | Out-Null }
+    }
+    $Profile | Add-Member -NotePropertyName protectedFolders -NotePropertyValue $protectedFolders.ToArray() -Force
     return $Profile
 }
 
@@ -165,6 +176,26 @@ function RoleFolder([object]$Role) {
     $full = FullPath (Join-Path $projectRoot $folder)
     if (-not (UnderRoot $full $projectRoot)) { throw "Role folder escapes project root: $folder" }
     return $full
+}
+
+function ProtectedFolderRoots([object]$Profile) {
+    $roots = New-Object System.Collections.Generic.List[string]
+    foreach ($folder in @(PropertyValue $Profile 'protectedFolders' @())) {
+        $normalized = NormalizeProtectedFolder ([string]$folder)
+        if (-not $normalized) { continue }
+        $full = FullPath (Join-Path $projectRoot ($normalized.Replace('/','\')))
+        if (UnderRoot $full $projectRoot) { $roots.Add($full.TrimEnd('\','/')) | Out-Null }
+    }
+    return $roots.ToArray()
+}
+
+function IsInProtectedFolder([string]$FilePath, [object[]]$ProtectedRoots) {
+    $full = (FullPath $FilePath)
+    foreach ($root in @($ProtectedRoots)) {
+        $protected = ([string]$root).TrimEnd('\','/')
+        if ($full.Equals($protected, [System.StringComparison]::OrdinalIgnoreCase) -or $full.StartsWith($protected + '\', [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+    }
+    return $false
 }
 
 function MatchLooseFile([object]$Profile, [System.IO.FileInfo]$File) {
@@ -230,12 +261,14 @@ else {
         $programJson = & $applyCore -ProfilePath $ProfilePath -ProjectPath $projectRoot -PassThruJson
         $programResult = $programJson | ConvertFrom-Json
     }
+    $protectedFolderRoots = @(ProtectedFolderRoots $profile)
     $folderArgs = @{ LiteralPath=$projectRoot; File=$true; Force=$true; ErrorAction='SilentlyContinue' }
     if ($LooseFileSearchMode -eq 'Recursive') { $folderArgs.Recurse = $true }
     $files = @(Get-ChildItem @folderArgs | Where-Object {
         $_.FullName -notlike '*\.flowcell\*' -and
         $_.Name -notlike 'organize-folder.*' -and
-        $_.FullName -notmatch '(?i)[\\/](?:01 live|02 snapshots|03 archive|04 trash)[\\/]'
+        $_.FullName -notmatch '(?i)[\\/](?:01 live|02 snapshots|03 archive|04 trash)[\\/]' -and
+        -not (IsInProtectedFolder -FilePath $_.FullName -ProtectedRoots $protectedFolderRoots)
     })
     $moves = New-Object System.Collections.Generic.List[object]
     $ambiguous = New-Object System.Collections.Generic.List[object]
