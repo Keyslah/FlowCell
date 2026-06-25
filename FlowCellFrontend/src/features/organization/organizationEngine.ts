@@ -93,8 +93,7 @@ export function normalizeOrganizationProfile(profile: OrganizationProfile): Orga
       ...role,
       roleId,
       displayName: String(role.displayName || roleId),
-      folder:
-        roleId === UNKNOWN_ROLE_ID ? String(role.folder ?? "").trim() : String(role.folder || roleId),
+      folder: String(role.folder ?? "").trim(),
       fileTypes: normalizeFileTypes(role.fileTypes),
       preset: Boolean(role.preset),
       catchAllUnmatched: Boolean(role.catchAllUnmatched),
