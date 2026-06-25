@@ -4,10 +4,10 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite --host 127.0.0.1 --port 1420",
-    "build": "tsc && vite build",
+    "dev": "node scripts/patch-slicer-launcher.mjs && vite --host 127.0.0.1 --port 1420",
+    "build": "node scripts/patch-slicer-launcher.mjs && tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "node scripts/patch-slicer-launcher.mjs && tauri"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",
