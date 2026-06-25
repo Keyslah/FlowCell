@@ -74,6 +74,10 @@ const FILE_TYPE_GROUPS: FileTypeGroup[] = [
 // Lifecycle subfolders created inside every program folder on apply.
 const PROGRAM_LIFECYCLE_FOLDERS = ["01 live", "02 snapshots", "03 archive", "04 trash"];
 
+// Program folders (those carrying file types) are always realized under "01 src"
+// by the apply step — that's where they live on disk (e.g. 01 src/Illustrator).
+const PROGRAM_BUILD_ROOT = "01 src";
+
 // The only default program folders. Each makes its folder from its native files.
 const PROGRAM_FOLDER_PRESETS: Array<{ name: string; fileTypes: string[] }> = [
   { name: "Illustrator", fileTypes: [".ai", ".ait"] },
@@ -161,6 +165,19 @@ function parentFolderPath(value: string): string {
   const segments = normalized.split("/").filter(Boolean);
   segments.pop();
   return segments.length ? segments.join("/") : ".";
+}
+
+// Where a program-folder card is grouped in the editor. A program folder (one
+// carrying file types) is always realized under "01 src" on apply, so a rule
+// that still stores a bare name (parent ".") is shown under "01 src" — its real
+// build/disk location — instead of the project root. Folders with an explicit
+// parent, and plain folders without file types, keep their literal parent.
+function programCardParent(folder: string, hasFileTypes: boolean): string {
+  const parent = parentFolderPath(folder || "");
+  if (hasFileTypes && parent === ".") {
+    return PROGRAM_BUILD_ROOT;
+  }
+  return parent;
 }
 
 function isDirectTypeRole(roleId: string): boolean {
@@ -323,13 +340,19 @@ export default function OrganizationSetupWindowPage() {
       ? "profile"
       : null;
 
-  // Program folders whose parent is the active folder, shown alongside roles.
+  // Program folders grouped under the active folder, shown alongside roles. A
+  // program folder (with file types) is grouped under its build root "01 src"
+  // even if the saved rule stores a bare name, so it shows where it actually
+  // lives — not under the project root.
   const assignedProgramEntries = programFolders
     .map((program, index) => ({ program, index }))
-    .filter(
-      ({ program }) =>
-        activeFolder !== null && parentFolderPath(program.folder || "") === activeFolder
-    );
+    .filter(({ program }) => {
+      if (activeFolder === null) {
+        return false;
+      }
+      const hasFileTypes = normalizeFileTypes(program.fileTypesText).length > 0;
+      return programCardParent(program.folder || "", hasFileTypes) === activeFolder;
+    });
 
   // The project tree shows the project root's actual folders. Nothing is added
   // here automatically — folders appear only after you create them (Add Folder)

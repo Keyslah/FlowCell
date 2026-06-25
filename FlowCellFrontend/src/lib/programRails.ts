@@ -1,6 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LayoutSnapshot } from "../types";
-import { showOpenFileDialog } from "./tauri";
+import {
+  applySlicerButtonAssignmentLabels,
+  clearSlicerButtonAssignments,
+  handleSlicerLaunchForPanelButton
+} from "./slicerLauncherAssignments";
 
 export interface PanelScriptChildRecord {
   slot: string;
@@ -94,14 +98,6 @@ function readString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function readStringList(value: unknown): string[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.map(readString).filter(Boolean);
-}
-
 function responseMessage(response: unknown): string {
   if (typeof response === "string" && response.trim()) {
     return response.trim();
@@ -118,70 +114,7 @@ function responseMessage(response: unknown): string {
   );
 }
 
-type SlicerLauncherId = "orca" | "cura";
-
-interface SlicerLauncherSpec {
-  id: SlicerLauncherId;
-  displayName: string;
-  executableLabel: string;
-}
-
-const SLICER_LAUNCHERS: Record<SlicerLauncherId, SlicerLauncherSpec> = {
-  orca: {
-    id: "orca",
-    displayName: "OrcaSlicer",
-    executableLabel: "Orca EXE"
-  },
-  cura: {
-    id: "cura",
-    displayName: "UltiMaker Cura",
-    executableLabel: "Cura EXE"
-  }
-};
-
-function readSlicerLauncherId(response: PanelScriptRunResponse): SlicerLauncherId | null {
-  if (
-    response.requires_flowcell_orca_launch === true ||
-    response.requiresFlowCellOrcaLaunch === true
-  ) {
-    return "orca";
-  }
-
-  if (
-    response.requires_flowcell_cura_launch === true ||
-    response.requiresFlowCellCuraLaunch === true
-  ) {
-    return "cura";
-  }
-
-  const rawId = readString(response.slicer_id ?? response.slicerId).toLowerCase();
-  if (rawId === "orca" || rawId === "orcaslicer" || rawId === "orca_slicer") {
-    return "orca";
-  }
-  if (rawId === "cura" || rawId === "ultimaker_cura" || rawId === "ultimaker-cura") {
-    return "cura";
-  }
-
-  return null;
-}
-
-function resolveSlicerLauncherSpec(response: PanelScriptRunResponse): SlicerLauncherSpec {
-  const id = readSlicerLauncherId(response);
-  if (!id) {
-    throw new Error("Blender did not identify which slicer FlowCell should launch.");
-  }
-
-  const fallback = SLICER_LAUNCHERS[id];
-  return {
-    id,
-    displayName:
-      readString(response.slicer_display_name ?? response.slicerDisplayName) ||
-      fallback.displayName,
-    executableLabel:
-      readString(response.executable_label ?? response.executableLabel) ||
-      fallback.executableLabel
-  };
-}
+type SlicerLauncherId = "orca" | "cura" | "slicer";
 
 function isFlowCellSlicerLaunchResponse(
   response: unknown
@@ -197,22 +130,6 @@ function isFlowCellSlicerLaunchResponse(
   );
 }
 
-function initialDirectoryFromPath(path: string): string | undefined {
-  const trimmed = path.trim();
-  if (!trimmed) {
-    return undefined;
-  }
-
-  const lastSlash = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
-  return lastSlash > 0 ? trimmed.slice(0, lastSlash) : undefined;
-}
-
-async function loadSlicerExecutable(slicerId: SlicerLauncherId): Promise<string | null> {
-  return invokeProgramRailCommand<string | null>("load_slicer_executable", {
-    slicerId
-  });
-}
-
 async function launchSlicer(
   slicerId: SlicerLauncherId,
   executablePath: string,
@@ -223,57 +140,6 @@ async function launchSlicer(
     executablePath,
     exportedPaths
   });
-}
-
-async function pickSlicerExecutable(
-  detectedExecutable: string,
-  executableLabel: string
-): Promise<string> {
-  const selectedPaths = await showOpenFileDialog({
-    title: `Choose ${executableLabel}`,
-    filter: "Executable (*.exe)|*.exe|All Files (*.*)|*.*",
-    initialDirectory: initialDirectoryFromPath(detectedExecutable)
-  });
-  return selectedPaths[0]?.trim() ?? "";
-}
-
-async function handleFlowCellSlicerLaunch(
-  response: PanelScriptRunResponse
-): Promise<string> {
-  const spec = resolveSlicerLauncherSpec(response);
-  const exportedPaths = readStringList(response.exported_paths ?? response.exportedPaths);
-  if (exportedPaths.length === 0) {
-    throw new Error(`Blender did not return any STL files for ${spec.displayName}.`);
-  }
-
-  const savedExecutable = await loadSlicerExecutable(spec.id);
-  if (savedExecutable?.trim()) {
-    return launchSlicer(spec.id, savedExecutable.trim(), exportedPaths);
-  }
-
-  const detectedExecutable = readString(
-    response.detected_executable ?? response.detectedExecutable
-  );
-  let executablePath = "";
-
-  if (detectedExecutable) {
-    const useDetected = window.confirm(
-      `FlowCell found ${spec.displayName} here:\n\n${detectedExecutable}\n\nUse this ${spec.executableLabel} for this button?\n\nChoose Cancel to pick a different ${spec.executableLabel}.`
-    );
-    if (useDetected) {
-      executablePath = detectedExecutable;
-    }
-  }
-
-  if (!executablePath) {
-    executablePath = await pickSlicerExecutable(detectedExecutable, spec.executableLabel);
-  }
-
-  if (!executablePath) {
-    return `${spec.displayName} launch cancelled.`;
-  }
-
-  return launchSlicer(spec.id, executablePath, exportedPaths);
 }
 
 export async function listProgramFolders(): Promise<string[]> {
@@ -371,10 +237,11 @@ export async function listPanelScriptFiles(
     return [];
   }
 
-  return invokeProgramRailCommand<PanelScriptFileRecord[]>("list_panel_script_files", {
+  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("list_panel_script_files", {
     programName,
     panelName
   });
+  return applySlicerButtonAssignmentLabels(programName, panelName, records);
 }
 
 export async function addPanelScripts(
@@ -385,10 +252,11 @@ export async function addPanelScripts(
     throw new Error("Panel scripts can only be added from the desktop host.");
   }
 
-  return invokeProgramRailCommand<PanelScriptFileRecord[]>("add_panel_scripts", {
+  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("add_panel_scripts", {
     programName,
     panelName
   });
+  return applySlicerButtonAssignmentLabels(programName, panelName, records);
 }
 
 export async function deletePanelScripts(
@@ -400,11 +268,13 @@ export async function deletePanelScripts(
     throw new Error("Panel scripts can only be deleted from the desktop host.");
   }
 
-  return invokeProgramRailCommand<PanelScriptFileRecord[]>("delete_panel_scripts", {
+  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("delete_panel_scripts", {
     programName,
     panelName,
     fileNames
   });
+  clearSlicerButtonAssignments(programName, panelName, fileNames);
+  return applySlicerButtonAssignmentLabels(programName, panelName, records);
 }
 
 export async function updatePanelScriptDescription(
@@ -417,12 +287,13 @@ export async function updatePanelScriptDescription(
     throw new Error("Panel script descriptions can only be updated from the desktop host.");
   }
 
-  return invokeProgramRailCommand<PanelScriptFileRecord[]>("update_panel_script_description", {
+  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("update_panel_script_description", {
     programName,
     panelName,
     fileName,
     description
   });
+  return applySlicerButtonAssignmentLabels(programName, panelName, records);
 }
 
 export async function runPanelScript(
@@ -441,7 +312,7 @@ export async function runPanelScript(
   });
 
   if (isFlowCellSlicerLaunchResponse(response)) {
-    return handleFlowCellSlicerLaunch(response);
+    return handleSlicerLaunchForPanelButton(response, { programName, panelName, fileName }, launchSlicer);
   }
 
   return responseMessage(response);
