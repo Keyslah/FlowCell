@@ -38,19 +38,25 @@ use windows::Win32::UI::WindowsAndMessaging::{
     SWP_SHOWWINDOW, SW_SHOWNOACTIVATE,
 };
 #[cfg(windows)]
-use windows_sys::Win32::Foundation::{CloseHandle, HWND, POINT};
+use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, POINT};
 #[cfg(windows)]
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
+#[cfg(windows)]
+use windows_sys::Win32::System::Memory::{
+    GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT,
+};
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow, GetWindow,
-    GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, IsWindowVisible, SendMessageTimeoutW,
-    SetWindowLongPtrW, WindowFromPoint, GA_ROOT, GWLP_HWNDPARENT, GW_HWNDNEXT, SMTO_ABORTIFHUNG,
-    WM_COPYDATA,
+    EnumWindows, FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
+    GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
+    PostMessageW, SendMessageTimeoutW, SetForegroundWindow as SetForegroundWindowSys,
+    SetWindowLongPtrW, ShowWindowAsync as ShowWindowAsyncSys, WindowFromPoint, GA_ROOT,
+    GWLP_HWNDPARENT, GW_HWNDNEXT, SMTO_ABORTIFHUNG, SW_RESTORE as SW_RESTORE_SYS, WM_COPYDATA,
+    WM_DROPFILES,
 };
 
 #[cfg(windows)]
@@ -84,11 +90,9 @@ const SCOPED_TOPMOST_POLL_MS: u64 = 180;
 const DEFAULT_BLENDER_BRIDGE_TIMEOUT_SECONDS: u64 = 20;
 const BLENDER_BRIDGE_RESPONSE_POLL_MS: u64 = 4;
 const BLENDER_BRIDGE_STATUS_TIMEOUT_MS: u64 = 450;
-const BLENDER_BRIDGE_NOT_RUNNING_MESSAGE: &str =
-    "Open Blender first, then run the button again.";
+const BLENDER_BRIDGE_NOT_RUNNING_MESSAGE: &str = "Open Blender first, then run the button again.";
 const ORCA_LAUNCHER_CONFIG_FILE_NAME: &str = "orca_launcher.json";
 const CURA_LAUNCHER_CONFIG_FILE_NAME: &str = "cura_launcher.json";
-const SLICER_LAUNCHER_CONFIG_FILE_NAME: &str = "slicer_launcher.json";
 const FLOWCELL_CONTROLLER_SCRIPT_TIMEOUT_SECONDS: u64 = 25;
 #[cfg(windows)]
 const FLOWCELL_DIRECT_SCRIPT_RECEIVER_TITLE: &str = "FlowCellBackendDirectScriptReceiver";
@@ -283,7 +287,7 @@ struct SlicerLauncherSpec {
     id: &'static str,
     display_name: &'static str,
     executable_label: &'static str,
-    config_file_name: &'static str,
+    config_file_name: Option<&'static str>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -2087,29 +2091,35 @@ fn resolve_slicer_launcher_spec(slicer_id: &str) -> Result<SlicerLauncherSpec, S
             id: "orca",
             display_name: "OrcaSlicer",
             executable_label: "Orca EXE",
-            config_file_name: ORCA_LAUNCHER_CONFIG_FILE_NAME,
+            config_file_name: Some(ORCA_LAUNCHER_CONFIG_FILE_NAME),
         }),
         "cura" | "ultimaker_cura" | "ultimaker-cura" => Ok(SlicerLauncherSpec {
             id: "cura",
             display_name: "UltiMaker Cura",
             executable_label: "Cura EXE",
-            config_file_name: CURA_LAUNCHER_CONFIG_FILE_NAME,
+            config_file_name: Some(CURA_LAUNCHER_CONFIG_FILE_NAME),
         }),
         "slicer" | "generic" | "custom" => Ok(SlicerLauncherSpec {
             id: "slicer",
             display_name: "Slicer",
             executable_label: "Slicer EXE",
-            config_file_name: SLICER_LAUNCHER_CONFIG_FILE_NAME,
+            config_file_name: None,
         }),
         _ => Err("Unknown slicer launcher.".to_string()),
     }
 }
 
-fn resolve_slicer_launcher_config_path(spec: SlicerLauncherSpec) -> Result<PathBuf, String> {
+fn resolve_slicer_launcher_config_path(
+    spec: SlicerLauncherSpec,
+) -> Result<Option<PathBuf>, String> {
+    let Some(config_file_name) = spec.config_file_name else {
+        return Ok(None);
+    };
+
     let local_root = resolve_flowcell_local_root()?;
     fs::create_dir_all(&local_root)
         .map_err(|error| format!("Failed to create {}: {error}", local_root.display()))?;
-    Ok(local_root.join(spec.config_file_name))
+    Ok(Some(local_root.join(config_file_name)))
 }
 
 fn validate_slicer_executable_path(
@@ -2148,7 +2158,9 @@ fn validate_slicer_executable_path(
 
 fn read_saved_slicer_executable(slicer_id: &str) -> Result<Option<String>, String> {
     let spec = resolve_slicer_launcher_spec(slicer_id)?;
-    let config_path = resolve_slicer_launcher_config_path(spec)?;
+    let Some(config_path) = resolve_slicer_launcher_config_path(spec)? else {
+        return Ok(None);
+    };
     if !config_path.is_file() {
         return Ok(None);
     }
@@ -2166,7 +2178,9 @@ fn read_saved_slicer_executable(slicer_id: &str) -> Result<Option<String>, Strin
 
 fn write_slicer_executable(slicer_id: &str, executable: &Path) -> Result<(), String> {
     let spec = resolve_slicer_launcher_spec(slicer_id)?;
-    let config_path = resolve_slicer_launcher_config_path(spec)?;
+    let Some(config_path) = resolve_slicer_launcher_config_path(spec)? else {
+        return Ok(());
+    };
     let payload = SlicerLauncherConfig {
         executable: executable.display().to_string(),
     };
@@ -2176,6 +2190,149 @@ fn write_slicer_executable(slicer_id: &str, executable: &Path) -> Result<(), Str
         .map_err(|error| format!("Failed to write {}: {error}", config_path.display()))
 }
 
+#[cfg(windows)]
+#[repr(C)]
+struct FlowCellDropFilesHeader {
+    p_files: u32,
+    pt_x: i32,
+    pt_y: i32,
+    f_nc: i32,
+    f_wide: i32,
+}
+
+#[cfg(windows)]
+struct SlicerWindowSearch {
+    executable_path_key: String,
+    hwnd: HWND,
+}
+
+#[cfg(windows)]
+fn path_compare_key(path: &Path) -> String {
+    let normalized = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    normalized
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase()
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn enum_slicer_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    if hwnd.is_null() {
+        return 1;
+    }
+    if IsWindowVisible(hwnd) == 0 && IsIconic(hwnd) == 0 {
+        return 1;
+    }
+
+    let search = &mut *(lparam as *mut SlicerWindowSearch);
+    let mut process_id = 0u32;
+    GetWindowThreadProcessId(hwnd, &mut process_id);
+    let Some(process_path) = query_process_path_by_id(process_id) else {
+        return 1;
+    };
+
+    if path_compare_key(Path::new(&process_path)) == search.executable_path_key {
+        search.hwnd = hwnd;
+        return 0;
+    }
+
+    1
+}
+
+#[cfg(windows)]
+fn find_running_slicer_window(executable: &Path) -> Option<HWND> {
+    let mut search = SlicerWindowSearch {
+        executable_path_key: path_compare_key(executable),
+        hwnd: std::ptr::null_mut(),
+    };
+
+    unsafe {
+        EnumWindows(
+            Some(enum_slicer_window),
+            &mut search as *mut SlicerWindowSearch as LPARAM,
+        );
+    }
+
+    if search.hwnd.is_null() {
+        None
+    } else {
+        Some(search.hwnd)
+    }
+}
+
+#[cfg(windows)]
+fn post_model_files_to_window(hwnd: HWND, model_paths: &[PathBuf]) -> Result<(), String> {
+    if model_paths.is_empty() {
+        return Err("No slicer model files were provided.".to_string());
+    }
+
+    let mut wide_paths = Vec::<u16>::new();
+    for path in model_paths {
+        wide_paths.extend(path.display().to_string().encode_utf16());
+        wide_paths.push(0);
+    }
+    wide_paths.push(0);
+
+    let header_size = std::mem::size_of::<FlowCellDropFilesHeader>();
+    let wide_bytes = wide_paths.len() * std::mem::size_of::<u16>();
+    let total_size = header_size + wide_bytes;
+
+    unsafe {
+        let drop_handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, total_size);
+        if drop_handle.is_null() {
+            return Err("Failed to allocate drag-drop payload for the open slicer.".to_string());
+        }
+
+        let locked = GlobalLock(drop_handle) as *mut u8;
+        if locked.is_null() {
+            return Err("Failed to prepare drag-drop payload for the open slicer.".to_string());
+        }
+
+        let header = locked as *mut FlowCellDropFilesHeader;
+        (*header).p_files = header_size as u32;
+        (*header).pt_x = 0;
+        (*header).pt_y = 0;
+        (*header).f_nc = 0;
+        (*header).f_wide = 1;
+        std::ptr::copy_nonoverlapping(
+            wide_paths.as_ptr() as *const u8,
+            locked.add(header_size),
+            wide_bytes,
+        );
+        let _ = GlobalUnlock(drop_handle);
+
+        if PostMessageW(hwnd, WM_DROPFILES, drop_handle as usize, 0) == 0 {
+            return Err("Failed to send model files to the open slicer window.".to_string());
+        }
+
+        let _ = ShowWindowAsyncSys(hwnd, SW_RESTORE_SYS);
+        let _ = SetForegroundWindowSys(hwnd);
+    }
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn send_models_to_running_slicer(
+    executable: &Path,
+    model_paths: &[PathBuf],
+) -> Result<bool, String> {
+    let Some(hwnd) = find_running_slicer_window(executable) else {
+        return Ok(false);
+    };
+
+    post_model_files_to_window(hwnd, model_paths)?;
+    Ok(true)
+}
+
+#[cfg(not(windows))]
+fn send_models_to_running_slicer(
+    _executable: &Path,
+    _model_paths: &[PathBuf],
+) -> Result<bool, String> {
+    Ok(false)
+}
+
 fn launch_slicer_impl(
     slicer_id: &str,
     executable_path: &str,
@@ -2183,30 +2340,40 @@ fn launch_slicer_impl(
 ) -> Result<String, String> {
     let spec = resolve_slicer_launcher_spec(slicer_id)?;
     let executable = validate_slicer_executable_path(executable_path, spec)?;
-    let stl_paths = exported_paths
+    let model_paths = exported_paths
         .iter()
         .map(|path| PathBuf::from(path.trim().trim_matches('"').trim()))
         .filter(|path| !path.as_os_str().is_empty())
         .collect::<Vec<_>>();
 
-    if stl_paths.is_empty() {
+    if model_paths.is_empty() {
         return Err(format!(
-            "No STL files were exported for {}.",
+            "No model files were exported for {}.",
             spec.display_name
         ));
     }
 
-    for path in &stl_paths {
+    for path in &model_paths {
         if !path.is_file() {
             return Err(format!(
-                "Exported STL file was not found: {}",
+                "Exported model file was not found: {}",
                 path.display()
             ));
         }
     }
 
+    if send_models_to_running_slicer(&executable, &model_paths)? {
+        write_slicer_executable(spec.id, &executable)?;
+        let count = model_paths.len();
+        let file_label = if count == 1 { "file" } else { "files" };
+        return Ok(format!(
+            "Sent {count} model {file_label} to the open {} window.",
+            spec.display_name
+        ));
+    }
+
     let mut command = Command::new(&executable);
-    command.args(&stl_paths);
+    command.args(&model_paths);
     if let Some(parent) = executable.parent() {
         command.current_dir(parent);
     }
@@ -2220,10 +2387,10 @@ fn launch_slicer_impl(
 
     write_slicer_executable(spec.id, &executable)?;
 
-    let count = stl_paths.len();
+    let count = model_paths.len();
     let file_label = if count == 1 { "file" } else { "files" };
     Ok(format!(
-        "Launched {} with {count} STL {file_label}.",
+        "Launched {} with {count} model {file_label}.",
         spec.display_name
     ))
 }
@@ -5241,7 +5408,6 @@ mod program_registration_tests {
 
         fs::remove_dir_all(&folder).expect("temporary test folder should be removed");
     }
-
 }
 
 fn parse_ini_document(contents: &str) -> IniDocument {
@@ -10478,9 +10644,7 @@ fn legacy_organization_profile_path(project_root: &Path) -> PathBuf {
 // Files the organizer manages itself — they must never be listed as loose
 // files or organized into folders.
 fn is_organization_sidecar_file(file_name: &str) -> bool {
-    file_name
-        .to_lowercase()
-        .starts_with("organize-folder.")
+    file_name.to_lowercase().starts_with("organize-folder.")
 }
 
 #[tauri::command]
@@ -10572,12 +10736,14 @@ fn read_organization_profile(project_root: String) -> Result<Option<Value>, Stri
     })?;
     // Strip a leading UTF-8 BOM — PowerShell's Set-Content -Encoding UTF8 writes
     // one, and serde_json otherwise fails with "expected value at line 1 column 1".
-    let profile = serde_json::from_str::<Value>(contents.trim_start_matches('\u{feff}')).map_err(|error| {
-        format!(
-            "Organization profile at {} is not valid JSON: {error}",
-            profile_path.display()
-        )
-    })?;
+    let profile = serde_json::from_str::<Value>(contents.trim_start_matches('\u{feff}')).map_err(
+        |error| {
+            format!(
+                "Organization profile at {} is not valid JSON: {error}",
+                profile_path.display()
+            )
+        },
+    )?;
 
     if !profile.is_object() {
         return Err(format!(
@@ -10692,7 +10858,10 @@ fn materialize_folder_tree(target: &Path, folders: &[String]) -> Result<(), Stri
             continue;
         }
         fs::create_dir_all(&directory).map_err(|error| {
-            format!("Unable to create folder at {}: {error}", directory.display())
+            format!(
+                "Unable to create folder at {}: {error}",
+                directory.display()
+            )
         })?;
     }
     Ok(())
@@ -10709,9 +10878,9 @@ fn list_relative_subdirectories(base: &Path) -> Result<Vec<String>, String> {
         for entry in entries {
             let entry =
                 entry.map_err(|error| format!("Failed to read {}: {error}", dir.display()))?;
-            let file_type = entry
-                .file_type()
-                .map_err(|error| format!("Failed to inspect {}: {error}", entry.path().display()))?;
+            let file_type = entry.file_type().map_err(|error| {
+                format!("Failed to inspect {}: {error}", entry.path().display())
+            })?;
             if file_type.is_dir() && !file_type.is_symlink() {
                 let path = entry.path();
                 if let Ok(relative) = path.strip_prefix(base) {
@@ -10739,8 +10908,8 @@ fn list_organization_profiles() -> Result<Vec<OrganizationProfileSummary>, Strin
     let entries = fs::read_dir(&profiles_root)
         .map_err(|error| format!("Failed to read {}: {error}", profiles_root.display()))?;
     for entry in entries {
-        let entry =
-            entry.map_err(|error| format!("Failed to read {}: {error}", profiles_root.display()))?;
+        let entry = entry
+            .map_err(|error| format!("Failed to read {}: {error}", profiles_root.display()))?;
         let path = entry.path();
         if path.extension().and_then(|value| value.to_str()) != Some("json") {
             continue;
@@ -10773,12 +10942,14 @@ fn read_organization_profile_named(name: String) -> Result<Option<Value>, String
     })?;
     // Strip a leading UTF-8 BOM — PowerShell's Set-Content -Encoding UTF8 writes
     // one, and serde_json otherwise fails with "expected value at line 1 column 1".
-    let profile = serde_json::from_str::<Value>(contents.trim_start_matches('\u{feff}')).map_err(|error| {
-        format!(
-            "Profile at {} is not valid JSON: {error}",
-            profile_path.display()
-        )
-    })?;
+    let profile = serde_json::from_str::<Value>(contents.trim_start_matches('\u{feff}')).map_err(
+        |error| {
+            format!(
+                "Profile at {} is not valid JSON: {error}",
+                profile_path.display()
+            )
+        },
+    )?;
     if !profile.is_object() {
         return Err(format!(
             "Profile at {} must contain a JSON object.",
@@ -10855,7 +11026,10 @@ fn save_organization_profile_as(
             .map_err(|error| format!("Unable to serialize profile: {error}"))?
     );
     fs::write(&profile_path, serialized).map_err(|error| {
-        format!("Unable to write profile at {}: {error}", profile_path.display())
+        format!(
+            "Unable to write profile at {}: {error}",
+            profile_path.display()
+        )
     })?;
 
     Ok(tree_dir.display().to_string())
@@ -10920,10 +11094,7 @@ fn apply_organization_profile_to_root(
 // Build a saved profile's folder structure inside any existing folder (no
 // profile file is written). Used to apply a profile to a selected subfolder.
 #[tauri::command]
-fn apply_organization_profile_folders(
-    name: String,
-    target_path: String,
-) -> Result<String, String> {
+fn apply_organization_profile_folders(name: String, target_path: String) -> Result<String, String> {
     let safe_name = validate_folder_name(&name, "Profile")?;
     let target = resolve_organization_project_root(&target_path)?;
     let skeleton = resolve_folder_trees_root()?.join(&safe_name);
@@ -11114,17 +11285,17 @@ fn create_organization_folder(
     let root = resolve_organization_project_root(&project_root)?;
     let directory = resolve_organization_subfolder(&root, &relative_path)?;
     fs::create_dir_all(&directory).map_err(|error| {
-        format!("Unable to create folder at {}: {error}", directory.display())
+        format!(
+            "Unable to create folder at {}: {error}",
+            directory.display()
+        )
     })?;
     Ok(directory.display().to_string())
 }
 
 // Delete a folder under the project root by sending it to the Recycle Bin.
 #[tauri::command]
-fn recycle_organization_folder(
-    project_root: String,
-    relative_path: String,
-) -> Result<(), String> {
+fn recycle_organization_folder(project_root: String, relative_path: String) -> Result<(), String> {
     let root = resolve_organization_project_root(&project_root)?;
     let directory = resolve_organization_subfolder(&root, &relative_path)?;
     if directory.is_dir() {
