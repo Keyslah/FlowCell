@@ -340,6 +340,19 @@ export const staticButtons: ButtonRecord[] = [
     ...defaultButtonVisual
   },
   {
+    id: "top-left-button-8",
+    groupId: "top-left-actions",
+    x: 442.032390,
+    y: 36.353741,
+    width: 70.446043,
+    height: 37.294964,
+    radius: 18.647463,
+    label: "Settings",
+    tooltip: "Open FlowCell startup settings.",
+    actionId: "open-settings",
+    ...defaultButtonVisual
+  },
+  {
     id: "top-right-button-1",
     groupId: "top-right-actions",
     x: 929.586346,

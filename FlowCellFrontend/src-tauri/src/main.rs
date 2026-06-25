@@ -2338,13 +2338,9 @@ fn launch_slicer_impl(
         }
     }
 
-    let single_instance_handoff = executable_has_running_window(&executable)
-        && executable_supports_single_instance_arg(&executable);
+    let was_running = executable_has_running_window(&executable);
 
     let mut command = Command::new(&executable);
-    if single_instance_handoff {
-        command.arg(SLICER_SINGLE_INSTANCE_ARG);
-    }
     command.args(&model_paths);
     if let Some(parent) = executable.parent() {
         command.current_dir(parent);
@@ -2361,7 +2357,7 @@ fn launch_slicer_impl(
 
     let count = model_paths.len();
     let file_label = if count == 1 { "file" } else { "files" };
-    if single_instance_handoff {
+    if was_running {
         Ok(format!(
             "Sent {count} model {file_label} to the open {} window.",
             spec.display_name

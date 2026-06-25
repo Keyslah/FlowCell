@@ -316,3 +316,72 @@
   height: 100%;
 }
 
+.main-page__settings-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 49;
+  background: rgba(0, 0, 0, 0.42);
+}
+
+.main-page__settings {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 50;
+  display: grid;
+  gap: 14px;
+  width: min(360px, calc(100vw - 48px));
+  padding: 18px 20px 20px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
+    rgba(12, 16, 18, 0.96);
+  color: rgba(241, 246, 248, 0.96);
+  box-shadow:
+    0 24px 56px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  font: 600 13px/1.4 "Segoe UI", sans-serif;
+}
+
+.main-page__settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.main-page__settings-header h2 {
+  margin: 0;
+  font: 800 16px/1 "Segoe UI", sans-serif;
+}
+
+.main-page__settings-close {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: 800 13px/1 "Segoe UI", sans-serif;
+  cursor: pointer;
+}
+
+.main-page__settings-close:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.main-page__settings-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.main-page__settings-option input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  cursor: pointer;
+}
+

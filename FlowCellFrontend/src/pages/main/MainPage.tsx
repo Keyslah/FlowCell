@@ -67,6 +67,13 @@ import {
   writeLastLayoutDirectory
 } from "../../lib/layoutSnapshots";
 import {
+  readLastLayoutPath,
+  readStartupSettings,
+  writeLastLayoutPath,
+  writeStartupSettings,
+  type StartupSettings
+} from "../../lib/startupSettings";
+import {
   openButtonReorderWindow,
   openAlignmentToolboxWindow,
   openBooleanToolboxWindow,
@@ -547,6 +554,10 @@ export default function MainPage() {
   const [scriptRunError, setScriptRunError] = useState<ScriptRunErrorState | null>(null);
   const [selectedScriptGroupPopoutType, setSelectedScriptGroupPopoutType] =
     useState<ScriptGroupPopoutType>(DEFAULT_SCRIPT_GROUP_POPOUT_TYPE);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [startupSettings, setStartupSettings] = useState<StartupSettings>(() =>
+    readStartupSettings()
+  );
 
   useEffect(() => {
     const currentWindow = getCurrentWindow();
@@ -1614,6 +1625,7 @@ export default function MainPage() {
 
     const savedPath = await saveLayoutSnapshot(targetPath, snapshot);
     writeLastLayoutDirectory(getParentDirectory(savedPath));
+    writeLastLayoutPath(savedPath);
   };
 
   const handleLoadLayout = async () => {
@@ -1625,7 +1637,57 @@ export default function MainPage() {
     const snapshot = await loadLayoutSnapshot(selectedPath);
     writeLastLayoutDirectory(getParentDirectory(selectedPath));
     await restoreLayoutSnapshotState(snapshot);
+    writeLastLayoutPath(selectedPath);
   };
+
+  const handleStartupSettingChange = (changes: Partial<StartupSettings>) => {
+    setStartupSettings((current) => {
+      const next = { ...current, ...changes };
+      writeStartupSettings(next);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const currentWindow = getCurrentWindow();
+    if (currentWindow.label !== "main") {
+      return;
+    }
+
+    let cancelled = false;
+
+    void (async () => {
+      const settings = readStartupSettings();
+
+      if (settings.loadLastLayoutOnStartup) {
+        const lastLayoutPath = readLastLayoutPath();
+        if (lastLayoutPath) {
+          try {
+            const snapshot = await loadLayoutSnapshot(lastLayoutPath);
+            if (!cancelled) {
+              await restoreLayoutSnapshotState(snapshot);
+              writeLastLayoutPath(lastLayoutPath);
+            }
+          } catch (error) {
+            console.error("Failed to load last layout on startup.", error);
+          }
+        }
+      }
+
+      if (!cancelled && settings.minimizeMainOnStartup) {
+        try {
+          await currentWindow.minimize();
+        } catch (error) {
+          console.error("Failed to minimize main window on startup.", error);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleOpenRotateToolbox = async (record: PanelScriptFileRecord) => {
     if (!selectedProgramName || !selectedPanelName) {
@@ -2469,6 +2531,11 @@ export default function MainPage() {
       return;
     }
 
+    if (button.actionId === "open-settings") {
+      setIsSettingsOpen(true);
+      return;
+    }
+
     if (button.actionId === "top-right-button-1") {
       await handleMinimizeMainWindow();
       return;
@@ -2940,6 +3007,58 @@ export default function MainPage() {
               <strong>{scriptRunError.title}</strong>
               <p>{scriptRunError.detail}</p>
             </section>
+          ) : null}
+          {isSettingsOpen ? (
+            <>
+              <div
+                className="main-page__settings-backdrop"
+                aria-hidden="true"
+                onMouseDown={() => setIsSettingsOpen(false)}
+              />
+              <section
+                className="main-page__settings"
+                role="dialog"
+                aria-modal="true"
+                aria-label="FlowCell Settings"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <header className="main-page__settings-header">
+                  <h2>Settings</h2>
+                  <button
+                    type="button"
+                    className="main-page__settings-close"
+                    aria-label="Close settings"
+                    onClick={() => setIsSettingsOpen(false)}
+                  >
+                    X
+                  </button>
+                </header>
+                <label className="main-page__settings-option">
+                  <input
+                    type="checkbox"
+                    checked={startupSettings.loadLastLayoutOnStartup}
+                    onChange={(event) =>
+                      handleStartupSettingChange({
+                        loadLastLayoutOnStartup: event.target.checked
+                      })
+                    }
+                  />
+                  <span>Load last layout on startup</span>
+                </label>
+                <label className="main-page__settings-option">
+                  <input
+                    type="checkbox"
+                    checked={startupSettings.minimizeMainOnStartup}
+                    onChange={(event) =>
+                      handleStartupSettingChange({
+                        minimizeMainOnStartup: event.target.checked
+                      })
+                    }
+                  />
+                  <span>Minimize main page on startup</span>
+                </label>
+              </section>
+            </>
           ) : null}
         </div>
       </ExactPageFrame>
