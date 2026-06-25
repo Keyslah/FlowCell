@@ -70,23 +70,45 @@ function getActiveFolderSourceFromPage(): "project" | "profile" | null {
   return null;
 }
 
-function getSelectedProfileNameFromPage(): string {
+function getProfilePanelTitleFromPage(): string {
   const profilePanel = Array.from(document.querySelectorAll<HTMLElement>(".organization-setup__panel"))
     .find((panel) => panel.querySelector(".organization-setup__section-heading span")?.textContent?.trim() === "Profile");
-  const title = profilePanel?.querySelector(".organization-setup__section-heading h2")?.textContent?.trim() ?? "";
+  return profilePanel?.querySelector(".organization-setup__section-heading h2")?.textContent?.trim() ?? "";
+}
+
+function getSelectedProfileNameFromPage(): string {
+  const title = getProfilePanelTitleFromPage();
   if (!title || title === "—" || title.toLowerCase().includes("unsaved")) {
     return "";
   }
   return title;
 }
 
+function getTypedProfileNameFromPage(): string {
+  return document
+    .querySelector<HTMLInputElement>(".organization-setup__profile-save input")
+    ?.value.trim() ?? "";
+}
+
+function getSaveTargetProfileNameFromPage(): string {
+  return getSelectedProfileNameFromPage() || getTypedProfileNameFromPage();
+}
+
+function rootProtectedStorageKey(): string {
+  return `root:${getProjectRootFromPage()}`;
+}
+
+function profileProtectedStorageKey(profileName: string): string {
+  return `profile:${profileName}`;
+}
+
 function protectedStorageKey(): string {
   const source = getActiveFolderSourceFromPage();
   const profileName = getSelectedProfileNameFromPage();
   if (source === "profile" && profileName) {
-    return `profile:${profileName}`;
+    return profileProtectedStorageKey(profileName);
   }
-  return `root:${getProjectRootFromPage()}`;
+  return rootProtectedStorageKey();
 }
 
 function readProtectedFoldersForKey(key: string): string[] {
@@ -102,6 +124,29 @@ function writeProtectedFoldersForKey(key: string, folders: string[]) {
     delete store[key];
   }
   writeProtectedStore(store);
+}
+
+function mergeProtectedFolders(...groups: string[][]): string[] {
+  const merged: string[] = [];
+  groups.forEach((group) => merged.push(...group));
+  return normalizeProtectedFolders(merged);
+}
+
+function isCopiedRootProfileVisible(): boolean {
+  return getProfilePanelTitleFromPage().toLowerCase().includes("from root");
+}
+
+function readProtectedFoldersForProfileSaveTarget(profileName: string): string[] {
+  const activeKey = protectedStorageKey();
+  const rootKey = rootProtectedStorageKey();
+  const profileKey = profileProtectedStorageKey(profileName);
+  const keys = new Set<string>([profileKey, activeKey]);
+
+  if (isCopiedRootProfileVisible() || getActiveFolderSourceFromPage() === "project") {
+    keys.add(rootKey);
+  }
+
+  return mergeProtectedFolders(...[...keys].map(readProtectedFoldersForKey));
 }
 
 async function writeProtectedFoldersToProjectRoot(projectRoot: string, folders: string[]) {
@@ -149,6 +194,18 @@ async function syncProtectedFoldersToProfile() {
     return;
   }
   await writeProtectedFoldersToProjectRoot(getProjectRootFromPage(), folders);
+}
+
+async function syncProtectedFoldersToSaveTarget() {
+  const profileName = getSaveTargetProfileNameFromPage();
+  if (!profileName) {
+    await syncProtectedFoldersToProfile();
+    return;
+  }
+
+  const folders = readProtectedFoldersForProfileSaveTarget(profileName);
+  writeProtectedFoldersForKey(profileProtectedStorageKey(profileName), folders);
+  await writeProtectedFoldersToNamedProfile(profileName, folders);
 }
 
 function isActiveFolderProtected(): boolean {
@@ -286,34 +343,18 @@ export default function OrganizationSetupWindowPagePatched() {
       frame = window.requestAnimationFrame(applyRuntimePatch);
     };
 
-    const replaying = new WeakSet<HTMLButtonElement>();
     const handleClick = (event: MouseEvent) => {
       const button = (event.target as Element | null)?.closest<HTMLButtonElement>("button");
       if (!button) {
         return;
       }
       const text = button.textContent?.trim() ?? "";
-      if (replaying.has(button)) {
-        replaying.delete(button);
-        return;
-      }
 
-      if (text.startsWith("Apply profile to")) {
-        const profileName = getSelectedProfileNameFromPage();
-        const rootKey = `root:${getProjectRootFromPage()}`;
-        const rootProtectedFolders = readProtectedFoldersForKey(rootKey);
-        if (profileName && rootProtectedFolders.length) {
-          event.preventDefault();
-          event.stopPropagation();
-          void writeProtectedFoldersToNamedProfile(profileName, rootProtectedFolders).finally(() => {
-            replaying.add(button);
-            button.click();
-          });
-          return;
-        }
-      }
-
-      if (/^(Save Profile|Apply to tree|Apply & rescan|Apply to profile)$/.test(text)) {
+      if (/^(Save Profile|Apply to profile)$/.test(text)) {
+        window.setTimeout(() => void syncProtectedFoldersToSaveTarget().finally(applyRuntimePatch), 300);
+        window.setTimeout(() => void syncProtectedFoldersToSaveTarget().finally(applyRuntimePatch), 900);
+        window.setTimeout(() => void syncProtectedFoldersToSaveTarget().finally(applyRuntimePatch), 2200);
+      } else if (/^(Apply to tree|Apply & rescan)$/.test(text)) {
         window.setTimeout(() => void syncProtectedFoldersToProfile().finally(applyRuntimePatch), 900);
         window.setTimeout(() => void syncProtectedFoldersToProfile().finally(applyRuntimePatch), 2200);
       }
