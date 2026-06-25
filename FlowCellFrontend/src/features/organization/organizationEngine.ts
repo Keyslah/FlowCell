@@ -29,12 +29,32 @@ export function normalizeFileTypes(value: string | string[] | undefined | null):
   return output;
 }
 
+export function normalizeProtectedFolders(value: string[] | undefined | null): string[] {
+  const seen = new Set<string>();
+  const output: string[] = [];
+
+  for (const raw of value ?? []) {
+    const folder = String(raw)
+      .trim()
+      .replace(/\\/g, "/")
+      .replace(/^\.\//, "")
+      .replace(/\/+$/, "");
+    if (!folder || folder === "." || folder.includes("..") || seen.has(folder.toLowerCase())) {
+      continue;
+    }
+    seen.add(folder.toLowerCase());
+    output.push(folder);
+  }
+
+  return output;
+}
+
 export function createStarterOrganizationProfile(projectRoot: string): OrganizationProfile {
   return normalizeOrganizationProfile({
     profileVersion: 1,
     projectRoot,
-    // The required presets plus exactly three default roles (Images, SVG, 3D).
-    // They are available in the Role dropdown but unassigned (folder ""), so
+    // The required presets plus exactly three default groups (Images, SVG, 3D).
+    // They are available in the assignment dropdown but unassigned (folder ""), so
     // nothing is added to any folder automatically. No program folders are
     // auto-assigned — the default programs live only as Add Folder presets.
     roles: [
@@ -73,11 +93,12 @@ export function createStarterOrganizationProfile(projectRoot: string): Organizat
         folder: "",
         fileTypes: [
           ".stl", ".obj", ".fbx", ".glb", ".gltf", ".3mf", ".ply", ".dae", ".usd",
-          ".usdz", ".abc", ".x3d", ".step", ".stp", ".iges", ".igs", ".blend",
+          ".usdz", ".abc", ".x3d", ".step", ".stp", ".iges", ".igs",
         ],
       },
     ],
     programFolders: [],
+    protectedFolders: [],
     rememberedChoices: {},
   });
 }
@@ -89,12 +110,16 @@ export function normalizeOrganizationProfile(profile: OrganizationProfile): Orga
     const roleId = String(role.roleId ?? "").trim();
     if (!roleId || roles.has(roleId)) continue;
 
+    const fileTypes = normalizeFileTypes(role.fileTypes).filter(
+      (extension) => !(roleId === "3d" && extension === ".blend"),
+    );
+
     roles.set(roleId, {
       ...role,
       roleId,
       displayName: String(role.displayName || roleId),
       folder: String(role.folder ?? "").trim(),
-      fileTypes: normalizeFileTypes(role.fileTypes),
+      fileTypes,
       preset: Boolean(role.preset),
       catchAllUnmatched: Boolean(role.catchAllUnmatched),
       description: String(role.description || ""),
@@ -139,6 +164,7 @@ export function normalizeOrganizationProfile(profile: OrganizationProfile): Orga
         program.createOnlyIfMatchingFilesOrRolesPresent,
       ),
     })),
+    protectedFolders: normalizeProtectedFolders(profile.protectedFolders),
     rememberedChoices: profile.rememberedChoices ?? {},
   };
 }
