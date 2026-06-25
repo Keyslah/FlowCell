@@ -29,6 +29,7 @@ export type OrganizationProfile = {
   projectRoot: string;
   roles: OrganizationRole[];
   programFolders: ProgramFolderRule[];
+  protectedFolders?: string[];
   rememberedChoices?: Record<string, RememberedChoice>;
 };
 
