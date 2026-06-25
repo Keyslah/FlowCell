@@ -245,10 +245,20 @@ $srcRoot = Join-Path $target '01 src'
 $assetsRoot = Join-Path $srcRoot '00 assets'
 $programDefinitions = @(Get-ProgramDefinitions -Profile $profile)
 
+# Program working files are gathered only from inside 01 src, plus loose files
+# dropped at the project root (which get filed into 01 src). Every 01 src sibling
+# — 02 builds, 03 releases, the big top-level 04 archive, and anything else next
+# to 01 src — is left untouched. Any program's own snapshots/archive/trash (with
+# or without a number prefix) is also skipped, so already-filed, archived, or
+# trashed working files are never pulled back into 01 live / 02 snapshots.
+$srcPrefix = $srcRoot.TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
 $allFiles = @(
     Get-ChildItem -LiteralPath $target -Recurse -File -Force | Where-Object {
-        -not $_.Name.ToLowerInvariant().StartsWith('organize-folder.') -and
-        $_.FullName -notmatch '(?i)[\\/](?:02 snapshots|03 archive|04 trash)[\\/]'
+        if ($_.Name.ToLowerInvariant().StartsWith('organize-folder.')) { return $false }
+        if ($_.FullName -match '(?i)[\\/](?:\d+\s+)?(?:snapshots|archive|trash)[\\/]') { return $false }
+        $parent = Split-Path -Parent $_.FullName
+        if ([string]::Equals($parent, $target, [System.StringComparison]::OrdinalIgnoreCase)) { return $true }
+        return $_.FullName.StartsWith($srcPrefix, [System.StringComparison]::OrdinalIgnoreCase)
     }
 )
 

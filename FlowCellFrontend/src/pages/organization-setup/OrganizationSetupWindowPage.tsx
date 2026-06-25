@@ -685,11 +685,12 @@ export default function OrganizationSetupWindowPage() {
     setStatusTone("");
     try {
       const profile = buildProfile();
-      // Capture the planned structure. For an unsaved "copy root to profile"
-      // scratch tree, save the (possibly edited) profile-section tree; otherwise
-      // use the project tree's scanned folders plus added program folders.
-      const sourceFolders =
-        loadedScan && !selectedProfileName ? loadedScan.folders : treeFolders;
+      // Capture the planned structure. When the Profile section holds a tree (a
+      // loaded saved profile or an unsaved "copy root to profile" scratch), that
+      // tree is the source of truth for the profile's folders — including any
+      // added via Add Folder — so re-saving never wipes them. Otherwise fall back
+      // to the project tree's scanned folders plus added program folders.
+      const sourceFolders = loadedScan ? loadedScan.folders : treeFolders;
       const folders = sourceFolders.filter((folder) => folder !== ".");
       const savedPath = await saveOrganizationProfileAs(name, profile, folders);
       await refreshSavedProfiles();
@@ -753,12 +754,22 @@ export default function OrganizationSetupWindowPage() {
     setProgramPickFileTypes("");
   };
 
-  // Add a folder to the selected folder. `addNow` creates it on disk right away
-  // (so it shows in the tree); otherwise it's a conditional rule created on apply
-  // only when its file types show up.
+  // Sort folder lists the same way the backend scan does: "." first, then
+  // case-insensitive. Keeps an in-memory scratch profile tree tidy after edits.
+  const sortFolderList = (folders: string[]): string[] =>
+    [...new Set(folders)].sort((a, b) =>
+      a === "." ? -1 : b === "." ? 1 : a.toLowerCase().localeCompare(b.toLowerCase())
+    );
+
+  // Add a folder to the active folder. `addNow` creates it right away (so it
+  // shows in the tree); otherwise it's a conditional rule created on apply only
+  // when its file types show up. The active folder may be in the Project tree
+  // (created on disk under the project root) or the Profile section: for a saved
+  // profile the folder is created in its on-disk skeleton so it sticks, and for
+  // an unsaved "copy root to profile" scratch tree it's added in memory.
   const addProgramFolderToSelected = async (addNow: boolean) => {
-    if (!selectedFolder) {
-      setStatus("Select a folder in the Project Tree first.");
+    if (!activeFolder) {
+      setStatus("Select a folder first.");
       setStatusTone("is-error");
       return;
     }
@@ -770,14 +781,14 @@ export default function OrganizationSetupWindowPage() {
     }
     const programId = normalizeRoleId(name);
     const fileTypesText = normalizeFileTypes(programPickFileTypes).join(", ");
-    // The new folder lives inside the selected folder.
-    const folderPath = selectedFolder === "." ? name : `${selectedFolder}/${name}`;
+    // The new folder lives inside the active folder.
+    const folderPath = activeFolder === "." ? name : `${activeFolder}/${name}`;
 
     setProgramFolders((current) => {
       const existingIndex = current.findIndex(
         (program) =>
           program.programId === programId &&
-          parentFolderPath(program.folder || "") === selectedFolder
+          parentFolderPath(program.folder || "") === activeFolder
       );
       const next: ProgramFolderDraft = {
         programId,
@@ -794,6 +805,49 @@ export default function OrganizationSetupWindowPage() {
     });
     cancelAddProgramFolder();
 
+    if (addNow && activeFolderSource === "profile" && loadedScan) {
+      // Unsaved scratch tree: add the folder to the in-memory list only.
+      if (!selectedProfileName) {
+        setLoadedScan((current) =>
+          current ? { ...current, folders: sortFolderList([...current.folders, folderPath]) } : current
+        );
+        setSelectedLoadedFolder(folderPath);
+        setStatus(`Added ${folderPath} to the profile section. Save Profile to keep it.`);
+        setStatusTone("is-success");
+        return;
+      }
+
+      // Saved profile: create the folder in its skeleton so it persists.
+      const skeletonRoot = loadedScan.projectRoot;
+      setBusy(true);
+      setStatus(`Creating ${folderPath} in profile "${selectedProfileName}"…`);
+      setStatusTone("");
+      try {
+        await createOrganizationFolder(skeletonRoot, folderPath);
+        setLoadedScan(await scanOrganizationProject(skeletonRoot));
+        setSelectedLoadedFolder(folderPath);
+        pushUndo(`Add ${folderPath} (profile)`, async () => {
+          await recycleOrganizationFolder(skeletonRoot, folderPath);
+          setProgramFolders((current) =>
+            current.filter(
+              (program) =>
+                normalizeFolderPath(program.folder || "") !== normalizeFolderPath(folderPath)
+            )
+          );
+          setLoadedScan(await scanOrganizationProject(skeletonRoot));
+          setSelectedLoadedFolder(null);
+        });
+        setStatus(`Created ${folderPath} in profile "${selectedProfileName}".`);
+        setStatusTone("is-success");
+      } catch (error) {
+        setStatus(formatError(error));
+        setStatusTone("is-error");
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
     if (addNow && projectRoot.trim()) {
       const root = projectRoot.trim();
       setBusy(true);
@@ -803,6 +857,7 @@ export default function OrganizationSetupWindowPage() {
         await createOrganizationFolder(root, folderPath);
         setScan(await scanOrganizationProject(root));
         setSelectedFolder(folderPath);
+        setSelectedLoadedFolder(null);
         pushUndo(`Add ${folderPath}`, async () => {
           await recycleOrganizationFolder(root, folderPath);
           setProgramFolders((current) =>
@@ -825,7 +880,7 @@ export default function OrganizationSetupWindowPage() {
       return;
     }
 
-    setStatus(`Added ${name} under ${selectedFolder} (created when matching files are present).`);
+    setStatus(`Added ${name} under ${activeFolder} (created when matching files are present).`);
     setStatusTone("is-success");
   };
 
@@ -1413,11 +1468,11 @@ export default function OrganizationSetupWindowPage() {
                     <button
                       type="button"
                       onClick={openAddProgramFolder}
-                      disabled={busy || activeFolderSource !== "project"}
+                      disabled={busy || !activeFolder}
                       title={
-                        activeFolderSource === "project"
-                          ? "Add a folder under the selected project folder"
-                          : "Select a folder in the Project tree to add a folder on disk"
+                        activeFolderSource === "profile"
+                          ? "Add a folder into the selected profile folder"
+                          : "Add a folder under the selected project folder"
                       }
                     >
                       Add Folder
@@ -1578,7 +1633,12 @@ export default function OrganizationSetupWindowPage() {
                     id="organization-add-program-title"
                     className="organization-setup__add-role-title"
                   >
-                    Add folder to {selectedFolder === "." ? "Project Root (.)" : selectedFolder}
+                    Add folder to {activeFolder === "." ? "Project Root (.)" : activeFolder}
+                    {activeFolderSource === "profile"
+                      ? selectedProfileName
+                        ? ` (profile "${selectedProfileName}")`
+                        : " (profile section)"
+                      : ""}
                   </h2>
 
                   <div className="organization-setup__program-presets">
@@ -1602,7 +1662,7 @@ export default function OrganizationSetupWindowPage() {
                     ))}
                   </div>
 
-                  {savedProfiles.length ? (
+                  {savedProfiles.length && activeFolderSource === "project" ? (
                     <div className="organization-setup__program-presets">
                       {savedProfiles.map((profile) => (
                         <button
