@@ -42,10 +42,6 @@ use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, POINT};
 #[cfg(windows)]
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 #[cfg(windows)]
-use windows_sys::Win32::System::Memory::{
-    GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT,
-};
-#[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -53,10 +49,8 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
     GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    PostMessageW, SendMessageTimeoutW, SetForegroundWindow as SetForegroundWindowSys,
-    SetWindowLongPtrW, ShowWindowAsync as ShowWindowAsyncSys, WindowFromPoint, GA_ROOT,
-    GWLP_HWNDPARENT, GW_HWNDNEXT, SMTO_ABORTIFHUNG, SW_RESTORE as SW_RESTORE_SYS, WM_COPYDATA,
-    WM_DROPFILES,
+    SendMessageTimeoutW, SetWindowLongPtrW, WindowFromPoint, GA_ROOT, GWLP_HWNDPARENT, GW_HWNDNEXT,
+    SMTO_ABORTIFHUNG, WM_COPYDATA,
 };
 
 #[cfg(windows)]
@@ -74,6 +68,8 @@ const CORE_ACTION_KIND: &str = "core_action";
 const ILLUSTRATOR_SET_ANCHOR_ACTION_ID: &str = "illustrator_set_anchor";
 const CORE_ACTIONS_PANEL_NAME: &str = "Actions";
 const BOOLEAN_TOOL_KIND: &str = "boolean_toolset";
+const SLICER_SINGLE_INSTANCE_ARG: &str = "--single-instance";
+const MAX_SINGLE_INSTANCE_SCAN_BYTES: u64 = 256 * 1024 * 1024;
 const DIMENSIONS_TOOL_KIND: &str = "dimensions_toolset";
 const REMESH_TOOL_KIND: &str = "remesh_toolset";
 const TRI_POLY_TOOL_KIND: &str = "tri_poly_toolset";
@@ -780,6 +776,11 @@ fn resolve_powershell_path() -> PathBuf {
     }
 
     PathBuf::from("powershell.exe")
+}
+
+#[cfg(windows)]
+fn powershell_single_quoted_string(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn resolve_repo_root() -> Option<PathBuf> {
@@ -2190,49 +2191,39 @@ fn write_slicer_executable(slicer_id: &str, executable: &Path) -> Result<(), Str
         .map_err(|error| format!("Failed to write {}: {error}", config_path.display()))
 }
 
-#[cfg(windows)]
-#[repr(C)]
-struct FlowCellDropFilesHeader {
-    p_files: u32,
-    pt_x: i32,
-    pt_y: i32,
-    f_nc: i32,
-    f_wide: i32,
-}
-
-#[cfg(windows)]
-struct SlicerWindowSearch {
-    executable_path_key: String,
-    hwnd: HWND,
-}
-
-#[cfg(windows)]
-fn path_compare_key(path: &Path) -> String {
-    let normalized = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    normalized
+fn normalized_path_key(path: &Path) -> String {
+    fs::canonicalize(path)
+        .unwrap_or_else(|_| path.to_path_buf())
         .to_string_lossy()
         .replace('/', "\\")
         .to_ascii_lowercase()
 }
 
 #[cfg(windows)]
-unsafe extern "system" fn enum_slicer_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+struct RunningExecutableWindowSearch {
+    executable_path_key: String,
+    found: bool,
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn enum_running_executable_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
     if hwnd.is_null() {
         return 1;
     }
+
     if IsWindowVisible(hwnd) == 0 && IsIconic(hwnd) == 0 {
         return 1;
     }
 
-    let search = &mut *(lparam as *mut SlicerWindowSearch);
+    let search = &mut *(lparam as *mut RunningExecutableWindowSearch);
     let mut process_id = 0u32;
     GetWindowThreadProcessId(hwnd, &mut process_id);
     let Some(process_path) = query_process_path_by_id(process_id) else {
         return 1;
     };
 
-    if path_compare_key(Path::new(&process_path)) == search.executable_path_key {
-        search.hwnd = hwnd;
+    if normalized_path_key(Path::new(&process_path)) == search.executable_path_key {
+        search.found = true;
         return 0;
     }
 
@@ -2240,97 +2231,82 @@ unsafe extern "system" fn enum_slicer_window(hwnd: HWND, lparam: LPARAM) -> BOOL
 }
 
 #[cfg(windows)]
-fn find_running_slicer_window(executable: &Path) -> Option<HWND> {
-    let mut search = SlicerWindowSearch {
-        executable_path_key: path_compare_key(executable),
-        hwnd: std::ptr::null_mut(),
+fn executable_has_running_window(executable: &Path) -> bool {
+    let mut search = RunningExecutableWindowSearch {
+        executable_path_key: normalized_path_key(executable),
+        found: false,
     };
 
     unsafe {
         EnumWindows(
-            Some(enum_slicer_window),
-            &mut search as *mut SlicerWindowSearch as LPARAM,
+            Some(enum_running_executable_window),
+            &mut search as *mut RunningExecutableWindowSearch as LPARAM,
         );
     }
 
-    if search.hwnd.is_null() {
-        None
-    } else {
-        Some(search.hwnd)
-    }
-}
-
-#[cfg(windows)]
-fn post_model_files_to_window(hwnd: HWND, model_paths: &[PathBuf]) -> Result<(), String> {
-    if model_paths.is_empty() {
-        return Err("No slicer model files were provided.".to_string());
-    }
-
-    let mut wide_paths = Vec::<u16>::new();
-    for path in model_paths {
-        wide_paths.extend(path.display().to_string().encode_utf16());
-        wide_paths.push(0);
-    }
-    wide_paths.push(0);
-
-    let header_size = std::mem::size_of::<FlowCellDropFilesHeader>();
-    let wide_bytes = wide_paths.len() * std::mem::size_of::<u16>();
-    let total_size = header_size + wide_bytes;
-
-    unsafe {
-        let drop_handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, total_size);
-        if drop_handle.is_null() {
-            return Err("Failed to allocate drag-drop payload for the open slicer.".to_string());
-        }
-
-        let locked = GlobalLock(drop_handle) as *mut u8;
-        if locked.is_null() {
-            return Err("Failed to prepare drag-drop payload for the open slicer.".to_string());
-        }
-
-        let header = locked as *mut FlowCellDropFilesHeader;
-        (*header).p_files = header_size as u32;
-        (*header).pt_x = 0;
-        (*header).pt_y = 0;
-        (*header).f_nc = 0;
-        (*header).f_wide = 1;
-        std::ptr::copy_nonoverlapping(
-            wide_paths.as_ptr() as *const u8,
-            locked.add(header_size),
-            wide_bytes,
-        );
-        let _ = GlobalUnlock(drop_handle);
-
-        if PostMessageW(hwnd, WM_DROPFILES, drop_handle as usize, 0) == 0 {
-            return Err("Failed to send model files to the open slicer window.".to_string());
-        }
-
-        let _ = ShowWindowAsyncSys(hwnd, SW_RESTORE_SYS);
-        let _ = SetForegroundWindowSys(hwnd);
-    }
-
-    Ok(())
-}
-
-#[cfg(windows)]
-fn send_models_to_running_slicer(
-    executable: &Path,
-    model_paths: &[PathBuf],
-) -> Result<bool, String> {
-    let Some(hwnd) = find_running_slicer_window(executable) else {
-        return Ok(false);
-    };
-
-    post_model_files_to_window(hwnd, model_paths)?;
-    Ok(true)
+    search.found
 }
 
 #[cfg(not(windows))]
-fn send_models_to_running_slicer(
-    _executable: &Path,
-    _model_paths: &[PathBuf],
-) -> Result<bool, String> {
-    Ok(false)
+fn executable_has_running_window(_executable: &Path) -> bool {
+    false
+}
+
+fn file_contains_ascii_token(path: &Path, token: &[u8]) -> bool {
+    let Ok(metadata) = fs::metadata(path) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() > MAX_SINGLE_INSTANCE_SCAN_BYTES {
+        return false;
+    }
+
+    let Ok(bytes) = fs::read(path) else {
+        return false;
+    };
+    bytes.windows(token.len()).any(|window| window == token)
+}
+
+fn single_instance_scan_candidates(executable: &Path) -> Vec<PathBuf> {
+    let mut candidates = vec![executable.to_path_buf()];
+    let Some(parent) = executable.parent() else {
+        return candidates;
+    };
+
+    let relevant_name_parts = [
+        "bambu", "cura", "orca", "prusa", "slicer", "studio", "super",
+    ];
+    if let Ok(entries) = fs::read_dir(parent) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let extension = path
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default();
+            if !extension.eq_ignore_ascii_case("dll") {
+                continue;
+            }
+            let file_name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if relevant_name_parts
+                .iter()
+                .any(|name_part| file_name.contains(name_part))
+            {
+                candidates.push(path);
+            }
+        }
+    }
+
+    candidates
+}
+
+fn executable_supports_single_instance_arg(executable: &Path) -> bool {
+    let token = SLICER_SINGLE_INSTANCE_ARG.as_bytes();
+    single_instance_scan_candidates(executable)
+        .into_iter()
+        .any(|candidate| file_contains_ascii_token(&candidate, token))
 }
 
 fn launch_slicer_impl(
@@ -2362,17 +2338,13 @@ fn launch_slicer_impl(
         }
     }
 
-    if send_models_to_running_slicer(&executable, &model_paths)? {
-        write_slicer_executable(spec.id, &executable)?;
-        let count = model_paths.len();
-        let file_label = if count == 1 { "file" } else { "files" };
-        return Ok(format!(
-            "Sent {count} model {file_label} to the open {} window.",
-            spec.display_name
-        ));
-    }
+    let single_instance_handoff = executable_has_running_window(&executable)
+        && executable_supports_single_instance_arg(&executable);
 
     let mut command = Command::new(&executable);
+    if single_instance_handoff {
+        command.arg(SLICER_SINGLE_INSTANCE_ARG);
+    }
     command.args(&model_paths);
     if let Some(parent) = executable.parent() {
         command.current_dir(parent);
@@ -2389,10 +2361,17 @@ fn launch_slicer_impl(
 
     let count = model_paths.len();
     let file_label = if count == 1 { "file" } else { "files" };
-    Ok(format!(
-        "Launched {} with {count} model {file_label}.",
-        spec.display_name
-    ))
+    if single_instance_handoff {
+        Ok(format!(
+            "Sent {count} model {file_label} to the open {} window.",
+            spec.display_name
+        ))
+    } else {
+        Ok(format!(
+            "Launched {} with {count} model {file_label}.",
+            spec.display_name
+        ))
+    }
 }
 
 #[tauri::command]
@@ -3139,6 +3118,66 @@ fn show_save_file_dialog(
     }
 
     Ok(dialog.save_file().map(|path| path.display().to_string()))
+}
+
+#[tauri::command]
+fn show_text_input_dialog(
+    title: String,
+    prompt: String,
+    default_value: String,
+) -> Result<Option<String>, String> {
+    #[cfg(windows)]
+    {
+        let script = format!(
+            r#"
+$Title = {title}
+$Prompt = {prompt}
+$DefaultValue = {default_value}
+Add-Type -AssemblyName Microsoft.VisualBasic
+[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding -ArgumentList $false
+$value = [Microsoft.VisualBasic.Interaction]::InputBox($Prompt, $Title, $DefaultValue)
+[Console]::Out.Write($value)
+"#,
+            title = powershell_single_quoted_string(&title),
+            prompt = powershell_single_quoted_string(&prompt),
+            default_value = powershell_single_quoted_string(&default_value)
+        );
+        let mut command = Command::new(resolve_powershell_path());
+        command
+            .args([
+                "-NoProfile",
+                "-Sta",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW);
+
+        let output = command
+            .output()
+            .map_err(|error| format!("Failed to open text input dialog: {error}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(if stderr.is_empty() {
+                "Text input dialog failed.".to_string()
+            } else {
+                stderr
+            });
+        }
+
+        let value = String::from_utf8_lossy(&output.stdout)
+            .trim_end_matches(['\r', '\n'])
+            .trim()
+            .to_string();
+        return Ok((!value.is_empty()).then_some(value));
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = (title, prompt, default_value);
+        Err("Text input dialog is only available on Windows.".to_string())
+    }
 }
 
 #[tauri::command]
@@ -11462,6 +11501,7 @@ fn main() {
             show_open_file_dialog,
             show_open_folder_dialog,
             show_save_file_dialog,
+            show_text_input_dialog,
             sample_photo_theme_colors,
             load_blender_theme_darkness_profiles,
             save_blender_theme_darkness_profiles,

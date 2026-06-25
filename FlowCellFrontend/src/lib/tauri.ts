@@ -901,6 +901,18 @@ export function showSaveFileDialog(args: {
   });
 }
 
+export function showTextInputDialog(args: {
+  title: string;
+  prompt: string;
+  defaultValue?: string;
+}): Promise<string | null> {
+  return invoke("show_text_input_dialog", {
+    title: args.title,
+    prompt: args.prompt,
+    defaultValue: args.defaultValue ?? ""
+  });
+}
+
 export function samplePhotoThemeColors(
   imagePath: string
 ): Promise<SampledPhotoThemeColors> {

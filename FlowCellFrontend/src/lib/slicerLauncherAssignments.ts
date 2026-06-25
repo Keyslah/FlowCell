@@ -1,4 +1,4 @@
-import { showOpenFileDialog } from "./tauri";
+import { showOpenFileDialog, showTextInputDialog } from "./tauri";
 
 type SlicerLauncherId = "orca" | "cura" | "slicer";
 
@@ -222,10 +222,18 @@ async function resolveExecutableForNewSlicerButton(spec: SlicerLauncherSpec, det
   return pickSlicerExecutable(detectedExecutable, spec.executableLabel);
 }
 
-function promptForSlicerButtonName(executablePath: string, fallback: string): string {
+async function promptForSlicerButtonName(executablePath: string, fallback: string): Promise<string> {
   const suggestedName = inferSlicerDisplayName(executablePath, fallback);
-  const chosenName = window.prompt("Name this slicer button. This only renames this button instance.", suggestedName);
-  return readString(chosenName) || suggestedName;
+  try {
+    const chosenName = await showTextInputDialog({
+      title: "Name Slicer Button",
+      prompt: "Name this slicer button. This only renames this button instance.",
+      defaultValue: suggestedName
+    });
+    return readString(chosenName) || suggestedName;
+  } catch {
+    return suggestedName;
+  }
 }
 
 function saveSlicerButtonAssignment(context: SlicerLaunchContext, executablePath: string, displayName: string): void {
@@ -277,7 +285,7 @@ export async function handleSlicerLaunchForPanelButton(
   const detectedExecutable = readString(response.detected_executable ?? response.detectedExecutable);
   const executablePath = await resolveExecutableForNewSlicerButton(spec, detectedExecutable);
   if (!executablePath) return `${spec.displayName} launch cancelled.`;
-  const displayName = promptForSlicerButtonName(executablePath, spec.displayName);
+  const displayName = await promptForSlicerButtonName(executablePath, spec.displayName);
   saveSlicerButtonAssignment(context, executablePath, displayName);
   return launchSlicer(spec.id, executablePath, exportedPaths);
 }
