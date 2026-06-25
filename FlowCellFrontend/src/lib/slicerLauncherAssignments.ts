@@ -1,6 +1,6 @@
 import { showOpenFileDialog } from "./tauri";
 
-type SlicerLauncherId = "orca" | "cura";
+type SlicerLauncherId = "orca" | "cura" | "slicer";
 
 type RecentSlicerChoice =
   | { kind: "path"; path: string }
@@ -14,6 +14,8 @@ export interface PanelSlicerScriptRecord {
 }
 
 interface PanelScriptRunResponse {
+  requires_flowcell_slicer_launch?: boolean;
+  requiresFlowCellSlicerLaunch?: boolean;
   requires_flowcell_orca_launch?: boolean;
   requiresFlowCellOrcaLaunch?: boolean;
   requires_flowcell_cura_launch?: boolean;
@@ -81,8 +83,19 @@ function readRequestedSlicerId(response: PanelScriptRunResponse): string {
 
 function resolveSlicerLauncherSpec(response: PanelScriptRunResponse): SlicerLauncherSpec {
   const requestedId = readRequestedSlicerId(response);
-  const id = requestedId === "cura" || requestedId === "ultimaker_cura" || requestedId === "ultimaker-cura" ? "cura" : "orca";
-  const fallbackName = id === "cura" ? "UltiMaker Cura" : "OrcaSlicer";
+  const id =
+    requestedId === "orca" ||
+    requestedId === "orcaslicer" ||
+    requestedId === "orca_slicer" ||
+    requestedId === "orca-slicer"
+      ? "orca"
+      : requestedId === "cura" ||
+          requestedId === "ultimaker_cura" ||
+          requestedId === "ultimaker-cura"
+        ? "cura"
+        : "slicer";
+  const fallbackName =
+    id === "cura" ? "UltiMaker Cura" : id === "orca" ? "OrcaSlicer" : "Slicer";
   return {
     id,
     displayName: readString(response.slicer_display_name ?? response.slicerDisplayName) || fallbackName,

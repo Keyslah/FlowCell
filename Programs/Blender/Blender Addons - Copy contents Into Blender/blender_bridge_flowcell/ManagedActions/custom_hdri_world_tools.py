@@ -507,6 +507,23 @@ def _overlay_state():
     return state
 
 
+def _bump_place_picture_generation():
+    namespace = bpy.app.driver_namespace
+    try:
+        generation = int(namespace.get(PLACE_PICTURE_GENERATION_KEY, 0)) + 1
+    except Exception:
+        generation = 1
+    namespace[PLACE_PICTURE_GENERATION_KEY] = generation
+    return generation
+
+
+def _place_picture_overlay_is_current(state, generation):
+    try:
+        return bool(state.get("enabled", False)) and int(state.get("generation", -1)) == int(generation)
+    except Exception:
+        return False
+
+
 def _tag_redraw_view3d():
     window_manager = getattr(bpy.context, "window_manager", None)
     if window_manager is None:
@@ -2174,6 +2191,7 @@ def _remove_place_picture_draw_handlers(state):
 
 def _remove_viewport_overlay_handler():
     state = _overlay_state()
+    _bump_place_picture_generation()
     _remove_place_picture_draw_handlers(state)
     _restore_place_picture_viewports(state)
     state.clear()
@@ -2372,8 +2390,7 @@ def _register_viewport_overlay_from_resolved_path(
 
     image_shader = gpu.shader.from_builtin("IMAGE") if image is not None else None
     color_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
-    generation = int(bpy.app.driver_namespace.get(PLACE_PICTURE_GENERATION_KEY, 0)) + 1
-    bpy.app.driver_namespace[PLACE_PICTURE_GENERATION_KEY] = generation
+    generation = _bump_place_picture_generation()
 
     state["image"] = image
     state["path"] = resolved_path
@@ -2385,6 +2402,8 @@ def _register_viewport_overlay_from_resolved_path(
     state["generation"] = generation
 
     def draw_background_image():
+        if not _place_picture_overlay_is_current(state, generation):
+            return
         if image is None or not PLACE_PICTURE_ENABLE_BACKGROUND:
             return
         region, _rv3d, _space = _get_current_3d_context()
@@ -2448,6 +2467,8 @@ def _register_viewport_overlay_from_resolved_path(
                 gpu.state.depth_mask_set(old_depth_mask)
 
     def draw_grid_and_gizmo_overlay():
+        if not _place_picture_overlay_is_current(state, generation):
+            return
         region, rv3d, _space = _get_current_3d_context()
         if region is None:
             return

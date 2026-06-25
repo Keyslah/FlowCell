@@ -88,6 +88,7 @@ const BLENDER_BRIDGE_NOT_RUNNING_MESSAGE: &str =
     "Open Blender first, then run the button again.";
 const ORCA_LAUNCHER_CONFIG_FILE_NAME: &str = "orca_launcher.json";
 const CURA_LAUNCHER_CONFIG_FILE_NAME: &str = "cura_launcher.json";
+const SLICER_LAUNCHER_CONFIG_FILE_NAME: &str = "slicer_launcher.json";
 const FLOWCELL_CONTROLLER_SCRIPT_TIMEOUT_SECONDS: u64 = 25;
 #[cfg(windows)]
 const FLOWCELL_DIRECT_SCRIPT_RECEIVER_TITLE: &str = "FlowCellBackendDirectScriptReceiver";
@@ -2093,6 +2094,12 @@ fn resolve_slicer_launcher_spec(slicer_id: &str) -> Result<SlicerLauncherSpec, S
             display_name: "UltiMaker Cura",
             executable_label: "Cura EXE",
             config_file_name: CURA_LAUNCHER_CONFIG_FILE_NAME,
+        }),
+        "slicer" | "generic" | "custom" => Ok(SlicerLauncherSpec {
+            id: "slicer",
+            display_name: "Slicer",
+            executable_label: "Slicer EXE",
+            config_file_name: SLICER_LAUNCHER_CONFIG_FILE_NAME,
         }),
         _ => Err("Unknown slicer launcher.".to_string()),
     }
@@ -8221,7 +8228,7 @@ fn run_blender_generic_toolset_action(
         );
     }
 
-    run_blender_bridge_action_direct(action, Value::Object(request_payload))
+    run_blender_bridge_action_direct_with_fallback(action, Value::Object(request_payload))
 }
 
 #[cfg(windows)]
@@ -8660,6 +8667,41 @@ fn resolve_target_blender_process_id(_bridge_root: &Path) -> Result<u32, String>
 
 fn run_blender_bridge_action_direct(action: &str, data: Value) -> Result<Value, String> {
     run_blender_bridge_action_direct_with_options(action, data, None, false)
+}
+
+fn blender_bridge_action_fallback(action: &str) -> Option<&'static str> {
+    match action.trim().to_ascii_lowercase().as_str() {
+        "flowcell_custom_theme" | "flowcell_custom_hdri_world_tools" => {
+            Some("custom_hdri_world_tools")
+        }
+        _ => None,
+    }
+}
+
+fn is_blender_bridge_unsupported_action_error(message: &str, action: &str) -> bool {
+    let expected = format!("unsupported action: {}", action.trim().to_ascii_lowercase());
+    message.trim().to_ascii_lowercase().contains(&expected)
+}
+
+fn run_blender_bridge_action_direct_with_fallback(
+    action: &str,
+    data: Value,
+) -> Result<Value, String> {
+    match run_blender_bridge_action_direct(action, data.clone()) {
+        Ok(response) => Ok(response),
+        Err(message) => {
+            let Some(fallback_action) = blender_bridge_action_fallback(action) else {
+                return Err(message);
+            };
+            if fallback_action.eq_ignore_ascii_case(action)
+                || !is_blender_bridge_unsupported_action_error(&message, action)
+            {
+                return Err(message);
+            }
+
+            run_blender_bridge_action_direct(fallback_action, data)
+        }
+    }
 }
 
 fn run_blender_bridge_status_action_or_fallback(

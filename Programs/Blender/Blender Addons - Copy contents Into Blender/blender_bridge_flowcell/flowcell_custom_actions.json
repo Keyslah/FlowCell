@@ -337,6 +337,14 @@
                         "description":  "Export the selected mesh objects as STL files and add them to Orca."
                     },
                     {
+                        "action":  "flowcell_custom_slicer",
+                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_slicer.py",
+                        "functionName":  "",
+                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_slicer.py",
+                        "sourceFunctionName":  "",
+                        "description":  "Slicer"
+                    },
+                    {
                         "action":  "flowcell_custom_origin_geo",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_origin_geo.py",
                         "functionName":  "",

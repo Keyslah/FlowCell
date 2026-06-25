@@ -114,7 +114,7 @@ function responseMessage(response: unknown): string {
   );
 }
 
-type SlicerLauncherId = "orca" | "cura";
+type SlicerLauncherId = "orca" | "cura" | "slicer";
 
 function isFlowCellSlicerLaunchResponse(
   response: unknown

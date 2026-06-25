@@ -573,6 +573,12 @@
                         "tooltip":  "With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.",
                         "action":  "flowcell_custom_cursor_center_hole",
                         "panel":  "Utility"
+                    },
+                    {
+                        "label":  "slicer",
+                        "tooltip":  "Slicer",
+                        "action":  "flowcell_custom_slicer",
+                        "panel":  "Files"
                     }
                 ]
 }
