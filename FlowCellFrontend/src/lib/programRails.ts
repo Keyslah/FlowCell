@@ -1,6 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { LayoutSnapshot } from "../types";
 import { showOpenFileDialog } from "./tauri";
+import {
+  applySlicerButtonAssignmentLabels,
+  clearSlicerButtonAssignments,
+  handleSlicerLaunchForPanelButton
+} from "./slicerLauncherAssignments";
 
 export interface PanelScriptChildRecord {
   slot: string;
@@ -371,10 +376,11 @@ export async function listPanelScriptFiles(
     return [];
   }
 
-  return invokeProgramRailCommand<PanelScriptFileRecord[]>("list_panel_script_files", {
+  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("list_panel_script_files", {
     programName,
     panelName
   });
+  return applySlicerButtonAssignmentLabels(programName, panelName, records);
 }
 
 export async function addPanelScripts(
@@ -385,10 +391,11 @@ export async function addPanelScripts(
     throw new Error("Panel scripts can only be added from the desktop host.");
   }
 
-  return invokeProgramRailCommand<PanelScriptFileRecord[]>("add_panel_scripts", {
+  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("add_panel_scripts", {
     programName,
     panelName
   });
+  return applySlicerButtonAssignmentLabels(programName, panelName, records);
 }
 
 export async function deletePanelScripts(
@@ -400,11 +407,13 @@ export async function deletePanelScripts(
     throw new Error("Panel scripts can only be deleted from the desktop host.");
   }
 
-  return invokeProgramRailCommand<PanelScriptFileRecord[]>("delete_panel_scripts", {
+  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("delete_panel_scripts", {
     programName,
     panelName,
     fileNames
   });
+  clearSlicerButtonAssignments(programName, panelName, fileNames);
+  return applySlicerButtonAssignmentLabels(programName, panelName, records);
 }
 
 export async function updatePanelScriptDescription(
@@ -417,12 +426,13 @@ export async function updatePanelScriptDescription(
     throw new Error("Panel script descriptions can only be updated from the desktop host.");
   }
 
-  return invokeProgramRailCommand<PanelScriptFileRecord[]>("update_panel_script_description", {
+  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("update_panel_script_description", {
     programName,
     panelName,
     fileName,
     description
   });
+  return applySlicerButtonAssignmentLabels(programName, panelName, records);
 }
 
 export async function runPanelScript(
@@ -441,7 +451,7 @@ export async function runPanelScript(
   });
 
   if (isFlowCellSlicerLaunchResponse(response)) {
-    return handleFlowCellSlicerLaunch(response);
+    return handleSlicerLaunchForPanelButton(response, { programName, panelName, fileName }, launchSlicer);
   }
 
   return responseMessage(response);
