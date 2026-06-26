@@ -12,6 +12,10 @@ use std::env;
 use std::ffi::c_void;
 use std::fs;
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
+#[cfg(windows)]
+use std::mem::size_of;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -42,6 +46,10 @@ use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, POINT};
 #[cfg(windows)]
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 #[cfg(windows)]
+use windows_sys::Win32::System::Memory::{
+    GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT,
+};
+#[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -49,12 +57,14 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
     GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    SendMessageTimeoutW, SetWindowLongPtrW, WindowFromPoint, GA_ROOT, GWLP_HWNDPARENT, GW_HWNDNEXT,
-    SMTO_ABORTIFHUNG, WM_COPYDATA,
+    PostMessageW, SendMessageTimeoutW, SetWindowLongPtrW, WindowFromPoint, GA_ROOT,
+    GWLP_HWNDPARENT, GW_HWNDNEXT, SMTO_ABORTIFHUNG, WM_COPYDATA,
 };
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
+#[cfg(windows)]
+const WM_DROPFILES_MESSAGE: u32 = 0x0233;
 const BLENDER_PANEL_ITEM_SUFFIX: &str = ".flowcell-panel-item.json";
 const FRONTEND_MACRO_OWNER: &str = "flowcell_frontend";
 const FRONTEND_MACRO_SCHEMA_VERSION: &str = "2";
@@ -2816,7 +2826,7 @@ fn list_detected_slicer_executables() -> Result<Vec<DetectedSlicerExecutable>, S
 #[cfg(windows)]
 struct RunningExecutableWindowSearch {
     executable_path_key: String,
-    found: bool,
+    hwnd: HWND,
 }
 
 #[cfg(windows)]
@@ -2837,7 +2847,7 @@ unsafe extern "system" fn enum_running_executable_window(hwnd: HWND, lparam: LPA
     };
 
     if normalized_path_key(Path::new(&process_path)) == search.executable_path_key {
-        search.found = true;
+        search.hwnd = hwnd;
         return 0;
     }
 
@@ -2845,10 +2855,10 @@ unsafe extern "system" fn enum_running_executable_window(hwnd: HWND, lparam: LPA
 }
 
 #[cfg(windows)]
-fn executable_has_running_window(executable: &Path) -> bool {
+fn running_executable_window(executable: &Path) -> Option<HWND> {
     let mut search = RunningExecutableWindowSearch {
         executable_path_key: normalized_path_key(executable),
-        found: false,
+        hwnd: std::ptr::null_mut(),
     };
 
     unsafe {
@@ -2858,11 +2868,73 @@ fn executable_has_running_window(executable: &Path) -> bool {
         );
     }
 
-    search.found
+    (!search.hwnd.is_null()).then_some(search.hwnd)
 }
 
 #[cfg(not(windows))]
-fn executable_has_running_window(_executable: &Path) -> bool {
+fn running_executable_window(_executable: &Path) -> Option<()> {
+    None
+}
+
+#[cfg(windows)]
+#[repr(C)]
+struct DropFilesHeader {
+    p_files: u32,
+    pt: POINT,
+    f_nc: BOOL,
+    f_wide: BOOL,
+}
+
+#[cfg(windows)]
+fn wide_drop_file_list(model_paths: &[PathBuf]) -> Vec<u16> {
+    let mut file_list = Vec::new();
+    for path in model_paths {
+        let absolute_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        file_list.extend(absolute_path.as_os_str().encode_wide());
+        file_list.push(0);
+    }
+    file_list.push(0);
+    file_list
+}
+
+#[cfg(windows)]
+fn send_model_paths_to_running_window(hwnd: HWND, model_paths: &[PathBuf]) -> bool {
+    if hwnd.is_null() || model_paths.is_empty() {
+        return false;
+    }
+
+    let file_list = wide_drop_file_list(model_paths);
+    let header_size = size_of::<DropFilesHeader>();
+    let file_bytes = file_list.len() * size_of::<u16>();
+    let allocation_size = header_size + file_bytes;
+
+    unsafe {
+        let drop_handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, allocation_size);
+        if drop_handle.is_null() {
+            return false;
+        }
+
+        let locked = GlobalLock(drop_handle);
+        if locked.is_null() {
+            return false;
+        }
+
+        let header = locked as *mut DropFilesHeader;
+        (*header).p_files = header_size as u32;
+        (*header).pt = POINT { x: 0, y: 0 };
+        (*header).f_nc = 0;
+        (*header).f_wide = 1;
+
+        let file_list_target = (locked as *mut u8).add(header_size) as *mut u16;
+        std::ptr::copy_nonoverlapping(file_list.as_ptr(), file_list_target, file_list.len());
+        GlobalUnlock(drop_handle);
+
+        PostMessageW(hwnd, WM_DROPFILES_MESSAGE, drop_handle as usize, 0) != 0
+    }
+}
+
+#[cfg(not(windows))]
+fn send_model_paths_to_running_window(_hwnd: (), _model_paths: &[PathBuf]) -> bool {
     false
 }
 
@@ -2956,7 +3028,20 @@ fn launch_slicer_impl(
         }
     }
 
-    let was_running = executable_has_running_window(&executable);
+    let running_window = running_executable_window(&executable);
+    if let Some(hwnd) = running_window {
+        if send_model_paths_to_running_window(hwnd, &model_paths) {
+            write_slicer_executable(spec.id, &executable)?;
+            let count = model_paths.len();
+            let file_label = if count == 1 { "file" } else { "files" };
+            return Ok(format!(
+                "Sent {count} model {file_label} to the open {} window.",
+                spec.display_name
+            ));
+        }
+    }
+
+    let was_running = running_window.is_some();
     let use_single_instance_arg = should_use_single_instance_arg(&executable, was_running);
 
     let mut command = Command::new(&executable);
