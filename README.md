@@ -47,58 +47,12 @@ Source/dev mode still uses [AutoHotkey V2](https://www.autohotkey.com/download/a
 
 [Toggle AutoHotkey for anti-cheat games](docs/toggle-autohotkey-for-anticheat.md): use this to disable AutoHotkey to play anti-cheat video games.
 
-## Programs
-
-- [Blender](Programs/Blender/README.md): bridge-based tools and special toolboxes for workflows like rotate, align, boolean, remesh, theme/HDRI, dimensions, and snap.
-- [Illustrator](Programs/Illustrator/README.md): JSX script panels plus Illustrator-aware toolsets such as alignment and rotate.
-- [Photoshop](Programs/Photoshop/README.md): JSX script panels using the shared Git/local/panel script workflow.
-- [Windows](Programs/Windows/README.md): utility scripts, repo helpers, monitor tools, Codex usage, and other desktop helpers.
 
 ## Organization
+To use the files panels, you have to set up the file organizer with your filing system. 
 
-The Windows `Files` panel `file Organizer` button makes your filing system work with Flowcell
-In the setup window:
+https://github.com/Keyslah/FlowCell/blob/FlowCell/docs/File%20organizer.md  
 
-1. Use `root folder` to browse
-2. The root is shown as `.`.
-3. Assign existing file groups from the group dropdown, use `Add group` to create or edit a group and its file types, or use the direct `File types` field for one folder.
-4. Use `Add Folder` to add a folder under the selected folder. `Add folder` creates it immediately; `Add when files match` creates it later only when its file types are present. The program presets are Illustrator, Photoshop, Blender, and Fusion 360, and folders with file types preview `01 live`, `02 snapshots`, `03 archive`, and `04 trash`.
-5. Assign the `Unknown Files` role to a scanned folder before saving. It is the catch-all for loose files whose extension does not match another group.
-6. Use `Apply to tree` to write the current setup to the root folder, or `Apply & rescan` to write it and refresh the scanned tree.
-
-The project profile is written as a visible sidecar at the project root:
-
-```text
-<project folder>/organize-folder.profile.json
-```
-
-The Load profile side of the window is for reusable folder trees. `Save Profile` stores the current setup in two places:
-
-```text
-FlowCell/local/Folder Trees/<profile name>/
-FlowCell/local/Folder Tree Profiles/<profile name>.json
-```
-
-`Load profile` loads that reusable setup into the editor without changing the current project root. `Apply profile to root` builds the loaded profile into the selected project root, writes `organize-folder.profile.json`, and runs the profile's conditional program-folder rules. If a subfolder is selected, it builds only the saved folder structure inside that subfolder and does not write a project profile there. `Apply to profile` saves the current editor state back into the loaded profile so you can build it up incrementally.
-
-Applying a saved profile to a root first rebuilds the saved empty folder skeleton. Program-folder rules are then applied under the shared source area:
-
-```text
-<project folder>/
-  01 src/
-    00 assets/
-    <profile program folders>/
-      01 live/
-      02 snapshots/
-      03 archive/
-      04 trash/
-```
-
-Program folders are conditional working-file destinations. Applying a profile reuses an existing matching program folder when possible, moves the newest clear version family member to `01 live`, moves older family members to `02 snapshots` as `(S01)`, `(S02)`, and so on, and records conflicts instead of overwriting files.
-
-`Make script` generates a profile-specific script in `Programs/Windows/Windows Git Scripts/Files/apply_profile_<name>.ps1`. That script reads a destination folder or file path from the clipboard, applies the saved profile through `Programs/Windows/SupportScripts/Apply-OrganizationProfileCore.ps1`, and can be added to a panel with Add Script.
-
-The legacy Windows `Files` panel `Organize Folder` button is separate. It still uses the clipboard path and writes `organize-folder.undo.json` in the project folder with file moves, structure renames, created folders, recycled empty folders, timestamp stamps, conflicts, unresolved items, and rollback data. It no longer writes `organize-folder.log.txt`.
 
 ## Important Links
 
