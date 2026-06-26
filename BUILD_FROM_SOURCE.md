@@ -14,7 +14,6 @@ Install these on Windows:
 - AutoHotkey v2 for source/dev mode
 - PowerShell
 
-Blender, Illustrator, and Photoshop are only needed for the integrations you want to use or test.
 
 ## Clone
 
@@ -32,7 +31,6 @@ Use the existing source/dev launcher:
 run.cmd
 ```
 
-That existing launcher path is intentionally separate from the portable release launcher.
 
 ## Build the frontend app
 
@@ -86,8 +84,3 @@ Upload the ZIP files from `dist/` to GitHub Releases as release assets. Do not c
 run.cmd
 = source/developer path
 
-Start FlowCell.cmd
-= portable release path
-```
-
-The portable launcher directly uses bundled AutoHotkey from `FlowCell/runtime/AutoHotkey64.exe` inside the generated release package. It does not call npm, Cargo, Tauri build, or the source/dev backend launcher.

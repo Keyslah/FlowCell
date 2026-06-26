@@ -1,8 +1,8 @@
 # FlowCell
 
-FlowCell is a desktop app to fire scripts with buttons, macros, and hotkeys without digging through menus or using tiny buttons.
+FlowCell is a desktop app to fire scripts with buttons, macros, and hotkeys without digging through menus or using tiny pathetic buttons.
 
-Its like a small control deck that only stays on top of its respective program.
+Its a small control deck that only stays on top of its respective program.
 
 ## Download
 
@@ -11,15 +11,11 @@ Use the GitHub Releases page, not GitHub's automatic source-code ZIP:
 ```text
 https://github.com/Keyslah/FlowCell/releases/latest
 ```
-
-Pick the download that matches what you want:
-
+The core of flowcell
 ```text
 FlowCell-Core.zip
 ```
-
-Base app only. Use this when you want the smallest FlowCell package.
-
+Download the program files, extract to flowcell\Programs folder and follow the instructions to integrate.
 ```text
 FlowCell-Blender.zip
 FlowCell-Illustrator.zip
@@ -27,13 +23,7 @@ FlowCell-Photoshop.zip
 FlowCell-Windows.zip
 ```
 
-Optional program payloads. Download `FlowCell-Core.zip`, then extract any payload ZIPs you want into the extracted FlowCell Core folder. Each payload merges into `Programs\<ProgramName>` and does not contain the Core app.
 
-After downloading, extract the ZIP, open the extracted folder, and double-click:
-
-```text
-Start FlowCell.cmd
-```
 
 Normal users do not need Node, npm, Rust, Cargo, Tauri build tools, or a separate AutoHotkey install. The Core package includes the built FlowCell app and bundled AutoHotkey v2 runtime.
 
@@ -66,24 +56,21 @@ Source/dev mode still uses [AutoHotkey V2](https://www.autohotkey.com/download/a
 
 ## Organization
 
-The Windows `Files` panel `Setup Organization` button is the setup flow. The panel script at `Programs/Windows/Panels/Files/setup_organization.ps1` is only a marker; FlowCell intercepts the `setup_organization.ps1` filename before running a script and opens the native `organization-setup` Tauri/React window instead. The older WinForms script under `Programs/Windows/Windows Git Scripts/Files/setup_organization.ps1` is a standalone fallback, not the normal panel flow.
-
+The Windows `Files` panel `file Organizer` button makes your filing system work with Flowcell
 In the setup window:
 
-1. Use `Project root` to browse to the project folder, then `Rescan` if the folder changes on disk.
-2. Select a folder in the Project root tree. The root is shown as `.`.
-3. Assign existing roles from the Role dropdown, use `Add Role` to create or edit a role and its file types, or use the direct `File types` field for one folder.
+1. Use `root folder` to browse
+2. The root is shown as `.`.
+3. Assign existing file groups from the group dropdown, use `Add group` to create or edit a group and its file types, or use the direct `File types` field for one folder.
 4. Use `Add Folder` to add a folder under the selected folder. `Add folder` creates it immediately; `Add when files match` creates it later only when its file types are present. The program presets are Illustrator, Photoshop, Blender, and Fusion 360, and folders with file types preview `01 live`, `02 snapshots`, `03 archive`, and `04 trash`.
-5. Assign the `Unknown Files` role to a scanned folder before saving. It is the catch-all for loose files whose extension does not match another role.
-6. Use `Apply to tree` to write the current setup to the project, or `Apply & rescan` to write it and refresh the scanned tree.
+5. Assign the `Unknown Files` role to a scanned folder before saving. It is the catch-all for loose files whose extension does not match another group.
+6. Use `Apply to tree` to write the current setup to the root folder, or `Apply & rescan` to write it and refresh the scanned tree.
 
 The project profile is written as a visible sidecar at the project root:
 
 ```text
 <project folder>/organize-folder.profile.json
 ```
-
-Older `.flowcell/organization-profile.json` files are still read as a fallback and migrate on the next save.
 
 The Load profile side of the window is for reusable folder trees. `Save Profile` stores the current setup in two places:
 
