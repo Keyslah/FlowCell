@@ -12,6 +12,7 @@ Repository guardrails
 - Protect context aggressively.
 - Cap unknown command output by bytes.
 - Validate based on risk.
+- When a FlowCell change requires a new build, automatically run that build before finishing the task.
 - Final summaries must state changed files, validation run, skipped validation reasons, and remaining risks.
 
 Command-output rules

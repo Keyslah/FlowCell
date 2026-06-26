@@ -19,7 +19,6 @@ import { writePanelFanDiagnostics } from "../../lib/panelFanDiagnostics";
 import { writeRegisteredLayoutWindowSnapshotBounds } from "../../lib/layoutSnapshots";
 import {
   listPanelScriptFiles,
-  readPanelScriptStatusMessage,
   runPanelScript,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
@@ -1244,16 +1243,8 @@ export default function PanelFanToolPopoutWindowPage({
 
     try {
       setScriptRunError(null);
-      const statusMessage = readPanelScriptStatusMessage(
-        await runPanelScript(context.programName, context.panelName, entry.childSlotId)
-      );
-      if (statusMessage) {
-        keepOpenForFeedback = true;
-        setScriptRunError({
-          title: "Script status.",
-          detail: statusMessage
-        });
-      }
+      // Success needs no popup — only failures keep the fan open for feedback.
+      await runPanelScript(context.programName, context.panelName, entry.childSlotId);
     } catch (error) {
       console.error(
         `Failed to run panel fan child ${entry.childSlotId} for ${context.programName}/${context.panelName}.`,

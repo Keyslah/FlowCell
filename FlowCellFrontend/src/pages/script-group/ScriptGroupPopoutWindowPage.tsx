@@ -12,7 +12,7 @@ import {
   readButtonLabelOverrides,
   resolveButtonLabelOverride
 } from "../../lib/buttonLabelOverrides";
-import { readPanelScriptStatusMessage, runPanelScript } from "../../lib/programRails";
+import { runPanelScript } from "../../lib/programRails";
 import { getScriptGroupPopoutTemplate } from "../../lib/scriptGroupPopoutTemplates";
 import type { ScriptGroupPopoutWindowContext } from "../../lib/windowContext";
 import "./scriptGroupPopoutWindowPage.css";
@@ -267,15 +267,8 @@ export default function ScriptGroupPopoutWindowPage({
   const handleButtonActivate = async (fileName: string) => {
     try {
       setScriptRunError(null);
-      const statusMessage = readPanelScriptStatusMessage(
-        await runPanelScript(context.programName, context.panelName, fileName)
-      );
-      if (statusMessage) {
-        setScriptRunError({
-          title: "Script status.",
-          detail: statusMessage
-        });
-      }
+      // Success needs no popup — only surface failures.
+      await runPanelScript(context.programName, context.panelName, fileName);
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
       setScriptRunError({

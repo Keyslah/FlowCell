@@ -12,10 +12,6 @@ use std::env;
 use std::ffi::c_void;
 use std::fs;
 use std::io::{ErrorKind, Read, Seek, SeekFrom, Write};
-#[cfg(windows)]
-use std::mem::size_of;
-#[cfg(windows)]
-use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -46,10 +42,6 @@ use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, POINT};
 #[cfg(windows)]
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 #[cfg(windows)]
-use windows_sys::Win32::System::Memory::{
-    GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT,
-};
-#[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
@@ -57,14 +49,12 @@ use windows_sys::Win32::System::Threading::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
     GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    PostMessageW, SendMessageTimeoutW, SetWindowLongPtrW, WindowFromPoint, GA_ROOT,
+    SendMessageTimeoutW, SetWindowLongPtrW, WindowFromPoint, GA_ROOT,
     GWLP_HWNDPARENT, GW_HWNDNEXT, SMTO_ABORTIFHUNG, WM_COPYDATA,
 };
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-#[cfg(windows)]
-const WM_DROPFILES_MESSAGE: u32 = 0x0233;
 const BLENDER_PANEL_ITEM_SUFFIX: &str = ".flowcell-panel-item.json";
 const FRONTEND_MACRO_OWNER: &str = "flowcell_frontend";
 const FRONTEND_MACRO_SCHEMA_VERSION: &str = "2";
@@ -78,8 +68,6 @@ const CORE_ACTION_KIND: &str = "core_action";
 const ILLUSTRATOR_SET_ANCHOR_ACTION_ID: &str = "illustrator_set_anchor";
 const CORE_ACTIONS_PANEL_NAME: &str = "Actions";
 const BOOLEAN_TOOL_KIND: &str = "boolean_toolset";
-const SLICER_SINGLE_INSTANCE_ARG: &str = "--single-instance";
-const MAX_SINGLE_INSTANCE_SCAN_BYTES: u64 = 256 * 1024 * 1024;
 const DIMENSIONS_TOOL_KIND: &str = "dimensions_toolset";
 const REMESH_TOOL_KIND: &str = "remesh_toolset";
 const TRI_POLY_TOOL_KIND: &str = "tri_poly_toolset";
@@ -2876,129 +2864,6 @@ fn running_executable_window(_executable: &Path) -> Option<()> {
     None
 }
 
-#[cfg(windows)]
-#[repr(C)]
-struct DropFilesHeader {
-    p_files: u32,
-    pt: POINT,
-    f_nc: BOOL,
-    f_wide: BOOL,
-}
-
-#[cfg(windows)]
-fn wide_drop_file_list(model_paths: &[PathBuf]) -> Vec<u16> {
-    let mut file_list = Vec::new();
-    for path in model_paths {
-        let absolute_path = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        file_list.extend(absolute_path.as_os_str().encode_wide());
-        file_list.push(0);
-    }
-    file_list.push(0);
-    file_list
-}
-
-#[cfg(windows)]
-fn send_model_paths_to_running_window(hwnd: HWND, model_paths: &[PathBuf]) -> bool {
-    if hwnd.is_null() || model_paths.is_empty() {
-        return false;
-    }
-
-    let file_list = wide_drop_file_list(model_paths);
-    let header_size = size_of::<DropFilesHeader>();
-    let file_bytes = file_list.len() * size_of::<u16>();
-    let allocation_size = header_size + file_bytes;
-
-    unsafe {
-        let drop_handle = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, allocation_size);
-        if drop_handle.is_null() {
-            return false;
-        }
-
-        let locked = GlobalLock(drop_handle);
-        if locked.is_null() {
-            return false;
-        }
-
-        let header = locked as *mut DropFilesHeader;
-        (*header).p_files = header_size as u32;
-        (*header).pt = POINT { x: 0, y: 0 };
-        (*header).f_nc = 0;
-        (*header).f_wide = 1;
-
-        let file_list_target = (locked as *mut u8).add(header_size) as *mut u16;
-        std::ptr::copy_nonoverlapping(file_list.as_ptr(), file_list_target, file_list.len());
-        GlobalUnlock(drop_handle);
-
-        PostMessageW(hwnd, WM_DROPFILES_MESSAGE, drop_handle as usize, 0) != 0
-    }
-}
-
-#[cfg(not(windows))]
-fn send_model_paths_to_running_window(_hwnd: (), _model_paths: &[PathBuf]) -> bool {
-    false
-}
-
-fn file_contains_ascii_token(path: &Path, token: &[u8]) -> bool {
-    let Ok(metadata) = fs::metadata(path) else {
-        return false;
-    };
-    if !metadata.is_file() || metadata.len() > MAX_SINGLE_INSTANCE_SCAN_BYTES {
-        return false;
-    }
-
-    let Ok(bytes) = fs::read(path) else {
-        return false;
-    };
-    bytes.windows(token.len()).any(|window| window == token)
-}
-
-fn single_instance_scan_candidates(executable: &Path) -> Vec<PathBuf> {
-    let mut candidates = vec![executable.to_path_buf()];
-    let Some(parent) = executable.parent() else {
-        return candidates;
-    };
-
-    let relevant_name_parts = [
-        "bambu", "cura", "orca", "prusa", "slicer", "studio", "super",
-    ];
-    if let Ok(entries) = fs::read_dir(parent) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let extension = path
-                .extension()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default();
-            if !extension.eq_ignore_ascii_case("dll") {
-                continue;
-            }
-            let file_name = path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            if relevant_name_parts
-                .iter()
-                .any(|name_part| file_name.contains(name_part))
-            {
-                candidates.push(path);
-            }
-        }
-    }
-
-    candidates
-}
-
-fn executable_supports_single_instance_arg(executable: &Path) -> bool {
-    let token = SLICER_SINGLE_INSTANCE_ARG.as_bytes();
-    single_instance_scan_candidates(executable)
-        .into_iter()
-        .any(|candidate| file_contains_ascii_token(&candidate, token))
-}
-
-fn should_use_single_instance_arg(executable: &Path, was_running: bool) -> bool {
-    was_running && executable_supports_single_instance_arg(executable)
-}
-
 fn launch_slicer_impl(
     slicer_id: &str,
     executable_path: &str,
@@ -3028,26 +2893,19 @@ fn launch_slicer_impl(
         }
     }
 
-    let running_window = running_executable_window(&executable);
-    if let Some(hwnd) = running_window {
-        if send_model_paths_to_running_window(hwnd, &model_paths) {
-            write_slicer_executable(spec.id, &executable)?;
-            let count = model_paths.len();
-            let file_label = if count == 1 { "file" } else { "files" };
-            return Ok(format!(
-                "Sent {count} model {file_label} to the open {} window.",
-                spec.display_name
-            ));
-        }
-    }
-
-    let was_running = running_window.is_some();
-    let use_single_instance_arg = should_use_single_instance_arg(&executable, was_running);
+    // Hand the model files to the slicer by launching its own executable with the
+    // file paths as arguments, and let the slicer's own single-instance setting
+    // decide where they land (its running window when single-instance is enabled,
+    // otherwise a new window) — either way the model loads. We intentionally do
+    // NOT force a `--single-instance` flag: when the user's slicer has that option
+    // turned off, forcing it makes the launch try to hand off to a window that is
+    // not listening, so the files are silently dropped and nothing loads. We also
+    // cannot post a cross-process WM_DROPFILES message: the HDROP handle is only
+    // valid in this process, so the slicer would receive an unreadable handle
+    // while the post still reports success.
+    let was_running = running_executable_window(&executable).is_some();
 
     let mut command = Command::new(&executable);
-    if use_single_instance_arg {
-        command.arg(SLICER_SINGLE_INSTANCE_ARG);
-    }
     command.args(&model_paths);
     if let Some(parent) = executable.parent() {
         command.current_dir(parent);
@@ -3064,14 +2922,9 @@ fn launch_slicer_impl(
 
     let count = model_paths.len();
     let file_label = if count == 1 { "file" } else { "files" };
-    if use_single_instance_arg {
+    if was_running {
         Ok(format!(
-            "Sent {count} model {file_label} to the open {} window.",
-            spec.display_name
-        ))
-    } else if was_running {
-        Ok(format!(
-            "Launched {} with {count} model {file_label}; an existing window was already open.",
+            "Sent {count} model {file_label} to {}.",
             spec.display_name
         ))
     } else {
@@ -3909,8 +3762,13 @@ Add-Type -AssemblyName System.Drawing
 
 $choices = @()
 if (-not [string]::IsNullOrWhiteSpace($ChoicesJson)) {{
-    $choices = @(ConvertFrom-Json -InputObject $ChoicesJson)
+    # Windows PowerShell 5.1 emits ConvertFrom-Json's array as a single pipeline
+    # item, so wrapping the call in @(...) would yield one element holding the
+    # whole array. Assign first, then normalize to an array so each slicer keeps
+    # its own button.
+    $choices = ConvertFrom-Json -InputObject $ChoicesJson
 }}
+$choices = @($choices)
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = $Title

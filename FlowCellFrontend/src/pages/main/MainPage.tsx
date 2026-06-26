@@ -44,7 +44,6 @@ import {
   listPanelFolders,
   listPanelScriptFiles,
   listProgramFolders,
-  readPanelScriptStatusMessage,
   renamePanelFolder,
   renameProgramFolder,
   runPanelScript,
@@ -1204,15 +1203,9 @@ export default function MainPage() {
 
     try {
       setScriptRunError(null);
-      const statusMessage = readPanelScriptStatusMessage(
-        await runPanelScript(selectedProgramName, selectedPanelName, fileName)
-      );
-      if (statusMessage) {
-        setScriptRunError({
-          title: "Script status.",
-          detail: statusMessage
-        });
-      }
+      // Success needs no on-screen confirmation — the slicer/app coming to the
+      // front with the model is the confirmation. Only failures are surfaced.
+      await runPanelScript(selectedProgramName, selectedPanelName, fileName);
     } catch (error) {
       console.error(`Failed to run panel script for ${selectedProgramName}.`, error);
       setScriptRunError({
