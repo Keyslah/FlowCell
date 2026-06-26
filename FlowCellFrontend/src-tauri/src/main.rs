@@ -294,6 +294,24 @@ struct DetectedSlicerExecutable {
     source: String,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct InstalledSlicerRegistryEntry {
+    #[serde(default)]
+    display_name: String,
+    #[serde(default)]
+    display_icon: String,
+    #[serde(default)]
+    install_location: String,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct InstalledSlicerRegistryResponse {
+    #[serde(default)]
+    entries: Vec<InstalledSlicerRegistryEntry>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct SlicerChoiceDialogChoice {
@@ -2510,15 +2528,212 @@ fn push_detected_slicer_executable(
     seen: &mut HashSet<String>,
     path: PathBuf,
 ) {
+    push_detected_slicer_executable_with_metadata(found, seen, path, None, "Detected");
+}
+
+fn push_detected_slicer_executable_with_metadata(
+    found: &mut Vec<DetectedSlicerExecutable>,
+    seen: &mut HashSet<String>,
+    path: PathBuf,
+    display_name: Option<String>,
+    source: &str,
+) {
     let key = normalized_path_key(&path);
     if !seen.insert(key) {
         return;
     }
+    let fallback_display_name = infer_detected_slicer_display_name(&path);
     found.push(DetectedSlicerExecutable {
-        display_name: infer_detected_slicer_display_name(&path),
+        display_name: display_name
+            .map(|name| name.trim().to_string())
+            .filter(|name| !name.is_empty())
+            .unwrap_or(fallback_display_name),
         executable_path: path.display().to_string(),
-        source: "Detected".to_string(),
+        source: source.to_string(),
     });
+}
+
+fn registry_icon_executable_path(value: &str) -> Option<PathBuf> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(rest) = trimmed.strip_prefix('"') {
+        if let Some(end_quote) = rest.find('"') {
+            let path = rest[..end_quote].trim();
+            return (!path.is_empty()).then(|| PathBuf::from(path));
+        }
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    lower
+        .find(".exe")
+        .map(|index| PathBuf::from(trimmed[..index + 4].trim().trim_matches('"')))
+}
+
+fn registry_slicer_executable_candidate(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if !extension.eq_ignore_ascii_case("exe") {
+        return false;
+    }
+    let file_name = lower_file_name(path);
+    !name_contains_any_token(&file_name, SLICER_HELPER_EXECUTABLE_TOKENS)
+}
+
+fn collect_registry_install_location_executables(
+    root: &Path,
+    found: &mut Vec<DetectedSlicerExecutable>,
+    seen: &mut HashSet<String>,
+    display_name: &str,
+) {
+    const MAX_DEPTH: usize = 2;
+    const MAX_VISITED_DIRECTORIES: usize = 128;
+
+    if !root.is_dir() {
+        return;
+    }
+
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+    let mut visited = HashSet::new();
+    while let Some((directory, depth)) = stack.pop() {
+        if visited.len() >= MAX_VISITED_DIRECTORIES {
+            break;
+        }
+        let directory_key = normalized_path_key(&directory);
+        if !visited.insert(directory_key) {
+            continue;
+        }
+
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_file() {
+                if registry_slicer_executable_candidate(&path) {
+                    push_detected_slicer_executable_with_metadata(
+                        found,
+                        seen,
+                        path,
+                        Some(display_name.to_string()),
+                        "Installed",
+                    );
+                }
+                continue;
+            }
+            if file_type.is_dir() && depth < MAX_DEPTH {
+                stack.push((path, depth + 1));
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+fn read_installed_slicer_registry_entries() -> Vec<InstalledSlicerRegistryEntry> {
+    let script = r#"
+$ErrorActionPreference = 'SilentlyContinue'
+$tokens = @(
+  'slicer', '3d print', '3d-print', '3d printer', 'gcode', 'g-code',
+  'cura', 'orca', 'prusa', 'bambu', 'anycubic', 'creality', 'chitubox',
+  'lychee', 'ideamaker', 'flashprint', 'mattercontrol', 'elegoo', 'superslicer'
+)
+$registryRoots = @(
+  'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*',
+  'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*'
+)
+$entries = @()
+foreach ($root in $registryRoots) {
+  foreach ($item in Get-ItemProperty -Path $root -ErrorAction SilentlyContinue) {
+    $displayName = [string]$item.DisplayName
+    if ([string]::IsNullOrWhiteSpace($displayName)) { continue }
+    $displayIcon = [Environment]::ExpandEnvironmentVariables([string]$item.DisplayIcon)
+    $installLocation = [Environment]::ExpandEnvironmentVariables([string]$item.InstallLocation)
+    $haystack = "$displayName $($item.Publisher) $displayIcon $installLocation"
+    $matched = $false
+    foreach ($token in $tokens) {
+      if ($haystack.IndexOf($token, [System.StringComparison]::OrdinalIgnoreCase) -ge 0) {
+        $matched = $true
+        break
+      }
+    }
+    if (-not $matched) { continue }
+    $entries += [pscustomobject]@{
+      displayName = $displayName
+      displayIcon = $displayIcon
+      installLocation = $installLocation
+    }
+  }
+}
+[pscustomobject]@{ entries = @($entries) } | ConvertTo-Json -Compress -Depth 4
+"#;
+
+    let mut command = Command::new(resolve_powershell_path());
+    command
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
+        .creation_flags(CREATE_NO_WINDOW);
+
+    let Ok(output) = command.output() else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return Vec::new();
+    }
+
+    serde_json::from_str::<InstalledSlicerRegistryResponse>(&raw)
+        .map(|response| response.entries)
+        .unwrap_or_default()
+}
+
+#[cfg(not(windows))]
+fn read_installed_slicer_registry_entries() -> Vec<InstalledSlicerRegistryEntry> {
+    Vec::new()
+}
+
+fn push_registry_detected_slicer_executables(
+    found: &mut Vec<DetectedSlicerExecutable>,
+    seen: &mut HashSet<String>,
+) {
+    for entry in read_installed_slicer_registry_entries() {
+        let display_name = entry.display_name.trim().to_string();
+        if let Some(path) = registry_icon_executable_path(&entry.display_icon) {
+            if path.is_file() && registry_slicer_executable_candidate(&path) {
+                push_detected_slicer_executable_with_metadata(
+                    found,
+                    seen,
+                    path,
+                    Some(display_name.clone()),
+                    "Installed",
+                );
+            }
+        }
+
+        let install_location = entry.install_location.trim();
+        if !install_location.is_empty() {
+            collect_registry_install_location_executables(
+                &PathBuf::from(install_location),
+                found,
+                seen,
+                &display_name,
+            );
+        }
+    }
 }
 
 fn collect_detected_slicer_executables_from_root(
@@ -2578,6 +2793,7 @@ fn detect_installed_slicer_executables() -> Vec<DetectedSlicerExecutable> {
     for root in detected_slicer_search_roots() {
         collect_detected_slicer_executables_from_root(&root, &mut found, &mut seen);
     }
+    push_registry_detected_slicer_executables(&mut found, &mut seen);
     let mut found = latest_detected_slicer_executables(found);
     found.sort_by(|a, b| {
         a.display_name
@@ -2707,6 +2923,10 @@ fn executable_supports_single_instance_arg(executable: &Path) -> bool {
         .any(|candidate| file_contains_ascii_token(&candidate, token))
 }
 
+fn should_use_single_instance_arg(executable: &Path, was_running: bool) -> bool {
+    was_running && executable_supports_single_instance_arg(executable)
+}
+
 fn launch_slicer_impl(
     slicer_id: &str,
     executable_path: &str,
@@ -2737,8 +2957,12 @@ fn launch_slicer_impl(
     }
 
     let was_running = executable_has_running_window(&executable);
+    let use_single_instance_arg = should_use_single_instance_arg(&executable, was_running);
 
     let mut command = Command::new(&executable);
+    if use_single_instance_arg {
+        command.arg(SLICER_SINGLE_INSTANCE_ARG);
+    }
     command.args(&model_paths);
     if let Some(parent) = executable.parent() {
         command.current_dir(parent);
@@ -2755,9 +2979,14 @@ fn launch_slicer_impl(
 
     let count = model_paths.len();
     let file_label = if count == 1 { "file" } else { "files" };
-    if was_running {
+    if use_single_instance_arg {
         Ok(format!(
             "Sent {count} model {file_label} to the open {} window.",
+            spec.display_name
+        ))
+    } else if was_running {
+        Ok(format!(
+            "Launched {} with {count} model {file_label}; an existing window was already open.",
             spec.display_name
         ))
     } else {
@@ -3605,7 +3834,7 @@ $form.TopMost = $true
 $form.FormBorderStyle = 'FixedDialog'
 $form.MaximizeBox = $false
 $form.MinimizeBox = $false
-$form.ClientSize = New-Object System.Drawing.Size(760, ([Math]::Min(680, [Math]::Max(220, 132 + ([Math]::Max(1, @($choices).Count) * 50)))))
+$form.ClientSize = New-Object System.Drawing.Size(420, ([Math]::Min(680, [Math]::Max(220, 132 + ([Math]::Max(1, @($choices).Count) * 58)))))
 
 $header = New-Object System.Windows.Forms.Label
 $header.Dock = 'Top'
@@ -3658,26 +3887,13 @@ foreach ($choice in $choices) {{
         continue
     }}
 
-    $pathLeaf = [System.IO.Path]::GetFileName($executablePath)
-    $parentPath = [System.IO.Path]::GetDirectoryName($executablePath)
-    $parentLeaf = [System.IO.Path]::GetFileName($parentPath)
-    $buttonLabel = $displayName
-    if (-not [string]::IsNullOrWhiteSpace($pathLeaf)) {{
-        $buttonLabel = "$buttonLabel  -  $pathLeaf"
-    }}
-    if (-not [string]::IsNullOrWhiteSpace($parentLeaf) -and $parentLeaf -ne $pathLeaf) {{
-        $buttonLabel = "$buttonLabel  ($parentLeaf)"
-    }}
-    if (-not [string]::IsNullOrWhiteSpace($source)) {{
-        $buttonLabel = "$buttonLabel  [$source]"
-    }}
-
     $button = New-Object System.Windows.Forms.Button
-    $button.Width = 710
-    $button.Height = 42
-    $button.TextAlign = 'MiddleLeft'
+    $button.Width = 370
+    $button.Height = 46
+    $button.Margin = New-Object System.Windows.Forms.Padding(6, 6, 6, 6)
+    $button.TextAlign = 'MiddleCenter'
     $button.AutoEllipsis = $true
-    $button.Text = $buttonLabel
+    $button.Text = $displayName
     $tooltip.SetToolTip($button, $executablePath)
     $pathForButton = $executablePath
     $button.Add_Click({{
