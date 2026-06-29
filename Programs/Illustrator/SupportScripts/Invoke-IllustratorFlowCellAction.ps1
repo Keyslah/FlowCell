@@ -62,8 +62,15 @@ function Send-BridgeRequest {
   try {
     $client = [System.IO.Pipes.NamedPipeClientStream]::new('.', $PipeName, [System.IO.Pipes.PipeDirection]::InOut)
     $client.Connect($TimeoutMs)
-    $client.ReadTimeout = [Math]::Max($TimeoutMs, 1000)
-    $client.WriteTimeout = [Math]::Max($TimeoutMs, 1000)
+    # PipeStream on .NET Framework (Windows PowerShell 5.1) does not support
+    # Read/Write timeouts and throws when they are assigned. Connect() above
+    # already bounds connection time, so treat these as best-effort.
+    try {
+      $client.ReadTimeout = [Math]::Max($TimeoutMs, 1000)
+      $client.WriteTimeout = [Math]::Max($TimeoutMs, 1000)
+    } catch {
+      # Timeouts are not supported on this stream; continue without them.
+    }
 
     $reader = [System.IO.StreamReader]::new($client)
     $writer = [System.IO.StreamWriter]::new($client)

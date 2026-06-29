@@ -12,6 +12,10 @@ import {
   BOOLEAN_TOOLBOX_WINDOW_WIDTH
 } from "../pages/boolean/booleanToolboxGeometry";
 import {
+  BUILD_LAYERS_WINDOW_HEIGHT,
+  BUILD_LAYERS_WINDOW_WIDTH
+} from "../pages/build-layers/buildLayersGeometry";
+import {
   CODEX_USAGE_POPOUT_WINDOW_HEIGHT,
   CODEX_USAGE_POPOUT_WINDOW_WIDTH
 } from "../pages/codex-usage/codexUsagePopoutGeometry";
@@ -82,6 +86,8 @@ const pendingTriPolyToolboxOpens = new Map<string, Promise<void>>();
 const pendingBindsOpens = new Map<string, Promise<void>>();
 const pendingMacroLabOpens = new Map<string, Promise<void>>();
 const pendingOrganizationSetupOpens = new Map<string, Promise<void>>();
+const pendingBuildLayersOpens = new Map<string, Promise<void>>();
+const pendingWindowGridOpens = new Map<string, Promise<void>>();
 const pendingButtonReorderOpens = new Map<string, Promise<void>>();
 const pendingFlattenRevolveToolboxOpens = new Map<string, Promise<void>>();
 const pendingGenericToolboxOpens = new Map<string, Promise<void>>();
@@ -1331,6 +1337,155 @@ export async function openOrganizationSetupWindow(): Promise<void> {
   });
 
   pendingOrganizationSetupOpens.set(windowLabel, openPromise);
+  return openPromise;
+}
+
+export async function openBuildLayersWindow(args: {
+  programName: string;
+  panelName: string;
+  label?: string;
+}): Promise<void> {
+  const windowLabel = "flowcell-build-layers";
+  const pendingOpen = pendingBuildLayersOpens.get(windowLabel);
+  if (pendingOpen) {
+    return pendingOpen;
+  }
+
+  const openPromise = (async () => {
+    const currentWindow = getCurrentWindow();
+    const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+    const [position, size] = await Promise.all([
+      currentWindow.outerPosition().catch(() => null),
+      currentWindow.innerSize().catch(() => null)
+    ]);
+    const placement = {
+      width: BUILD_LAYERS_WINDOW_WIDTH,
+      height: BUILD_LAYERS_WINDOW_HEIGHT,
+      x: undefined as number | undefined,
+      y: undefined as number | undefined
+    };
+    if (position && size) {
+      const logicalLeft = position.x / scaleFactor;
+      const logicalTop = position.y / scaleFactor;
+      const logicalWidth = size.width / scaleFactor;
+      placement.x = logicalLeft + Math.max(logicalWidth - placement.width - 24, 24);
+      placement.y = logicalTop + 24;
+    }
+
+    const existing = await WebviewWindow.getByLabel(windowLabel);
+    if (existing) {
+      await existing.setDecorations(false).catch(() => {});
+      await applyProgramScopedTopmost(windowLabel, args.programName);
+      await focusExistingWindow(existing);
+      return;
+    }
+
+    const window = new WebviewWindow(windowLabel, {
+      url: buildWindowContextUrl({
+        kind: "build-layers",
+        programName: args.programName,
+        panelName: args.panelName,
+        label: args.label
+      }),
+      title: "FlowCell - Layers Builder",
+      width: placement.width,
+      height: placement.height,
+      x: placement.x,
+      y: placement.y,
+      minWidth: 240,
+      minHeight: 300,
+      resizable: true,
+      decorations: false,
+      transparent: false,
+      shadow: true,
+      visible: true,
+      focus: true,
+      alwaysOnTop: false
+    });
+
+    await waitForWindowCreated(window);
+    await window.setDecorations(false).catch(() => {});
+    await applyProgramScopedTopmost(windowLabel, args.programName);
+    if (typeof placement.x === "number" && typeof placement.y === "number") {
+      await window.setPosition(new LogicalPosition(placement.x, placement.y)).catch(() => {});
+    }
+    await focusExistingWindow(window);
+  })().finally(() => {
+    if (pendingBuildLayersOpens.get(windowLabel) === openPromise) {
+      pendingBuildLayersOpens.delete(windowLabel);
+    }
+  });
+
+  pendingBuildLayersOpens.set(windowLabel, openPromise);
+  return openPromise;
+}
+
+export async function openWindowGridWindow(): Promise<void> {
+  const windowLabel = "flowcell-window-grid";
+  const pendingOpen = pendingWindowGridOpens.get(windowLabel);
+  if (pendingOpen) {
+    return pendingOpen;
+  }
+
+  const openPromise = (async () => {
+    const existing = await WebviewWindow.getByLabel(windowLabel);
+    if (existing) {
+      await existing.setDecorations(false).catch(() => {});
+      await focusExistingWindow(existing);
+      return;
+    }
+
+    const currentWindow = getCurrentWindow();
+    const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+    const [position, size] = await Promise.all([
+      currentWindow.outerPosition().catch(() => null),
+      currentWindow.innerSize().catch(() => null)
+    ]);
+    const width = 760;
+    const height = 540;
+    let x: number | undefined;
+    let y: number | undefined;
+    if (position && size) {
+      const logicalLeft = position.x / scaleFactor;
+      const logicalTop = position.y / scaleFactor;
+      const logicalWidth = size.width / scaleFactor;
+      const logicalHeight = size.height / scaleFactor;
+      x = logicalLeft + Math.max((logicalWidth - width) / 2, 24);
+      y = logicalTop + Math.max((logicalHeight - height) / 2, 24);
+    }
+
+    const window = new WebviewWindow(windowLabel, {
+      url: buildWindowContextUrl({ kind: "window-grid" }),
+      title: "FlowCell - Windows",
+      width,
+      height,
+      x,
+      y,
+      minWidth: 360,
+      minHeight: 280,
+      resizable: true,
+      decorations: false,
+      transparent: false,
+      shadow: true,
+      visible: true,
+      focus: true,
+      alwaysOnTop: false,
+      skipTaskbar: true
+    });
+
+    await waitForWindowCreated(window);
+    await window.setDecorations(false).catch(() => {});
+    if (typeof x === "number" && typeof y === "number") {
+      await window.setPosition(new LogicalPosition(x, y)).catch(() => {});
+    }
+    await focusExistingWindow(window);
+  })().finally(() => {
+    if (pendingWindowGridOpens.get(windowLabel) === openPromise) {
+      pendingWindowGridOpens.delete(windowLabel);
+    }
+  });
+
+  pendingWindowGridOpens.set(windowLabel, openPromise);
   return openPromise;
 }
 

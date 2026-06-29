@@ -1,0 +1,257 @@
+.build-layers-window {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #1f2125;
+}
+
+.build-layers-window--space-drag {
+  cursor: grab;
+}
+
+.build-layers-window--dragging {
+  cursor: grabbing;
+}
+
+.build-layers__scale {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+}
+
+.build-layers {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  background: #1f2125;
+  color: #e6e8ec;
+  font-size: 12px;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+
+.build-layers__resize-handle {
+  position: absolute;
+  z-index: 50;
+}
+
+.build-layers__resize-handle--north {
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.build-layers__resize-handle--south {
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.build-layers__resize-handle--east {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.build-layers__resize-handle--west {
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.build-layers__resize-handle--north-east,
+.build-layers__resize-handle--north-west,
+.build-layers__resize-handle--south-east,
+.build-layers__resize-handle--south-west {
+  width: 12px;
+  height: 12px;
+  z-index: 51;
+}
+
+.build-layers__resize-handle--north-east {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.build-layers__resize-handle--north-west {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.build-layers__resize-handle--south-east {
+  bottom: 0;
+  right: 0;
+  cursor: nwse-resize;
+}
+
+.build-layers__resize-handle--south-west {
+  bottom: 0;
+  left: 0;
+  cursor: nesw-resize;
+}
+
+.build-layers__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid #34373d;
+}
+
+.build-layers__toolbar button {
+  border: 1px solid #45484f;
+  background: #2b2e33;
+  color: inherit;
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+}
+
+.build-layers__toolbar button:hover:not(:disabled) {
+  background: #383c43;
+}
+
+.build-layers__toolbar button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.build-layers__force {
+  border-color: #6b3a3a !important;
+  color: #f0b4b4 !important;
+}
+
+.build-layers__tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.build-layers__tree::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.build-layers__empty {
+  padding: 20px 12px;
+  color: #9aa0a8;
+  text-align: center;
+}
+
+.build-layers__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding-right: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.build-layers__row:hover {
+  background: #2a2d33;
+}
+
+.build-layers__row.is-highlighted {
+  background: #2d4a6b;
+}
+
+.build-layers__row.is-highlighted:hover {
+  background: #335685;
+}
+
+.build-layers__row.is-active .build-layers__name {
+  font-weight: 600;
+}
+
+.build-layers__row.is-hidden .build-layers__name {
+  color: #80868f;
+  font-style: italic;
+}
+
+.build-layers__row.is-locked .build-layers__name {
+  color: #b6bcc4;
+}
+
+.build-layers__twisty {
+  width: 14px;
+  min-width: 14px;
+  border: none;
+  background: transparent;
+  color: #9aa0a8;
+  cursor: pointer;
+  padding: 0;
+}
+
+.build-layers__icon {
+  width: 18px;
+  min-width: 18px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.build-layers__name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.build-layers__count {
+  color: #8b919a;
+  font-size: 10px;
+  background: #2f3338;
+  border-radius: 8px;
+  padding: 0 6px;
+}
+
+/* Illustrator-style "target" dot: click to select all objects on the layer. */
+.build-layers__target {
+  width: 11px;
+  min-width: 11px;
+  height: 11px;
+  margin-left: 4px;
+  border: 1.5px solid #9aa0a8;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}
+
+.build-layers__target:hover {
+  border-color: #e6e8ec;
+  background: rgba(230, 232, 236, 0.25);
+}
+
+.build-layers__row.is-active .build-layers__target {
+  border-color: #d7dde6;
+  background: radial-gradient(circle, #d7dde6 0 45%, transparent 55%);
+}
+
+.build-layers__errorbar {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  background: #3a2626;
+  color: #f0a0a0;
+  border-top: 1px solid #5a3636;
+  font-size: 11px;
+}

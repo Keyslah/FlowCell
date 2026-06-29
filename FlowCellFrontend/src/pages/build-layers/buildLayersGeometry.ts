@@ -1,0 +1,2 @@
+export const BUILD_LAYERS_WINDOW_WIDTH = 360;
+export const BUILD_LAYERS_WINDOW_HEIGHT = 640;

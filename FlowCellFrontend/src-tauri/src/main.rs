@@ -5265,6 +5265,133 @@ fn format_process_failure(output: &std::process::Output, fallback: &str) -> Stri
     fallback.to_string()
 }
 
+fn resolve_illustrator_bridge_invoke_script() -> Result<PathBuf, String> {
+    let repo_root = resolve_repo_root()
+        .ok_or_else(|| "FlowCell repo root could not be resolved for Illustrator bridge.".to_string())?;
+    let invoke_script = repo_root
+        .join("Programs")
+        .join("Illustrator")
+        .join("SupportScripts")
+        .join("Invoke-IllustratorFlowCellAction.ps1");
+    if !invoke_script.is_file() {
+        return Err(format!(
+            "Illustrator bridge runner was not found at {}.",
+            invoke_script.display()
+        ));
+    }
+    Ok(invoke_script)
+}
+
+fn base64_encode_standard(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity((input.len() + 2) / 3 * 4);
+    for chunk in input.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = if chunk.len() > 1 { chunk[1] as u32 } else { 0 };
+        let b2 = if chunk.len() > 2 { chunk[2] as u32 } else { 0 };
+        let triple = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((triple >> 18) & 63) as usize] as char);
+        out.push(TABLE[((triple >> 12) & 63) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((triple >> 6) & 63) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(triple & 63) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
+}
+
+/// Encodes a PowerShell command for `-EncodedCommand` (base64 of UTF-16LE).
+/// This is the only reliable way to pass a JSON argument (with embedded double
+/// quotes) to powershell.exe — `-File`/`-Command` quoting strips the quotes.
+fn encode_powershell_command(command: &str) -> String {
+    let mut bytes = Vec::with_capacity(command.len() * 2);
+    for unit in command.encode_utf16() {
+        bytes.extend_from_slice(&unit.to_le_bytes());
+    }
+    base64_encode_standard(&bytes)
+}
+
+fn run_illustrator_layers_action_blocking(args_json: String) -> Result<String, String> {
+    let invoke_script = resolve_illustrator_bridge_invoke_script()?;
+    // Generous cold-start budget: the warm bridge replies in milliseconds, but a
+    // first call may have to launch the STA bridge and activate Illustrator COM.
+    let command = format!(
+        "& '{}' -ActionId 'ill-layers' -ArgsJson '{}' -ConnectTimeoutMs 2000 -StartTimeoutMs 25000 -Wait",
+        escape_powershell_single_quoted(&invoke_script.to_string_lossy()),
+        escape_powershell_single_quoted(&args_json)
+    );
+    let arguments = vec![
+        "-EncodedCommand".to_string(),
+        encode_powershell_command(&command),
+    ];
+
+    let output = spawn_powershell_output(&arguments)?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    append_flowcell_local_log(
+        "layers-builder.log",
+        &format!(
+            "args={} exit={:?} stdout_len={} stderr={}",
+            args_json,
+            output.status.code(),
+            stdout.len(),
+            stderr.chars().take(600).collect::<String>()
+        ),
+    );
+
+    if !output.status.success() {
+        return Err(format_process_failure(
+            &output,
+            "Illustrator layers action failed.",
+        ));
+    }
+    if stdout.is_empty() {
+        return Err("Illustrator layers action returned no response.".to_string());
+    }
+    Ok(stdout)
+}
+
+/// Runs the `ill-layers` bridge action (scan or mutate the layer tree) and
+/// returns the raw response JSON printed by Invoke-IllustratorFlowCellAction.ps1
+/// (`-Wait`). The frontend parses the nested `result` payload built by the JSX.
+/// Async + spawn_blocking so the (possibly multi-second cold-start) PowerShell
+/// call never blocks the WebView main thread / freezes the window.
+#[tauri::command]
+async fn run_illustrator_layers_action(args_json: String) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || run_illustrator_layers_action_blocking(args_json))
+        .await
+        .map_err(|error| format!("Illustrator layers task failed: {error}"))?
+}
+
+/// Persists the FlowCell-highlighted layer keys so the Layers Builder panel
+/// buttons (which run inside Illustrator) can resolve the same targets. The
+/// canonical copy lives under FlowCell/local; a mirror is written to the OS temp
+/// folder because the in-Illustrator `.jsx` reads it via ExtendScript's
+/// `Folder.temp` (no repo-root path derivation needed).
+#[tauri::command]
+fn set_illustrator_layers_highlight(keys: Vec<String>) -> Result<(), String> {
+    let body = serde_json::to_string(&json!({ "keys": keys }))
+        .map_err(|error| format!("Failed to serialize highlight set: {error}"))?;
+
+    let local_root = resolve_flowcell_local_root()?;
+    fs::create_dir_all(&local_root)
+        .map_err(|error| format!("Failed to create FlowCell local folder: {error}"))?;
+    fs::write(local_root.join("illustrator-layers-highlight.json"), &body)
+        .map_err(|error| format!("Failed to write highlight set: {error}"))?;
+
+    let temp_path = std::env::temp_dir().join("flowcell-illustrator-layers-highlight.json");
+    fs::write(&temp_path, &body)
+        .map_err(|error| format!("Failed to write highlight mirror: {error}"))?;
+
+    Ok(())
+}
+
 fn wait_for_child_output_with_timeout(
     mut child: std::process::Child,
     timeout: Duration,
@@ -12264,6 +12391,8 @@ fn main() {
             rename_panel_folder,
             delete_panel_folder,
             list_panel_script_files,
+            run_illustrator_layers_action,
+            set_illustrator_layers_highlight,
             load_binds_workspace,
             save_bind_shortcut,
             get_cursor_position,

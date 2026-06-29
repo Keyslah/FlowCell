@@ -112,6 +112,17 @@ export type OrganizationSetupWindowContext = {
   kind: "organization-setup";
 };
 
+export type BuildLayersWindowContext = {
+  kind: "build-layers";
+  programName: string;
+  panelName: string;
+  label?: string;
+};
+
+export type WindowGridWindowContext = {
+  kind: "window-grid";
+};
+
 export type MacroLabWindowContext = {
   kind: "macro-lab";
   programName: string;
@@ -168,6 +179,8 @@ export type FlowCellWindowContext =
   | ButtonReorderWindowContext
   | BindsWindowContext
   | OrganizationSetupWindowContext
+  | BuildLayersWindowContext
+  | WindowGridWindowContext
   | MacroLabWindowContext
   | ScriptGroupPopoutWindowContext
   | CodexUsagePopoutWindowContext;
@@ -418,6 +431,23 @@ export function getWindowContextFromLocation(): FlowCellWindowContext {
       };
     }
     if (
+      parsed.kind === "build-layers" &&
+      typeof parsed.programName === "string" &&
+      typeof parsed.panelName === "string"
+    ) {
+      return {
+        kind: "build-layers",
+        programName: parsed.programName,
+        panelName: parsed.panelName,
+        label: typeof parsed.label === "string" ? parsed.label : undefined
+      };
+    }
+    if (parsed.kind === "window-grid") {
+      return {
+        kind: "window-grid"
+      };
+    }
+    if (
       parsed.kind === "macro-lab" &&
       typeof parsed.programName === "string" &&
       typeof parsed.panelName === "string"
@@ -532,6 +562,8 @@ export function resolveWindowContextAfterBootstrap(
       nextContext.kind === "panel-fan-options" ||
       nextContext.kind === "binds" ||
       nextContext.kind === "organization-setup" ||
+      nextContext.kind === "build-layers" ||
+      nextContext.kind === "window-grid" ||
       nextContext.kind === "macro-lab" ||
       nextContext.kind === "button-reorder" ||
       nextContext.kind === "script-group-popout" ||

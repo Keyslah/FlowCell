@@ -1,11 +1,20 @@
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import type { LayoutSnapshot } from "../types";
 import {
   applySlicerButtonAssignmentLabels,
   clearSlicerButtonAssignments,
   handleSlicerLaunchForPanelButton
 } from "./slicerLauncherAssignments";
-import { openOrganizationSetupWindow } from "./windowing";
+import {
+  openBuildLayersWindow,
+  openOrganizationSetupWindow,
+  openWindowGridWindow
+} from "./windowing";
+
+// Broadcast when an Illustrator layers panel button runs, so the Build Layers
+// window can re-scan and reflect the change (it runs the JSX out-of-process).
+export const ILLUSTRATOR_LAYERS_CHANGED_EVENT = "flowcell:illustrator-layers-changed";
 
 export interface PanelScriptChildRecord {
   slot: string;
@@ -124,6 +133,30 @@ export function readPanelScriptStatusMessage(message: string): string {
 
 function isOrganizationSetupLauncher(fileName: string): boolean {
   return fileName.trim().toLowerCase() === "setup_organization.ps1";
+}
+
+function isBuildLayersLauncher(fileName: string): boolean {
+  return fileName.trim().toLowerCase() === "build layers.jsx";
+}
+
+// A panel button with any of these base names (any extension) opens the Window
+// Grid overlay. Put it in whatever panel you like.
+const WINDOW_GRID_LAUNCHER_BASE_NAMES = new Set([
+  "window grid",
+  "windows grid",
+  "window-grid",
+  "all windows"
+]);
+
+function isWindowGridLauncher(fileName: string): boolean {
+  const base = fileName
+    .trim()
+    .toLowerCase()
+    .replace(/\.[^.]+$/, "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return WINDOW_GRID_LAUNCHER_BASE_NAMES.has(base);
 }
 
 type SlicerLauncherId = "orca" | "cura" | "slicer";
@@ -332,11 +365,29 @@ export async function runPanelScript(
     return "Script completed.";
   }
 
+  if (isBuildLayersLauncher(fileName)) {
+    await openBuildLayersWindow({ programName, panelName, label: "Layers Builder" });
+    return "Script completed.";
+  }
+
+  if (isWindowGridLauncher(fileName)) {
+    await openWindowGridWindow();
+    return "Script completed.";
+  }
+
   const response = await invokeProgramRailCommand<unknown>("run_panel_script_response", {
     programName,
     panelName,
     fileName
   });
+
+  const normalizedPanel = panelName.trim().toLowerCase();
+  if (
+    programName.trim().toLowerCase().includes("illustrator") &&
+    (normalizedPanel === "layers builder" || normalizedPanel === "layers")
+  ) {
+    void emit(ILLUSTRATOR_LAYERS_CHANGED_EVENT, { panelName, fileName }).catch(() => {});
+  }
 
   if (isFlowCellOrganizationSetupResponse(response)) {
     await openOrganizationSetupWindow();
