@@ -142,6 +142,8 @@ interface HdriWorldToolSurfaceProps {
   onRefillTheme: (values: HdriWorldToolValues) => void;
   onSaveTheme: () => void;
   onLoadTheme: () => void;
+  onSaveThemePackage: () => void;
+  onOpenThemePackage: () => void;
   onApplyThemeMode: (
     mode: "dark" | "light",
     values: HdriWorldToolValues
@@ -815,6 +817,8 @@ export function HdriWorldToolSurface({
   onRefillTheme,
   onSaveTheme,
   onLoadTheme,
+  onSaveThemePackage,
+  onOpenThemePackage,
   onApplyThemeMode,
   onApplyThemeBucket,
   onFlipViewportGradient,
@@ -859,6 +863,21 @@ export function HdriWorldToolSurface({
           styleGroup,
           importedSkin,
           title: "Randomly remix the staged sampled colors into a different bucket set."
+        })}
+        {renderToolChip("Save", {
+          onClick: onSaveThemePackage,
+          className: "tool-chip",
+          styleGroup,
+          importedSkin,
+          title:
+            "Save the actual theme image(s) plus the staged bucket colors into the Blender themes folder."
+        })}
+        {renderToolChip("Open", {
+          onClick: onOpenThemePackage,
+          className: "tool-chip",
+          styleGroup,
+          importedSkin,
+          title: "Open a saved theme package to restore its image(s) and bucket colors."
         })}
       </div>
       <div className="hdri-world-row hdri-world-row--theme-actions">

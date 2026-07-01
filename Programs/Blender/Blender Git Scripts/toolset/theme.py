@@ -789,7 +789,7 @@ def _set_project_place_picture_state(
         "grid_distance_m": float(grid_distance_m),
         "grid_far_spacing_m": float(grid_far_spacing_m),
     }
-    return _write_theme_state(context, state)
+    return _write_project_theme_state(context, state)
 
 
 def _set_startup_place_picture_state(context, payload):
@@ -800,6 +800,8 @@ def _set_startup_place_picture_state(context, payload):
     state = _read_global_theme_state()
     state["place_picture"] = {
         "enabled": True,
+        "explicit_startup": True,
+        "saved_by": "startup_button",
         "path": resolved_path,
         "relative_path": _project_relative_path(resolved_path),
         "grid_spacing_m": spacing_m,
@@ -864,6 +866,17 @@ def _project_state_payload(state):
     }
 
 
+def _is_explicit_startup_place_picture_state(place_picture_state) -> bool:
+    return bool(
+        isinstance(place_picture_state, dict)
+        and place_picture_state.get("enabled")
+        and (
+            place_picture_state.get("explicit_startup") is True
+            or place_picture_state.get("saved_by") == "startup_button"
+        )
+    )
+
+
 def _startup_state_payload(global_state):
     theme_state = global_state.get("theme", {}) if isinstance(global_state, dict) else {}
     place_picture_state = (
@@ -876,7 +889,7 @@ def _startup_state_payload(global_state):
             isinstance(theme_state, dict) and theme_state.get("enabled")
         ),
         "has_startup_place_picture_state": bool(
-            isinstance(place_picture_state, dict) and place_picture_state.get("enabled")
+            _is_explicit_startup_place_picture_state(place_picture_state)
         ),
     }
 
@@ -3598,242 +3611,43 @@ def _apply_theme_bucket(context, payload):
         "viewport_background": "viewport_background_hex",
         "gradient_2": "viewport_gradient_hex",
         "viewport_gradient": "viewport_gradient_hex",
+        "tab_text": "tabs_text_hex",
+        "header_text": "header_text_hex",
     }
     bucket_key = bucket_aliases.get(bucket, bucket)
-    role_hexes = _read_theme_role_hexes(payload)
-    if payload.get("bucket_hex") is not None and bucket_key in role_hexes:
-        role_hexes[bucket_key] = _normalize_hex_color(payload, "bucket_hex")
-
-    theme = _ctx(context).preferences.themes[0]
-    theme_ui = getattr(theme, "user_interface", None)
-    changed = 0
-
-    if bucket_key == "tabs_hex":
-        hex_value = role_hexes["tabs_hex"]
-        for widget_name in ("wcol_tab", "wcol_toolbar_item"):
-            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
-            changed += _set_theme_hex_attributes(
-                widget, ("inner", "inner_sel", "outline_sel"), hex_value
-            )
-        for _, section in _iter_theme_sections(theme):
-            changed += _set_theme_hex_attributes(section, ("tab_back", "tab_active"), hex_value)
-        message = "Applied Tab Fill bucket."
-    elif bucket_key == "headers_hex":
-        hex_value = role_hexes["headers_hex"]
-        changed += _set_theme_hex_attributes(
-            theme_ui,
-            ("panel_header", "panel_active", "header", "title", "navigation_bar"),
-            hex_value,
-        )
-        widget = getattr(theme_ui, "wcol_box", None) if theme_ui is not None else None
-        changed += _set_theme_hex_attributes(widget, ("inner_sel", "outline_sel"), hex_value)
-        panel = getattr(theme_ui, "panel", None) if theme_ui is not None else None
-        changed += _set_theme_hex_attributes(panel, ("header", "active"), hex_value)
-        for _, section in _iter_theme_sections(theme):
-            changed += _set_theme_hex_attributes(section, ("header", "title", "navigation_bar"), hex_value)
-            changed += _set_theme_hex_attributes(getattr(section, "space", None), ("header", "title", "navigation_bar"), hex_value)
-            changed += _set_theme_hex_attributes(getattr(section, "panelcolors", None), ("header", "active"), hex_value)
-            changed += _set_theme_hex_attributes(
-                getattr(getattr(section, "space", None), "panelcolors", None),
-                ("header", "active"),
-                hex_value,
-            )
-        message = "Applied Header bucket."
-    elif bucket_key == "editor_background_hex":
-        hex_value = role_hexes["editor_background_hex"]
-        changed += _set_theme_hex_attributes(
-            theme_ui,
-            ("back", "sub_back", "menu_back", "panel_back", "panel_sub_back", "panel_outline"),
-            hex_value,
-        )
-        for widget_name in ("wcol_box", "wcol_menu_back", "wcol_menu", "wcol_menu_item"):
-            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
-            changed += _set_theme_hex_attributes(widget, ("inner", "outline"), hex_value)
-        panel = getattr(theme_ui, "panel", None) if theme_ui is not None else None
-        changed += _set_theme_hex_attributes(panel, ("back", "sub_back", "outline"), hex_value)
-        for section_name, section in _iter_theme_sections(theme):
-            if section_name == "outliner":
-                continue
-            changed += _set_theme_hex_attributes(
-                section, ("back", "sub_back", "list", "row_alternate"), hex_value
-            )
-            changed += _set_theme_hex_attributes(getattr(section, "space", None), ("back",), hex_value)
-            changed += _set_theme_hex_attributes(
-                getattr(section, "panelcolors", None),
-                ("back", "sub_back", "outline"),
-                hex_value,
-            )
-            changed += _set_theme_hex_attributes(
-                getattr(getattr(section, "space", None), "panelcolors", None),
-                ("back", "sub_back", "outline"),
-                hex_value,
-            )
-        message = "Applied Panel bucket."
-    elif bucket_key == "scene_hex":
-        hex_value = role_hexes["scene_hex"]
-        outliner = getattr(theme, "outliner", None)
-        changed += _set_theme_hex_attributes(outliner, ("back", "list", "row_alternate"), hex_value)
-        widget = getattr(theme_ui, "wcol_list_item", None) if theme_ui is not None else None
-        changed += _set_theme_hex_attributes(widget, ("inner", "inner_sel"), hex_value)
-        message = "Applied Collection Row bucket."
-    elif bucket_key == "controls_hex":
-        hex_value = role_hexes["controls_hex"]
-        skipped_widgets = {
-            "wcol_box",
-            "wcol_list_item",
-            "wcol_menu",
-            "wcol_menu_back",
-            "wcol_menu_item",
-            "wcol_option",
-            "wcol_pie_menu",
-            "wcol_progress",
-            "wcol_radio",
-            "wcol_state",
-            "wcol_tab",
-            "wcol_toolbar_item",
-            "wcol_toggle",
-            "wcol_tooltip",
-        }
-        if theme_ui is not None:
-            for widget_name in _iter_theme_ui_widget_names(theme_ui):
-                if widget_name in skipped_widgets:
-                    continue
-                changed += _set_theme_hex_attributes(
-                    getattr(theme_ui, widget_name, None),
-                    ("inner", "inner_sel"),
-                    hex_value,
-                )
-        changed += _set_theme_hex_attributes(theme_ui, ("button", "execution_buts"), hex_value)
-        for _, section in _iter_theme_sections(theme):
-            changed += _set_theme_hex_attributes(
-                section,
-                ("button", "execution_buts", "button_animated", "button_key"),
-                hex_value,
-            )
-            changed += _set_theme_hex_attributes(
-                getattr(section, "space", None),
-                ("button", "execution_buts"),
-                hex_value,
-            )
-        message = "Applied Control Fill bucket."
-    elif bucket_key == "highlights_hex":
-        hex_value = role_hexes["highlights_hex"]
-        changed += _set_theme_hex_attributes(theme_ui, ("active", "selected_highlight"), hex_value)
-        for widget_name in ("wcol_option", "wcol_radio", "wcol_toggle", "wcol_progress"):
-            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
-            changed += _set_theme_hex_attributes(
-                widget, ("inner", "inner_sel", "outline_sel"), hex_value
-            )
-        state_widget = getattr(theme_ui, "wcol_state", None) if theme_ui is not None else None
-        changed += _set_theme_hex_attributes(
-            state_widget,
-            (
-                "error",
-                "inner_anim_sel",
-                "inner_changed_sel",
-                "inner_driven_sel",
-                "inner_key_sel",
-                "inner_overridden_sel",
-                "inner_red_alert",
-                "inner_red_alert_sel",
-            ),
-            hex_value,
-        )
-        for _, section in _iter_theme_sections(theme):
-            changed += _set_theme_hex_attributes(
-                section,
-                (
-                    "edge_select",
-                    "face_select",
-                    "vertex_select",
-                    "active",
-                    "grid",
-                    "selected_highlight",
-                    "button_key_sel",
-                ),
-                hex_value,
-            )
-        message = "Applied Highlights bucket."
-    elif bucket_key == "viewport_background_hex":
-        hex_value = role_hexes["viewport_background_hex"]
-        view3d_space = getattr(getattr(theme, "view_3d", None), "space", None)
-        gradients = getattr(view3d_space, "gradients", None) if view3d_space else None
-        changed += _set_theme_hex_property(gradients, "gradient", hex_value)
-        message = "Applied Viewport BG bucket."
-    elif bucket_key == "viewport_gradient_hex":
-        hex_value = role_hexes["viewport_gradient_hex"]
-        view3d_space = getattr(getattr(theme, "view_3d", None), "space", None)
-        gradients = getattr(view3d_space, "gradients", None) if view3d_space else None
-        changed += _set_theme_hex_property(gradients, "high_gradient", hex_value)
-        message = "Applied Gradient 2 bucket."
-    elif bucket_key == "text_hex":
-        hex_value = role_hexes["text_hex"]
-        changed += _set_theme_hex_attributes(theme_ui, ("text", "text_hi", "panel_text"), hex_value)
-        for widget_name in ("wcol_text", "wcol_tooltip"):
-            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
-            changed += _set_theme_hex_attributes(widget, ("text", "text_sel"), hex_value)
-        for _, section in _iter_theme_sections(theme):
-            changed += _set_theme_hex_attributes(section, ("text", "text_hi", "list_text"), hex_value)
-            changed += _set_theme_hex_attributes(getattr(section, "space", None), ("text", "text_hi"), hex_value)
-        message = "Applied Random Text bucket."
-    elif bucket_key == "control_text_hex":
-        hex_value = role_hexes["control_text_hex"]
-        if theme_ui is not None:
-            for widget_name in _iter_theme_ui_widget_names(theme_ui):
-                if widget_name in ("wcol_tab", "wcol_toolbar_item", "wcol_pie_menu", "wcol_tooltip"):
-                    continue
-                changed += _set_theme_hex_attributes(
-                    getattr(theme_ui, widget_name, None),
-                    ("text", "text_sel"),
-                    hex_value,
-                )
-        for _, section in _iter_theme_sections(theme):
-            changed += _set_theme_hex_attributes(section, ("button_text", "button_text_hi"), hex_value)
-            changed += _set_theme_hex_attributes(
-                getattr(section, "space", None),
-                ("button_text", "button_text_hi"),
-                hex_value,
-            )
-        message = "Applied Tool Text bucket."
-    elif bucket_key == "accent_text_hex":
-        hex_value = role_hexes["accent_text_hex"]
-        changed += _set_theme_hex_attributes(theme_ui, ("button_title", "panel_title"), hex_value)
-        for widget_name in ("wcol_pie_menu", "wcol_option"):
-            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
-            changed += _set_theme_hex_attributes(widget, ("text", "text_sel"), hex_value)
-        for _, section in _iter_theme_sections(theme):
-            changed += _set_theme_hex_attributes(section, ("button_title",), hex_value)
-            changed += _set_theme_hex_attributes(getattr(section, "space", None), ("button_title",), hex_value)
-        outliner = getattr(theme, "outliner", None)
-        changed += _set_theme_hex_attributes(
-            outliner, ("match", "active_object", "selected_object"), hex_value
-        )
-        message = "Applied Scene/Header Text bucket."
-    elif bucket_key == "tabs_text_hex":
-        hex_value = role_hexes["tabs_text_hex"]
-        for widget_name in ("wcol_tab", "wcol_toolbar_item"):
-            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
-            changed += _set_theme_hex_attributes(widget, ("text", "text_sel"), hex_value)
-        for _, section in _iter_theme_sections(theme):
-            changed += _set_theme_hex_attributes(section, ("tab_text", "tab_text_hi"), hex_value)
-        message = "Applied Tab Text bucket."
-    elif bucket_key == "header_text_hex":
-        hex_value = role_hexes["header_text_hex"]
-        changed += _set_theme_hex_attributes(
-            theme_ui, ("header_text", "header_text_hi", "panel_text"), hex_value
-        )
-        for _, section in _iter_theme_sections(theme):
-            changed += _set_theme_hex_attributes(section, ("header_text", "header_text_hi"), hex_value)
-        message = "Applied Header Text bucket."
-    else:
+    bucket_messages = {
+        "tabs_hex": "Applied Tab Fill bucket.",
+        "headers_hex": "Applied Header bucket.",
+        "editor_background_hex": "Applied Panel bucket.",
+        "scene_hex": "Applied Collection Row bucket.",
+        "controls_hex": "Applied Control Fill bucket.",
+        "highlights_hex": "Applied Highlights bucket.",
+        "viewport_background_hex": "Applied Viewport BG bucket.",
+        "viewport_gradient_hex": "Applied Gradient 2 bucket.",
+        "text_hex": "Applied Random Text bucket.",
+        "control_text_hex": "Applied Tool Text bucket.",
+        "accent_text_hex": "Applied Scene/Header Text bucket.",
+        "tabs_text_hex": "Applied Tab Text bucket.",
+        "header_text_hex": "Applied Header Text bucket.",
+    }
+    if bucket_key not in bucket_messages:
         raise ValueError(f"Unsupported theme bucket: {bucket or '[blank]'}")
 
-    if changed <= 0:
-        raise ValueError(f"Theme bucket did not match any Blender theme fields: {bucket_key}")
+    # Route the single bucket through the exact same pipeline the main Apply
+    # uses (_apply_theme_from_photo_manual_colors) so applying one bucket touches
+    # every Blender theme field the full apply feeds from that bucket. Each
+    # bucket used to hand-list a narrower subset of fields, which drifted behind
+    # the full apply (the reported bug: a bucket applied to only part of what the
+    # main Apply later completed). The panel already sends the full staged
+    # palette in the payload, so we only override this bucket's hex with the
+    # swatch value; re-asserting the other staged colors is a visual no-op in the
+    # normal workflow because they already match the live theme.
+    payload = dict(payload)
+    if payload.get("bucket_hex") is not None:
+        payload[bucket_key] = _normalize_hex_color(payload, "bucket_hex")
 
-    _set_project_theme_state_from_role_hexes(context, payload, role_hexes)
-    _tag_redraw_view3d()
-    return _result(message, bucket=bucket_key, applied_count=changed)
+    _apply_theme_from_photo_manual_colors(context, payload)
+    return _result(bucket_messages[bucket_key], bucket=bucket_key)
 
 
 def _absorb_current_theme(context):
@@ -4153,7 +3967,11 @@ def _restore_state_for_startup(context):
 
     theme_state = global_theme if global_state_exists else project_theme
     place_picture_state = (
-        global_place_picture if global_state_exists else project_place_picture
+        global_place_picture
+        if global_state_exists and _is_explicit_startup_place_picture_state(global_place_picture)
+        else project_place_picture
+        if not global_state_exists
+        else {"enabled": False}
     )
     return project_state, global_state, theme_state, place_picture_state, global_state_exists
 

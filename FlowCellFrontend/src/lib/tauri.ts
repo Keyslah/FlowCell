@@ -971,6 +971,34 @@ export function loadBlenderThemeFile(path: string): Promise<Record<string, unkno
   return invoke("load_blender_theme_file", { path });
 }
 
+export function saveBlenderThemePackage(args: {
+  name: string;
+  themeImagePath?: string;
+  staticBackgroundPath?: string;
+  values: Record<string, unknown>;
+}): Promise<string> {
+  return invoke("save_blender_theme_package", {
+    name: args.name,
+    themeImagePath: args.themeImagePath,
+    staticBackgroundPath: args.staticBackgroundPath,
+    values: args.values
+  });
+}
+
+export interface LoadedThemePackage {
+  values: Record<string, unknown>;
+  themeImagePath: string;
+  staticBackgroundPath: string;
+}
+
+export function loadBlenderThemePackage(manifestPath: string): Promise<LoadedThemePackage> {
+  return invoke("load_blender_theme_package", { manifestPath });
+}
+
+export function resolveBlenderThemeRootPath(): Promise<string> {
+  return invoke("resolve_blender_theme_root_path");
+}
+
 export async function showOpenExeDialog(initialDirectory?: string): Promise<string | null> {
   const paths = await showOpenFileDialog({
     title: "Choose Program EXE",

@@ -18,11 +18,15 @@ import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import {
   loadBlenderThemeDarknessProfiles,
   loadBlenderThemeFile,
+  loadBlenderThemePackage,
+  resolveBlenderThemeRootPath,
   samplePhotoThemeColors,
   saveBlenderThemeDarknessProfiles,
   saveBlenderThemeFile,
+  saveBlenderThemePackage,
   showOpenFileDialog,
   showSaveFileDialog,
+  showTextInputDialog,
   refreshScopedWindowTopmost,
   registerScopedWindowTopmost,
   setHostWindowTopmost,
@@ -2318,6 +2322,74 @@ export default function ThemeToolboxWindowPage({
     }
   };
 
+  const handleSaveThemePackage = async () => {
+    const currentValues = latestValuesRef.current;
+    const themeImagePath = currentValues.ThemeImagePath.trim();
+    const staticBackgroundPath = currentValues.StaticBackgroundPath.trim();
+    if (!themeImagePath && !staticBackgroundPath) {
+      setStatusMessage("Add a theme image or a Place Picture image before saving.");
+      return;
+    }
+
+    const defaultName = labelFromPath(themeImagePath || staticBackgroundPath) ||
+      (context.label ?? "Theme");
+    setStatusMessage(null);
+    try {
+      const name = await runWithScopedTopmostSuspended(() =>
+        showTextInputDialog({
+          title: "Save Theme Package",
+          prompt: "Name this theme package (saved to the Blender themes folder):",
+          defaultValue: defaultName
+        })
+      );
+      if (name === null || !name.trim()) {
+        return;
+      }
+
+      const savedPath = await saveBlenderThemePackage({
+        name: name.trim(),
+        themeImagePath: themeImagePath || undefined,
+        staticBackgroundPath: staticBackgroundPath || undefined,
+        values: buildHdriWorldThemeSnapshot(currentValues)
+      });
+      setStatusMessage(`Saved theme package: ${labelFromPath(savedPath) || name.trim()}`);
+    } catch (error) {
+      setStatusMessage(formatErrorMessage(error));
+    }
+  };
+
+  const handleOpenThemePackage = async () => {
+    setStatusMessage(null);
+    try {
+      const initialDirectory = await resolveBlenderThemeRootPath().catch(() => undefined);
+      const selectedPaths = await runWithScopedTopmostSuspended(() =>
+        showOpenFileDialog({
+          title: "Open Theme Package",
+          filter:
+            "Theme Package (*.flowcell-theme-pack.json)|*.flowcell-theme-pack.json|All Files (*.*)|*.*",
+          initialDirectory: initialDirectory ?? undefined,
+          multiselect: false
+        })
+      );
+      if (selectedPaths.length === 0) {
+        return;
+      }
+
+      const loaded = await loadBlenderThemePackage(selectedPaths[0]);
+      updateValues(
+        normalizeHdriWorldToolValues({
+          ...latestValuesRef.current,
+          ...loaded.values,
+          ThemeImagePath: loaded.themeImagePath,
+          StaticBackgroundPath: loaded.staticBackgroundPath
+        })
+      );
+      setStatusMessage(`Opened theme package: ${labelFromPath(selectedPaths[0])}`);
+    } catch (error) {
+      setStatusMessage(formatErrorMessage(error));
+    }
+  };
+
   const shellClassName = [
     "theme-toolbox-window-page",
     effectiveSpaceDragActive ? "theme-toolbox-window-page--space-drag" : "",
@@ -2433,6 +2505,12 @@ export default function ThemeToolboxWindowPage({
                 }}
                 onLoadTheme={() => {
                   void handleLoadTheme();
+                }}
+                onSaveThemePackage={() => {
+                  void handleSaveThemePackage();
+                }}
+                onOpenThemePackage={() => {
+                  void handleOpenThemePackage();
                 }}
                 onApplyThemeMode={(mode, nextValues) => {
                   handleThemeModeApply(mode, nextValues);

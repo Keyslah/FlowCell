@@ -4054,6 +4054,204 @@ fn save_blender_theme_file(
     Ok(file_path.display().to_string())
 }
 
+fn normalize_source_image_path(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn image_extension_for(path: &Path) -> String {
+    path.extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "png".to_string())
+}
+
+/// Copies `source` into `package_dir`, keeping the image's original file name.
+/// `fallback_base` names the copy only when the source has no usable file name;
+/// `reserved` disambiguates the rare case where the two package images share a
+/// name but come from different paths.
+fn copy_theme_package_image(
+    source: &str,
+    package_dir: &Path,
+    fallback_base: &str,
+    reserved: Option<&str>,
+) -> Result<String, String> {
+    let source_path = Path::new(source);
+    if !source_path.is_file() {
+        return Err(format!("Image file was not found: {}", source_path.display()));
+    }
+
+    let mut file_name = source_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(str::to_string)
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| format!("{fallback_base}.{}", image_extension_for(source_path)));
+
+    if reserved
+        .map(|other| other.eq_ignore_ascii_case(&file_name))
+        .unwrap_or(false)
+    {
+        file_name = format!("{fallback_base}-{file_name}");
+    }
+
+    let destination = package_dir.join(&file_name);
+    fs::copy(source_path, &destination).map_err(|error| {
+        format!(
+            "Failed to copy image {} into theme package: {error}",
+            source_path.display()
+        )
+    })?;
+
+    Ok(file_name)
+}
+
+/// Saves a Blender theme "package" into the blender_themes folder: the actual
+/// image bytes (buckets source and/or Place Picture background) plus a manifest
+/// carrying the staged bucket colors. One image is stored when both fields point
+/// at the same file; two are stored when they differ. Everything lives in a
+/// single `<name>` subfolder: the copied image(s) plus the
+/// `<name>.flowcell-theme-pack.json` manifest, which references the images by
+/// their file name.
+#[tauri::command]
+fn save_blender_theme_package(
+    name: String,
+    theme_image_path: Option<String>,
+    static_background_path: Option<String>,
+    values: Value,
+) -> Result<String, String> {
+    let stem = sanitize_theme_file_stem(&name);
+    let theme_root = resolve_default_blender_theme_root()?;
+    let package_dir = theme_root.join(&stem);
+    let manifest_path = package_dir.join(format!("{stem}.flowcell-theme-pack.json"));
+
+    let buckets_source = theme_image_path.as_deref().and_then(normalize_source_image_path);
+    let background_source = static_background_path
+        .as_deref()
+        .and_then(normalize_source_image_path);
+
+    if buckets_source.is_none() && background_source.is_none() {
+        return Err("Add a theme image or a Place Picture image before saving.".to_string());
+    }
+
+    fs::create_dir_all(&package_dir).map_err(|error| {
+        format!(
+            "Failed to create theme package folder at {}: {error}",
+            package_dir.display()
+        )
+    })?;
+
+    let same_image = match (buckets_source.as_deref(), background_source.as_deref()) {
+        (Some(buckets), Some(background)) => buckets.eq_ignore_ascii_case(background),
+        _ => false,
+    };
+
+    let buckets_rel = if let Some(buckets) = buckets_source.as_deref() {
+        Some(copy_theme_package_image(buckets, &package_dir, "buckets", None)?)
+    } else {
+        None
+    };
+
+    let background_rel = if same_image {
+        buckets_rel.clone()
+    } else if let Some(background) = background_source.as_deref() {
+        Some(copy_theme_package_image(
+            background,
+            &package_dir,
+            "background",
+            buckets_rel.as_deref(),
+        )?)
+    } else {
+        None
+    };
+
+    let manifest = serde_json::json!({
+        "format": "flowcell-blender-theme-pack-v1",
+        "savedAt": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| error.to_string())?
+            .as_secs()
+            .to_string(),
+        "name": name.trim(),
+        "bucketsImage": buckets_rel,
+        "backgroundImage": background_rel,
+        "values": values,
+    });
+    let serialized = serde_json::to_string_pretty(&manifest).map_err(|error| error.to_string())?;
+    fs::write(&manifest_path, serialized).map_err(|error| {
+        format!(
+            "Failed to write theme package manifest at {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+
+    Ok(manifest_path.display().to_string())
+}
+
+/// Reads a theme package manifest and resolves the copied image paths back to
+/// absolute paths so the toolbox can restore both the bucket colors and the
+/// actual image references.
+#[tauri::command]
+fn load_blender_theme_package(manifest_path: String) -> Result<Value, String> {
+    let trimmed = manifest_path.trim();
+    if trimmed.is_empty() {
+        return Err("Theme package path is required.".to_string());
+    }
+
+    let file_path = PathBuf::from(trimmed);
+    if !file_path.is_file() {
+        return Err(format!("Theme package was not found: {}", file_path.display()));
+    }
+
+    let raw = fs::read_to_string(&file_path).map_err(|error| {
+        format!(
+            "Failed to read theme package at {}: {error}",
+            file_path.display()
+        )
+    })?;
+    let parsed: Value = serde_json::from_str(&raw).map_err(|error| {
+        format!(
+            "Failed to parse theme package at {}: {error}",
+            file_path.display()
+        )
+    })?;
+
+    let parent = file_path.parent().unwrap_or_else(|| Path::new("."));
+    let resolve_relative = |key: &str| -> String {
+        parsed
+            .get(key)
+            .and_then(Value::as_str)
+            .map(|relative| relative.trim())
+            .filter(|relative| !relative.is_empty())
+            .map(|relative| parent.join(relative).display().to_string())
+            .unwrap_or_default()
+    };
+
+    let values = parsed
+        .get("values")
+        .filter(|value| value.is_object())
+        .cloned()
+        .unwrap_or_else(|| Value::Object(Default::default()));
+
+    Ok(serde_json::json!({
+        "values": values,
+        "themeImagePath": resolve_relative("bucketsImage"),
+        "staticBackgroundPath": resolve_relative("backgroundImage"),
+    }))
+}
+
+/// Returns the blender_themes folder path (creating it) so the frontend can open
+/// its file dialogs rooted there.
+#[tauri::command]
+fn resolve_blender_theme_root_path() -> Result<String, String> {
+    Ok(resolve_default_blender_theme_root()?.display().to_string())
+}
+
 #[tauri::command]
 fn load_blender_theme_file(path: String) -> Result<Value, String> {
     let trimmed_path = path.trim();
@@ -12501,6 +12699,9 @@ fn main() {
             save_blender_theme_darkness_profiles,
             save_blender_theme_file,
             load_blender_theme_file,
+            save_blender_theme_package,
+            load_blender_theme_package,
+            resolve_blender_theme_root_path,
             list_detected_slicer_executables,
             load_slicer_executable,
             launch_slicer,

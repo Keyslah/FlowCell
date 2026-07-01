@@ -141,8 +141,15 @@
 
 .theme-toolbox-window-page .hdri-world-row--theme-path {
   grid-template-columns:
-    minmax(0, 1fr) minmax(66px, auto) minmax(104px, auto)
-    minmax(62px, auto);
+    minmax(0, 1fr) minmax(58px, auto) minmax(92px, auto)
+    minmax(52px, auto) minmax(52px, auto) minmax(52px, auto);
+  align-items: center;
+}
+
+.theme-toolbox-window-page .hdri-world-row--theme-path .hdri-world-field__input {
+  min-height: 22px;
+  padding: 2px 8px;
+  font-size: 0.72rem;
 }
 
 .theme-toolbox-window-page .hdri-world-row--theme-actions {
