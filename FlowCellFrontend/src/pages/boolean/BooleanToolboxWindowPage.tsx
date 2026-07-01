@@ -12,6 +12,7 @@ import {
   type PanelScriptFileRecord,
   type ToolsetActionResponse
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import type { BooleanToolboxWindowContext } from "../../lib/windowContext";
 import {
   BOOLEAN_TOOLBOX_CANONICAL_HEIGHT,
@@ -191,6 +192,8 @@ export default function BooleanToolboxWindowPage({
   const [pendingCommand, setPendingCommand] = useState<BooleanToolboxCommand | null>(null);
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [windowSize, setWindowSize] = useState(() => ({
     width: Math.max(window.innerWidth, 1),
     height: Math.max(window.innerHeight, 1)
@@ -331,10 +334,10 @@ export default function BooleanToolboxWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     const syncWindowSize = () => {
@@ -399,7 +402,7 @@ export default function BooleanToolboxWindowPage({
 
     void getCurrentWindow().setFocus().catch(() => {});
 
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       return;
     }
 
@@ -424,7 +427,7 @@ export default function BooleanToolboxWindowPage({
 
   const pageClassName = [
     "boolean-toolbox-window-page",
-    spaceDragActive ? "boolean-toolbox-window-page--space-drag" : "",
+    effectiveSpaceDragActive ? "boolean-toolbox-window-page--space-drag" : "",
     spaceDragging ? "boolean-toolbox-window-page--dragging" : ""
   ]
     .filter(Boolean)

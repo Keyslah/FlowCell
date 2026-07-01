@@ -383,6 +383,7 @@ function renderThemeRoleField(args: {
           value={/^#[0-9A-F]{6}$/i.test(value) ? value : row.placeholder}
           onPointerDown={onNativePickerOpen}
           onFocus={onNativePickerOpen}
+          onBlur={() => onNativePickerClose?.()}
           onKeyDown={(event) => {
             if (event.key === "Escape") {
               onNativePickerClose?.();

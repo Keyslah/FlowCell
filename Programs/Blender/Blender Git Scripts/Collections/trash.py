@@ -1,5 +1,4 @@
 # Description: Move the selected objects into Trash.
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

@@ -1,5 +1,4 @@
 # Description: Create Live, Snapshots, Trash, and Archive collections  if missing. Visible objects go to Live
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

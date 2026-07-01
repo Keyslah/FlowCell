@@ -325,72 +325,13 @@ function Get-FlowCellCustomEntrypointMetadata([string]$Path, [string]$PreferredF
     return $baseFailure
 }
 
-function Test-FlowCellTruthyDirective([string]$Path, [string]$DirectiveName) {
-    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return $false
-    }
-
-    $pattern = '^\s*#\s*{0}\s*:\s*(?<value>.+?)\s*$' -f [Regex]::Escape($DirectiveName)
-    foreach ($line in @(Get-Content -LiteralPath $Path -TotalCount 64)) {
-        if ([string]$line -match $pattern) {
-            $value = [string]$matches['value']
-            return $value.Trim() -imatch '^(1|true|yes|built[-_ ]?in[-_ ]?only)$'
-        }
-        if (-not [string]::IsNullOrWhiteSpace([string]$line) -and [string]$line -notmatch '^\s*#') {
-            break
-        }
-    }
-
-    return $false
-}
-
-function Test-FlowCellWrapperOnlyScript([string]$Path, [object]$RunEntrypointMeta) {
-    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return $false
-    }
-
-    $runSource = [string]$RunEntrypointMeta.SourceText
-    if ($runSource -notmatch '\bexecute_bridge_operator\s*\(') {
-        return $false
-    }
-
-    $allFunctions = @(Get-PythonTopLevelFunctionNames -Path $Path)
-    $helperFunctions = @(
-        $allFunctions |
-            Where-Object {
-                [string]$_ -inotmatch '^(run_flowcell_action|main|_load_flowcell_bridge|_merge_payload)$'
-            }
-    )
-    $raw = Get-Content -LiteralPath $Path -Raw
-    $looksGeneratedBridgeWrapper = $raw -match '(?m)^\s*ACTION_NAME\s*=' -and
-        $raw -match '(?m)^\s*DEFAULT_DATA\s*='
-
-    return ($looksGeneratedBridgeWrapper -and $helperFunctions.Count -eq 0)
-}
-
 function Test-FlowCellPortableBlenderSource([string]$Path) {
     $runMeta = Get-FlowCellCustomEntrypointMetadata -Path $Path -PreferredFunctionName 'run_flowcell_action'
     if ([string]::IsNullOrWhiteSpace([string]$runMeta.FunctionName)) {
         return [pscustomobject]@{
             IsValid = $false
             FunctionName = ''
-            Reason = 'Portable Blender Add Script sources must expose run_flowcell_action(context=None, data=None).'
-        }
-    }
-
-    if (Test-FlowCellTruthyDirective -Path $Path -DirectiveName 'FLOWCELL_BUILTIN_ONLY') {
-        return [pscustomobject]@{
-            IsValid = $false
-            FunctionName = ''
-            Reason = 'This Blender script is marked FLOWCELL_BUILTIN_ONLY and is not a portable Add Script source.'
-        }
-    }
-
-    if (Test-FlowCellWrapperOnlyScript -Path $Path -RunEntrypointMeta $runMeta) {
-        return [pscustomobject]@{
-            IsValid = $false
-            FunctionName = ''
-            Reason = 'This Blender script is only a bridge wrapper. Put the actual tool logic in Blender Git Scripts before adding it.'
+            Reason = 'Blender Add Script sources must expose run_flowcell_action(context=None, data=None).'
         }
     }
 
@@ -446,71 +387,6 @@ function Get-FlowCellPythonBootstrapHint([string]$Path, [string[]]$AvailableFunc
     return ''
 }
 
-function Get-BridgeActionFunctionMap {
-    return @{
-        'make_layers' = 'perform_make_layers'
-        'sort' = 'perform_sort'
-        'sort_live' = 'perform_sort_live'
-        'snapshot' = 'perform_snapshot'
-        'back' = 'perform_back'
-        'restore' = 'perform_restore'
-        'trash' = 'perform_trash'
-        'archive' = 'perform_archive'
-        'empty_trash' = 'perform_empty_trash'
-        'add_to_live' = 'perform_add_to_live'
-        'new_collection' = 'perform_new_collection'
-        'empty_collections' = 'perform_empty_collections'
-        'cycle_collection' = 'perform_cycle_collection'
-        'cycle_live_versions' = 'perform_cycle_live_versions'
-        'save_selected_stl_to_assets' = 'perform_save_selected_stl_to_assets_result'
-        'import_obj_into_scene' = 'perform_import_obj_into_scene_result'
-        'import_png_as_lithophane' = 'perform_import_png_as_lithophane_result'
-        'render_active_object_png_to_images' = 'perform_render_active_object_png_to_images_result'
-        'alignment_tools' = 'perform_flowcell_alignment_tool'
-        'flatten_revolve_tools' = 'perform_flowcell_flatten_revolve_tool'
-        'cursor_center_hole' = 'perform_cursor_center_hole'
-        'rename_selected_objects' = 'perform_batch_rename_selected_objects'
-    }
-}
-
-function Get-BuiltInActionDescriptionMap {
-    return @{
-        'make_layers' = 'Create Live, Snapshots, Trash, and Archive if missing.'
-        'sort' = 'Sort by visibility: visible objects become Live, matching invisible family objects become Snapshots as s#, and other invisible objects become Trash as t#.'
-        'sort_live' = 'Move every currently hidden object under Live into Trash.'
-        'snapshot' = 'Copy the selected Live objects into Snapshots as versioned s# duplicates.'
-        'back' = 'Move the current Live version to Trash and restore the newest matching snapshot back into Live.'
-        'restore' = 'Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first.'
-        'trash' = 'Move the selected objects into Trash.'
-        'archive' = 'Copy the selected objects into Archive.'
-        'empty_trash' = 'Delete everything inside Trash.'
-        'add_to_live' = 'Copy selected snapshot, trash, or archive objects into Live without replacing the current Live version.'
-        'new_collection' = 'Prompt for a name and create a new child collection near the selected object.'
-        'empty_collections' = 'Delete empty collections while keeping the system roots.'
-        'cycle_collection' = 'Use the selected object''s collection and show one direct object at a time while selecting it.'
-        'cycle_live_versions' = 'With one selected Live object, cycle Live and snapshot versions one visible object at a time.'
-        'save_selected_stl_to_assets' = 'Export the selected mesh objects to 01 src\00 assets\03 3d as a uniquely named STL.'
-        'render_active_object_png_to_images' = 'Render the active selected object from the current scene camera to 01 src\00 assets\01 images as a transparent PNG cropped exactly to the visible object bounds.'
-        'alignment_tools' = 'Open FlowCell alignment controls for active-object min, center, max, surface, and origin alignment.'
-        'flatten_revolve_tools' = 'Flatten the active mesh into a centered profile, hide the source object, and generate revolve output in place.'
-        'cursor_center_hole' = 'With one hole wall face selected in Edit Mode, find the center point and move the 3D cursor to it.'
-        'rename_selected_objects' = 'Prompt for rename values and batch-rename the selected Blender objects through the FlowCell bridge.'
-    }
-}
-
-function Get-PreferredActionDescription([string]$ActionName, [string]$CurrentDescription = '') {
-    if (-not [string]::IsNullOrWhiteSpace($CurrentDescription)) {
-        return [string]$CurrentDescription
-    }
-
-    $builtInDescriptions = Get-BuiltInActionDescriptionMap
-    if (-not [string]::IsNullOrWhiteSpace($ActionName) -and $builtInDescriptions.ContainsKey($ActionName)) {
-        return [string]$builtInDescriptions[$ActionName]
-    }
-
-    return [string]$CurrentDescription
-}
-
 function Get-FriendlyBlenderButtonLabel([string]$RawLabel) {
     if ([string]::IsNullOrWhiteSpace($RawLabel)) {
         return 'button'
@@ -527,24 +403,6 @@ function Get-FriendlyBlenderButtonLabel([string]$RawLabel) {
     }
 
     return $label
-}
-
-function Get-SourceMetadataForAction([string]$ActionName) {
-    $map = Get-BridgeActionFunctionMap
-    if ([string]::IsNullOrWhiteSpace($ActionName) -or -not $map.ContainsKey($ActionName)) { return $null }
-    $functionName = [string]$map[$ActionName]
-
-    if ($functionName -eq 'perform_batch_rename_selected_objects' -and (Test-Path -LiteralPath $addonBridgePath -PathType Leaf)) {
-        $meta = Get-PythonFunctionMetadata -Path $addonBridgePath -PreferredFunctionName $functionName
-        return [pscustomobject]@{ PythonPath = $addonBridgePath; FunctionName = $meta.FunctionName; StartLine = [int]$meta.StartLine; SourceText = [string]$meta.SourceText }
-    }
-
-    if (Test-Path -LiteralPath $addonActionsPath -PathType Leaf) {
-        $meta = Get-PythonFunctionMetadata -Path $addonActionsPath -PreferredFunctionName $functionName
-        return [pscustomobject]@{ PythonPath = $addonActionsPath; FunctionName = $meta.FunctionName; StartLine = [int]$meta.StartLine; SourceText = [string]$meta.SourceText }
-    }
-
-    return $null
 }
 
 function Get-TopDescription([string]$Path) {
@@ -659,7 +517,6 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
         $actionName = Get-UniqueActionName -BaseName ('{0}{1}' -f [string]$bridgeLayout.GeneratedActionPrefix, $safeLabel) -Taken $takenActionNames
         $description = Get-TopDescription -Path $fullPath
         if ([string]::IsNullOrWhiteSpace($description)) { $description = ('Run {0} through the {1} Blender bridge.' -f $label, [string]$bridgeLayout.AddonDisplayName) }
-        $description = Get-PreferredActionDescription -ActionName $actionName -CurrentDescription $description
         Set-TopDescription -Path $fullPath -NextDescription $description
 
         $pythonPath = ''

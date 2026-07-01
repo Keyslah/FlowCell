@@ -22,6 +22,7 @@ import {
   runPanelScript,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import { DEFAULT_POPOUT_IMPORTED_SKIN } from "../../lib/theme";
 import type { PanelFanWindowContext } from "../../lib/windowContext";
 import type { FlowCellButton } from "../../types";
@@ -39,7 +40,7 @@ const PANEL_FAN_DRAG_SYNC_DELAY_MS = 48;
 // misclassify a dropped owner window as an expanded fan and drift the anchor.
 const PANEL_FAN_OWNER_BOUNDS_TOLERANCE = 8;
 
-interface LogicalBounds {
+interface PhysicalBounds {
   x: number;
   y: number;
   width: number;
@@ -62,7 +63,7 @@ function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function areBoundsEqual(left: LogicalBounds | null, right: LogicalBounds): boolean {
+function areBoundsEqual(left: PhysicalBounds | null, right: PhysicalBounds): boolean {
   return Boolean(
     left &&
       Math.abs(left.x - right.x) < 0.5 &&
@@ -74,8 +75,7 @@ function areBoundsEqual(left: LogicalBounds | null, right: LogicalBounds): boole
 
 async function waitForWindowBoundsToMatch(
   currentWindow: ReturnType<typeof getCurrentWindow>,
-  targetBounds: LogicalBounds,
-  scaleFactor: number
+  targetBounds: PhysicalBounds
 ): Promise<boolean> {
   for (let attempt = 0; attempt < PANEL_FAN_BOUNDS_SETTLE_ATTEMPTS; attempt += 1) {
     const [position, size] = await Promise.all([
@@ -85,10 +85,10 @@ async function waitForWindowBoundsToMatch(
     const currentBounds =
       position && size
         ? {
-            x: position.x / scaleFactor,
-            y: position.y / scaleFactor,
-            width: size.width / scaleFactor,
-            height: size.height / scaleFactor
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height
           }
         : null;
     if (areBoundsEqual(currentBounds, targetBounds)) {
@@ -225,38 +225,77 @@ function buildChildButton(record: PanelScriptFileRecord, label: string): FlowCel
   };
 }
 
-function resolveLogicalBounds(args: {
+function resolvePhysicalBounds(args: {
   position: { x: number; y: number } | null;
   size: { width: number; height: number } | null;
-  scaleFactor: number;
-}): LogicalBounds | null {
+}): PhysicalBounds | null {
   if (!args.position || !args.size) {
     return null;
   }
 
   return {
-    x: args.position.x / args.scaleFactor,
-    y: args.position.y / args.scaleFactor,
-    width: args.size.width / args.scaleFactor,
-    height: args.size.height / args.scaleFactor
+    x: args.position.x,
+    y: args.position.y,
+    width: args.size.width,
+    height: args.size.height
+  };
+}
+
+function toPhysicalExtent(value: number, scaleFactor: number): number {
+  return Math.max(1, Math.round(value * scaleFactor));
+}
+
+function resolveOwnerPhysicalSize(args: {
+  metrics: FanClusterPanelMetrics;
+  scaleFactor: number;
+}): { width: number; height: number } {
+  return {
+    width: toPhysicalExtent(args.metrics.ownerWidth, args.scaleFactor),
+    height: toPhysicalExtent(args.metrics.ownerHeight, args.scaleFactor)
+  };
+}
+
+function resolveLegacyOwnerPhysicalSize(args: {
+  metrics: FanClusterPanelMetrics;
+  scaleFactor: number;
+}): { width: number; height: number } {
+  return {
+    width: toPhysicalExtent(args.metrics.ownerWidth, args.scaleFactor),
+    height: toPhysicalExtent(args.metrics.ownerHeight, args.scaleFactor)
   };
 }
 
 function matchesCollapsedOwnerBounds(args: {
-  bounds: LogicalBounds | null;
+  bounds: PhysicalBounds | null;
   metrics: FanClusterPanelMetrics | null;
+  scaleFactor: number;
 }): boolean {
   if (!args.bounds || !args.metrics) {
     return false;
   }
 
-  return (
+  const ownerSize = resolveOwnerPhysicalSize({
+    metrics: args.metrics,
+    scaleFactor: args.scaleFactor
+  });
+  const matchesPhysicalOwner =
+    Math.abs(args.bounds.width - ownerSize.width) <= PANEL_FAN_OWNER_BOUNDS_TOLERANCE &&
+    Math.abs(args.bounds.height - ownerSize.height) <= PANEL_FAN_OWNER_BOUNDS_TOLERANCE;
+  const legacyOwnerSize = resolveLegacyOwnerPhysicalSize({
+    metrics: args.metrics,
+    scaleFactor: args.scaleFactor
+  });
+  const matchesLegacyPhysicalOwner =
+    Math.abs(args.bounds.width - legacyOwnerSize.width) <= PANEL_FAN_OWNER_BOUNDS_TOLERANCE &&
+    Math.abs(args.bounds.height - legacyOwnerSize.height) <= PANEL_FAN_OWNER_BOUNDS_TOLERANCE;
+  const matchesLegacyLogicalOwner =
     Math.abs(args.bounds.width - args.metrics.ownerWidth) <= PANEL_FAN_OWNER_BOUNDS_TOLERANCE &&
-    Math.abs(args.bounds.height - args.metrics.ownerHeight) <= PANEL_FAN_OWNER_BOUNDS_TOLERANCE
-  );
+    Math.abs(args.bounds.height - args.metrics.ownerHeight) <= PANEL_FAN_OWNER_BOUNDS_TOLERANCE;
+
+  return matchesPhysicalOwner || matchesLegacyPhysicalOwner || matchesLegacyLogicalOwner;
 }
 
-function toFlowCellBounds(bounds: LogicalBounds): {
+function toFlowCellBounds(bounds: PhysicalBounds): {
   Left: number;
   Top: number;
   Width: number;
@@ -276,21 +315,27 @@ function resolveCollapsedOriginFromWindowBounds(args: {
   scaleFactor: number;
   metrics: FanClusterPanelMetrics | null;
 }): { x: number; y: number } | null {
-  const logicalBounds = resolveLogicalBounds(args);
-  if (!logicalBounds) {
+  const physicalBounds = resolvePhysicalBounds(args);
+  if (!physicalBounds) {
     return null;
   }
 
-  if (matchesCollapsedOwnerBounds({ bounds: logicalBounds, metrics: args.metrics })) {
+  if (
+    matchesCollapsedOwnerBounds({
+      bounds: physicalBounds,
+      metrics: args.metrics,
+      scaleFactor: args.scaleFactor
+    })
+  ) {
     return {
-      x: logicalBounds.x,
-      y: logicalBounds.y
+      x: physicalBounds.x,
+      y: physicalBounds.y
     };
   }
 
   return {
-    x: logicalBounds.x + (args.metrics?.ownerLeft ?? 0),
-    y: logicalBounds.y + (args.metrics?.ownerTop ?? 0)
+    x: physicalBounds.x + (args.metrics?.ownerLeft ?? 0) * args.scaleFactor,
+    y: physicalBounds.y + (args.metrics?.ownerTop ?? 0) * args.scaleFactor
   };
 }
 
@@ -299,7 +344,7 @@ function resolveCollapsedOwnerBounds(args: {
   size: { width: number; height: number } | null;
   scaleFactor: number;
   metrics: FanClusterPanelMetrics | null;
-}): LogicalBounds | null {
+}): PhysicalBounds | null {
   const origin = resolveCollapsedOriginFromWindowBounds(args);
   if (!origin || !args.metrics) {
     return null;
@@ -308,8 +353,8 @@ function resolveCollapsedOwnerBounds(args: {
   return {
     x: origin.x,
     y: origin.y,
-    width: args.metrics.ownerWidth,
-    height: args.metrics.ownerHeight
+    width: toPhysicalExtent(args.metrics.ownerWidth, args.scaleFactor),
+    height: toPhysicalExtent(args.metrics.ownerHeight, args.scaleFactor)
   };
 }
 
@@ -322,7 +367,6 @@ export default function PanelFanToolPopoutWindowPage({
   const collapseWindowTimerRef = useRef<number | undefined>(undefined);
   const collapsedOriginRef = useRef<{ x: number; y: number } | null>(null);
   const diagnosticsHistoryRef = useRef<Record<string, unknown>[]>([]);
-  const expandedBoundsRef = useRef<LogicalBounds | null>(null);
   const ignoreCursorStateRef = useRef<boolean | null>(null);
   const spaceDragSyncTimerRef = useRef<number | undefined>(undefined);
   const wasSpaceDraggingRef = useRef(false);
@@ -338,6 +382,8 @@ export default function PanelFanToolPopoutWindowPage({
   const [hoverReady, setHoverReady] = useState(true);
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [scriptRunError, setScriptRunError] = useState<ScriptRunErrorState | null>(null);
   const [metrics, setMetrics] = useState<FanClusterPanelMetrics | null>(null);
   const [fanOptions, setFanOptions] = useState(() =>
@@ -450,10 +496,10 @@ export default function PanelFanToolPopoutWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     setOwnerPinnedOpen(false);
@@ -463,21 +509,19 @@ export default function PanelFanToolPopoutWindowPage({
   useEffect(() => {
     setLayoutBoundsReady(false);
     setRestoreWindowStateReady(false);
-    expandedBoundsRef.current = null;
   }, [context.panelName, context.programName, records.length]);
 
   useEffect(() => {
     void (async () => {
       const currentWindow = getCurrentWindow();
-      const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
       const position = await currentWindow.outerPosition().catch(() => null);
       if (!position) {
         return;
       }
 
       collapsedOriginRef.current = {
-        x: position.x / scaleFactor,
-        y: position.y / scaleFactor
+        x: position.x,
+        y: position.y
       };
     })();
   }, []);
@@ -518,7 +562,7 @@ export default function PanelFanToolPopoutWindowPage({
     let scaleFactor = 1;
     let position: { x: number; y: number } | null = null;
     let size: { width: number; height: number } | null = null;
-    let currentBounds: LogicalBounds | null = null;
+    let currentBounds: PhysicalBounds | null = null;
 
     for (let attempt = 0; attempt < PANEL_FAN_BOUNDS_SETTLE_ATTEMPTS; attempt += 1) {
       const nextScaleFactor = await currentWindow.scaleFactor().catch(() => scaleFactor || 1);
@@ -526,10 +570,9 @@ export default function PanelFanToolPopoutWindowPage({
         currentWindow.outerPosition().catch(() => null),
         currentWindow.outerSize().catch(() => null)
       ]);
-      const nextBounds = resolveLogicalBounds({
+      const nextBounds = resolvePhysicalBounds({
         position: nextPosition,
-        size: nextSize,
-        scaleFactor: nextScaleFactor
+        size: nextSize
       });
       const boundsSettled =
         currentBounds !== null &&
@@ -570,15 +613,6 @@ export default function PanelFanToolPopoutWindowPage({
       toFlowCellBounds(collapsedBounds)
     );
 
-    if (
-      currentBounds &&
-      !matchesCollapsedOwnerBounds({
-        bounds: currentBounds,
-        metrics
-      })
-    ) {
-      expandedBoundsRef.current = currentBounds;
-    }
   };
 
   const scheduleCollapseWindow = (force = false) => {
@@ -653,10 +687,9 @@ export default function PanelFanToolPopoutWindowPage({
       currentWindow.outerPosition().catch(() => null),
       currentWindow.outerSize().catch(() => null)
     ]);
-    const currentBounds = resolveLogicalBounds({
+    const currentBounds = resolvePhysicalBounds({
       position,
-      size,
-      scaleFactor
+      size
     });
     const collapsedBounds = resolveCollapsedOwnerBounds({
       position,
@@ -667,16 +700,6 @@ export default function PanelFanToolPopoutWindowPage({
 
     if (!collapsedBounds) {
       return;
-    }
-
-    if (
-      currentBounds &&
-      !matchesCollapsedOwnerBounds({
-        bounds: currentBounds,
-        metrics
-      })
-    ) {
-      expandedBoundsRef.current = currentBounds;
     }
 
     if (collapseIntentTimerRef.current) {
@@ -761,10 +784,9 @@ export default function PanelFanToolPopoutWindowPage({
         return;
       }
 
-      const currentBounds = resolveLogicalBounds({
+      const currentBounds = resolvePhysicalBounds({
         position,
-        size,
-        scaleFactor
+        size
       });
       const collapsedBounds = resolveCollapsedOwnerBounds({
         position,
@@ -788,20 +810,6 @@ export default function PanelFanToolPopoutWindowPage({
           currentWindow.label,
           toFlowCellBounds(collapsedBounds)
         );
-      }
-
-      const restoredExpandedBounds =
-        currentBounds &&
-        !matchesCollapsedOwnerBounds({
-          bounds: currentBounds,
-          metrics
-        })
-          ? currentBounds
-          : null;
-      if (restoredExpandedBounds) {
-        expandedBoundsRef.current = restoredExpandedBounds;
-      } else {
-        expandedBoundsRef.current = null;
       }
 
       setOwnerPinnedOpen(false);
@@ -836,14 +844,14 @@ export default function PanelFanToolPopoutWindowPage({
       if (cancelled) {
         return;
       }
-      const currentBounds = resolveLogicalBounds({
+      const currentBounds = resolvePhysicalBounds({
         position,
-        size,
-        scaleFactor
+        size
       });
       const currentWindowIsCollapsed = matchesCollapsedOwnerBounds({
         bounds: currentBounds,
-        metrics
+        metrics,
+        scaleFactor
       });
       const collapsedBounds = resolveCollapsedOwnerBounds({
         position,
@@ -872,34 +880,23 @@ export default function PanelFanToolPopoutWindowPage({
             }
           : null);
 
-      if (
-        currentBounds &&
-        !matchesCollapsedOwnerBounds({
-          bounds: currentBounds,
-          metrics
-        })
-      ) {
-        expandedBoundsRef.current = currentBounds;
-      }
-
-      const targetBounds: LogicalBounds = windowExpanded
+      const targetBounds: PhysicalBounds = windowExpanded
         ? {
-            x: (origin?.x ?? 0) - metrics.ownerLeft,
-            y: (origin?.y ?? 0) - metrics.ownerTop,
-            width: expandedBoundsRef.current?.width ?? metrics.windowWidth,
-            height: expandedBoundsRef.current?.height ?? metrics.windowHeight
+            x: (origin?.x ?? 0) - metrics.ownerLeft * scaleFactor,
+            y: (origin?.y ?? 0) - metrics.ownerTop * scaleFactor,
+            width: toPhysicalExtent(metrics.windowWidth, scaleFactor),
+            height: toPhysicalExtent(metrics.windowHeight, scaleFactor)
           }
         : {
             x: origin?.x ?? 0,
             y: origin?.y ?? 0,
-            width: metrics.ownerWidth,
-            height: metrics.ownerHeight
+            width: toPhysicalExtent(metrics.ownerWidth, scaleFactor),
+            height: toPhysicalExtent(metrics.ownerHeight, scaleFactor)
           };
       if (areBoundsEqual(currentBounds, targetBounds)) {
         const matchedBounds = await waitForWindowBoundsToMatch(
           currentWindow,
-          targetBounds,
-          scaleFactor
+          targetBounds
         );
         if (!cancelled && matchedBounds) {
           setLayoutBoundsReady(true);
@@ -924,8 +921,7 @@ export default function PanelFanToolPopoutWindowPage({
       }
       const matchedBounds = await waitForWindowBoundsToMatch(
         currentWindow,
-        targetBounds,
-        scaleFactor
+        targetBounds
       );
       if (!cancelled && matchedBounds) {
         setLayoutBoundsReady(true);
@@ -1010,6 +1006,42 @@ export default function PanelFanToolPopoutWindowPage({
         return screenRectContains(rect, pointer.x, pointer.y);
       });
 
+      if (
+        hitInteractivePill &&
+        hoverReady &&
+        !windowExpanded &&
+        !effectiveSpaceDragActive &&
+        !spaceDragging &&
+        !spaceDragSyncTimerRef.current &&
+        !wasSpaceDraggingRef.current
+      ) {
+        if (collapseIntentTimerRef.current) {
+          window.clearTimeout(collapseIntentTimerRef.current);
+          collapseIntentTimerRef.current = undefined;
+        }
+        if (collapseWindowTimerRef.current) {
+          window.clearTimeout(collapseWindowTimerRef.current);
+          collapseWindowTimerRef.current = undefined;
+        }
+        setChildrenVisible(false);
+        setLayoutBoundsReady(false);
+        setWindowExpanded(true);
+      }
+
+      if (
+        !hitInteractivePill &&
+        (windowExpanded || childrenVisible) &&
+        !ownerPinnedOpen &&
+        !collapseIntentTimerRef.current &&
+        !collapseWindowTimerRef.current &&
+        !effectiveSpaceDragActive &&
+        !spaceDragging &&
+        !spaceDragSyncTimerRef.current &&
+        !wasSpaceDraggingRef.current
+      ) {
+        queueGuardedCollapseWindow(false);
+      }
+
       await setIgnoreCursorEvents(!hitInteractivePill);
     };
 
@@ -1034,7 +1066,15 @@ export default function PanelFanToolPopoutWindowPage({
       ignoreCursorStateRef.current = null;
       void currentWindow.setIgnoreCursorEvents(false).catch(() => {});
     };
-  }, [childrenVisible, metrics, windowExpanded]);
+  }, [
+    childrenVisible,
+    effectiveSpaceDragActive,
+    hoverReady,
+    metrics,
+    ownerPinnedOpen,
+    spaceDragging,
+    windowExpanded
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1182,7 +1222,7 @@ export default function PanelFanToolPopoutWindowPage({
       setLayoutBoundsReady(false);
     }
     if (
-      spaceDragActive ||
+      effectiveSpaceDragActive ||
       spaceDragging ||
       spaceDragSyncTimerRef.current ||
       wasSpaceDraggingRef.current
@@ -1194,7 +1234,7 @@ export default function PanelFanToolPopoutWindowPage({
 
   const requestCollapse = ({ force = false }: { force?: boolean } = {}) => {
     if (
-      spaceDragActive ||
+      effectiveSpaceDragActive ||
       spaceDragging ||
       spaceDragSyncTimerRef.current ||
       wasSpaceDraggingRef.current
@@ -1221,7 +1261,7 @@ export default function PanelFanToolPopoutWindowPage({
     }
 
     if (
-      spaceDragActive ||
+      effectiveSpaceDragActive ||
       spaceDragging ||
       spaceDragSyncTimerRef.current ||
       wasSpaceDraggingRef.current
@@ -1263,7 +1303,7 @@ export default function PanelFanToolPopoutWindowPage({
   };
 
   const handleShellPointerDownCapture = (event: ReactPointerEvent<HTMLElement>) => {
-    if (!spaceDragActive || spaceDragging || event.button !== 0) {
+    if (!effectiveSpaceDragActive || spaceDragging || event.button !== 0) {
       return;
     }
 
@@ -1285,7 +1325,7 @@ export default function PanelFanToolPopoutWindowPage({
     <main
       className={[
         "panel-fan-window-page",
-        spaceDragActive ? "panel-fan-window-page--space-drag" : "",
+        effectiveSpaceDragActive ? "panel-fan-window-page--space-drag" : "",
         spaceDragging ? "panel-fan-window-page--dragging" : ""
       ]
         .filter(Boolean)
@@ -1316,7 +1356,7 @@ export default function PanelFanToolPopoutWindowPage({
             geometryExpanded={windowExpanded}
             windowExpanded={windowExpanded}
             childrenVisible={childrenVisible}
-            suspendInteraction={!hoverReady || spaceDragActive || spaceDragging}
+            suspendInteraction={!hoverReady || effectiveSpaceDragActive || spaceDragging}
             onExpandRequest={requestExpand}
             onCollapseRequest={requestCollapse}
             onPanelFanMetricsChange={setMetrics}

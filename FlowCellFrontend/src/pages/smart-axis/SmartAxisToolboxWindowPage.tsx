@@ -12,6 +12,7 @@ import {
   type PanelScriptFileRecord,
   type SmartAxisToolStateResponse
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import type { SmartAxisToolboxWindowContext } from "../../lib/windowContext";
 import {
   SMART_AXIS_TOOLBOX_CANONICAL_HEIGHT,
@@ -152,6 +153,8 @@ export default function SmartAxisToolboxWindowPage({
   );
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [windowSize, setWindowSize] = useState(() => ({
     width: Math.max(window.innerWidth, 1),
     height: Math.max(window.innerHeight, 1)
@@ -289,10 +292,10 @@ export default function SmartAxisToolboxWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     const syncWindowSize = () => {
@@ -355,7 +358,7 @@ export default function SmartAxisToolboxWindowPage({
 
     void getCurrentWindow().setFocus().catch(() => {});
 
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       return;
     }
 
@@ -377,7 +380,7 @@ export default function SmartAxisToolboxWindowPage({
   };
   const pageClassName = [
     "smart-axis-toolbox-window-page",
-    spaceDragActive ? "smart-axis-toolbox-window-page--space-drag" : "",
+    effectiveSpaceDragActive ? "smart-axis-toolbox-window-page--space-drag" : "",
     spaceDragging ? "smart-axis-toolbox-window-page--dragging" : ""
   ]
     .filter(Boolean)

@@ -292,9 +292,41 @@ function Ensure-FlowCellWindowInterop {
 
     Add-Type -TypeDefinition @'
 using System;
+using System.Text;
 using System.Runtime.InteropServices;
 
 public static class FlowCellWindowInterop {
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [DllImport("user32.dll")]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern bool IsIconic(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    public static extern int GetClassName(IntPtr hWnd, StringBuilder className, int maxCount);
+
+    [DllImport("user32.dll")]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
     [DllImport("user32.dll")]
     public static extern bool ShowWindowAsync(IntPtr hWnd, int nCmdShow);
 
@@ -305,6 +337,62 @@ public static class FlowCellWindowInterop {
     public static extern bool BringWindowToTop(IntPtr hWnd);
 }
 '@
+}
+
+function Get-FlowCellFrontendMainWindowHandle([System.Diagnostics.Process]$Process) {
+    if (-not $Process) {
+        return [IntPtr]::Zero
+    }
+
+    Ensure-FlowCellWindowInterop
+
+    $targetProcessId = [uint32]$Process.Id
+    $candidateHandles = New-Object 'System.Collections.Generic.List[System.IntPtr]'
+
+    [FlowCellWindowInterop]::EnumWindows({
+        param([IntPtr]$hWnd, [IntPtr]$lParam)
+
+        $windowProcessId = [uint32]0
+        [void][FlowCellWindowInterop]::GetWindowThreadProcessId($hWnd, [ref]$windowProcessId)
+        if ($windowProcessId -ne $targetProcessId) {
+            return $true
+        }
+
+        if (-not [FlowCellWindowInterop]::IsWindowVisible($hWnd)) {
+            return $true
+        }
+
+        $titleBuilder = New-Object System.Text.StringBuilder 512
+        [void][FlowCellWindowInterop]::GetWindowText($hWnd, $titleBuilder, $titleBuilder.Capacity)
+        $title = $titleBuilder.ToString()
+        if ($title -ne 'FlowCell') {
+            return $true
+        }
+
+        $classBuilder = New-Object System.Text.StringBuilder 256
+        [void][FlowCellWindowInterop]::GetClassName($hWnd, $classBuilder, $classBuilder.Capacity)
+        $className = $classBuilder.ToString()
+        if ($className -ne 'Tauri Window') {
+            return $true
+        }
+
+        $bounds = New-Object FlowCellWindowInterop+RECT
+        [void][FlowCellWindowInterop]::GetWindowRect($hWnd, [ref]$bounds)
+        $width = $bounds.Right - $bounds.Left
+        $height = $bounds.Bottom - $bounds.Top
+        if ((-not [FlowCellWindowInterop]::IsIconic($hWnd)) -and ($width -lt 300 -or $height -lt 240)) {
+            return $true
+        }
+
+        $candidateHandles.Add($hWnd) | Out-Null
+        return $false
+    }, [IntPtr]::Zero) | Out-Null
+
+    if ($candidateHandles.Count -gt 0) {
+        return $candidateHandles[0]
+    }
+
+    return [IntPtr]::Zero
 }
 
 function Focus-FlowCellFrontendWindow([System.Diagnostics.Process]$Process) {
@@ -320,13 +408,7 @@ function Focus-FlowCellFrontendWindow([System.Diagnostics.Process]$Process) {
     catch {
     }
 
-    $windowHandle = [IntPtr]::Zero
-    try {
-        $windowHandle = [IntPtr]$Process.MainWindowHandle
-    }
-    catch {
-        $windowHandle = [IntPtr]::Zero
-    }
+    $windowHandle = Get-FlowCellFrontendMainWindowHandle -Process $Process
     if ($windowHandle -eq [IntPtr]::Zero) {
         Start-Sleep -Milliseconds 150
         try {
@@ -334,12 +416,7 @@ function Focus-FlowCellFrontendWindow([System.Diagnostics.Process]$Process) {
         }
         catch {
         }
-        try {
-            $windowHandle = [IntPtr]$Process.MainWindowHandle
-        }
-        catch {
-            $windowHandle = [IntPtr]::Zero
-        }
+        $windowHandle = Get-FlowCellFrontendMainWindowHandle -Process $Process
     }
 
     if ($windowHandle -eq [IntPtr]::Zero) {
@@ -362,7 +439,7 @@ function Focus-FlowCellFrontendWindow([System.Diagnostics.Process]$Process) {
     catch {
     }
 
-    return $false
+    return $true
 }
 
 function Stop-FlowCellFrontendProcess {
@@ -459,11 +536,12 @@ try {
             $existingProcess = $runningFrontend[0]
             if (Focus-FlowCellFrontendWindow -Process $existingProcess) {
                 Write-LauncherLog ("Coalesced overlapping launch request into existing frontend process {0}." -f $existingProcess.Id)
+                return
             }
             else {
-                Write-LauncherLog ("Overlapping launch request found frontend process {0}; leaving the running instance in place." -f $existingProcess.Id)
+                Write-LauncherLog ("Overlapping launch request found frontend process {0} without a usable main window; restarting frontend." -f $existingProcess.Id)
+                Stop-FlowCellFrontendProcess
             }
-            return
         }
     }
 
@@ -473,11 +551,12 @@ try {
             $existingProcess = $runningFrontend[0]
             if (Focus-FlowCellFrontendWindow -Process $existingProcess) {
                 Write-LauncherLog ("Frontend already running in process {0}; focused existing window." -f $existingProcess.Id)
+                return
             }
             else {
-                Write-LauncherLog ("Frontend already running in process {0}; leaving existing instance in place." -f $existingProcess.Id)
+                Write-LauncherLog ("Frontend already running in process {0} without a usable main window; restarting frontend." -f $existingProcess.Id)
+                Stop-FlowCellFrontendProcess
             }
-            return
         }
     }
 
@@ -537,11 +616,12 @@ try {
             $existingProcess = $runningFrontend[0]
             if (Focus-FlowCellFrontendWindow -Process $existingProcess) {
                 Write-LauncherLog ("Frontend already running in process {0}; focused existing window after launch request." -f $existingProcess.Id)
+                return
             }
             else {
-                Write-LauncherLog ("Frontend already running in process {0}; leaving existing instance in place after launch request." -f $existingProcess.Id)
+                Write-LauncherLog ("Frontend already running in process {0} without a usable main window after launch request; restarting frontend." -f $existingProcess.Id)
+                Stop-FlowCellFrontendProcess
             }
-            return
         }
 
         Write-LauncherLog 'Starting compiled Tauri frontend.'

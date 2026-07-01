@@ -10,8 +10,8 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import {
   getCurrentWindow,
-  LogicalPosition,
-  LogicalSize,
+  PhysicalPosition,
+  PhysicalSize,
   type Window as TauriWindow
 } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -97,6 +97,7 @@ import {
 } from "../../lib/windowing";
 import { MACRO_PANEL_CHANGED_EVENT, runFrontendMacro } from "../../lib/macros";
 import { showOpenFolderDialog } from "../../lib/tauri";
+import { buildScriptGroupPopoutWindowSize } from "../../lib/scriptGroupPopoutTemplates";
 import { DEFAULT_FLOW_IMPORTED_SKIN } from "../../lib/theme";
 import mainBackground from "../../assets/backgrounds/main-background.jpeg";
 import type { FlowCellBounds, LayoutSnapshot, LayoutSnapshotWindow, StyleGroup } from "../../types";
@@ -505,11 +506,10 @@ function isValidFlowCellBounds(bounds: FlowCellBounds | null | undefined): bound
   );
 }
 
-type WindowBoundsTarget = Pick<TauriWindow, "scaleFactor" | "outerPosition" | "innerSize">;
+type WindowBoundsTarget = Pick<TauriWindow, "outerPosition" | "innerSize">;
 
 async function captureWindowBounds(target: WindowBoundsTarget): Promise<FlowCellBounds | null> {
-  const [scaleFactor, position, size] = await Promise.all([
-    target.scaleFactor().catch(() => 1),
+  const [position, size] = await Promise.all([
     target.outerPosition().catch(() => null),
     target.innerSize().catch(() => null)
   ]);
@@ -519,10 +519,10 @@ async function captureWindowBounds(target: WindowBoundsTarget): Promise<FlowCell
   }
 
   return {
-    Left: Number((position.x / scaleFactor).toFixed(3)),
-    Top: Number((position.y / scaleFactor).toFixed(3)),
-    Width: Number((size.width / scaleFactor).toFixed(3)),
-    Height: Number((size.height / scaleFactor).toFixed(3))
+    Left: Number(position.x.toFixed(3)),
+    Top: Number(position.y.toFixed(3)),
+    Width: Number(size.width.toFixed(3)),
+    Height: Number(size.height.toFixed(3))
   };
 }
 
@@ -532,14 +532,15 @@ async function applyWindowBounds(
   target: WindowPlacementTarget,
   bounds: FlowCellBounds
 ): Promise<void> {
-  await target.setSize(new LogicalSize(bounds.Width, bounds.Height)).catch(() => {});
+  await target.setSize(new PhysicalSize(bounds.Width, bounds.Height)).catch(() => {});
   await target
-    .setPosition(new LogicalPosition(bounds.Left, bounds.Top))
+    .setPosition(new PhysicalPosition(bounds.Left, bounds.Top))
     .catch(() => {});
 }
 
 export default function MainPage() {
   const topLeftActionGroupRef = useRef<HTMLDivElement | null>(null);
+  const layoutActionPendingRef = useRef(false);
   const pendingPanelScriptActionTimersRef = useRef<Record<string, number>>({});
   const preferredPanelSelectionRef = useRef<string | null>(null);
   const preferredSelectedPanelScriptFileNamesRef = useRef<string[] | null>(null);
@@ -1305,12 +1306,23 @@ export default function MainPage() {
         continue;
       }
 
-      const bounds =
+      let bounds =
         registeredWindow.kind === "panel-fan" && isValidFlowCellBounds(registeredWindow.snapshotBounds)
           ? registeredWindow.snapshotBounds
           : await captureWindowBounds(windowHandle);
       if (!isValidFlowCellBounds(bounds)) {
         continue;
+      }
+      if (
+        registeredWindow.kind === "script-group-popout" &&
+        (registeredWindow.selectedFileNames?.length ?? 0) === 1
+      ) {
+        const singleButtonSize = buildScriptGroupPopoutWindowSize("single", 1);
+        bounds = {
+          ...bounds,
+          Width: singleButtonSize.width,
+          Height: singleButtonSize.height
+        };
       }
 
       managedWindows.push({
@@ -1664,30 +1676,48 @@ export default function MainPage() {
   };
 
   const handleSaveLayout = async () => {
-    const snapshot = await captureLayoutSnapshotState();
-    const targetPath = await showSaveLayoutDialog(
-      buildSuggestedLayoutName(),
-      readLastLayoutDirectory() ?? undefined
-    );
-    if (!targetPath) {
+    if (layoutActionPendingRef.current) {
       return;
     }
 
-    const savedPath = await saveLayoutSnapshot(targetPath, snapshot);
-    writeLastLayoutDirectory(getParentDirectory(savedPath));
-    writeLastLayoutPath(savedPath);
+    layoutActionPendingRef.current = true;
+    try {
+      const snapshot = await captureLayoutSnapshotState();
+      const targetPath = await showSaveLayoutDialog(
+        buildSuggestedLayoutName(),
+        readLastLayoutDirectory() ?? undefined
+      );
+      if (!targetPath) {
+        return;
+      }
+
+      const savedPath = await saveLayoutSnapshot(targetPath, snapshot);
+      writeLastLayoutDirectory(getParentDirectory(savedPath));
+      writeLastLayoutPath(savedPath);
+    } finally {
+      layoutActionPendingRef.current = false;
+    }
   };
 
   const handleLoadLayout = async () => {
-    const selectedPath = await showOpenLayoutDialog(readLastLayoutDirectory() ?? undefined);
-    if (!selectedPath) {
+    if (layoutActionPendingRef.current) {
       return;
     }
 
-    const snapshot = await loadLayoutSnapshot(selectedPath);
-    writeLastLayoutDirectory(getParentDirectory(selectedPath));
-    await restoreLayoutSnapshotState(snapshot);
-    writeLastLayoutPath(selectedPath);
+    layoutActionPendingRef.current = true;
+    try {
+      const selectedPath = await showOpenLayoutDialog(readLastLayoutDirectory() ?? undefined);
+      if (!selectedPath) {
+        return;
+      }
+
+      const snapshot = await loadLayoutSnapshot(selectedPath);
+      writeLastLayoutDirectory(getParentDirectory(selectedPath));
+      await restoreLayoutSnapshotState(snapshot);
+      writeLastLayoutPath(selectedPath);
+    } finally {
+      layoutActionPendingRef.current = false;
+    }
   };
 
   const handleStartupSettingChange = (changes: Partial<StartupSettings>) => {

@@ -22,7 +22,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 use tauri::Manager;
-use tauri::{AppHandle, LogicalPosition, LogicalSize, State, WebviewWindow};
+use tauri::{AppHandle, LogicalSize, PhysicalPosition, PhysicalSize, State, WebviewWindow};
 #[cfg(windows)]
 use windows::Win32::Graphics::Dwm::{
     DwmSetWindowAttribute, DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND,
@@ -45,6 +45,8 @@ use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 use windows_sys::Win32::System::Threading::{
     OpenProcess, QueryFullProcessImageNameW, PROCESS_QUERY_LIMITED_INFORMATION,
 };
+#[cfg(windows)]
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SPACE};
 #[cfg(windows)]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
@@ -3079,13 +3081,13 @@ fn set_dialog_parent(
         return dialog;
     };
 
-    let _ = parent_window.set_focus();
-
     #[cfg(windows)]
     if let Ok(hwnd) = parent_window.hwnd() {
         let _ = unsafe { ShowWindowAsync(hwnd, SW_RESTORE) };
         let _ = unsafe { SetForegroundWindow(hwnd) };
     }
+
+    let _ = parent_window.set_focus();
 
     dialog.set_parent(&parent_window)
 }
@@ -3573,8 +3575,10 @@ fn validate_debug_file_name(raw_name: &str) -> Result<String, String> {
 
 #[tauri::command]
 fn show_save_layout_dialog(
+    app: AppHandle,
     suggested_name: String,
     initial_directory: Option<String>,
+    parent_label: Option<String>,
 ) -> Result<Option<String>, String> {
     let initial_directory = resolve_layout_dialog_directory(initial_directory)?;
     let file_name = if suggested_name.trim().is_empty() {
@@ -3582,24 +3586,38 @@ fn show_save_layout_dialog(
     } else {
         suggested_name.trim().to_string()
     };
+    let parent_label = parent_label.or_else(|| Some("main".to_string()));
 
-    let selected_path = FileDialog::new()
-        .set_title("Save Layout")
-        .set_directory(initial_directory)
-        .set_file_name(&file_name)
-        .add_filter("FlowCell Layout", &["json"])
+    let selected_path = set_dialog_parent(
+        &app,
+        FileDialog::new()
+            .set_title("Save Layout")
+            .set_directory(initial_directory)
+            .set_file_name(&file_name)
+            .add_filter("FlowCell Layout", &["json"]),
+        parent_label,
+    )
         .save_file();
 
     Ok(selected_path.map(|path| normalize_layout_file_path(&path).display().to_string()))
 }
 
 #[tauri::command]
-fn show_open_layout_dialog(initial_directory: Option<String>) -> Result<Option<String>, String> {
+fn show_open_layout_dialog(
+    app: AppHandle,
+    initial_directory: Option<String>,
+    parent_label: Option<String>,
+) -> Result<Option<String>, String> {
     let initial_directory = resolve_layout_dialog_directory(initial_directory)?;
-    let selected_path = FileDialog::new()
-        .set_title("Load Layout")
-        .set_directory(initial_directory)
-        .add_filter("FlowCell Layout", &["json"])
+    let parent_label = parent_label.or_else(|| Some("main".to_string()));
+    let selected_path = set_dialog_parent(
+        &app,
+        FileDialog::new()
+            .set_title("Load Layout")
+            .set_directory(initial_directory)
+            .add_filter("FlowCell Layout", &["json"]),
+        parent_label,
+    )
         .pick_file();
 
     Ok(selected_path.map(|path| path.display().to_string()))
@@ -3666,12 +3684,20 @@ fn show_save_file_dialog(
     app: AppHandle,
     title: String,
     filter: String,
+    default_file_name: Option<String>,
     initial_directory: Option<String>,
     parent_label: Option<String>,
 ) -> Result<Option<String>, String> {
     let mut dialog = set_dialog_parent(&app, FileDialog::new().set_title(&title), parent_label);
     if let Some(directory) = resolve_existing_dialog_directory(initial_directory) {
         dialog = dialog.set_directory(directory);
+    }
+    if let Some(file_name) = default_file_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        dialog = dialog.set_file_name(file_name);
     }
 
     for (label, extensions) in parse_dialog_filter_spec(&filter) {
@@ -9539,7 +9565,8 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
             Some(owner_hwnd)
         }
     };
-    if target_owner_hwnd != current_owner_hwnd {
+    let owner_changed = target_owner_hwnd != current_owner_hwnd;
+    if owner_changed {
         set_native_window_owner(window, target_owner_hwnd)?;
     }
 
@@ -9548,7 +9575,17 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         && matches_target_process
         && foreground.hwnd != 0
         && foreground.hwnd != window_hwnd;
-    set_window_topmost_impl(window, should_stay_on_top, should_promote)?;
+    // Only re-issue the native topmost/show calls when the resolved state
+    // actually changes. set_window_topmost_impl clears always-on-top then sets
+    // SetWindowPos(TOPMOST); running it every poll churns the z-order NOTOPMOST
+    // -> TOPMOST continuously and visibly flickers the taskbar while a target
+    // (e.g. Blender) is foreground. An already-topmost window stays above the
+    // non-topmost target, so steady-state re-asserts are unnecessary; genuine
+    // changes (target gains/loses foreground, cursor crosses the taskbar, owner
+    // change) still re-apply.
+    if owner_changed || entry.last_applied != Some(should_stay_on_top) {
+        set_window_topmost_impl(window, should_stay_on_top, should_promote)?;
+    }
 
     Ok((should_stay_on_top, matches_target, target_owner_hwnd))
 }
@@ -9952,10 +9989,16 @@ fn set_host_window_bounds(
         .set_max_size(None::<LogicalSize<f64>>)
         .map_err(|error| error.to_string())?;
     window
-        .set_position(LogicalPosition::new(bounds.x, bounds.y))
+        .set_position(PhysicalPosition::new(
+            bounds.x.round() as i32,
+            bounds.y.round() as i32,
+        ))
         .map_err(|error| error.to_string())?;
     window
-        .set_size(LogicalSize::new(bounds.width, bounds.height))
+        .set_size(PhysicalSize::new(
+            bounds.width.round().max(1.0) as u32,
+            bounds.height.round().max(1.0) as u32,
+        ))
         .map_err(|error| error.to_string())?;
 
     #[cfg(windows)]
@@ -10854,6 +10897,20 @@ fn record_frontend_macro(
             .map(|definition| definition.created_at.as_str()),
     )?;
     load_frontend_macro_document_with_bindings(&action_id)
+}
+
+#[tauri::command]
+fn is_space_key_down() -> bool {
+    #[cfg(windows)]
+    {
+        let state = unsafe { GetAsyncKeyState(VK_SPACE as i32) };
+        return (state as u16 & 0x8000) != 0;
+    }
+
+    #[cfg(not(windows))]
+    {
+        false
+    }
 }
 
 #[tauri::command]
@@ -12465,6 +12522,7 @@ fn main() {
             load_binds_workspace,
             save_bind_shortcut,
             get_cursor_position,
+            is_space_key_down,
             list_frontend_macros,
             list_frontend_panel_macros,
             load_frontend_macro,

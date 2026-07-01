@@ -12,6 +12,7 @@ import {
   runIllustratorAlignmentTool,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import type { AlignmentToolboxWindowContext } from "../../lib/windowContext";
 import {
   AlignmentToolboxSurface,
@@ -83,6 +84,8 @@ export default function AlignmentToolboxWindowPage({
   const [groupMode, setGroupMode] = useState(false);
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [windowSize, setWindowSize] = useState(() => ({
     width: Math.max(window.innerWidth, 1),
     height: Math.max(window.innerHeight, 1)
@@ -210,10 +213,10 @@ export default function AlignmentToolboxWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     const syncWindowSize = () => {
@@ -394,7 +397,7 @@ export default function AlignmentToolboxWindowPage({
 
     void getCurrentWindow().setFocus().catch(() => {});
 
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       return;
     }
 
@@ -419,7 +422,7 @@ export default function AlignmentToolboxWindowPage({
 
   const pageClassName = [
     "alignment-toolbox-window-page",
-    spaceDragActive ? "alignment-toolbox-window-page--space-drag" : "",
+    effectiveSpaceDragActive ? "alignment-toolbox-window-page--space-drag" : "",
     spaceDragging ? "alignment-toolbox-window-page--dragging" : ""
   ]
     .filter(Boolean)

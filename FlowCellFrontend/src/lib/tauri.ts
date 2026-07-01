@@ -890,12 +890,14 @@ export function showOpenFolderDialog(args: {
 export function showSaveFileDialog(args: {
   title: string;
   filter: string;
+  defaultFileName?: string;
   initialDirectory?: string;
   parentLabel?: string;
 }): Promise<string | null> {
   return invoke("show_save_file_dialog", {
     title: args.title,
     filter: args.filter,
+    defaultFileName: args.defaultFileName,
     initialDirectory: args.initialDirectory,
     parentLabel: args.parentLabel ?? getCurrentWindow().label
   });

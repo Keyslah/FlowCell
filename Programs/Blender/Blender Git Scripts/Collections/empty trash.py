@@ -1,5 +1,4 @@
 # Description: Delete everything inside Trash.
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

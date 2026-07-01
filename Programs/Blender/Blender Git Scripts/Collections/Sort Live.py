@@ -1,5 +1,4 @@
 # Description: Move every currently hidden object under Live into Trash.
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

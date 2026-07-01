@@ -1,5 +1,4 @@
 # Description: With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

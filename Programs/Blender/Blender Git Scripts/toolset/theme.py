@@ -1,8 +1,6 @@
 # Description: Set Blender UI theme and HDRI values, plus Place Picture fake gizmos and fake grid over a background image.
 
 
-
-
 # FLOWCELL_CHILD: browse_theme | Browse | Choose a theme source image, sample colors, and place it as the Place Picture image.
 # FLOWCELL_CHILD: absorb_theme | Absorb Theme | Pull the current Blender theme values back into the tool fields.
 # FLOWCELL_CHILD: save_theme | Save Buckets | Save the currently staged Blender theme buckets.
@@ -55,8 +53,29 @@ PLACE_PICTURE_GENERATION_KEY = "flowcell_place_picture_fake_gizmo_generation"
 PLACE_PICTURE_GRID_SPACING_KEY = "flowcell_place_picture_grid_spacing_m"
 PLACE_PICTURE_GRID_DISTANCE_KEY = "flowcell_place_picture_grid_distance_m"
 PLACE_PICTURE_GRID_FAR_SPACING_KEY = "flowcell_place_picture_grid_far_spacing_m"
+PROJECT_THEME_STATE_KEY = "flowcell_theme_project_state_v1"
 PROJECT_THEME_STATE_FORMAT = "flowcell-blender-theme-project-state-v1"
 GLOBAL_THEME_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
+PROJECT_THEME_STATE_THEME_KEYS = (
+    "visual_mode",
+    "tabs_hex",
+    "tabs_text_hex",
+    "headers_hex",
+    "header_text_hex",
+    "text_hex",
+    "control_text_hex",
+    "accent_text_hex",
+    "editor_background_hex",
+    "scene_hex",
+    "controls_hex",
+    "borders_hex",
+    "darks_hex",
+    "misc_hex",
+    "highlights_hex",
+    "viewport_background_hex",
+    "viewport_gradient_enabled",
+    "viewport_gradient_hex",
+)
 
 PLACE_PICTURE_ENABLE_BACKGROUND = True
 PLACE_PICTURE_ENABLE_FAKE_GRID = True
@@ -390,8 +409,18 @@ def _read_positive_grid_value(payload, key: str, default: float, label: str) -> 
 def _read_grid_settings(payload):
     return (
         _read_grid_spacing_m(payload),
-        _read_positive_grid_value(payload, "grid_distance_m", DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M, "Grid distance"),
-        _read_positive_grid_value(payload, "grid_far_spacing_m", DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M, "Far grid spacing"),
+        _read_positive_grid_value(
+            payload,
+            "grid_distance_m",
+            DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+            "Grid distance",
+        ),
+        _read_positive_grid_value(
+            payload,
+            "grid_far_spacing_m",
+            DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+            "Far grid spacing",
+        ),
     )
 
 
@@ -436,7 +465,10 @@ def _resolve_optional_image_path(raw_path: str) -> str:
     if not candidate:
         return ""
 
-    path = Path(candidate)
+    if candidate.startswith("//"):
+        path = Path(bpy.path.abspath(candidate))
+    else:
+        path = Path(candidate)
     if not path.is_absolute():
         path = _repo_root() / candidate
 
@@ -521,11 +553,22 @@ def _get_saved_overlay_path() -> str:
         if saved_path:
             return saved_path
 
-    place_picture_state = _read_global_theme_state().get("place_picture", {})
+    global_place_picture_state = _read_global_theme_state().get("place_picture", {})
+    if (
+        isinstance(global_place_picture_state, dict)
+        and bool(global_place_picture_state.get("enabled"))
+    ):
+        return str(
+            global_place_picture_state.get("path")
+            or global_place_picture_state.get("relative_path")
+            or ""
+        ).strip()
+
+    place_picture_state = _read_project_theme_state().get("place_picture", {})
     if isinstance(place_picture_state, dict) and bool(place_picture_state.get("enabled")):
         return str(
-            place_picture_state.get("path")
-            or place_picture_state.get("relative_path")
+            place_picture_state.get("relative_path")
+            or place_picture_state.get("path")
             or ""
         ).strip()
     return ""
@@ -542,7 +585,15 @@ def _set_saved_overlay_path(path: str):
         del window_manager[VIEWPORT_OVERLAY_PATH_KEY]
 
 
-def _empty_global_theme_state():
+def _project_scene(context=None):
+    active_context = _ctx(context)
+    scene = getattr(active_context, "scene", None)
+    if scene is None:
+        scene = getattr(bpy.context, "scene", None)
+    return scene
+
+
+def _empty_project_theme_state():
     return {
         "format": PROJECT_THEME_STATE_FORMAT,
         "theme": {"enabled": False},
@@ -557,9 +608,11 @@ def _empty_global_theme_state():
     }
 
 
-def _normalize_global_theme_state(value):
-    state = _empty_global_theme_state()
-    if not isinstance(value, dict) or value.get("format") != PROJECT_THEME_STATE_FORMAT:
+def _normalize_project_theme_state(value):
+    state = _empty_project_theme_state()
+    if not isinstance(value, dict):
+        return state
+    if value.get("format") != PROJECT_THEME_STATE_FORMAT:
         return state
 
     theme_state = value.get("theme", {})
@@ -588,8 +641,30 @@ def _normalize_global_theme_state(value):
             if math.isfinite(spacing_m) and spacing_m > 0.0
             else DEFAULT_PLACE_PICTURE_GRID_SPACING_M
         )
+        for key, default in (
+            ("grid_distance_m", DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M),
+            ("grid_far_spacing_m", DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M),
+        ):
+            try:
+                value = float(place_picture_state.get(key, default))
+            except (TypeError, ValueError):
+                value = default
+            state["place_picture"][key] = (
+                value if math.isfinite(value) and value > 0.0 else default
+            )
 
     return state
+
+
+def _read_project_theme_state(context=None):
+    scene = _project_scene(context)
+    if scene is None or PROJECT_THEME_STATE_KEY not in scene:
+        return _empty_project_theme_state()
+    try:
+        parsed = json.loads(str(scene.get(PROJECT_THEME_STATE_KEY) or ""))
+    except Exception:
+        return _empty_project_theme_state()
+    return _normalize_project_theme_state(parsed)
 
 
 def _global_theme_state_path() -> Path:
@@ -602,12 +677,31 @@ def _global_theme_state_path() -> Path:
 def _read_global_theme_state():
     path = _global_theme_state_path()
     if not path.is_file():
-        return _empty_global_theme_state()
+        return _empty_project_theme_state()
     try:
         parsed = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
-        return _empty_global_theme_state()
-    return _normalize_global_theme_state(parsed)
+        return _empty_project_theme_state()
+    return _normalize_project_theme_state(parsed)
+
+
+def _global_theme_state_exists() -> bool:
+    return _global_theme_state_path().is_file()
+
+
+def _write_global_theme_state(state):
+    normalized = _normalize_project_theme_state(
+        {
+            **(state if isinstance(state, dict) else {}),
+            "format": PROJECT_THEME_STATE_FORMAT,
+        }
+    )
+    normalized["updated_at"] = time.time()
+    path = _global_theme_state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")
+    _ensure_project_theme_restore_handler_registered_from_action()
+    return normalized
 
 
 def _ensure_project_theme_restore_handler_registered_from_action() -> bool:
@@ -619,15 +713,6 @@ def _ensure_project_theme_restore_handler_registered_from_action() -> bool:
             "_ensure_flowcell_project_theme_restore_handler_registered",
             None,
         )
-        for key, default in (
-            ("grid_distance_m", DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M),
-            ("grid_far_spacing_m", DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M),
-        ):
-            try:
-                value = float(place_picture_state.get(key, default))
-            except (TypeError, ValueError):
-                value = default
-            state["place_picture"][key] = value if math.isfinite(value) and value > 0.0 else default
         if not callable(ensure_handler):
             flowcell_actions = importlib.reload(flowcell_actions)
             ensure_handler = getattr(
@@ -643,18 +728,36 @@ def _ensure_project_theme_restore_handler_registered_from_action() -> bool:
     return False
 
 
-def _write_global_theme_state(state):
-    normalized = _normalize_global_theme_state(
+def _project_theme_restore_handler_registered() -> bool:
+    for handler in getattr(bpy.app.handlers, "load_post", []) or []:
+        if getattr(handler, "__name__", "") == "_restore_flowcell_project_theme_on_load":
+            return True
+    return False
+
+
+def _write_project_theme_state(context, state):
+    scene = _project_scene(context)
+    if scene is None:
+        raise RuntimeError("No active Blender scene is available for FlowCell project theme state.")
+    normalized = _normalize_project_theme_state(
         {
             **(state if isinstance(state, dict) else {}),
             "format": PROJECT_THEME_STATE_FORMAT,
         }
     )
     normalized["updated_at"] = time.time()
-    path = _global_theme_state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")
+    scene[PROJECT_THEME_STATE_KEY] = json.dumps(normalized, sort_keys=True)
+    try:
+        scene.update_tag()
+    except Exception:
+        pass
     _ensure_project_theme_restore_handler_registered_from_action()
+    return normalized
+
+
+def _write_theme_state(context, state):
+    normalized = _write_project_theme_state(context, state)
+    _write_global_theme_state(normalized)
     return normalized
 
 
@@ -669,17 +772,24 @@ def _project_relative_path(path: str) -> str:
     return relative_path if str(relative_path).startswith("//") else ""
 
 
-def _startup_state_payload(global_state):
-    place_picture_state = (
-        global_state.get("place_picture", {}) if isinstance(global_state, dict) else {}
-    )
-    return {
-        "startup_state": global_state,
-        "startup_state_path": str(_global_theme_state_path()),
-        "has_startup_place_picture_state": bool(
-            isinstance(place_picture_state, dict) and place_picture_state.get("enabled")
-        ),
+def _set_project_place_picture_state(
+    context,
+    resolved_path: str,
+    grid_spacing_m: float = DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+    grid_distance_m: float = DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+    grid_far_spacing_m: float = DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+):
+    state = _read_project_theme_state(context)
+    normalized_path = str(resolved_path or "").strip()
+    state["place_picture"] = {
+        "enabled": bool(normalized_path),
+        "path": normalized_path,
+        "relative_path": _project_relative_path(normalized_path),
+        "grid_spacing_m": float(grid_spacing_m),
+        "grid_distance_m": float(grid_distance_m),
+        "grid_far_spacing_m": float(grid_far_spacing_m),
     }
+    return _write_theme_state(context, state)
 
 
 def _set_startup_place_picture_state(context, payload):
@@ -700,8 +810,75 @@ def _set_startup_place_picture_state(context, payload):
     return _result(
         f"Place Picture startup image saved from {resolved_path}.",
         static_background_path=resolved_path,
+        grid_spacing_m=spacing_m,
+        grid_distance_m=distance_m,
+        grid_far_spacing_m=far_spacing_m,
         **_startup_state_payload(normalized),
     )
+
+
+def _read_place_picture_runtime_state(context=None):
+    state = _overlay_state()
+    namespace = bpy.app.driver_namespace
+    image = state.get("image")
+    runtime_path = str(state.get("path") or "")
+    image_path = str(getattr(image, "filepath", "") or "") if image is not None else ""
+    return _result(
+        "FlowCell Place Picture runtime state read.",
+        place_picture_runtime_enabled=bool(state.get("enabled")),
+        place_picture_runtime_path=runtime_path,
+        place_picture_runtime_image_path=image_path,
+        place_picture_runtime_has_background_handler=state.get("background_handler") is not None,
+        place_picture_runtime_has_overlay_handler=state.get("overlay_handler") is not None,
+        place_picture_runtime_has_view3d=any(True for _ in (_iter_view3d_spaces() or [])),
+        grid_spacing_m=float(
+            state.get("grid_spacing_m", DEFAULT_PLACE_PICTURE_GRID_SPACING_M)
+        ),
+        grid_distance_m=float(
+            state.get("grid_distance_m", DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M)
+        ),
+        grid_far_spacing_m=float(
+            state.get(
+                "grid_far_spacing_m",
+                DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+            )
+        ),
+        saved_overlay_path=_get_saved_overlay_path(),
+        startup_poll_restore_done=bool(namespace.get("flowcell_project_theme_poll_restore_done")),
+        startup_poll_restore_attempts=int(namespace.get("flowcell_project_theme_poll_restore_attempts", 0) or 0),
+        startup_poll_restore_next_time=float(namespace.get("flowcell_project_theme_poll_restore_next_time", 0.0) or 0.0),
+    )
+
+
+def _project_state_payload(state):
+    theme_state = state.get("theme", {}) if isinstance(state, dict) else {}
+    place_picture_state = state.get("place_picture", {}) if isinstance(state, dict) else {}
+    return {
+        "project_state": state,
+        "has_project_theme_state": bool(
+            isinstance(theme_state, dict) and theme_state.get("enabled")
+        ),
+        "has_project_place_picture_state": bool(
+            isinstance(place_picture_state, dict) and place_picture_state.get("enabled")
+        ),
+    }
+
+
+def _startup_state_payload(global_state):
+    theme_state = global_state.get("theme", {}) if isinstance(global_state, dict) else {}
+    place_picture_state = (
+        global_state.get("place_picture", {}) if isinstance(global_state, dict) else {}
+    )
+    return {
+        "startup_state": global_state,
+        "startup_state_path": str(_global_theme_state_path()),
+        "has_startup_theme_state": bool(
+            isinstance(theme_state, dict) and theme_state.get("enabled")
+        ),
+        "has_startup_place_picture_state": bool(
+            isinstance(place_picture_state, dict) and place_picture_state.get("enabled")
+        ),
+    }
 
 
 def _iter_view3d_spaces():
@@ -1323,14 +1500,43 @@ def _grid_spacing_for_view(rv3d, bounds=None) -> float:
     # for older callers but must not affect grid size.
     state = _overlay_state()
     namespace = bpy.app.driver_namespace
-    near_spacing_m = float(state.get("grid_spacing_m", namespace.get(PLACE_PICTURE_GRID_SPACING_KEY, DEFAULT_PLACE_PICTURE_GRID_SPACING_M)))
-    distance_m = float(state.get("grid_distance_m", namespace.get(PLACE_PICTURE_GRID_DISTANCE_KEY, DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M)))
-    far_spacing_m = float(state.get("grid_far_spacing_m", namespace.get(PLACE_PICTURE_GRID_FAR_SPACING_KEY, DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M)))
+    near_spacing_m = float(
+        state.get(
+            "grid_spacing_m",
+            namespace.get(
+                PLACE_PICTURE_GRID_SPACING_KEY,
+                DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+            ),
+        )
+    )
+    distance_m = float(
+        state.get(
+            "grid_distance_m",
+            namespace.get(
+                PLACE_PICTURE_GRID_DISTANCE_KEY,
+                DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+            ),
+        )
+    )
+    far_spacing_m = float(
+        state.get(
+            "grid_far_spacing_m",
+            namespace.get(
+                PLACE_PICTURE_GRID_FAR_SPACING_KEY,
+                DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+            ),
+        )
+    )
     try:
-        distance_from_origin = rv3d.view_matrix.inverted().translation.length
+        view_position = rv3d.view_matrix.inverted().translation
+        distance_from_origin = view_position.length
     except Exception:
-        distance_from_origin = max(float(getattr(rv3d, "view_distance", 0.0) or 0.0), 0.0)
-    return far_spacing_m if distance_from_origin > _grid_spacing_blender_units(distance_m) else near_spacing_m
+        distance_from_origin = max(
+            float(getattr(rv3d, "view_distance", 0.0) or 0.0),
+            0.0,
+        )
+    threshold = _grid_spacing_blender_units(distance_m)
+    return far_spacing_m if distance_from_origin > threshold else near_spacing_m
 
 
 def _project_world_axis_to_viewport(region, rv3d, axis):
@@ -2378,6 +2584,14 @@ def _apply_grid_spacing(context, payload):
         runtime_path,
         grid_only=not bool(runtime_path),
     )
+    if runtime_path:
+        _set_project_place_picture_state(
+            context,
+            runtime_path,
+            spacing_m,
+            distance_m,
+            far_spacing_m,
+        )
     return _result(
         f"Grid set to {spacing_m:g} m up to {distance_m:g} m from world origin, then {far_spacing_m:g} m.",
         grid_spacing_m=spacing_m,
@@ -2387,23 +2601,35 @@ def _apply_grid_spacing(context, payload):
     )
 
 
-def _place_picture_image(context, payload):
+def _place_picture_image(context, payload, persist_project_state=True):
     spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
     _set_runtime_grid_settings(spacing_m, distance_m, far_spacing_m)
     resolved_path = _resolve_optional_image_path(
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
-    return _register_viewport_overlay_from_resolved_path(resolved_path)
+    applied_path = _register_viewport_overlay_from_resolved_path(resolved_path)
+    _set_saved_overlay_path(applied_path)
+    if persist_project_state:
+        _set_project_place_picture_state(
+            context,
+            applied_path,
+            spacing_m,
+            distance_m,
+            far_spacing_m,
+        )
+    return applied_path
 
 
 def _set_static_background_image(context, payload):
     return _place_picture_image(context, payload)
 
 
-def _clear_place_picture_overlay():
+def _clear_place_picture_overlay(context=None, persist_project_state=True):
     _remove_viewport_overlay_handler()
     _disable_camera_background_images()
     _set_saved_overlay_path("")
+    if persist_project_state:
+        _set_project_place_picture_state(context, "")
     namespace = bpy.app.driver_namespace
     existing = namespace.get(VIEWPORT_OVERLAY_LOAD_HANDLER_KEY)
     if existing in bpy.app.handlers.load_post:
@@ -2751,6 +2977,105 @@ def _normalize_hex_color_with_fallback(payload, primary_key: str, fallback_key: 
     if primary_value is not None and str(primary_value).strip():
         return _normalize_hex_color(payload, primary_key)
     return _normalize_hex_color(payload, fallback_key)
+
+
+def _read_theme_role_hexes(payload):
+    role_hexes = {
+        "tabs_hex": _normalize_hex_color_with_fallback(payload, "tabs_hex", "headers_hex"),
+        "tabs_text_hex": _normalize_hex_color_with_fallback(
+            payload, "tabs_text_hex", "text_hex"
+        ),
+        "headers_hex": _normalize_hex_color(payload, "headers_hex"),
+        "header_text_hex": _normalize_hex_color_with_fallback(
+            payload, "header_text_hex", "text_hex"
+        ),
+        "text_hex": _normalize_hex_color(payload, "text_hex"),
+        "control_text_hex": _normalize_hex_color_with_fallback(
+            payload, "control_text_hex", "text_hex"
+        ),
+        "accent_text_hex": _normalize_hex_color_with_fallback(
+            payload, "accent_text_hex", "highlights_hex"
+        ),
+        "editor_background_hex": _normalize_hex_color_with_fallback(
+            payload, "editor_background_hex", "darks_hex"
+        ),
+        "scene_hex": _normalize_hex_color_with_fallback(
+            payload, "scene_hex", "editor_background_hex"
+        ),
+        "controls_hex": _normalize_hex_color(payload, "controls_hex"),
+        "borders_hex": _normalize_hex_color_with_fallback(
+            payload, "borders_hex", "misc_hex"
+        ),
+        "darks_hex": _normalize_hex_color(payload, "darks_hex"),
+        "highlights_hex": _normalize_hex_color(payload, "highlights_hex"),
+        "viewport_background_hex": _normalize_hex_color(
+            payload, "viewport_background_hex"
+        ),
+        "viewport_gradient_hex": _normalize_hex_color(payload, "viewport_gradient_hex"),
+    }
+    role_hexes["borders_hex"] = role_hexes["editor_background_hex"]
+    role_hexes["darks_hex"] = role_hexes["editor_background_hex"]
+    return role_hexes
+
+
+def _theme_project_payload_from_role_hexes(
+    role_hexes, visual_mode: str, viewport_gradient_enabled: bool
+):
+    editor_background_hex = role_hexes["editor_background_hex"]
+    return {
+        "enabled": True,
+        "visual_mode": str(visual_mode or "dark").lower(),
+        "tabs_hex": role_hexes["tabs_hex"],
+        "tabs_text_hex": role_hexes["tabs_text_hex"],
+        "headers_hex": role_hexes["headers_hex"],
+        "header_text_hex": role_hexes["header_text_hex"],
+        "text_hex": role_hexes["text_hex"],
+        "control_text_hex": role_hexes["control_text_hex"],
+        "accent_text_hex": role_hexes["accent_text_hex"],
+        "editor_background_hex": editor_background_hex,
+        "scene_hex": role_hexes["scene_hex"],
+        "controls_hex": role_hexes["controls_hex"],
+        "borders_hex": role_hexes.get("borders_hex", editor_background_hex),
+        "darks_hex": role_hexes.get("darks_hex", editor_background_hex),
+        "misc_hex": role_hexes.get("misc_hex", editor_background_hex),
+        "highlights_hex": role_hexes["highlights_hex"],
+        "viewport_background_hex": role_hexes["viewport_background_hex"],
+        "viewport_gradient_enabled": bool(viewport_gradient_enabled),
+        "viewport_gradient_hex": role_hexes["viewport_gradient_hex"],
+    }
+
+
+def _set_project_theme_state_from_role_hexes(
+    context, payload, role_hexes, viewport_gradient_enabled=None
+):
+    visual_mode = _read_string(payload or {}, "visual_mode", "dark").lower()
+    if viewport_gradient_enabled is None:
+        viewport_gradient_enabled = bool((payload or {}).get("viewport_gradient_enabled", False))
+    state = _read_project_theme_state(context)
+    state["theme"] = _theme_project_payload_from_role_hexes(
+        role_hexes,
+        visual_mode,
+        bool(viewport_gradient_enabled),
+    )
+    return _write_theme_state(context, state)
+
+
+def _project_theme_payload_for_restore(theme_state):
+    if not isinstance(theme_state, dict) or not bool(theme_state.get("enabled")):
+        return None
+    payload = {
+        key: theme_state[key]
+        for key in PROJECT_THEME_STATE_THEME_KEYS
+        if key in theme_state
+    }
+    editor_background_hex = str(payload.get("editor_background_hex") or "").strip()
+    if editor_background_hex:
+        payload.setdefault("borders_hex", editor_background_hex)
+        payload.setdefault("darks_hex", editor_background_hex)
+        payload.setdefault("misc_hex", editor_background_hex)
+    payload.setdefault("visual_mode", "dark")
+    payload.setdefault("viewport_gradient_enabled", False)
+    return payload
 
 
 def _set_theme_widget_colors(
@@ -3224,31 +3549,6 @@ def _apply_theme_user_interface(theme_ui, role_hexes):
     _apply_theme_text_sweep(theme_ui, role_hexes, "general")
 
 
-def _read_theme_role_hexes(payload):
-    role_hexes = {
-        "tabs_hex": _normalize_hex_color_with_fallback(payload, "tabs_hex", "headers_hex"),
-        "tabs_text_hex": _normalize_hex_color_with_fallback(payload, "tabs_text_hex", "text_hex"),
-        "headers_hex": _normalize_hex_color(payload, "headers_hex"),
-        "header_text_hex": _normalize_hex_color_with_fallback(payload, "header_text_hex", "text_hex"),
-        "text_hex": _normalize_hex_color(payload, "text_hex"),
-        "control_text_hex": _normalize_hex_color_with_fallback(payload, "control_text_hex", "text_hex"),
-        "accent_text_hex": _normalize_hex_color_with_fallback(payload, "accent_text_hex", "highlights_hex"),
-        "editor_background_hex": _normalize_hex_color_with_fallback(payload, "editor_background_hex", "darks_hex"),
-        "scene_hex": _normalize_hex_color_with_fallback(payload, "scene_hex", "editor_background_hex"),
-        "controls_hex": _normalize_hex_color(payload, "controls_hex"),
-        "borders_hex": _normalize_hex_color_with_fallback(payload, "borders_hex", "editor_background_hex"),
-        "darks_hex": _normalize_hex_color_with_fallback(payload, "darks_hex", "editor_background_hex"),
-        "misc_hex": _normalize_hex_color_with_fallback(payload, "misc_hex", "editor_background_hex"),
-        "highlights_hex": _normalize_hex_color(payload, "highlights_hex"),
-        "viewport_background_hex": _normalize_hex_color(payload, "viewport_background_hex"),
-        "viewport_gradient_hex": _normalize_hex_color(payload, "viewport_gradient_hex"),
-    }
-    role_hexes["borders_hex"] = role_hexes["editor_background_hex"]
-    role_hexes["darks_hex"] = role_hexes["editor_background_hex"]
-    role_hexes["misc_hex"] = role_hexes["editor_background_hex"]
-    return role_hexes
-
-
 def _set_theme_hex_property(target, attribute: str, hex_value: str) -> int:
     if _set_theme_color_property(
         target,
@@ -3272,22 +3572,6 @@ def _iter_theme_sections(theme):
         section = getattr(theme, section_name, None)
         if section is not None:
             yield section_name, section
-
-
-def _remember_theme_bucket_state(payload, role_hexes):
-    try:
-        state = _read_global_theme_state()
-        theme_state = state.setdefault("theme", {})
-        if isinstance(theme_state, dict):
-            theme_state.update(role_hexes)
-            theme_state["enabled"] = True
-            theme_state["visual_mode"] = _read_string(payload, "visual_mode", "dark").lower()
-            theme_state["viewport_gradient_enabled"] = bool(
-                payload.get("viewport_gradient_enabled", False)
-            )
-            _write_global_theme_state(state)
-    except Exception:
-        pass
 
 
 def _apply_theme_bucket(context, payload):
@@ -3328,7 +3612,9 @@ def _apply_theme_bucket(context, payload):
         hex_value = role_hexes["tabs_hex"]
         for widget_name in ("wcol_tab", "wcol_toolbar_item"):
             widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
-            changed += _set_theme_hex_attributes(widget, ("inner", "inner_sel", "outline_sel"), hex_value)
+            changed += _set_theme_hex_attributes(
+                widget, ("inner", "inner_sel", "outline_sel"), hex_value
+            )
         for _, section in _iter_theme_sections(theme):
             changed += _set_theme_hex_attributes(section, ("tab_back", "tab_active"), hex_value)
         message = "Applied Tab Fill bucket."
@@ -3368,9 +3654,15 @@ def _apply_theme_bucket(context, payload):
         for section_name, section in _iter_theme_sections(theme):
             if section_name == "outliner":
                 continue
-            changed += _set_theme_hex_attributes(section, ("back", "sub_back", "list", "row_alternate"), hex_value)
+            changed += _set_theme_hex_attributes(
+                section, ("back", "sub_back", "list", "row_alternate"), hex_value
+            )
             changed += _set_theme_hex_attributes(getattr(section, "space", None), ("back",), hex_value)
-            changed += _set_theme_hex_attributes(getattr(section, "panelcolors", None), ("back", "sub_back", "outline"), hex_value)
+            changed += _set_theme_hex_attributes(
+                getattr(section, "panelcolors", None),
+                ("back", "sub_back", "outline"),
+                hex_value,
+            )
             changed += _set_theme_hex_attributes(
                 getattr(getattr(section, "space", None), "panelcolors", None),
                 ("back", "sub_back", "outline"),
@@ -3406,18 +3698,32 @@ def _apply_theme_bucket(context, payload):
             for widget_name in _iter_theme_ui_widget_names(theme_ui):
                 if widget_name in skipped_widgets:
                     continue
-                changed += _set_theme_hex_attributes(getattr(theme_ui, widget_name, None), ("inner", "inner_sel"), hex_value)
+                changed += _set_theme_hex_attributes(
+                    getattr(theme_ui, widget_name, None),
+                    ("inner", "inner_sel"),
+                    hex_value,
+                )
         changed += _set_theme_hex_attributes(theme_ui, ("button", "execution_buts"), hex_value)
         for _, section in _iter_theme_sections(theme):
-            changed += _set_theme_hex_attributes(section, ("button", "execution_buts", "button_animated", "button_key"), hex_value)
-            changed += _set_theme_hex_attributes(getattr(section, "space", None), ("button", "execution_buts"), hex_value)
+            changed += _set_theme_hex_attributes(
+                section,
+                ("button", "execution_buts", "button_animated", "button_key"),
+                hex_value,
+            )
+            changed += _set_theme_hex_attributes(
+                getattr(section, "space", None),
+                ("button", "execution_buts"),
+                hex_value,
+            )
         message = "Applied Control Fill bucket."
     elif bucket_key == "highlights_hex":
         hex_value = role_hexes["highlights_hex"]
         changed += _set_theme_hex_attributes(theme_ui, ("active", "selected_highlight"), hex_value)
         for widget_name in ("wcol_option", "wcol_radio", "wcol_toggle", "wcol_progress"):
             widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
-            changed += _set_theme_hex_attributes(widget, ("inner", "inner_sel", "outline_sel"), hex_value)
+            changed += _set_theme_hex_attributes(
+                widget, ("inner", "inner_sel", "outline_sel"), hex_value
+            )
         state_widget = getattr(theme_ui, "wcol_state", None) if theme_ui is not None else None
         changed += _set_theme_hex_attributes(
             state_widget,
@@ -3436,7 +3742,15 @@ def _apply_theme_bucket(context, payload):
         for _, section in _iter_theme_sections(theme):
             changed += _set_theme_hex_attributes(
                 section,
-                ("edge_select", "face_select", "vertex_select", "active", "grid", "selected_highlight", "button_key_sel"),
+                (
+                    "edge_select",
+                    "face_select",
+                    "vertex_select",
+                    "active",
+                    "grid",
+                    "selected_highlight",
+                    "button_key_sel",
+                ),
                 hex_value,
             )
         message = "Applied Highlights bucket."
@@ -3468,10 +3782,18 @@ def _apply_theme_bucket(context, payload):
             for widget_name in _iter_theme_ui_widget_names(theme_ui):
                 if widget_name in ("wcol_tab", "wcol_toolbar_item", "wcol_pie_menu", "wcol_tooltip"):
                     continue
-                changed += _set_theme_hex_attributes(getattr(theme_ui, widget_name, None), ("text", "text_sel"), hex_value)
+                changed += _set_theme_hex_attributes(
+                    getattr(theme_ui, widget_name, None),
+                    ("text", "text_sel"),
+                    hex_value,
+                )
         for _, section in _iter_theme_sections(theme):
             changed += _set_theme_hex_attributes(section, ("button_text", "button_text_hi"), hex_value)
-            changed += _set_theme_hex_attributes(getattr(section, "space", None), ("button_text", "button_text_hi"), hex_value)
+            changed += _set_theme_hex_attributes(
+                getattr(section, "space", None),
+                ("button_text", "button_text_hi"),
+                hex_value,
+            )
         message = "Applied Tool Text bucket."
     elif bucket_key == "accent_text_hex":
         hex_value = role_hexes["accent_text_hex"]
@@ -3483,15 +3805,33 @@ def _apply_theme_bucket(context, payload):
             changed += _set_theme_hex_attributes(section, ("button_title",), hex_value)
             changed += _set_theme_hex_attributes(getattr(section, "space", None), ("button_title",), hex_value)
         outliner = getattr(theme, "outliner", None)
-        changed += _set_theme_hex_attributes(outliner, ("match", "active_object", "selected_object"), hex_value)
+        changed += _set_theme_hex_attributes(
+            outliner, ("match", "active_object", "selected_object"), hex_value
+        )
         message = "Applied Scene/Header Text bucket."
+    elif bucket_key == "tabs_text_hex":
+        hex_value = role_hexes["tabs_text_hex"]
+        for widget_name in ("wcol_tab", "wcol_toolbar_item"):
+            widget = getattr(theme_ui, widget_name, None) if theme_ui is not None else None
+            changed += _set_theme_hex_attributes(widget, ("text", "text_sel"), hex_value)
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(section, ("tab_text", "tab_text_hi"), hex_value)
+        message = "Applied Tab Text bucket."
+    elif bucket_key == "header_text_hex":
+        hex_value = role_hexes["header_text_hex"]
+        changed += _set_theme_hex_attributes(
+            theme_ui, ("header_text", "header_text_hi", "panel_text"), hex_value
+        )
+        for _, section in _iter_theme_sections(theme):
+            changed += _set_theme_hex_attributes(section, ("header_text", "header_text_hi"), hex_value)
+        message = "Applied Header Text bucket."
     else:
         raise ValueError(f"Unsupported theme bucket: {bucket or '[blank]'}")
 
     if changed <= 0:
         raise ValueError(f"Theme bucket did not match any Blender theme fields: {bucket_key}")
 
-    _remember_theme_bucket_state(payload, role_hexes)
+    _set_project_theme_state_from_role_hexes(context, payload, role_hexes)
     _tag_redraw_view3d()
     return _result(message, bucket=bucket_key, applied_count=changed)
 
@@ -3697,43 +4037,9 @@ def _absorb_current_theme(context):
     )
 
 
-def _apply_theme_from_photo_manual_colors(context, payload):
+def _apply_theme_from_photo_manual_colors(context, payload, persist_project_state=True):
     visual_mode = _read_string(payload, "visual_mode", "dark").lower()
-    role_hexes = {
-        "tabs_hex": _normalize_hex_color_with_fallback(payload, "tabs_hex", "headers_hex"),
-        "tabs_text_hex": _normalize_hex_color_with_fallback(
-            payload, "tabs_text_hex", "text_hex"
-        ),
-        "headers_hex": _normalize_hex_color(payload, "headers_hex"),
-        "header_text_hex": _normalize_hex_color_with_fallback(
-            payload, "header_text_hex", "text_hex"
-        ),
-        "text_hex": _normalize_hex_color(payload, "text_hex"),
-        "control_text_hex": _normalize_hex_color_with_fallback(
-            payload, "control_text_hex", "text_hex"
-        ),
-        "accent_text_hex": _normalize_hex_color_with_fallback(
-            payload, "accent_text_hex", "highlights_hex"
-        ),
-        "editor_background_hex": _normalize_hex_color_with_fallback(
-            payload, "editor_background_hex", "darks_hex"
-        ),
-        "scene_hex": _normalize_hex_color_with_fallback(
-            payload, "scene_hex", "editor_background_hex"
-        ),
-        "controls_hex": _normalize_hex_color(payload, "controls_hex"),
-        "borders_hex": _normalize_hex_color_with_fallback(
-            payload, "borders_hex", "misc_hex"
-        ),
-        "darks_hex": _normalize_hex_color(payload, "darks_hex"),
-        "highlights_hex": _normalize_hex_color(payload, "highlights_hex"),
-        "viewport_background_hex": _normalize_hex_color(
-            payload, "viewport_background_hex"
-        ),
-        "viewport_gradient_hex": _normalize_hex_color(payload, "viewport_gradient_hex"),
-    }
-    role_hexes["borders_hex"] = role_hexes["editor_background_hex"]
-    role_hexes["darks_hex"] = role_hexes["editor_background_hex"]
+    role_hexes = _read_theme_role_hexes(payload)
     viewport_gradient_enabled = bool(payload.get("viewport_gradient_enabled", False))
 
     theme = _ctx(context).preferences.themes[0]
@@ -3769,6 +4075,13 @@ def _apply_theme_from_photo_manual_colors(context, payload):
     # buckets even if another theme sub-structure overlaps them.
     _apply_exact_user_interface_panel_paths(theme, role_hexes)
 
+    if persist_project_state:
+        _set_project_theme_state_from_role_hexes(
+            context,
+            payload,
+            role_hexes,
+            viewport_gradient_enabled=viewport_gradient_enabled,
+        )
     _tag_redraw_view3d()
     return _result(
         "Blender UI theme updated from sampled photo colors.",
@@ -3792,9 +4105,149 @@ def _apply_theme_from_photo_manual_colors(context, payload):
     )
 
 
+def _read_project_startup_state(context):
+    _ensure_project_theme_restore_handler_registered_from_action()
+    state = _read_project_theme_state(context)
+    global_state = _read_global_theme_state()
+    return _result(
+        "FlowCell project startup state read.",
+        restore_handler_registered=_project_theme_restore_handler_registered(),
+        **_project_state_payload(state),
+        **_startup_state_payload(global_state),
+    )
+
+
+def _resolve_project_place_picture_path(place_picture_state, prefer_absolute=False):
+    if not isinstance(place_picture_state, dict) or not bool(place_picture_state.get("enabled")):
+        return "", ""
+
+    relative_path = str(place_picture_state.get("relative_path") or "").strip()
+    absolute_path = str(place_picture_state.get("path") or "").strip()
+    candidates = (
+        [absolute_path, relative_path]
+        if prefer_absolute
+        else [relative_path, absolute_path]
+    )
+    last_error = ""
+    seen = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        try:
+            return _resolve_optional_image_path(candidate), ""
+        except Exception as exc:
+            last_error = str(exc)
+
+    return "", last_error or "No saved Place Picture path was available."
+
+
+def _restore_state_for_startup(context):
+    project_state = _read_project_theme_state(context)
+    global_state_exists = _global_theme_state_exists()
+    global_state = _read_global_theme_state()
+    project_theme = project_state.get("theme", {})
+    project_place_picture = project_state.get("place_picture", {})
+    global_theme = global_state.get("theme", {})
+    global_place_picture = global_state.get("place_picture", {})
+
+    theme_state = global_theme if global_state_exists else project_theme
+    place_picture_state = (
+        global_place_picture if global_state_exists else project_place_picture
+    )
+    return project_state, global_state, theme_state, place_picture_state, global_state_exists
+
+
+def _restore_project_startup_state(context):
+    _ensure_project_theme_restore_handler_registered_from_action()
+    (
+        state,
+        global_state,
+        theme_state,
+        place_picture_state,
+        global_state_exists,
+    ) = _restore_state_for_startup(context)
+    warnings = []
+    restored_theme = False
+    restored_place_picture = False
+
+    theme_payload = _project_theme_payload_for_restore(theme_state)
+    if theme_payload:
+        try:
+            _apply_theme_from_photo_manual_colors(
+                context,
+                theme_payload,
+                persist_project_state=False,
+            )
+            restored_theme = True
+        except Exception as exc:
+            warnings.append(f"Theme restore failed: {exc}")
+
+    resolved_picture_path, picture_warning = _resolve_project_place_picture_path(
+        place_picture_state,
+        prefer_absolute=global_state_exists,
+    )
+    if resolved_picture_path:
+        try:
+            _place_picture_image(
+                context,
+                {
+                    "static_background_path": resolved_picture_path,
+                    "grid_spacing_m": place_picture_state.get(
+                        "grid_spacing_m",
+                        DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+                    ),
+                    "grid_distance_m": place_picture_state.get(
+                        "grid_distance_m",
+                        DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+                    ),
+                    "grid_far_spacing_m": place_picture_state.get(
+                        "grid_far_spacing_m",
+                        DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+                    ),
+                },
+                persist_project_state=False,
+            )
+            restored_place_picture = True
+        except Exception as exc:
+            warnings.append(f"Place Picture restore failed: {exc}")
+    elif picture_warning:
+        warnings.append(f"Place Picture restore skipped: {picture_warning}")
+
+    if restored_theme and restored_place_picture:
+        message = "FlowCell project theme and Place Picture restored."
+    elif restored_theme:
+        message = "FlowCell project theme restored."
+    elif restored_place_picture:
+        message = "FlowCell project Place Picture restored."
+    elif warnings:
+        message = "FlowCell project startup restore completed with warnings."
+    else:
+        message = "No FlowCell project startup state to restore."
+
+    return _result(
+        message,
+        restored_theme=restored_theme,
+        restored_place_picture=restored_place_picture,
+        warnings=warnings,
+        **_project_state_payload(state),
+        **_startup_state_payload(global_state),
+    )
+
+
 def run_flowcell_action(context=None, data=None):
     payload = data or {}
     command = _read_string(payload, "command", "apply_all").lower()
+    if command == "read_project_startup_state":
+        return _read_project_startup_state(context)
+    if command == "restore_project_startup_state":
+        return _restore_project_startup_state(context)
+    if command == "read_startup_state":
+        return _read_project_startup_state(context)
+    if command == "restore_startup_state":
+        return _restore_project_startup_state(context)
+    if command == "read_place_picture_runtime_state":
+        return _read_place_picture_runtime_state(context)
     if command == "apply_theme_from_photo_manual_colors":
         return _apply_theme_from_photo_manual_colors(context, payload)
     if command == "apply_theme_bucket":
@@ -3822,7 +4275,7 @@ def run_flowcell_action(context=None, data=None):
             )
         return _result("Place Picture cleared.", static_background_path="")
     if command == "clear_place_picture":
-        _clear_place_picture_overlay()
+        _clear_place_picture_overlay(context)
         return _result("Place Picture cleared.", static_background_path="")
 
     state = _ensure_world_state(context)

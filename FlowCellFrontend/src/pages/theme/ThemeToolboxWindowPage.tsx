@@ -14,6 +14,7 @@ import {
   runBlenderToolsetAction,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import {
   loadBlenderThemeDarknessProfiles,
   loadBlenderThemeFile,
@@ -583,20 +584,12 @@ function buildThemeRoleAssignment(
 function buildRefilledThemeRoleAssignment(
   values: HdriWorldToolValues
 ): Partial<HdriWorldToolValues> {
-  const palette = normalizePaletteHexes([
-    ...values.ThemePaletteHexes,
-    values.ThemeTabsHex,
-    values.ThemeHeadersHex,
-    values.ThemeTextHex,
-    values.ThemeControlTextHex,
-    values.ThemeAccentTextHex,
-    values.ThemeEditorBackgroundHex,
-    values.ThemeSceneHex,
-    values.ThemeControlsHex,
-    values.ThemeHighlightsHex,
-    values.ThemeViewportBackgroundHex,
-    values.ThemeViewportGradientHex
-  ]);
+  // Sample only from the stable sampled palette. Mixing the current role colors
+  // back in (and persisting them below) makes each refill re-feed the already
+  // luminance-shifted colors into the pool, so repeated refills drift to grey.
+  const palette = normalizePaletteHexes(
+    values.ThemePaletteHexes.length > 0 ? values.ThemePaletteHexes : DEFAULT_THEME_PALETTE
+  );
   const rolePalette = preferPaletteColors(palette.length > 0 ? palette : DEFAULT_THEME_PALETTE);
   while (rolePalette.length < 5) {
     rolePalette.push(rolePalette[rolePalette.length - 1] ?? rolePalette[0]);
@@ -641,7 +634,6 @@ function buildRefilledThemeRoleAssignment(
   const editorBackgroundHex = colorForField("ThemeEditorBackgroundHex");
 
   return {
-    ThemePaletteHexes: palette.length > 0 ? palette : DEFAULT_THEME_PALETTE,
     ThemeVisualMode: mode,
     ThemeTabsHex: colorForField("ThemeTabsHex"),
     ThemeHeadersHex: colorForField("ThemeHeadersHex"),
@@ -1354,6 +1346,8 @@ export default function ThemeToolboxWindowPage({
   const [darknessProfileName, setDarknessProfileName] = useState("");
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [viewportSize, setViewportSize] = useState({
     width: THEME_TOOLBOX_BASE_WIDTH,
     height: 640
@@ -1542,6 +1536,10 @@ export default function ThemeToolboxWindowPage({
 
     topmostResumeTimerRef.current = window.setTimeout(() => {
       topmostResumeTimerRef.current = null;
+      // The picker is only considered closed once the resume actually fires.
+      // Clearing this earlier would let window-focus churn during screen picking
+      // re-register scoped topmost mid-pick and flicker the taskbar.
+      nativePickerOpenRef.current = false;
       void refreshThemeScopedTopmost()
         .catch(() => {
           const windowLabel = getCurrentWindow().label;
@@ -1571,13 +1569,24 @@ export default function ThemeToolboxWindowPage({
       return;
     }
 
-    nativePickerOpenRef.current = false;
+    // Keep the picker flagged open until resumeScopedTopmost fires; it clears
+    // the flag when it actually re-registers scoped topmost.
     resumeScopedTopmost(delayMs);
   };
 
   useEffect(() => {
     const handleWindowFocus = () => {
-      handleNativePickerClose();
+      if (nativePickerOpenRef.current) {
+        // Native color/eyedropper picker is still open. The screen magnifier is
+        // a browser-owned overlay that grabs and returns foreground, so window
+        // focus/blur churns while picking across monitors. Re-registering scoped
+        // topmost here restarts the topmost worker mid-pick and flickers the
+        // taskbar over Blender. Stay fully suspended; resume happens only when
+        // the picker actually closes (input blur / Escape / a click back in the
+        // window).
+        return;
+      }
+
       void refreshThemeScopedTopmost().catch(() => {});
     };
 
@@ -1672,10 +1681,10 @@ export default function ThemeToolboxWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     const viewport = viewportRef.current;
@@ -1810,9 +1819,30 @@ export default function ThemeToolboxWindowPage({
     }
 
     void getCurrentWindow().setFocus().catch(() => {});
-    void refreshThemeScopedTopmost().catch(() => {});
 
-    if (!spaceDragActive) {
+    const pointerTarget = event.target;
+    const openingNativePicker =
+      pointerTarget instanceof HTMLElement &&
+      (pointerTarget instanceof HTMLInputElement && pointerTarget.type === "color"
+        ? true
+        : Boolean(pointerTarget.closest('input[type="color"]')));
+
+    // This capture-phase handler runs before the color input's own pointer-down
+    // that suspends scoped topmost. If we re-register here on the click that
+    // opens the picker, that registration races (and can win against) the
+    // suspend, leaving the topmost worker active during screen picking. So skip
+    // re-registration when a picker is opening or already open; a click that
+    // lands elsewhere while a picker is open means the user is back, so finish
+    // it and resume.
+    if (openingNativePicker) {
+      // handled by the color input's onPointerDown/onFocus (suspend).
+    } else if (nativePickerOpenRef.current) {
+      handleNativePickerClose(0);
+    } else {
+      void refreshThemeScopedTopmost().catch(() => {});
+    }
+
+    if (!effectiveSpaceDragActive) {
       return;
     }
 
@@ -2229,17 +2259,17 @@ export default function ThemeToolboxWindowPage({
     const defaultThemeName = values.ThemeImagePath.trim()
       ? `${labelFromPath(values.ThemeImagePath)} Theme`
       : `${context.label ?? "Theme"} Theme`;
-    const nextThemeName = window.prompt("Save Blender Theme As", defaultThemeName)?.trim();
-    if (!nextThemeName) {
-      return;
-    }
 
     setStatusMessage(null);
     try {
+      // Single dialog only: the native save dialog collects both name and
+      // location. `suggestedName` is ignored by the backend once a path is
+      // provided, so no separate name prompt is needed.
       const selectedPath = await runWithScopedTopmostSuspended(() =>
         showSaveFileDialog({
           title: "Save Blender Theme",
           filter: "JSON Files (*.json)|*.json|All Files (*.*)|*.*",
+          defaultFileName: ensureJsonFileExtension(defaultThemeName),
           initialDirectory: readLocalStringPreference(LAST_BLENDER_THEME_DIRECTORY_KEY) ?? undefined
         })
       );
@@ -2249,7 +2279,7 @@ export default function ThemeToolboxWindowPage({
 
       const resolvedPath = ensureJsonFileExtension(selectedPath);
       const savedPath = await saveBlenderThemeFile({
-        suggestedName: nextThemeName,
+        suggestedName: defaultThemeName,
         path: resolvedPath,
         values: buildHdriWorldThemeSnapshot(values)
       });
@@ -2290,7 +2320,7 @@ export default function ThemeToolboxWindowPage({
 
   const shellClassName = [
     "theme-toolbox-window-page",
-    spaceDragActive ? "theme-toolbox-window-page--space-drag" : "",
+    effectiveSpaceDragActive ? "theme-toolbox-window-page--space-drag" : "",
     spaceDragging ? "theme-toolbox-window-page--dragging" : ""
   ]
     .filter(Boolean)

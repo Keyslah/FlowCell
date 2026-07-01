@@ -1,5 +1,4 @@
 # Description: Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first.
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

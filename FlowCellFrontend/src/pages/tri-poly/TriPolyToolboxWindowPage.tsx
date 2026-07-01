@@ -12,6 +12,7 @@ import {
   type PanelScriptFileRecord,
   type ToolsetActionResponse
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import type { TriPolyToolboxWindowContext } from "../../lib/windowContext";
 import {
   TriPolyToolboxSurface,
@@ -129,6 +130,8 @@ export default function TriPolyToolboxWindowPage({
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [windowSize, setWindowSize] = useState(() => ({
     width: Math.max(window.innerWidth, 1),
     height: Math.max(window.innerHeight, 1)
@@ -269,10 +272,10 @@ export default function TriPolyToolboxWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     const syncWindowSize = () => {
@@ -381,7 +384,7 @@ export default function TriPolyToolboxWindowPage({
 
     void getCurrentWindow().setFocus().catch(() => {});
 
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       return;
     }
 
@@ -406,7 +409,7 @@ export default function TriPolyToolboxWindowPage({
 
   const pageClassName = [
     "tri-poly-toolbox-window-page",
-    spaceDragActive ? "tri-poly-toolbox-window-page--space-drag" : "",
+    effectiveSpaceDragActive ? "tri-poly-toolbox-window-page--space-drag" : "",
     spaceDragging ? "tri-poly-toolbox-window-page--dragging" : ""
   ]
     .filter(Boolean)

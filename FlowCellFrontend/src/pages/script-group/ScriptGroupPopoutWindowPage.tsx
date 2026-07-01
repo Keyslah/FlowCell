@@ -14,6 +14,7 @@ import {
 } from "../../lib/buttonLabelOverrides";
 import { runPanelScript } from "../../lib/programRails";
 import { getScriptGroupPopoutTemplate } from "../../lib/scriptGroupPopoutTemplates";
+import { isNativeSpaceKeyDown } from "../../lib/nativeKeyState";
 import type { ScriptGroupPopoutWindowContext } from "../../lib/windowContext";
 import "./scriptGroupPopoutWindowPage.css";
 
@@ -460,7 +461,7 @@ export default function ScriptGroupPopoutWindowPage({
   };
 
   const handleShellPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!spaceDragActive || event.button !== 0) {
+    if (event.button !== 0) {
       return;
     }
 
@@ -472,13 +473,39 @@ export default function ScriptGroupPopoutWindowPage({
       return;
     }
 
+    const scriptButton =
+      target instanceof HTMLElement
+        ? target.closest<HTMLButtonElement>(".script-group-popout__button")
+        : null;
+    const scriptFileName = scriptButton?.dataset.scriptFileName;
+
     event.preventDefault();
     event.stopPropagation();
-    setSpaceDragging(true);
-    void getCurrentWindow().startDragging().catch((error) => {
-      console.error("Failed to start script group popout drag.", error);
-      setSpaceDragging(false);
-    });
+
+    const startSpaceDrag = () => {
+      setSpaceDragActive(true);
+      setSpaceDragging(true);
+      void getCurrentWindow().startDragging().catch((error) => {
+        console.error("Failed to start script group popout drag.", error);
+        setSpaceDragging(false);
+      });
+    };
+
+    if (spaceDragActive) {
+      startSpaceDrag();
+      return;
+    }
+
+    void (async () => {
+      if (await isNativeSpaceKeyDown()) {
+        startSpaceDrag();
+        return;
+      }
+
+      if (scriptFileName) {
+        await handleButtonActivate(scriptFileName);
+      }
+    })();
   };
 
   const pageClassName = [
@@ -599,6 +626,7 @@ export default function ScriptGroupPopoutWindowPage({
                     }`}
                     aria-label={button.label}
                     data-flow-tooltip={button.tooltip?.trim() || button.label}
+                    data-script-file-name={button.fileName}
                     style={{
                       left: `${button.x}px`,
                       top: `${button.y}px`,

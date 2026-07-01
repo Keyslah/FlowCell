@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { LayoutSnapshot } from "../types";
 import {
   applySlicerButtonAssignmentLabels,
@@ -85,6 +86,14 @@ interface PanelScriptRunResponse {
 
 function isTauriWindowHost(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function getCurrentWindowLabel(): string | undefined {
+  try {
+    return getCurrentWindow().label;
+  } catch {
+    return undefined;
+  }
 }
 
 function formatInvokeError(error: unknown): string {
@@ -411,7 +420,8 @@ export async function showSaveLayoutDialog(
 
   return invokeProgramRailCommand<string | null>("show_save_layout_dialog", {
     suggestedName,
-    initialDirectory
+    initialDirectory,
+    parentLabel: getCurrentWindowLabel()
   });
 }
 
@@ -423,7 +433,8 @@ export async function showOpenLayoutDialog(
   }
 
   return invokeProgramRailCommand<string | null>("show_open_layout_dialog", {
-    initialDirectory
+    initialDirectory,
+    parentLabel: getCurrentWindowLabel()
   });
 }
 

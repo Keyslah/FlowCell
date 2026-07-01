@@ -16,6 +16,7 @@ import {
   type PanelScriptChildRecord,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import { TOOLSET_BLACK_TINT_IMPORTED_SKIN } from "../../lib/theme";
 import type { FlattenRevolveToolboxWindowContext } from "../../lib/windowContext";
 import type { ButtonRecord } from "../main/mainLayout";
@@ -110,6 +111,8 @@ export default function FlattenRevolveToolboxWindowPage({
   const [pendingCommand, setPendingCommand] = useState<string | null>(null);
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [surfaceMetrics, setSurfaceMetrics] = useState({
     width: 420,
     height: 220
@@ -304,10 +307,10 @@ export default function FlattenRevolveToolboxWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     const surfaceContent = surfaceContentRef.current;
@@ -390,7 +393,7 @@ export default function FlattenRevolveToolboxWindowPage({
 
     void getCurrentWindow().setFocus().catch(() => {});
 
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       return;
     }
 
@@ -447,7 +450,7 @@ export default function FlattenRevolveToolboxWindowPage({
     <main
       className={[
         "flatten-revolve-toolbox-window-page",
-        spaceDragActive ? "flatten-revolve-toolbox-window-page--space-drag" : "",
+        effectiveSpaceDragActive ? "flatten-revolve-toolbox-window-page--space-drag" : "",
         spaceDragging ? "flatten-revolve-toolbox-window-page--dragging" : ""
       ]
         .filter(Boolean)

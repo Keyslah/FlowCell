@@ -12,6 +12,7 @@ import {
   type PanelScriptFileRecord,
   type ToolsetActionResponse
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import type { RemeshToolboxWindowContext } from "../../lib/windowContext";
 import {
   RemeshToolboxSurface,
@@ -260,6 +261,8 @@ export default function RemeshToolboxWindowPage({
   const [pendingCommand, setPendingCommand] = useState<RemeshToolboxCommand | null>(null);
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [windowSize, setWindowSize] = useState(() => ({
     width: Math.max(window.innerWidth, 1),
     height: Math.max(window.innerHeight, 1)
@@ -442,10 +445,10 @@ export default function RemeshToolboxWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     const syncWindowSize = () => {
@@ -510,7 +513,7 @@ export default function RemeshToolboxWindowPage({
 
     void getCurrentWindow().setFocus().catch(() => {});
 
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       return;
     }
 
@@ -535,7 +538,7 @@ export default function RemeshToolboxWindowPage({
 
   const pageClassName = [
     "remesh-toolbox-window-page",
-    spaceDragActive ? "remesh-toolbox-window-page--space-drag" : "",
+    effectiveSpaceDragActive ? "remesh-toolbox-window-page--space-drag" : "",
     spaceDragging ? "remesh-toolbox-window-page--dragging" : ""
   ]
     .filter(Boolean)

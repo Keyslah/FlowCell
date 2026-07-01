@@ -102,7 +102,13 @@
 .fan-cluster__child {
   position: absolute;
   overflow: visible;
+  line-height: 0;
   pointer-events: auto;
+}
+
+.fan-cluster--panel-fan .fan-cluster__owner > .host-skin-button,
+.fan-cluster--panel-fan .fan-cluster__child > .host-skin-button {
+  display: flex;
 }
 
 .fan-cluster__owner {

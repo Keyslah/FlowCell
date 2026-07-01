@@ -305,13 +305,12 @@ Only use `import flowcell_bridge as live_bridge` when a tool truly needs a live 
 ## What Add Script Does
 
 1. Opens in the current panel's `Blender Git Scripts` folder when available.
-2. Validates that the file exposes callable `run_flowcell_action(context=None, data=None)`.
-3. Rejects bridge-only wrappers, including files whose main behavior is `bridge.execute_bridge_operator(...)` or files marked `FLOWCELL_BUILTIN_ONLY`.
-4. Copies the validated source into `ManagedActions` as generated installed runtime output.
-5. Registers each tool in `flowcell_custom_actions.json` with `pythonPath` pointing at the runtime copy and `sourcePythonPath` pointing at the original source.
-6. Preserves `FLOWCELL_KIND` and `FLOWCELL_CHILD` metadata in the panel `.flowcell-panel-item.json` record.
-7. Leaves `executionTarget` empty for Blender script buttons so runtime clicks go through the bridge registry.
-8. Tells you whether Blender must reload the FlowCell add-on or restart before runtime verification reflects the new code.
+2. Validates that the file exposes callable `run_flowcell_action(context=None, data=None)`. That is the only gate — a single script, a toolset, or a thin wrapper whose `run_flowcell_action` calls `bridge.execute_bridge_operator(...)` are all accepted the same way, so any button can be added, deleted, and re-added through Add Script.
+3. Copies the validated source into `ManagedActions` as generated installed runtime output.
+4. Registers each tool in `flowcell_custom_actions.json` with `pythonPath` pointing at the runtime copy and `sourcePythonPath` pointing at the original source.
+5. Preserves `FLOWCELL_KIND` and `FLOWCELL_CHILD` metadata in the panel `.flowcell-panel-item.json` record.
+6. Leaves `executionTarget` empty for Blender script buttons so runtime clicks go through the bridge registry.
+7. Tells you whether Blender must reload the FlowCell add-on or restart before runtime verification reflects the new code.
 
 ## Folder Roles
 

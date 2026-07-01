@@ -1,5 +1,4 @@
 # Description: With one selected Live object, cycle Live and snapshot versions one visible object at a time.
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

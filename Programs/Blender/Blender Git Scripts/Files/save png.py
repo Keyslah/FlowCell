@@ -1,5 +1,4 @@
 # Description: Render the active selected object from the current scene camera to 01 src\00 assets\01 images as a transparent PNG cropped exactly to the visible object bounds.
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

@@ -1,5 +1,4 @@
 # Description: Copy the selected Live objects into Snapshots as versioned s# duplicates.
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

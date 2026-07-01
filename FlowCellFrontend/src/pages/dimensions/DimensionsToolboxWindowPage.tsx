@@ -12,6 +12,7 @@ import {
   type PanelScriptFileRecord,
   type ToolsetActionResponse
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import type { DimensionsToolboxWindowContext } from "../../lib/windowContext";
 import {
   DIMENSIONS_TOOLBOX_CANONICAL_HEIGHT,
@@ -155,6 +156,8 @@ export default function DimensionsToolboxWindowPage({
   );
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [windowSize, setWindowSize] = useState(() => ({
     width: Math.max(window.innerWidth, 1),
     height: Math.max(window.innerHeight, 1)
@@ -309,10 +312,10 @@ export default function DimensionsToolboxWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     const syncWindowSize = () => {
@@ -347,7 +350,7 @@ export default function DimensionsToolboxWindowPage({
 
     void getCurrentWindow().setFocus().catch(() => {});
 
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       return;
     }
 
@@ -372,7 +375,7 @@ export default function DimensionsToolboxWindowPage({
 
   const pageClassName = [
     "dimensions-toolbox-window-page",
-    spaceDragActive ? "dimensions-toolbox-window-page--space-drag" : "",
+    effectiveSpaceDragActive ? "dimensions-toolbox-window-page--space-drag" : "",
     spaceDragging ? "dimensions-toolbox-window-page--dragging" : ""
   ]
     .filter(Boolean)

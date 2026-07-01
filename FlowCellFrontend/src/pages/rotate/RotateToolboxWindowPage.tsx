@@ -12,6 +12,7 @@ import {
   runToolsetAction,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import type { RotateToolboxWindowContext } from "../../lib/windowContext";
 import { RotateToolboxSurface, type RotateToolboxState } from "../main/RotateToolboxSurface";
 import {
@@ -81,6 +82,8 @@ export default function RotateToolboxWindowPage({
   const [actionBusy, setActionBusy] = useState(false);
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [windowSize, setWindowSize] = useState(() => ({
     width: Math.max(window.innerWidth, 1),
     height: Math.max(window.innerHeight, 1)
@@ -201,10 +204,10 @@ export default function RotateToolboxWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     const syncWindowSize = () => {
@@ -292,7 +295,7 @@ export default function RotateToolboxWindowPage({
 
     void getCurrentWindow().setFocus().catch(() => {});
 
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       return;
     }
 
@@ -315,7 +318,7 @@ export default function RotateToolboxWindowPage({
 
   const pageClassName = [
     "rotate-toolbox-window-page",
-    spaceDragActive ? "rotate-toolbox-window-page--space-drag" : "",
+    effectiveSpaceDragActive ? "rotate-toolbox-window-page--space-drag" : "",
     spaceDragging ? "rotate-toolbox-window-page--dragging" : ""
   ]
     .filter(Boolean)

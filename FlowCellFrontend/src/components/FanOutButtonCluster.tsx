@@ -73,6 +73,7 @@ const FAN_OPEN_COLLAPSE_DELAY_MS = 220;
 const FAN_CLOSED_COLLAPSE_DELAY_MS = 240;
 const PANEL_FAN_OPEN_POINTER_TRANSFER_MS = 650;
 const PANEL_FAN_OPEN_COLLAPSE_DELAY_MS = 650;
+const PANEL_FAN_BUTTON_BOTTOM_RESERVE = 18;
 
 interface FanOutButtonClusterProps {
   ownerButton: FlowCellButton;
@@ -174,6 +175,39 @@ function readStableNodeSize(
     width: Math.max(Math.ceil(fallback?.width ?? 0), 1),
     height: Math.max(Math.ceil(fallback?.height ?? 0), 1)
   };
+}
+
+function addPanelFanBottomReserve(size: { width: number; height: number }): {
+  width: number;
+  height: number;
+} {
+  return {
+    width: size.width,
+    height: size.height + PANEL_FAN_BUTTON_BOTTOM_RESERVE
+  };
+}
+
+function removePanelFanBottomReserve(height: number): number {
+  return Math.max(1, height - PANEL_FAN_BUTTON_BOTTOM_RESERVE);
+}
+
+function readPanelFanSlotVisualSize(
+  slot: HTMLElement | null | undefined,
+  fallback?: { width?: number; height?: number }
+): { width: number; height: number } {
+  const buttonHost = Array.from(slot?.children ?? []).find((child): child is HTMLElement => {
+    return child instanceof HTMLElement && child.classList.contains("host-skin-button");
+  });
+  return readStableNodeSize(buttonHost, fallback);
+}
+
+function resolvePanelFanButtonHeight(
+  reservedHeight: number | undefined,
+  fallbackHeight: number
+): number {
+  return typeof reservedHeight === "number" && Number.isFinite(reservedHeight)
+    ? removePanelFanBottomReserve(reservedHeight)
+    : fallbackHeight;
 }
 
 function areRectsEqual(
@@ -1001,15 +1035,25 @@ export function FanOutButtonCluster({
   }, [childrenVisible, onCollapseRequest, variant, windowExpanded]);
 
   useLayoutEffect(() => {
-    const ownerMetrics = readStableNodeSize(ownerVisibleRef.current);
-    const childSizes = childVisuals.map((entry) =>
-      readStableNodeSize(visibleChildRefs.current.get(entry.key), ownerMetrics)
-    );
-
     if (variant === "panel-fan") {
+      const ownerMetrics = readPanelFanSlotVisualSize(ownerVisibleRef.current, ownerFootprintOverride);
+      const childSizes = childVisuals.map((entry) => {
+        const entryVisuals = resolveButtonVisuals(
+          entry.entry.button,
+          undefined,
+          resolveChildImportedSkinOverride?.(entry.entry)
+        );
+        const childFootprintOverride = resolveFanChildFootprintOverride(entryVisuals.importedSkin);
+        return readPanelFanSlotVisualSize(
+          visibleChildRefs.current.get(entry.key),
+          childFootprintOverride
+        );
+      });
+      const panelOwnerMetrics = addPanelFanBottomReserve(ownerMetrics);
+      const panelChildSizes = childSizes.map(addPanelFanBottomReserve);
       const nextLayout = computePanelLayout({
-        owner: ownerMetrics,
-        childSizes,
+        owner: panelOwnerMetrics,
+        childSizes: panelChildSizes,
         layout: layout === "row" ? "grid" : layout,
         placement
       });
@@ -1021,6 +1065,10 @@ export function FanOutButtonCluster({
       return;
     }
 
+    const ownerMetrics = readStableNodeSize(ownerVisibleRef.current);
+    const childSizes = childVisuals.map((entry) =>
+      readStableNodeSize(visibleChildRefs.current.get(entry.key), ownerMetrics)
+    );
     const nextLayout = computeFloatingLayout({
       owner: ownerMetrics,
       childSizes,
@@ -1075,15 +1123,28 @@ export function FanOutButtonCluster({
     }
 
     const observer = new ResizeObserver(() => {
-      const ownerMetrics = readStableNodeSize(ownerVisibleRef.current);
-      const childSizes = childVisuals.map((entry) =>
-        readStableNodeSize(visibleChildRefs.current.get(entry.key), ownerMetrics)
-      );
-
       if (variant === "panel-fan") {
+        const ownerMetrics = readPanelFanSlotVisualSize(
+          ownerVisibleRef.current,
+          ownerFootprintOverride
+        );
+        const childSizes = childVisuals.map((entry) => {
+          const entryVisuals = resolveButtonVisuals(
+            entry.entry.button,
+            undefined,
+            resolveChildImportedSkinOverride?.(entry.entry)
+          );
+          const childFootprintOverride = resolveFanChildFootprintOverride(entryVisuals.importedSkin);
+          return readPanelFanSlotVisualSize(
+            visibleChildRefs.current.get(entry.key),
+            childFootprintOverride
+          );
+        });
+        const panelOwnerMetrics = addPanelFanBottomReserve(ownerMetrics);
+        const panelChildSizes = childSizes.map(addPanelFanBottomReserve);
         const nextLayout = computePanelLayout({
-          owner: ownerMetrics,
-          childSizes,
+          owner: panelOwnerMetrics,
+          childSizes: panelChildSizes,
           layout: layout === "row" ? "grid" : layout,
           placement
         });
@@ -1095,6 +1156,10 @@ export function FanOutButtonCluster({
         return;
       }
 
+      const ownerMetrics = readStableNodeSize(ownerVisibleRef.current);
+      const childSizes = childVisuals.map((entry) =>
+        readStableNodeSize(visibleChildRefs.current.get(entry.key), ownerMetrics)
+      );
       const nextLayout = computeFloatingLayout({
         owner: ownerMetrics,
         childSizes,
@@ -1148,7 +1213,10 @@ export function FanOutButtonCluster({
   const ownerButtonRecord = buildFanButtonRecord({
     button: ownerButton,
     width: activeLayout?.ownerWidth ?? ownerFootprintOverride.width,
-    height: activeLayout?.ownerHeight ?? ownerFootprintOverride.height
+    height:
+      variant === "panel-fan"
+        ? resolvePanelFanButtonHeight(activeLayout?.ownerHeight, ownerFootprintOverride.height)
+        : activeLayout?.ownerHeight ?? ownerFootprintOverride.height
   });
 
   return (
@@ -1228,7 +1296,13 @@ export function FanOutButtonCluster({
                   button={buildFanButtonRecord({
                     button: entry.entry.button,
                     width: childLayout?.width ?? childFootprintOverride.width,
-                    height: childLayout?.height ?? childFootprintOverride.height
+                    height:
+                      variant === "panel-fan"
+                        ? resolvePanelFanButtonHeight(
+                            childLayout?.height,
+                            childFootprintOverride.height
+                          )
+                        : childLayout?.height ?? childFootprintOverride.height
                   })}
                   absolute={false}
                   importedSkinOverride={childVisuals.importedSkin}

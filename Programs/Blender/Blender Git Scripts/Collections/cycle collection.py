@@ -1,5 +1,4 @@
 # Description: Use the selected object's collection and show one direct object at a time while selecting it.
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

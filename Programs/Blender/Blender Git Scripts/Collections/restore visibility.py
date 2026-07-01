@@ -1,5 +1,4 @@
 # Description: Hide every object in the active view layer except the objects recorded by Baseline Visibility.
-# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

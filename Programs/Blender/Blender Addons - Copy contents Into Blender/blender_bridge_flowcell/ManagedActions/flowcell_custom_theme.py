@@ -1,10 +1,10 @@
 # Description: Set Blender UI theme and HDRI values, plus Place Picture fake gizmos and fake grid over a background image.
 
 
-# FLOWCELL_CHILD: browse_theme | Browse | Choose a theme source image to sample colors from.
+# FLOWCELL_CHILD: browse_theme | Browse | Choose a theme source image, sample colors, and place it as the Place Picture image.
 # FLOWCELL_CHILD: absorb_theme | Absorb Theme | Pull the current Blender theme values back into the tool fields.
-# FLOWCELL_CHILD: save_theme | Save Theme | Save the currently staged Blender theme preset.
-# FLOWCELL_CHILD: load_theme | Load Theme | Load a saved Blender theme preset into the tool fields.
+# FLOWCELL_CHILD: save_theme | Save Buckets | Save the currently staged Blender theme buckets.
+# FLOWCELL_CHILD: load_theme | Load Buckets | Load saved Blender theme buckets into the tool fields.
 # FLOWCELL_CHILD: dark_theme | Dark Theme | Stage the sampled palette as a dark Blender theme.
 # FLOWCELL_CHILD: light_theme | Light Theme | Stage the sampled palette as a light Blender theme.
 # FLOWCELL_CHILD: apply_theme | Apply | Apply the currently visible Blender theme role colors.
@@ -641,6 +641,17 @@ def _normalize_project_theme_state(value):
             if math.isfinite(spacing_m) and spacing_m > 0.0
             else DEFAULT_PLACE_PICTURE_GRID_SPACING_M
         )
+        for key, default in (
+            ("grid_distance_m", DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M),
+            ("grid_far_spacing_m", DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M),
+        ):
+            try:
+                value = float(place_picture_state.get(key, default))
+            except (TypeError, ValueError):
+                value = default
+            state["place_picture"][key] = (
+                value if math.isfinite(value) and value > 0.0 else default
+            )
 
     return state
 
@@ -702,17 +713,6 @@ def _ensure_project_theme_restore_handler_registered_from_action() -> bool:
             "_ensure_flowcell_project_theme_restore_handler_registered",
             None,
         )
-        for key, default in (
-            ("grid_distance_m", DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M),
-            ("grid_far_spacing_m", DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M),
-        ):
-            try:
-                value = float(place_picture_state.get(key, default))
-            except (TypeError, ValueError):
-                value = default
-            state["place_picture"][key] = (
-                value if math.isfinite(value) and value > 0.0 else default
-            )
         if not callable(ensure_handler):
             flowcell_actions = importlib.reload(flowcell_actions)
             ensure_handler = getattr(

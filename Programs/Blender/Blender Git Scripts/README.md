@@ -1,8 +1,8 @@
 # Blender Git Scripts
 
-Tracked shared Blender script sources live here, organized by panel subfolder. Portable Add Script sources must contain their actual Blender logic in this folder, expose `run_flowcell_action(context=None, data=None)`, and include a `# Description: ...` header.
+Tracked shared Blender script sources live here, organized by panel subfolder. Any Add Script source must expose `run_flowcell_action(context=None, data=None)` and include a `# Description: ...` header.
 
-`ManagedActions` is generated installed runtime output, not source. Bridge-only wrappers that call `bridge.execute_bridge_operator(...)` are not portable Add Script sources; files marked `# FLOWCELL_BUILTIN_ONLY: true` are intentionally blocked from Add Script and only document legacy/built-in bridge routes.
+`ManagedActions` is generated installed runtime output, not source. Every source is treated the same by Add Script — a single script, a toolset, or a thin wrapper whose `run_flowcell_action` calls `bridge.execute_bridge_operator(...)` all install, delete, and re-add identically. (Bridge wrappers run because the referenced bridge operator lives in the installed add-on.)
 
 After adding, deleting, or repairing Blender scripts/toolsets, reload the FlowCell Blender add-on or restart Blender so runtime registrations refresh.
 

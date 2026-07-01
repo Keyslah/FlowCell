@@ -15,6 +15,7 @@ import {
   runToolsetAction,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
+import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import { TOOLSET_BLACK_TINT_IMPORTED_SKIN } from "../../lib/theme";
 import type { GenericToolboxWindowContext } from "../../lib/windowContext";
 import type { ButtonRecord } from "../main/mainLayout";
@@ -103,6 +104,8 @@ export default function GenericToolboxWindowPage({
   const [pendingSlot, setPendingSlot] = useState<string | null>(null);
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const nativeSpaceDragActive = useNativeSpaceDragActive();
+  const effectiveSpaceDragActive = spaceDragActive || nativeSpaceDragActive;
   const [surfaceMetrics, setSurfaceMetrics] = useState({
     width: BUTTON_WIDTH,
     height: BUTTON_HEIGHT
@@ -273,10 +276,10 @@ export default function GenericToolboxWindowPage({
   }, []);
 
   useEffect(() => {
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
-  }, [spaceDragActive]);
+  }, [effectiveSpaceDragActive]);
 
   useEffect(() => {
     const surfaceContent = surfaceContentRef.current;
@@ -339,7 +342,7 @@ export default function GenericToolboxWindowPage({
 
     void getCurrentWindow().setFocus().catch(() => {});
 
-    if (!spaceDragActive) {
+    if (!effectiveSpaceDragActive) {
       return;
     }
 
@@ -393,7 +396,7 @@ export default function GenericToolboxWindowPage({
     <main
       className={[
         "generic-toolbox-window-page",
-        spaceDragActive ? "generic-toolbox-window-page--space-drag" : "",
+        effectiveSpaceDragActive ? "generic-toolbox-window-page--space-drag" : "",
         spaceDragging ? "generic-toolbox-window-page--dragging" : ""
       ]
         .filter(Boolean)
