@@ -1,146 +1,26 @@
-{
+﻿{
     "actions":  [
-                    {
-                        "action":  "custom_custom_lithophane_tool",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/custom_custom_lithophane_tool.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/custom_custom_lithophane_tool.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "custom_hdri_world_tools",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/custom_hdri_world_tools.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/custom_hdri_world_tools.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "custom_litho",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/custom_litho.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/custom_litho.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "custom_litho_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/custom_litho_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/custom_litho_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "custom_quick_rotate_group",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/custom_quick_rotate_group.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/custom_quick_rotate_group.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "custom_util_smart_axis_lock",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/custom_util_smart_axis_lock.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/custom_util_smart_axis_lock.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_add_to_live",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_add_to_live.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_add_to_live.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Copy selected snapshot, trash, or archive objects into Live without replacing the current Live version."
-                    },
-                    {
-                        "action":  "flowcell_custom_add_to_live_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_add_to_live_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_add_to_live_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Copy selected snapshot, trash, or archive objects into Live without replacing the current Live version."
-                    },
-                    {
-                        "action":  "flowcell_custom_alignment_tools",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_alignment_tools.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_alignment_tools.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
                     {
                         "action":  "flowcell_custom_alignment_tools_2",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_alignment_tools_2.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_alignment_tools_2.py",
+                        "sourcePythonPath":  "Blender Git Scripts/toolset/alignment tools.py",
                         "sourceFunctionName":  "",
-                        "description":  "Open FlowCell alignment controls for active-object min, center, max, surface, and origin alignment."
-                    },
-                    {
-                        "action":  "flowcell_custom_archive",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_archive.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_archive.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Copy the selected objects into Archive."
-                    },
-                    {
-                        "action":  "flowcell_custom_archive_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_archive_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_archive_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Copy the selected objects into Archive."
-                    },
-                    {
-                        "action":  "flowcell_custom_back",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_back.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_back.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Move the current Live version to Trash and restore the newest matching snapshot back into Live."
-                    },
-                    {
-                        "action":  "flowcell_custom_back_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_back_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_back_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Move the current Live version to Trash and restore the newest matching snapshot back into Live."
-                    },
-                    {
-                        "action":  "flowcell_custom_back_3",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_back_3.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_back_3.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Move the current Live version to Trash and restore the newest matching snapshot back into Live."
-                    },
-                    {
-                        "action":  "flowcell_custom_baseline_visibility",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_baseline_visibility.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_baseline_visibility.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Record the objects currently visible in the active view layer."
+                        "description":  "Selected objects go to the active-object min, center, max, surface, and origin alignment."
                     },
                     {
                         "action":  "flowcell_custom_boolean",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_boolean.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_boolean.py",
+                        "sourcePythonPath":  "Blender Git Scripts/toolset/boolean.py",
                         "sourceFunctionName":  "",
-                        "description":  "Quick Boolean with I/U/D operation buttons, solver dropdown, SI/HT/HC/S toggles, and Run."
+                        "description":  "Quick Boolean with I/U/D operation buttons, solver fanout, SI/HT/HC/S toggles, and Run."
                     },
                     {
                         "action":  "flowcell_custom_cone",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cone.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cone.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Shapes/Cone.py",
                         "sourceFunctionName":  "",
                         "description":  "Low poly cone."
                     },
@@ -148,7 +28,7 @@
                         "action":  "flowcell_custom_cube",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cube.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cube.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Shapes/Cube.py",
                         "sourceFunctionName":  "",
                         "description":  "Low poly cube."
                     },
@@ -156,119 +36,23 @@
                         "action":  "flowcell_custom_cura",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cura.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cura.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Files/cura.py",
                         "sourceFunctionName":  "",
                         "description":  "Export the selected mesh objects as STL files and add them to Cura."
-                    },
-                    {
-                        "action":  "flowcell_custom_cursor_center_hole",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cursor_center_hole.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cursor_center_hole.py",
-                        "sourceFunctionName":  "",
-                        "description":  "With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it."
-                    },
-                    {
-                        "action":  "flowcell_custom_custom_quick_rotate_group",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_custom_quick_rotate_group.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_custom_quick_rotate_group.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_cycle_collection",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_collection.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_collection.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Use the selected object\u0027s collection and show one direct object at a time while selecting it."
-                    },
-                    {
-                        "action":  "flowcell_custom_cycle_collection_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_collection_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_collection_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Use the selected object\u0027s collection and show one direct object at a time while selecting it."
-                    },
-                    {
-                        "action":  "flowcell_custom_cycle_versions_back",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_versions_back.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_versions_back.py",
-                        "sourceFunctionName":  "",
-                        "description":  "With one selected Live object, cycle Live and snapshot versions one visible object at a time."
-                    },
-                    {
-                        "action":  "flowcell_custom_cycle_versions_back_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_versions_back_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_versions_back_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "With one selected Live object, cycle Live and snapshot versions one visible object at a time."
-                    },
-                    {
-                        "action":  "flowcell_custom_cycle_versions_forward",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_versions_forward.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_versions_forward.py",
-                        "sourceFunctionName":  "",
-                        "description":  "With one selected Live object, cycle Live and snapshot versions one visible object at a time."
-                    },
-                    {
-                        "action":  "flowcell_custom_cycle_versions_forward_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_versions_forward_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cycle_versions_forward_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "With one selected Live object, cycle Live and snapshot versions one visible object at a time."
                     },
                     {
                         "action":  "flowcell_custom_cylinder",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cylinder.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_cylinder.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Shapes/Cylinder.py",
                         "sourceFunctionName":  "",
                         "description":  "Low poly cylinder."
-                    },
-                    {
-                        "action":  "flowcell_custom_empty_collections",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_empty_collections.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_empty_collections.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Delete empty collections while keeping the system roots."
-                    },
-                    {
-                        "action":  "flowcell_custom_empty_collections_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_empty_collections_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_empty_collections_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Delete empty collections while keeping the system roots."
-                    },
-                    {
-                        "action":  "flowcell_custom_empty_trash",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_empty_trash.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_empty_trash.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Delete everything inside Trash."
-                    },
-                    {
-                        "action":  "flowcell_custom_empty_trash_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_empty_trash_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_empty_trash_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Delete everything inside Trash."
                     },
                     {
                         "action":  "flowcell_custom_flatten_revolve_2",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_flatten_revolve_2.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_flatten_revolve_2.py",
+                        "sourcePythonPath":  "Blender Git Scripts/toolset/flatten revolve.py",
                         "sourceFunctionName":  "",
                         "description":  "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place."
                     },
@@ -276,55 +60,15 @@
                         "action":  "flowcell_custom_lithophane",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_lithophane.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_lithophane.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Utility/lithophane.py",
                         "sourceFunctionName":  "",
                         "description":  "Pick one or more images in Blender, create DPI-sized planes, and turn them into lithophanes automatically."
-                    },
-                    {
-                        "action":  "flowcell_custom_make_layers",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_make_layers.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_make_layers.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Create Live, Snapshots, Trash, and Archive if missing."
-                    },
-                    {
-                        "action":  "flowcell_custom_make_layers_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_make_layers_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_make_layers_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Create Live, Snapshots, Trash, and Archive if missing."
-                    },
-                    {
-                        "action":  "flowcell_custom_new_collection",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_new_collection.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_new_collection.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Prompt for a name and create a new child collection near the selected object."
-                    },
-                    {
-                        "action":  "flowcell_custom_new_collection_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_new_collection_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_new_collection_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Prompt for a name and create a new child collection near the selected object."
-                    },
-                    {
-                        "action":  "flowcell_custom_new_collection_3",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_new_collection_3.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_new_collection_3.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Prompt for a name and create a new child collection near the selected object."
                     },
                     {
                         "action":  "flowcell_custom_obj_import",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_obj_import.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_obj_import.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Files/obj import.py",
                         "sourceFunctionName":  "",
                         "description":  "Import an OBJ, rotate it -90 degrees on X, scale it 10x, and apply transforms. (from Illustrator export)"
                     },
@@ -332,135 +76,55 @@
                         "action":  "flowcell_custom_orca",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_orca.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_orca.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Files/orca.py",
                         "sourceFunctionName":  "",
                         "description":  "Export the selected mesh objects as STL files and add them to Orca."
-                    },
-                    {
-                        "action":  "flowcell_custom_slicer",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_slicer.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_slicer.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Slicer"
                     },
                     {
                         "action":  "flowcell_custom_origin_geo",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_origin_geo.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_origin_geo.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Utility/origin_geo.py",
                         "sourceFunctionName":  "",
                         "description":  "Set each selected object\u0027s origin to its geometry center in Object Mode."
-                    },
-                    {
-                        "action":  "flowcell_custom_remesh",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_remesh.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_remesh.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Create, update, and apply Remesh modifiers with Voxel, Smooth, Sharp, and Blocks modes."
                     },
                     {
                         "action":  "flowcell_custom_remesh_2",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_remesh_2.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_remesh_2.py",
+                        "sourcePythonPath":  "Blender Git Scripts/toolset/remesh.py",
                         "sourceFunctionName":  "",
                         "description":  "Create, update, and apply Blender Remesh modifiers from a compact FlowCell tool set."
-                    },
-                    {
-                        "action":  "flowcell_custom_rename_selected",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rename_selected.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rename_selected.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Rename all selected Blender objects in one prompt."
                     },
                     {
                         "action":  "flowcell_custom_rename_selected_2",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rename_selected_2.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rename_selected_2.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Collections/rename selected.py",
                         "sourceFunctionName":  "",
                         "description":  "Rename all selected Blender objects in one prompt."
-                    },
-                    {
-                        "action":  "flowcell_custom_restore",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_restore.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_restore.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first."
-                    },
-                    {
-                        "action":  "flowcell_custom_restore_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_restore_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_restore_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first."
-                    },
-                    {
-                        "action":  "flowcell_custom_restore_visibility",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_restore_visibility.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_restore_visibility.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Hide every object in the active view layer except the objects recorded by Baseline Visibility."
-                    },
-                    {
-                        "action":  "flowcell_custom_rotate",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rotate.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rotate.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Open Rotate controls for axis, pivot, transform, and distribute rotation steps."
-                    },
-                    {
-                        "action":  "flowcell_custom_rotate_3",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rotate_3.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rotate_3.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Open Rotate controls for axis, pivot, transform, and distribute rotation steps."
                     },
                     {
                         "action":  "flowcell_custom_rotate_4",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rotate_4.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rotate_4.py",
+                        "sourcePythonPath":  "Blender Git Scripts/toolset/rotate.py",
                         "sourceFunctionName":  "",
-                        "description":  "Open Rotate controls for axis, pivot, transform, and distribute rotation steps."
+                        "description":  "rotate objects with, transform, and distribute(evenly spaced copies around pivot)"
                     },
                     {
-                        "action":  "flowcell_custom_save_png",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_save_png.py",
+                        "action":  "flowcell_custom_slicer",
+                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_slicer.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_save_png.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Files/slicer.py",
                         "sourceFunctionName":  "",
-                        "description":  "Render the active selected object from the current scene camera to 01 src\\00 assets\\01 images as a transparent PNG cropped exactly to the visible object bounds."
-                    },
-                    {
-                        "action":  "flowcell_custom_save_stl",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_save_stl.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_save_stl.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Export the selected mesh objects to 01 src\\00 assets\\03 3d as a uniquely named STL."
-                    },
-                    {
-                        "action":  "flowcell_custom_smart_axis",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_smart_axis.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_smart_axis.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Smart Axis Lock stores selected object bounds, cycles pinned axis sides, and can run live while scaling."
+                        "description":  "Slicer"
                     },
                     {
                         "action":  "flowcell_custom_smart_axis_3",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_smart_axis_3.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_smart_axis_3.py",
+                        "sourcePythonPath":  "Blender Git Scripts/toolset/smart axis.py",
                         "sourceFunctionName":  "",
                         "description":  "Smart Axis Lock stores selected object bounds, cycles pinned axis sides, and can run live while scaling."
                     },
@@ -468,119 +132,23 @@
                         "action":  "flowcell_custom_snap",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snap.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snap.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Snap/snap.py",
                         "sourceFunctionName":  "",
-                        "description":  "Toggle Grid snap between moving the selection to the grid and moving the cursor to the grid."
-                    },
-                    {
-                        "action":  "flowcell_custom_snapshot",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Copy the selected Live objects into Snapshots as versioned s# duplicates."
-                    },
-                    {
-                        "action":  "flowcell_custom_snapshot_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Copy the selected Live objects into Snapshots as versioned s# duplicates."
-                    },
-                    {
-                        "action":  "flowcell_custom_snapshot_3",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_3.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_3.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Copy the selected Live objects into Snapshots as versioned s# duplicates."
-                    },
-                    {
-                        "action":  "flowcell_custom_snapshot_4",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_4.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_4.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Copy the selected Live objects into Snapshots as versioned s# duplicates."
-                    },
-                    {
-                        "action":  "flowcell_custom_snapshot_5",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_5.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_5.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_snapshot_6",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_6.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_6.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_snapshot_7",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_7.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_snapshot_7.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_sort",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_sort.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_sort.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Sort by visibility: visible objects become Live, matching invisible family objects become Snapshots as s#, and other invisible objects become Trash as t#."
-                    },
-                    {
-                        "action":  "flowcell_custom_sort_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_sort_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_sort_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Sort by visibility: visible objects become Live, matching invisible family objects become Snapshots as s#, and other invisible objects become Trash as t#."
-                    },
-                    {
-                        "action":  "flowcell_custom_sort_live",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_sort_live.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_sort_live.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Move every currently hidden object under Live into Trash."
-                    },
-                    {
-                        "action":  "flowcell_custom_sort_live_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_sort_live_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_sort_live_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Move every currently hidden object under Live into Trash."
+                        "description":  "Snap selected Blender objects or the 3D cursor from FlowCell snap buttons."
                     },
                     {
                         "action":  "flowcell_custom_sphere",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_sphere.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_sphere.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Shapes/Sphere.py",
                         "sourceFunctionName":  "",
                         "description":  "Low poly sphere."
-                    },
-                    {
-                        "action":  "flowcell_custom_split",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_split.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_split.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Split joined or physically separated parts into disconnected objects and set each new origin to geometry."
                     },
                     {
                         "action":  "flowcell_custom_split_2",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_split_2.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_split_2.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Utility/split.py",
                         "sourceFunctionName":  "",
                         "description":  "Split joined or physically separated parts into disconnected objects and set each new origin to geometry."
                     },
@@ -588,39 +156,23 @@
                         "action":  "flowcell_custom_theme",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_theme.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_theme.py",
+                        "sourcePythonPath":  "Blender Git Scripts/toolset/theme.py",
                         "sourceFunctionName":  "",
-                        "description":  "Open Theme, Place Picture, and HDRI controls for Blender UI colors, fake viewport picture grid/gizmos, world path, X/Y/Z rotation, and world strength."
+                        "description":  "Set Blender UI theme and HDRI values, plus Place Picture fake gizmos and fake grid over a background image."
                     },
                     {
                         "action":  "flowcell_custom_transform",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_transform.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_transform.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Utility/transform.py",
                         "sourceFunctionName":  "",
                         "description":  "Apply location, rotation, and scale to all selected objects in Object Mode."
-                    },
-                    {
-                        "action":  "flowcell_custom_trash",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_trash.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_trash.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Move the selected objects into Trash."
-                    },
-                    {
-                        "action":  "flowcell_custom_trash_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_trash_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_trash_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  "Move the selected objects into Trash."
                     },
                     {
                         "action":  "flowcell_custom_tri_poly",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_tri_poly.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_tri_poly.py",
+                        "sourcePythonPath":  "Blender Git Scripts/toolset/tri poly.py",
                         "sourceFunctionName":  "",
                         "description":  "Create triangle and regular polygon prism shapes from a compact Tri \u0026 Poly tool set."
                     },
@@ -628,111 +180,15 @@
                         "action":  "flowcell_custom_triangle",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_triangle.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_triangle.py",
+                        "sourcePythonPath":  "Blender Git Scripts/Shapes/Triangle.py",
                         "sourceFunctionName":  "",
                         "description":  "Low poly triangular prism."
-                    },
-                    {
-                        "action":  "flowcell_custom_util_boolsafe_cone",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_cone.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_cone.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_boolsafe_cube",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_cube.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_cube.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_boolsafe_cylinder",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_cylinder.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_cylinder.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_boolsafe_cylinder_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_cylinder_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_cylinder_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_boolsafe_sphere",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_sphere.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_sphere.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_boolsafe_triangle",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_triangle.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_triangle.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_boolsafe_triangle_2",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_triangle_2.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_boolsafe_triangle_2.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_import_obj_fix_transform",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_import_obj_fix_transform.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_import_obj_fix_transform.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_lithophane_from_image",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_lithophane_from_image.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_lithophane_from_image.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_origin_to_geometry",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_origin_to_geometry.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_origin_to_geometry.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_split_loose_parts",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_split_loose_parts.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_split_loose_parts.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
-                    },
-                    {
-                        "action":  "flowcell_custom_util_transform_all",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_transform_all.py",
-                        "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_util_transform_all.py",
-                        "sourceFunctionName":  "",
-                        "description":  ""
                     },
                     {
                         "action":  "flowcell_custom_xyz_dimensions_2",
                         "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_xyz_dimensions_2.py",
                         "functionName":  "",
-                        "sourcePythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_xyz_dimensions_2.py",
+                        "sourcePythonPath":  "Blender Git Scripts/toolset/xyz dimensions.py",
                         "sourceFunctionName":  "",
                         "description":  "Show live X, Y, and Z dimensions for the active selected object in inches."
                     }

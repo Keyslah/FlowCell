@@ -1,4 +1,5 @@
 # Description: Copy the selected objects into Archive.
+# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

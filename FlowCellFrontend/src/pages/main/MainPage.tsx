@@ -4,7 +4,8 @@ import {
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent
 } from "react";
 import { listen } from "@tauri-apps/api/event";
 import {
@@ -558,6 +559,53 @@ export default function MainPage() {
   const [startupSettings, setStartupSettings] = useState<StartupSettings>(() =>
     readStartupSettings()
   );
+  const [spaceDragActive, setSpaceDragActive] = useState(false);
+  const [spaceDragging, setSpaceDragging] = useState(false);
+
+  // Frameless window: hold Space then drag to move it.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== "Space") {
+        return;
+      }
+      event.preventDefault();
+      if (!event.repeat) {
+        setSpaceDragActive(true);
+      }
+    };
+    const handleKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== "Space") {
+        return;
+      }
+      event.preventDefault();
+      setSpaceDragActive(false);
+      setSpaceDragging(false);
+    };
+    const handleBlur = () => {
+      setSpaceDragActive(false);
+      setSpaceDragging(false);
+    };
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    window.addEventListener("keyup", handleKeyUp, { capture: true });
+    window.addEventListener("blur", handleBlur);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown, { capture: true });
+      window.removeEventListener("keyup", handleKeyUp, { capture: true });
+      window.removeEventListener("blur", handleBlur);
+    };
+  }, []);
+
+  const handleMainShellPointerDown = (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0 || !spaceDragActive) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    setSpaceDragging(true);
+    void getCurrentWindow()
+      .startDragging()
+      .catch(() => setSpaceDragging(false));
+  };
 
   useEffect(() => {
     const currentWindow = getCurrentWindow();
@@ -1981,6 +2029,32 @@ export default function MainPage() {
     }
   };
 
+  const handleBindsContextMenuButton = () => {
+    if (!contextMenuButton || !isPanelScriptButtonAction(contextMenuButton.actionId)) {
+      closeContextMenu();
+      return;
+    }
+
+    const { scriptFileName } = contextMenuButton;
+    if (!selectedProgramName || !selectedPanelName || !scriptFileName) {
+      closeContextMenu();
+      window.alert("Select a program and panel before assigning a bind.");
+      return;
+    }
+
+    // Matches the binds workspace button id built by the backend.
+    const buttonId = `${selectedProgramName}::${selectedPanelName}::${scriptFileName}`;
+    closeContextMenu();
+    void openBindsWindow({
+      programName: selectedProgramName,
+      panelName: selectedPanelName,
+      buttonId
+    }).catch((error) => {
+      console.error("Failed to open Binds.", error);
+      window.alert(`Binds could not be opened.\n\n${formatErrorMessage(error)}`);
+    });
+  };
+
   const handleDeleteContextMenuButton = async () => {
     if (!contextMenuButton || !isPanelScriptButtonAction(contextMenuButton.actionId)) {
       closeContextMenu();
@@ -2777,7 +2851,18 @@ export default function MainPage() {
   };
 
   return (
-    <main className="main-page">
+    <main
+      className={[
+        "main-page",
+        spaceDragActive ? "main-page--space-drag" : "",
+        spaceDragging ? "main-page--dragging" : ""
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      onPointerDownCapture={handleMainShellPointerDown}
+      onPointerUp={() => setSpaceDragging(false)}
+      onPointerCancel={() => setSpaceDragging(false)}
+    >
       <ExactPageFrame page={page}>
         <div className="main-page__page">
           <div
@@ -2917,6 +3002,17 @@ export default function MainPage() {
                       hostMode="neutral"
                       targetHeight={44}
                       onClick={handleRenameContextMenuButton}
+                    />
+                    <HostSkinButton
+                      type="button"
+                      label="Binds"
+                      flowId={`button-context-binds:${contextMenuButton.id}`}
+                      className="button-context-menu__item"
+                      styleGroup={CONTEXT_MENU_STYLE_GROUP}
+                      importedSkin={DEFAULT_FLOW_IMPORTED_SKIN}
+                      hostMode="neutral"
+                      targetHeight={44}
+                      onClick={handleBindsContextMenuButton}
                     />
                     <HostSkinButton
                       type="button"

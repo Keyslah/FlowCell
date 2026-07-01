@@ -360,13 +360,114 @@ function Get-RequestedSourceFolders {
     return @()
 }
 
+function Get-BackupRootConfigPath {
+    return (Join-Path $flowCellLocalRoot 'github_backup_root.txt')
+}
+
+function Get-DefaultBackupRoot {
+    # Per-user fallback used only when nothing has been chosen yet and no
+    # interactive prompt is possible (e.g. the hidden background worker). Never
+    # a machine-specific hardcoded path.
+    $profileRoot = [string]$env:USERPROFILE
+    if ([string]::IsNullOrWhiteSpace($profileRoot)) {
+        $profileRoot = [string][Environment]::GetFolderPath([System.Environment+SpecialFolder]::UserProfile)
+    }
+    if ([string]::IsNullOrWhiteSpace($profileRoot)) {
+        $profileRoot = [System.IO.Path]::GetTempPath()
+    }
+
+    return (Get-NormalizedFullPath -Path (Join-Path $profileRoot 'FlowCell Backups\GitHub'))
+}
+
+function Read-PersistedBackupRoot {
+    $configPath = Get-BackupRootConfigPath
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        return ''
+    }
+
+    try {
+        $value = [string](Get-Content -LiteralPath $configPath -Raw -ErrorAction Stop)
+    }
+    catch {
+        return ''
+    }
+
+    $value = $value.Trim().Trim('"')
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return ''
+    }
+
+    return (Get-NormalizedFullPath -Path $value)
+}
+
+function Save-PersistedBackupRoot([string]$Path) {
+    $configPath = Get-BackupRootConfigPath
+    $directory = Split-Path -Parent $configPath
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) {
+        New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    }
+
+    Set-Content -LiteralPath $configPath -Value $Path -Encoding UTF8
+}
+
 function Get-BackupRoot {
+    # Resolution order: explicit env override, then the saved choice, then a
+    # per-user default. The folder is never hardcoded to a specific machine.
     $envPath = [string][Environment]::GetEnvironmentVariable('FLOWCELL_GITHUB_BACKUP_ROOT')
     if (-not [string]::IsNullOrWhiteSpace($envPath)) {
         return (Get-NormalizedFullPath -Path $envPath.Trim().Trim('"'))
     }
 
-    return 'D:\Backups\GitHub'
+    $persisted = Read-PersistedBackupRoot
+    if (-not [string]::IsNullOrWhiteSpace($persisted)) {
+        return $persisted
+    }
+
+    return (Get-DefaultBackupRoot)
+}
+
+function Select-BackupRootFolder([string]$InitialPath) {
+    $dialog = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dialog.Description = ('Choose the folder where {0} snapshots will be stored. This is remembered for next time.' -f $script:BackupUiLabel)
+    $dialog.ShowNewFolderButton = $true
+    if (-not [string]::IsNullOrWhiteSpace($InitialPath)) {
+        try { $dialog.SelectedPath = $InitialPath } catch { }
+    }
+
+    try {
+        $result = $dialog.ShowDialog()
+    }
+    finally {
+        $dialog.Dispose()
+    }
+
+    if ($result -ne [System.Windows.Forms.DialogResult]::OK) {
+        return ''
+    }
+
+    return [string]$dialog.SelectedPath
+}
+
+function Resolve-BackupRootInteractive {
+    # Called from the foreground (interactive) invocation so the picker appears
+    # before the hidden background worker starts. Returns $true when a backup
+    # root is available, $false when the user cancelled the picker.
+    $envPath = [string][Environment]::GetEnvironmentVariable('FLOWCELL_GITHUB_BACKUP_ROOT')
+    if (-not [string]::IsNullOrWhiteSpace($envPath)) {
+        return $true
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace((Read-PersistedBackupRoot))) {
+        return $true
+    }
+
+    $picked = Select-BackupRootFolder -InitialPath (Get-DefaultBackupRoot)
+    if ([string]::IsNullOrWhiteSpace($picked)) {
+        return $false
+    }
+
+    Save-PersistedBackupRoot -Path (Get-NormalizedFullPath -Path $picked)
+    return $true
 }
 
 function Get-RepositoryRoot([string]$CandidatePath) {
@@ -1048,6 +1149,11 @@ function Get-CompletionNotificationText([object[]]$Results, [bool]$HasIssues) {
 
 if (-not $BackgroundWorker) {
     try {
+        if (-not (Resolve-BackupRootInteractive)) {
+            $statusMessage = ('{0} cancelled. No backup folder was selected.' -f $script:BackupUiLabel)
+            Write-Status $statusMessage
+            exit 0
+        }
         Start-BackgroundBackup
         $statusMessage = ('{0} started in the background. Windows will notify you when it finishes.' -f $script:BackupUiLabel)
         Write-Status $statusMessage

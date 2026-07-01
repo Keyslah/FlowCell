@@ -104,8 +104,17 @@ export type ButtonReorderWindowContext = {
   panelName: string;
 };
 
+export type BindsButtonPrefill = {
+  programName: string;
+  panelName: string;
+  buttonId: string;
+};
+
+export const BINDS_PREFILL_EVENT = "flowcell:binds-prefill";
+
 export type BindsWindowContext = {
   kind: "binds";
+  prefill?: BindsButtonPrefill;
 };
 
 export type OrganizationSetupWindowContext = {
@@ -421,9 +430,20 @@ export function getWindowContextFromLocation(): FlowCellWindowContext {
     if (
       parsed.kind === "binds"
     ) {
-      return {
-        kind: "binds"
-      };
+      const prefillRaw = (parsed as { prefill?: unknown }).prefill;
+      const prefill =
+        prefillRaw &&
+        typeof prefillRaw === "object" &&
+        typeof (prefillRaw as BindsButtonPrefill).programName === "string" &&
+        typeof (prefillRaw as BindsButtonPrefill).panelName === "string" &&
+        typeof (prefillRaw as BindsButtonPrefill).buttonId === "string"
+          ? {
+              programName: (prefillRaw as BindsButtonPrefill).programName,
+              panelName: (prefillRaw as BindsButtonPrefill).panelName,
+              buttonId: (prefillRaw as BindsButtonPrefill).buttonId
+            }
+          : undefined;
+      return prefill ? { kind: "binds", prefill } : { kind: "binds" };
     }
     if (parsed.kind === "organization-setup") {
       return {

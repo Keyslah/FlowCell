@@ -1,4 +1,5 @@
 # Description: Record the objects currently visible in the active view layer.
+# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

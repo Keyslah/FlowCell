@@ -1,6 +1,6 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   loadBindsWorkspace,
   saveBindShortcut,
@@ -20,7 +20,8 @@ import {
   validateShortcutInput
 } from "../../lib/shortcutProfiles";
 import { openMacroLabWindow } from "../../lib/windowing";
-import type { BindsWindowContext } from "../../lib/windowContext";
+import { BINDS_PREFILL_EVENT } from "../../lib/windowContext";
+import type { BindsButtonPrefill, BindsWindowContext } from "../../lib/windowContext";
 import type {
   BindableButtonRecord,
   BindablePanelRecord,
@@ -112,11 +113,13 @@ function reconcileSelection(
 }
 
 export default function BindsWindowPage({
-  context: _context
+  context
 }: {
   context: BindsWindowContext;
 }) {
   const [workspace, setWorkspace] = useState<BindsWorkspaceData | null>(null);
+  const workspaceRef = useRef<BindsWorkspaceData | null>(null);
+  const shortcutInputRef = useRef<HTMLInputElement | null>(null);
   const [selection, setSelection] = useState<BindsSelection>({
     programName: "",
     panelName: "",
@@ -154,15 +157,22 @@ export default function BindsWindowPage({
           return;
         }
 
-        const nextSelection = reconcileSelection(nextWorkspace, {
-          programName: "",
-          panelName: "",
-          buttonId: ""
-        });
+        const seed = context.prefill
+          ? {
+              programName: context.prefill.programName,
+              panelName: context.prefill.panelName,
+              buttonId: context.prefill.buttonId
+            }
+          : { programName: "", panelName: "", buttonId: "" };
+        const nextSelection = reconcileSelection(nextWorkspace, seed);
         setWorkspace(nextWorkspace);
         setSelection(nextSelection);
         setSelectedMacroId(resolveMacroId(nextWorkspace, ""));
         setLoadError("");
+        if (context.prefill) {
+          setTargetMode("button");
+          window.setTimeout(() => shortcutInputRef.current?.focus(), 0);
+        }
       } catch (error) {
         if (cancelled) {
           return;
@@ -189,6 +199,37 @@ export default function BindsWindowPage({
       void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
     };
   }, []);
+
+  useEffect(() => {
+    workspaceRef.current = workspace;
+  }, [workspace]);
+
+  // Select the requested button and focus the shortcut field so a button sent
+  // from the main page's right-click "Binds" action is ready to assign.
+  const applyPrefill = useCallback((prefill: BindsButtonPrefill) => {
+    const resolved = reconcileSelection(workspaceRef.current, {
+      programName: prefill.programName,
+      panelName: prefill.panelName,
+      buttonId: prefill.buttonId
+    });
+    setTargetMode("button");
+    setSelection(resolved);
+    setStatusMessage("");
+    window.setTimeout(() => shortcutInputRef.current?.focus(), 0);
+  }, []);
+
+  // An already-open Binds window receives the prefill as an event.
+  useEffect(() => {
+    const unlistenPromise = listen<BindsButtonPrefill>(BINDS_PREFILL_EVENT, (event) => {
+      if (event.payload) {
+        applyPrefill(event.payload);
+      }
+    });
+
+    return () => {
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, [applyPrefill]);
 
   useEffect(() => {
     const nextSelection = reconcileSelection(workspace, selection);
@@ -621,6 +662,7 @@ export default function BindsWindowPage({
               <span className="binds-window__field-label">Shortcut</span>
               <div className="binds-window__shortcut-combo" ref={shortcutMenuRef}>
               <input
+                ref={shortcutInputRef}
                 className="binds-window__input"
                 type="text"
                 value={shortcutInput}
@@ -636,9 +678,61 @@ export default function BindsWindowPage({
                   }
                 }}
                 onKeyDown={(event) => {
-                  if (event.key === "ArrowDown" && activeButton) {
+                  if (!activeButton) {
+                    return;
+                  }
+
+                  const key = event.key;
+                  if (
+                    key === "ArrowDown" &&
+                    !event.ctrlKey &&
+                    !event.altKey &&
+                    !event.metaKey &&
+                    !event.shiftKey
+                  ) {
                     event.preventDefault();
                     setIsShortcutMenuOpen(true);
+                    return;
+                  }
+
+                  // Ignore lone modifier presses; wait for the full chord.
+                  if (
+                    key === "Control" ||
+                    key === "Shift" ||
+                    key === "Alt" ||
+                    key === "Meta" ||
+                    key === "OS" ||
+                    key === "ContextMenu" ||
+                    key === "Dead"
+                  ) {
+                    return;
+                  }
+
+                  // Capture a pressed key chord (any Ctrl/Alt/Win combo, or a
+                  // function key) so you can just press the shortcut. Plain text
+                  // typing and the ▼ dropdown still work for everything else.
+                  const isFunctionKey = /^F([1-9]|1[0-9]|2[0-4])$/.test(key);
+                  const hasChordModifier =
+                    event.ctrlKey || event.altKey || event.metaKey;
+                  if (!hasChordModifier && !isFunctionKey) {
+                    return;
+                  }
+
+                  event.preventDefault();
+                  const parts: string[] = [];
+                  if (event.ctrlKey) parts.push("ctrl");
+                  if (event.altKey) parts.push("alt");
+                  if (event.shiftKey) parts.push("shift");
+                  if (event.metaKey) parts.push("win");
+                  parts.push(
+                    key === " " ? "space" : key.length === 1 ? key.toLowerCase() : key
+                  );
+
+                  const parsed = parseShortcutInput(parts.join(" + "));
+                  if (parsed.trim()) {
+                    setShortcutInput(formatShortcutForDisplay(parsed));
+                    setStatusMessage("");
+                    setIsShortcutMenuOpen(false);
                   }
                 }}
                 onBlur={(event) => {
@@ -707,8 +801,9 @@ export default function BindsWindowPage({
           </div>
 
           <p className="binds-window__toolbar-note">
-            Pick one button and one shortcut. Existing FlowCell conflicts are blocked; Windows or
-            application shortcuts show a warning but are still allowed.
+            Pick one button, then press the shortcut keys in the field (or type them, or use ▼).
+            Existing FlowCell conflicts are blocked; Windows or application shortcuts show a warning
+            but are still allowed.
           </p>
 
           {statusMessage ? (

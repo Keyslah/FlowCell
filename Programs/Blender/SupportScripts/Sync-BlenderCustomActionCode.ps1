@@ -97,10 +97,58 @@ function Resolve-FlowCellBundledActionSourcePath {
     catch {
     }
 
+    $projectSourcePath = Join-Path $projectRoot $sourcePythonPath
+    if (Test-Path -LiteralPath $projectSourcePath -PathType Leaf) {
+        return [System.IO.Path]::GetFullPath($projectSourcePath)
+    }
+
     $addonTemplateRoot = Split-Path -Parent (Split-Path -Parent $BundledRegistryPath)
     $templateSourcePath = Join-Path $addonTemplateRoot $sourcePythonPath
     if (Test-Path -LiteralPath $templateSourcePath -PathType Leaf) {
         return [System.IO.Path]::GetFullPath($templateSourcePath)
+    }
+
+    return ''
+}
+
+function Resolve-FlowCellRegistryPythonPath {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PythonPath
+    )
+
+    if ([string]::IsNullOrWhiteSpace($PythonPath)) {
+        return ''
+    }
+
+    try {
+        if ([System.IO.Path]::IsPathRooted($PythonPath)) {
+            $absolutePath = [System.IO.Path]::GetFullPath($PythonPath)
+            if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
+                return $absolutePath
+            }
+            return $absolutePath
+        }
+    }
+    catch {
+    }
+
+    $registryRoot = Split-Path -Parent $customRegistryPath
+    $addonRoot = Split-Path -Parent $registryRoot
+    foreach ($candidate in @(
+        (Join-Path $addonRoot $PythonPath),
+        (Join-Path $registryRoot $PythonPath),
+        (Join-Path $projectRoot $PythonPath)
+    )) {
+        try {
+            $resolvedCandidate = [System.IO.Path]::GetFullPath($candidate)
+        }
+        catch {
+            $resolvedCandidate = $candidate
+        }
+        if (Test-Path -LiteralPath $resolvedCandidate -PathType Leaf) {
+            return $resolvedCandidate
+        }
     }
 
     return ''
@@ -555,11 +603,22 @@ foreach ($entry in @($registry.actions)) {
         continue
     }
 
-    try {
-        $resolvedSourcePythonPath = [System.IO.Path]::GetFullPath($sourcePythonPath)
+    $resolvedRuntimePythonPath = Resolve-FlowCellRegistryPythonPath -PythonPath $entryPythonPath
+    if ([string]::IsNullOrWhiteSpace($resolvedRuntimePythonPath)) {
+        $resolvedRuntimePythonPath = Resolve-FlowCellRegistryPythonPath -PythonPath $sourcePythonPath
     }
-    catch {
-        $resolvedSourcePythonPath = $sourcePythonPath
+    if ([string]::IsNullOrWhiteSpace($resolvedRuntimePythonPath) -or -not (Test-Path -LiteralPath $resolvedRuntimePythonPath -PathType Leaf)) {
+        continue
+    }
+
+    $resolvedSourcePythonPath = Resolve-FlowCellRegistryPythonPath -PythonPath $sourcePythonPath
+    if ([string]::IsNullOrWhiteSpace($resolvedSourcePythonPath)) {
+        try {
+            $resolvedSourcePythonPath = [System.IO.Path]::GetFullPath($sourcePythonPath)
+        }
+        catch {
+            $resolvedSourcePythonPath = $sourcePythonPath
+        }
     }
     if (-not (Test-Path -LiteralPath $resolvedSourcePythonPath -PathType Leaf)) {
         continue
@@ -580,6 +639,12 @@ foreach ($entry in @($registry.actions)) {
         continue
     }
     $resolvedFunctionName = [string]$sourceMeta.FunctionName
+    $runtimeFunctionName = if ($entry.PSObject.Properties['functionName'] -and -not [string]::IsNullOrWhiteSpace([string]$entry.functionName)) {
+        [string]$entry.functionName
+    }
+    else {
+        $resolvedFunctionName
+    }
     $wrapperFunctionName = New-FlowCellCustomWrapperFunctionName -ActionName $actionName
     $entryDescription = if ($entry.PSObject.Properties['description']) { [string]$entry.description } else { '' }
 
@@ -592,8 +657,8 @@ foreach ($entry in @($registry.actions)) {
         }
         $entryMap[[string]$prop.Name] = $prop.Value
     }
-    $entryMap.pythonPath = $addonActionsPath
-    $entryMap.functionName = $wrapperFunctionName
+    $entryMap.pythonPath = $resolvedRuntimePythonPath
+    $entryMap.functionName = $runtimeFunctionName
     $entryMap.sourcePythonPath = $resolvedSourcePythonPath
     $entryMap.sourceFunctionName = $resolvedFunctionName
     $entryMap.startLine = [int]$sourceMeta.StartLine

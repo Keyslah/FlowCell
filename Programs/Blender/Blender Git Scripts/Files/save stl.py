@@ -1,4 +1,5 @@
 # Description: Export the selected mesh objects to 01 src\00 assets\03 3d as a uniquely named STL.
+# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

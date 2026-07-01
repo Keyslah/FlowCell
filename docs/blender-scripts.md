@@ -63,6 +63,10 @@ The parser uses:
 - child fields -> `PanelScriptChildRecord { slot, label, tooltip }`
 - `slot` -> the `command`/`action` value sent to `run_flowcell_action`
 
+## Runtime Cleanup
+
+Deleting an installed Blender script/toolset is a runtime cleanup operation. FlowCell should remove the active button/config entry, custom-action registry entry, generated `ManagedActions` copy, stale unreferenced same-family variants, and panel metadata references for that action. It should not delete the source file from `Programs/Blender/Blender Git Scripts` unless the user explicitly deletes that source script.
+
 Known dedicated Blender toolset kinds and required slots:
 
 | Kind | Required slots |
@@ -290,31 +294,31 @@ Only use `import flowcell_bridge as live_bridge` when a tool truly needs a live 
 
 ## Public Sharing Flow
 
-1. Put shareable scripts in `Programs\Blender\Blender Git Scripts`, usually under the matching panel subfolder.
+1. Put shareable scripts in `Programs\Blender\Blender Git Scripts`, usually under the matching panel subfolder. This is the source library.
 2. Open the Blender tab in FlowCell.
 3. Click `Add Script`.
 4. Select one or more `.py` files.
-5. FlowCell copies each file into flat `Blender Local Scripts` and into the selected panel folder, then installs/registers the panel copy.
+5. FlowCell validates each selected source, installs a generated runtime copy into `ManagedActions`, and registers the action.
 6. Reload the Blender FlowCell add-on or restart Blender if FlowCell says runtime reload is required.
 7. Use the new script button.
 
 ## What Add Script Does
 
 1. Opens in the current panel's `Blender Git Scripts` folder when available.
-2. Validates the entrypoint shape and rejects obvious bootstrap/listener files.
-3. Copies each selected source into `Blender Local Scripts`, reusing byte-identical copies and suffixing same-name conflicts.
-4. Copies each selected source into the selected `Panels\<Panel>` folder as the runnable panel copy.
-5. Registers each tool in the FlowCell Blender bridge custom-action registry and regenerates the live custom section.
-6. Writes or updates the panel `.flowcell-panel-item.json` record so `sourcePath` points at the panel-local `.py` file.
-7. Leaves `executionTarget` empty for Blender script buttons so runtime clicks do not launch PowerShell wrappers.
+2. Validates that the file exposes callable `run_flowcell_action(context=None, data=None)`.
+3. Rejects bridge-only wrappers, including files whose main behavior is `bridge.execute_bridge_operator(...)` or files marked `FLOWCELL_BUILTIN_ONLY`.
+4. Copies the validated source into `ManagedActions` as generated installed runtime output.
+5. Registers each tool in `flowcell_custom_actions.json` with `pythonPath` pointing at the runtime copy and `sourcePythonPath` pointing at the original source.
+6. Preserves `FLOWCELL_KIND` and `FLOWCELL_CHILD` metadata in the panel `.flowcell-panel-item.json` record.
+7. Leaves `executionTarget` empty for Blender script buttons so runtime clicks go through the bridge registry.
 8. Tells you whether Blender must reload the FlowCell add-on or restart before runtime verification reflects the new code.
 
 ## Folder Roles
 
-- `Blender Git Scripts`: tracked shareable source tools, organized by panel subfolder.
+- `Blender Git Scripts`: tracked shareable source tools, organized by panel subfolder. Actual unique downloadable logic must live here.
 - `Blender Local Scripts`: ignored flat private backup/core copies. FlowCell never auto-deletes these.
 - `Panels\<Panel>`: ignored local button records and panel-local runnable `.py` copies.
-- `ManagedActions`: ignored bridge-managed runtime action source.
+- `ManagedActions`: generated installed runtime copies. Do not edit this as the source of a downloadable tool.
 - `FlowCellButtons`: deprecated per-button wrapper location, retained only as a purged compatibility folder.
 - `SupportScripts`: dispatcher/sync plumbing only.
 - `Blender Addons - Copy contents Into Blender`: paste-ready Blender add-on files for Blender's `scripts\addons` folder.
@@ -322,7 +326,7 @@ Only use `import flowcell_bridge as live_bridge` when a tool truly needs a live 
 
 ## Delete Behavior
 
-Deleting a Blender script button removes the panel record and panel-local copy through host-owned cleanup where safe. It may prune orphaned generated action files, but it never deletes from `Blender Local Scripts`.
+Deleting a Blender script button calls `delete_blender_action(action_id)`: it removes matching `Programs\Blender\config.json` entries, prunes `flowcell_custom_actions.json`, recycles unreferenced generated `ManagedActions` files for that action family (including stale `_2`, `_3`, `_4` variants when no remaining button references them), regenerates cached registration, and verifies no config or registry reference remains. It does not delete from `Blender Git Scripts`; delete source files only when you explicitly mean to remove the source library entry.
 
 ## Runtime Reload Rule
 

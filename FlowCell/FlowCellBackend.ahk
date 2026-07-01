@@ -207,8 +207,8 @@ GetFlowCellIllustratorAnchorScriptPath() {
     return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_SetAnchorHotkey.jsx"
 }
 
-GetDefaultDummyMonitorHotkeyBinding() {
-    scriptPath := GetFlowCellWorkspaceRoot() "\Programs\Windows\Panels\Utility\Launch-DummyMonitorToggle.vbs"
+GetDefaultSingleMonitorHotkeyBinding() {
+    scriptPath := GetFlowCellWorkspaceRoot() "\Programs\Windows\Panels\Utility\Toggle Monitors.vbs"
     if !FileExist(scriptPath)
         return ""
 
@@ -219,16 +219,58 @@ GetDefaultDummyMonitorHotkeyBinding() {
     }
 }
 
-ShouldRestoreDefaultDummyMonitorBinding(bindingFilePath) {
+ShouldRestoreDefaultSingleMonitorBinding(bindingFilePath) {
     if bindingFilePath = "" || !FileExist(bindingFilePath)
         return true
     try {
-        rawValue := IniRead(bindingFilePath, "Meta", "DummyMonitorDefaultEnabled", "1")
+        iniText := ReadUtf8TextFileWithoutBom(bindingFilePath)
+        rawValue := GetIniTextValue(iniText, "Meta", "SingleMonitorDefaultEnabled", "1")
         normalized := StrLower(Trim(rawValue ""))
         return normalized != "0" && normalized != "false" && normalized != "no"
     } catch {
         return true
     }
+}
+
+ReadUtf8TextFileWithoutBom(path) {
+    text := FileRead(path, "UTF-8")
+    if SubStr(text, 1, 1) = Chr(0xFEFF)
+        return SubStr(text, 2)
+    if SubStr(text, 1, 3) = "ï»¿"
+        return SubStr(text, 4)
+    return text
+}
+
+GetIniTextValue(iniText, sectionName, keyName, defaultValue := "") {
+    currentSection := ""
+    targetSection := StrLower(Trim(sectionName ""))
+    targetKey := StrLower(Trim(keyName ""))
+    normalizedText := StrReplace(iniText, "`r", "")
+
+    for rawLine in StrSplit(normalizedText, "`n") {
+        line := Trim(rawLine)
+        if line = "" || SubStr(line, 1, 1) = ";" || SubStr(line, 1, 1) = "#"
+            continue
+
+        lineLength := StrLen(line)
+        if lineLength >= 2 && SubStr(line, 1, 1) = "[" && SubStr(line, lineLength, 1) = "]" {
+            currentSection := StrLower(Trim(SubStr(line, 2, lineLength - 2)))
+            continue
+        }
+
+        if currentSection != targetSection
+            continue
+
+        separatorIndex := InStr(line, "=")
+        if separatorIndex <= 1
+            continue
+
+        key := StrLower(Trim(SubStr(line, 1, separatorIndex - 1)))
+        if key = targetKey
+            return Trim(SubStr(line, separatorIndex + 1))
+    }
+
+    return defaultValue
 }
 
 class FlowCellApp {
@@ -1117,6 +1159,11 @@ class FlowCellApp {
 
     HandleShortcutInvocation(binding) {
         global flowCellLastActionStatusPath
+        if this.IsTempShotsShortcutScript(binding.scriptPath) {
+            this.HandleTempShotsShortcutInvocation(binding)
+            return
+        }
+
         this.logger.Info("Script hotkey requested. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
         result := this.RunBackendScriptCommand(binding.scriptPath, binding.HasOwnProp("programTabId") ? binding.programTabId : 0, "hotkey " binding.shortcut)
         if binding.HasOwnProp("sendKeyAfter") && binding.sendKeyAfter != "" && WinActive("ahk_exe Illustrator.exe") {
@@ -1135,6 +1182,181 @@ class FlowCellApp {
         this.SetShortcutStatus(JoinLines(lines))
         WriteTextFile(flowCellLastActionStatusPath, JoinLines(lines))
         this.logger.Info("Script hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
+    }
+
+    IsTempShotsShortcutScript(scriptPath) {
+        resolvedScriptPath := ResolveLegacyWindowsProgramPath(scriptPath, false)
+        SplitPath resolvedScriptPath, &fileName
+        return StrLower(Trim(fileName)) = "temp_shots.vbs"
+    }
+
+    HandleTempShotsShortcutInvocation(binding) {
+        global flowCellLastActionStatusPath
+        scriptPath := ResolveLegacyWindowsProgramPath(binding.scriptPath)
+        this.logger.Info("Temp Shots hotkey requested. Shortcut=" binding.shortcut " | Script=" scriptPath)
+
+        result := this.TryLaunchTempShotsFastShortcut(scriptPath)
+
+        if !result.attempted {
+            result := {
+                attempted: true,
+                succeeded: false,
+                method: "temp_shots_wscript_async",
+                detail: ""
+            }
+
+            if !FileExist(scriptPath) {
+                result.detail := "Temp Shots launcher was not found."
+            } else {
+                wscriptPath := A_WinDir "\System32\wscript.exe"
+                if !FileExist(wscriptPath)
+                    wscriptPath := "wscript.exe"
+                try {
+                    Run('"' wscriptPath '" //nologo "' scriptPath '"', , "Hide")
+                    result.succeeded := true
+                    result.detail := "Temp Shots launched."
+                } catch as err {
+                    result.detail := "Launching Temp Shots failed. " err.Message
+                }
+            }
+        }
+
+        lines := [
+            "Shortcut: " binding.shortcut,
+            "Script: " scriptPath,
+            "Attempted: " BoolToWord(result.attempted),
+            "Succeeded: " BoolToWord(result.succeeded),
+            "Method: " result.method,
+            "Details: " result.detail
+        ]
+        statusText := JoinLines(lines)
+        this.SetShortcutStatus(statusText)
+        WriteTextFile(flowCellLastActionStatusPath, statusText)
+        this.logger.Info("Temp Shots hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
+    }
+
+    TryLaunchTempShotsFastShortcut(launcherPath) {
+        global flowCellLastActionStatusPath
+        result := {
+            attempted: false,
+            succeeded: false,
+            method: "temp_shots_fast_async",
+            detail: ""
+        }
+
+        psScript := this.ResolveTempShotsPowerShellScriptPath(launcherPath)
+        if psScript = "" {
+            result.detail := "Temp Shots PowerShell saver was not found."
+            return result
+        }
+
+        targetFolder := this.ReadTempShotsFastFolder()
+        if targetFolder = "" {
+            result.detail := "Temp Shots folder has not been selected yet."
+            return result
+        }
+
+        initialSequence := DllCall("user32.dll\GetClipboardSequenceNumber", "UInt")
+        if !this.StartTempShotsScreenSnip() {
+            result.attempted := true
+            result.detail := "Windows screen snip could not be started."
+            return result
+        }
+
+        result.attempted := true
+        try {
+            command := 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Sta -File "' psScript '" -SaveStartedSnip -InitialSequence ' initialSequence
+            Run(command, , "Hide")
+            result.succeeded := true
+            result.detail := "Temp Shots launched."
+            WriteTextFile(flowCellLastActionStatusPath, "Temp Shots is waiting for a screen snip.")
+        } catch as err {
+            result.detail := "Launching Temp Shots saver failed. " err.Message
+        }
+        return result
+    }
+
+    ResolveTempShotsPowerShellScriptPath(launcherPath) {
+        repoScript := GetFlowCellWorkspaceRoot() "\Programs\Windows\Windows Git Scripts\Utility\Temp Shots.ps1"
+        if FileExist(repoScript)
+            return repoScript
+
+        if launcherPath != "" {
+            SplitPath launcherPath, , &launcherDir
+            siblingScript := launcherDir "\Temp Shots.ps1"
+            if FileExist(siblingScript)
+                return siblingScript
+        }
+
+        localScript := GetFlowCellWorkspaceRoot() "\Programs\Windows\Windows Local Scripts\Temp Shots.ps1"
+        if FileExist(localScript)
+            return localScript
+
+        return ""
+    }
+
+    ReadTempShotsFastFolder() {
+        global flowCellLocalRoot
+        folderCachePath := flowCellLocalRoot "\windows\temp-shots\temp-shots.folder.txt"
+        if FileExist(folderCachePath) {
+            try {
+                folder := Trim(ReadUtf8TextFileWithoutBom(folderCachePath), "`r`n`t ")
+                if folder != "" && DirExist(folder)
+                    return folder
+            } catch {
+            }
+        }
+
+        configPath := flowCellLocalRoot "\windows\temp-shots\temp-shots.config.json"
+        if !FileExist(configPath)
+            return ""
+
+        try {
+            configText := ReadUtf8TextFileWithoutBom(configPath)
+            if RegExMatch(configText, '"folder"\s*:\s*"((?:\\.|[^"\\])*)"', &match) {
+                folder := this.UnescapeJsonString(match[1])
+                if folder != "" && DirExist(folder) {
+                    try {
+                        if !DirExist(flowCellLocalRoot "\windows\temp-shots")
+                            DirCreate flowCellLocalRoot "\windows\temp-shots"
+                        if FileExist(folderCachePath)
+                            FileDelete folderCachePath
+                        FileAppend folder, folderCachePath, "UTF-8-RAW"
+                    } catch {
+                    }
+                    return folder
+                }
+            }
+        } catch {
+        }
+
+        return ""
+    }
+
+    UnescapeJsonString(value) {
+        value := StrReplace(value, '\"', '"')
+        value := StrReplace(value, '\/', '/')
+        value := StrReplace(value, '\\', '\')
+        return value
+    }
+
+    StartTempShotsScreenSnip() {
+        try {
+            explorerPath := A_WinDir "\explorer.exe"
+            if FileExist(explorerPath) {
+                Run('"' explorerPath '" ms-screenclip:', , "Hide")
+                return true
+            }
+        } catch {
+        }
+
+        try {
+            Run('SnippingTool.exe /clip', , "Hide")
+            return true
+        } catch {
+        }
+
+        return false
     }
 
     RunBackendCommand(commandId, payloadJson, programTabId := 0, programName := "", sourceButtonId := "", runAsync := false) {
@@ -1204,7 +1426,7 @@ class FlowCellApp {
                 . ","
                 . PowerShellSingleQuote(resultPath)
                 . " -Force -ErrorAction SilentlyContinue } }"
-            command := 'powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "' psScript '"'
+            command := 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Command "' psScript '"'
             try {
                 Run(command, , "Hide")
             } catch as err {
@@ -1224,7 +1446,7 @@ class FlowCellApp {
             return result
         }
 
-        command := 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' flowCellCommandBackendPath '" -EnvelopePath "' envelopePath '" -ResultPath "' resultPath '"'
+        command := 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' flowCellCommandBackendPath '" -EnvelopePath "' envelopePath '" -ResultPath "' resultPath '"'
         try exitCode := RunWait(command, , "Hide")
         catch as err {
             result.detail := "Launching the command backend failed. " err.Message
@@ -2455,6 +2677,12 @@ class FlowCellApp {
                 return this.RunGenericScript(scriptPath, source, activateExe, "blender_bridge")
             case "generic":
                 activateExe := this.ResolveConfiguredProgramExePath(programConfig)
+                normalizedGenericProgram := StrLower(Trim(resolvedProgramName))
+                genericExeName := StrLower(Trim(activateExe))
+                if genericExeName != ""
+                    SplitPath genericExeName, &genericExeName
+                if normalizedGenericProgram = "windows" || genericExeName = "explorer.exe" || genericExeName = "dopus.exe" || genericExeName = "dopusrt.exe"
+                    return this.RunGenericScript(scriptPath, source, "", "windows_generic")
                 return this.RunGenericScript(scriptPath, source, activateExe, "generic")
         }
 
@@ -2527,11 +2755,13 @@ class FlowCellApp {
             extension := "." StrLower(extension)
             exitCode := 0
             if extension = ".ps1" {
+                powershellArgs := '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass '
                 if this.ScriptRequiresVisibleWindow(scriptPath) {
-                    exitCode := RunWait('powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Sta -File "' scriptPath '"')
+                    powershellArgs .= '-Sta '
                 } else {
-                    exitCode := RunWait('powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' scriptPath '"', , "Hide")
+                    powershellArgs .= '-NonInteractive '
                 }
+                exitCode := RunWait('powershell.exe ' powershellArgs '-File "' scriptPath '"', , "Hide")
             } else if extension = ".cmd" || extension = ".bat" {
                 exitCode := RunWait(A_ComSpec ' /c "' scriptPath '"', , "Hide")
             } else {
@@ -5254,7 +5484,7 @@ class SaveSelectedObjToBlenderAction extends SaveSelectedObjToProject3DAction {
         }
 
         result.attempted := true
-        command := 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' helperPath '" -ObjPath "' objPath '" -ResultPath "' resultPath '"'
+        command := 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' helperPath '" -ObjPath "' objPath '" -ResultPath "' resultPath '"'
         try exitCode := RunWait(command, , "Hide")
         catch as err {
             result.detail := "Launching the Blender import helper failed. " err.Message
@@ -5644,7 +5874,7 @@ class SaveSelectedPngToBlenderLithoAction extends SaveSelectedObjToProject3DActi
         }
 
         result.attempted := true
-        command := 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File "' helperPath '" -PngPath "' pngPath '" -Dpi "' dpi '" -ResultPath "' resultPath '"'
+        command := 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' helperPath '" -PngPath "' pngPath '" -Dpi "' dpi '" -ResultPath "' resultPath '"'
         try exitCode := RunWait(command, , "Hide")
         catch as err {
             result.detail := "Launching the Blender lithophane helper failed. " err.Message
@@ -6910,8 +7140,9 @@ class ScriptShortcutManager {
         }
 
         try {
-            idText := IniRead(this.bindingFilePath, "Meta", "Ids", "")
-            nextIdText := IniRead(this.bindingFilePath, "Meta", "NextId", "1")
+            iniText := ReadUtf8TextFileWithoutBom(this.bindingFilePath)
+            idText := GetIniTextValue(iniText, "Meta", "Ids", "")
+            nextIdText := GetIniTextValue(iniText, "Meta", "NextId", "1")
             this.nextId := Max(Integer(nextIdText), 1)
         } catch as err {
             this.logger.Error("Failed to read the FlowCell bindings file.", err)
@@ -6933,9 +7164,9 @@ class ScriptShortcutManager {
 
             section := "Binding_" idToken
             try {
-                shortcut := CanonicalizeShortcut(IniRead(this.bindingFilePath, section, "Shortcut"))
-                scriptPath := ResolveLegacyWindowsProgramPath(IniRead(this.bindingFilePath, section, "ScriptPath"))
-                programTabId := IniRead(this.bindingFilePath, section, "ProgramTabId", "0")
+                shortcut := CanonicalizeShortcut(GetIniTextValue(iniText, section, "Shortcut"))
+                scriptPath := ResolveLegacyWindowsProgramPath(GetIniTextValue(iniText, section, "ScriptPath"))
+                programTabId := GetIniTextValue(iniText, section, "ProgramTabId", "0")
                 this.bindings.Push({
                     id: Integer(idToken),
                     shortcut: shortcut,
@@ -6965,6 +7196,13 @@ class ScriptShortcutManager {
             if binding.HasOwnProp("programTabId") && binding.programTabId
                 IniWrite binding.programTabId, this.bindingFilePath, section, "ProgramTabId"
         }
+
+        ; IniWrite creates new files as UTF-16 (BOM FF FE). The Tauri/Rust side reads this
+        ; file with a strict UTF-8 reader, so re-save as UTF-8 or the frontend bindings
+        ; parser fails outright. FileRead auto-detects the source BOM/encoding.
+        normalizedText := FileRead(this.bindingFilePath)
+        FileDelete this.bindingFilePath
+        FileAppend normalizedText, this.bindingFilePath, "UTF-8"
     }
 
     BuildIdList() {
@@ -6975,14 +7213,14 @@ class ScriptShortcutManager {
     }
 
     EnsureDefaultBindings() {
-        this.EnsureDefaultDummyMonitorBinding()
+        this.EnsureDefaultSingleMonitorBinding()
     }
 
-    EnsureDefaultDummyMonitorBinding() {
-        if !ShouldRestoreDefaultDummyMonitorBinding(this.bindingFilePath)
+    EnsureDefaultSingleMonitorBinding() {
+        if !ShouldRestoreDefaultSingleMonitorBinding(this.bindingFilePath)
             return
 
-        defaultBinding := GetDefaultDummyMonitorHotkeyBinding()
+        defaultBinding := GetDefaultSingleMonitorHotkeyBinding()
         if !IsObject(defaultBinding)
             return
 
@@ -7003,7 +7241,11 @@ class ScriptShortcutManager {
             status: "Loaded"
         })
         this.nextId += 1
-        this.logger.Info("Restored default dummy monitor shortcut binding. Shortcut=" defaultBinding.shortcut " | Script=" defaultBinding.scriptPath)
+        ; Persist immediately - otherwise this default only ever lives in memory and the
+        ; Binds UI (which reads bindings.ini directly) shows the shortcut as unbound even
+        ; though it is actually registered and working.
+        this.SaveToDisk()
+        this.logger.Info("Restored default single-monitor shortcut binding. Shortcut=" defaultBinding.shortcut " | Script=" defaultBinding.scriptPath)
     }
 
     ApplyHotkeys() {

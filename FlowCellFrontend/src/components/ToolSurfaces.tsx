@@ -843,7 +843,7 @@ export function HdriWorldToolSurface({
           className: "tool-chip",
           styleGroup,
           importedSkin,
-          title: "Pick an image and sample five theme colors."
+          title: "Pick an image, sample theme colors, and place it as the Place Picture image."
         })}
         {renderToolChip("Absorb Theme", {
           onClick: onAbsorbTheme,

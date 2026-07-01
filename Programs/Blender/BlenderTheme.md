@@ -10,7 +10,7 @@ Open the Blender program in FlowCell and use the `theme` owner button from the p
 
 ## Theme Workflow
 
-1. Use `Browse` to pick an image and sample five theme colors, or use `Absorb Theme` to read the current Blender theme into the visible buckets.
+1. Use `Browse` to pick an image, sample theme colors, copy that same image into the Place Picture field, and place it in Blender. Use `Absorb Theme` to read the current Blender theme into the visible buckets.
 2. Press `Dark Theme` or `Light Theme` to stage a generated theme preset on the page. These buttons do not send the theme to Blender by themselves.
 3. Optionally choose a darkness profile from the dropdown beside `Dark Theme`. `Save Darkness Profile...` stores the current darkness pattern for later dark/light remapping.
 4. Fine-tune the staged colors with the bucket color pickers or hex fields.
@@ -21,7 +21,7 @@ Open the Blender program in FlowCell and use the `theme` owner button from the p
 
 | Control | Hover Description |
 | --- | --- |
-| `Browse` | Pick an image and sample five theme colors. |
+| `Browse` | Pick an image, sample theme colors, and place it as the Place Picture image. |
 | `Absorb Theme` | Read the current Blender theme and stage all visible buckets. |
 | `Save Buckets` | Save the current staged Blender theme buckets for later reuse. |
 | `Load Buckets` | Load saved Blender theme buckets back into this page. |

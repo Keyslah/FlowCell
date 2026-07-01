@@ -11,9 +11,9 @@ ahkExe = root & "\runtime\AutoHotkey64.exe"
 backendFound = False
 
 If fso.FileExists(patchScript) Then
-    patchCommand = "powershell.exe -NoProfile -File " & Chr(34) & patchScript & Chr(34) & " -RepoRoot " & Chr(34) & repoRoot & Chr(34)
+    patchCommand = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File " & Chr(34) & patchScript & Chr(34) & " -RepoRoot " & Chr(34) & repoRoot & Chr(34)
     On Error Resume Next
-    shell.Run patchCommand, 1, True
+    shell.Run patchCommand, 0, True
     On Error GoTo 0
 End If
 

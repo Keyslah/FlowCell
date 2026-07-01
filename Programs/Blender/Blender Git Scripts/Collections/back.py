@@ -1,4 +1,5 @@
 # Description: Move the current Live version to Trash and restore the newest matching snapshot back into Live.
+# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

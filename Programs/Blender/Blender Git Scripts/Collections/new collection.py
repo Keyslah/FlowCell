@@ -1,4 +1,5 @@
 # Description: Prompt for a name and create a new child collection near the selected object.
+# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

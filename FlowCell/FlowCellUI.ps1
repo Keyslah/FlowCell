@@ -551,7 +551,7 @@ function Get-AhkScriptPowerShellArgumentList([string]$ScriptPath, [string[]]$Arg
         $parts += (ConvertTo-SingleQuotedPowerShellLiteral ([string]$argument))
     }
     $commandText = (($parts -join ' ') + '; exit $LASTEXITCODE')
-    return @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', $commandText)
+    return @('-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-Command', $commandText)
 }
 
 function Invoke-ControllerCli([string[]]$Arguments) {
@@ -564,7 +564,7 @@ function Start-AhkScriptProcess([string]$ScriptPath, [string[]]$Arguments, [stri
 }
 
 function Get-PowerShellScriptArgumentList([string]$ScriptPath, [string[]]$Arguments) {
-    $resolvedArguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath)
+    $resolvedArguments = @('-NoProfile', '-WindowStyle', 'Hidden', '-ExecutionPolicy', 'Bypass', '-File', $ScriptPath)
     foreach ($argument in @($Arguments)) {
         $resolvedArguments += [string]$argument
     }
@@ -6588,10 +6588,10 @@ function Read-State {
             }
         }
     }
-    $defaultDummyBinding = Get-DefaultDummyMonitorBinding -ProgramTabs @($programTabs)
-    if ($null -ne $defaultDummyBinding) {
-        $defaultShortcut = Normalize-Shortcut -Value ([string]$defaultDummyBinding.Shortcut)
-        $defaultTarget = Resolve-LegacyWindowsProgramPath -Path ([string]$defaultDummyBinding.Target) -RequireExisting
+    $defaultSingleBinding = Get-DefaultSingleMonitorBinding -ProgramTabs @($programTabs)
+    if ($null -ne $defaultSingleBinding) {
+        $defaultShortcut = Normalize-Shortcut -Value ([string]$defaultSingleBinding.Shortcut)
+        $defaultTarget = Resolve-LegacyWindowsProgramPath -Path ([string]$defaultSingleBinding.Target) -RequireExisting
         $existingDefaultBinding = @(
             $scriptBindings |
                 Where-Object {
@@ -6608,10 +6608,10 @@ function Read-State {
             $scriptBindings += [pscustomobject]@{
                 Kind = 'script'
                 Id = [int]$nextId
-                Shortcut = [string]$defaultDummyBinding.Shortcut
+                Shortcut = [string]$defaultSingleBinding.Shortcut
                 Target = [string]$defaultTarget
                 Status = 'Active'
-                ProgramTabId = [int]$defaultDummyBinding.ProgramTabId
+                ProgramTabId = [int]$defaultSingleBinding.ProgramTabId
             }
             $nextId = [int]$nextId + 1
         }
@@ -6660,12 +6660,12 @@ function Resolve-LegacyWindowsProgramPath {
     return $normalizedPath
 }
 
-function Get-DefaultDummyMonitorBinding {
+function Get-DefaultSingleMonitorBinding {
     param(
         [object[]]$ProgramTabs = @()
     )
 
-    $targetPath = Join-Path $script:FlowCellHomeRoot 'Programs\Windows\Panels\Utility\Launch-DummyMonitorToggle.vbs'
+    $targetPath = Join-Path $script:FlowCellHomeRoot 'Programs\Windows\Panels\Utility\Toggle Monitors.vbs'
     if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
         return $null
     }

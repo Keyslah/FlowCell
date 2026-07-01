@@ -21,16 +21,6 @@
                         "localAction":  "add_button"
                     },
                     {
-                        "label":  "alignment tools",
-                        "tooltip":  "Open FlowCell alignment controls for active-object min, center, max, surface, and origin alignment.",
-                        "action":  "flowcell_custom_alignment_tools_2"
-                    },
-                    {
-                        "label":  "flatten revolve",
-                        "tooltip":  "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.",
-                        "action":  "flowcell_custom_flatten_revolve_2"
-                    },
-                    {
                         "label":  "Base",
                         "tooltip":  "Store the current selected-object bounds as the Smart Axis baseline.",
                         "action":  "smart_axis_lock",
@@ -71,22 +61,10 @@
                                  }
                     },
                     {
-                        "label":  "rotate",
-                        "tooltip":  "Open Rotate controls for axis, pivot, transform, and distribute rotation steps.",
-                        "action":  "flowcell_custom_rotate_4"
-                    },
-                    {
-                        "label":  "theme",
-                        "tooltip":  "Open Theme, Place Picture, and HDRI controls for Blender UI colors, fake viewport picture grid/gizmos, world path, X/Y/Z rotation, and world strength.",
-                        "action":  "flowcell_custom_theme"
-                    },
-                    {
                         "label":  "Cursor Center Hole",
                         "tooltip":  "With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.",
-                        "action":  "alignment_tools",
-                        "data":  {
-                                     "command":  "cursor_center_hole"
-                                 }
+                        "action":  "cursor_center_hole",
+                        "panel":  "Utility"
                     },
                     {
                         "label":  "save stl",
@@ -181,226 +159,37 @@
                         "statusText":  "live"
                     },
                     {
-                        "label":  "rotate",
-                        "tooltip":  "Open Rotate controls for axis, pivot, transform, and distribute rotation steps.",
-                        "action":  "flowcell_custom_rotate"
-                    },
-                    {
-                        "label":  "smart axis",
-                        "tooltip":  "Smart Axis Lock stores selected object bounds, cycles pinned axis sides, and can run live while scaling.",
-                        "action":  "flowcell_custom_smart_axis"
-                    },
-                    {
-                        "label":  "new collection",
-                        "tooltip":  "Prompt for a name and create a new child collection near the selected object.",
-                        "action":  "flowcell_custom_new_collection"
-                    },
-                    {
-                        "label":  "add to live",
-                        "tooltip":  "Copy selected snapshot, trash, or archive objects into Live without replacing the current Live version.",
-                        "action":  "flowcell_custom_add_to_live"
-                    },
-                    {
-                        "label":  "archive",
-                        "tooltip":  "Copy the selected objects into Archive.",
-                        "action":  "flowcell_custom_archive"
-                    },
-                    {
-                        "label":  "back",
-                        "tooltip":  "Move the current Live version to Trash and restore the newest matching snapshot back into Live.",
-                        "action":  "flowcell_custom_back"
-                    },
-                    {
-                        "label":  "cycle collection",
-                        "tooltip":  "Use the selected object\u0027s collection and show one direct object at a time while selecting it.",
-                        "action":  "flowcell_custom_cycle_collection"
-                    },
-                    {
                         "label":  "cycle versions back",
                         "tooltip":  "With one selected Live object, cycle Live and snapshot versions one visible object at a time.",
-                        "action":  "flowcell_custom_cycle_versions_back"
+                        "action":  "cycle_live_versions",
+                        "data":  {
+                                     "direction":  "backward"
+                                 }
                     },
                     {
                         "label":  "cycle versions forward",
                         "tooltip":  "With one selected Live object, cycle Live and snapshot versions one visible object at a time.",
-                        "action":  "flowcell_custom_cycle_versions_forward"
-                    },
-                    {
-                        "label":  "empty collections",
-                        "tooltip":  "Delete empty collections while keeping the system roots.",
-                        "action":  "flowcell_custom_empty_collections"
-                    },
-                    {
-                        "label":  "empty trash",
-                        "tooltip":  "Delete everything inside Trash.",
-                        "action":  "flowcell_custom_empty_trash"
-                    },
-                    {
-                        "label":  "make layers",
-                        "tooltip":  "Create Live, Snapshots, Trash, and Archive if missing.",
-                        "action":  "flowcell_custom_make_layers"
-                    },
-                    {
-                        "label":  "new collection",
-                        "tooltip":  "Prompt for a name and create a new child collection near the selected object.",
-                        "action":  "flowcell_custom_new_collection_2"
-                    },
-                    {
-                        "label":  "rename selected",
-                        "tooltip":  "Rename all selected Blender objects in one prompt.",
-                        "action":  "flowcell_custom_rename_selected"
-                    },
-                    {
-                        "label":  "restore",
-                        "tooltip":  "Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first.",
-                        "action":  "flowcell_custom_restore"
-                    },
-                    {
-                        "label":  "snapshot 2",
-                        "tooltip":  "Copy the selected Live objects into Snapshots as versioned s# duplicates.",
-                        "action":  "flowcell_custom_snapshot_2"
-                    },
-                    {
-                        "label":  "snapshot",
-                        "tooltip":  "Copy the selected Live objects into Snapshots as versioned s# duplicates.",
-                        "action":  "flowcell_custom_snapshot"
-                    },
-                    {
-                        "label":  "Sort Live",
-                        "tooltip":  "Move every currently hidden object under Live into Trash.",
-                        "action":  "flowcell_custom_sort_live"
-                    },
-                    {
-                        "label":  "sort",
-                        "tooltip":  "Sort by visibility: visible objects become Live, matching invisible family objects become Snapshots as s#, and other invisible objects become Trash as t#.",
-                        "action":  "flowcell_custom_sort"
-                    },
-                    {
-                        "label":  "trash",
-                        "tooltip":  "Move the selected objects into Trash.",
-                        "action":  "flowcell_custom_trash"
-                    },
-                    {
-                        "label":  "snapshot",
-                        "tooltip":  "Copy the selected Live objects into Snapshots as versioned s# duplicates.",
-                        "action":  "flowcell_custom_snapshot_3"
-                    },
-                    {
-                        "label":  "snapshot",
-                        "tooltip":  "Copy the selected Live objects into Snapshots as versioned s# duplicates.",
-                        "action":  "flowcell_custom_snapshot_4"
-                    },
-                    {
-                        "label":  "trash",
-                        "tooltip":  "Move the selected objects into Trash.",
-                        "action":  "flowcell_custom_trash_2"
-                    },
-                    {
-                        "label":  "sort",
-                        "tooltip":  "Sort by visibility: visible objects become Live, matching invisible family objects become Snapshots as s#, and other invisible objects become Trash as t#.",
-                        "action":  "flowcell_custom_sort_2"
-                    },
-                    {
-                        "label":  "Sort Live",
-                        "tooltip":  "Move every currently hidden object under Live into Trash.",
-                        "action":  "flowcell_custom_sort_live_2"
-                    },
-                    {
-                        "label":  "restore",
-                        "tooltip":  "Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first.",
-                        "action":  "flowcell_custom_restore_2"
+                        "action":  "cycle_live_versions",
+                        "data":  {
+                                     "direction":  "forward"
+                                 }
                     },
                     {
                         "label":  "baseline visibility",
                         "tooltip":  "Record the objects currently visible in the active view layer.",
-                        "action":  "flowcell_custom_baseline_visibility",
+                        "action":  "baseline_visibility",
                         "panel":  "Collections"
                     },
                     {
                         "label":  "restore visibility",
                         "tooltip":  "Hide every object in the active view layer except the objects recorded by Baseline Visibility.",
-                        "action":  "flowcell_custom_restore_visibility",
+                        "action":  "restore_visibility",
                         "panel":  "Collections"
                     },
                     {
                         "label":  "rename selected",
                         "tooltip":  "Rename all selected Blender objects in one prompt.",
                         "action":  "flowcell_custom_rename_selected_2"
-                    },
-                    {
-                        "label":  "new collection",
-                        "tooltip":  "Prompt for a name and create a new child collection near the selected object.",
-                        "action":  "flowcell_custom_new_collection_3"
-                    },
-                    {
-                        "label":  "make layers",
-                        "tooltip":  "Create Live, Snapshots, Trash, and Archive if missing.",
-                        "action":  "flowcell_custom_make_layers_2"
-                    },
-                    {
-                        "label":  "empty trash",
-                        "tooltip":  "Delete everything inside Trash.",
-                        "action":  "flowcell_custom_empty_trash_2"
-                    },
-                    {
-                        "label":  "empty collections",
-                        "tooltip":  "Delete empty collections while keeping the system roots.",
-                        "action":  "flowcell_custom_empty_collections_2"
-                    },
-                    {
-                        "label":  "cycle versions forward",
-                        "tooltip":  "With one selected Live object, cycle Live and snapshot versions one visible object at a time.",
-                        "action":  "flowcell_custom_cycle_versions_forward_2"
-                    },
-                    {
-                        "label":  "cycle versions back",
-                        "tooltip":  "With one selected Live object, cycle Live and snapshot versions one visible object at a time.",
-                        "action":  "flowcell_custom_cycle_versions_back_2"
-                    },
-                    {
-                        "label":  "cycle collection",
-                        "tooltip":  "Use the selected object\u0027s collection and show one direct object at a time while selecting it.",
-                        "action":  "flowcell_custom_cycle_collection_2"
-                    },
-                    {
-                        "label":  "back",
-                        "tooltip":  "Move the current Live version to Trash and restore the newest matching snapshot back into Live.",
-                        "action":  "flowcell_custom_back_2"
-                    },
-                    {
-                        "label":  "archive",
-                        "tooltip":  "Copy the selected objects into Archive.",
-                        "action":  "flowcell_custom_archive_2"
-                    },
-                    {
-                        "label":  "add to live",
-                        "tooltip":  "Copy selected snapshot, trash, or archive objects into Live without replacing the current Live version.",
-                        "action":  "flowcell_custom_add_to_live_2"
-                    },
-                    {
-                        "label":  "rotate",
-                        "tooltip":  "Open Rotate controls for axis, pivot, transform, and distribute rotation steps.",
-                        "action":  "flowcell_custom_rotate_3"
-                    },
-                    {
-                        "label":  "cura",
-                        "tooltip":  "Export the selected mesh objects as STL files and add them to Cura.",
-                        "action":  "flowcell_custom_cura"
-                    },
-                    {
-                        "label":  "orca",
-                        "tooltip":  "Export the selected mesh objects as STL files and add them to Orca.",
-                        "action":  "flowcell_custom_orca"
-                    },
-                    {
-                        "label":  "save png",
-                        "tooltip":  "Render the active selected object from the current scene camera to 01 src\\00 assets\\01 images as a transparent PNG cropped exactly to the visible object bounds.",
-                        "action":  "flowcell_custom_save_png"
-                    },
-                    {
-                        "label":  "save stl",
-                        "tooltip":  "Export the selected mesh objects to the active organization profile\u0027s STL destination as a uniquely named STL.",
-                        "action":  "flowcell_custom_save_stl"
                     },
                     {
                         "label":  "Cube",
@@ -435,31 +224,6 @@
                     {
                         "label":  "split",
                         "tooltip":  "Split joined or physically separated parts into disconnected objects and set each new origin to geometry.",
-                        "action":  "flowcell_custom_split"
-                    },
-                    {
-                        "label":  "alignment tools",
-                        "tooltip":  "Open FlowCell alignment controls for active-object min, center, max, surface, and origin alignment.",
-                        "action":  "flowcell_custom_alignment_tools_2"
-                    },
-                    {
-                        "label":  "theme",
-                        "tooltip":  "Set the Blender world HDRI image plus X/Y/Z rotation, world strength,",
-                        "action":  "flowcell_custom_theme"
-                    },
-                    {
-                        "label":  "boolean",
-                        "tooltip":  "Quick Boolean with I/U/D operation buttons, solver dropdown, SI/HT/HC/S toggles, and Run.",
-                        "action":  "flowcell_custom_boolean"
-                    },
-                    {
-                        "label":  "back",
-                        "tooltip":  "Move the current Live version to Trash and restore the newest matching snapshot back into Live.",
-                        "action":  "flowcell_custom_back_3"
-                    },
-                    {
-                        "label":  "split",
-                        "tooltip":  "Split joined or physically separated parts into disconnected objects and set each new origin to geometry.",
                         "action":  "flowcell_custom_split_2",
                         "panel":  "Utility"
                     },
@@ -480,48 +244,6 @@
                         "tooltip":  "Set each selected object\u0027s origin to its geometry center in Object Mode.",
                         "action":  "flowcell_custom_origin_geo",
                         "panel":  "Utility"
-                    },
-                    {
-                        "label":  "tri poly",
-                        "tooltip":  "Create triangle and regular polygon prism shapes from a compact Tri \u0026 Poly tool set.",
-                        "action":  "flowcell_custom_tri_poly",
-                        "panel":  "toolset"
-                    },
-                    {
-                        "label":  "remesh",
-                        "tooltip":  "Create, update, and apply Remesh modifiers with Voxel, Smooth, Sharp, and Blocks modes.",
-                        "action":  "flowcell_custom_remesh",
-                        "panel":  "toolset"
-                    },
-                    {
-                        "label":  "remesh",
-                        "tooltip":  "Create, update, and apply Blender Remesh modifiers from a compact FlowCell tool set.",
-                        "action":  "flowcell_custom_remesh_2",
-                        "panel":  "toolset"
-                    },
-                    {
-                        "label":  "smart axis",
-                        "tooltip":  "Smart Axis Lock stores selected object bounds, cycles pinned axis sides, and can run live while scaling.",
-                        "action":  "flowcell_custom_smart_axis_3",
-                        "panel":  "toolset"
-                    },
-                    {
-                        "label":  "rotate",
-                        "tooltip":  "rotate objects with, transform, and distribute(evenly spaced copies around pivot)",
-                        "action":  "flowcell_custom_rotate_4",
-                        "panel":  "toolset"
-                    },
-                    {
-                        "label":  "flatten revolve",
-                        "tooltip":  "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.",
-                        "action":  "flowcell_custom_flatten_revolve_2",
-                        "panel":  "toolset"
-                    },
-                    {
-                        "label":  "xyz dimensions",
-                        "tooltip":  "Show live X, Y, and Z dimensions for the active selected object in inches.",
-                        "action":  "flowcell_custom_xyz_dimensions_2",
-                        "panel":  "toolset"
                     },
                     {
                         "label":  "Grid",
@@ -569,16 +291,64 @@
                                  }
                     },
                     {
-                        "label":  "Cursor Center Hole",
-                        "tooltip":  "With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.",
-                        "action":  "flowcell_custom_cursor_center_hole",
-                        "panel":  "Utility"
-                    },
-                    {
                         "label":  "slicer",
                         "tooltip":  "Slicer",
                         "action":  "flowcell_custom_slicer",
                         "panel":  "Files"
+                    },
+                    {
+                        "label":  "alignment tools",
+                        "tooltip":  "Selected objects go to the active-object min, center, max, surface, and origin alignment.",
+                        "action":  "flowcell_custom_alignment_tools",
+                        "panel":  "toolset"
+                    },
+                    {
+                        "label":  "boolean",
+                        "tooltip":  "Quick Boolean with I/U/D operation buttons, solver fanout, SI/HT/HC/S toggles, and Run.",
+                        "action":  "flowcell_custom_boolean",
+                        "panel":  "toolset"
+                    },
+                    {
+                        "label":  "flatten revolve",
+                        "tooltip":  "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.",
+                        "action":  "flowcell_custom_flatten_revolve",
+                        "panel":  "toolset"
+                    },
+                    {
+                        "label":  "remesh",
+                        "tooltip":  "Create, update, and apply Blender Remesh modifiers from a compact FlowCell tool set.",
+                        "action":  "flowcell_custom_remesh",
+                        "panel":  "toolset"
+                    },
+                    {
+                        "label":  "rotate",
+                        "tooltip":  "rotate objects with, transform, and distribute(evenly spaced copies around pivot)",
+                        "action":  "flowcell_custom_rotate",
+                        "panel":  "toolset"
+                    },
+                    {
+                        "label":  "smart axis",
+                        "tooltip":  "Smart Axis Lock stores selected object bounds, cycles pinned axis sides, and can run live while scaling.",
+                        "action":  "flowcell_custom_smart_axis",
+                        "panel":  "toolset"
+                    },
+                    {
+                        "label":  "theme",
+                        "tooltip":  "Set Blender UI theme and HDRI values, plus Place Picture fake gizmos and fake grid over a background image.",
+                        "action":  "flowcell_custom_theme",
+                        "panel":  "toolset"
+                    },
+                    {
+                        "label":  "tri poly",
+                        "tooltip":  "Create triangle and regular polygon prism shapes from a compact Tri \u0026 Poly tool set.",
+                        "action":  "flowcell_custom_tri_poly",
+                        "panel":  "toolset"
+                    },
+                    {
+                        "label":  "xyz dimensions",
+                        "tooltip":  "Show live X, Y, and Z dimensions for the active selected object in inches.",
+                        "action":  "flowcell_custom_xyz_dimensions",
+                        "panel":  "toolset"
                     }
                 ]
 }

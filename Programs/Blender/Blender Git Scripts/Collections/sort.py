@@ -1,4 +1,5 @@
 # Description: Sort by visibility: visible objects become Live, matching invisible family objects become Snapshots as s#, and other invisible objects become Trash as t#.
+# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

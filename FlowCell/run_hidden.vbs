@@ -14,4 +14,4 @@ args = ""
 For i = 0 To WScript.Arguments.Count - 1
     args = args & " " & Chr(34) & WScript.Arguments(i) & Chr(34)
 Next
-shell.Run Chr(34) & psExe & Chr(34) & " -NoProfile -ExecutionPolicy Bypass -File " & Chr(34) & frontendScript & Chr(34) & args, 0, False
+shell.Run Chr(34) & psExe & Chr(34) & " -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File " & Chr(34) & frontendScript & Chr(34) & args, 0, False

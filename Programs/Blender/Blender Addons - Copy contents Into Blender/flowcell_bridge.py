@@ -774,6 +774,23 @@ def execute_bridge_operator(action: str, data: dict) -> dict[str, object]:
     normalized = str(action or "").strip().lower()
     result: dict[str, object] = {}
 
+    custom_result = execute_custom_action(normalized, data)
+    if custom_result is not None:
+        result = custom_result
+        set_bridge_result(
+            str(custom_result.get("message", "")),
+            str(custom_result.get("display", "")),
+        )
+        try:
+            bpy.context.view_layer.update()
+        except Exception:
+            pass
+        return {
+            **result,
+            "message": LAST_BRIDGE_MESSAGE or str(result.get("message", "") or f"Completed {normalized}."),
+            "display": LAST_BRIDGE_DISPLAY,
+        }
+
     if normalized == "make_layers":
         message = actions.perform_make_layers(bpy.context)
         set_bridge_result(message)

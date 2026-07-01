@@ -151,75 +151,116 @@ function Get-BridgeActionFromWrapper([string]$ScriptPath) {
     return [string]$matches[0].Groups[1].Value
 }
 
-$normalizedTargetPath = Get-NormalizedPathKey $ButtonTarget
-if ([string]::IsNullOrWhiteSpace($normalizedTargetPath)) {
-    throw 'Blender button delete target was blank.'
-}
-
-$config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-if ($null -eq $config.buttons) {
-    $config | Add-Member -MemberType NoteProperty -Name buttons -Value @() -Force
-}
-$config.buttons = @($config.buttons)
-
-$bridgeActionFromWrapper = Get-BridgeActionFromWrapper -ScriptPath $ButtonTarget
-if ([string]::IsNullOrWhiteSpace($bridgeActionFromWrapper) -and $ButtonTarget -match '^\s*(?:flowcell-)?action\s*:\s*(?<action>.+?)\s*$') {
-    $bridgeActionFromWrapper = [string]$matches['action']
-}
-$removedActions = New-Object System.Collections.Generic.List[string]
-$remainingButtons = New-Object System.Collections.Generic.List[object]
-$removedButtonCount = 0
-
-foreach ($button in @($config.buttons)) {
-    $buttonScriptPath = if ($button.PSObject.Properties['scriptPath']) {
-        Get-NormalizedPathKey (Resolve-FlowCellButtonScriptPath ([string]$button.scriptPath))
-    } else {
-        ''
+function Get-FlowCellActionFamilyKey([string]$ActionId) {
+    if ([string]::IsNullOrWhiteSpace($ActionId)) {
+        return ''
     }
-    $buttonAction = if ($button.PSObject.Properties['action']) { [string]$button.action } else { '' }
-    $matchesTarget = (
-        -not [string]::IsNullOrWhiteSpace($buttonScriptPath) -and
-        $buttonScriptPath -eq $normalizedTargetPath
-    )
-    $matchesAction = (
-        -not [string]::IsNullOrWhiteSpace($bridgeActionFromWrapper) -and
-        -not [string]::IsNullOrWhiteSpace($buttonAction) -and
-        $buttonAction -ieq $bridgeActionFromWrapper
-    )
+    return (([string]$ActionId).Trim() -replace '_\d+$', '').ToLowerInvariant()
+}
 
-    if ($matchesTarget -or $matchesAction) {
-        $removedButtonCount++
-        if (-not [string]::IsNullOrWhiteSpace($buttonAction) -and -not $removedActions.Contains($buttonAction)) {
-            [void]$removedActions.Add($buttonAction)
+function Test-FlowCellPathUnderAnyRoot([string]$Path, [string[]]$Roots) {
+    $pathKey = Get-NormalizedPathKey $Path
+    if ([string]::IsNullOrWhiteSpace($pathKey)) {
+        return $false
+    }
+    foreach ($root in @($Roots)) {
+        $rootKey = Get-NormalizedPathKey $root
+        if ([string]::IsNullOrWhiteSpace($rootKey)) {
+            continue
         }
-        continue
+        if ($pathKey -eq $rootKey -or $pathKey.StartsWith($rootKey + '\')) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Resolve-FlowCellRegistryPath([string]$RawPath, [string]$BridgeFolder, [string]$AddonRoot) {
+    if ([string]::IsNullOrWhiteSpace($RawPath)) {
+        return ''
+    }
+    try {
+        if ([System.IO.Path]::IsPathRooted($RawPath)) {
+            return [System.IO.Path]::GetFullPath($RawPath)
+        }
+    }
+    catch {
     }
 
-    [void]$remainingButtons.Add($button)
+    $trimmedPath = ([string]$RawPath).Trim().TrimStart('\', '/')
+    foreach ($candidate in @(
+        (Join-Path $AddonRoot $trimmedPath),
+        (Join-Path $BridgeFolder $trimmedPath),
+        (Join-Path $projectRoot $trimmedPath)
+    )) {
+        try {
+            $resolvedCandidate = [System.IO.Path]::GetFullPath($candidate)
+        }
+        catch {
+            $resolvedCandidate = $candidate
+        }
+        if (Test-Path -LiteralPath $resolvedCandidate -PathType Leaf) {
+            return $resolvedCandidate
+        }
+    }
+
+    return ''
 }
 
-if (-not [string]::IsNullOrWhiteSpace($bridgeActionFromWrapper) -and -not $removedActions.Contains($bridgeActionFromWrapper)) {
-    [void]$removedActions.Add($bridgeActionFromWrapper)
+function Add-UniqueText([System.Collections.Generic.List[string]]$List, [string]$Value) {
+    if ([string]::IsNullOrWhiteSpace($Value)) {
+        return
+    }
+    if (-not $List.Contains($Value)) {
+        [void]$List.Add($Value)
+    }
 }
 
-if ($removedButtonCount -le 0) {
-    throw ('No matching Blender config button was found for target: {0}' -f $ButtonTarget)
-}
+function delete_blender_action([string]$action_id) {
+    $targetAction = ([string]$action_id).Trim()
+    if ([string]::IsNullOrWhiteSpace($targetAction)) {
+        throw 'delete_blender_action requires a non-empty action id.'
+    }
+    $targetFamily = Get-FlowCellActionFamilyKey $targetAction
 
-$config.buttons = @($remainingButtons.ToArray())
-Write-FlowCellTextFile -Path $ConfigPath -Value ($config | ConvertTo-Json -Depth 16) -Encoding UTF8
+    $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    if ($null -eq $config.buttons) {
+        $config | Add-Member -MemberType NoteProperty -Name buttons -Value @() -Force
+    }
+    $config.buttons = @($config.buttons)
 
-$bridgeLayout = Get-FlowCellBlenderBridgeLayout -Config $config -BridgeFolder $BridgeFolder
-$BridgeFolder = [string]$bridgeLayout.BridgeFolder
-$customRegistryPath = [string]$bridgeLayout.CustomRegistryPath
-$managedRoot = Get-NormalizedPathKey $managedActionRoot
-$liveActionsPath = Get-NormalizedPathKey ([string]$bridgeLayout.AddonActionsPath)
-$prunedActionCount = 0
-$prunedSourcePaths = New-Object System.Collections.Generic.List[string]
+    $removedActions = New-Object System.Collections.Generic.List[string]
+    Add-UniqueText -List $removedActions -Value $targetAction
+    $remainingButtons = New-Object System.Collections.Generic.List[object]
+    $removedButtonCount = 0
 
-if (-not [string]::IsNullOrWhiteSpace($customRegistryPath)) {
+    foreach ($button in @($config.buttons)) {
+        $buttonAction = if ($button.PSObject.Properties['action']) { [string]$button.action } else { '' }
+        if (-not [string]::IsNullOrWhiteSpace($buttonAction) -and $buttonAction -ieq $targetAction) {
+            $removedButtonCount++
+            Add-UniqueText -List $removedActions -Value $buttonAction
+            continue
+        }
+        [void]$remainingButtons.Add($button)
+    }
+
+    $config.buttons = @($remainingButtons.ToArray())
+    Write-FlowCellTextFile -Path $ConfigPath -Value ($config | ConvertTo-Json -Depth 16) -Encoding UTF8
+
+    $bridgeLayout = Get-FlowCellBlenderBridgeLayout -Config $config -BridgeFolder $BridgeFolder
+    $resolvedBridgeFolder = [string]$bridgeLayout.BridgeFolder
+    $addonRoot = [string]$bridgeLayout.AddonRoot
+    $customRegistryPath = [string]$bridgeLayout.CustomRegistryPath
+    $managedRoots = @(
+        (Join-Path $projectRoot 'ManagedActions'),
+        (Join-Path $resolvedBridgeFolder 'ManagedActions')
+    )
+    $liveActionsPath = Get-NormalizedPathKey ([string]$bridgeLayout.AddonActionsPath)
+    $removedRuntimePaths = New-Object System.Collections.Generic.List[string]
+    $prunedActionCount = 0
+
     $registry = [pscustomobject]@{ actions = @() }
-    if (Test-Path -LiteralPath $customRegistryPath -PathType Leaf) {
+    if (-not [string]::IsNullOrWhiteSpace($customRegistryPath) -and (Test-Path -LiteralPath $customRegistryPath -PathType Leaf)) {
         try {
             $registry = Get-Content -LiteralPath $customRegistryPath -Raw | ConvertFrom-Json
             if ($null -eq $registry.actions) {
@@ -230,52 +271,125 @@ if (-not [string]::IsNullOrWhiteSpace($customRegistryPath)) {
             $registry = [pscustomobject]@{ actions = @() }
         }
     }
+    $registry.actions = @($registry.actions)
+
+    $referencedActions = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($button in @($config.buttons)) {
+        $buttonAction = if ($button.PSObject.Properties['action']) { [string]$button.action } else { '' }
+        if (-not [string]::IsNullOrWhiteSpace($buttonAction)) {
+            [void]$referencedActions.Add($buttonAction.Trim())
+        }
+    }
 
     $remainingRegistry = New-Object System.Collections.Generic.List[object]
     foreach ($registryEntry in @($registry.actions)) {
         $registryAction = if ($registryEntry.PSObject.Properties['action']) { [string]$registryEntry.action } else { '' }
-        if (
-            -not [string]::IsNullOrWhiteSpace($registryAction) -and
-            $removedActions.Contains($registryAction) -and
-            @($config.buttons | Where-Object { $_.PSObject.Properties['action'] -and [string]$_.action -ieq $registryAction }).Count -eq 0
-        ) {
-            $sourcePath = if ($registryEntry.PSObject.Properties['sourcePythonPath'] -and -not [string]::IsNullOrWhiteSpace([string]$registryEntry.sourcePythonPath)) {
-                Get-NormalizedPathKey ([string]$registryEntry.sourcePythonPath)
-            }
-            elseif ($registryEntry.PSObject.Properties['pythonPath']) {
-                Get-NormalizedPathKey ([string]$registryEntry.pythonPath)
-            }
-            else {
-                ''
-            }
-            if (
-                -not [string]::IsNullOrWhiteSpace($sourcePath) -and
-                $sourcePath -ne $liveActionsPath -and
-                $sourcePath.StartsWith($managedRoot)
-            ) {
-                [void]$prunedSourcePaths.Add($sourcePath)
+        $registryFamily = Get-FlowCellActionFamilyKey $registryAction
+        $sameTarget = -not [string]::IsNullOrWhiteSpace($registryAction) -and $registryAction -ieq $targetAction
+        $sameUnreferencedFamily = (
+            -not [string]::IsNullOrWhiteSpace($registryFamily) -and
+            $registryFamily -eq $targetFamily -and
+            -not $referencedActions.Contains($registryAction)
+        )
+
+        if ($sameTarget -or $sameUnreferencedFamily) {
+            Add-UniqueText -List $removedActions -Value $registryAction
+            foreach ($propertyName in @('pythonPath', 'sourcePythonPath')) {
+                $property = $registryEntry.PSObject.Properties[$propertyName]
+                $rawPath = if ($null -ne $property) { [string]$property.Value } else { '' }
+                $resolvedPath = Resolve-FlowCellRegistryPath -RawPath $rawPath -BridgeFolder $resolvedBridgeFolder -AddonRoot $addonRoot
+                if (
+                    -not [string]::IsNullOrWhiteSpace($resolvedPath) -and
+                    (Get-NormalizedPathKey $resolvedPath) -ne $liveActionsPath -and
+                    (Test-FlowCellPathUnderAnyRoot -Path $resolvedPath -Roots $managedRoots)
+                ) {
+                    Add-UniqueText -List $removedRuntimePaths -Value (Get-NormalizedPathKey $resolvedPath)
+                }
             }
             $prunedActionCount++
             continue
         }
+
         [void]$remainingRegistry.Add($registryEntry)
     }
 
     $registry.actions = @($remainingRegistry.ToArray())
-    Write-FlowCellTextFile -Path $customRegistryPath -Value ($registry | ConvertTo-Json -Depth 8) -Encoding UTF8
+    if (-not [string]::IsNullOrWhiteSpace($customRegistryPath)) {
+        Write-FlowCellTextFile -Path $customRegistryPath -Value ($registry | ConvertTo-Json -Depth 8) -Encoding UTF8
+    }
+
+    $referencedRuntimePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($registryEntry in @($registry.actions)) {
+        foreach ($propertyName in @('pythonPath', 'sourcePythonPath')) {
+            $property = $registryEntry.PSObject.Properties[$propertyName]
+            $rawPath = if ($null -ne $property) { [string]$property.Value } else { '' }
+            $resolvedPath = Resolve-FlowCellRegistryPath -RawPath $rawPath -BridgeFolder $resolvedBridgeFolder -AddonRoot $addonRoot
+            if (
+                -not [string]::IsNullOrWhiteSpace($resolvedPath) -and
+                (Test-FlowCellPathUnderAnyRoot -Path $resolvedPath -Roots $managedRoots)
+            ) {
+                [void]$referencedRuntimePaths.Add((Get-NormalizedPathKey $resolvedPath))
+            }
+        }
+    }
+
+    foreach ($managedRootCandidate in @($managedRoots)) {
+        if ([string]::IsNullOrWhiteSpace($managedRootCandidate) -or -not (Test-Path -LiteralPath $managedRootCandidate -PathType Container)) {
+            continue
+        }
+        foreach ($file in @(Get-ChildItem -LiteralPath $managedRootCandidate -File -Filter '*.py' -ErrorAction SilentlyContinue)) {
+            $fileAction = [System.IO.Path]::GetFileNameWithoutExtension($file.Name)
+            if ((Get-FlowCellActionFamilyKey $fileAction) -ne $targetFamily) {
+                continue
+            }
+            $fileKey = Get-NormalizedPathKey $file.FullName
+            if (-not $referencedRuntimePaths.Contains($fileKey)) {
+                Add-UniqueText -List $removedRuntimePaths -Value $fileKey
+            }
+        }
+    }
+
+    foreach ($runtimePath in @($removedRuntimePaths.ToArray() | Select-Object -Unique)) {
+        Move-FlowCellFileToRecycleBin -Path $runtimePath
+    }
+
+    if (Test-Path -LiteralPath $customActionSyncPath -PathType Leaf) {
+        & $customActionSyncPath -ConfigPath $ConfigPath -BridgeFolder $resolvedBridgeFolder | Out-Null
+    }
+
+    $verifiedConfig = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+    $danglingConfig = @($verifiedConfig.buttons | Where-Object { $_.PSObject.Properties['action'] -and [string]$_.action -ieq $targetAction })
+    if (@($danglingConfig).Count -gt 0) {
+        throw ('delete_blender_action left config references for {0}.' -f $targetAction)
+    }
+    if (-not [string]::IsNullOrWhiteSpace($customRegistryPath) -and (Test-Path -LiteralPath $customRegistryPath -PathType Leaf)) {
+        $verifiedRegistry = Get-Content -LiteralPath $customRegistryPath -Raw | ConvertFrom-Json
+        $danglingRegistry = @($verifiedRegistry.actions | Where-Object { $_.PSObject.Properties['action'] -and [string]$_.action -ieq $targetAction })
+        if (@($danglingRegistry).Count -gt 0) {
+            throw ('delete_blender_action left registry references for {0}.' -f $targetAction)
+        }
+    }
+
+    return [pscustomobject]@{
+        RemovedButtonCount = $removedButtonCount
+        RemovedActionCount = $prunedActionCount
+        RemovedActions = @($removedActions.ToArray())
+        RemovedRuntimePaths = @($removedRuntimePaths.ToArray())
+        StatusMessage = ('Deleted Blender action {0}. Removed config entries: {1}. Pruned custom actions: {2}.' -f $targetAction, $removedButtonCount, $prunedActionCount)
+    }
 }
 
-foreach ($sourcePath in @($prunedSourcePaths.ToArray() | Select-Object -Unique)) {
-    Move-FlowCellFileToRecycleBin -Path $sourcePath
+$normalizedTargetPath = Get-NormalizedPathKey $ButtonTarget
+if ([string]::IsNullOrWhiteSpace($normalizedTargetPath)) {
+    throw 'Blender button delete target was blank.'
 }
 
-if (Test-Path -LiteralPath $customActionSyncPath -PathType Leaf) {
-    & $customActionSyncPath -ConfigPath $ConfigPath -BridgeFolder $BridgeFolder | Out-Null
+$bridgeActionFromWrapper = Get-BridgeActionFromWrapper -ScriptPath $ButtonTarget
+if ([string]::IsNullOrWhiteSpace($bridgeActionFromWrapper) -and $ButtonTarget -match '^\s*(?:flowcell-)?action\s*:\s*(?<action>.+?)\s*$') {
+    $bridgeActionFromWrapper = [string]$matches['action']
+}
+if ([string]::IsNullOrWhiteSpace($bridgeActionFromWrapper)) {
+    throw ('Could not resolve a Blender action id from delete target: {0}' -f $ButtonTarget)
 }
 
-[pscustomobject]@{
-    RemovedButtonCount = $removedButtonCount
-    RemovedActionCount = $prunedActionCount
-    RemovedActions = @($removedActions.ToArray())
-    StatusMessage = ('Removed Blender button traces. Removed config entries: {0}. Pruned custom actions: {1}.' -f $removedButtonCount, $prunedActionCount)
-} | ConvertTo-Json -Depth 6
+delete_blender_action -action_id $bridgeActionFromWrapper | ConvertTo-Json -Depth 6

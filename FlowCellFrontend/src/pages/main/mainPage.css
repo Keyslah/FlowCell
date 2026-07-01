@@ -4,6 +4,14 @@
   background: transparent;
 }
 
+.main-page--space-drag {
+  cursor: grab;
+}
+
+.main-page--dragging {
+  cursor: grabbing;
+}
+
 .exact-page-frame {
   position: relative;
   width: 100%;

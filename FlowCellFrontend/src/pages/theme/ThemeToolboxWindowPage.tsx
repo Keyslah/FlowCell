@@ -2118,7 +2118,8 @@ export default function ThemeToolboxWindowPage({
         return;
       }
 
-      const sampled = await samplePhotoThemeColors(selectedPaths[0]);
+      const selectedImagePath = selectedPaths[0];
+      const sampled = await samplePhotoThemeColors(selectedImagePath);
       const namedPaletteHexes = [
         sampled.headersHex,
         sampled.textHex,
@@ -2136,14 +2137,18 @@ export default function ThemeToolboxWindowPage({
         ...sampledPaletteHexes,
         ...namedPaletteHexes
       ]);
-      updateValues({
-        ThemeImagePath: selectedPaths[0],
+      const nextValues = normalizeHdriWorldToolValues({
+        ...latestValuesRef.current,
+        ThemeImagePath: selectedImagePath,
+        StaticBackgroundPath: selectedImagePath,
         ThemePaletteHexes: paletteHexes,
         ...buildThemeRoleAssignment(paletteHexes, "dark", {
           preferredHighlightsHex: sampled.highlightsHex.toUpperCase(),
           darknessProfile: activeDarknessProfile
         })
       });
+      updateValues(nextValues);
+      await handleApply("place_picture", nextValues);
     } catch (error) {
       setStatusMessage(formatErrorMessage(error));
     }

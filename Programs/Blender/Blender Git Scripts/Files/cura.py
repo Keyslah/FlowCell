@@ -1,5 +1,4 @@
 # Description: Export the selected mesh objects as STL files and add them to Cura.
-
 from __future__ import annotations
 
 import importlib

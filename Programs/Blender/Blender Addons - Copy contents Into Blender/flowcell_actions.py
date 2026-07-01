@@ -3151,6 +3151,22 @@ def _execute_bridge_operator_direct(action: str, data: dict) -> dict[str, object
     normalized = str(action or "").strip().lower()
     result = None
 
+    custom_result = execute_custom_action(normalized, data)
+    if custom_result is not None:
+        set_bridge_result(
+            str(custom_result.get("message", "")),
+            str(custom_result.get("display", "")),
+        )
+        try:
+            bpy.context.view_layer.update()
+        except Exception:
+            pass
+        return {
+            **custom_result,
+            "message": LAST_BRIDGE_MESSAGE or str(custom_result.get("message", f"Completed {normalized}.")),
+            "display": LAST_BRIDGE_DISPLAY,
+        }
+
     if normalized == "make_layers":
         result = bpy.ops.object.flowcell_live_snapshot_make_layers("EXEC_DEFAULT")
     elif normalized == "sort":
@@ -4082,8 +4098,6 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
-
 
 
 

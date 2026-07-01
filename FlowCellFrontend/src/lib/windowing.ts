@@ -53,7 +53,13 @@ import {
   setHostWindowTopmost,
   unregisterScopedWindowTopmost
 } from "./tauri";
-import { buildWindowContextUrl, type ScriptGroupPopoutScript } from "./windowContext";
+import { emit } from "@tauri-apps/api/event";
+import {
+  buildWindowContextUrl,
+  BINDS_PREFILL_EVENT,
+  type BindsButtonPrefill,
+  type ScriptGroupPopoutScript
+} from "./windowContext";
 import { getCodexUsageSnapshot } from "./codexUsage";
 
 const PANEL_FAN_WINDOW_WIDTH = 132;
@@ -1165,11 +1171,15 @@ export async function openButtonReorderWindow(args: {
   return openPromise;
 }
 
-export async function openBindsWindow(): Promise<void> {
+export async function openBindsWindow(prefill?: BindsButtonPrefill): Promise<void> {
   const windowLabel = "flowcell-binds";
   const pendingOpen = pendingBindsOpens.get(windowLabel);
   if (pendingOpen) {
-    return pendingOpen;
+    await pendingOpen;
+    if (prefill) {
+      await emit(BINDS_PREFILL_EVENT, prefill).catch(() => {});
+    }
+    return;
   }
 
   const openPromise = (async () => {
@@ -1183,13 +1193,18 @@ export async function openBindsWindow(): Promise<void> {
           .catch(() => {});
       }
       await focusExistingWindow(existing);
+      // The page is already mounted and listening, so push the prefill as an event.
+      if (prefill) {
+        await emit(BINDS_PREFILL_EVENT, prefill).catch(() => {});
+      }
       return;
     }
 
     const window = new WebviewWindow(windowLabel, {
-      url: buildWindowContextUrl({
-        kind: "binds"
-      }),
+      // A fresh window reads the prefill from its context URL on mount.
+      url: buildWindowContextUrl(
+        prefill ? { kind: "binds", prefill } : { kind: "binds" }
+      ),
       title: "FlowCell - Binds",
       width: placement.width,
       height: placement.height,

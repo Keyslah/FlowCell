@@ -73,12 +73,12 @@ const REMESH_TOOL_KIND: &str = "remesh_toolset";
 const TRI_POLY_TOOL_KIND: &str = "tri_poly_toolset";
 const ROTATE_TOOL_KIND: &str = "rotate_toolset";
 const SMART_AXIS_TOOL_KIND: &str = "smart_axis_toolset";
-const DEFAULT_ALIGNMENT_BRIDGE_ACTION: &str = "alignment_tools";
+const DEFAULT_ALIGNMENT_BRIDGE_ACTION: &str = "flowcell_custom_alignment_tools_2";
 const DEFAULT_BOOLEAN_BRIDGE_ACTION: &str = "flowcell_custom_boolean";
-const DEFAULT_DIMENSIONS_BRIDGE_ACTION: &str = "flowcell_custom_xyz_dimensions";
-const DEFAULT_REMESH_BRIDGE_ACTION: &str = "flowcell_custom_remesh";
-const DEFAULT_ROTATE_BRIDGE_ACTION: &str = "flowcell_custom_rotate";
-const DEFAULT_SMART_AXIS_BRIDGE_ACTION: &str = "smart_axis_lock";
+const DEFAULT_DIMENSIONS_BRIDGE_ACTION: &str = "flowcell_custom_xyz_dimensions_2";
+const DEFAULT_REMESH_BRIDGE_ACTION: &str = "flowcell_custom_remesh_2";
+const DEFAULT_ROTATE_BRIDGE_ACTION: &str = "flowcell_custom_rotate_4";
+const DEFAULT_SMART_AXIS_BRIDGE_ACTION: &str = "flowcell_custom_smart_axis_3";
 #[cfg(windows)]
 const SCOPED_TOPMOST_POLL_MS: u64 = 180;
 const DEFAULT_BLENDER_BRIDGE_TIMEOUT_SECONDS: u64 = 20;
@@ -229,6 +229,7 @@ struct BlenderInstallResultItem {
     action: Option<String>,
     label: Option<String>,
     tooltip: Option<String>,
+    message: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -4696,10 +4697,34 @@ fn panel_item_path_for_label(panel_directory: &Path, label: &str) -> PathBuf {
 }
 
 fn read_panel_item_file(path: &Path) -> Result<BlenderPanelItemRecord, String> {
-    let content = fs::read_to_string(path)
-        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
-    serde_json::from_str::<BlenderPanelItemRecord>(&content)
-        .map_err(|error| format!("Failed to parse {}: {error}", path.display()))
+    let mut last_error = String::new();
+    for attempt in 0..5 {
+        match fs::read_to_string(path) {
+            Ok(content) => {
+                if content.trim_start_matches('\u{feff}').trim().is_empty() {
+                    last_error = format!("{} is empty.", path.display());
+                } else {
+                    match serde_json::from_str::<BlenderPanelItemRecord>(
+                        content.trim_start_matches('\u{feff}'),
+                    ) {
+                        Ok(record) => return Ok(record),
+                        Err(error) => {
+                            last_error = format!("Failed to parse {}: {error}", path.display());
+                        }
+                    }
+                }
+            }
+            Err(error) => {
+                last_error = format!("Failed to read {}: {error}", path.display());
+            }
+        }
+
+        if attempt < 4 {
+            std::thread::sleep(std::time::Duration::from_millis(40));
+        }
+    }
+
+    Err(last_error)
 }
 
 fn write_panel_item_file(path: &Path, record: &BlenderPanelItemRecord) -> Result<(), String> {
@@ -5066,7 +5091,14 @@ fn normalize_blender_panel_item_record(record: &BlenderPanelItemRecord) -> Blend
     } else {
         record.children.clone()
     };
-    let tool_kind = classify_blender_panel_item_kind(&record.label, &source_path, &children);
+    let explicit_kind = if source_path.is_file() {
+        parse_flowcell_kind(&source_path).unwrap_or(None)
+    } else {
+        None
+    };
+    let tool_kind = explicit_kind
+        .as_deref()
+        .or_else(|| classify_blender_panel_item_kind(&record.label, &source_path, &children));
     let bridge_action = match tool_kind {
         Some(kind) => {
             let trimmed = record.bridge_action.trim();
@@ -5128,7 +5160,17 @@ fn list_blender_panel_script_files(
             continue;
         }
 
-        let record = read_normalized_panel_item_file(&path)?;
+        let record = match read_normalized_panel_item_file(&path) {
+            Ok(record) => record,
+            Err(error) => {
+                eprintln!(
+                    "Skipping invalid Blender panel item '{}': {}",
+                    path.display(),
+                    error
+                );
+                continue;
+            }
+        };
         let is_macro_record = is_frontend_macro_panel_item(&record);
         records.push(PanelScriptFileRecord {
             file_name,
@@ -5241,11 +5283,15 @@ fn spawn_powershell_output(arguments: &[String]) -> Result<std::process::Output,
     let mut command = Command::new(resolve_powershell_path());
     command
         .arg("-NoProfile")
+        .arg("-WindowStyle")
+        .arg("Hidden")
         .arg("-ExecutionPolicy")
         .arg("Bypass");
     for argument in arguments {
         command.arg(argument);
     }
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
     command
         .output()
         .map_err(|error| format!("Failed to start PowerShell: {error}"))
@@ -6302,6 +6348,7 @@ mod program_registration_tests {
 fn parse_ini_document(contents: &str) -> IniDocument {
     let mut document = IniDocument::new();
     let mut current_section = String::new();
+    let contents = contents.strip_prefix('\u{feff}').unwrap_or(contents);
 
     for line in contents.lines() {
         let trimmed = line.trim();
@@ -6386,12 +6433,14 @@ fn resolve_bindings_file_path() -> Result<PathBuf, String> {
     Ok(resolve_flowcell_local_root()?.join("bindings.ini"))
 }
 
-fn resolve_dummy_monitor_binding() -> Option<(String, String, i64)> {
+fn resolve_single_monitor_binding() -> Option<(String, String, i64)> {
     let repo_root = resolve_repo_root()?;
     let script_path = repo_root
         .join("Programs")
         .join("Windows")
-        .join("toggle_dummy_monitor.ps1");
+        .join("Panels")
+        .join("Utility")
+        .join("Toggle Monitors.vbs");
     if !script_path.is_file() {
         return None;
     }
@@ -6403,11 +6452,11 @@ fn resolve_dummy_monitor_binding() -> Option<(String, String, i64)> {
     ))
 }
 
-fn should_restore_default_dummy_monitor(document: &IniDocument) -> bool {
+fn should_restore_default_single_monitor(document: &IniDocument) -> bool {
     let Some(meta_section) = document.get("Meta") else {
         return true;
     };
-    let Some(raw_value) = meta_section.get("DummyMonitorDefaultEnabled") else {
+    let Some(raw_value) = meta_section.get("SingleMonitorDefaultEnabled") else {
         return true;
     };
     !matches!(
@@ -6416,15 +6465,15 @@ fn should_restore_default_dummy_monitor(document: &IniDocument) -> bool {
     )
 }
 
-fn ensure_default_dummy_monitor_binding(
+fn ensure_default_single_monitor_binding(
     bindings: &mut FrontendBindingsState,
     document: &IniDocument,
 ) {
-    if !should_restore_default_dummy_monitor(document) {
+    if !should_restore_default_single_monitor(document) {
         return;
     }
 
-    let Some((default_shortcut, default_target, program_tab_id)) = resolve_dummy_monitor_binding()
+    let Some((default_shortcut, default_target, program_tab_id)) = resolve_single_monitor_binding()
     else {
         return;
     };
@@ -6540,7 +6589,7 @@ fn read_bindings_file_state() -> Result<(FrontendBindingsState, IniDocument, Pat
         script_bindings,
         action_hotkeys,
     };
-    ensure_default_dummy_monitor_binding(&mut bindings, &document);
+    ensure_default_single_monitor_binding(&mut bindings, &document);
     Ok((bindings, document, bindings_path))
 }
 
@@ -8558,6 +8607,8 @@ fn run_windows_panel_script_file_with_window_mode(
             let mut command = Command::new(resolve_powershell_path());
             command
                 .arg("-NoProfile")
+                .arg("-WindowStyle")
+                .arg("Hidden")
                 .arg("-ExecutionPolicy")
                 .arg("Bypass")
                 .arg("-File")
@@ -8592,7 +8643,7 @@ fn run_windows_panel_script_file_with_window_mode(
 }
 
 fn run_windows_panel_script_file(script_path: &Path) -> Result<(), String> {
-    run_windows_panel_script_file_with_window_mode(script_path, false)
+    run_windows_panel_script_file_with_window_mode(script_path, true)
 }
 
 fn add_blender_panel_scripts(
@@ -8640,15 +8691,8 @@ fn add_blender_panel_scripts(
             ));
         }
 
-        let mut panel_paths = Vec::new();
-        for source_path in &paths {
-            let (_local_path, panel_path) =
-                copy_script_into_panel_workflow("Blender", panel_directory, source_path)?;
-            panel_paths.push(panel_path);
-        }
-
         let selected_paths_json = serde_json::to_string(
-            &panel_paths
+            &paths
                 .iter()
                 .map(|path| path.to_string_lossy().to_string())
                 .collect::<Vec<_>>(),
@@ -8681,6 +8725,28 @@ fn add_blender_panel_scripts(
                 )
             })?;
 
+        let failed_results = install_result
+            .results
+            .iter()
+            .filter(|result| !result.installed)
+            .collect::<Vec<_>>();
+        if !failed_results.is_empty() {
+            let first_failure = failed_results[0];
+            let source_name = PathBuf::from(first_failure.source.trim())
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or(first_failure.source.trim())
+                .to_string();
+            let message = first_failure
+                .message
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+                .unwrap_or("Blender Add Script validation failed.")
+                .trim()
+                .to_string();
+            return Err(format!("{}: {}", source_name, message));
+        }
+
         for result in install_result.results {
             if !result.installed {
                 continue;
@@ -8710,7 +8776,14 @@ fn add_blender_panel_scripts(
             } else {
                 Vec::new()
             };
-            let tool_kind = classify_blender_panel_item_kind(&label, &source_path, &children);
+            let explicit_kind = if source_path.is_file() {
+                parse_flowcell_kind(&source_path).unwrap_or(None)
+            } else {
+                None
+            };
+            let tool_kind = explicit_kind
+                .as_deref()
+                .or_else(|| classify_blender_panel_item_kind(&label, &source_path, &children));
             let bridge_action = result
                 .action
                 .as_deref()
@@ -9725,12 +9798,8 @@ fn run_blender_bridge_action_direct(action: &str, data: Value) -> Result<Value, 
 }
 
 fn blender_bridge_action_fallback(action: &str) -> Option<&'static str> {
-    match action.trim().to_ascii_lowercase().as_str() {
-        "flowcell_custom_theme" | "flowcell_custom_hdri_world_tools" => {
-            Some("custom_hdri_world_tools")
-        }
-        _ => None,
-    }
+    let _ = action;
+    None
 }
 
 fn is_blender_bridge_unsupported_action_error(message: &str, action: &str) -> bool {
@@ -10461,14 +10530,14 @@ fn save_bind_shortcut(
         }
     }
 
-    if resolve_dummy_monitor_binding()
-        .map(|(_, dummy_target, _)| {
-            normalize_binding_target_for_compare(&dummy_target) == normalized_target
+    if resolve_single_monitor_binding()
+        .map(|(_, single_target, _)| {
+            normalize_binding_target_for_compare(&single_target) == normalized_target
         })
         .unwrap_or(false)
     {
         document.entry(String::from("Meta")).or_default().insert(
-            String::from("DummyMonitorDefaultEnabled"),
+            String::from("SingleMonitorDefaultEnabled"),
             if normalized_shortcut.is_empty() {
                 String::from("0")
             } else {

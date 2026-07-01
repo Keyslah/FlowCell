@@ -92,7 +92,9 @@ HOTKEY_ID = 1
 CCHDEVICENAME = 32
 CCHFORMNAME = 32
 CCHDEVICESTRING = 128
-DEFAULT_TARGET_DISPLAY = "AOC28E850.HDR"
+# No hardcoded monitor. The launcher prompts for which monitor to toggle to and
+# always passes it via --target-display; this empty default is only a safety net.
+DEFAULT_TARGET_DISPLAY = ""
 
 WH_KEYBOARD_LL = 13
 HC_ACTION = 0
@@ -467,8 +469,15 @@ def awareness_set_flags(base_flag: int) -> int:
 
 
 def config_root() -> Path:
-    root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "DummyMonitorToggle"
-    root.mkdir(parents=True, exist_ok=True)
+    root = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "ToggleMonitors"
+    legacy = root.parent / "DummyMonitorToggle"
+    if legacy.exists() and not root.exists():
+        try:
+            legacy.rename(root)
+        except OSError:
+            root.mkdir(parents=True, exist_ok=True)
+    else:
+        root.mkdir(parents=True, exist_ok=True)
     return root
 
 
@@ -486,8 +495,8 @@ def snapshot_bundle_paths(base_dir: Path, stem_prefix: str) -> dict[str, Path]:
     return {
         "normal": base_dir / f"{stem_prefix}.json",
         "no_wireless": base_dir / f"{stem_prefix}_no_wireless.json",
-        "no_dummy": base_dir / f"{stem_prefix}_no_dummy.json",
-        "no_dummy_no_wireless": base_dir / f"{stem_prefix}_no_dummy_no_wireless.json",
+        "no_target": base_dir / f"{stem_prefix}_no_target.json",
+        "no_target_no_wireless": base_dir / f"{stem_prefix}_no_target_no_wireless.json",
     }
 
 
@@ -530,12 +539,12 @@ def write_active_profile_slug(slug: str) -> None:
 
 
 def setup_logging() -> logging.Logger:
-    logger = logging.getLogger("dummy-monitor-toggle")
+    logger = logging.getLogger("toggle-monitors")
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
     formatter = logging.Formatter("%(asctime)s %(levelname)s %(message)s")
 
-    file_handler = logging.FileHandler(config_root() / "dummy_monitor_toggle.log", encoding="utf-8")
+    file_handler = logging.FileHandler(config_root() / "toggle_monitors.log", encoding="utf-8")
     file_handler.setFormatter(formatter)
     logger.addHandler(file_handler)
 
@@ -960,14 +969,14 @@ def capture_layout_bundle(target_display: str):
             lambda path: path.targetInfo.outputTechnology != DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST,
             snapshot,
         ),
-        "no_dummy": build_filtered_snapshot_or_fallback(
+        "no_target": build_filtered_snapshot_or_fallback(
             path_array,
             mode_array,
             snapshot.path_count,
             lambda path: resolved_target_source is None or get_source_name(path).upper() != resolved_target_source,
             snapshot,
         ),
-        "no_dummy_no_wireless": build_filtered_snapshot_or_fallback(
+        "no_target_no_wireless": build_filtered_snapshot_or_fallback(
             path_array,
             mode_array,
             snapshot.path_count,
@@ -1082,19 +1091,68 @@ def resolve_target_source_name(path_array, path_count: int, target_display: str)
     return get_source_name(match).upper()
 
 
+def list_available_displays() -> list[tuple[str, str]]:
+    """Return (label, selector) for every distinct monitor Windows can see.
+
+    The selector is a value --target-display will match (friendly name, monitor
+    device path, or GDI source). Inactive monitors are included so a monitor that
+    is currently switched off can still be picked from the launcher menu.
+    """
+    snapshot, path_array, _ = query_display_config(awareness_query_flags(QDC_ALL_PATHS))
+    named_seen: set[str] = set()
+    other_seen: set[str] = set()
+    named: list[tuple[str, str]] = []
+    other: list[tuple[str, str]] = []
+    for path in path_array[: snapshot.path_count]:
+        friendly, device_path = get_target_identity_details(path)
+        source = get_source_name(path).strip()
+        friendly = friendly.strip()
+        if friendly:
+            key = friendly.upper()
+            if key not in named_seen:
+                named_seen.add(key)
+                named.append((friendly, friendly))
+            continue
+        selector = device_path or source
+        if not selector:
+            continue
+        key = selector.upper()
+        if key not in other_seen:
+            other_seen.add(key)
+            other.append((selector, selector))
+    # Prefer real, recognizable monitor names; bare "\\.\DISPLAYn" GDI sources
+    # are phantom/driver paths and only shown if nothing has a friendly name.
+    return named if named else other
+
+
+def write_display_list(out_path: Optional[str]) -> str:
+    """Render the monitor list as one ``label<TAB>selector`` line per monitor.
+
+    Written to ``out_path`` when given (UTF-8) so the launcher can read it
+    without relying on stdout, which is unavailable under pythonw.exe.
+    """
+    displays = list_available_displays()
+    text = "\n".join(f"{label}\t{selector}" for label, selector in displays)
+    if out_path:
+        Path(out_path).write_text(text + ("\n" if text else ""), encoding="utf-8")
+    elif sys.stdout is not None:
+        print(text)
+    return text
+
+
 def save_snapshot_bundle(paths: dict[str, Path], bundle: dict[str, DisplayConfigSnapshot]) -> None:
     save_snapshot(bundle["normal"], paths["normal"])
     save_snapshot(bundle["no_wireless"], paths["no_wireless"])
-    save_snapshot(bundle["no_dummy"], paths["no_dummy"])
-    save_snapshot(bundle["no_dummy_no_wireless"], paths["no_dummy_no_wireless"])
+    save_snapshot(bundle["no_target"], paths["no_target"])
+    save_snapshot(bundle["no_target_no_wireless"], paths["no_target_no_wireless"])
 
 
 def load_snapshot_bundle(paths: dict[str, Path]) -> dict[str, DisplayConfigSnapshot]:
     return {
         "normal": load_snapshot(paths["normal"]),
         "no_wireless": load_snapshot(paths["no_wireless"]),
-        "no_dummy": load_snapshot(paths["no_dummy"]),
-        "no_dummy_no_wireless": load_snapshot(paths["no_dummy_no_wireless"]),
+        "no_target": load_snapshot(paths["no_target"]),
+        "no_target_no_wireless": load_snapshot(paths["no_target_no_wireless"]),
     }
 
 
@@ -1437,11 +1495,11 @@ def prune_active_paths_to_keep_set(target_display: str, logger: logging.Logger) 
         return source_name == target_display.upper() or path.targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST
 
     filtered = build_filtered_snapshot(path_array, mode_array, snapshot.path_count, keep_predicate)
-    logger.info("Pruning active CCD paths to keep dummy plus wireless targets only")
+    logger.info("Pruning active CCD paths to keep the single monitor plus wireless targets only")
     apply_snapshot(filtered, save_to_database=False)
 
 
-class DummyMonitorToggle:
+class MonitorToggle:
     def __init__(self, logger: logging.Logger, target_display: str) -> None:
         self.logger = logger
         self.target_display = target_display.upper()
@@ -1449,12 +1507,12 @@ class DummyMonitorToggle:
         self.legacy_paths = snapshot_bundle_paths(config_root(), "normal_layout")
         self.snapshot_path = self.session_paths["normal"]
         self.snapshot_no_wireless_path = self.session_paths["no_wireless"]
-        self.snapshot_no_dummy_path = self.session_paths["no_dummy"]
-        self.snapshot_no_dummy_no_wireless_path = self.session_paths["no_dummy_no_wireless"]
+        self.snapshot_no_target_path = self.session_paths["no_target"]
+        self.snapshot_no_target_no_wireless_path = self.session_paths["no_target_no_wireless"]
         self.normal_snapshot: Optional[DisplayConfigSnapshot] = None
         self.normal_no_wireless_snapshot: Optional[DisplayConfigSnapshot] = None
-        self.normal_no_dummy_snapshot: Optional[DisplayConfigSnapshot] = None
-        self.normal_no_dummy_no_wireless_snapshot: Optional[DisplayConfigSnapshot] = None
+        self.normal_no_target_snapshot: Optional[DisplayConfigSnapshot] = None
+        self.normal_no_target_no_wireless_snapshot: Optional[DisplayConfigSnapshot] = None
         self.current_state = "unknown"
         self.hotkey_hook = None
         self.hotkey_proc = None
@@ -1463,8 +1521,8 @@ class DummyMonitorToggle:
     def apply_loaded_bundle(self, bundle: dict[str, DisplayConfigSnapshot]) -> None:
         self.normal_snapshot = bundle["normal"]
         self.normal_no_wireless_snapshot = bundle["no_wireless"]
-        self.normal_no_dummy_snapshot = bundle["no_dummy"]
-        self.normal_no_dummy_no_wireless_snapshot = bundle["no_dummy_no_wireless"]
+        self.normal_no_target_snapshot = bundle["no_target"]
+        self.normal_no_target_no_wireless_snapshot = bundle["no_target_no_wireless"]
 
     def load_active_profile_bundle(self) -> bool:
         active_slug = read_active_profile_slug()
@@ -1574,25 +1632,25 @@ class DummyMonitorToggle:
         if not self.is_target_attached_to_desktop():
             raise DisplayConfigError(f"Target monitor {self.target_display} still is not attached after activation attempt.")
 
-    def move_windows_off_dummy_before_restore(self, restore_snapshot: DisplayConfigSnapshot) -> None:
+    def move_windows_off_single_before_restore(self, restore_snapshot: DisplayConfigSnapshot) -> None:
         try:
-            dummy_source_name = self.current_target_source_name()
-            if dummy_source_name is None:
-                self.logger.info("No active dummy source found before restore; skipping pre-restore window move")
+            single_source_name = self.current_target_source_name()
+            if single_source_name is None:
+                self.logger.info("No active single source found before restore; skipping pre-restore window move")
                 return
-            dummy_rect = self.current_source_rect(dummy_source_name)
-            if dummy_rect is None:
-                self.logger.info("No active dummy rect found before restore; skipping pre-restore window move")
+            single_rect = self.current_source_rect(single_source_name)
+            if single_rect is None:
+                self.logger.info("No active single rect found before restore; skipping pre-restore window move")
                 return
 
-            destination_rect = preferred_destination_rect(restore_snapshot, exclude_source=dummy_source_name)
+            destination_rect = preferred_destination_rect(restore_snapshot, exclude_source=single_source_name)
             if destination_rect is None:
                 self.logger.info("No destination rect available for pre-restore window move")
                 return
 
-            move_windows_from_rect(dummy_rect, destination_rect, self.logger, "dummy disconnect")
+            move_windows_from_rect(single_rect, destination_rect, self.logger, "single-monitor disconnect")
         except Exception as error:
-            self.logger.warning("Pre-restore dummy window move failed: %s", error)
+            self.logger.warning("Pre-restore single-monitor window move failed: %s", error)
 
     def recover_windows_after_restore(self, restore_snapshot: DisplayConfigSnapshot) -> None:
         try:
@@ -1632,12 +1690,12 @@ class DummyMonitorToggle:
         save_snapshot_bundle(self.session_paths, bundle)
         self.logger.info("Saved current layout snapshot to %s", self.snapshot_path)
         self.logger.info("Saved non-wireless fallback snapshot to %s", self.snapshot_no_wireless_path)
-        self.logger.info("Saved no-dummy restore snapshot to %s", self.snapshot_no_dummy_path)
-        self.logger.info("Saved no-dummy/no-wireless fallback snapshot to %s", self.snapshot_no_dummy_no_wireless_path)
+        self.logger.info("Saved no-target restore snapshot to %s", self.snapshot_no_target_path)
+        self.logger.info("Saved no-target/no-wireless fallback snapshot to %s", self.snapshot_no_target_no_wireless_path)
         for line in list_display_lines(path_array[: snapshot.path_count], mode_array):
             self.logger.info("  %s", line)
 
-    def enter_dummy_only(self) -> None:
+    def enter_single_only(self) -> None:
         self.logger.info("Attempting %s-only mode", self.target_display)
         if not has_active_wireless_target():
             snapshot, path_array, mode_array = query_display_config(awareness_query_flags(QDC_ALL_PATHS))
@@ -1648,7 +1706,7 @@ class DummyMonitorToggle:
                 )
             self.logger.info("No active wireless target detected; applying direct reduced-state snapshot")
             activate_single_path(target_path, mode_array, self.logger)
-            self.current_state = "dummy"
+            self.current_state = "single"
             return
 
         self.ensure_target_attached()
@@ -1660,7 +1718,7 @@ class DummyMonitorToggle:
         self.logger.info("Keeping active displays in reduced state: %s", ", ".join(keep_display_names))
         switch_to_single_gdi_display(keep_display_names, self.logger)
         prune_active_paths_to_keep_set(target_source_name, self.logger)
-        self.current_state = "dummy"
+        self.current_state = "single"
 
     def restore_normal(self) -> None:
         self.logger.info("Restoring saved multi-monitor layout")
@@ -1668,30 +1726,30 @@ class DummyMonitorToggle:
             loaded = self.load_session_or_legacy_bundle()
             if not loaded:
                 self.load_active_profile_bundle()
-        if self.normal_snapshot is None and self.normal_no_dummy_snapshot is None:
+        if self.normal_snapshot is None and self.normal_no_target_snapshot is None:
             raise DisplayConfigError("No saved normal layout is available to restore.")
 
-        preferred_restore = self.normal_no_dummy_snapshot or self.normal_snapshot
-        preferred_no_wireless_restore = self.normal_no_dummy_no_wireless_snapshot or self.normal_no_wireless_snapshot
+        preferred_restore = self.normal_no_target_snapshot or self.normal_snapshot
+        preferred_no_wireless_restore = self.normal_no_target_no_wireless_snapshot or self.normal_no_wireless_snapshot
         try:
-            self.move_windows_off_dummy_before_restore(preferred_restore)
+            self.move_windows_off_single_before_restore(preferred_restore)
         except Exception as error:
-            self.logger.warning("Pre-restore dummy window move failed: %s", error)
+            self.logger.warning("Pre-restore single-monitor window move failed: %s", error)
         try:
             apply_snapshot(preferred_restore, save_to_database=True)
         except DisplayConfigError as first_error:
             self.logger.warning("In-memory restore failed: %s", first_error)
             disk_restore_error = None
-            if self.snapshot_no_dummy_path.exists():
+            if self.snapshot_no_target_path.exists():
                 try:
-                    self.normal_no_dummy_snapshot = load_snapshot(self.snapshot_no_dummy_path)
-                    apply_snapshot(self.normal_no_dummy_snapshot, save_to_database=True)
-                    self.recover_windows_after_restore(self.normal_no_dummy_snapshot)
+                    self.normal_no_target_snapshot = load_snapshot(self.snapshot_no_target_path)
+                    apply_snapshot(self.normal_no_target_snapshot, save_to_database=True)
+                    self.recover_windows_after_restore(self.normal_no_target_snapshot)
                     self.current_state = "normal"
                     return
                 except DisplayConfigError as error:
                     disk_restore_error = error
-                    self.logger.warning("On-disk no-dummy restore failed: %s", error)
+                    self.logger.warning("On-disk no-target restore failed: %s", error)
 
             if self.snapshot_path.exists():
                 try:
@@ -1711,11 +1769,11 @@ class DummyMonitorToggle:
                 self.current_state = "normal"
                 return
 
-            if self.snapshot_no_dummy_no_wireless_path.exists():
-                self.logger.info("Trying on-disk no-dummy/no-wireless fallback restore")
-                self.normal_no_dummy_no_wireless_snapshot = load_snapshot(self.snapshot_no_dummy_no_wireless_path)
-                apply_snapshot(self.normal_no_dummy_no_wireless_snapshot, save_to_database=True)
-                self.recover_windows_after_restore(self.normal_no_dummy_no_wireless_snapshot)
+            if self.snapshot_no_target_no_wireless_path.exists():
+                self.logger.info("Trying on-disk no-target/no-wireless fallback restore")
+                self.normal_no_target_no_wireless_snapshot = load_snapshot(self.snapshot_no_target_no_wireless_path)
+                apply_snapshot(self.normal_no_target_no_wireless_snapshot, save_to_database=True)
+                self.recover_windows_after_restore(self.normal_no_target_no_wireless_snapshot)
                 self.current_state = "normal"
                 return
 
@@ -1761,10 +1819,10 @@ class DummyMonitorToggle:
             return
         self.logger.info("Normal layout detected; capturing snapshot then entering reduced state")
         self.startup_capture()
-        self.enter_dummy_only()
+        self.enter_single_only()
         if has_active_wireless_target():
             self.launch_wireless_drop_watcher()
-        self.log_current_displays("Display state after one-shot dummy-only switch", awareness_query_flags(QDC_ONLY_ACTIVE_PATHS))
+        self.log_current_displays("Display state after one-shot single-monitor switch", awareness_query_flags(QDC_ONLY_ACTIVE_PATHS))
 
     def launch_wireless_drop_watcher(self) -> None:
         python_exe = Path(sys.executable)
@@ -1820,22 +1878,22 @@ class DummyMonitorToggle:
 
     def toggle(self) -> None:
         self.logger.info("Hotkey pressed: Ctrl+Shift+F2")
-        if self.current_state == "dummy":
+        if self.current_state == "single":
             self.restore_normal()
             self.log_current_displays("Display state after restore", awareness_query_flags(QDC_ONLY_ACTIVE_PATHS))
             return
-        self.enter_dummy_only()
-        self.log_current_displays("Display state after dummy-only switch", awareness_query_flags(QDC_ONLY_ACTIVE_PATHS))
+        self.enter_single_only()
+        self.log_current_displays("Display state after single-monitor switch", awareness_query_flags(QDC_ONLY_ACTIVE_PATHS))
 
     def run(self) -> None:
-        self.logger.info("Dummy monitor toggle starting")
+        self.logger.info("Toggle Monitors starting")
         self.logger.info("Target monitor selector: %s", self.target_display)
         self.startup_capture()
         self.log_current_displays("Detected active displays before switch", awareness_query_flags(QDC_ONLY_ACTIVE_PATHS))
         try:
-            self.enter_dummy_only()
+            self.enter_single_only()
         except Exception as error:
-            self.logger.exception("Startup switch to dummy-only failed: %s", error)
+            self.logger.exception("Startup switch to single-monitor failed: %s", error)
             self.logger.info("Falling back to the saved normal layout")
             try:
                 self.restore_normal()
@@ -1876,7 +1934,7 @@ class DummyMonitorToggle:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Toggle between the configured dummy-monitor-only state and the saved monitor layout.")
+    parser = argparse.ArgumentParser(description="Toggle between the chosen single-monitor state and the saved monitor layout.")
     parser.add_argument("--list-only", action="store_true", help="Log all active and available display paths, then exit.")
     parser.add_argument("--save-layout", metavar="NAME", help="Save the current active layout under a friendly name and make it the active saved profile.")
     parser.add_argument("--set-active-layout", metavar="NAME", help="Mark an existing saved layout name as the active profile for future restores.")
@@ -1884,10 +1942,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--list-layouts-json", action="store_true", help="Print saved layout profile metadata as JSON.")
     parser.add_argument("--toggle-once", action="store_true", help="Toggle once and exit instead of running the background hotkey service.")
     parser.add_argument("--watch-wireless-drop", action="store_true", help="Watch the reduced state and restore the saved layout if the wireless display disappears.")
+    parser.add_argument("--list-displays", action="store_true", help="Write the available monitors (one 'label<TAB>selector' line each) for the launcher's picker, then exit.")
+    parser.add_argument("--out", metavar="FILE", help="Write --list-displays output to this file instead of stdout (needed under pythonw.exe).")
     parser.add_argument(
         "--target-display",
         default=DEFAULT_TARGET_DISPLAY,
-        help="Target GDI display name or monitor identity, default: AOC28E850.HDR",
+        help="Monitor selector (friendly name, monitor device path, or GDI source) to toggle to. The launcher supplies this; there is no built-in default.",
     )
     return parser.parse_args()
 
@@ -1922,24 +1982,31 @@ def main() -> int:
         print(json.dumps(payload, indent=2))
         return 0
 
+    if args.list_displays:
+        write_display_list(args.out)
+        return 0
+
     if args.toggle_once:
-        DummyMonitorToggle(logger, args.target_display).toggle_once()
+        if not args.target_display.strip():
+            logger.error("No monitor configured. Delete and re-add the Toggle Monitors button to choose one.")
+            return 2
+        MonitorToggle(logger, args.target_display).toggle_once()
         return 0
 
     if args.watch_wireless_drop:
-        instance = SingleInstance("Local\\DummyMonitorToggleWirelessWatch")
+        instance = SingleInstance("Local\\ToggleMonitorsWirelessWatch")
         if not instance.acquire():
             logger.info("Wireless-drop watcher is already running; exiting")
             return 0
         try:
-            DummyMonitorToggle(logger, args.target_display).watch_wireless_drop_and_restore()
+            MonitorToggle(logger, args.target_display).watch_wireless_drop_and_restore()
             return 0
         finally:
             instance.release()
 
-    instance = SingleInstance("Local\\DummyMonitorToggleHotkey")
+    instance = SingleInstance("Local\\ToggleMonitorsHotkey")
     if not instance.acquire():
-        logger.info("Another Dummy Monitor Toggle instance is already running; exiting")
+        logger.info("Another Toggle Monitors instance is already running; exiting")
         return 0
 
     try:
@@ -1955,7 +2022,7 @@ def main() -> int:
                 logger.info("  %s", line)
             return 0
 
-        DummyMonitorToggle(logger, args.target_display).run()
+        MonitorToggle(logger, args.target_display).run()
         return 0
     finally:
         instance.release()
@@ -1965,5 +2032,5 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except DisplayConfigError as error:
-        logging.getLogger("dummy-monitor-toggle").exception("Fatal error: %s", error)
+        logging.getLogger("toggle-monitors").exception("Fatal error: %s", error)
         raise SystemExit(1)

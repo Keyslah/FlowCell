@@ -1,4 +1,5 @@
 # Description: Delete empty collections while keeping the system roots.
+# FLOWCELL_BUILTIN_ONLY: true
 
 from __future__ import annotations
 

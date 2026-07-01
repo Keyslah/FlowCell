@@ -34,7 +34,7 @@ $projectRoot = Join-Path $repoRoot 'Programs\Blender'
 if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) {
     $projectRoot = Join-Path $repoRoot 'Blender'
 }
-$managedActionRoot = Join-Path $projectRoot 'ManagedActions'
+$managedActionRoot = ''
 $supportRoot = Join-Path $projectRoot 'SupportScripts'
 $bridgeLayoutPath = Join-Path $supportRoot 'FlowCellBlenderBridgeLayout.ps1'
 $customActionSyncPath = Join-Path $supportRoot 'Sync-BlenderCustomActionCode.ps1'
@@ -50,8 +50,6 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
     throw "Blender config not found: $ConfigPath"
 }
 
-New-Item -ItemType Directory -Path $managedActionRoot -Force | Out-Null
-
 $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 if ($null -eq $config.buttons) { $config | Add-Member -MemberType NoteProperty -Name buttons -Value @() }
 $config.buttons = @($config.buttons)
@@ -60,6 +58,8 @@ $BridgeFolder = [string]$bridgeLayout.BridgeFolder
 Ensure-FlowCellBlenderBridgeRuntime -Layout $bridgeLayout
 
 New-Item -ItemType Directory -Path $BridgeFolder -Force | Out-Null
+$managedActionRoot = Join-Path $BridgeFolder 'ManagedActions'
+New-Item -ItemType Directory -Path $managedActionRoot -Force | Out-Null
 $customRegistryPath = [string]$bridgeLayout.CustomRegistryPath
 $addonRoot = [string]$bridgeLayout.AddonRoot
 $addonActionsPath = [string]$bridgeLayout.AddonActionsPath
@@ -323,6 +323,82 @@ function Get-FlowCellCustomEntrypointMetadata([string]$Path, [string]$PreferredF
     }
 
     return $baseFailure
+}
+
+function Test-FlowCellTruthyDirective([string]$Path, [string]$DirectiveName) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+
+    $pattern = '^\s*#\s*{0}\s*:\s*(?<value>.+?)\s*$' -f [Regex]::Escape($DirectiveName)
+    foreach ($line in @(Get-Content -LiteralPath $Path -TotalCount 64)) {
+        if ([string]$line -match $pattern) {
+            $value = [string]$matches['value']
+            return $value.Trim() -imatch '^(1|true|yes|built[-_ ]?in[-_ ]?only)$'
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$line) -and [string]$line -notmatch '^\s*#') {
+            break
+        }
+    }
+
+    return $false
+}
+
+function Test-FlowCellWrapperOnlyScript([string]$Path, [object]$RunEntrypointMeta) {
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+
+    $runSource = [string]$RunEntrypointMeta.SourceText
+    if ($runSource -notmatch '\bexecute_bridge_operator\s*\(') {
+        return $false
+    }
+
+    $allFunctions = @(Get-PythonTopLevelFunctionNames -Path $Path)
+    $helperFunctions = @(
+        $allFunctions |
+            Where-Object {
+                [string]$_ -inotmatch '^(run_flowcell_action|main|_load_flowcell_bridge|_merge_payload)$'
+            }
+    )
+    $raw = Get-Content -LiteralPath $Path -Raw
+    $looksGeneratedBridgeWrapper = $raw -match '(?m)^\s*ACTION_NAME\s*=' -and
+        $raw -match '(?m)^\s*DEFAULT_DATA\s*='
+
+    return ($looksGeneratedBridgeWrapper -and $helperFunctions.Count -eq 0)
+}
+
+function Test-FlowCellPortableBlenderSource([string]$Path) {
+    $runMeta = Get-FlowCellCustomEntrypointMetadata -Path $Path -PreferredFunctionName 'run_flowcell_action'
+    if ([string]::IsNullOrWhiteSpace([string]$runMeta.FunctionName)) {
+        return [pscustomobject]@{
+            IsValid = $false
+            FunctionName = ''
+            Reason = 'Portable Blender Add Script sources must expose run_flowcell_action(context=None, data=None).'
+        }
+    }
+
+    if (Test-FlowCellTruthyDirective -Path $Path -DirectiveName 'FLOWCELL_BUILTIN_ONLY') {
+        return [pscustomobject]@{
+            IsValid = $false
+            FunctionName = ''
+            Reason = 'This Blender script is marked FLOWCELL_BUILTIN_ONLY and is not a portable Add Script source.'
+        }
+    }
+
+    if (Test-FlowCellWrapperOnlyScript -Path $Path -RunEntrypointMeta $runMeta) {
+        return [pscustomobject]@{
+            IsValid = $false
+            FunctionName = ''
+            Reason = 'This Blender script is only a bridge wrapper. Put the actual tool logic in Blender Git Scripts before adding it.'
+        }
+    }
+
+    return [pscustomobject]@{
+        IsValid = $true
+        FunctionName = [string]$runMeta.FunctionName
+        Reason = ''
+    }
 }
 
 function Get-FlowCellPythonBootstrapHint([string]$Path, [string[]]$AvailableFunctions = @()) {
@@ -590,15 +666,15 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
         $functionName = ''
         $startLine = 1
 
-        $entrypointMeta = Get-FlowCellCustomEntrypointMetadata -Path $fullPath
-        if ([string]::IsNullOrWhiteSpace([string]$entrypointMeta.FunctionName)) {
-            $availableFunctions = @($entrypointMeta.AvailableFunctions)
+        $sourceValidation = Test-FlowCellPortableBlenderSource -Path $fullPath
+        if (-not [bool]$sourceValidation.IsValid) {
+            $availableFunctions = @(Get-PythonTopLevelFunctionNames -Path $fullPath)
             $bootstrapHint = Get-FlowCellPythonBootstrapHint -Path $fullPath -AvailableFunctions $availableFunctions
             $baseReason = if (-not [string]::IsNullOrWhiteSpace($bootstrapHint)) {
                 $bootstrapHint
             }
             else {
-                [string]$entrypointMeta.Reason
+                [string]$sourceValidation.Reason
             }
             $availableSummary = if ($availableFunctions.Count -gt 0) {
                 ' Found top-level functions: ' + (($availableFunctions | ForEach-Object { "'$_'" }) -join ', ') + '.'
@@ -614,10 +690,11 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             continue
         }
 
+        $sourcePythonPath = [System.IO.Path]::GetFullPath($fullPath)
         $managedPythonPath = Join-Path $managedActionRoot ('{0}.py' -f $actionName)
         Copy-Item -LiteralPath $fullPath -Destination $managedPythonPath -Force
         Set-TopDescription -Path $managedPythonPath -NextDescription $description
-        $meta = Get-PythonFunctionMetadata -Path $managedPythonPath -PreferredFunctionName ([string]$entrypointMeta.FunctionName)
+        $meta = Get-PythonFunctionMetadata -Path $managedPythonPath -PreferredFunctionName ([string]$sourceValidation.FunctionName)
         $pythonPath = $managedPythonPath
         $functionName = [string]$meta.FunctionName
         $startLine = [int]$meta.StartLine
@@ -643,7 +720,7 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
         if (@($existingEntry).Count -gt 0) {
             $existingEntry[0].pythonPath = [string]$pythonPath
             $existingEntry[0].functionName = [string]$functionName
-            $existingEntry[0] | Add-Member -MemberType NoteProperty -Name sourcePythonPath -Value ([string]$pythonPath) -Force
+            $existingEntry[0] | Add-Member -MemberType NoteProperty -Name sourcePythonPath -Value ([string]$sourcePythonPath) -Force
             $existingEntry[0] | Add-Member -MemberType NoteProperty -Name sourceFunctionName -Value ([string]$functionName) -Force
             $existingEntry[0] | Add-Member -MemberType NoteProperty -Name startLine -Value ([int]$startLine) -Force
             $existingEntry[0] | Add-Member -MemberType NoteProperty -Name description -Value ([string]$description) -Force
@@ -653,7 +730,7 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
                 action = [string]$actionName
                 pythonPath = [string]$pythonPath
                 functionName = [string]$functionName
-                sourcePythonPath = [string]$pythonPath
+                sourcePythonPath = [string]$sourcePythonPath
                 sourceFunctionName = [string]$functionName
                 startLine = [int]$startLine
                 description = [string]$description

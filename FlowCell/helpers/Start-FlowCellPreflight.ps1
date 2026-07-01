@@ -182,7 +182,92 @@ function Get-ProgramTabIdsFromDocument {
     return @($ids | Sort-Object -Unique)
 }
 
-function Ensure-CoreWindowsProgramStructure {
+function Get-ProgramTabSectionNameByLabel {
+    param(
+        [System.Collections.IDictionary]$Document,
+        [string]$Label
+    )
+
+    foreach ($sectionName in @($Document.Keys)) {
+        $name = [string]$sectionName
+        if (-not $name.StartsWith('ProgramTab_')) {
+            continue
+        }
+
+        $section = $Document[$name]
+        if ($section.Contains('Label') -and [string]::Equals([string]$section['Label'], $Label, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $name
+        }
+    }
+
+    return $null
+}
+
+function New-ProgramTabSectionName {
+    param(
+        [System.Collections.IDictionary]$Document,
+        [int]$PreferredId
+    )
+
+    $preferredSectionName = "ProgramTab_$PreferredId"
+    if (-not $Document.Contains($preferredSectionName)) {
+        return $preferredSectionName
+    }
+
+    $existingIds = @(Get-ProgramTabIdsFromDocument -Document $Document)
+    $nextId = 1
+    if ($existingIds.Count -gt 0) {
+        $nextId = ([int]($existingIds | Measure-Object -Maximum).Maximum) + 1
+    }
+    while ($Document.Contains("ProgramTab_$nextId")) {
+        $nextId++
+    }
+
+    return "ProgramTab_$nextId"
+}
+
+function Set-CoreProgramRegistration {
+    param(
+        [System.Collections.IDictionary]$Document,
+        [string]$Label,
+        [int]$PreferredId,
+        [string]$ScriptFolder,
+        [string]$ProgramType,
+        [string]$ExePath,
+        [string]$RunMethod,
+        [string]$AllowedScriptExtensions,
+        [string]$BridgeFolder,
+        [string]$RequiresRestart,
+        [string]$DefaultPanels,
+        [string]$ProcessNames
+    )
+
+    $sectionName = Get-ProgramTabSectionNameByLabel -Document $Document -Label $Label
+    if ([string]::IsNullOrWhiteSpace($sectionName)) {
+        $sectionName = New-ProgramTabSectionName -Document $Document -PreferredId $PreferredId
+        $Document[$sectionName] = [ordered]@{}
+        Write-PreflightLog "Registered built-in $Label program as $sectionName"
+    }
+
+    $section = $Document[$sectionName]
+    $section['AllowedScriptExtensions'] = $AllowedScriptExtensions
+    if (-not [string]::IsNullOrWhiteSpace($BridgeFolder) -or -not $section.Contains('BridgeFolder')) {
+        $section['BridgeFolder'] = $BridgeFolder
+    }
+    $section['DefaultPanels'] = $DefaultPanels
+    if (-not [string]::IsNullOrWhiteSpace($ExePath) -or -not $section.Contains('ExePath') -or [string]::IsNullOrWhiteSpace([string]$section['ExePath'])) {
+        $section['ExePath'] = $ExePath
+    }
+    $section['Label'] = $Label
+    $section['NormalizedName'] = $Label.ToLowerInvariant()
+    $section['ProcessNames'] = $ProcessNames
+    $section['ProgramType'] = $ProgramType
+    $section['RequiresRestart'] = $RequiresRestart
+    $section['RunMethod'] = $RunMethod
+    $section['ScriptFolder'] = $ScriptFolder
+}
+
+function Ensure-CoreProgramStructure {
     New-Item -ItemType Directory -Path $ProgramsRoot -Force | Out-Null
 
     $windowsRoot = Join-Path $ProgramsRoot 'Windows'
@@ -203,48 +288,82 @@ function Ensure-CoreWindowsProgramStructure {
         $document['Meta'] = [ordered]@{}
     }
 
-    $windowsSectionName = $null
-    foreach ($sectionName in @($document.Keys)) {
-        $name = [string]$sectionName
-        if (-not $name.StartsWith('ProgramTab_')) {
+    Set-CoreProgramRegistration `
+        -Document $document `
+        -Label 'Windows' `
+        -PreferredId 2 `
+        -ScriptFolder $windowsGitScripts `
+        -ProgramType 'generic' `
+        -ExePath 'explorer.exe' `
+        -RunMethod 'generic' `
+        -AllowedScriptExtensions '.ps1|.cmd|.bat|.exe|.lnk|.vbs|.ahk' `
+        -BridgeFolder '' `
+        -RequiresRestart '0' `
+        -DefaultPanels 'Files|Utility' `
+        -ProcessNames 'explorer|dopus|dopusrt'
+
+    $corePrograms = @(
+        @{
+            Label = 'Illustrator'
+            PreferredId = 1
+            ScriptFolderName = 'Illustrator Git Scripts'
+            ProgramType = 'adobe_direct_script_runner'
+            ExePath = ''
+            RunMethod = 'illustrator_direct'
+            AllowedScriptExtensions = '.jsx|.js'
+            BridgeFolder = ''
+            RequiresRestart = '0'
+            DefaultPanels = 'Layers|Files|Utility'
+            ProcessNames = 'illustrator'
+        },
+        @{
+            Label = 'Blender'
+            PreferredId = 3
+            ScriptFolderName = 'Blender Git Scripts'
+            ProgramType = 'bridge_runner'
+            ExePath = ''
+            RunMethod = 'blender_bridge'
+            AllowedScriptExtensions = '.ps1|.py|.blend|.exe|.lnk'
+            BridgeFolder = Join-Path $ProgramsRoot 'Blender'
+            RequiresRestart = '0'
+            DefaultPanels = 'Collections|Files|Utility'
+            ProcessNames = 'blender|blender-launcher'
+        },
+        @{
+            Label = 'Photoshop'
+            PreferredId = 4
+            ScriptFolderName = 'Photoshop Git Scripts'
+            ProgramType = 'adobe_direct_script_runner'
+            ExePath = ''
+            RunMethod = 'photoshop_direct'
+            AllowedScriptExtensions = '.jsx|.js'
+            BridgeFolder = ''
+            RequiresRestart = '0'
+            DefaultPanels = 'Layers|Files|Utility'
+            ProcessNames = 'photoshop'
+        }
+    )
+
+    foreach ($program in $corePrograms) {
+        $programRoot = Join-Path $ProgramsRoot $program.Label
+        if (-not (Test-Path -LiteralPath $programRoot -PathType Container)) {
             continue
         }
-        $section = $document[$name]
-        if ($section.Contains('Label') -and [string]::Equals([string]$section['Label'], 'Windows', [System.StringComparison]::OrdinalIgnoreCase)) {
-            $windowsSectionName = $name
-            break
-        }
-    }
 
-    if ([string]::IsNullOrWhiteSpace($windowsSectionName)) {
-        $windowsSectionName = 'ProgramTab_2'
-        if ($document.Contains($windowsSectionName)) {
-            $existingIds = @(Get-ProgramTabIdsFromDocument -Document $document)
-            $nextId = 1
-            if ($existingIds.Count -gt 0) {
-                $nextId = ([int]($existingIds | Measure-Object -Maximum).Maximum) + 1
-            }
-            while ($document.Contains("ProgramTab_$nextId")) {
-                $nextId++
-            }
-            $windowsSectionName = "ProgramTab_$nextId"
-        }
-        $document[$windowsSectionName] = [ordered]@{}
-        Write-PreflightLog "Registered built-in Windows program as $windowsSectionName"
+        Set-CoreProgramRegistration `
+            -Document $document `
+            -Label $program.Label `
+            -PreferredId $program.PreferredId `
+            -ScriptFolder (Join-Path $programRoot $program.ScriptFolderName) `
+            -ProgramType $program.ProgramType `
+            -ExePath $program.ExePath `
+            -RunMethod $program.RunMethod `
+            -AllowedScriptExtensions $program.AllowedScriptExtensions `
+            -BridgeFolder $program.BridgeFolder `
+            -RequiresRestart $program.RequiresRestart `
+            -DefaultPanels $program.DefaultPanels `
+            -ProcessNames $program.ProcessNames
     }
-
-    $windowsSection = $document[$windowsSectionName]
-    $windowsSection['AllowedScriptExtensions'] = '.ps1|.cmd|.bat|.exe|.lnk|.vbs|.ahk'
-    $windowsSection['BridgeFolder'] = ''
-    $windowsSection['DefaultPanels'] = ''
-    $windowsSection['ExePath'] = 'explorer.exe'
-    $windowsSection['Label'] = 'Windows'
-    $windowsSection['NormalizedName'] = 'windows'
-    $windowsSection['ProcessNames'] = 'explorer|dopus|dopusrt'
-    $windowsSection['ProgramType'] = 'generic'
-    $windowsSection['RequiresRestart'] = '0'
-    $windowsSection['RunMethod'] = 'generic'
-    $windowsSection['ScriptFolder'] = $windowsGitScripts
 
     $programIds = @(Get-ProgramTabIdsFromDocument -Document $document)
     $document['Meta']['ProgramTabIds'] = ($programIds -join '|')
@@ -253,17 +372,18 @@ function Ensure-CoreWindowsProgramStructure {
         $nextProgramId = ([int]($programIds | Measure-Object -Maximum).Maximum) + 1
     }
     $document['Meta']['ProgramTabNextId'] = [string]$nextProgramId
-    if (-not $document['Meta'].Contains('SelectedProgramTabId') -or [string]::IsNullOrWhiteSpace([string]$document['Meta']['SelectedProgramTabId'])) {
-        $document['Meta']['SelectedProgramTabId'] = ($windowsSectionName -replace '^ProgramTab_', '')
+    $selectedProgramTabId = 0
+    if (-not $document['Meta'].Contains('SelectedProgramTabId') -or -not [int]::TryParse([string]$document['Meta']['SelectedProgramTabId'], [ref]$selectedProgramTabId) -or -not (@($programIds) -contains $selectedProgramTabId)) {
+        $document['Meta']['SelectedProgramTabId'] = [string]($programIds | Select-Object -First 1)
     }
 
     Write-PreflightIni -Path $BindingsPath -Document $document
 }
 
 try {
-    Ensure-CoreWindowsProgramStructure
+    Ensure-CoreProgramStructure
 } catch {
-    Write-PreflightLog "Core Windows program repair failed: $($_.Exception.Message)"
+    Write-PreflightLog "Core program repair failed: $($_.Exception.Message)"
     throw
 }
 

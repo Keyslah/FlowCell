@@ -1,9 +1,11 @@
 # Description: Create triangle and regular polygon prism shapes from a compact Tri & Poly tool set.
 
+
+
 # FLOWCELL_KIND: tri_poly_toolset
 # FLOWCELL_CHILD: triangle_equilateral | Equila... | Create an equilateral triangular prism.
 # FLOWCELL_CHILD: triangle_isosceles | Isosc... | Create an isosceles triangular prism.
-# FLOWCELL_CHILD: triangle_50 | 50° | Create a triangular prism with the typed apex angle.
+# FLOWCELL_CHILD: triangle_50 | 50Ã‚Â° | Create a triangular prism with the typed apex angle.
 # FLOWCELL_CHILD: triangle_right | Right | Create a right triangular prism.
 # FLOWCELL_CHILD: triangle_scalene | Scalene | Create a scalene triangular prism.
 # FLOWCELL_CHILD: polygon_create | Create | Create a regular polygon prism using the staged side count.
@@ -314,7 +316,7 @@ def _ensure_scene_props():
         )
     if not hasattr(bpy.types.Scene, "flowcell_tri_poly_angle_deg"):
         bpy.types.Scene.flowcell_tri_poly_angle_deg = bpy.props.FloatProperty(
-            name="Angle °",
+            name="Angle Ã‚Â°",
             default=DEFAULT_ANGLE_DEG,
             min=MIN_ANGLE_DEG,
             max=MAX_ANGLE_DEG,
@@ -360,7 +362,7 @@ class FLOWCELL_PT_tri_poly_panel(bpy.types.Panel):
             op = row.operator(FLOWCELL_OT_tri_poly_action.bl_idname, text=label)
             op.command = command
         row.prop(context.scene, "flowcell_tri_poly_angle_deg", text="")
-        op = row.operator(FLOWCELL_OT_tri_poly_action.bl_idname, text="°")
+        op = row.operator(FLOWCELL_OT_tri_poly_action.bl_idname, text="Ã‚Â°")
         op.command = "triangle_50"
         for command, label in (
             ("triangle_right", "Right"),
@@ -420,7 +422,7 @@ def run_flowcell_action(context=None, data=None):
         angle_deg = _set_scene_angle_deg(context, _data_value(data, "angle_deg", DEFAULT_ANGLE_DEG))
         return _result(
             "OK",
-            f"Triangle angle set to {angle_deg:g}°.",
+            f"Triangle angle set to {angle_deg:g}Ã‚Â°.",
             changed=0,
             sides=_scene_sides(context),
             angle_deg=angle_deg,
