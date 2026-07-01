@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "rail-experiment",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:\\Users\\aaron\\AppData\\Local\\Temp\\claude\\D--Dev-workspace-Codex-flowcell\\5f0c4044-0901-4303-9d83-a376c9ff4f4a\\scratchpad\\server.js"],
+      "port": 5599
+    }
+  ]
+}

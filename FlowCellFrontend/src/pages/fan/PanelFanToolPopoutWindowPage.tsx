@@ -64,12 +64,16 @@ function formatErrorMessage(error: unknown): string {
 }
 
 function areBoundsEqual(left: PhysicalBounds | null, right: PhysicalBounds): boolean {
+  // 1px tolerance: window positions/sizes are whole physical pixels, and Windows
+  // may land a window a pixel off the requested spot on some DPI/edge cases. A
+  // stricter check (< 0.5) could never confirm the target there, leaving the fan
+  // stuck. 1px is imperceptible but absorbs that rounding slack.
   return Boolean(
     left &&
-      Math.abs(left.x - right.x) < 0.5 &&
-      Math.abs(left.y - right.y) < 0.5 &&
-      Math.abs(left.width - right.width) < 0.5 &&
-      Math.abs(left.height - right.height) < 0.5
+      Math.abs(left.x - right.x) <= 1 &&
+      Math.abs(left.y - right.y) <= 1 &&
+      Math.abs(left.width - right.width) <= 1 &&
+      Math.abs(left.height - right.height) <= 1
   );
 }
 
@@ -334,8 +338,12 @@ function resolveCollapsedOriginFromWindowBounds(args: {
   }
 
   return {
-    x: physicalBounds.x + (args.metrics?.ownerLeft ?? 0) * args.scaleFactor,
-    y: physicalBounds.y + (args.metrics?.ownerTop ?? 0) * args.scaleFactor
+    // Round to whole physical pixels: a window can only sit on integer pixels,
+    // and ownerLeft/ownerTop * scaleFactor can be fractional (e.g. 66 * 1.75 =
+    // 115.5 at 175%). A fractional origin propagates into the expanded target
+    // below and makes the bounds-settled check never match on that DPI.
+    x: Math.round(physicalBounds.x + (args.metrics?.ownerLeft ?? 0) * args.scaleFactor),
+    y: Math.round(physicalBounds.y + (args.metrics?.ownerTop ?? 0) * args.scaleFactor)
   };
 }
 
@@ -882,14 +890,19 @@ export default function PanelFanToolPopoutWindowPage({
 
       const targetBounds: PhysicalBounds = windowExpanded
         ? {
-            x: (origin?.x ?? 0) - metrics.ownerLeft * scaleFactor,
-            y: (origin?.y ?? 0) - metrics.ownerTop * scaleFactor,
+            // Round to whole physical pixels so the target matches where Windows
+            // can actually place the window. ownerLeft/ownerTop * scaleFactor is
+            // fractional at some DPIs (66 * 1.75 = 115.5 at 175%); an unrounded
+            // target lands 0.5px off the real window position, so the settled
+            // check never passes and the fan never opens on that monitor.
+            x: Math.round((origin?.x ?? 0) - metrics.ownerLeft * scaleFactor),
+            y: Math.round((origin?.y ?? 0) - metrics.ownerTop * scaleFactor),
             width: toPhysicalExtent(metrics.windowWidth, scaleFactor),
             height: toPhysicalExtent(metrics.windowHeight, scaleFactor)
           }
         : {
-            x: origin?.x ?? 0,
-            y: origin?.y ?? 0,
+            x: Math.round(origin?.x ?? 0),
+            y: Math.round(origin?.y ?? 0),
             width: toPhysicalExtent(metrics.ownerWidth, scaleFactor),
             height: toPhysicalExtent(metrics.ownerHeight, scaleFactor)
           };
