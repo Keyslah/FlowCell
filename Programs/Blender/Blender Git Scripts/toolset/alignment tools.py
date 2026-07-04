@@ -125,7 +125,6 @@ def _run_alignment(context, data):
 
     active_min, active_max = _alignment_bounds(active)
     active_center = (active_min + active_max) / 2.0
-    active_origin = _alignment_origin(active)
 
     if command == "center_all":
         for obj in moved_objects:
@@ -159,22 +158,23 @@ def _run_alignment(context, data):
         obj_min, obj_max = _alignment_bounds(obj)
         obj_center = (obj_min + obj_max) / 2.0
         obj_origin = _alignment_origin(obj)
-        source = obj_center
 
         if modifier == "SURFACE":
             target = active_min[axis_index] if obj_center[axis_index] > active_center[axis_index] else active_max[axis_index]
             source = obj_min if obj_center[axis_index] <= active_center[axis_index] else obj_max
-        elif modifier in {"GEOCENTER", "ORIGIN"}:
-            target = active_origin[axis_index]
-            source = obj_origin
-        elif mode == "MIN":
-            target = active_min[axis_index]
-            source = obj_min
-        elif mode == "MAX":
-            target = active_max[axis_index]
-            source = obj_max
         else:
-            target = active_center[axis_index]
+            if mode == "MIN":
+                target = active_min[axis_index]
+                source = obj_min
+            elif mode == "MAX":
+                target = active_max[axis_index]
+                source = obj_max
+            else:
+                target = active_center[axis_index]
+                source = obj_center
+
+            if modifier in {"GEOCENTER", "ORIGIN"}:
+                source = obj_origin
 
         _offset_object_world_axis(obj, axis_index, target - source[axis_index])
         moved_count += 1

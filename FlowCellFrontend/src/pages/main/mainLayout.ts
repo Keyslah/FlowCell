@@ -1,4 +1,5 @@
 import { buildPanelScriptButtonId } from "../../lib/buttonLabelOverrides";
+import type { PanelButtonEventsRecord } from "../../lib/programRails";
 
 export type PageRecord = {
   id: string;
@@ -39,6 +40,8 @@ export type ButtonRecord = {
   label: string;
   tooltip?: string;
   actionId: string;
+  bridgeAction?: string;
+  events?: PanelButtonEventsRecord;
   skinId: string;
   border?: string;
   background?: string;
@@ -353,6 +356,19 @@ export const staticButtons: ButtonRecord[] = [
     ...defaultButtonVisual
   },
   {
+    id: "top-left-button-9",
+    groupId: "top-left-actions",
+    x: 528.923453,
+    y: 36.353741,
+    width: 92.446043,
+    height: 37.294964,
+    radius: 18.647463,
+    label: "Appearance",
+    tooltip: "Open FlowCell appearance controls.",
+    actionId: "open-appearance",
+    ...defaultButtonVisual
+  },
+  {
     id: "top-right-button-1",
     groupId: "top-right-actions",
     x: 929.586346,
@@ -415,6 +431,8 @@ export function buildButtonsSurfaceButtons(
     label: string;
     tooltip?: string;
     kind?: string;
+    bridgeAction?: string;
+    events?: PanelButtonEventsRecord;
     macroId?: string;
   }[],
   options: ButtonsSurfaceBuildOptions = {}
@@ -569,6 +587,8 @@ export function buildButtonsSurfaceButtons(
       label: script.label,
       tooltip: script.tooltip,
       actionId: isMacro ? "run-panel-macro" : "run-panel-script",
+      bridgeAction: script.bridgeAction,
+      events: script.events,
       allowRename: true,
       isSelected: selectedScriptFileNames.has(script.fileName),
       ...defaultButtonVisual

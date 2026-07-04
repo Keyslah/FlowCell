@@ -132,6 +132,10 @@ export type WindowGridWindowContext = {
   kind: "window-grid";
 };
 
+export type AppearanceWindowContext = {
+  kind: "appearance";
+};
+
 export type MacroLabWindowContext = {
   kind: "macro-lab";
   programName: string;
@@ -190,6 +194,7 @@ export type FlowCellWindowContext =
   | OrganizationSetupWindowContext
   | BuildLayersWindowContext
   | WindowGridWindowContext
+  | AppearanceWindowContext
   | MacroLabWindowContext
   | ScriptGroupPopoutWindowContext
   | CodexUsagePopoutWindowContext;
@@ -467,6 +472,11 @@ export function getWindowContextFromLocation(): FlowCellWindowContext {
         kind: "window-grid"
       };
     }
+    if (parsed.kind === "appearance") {
+      return {
+        kind: "appearance"
+      };
+    }
     if (
       parsed.kind === "macro-lab" &&
       typeof parsed.programName === "string" &&
@@ -584,6 +594,7 @@ export function resolveWindowContextAfterBootstrap(
       nextContext.kind === "organization-setup" ||
       nextContext.kind === "build-layers" ||
       nextContext.kind === "window-grid" ||
+      nextContext.kind === "appearance" ||
       nextContext.kind === "macro-lab" ||
       nextContext.kind === "button-reorder" ||
       nextContext.kind === "script-group-popout" ||

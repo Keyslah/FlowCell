@@ -995,6 +995,15 @@ export function loadBlenderThemePackage(manifestPath: string): Promise<LoadedThe
   return invoke("load_blender_theme_package", { manifestPath });
 }
 
+export interface BlenderThemePackageEntry {
+  name: string;
+  manifestPath: string;
+}
+
+export function listBlenderThemePackages(): Promise<BlenderThemePackageEntry[]> {
+  return invoke("list_blender_theme_packages");
+}
+
 export function resolveBlenderThemeRootPath(): Promise<string> {
   return invoke("resolve_blender_theme_root_path");
 }

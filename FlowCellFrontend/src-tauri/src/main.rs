@@ -6,7 +6,7 @@ use rfd::FileDialog;
 use rusqlite::{Connection, OpenFlags};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::env;
 #[cfg(windows)]
 use std::ffi::c_void;
@@ -51,8 +51,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SPACE
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
     GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    SendMessageTimeoutW, SetWindowLongPtrW, WindowFromPoint, GA_ROOT,
-    GWLP_HWNDPARENT, GW_HWNDNEXT, SMTO_ABORTIFHUNG, WM_COPYDATA,
+    SendMessageTimeoutW, SetWindowLongPtrW, WindowFromPoint, GA_ROOT, GWLP_HWNDPARENT, GW_HWNDNEXT,
+    SMTO_ABORTIFHUNG, WM_COPYDATA,
 };
 
 #[cfg(windows)]
@@ -79,7 +79,7 @@ const DEFAULT_ALIGNMENT_BRIDGE_ACTION: &str = "flowcell_custom_alignment_tools_2
 const DEFAULT_BOOLEAN_BRIDGE_ACTION: &str = "flowcell_custom_boolean";
 const DEFAULT_DIMENSIONS_BRIDGE_ACTION: &str = "flowcell_custom_xyz_dimensions_2";
 const DEFAULT_REMESH_BRIDGE_ACTION: &str = "flowcell_custom_remesh_2";
-const DEFAULT_ROTATE_BRIDGE_ACTION: &str = "flowcell_custom_rotate_4";
+const DEFAULT_ROTATE_BRIDGE_ACTION: &str = "flowcell_custom_rotate";
 const DEFAULT_SMART_AXIS_BRIDGE_ACTION: &str = "flowcell_custom_smart_axis_3";
 #[cfg(windows)]
 const SCOPED_TOPMOST_POLL_MS: u64 = 180;
@@ -126,6 +126,19 @@ struct PanelScriptChildRecord {
     tooltip: String,
 }
 
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct PanelButtonEventActionRecord {
+    #[serde(rename = "type", default, skip_serializing_if = "String::is_empty")]
+    action_type: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    action: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    data: Option<Value>,
+}
+
+type PanelButtonEventsRecord = BTreeMap<String, PanelButtonEventActionRecord>;
+
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct PanelScriptFileRecord {
@@ -141,6 +154,8 @@ struct PanelScriptFileRecord {
     bridge_action: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     bridge_data: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    events: Option<PanelButtonEventsRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     children: Option<Vec<PanelScriptChildRecord>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -176,6 +191,8 @@ struct BlenderPanelItemRecord {
     bridge_action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bridge_data: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    events: Option<PanelButtonEventsRecord>,
     #[serde(default)]
     children: Vec<PanelScriptChildRecord>,
     #[serde(default)]
@@ -231,6 +248,7 @@ struct BlenderInstallResultItem {
     action: Option<String>,
     label: Option<String>,
     tooltip: Option<String>,
+    events: Option<PanelButtonEventsRecord>,
     message: Option<String>,
 }
 
@@ -3597,7 +3615,7 @@ fn show_save_layout_dialog(
             .add_filter("FlowCell Layout", &["json"]),
         parent_label,
     )
-        .save_file();
+    .save_file();
 
     Ok(selected_path.map(|path| normalize_layout_file_path(&path).display().to_string()))
 }
@@ -3618,7 +3636,7 @@ fn show_open_layout_dialog(
             .add_filter("FlowCell Layout", &["json"]),
         parent_label,
     )
-        .pick_file();
+    .pick_file();
 
     Ok(selected_path.map(|path| path.display().to_string()))
 }
@@ -4083,7 +4101,10 @@ fn copy_theme_package_image(
 ) -> Result<String, String> {
     let source_path = Path::new(source);
     if !source_path.is_file() {
-        return Err(format!("Image file was not found: {}", source_path.display()));
+        return Err(format!(
+            "Image file was not found: {}",
+            source_path.display()
+        ));
     }
 
     let mut file_name = source_path
@@ -4130,7 +4151,9 @@ fn save_blender_theme_package(
     let package_dir = theme_root.join(&stem);
     let manifest_path = package_dir.join(format!("{stem}.flowcell-theme-pack.json"));
 
-    let buckets_source = theme_image_path.as_deref().and_then(normalize_source_image_path);
+    let buckets_source = theme_image_path
+        .as_deref()
+        .and_then(normalize_source_image_path);
     let background_source = static_background_path
         .as_deref()
         .and_then(normalize_source_image_path);
@@ -4152,7 +4175,12 @@ fn save_blender_theme_package(
     };
 
     let buckets_rel = if let Some(buckets) = buckets_source.as_deref() {
-        Some(copy_theme_package_image(buckets, &package_dir, "buckets", None)?)
+        Some(copy_theme_package_image(
+            buckets,
+            &package_dir,
+            "buckets",
+            None,
+        )?)
     } else {
         None
     };
@@ -4205,7 +4233,10 @@ fn load_blender_theme_package(manifest_path: String) -> Result<Value, String> {
 
     let file_path = PathBuf::from(trimmed);
     if !file_path.is_file() {
-        return Err(format!("Theme package was not found: {}", file_path.display()));
+        return Err(format!(
+            "Theme package was not found: {}",
+            file_path.display()
+        ));
     }
 
     let raw = fs::read_to_string(&file_path).map_err(|error| {
@@ -4243,6 +4274,78 @@ fn load_blender_theme_package(manifest_path: String) -> Result<Value, String> {
         "themeImagePath": resolve_relative("bucketsImage"),
         "staticBackgroundPath": resolve_relative("backgroundImage"),
     }))
+}
+
+/// Lists saved theme packages under the blender_themes folder. Each package is a
+/// `<name>` subfolder holding a `<name>.flowcell-theme-pack.json` manifest; the
+/// returned entries carry the manifest's display `name` (folder name fallback)
+/// and the absolute manifest path so the toolbox dropdown can load them without a
+/// native file dialog.
+#[tauri::command]
+fn list_blender_theme_packages() -> Result<Vec<Value>, String> {
+    let root = resolve_default_blender_theme_root()?;
+    let mut packages: Vec<(String, String)> = Vec::new();
+
+    let entries = match fs::read_dir(&root) {
+        Ok(entries) => entries,
+        Err(_) => return Ok(Vec::new()),
+    };
+
+    for entry in entries.flatten() {
+        let package_dir = entry.path();
+        if !package_dir.is_dir() {
+            continue;
+        }
+
+        let Ok(files) = fs::read_dir(&package_dir) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let file_path = file.path();
+            let is_manifest = file_path.is_file()
+                && file_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .map(|value| {
+                        value
+                            .to_ascii_lowercase()
+                            .ends_with(".flowcell-theme-pack.json")
+                    })
+                    .unwrap_or(false);
+            if !is_manifest {
+                continue;
+            }
+
+            let folder_name = package_dir
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("Theme")
+                .to_string();
+            let name = fs::read_to_string(&file_path)
+                .ok()
+                .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
+                .and_then(|parsed| {
+                    parsed
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .map(|value| value.trim().to_string())
+                })
+                .filter(|value| !value.is_empty())
+                .unwrap_or(folder_name);
+
+            packages.push((name, file_path.display().to_string()));
+            break;
+        }
+    }
+
+    packages.sort_by(|left, right| left.0.to_lowercase().cmp(&right.0.to_lowercase()));
+
+    Ok(packages
+        .into_iter()
+        .map(|(name, manifest_path)| {
+            serde_json::json!({ "name": name, "manifestPath": manifest_path })
+        })
+        .collect())
 }
 
 /// Returns the blender_themes folder path (creating it) so the frontend can open
@@ -4378,6 +4481,7 @@ fn list_simple_panel_script_files(
                     execution_target: None,
                     bridge_action: None,
                     bridge_data: None,
+                    events: None,
                     children: None,
                     macro_id: Some(record.macro_id),
                 });
@@ -4397,6 +4501,7 @@ fn list_simple_panel_script_files(
             execution_target: None,
             bridge_action: None,
             bridge_data: None,
+            events: None,
             children: None,
             macro_id: None,
         });
@@ -4494,6 +4599,7 @@ fn read_adobe_panel_script_record(path: &Path, file_name: String) -> PanelScript
         execution_target: None,
         bridge_action: None,
         bridge_data: None,
+        events: None,
         children: if children.is_empty() {
             None
         } else {
@@ -5001,6 +5107,145 @@ fn parse_flowcell_kind(path: &Path) -> Result<Option<String>, String> {
     Ok(None)
 }
 
+fn normalize_panel_button_event_name(name: &str) -> Option<String> {
+    let normalized = name
+        .trim()
+        .replace(['_', '-', ' '], "")
+        .to_ascii_lowercase();
+    match normalized.as_str() {
+        "click" => Some("click".to_string()),
+        "doubleclick" => Some("doubleClick".to_string()),
+        "contextmenu" | "rightclick" => Some("contextMenu".to_string()),
+        "hoverenter" | "pointerenter" | "mouseenter" => Some("hoverEnter".to_string()),
+        "hoverleave" | "pointerleave" | "mouseleave" => Some("hoverLeave".to_string()),
+        "pressdown" | "pointerdown" | "mousedown" => Some("pressDown".to_string()),
+        "pressup" | "pointerup" | "mouseup" | "pointercancel" | "mousecancel" => {
+            Some("pressUp".to_string())
+        }
+        "focus" => Some("focus".to_string()),
+        "blur" => Some("blur".to_string()),
+        _ => None,
+    }
+}
+
+fn normalize_panel_button_action_type(action_type: &str) -> String {
+    let normalized = action_type
+        .trim()
+        .replace(['_', '-', ' '], "")
+        .to_ascii_lowercase();
+    match normalized.as_str() {
+        "" | "blenderbridge" | "bridge" => "blenderBridge".to_string(),
+        "none" | "noop" | "noaction" => "none".to_string(),
+        _ => action_type.trim().to_string(),
+    }
+}
+
+fn normalize_panel_button_event_action(
+    action: PanelButtonEventActionRecord,
+) -> Option<PanelButtonEventActionRecord> {
+    let action_type = normalize_panel_button_action_type(&action.action_type);
+    let action_name = action.action.trim().to_string();
+    if action_type != "none" && action_name.is_empty() {
+        return None;
+    }
+
+    Some(PanelButtonEventActionRecord {
+        action_type,
+        action: action_name,
+        data: action.data,
+    })
+}
+
+fn normalize_panel_button_events(
+    events: Option<PanelButtonEventsRecord>,
+) -> Option<PanelButtonEventsRecord> {
+    let mut normalized_events = PanelButtonEventsRecord::new();
+    for (event_name, event_action) in events.unwrap_or_default() {
+        let Some(normalized_name) = normalize_panel_button_event_name(&event_name) else {
+            continue;
+        };
+        let Some(normalized_action) = normalize_panel_button_event_action(event_action) else {
+            continue;
+        };
+        normalized_events.insert(normalized_name, normalized_action);
+    }
+
+    if normalized_events.is_empty() {
+        None
+    } else {
+        Some(normalized_events)
+    }
+}
+
+fn parse_flowcell_button_events(path: &Path) -> Result<Option<PanelButtonEventsRecord>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    let mut events = PanelButtonEventsRecord::new();
+
+    for line in content.lines() {
+        if let Some(json_value) = parse_flowcell_directive_value(line, "FLOWCELL_EVENTS") {
+            let parsed_events = serde_json::from_str::<PanelButtonEventsRecord>(json_value)
+                .map_err(|error| {
+                    format!(
+                        "Failed to parse FLOWCELL_EVENTS in {}: {error}",
+                        path.display()
+                    )
+                })?;
+            if let Some(normalized_events) = normalize_panel_button_events(Some(parsed_events)) {
+                events.extend(normalized_events);
+            }
+            continue;
+        }
+
+        let Some(event_value) = parse_flowcell_directive_value(line, "FLOWCELL_EVENT") else {
+            continue;
+        };
+        let parts = event_value
+            .splitn(4, '|')
+            .map(str::trim)
+            .collect::<Vec<_>>();
+        if parts.len() < 2 {
+            continue;
+        }
+
+        let Some(event_name) = normalize_panel_button_event_name(parts[0]) else {
+            continue;
+        };
+        let (action_type, action_name, data_text) = if parts.len() >= 3 {
+            (
+                parts[1],
+                parts[2],
+                parts.get(3).copied().unwrap_or_default(),
+            )
+        } else {
+            ("blenderBridge", parts[1], "")
+        };
+        let data = if data_text.trim().is_empty() {
+            None
+        } else {
+            Some(serde_json::from_str::<Value>(data_text).map_err(|error| {
+                format!(
+                    "Failed to parse FLOWCELL_EVENT data for '{}' in {}: {error}",
+                    event_name,
+                    path.display()
+                )
+            })?)
+        };
+        let Some(event_action) =
+            normalize_panel_button_event_action(PanelButtonEventActionRecord {
+                action_type: action_type.to_string(),
+                action: action_name.to_string(),
+                data,
+            })
+        else {
+            continue;
+        };
+        events.insert(event_name, event_action);
+    }
+
+    normalize_panel_button_events(Some(events)).map_or(Ok(None), |events| Ok(Some(events)))
+}
+
 fn is_rotate_tool_children(children: &[PanelScriptChildRecord]) -> bool {
     const REQUIRED_SLOTS: &[&str] = &[
         "axis_z",
@@ -5304,6 +5549,7 @@ fn normalize_blender_panel_item_record(record: &BlenderPanelItemRecord) -> Blend
             execution_target: String::new(),
             bridge_action: String::new(),
             bridge_data: None,
+            events: None,
             children: Vec::new(),
             macro_id: record.macro_id.trim().to_string(),
         };
@@ -5317,6 +5563,11 @@ fn normalize_blender_panel_item_record(record: &BlenderPanelItemRecord) -> Blend
     };
     let explicit_kind = if source_path.is_file() {
         parse_flowcell_kind(&source_path).unwrap_or(None)
+    } else {
+        None
+    };
+    let source_events = if source_path.is_file() {
+        parse_flowcell_button_events(&source_path).unwrap_or_else(|_| record.events.clone())
     } else {
         None
     };
@@ -5343,6 +5594,7 @@ fn normalize_blender_panel_item_record(record: &BlenderPanelItemRecord) -> Blend
         execution_target: record.execution_target.clone(),
         bridge_action,
         bridge_data: record.bridge_data.clone(),
+        events: normalize_panel_button_events(source_events.or_else(|| record.events.clone())),
         children,
         macro_id: String::new(),
     }
@@ -5416,6 +5668,7 @@ fn list_blender_panel_script_files(
                 Some(record.bridge_action)
             },
             bridge_data: record.bridge_data,
+            events: normalize_panel_button_events(record.events),
             children: if record.children.is_empty() {
                 None
             } else {
@@ -5536,8 +5789,9 @@ fn format_process_failure(output: &std::process::Output, fallback: &str) -> Stri
 }
 
 fn resolve_illustrator_bridge_invoke_script() -> Result<PathBuf, String> {
-    let repo_root = resolve_repo_root()
-        .ok_or_else(|| "FlowCell repo root could not be resolved for Illustrator bridge.".to_string())?;
+    let repo_root = resolve_repo_root().ok_or_else(|| {
+        "FlowCell repo root could not be resolved for Illustrator bridge.".to_string()
+    })?;
     let invoke_script = repo_root
         .join("Programs")
         .join("Illustrator")
@@ -6920,6 +7174,7 @@ fn build_frontend_macro_panel_item(
         execution_target: String::new(),
         bridge_action: String::new(),
         bridge_data: None,
+        events: None,
         children: Vec::new(),
         macro_id: action_id.trim().to_string(),
     }
@@ -9008,6 +9263,10 @@ fn add_blender_panel_scripts(
             let tool_kind = explicit_kind
                 .as_deref()
                 .or_else(|| classify_blender_panel_item_kind(&label, &source_path, &children));
+            let events = result
+                .events
+                .clone()
+                .or_else(|| parse_flowcell_button_events(&source_path).ok().flatten());
             let bridge_action = result
                 .action
                 .as_deref()
@@ -9034,6 +9293,7 @@ fn add_blender_panel_scripts(
                 execution_target: String::new(),
                 bridge_action,
                 bridge_data: None,
+                events: normalize_panel_button_events(events),
                 children,
                 macro_id: String::new(),
             };
@@ -11649,6 +11909,54 @@ fn run_panel_script(
 }
 
 #[tauri::command]
+fn run_panel_button_event(
+    program_name: String,
+    panel_name: String,
+    file_name: String,
+    event_name: String,
+) -> Result<String, String> {
+    let Some(normalized_event_name) = normalize_panel_button_event_name(&event_name) else {
+        return Err(format!("Unsupported button event '{}'.", event_name.trim()));
+    };
+
+    if is_blender_program_name(&program_name) {
+        let item = resolve_blender_panel_item_record(&program_name, &panel_name, &file_name)?;
+        let events = normalize_panel_button_events(item.events.clone()).ok_or_else(|| {
+            format!(
+                "Panel item '{}' does not declare button events.",
+                item.label
+            )
+        })?;
+        let event_action = events.get(&normalized_event_name).ok_or_else(|| {
+            format!(
+                "Panel item '{}' does not declare the '{}' event.",
+                item.label, normalized_event_name
+            )
+        })?;
+
+        let action_type = normalize_panel_button_action_type(&event_action.action_type);
+        if action_type == "none" {
+            return Ok("Button event has no action.".to_string());
+        }
+        if action_type != "blenderBridge" {
+            return Err(format!(
+                "Button event action type '{}' is not supported for Blender panel buttons yet.",
+                event_action.action_type
+            ));
+        }
+
+        let data = event_action.data.clone().unwrap_or_else(|| json!({}));
+        let response = run_blender_bridge_action_direct(&event_action.action, data)?;
+        return Ok(extract_blender_bridge_response_message(&response));
+    }
+
+    Err(format!(
+        "Button events are not wired for '{}' panel buttons yet.",
+        program_name.trim()
+    ))
+}
+
+#[tauri::command]
 fn run_blender_rotate_tool(
     program_name: String,
     panel_name: String,
@@ -12701,6 +13009,7 @@ fn main() {
             load_blender_theme_file,
             save_blender_theme_package,
             load_blender_theme_package,
+            list_blender_theme_packages,
             resolve_blender_theme_root_path,
             list_detected_slicer_executables,
             load_slicer_executable,
@@ -12742,6 +13051,7 @@ fn main() {
             delete_panel_scripts,
             run_panel_script_response,
             run_panel_script,
+            run_panel_button_event,
             run_blender_rotate_tool,
             run_blender_alignment_tool,
             run_illustrator_alignment_tool,

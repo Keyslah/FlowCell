@@ -34,7 +34,7 @@ Sort: Sort by visibility: visible objects become Live, matching invisible family
 
 Sort Live: Move every currently hidden object under Live into Trash.
 
-Snapshot: Copy the selected Live objects into Snapshots as versioned s# duplicates.
+Snapshot: Copy the selected objects into Snapshots as versioned s# duplicates, creating roots and buckets as needed.
 
 Back: Move the current Live version to Trash and restore the newest matching snapshot back into Live.
 
@@ -103,6 +103,7 @@ VERSION_PREFIX_RE = re.compile(r"^\([sta]\d+\)", re.IGNORECASE)
 TARGET_NAME_PROP = "lls_target_name"
 CYCLE_INDEX_PROP = "lls_cycle_index"
 VISIBILITY_BASELINE_PROP = "flowcell_visibility_baseline_objects"
+CYCLE_COLLECTION_HOVER_VISIBILITY_PROP = "flowcell_cycle_collection_hover_visibility_v1"
 PROJECT_THEME_RESTORE_HANDLER_KEY = "flowcell_project_theme_restore_load_post"
 PROJECT_THEME_RESTORE_ATTEMPTS_KEY = "flowcell_project_theme_restore_attempts"
 PROJECT_THEME_RESTORE_MAX_ATTEMPTS = 240
@@ -1763,6 +1764,63 @@ def set_object_hidden_in_view_layer(
         obj.hide_viewport = hidden
 
 
+def get_object_hidden_in_view_layer(
+    obj: bpy.types.Object,
+    view_layer: bpy.types.ViewLayer,
+) -> bool:
+    try:
+        return bool(obj.hide_get(view_layer=view_layer))
+    except TypeError:
+        try:
+            return bool(obj.hide_get())
+        except Exception:
+            return bool(obj.hide_viewport)
+    except Exception:
+        return bool(obj.hide_viewport)
+
+
+def save_cycle_collection_hover_visibility(context: bpy.types.Context) -> int:
+    objects = []
+    for obj in context.scene.objects:
+        objects.append(
+            {
+                "name": obj.name,
+                "hide_viewport": bool(obj.hide_viewport),
+                "hidden": get_object_hidden_in_view_layer(obj, context.view_layer),
+            }
+        )
+
+    context.scene[CYCLE_COLLECTION_HOVER_VISIBILITY_PROP] = json.dumps({"objects": objects})
+    return len(objects)
+
+
+def load_cycle_collection_hover_visibility(context: bpy.types.Context) -> list[dict] | None:
+    raw_value = context.scene.get(CYCLE_COLLECTION_HOVER_VISIBILITY_PROP)
+    if raw_value is None:
+        return None
+
+    try:
+        parsed = json.loads(str(raw_value))
+    except Exception:
+        return None
+
+    if not isinstance(parsed, dict):
+        return None
+
+    objects = parsed.get("objects")
+    if not isinstance(objects, list):
+        return None
+
+    return [record for record in objects if isinstance(record, dict)]
+
+
+def clear_cycle_collection_hover_visibility(context: bpy.types.Context) -> None:
+    try:
+        del context.scene[CYCLE_COLLECTION_HOVER_VISIBILITY_PROP]
+    except Exception:
+        pass
+
+
 def reveal_collection_in_view_layer(
     context: bpy.types.Context,
     target_collection: bpy.types.Collection | None,
@@ -2311,7 +2369,6 @@ def perform_snapshot(context: bpy.types.Context) -> str:
     disable_outliner_alpha_sort()
     scene_root = context.scene.collection
     root_collections = ensure_root_structure(scene_root)
-    live_collection = root_collections["Live"]
     snapshots_collection = root_collections["Snapshots"]
     parent_map = build_collection_parent_map(scene_root)
 
@@ -2320,14 +2377,9 @@ def perform_snapshot(context: bpy.types.Context) -> str:
         return "No selected objects to snapshot."
 
     snapshot_count = 0
-    skipped_non_live = 0
 
     for obj in selected_objects:
-        if not object_is_in_root(obj, live_collection, parent_map):
-            skipped_non_live += 1
-            continue
-
-        target_name = strip_version_prefix(obj.name) or obj.name
+        target_name = get_target_name_for_object(obj, root_collections, parent_map)
         snapshot_family = ensure_named_bucket(snapshots_collection, target_name)
         snapshot_name = format_version_label(
             "s",
@@ -2344,12 +2396,6 @@ def perform_snapshot(context: bpy.types.Context) -> str:
         reorder_versioned_objects(snapshot_family, "s", descending=True)
         duplicate.hide_set(True, view_layer=context.view_layer)
         snapshot_count += 1
-
-    if snapshot_count == 0 and skipped_non_live > 0:
-        return "Skipped snapshot: only objects in Live can be snapshotted."
-
-    if skipped_non_live > 0:
-        return f"Saved {snapshot_count} snapshot object(s). Skipped {skipped_non_live} non-Live object(s)."
 
     return f"Saved {snapshot_count} snapshot object(s)."
 
@@ -2528,6 +2574,46 @@ def perform_baseline_visibility(context: bpy.types.Context) -> str:
     return f"Recorded {len(visible_names)} visible object(s)."
 
 
+def perform_cycle_collection_hover_save_visibility(context: bpy.types.Context) -> str:
+    object_count = save_cycle_collection_hover_visibility(context)
+    return f"Captured cycle collection hover visibility for {object_count} object(s)."
+
+
+def perform_cycle_collection_hover_restore_visibility(context: bpy.types.Context) -> str:
+    records = load_cycle_collection_hover_visibility(context)
+    clear_cycle_collection_hover_visibility(context)
+    if records is None:
+        return "No cycle collection hover visibility snapshot is recorded."
+
+    scene_objects = list(context.scene.objects)
+    objects_by_name = {obj.name: obj for obj in scene_objects}
+    restored = 0
+    missing = 0
+
+    for record in records:
+        name = record.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+
+        obj = objects_by_name.get(name)
+        if obj is None:
+            missing += 1
+            continue
+
+        obj.hide_viewport = bool(record.get("hide_viewport", False))
+        set_object_hidden_in_view_layer(obj, context.view_layer, bool(record.get("hidden", False)))
+        restored += 1
+
+    try:
+        context.view_layer.update()
+    except Exception:
+        pass
+
+    if missing > 0:
+        return f"Restored cycle collection hover visibility for {restored} object(s). Missing {missing} saved object(s)."
+    return f"Restored cycle collection hover visibility for {restored} object(s)."
+
+
 def perform_restore_visibility(context: bpy.types.Context) -> str:
     baseline_names = load_visibility_baseline(context)
     if baseline_names is None:
@@ -2702,12 +2788,21 @@ def perform_cycle_collection(context: bpy.types.Context) -> str:
     next_index = (current_index + 1) % len(collection_objects)
     next_object = collection_objects[next_index]
 
+    reveal_collection_in_view_layer(context, target_collection)
+    reveal_object_collection_paths(context, next_object)
+
     for obj in collection_objects:
         obj.hide_viewport = False
         obj.hide_set(obj != next_object, view_layer=context.view_layer)
 
-    bpy.ops.object.select_all(action="DESELECT")
+    next_object.hide_viewport = False
     next_object.hide_set(False, view_layer=context.view_layer)
+    try:
+        context.view_layer.update()
+    except Exception:
+        pass
+
+    bpy.ops.object.select_all(action="DESELECT")
     next_object.select_set(True)
     context.view_layer.objects.active = next_object
     target_collection[CYCLE_INDEX_PROP] = next_index
@@ -4098,12 +4193,6 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
-
-
-
-
-
 
 
 

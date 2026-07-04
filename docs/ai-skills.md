@@ -190,7 +190,7 @@ Use `rg` to find current owners before opening broad files. Do not rely on older
 ##### Main ownership
 
 - `MainPage.tsx` owns selected program/panel/scripts, save/load, `LayoutSnapshot.Windows`, and the restore switch for managed windows.
-- `windowing.ts` owns native `WebviewWindow` creation, window labels, default placement, saved-bounds placement, scoped topmost registration, and `registerLayoutWindow`.
+- `windowing.ts` owns native `WebviewWindow` creation, window labels, default placement, saved-bounds placement via `applyWindowPlacement` (position first, then size), scoped topmost registration, and `registerLayoutWindow`.
 - `windowContext.ts` serializes each window kind into query-string context and parses it back.
 - `App.tsx` routes parsed window contexts to the correct page and registers scoped topmost for non-main windows.
 - `layoutSnapshots.ts` stores the managed-window registry in browser storage; this is the current source for windows that need to be captured.
@@ -236,9 +236,11 @@ Keep the coordinate systems separate:
 - Main page design space: `ExactPageFrame` scales the fixed `1225 x 721` canvas.
 - Button skin scale: `ButtonHost` and `HostSkinButton` measure host/skin size and compute imported-skin scale.
 - Popout/toolbox surface scale: `ScriptGroupPopoutWindowPage` and `GenericToolboxWindowPage` use CSS transform scale to fit canonical or measured content.
-- Native window scale: Tauri positions/sizes are physical; layout state and `set_host_window_bounds` use logical bounds. Convert with `window.scaleFactor()`.
+- Native window scale: Tauri window positions/sizes, layout snapshot bounds (Version 7), and `set_host_window_bounds` are all physical desktop pixels. Only DOM-measured geometry is logical; convert at the native boundary with `window.scaleFactor()`.
 
-Do not save physical pixels into layout. Do not compare DOM `getBoundingClientRect()` values directly to screen cursor coordinates. Convert DOM viewport rects to physical screen rects with `outerPosition + rect * scaleFactor` for hit testing.
+Layout snapshots save the live physical bounds verbatim and restore them verbatim. Never divide or multiply saved layout bounds by `scaleFactor`, and never add monitor-guessing conversions or "migrations" on load — a heuristic that reinterpreted saved coordinates against monitor rects moved the user's toolsets to the wrong monitor. Save what is on screen; restore it byte-for-byte. Do not compare DOM `getBoundingClientRect()` values directly to screen cursor coordinates. Convert DOM viewport rects to physical screen rects with `outerPosition + rect * scaleFactor` for hit testing.
+
+Placement order is a hard rule: set position before size. All restore placement goes through `applyWindowPlacement` (`windowing.ts`) and `applyWindowBounds` (`MainPage.tsx`), which park the window on its final monitor first and only then apply `PhysicalSize`. A size applied while the window can still move across monitors gets rescaled by Windows (WM_DPICHANGED) when the move happens — on the 100%/150%/175% mixed-DPI setup every restored toolset came back at exactly 2/3 size at the correct position. Never reintroduce a size-then-position sequence, including in new `open*Window` functions. Exact-ratio size errors (x2/3, x1.5, x1.75) are DPI-transit bugs, not saved-data bugs; diagnose by enumerating the live `flowcell_frontend` window rects with a per-monitor-DPI-aware process (SetProcessDpiAwareness(2) + EnumWindows/GetWindowRect) and comparing against the saved layout JSON.
 
 ##### Panel Fan
 
@@ -321,7 +323,8 @@ Do not assume the user mis-clicked. If they say it is still broken, trust curren
    - existing popouts not getting forced placement reapplied
    - saved bounds being rejected by overly strict minimum-size checks
    - move/resize listeners immediately overwriting restored bounds
-   - physical pixels saved where logical bounds are required
+   - size applied before position, letting a cross-monitor move DPI-rescale the window
+   - scale-factor conversions or monitor-guessing applied to saved layout bounds
    - DOM viewport rects compared directly to physical cursor coordinates
    - panel-fan expanded bounds captured instead of collapsed owner bounds
    - scoped topmost covering Windows taskbar preview thumbnails

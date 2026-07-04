@@ -757,7 +757,17 @@ def _write_project_theme_state(context, state):
 
 def _write_theme_state(context, state):
     normalized = _write_project_theme_state(context, state)
-    _write_global_theme_state(normalized)
+    # Persist only the theme portion to the global startup file. The global
+    # Place Picture entry is owned by the Startup button; overwriting it here
+    # with the project's Place Picture strips the explicit_startup flag off the
+    # image the user saved for startup, so the next launch skips restoring it.
+    global_state = _read_global_theme_state()
+    if not isinstance(global_state, dict):
+        global_state = _empty_project_theme_state()
+    else:
+        global_state = dict(global_state)
+    global_state["theme"] = normalized.get("theme", {})
+    _write_global_theme_state(global_state)
     return normalized
 
 
@@ -3966,9 +3976,17 @@ def _restore_state_for_startup(context):
     global_place_picture = global_state.get("place_picture", {})
 
     theme_state = global_theme if global_state_exists else project_theme
+    # The global Place Picture is now written only by the Startup button (theme
+    # applies no longer overwrite it), so any enabled global entry is a startup
+    # image. Restore it whenever it is enabled — matching the poll trigger's own
+    # enabled/path gate — instead of also requiring the explicit_startup flag,
+    # which older writes could strip.
+    global_place_picture_enabled = bool(
+        isinstance(global_place_picture, dict) and global_place_picture.get("enabled")
+    )
     place_picture_state = (
         global_place_picture
-        if global_state_exists and _is_explicit_startup_place_picture_state(global_place_picture)
+        if global_state_exists and global_place_picture_enabled
         else project_place_picture
         if not global_state_exists
         else {"enabled": False}

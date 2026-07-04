@@ -87,6 +87,8 @@ const GENERIC_TOOLBOX_WINDOW_WIDTH = 560;
 const GENERIC_TOOLBOX_WINDOW_HEIGHT = 360;
 const THEME_TOOLBOX_WINDOW_WIDTH = 920;
 const THEME_TOOLBOX_WINDOW_HEIGHT = 500;
+const APPEARANCE_WINDOW_WIDTH = 560;
+const APPEARANCE_WINDOW_HEIGHT = 640;
 const WINDOW_RELEASE_ATTEMPTS = 24;
 const WINDOW_RELEASE_DELAY_MS = 16;
 const DUPLICATE_WINDOW_CASCADE_STEP = 28;
@@ -119,6 +121,7 @@ const pendingRotateToolboxOpens = new Map<string, Promise<void>>();
 const pendingSmartAxisToolboxOpens = new Map<string, Promise<void>>();
 const pendingScriptGroupPopoutOpens = new Map<string, Promise<void>>();
 const pendingCodexUsagePopoutOpens = new Map<string, Promise<void>>();
+const pendingAppearanceOpens = new Map<string, Promise<void>>();
 let duplicateWindowInstanceCounter = 0;
 const duplicateWindowCascadeIndexes = new Map<string, number>();
 
@@ -195,6 +198,21 @@ function placementPosition(placement: WindowPlacement): LogicalPosition | Physic
   return placement.unit === "physical"
     ? new PhysicalPosition(x, y)
     : new LogicalPosition(x, y);
+}
+
+// Position must be applied before size. Moving a window between monitors with
+// different scale factors makes Windows rescale it (WM_DPICHANGED), so a size
+// applied before a cross-monitor move comes back multiplied by the DPI ratio
+// (saved toolsets restored at 2/3 size after transiting the 150% monitor).
+// Once the window sits on its final monitor, the size applies exactly.
+async function applyWindowPlacement(
+  target: WebviewWindow,
+  placement: WindowPlacement
+): Promise<void> {
+  if (typeof placement.x === "number" && typeof placement.y === "number") {
+    await target.setPosition(placementPosition(placement)).catch(() => {});
+  }
+  await target.setSize(placementSize(placement)).catch(() => {});
 }
 
 async function clampPhysicalPositionToWorkArea(args: {
@@ -1090,9 +1108,6 @@ export async function openPanelFanWindow(args: {
     await waitForWindowCreated(window);
     await applyPanelFanWindowChrome(window);
     await applyProgramScopedTopmost(windowLabel, args.programName);
-    await window
-      .setSize(savedPhysicalPosition ? new LogicalSize(defaultPlacement.width, defaultPlacement.height) : placementSize(placement))
-      .catch(() => {});
     if (savedPhysicalPosition) {
       await window
         .setPosition(new PhysicalPosition(savedPhysicalPosition.x, savedPhysicalPosition.y))
@@ -1102,6 +1117,9 @@ export async function openPanelFanWindow(args: {
         .setPosition(placementPosition(placement))
         .catch(() => {});
     }
+    await window
+      .setSize(savedPhysicalPosition ? new LogicalSize(defaultPlacement.width, defaultPlacement.height) : placementSize(placement))
+      .catch(() => {});
   })().finally(() => {
     if (pendingPanelFanOpens.get(windowLabel) === openPromise) {
       pendingPanelFanOpens.delete(windowLabel);
@@ -1157,12 +1175,7 @@ export async function openPanelFanOptionsWindow(args: {
     const existing = await WebviewWindow.getByLabel(windowLabel);
     if (existing) {
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await existing.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await existing
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(existing, placement);
       await focusExistingWindow(existing);
       return;
     }
@@ -1189,12 +1202,7 @@ export async function openPanelFanOptionsWindow(args: {
 
     await waitForWindowCreated(window);
     await applyProgramScopedTopmost(windowLabel, args.programName);
-    await window.setSize(placementSize(placement)).catch(() => {});
-    if (typeof placement.x === "number" && typeof placement.y === "number") {
-      await window
-        .setPosition(placementPosition(placement))
-        .catch(() => {});
-    }
+    await applyWindowPlacement(window, placement);
     await focusExistingWindow(window);
   })().finally(() => {
     if (pendingPanelFanOptionsOpens.get(windowLabel) === openPromise) {
@@ -1230,12 +1238,7 @@ export async function openButtonReorderWindow(args: {
     const existing = await WebviewWindow.getByLabel(windowLabel);
     if (existing) {
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await existing.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await existing
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(existing, placement);
       await focusExistingWindow(existing);
       return;
     }
@@ -1262,12 +1265,7 @@ export async function openButtonReorderWindow(args: {
 
     await waitForWindowCreated(window);
     await applyProgramScopedTopmost(windowLabel, args.programName);
-    await window.setSize(placementSize(placement)).catch(() => {});
-    if (typeof placement.x === "number" && typeof placement.y === "number") {
-      await window
-        .setPosition(placementPosition(placement))
-        .catch(() => {});
-    }
+    await applyWindowPlacement(window, placement);
     await focusExistingWindow(window);
   })().finally(() => {
     if (pendingButtonReorderOpens.get(windowLabel) === openPromise) {
@@ -1294,12 +1292,7 @@ export async function openBindsWindow(prefill?: BindsButtonPrefill): Promise<voi
     const placement = await resolveBindsWindowOptions();
     const existing = await WebviewWindow.getByLabel(windowLabel);
     if (existing) {
-      await existing.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await existing
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(existing, placement);
       await focusExistingWindow(existing);
       // The page is already mounted and listening, so push the prefill as an event.
       if (prefill) {
@@ -1328,12 +1321,7 @@ export async function openBindsWindow(prefill?: BindsButtonPrefill): Promise<voi
     });
 
     await waitForWindowCreated(window);
-    await window.setSize(placementSize(placement)).catch(() => {});
-    if (typeof placement.x === "number" && typeof placement.y === "number") {
-      await window
-        .setPosition(placementPosition(placement))
-        .catch(() => {});
-    }
+    await applyWindowPlacement(window, placement);
     await focusExistingWindow(window);
   })().finally(() => {
     if (pendingBindsOpens.get(windowLabel) === openPromise) {
@@ -1387,12 +1375,7 @@ export async function openMacroLabWindow(args: {
     });
 
     await waitForWindowCreated(window);
-    await window.setSize(placementSize(placement)).catch(() => {});
-    if (typeof placement.x === "number" && typeof placement.y === "number") {
-      await window
-        .setPosition(placementPosition(placement))
-        .catch(() => {});
-    }
+    await applyWindowPlacement(window, placement);
     await focusExistingWindow(window);
   })().finally(() => {
     if (pendingMacroLabOpens.get(windowLabel) === openPromise) {
@@ -1415,12 +1398,7 @@ export async function openOrganizationSetupWindow(): Promise<void> {
     const placement = await resolveOrganizationSetupWindowOptions();
     const existing = await WebviewWindow.getByLabel(windowLabel);
     if (existing) {
-      await existing.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await existing
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(existing, placement);
       await focusExistingWindow(existing);
       return;
     }
@@ -1446,12 +1424,7 @@ export async function openOrganizationSetupWindow(): Promise<void> {
     });
 
     await waitForWindowCreated(window);
-    await window.setSize(placementSize(placement)).catch(() => {});
-    if (typeof placement.x === "number" && typeof placement.y === "number") {
-      await window
-        .setPosition(placementPosition(placement))
-        .catch(() => {});
-    }
+    await applyWindowPlacement(window, placement);
     await focusExistingWindow(window);
   })().finally(() => {
     if (pendingOrganizationSetupOpens.get(windowLabel) === openPromise) {
@@ -1612,6 +1585,74 @@ export async function openWindowGridWindow(): Promise<void> {
   return openPromise;
 }
 
+export async function openAppearanceWindow(): Promise<void> {
+  const windowLabel = "flowcell-appearance";
+  const pendingOpen = pendingAppearanceOpens.get(windowLabel);
+  if (pendingOpen) {
+    return pendingOpen;
+  }
+
+  const openPromise = (async () => {
+    const existing = await WebviewWindow.getByLabel(windowLabel);
+    if (existing) {
+      await existing.setDecorations(false).catch(() => {});
+      await focusExistingWindow(existing);
+      return;
+    }
+
+    const currentWindow = getCurrentWindow();
+    const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+    const [position, size] = await Promise.all([
+      currentWindow.outerPosition().catch(() => null),
+      currentWindow.innerSize().catch(() => null)
+    ]);
+    const width = APPEARANCE_WINDOW_WIDTH;
+    const height = APPEARANCE_WINDOW_HEIGHT;
+    let x: number | undefined;
+    let y: number | undefined;
+    if (position && size) {
+      const logicalLeft = position.x / scaleFactor;
+      const logicalTop = position.y / scaleFactor;
+      const logicalWidth = size.width / scaleFactor;
+      const logicalHeight = size.height / scaleFactor;
+      x = logicalLeft + Math.max((logicalWidth - width) / 2, 24);
+      y = logicalTop + Math.max((logicalHeight - height) / 2, 24);
+    }
+
+    const window = new WebviewWindow(windowLabel, {
+      url: buildWindowContextUrl({ kind: "appearance" }),
+      title: "FlowCell - Appearance",
+      width,
+      height,
+      x,
+      y,
+      minWidth: 380,
+      minHeight: 460,
+      resizable: true,
+      decorations: false,
+      transparent: false,
+      shadow: true,
+      visible: true,
+      focus: true,
+      alwaysOnTop: false
+    });
+
+    await waitForWindowCreated(window);
+    await window.setDecorations(false).catch(() => {});
+    if (typeof x === "number" && typeof y === "number") {
+      await window.setPosition(new LogicalPosition(x, y)).catch(() => {});
+    }
+    await focusExistingWindow(window);
+  })().finally(() => {
+    if (pendingAppearanceOpens.get(windowLabel) === openPromise) {
+      pendingAppearanceOpens.delete(windowLabel);
+    }
+  });
+
+  pendingAppearanceOpens.set(windowLabel, openPromise);
+  return openPromise;
+}
+
 export async function openScriptGroupPopoutWindow(args: {
   programName: string;
   panelName: string;
@@ -1684,12 +1725,7 @@ export async function openScriptGroupPopoutWindow(args: {
     await waitForWindowCreated(window);
     await applyRotateToolboxWindowChrome(window);
     await applyProgramScopedTopmost(windowLabel, args.programName);
-    await window.setSize(placementSize(placement)).catch(() => {});
-    if (typeof placement.x === "number" && typeof placement.y === "number") {
-      await window
-        .setPosition(placementPosition(placement))
-        .catch(() => {});
-    }
+    await applyWindowPlacement(window, placement);
     await focusExistingWindow(window);
   })().finally(() => {
     if (pendingScriptGroupPopoutOpens.get(windowLabel) === openPromise) {
@@ -1762,12 +1798,7 @@ export async function openCodexUsagePopoutWindow(args: {
     await waitForWindowCreated(window);
     await applyRotateToolboxWindowChrome(window);
     await applyProgramScopedTopmost(windowLabel, args.programName);
-    await window.setSize(placementSize(placement)).catch(() => {});
-    if (typeof placement.x === "number" && typeof placement.y === "number") {
-      await window
-        .setPosition(placementPosition(placement))
-        .catch(() => {});
-    }
+    await applyWindowPlacement(window, placement);
     await focusExistingWindow(window);
   })().finally(() => {
     if (pendingCodexUsagePopoutOpens.get(windowLabel) === openPromise) {
@@ -1816,12 +1847,7 @@ export async function openGenericToolboxWindow(args: {
       if (existing) {
         await applyGenericToolboxWindowChrome(existing);
         await applyProgramScopedTopmost(windowLabel, args.programName);
-        await existing.setSize(placementSize(placement)).catch(() => {});
-        if (typeof placement.x === "number" && typeof placement.y === "number") {
-          await existing
-            .setPosition(placementPosition(placement))
-            .catch(() => {});
-        }
+        await applyWindowPlacement(existing, placement);
         await showWindowWithoutFocus(existing);
         return;
       }
@@ -1851,12 +1877,7 @@ export async function openGenericToolboxWindow(args: {
       await waitForWindowCreated(window);
       await applyGenericToolboxWindowChrome(window);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await window.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await window
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(window, placement);
       await showWindowWithoutFocus(window);
       return;
     } catch (error) {
@@ -1911,12 +1932,7 @@ export async function openThemeToolboxWindow(args: {
       if (existing) {
         await applyGenericToolboxWindowChrome(existing);
         await applyProgramScopedTopmost(windowLabel, args.programName);
-        await existing.setSize(placementSize(placement)).catch(() => {});
-        if (typeof placement.x === "number" && typeof placement.y === "number") {
-          await existing
-            .setPosition(placementPosition(placement))
-            .catch(() => {});
-        }
+        await applyWindowPlacement(existing, placement);
         await showWindowWithoutFocus(existing);
         return;
       }
@@ -1946,12 +1962,7 @@ export async function openThemeToolboxWindow(args: {
       await waitForWindowCreated(window);
       await applyGenericToolboxWindowChrome(window);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await window.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await window
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(window, placement);
       await showWindowWithoutFocus(window);
       return;
     } catch (error) {
@@ -2006,12 +2017,7 @@ export async function openFlattenRevolveToolboxWindow(args: {
       if (existing) {
         await applyGenericToolboxWindowChrome(existing);
         await applyProgramScopedTopmost(windowLabel, args.programName);
-        await existing.setSize(placementSize(placement)).catch(() => {});
-        if (typeof placement.x === "number" && typeof placement.y === "number") {
-          await existing
-            .setPosition(placementPosition(placement))
-            .catch(() => {});
-        }
+        await applyWindowPlacement(existing, placement);
         await showWindowWithoutFocus(existing);
         return;
       }
@@ -2041,12 +2047,7 @@ export async function openFlattenRevolveToolboxWindow(args: {
       await waitForWindowCreated(window);
       await applyGenericToolboxWindowChrome(window);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await window.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await window
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(window, placement);
       await showWindowWithoutFocus(window);
       return;
     } catch (error) {
@@ -2101,12 +2102,7 @@ export async function openRotateToolboxWindow(args: {
       if (existing) {
         await applyGenericToolboxWindowChrome(existing);
         await applyProgramScopedTopmost(windowLabel, args.programName);
-        await existing.setSize(placementSize(placement)).catch(() => {});
-        if (typeof placement.x === "number" && typeof placement.y === "number") {
-          await existing
-            .setPosition(placementPosition(placement))
-            .catch(() => {});
-        }
+        await applyWindowPlacement(existing, placement);
         await showWindowWithoutFocus(existing);
         return;
       }
@@ -2136,12 +2132,7 @@ export async function openRotateToolboxWindow(args: {
       await waitForWindowCreated(window);
       await applyGenericToolboxWindowChrome(window);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await window.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await window
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(window, placement);
       await showWindowWithoutFocus(window);
       return;
     } catch (error) {
@@ -2207,14 +2198,7 @@ export async function openSmartAxisToolboxWindow(args: {
         } else {
           await applyGenericToolboxWindowChrome(existing);
           await applyProgramScopedTopmost(windowLabel, args.programName);
-          await existing
-            .setSize(placementSize(placement))
-            .catch(() => {});
-          if (typeof placement.x === "number" && typeof placement.y === "number") {
-            await existing
-              .setPosition(placementPosition(placement))
-              .catch(() => {});
-          }
+          await applyWindowPlacement(existing, placement);
           await showWindowWithoutFocus(existing);
           return;
         }
@@ -2224,14 +2208,7 @@ export async function openSmartAxisToolboxWindow(args: {
       if (reopenedExisting) {
         await applyGenericToolboxWindowChrome(reopenedExisting);
         await applyProgramScopedTopmost(windowLabel, args.programName);
-        await reopenedExisting
-          .setSize(placementSize(placement))
-          .catch(() => {});
-        if (typeof placement.x === "number" && typeof placement.y === "number") {
-          await reopenedExisting
-            .setPosition(placementPosition(placement))
-            .catch(() => {});
-        }
+        await applyWindowPlacement(reopenedExisting, placement);
         await showWindowWithoutFocus(reopenedExisting);
         return;
       }
@@ -2255,14 +2232,7 @@ export async function openSmartAxisToolboxWindow(args: {
       await waitForWindowCreated(window);
       await applyGenericToolboxWindowChrome(window);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await window
-        .setSize(placementSize(placement))
-        .catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await window
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(window, placement);
       await showWindowWithoutFocus(window);
       return;
     } catch (error) {
@@ -2317,12 +2287,7 @@ export async function openAlignmentToolboxWindow(args: {
       if (existing) {
         await applyGenericToolboxWindowChrome(existing);
         await applyProgramScopedTopmost(windowLabel, args.programName);
-        await existing.setSize(placementSize(placement)).catch(() => {});
-        if (typeof placement.x === "number" && typeof placement.y === "number") {
-          await existing
-            .setPosition(placementPosition(placement))
-            .catch(() => {});
-        }
+        await applyWindowPlacement(existing, placement);
         await showWindowWithoutFocus(existing);
         return;
       }
@@ -2352,12 +2317,7 @@ export async function openAlignmentToolboxWindow(args: {
       await waitForWindowCreated(window);
       await applyGenericToolboxWindowChrome(window);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await window.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await window
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(window, placement);
       await showWindowWithoutFocus(window);
       return;
     } catch (error) {
@@ -2412,12 +2372,7 @@ export async function openBooleanToolboxWindow(args: {
       if (existing) {
         await applyGenericToolboxWindowChrome(existing);
         await applyProgramScopedTopmost(windowLabel, args.programName);
-        await existing.setSize(placementSize(placement)).catch(() => {});
-        if (typeof placement.x === "number" && typeof placement.y === "number") {
-          await existing
-            .setPosition(placementPosition(placement))
-            .catch(() => {});
-        }
+        await applyWindowPlacement(existing, placement);
         await showWindowWithoutFocus(existing);
         return;
       }
@@ -2447,12 +2402,7 @@ export async function openBooleanToolboxWindow(args: {
       await waitForWindowCreated(window);
       await applyGenericToolboxWindowChrome(window);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await window.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await window
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(window, placement);
       await showWindowWithoutFocus(window);
       return;
     } catch (error) {
@@ -2507,12 +2457,7 @@ export async function openDimensionsToolboxWindow(args: {
       if (existing) {
         await applyGenericToolboxWindowChrome(existing);
         await applyProgramScopedTopmost(windowLabel, args.programName);
-        await existing.setSize(placementSize(placement)).catch(() => {});
-        if (typeof placement.x === "number" && typeof placement.y === "number") {
-          await existing
-            .setPosition(placementPosition(placement))
-            .catch(() => {});
-        }
+        await applyWindowPlacement(existing, placement);
         await showWindowWithoutFocus(existing);
         return;
       }
@@ -2542,12 +2487,7 @@ export async function openDimensionsToolboxWindow(args: {
       await waitForWindowCreated(window);
       await applyGenericToolboxWindowChrome(window);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await window.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await window
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(window, placement);
       await showWindowWithoutFocus(window);
       return;
     } catch (error) {
@@ -2602,12 +2542,7 @@ export async function openRemeshToolboxWindow(args: {
       if (existing) {
         await applyGenericToolboxWindowChrome(existing);
         await applyProgramScopedTopmost(windowLabel, args.programName);
-        await existing.setSize(placementSize(placement)).catch(() => {});
-        if (typeof placement.x === "number" && typeof placement.y === "number") {
-          await existing
-            .setPosition(placementPosition(placement))
-            .catch(() => {});
-        }
+        await applyWindowPlacement(existing, placement);
         await showWindowWithoutFocus(existing);
         return;
       }
@@ -2637,12 +2572,7 @@ export async function openRemeshToolboxWindow(args: {
       await waitForWindowCreated(window);
       await applyGenericToolboxWindowChrome(window);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await window.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await window
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(window, placement);
       await showWindowWithoutFocus(window);
       return;
     } catch (error) {
@@ -2697,12 +2627,7 @@ export async function openTriPolyToolboxWindow(args: {
       if (existing) {
         await applyGenericToolboxWindowChrome(existing);
         await applyProgramScopedTopmost(windowLabel, args.programName);
-        await existing.setSize(placementSize(placement)).catch(() => {});
-        if (typeof placement.x === "number" && typeof placement.y === "number") {
-          await existing
-            .setPosition(placementPosition(placement))
-            .catch(() => {});
-        }
+        await applyWindowPlacement(existing, placement);
         await showWindowWithoutFocus(existing);
         return;
       }
@@ -2732,12 +2657,7 @@ export async function openTriPolyToolboxWindow(args: {
       await waitForWindowCreated(window);
       await applyGenericToolboxWindowChrome(window);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      await window.setSize(placementSize(placement)).catch(() => {});
-      if (typeof placement.x === "number" && typeof placement.y === "number") {
-        await window
-          .setPosition(placementPosition(placement))
-          .catch(() => {});
-      }
+      await applyWindowPlacement(window, placement);
       await showWindowWithoutFocus(window);
       return;
     } catch (error) {

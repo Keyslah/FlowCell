@@ -48,6 +48,7 @@ import {
   renamePanelFolder,
   renameProgramFolder,
   runPanelScript,
+  runPanelButtonEvent,
   saveLayoutSnapshot,
   showOpenLayoutDialog,
   showSaveLayoutDialog,
@@ -75,6 +76,7 @@ import {
   type StartupSettings
 } from "../../lib/startupSettings";
 import {
+  openAppearanceWindow,
   openButtonReorderWindow,
   openAlignmentToolboxWindow,
   openBooleanToolboxWindow,
@@ -96,6 +98,11 @@ import {
   reloadCurrentHostWindow
 } from "../../lib/windowing";
 import { MACRO_PANEL_CHANGED_EVENT, runFrontendMacro } from "../../lib/macros";
+import {
+  readAppearanceSettings,
+  subscribeAppearanceSettings,
+  type AppearanceSettings
+} from "../../lib/appearanceSettings";
 import { showOpenFolderDialog } from "../../lib/tauri";
 import { buildScriptGroupPopoutWindowSize } from "../../lib/scriptGroupPopoutTemplates";
 import { DEFAULT_FLOW_IMPORTED_SKIN } from "../../lib/theme";
@@ -129,11 +136,21 @@ type MacroPanelChangedPayload = {
   panelName?: string;
 };
 
+type ActiveHoverButtonEvent = {
+  buttonId: string;
+  programName: string;
+  panelName: string;
+  fileName: string;
+};
+
 const BUTTON_CONTEXT_MENU_WIDTH = 168;
 const BUTTON_CONTEXT_MENU_HEIGHT = 156;
 const BUTTON_CONTEXT_MENU_MARGIN = 8;
 const PANEL_SCRIPT_DOUBLE_CLICK_MS = 220;
-const LAYOUT_SNAPSHOT_VERSION = 6;
+// Version 7 marks bounds stored in physical desktop pixels, captured exactly
+// as the window sits on its monitor and restored verbatim (position first,
+// then size — see applyWindowBounds / windowing's applyWindowPlacement).
+const LAYOUT_SNAPSHOT_VERSION = 7;
 const CONTEXT_MENU_STYLE_GROUP: StyleGroup = {
   id: "main-page-context-menu-style",
   index: 0,
@@ -532,15 +549,18 @@ async function applyWindowBounds(
   target: WindowPlacementTarget,
   bounds: FlowCellBounds
 ): Promise<void> {
-  await target.setSize(new PhysicalSize(bounds.Width, bounds.Height)).catch(() => {});
+  // Position before size: a cross-monitor move makes Windows rescale the
+  // window by the DPI ratio, which would corrupt a size applied first.
   await target
     .setPosition(new PhysicalPosition(bounds.Left, bounds.Top))
     .catch(() => {});
+  await target.setSize(new PhysicalSize(bounds.Width, bounds.Height)).catch(() => {});
 }
 
 export default function MainPage() {
   const topLeftActionGroupRef = useRef<HTMLDivElement | null>(null);
   const layoutActionPendingRef = useRef(false);
+  const activeHoverButtonEventsRef = useRef<Map<string, ActiveHoverButtonEvent>>(new Map());
   const pendingPanelScriptActionTimersRef = useRef<Record<string, number>>({});
   const preferredPanelSelectionRef = useRef<string | null>(null);
   const preferredSelectedPanelScriptFileNamesRef = useRef<string[] | null>(null);
@@ -562,6 +582,54 @@ export default function MainPage() {
   );
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const [appearanceSettings, setAppearanceSettings] = useState<AppearanceSettings>(() =>
+    readAppearanceSettings()
+  );
+  const [hoveredRailId, setHoveredRailId] = useState<string | null>(null);
+
+  useEffect(() => {
+    return () => {
+      const activeEvents = Array.from(activeHoverButtonEventsRef.current.values());
+      activeHoverButtonEventsRef.current.clear();
+      activeEvents.forEach((event) => {
+        void runPanelButtonEvent(
+          event.programName,
+          event.panelName,
+          event.fileName,
+          "hoverLeave"
+        ).catch((error) => {
+          console.warn("Failed to run button hoverLeave cleanup.", error);
+        });
+      });
+    };
+  }, []);
+
+  // Appearance settings are edited in the Appearance window and applied live here.
+  useEffect(() => subscribeAppearanceSettings(setAppearanceSettings), []);
+
+  // Rails are pointer-events:none (so buttons on top keep their clicks). Detect the
+  // hovered rail by hit-testing the pointer against each rail rect — no clicks are
+  // intercepted, and it works through the scaled page plane since rects are viewport.
+  const handleRailHoverPointerMove = (event: ReactPointerEvent<HTMLElement>) => {
+    const { clientX, clientY } = event;
+    let nextRailId: string | null = null;
+    document.querySelectorAll<HTMLElement>(".rail-surface").forEach((node) => {
+      if (nextRailId) {
+        return;
+      }
+      const rect = node.getBoundingClientRect();
+      if (
+        clientX >= rect.left &&
+        clientX <= rect.right &&
+        clientY >= rect.top &&
+        clientY <= rect.bottom
+      ) {
+        nextRailId = node.dataset.railId ?? null;
+      }
+    });
+    setHoveredRailId((current) => (current === nextRailId ? current : nextRailId));
+    syncButtonHoverFromPointerEvent(event);
+  };
 
   // Frameless window: hold Space then drag to move it.
   useEffect(() => {
@@ -2598,6 +2666,139 @@ export default function MainPage() {
     await getMainChromeWindow()?.close();
   };
 
+  const getButtonEvent = (button: ButtonRecord, eventName: string) => {
+    return button.events?.[eventName];
+  };
+
+  const getPanelButtonEventTarget = (button: ButtonRecord): ActiveHoverButtonEvent | null => {
+    if (!selectedProgramName || !selectedPanelName || !button.scriptFileName) {
+      return null;
+    }
+    if (button.actionId !== "run-panel-script") {
+      return null;
+    }
+
+    return {
+      buttonId: button.id,
+      programName: selectedProgramName,
+      panelName: selectedPanelName,
+      fileName: button.scriptFileName
+    };
+  };
+
+  const getPanelButtonEventKey = (target: ActiveHoverButtonEvent): string => {
+    return `${target.programName}\n${target.panelName}\n${target.fileName}`;
+  };
+
+  const runButtonHoverLeave = (target: ActiveHoverButtonEvent, key: string) => {
+    activeHoverButtonEventsRef.current.delete(key);
+    void runPanelButtonEvent(target.programName, target.panelName, target.fileName, "hoverLeave").catch(
+      (error) => {
+        console.warn("Failed to run button hoverLeave event.", error);
+      }
+    );
+  };
+
+  const cleanupActiveHoverButtonEvents = () => {
+    const activeEvents = Array.from(activeHoverButtonEventsRef.current.entries());
+    activeEvents.forEach(([key, target]) => runButtonHoverLeave(target, key));
+  };
+
+  const findButtonIdFromPointerEvent = (event: ReactPointerEvent<HTMLElement>): string | null => {
+    const path = event.nativeEvent.composedPath?.() ?? [];
+    for (const pathItem of path) {
+      if (!(pathItem instanceof HTMLElement)) {
+        continue;
+      }
+      const buttonElement = pathItem.dataset.buttonId
+        ? pathItem
+        : pathItem.closest<HTMLElement>("[data-button-id]");
+      if (buttonElement?.dataset.buttonId) {
+        return buttonElement.dataset.buttonId;
+      }
+    }
+
+    const hitElement = document.elementFromPoint(event.clientX, event.clientY);
+    const buttonElement = hitElement?.closest<HTMLElement>("[data-button-id]");
+    return buttonElement?.dataset.buttonId ?? null;
+  };
+
+  const syncButtonHoverFromPointerEvent = (event: ReactPointerEvent<HTMLElement>) => {
+    const hoveredButtonId = findButtonIdFromPointerEvent(event);
+    const activeEvents = Array.from(activeHoverButtonEventsRef.current.entries());
+    activeEvents.forEach(([key, target]) => {
+      if (target.buttonId !== hoveredButtonId) {
+        runButtonHoverLeave(target, key);
+      }
+    });
+
+    if (!hoveredButtonId) {
+      return;
+    }
+
+    const hoveredButton = resolvedButtonsById.get(hoveredButtonId);
+    if (!hoveredButton || !getButtonEvent(hoveredButton, "hoverEnter")) {
+      return;
+    }
+
+    handleButtonHoverStart(hoveredButton);
+  };
+
+  const handleButtonHoverStart = (button: ButtonRecord) => {
+    if (!getButtonEvent(button, "hoverEnter")) {
+      return;
+    }
+
+    const target = getPanelButtonEventTarget(button);
+    if (!target) {
+      return;
+    }
+
+    const key = getPanelButtonEventKey(target);
+    if (activeHoverButtonEventsRef.current.has(key)) {
+      return;
+    }
+
+    activeHoverButtonEventsRef.current.set(key, target);
+    void runPanelButtonEvent(target.programName, target.panelName, target.fileName, "hoverEnter").catch(
+      (error) => {
+        activeHoverButtonEventsRef.current.delete(key);
+        console.warn("Failed to run button hoverEnter event.", error);
+      }
+    );
+  };
+
+  const handleButtonHoverEnd = (button: ButtonRecord) => {
+    const target = getPanelButtonEventTarget(button);
+    if (!target) {
+      return;
+    }
+
+    const key = getPanelButtonEventKey(target);
+    const activeTarget = activeHoverButtonEventsRef.current.get(key);
+    if (!activeTarget || !getButtonEvent(button, "hoverLeave")) {
+      activeHoverButtonEventsRef.current.delete(key);
+      return;
+    }
+
+    runButtonHoverLeave(activeTarget, key);
+  };
+
+  const handleButtonHoverCancel = (button: ButtonRecord) => {
+    const target = getPanelButtonEventTarget(button);
+    if (!target) {
+      return;
+    }
+
+    const key = getPanelButtonEventKey(target);
+    const activeTarget = activeHoverButtonEventsRef.current.get(key);
+    if (!activeTarget) {
+      return;
+    }
+
+    runButtonHoverLeave(activeTarget, key);
+  };
+
   const handleButtonActivate = async (
     button: ButtonRecord,
     event: ReactMouseEvent<HTMLElement>
@@ -2639,6 +2840,16 @@ export default function MainPage() {
 
     if (button.actionId === "open-settings") {
       setIsSettingsOpen(true);
+      return;
+    }
+
+    if (button.actionId === "open-appearance") {
+      try {
+        await openAppearanceWindow();
+      } catch (error) {
+        console.error("Failed to open the Appearance window.", error);
+        window.alert(`Appearance window could not be opened.\n\n${formatErrorMessage(error)}`);
+      }
       return;
     }
 
@@ -2890,8 +3101,16 @@ export default function MainPage() {
         .filter(Boolean)
         .join(" ")}
       onPointerDownCapture={handleMainShellPointerDown}
+      onPointerMove={handleRailHoverPointerMove}
+      onPointerLeave={() => {
+        setHoveredRailId(null);
+        cleanupActiveHoverButtonEvents();
+      }}
       onPointerUp={() => setSpaceDragging(false)}
-      onPointerCancel={() => setSpaceDragging(false)}
+      onPointerCancel={() => {
+        setSpaceDragging(false);
+        cleanupActiveHoverButtonEvents();
+      }}
     >
       <ExactPageFrame page={page}>
         <div className="main-page__page">
@@ -2901,7 +3120,12 @@ export default function MainPage() {
             style={{ backgroundImage: `url(${mainBackground})` }}
           />
           {rails.map((rail) => (
-            <RailSurface key={rail.id} rail={rail} />
+            <RailSurface
+              key={rail.id}
+              rail={rail}
+              isHovered={hoveredRailId === rail.id}
+              motion={appearanceSettings.railHover}
+            />
           ))}
           {topLeftActionAnchor ? (
             <div
@@ -2923,6 +3147,9 @@ export default function MainPage() {
                   onActivate={handleButtonActivate}
                   onDoubleActivate={handleButtonDoubleActivate}
                   onRequestContextMenu={handleButtonContextMenu}
+                  onHoverStart={handleButtonHoverStart}
+                  onHoverEnd={handleButtonHoverEnd}
+                  onHoverCancel={handleButtonHoverCancel}
                 />
               ))}
             </div>
@@ -2945,6 +3172,9 @@ export default function MainPage() {
                   onActivate={handleButtonActivate}
                   onDoubleActivate={handleButtonDoubleActivate}
                   onRequestContextMenu={handleButtonContextMenu}
+                  onHoverStart={handleButtonHoverStart}
+                  onHoverEnd={handleButtonHoverEnd}
+                  onHoverCancel={handleButtonHoverCancel}
                 />
               ))}
             </div>
@@ -2957,6 +3187,9 @@ export default function MainPage() {
               onActivate={handleButtonActivate}
               onDoubleActivate={handleButtonDoubleActivate}
               onRequestContextMenu={handleButtonContextMenu}
+              onHoverStart={handleButtonHoverStart}
+              onHoverEnd={handleButtonHoverEnd}
+              onHoverCancel={handleButtonHoverCancel}
             />
           ))}
           <label

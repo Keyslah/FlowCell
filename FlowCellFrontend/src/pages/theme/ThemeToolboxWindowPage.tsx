@@ -16,10 +16,12 @@ import {
 } from "../../lib/programRails";
 import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import {
+  listBlenderThemePackages,
   loadBlenderThemeDarknessProfiles,
   loadBlenderThemeFile,
   loadBlenderThemePackage,
   resolveBlenderThemeRootPath,
+  type BlenderThemePackageEntry,
   samplePhotoThemeColors,
   saveBlenderThemeDarknessProfiles,
   saveBlenderThemeFile,
@@ -106,6 +108,11 @@ interface DarknessProfile {
 const LAST_BLENDER_THEME_DIRECTORY_KEY = "flowcell.lastBlenderThemeDirectory";
 const DARKNESS_PROFILE_STORAGE_KEY = "flowcell.themeToolbox.darknessProfiles.v1";
 const ACTIVE_DARKNESS_PROFILE_STORAGE_KEY = "flowcell.themeToolbox.activeDarknessProfile.v1";
+const DARKNESS_LEVEL_STORAGE_KEY = "flowcell.themeToolbox.darknessLevel.v1";
+const DEFAULT_DARKNESS_LEVEL = 0.3;
+// Light themes always paint their text pure black so every visible bucket label
+// stays readable against the lighter fills.
+const LIGHT_THEME_TEXT_HEX = "#000000";
 const DEFAULT_THEME_PALETTE = ["#1E2728", "#F4F4EE", "#4D686B", "#7BA8B7", "#2D383A"];
 const THEME_TOOLBOX_BASE_WIDTH = 904;
 const THEME_TOOLBOX_VIEWPORT_PADDING = 16;
@@ -399,6 +406,118 @@ function shiftHexTowardLuminance(hexValue: string, targetLuminance: number): str
   return bestHex;
 }
 
+function rgbToHsl(red: number, green: number, blue: number): [number, number, number] {
+  const r = red / 255;
+  const g = green / 255;
+  const b = blue / 255;
+  const maxValue = Math.max(r, g, b);
+  const minValue = Math.min(r, g, b);
+  const delta = maxValue - minValue;
+  const lightness = (maxValue + minValue) / 2;
+  if (delta <= 0) {
+    return [0, 0, lightness];
+  }
+
+  const saturation =
+    lightness > 0.5 ? delta / (2 - maxValue - minValue) : delta / (maxValue + minValue);
+  let hue: number;
+  if (maxValue === r) {
+    hue = ((g - b) / delta) % 6;
+  } else if (maxValue === g) {
+    hue = (b - r) / delta + 2;
+  } else {
+    hue = (r - g) / delta + 4;
+  }
+  hue = (hue * 60 + 360) % 360;
+  return [hue, saturation, lightness];
+}
+
+function hslToRgb(
+  hue: number,
+  saturation: number,
+  lightness: number
+): [number, number, number] {
+  const normalizedHue = (((hue % 360) + 360) % 360) / 360;
+  const s = Math.max(0, Math.min(1, saturation));
+  const l = Math.max(0, Math.min(1, lightness));
+  if (s <= 0) {
+    const gray = l * 255;
+    return [gray, gray, gray];
+  }
+
+  const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+  const p = 2 * l - q;
+  const hueToChannel = (offset: number): number => {
+    let t = offset;
+    if (t < 0) {
+      t += 1;
+    }
+    if (t > 1) {
+      t -= 1;
+    }
+    if (t < 1 / 6) {
+      return p + (q - p) * 6 * t;
+    }
+    if (t < 1 / 2) {
+      return q;
+    }
+    if (t < 2 / 3) {
+      return p + (q - p) * (2 / 3 - t) * 6;
+    }
+    return p;
+  };
+
+  return [
+    hueToChannel(normalizedHue + 1 / 3) * 255,
+    hueToChannel(normalizedHue) * 255,
+    hueToChannel(normalizedHue - 1 / 3) * 255
+  ];
+}
+
+// Reach the target luminance by moving lightness in HSL space while keeping the
+// color's hue and holding saturation to a floor. Unlike shiftHexTowardLuminance
+// (which mixes toward black/white and greys colors out), this keeps tones vivid,
+// and an optional hue rotation spreads a small sampled palette into more colors.
+function colorizeHexToLuminance(
+  hexValue: string,
+  targetLuminance: number,
+  hueShiftDegrees = 0,
+  saturationFloor = 0.45
+): string {
+  const sourceRgb = parseThemeHexRgb(hexValue);
+  if (!sourceRgb) {
+    return shiftHexTowardLuminance(hexValue, targetLuminance);
+  }
+
+  const [hue, saturation] = rgbToHsl(sourceRgb[0], sourceRgb[1], sourceRgb[2]);
+  const boostedSaturation = Math.max(saturation, saturationFloor);
+  const shiftedHue = hue + hueShiftDegrees;
+  const boundedTarget = Math.max(0, Math.min(1, targetLuminance));
+  let low = 0;
+  let high = 1;
+  let bestHex = hexValue;
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (let index = 0; index < 20; index += 1) {
+    const lightness = (low + high) * 0.5;
+    const candidateHex = rgbToThemeHex(hslToRgb(shiftedHue, boostedSaturation, lightness));
+    const candidateLuminance = hexLuminance(candidateHex);
+    const distance = Math.abs(candidateLuminance - boundedTarget);
+    if (distance < bestDistance) {
+      bestHex = candidateHex;
+      bestDistance = distance;
+    }
+
+    if (candidateLuminance < boundedTarget) {
+      low = lightness;
+    } else {
+      high = lightness;
+    }
+  }
+
+  return bestHex;
+}
+
 function pickPaletteHexForTone(
   palette: string[],
   targetLuminance: number,
@@ -473,7 +592,8 @@ function buildProfiledThemeRoleAssignment(
     usageCounts.set(sampledHex, (usageCounts.get(sampledHex) ?? 0) + 1);
     return shiftHexTowardLuminance(sampledHex, target);
   };
-  const textHex = pickPaletteTextHex(rolePalette, mode);
+  const textHex =
+    mode === "light" ? LIGHT_THEME_TEXT_HEX : pickPaletteTextHex(rolePalette, mode);
   const editorBackgroundHex = colorForField("ThemeEditorBackgroundHex");
 
   return {
@@ -530,7 +650,7 @@ function buildThemeRoleAssignment(
       : mode === "light"
         ? middle
         : light;
-  const darkText = pickPaletteTextHex(rolePalette, "light");
+  const darkText = LIGHT_THEME_TEXT_HEX;
   const lightText = pickPaletteTextHex(rolePalette, "dark");
 
   if (mode === "light") {
@@ -634,7 +754,83 @@ function buildRefilledThemeRoleAssignment(
   );
   usageCounts.set(sampledTextHex, (usageCounts.get(sampledTextHex) ?? 0) + 1);
   rememberHue(sampledTextHex);
-  const textHex = shiftHexTowardLuminance(sampledTextHex, textTarget);
+  const textHex =
+    mode === "light"
+      ? LIGHT_THEME_TEXT_HEX
+      : shiftHexTowardLuminance(sampledTextHex, textTarget);
+  const editorBackgroundHex = colorForField("ThemeEditorBackgroundHex");
+
+  return {
+    ThemeVisualMode: mode,
+    ThemeTabsHex: colorForField("ThemeTabsHex"),
+    ThemeHeadersHex: colorForField("ThemeHeadersHex"),
+    ThemeTextHex: textHex,
+    ThemeControlTextHex: textHex,
+    ThemeAccentTextHex: textHex,
+    ThemeTabsTextHex: textHex,
+    ThemeHeaderTextHex: textHex,
+    ThemeEditorBackgroundHex: editorBackgroundHex,
+    ThemeSceneHex: colorForField("ThemeSceneHex"),
+    ThemeControlsHex: colorForField("ThemeControlsHex"),
+    ThemeMiscHex: editorBackgroundHex,
+    ThemeDarksHex: editorBackgroundHex,
+    ThemeHighlightsHex: colorForField("ThemeHighlightsHex"),
+    ThemeViewportBackgroundHex: colorForField("ThemeViewportBackgroundHex"),
+    ThemeViewportGradientEnabled: values.ThemeViewportGradientEnabled,
+    ThemeViewportGradientHex: colorForField("ThemeViewportGradientHex")
+  };
+}
+
+function buildLeveledThemeRoleAssignment(
+  values: HdriWorldToolValues,
+  level: number
+): Partial<HdriWorldToolValues> {
+  // `level` runs 0 (darkest) .. 1 (lightest). Each bucket is interpolated between
+  // its dark and light preset target, so the whole theme tracks the slider while
+  // every bucket keeps its own relative lightness — backgrounds stay the darkest
+  // elements, highlights the brightest, even in a light theme.
+  const palette = normalizePaletteHexes(
+    values.ThemePaletteHexes.length > 0 ? values.ThemePaletteHexes : DEFAULT_THEME_PALETTE
+  );
+  const rolePalette = preferPaletteColors(palette.length > 0 ? palette : DEFAULT_THEME_PALETTE);
+  while (rolePalette.length < 5) {
+    rolePalette.push(rolePalette[rolePalette.length - 1] ?? rolePalette[0]);
+  }
+
+  const boundedLevel = Math.max(0, Math.min(1, level));
+  const mode: ThemeVisualMode = boundedLevel >= 0.5 ? "light" : "dark";
+  const usageCounts = new Map<string, number>();
+  const usedHues: number[] = [];
+  const rememberHue = (hexValue: string) => {
+    const hue = hexHueDegrees(hexValue);
+    if (hue !== null) {
+      usedHues.push(hue);
+    }
+  };
+  const colorForField = (field: ThemeToneRoleField): string => {
+    const darkTarget = DEFAULT_DARK_TONE_TARGETS[field];
+    const lightTarget = DEFAULT_LIGHT_TONE_TARGETS[field];
+    const baseTarget = darkTarget + boundedLevel * (lightTarget - darkTarget);
+    const jitter = (Math.random() - 0.5) * 0.06;
+    const target = Math.max(0.01, Math.min(0.92, baseTarget + jitter));
+    const sampledHex = pickSpectrumPaletteHexForTone(
+      rolePalette,
+      target,
+      usageCounts,
+      usedHues
+    );
+    usageCounts.set(sampledHex, (usageCounts.get(sampledHex) ?? 0) + 1);
+    rememberHue(sampledHex);
+    // Give each bucket its own hue: nudge colored bases for variety, and pick a
+    // fresh hue anywhere on the wheel when the sampled color is a near-grey so
+    // the theme never collapses into the same washed-out tones.
+    const baseHue = hexHueDegrees(sampledHex);
+    const hueShift = baseHue === null ? Math.random() * 360 : (Math.random() - 0.5) * 64;
+    const saturationFloor = field === "ThemeHighlightsHex" ? 0.66 : 0.46;
+    return colorizeHexToLuminance(sampledHex, target, hueShift, saturationFloor);
+  };
+  const textHex =
+    mode === "light" ? LIGHT_THEME_TEXT_HEX : pickPaletteTextHex(rolePalette, "dark");
   const editorBackgroundHex = colorForField("ThemeEditorBackgroundHex");
 
   return {
@@ -872,6 +1068,19 @@ function syncHdriWorldVisibleTextBuckets(
   }
 
   return nextValues;
+}
+
+function mergeHdriWorldValuePatch(
+  values: HdriWorldToolValues,
+  patch: Partial<HdriWorldToolValues>
+): HdriWorldToolValues {
+  return syncHdriWorldVisibleTextBuckets(
+    normalizeHdriWorldToolValues({
+      ...values,
+      ...patch
+    }),
+    patch
+  );
 }
 
 function buildHdriWorldThemeSnapshot(values: HdriWorldToolValues): Record<string, unknown> {
@@ -1348,6 +1557,15 @@ export default function ThemeToolboxWindowPage({
   );
   const [darknessProfileDialogOpen, setDarknessProfileDialogOpen] = useState(false);
   const [darknessProfileName, setDarknessProfileName] = useState("");
+  const [darknessLevel, setDarknessLevel] = useState(() => {
+    const stored = readLocalStringPreference(DARKNESS_LEVEL_STORAGE_KEY);
+    const parsed = stored === null ? Number.NaN : Number(stored);
+    return Number.isFinite(parsed)
+      ? Math.max(0, Math.min(1, parsed))
+      : DEFAULT_DARKNESS_LEVEL;
+  });
+  const [themePackages, setThemePackages] = useState<BlenderThemePackageEntry[]>([]);
+  const [activeThemePackagePath, setActiveThemePackagePath] = useState("");
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
   const nativeSpaceDragActive = useNativeSpaceDragActive();
@@ -1448,6 +1666,24 @@ export default function ThemeToolboxWindowPage({
       activeDarknessProfileId
     );
   }, [activeDarknessProfileId]);
+
+  useEffect(() => {
+    writeLocalStringPreference(DARKNESS_LEVEL_STORAGE_KEY, String(darknessLevel));
+  }, [darknessLevel]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listBlenderThemePackages()
+      .then((packages) => {
+        if (!cancelled) {
+          setThemePackages(packages);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     if (!darknessProfileStoreLoadedRef.current) {
@@ -1560,6 +1796,24 @@ export default function ThemeToolboxWindowPage({
       return await operation();
     } finally {
       resumeScopedTopmost();
+    }
+  };
+
+  // Modal file dialogs must run with this window kept foremost/topmost, NOT
+  // suspended: suspending scoped topmost drops the window below Blender, so its
+  // owned (parented) dialog opens hidden behind Blender. This is the opposite of
+  // the eyedropper pickers, which need suspension. Focus + force-topmost here so
+  // the parented dialog surfaces on top, then re-register scoped topmost after.
+  const runWithWindowForemost = async <T,>(
+    operation: () => Promise<T>
+  ): Promise<T> => {
+    const windowLabel = getCurrentWindow().label;
+    await getCurrentWindow().setFocus().catch(() => {});
+    await setHostWindowTopmost(windowLabel, true).catch(() => {});
+    try {
+      return await operation();
+    } finally {
+      await refreshThemeScopedTopmost().catch(() => {});
     }
   };
 
@@ -1794,13 +2048,7 @@ export default function ThemeToolboxWindowPage({
 
   const updateValues = (patch: Partial<HdriWorldToolValues>) => {
     setValues((current) => {
-      const nextValues = syncHdriWorldVisibleTextBuckets(
-        normalizeHdriWorldToolValues({
-          ...current,
-          ...patch
-        }),
-        patch
-      );
+      const nextValues = mergeHdriWorldValuePatch(current, patch);
       latestValuesRef.current = nextValues;
       return nextValues;
     });
@@ -1816,6 +2064,49 @@ export default function ThemeToolboxWindowPage({
       event.stopPropagation();
       void getCurrentWindow().startResizeDragging(direction);
     };
+
+  const handleMinimizeWindow = () => {
+    void getCurrentWindow().minimize().catch(() => {});
+  };
+
+  const handleToggleMaximizeWindow = () => {
+    void (async () => {
+      const currentWindow = getCurrentWindow();
+      try {
+        if (await currentWindow.isMaximized()) {
+          await currentWindow.unmaximize();
+        } else {
+          await currentWindow.maximize();
+        }
+      } catch {
+      }
+    })();
+  };
+
+  const handleCloseWindow = () => {
+    void getCurrentWindow().close().catch(() => {});
+  };
+
+  const handleHeaderPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    // Use Element (not HTMLElement): clicks that land on the button's inline SVG
+    // icon report an SVGElement target, which is not an HTMLElement — so an
+    // HTMLElement check would miss the button and start a window drag that
+    // swallows the click, making the header buttons fire only intermittently.
+    const target = event.target;
+    if (
+      target instanceof Element &&
+      target.closest(".theme-toolbox-window-page__header-button")
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    void getCurrentWindow().startDragging().catch(() => {});
+  };
 
   const handleShellPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) {
@@ -2053,10 +2344,12 @@ export default function ThemeToolboxWindowPage({
     }
   };
 
-  const handleRefillTheme = (valuesOverride: HdriWorldToolValues) => {
+  const handleRefillTheme = async (valuesOverride: HdriWorldToolValues) => {
     const currentValues = normalizeHdriWorldToolValues({ ...valuesOverride });
-    updateValues(buildRefilledThemeRoleAssignment(currentValues));
-    setStatusMessage(null);
+    const patch = buildRefilledThemeRoleAssignment(currentValues);
+    const nextValues = mergeHdriWorldValuePatch(currentValues, patch);
+    updateValues(patch);
+    await handleApply("apply_theme_from_photo_manual_colors", nextValues);
   };
 
   const handleFlipViewportGradient = (valuesOverride: HdriWorldToolValues) => {
@@ -2216,6 +2509,21 @@ export default function ThemeToolboxWindowPage({
     setStatusMessage(null);
   };
 
+  const handleDarknessLevelChange = (level: number) => {
+    setDarknessLevel(Math.max(0, Math.min(1, level)));
+  };
+
+  const handleApplyDarknessLevel = (
+    level: number,
+    valuesOverride: HdriWorldToolValues
+  ) => {
+    const boundedLevel = Math.max(0, Math.min(1, level));
+    setDarknessLevel(boundedLevel);
+    const currentValues = normalizeHdriWorldToolValues({ ...valuesOverride });
+    updateValues(buildLeveledThemeRoleAssignment(currentValues, boundedLevel));
+    setStatusMessage(null);
+  };
+
   const handleDarknessProfileSelect = (
     profileId: string,
     valuesOverride: HdriWorldToolValues
@@ -2352,17 +2660,91 @@ export default function ThemeToolboxWindowPage({
         staticBackgroundPath: staticBackgroundPath || undefined,
         values: buildHdriWorldThemeSnapshot(currentValues)
       });
+      setActiveThemePackagePath(savedPath);
+      await refreshThemePackages();
       setStatusMessage(`Saved theme package: ${labelFromPath(savedPath) || name.trim()}`);
     } catch (error) {
       setStatusMessage(formatErrorMessage(error));
     }
   };
 
-  const handleOpenThemePackage = async () => {
+  const refreshThemePackages = async (): Promise<BlenderThemePackageEntry[]> => {
+    try {
+      const packages = await listBlenderThemePackages();
+      setThemePackages(packages);
+      return packages;
+    } catch {
+      return [];
+    }
+  };
+
+  const applyLoadedThemePackage = async (
+    manifestPath: string
+  ): Promise<HdriWorldToolValues> => {
+    const loaded = await loadBlenderThemePackage(manifestPath);
+    const nextValues = normalizeHdriWorldToolValues({
+      ...latestValuesRef.current,
+      ...loaded.values,
+      ThemeImagePath: loaded.themeImagePath,
+      StaticBackgroundPath: loaded.staticBackgroundPath
+    });
+    updateValues(nextValues);
+    setActiveThemePackagePath(manifestPath);
+    return nextValues;
+  };
+
+  // Cycling with the arrows should not just stage the loaded theme — it applies
+  // the bucket colors to Blender and re-runs Place Picture so each step is live.
+  const applyThemeAndPlacePicture = async (nextValues: HdriWorldToolValues) => {
+    await handleApply("apply_theme_from_photo_manual_colors", nextValues);
+    if (nextValues.StaticBackgroundPath.trim()) {
+      await handleApply("place_picture", nextValues);
+    }
+  };
+
+  const handleSelectThemePackage = async (manifestPath: string) => {
+    const trimmed = manifestPath.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    setStatusMessage(null);
+    try {
+      const nextValues = await applyLoadedThemePackage(trimmed);
+      await applyThemeAndPlacePicture(nextValues);
+    } catch (error) {
+      setStatusMessage(formatErrorMessage(error));
+    }
+  };
+
+  const handleCycleThemePackage = async (direction: -1 | 1) => {
+    const packages = await refreshThemePackages();
+    if (packages.length === 0) {
+      setStatusMessage("No saved theme packages yet. Use Browse to open one.");
+      return;
+    }
+
+    const currentIndex = packages.findIndex(
+      (entry) => entry.manifestPath === activeThemePackagePath
+    );
+    const startIndex = currentIndex >= 0 ? currentIndex : direction > 0 ? -1 : 0;
+    const nextIndex = (startIndex + direction + packages.length) % packages.length;
+    const next = packages[nextIndex];
+
+    setStatusMessage(null);
+    try {
+      const nextValues = await applyLoadedThemePackage(next.manifestPath);
+      await applyThemeAndPlacePicture(nextValues);
+    } catch (error) {
+      setStatusMessage(formatErrorMessage(error));
+    }
+  };
+
+  const handleBrowseThemePackage = async () => {
     setStatusMessage(null);
     try {
       const initialDirectory = await resolveBlenderThemeRootPath().catch(() => undefined);
-      const selectedPaths = await runWithScopedTopmostSuspended(() =>
+      const selectedPaths = await runWithWindowForemost(() =>
         showOpenFileDialog({
           title: "Open Theme Package",
           filter:
@@ -2375,15 +2757,8 @@ export default function ThemeToolboxWindowPage({
         return;
       }
 
-      const loaded = await loadBlenderThemePackage(selectedPaths[0]);
-      updateValues(
-        normalizeHdriWorldToolValues({
-          ...latestValuesRef.current,
-          ...loaded.values,
-          ThemeImagePath: loaded.themeImagePath,
-          StaticBackgroundPath: loaded.staticBackgroundPath
-        })
-      );
+      await applyLoadedThemePackage(selectedPaths[0]);
+      await refreshThemePackages();
       setStatusMessage(`Opened theme package: ${labelFromPath(selectedPaths[0])}`);
     } catch (error) {
       setStatusMessage(formatErrorMessage(error));
@@ -2462,6 +2837,50 @@ export default function ThemeToolboxWindowPage({
                 } as CSSProperties
               }
             >
+            <div
+              className="theme-toolbox-window-page__header"
+              onPointerDown={handleHeaderPointerDown}
+            >
+              <span className="theme-toolbox-window-page__header-title">
+                {record?.label ?? context.label ?? "Theme"}
+              </span>
+              <div className="theme-toolbox-window-page__header-actions">
+                <button
+                  type="button"
+                  className="theme-toolbox-window-page__header-button"
+                  title="Minimize"
+                  aria-label="Minimize"
+                  onClick={handleMinimizeWindow}
+                >
+                  <svg viewBox="0 0 12 12" aria-hidden="true">
+                    <line x1="2.5" y1="6" x2="9.5" y2="6" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="theme-toolbox-window-page__header-button"
+                  title="Maximize"
+                  aria-label="Maximize"
+                  onClick={handleToggleMaximizeWindow}
+                >
+                  <svg viewBox="0 0 12 12" aria-hidden="true">
+                    <rect x="2.5" y="2.5" width="7" height="7" rx="1" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="theme-toolbox-window-page__header-button theme-toolbox-window-page__header-button--close"
+                  title="Close"
+                  aria-label="Close"
+                  onClick={handleCloseWindow}
+                >
+                  <svg viewBox="0 0 12 12" aria-hidden="true">
+                    <line x1="3" y1="3" x2="9" y2="9" />
+                    <line x1="9" y1="3" x2="3" y2="9" />
+                  </svg>
+                </button>
+              </div>
+            </div>
             {loading ? (
               <p className="theme-toolbox-window-page__status">Loading theme tool...</p>
             ) : loadError ? (
@@ -2498,7 +2917,7 @@ export default function ThemeToolboxWindowPage({
                   void handleAbsorbTheme();
                 }}
                 onRefillTheme={(nextValues) => {
-                  handleRefillTheme(nextValues);
+                  void handleRefillTheme(nextValues);
                 }}
                 onSaveTheme={() => {
                   void handleSaveTheme();
@@ -2509,8 +2928,19 @@ export default function ThemeToolboxWindowPage({
                 onSaveThemePackage={() => {
                   void handleSaveThemePackage();
                 }}
-                onOpenThemePackage={() => {
-                  void handleOpenThemePackage();
+                themePackages={themePackages}
+                activeThemePackagePath={activeThemePackagePath}
+                onSelectThemePackage={(manifestPath) => {
+                  void handleSelectThemePackage(manifestPath);
+                }}
+                onCycleThemePackage={(direction) => {
+                  void handleCycleThemePackage(direction);
+                }}
+                onBrowseThemePackage={() => {
+                  void handleBrowseThemePackage();
+                }}
+                onRefreshThemePackages={() => {
+                  void refreshThemePackages();
                 }}
                 onApplyThemeMode={(mode, nextValues) => {
                   handleThemeModeApply(mode, nextValues);
@@ -2531,6 +2961,13 @@ export default function ThemeToolboxWindowPage({
                 }}
                 onRequestSaveDarknessProfile={() => {
                   handleOpenDarknessProfileDialog();
+                }}
+                darknessLevel={darknessLevel}
+                onDarknessLevelChange={(level) => {
+                  handleDarknessLevelChange(level);
+                }}
+                onApplyDarknessLevel={(level, nextValues) => {
+                  handleApplyDarknessLevel(level, nextValues);
                 }}
               />
             )}

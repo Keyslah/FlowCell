@@ -105,8 +105,8 @@
                         "description":  "Rename all selected Blender objects in one prompt."
                     },
                     {
-                        "action":  "flowcell_custom_rotate_4",
-                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rotate_4.py",
+                        "action":  "flowcell_custom_rotate",
+                        "pythonPath":  "blender_bridge_flowcell/ManagedActions/flowcell_custom_rotate.py",
                         "functionName":  "",
                         "sourcePythonPath":  "Blender Git Scripts/toolset/rotate.py",
                         "sourceFunctionName":  "",

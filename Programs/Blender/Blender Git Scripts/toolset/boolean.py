@@ -87,6 +87,17 @@ def _snapshot_message_is_failure(message):
     )
 
 
+def _refresh_flowcell_snapshot_actions(bridge):
+    actions_module = getattr(bridge, "actions", None)
+    if actions_module is None:
+        return
+
+    try:
+        importlib.reload(actions_module)
+    except Exception:
+        pass
+
+
 def _snapshot_active_object_before_boolean(context, active):
     original_selection = list(context.selected_objects)
     original_active = context.view_layer.objects.active
@@ -99,6 +110,7 @@ def _snapshot_active_object_before_boolean(context, active):
         context.view_layer.objects.active = active
 
         bridge = _load_flowcell_bridge()
+        _refresh_flowcell_snapshot_actions(bridge)
         result = bridge.execute_bridge_operator("snapshot", {})
     except Exception as exc:
         result = {"status": "error", "message": str(exc)}
@@ -116,6 +128,166 @@ def _snapshot_active_object_before_boolean(context, active):
     if status == "error" or _snapshot_message_is_failure(message):
         return {"status": "error", "message": message or "Snapshot before Boolean failed."}
     return {"status": "ok", "message": message}
+
+
+def _set_modifier_property(modifier, name, value):
+    if not hasattr(modifier, name):
+        return
+    try:
+        setattr(modifier, name, value)
+    except Exception:
+        pass
+
+
+def _collect_boolean_targets(context):
+    active = context.active_object
+    if active is None:
+        return None, [], "Select a target object and make it active before running Boolean."
+    if getattr(active, "type", "") != 'MESH':
+        return None, [], "The active Boolean target must be a mesh object."
+
+    cutters = [obj for obj in context.selected_objects if obj != active]
+    if not cutters:
+        return None, [], "Select at least one cutter object besides the active target."
+
+    non_mesh_cutters = [obj for obj in cutters if getattr(obj, "type", "") != 'MESH']
+    if non_mesh_cutters:
+        names = ", ".join(getattr(obj, "name", "Unknown") for obj in non_mesh_cutters[:3])
+        return None, [], f"Boolean cutters must be mesh objects. Non-mesh cutter(s): {names}."
+
+    return active, cutters, ""
+
+
+def _remove_temporary_boolean_operand(temp_obj):
+    if temp_obj is None:
+        return
+
+    temp_mesh = getattr(temp_obj, "data", None)
+    try:
+        bpy.data.objects.remove(temp_obj, do_unlink=True)
+    except Exception:
+        pass
+
+    if temp_mesh is not None:
+        try:
+            bpy.data.meshes.remove(temp_mesh)
+        except Exception:
+            pass
+
+
+def _link_temporary_boolean_operand(context, active, temp_obj):
+    active_collections = list(getattr(active, "users_collection", []) or [])
+    for collection in active_collections:
+        try:
+            collection.objects.link(temp_obj)
+            return
+        except Exception:
+            pass
+
+    context.scene.collection.objects.link(temp_obj)
+
+
+def _make_combined_boolean_operand(context, active, cutters):
+    if len(cutters) == 1:
+        return cutters[0], None
+
+    depsgraph = context.evaluated_depsgraph_get()
+    vertices = []
+    faces = []
+    temp_mesh = bpy.data.meshes.new("FlowCell_Boolean_Cutters_Mesh")
+    temp_obj = None
+
+    try:
+        for cutter in cutters:
+            evaluated = cutter.evaluated_get(depsgraph)
+            source_mesh = evaluated.to_mesh()
+            try:
+                offset = len(vertices)
+                transform = cutter.matrix_world.copy()
+                vertices.extend(tuple(transform @ vertex.co) for vertex in source_mesh.vertices)
+                faces.extend([offset + index for index in polygon.vertices] for polygon in source_mesh.polygons)
+            finally:
+                try:
+                    evaluated.to_mesh_clear()
+                except Exception:
+                    pass
+
+        if not vertices or not faces:
+            raise ValueError("selected cutters do not contain mesh faces to combine")
+
+        temp_mesh.from_pydata(vertices, [], faces)
+        temp_mesh.update()
+        temp_obj = bpy.data.objects.new("FlowCell_Boolean_Cutters", temp_mesh)
+        temp_obj.display_type = 'WIRE'
+        temp_obj.hide_render = True
+        _link_temporary_boolean_operand(context, active, temp_obj)
+        return temp_obj, temp_obj
+    except Exception:
+        if temp_obj is not None:
+            _remove_temporary_boolean_operand(temp_obj)
+        else:
+            try:
+                bpy.data.meshes.remove(temp_mesh)
+            except Exception:
+                pass
+        raise
+
+
+def _apply_boolean_modifiers(context, active, cutters, s):
+    try:
+        operand, temp_operand = _make_combined_boolean_operand(context, active, cutters)
+    except Exception as exc:
+        return {"status": "error", "message": f"Boolean cutter preparation failed: {exc}"}
+
+    mod = None
+    try:
+        mod = active.modifiers.new(name="QuickBoolean", type='BOOLEAN')
+        mod.operation = s.qb_operation
+        mod.solver = s.qb_solver
+        _set_modifier_property(mod, "use_self", s.qb_self_intersection)
+        _set_modifier_property(mod, "use_hole_tolerant", s.qb_hole_tolerant)
+        mod.object = operand
+
+        if context.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        active.select_set(True)
+        context.view_layer.objects.active = active
+
+        bpy.ops.object.modifier_apply(modifier=mod.name)
+    except Exception as exc:
+        operand_name = getattr(operand, "name", "combined cutter")
+        return {
+            "status": "error",
+            "message": f"Boolean apply failed for cutter operand '{operand_name}': {exc}"
+        }
+    finally:
+        if mod is not None and mod.name in active.modifiers:
+            active.modifiers.remove(mod)
+        _remove_temporary_boolean_operand(temp_operand)
+
+    return {"status": "ok", "appliedCount": len(cutters)}
+
+
+
+def _apply_boolean_remesh(context, active, s):
+    remesh = active.modifiers.new(name="QB_Remesh", type='REMESH')
+    remesh.mode = s.qb_remesh_mode
+    remesh.use_smooth_shade = s.qb_remesh_smooth_shade
+
+    if s.qb_remesh_mode == 'VOXEL':
+        remesh.voxel_size = s.qb_remesh_voxel_size
+        remesh.adaptivity = s.qb_remesh_adaptivity
+    else:
+        remesh.octree_depth = s.qb_remesh_octree_depth
+        remesh.scale = s.qb_remesh_scale
+        remesh.use_remove_disconnected = s.qb_remesh_remove_disconnected
+
+    if context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    context.view_layer.objects.active = active
+    bpy.ops.object.modifier_apply(modifier=remesh.name)
+    if remesh.name in active.modifiers:
+        active.modifiers.remove(remesh)
 
 
 # Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ PANEL Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
@@ -176,14 +348,10 @@ class OBJECT_OT_qb_run_auto(bpy.types.Operator):
     def execute(self, context):
         s = context.scene
         self.ensure_object_mode(context)
-        active = context.active_object
-        selected = [o for o in context.selected_objects if o != active]
-
-        if not active or len(selected) != 1:
-            self.report({'ERROR'}, "Select exactly two objects: make the TARGET active and the CUTTER selected.")
+        active, cutters, target_error = _collect_boolean_targets(context)
+        if target_error:
+            self.report({'ERROR'}, target_error)
             return {'CANCELLED'}
-
-        cutter = selected[0]
 
         snapshot_message = ""
         if s.qb_backup_active:
@@ -193,38 +361,25 @@ class OBJECT_OT_qb_run_auto(bpy.types.Operator):
                 return {'CANCELLED'}
             snapshot_message = str(snapshot_result.get("message", ""))
             active.select_set(True)
-            cutter.select_set(True)
+            for cutter in cutters:
+                cutter.select_set(True)
             context.view_layer.objects.active = active
 
-        mod = active.modifiers.new(name="QuickBoolean", type='BOOLEAN')
-        mod.operation = s.qb_operation
-        mod.solver = s.qb_solver
-        mod.use_self = s.qb_self_intersection
-        mod.use_hole_tolerant = s.qb_hole_tolerant
-        mod.object = cutter
-
-        self.ensure_object_mode(context)
-        context.view_layer.objects.active = active
-
-        try:
-            bpy.ops.object.modifier_apply(modifier=mod.name)
-        except Exception:
-            if mod.name in active.modifiers:
-                active.modifiers.remove(mod)
-            self.report({'ERROR'}, "Boolean apply failed.")
+        apply_result = _apply_boolean_modifiers(context, active, cutters, s)
+        if apply_result.get("status") != "ok":
+            self.report({'ERROR'}, apply_result.get("message", "Boolean apply failed."))
             return {'CANCELLED'}
 
-        if mod.name in active.modifiers:
-            active.modifiers.remove(mod)
-
         if s.qb_hide_cutter:
-            cutter.hide_set(True)
-            cutter.hide_render = True
+            for cutter in cutters:
+                cutter.hide_set(True)
+                cutter.hide_render = True
 
         if s.qb_use_remesh:
-            self.apply_remesh(context, active, s)
+            _apply_boolean_remesh(context, active, s)
 
-        message = f"{s.qb_operation} Boolean applied successfully."
+        applied_count = int(apply_result.get("appliedCount", len(cutters)))
+        message = f"{s.qb_operation} Boolean applied to {applied_count} cutter object(s)."
         if snapshot_message:
             message = f"{snapshot_message} {message}"
         self.report({'INFO'}, message)
@@ -294,15 +449,9 @@ def _run_boolean_operator(context):
     if context.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
 
-    active = context.active_object
-    selected = [o for o in context.selected_objects if o != active]
-    if not active or len(selected) != 1:
-        return {
-            "status": "error",
-            "message": "Select exactly two objects: make the TARGET active and the CUTTER selected."
-        }
-
-    cutter = selected[0]
+    active, cutters, target_error = _collect_boolean_targets(context)
+    if target_error:
+        return {"status": "error", "message": target_error}
 
     snapshot_message = ""
     if s.qb_backup_active:
@@ -311,55 +460,24 @@ def _run_boolean_operator(context):
             return snapshot_result
         snapshot_message = str(snapshot_result.get("message", ""))
         active.select_set(True)
-        cutter.select_set(True)
+        for cutter in cutters:
+            cutter.select_set(True)
         context.view_layer.objects.active = active
 
-    mod = active.modifiers.new(name="QuickBoolean", type='BOOLEAN')
-    mod.operation = s.qb_operation
-    mod.solver = s.qb_solver
-    mod.use_self = s.qb_self_intersection
-    mod.use_hole_tolerant = s.qb_hole_tolerant
-    mod.object = cutter
-
-    if context.mode != 'OBJECT':
-        bpy.ops.object.mode_set(mode='OBJECT')
-    context.view_layer.objects.active = active
-
-    try:
-        bpy.ops.object.modifier_apply(modifier=mod.name)
-    except Exception:
-        if mod.name in active.modifiers:
-            active.modifiers.remove(mod)
-        return {"status": "error", "message": "Boolean apply failed."}
-
-    if mod.name in active.modifiers:
-        active.modifiers.remove(mod)
+    apply_result = _apply_boolean_modifiers(context, active, cutters, s)
+    if apply_result.get("status") != "ok":
+        return apply_result
 
     if s.qb_hide_cutter:
-        cutter.hide_set(True)
-        cutter.hide_render = True
+        for cutter in cutters:
+            cutter.hide_set(True)
+            cutter.hide_render = True
 
     if s.qb_use_remesh:
-        remesh = active.modifiers.new(name="QB_Remesh", type='REMESH')
-        remesh.mode = s.qb_remesh_mode
-        remesh.use_smooth_shade = s.qb_remesh_smooth_shade
+        _apply_boolean_remesh(context, active, s)
 
-        if s.qb_remesh_mode == 'VOXEL':
-            remesh.voxel_size = s.qb_remesh_voxel_size
-            remesh.adaptivity = s.qb_remesh_adaptivity
-        else:
-            remesh.octree_depth = s.qb_remesh_octree_depth
-            remesh.scale = s.qb_remesh_scale
-            remesh.use_remove_disconnected = s.qb_remesh_remove_disconnected
-
-        if context.mode != 'OBJECT':
-            bpy.ops.object.mode_set(mode='OBJECT')
-        context.view_layer.objects.active = active
-        bpy.ops.object.modifier_apply(modifier=remesh.name)
-        if remesh.name in active.modifiers:
-            active.modifiers.remove(remesh)
-
-    message = f"{s.qb_operation} Boolean applied successfully."
+    applied_count = int(apply_result.get("appliedCount", len(cutters)))
+    message = f"{s.qb_operation} Boolean applied to {applied_count} cutter object(s)."
     if snapshot_message:
         message = f"{snapshot_message} {message}"
     return {

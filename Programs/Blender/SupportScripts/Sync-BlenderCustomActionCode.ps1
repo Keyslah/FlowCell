@@ -29,8 +29,6 @@ $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
 $bridgeLayout = Get-FlowCellBlenderBridgeLayout -Config $config -BridgeFolder $BridgeFolder
 $BridgeFolder = [string]$bridgeLayout.BridgeFolder
 Ensure-FlowCellBlenderBridgeRuntime -Layout $bridgeLayout
-$script:FlowCellGeneratedFunctionPrefix = [string]$bridgeLayout.GeneratedFunctionPrefix
-$script:FlowCellGeneratedSourceRunNamePrefix = [string]$bridgeLayout.GeneratedSourceRunNamePrefix
 $customRegistryPath = [string]$bridgeLayout.CustomRegistryPath
 $addonActionsPath = [string]$bridgeLayout.AddonActionsPath
 if (-not (Test-Path -LiteralPath $addonActionsPath -PathType Leaf)) {
@@ -241,30 +239,6 @@ function Merge-FlowCellBundledCustomActions {
     $registry.actions = @($mergedActions.ToArray())
 }
 
-function Get-SafePythonIdentifier([string]$Value) {
-    $safe = ($Value -replace '[^A-Za-z0-9_]+', '_').Trim('_')
-    if ([string]::IsNullOrWhiteSpace($safe)) {
-        $safe = 'custom_action'
-    }
-    if ($safe -match '^[0-9]') {
-        $safe = 'custom_' + $safe
-    }
-    return $safe.ToLowerInvariant()
-}
-
-function New-FlowCellCustomWrapperFunctionName([string]$ActionName) {
-    return ('{0}{1}' -f $script:FlowCellGeneratedFunctionPrefix, (Get-SafePythonIdentifier -Value $ActionName))
-}
-
-function ConvertTo-PythonStringLiteral([string]$Value) {
-    $text = if ($null -ne $Value) { [string]$Value } else { '' }
-    $text = $text -replace '\\', '\\\\'
-    $text = $text -replace "'", "\\'"
-    $text = $text -replace "`r", '\r'
-    $text = $text -replace "`n", '\n'
-    return ("'{0}'" -f $text)
-}
-
 function Get-PythonFunctionMetadata([string]$Path, [string]$PreferredFunctionName = '') {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         return [pscustomobject]@{ FunctionName = ''; StartLine = 1; SourceText = '' }
@@ -417,15 +391,6 @@ function Get-FlowCellCustomEntrypointMetadata([string]$Path, [string]$PreferredF
     }
 
     return $baseFailure
-}
-
-function Convert-TextToCommentLines([string]$Text) {
-    if ([string]::IsNullOrWhiteSpace($Text)) {
-        return @('# (No source text was available.)')
-    }
-
-    $normalized = $Text -replace "`r`n", "`n"
-    return @(($normalized -split "`n", -1) | ForEach-Object { '# ' + [string]$_ })
 }
 
 function Write-Utf8NoBomFile([string]$Path, [string]$Content) {

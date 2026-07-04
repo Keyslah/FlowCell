@@ -1,6 +1,4 @@
-# Description: Use the selected object's collection and show one direct object at a time while selecting it.
-# FLOWCELL_EVENT: hoverEnter|blenderBridge|cycle_collection_hover_save_visibility
-# FLOWCELL_EVENT: hoverLeave|blenderBridge|cycle_collection_hover_restore_visibility
+# Description: Restore the visibility state saved when Cycle Collection hover began.
 
 from __future__ import annotations
 
@@ -70,7 +68,8 @@ def _merge_payload(default_payload, override_payload):
         payload.update(dict(override_payload))
     return payload
 
-ACTION_NAME = "cycle_collection"
+
+ACTION_NAME = "cycle_collection_hover_restore_visibility"
 DEFAULT_DATA = json.loads(r'''{}''')
 
 

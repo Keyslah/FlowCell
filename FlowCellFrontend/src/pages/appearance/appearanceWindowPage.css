@@ -1,0 +1,324 @@
+/* Appearance window — a deliberately distinct "instrument panel" look, separate
+   from FlowCell's other windows and from the default flat UI. Deep matte shell,
+   engraved cards, and a single lime signal color for anything live/adjustable. */
+
+.ap {
+  --ap-bg: #0b0f0c;
+  --ap-panel: #12181300;
+  --ap-ink: #e8f3e2;
+  --ap-ink-dim: #8fa389;
+  --ap-line: rgba(150, 214, 120, 0.16);
+  --ap-line-soft: rgba(150, 214, 120, 0.09);
+  --ap-signal: #a6f05a;
+  --ap-signal-dim: #5f8a37;
+  --ap-glow: 0 0 14px rgba(166, 240, 90, 0.55);
+
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  color: var(--ap-ink);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(84, 132, 52, 0.22), transparent 60%),
+    radial-gradient(90% 70% at 50% 120%, rgba(20, 40, 16, 0.6), transparent 55%),
+    var(--ap-bg);
+}
+
+.ap--space-drag { cursor: grab; }
+.ap--dragging { cursor: grabbing; }
+
+/* Fine engraved texture that reads as a machined faceplate. */
+.ap::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.014) 0,
+    rgba(255, 255, 255, 0.014) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.7;
+}
+
+.ap-resize-handle { position: absolute; z-index: 40; }
+.ap-resize-handle--north { top: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.ap-resize-handle--south { bottom: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.ap-resize-handle--east { top: 8px; bottom: 8px; right: 0; width: 6px; cursor: ew-resize; }
+.ap-resize-handle--west { top: 8px; bottom: 8px; left: 0; width: 6px; cursor: ew-resize; }
+.ap-resize-handle--north-east { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.ap-resize-handle--north-west { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.ap-resize-handle--south-east { bottom: 0; right: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.ap-resize-handle--south-west { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+
+.ap-titlebar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 46px;
+  padding: 0 10px 0 18px;
+  border-bottom: 1px solid var(--ap-line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+}
+
+.ap-titlebar__brand { display: flex; align-items: baseline; gap: 10px; }
+
+.ap-titlebar__pip {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ap-signal);
+  box-shadow: var(--ap-glow);
+}
+
+.ap-titlebar__name {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+}
+
+.ap-titlebar__scope {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ap-signal-dim);
+}
+
+.ap-titlebar__close {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ap-ink-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.ap-titlebar__close:hover {
+  color: var(--ap-ink);
+  border-color: var(--ap-line);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ap-body {
+  position: relative;
+  z-index: 1;
+  height: calc(100% - 46px);
+  overflow-y: auto;
+  padding: 16px 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ap-lede {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ap-ink-dim);
+}
+
+/* Live preview — hover the rail to feel the current drop/rise settings. */
+.ap-preview { display: block; }
+.ap-preview__stage {
+  position: relative;
+  height: 118px;
+  border-radius: 14px;
+  overflow: hidden;
+  background-size: cover;
+  background-position: center;
+  border: 1px solid var(--ap-line);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.ap-preview__rail {
+  position: absolute;
+  left: 34%;
+  top: -6%;
+  width: 32%;
+  height: 92%;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.02);
+  will-change: transform, backdrop-filter;
+}
+.ap-preview__label {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.ap-group {
+  border: 1px solid var(--ap-line);
+  border-radius: 14px;
+  padding: 14px 15px 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0)) ,
+    rgba(8, 12, 8, 0.5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ap-group__head { display: flex; align-items: baseline; gap: 10px; }
+.ap-group__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.ap-group__hint {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ap-signal-dim);
+}
+
+.ap-field { display: flex; flex-direction: column; gap: 9px; }
+.ap-field__row { display: flex; align-items: baseline; justify-content: space-between; }
+.ap-field__label {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ap-ink-dim);
+}
+.ap-field__value {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ap-ink);
+}
+
+/* Custom slider: engraved track, lit fill, glowing thumb. */
+.ap-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+.ap-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, var(--ap-signal) 0, var(--ap-signal-dim) var(--ap-fill, 0%), transparent var(--ap-fill, 0%)),
+    rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+.ap-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f4ffe4, var(--ap-signal) 55%, #5f8a37);
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  box-shadow: var(--ap-glow);
+}
+.ap-slider:focus-visible { outline: none; }
+.ap-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--ap-glow), 0 0 0 3px rgba(166, 240, 90, 0.25);
+}
+.ap-slider__scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ap-ink-dim);
+  opacity: 0.7;
+}
+
+.ap-curve-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.ap-chip {
+  padding: 6px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--ap-line);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--ap-ink-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+.ap-chip:hover { color: var(--ap-ink); border-color: rgba(166, 240, 90, 0.4); }
+.ap-chip--active {
+  color: #0c1207;
+  background: var(--ap-signal);
+  border-color: var(--ap-signal);
+  box-shadow: var(--ap-glow);
+}
+
+/* Curve read-out: the math shape (left) plus a live timing tracer (below). */
+.ap-curve {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+}
+.ap-curve__svg {
+  width: 100%;
+  height: 76px;
+  border: 1px solid var(--ap-line-soft);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(0, 0, 0, 0.2));
+}
+.ap-curve__grid { stroke: rgba(150, 214, 120, 0.14); stroke-width: 0.6; }
+.ap-curve__diagonal { fill: none; stroke: rgba(150, 214, 120, 0.16); stroke-width: 0.8; stroke-dasharray: 3 3; }
+.ap-curve__path {
+  fill: none;
+  stroke: var(--ap-signal);
+  stroke-width: 2.4;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 3px rgba(166, 240, 90, 0.7));
+}
+.ap-curve__track {
+  position: relative;
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.ap-curve__tracer {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f4ffe4, var(--ap-signal) 60%, #5f8a37);
+  box-shadow: var(--ap-glow);
+  animation-name: ap-trace;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+
+@keyframes ap-trace {
+  from { left: 3px; }
+  to { left: calc(100% - 13px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ap-curve__tracer { animation: none; }
+}

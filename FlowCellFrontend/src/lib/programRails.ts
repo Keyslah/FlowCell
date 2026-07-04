@@ -23,6 +23,14 @@ export interface PanelScriptChildRecord {
   tooltip: string;
 }
 
+export interface PanelButtonEventActionRecord {
+  type?: string;
+  action?: string;
+  data?: unknown;
+}
+
+export type PanelButtonEventsRecord = Record<string, PanelButtonEventActionRecord>;
+
 export interface PanelScriptFileRecord {
   fileName: string;
   label: string;
@@ -31,6 +39,7 @@ export interface PanelScriptFileRecord {
   executionTarget?: string;
   bridgeAction?: string;
   bridgeData?: unknown;
+  events?: PanelButtonEventsRecord;
   children?: PanelScriptChildRecord[];
   macroId?: string;
 }
@@ -408,6 +417,24 @@ export async function runPanelScript(
   }
 
   return responseMessage(response);
+}
+
+export async function runPanelButtonEvent(
+  programName: string,
+  panelName: string,
+  fileName: string,
+  eventName: string
+): Promise<string> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Panel button events can only be run from the desktop host.");
+  }
+
+  return invokeProgramRailCommand<string>("run_panel_button_event", {
+    programName,
+    panelName,
+    fileName,
+    eventName
+  });
 }
 
 export async function showSaveLayoutDialog(

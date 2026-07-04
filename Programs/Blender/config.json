@@ -103,7 +103,7 @@
                     },
                     {
                         "label":  "snapshot",
-                        "tooltip":  "Save the selected Live objects into Snapshots.",
+                        "tooltip":  "Save the selected objects into Snapshots, creating the collection if needed.",
                         "action":  "snapshot"
                     },
                     {
@@ -149,7 +149,17 @@
                     {
                         "label":  "cycle collection",
                         "tooltip":  "Use the selected object\u0027s collection and show one direct object at a time while selecting it.",
-                        "action":  "cycle_collection"
+                        "action":  "cycle_collection",
+                        "events":  {
+                                       "hoverEnter":  {
+                                                          "type":  "blenderBridge",
+                                                          "action":  "cycle_collection_hover_save_visibility"
+                                                      },
+                                       "hoverLeave":  {
+                                                          "type":  "blenderBridge",
+                                                          "action":  "cycle_collection_hover_restore_visibility"
+                                                      }
+                                   }
                     },
                     {
                         "label":  "cycle versions",

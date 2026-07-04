@@ -53,6 +53,28 @@
   height: 100%;
 }
 
+.boolean-toolbox-window-page__feedback {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 80;
+  max-width: calc(100vw - 18px);
+  padding: 7px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 8px;
+  background: rgba(20, 103, 54, 0.96);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.38);
+  color: #fff;
+  font: 700 11px/1.25 "Segoe UI", sans-serif;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.boolean-toolbox-window-page__feedback[data-kind="error"] {
+  background: rgba(170, 31, 44, 0.96);
+}
+
 .boolean-toolbox-window-page__resize-handle {
   position: absolute;
   z-index: 50;

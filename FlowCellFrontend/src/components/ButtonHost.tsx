@@ -17,6 +17,9 @@ type ButtonHostProps = {
   ) => void;
   onDoubleActivate?: (button: ButtonRecord, event: ReactMouseEvent<HTMLElement>) => void;
   onRequestContextMenu?: (button: ButtonRecord, event: ReactMouseEvent<HTMLElement>) => void;
+  onHoverStart?: (button: ButtonRecord, event: ReactMouseEvent<HTMLElement>) => void;
+  onHoverEnd?: (button: ButtonRecord, event: ReactMouseEvent<HTMLElement>) => void;
+  onHoverCancel?: (button: ButtonRecord, event: ReactMouseEvent<HTMLElement>) => void;
   absolute?: boolean;
   targetHeightOverride?: number;
   importedSkinOverride?: ImportedSkin;
@@ -40,6 +43,9 @@ export function ButtonHost({
   onActivate,
   onDoubleActivate,
   onRequestContextMenu,
+  onHoverStart,
+  onHoverEnd,
+  onHoverCancel,
   absolute = true,
   targetHeightOverride,
   importedSkinOverride,
@@ -108,10 +114,17 @@ export function ButtonHost({
   };
 
   const handleTooltipPointerEnter = (event: ReactMouseEvent<HTMLElement>) => {
+    onHoverStart?.(button, event);
     showTooltip(event.currentTarget);
   };
 
-  const handleTooltipPointerLeave = () => {
+  const handleTooltipPointerLeave = (event: ReactMouseEvent<HTMLElement>) => {
+    onHoverEnd?.(button, event);
+    void hideFlowTooltip();
+  };
+
+  const handleTooltipPointerCancel = (event: ReactMouseEvent<HTMLElement>) => {
+    onHoverCancel?.(button, event);
     void hideFlowTooltip();
   };
 
@@ -161,6 +174,7 @@ export function ButtonHost({
       data-flow-tooltip={hoverDescription || undefined}
       onPointerEnter={handleTooltipPointerEnter}
       onPointerLeave={handleTooltipPointerLeave}
+      onPointerCancel={handleTooltipPointerCancel}
       onFocus={handleTooltipFocus}
       onBlur={handleTooltipBlur}
       onClick={activate}

@@ -854,6 +854,14 @@ def execute_bridge_operator(action: str, data: dict) -> dict[str, object]:
         message = actions.perform_cycle_collection(bpy.context)
         set_bridge_result(message)
         result["message"] = message
+    elif normalized == "cycle_collection_hover_save_visibility":
+        message = actions.perform_cycle_collection_hover_save_visibility(bpy.context)
+        set_bridge_result(message)
+        result["message"] = message
+    elif normalized == "cycle_collection_hover_restore_visibility":
+        message = actions.perform_cycle_collection_hover_restore_visibility(bpy.context)
+        set_bridge_result(message)
+        result["message"] = message
     elif normalized == "cycle_live_versions":
         result = actions.perform_cycle_live_versions(
             bpy.context,

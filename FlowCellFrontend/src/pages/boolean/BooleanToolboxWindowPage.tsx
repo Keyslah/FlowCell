@@ -186,6 +186,7 @@ export default function BooleanToolboxWindowPage({
   const [record, setRecord] = useState<PanelScriptFileRecord | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [booleanState, setBooleanState] = useState<BooleanToolboxState>(
     DEFAULT_BOOLEAN_TOOLBOX_STATE
   );
@@ -221,6 +222,7 @@ export default function BooleanToolboxWindowPage({
 
     setLoading(true);
     setLoadError(null);
+    setActionError(null);
     setRecord(null);
     setPendingCommand(null);
     commitBooleanState(DEFAULT_BOOLEAN_TOOLBOX_STATE);
@@ -334,6 +336,20 @@ export default function BooleanToolboxWindowPage({
   }, []);
 
   useEffect(() => {
+    if (!actionError) {
+      return;
+    }
+
+    const timeout = window.setTimeout(() => {
+      setActionError(null);
+    }, 6000);
+
+    return () => {
+      window.clearTimeout(timeout);
+    };
+  }, [actionError]);
+
+  useEffect(() => {
     if (!effectiveSpaceDragActive) {
       setSpaceDragging(false);
     }
@@ -366,6 +382,7 @@ export default function BooleanToolboxWindowPage({
     const optimisticState = applyOptimisticBooleanAction(previousState, command, payload);
     commitBooleanState(optimisticState);
     setPendingCommand(command);
+    setActionError(null);
 
     try {
       const response = await runBlenderToolsetAction({
@@ -378,6 +395,8 @@ export default function BooleanToolboxWindowPage({
       commitBooleanState(normalizeBooleanState(response, booleanStateRef.current));
     } catch (error) {
       commitBooleanState(previousState);
+      const message = formatErrorMessage(error);
+      setActionError(message);
       console.error("Failed to run Boolean toolbox action.", error);
     } finally {
       setPendingCommand(null);
@@ -525,6 +544,12 @@ export default function BooleanToolboxWindowPage({
           </div>
         </div>
       </div>
+
+      {actionError ? (
+        <div className="boolean-toolbox-window-page__feedback" data-kind="error">
+          {actionError}
+        </div>
+      ) : null}
     </main>
   );
 }

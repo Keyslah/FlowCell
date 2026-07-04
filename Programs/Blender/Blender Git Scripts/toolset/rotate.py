@@ -100,6 +100,18 @@ def _pivot_point(context, objects, center_mode):
     return active.matrix_world.translation.copy()
 
 
+def _objects_for_operation(context, objects, center_mode):
+    if str(center_mode or "").strip().upper() != "OBJECT":
+        return list(objects)
+    active = _active_object(context)
+    if active is None:
+        raise ValueError("Object center mode needs an active object.")
+    targets = [obj for obj in objects if obj is not active]
+    if not targets:
+        raise ValueError("Object center mode needs at least one selected object besides the active pivot object.")
+    return targets
+
+
 def _axis_vector(axis):
     normalized = str(axis or "Z").strip().upper()
     if normalized not in SUPPORTED_AXES:
@@ -126,13 +138,11 @@ def _apply_world_rotation(obj, pivot, rotation_quaternion):
     obj.matrix_world = transform @ obj.matrix_world
 
 
-def _ordered_selection(context=None):
-    context = _ctx(context)
-    selected = _selected_objects(context)
+def _ordered_objects(context, objects):
     active = _active_object(context)
-    if active is None or active not in selected:
-        return selected
-    return [active] + [obj for obj in selected if obj != active]
+    if active is None or active not in objects:
+        return list(objects)
+    return [active] + [obj for obj in objects if obj is not active]
 
 
 def _perform_transform(context, objects, pivot, axis, angle_deg):
@@ -180,8 +190,12 @@ def _set_selection(context, objects, active=None):
             pass
 
 
-def _perform_distribute(context, objects, pivot, axis, angle_deg, distribute_count):
-    source_objects = _ordered_selection(context)
+def _contains_identity(objects, target):
+    return any(obj is target for obj in objects)
+
+
+def _perform_distribute(context, objects, pivot, axis, angle_deg, distribute_count, active_after=None):
+    source_objects = _ordered_objects(context, objects)
     selected_count = len(source_objects)
     total_sets = max(1, int(round(float(distribute_count or 1))))
     full_turn = 360.0 if float(angle_deg) >= 0 else -360.0
@@ -193,7 +207,14 @@ def _perform_distribute(context, objects, pivot, axis, angle_deg, distribute_cou
         for obj in duplicated_set:
             _apply_world_rotation(obj, pivot, rotation)
         distributed_objects.extend(duplicated_set)
-    _set_selection(context, distributed_objects, active=source_objects[0] if source_objects else None)
+    selection_objects = list(distributed_objects)
+    if active_after is not None and not _contains_identity(selection_objects, active_after):
+        selection_objects.insert(0, active_after)
+    _set_selection(
+        context,
+        selection_objects,
+        active=active_after if active_after is not None else (source_objects[0] if source_objects else None),
+    )
     if total_sets == 1:
         return {
             "message": (
@@ -235,7 +256,11 @@ def run_flowcell_action(context=None, data=None):
         raise ValueError(f"Unsupported operation mode: {operation_mode}")
 
     pivot = _pivot_point(context, objects, center_mode)
+    operation_objects = _objects_for_operation(context, objects, center_mode)
+    active_after = _active_object(context) if center_mode == "OBJECT" else None
     if operation_mode == "DISTRIBUTE":
         angle_deg = 360.0 if angle_deg >= 0 else -360.0
-        return _perform_distribute(context, objects, pivot, axis, angle_deg, distribute_count)
-    return _perform_transform(context, objects, pivot, axis, angle_deg)
+        return _perform_distribute(
+            context, operation_objects, pivot, axis, angle_deg, distribute_count, active_after
+        )
+    return _perform_transform(context, operation_objects, pivot, axis, angle_deg)

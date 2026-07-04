@@ -16,6 +16,7 @@ import BooleanToolboxWindowPage from "./pages/boolean/BooleanToolboxWindowPage";
 import BindsWindowPage from "./pages/binds/BindsWindowPage";
 import BuildLayersWindowPage from "./pages/build-layers/BuildLayersWindowPage";
 import WindowGridWindowPage from "./pages/window-grid/WindowGridWindowPage";
+import AppearanceWindowPage from "./pages/appearance/AppearanceWindowPage";
 import ButtonReorderWindowPage from "./pages/button-reorder/ButtonReorderWindowPage";
 import CodexUsagePopoutWindowPage from "./pages/codex-usage/CodexUsagePopoutWindowPage";
 import DimensionsToolboxWindowPage from "./pages/dimensions/DimensionsToolboxWindowPage";
@@ -100,7 +101,8 @@ function resolveScopedTopmostProgramName(
     windowContext.kind === "binds" ||
     windowContext.kind === "organization-setup" ||
     windowContext.kind === "macro-lab" ||
-    windowContext.kind === "window-grid"
+    windowContext.kind === "window-grid" ||
+    windowContext.kind === "appearance"
   ) {
     return "";
   }
@@ -342,6 +344,9 @@ export default function App() {
   }
   if (windowContext.kind === "window-grid") {
     return <WindowGridWindowPage />;
+  }
+  if (windowContext.kind === "appearance") {
+    return <AppearanceWindowPage />;
   }
   if (windowContext.kind === "macro-lab") {
     return <MacroLabWindowPage context={windowContext} />;

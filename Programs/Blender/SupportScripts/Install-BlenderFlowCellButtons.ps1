@@ -147,6 +147,153 @@ function Get-FlowCellObjectPropertyValue {
     return $property.Value
 }
 
+function Get-FlowCellSupportedCommentBody {
+    param([AllowEmptyString()][string]$Line)
+
+    $trimmed = ([string]$Line).TrimStart()
+    if ($trimmed.StartsWith('#')) { return $trimmed.Substring(1) }
+    if ($trimmed.StartsWith('//')) { return $trimmed.Substring(2) }
+    if ($trimmed.StartsWith(';')) { return $trimmed.Substring(1) }
+    if ($trimmed.StartsWith("'")) { return $trimmed.Substring(1) }
+    if ($trimmed.StartsWith('REM', [System.StringComparison]::OrdinalIgnoreCase) -and $trimmed.Length -gt 3 -and [char]::IsWhiteSpace($trimmed[3])) {
+        return $trimmed.Substring(3)
+    }
+
+    return $null
+}
+
+function Get-FlowCellDirectiveValue {
+    param(
+        [AllowEmptyString()][string]$Line,
+        [Parameter(Mandatory = $true)]
+        [string]$Directive
+    )
+
+    $body = Get-FlowCellSupportedCommentBody -Line $Line
+    if ($null -eq $body) { return $null }
+
+    $trimmedBody = ([string]$body).TrimStart()
+    if (-not $trimmedBody.StartsWith($Directive, [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $null
+    }
+
+    $rest = $trimmedBody.Substring($Directive.Length).TrimStart()
+    if (-not $rest.StartsWith(':')) { return $null }
+    return $rest.Substring(1).Trim()
+}
+
+function Get-FlowCellButtonEventName {
+    param([AllowEmptyString()][string]$Name)
+
+    $normalized = (([string]$Name).Trim() -replace '[_\-\s]+', '').ToLowerInvariant()
+    switch ($normalized) {
+        'click' { return 'click' }
+        'doubleclick' { return 'doubleClick' }
+        'contextmenu' { return 'contextMenu' }
+        'rightclick' { return 'contextMenu' }
+        'hoverenter' { return 'hoverEnter' }
+        'pointerenter' { return 'hoverEnter' }
+        'mouseenter' { return 'hoverEnter' }
+        'hoverleave' { return 'hoverLeave' }
+        'pointerleave' { return 'hoverLeave' }
+        'mouseleave' { return 'hoverLeave' }
+        'pressdown' { return 'pressDown' }
+        'pointerdown' { return 'pressDown' }
+        'mousedown' { return 'pressDown' }
+        'pressup' { return 'pressUp' }
+        'pointerup' { return 'pressUp' }
+        'mouseup' { return 'pressUp' }
+        'pointercancel' { return 'pressUp' }
+        'focus' { return 'focus' }
+        'blur' { return 'blur' }
+        default { return '' }
+    }
+}
+
+function Get-FlowCellButtonActionType {
+    param([AllowEmptyString()][string]$Type)
+
+    $normalized = (([string]$Type).Trim() -replace '[_\-\s]+', '').ToLowerInvariant()
+    switch ($normalized) {
+        '' { return 'blenderBridge' }
+        'bridge' { return 'blenderBridge' }
+        'blenderbridge' { return 'blenderBridge' }
+        'noop' { return 'none' }
+        'noaction' { return 'none' }
+        'none' { return 'none' }
+        default { return ([string]$Type).Trim() }
+    }
+}
+
+function Get-FlowCellButtonEvents {
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $null
+    }
+
+    $events = [ordered]@{}
+    foreach ($line in @(Get-Content -LiteralPath $Path)) {
+        $eventsJson = Get-FlowCellDirectiveValue -Line ([string]$line) -Directive 'FLOWCELL_EVENTS'
+        if (-not [string]::IsNullOrWhiteSpace($eventsJson)) {
+            $parsedEvents = $eventsJson | ConvertFrom-Json -ErrorAction Stop
+            foreach ($property in @($parsedEvents.PSObject.Properties)) {
+                $eventName = Get-FlowCellButtonEventName -Name ([string]$property.Name)
+                if ([string]::IsNullOrWhiteSpace($eventName)) { continue }
+
+                $record = $property.Value
+                $actionType = Get-FlowCellButtonActionType -Type ([string](Get-FlowCellObjectPropertyValue -InputObject $record -Name 'type'))
+                $actionName = ([string](Get-FlowCellObjectPropertyValue -InputObject $record -Name 'action')).Trim()
+                if ($actionType -ne 'none' -and [string]::IsNullOrWhiteSpace($actionName)) { continue }
+
+                $eventRecord = [ordered]@{
+                    type = $actionType
+                    action = $actionName
+                }
+                $data = Get-FlowCellObjectPropertyValue -InputObject $record -Name 'data'
+                if ($null -ne $data) {
+                    $eventRecord.data = $data
+                }
+                $events[$eventName] = [pscustomobject]$eventRecord
+            }
+            continue
+        }
+
+        $eventValue = Get-FlowCellDirectiveValue -Line ([string]$line) -Directive 'FLOWCELL_EVENT'
+        if ([string]::IsNullOrWhiteSpace($eventValue)) { continue }
+
+        $parts = @(([string]$eventValue).Split([char]'|', 4) | ForEach-Object { ([string]$_).Trim() })
+        if ($parts.Count -lt 2) { continue }
+
+        $eventName = Get-FlowCellButtonEventName -Name $parts[0]
+        if ([string]::IsNullOrWhiteSpace($eventName)) { continue }
+
+        if ($parts.Count -ge 3) {
+            $actionType = Get-FlowCellButtonActionType -Type $parts[1]
+            $actionName = ([string]$parts[2]).Trim()
+            $dataText = if ($parts.Count -ge 4) { ([string]$parts[3]).Trim() } else { '' }
+        }
+        else {
+            $actionType = 'blenderBridge'
+            $actionName = ([string]$parts[1]).Trim()
+            $dataText = ''
+        }
+
+        if ($actionType -ne 'none' -and [string]::IsNullOrWhiteSpace($actionName)) { continue }
+        $eventRecord = [ordered]@{
+            type = $actionType
+            action = $actionName
+        }
+        if (-not [string]::IsNullOrWhiteSpace($dataText)) {
+            $eventRecord.data = $dataText | ConvertFrom-Json -ErrorAction Stop
+        }
+        $events[$eventName] = [pscustomobject]$eventRecord
+    }
+
+    if ($events.Count -le 0) { return $null }
+    return [pscustomobject]$events
+}
+
 function Set-FlowCellButtonPanel {
     param(
         [Parameter(Mandatory = $true)]
@@ -518,6 +665,7 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
         $description = Get-TopDescription -Path $fullPath
         if ([string]::IsNullOrWhiteSpace($description)) { $description = ('Run {0} through the {1} Blender bridge.' -f $label, [string]$bridgeLayout.AddonDisplayName) }
         Set-TopDescription -Path $fullPath -NextDescription $description
+        $buttonEvents = Get-FlowCellButtonEvents -Path $fullPath
 
         $pythonPath = ''
         $functionName = ''
@@ -561,15 +709,25 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             $existingButton[0].label = [string]$label
             $existingButton[0].tooltip = [string]$description
             Set-FlowCellButtonPanel -Button $existingButton[0] -PanelName $PanelName
+            if ($null -ne $buttonEvents) {
+                $existingButton[0] | Add-Member -MemberType NoteProperty -Name events -Value $buttonEvents -Force
+            }
+            elseif ($existingButton[0].PSObject.Properties['events']) {
+                $existingButton[0].PSObject.Properties.Remove('events')
+            }
             $updatedConfigButtons++
         }
         else {
-            $config.buttons = @($config.buttons) + @([pscustomobject]@{
+            $newButton = [ordered]@{
                 label = [string]$label
                 tooltip = [string]$description
                 action = [string]$actionName
                 panel = [string]$PanelName
-            })
+            }
+            if ($null -ne $buttonEvents) {
+                $newButton.events = $buttonEvents
+            }
+            $config.buttons = @($config.buttons) + @([pscustomobject]$newButton)
             $addedConfigButtons++
         }
 
@@ -601,6 +759,7 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             Action = $actionName
             Label = [string]$label
             Tooltip = [string]$description
+            Events = $buttonEvents
             PythonPath = $pythonPath
             FunctionName = $functionName
         }) | Out-Null

@@ -91,6 +91,11 @@ interface DarknessProfileOption {
   name: string;
 }
 
+interface ThemePackageOption {
+  name: string;
+  manifestPath: string;
+}
+
 interface QuickRotateGroupToolSurfaceProps {
   ownerLabel: string;
   panelName: string;
@@ -143,7 +148,12 @@ interface HdriWorldToolSurfaceProps {
   onSaveTheme: () => void;
   onLoadTheme: () => void;
   onSaveThemePackage: () => void;
-  onOpenThemePackage: () => void;
+  themePackages?: ThemePackageOption[];
+  activeThemePackagePath?: string;
+  onSelectThemePackage?: (manifestPath: string) => void;
+  onCycleThemePackage?: (direction: -1 | 1) => void;
+  onBrowseThemePackage?: () => void;
+  onRefreshThemePackages?: () => void;
   onApplyThemeMode: (
     mode: "dark" | "light",
     values: HdriWorldToolValues
@@ -157,6 +167,9 @@ interface HdriWorldToolSurfaceProps {
   activeDarknessProfileId?: string;
   onSelectDarknessProfile?: (profileId: string, values: HdriWorldToolValues) => void;
   onRequestSaveDarknessProfile?: () => void;
+  darknessLevel?: number;
+  onDarknessLevelChange?: (level: number) => void;
+  onApplyDarknessLevel?: (level: number, values: HdriWorldToolValues) => void;
 }
 
 interface SmartAxisVisualState {
@@ -818,19 +831,31 @@ export function HdriWorldToolSurface({
   onSaveTheme,
   onLoadTheme,
   onSaveThemePackage,
-  onOpenThemePackage,
+  themePackages = [],
+  activeThemePackagePath = "",
+  onSelectThemePackage,
+  onCycleThemePackage,
+  onBrowseThemePackage,
+  onRefreshThemePackages,
   onApplyThemeMode,
   onApplyThemeBucket,
   onFlipViewportGradient,
   darknessProfiles = [],
   activeDarknessProfileId = "",
   onSelectDarknessProfile,
-  onRequestSaveDarknessProfile
+  onRequestSaveDarknessProfile,
+  darknessLevel = 0.3,
+  onDarknessLevelChange,
+  onApplyDarknessLevel
 }: HdriWorldToolSurfaceProps) {
   const [darknessProfileMenuOpen, setDarknessProfileMenuOpen] = useState(false);
   const activeDarknessProfileName =
     darknessProfiles.find((profile) => profile.id === activeDarknessProfileId)?.name ??
     "Default";
+  const [themePackageMenuOpen, setThemePackageMenuOpen] = useState(false);
+  const activeThemePackageName =
+    themePackages.find((entry) => entry.manifestPath === activeThemePackagePath)?.name ??
+    "Open";
 
   const content = (
     <div className={compact ? "hdri-world-grid hdri-world-grid--compact" : "hdri-world-grid"}>
@@ -862,7 +887,7 @@ export function HdriWorldToolSurface({
           className: "tool-chip",
           styleGroup,
           importedSkin,
-          title: "Randomly remix the staged sampled colors into a different bucket set."
+          title: "Randomly remix the staged sampled colors into a different bucket set and apply it."
         })}
         {renderToolChip("Save", {
           onClick: onSaveThemePackage,
@@ -872,13 +897,90 @@ export function HdriWorldToolSurface({
           title:
             "Save the actual theme image(s) plus the staged bucket colors into the Blender themes folder."
         })}
-        {renderToolChip("Open", {
-          onClick: onOpenThemePackage,
-          className: "tool-chip",
-          styleGroup,
-          importedSkin,
-          title: "Open a saved theme package to restore its image(s) and bucket colors."
-        })}
+        <div className="hdri-theme-open-control">
+          <button
+            type="button"
+            className="hdri-theme-open-arrow"
+            title="Load the previous saved theme package."
+            onClick={() => onCycleThemePackage?.(-1)}
+          >
+            ‹
+          </button>
+          <div
+            className="hdri-theme-open-menu"
+            onBlur={(event) => {
+              const nextTarget = event.relatedTarget;
+              if (!(nextTarget instanceof Node) || !event.currentTarget.contains(nextTarget)) {
+                setThemePackageMenuOpen(false);
+              }
+            }}
+          >
+            <button
+              type="button"
+              className="hdri-theme-open-trigger"
+              title="Pick a saved theme package, or browse for one."
+              aria-haspopup="menu"
+              aria-expanded={themePackageMenuOpen}
+              onClick={() => {
+                setThemePackageMenuOpen((isOpen) => {
+                  const nextOpen = !isOpen;
+                  if (nextOpen) {
+                    onRefreshThemePackages?.();
+                  }
+                  return nextOpen;
+                });
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  setThemePackageMenuOpen(false);
+                }
+              }}
+            >
+              <span>{activeThemePackageName}</span>
+            </button>
+            {themePackageMenuOpen && (
+              <div className="hdri-theme-open-popover" role="menu">
+                {themePackages.length === 0 ? (
+                  <span className="hdri-theme-open-empty">No saved themes yet</span>
+                ) : (
+                  themePackages.map((entry) => (
+                    <button
+                      type="button"
+                      key={entry.manifestPath}
+                      className={`hdri-theme-open-option ${entry.manifestPath === activeThemePackagePath ? "is-active" : ""}`.trim()}
+                      role="menuitem"
+                      onClick={() => {
+                        onSelectThemePackage?.(entry.manifestPath);
+                        setThemePackageMenuOpen(false);
+                      }}
+                    >
+                      {entry.name}
+                    </button>
+                  ))
+                )}
+                <button
+                  type="button"
+                  className="hdri-theme-open-option hdri-theme-open-option--browse"
+                  role="menuitem"
+                  onClick={() => {
+                    onBrowseThemePackage?.();
+                    setThemePackageMenuOpen(false);
+                  }}
+                >
+                  Browse for file...
+                </button>
+              </div>
+            )}
+          </div>
+          <button
+            type="button"
+            className="hdri-theme-open-arrow"
+            title="Load the next saved theme package."
+            onClick={() => onCycleThemePackage?.(1)}
+          >
+            ›
+          </button>
+        </div>
       </div>
       <div className="hdri-world-row hdri-world-row--theme-actions">
         {renderToolChip("Save Buckets", {
@@ -970,14 +1072,33 @@ export function HdriWorldToolSurface({
             )}
           </div>
         </div>
-        {renderToolChip("Light Theme", {
-          onClick: () => onApplyThemeMode("light", values),
-          className: `tool-chip hdri-theme-actions-chip ${values.ThemeVisualMode === "light" ? "is-active" : ""}`.trim(),
-          selected: values.ThemeVisualMode === "light",
-          styleGroup,
-          importedSkin,
-          title: "Stage a light theme preset on this page. Apply sends it to Blender."
-        })}
+        <div className="hdri-theme-light-control">
+          {renderToolChip("Light Theme", {
+            onClick: () => onApplyThemeMode("light", values),
+            className: `tool-chip hdri-theme-actions-chip ${values.ThemeVisualMode === "light" ? "is-active" : ""}`.trim(),
+            selected: values.ThemeVisualMode === "light",
+            styleGroup,
+            importedSkin,
+            title: "Stage a light theme preset on this page. Apply sends it to Blender."
+          })}
+          <input
+            type="range"
+            className="hdri-theme-darkness-slider"
+            min={0}
+            max={1}
+            step={0.01}
+            value={darknessLevel}
+            aria-label="Theme darkness level"
+            title="Drag left for a darker theme, right for a lighter one. Release to re-sample every bucket around that level."
+            onChange={(event) => onDarknessLevelChange?.(Number(event.target.value))}
+            onPointerUp={(event) =>
+              onApplyDarknessLevel?.(Number(event.currentTarget.value), values)
+            }
+            onKeyUp={(event) =>
+              onApplyDarknessLevel?.(Number(event.currentTarget.value), values)
+            }
+          />
+        </div>
         {renderToolChip("Apply", {
           onClick: () => onApply("apply_theme_from_photo_manual_colors", values),
           className: "tool-chip hdri-theme-actions-chip",
