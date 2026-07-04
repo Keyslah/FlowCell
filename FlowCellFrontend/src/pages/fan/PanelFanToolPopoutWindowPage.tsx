@@ -19,6 +19,7 @@ import { writePanelFanDiagnostics } from "../../lib/panelFanDiagnostics";
 import { writeRegisteredLayoutWindowSnapshotBounds } from "../../lib/layoutSnapshots";
 import {
   listPanelScriptFiles,
+  runPanelButtonEvent,
   runPanelScript,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
@@ -57,6 +58,11 @@ interface ScreenRect {
 type ScriptRunErrorState = {
   title: string;
   detail: string;
+};
+
+type ActivePanelFanHoverEvent = {
+  fileName: string;
+  events: NonNullable<PanelScriptFileRecord["events"]>;
 };
 
 function formatErrorMessage(error: unknown): string {
@@ -378,6 +384,7 @@ export default function PanelFanToolPopoutWindowPage({
   const ignoreCursorStateRef = useRef<boolean | null>(null);
   const spaceDragSyncTimerRef = useRef<number | undefined>(undefined);
   const wasSpaceDraggingRef = useRef(false);
+  const activeHoverButtonEventsRef = useRef<Map<string, ActivePanelFanHoverEvent>>(new Map());
   const [records, setRecords] = useState<PanelScriptFileRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -545,6 +552,7 @@ export default function PanelFanToolPopoutWindowPage({
       if (spaceDragSyncTimerRef.current) {
         window.clearTimeout(spaceDragSyncTimerRef.current);
       }
+      cleanupActiveHoverEvents();
       void getCurrentWindow().setIgnoreCursorEvents(false).catch(() => {});
     };
   }, []);
@@ -556,10 +564,134 @@ export default function PanelFanToolPopoutWindowPage({
         panelId: context.panelName,
         panelName: context.panelName,
         button: buildChildButton(record, record.label),
-        childSlotId: record.fileName
+        childSlotId: record.fileName,
+        events: record.events
       };
     });
   }, [context.panelName, resolvedRecords]);
+
+  const getHoverEventKey = (fileName: string) =>
+    `${context.programName}\n${context.panelName}\n${fileName}`;
+
+  const runHoverLeave = (key: string, target: ActivePanelFanHoverEvent) => {
+    activeHoverButtonEventsRef.current.delete(key);
+    void runPanelButtonEvent(
+      context.programName,
+      context.panelName,
+      target.fileName,
+      "hoverLeave"
+    ).catch((error) => {
+      console.error(
+        `Failed to run panel fan hoverLeave for ${context.programName}/${context.panelName}/${target.fileName}.`,
+        error
+      );
+    });
+  };
+
+  const cleanupActiveHoverEvents = () => {
+    const activeEvents = Array.from(activeHoverButtonEventsRef.current.entries());
+    activeHoverButtonEventsRef.current.clear();
+    activeEvents.forEach(([key, target]) => {
+      runHoverLeave(key, target);
+    });
+  };
+
+  const ensureChildHoverStart = async (entry: FanClusterEntry): Promise<boolean> => {
+    if (!entry.events?.hoverEnter) {
+      return false;
+    }
+
+    const key = getHoverEventKey(entry.childSlotId);
+    if (activeHoverButtonEventsRef.current.has(key)) {
+      return true;
+    }
+
+    activeHoverButtonEventsRef.current.set(key, {
+      fileName: entry.childSlotId,
+      events: entry.events
+    });
+    try {
+      await runPanelButtonEvent(
+        context.programName,
+        context.panelName,
+        entry.childSlotId,
+        "hoverEnter"
+      );
+      return true;
+    } catch (error) {
+      activeHoverButtonEventsRef.current.delete(key);
+      console.error(
+        `Failed to run panel fan hoverEnter for ${context.programName}/${context.panelName}/${entry.childSlotId}.`,
+        error
+      );
+      return false;
+    }
+  };
+
+  const handleChildHoverStart = (entry: FanClusterEntry) => {
+    void ensureChildHoverStart(entry);
+  };
+
+  const handleChildHoverEnd = (entry: FanClusterEntry) => {
+    if (!entry.events?.hoverLeave) {
+      return;
+    }
+
+    const key = getHoverEventKey(entry.childSlotId);
+    const activeTarget = activeHoverButtonEventsRef.current.get(key);
+    if (activeTarget) {
+      runHoverLeave(key, activeTarget);
+    }
+  };
+
+  const syncHoveredChildFromNativeCursor = (args: {
+    windowPosition: { x: number; y: number };
+    pointer: { x: number; y: number };
+    scaleFactor: number;
+    open: boolean;
+  }) => {
+    let hoveredEntry: FanClusterEntry | null = null;
+
+    if (args.open) {
+      const childRoots = Array.from(
+        document.querySelectorAll(".fan-cluster__child")
+      ).filter((node): node is HTMLElement => node instanceof HTMLElement);
+
+      for (const root of childRoots) {
+        const interactiveNode = resolveInteractiveHitboxNode(root) ?? root;
+        const buttonElement = root.querySelector<HTMLElement>("[data-button-id]");
+        const buttonId = buttonElement?.dataset.buttonId ?? "";
+        if (!buttonId) {
+          continue;
+        }
+
+        const rect = interactiveNode.getBoundingClientRect();
+        const screenRect = {
+          left: args.windowPosition.x + rect.left * args.scaleFactor,
+          top: args.windowPosition.y + rect.top * args.scaleFactor,
+          right: args.windowPosition.x + rect.right * args.scaleFactor,
+          bottom: args.windowPosition.y + rect.bottom * args.scaleFactor
+        } satisfies ScreenRect;
+
+        if (screenRectContains(screenRect, args.pointer.x, args.pointer.y)) {
+          hoveredEntry =
+            childEntries.find((entry) => entry.childSlotId === buttonId) ?? null;
+          break;
+        }
+      }
+    }
+
+    const hoveredFileName = hoveredEntry?.childSlotId ?? "";
+    Array.from(activeHoverButtonEventsRef.current.entries()).forEach(([key, target]) => {
+      if (target.fileName !== hoveredFileName) {
+        runHoverLeave(key, target);
+      }
+    });
+
+    if (hoveredEntry?.events?.hoverEnter) {
+      void ensureChildHoverStart(hoveredEntry);
+    }
+  };
 
   const syncCollapsedAnchorFromCurrentWindow = async () => {
     if (!metrics) {
@@ -631,6 +763,7 @@ export default function PanelFanToolPopoutWindowPage({
     if (ownerPinnedOpen && !force) {
       return;
     }
+    cleanupActiveHoverEvents();
     setChildrenVisible(false);
     if (collapseWindowTimerRef.current) {
       window.clearTimeout(collapseWindowTimerRef.current);
@@ -1018,6 +1151,12 @@ export default function PanelFanToolPopoutWindowPage({
       const hitInteractivePill = interactiveRects.some((rect) => {
         return screenRectContains(rect, pointer.x, pointer.y);
       });
+      syncHoveredChildFromNativeCursor({
+        windowPosition,
+        pointer,
+        scaleFactor,
+        open: windowExpanded && childrenVisible
+      });
 
       if (
         hitInteractivePill &&
@@ -1052,6 +1191,7 @@ export default function PanelFanToolPopoutWindowPage({
         !spaceDragSyncTimerRef.current &&
         !wasSpaceDraggingRef.current
       ) {
+        cleanupActiveHoverEvents();
         queueGuardedCollapseWindow(false);
       }
 
@@ -1296,6 +1436,7 @@ export default function PanelFanToolPopoutWindowPage({
 
     try {
       setScriptRunError(null);
+      await ensureChildHoverStart(entry);
       // Success needs no popup — only failures keep the fan open for feedback.
       await runPanelScript(context.programName, context.panelName, entry.childSlotId);
     } catch (error) {
@@ -1310,6 +1451,7 @@ export default function PanelFanToolPopoutWindowPage({
       keepOpenForFeedback = true;
     } finally {
       if (collapseAfterRun && !keepOpenForFeedback) {
+        cleanupActiveHoverEvents();
         requestCollapse({ force: true });
       }
     }
@@ -1350,6 +1492,10 @@ export default function PanelFanToolPopoutWindowPage({
       }}
       onPointerCancel={() => {
         setSpaceDragging(false);
+        cleanupActiveHoverEvents();
+      }}
+      onPointerLeave={() => {
+        cleanupActiveHoverEvents();
       }}
     >
       <div className="panel-fan-window-page__surface">
@@ -1380,6 +1526,9 @@ export default function PanelFanToolPopoutWindowPage({
             importedSkinOverride={DEFAULT_POPOUT_IMPORTED_SKIN}
             onOwnerClick={handleOwnerClick}
             onChildClick={handleChildClick}
+            onChildHoverStart={handleChildHoverStart}
+            onChildHoverEnd={handleChildHoverEnd}
+            onChildHoverCancel={handleChildHoverEnd}
           />
         )}
         {scriptRunError ? (

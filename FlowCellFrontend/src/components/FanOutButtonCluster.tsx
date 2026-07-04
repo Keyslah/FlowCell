@@ -20,6 +20,7 @@ import {
   resolveFanOwnerFootprintOverride
 } from "./HostSkinButton";
 import type { ButtonRecord } from "../pages/main/mainLayout";
+import type { PanelButtonEventsRecord } from "../lib/programRails";
 
 export interface FanClusterEntry {
   programId: number;
@@ -27,6 +28,7 @@ export interface FanClusterEntry {
   panelName: string;
   button: FlowCellButton;
   childSlotId: string;
+  events?: PanelButtonEventsRecord;
 }
 
 export interface FanClusterInteractiveRect {
@@ -101,6 +103,9 @@ interface FanOutButtonClusterProps {
   resolveChildImportedSkinOverride?: (entry: FanClusterEntry) => ImportedSkin | undefined;
   onOwnerClick: () => void;
   onChildClick: (entry: FanClusterEntry) => void;
+  onChildHoverStart?: (entry: FanClusterEntry) => void;
+  onChildHoverEnd?: (entry: FanClusterEntry) => void;
+  onChildHoverCancel?: (entry: FanClusterEntry) => void;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -869,7 +874,10 @@ export function FanOutButtonCluster({
   importedSkinOverride,
   resolveChildImportedSkinOverride,
   onOwnerClick,
-  onChildClick
+  onChildClick,
+  onChildHoverStart,
+  onChildHoverEnd,
+  onChildHoverCancel
 }: FanOutButtonClusterProps) {
   const closeTimerRef = useRef<number | undefined>(undefined);
   const postExpandHoverTimerRef = useRef<number | undefined>(undefined);
@@ -1289,8 +1297,17 @@ export function FanOutButtonCluster({
                   .filter(Boolean)
                   .join(" ")}
                 style={childStyle}
-                onPointerEnter={requestExpand}
-                onPointerLeave={scheduleCollapse}
+                onPointerEnter={() => {
+                  requestExpand();
+                  onChildHoverStart?.(entry.entry);
+                }}
+                onPointerLeave={() => {
+                  scheduleCollapse();
+                  onChildHoverEnd?.(entry.entry);
+                }}
+                onPointerCancel={() => {
+                  onChildHoverCancel?.(entry.entry);
+                }}
               >
                 <ButtonHost
                   button={buildFanButtonRecord({
@@ -1308,6 +1325,9 @@ export function FanOutButtonCluster({
                   importedSkinOverride={childVisuals.importedSkin}
                   styleGroupOverride={childVisuals.styleGroup}
                   onActivate={() => onChildClick(entry.entry)}
+                  onHoverStart={() => onChildHoverStart?.(entry.entry)}
+                  onHoverEnd={() => onChildHoverEnd?.(entry.entry)}
+                  onHoverCancel={() => onChildHoverCancel?.(entry.entry)}
                 />
               </div>
             );

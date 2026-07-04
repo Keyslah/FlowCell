@@ -544,8 +544,22 @@ function Sync-LegacyFlowCellCompatibilityRegistry {
 
 Merge-FlowCellBundledCustomActions
 
+function Get-FlowCellNormalizedPathKey([string]$Path) {
+    if ([string]::IsNullOrWhiteSpace($Path)) {
+        return ''
+    }
+    try {
+        return ([System.IO.Path]::GetFullPath([string]$Path)).TrimEnd('\').ToLowerInvariant()
+    }
+    catch {
+        return ([string]$Path).Trim().TrimEnd('\').ToLowerInvariant()
+    }
+}
+
+$managedActionRoot = Join-Path $BridgeFolder 'ManagedActions'
+New-Item -ItemType Directory -Path $managedActionRoot -Force | Out-Null
+$addonActionsPathKey = Get-FlowCellNormalizedPathKey $addonActionsPath
 $normalizedEntries = New-Object System.Collections.Generic.List[object]
-$sectionLines = New-Object System.Collections.Generic.List[string]
 
 foreach ($entry in @($registry.actions)) {
     $actionName = [string]$entry.action
@@ -565,14 +579,6 @@ foreach ($entry in @($registry.actions)) {
         ''
     }
     if ([string]::IsNullOrWhiteSpace($sourcePythonPath)) {
-        continue
-    }
-
-    $resolvedRuntimePythonPath = Resolve-FlowCellRegistryPythonPath -PythonPath $entryPythonPath
-    if ([string]::IsNullOrWhiteSpace($resolvedRuntimePythonPath)) {
-        $resolvedRuntimePythonPath = Resolve-FlowCellRegistryPythonPath -PythonPath $sourcePythonPath
-    }
-    if ([string]::IsNullOrWhiteSpace($resolvedRuntimePythonPath) -or -not (Test-Path -LiteralPath $resolvedRuntimePythonPath -PathType Leaf)) {
         continue
     }
 
@@ -604,14 +610,27 @@ foreach ($entry in @($registry.actions)) {
         continue
     }
     $resolvedFunctionName = [string]$sourceMeta.FunctionName
-    $runtimeFunctionName = if ($entry.PSObject.Properties['functionName'] -and -not [string]::IsNullOrWhiteSpace([string]$entry.functionName)) {
-        [string]$entry.functionName
+
+    # Runtime target is always the action's own ManagedActions wrapper — never the shared flowcell_actions.py.
+    $resolvedRuntimePythonPath = Resolve-FlowCellRegistryPythonPath -PythonPath $entryPythonPath
+    if ([string]::IsNullOrWhiteSpace($resolvedRuntimePythonPath) -or
+        (Get-FlowCellNormalizedPathKey $resolvedRuntimePythonPath) -eq $addonActionsPathKey -or
+        -not (Test-Path -LiteralPath $resolvedRuntimePythonPath -PathType Leaf)) {
+        $resolvedRuntimePythonPath = Join-Path $managedActionRoot ('{0}.py' -f $actionName)
+        if (-not (Test-Path -LiteralPath $resolvedRuntimePythonPath -PathType Leaf)) {
+            Copy-Item -LiteralPath $resolvedSourcePythonPath -Destination $resolvedRuntimePythonPath -Force
+        }
     }
-    else {
-        $resolvedFunctionName
+
+    $preferredRuntimeFunctionName = if ($entry.PSObject.Properties['functionName']) { [string]$entry.functionName } else { '' }
+    $runtimeMeta = Get-FlowCellCustomEntrypointMetadata -Path $resolvedRuntimePythonPath -PreferredFunctionName $preferredRuntimeFunctionName
+    if ([string]::IsNullOrWhiteSpace([string]$runtimeMeta.FunctionName)) {
+        $runtimeMeta = Get-FlowCellCustomEntrypointMetadata -Path $resolvedRuntimePythonPath
     }
-    $wrapperFunctionName = New-FlowCellCustomWrapperFunctionName -ActionName $actionName
-    $entryDescription = if ($entry.PSObject.Properties['description']) { [string]$entry.description } else { '' }
+    if ([string]::IsNullOrWhiteSpace([string]$runtimeMeta.FunctionName)) {
+        continue
+    }
+    $runtimeFunctionName = [string]$runtimeMeta.FunctionName
 
     $entryMap = [ordered]@{
         action = $actionName
@@ -628,84 +647,13 @@ foreach ($entry in @($registry.actions)) {
     $entryMap.sourceFunctionName = $resolvedFunctionName
     $entryMap.startLine = [int]$sourceMeta.StartLine
     [void]$normalizedEntries.Add([pscustomobject]$entryMap)
-
-    if ($sectionLines.Count -eq 0) {
-        [void]$sectionLines.Add('# FLOWCELL CUSTOM ACTIONS START - AUTO-GENERATED')
-        [void]$sectionLines.Add('')
-        [void]$sectionLines.Add('def _flowcell_generated_custom_call(action_name: str, source_path: str, function_name: str, context, data):')
-        [void]$sectionLines.Add('    script_path = Path(source_path).expanduser()')
-        [void]$sectionLines.Add('    if not script_path.exists():')
-        [void]$sectionLines.Add('        raise ValueError(f"Custom action script not found: {script_path}")')
-        [void]$sectionLines.Add('')
-        [void]$sectionLines.Add(('    namespace = runpy.run_path(str(script_path), run_name=f"{0}{{action_name}}")' -f $script:FlowCellGeneratedSourceRunNamePrefix))
-        [void]$sectionLines.Add('    callback = namespace.get(function_name) if function_name else None')
-        [void]$sectionLines.Add('    if callback is None and not function_name:')
-        [void]$sectionLines.Add('        callback = namespace.get("run_flowcell_action") or namespace.get("main")')
-        [void]$sectionLines.Add('        if callback is None:')
-        [void]$sectionLines.Add('            for name, value in namespace.items():')
-        [void]$sectionLines.Add('                if name.startswith("perform_") and callable(value):')
-        [void]$sectionLines.Add('                    callback = value')
-        [void]$sectionLines.Add('                    break')
-        [void]$sectionLines.Add('')
-        [void]$sectionLines.Add('    if callback is None or not callable(callback):')
-        [void]$sectionLines.Add('        if function_name:')
-        [void]$sectionLines.Add('            raise ValueError(')
-        [void]$sectionLines.Add('                f"Custom action ''{action_name}'' could not find function ''{function_name}'' in {script_path}."')
-        [void]$sectionLines.Add('            )')
-        [void]$sectionLines.Add('        raise ValueError(f"Custom action ''{action_name}'' did not expose a callable entrypoint.")')
-        [void]$sectionLines.Add('')
-        [void]$sectionLines.Add('    raw_result = _call_custom_action_callable(callback, context or bpy.context, data or {})')
-        [void]$sectionLines.Add('    message = f"Completed {action_name}."')
-        [void]$sectionLines.Add('    display = ""')
-        [void]$sectionLines.Add('    payload: dict[str, object] = {}')
-        [void]$sectionLines.Add('    if isinstance(raw_result, dict):')
-        [void]$sectionLines.Add('        payload = raw_result')
-        [void]$sectionLines.Add('        message = str(payload.get("message", message))')
-        [void]$sectionLines.Add('        display = str(payload.get("display", ""))')
-        [void]$sectionLines.Add('    elif isinstance(raw_result, str):')
-        [void]$sectionLines.Add('        message = raw_result')
-        [void]$sectionLines.Add('    elif raw_result is not None:')
-        [void]$sectionLines.Add('        message = str(raw_result)')
-        [void]$sectionLines.Add('')
-        [void]$sectionLines.Add('    return {')
-        [void]$sectionLines.Add('        "message": message,')
-        [void]$sectionLines.Add('        "display": display,')
-        [void]$sectionLines.Add('        **payload,')
-        [void]$sectionLines.Add('    }')
-    }
-
-    [void]$sectionLines.Add('')
-    [void]$sectionLines.Add(('# FlowCell Custom Action: {0}' -f $actionName))
-    if (-not [string]::IsNullOrWhiteSpace($entryDescription)) {
-        [void]$sectionLines.Add(('# Description: {0}' -f $entryDescription))
-    }
-    [void]$sectionLines.Add(('# Source Python File: {0}' -f $resolvedSourcePythonPath))
-    [void]$sectionLines.Add(('# Source Action Function: {0}' -f $resolvedFunctionName))
-    [void]$sectionLines.Add(('# Source Action Start Line: {0}' -f [int]$sourceMeta.StartLine))
-    [void]$sectionLines.Add('# Source Action Logic:')
-    foreach ($commentLine in @(Convert-TextToCommentLines -Text ([string]$sourceMeta.SourceText))) {
-        [void]$sectionLines.Add([string]$commentLine)
-    }
-    [void]$sectionLines.Add(('def {0}(context=None, data=None):' -f $wrapperFunctionName))
-    [void]$sectionLines.Add('    return _flowcell_generated_custom_call(')
-    [void]$sectionLines.Add(('        action_name={0},' -f (ConvertTo-PythonStringLiteral -Value $actionName)))
-    [void]$sectionLines.Add(('        source_path={0},' -f (ConvertTo-PythonStringLiteral -Value $resolvedSourcePythonPath)))
-    [void]$sectionLines.Add(('        function_name={0},' -f (ConvertTo-PythonStringLiteral -Value $resolvedFunctionName)))
-    [void]$sectionLines.Add('        context=context,')
-    [void]$sectionLines.Add('        data=(data or {}),')
-    [void]$sectionLines.Add('    )')
-}
-
-if ($sectionLines.Count -gt 0) {
-    [void]$sectionLines.Add('')
-    [void]$sectionLines.Add('# FLOWCELL CUSTOM ACTIONS END - AUTO-GENERATED')
 }
 
 $registry.actions = @($normalizedEntries.ToArray())
 Set-Content -LiteralPath $customRegistryPath -Value ($registry | ConvertTo-Json -Depth 8) -Encoding UTF8
 
-$sectionText = if ($sectionLines.Count -gt 0) { ($sectionLines -join "`r`n") } else { '' }
-Set-GeneratedCustomSection -Path $addonActionsPath -SectionText $sectionText
+# Custom actions dispatch per-file from the registry; strip any legacy auto-generated wrapper section.
+Set-GeneratedCustomSection -Path $addonActionsPath -SectionText ''
 
 $legacyCompatibility = Sync-LegacyFlowCellCompatibilityRegistry -NormalizedEntries @($normalizedEntries.ToArray())
 
