@@ -12,10 +12,13 @@ import {
   readButtonLabelOverrides,
   resolveButtonLabelOverride
 } from "../../lib/buttonLabelOverrides";
-import { runPanelScript } from "../../lib/programRails";
+import { runPanelButtonEvent, runPanelScript } from "../../lib/programRails";
 import { getScriptGroupPopoutTemplate } from "../../lib/scriptGroupPopoutTemplates";
 import { isNativeSpaceKeyDown } from "../../lib/nativeKeyState";
-import type { ScriptGroupPopoutWindowContext } from "../../lib/windowContext";
+import type {
+  ScriptGroupPopoutScript,
+  ScriptGroupPopoutWindowContext
+} from "../../lib/windowContext";
 import "./scriptGroupPopoutWindowPage.css";
 
 type ScriptGroupPopoutWindowPageProps = {
@@ -52,6 +55,11 @@ type PositionedScriptButton = {
 type ScriptRunErrorState = {
   title: string;
   detail: string;
+};
+
+type ActiveScriptGroupHoverEvent = {
+  fileName: string;
+  events: NonNullable<ScriptGroupPopoutScript["events"]>;
 };
 
 const SINGLE_BUTTON_LABEL_HORIZONTAL_PADDING = 28;
@@ -142,6 +150,9 @@ export default function ScriptGroupPopoutWindowPage({
   const resizeSessionRef = useRef<ResizeSession | null>(null);
   const resizeUpdateInFlightRef = useRef(false);
   const resizePollTimerRef = useRef<number | null>(null);
+  const activeHoverButtonEventsRef = useRef<Map<string, ActiveScriptGroupHoverEvent>>(
+    new Map()
+  );
   const pendingResizeBoundsRef = useRef<{
     left: number;
     top: number;
@@ -248,6 +259,85 @@ export default function ScriptGroupPopoutWindowPage({
   const scaledWidth = canonicalWidth * uniformScale;
   const scaledHeight = canonicalHeight * uniformScale;
 
+  const getHoverEventKey = (fileName: string) =>
+    `${context.programName}\n${context.panelName}\n${fileName}`;
+
+  const getScriptByFileName = (fileName: string) =>
+    resolvedContext.scripts.find((script) => script.fileName === fileName) ?? null;
+
+  const runHoverLeave = (key: string, target: ActiveScriptGroupHoverEvent) => {
+    activeHoverButtonEventsRef.current.delete(key);
+    if (!target.events.hoverLeave) {
+      return;
+    }
+
+    void runPanelButtonEvent(
+      context.programName,
+      context.panelName,
+      target.fileName,
+      "hoverLeave"
+    ).catch((error) => {
+      console.error(
+        `Failed to run script popout hoverLeave for ${context.programName}/${context.panelName}/${target.fileName}.`,
+        error
+      );
+    });
+  };
+
+  const cleanupActiveHoverEvents = () => {
+    const activeEvents = Array.from(activeHoverButtonEventsRef.current.entries());
+    activeHoverButtonEventsRef.current.clear();
+    activeEvents.forEach(([key, target]) => {
+      runHoverLeave(key, target);
+    });
+  };
+
+  const ensureButtonHoverStart = async (fileName: string): Promise<boolean> => {
+    const script = getScriptByFileName(fileName);
+    if (!script?.events?.hoverEnter) {
+      return false;
+    }
+
+    const key = getHoverEventKey(fileName);
+    if (activeHoverButtonEventsRef.current.has(key)) {
+      return true;
+    }
+
+    activeHoverButtonEventsRef.current.set(key, {
+      fileName,
+      events: script.events
+    });
+
+    try {
+      await runPanelButtonEvent(context.programName, context.panelName, fileName, "hoverEnter");
+      return true;
+    } catch (error) {
+      activeHoverButtonEventsRef.current.delete(key);
+      console.error(
+        `Failed to run script popout hoverEnter for ${context.programName}/${context.panelName}/${fileName}.`,
+        error
+      );
+      return false;
+    }
+  };
+
+  const handleButtonHoverStart = (fileName: string) => {
+    void ensureButtonHoverStart(fileName);
+  };
+
+  const handleButtonHoverEnd = (fileName: string) => {
+    const script = getScriptByFileName(fileName);
+    if (!script?.events?.hoverLeave) {
+      return;
+    }
+
+    const key = getHoverEventKey(fileName);
+    const activeTarget = activeHoverButtonEventsRef.current.get(key);
+    if (activeTarget) {
+      runHoverLeave(key, activeTarget);
+    }
+  };
+
   useEffect(() => {
     if (!spaceDragActive) {
       setSpaceDragging(false);
@@ -262,12 +352,72 @@ export default function ScriptGroupPopoutWindowPage({
       }
       resizeSessionRef.current = null;
       pendingResizeBoundsRef.current = null;
+      cleanupActiveHoverEvents();
+    };
+  }, []);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (activeHoverButtonEventsRef.current.size === 0) {
+        return;
+      }
+
+      void (async () => {
+        const currentWindow = getCurrentWindow();
+        const [pointer, windowPosition, rawScaleFactor] = await Promise.all([
+          cursorPosition().catch(() => null),
+          currentWindow.outerPosition().catch(() => null),
+          currentWindow.scaleFactor().catch(() => 1)
+        ]);
+
+        if (!pointer || !windowPosition) {
+          return;
+        }
+
+        const scaleFactor =
+          Number.isFinite(rawScaleFactor) && rawScaleFactor > 0 ? rawScaleFactor : 1;
+        let hoveredFileName = "";
+        const buttonElements = Array.from(
+          document.querySelectorAll<HTMLButtonElement>(
+            ".script-group-popout__button[data-script-file-name]"
+          )
+        );
+
+        for (const buttonElement of buttonElements) {
+          const rect = buttonElement.getBoundingClientRect();
+          const left = windowPosition.x + rect.left * scaleFactor;
+          const top = windowPosition.y + rect.top * scaleFactor;
+          const right = windowPosition.x + rect.right * scaleFactor;
+          const bottom = windowPosition.y + rect.bottom * scaleFactor;
+
+          if (
+            pointer.x >= left &&
+            pointer.x <= right &&
+            pointer.y >= top &&
+            pointer.y <= bottom
+          ) {
+            hoveredFileName = buttonElement.dataset.scriptFileName ?? "";
+            break;
+          }
+        }
+
+        Array.from(activeHoverButtonEventsRef.current.entries()).forEach(([key, target]) => {
+          if (target.fileName !== hoveredFileName) {
+            runHoverLeave(key, target);
+          }
+        });
+      })();
+    }, 80);
+
+    return () => {
+      window.clearInterval(intervalId);
     };
   }, []);
 
   const handleButtonActivate = async (fileName: string) => {
     try {
       setScriptRunError(null);
+      await ensureButtonHoverStart(fileName);
       // Success needs no popup — only surface failures.
       await runPanelScript(context.programName, context.panelName, fileName);
     } catch (error) {
@@ -526,7 +676,9 @@ export default function ScriptGroupPopoutWindowPage({
         }}
         onPointerCancel={() => {
           setSpaceDragging(false);
+          cleanupActiveHoverEvents();
         }}
+        onPointerLeave={cleanupActiveHoverEvents}
       >
         <div
           className="script-group-popout__resize-handle script-group-popout__resize-handle--north-east"
@@ -643,6 +795,15 @@ export default function ScriptGroupPopoutWindowPage({
                       event.preventDefault();
                       event.stopPropagation();
                       void handleButtonActivate(button.fileName);
+                    }}
+                    onPointerEnter={() => {
+                      handleButtonHoverStart(button.fileName);
+                    }}
+                    onPointerLeave={() => {
+                      handleButtonHoverEnd(button.fileName);
+                    }}
+                    onPointerCancel={() => {
+                      handleButtonHoverEnd(button.fileName);
                     }}
                     onClick={(event) => {
                       if (event.detail === 0) {

@@ -148,6 +148,7 @@ export type ScriptGroupPopoutScript = {
   fileName: string;
   label: string;
   tooltip?: string;
+  events?: Record<string, { type?: string; action?: string; data?: unknown }>;
 };
 
 export type ScriptGroupPopoutWindowContext = {
@@ -245,6 +246,39 @@ function readCurrentTauriWindowLabel(): string {
     ?.currentWindow?.label;
 
   return typeof currentWindowLabel === "string" ? currentWindowLabel : "";
+}
+
+function normalizeScriptGroupPopoutScriptEvents(
+  value: unknown
+): ScriptGroupPopoutScript["events"] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const normalizedEvents: NonNullable<ScriptGroupPopoutScript["events"]> = {};
+  Object.entries(value as Record<string, unknown>).forEach(([eventName, eventAction]) => {
+    const normalizedEventName = eventName.trim();
+    if (
+      !normalizedEventName ||
+      !eventAction ||
+      typeof eventAction !== "object" ||
+      Array.isArray(eventAction)
+    ) {
+      return;
+    }
+
+    const eventActionRecord = eventAction as Record<string, unknown>;
+    normalizedEvents[normalizedEventName] = {
+      type: typeof eventActionRecord.type === "string" ? eventActionRecord.type : undefined,
+      action:
+        typeof eventActionRecord.action === "string" ? eventActionRecord.action : undefined,
+      data: Object.prototype.hasOwnProperty.call(eventActionRecord, "data")
+        ? eventActionRecord.data
+        : undefined
+    };
+  });
+
+  return Object.keys(normalizedEvents).length > 0 ? normalizedEvents : undefined;
 }
 
 export function buildWindowContextUrl(context: FlowCellWindowContext): string {
@@ -527,7 +561,8 @@ export function getWindowContextFromLocation(): FlowCellWindowContext {
             tooltip:
               typeof entry.tooltip === "string" && entry.tooltip.trim().length > 0
                 ? entry.tooltip.trim()
-                : undefined
+                : undefined,
+            events: normalizeScriptGroupPopoutScriptEvents(entry.events)
           })),
         popoutType: normalizeScriptGroupPopoutType(parsed.popoutType),
         label: typeof parsed.label === "string" ? parsed.label : undefined

@@ -1695,13 +1695,19 @@ export default function MainPage() {
                 ? {
                     fileName: matchedRecord.fileName,
                     label: matchedRecord.label,
-                    tooltip: matchedRecord.tooltip
+                    tooltip: matchedRecord.tooltip,
+                    events: matchedRecord.events
                   }
                 : null;
             }).filter(
               (
                 record
-              ): record is { fileName: string; label: string; tooltip: string | undefined } =>
+              ): record is {
+                fileName: string;
+                label: string;
+                tooltip: string | undefined;
+                events: PanelScriptFileRecord["events"];
+              } =>
                 Boolean(record)
             );
 
@@ -2612,7 +2618,8 @@ export default function MainPage() {
         scripts: selectedRegularPanelScriptRecords.map((record) => ({
           fileName: record.fileName,
           label: record.label,
-          tooltip: record.tooltip
+          tooltip: record.tooltip,
+          events: record.events
         })),
         popoutType: selectedScriptGroupPopoutType,
         label:
