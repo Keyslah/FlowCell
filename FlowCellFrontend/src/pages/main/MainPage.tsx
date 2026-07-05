@@ -76,7 +76,7 @@ import {
   type StartupSettings
 } from "../../lib/startupSettings";
 import {
-  openAppearanceWindow,
+  openAppearanceHubWindow,
   openButtonReorderWindow,
   openAlignmentToolboxWindow,
   openBooleanToolboxWindow,
@@ -2852,9 +2852,9 @@ export default function MainPage() {
 
     if (button.actionId === "open-appearance") {
       try {
-        await openAppearanceWindow();
+        await openAppearanceHubWindow();
       } catch (error) {
-        console.error("Failed to open the Appearance window.", error);
+        console.error("Failed to open the Appearance Hub window.", error);
         window.alert(`Appearance window could not be opened.\n\n${formatErrorMessage(error)}`);
       }
       return;

@@ -89,6 +89,8 @@ const THEME_TOOLBOX_WINDOW_WIDTH = 920;
 const THEME_TOOLBOX_WINDOW_HEIGHT = 500;
 const APPEARANCE_WINDOW_WIDTH = 560;
 const APPEARANCE_WINDOW_HEIGHT = 640;
+const APPEARANCE_HUB_WINDOW_WIDTH = 1080;
+const APPEARANCE_HUB_WINDOW_HEIGHT = 720;
 const WINDOW_RELEASE_ATTEMPTS = 24;
 const WINDOW_RELEASE_DELAY_MS = 16;
 const DUPLICATE_WINDOW_CASCADE_STEP = 28;
@@ -122,6 +124,7 @@ const pendingSmartAxisToolboxOpens = new Map<string, Promise<void>>();
 const pendingScriptGroupPopoutOpens = new Map<string, Promise<void>>();
 const pendingCodexUsagePopoutOpens = new Map<string, Promise<void>>();
 const pendingAppearanceOpens = new Map<string, Promise<void>>();
+const pendingAppearanceHubOpens = new Map<string, Promise<void>>();
 let duplicateWindowInstanceCounter = 0;
 const duplicateWindowCascadeIndexes = new Map<string, number>();
 
@@ -1650,6 +1653,74 @@ export async function openAppearanceWindow(): Promise<void> {
   });
 
   pendingAppearanceOpens.set(windowLabel, openPromise);
+  return openPromise;
+}
+
+export async function openAppearanceHubWindow(): Promise<void> {
+  const windowLabel = "flowcell-appearance-hub";
+  const pendingOpen = pendingAppearanceHubOpens.get(windowLabel);
+  if (pendingOpen) {
+    return pendingOpen;
+  }
+
+  const openPromise = (async () => {
+    const existing = await WebviewWindow.getByLabel(windowLabel);
+    if (existing) {
+      await existing.setDecorations(false).catch(() => {});
+      await focusExistingWindow(existing);
+      return;
+    }
+
+    const currentWindow = getCurrentWindow();
+    const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+    const [position, size] = await Promise.all([
+      currentWindow.outerPosition().catch(() => null),
+      currentWindow.innerSize().catch(() => null)
+    ]);
+    const width = APPEARANCE_HUB_WINDOW_WIDTH;
+    const height = APPEARANCE_HUB_WINDOW_HEIGHT;
+    let x: number | undefined;
+    let y: number | undefined;
+    if (position && size) {
+      const logicalLeft = position.x / scaleFactor;
+      const logicalTop = position.y / scaleFactor;
+      const logicalWidth = size.width / scaleFactor;
+      const logicalHeight = size.height / scaleFactor;
+      x = logicalLeft + Math.max((logicalWidth - width) / 2, 24);
+      y = logicalTop + Math.max((logicalHeight - height) / 2, 24);
+    }
+
+    const window = new WebviewWindow(windowLabel, {
+      url: buildWindowContextUrl({ kind: "appearance-hub" }),
+      title: "FlowCell - Appearance Hub",
+      width,
+      height,
+      x,
+      y,
+      minWidth: 720,
+      minHeight: 480,
+      resizable: true,
+      decorations: false,
+      transparent: false,
+      shadow: true,
+      visible: true,
+      focus: true,
+      alwaysOnTop: false
+    });
+
+    await waitForWindowCreated(window);
+    await window.setDecorations(false).catch(() => {});
+    if (typeof x === "number" && typeof y === "number") {
+      await window.setPosition(new LogicalPosition(x, y)).catch(() => {});
+    }
+    await focusExistingWindow(window);
+  })().finally(() => {
+    if (pendingAppearanceHubOpens.get(windowLabel) === openPromise) {
+      pendingAppearanceHubOpens.delete(windowLabel);
+    }
+  });
+
+  pendingAppearanceHubOpens.set(windowLabel, openPromise);
   return openPromise;
 }
 
