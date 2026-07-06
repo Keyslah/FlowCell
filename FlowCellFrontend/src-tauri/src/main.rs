@@ -792,7 +792,7 @@ fn resolve_foreground_scoped_process_names(
 }
 
 fn frontend_launcher_path_from_repo_root(root: &Path) -> PathBuf {
-    root.join("FlowCell")
+    root.join("flowcellbackend")
         .join("helpers")
         .join("Start-FlowCellFrontend.ps1")
 }
@@ -1530,19 +1530,19 @@ fn try_set_description_at_path(path_value: &str, description: &str) -> Result<()
 fn resolve_flowcell_local_debug_root() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root()
         .ok_or_else(|| "FlowCell repo root could not be resolved for debug dumps.".to_string())?;
-    Ok(repo_root.join("FlowCell").join("local").join("debug"))
+    Ok(repo_root.join("flowcellbackend").join("local").join("debug"))
 }
 
 fn resolve_flowcell_local_root() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root()
         .ok_or_else(|| "FlowCell repo root could not be resolved for local data.".to_string())?;
-    Ok(repo_root.join("FlowCell").join("local"))
+    Ok(repo_root.join("flowcellbackend").join("local"))
 }
 
 fn resolve_flowcell_config_root() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root()
         .ok_or_else(|| "FlowCell repo root could not be resolved for config data.".to_string())?;
-    Ok(repo_root.join("FlowCell").join("config"))
+    Ok(repo_root.join("flowcellbackend").join("config"))
 }
 
 fn resolve_shortcut_profiles_config_root() -> Result<PathBuf, String> {
@@ -3639,6 +3639,130 @@ fn show_open_layout_dialog(
     .pick_file();
 
     Ok(selected_path.map(|path| path.display().to_string()))
+}
+
+fn resolve_hub_skin_dialog_directory(initial_directory: Option<String>) -> Result<PathBuf, String> {
+    if let Some(raw_directory) = initial_directory
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        let directory = PathBuf::from(raw_directory);
+        if directory.is_dir() {
+            return Ok(directory);
+        }
+    }
+    let skins_root = resolve_flowcell_local_root()?.join("skins");
+    fs::create_dir_all(&skins_root).map_err(|error| {
+        format!(
+            "Failed to create FlowCell skins folder at {}: {error}",
+            skins_root.display()
+        )
+    })?;
+    Ok(skins_root)
+}
+
+#[tauri::command]
+fn show_save_hub_skin_dialog(
+    app: AppHandle,
+    suggested_name: String,
+    initial_directory: Option<String>,
+    parent_label: Option<String>,
+) -> Result<Option<String>, String> {
+    let initial_directory = resolve_hub_skin_dialog_directory(initial_directory)?;
+    let file_name = if suggested_name.trim().is_empty() {
+        "button.fcskin.json".to_string()
+    } else {
+        suggested_name.trim().to_string()
+    };
+    let parent_label = parent_label.or_else(|| Some("main".to_string()));
+    let selected_path = set_dialog_parent(
+        &app,
+        FileDialog::new()
+            .set_title("Save Button Skin")
+            .set_directory(initial_directory)
+            .set_file_name(&file_name)
+            .add_filter("FlowCell Button Skin", &["json"]),
+        parent_label,
+    )
+    .save_file();
+
+    Ok(selected_path.map(|path| path.display().to_string()))
+}
+
+#[tauri::command]
+fn show_open_hub_skin_dialog(
+    app: AppHandle,
+    initial_directory: Option<String>,
+    parent_label: Option<String>,
+) -> Result<Option<String>, String> {
+    let initial_directory = resolve_hub_skin_dialog_directory(initial_directory)?;
+    let parent_label = parent_label.or_else(|| Some("main".to_string()));
+    let selected_path = set_dialog_parent(
+        &app,
+        FileDialog::new()
+            .set_title("Load Button Skin")
+            .set_directory(initial_directory)
+            .add_filter("FlowCell Button Skin", &["json"]),
+        parent_label,
+    )
+    .pick_file();
+
+    Ok(selected_path.map(|path| path.display().to_string()))
+}
+
+#[tauri::command]
+fn save_hub_skin_file(path: String, value: Value) -> Result<String, String> {
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Button skin file path is required.".to_string());
+    }
+    let file_path = PathBuf::from(trimmed_path);
+    if let Some(parent) = file_path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "Failed to create button skin folder at {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+    let serialized = serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?;
+    fs::write(&file_path, serialized).map_err(|error| {
+        format!(
+            "Failed to write button skin file at {}: {error}",
+            file_path.display()
+        )
+    })?;
+    Ok(file_path.display().to_string())
+}
+
+#[tauri::command]
+fn load_hub_skin_file(path: String) -> Result<Value, String> {
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Button skin file path is required.".to_string());
+    }
+    let file_path = PathBuf::from(trimmed_path);
+    if !file_path.is_file() {
+        return Err(format!(
+            "Button skin file was not found: {}",
+            file_path.display()
+        ));
+    }
+    let raw = fs::read_to_string(&file_path).map_err(|error| {
+        format!(
+            "Failed to read button skin file at {}: {error}",
+            file_path.display()
+        )
+    })?;
+    serde_json::from_str::<Value>(&raw).map_err(|error| {
+        format!(
+            "Failed to parse button skin file at {}: {error}",
+            file_path.display()
+        )
+    })
 }
 
 #[tauri::command]
@@ -5895,7 +6019,7 @@ async fn run_illustrator_layers_action(args_json: String) -> Result<String, Stri
 
 /// Persists the FlowCell-highlighted layer keys so the Layers Builder panel
 /// buttons (which run inside Illustrator) can resolve the same targets. The
-/// canonical copy lives under FlowCell/local; a mirror is written to the OS temp
+/// canonical copy lives under flowcellbackend/local; a mirror is written to the OS temp
 /// folder because the in-Illustrator `.jsx` reads it via ExtendScript's
 /// `Folder.temp` (no repo-root path derivation needed).
 #[tauri::command]
@@ -8093,7 +8217,9 @@ fn resolve_flowcell_backend_script_path() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root().ok_or_else(|| {
         "FlowCell repo root could not be resolved for backend execution.".to_string()
     })?;
-    let backend_script_path = repo_root.join("FlowCell").join("FlowCellBackend.ahk");
+    let backend_script_path = repo_root
+        .join("flowcellbackend")
+        .join("FlowCellBackend.ahk");
     if backend_script_path.is_file() {
         Ok(backend_script_path)
     } else {
@@ -8109,7 +8235,7 @@ fn resolve_flowcell_command_backend_script_path() -> Result<PathBuf, String> {
         "FlowCell repo root could not be resolved for command backend execution.".to_string()
     })?;
     let backend_path = repo_root
-        .join("FlowCell")
+        .join("flowcellbackend")
         .join("FlowCellCommandBackend.ps1");
     if backend_path.is_file() {
         Ok(backend_path)
@@ -8125,7 +8251,9 @@ fn resolve_flowcell_backend_launcher_path() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root().ok_or_else(|| {
         "FlowCell repo root could not be resolved for backend launch.".to_string()
     })?;
-    let launcher_path = repo_root.join("FlowCell").join("run_backend_hidden.vbs");
+    let launcher_path = repo_root
+        .join("flowcellbackend")
+        .join("run_backend_hidden.vbs");
     if launcher_path.is_file() {
         Ok(launcher_path)
     } else {
@@ -8139,7 +8267,7 @@ fn resolve_flowcell_backend_launcher_path() -> Result<PathBuf, String> {
 fn resolve_flowcell_autohotkey_exe_path() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root()
         .ok_or_else(|| "FlowCell repo root could not be resolved for AutoHotkey.".to_string())?;
-    let flowcell_root = repo_root.join("FlowCell");
+    let flowcell_root = repo_root.join("flowcellbackend");
     let candidates = [
         flowcell_root.join("runtime").join("AutoHotkey64.exe"),
         flowcell_root.join("runtime").join("AutoHotkey.exe"),
@@ -12710,7 +12838,7 @@ function Get-ClipboardProjectPath {
 function Write-FlowCellStatus([string]$Message) {
     try {
         $repo = Find-FlowCellRoot -StartPath $PSScriptRoot
-        $statusPath = Join-Path $repo 'FlowCell\local\logs\last_action_status.txt'
+        $statusPath = Join-Path $repo 'flowcellbackend\local\logs\last_action_status.txt'
         New-Item -ItemType Directory -Path (Split-Path -Parent $statusPath) -Force | Out-Null
         Set-Content -LiteralPath $statusPath -Value $Message -Encoding UTF8
     } catch { }
@@ -13007,6 +13135,10 @@ fn main() {
             save_blender_theme_darkness_profiles,
             save_blender_theme_file,
             load_blender_theme_file,
+            show_save_hub_skin_dialog,
+            show_open_hub_skin_dialog,
+            save_hub_skin_file,
+            load_hub_skin_file,
             save_blender_theme_package,
             load_blender_theme_package,
             list_blender_theme_packages,

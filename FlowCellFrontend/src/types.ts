@@ -124,6 +124,10 @@ export interface ImportedSkin {
   labelMaxWidth?: number;
   labelMinScale?: number;
   labelScale?: number;
+  // Set only on Appearance-hub-authored runtime skins: the host runs a
+  // click-triggered play latch (data-play) that stays up until the skin's
+  // play animations finish. Never persisted into FlowCellState.
+  hubPlayLatch?: boolean;
 }
 
 export interface StyleGroup {

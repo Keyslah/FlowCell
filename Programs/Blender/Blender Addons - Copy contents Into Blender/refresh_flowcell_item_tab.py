@@ -22,7 +22,7 @@ bl_info = {
 
 
 BLENDER_CONFIG_RELATIVE_PATHS = (
-    Path("FlowCell") / "local" / "private" / "blender.config.local.json",
+    Path("flowcellbackend") / "local" / "private" / "blender.config.local.json",
     Path("Programs") / "Blender" / "config.json",
     Path("Blender") / "config.json",
 )
@@ -49,6 +49,20 @@ def _load_json_file(path: Path) -> dict:
         return {}
 
 
+def _normalize_workspace_root(candidate: Path) -> Path | None:
+    if (candidate / "run_hidden.vbs").is_file() and (
+        candidate / "flowcellbackend" / "run_hidden.vbs"
+    ).is_file():
+        return candidate
+
+    if candidate.name.casefold() == "flowcellbackend" and (candidate / "run_hidden.vbs").is_file():
+        parent = candidate.parent
+        if (parent / "run_hidden.vbs").is_file():
+            return parent
+
+    return None
+
+
 def _resolve_workspace_root(target_key: str) -> Path | None:
     target = WORKSPACE_TARGETS[target_key]
     candidates: list[Path] = []
@@ -71,8 +85,9 @@ def _resolve_workspace_root(target_key: str) -> Path | None:
             continue
         seen.add(candidate_key)
 
-        if (candidate / "run_hidden.vbs").is_file() and (candidate / "FlowCell" / "run_hidden.vbs").is_file():
-            return candidate
+        workspace_root = _normalize_workspace_root(candidate)
+        if workspace_root is not None:
+            return workspace_root
 
     return None
 
@@ -140,7 +155,7 @@ def _find_workspace_module_name(target_key: str, workspace_root: Path) -> str:
 
 
 def _get_workspace_runtime_paths(workspace_root: Path) -> dict[str, Path]:
-    flowcell_root = workspace_root / "FlowCell"
+    flowcell_root = workspace_root / "flowcellbackend"
     frontend_root = workspace_root / "FlowCellFrontend"
     return {
         "legacy_ui_script": (flowcell_root / "FlowCellUI.ps1").resolve(),

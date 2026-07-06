@@ -10,7 +10,7 @@ function Find-FlowCellRoot {
     $currentPath = [System.IO.Path]::GetFullPath($StartPath)
     while (-not [string]::IsNullOrWhiteSpace($currentPath) -and (Test-Path -LiteralPath $currentPath -PathType Container)) {
         $summaryPath = Join-Path $currentPath 'PROGRAM_SUMMARY.txt'
-        $flowCellPath = Join-Path $currentPath 'FlowCell'
+        $flowCellPath = Join-Path $currentPath 'flowcellbackend'
         if ((Test-Path -LiteralPath $summaryPath -PathType Leaf) -and (Test-Path -LiteralPath $flowCellPath -PathType Container)) {
             return $currentPath
         }
@@ -38,7 +38,7 @@ function Ensure-Directory {
 
 $script:FlowCellRoot = try { Find-FlowCellRoot -StartPath $PSScriptRoot } catch { $null }
 $script:ToggleRoot = if ($null -ne $script:FlowCellRoot) {
-    Join-Path $script:FlowCellRoot 'FlowCell\local\autohotkey-toggle'
+    Join-Path $script:FlowCellRoot 'flowcellbackend\local\autohotkey-toggle'
 }
 else {
     $PSScriptRoot
@@ -62,10 +62,10 @@ function Get-AutoHotkeyExePath {
     $paths = @()
     if ($null -ne $script:FlowCellRoot) {
         $paths += @(
-            (Join-Path $script:FlowCellRoot 'FlowCell\runtime\AutoHotkey64.exe'),
-            (Join-Path $script:FlowCellRoot 'FlowCell\runtime\AutoHotkey.exe'),
-            (Join-Path $script:FlowCellRoot 'FlowCell\local\bin\AutoHotkey64.exe'),
-            (Join-Path $script:FlowCellRoot 'FlowCell\local\bin\AutoHotkey.exe')
+            (Join-Path $script:FlowCellRoot 'flowcellbackend\runtime\AutoHotkey64.exe'),
+            (Join-Path $script:FlowCellRoot 'flowcellbackend\runtime\AutoHotkey.exe'),
+            (Join-Path $script:FlowCellRoot 'flowcellbackend\local\bin\AutoHotkey64.exe'),
+            (Join-Path $script:FlowCellRoot 'flowcellbackend\local\bin\AutoHotkey.exe')
         )
     }
 
@@ -80,7 +80,7 @@ function Get-AutoHotkeyExePath {
         }
     }
 
-    throw 'AutoHotkey v2 was not found. Install AutoHotkey v2 or place AutoHotkey64.exe in FlowCell\runtime or FlowCell\local\bin.'
+    throw 'AutoHotkey v2 was not found. Install AutoHotkey v2 or place AutoHotkey64.exe in flowcellbackend\runtime or flowcellbackend\local\bin.'
 }
 
 function Get-ManagedHotkeyLauncherListPath {
@@ -132,7 +132,7 @@ function Get-ManagedHotkeyLauncherPaths {
     }
 
     if ($null -ne $script:FlowCellRoot) {
-        $flowCellBackendScript = Join-Path $script:FlowCellRoot 'FlowCell\FlowCellBackend.ahk'
+        $flowCellBackendScript = Join-Path $script:FlowCellRoot 'flowcellbackend\FlowCellBackend.ahk'
         if (Test-Path -LiteralPath $flowCellBackendScript -PathType Leaf) {
             return @(
                 [pscustomobject]@{

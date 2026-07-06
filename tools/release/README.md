@@ -4,14 +4,14 @@ FlowCell source stays binary-free. Release ZIPs may include portable runtimes th
 
 For a normal user-facing release, include AutoHotkey v2 in:
 
-`FlowCell/runtime/AutoHotkey64.exe`
+`flowcellbackend/runtime/AutoHotkey64.exe`
 
-FlowCell/run.cmd looks for AutoHotkey in this order:
+flowcellbackend/run.cmd looks for AutoHotkey in this order:
 
-1. `FlowCell/runtime/AutoHotkey64.exe`
-2. `FlowCell/runtime/AutoHotkey.exe`
-3. `FlowCell/local/bin/AutoHotkey64.exe`
-4. `FlowCell/local/bin/AutoHotkey.exe`
+1. `flowcellbackend/runtime/AutoHotkey64.exe`
+2. `flowcellbackend/runtime/AutoHotkey.exe`
+3. `flowcellbackend/local/bin/AutoHotkey64.exe`
+4. `flowcellbackend/local/bin/AutoHotkey.exe`
 5. `C:/Program Files/AutoHotkey/v2/AutoHotkey64.exe`
 6. `C:/Program Files/AutoHotkey/v2/AutoHotkey.exe`
 

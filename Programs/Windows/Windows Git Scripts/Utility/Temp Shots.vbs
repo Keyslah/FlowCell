@@ -17,7 +17,7 @@ If Not fso.FileExists(psScript) Then
 End If
 
 If Not fso.FileExists(psScript) Then
-    statusPath = repoRoot & "\FlowCell\local\logs\last_action_status.txt"
+    statusPath = repoRoot & "\flowcellbackend\local\logs\last_action_status.txt"
     statusDir = fso.GetParentFolderName(statusPath)
     If Not fso.FolderExists(statusDir) Then
         fso.CreateFolder(statusDir)

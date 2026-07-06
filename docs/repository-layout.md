@@ -14,7 +14,7 @@ Panel deletes and button deletes only remove the panel copy or panel record. The
 
 ## Public Source
 
-- `FlowCell/`: PowerShell UI, AutoHotkey backend, helpers, and vendored libraries.
+- `flowcellbackend/`: PowerShell UI, AutoHotkey backend, helpers, runtime config, local state, and vendored libraries.
 - `FlowCellFrontend/`: React/Tauri desktop frontend and native command host.
 - `Programs/<Program>/<Program> Git Scripts/`: shared Git-synced script libraries, organized by panel subfolder.
 - `Programs/Blender/SupportScripts/`: Blender installer, dispatcher, cleanup, and sync plumbing.
@@ -25,7 +25,7 @@ Panel deletes and button deletes only remove the panel copy or panel record. The
 
 ## Ignored Local Data
 
-`FlowCell/local/` stores runtime state such as bindings, layouts, saved panels, recorded macros, logs, private settings, temp files, and build/runtime artifacts.
+`flowcellbackend/local/` stores runtime state such as bindings, layouts, saved panels, recorded macros, logs, private settings, temp files, and build/runtime artifacts.
 
 Program-local ignored data includes panel button folders, flat Local Scripts folders, ScriptDump contents, generated Blender actions, and caches.
 

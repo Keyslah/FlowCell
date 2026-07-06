@@ -121,7 +121,7 @@ function Get-RepoRoot {
 }
 
 function Get-FlowCellLocalRoot {
-    return Join-Path (Get-RepoRoot) 'FlowCell\local'
+    return Join-Path (Get-RepoRoot) 'flowcellbackend\local'
 }
 
 function Get-ChromeWorkspaceEnvironmentPath {

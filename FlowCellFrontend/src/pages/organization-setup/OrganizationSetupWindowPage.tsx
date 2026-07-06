@@ -238,7 +238,7 @@ export default function OrganizationSetupWindowPage() {
   const [ambiguityScope, setAmbiguityScope] = useState<AmbiguityScope>("file");
   const [directFileTypesInput, setDirectFileTypesInput] = useState("");
 
-  // Saved named profiles (skeleton trees under FlowCell/local/Folder Trees).
+  // Saved named profiles (skeleton trees under flowcellbackend/local/Folder Trees).
   const [savedProfiles, setSavedProfiles] = useState<OrganizationProfileSummary[]>([]);
   const [profileName, setProfileName] = useState("");
   // The profile currently loaded into the editor, ready to apply to a root.

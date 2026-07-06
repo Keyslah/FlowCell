@@ -47,7 +47,7 @@ Function FindEngineScript()
     Dim dir : dir = scriptDir
     Do While dir <> ""
         If fso.FileExists(fso.BuildPath(dir, "PROGRAM_SUMMARY.txt")) And _
-           fso.FolderExists(fso.BuildPath(dir, "FlowCell")) Then
+           fso.FolderExists(fso.BuildPath(dir, "flowcellbackend")) Then
             Dim canon
             canon = dir & "\Programs\Windows\Windows Git Scripts\Utility\toggle_monitors.py"
             If fso.FileExists(canon) Then

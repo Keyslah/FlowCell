@@ -27,6 +27,6 @@ Communication rules
 
 FlowCell implementation notes
 - After changes affecting Blender add-ons, configs, generated actions, wrappers, or bridge files, state the required reload/restart/resync step.
-- Check `FlowCell/local/logs`, status output, or relevant console output before guessing about runtime failures.
+- Check `flowcellbackend/local/logs`, status output, or relevant console output before guessing about runtime failures.
 - Update `PROGRAM_SUMMARY.txt` whenever repo structure or FlowCell behavior changes.
 </INSTRUCTIONS>

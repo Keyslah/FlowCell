@@ -10,8 +10,8 @@
 
 ## Repository Expectations
 
-- Public source belongs in tracked folders such as `FlowCell/`, `Blender/`, `Illustrator/`, `Windows/`, `Photoshop/`, `docs/`, `examples/`, and `tools/`.
-- Mutable runtime data belongs in `FlowCell/local/`, which is ignored by Git.
+- Public source belongs in tracked folders such as `flowcellbackend/`, `FlowCellFrontend/`, `Programs/`, `docs/`, `examples/`, and `tools/`.
+- Mutable runtime data belongs in `flowcellbackend/local/`, which is ignored by Git.
 - Relative paths inside the repo are expected and normal. If you move files that other scripts resolve by location, update those references in the same change.
 
 ## Issues and Discussions
@@ -23,8 +23,8 @@
 ## Validation
 
 - Parse-check PowerShell files before shipping changes.
-- Keep launcher behavior working through `run.cmd` and `FlowCell/run.cmd`.
-- If you touch panel import, layout persistence, or hotkey behavior, verify that local state still stays under `FlowCell/local/`.
+- Keep launcher behavior working through `run.cmd` and `flowcellbackend/run.cmd`.
+- If you touch panel import, layout persistence, or hotkey behavior, verify that local state still stays under `flowcellbackend/local/`.
 
 ## Pull Requests
 

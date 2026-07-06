@@ -46,7 +46,7 @@ Normal users also do not need Node, npm, Rust, Cargo, or Tauri build tools.
 <FlowCell Core folder>/
   Start FlowCell.cmd
   FlowCell.exe
-  FlowCell/
+  flowcellbackend/
     FlowCellBackend.ahk
     FlowCellCommandBackend.ps1
     runtime/

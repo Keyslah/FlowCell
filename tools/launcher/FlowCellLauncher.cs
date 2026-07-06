@@ -58,7 +58,7 @@ internal static class FlowCellLauncher
         while (current != null)
         {
             var rootRunCmd = Path.Combine(current.FullName, "run.cmd");
-            var flowCellRunCmd = Path.Combine(current.FullName, "FlowCell", "run.cmd");
+            var flowCellRunCmd = Path.Combine(current.FullName, "flowcellbackend", "run.cmd");
             if (File.Exists(rootRunCmd) && File.Exists(flowCellRunCmd))
             {
                 return current.FullName;
@@ -129,8 +129,8 @@ internal static class FlowCellLauncher
             ? AppDomain.CurrentDomain.BaseDirectory
             : repoRootOrBaseDirectory);
 
-        var flowCellLogs = Path.Combine(root, "FlowCell", "local", "logs");
-        if (Directory.Exists(Path.Combine(root, "FlowCell")))
+        var flowCellLogs = Path.Combine(root, "flowcellbackend", "local", "logs");
+        if (Directory.Exists(Path.Combine(root, "flowcellbackend")))
         {
             return flowCellLogs;
         }

@@ -10,7 +10,7 @@ function Find-FlowCellRoot([string]$StartPath) {
     $currentPath = [System.IO.Path]::GetFullPath($StartPath)
     while (-not [string]::IsNullOrWhiteSpace($currentPath) -and (Test-Path -LiteralPath $currentPath -PathType Container)) {
         $summaryPath = Join-Path $currentPath 'PROGRAM_SUMMARY.txt'
-        $flowCellPath = Join-Path $currentPath 'FlowCell'
+        $flowCellPath = Join-Path $currentPath 'flowcellbackend'
         if ((Test-Path -LiteralPath $summaryPath -PathType Leaf) -and (Test-Path -LiteralPath $flowCellPath -PathType Container)) {
             return $currentPath
         }
@@ -57,7 +57,7 @@ catch {
     else {
         try {
             $repoRoot = Find-FlowCellRoot -StartPath $PSScriptRoot
-            $statusPath = Join-Path $repoRoot 'FlowCell\local\logs\last_action_status.txt'
+            $statusPath = Join-Path $repoRoot 'flowcellbackend\local\logs\last_action_status.txt'
             New-Item -ItemType Directory -Path (Split-Path -Parent $statusPath) -Force | Out-Null
             Set-Content -LiteralPath $statusPath -Value $message -Encoding UTF8
         }

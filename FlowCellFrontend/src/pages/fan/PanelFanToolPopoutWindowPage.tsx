@@ -25,6 +25,12 @@ import {
 } from "../../lib/programRails";
 import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import { DEFAULT_POPOUT_IMPORTED_SKIN } from "../../lib/theme";
+import {
+  HUB_PANEL_BUTTON_KEY,
+  resolveHubLabelOverride,
+  resolveHubLiveSkin,
+  useHubSkinRevision
+} from "../appearance-hub/liveBridge";
 import type { PanelFanWindowContext } from "../../lib/windowContext";
 import type { FlowCellButton } from "../../types";
 import "../main/mainPage.css";
@@ -385,6 +391,8 @@ export default function PanelFanToolPopoutWindowPage({
   const spaceDragSyncTimerRef = useRef<number | undefined>(undefined);
   const wasSpaceDraggingRef = useRef(false);
   const activeHoverButtonEventsRef = useRef<Map<string, ActivePanelFanHoverEvent>>(new Map());
+  const activeChildSkinPlayKeysRef = useRef<Set<string>>(new Set());
+  const deferredCollapseAfterPlayRef = useRef<{ force: boolean } | null>(null);
   const [records, setRecords] = useState<PanelScriptFileRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -408,6 +416,7 @@ export default function PanelFanToolPopoutWindowPage({
     () => new Set(context.selectedFileNames),
     [context.selectedFileNames]
   );
+  const hubSkinRevision = useHubSkinRevision();
 
   useEffect(() => {
     let cancelled = false;
@@ -552,6 +561,8 @@ export default function PanelFanToolPopoutWindowPage({
       if (spaceDragSyncTimerRef.current) {
         window.clearTimeout(spaceDragSyncTimerRef.current);
       }
+      activeChildSkinPlayKeysRef.current.clear();
+      deferredCollapseAfterPlayRef.current = null;
       cleanupActiveHoverEvents();
       void getCurrentWindow().setIgnoreCursorEvents(false).catch(() => {});
     };
@@ -559,19 +570,66 @@ export default function PanelFanToolPopoutWindowPage({
 
   const childEntries = useMemo<FanClusterEntry[]>(() => {
     return resolvedRecords.map((record) => {
+      const hubLabelOverride = resolveHubLabelOverride(
+        context.programName,
+        context.panelName,
+        record.fileName,
+        "fan"
+      );
+      const label = hubLabelOverride !== undefined ? hubLabelOverride : record.label;
       return {
         programId: 0,
         panelId: context.panelName,
         panelName: context.panelName,
-        button: buildChildButton(record, record.label),
+        button: buildChildButton(record, label),
         childSlotId: record.fileName,
         events: record.events
       };
     });
-  }, [context.panelName, resolvedRecords]);
+  }, [context.panelName, context.programName, hubSkinRevision, resolvedRecords]);
+
+  // Appearance-hub skins for the fan placement: the owner pill maps to the
+  // panel-button address, children map to their script file names.
+  const hubSkinResolver = useMemo(() => {
+    void hubSkinRevision;
+    return (button: FlowCellButton) => {
+      const buttonKey =
+        button.Kind === "panel_fan_owner"
+          ? HUB_PANEL_BUTTON_KEY
+          : (button.Target || button.Id || "").trim();
+      if (!buttonKey) {
+        return undefined;
+      }
+      return resolveHubLiveSkin(context.programName, context.panelName, buttonKey, "fan");
+    };
+  }, [context.programName, context.panelName, hubSkinRevision]);
 
   const getHoverEventKey = (fileName: string) =>
     `${context.programName}\n${context.panelName}\n${fileName}`;
+
+  const hasActiveChildSkinPlay = () => activeChildSkinPlayKeysRef.current.size > 0;
+
+  const flushDeferredCollapseAfterPlay = () => {
+    if (hasActiveChildSkinPlay()) {
+      return;
+    }
+    const pending = deferredCollapseAfterPlayRef.current;
+    if (!pending) {
+      return;
+    }
+    deferredCollapseAfterPlayRef.current = null;
+    queueGuardedCollapseWindow(pending.force);
+  };
+
+  const handleChildPlayChange = (entry: FanClusterEntry, playing: boolean) => {
+    const key = getHoverEventKey(entry.childSlotId);
+    if (playing) {
+      activeChildSkinPlayKeysRef.current.add(key);
+      return;
+    }
+    activeChildSkinPlayKeysRef.current.delete(key);
+    flushDeferredCollapseAfterPlay();
+  };
 
   const runHoverLeave = (key: string, target: ActivePanelFanHoverEvent) => {
     activeHoverButtonEventsRef.current.delete(key);
@@ -777,6 +835,13 @@ export default function PanelFanToolPopoutWindowPage({
   const queueGuardedCollapseWindow = (force = false) => {
     if (collapseIntentTimerRef.current) {
       window.clearTimeout(collapseIntentTimerRef.current);
+    }
+
+    if (hasActiveChildSkinPlay()) {
+      deferredCollapseAfterPlayRef.current = {
+        force: force || deferredCollapseAfterPlayRef.current?.force === true
+      };
+      return;
     }
 
     if (force) {
@@ -1362,6 +1427,9 @@ export default function PanelFanToolPopoutWindowPage({
   ]);
 
   const requestExpand = () => {
+    if (!hasActiveChildSkinPlay()) {
+      deferredCollapseAfterPlayRef.current = null;
+    }
     if (collapseIntentTimerRef.current) {
       window.clearTimeout(collapseIntentTimerRef.current);
       collapseIntentTimerRef.current = undefined;
@@ -1457,6 +1525,11 @@ export default function PanelFanToolPopoutWindowPage({
     }
   };
 
+  const ownerButtonLabel =
+    resolveHubLabelOverride(context.programName, context.panelName, HUB_PANEL_BUTTON_KEY, "fan") ??
+    context.label ??
+    context.panelName;
+
   const handleShellPointerDownCapture = (event: ReactPointerEvent<HTMLElement>) => {
     if (!effectiveSpaceDragActive || spaceDragging || event.button !== 0) {
       return;
@@ -1507,7 +1580,7 @@ export default function PanelFanToolPopoutWindowPage({
           <p className="panel-fan-window-page__status">No regular panel buttons were selected.</p>
         ) : (
           <FanOutButtonCluster
-            ownerButton={buildOwnerButton(context.label ?? context.panelName)}
+            ownerButton={buildOwnerButton(ownerButtonLabel)}
             layout={fanOptions.layout}
             placement={fanOptions.placement}
             variant="panel-fan"
@@ -1524,11 +1597,13 @@ export default function PanelFanToolPopoutWindowPage({
             ownerImportedSkinOverride={DEFAULT_POPOUT_IMPORTED_SKIN}
             styleGroupOverride={MAIN_PAGE_IMPORTED_STYLE_GROUP}
             importedSkinOverride={DEFAULT_POPOUT_IMPORTED_SKIN}
+            hubSkinResolver={hubSkinResolver}
             onOwnerClick={handleOwnerClick}
             onChildClick={handleChildClick}
             onChildHoverStart={handleChildHoverStart}
             onChildHoverEnd={handleChildHoverEnd}
             onChildHoverCancel={handleChildHoverEnd}
+            onChildPlayChange={handleChildPlayChange}
           />
         )}
         {scriptRunError ? (

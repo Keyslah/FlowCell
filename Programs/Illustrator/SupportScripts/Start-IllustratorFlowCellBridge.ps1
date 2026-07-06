@@ -31,12 +31,12 @@ $script:ManifestPath = if ([string]::IsNullOrWhiteSpace($ManifestPath)) {
   [System.IO.Path]::GetFullPath($ManifestPath)
 }
 $script:PidPath = if ([string]::IsNullOrWhiteSpace($PidPath)) {
-  Join-Path $script:RepoRootPath 'FlowCell\local\illustrator-bridge.pid.json'
+  Join-Path $script:RepoRootPath 'flowcellbackend\local\illustrator-bridge.pid.json'
 } else {
   [System.IO.Path]::GetFullPath($PidPath)
 }
 $script:LogPath = if ([string]::IsNullOrWhiteSpace($LogPath)) {
-  Join-Path $script:RepoRootPath 'FlowCell\local\logs\illustrator-bridge.log'
+  Join-Path $script:RepoRootPath 'flowcellbackend\local\logs\illustrator-bridge.log'
 } else {
   [System.IO.Path]::GetFullPath($LogPath)
 }

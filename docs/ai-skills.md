@@ -21,7 +21,7 @@ Use the FlowCell AI skills in docs/ai-skills.md. For Blender Add Script/toolset 
 
 ## flowcell
 
-**Use when:** Use when updating, fixing, or extending the FlowCell desktop app under <repo root>, especially the active Tauri v2 + React + TypeScript frontend in FlowCellFrontend, the FlowCell command/backend host under FlowCell, FlowCell logs and state under FlowCell\local, Blender Add Button or bridge flows, Illustrator/Photoshop scripts or buttons routed through FlowCell actions, popouts, layouts, style-group rendering, or any task that must preserve the State Layer / Functional Host Layer / Visual Skin Layer split.
+**Use when:** Use when updating, fixing, or extending the FlowCell desktop app under <repo root>, especially the active Tauri v2 + React + TypeScript frontend in FlowCellFrontend, the FlowCell command/backend host under flowcellbackend, FlowCell logs and state under flowcellbackend\local, Blender Add Button or bridge flows, Illustrator/Photoshop scripts or buttons routed through FlowCell actions, popouts, layouts, style-group rendering, or any task that must preserve the State Layer / Functional Host Layer / Visual Skin Layer split.
 
 
 ### FlowCell
@@ -36,17 +36,17 @@ Keep `FlowCell` behavior aligned with this repo unless the user explicitly asks 
 2. Inspect narrow live files before broad reads:
    - `<repo root>\FlowCellFrontend\src\...`
    - `<repo root>\FlowCellFrontend\src-tauri\...`
-   - `<repo root>\FlowCell\FlowCellCommandBackend.ps1`
-   - `<repo root>\FlowCell\FlowCellBackend.ahk`
-   - `<repo root>\FlowCell\FlowCellUI.ps1` only when the issue is explicitly about the legacy WPF shell
-   - `<repo root>\FlowCell\local\flowcell_state.json`
-   - `<repo root>\FlowCell\local\bindings.ini`
+   - `<repo root>\flowcellbackend\FlowCellCommandBackend.ps1`
+   - `<repo root>\flowcellbackend\FlowCellBackend.ahk`
+   - `<repo root>\flowcellbackend\FlowCellUI.ps1` only when the issue is explicitly about the legacy WPF shell
+   - `<repo root>\flowcellbackend\local\flowcell_state.json`
+   - `<repo root>\flowcellbackend\local\bindings.ini`
 3. Check current logs before guessing about runtime failures:
-   - `<repo root>\FlowCell\local\logs\ui.log`
-   - `<repo root>\FlowCell\local\logs\frontend-tauri.log`
-   - `<repo root>\FlowCell\local\logs\command_host.log`
-   - `<repo root>\FlowCell\local\logs\controller.log`
-   - `<repo root>\FlowCell\local\logs\last_action_status.txt`
+   - `<repo root>\flowcellbackend\local\logs\ui.log`
+   - `<repo root>\flowcellbackend\local\logs\frontend-tauri.log`
+   - `<repo root>\flowcellbackend\local\logs\command_host.log`
+   - `<repo root>\flowcellbackend\local\logs\controller.log`
+   - `<repo root>\flowcellbackend\local\logs\last_action_status.txt`
    - relevant launcher logs such as `flowcell_launcher.log`, `frontend-launcher.log`, or `ui-launcher.log`
 4. If the user says something "still" fails, trust the current files and fresh logs over thread memory.
 5. Verify process state and log timestamps before assuming a restart, reload, or rebuild already happened.
@@ -79,12 +79,12 @@ Keep `FlowCell` behavior aligned with this repo unless the user explicitly asks 
 - The active shell is the Tauri v2 + React + TypeScript frontend under `<repo root>\FlowCellFrontend`.
 - The normal launcher path goes through:
   - `<repo root>\run.cmd`
-  - `<repo root>\FlowCell\run.cmd`
-  - `<repo root>\FlowCell\helpers\Start-FlowCellFrontend.ps1`
-- The active backend command host is `<repo root>\FlowCell\FlowCellCommandBackend.ps1`.
-- The AutoHotkey controller is `<repo root>\FlowCell\FlowCellBackend.ahk`.
-- Mutable runtime data lives under `<repo root>\FlowCell\local`.
-- The legacy WPF shell `<repo root>\FlowCell\FlowCellUI.ps1` still exists on disk but is not the default live shell.
+  - `<repo root>\flowcellbackend\run.cmd`
+  - `<repo root>\flowcellbackend\helpers\Start-FlowCellFrontend.ps1`
+- The active backend command host is `<repo root>\flowcellbackend\FlowCellCommandBackend.ps1`.
+- The AutoHotkey controller is `<repo root>\flowcellbackend\FlowCellBackend.ahk`.
+- Mutable runtime data lives under `<repo root>\flowcellbackend\local`.
+- The legacy WPF shell `<repo root>\flowcellbackend\FlowCellUI.ps1` still exists on disk but is not the default live shell.
 
 #### Common Workflows
 
@@ -103,13 +103,13 @@ Keep `FlowCell` behavior aligned with this repo unless the user explicitly asks 
 
 ##### AutoHotkey or launcher changes
 
-1. Inspect `FlowCellBackend.ahk`, `FlowCell\run.cmd`, and the launcher/helper scripts first.
+1. Inspect `FlowCellBackend.ahk`, `flowcellbackend\run.cmd`, and the launcher/helper scripts first.
 2. Use current launcher logs before assuming the launch path is wrong.
 3. Keep launch, focus, and restart behavior aligned with the current Tauri frontend model.
 
 ##### State, layout, or popout issues
 
-1. Inspect `FlowCell\local\flowcell_state.json`, `FlowCell\local\layouts`, and `FlowCell\local\panel_saves`.
+1. Inspect `flowcellbackend\local\flowcell_state.json`, `flowcellbackend\local\layouts`, and `flowcellbackend\local\panel_saves`.
 2. Keep popout/layout persistence in the state layer, not in visual code.
 3. Do not wipe `flowcell_state.json` unless the user explicitly asks.
 
@@ -144,7 +144,7 @@ Use these rules only when Adobe scripts, launcher buttons, or imported script ac
 - Frontend TypeScript or CSS changes: run `npm run build` in `FlowCellFrontend`.
 - PowerShell changes: parse-check changed files with `[System.Management.Automation.Language.Parser]::ParseFile(...)`.
 - Blender Python/add-on changes: run `python -m py_compile` on the changed Python files.
-- Runtime regressions: inspect the latest relevant files in `FlowCell\local\logs`.
+- Runtime regressions: inspect the latest relevant files in `flowcellbackend\local\logs`.
 - If a useful automated validation is unavailable, say so plainly and leave a targeted manual verification note.
 
 ## layout
@@ -166,11 +166,11 @@ Do not switch repos just because an older path appears in memory or logs. Let th
 
 1. Read `PROGRAM_SUMMARY.txt` first when present.
 2. Check fresh runtime evidence before guessing:
-   - `FlowCell\local\layouts\`
-   - `FlowCell\local\logs\frontend-tauri.log`
-   - `FlowCell\local\logs\frontend-launcher.log`
-   - `FlowCell\local\logs\` and panel-fan debug dumps when Pop/Fan is involved
-   - `FlowCell\local\flowcell_state.json` only if the current repo still uses it
+   - `flowcellbackend\local\layouts\`
+   - `flowcellbackend\local\logs\frontend-tauri.log`
+   - `flowcellbackend\local\logs\frontend-launcher.log`
+   - `flowcellbackend\local\logs\` and panel-fan debug dumps when Pop/Fan is involved
+   - `flowcellbackend\local\flowcell_state.json` only if the current repo still uses it
 3. Inspect the current ownership files first:
    - `FlowCellFrontend\src\pages\main\MainPage.tsx`
    - `FlowCellFrontend\src\lib\windowing.ts`
@@ -281,7 +281,7 @@ Do not assume the user mis-clicked. If they say it is still broken, trust curren
 
 ##### 2. Check persistence first
 
-- Inspect the newest layout file in `FlowCell\local\layouts`.
+- Inspect the newest layout file in `flowcellbackend\local\layouts`.
 - Inspect registered managed windows via `layoutSnapshots.ts` behavior and `LayoutSnapshot.Windows`.
 - In older FlowCell paths, inspect `flowcell_state.json` for `ToolPopouts`, `PanelPopouts`, `IsPoppedOut`, and saved bounds.
 - If persistence is correct, the bug is in reopen, placement, scale conversion, or native topmost.
@@ -334,7 +334,7 @@ Do not assume the user mis-clicked. If they say it is still broken, trust curren
 
 - Run `npm run build` in the current repo's `FlowCellFrontend` after frontend changes.
 - If the running frontend uses the compiled Tauri binary, restart through:
-   - `FlowCell\helpers\Start-FlowCellFrontend.ps1` when present
+   - `flowcellbackend\helpers\Start-FlowCellFrontend.ps1` when present
 - After restart, verify the new process start time and launcher log entries.
 - If you cannot run a live click-through, say so plainly and leave a targeted manual retest note.
 
@@ -682,8 +682,8 @@ Work in the active FlowCell repo, especially `<repo root>`.
 
 1. Read `PROGRAM_SUMMARY.txt` in the active repo.
 2. If behavior is failing at runtime, check fresh logs before guessing:
-   - `FlowCell\local\logs\frontend-launcher.log`
-   - `FlowCell\local\logs\frontend-tauri.log`
+   - `flowcellbackend\local\logs\frontend-launcher.log`
+   - `flowcellbackend\local\logs\frontend-tauri.log`
 3. Inspect only the narrow files that own fanout behavior:
    - `FlowCellFrontend\src\components\FanOutButtonCluster.tsx`
    - `FlowCellFrontend\src\pages\fan\PanelFanToolPopoutWindowPage.tsx`
@@ -797,7 +797,7 @@ Do not move fanout behavior into skin code.
 #### Validation
 
 - Run `npm run build` in the active repo's `FlowCellFrontend`.
-- Restart with `FlowCell\helpers\Start-FlowCellFrontend.ps1` after Tauri/native changes.
+- Restart with `flowcellbackend\helpers\Start-FlowCellFrontend.ps1` after Tauri/native changes.
 - Recheck `frontend-launcher.log` and `frontend-tauri.log` when the issue is runtime-specific.
 - Leave a manual smoke note for:
   - large fanouts opening without the owner jumping off the cursor
@@ -1114,9 +1114,9 @@ Use this skill when a user wants Blender theme buckets mapped correctly, when a 
    - `<repo root>\FlowCellFrontend\src\components\ToolSurfaces.tsx`
    - `<repo root>\PROGRAM_SUMMARY.txt`
 2. Check current runtime evidence before guessing:
-   - `<repo root>\FlowCell\local\logs\frontend-tauri.log`
-   - `<repo root>\FlowCell\local\logs\command_host.log`
-   - `<repo root>\FlowCell\local\logs\last_action_status.txt`
+   - `<repo root>\flowcellbackend\local\logs\frontend-tauri.log`
+   - `<repo root>\flowcellbackend\local\logs\command_host.log`
+   - `<repo root>\flowcellbackend\local\logs\last_action_status.txt`
 3. Separate the problem:
    - If the frontend sampled or staged the wrong hex, fix the FlowCell theme-tool payload or preset builder.
    - If the frontend sent the right hex but Blender still shows the wrong surface, fix the Blender managed action mapping.
@@ -1150,7 +1150,7 @@ Read [references/blender-5-theme-notes.md](./references/blender-5-theme-notes.md
 - The Blender theme mapper lives in:
   - `Blender\ManagedActions\custom_hdri_world_tools.py`
 - The command host forwards theme applies through:
-  - `FlowCell\FlowCellCommandBackend.ps1`
+  - `flowcellbackend\FlowCellCommandBackend.ps1`
 - The direct bridge helper is:
   - `Blender\SupportScripts\Invoke-BlenderFlowCellAction.ps1`
 - The configured live Blender bridge root for this sandbox is:
@@ -1320,7 +1320,9 @@ When using this skill, explicitly state:
 
 ### Appearance Hub Skin Author
 
-Produce one paste-ready text block made of `=== slot ===` sections. The hub splits it into slots, sanitizes it, and compiles it into scoped CSS that renders only inside the hub preview. Skins made here follow the same label-first pipeline as live FlowCell buttons (see react-tauri-button-skin-contract): label first, then the skin's own size, and the measured core IS the hitbox.
+Produce one paste-ready text block made of `=== slot ===` sections. The hub splits it into slots, sanitizes it, and compiles it. Skins made here follow the same label-first pipeline as live FlowCell buttons (see react-tauri-button-skin-contract): label first, then the skin's own size, and the measured core IS the hitbox.
+
+As of hub v8, pasted skins apply to REAL buttons: the hub selects an address (program → panel → button → placement, where placement is Main page / Single popped / Group popped / Fan) and the paste lands on that address. The paste format is unchanged; the hub compiles it for the live imported-skin pipeline (`pages/appearance-hub/liveBridge.ts`). The `play` slot triggers on click in both the bench and the live app and always runs to completion. Text (font, one/two rows, size, label override) is set in the hub's Text section, not in the paste. Whole skins (code + text) save/load as `.fcskin.json` files from the hub's Save/Load buttons.
 
 #### Output Format
 

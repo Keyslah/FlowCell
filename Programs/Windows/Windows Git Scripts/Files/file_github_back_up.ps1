@@ -31,7 +31,7 @@ function Find-FlowCellRoot([string]$StartPath) {
     $currentPath = [System.IO.Path]::GetFullPath($StartPath)
     while (-not [string]::IsNullOrWhiteSpace($currentPath) -and (Test-Path -LiteralPath $currentPath -PathType Container)) {
         $summaryPath = Join-Path $currentPath 'PROGRAM_SUMMARY.txt'
-        $flowCellPath = Join-Path $currentPath 'FlowCell'
+        $flowCellPath = Join-Path $currentPath 'flowcellbackend'
         if ((Test-Path -LiteralPath $summaryPath -PathType Leaf) -and (Test-Path -LiteralPath $flowCellPath -PathType Container)) {
             return $currentPath
         }
@@ -47,7 +47,7 @@ function Find-FlowCellRoot([string]$StartPath) {
 }
 
 $repoRoot = Find-FlowCellRoot -StartPath $PSScriptRoot
-$flowCellLocalRoot = Join-Path $repoRoot 'FlowCell\local'
+$flowCellLocalRoot = Join-Path $repoRoot 'flowcellbackend\local'
 $statusPath = Join-Path $flowCellLocalRoot 'logs\last_action_status.txt'
 $script:BackupUiLabel = Get-BackupUiLabel -Flavor $BackupFlavor
 $script:BackupUiTitle = Get-BackupUiTitle -Flavor $BackupFlavor
@@ -548,7 +548,7 @@ function Get-FlowCellExternalBackupItems([string]$RepositoryRoot, [string]$Backu
         return @()
     }
 
-    $localConfigPath = Join-Path $RepositoryRoot 'FlowCell\local\private\blender.config.local.json'
+    $localConfigPath = Join-Path $RepositoryRoot 'flowcellbackend\local\private\blender.config.local.json'
     if (-not (Test-Path -LiteralPath $localConfigPath -PathType Leaf)) {
         return @()
     }
@@ -645,7 +645,7 @@ function Get-FlowCellObjectPropertyValue([object]$InputObject, [string]$Name) {
 
 function Get-FlowCellBlenderConfig([string]$RepositoryRoot) {
     $configPaths = @(
-        (Join-Path $RepositoryRoot 'FlowCell\local\private\blender.config.local.json'),
+        (Join-Path $RepositoryRoot 'flowcellbackend\local\private\blender.config.local.json'),
         (Join-Path $RepositoryRoot 'Programs\Blender\config.json')
     )
 

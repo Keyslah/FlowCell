@@ -8,7 +8,7 @@ function Find-FlowCellRoot([string]$StartPath) {
     $currentPath = [System.IO.Path]::GetFullPath($StartPath)
     while (-not [string]::IsNullOrWhiteSpace($currentPath) -and (Test-Path -LiteralPath $currentPath -PathType Container)) {
         $summaryPath = Join-Path $currentPath 'PROGRAM_SUMMARY.txt'
-        $flowCellPath = Join-Path $currentPath 'FlowCell'
+        $flowCellPath = Join-Path $currentPath 'flowcellbackend'
         if ((Test-Path -LiteralPath $summaryPath -PathType Leaf) -and (Test-Path -LiteralPath $flowCellPath -PathType Container)) {
             return $currentPath
         }
@@ -24,7 +24,7 @@ function Find-FlowCellRoot([string]$StartPath) {
 }
 
 $repoRoot = Find-FlowCellRoot -StartPath $PSScriptRoot
-$flowCellLocalRoot = Join-Path $repoRoot 'FlowCell\local'
+$flowCellLocalRoot = Join-Path $repoRoot 'flowcellbackend\local'
 $statusPath = Join-Path $flowCellLocalRoot 'logs\last_action_status.txt'
 
 function Write-Status([string]$Message) {

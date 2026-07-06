@@ -1,7 +1,7 @@
 # Generated release output.
 dist/
 
-FlowCell/local/
+flowcellbackend/local/
 
 # Program-local button/layout state and durable private script copies.
 Programs/*/Panels/**

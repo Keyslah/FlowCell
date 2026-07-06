@@ -10,26 +10,26 @@ function Resolve-RepoRoot {
 
     if (-not [string]::IsNullOrWhiteSpace($Candidate)) {
         $full = [System.IO.Path]::GetFullPath($Candidate)
-        if (Test-Path -LiteralPath (Join-Path $full 'FlowCell\FlowCellCommandBackend.ps1') -PathType Leaf) {
+        if (Test-Path -LiteralPath (Join-Path $full 'flowcellbackend\FlowCellCommandBackend.ps1') -PathType Leaf) {
             return $full
         }
-        throw "RepoRoot does not contain FlowCell\FlowCellCommandBackend.ps1: $full"
+        throw "RepoRoot does not contain flowcellbackend\FlowCellCommandBackend.ps1: $full"
     }
 
     $current = [System.IO.DirectoryInfo](Get-Location)
     while ($null -ne $current) {
-        $candidateFile = Join-Path $current.FullName 'FlowCell\FlowCellCommandBackend.ps1'
+        $candidateFile = Join-Path $current.FullName 'flowcellbackend\FlowCellCommandBackend.ps1'
         if (Test-Path -LiteralPath $candidateFile -PathType Leaf) {
             return $current.FullName
         }
         $current = $current.Parent
     }
 
-    throw 'Could not find FlowCell\FlowCellCommandBackend.ps1. Run this from the FlowCell repo root or pass -RepoRoot.'
+    throw 'Could not find flowcellbackend\FlowCellCommandBackend.ps1. Run this from the FlowCell repo root or pass -RepoRoot.'
 }
 
 $root = Resolve-RepoRoot -Candidate $RepoRoot
-$targetPath = Join-Path $root 'FlowCell\FlowCellCommandBackend.ps1'
+$targetPath = Join-Path $root 'flowcellbackend\FlowCellCommandBackend.ps1'
 $raw = [System.IO.File]::ReadAllText($targetPath)
 
 if ($raw -match 'Resolve-FlowCellBlenderBridgeActionForScriptPath') {

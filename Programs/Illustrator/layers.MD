@@ -28,7 +28,7 @@
 
 `Layers Builder` is a separate panel that mirrors every button above but routes each one through FlowCell's highlight bridge so it operates on the **FlowCell-highlighted** layers (which may be locked or hidden) instead of only `app.selection`. The original `Layers` panel is left untouched as a fallback.
 
-- `Build Layers` opens the Layers Builder window: a live layer/sublayer tree where you highlight target rows (locked/hidden allowed), toggle lock/visibility, and create/rename/delete/duplicate layers. Highlight state is owned by FlowCell, not Illustrator's native panel, and is saved to `FlowCell/local/illustrator-layers-highlight.json`. The tree auto-refreshes after FlowCell operations; use Refresh for changes made directly in Illustrator.
+- `Build Layers` opens the Layers Builder window: a live layer/sublayer tree where you highlight target rows (locked/hidden allowed), toggle lock/visibility, and create/rename/delete/duplicate layers. Highlight state is owned by FlowCell, not Illustrator's native panel, and is saved to `flowcellbackend/local/illustrator-layers-highlight.json`. The tree auto-refreshes after FlowCell operations; use Refresh for changes made directly in Illustrator.
 - Every other button is a self-contained `.jsx` copy of the matching original `Layers` script, prefixed with a prelude that reads the highlight set, selects the highlighted layers' artwork (temporarily unlocking/unhiding as needed), runs the original script body, then restores lock/visibility in a `finally` block. (Illustrator panels only run `.jsx`/`.js`, so the buttons are JSX rather than wrappers.)
 
 Regenerate the panel after changing the original `Layers` panel:

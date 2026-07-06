@@ -13,7 +13,7 @@ if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) {
     $projectRoot = Join-Path $repoRoot 'Blender'
 }
 if ([string]::IsNullOrWhiteSpace($StatePath)) {
-    $StatePath = Join-Path $repoRoot 'FlowCell\local\flowcell_state.json'
+    $StatePath = Join-Path $repoRoot 'flowcellbackend\local\flowcell_state.json'
 }
 if ([string]::IsNullOrWhiteSpace($OutputRoot)) {
     $OutputRoot = Join-Path $projectRoot 'Blender Git Scripts'
