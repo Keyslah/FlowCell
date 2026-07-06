@@ -80,6 +80,14 @@ body {
   outline: none !important;
   padding: 0 !important;
   overflow: visible !important;
+  /* HITBOX = SKIN SHAPE. The rectangular host root is NOT a click target; only
+     the skin's own interactive core is (the shadow rule
+     [data-flow-interactive]{pointer-events:auto!important} re-enables it). The
+     root still fires onClick because the skin bridge dispatchEvent()s the click
+     to it directly, which pointer-events cannot block. Every host wrapper above
+     the core is inert, so clicks in the transparent area around the skin fall
+     through instead of hitting a host rectangle. */
+  pointer-events: none !important;
 }
 
 .host-skin-button--hub .host-skin-button__frame {
@@ -89,6 +97,7 @@ body {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;
   overflow: visible !important;
+  pointer-events: none !important;
 }
 
 .host-skin-button__frame {

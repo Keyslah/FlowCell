@@ -96,6 +96,13 @@
   transition: none;
 }
 
+/* The hub-slot only POSITIONS the skin (centered on the template rect). It must
+   be pointer-inert so its rectangle never becomes the hitbox — only the skin's
+   own shaped core (re-enabled inside the shadow root) receives clicks. */
+.script-group-popout__hub-slot {
+  pointer-events: none;
+}
+
 .script-group-popout__button--single {
   background: rgba(0, 0, 0, 0.5);
 }
