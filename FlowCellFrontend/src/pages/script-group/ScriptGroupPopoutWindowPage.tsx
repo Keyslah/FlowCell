@@ -15,8 +15,6 @@ import {
 import { runPanelButtonEvent, runPanelScript } from "../../lib/programRails";
 import { getScriptGroupPopoutTemplate } from "../../lib/scriptGroupPopoutTemplates";
 import { isNativeSpaceKeyDown } from "../../lib/nativeKeyState";
-import { HostSkinButton } from "../../components/HostSkinButton";
-import { resolveSkinPort, useSkinPortRevision } from "../appearance-hub/SkinPort";
 import type {
   ScriptGroupPopoutScript,
   ScriptGroupPopoutWindowContext
@@ -248,9 +246,6 @@ export default function ScriptGroupPopoutWindowPage({
     [context, labelOverrides]
   );
   const buttons = useMemo(() => buildScriptButtons(resolvedContext), [resolvedContext]);
-  // Re-render when hub assignments change in any window.
-  const skinPortRevision = useSkinPortRevision();
-  const hubPlacement = template.type === "single" ? "popped-single" : "popped-group";
   const rowCount = Math.max(
     1,
     Math.ceil(Math.max(resolvedContext.scripts.length, 1) / template.buttonsPerRow)
@@ -762,47 +757,6 @@ export default function ScriptGroupPopoutWindowPage({
 
               {buttons.map((button) => {
                 const isSingleButtonTemplate = template.type === "single";
-                const skinPort = resolveSkinPort({
-                  programName: context.programName,
-                  panelName: context.panelName,
-                  buttonKey: button.fileName,
-                  placement: hubPlacement
-                });
-                if (skinPort) {
-                  // Skin dictates its own size (natural x user scale, baked
-                  // into the skin html). The template rect only positions it;
-                  // it is centered on the rect and never forced to fit.
-                  return (
-                    <div
-                      key={`${button.id}-hub-${skinPortRevision}`}
-                      className="script-group-popout__hub-slot"
-                      style={{
-                        position: "absolute",
-                        left: `${button.x + button.width / 2}px`,
-                        top: `${button.y + button.height / 2}px`,
-                        transform: "translate(-50%, -50%)"
-                      }}
-                    >
-                      <HostSkinButton
-                        label={
-                          skinPort.labelOverride !== undefined ? skinPort.labelOverride : button.label
-                        }
-                        importedSkin={skinPort.importedSkin}
-                        hostMode="neutral"
-                        className="script-group-popout__button script-group-popout__button--hub"
-                        data-script-file-name={button.fileName}
-                        data-flow-tooltip={button.tooltip?.trim() || button.label}
-                        aria-label={button.label}
-                        onClick={() => {
-                          void handleButtonActivate(button.fileName);
-                        }}
-                        onPointerEnter={() => handleButtonHoverStart(button.fileName)}
-                        onPointerLeave={() => handleButtonHoverEnd(button.fileName)}
-                        onPointerCancel={() => handleButtonHoverEnd(button.fileName)}
-                      />
-                    </div>
-                  );
-                }
                 const stackedLabelWords = isSingleButtonTemplate
                   ? null
                   : splitTwoWordButtonLabel(button.label);

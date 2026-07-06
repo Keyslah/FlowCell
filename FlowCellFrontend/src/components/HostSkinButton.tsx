@@ -31,12 +31,6 @@ import type { ImportedSkin, StyleGroup } from "../types";
 
 const HOLD_DELAY_MS = 280;
 const RELEASE_PHASE_MS = 140;
-// Hub play latch: one-shot animations triggered on press that always run to
-// completion (see appearance-hub/liveBridge.ts). Grace clears the latch when
-// the skin starts nothing; the cap guards against runaway animations.
-const HUB_PLAY_GRACE_MS = 300;
-const HUB_PLAY_MAX_MS = 15_000;
-const HUB_PLAY_SETTLE_MS = 180;
 
 interface FlowButtonFootprintOverride {
   width: number;
@@ -124,7 +118,6 @@ interface HostSkinButtonProps
   autoInlineSize?: boolean;
   targetHeight?: number;
   afterContent?: ReactNode;
-  onHubPlayChange?: (playing: boolean) => void;
 }
 
 function sanitizeFlowId(value: string): string {
@@ -270,7 +263,6 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       autoInlineSize = false,
       targetHeight,
       afterContent,
-      onHubPlayChange,
       className,
       style,
       type,
@@ -301,14 +293,6 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
     const [hovered, setHovered] = useState(false);
     const [pressed, setPressed] = useState(false);
     const [held, setHeld] = useState(false);
-    const [playing, setPlaying] = useState(false);
-    const playingRef = useRef(false);
-    const playAnimationCountRef = useRef(0);
-    const playSawAnimationRef = useRef(false);
-    const playGraceTimerRef = useRef<number | undefined>(undefined);
-    const playCapTimerRef = useRef<number | undefined>(undefined);
-    const playSettleTimerRef = useRef<number | undefined>(undefined);
-    const onHubPlayChangeRef = useRef(onHubPlayChange);
     const [actionPhase, setActionPhase] = useState<FlowButtonActionPhase>(
       error ? "error" : "idle"
     );
@@ -401,7 +385,6 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       active,
       pressed,
       held,
-      play: playing,
       disabled,
       error,
       compact: resolvedSkinCompact,
@@ -480,122 +463,6 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       pointerEvents: "auto"
     };
 
-    const usesHubPlayLatch = resolvedImportedSkin?.hubPlayLatch === true;
-
-    useEffect(() => {
-      onHubPlayChangeRef.current = onHubPlayChange;
-    }, [onHubPlayChange]);
-
-    const clearHubPlayTimer = (timerRef: { current: number | undefined }) => {
-      if (timerRef.current !== undefined) {
-        window.clearTimeout(timerRef.current);
-        timerRef.current = undefined;
-      }
-    };
-
-    const playDetachRef = useRef<(() => void) | null>(null);
-
-    const stopHubPlay = () => {
-      const wasPlaying = playingRef.current;
-      playingRef.current = false;
-      playAnimationCountRef.current = 0;
-      playSawAnimationRef.current = false;
-      clearHubPlayTimer(playGraceTimerRef);
-      clearHubPlayTimer(playCapTimerRef);
-      clearHubPlayTimer(playSettleTimerRef);
-      playDetachRef.current?.();
-      playDetachRef.current = null;
-      setPlaying(false);
-      if (wasPlaying) {
-        onHubPlayChangeRef.current?.(false);
-      }
-    };
-
-    const scheduleHubPlaySettleCheck = () => {
-      clearHubPlayTimer(playSettleTimerRef);
-      playSettleTimerRef.current = window.setTimeout(() => {
-        playSettleTimerRef.current = undefined;
-        if (!playingRef.current) {
-          return;
-        }
-        const skinNode = skinRef.current;
-        const stillRunning = skinNode
-          ? skinNode
-              .getAnimations({ subtree: true })
-              .some((animation) => animation.playState === "running")
-          : false;
-        if (!stillRunning) {
-          stopHubPlay();
-        }
-      }, HUB_PLAY_SETTLE_MS);
-    };
-
-    // Animation events do not compose across shadow boundaries, so the latch
-    // listens on the skin's shadow root. Listeners attach per play (the
-    // shadow root is guaranteed to exist once the user can press the skin).
-    const startHubPlay = () => {
-      if (!usesHubPlayLatch || playingRef.current) {
-        return;
-      }
-      const shadowRoot = skinRef.current?.shadowRoot;
-      if (!shadowRoot) {
-        return;
-      }
-      playingRef.current = true;
-      playAnimationCountRef.current = 0;
-      playSawAnimationRef.current = false;
-      onHubPlayChangeRef.current?.(true);
-
-      const handleAnimationStart = () => {
-        if (!playingRef.current) {
-          return;
-        }
-        playSawAnimationRef.current = true;
-        playAnimationCountRef.current += 1;
-      };
-      const handleAnimationEnd = () => {
-        if (!playingRef.current) {
-          return;
-        }
-        playAnimationCountRef.current -= 1;
-        if (playSawAnimationRef.current && playAnimationCountRef.current <= 0) {
-          stopHubPlay();
-          return;
-        }
-        scheduleHubPlaySettleCheck();
-      };
-      shadowRoot.addEventListener("animationstart", handleAnimationStart);
-      shadowRoot.addEventListener("animationend", handleAnimationEnd);
-      shadowRoot.addEventListener("animationcancel", handleAnimationEnd);
-      playDetachRef.current = () => {
-        shadowRoot.removeEventListener("animationstart", handleAnimationStart);
-        shadowRoot.removeEventListener("animationend", handleAnimationEnd);
-        shadowRoot.removeEventListener("animationcancel", handleAnimationEnd);
-      };
-
-      setPlaying(true);
-      playGraceTimerRef.current = window.setTimeout(() => {
-        if (!playSawAnimationRef.current) {
-          stopHubPlay();
-        }
-      }, HUB_PLAY_GRACE_MS);
-      playCapTimerRef.current = window.setTimeout(stopHubPlay, HUB_PLAY_MAX_MS);
-    };
-
-    useEffect(() => {
-      return () => {
-        if (playingRef.current) {
-          onHubPlayChangeRef.current?.(false);
-        }
-        playingRef.current = false;
-        clearHubPlayTimer(playGraceTimerRef);
-        clearHubPlayTimer(playCapTimerRef);
-        clearHubPlayTimer(playSettleTimerRef);
-        playDetachRef.current?.();
-        playDetachRef.current = null;
-      };
-    }, []);
-
     const clearHoldTimer = () => {
       if (holdTimerRef.current !== undefined) {
         window.clearTimeout(holdTimerRef.current);
@@ -616,7 +483,6 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       }
       clearReleaseTimer();
       clearHoldTimer();
-      startHubPlay();
       setTrigger(nextTrigger);
       setPressed(true);
       setHeld(false);

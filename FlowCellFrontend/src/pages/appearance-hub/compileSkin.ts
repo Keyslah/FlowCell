@@ -231,12 +231,6 @@ function stripInlineAnimations(markup: string): string {
     .replace(/style='([^']*)'/gi, (_match, css: string) => `style='${stripAnimationDeclarations(css)}'`);
 }
 
-// Fully sanitized structure markup: scripts/handlers stripped, style/link
-// tags removed, inline animation declarations removed.
-export function sanitizeStructureMarkup(structure: string): string {
-  return stripInlineAnimations(sanitizeMarkup(structure));
-}
-
 // Inject the bench label into the sanitized structure. Stacked mode puts each
 // word on its own line via <br> (forced breaks work even under nowrap).
 export function renderStructureHtml(
@@ -251,36 +245,7 @@ export function renderStructureHtml(
         .map((word) => escapeHtml(word))
         .join("<br>")
     : escapeHtml(label);
-  return sanitizeStructureMarkup(structure).replace(/\{\{label\}\}/g, safeLabel);
-}
-
-// Two-line mode breaks the label at the space closest to its middle; one-line
-// mode injects it verbatim. <br> forces the break even under nowrap.
-export function renderStructureHtmlWithLines(
-  structure: string,
-  label: string,
-  lines: 1 | 2
-): string {
-  let safeLabel = escapeHtml(label);
-  if (lines === 2) {
-    const trimmed = label.trim();
-    const middle = trimmed.length / 2;
-    let bestIndex = -1;
-    let bestDistance = Number.POSITIVE_INFINITY;
-    for (let index = 0; index < trimmed.length; index += 1) {
-      if (trimmed[index] === " ") {
-        const distance = Math.abs(index - middle);
-        if (distance < bestDistance) {
-          bestDistance = distance;
-          bestIndex = index;
-        }
-      }
-    }
-    if (bestIndex > 0) {
-      safeLabel = `${escapeHtml(trimmed.slice(0, bestIndex))}<br>${escapeHtml(trimmed.slice(bestIndex + 1))}`;
-    }
-  }
-  return sanitizeStructureMarkup(structure).replace(/\{\{label\}\}/g, safeLabel);
+  return stripInlineAnimations(sanitizeMarkup(structure)).replace(/\{\{label\}\}/g, safeLabel);
 }
 
 export type CompiledSkin = {
@@ -296,8 +261,7 @@ export type CompiledSkin = {
 export function compileSkin(
   skinId: string,
   slots: SlotContentMap,
-  fontSizePx: number | null,
-  fontFamily?: string | null
+  fontSizePx: number | null
 ): CompiledSkin {
   const scope = `.ahub-stage .${buildScopeClassName(skinId)}`;
   const slotErrors: Partial<Record<SlotId, string[]>> = {};
@@ -334,9 +298,6 @@ export function compileSkin(
   if (typeof fontSizePx === "number" && Number.isFinite(fontSizePx) && fontSizePx > 0) {
     cssParts.push(`${scope} [data-core] { font-size: ${fontSizePx}px; }`);
   }
-  if (typeof fontFamily === "string" && fontFamily.trim()) {
-    cssParts.push(`${scope} [data-core] { font-family: ${JSON.stringify(fontFamily.trim())}; }`);
-  }
 
   return {
     css: cssParts.join("\n"),
@@ -353,22 +314,16 @@ export function compileSkin(
 // immune — unrelated attribute changes leave the computed animation identical.
 const ANIM_DECLARATION_PATTERN = /^--anim-([a-z0-9-]+)\s*:\s*(.+)$/i;
 
-export type PartitionedStateDeclarations = {
-  varDeclarations: string[];
-  coreDeclarations: string[];
-  animations: Array<{ token: string; value: string }>;
-};
-
-// Shared by the bench compiler and the live bridge compiler so both interpret
-// slot content identically.
-export function partitionStateDeclarations(content: string): PartitionedStateDeclarations {
+function compileStateSlot(scope: string, slotId: StateSlotId, content: string): string[] {
+  const suffix = STATE_SELECTOR_SUFFIX[slotId];
   const varDeclarations: string[] = [];
   const coreDeclarations: string[] = [];
-  const animations: Array<{ token: string; value: string }> = [];
+  const animRules: string[] = [];
   for (const declaration of splitDeclarations(content)) {
     const animMatch = ANIM_DECLARATION_PATTERN.exec(declaration);
     if (animMatch) {
-      animations.push({ token: animMatch[1].toLowerCase(), value: animMatch[2] });
+      const token = animMatch[1].toLowerCase();
+      animRules.push(`${scope}${suffix} [data-anim="${token}"] { animation: ${animMatch[2]}; }`);
       continue;
     }
     if (declaration.startsWith("--")) {
@@ -377,12 +332,6 @@ export function partitionStateDeclarations(content: string): PartitionedStateDec
       coreDeclarations.push(declaration);
     }
   }
-  return { varDeclarations, coreDeclarations, animations };
-}
-
-function compileStateSlot(scope: string, slotId: StateSlotId, content: string): string[] {
-  const suffix = STATE_SELECTOR_SUFFIX[slotId];
-  const { varDeclarations, coreDeclarations, animations } = partitionStateDeclarations(content);
   const rules: string[] = [];
   if (varDeclarations.length > 0) {
     rules.push(`${scope}${suffix} { ${varDeclarations.join("; ")}; }`);
@@ -390,8 +339,6 @@ function compileStateSlot(scope: string, slotId: StateSlotId, content: string): 
   if (coreDeclarations.length > 0) {
     rules.push(`${scope}${suffix} [data-core] { ${coreDeclarations.join("; ")}; }`);
   }
-  for (const animation of animations) {
-    rules.push(`${scope}${suffix} [data-anim="${animation.token}"] { animation: ${animation.value}; }`);
-  }
+  rules.push(...animRules);
   return rules;
 }

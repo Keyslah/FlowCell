@@ -93,7 +93,6 @@ const APPEARANCE_HUB_WINDOW_WIDTH = 1080;
 const APPEARANCE_HUB_WINDOW_HEIGHT = 720;
 const WINDOW_RELEASE_ATTEMPTS = 24;
 const WINDOW_RELEASE_DELAY_MS = 16;
-const TRANSPARENT_WINDOW_BACKGROUND: [number, number, number, number] = [0, 0, 0, 0];
 const DUPLICATE_WINDOW_CASCADE_STEP = 28;
 const DUPLICATE_WINDOW_CASCADE_SLOTS = 12;
 type WindowPlacement = {
@@ -385,7 +384,7 @@ async function applyRotateToolboxWindowChrome(window: WebviewWindow): Promise<vo
     setBackgroundColor?: (color: [number, number, number, number]) => Promise<void>;
   };
   if (typeof backgroundTarget.setBackgroundColor === "function") {
-    await backgroundTarget.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND).catch(() => {});
+    await backgroundTarget.setBackgroundColor([0, 0, 0, 0]).catch(() => {});
   }
 }
 
@@ -404,7 +403,7 @@ async function applyPanelFanWindowChrome(window: WebviewWindow): Promise<void> {
     setBackgroundColor?: (color: [number, number, number, number]) => Promise<void>;
   };
   if (typeof backgroundTarget.setBackgroundColor === "function") {
-    await backgroundTarget.setBackgroundColor(TRANSPARENT_WINDOW_BACKGROUND).catch(() => {});
+    await backgroundTarget.setBackgroundColor([0, 0, 0, 0]).catch(() => {});
   }
 }
 
@@ -1103,7 +1102,6 @@ export async function openPanelFanWindow(args: {
       resizable: true,
       decorations: false,
       transparent: true,
-      backgroundColor: TRANSPARENT_WINDOW_BACKGROUND,
       shadow: false,
       visible: true,
       focus: false,
@@ -1707,13 +1705,14 @@ export async function openAppearanceHubWindow(): Promise<void> {
       shadow: true,
       visible: true,
       focus: true,
-      alwaysOnTop: false,
-      maximized: true
+      alwaysOnTop: false
     });
 
     await waitForWindowCreated(window);
     await window.setDecorations(false).catch(() => {});
-    await window.maximize().catch(() => {});
+    if (typeof x === "number" && typeof y === "number") {
+      await window.setPosition(new LogicalPosition(x, y)).catch(() => {});
+    }
     await focusExistingWindow(window);
   })().finally(() => {
     if (pendingAppearanceHubOpens.get(windowLabel) === openPromise) {

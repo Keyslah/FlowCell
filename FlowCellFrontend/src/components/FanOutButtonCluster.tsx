@@ -14,9 +14,8 @@ import type {
   StyleGroup
 } from "../types";
 import { getImportedSkin, resolveStyleGroup } from "../lib/skins";
-import { ButtonHost, MAIN_PAGE_IMPORTED_STYLE_GROUP } from "./ButtonHost";
+import { ButtonHost } from "./ButtonHost";
 import {
-  HostSkinButton,
   resolveFanChildFootprintOverride,
   resolveFanOwnerFootprintOverride
 } from "./HostSkinButton";
@@ -77,7 +76,6 @@ const FAN_CLOSED_COLLAPSE_DELAY_MS = 240;
 const PANEL_FAN_OPEN_POINTER_TRANSFER_MS = 650;
 const PANEL_FAN_OPEN_COLLAPSE_DELAY_MS = 650;
 const PANEL_FAN_BUTTON_BOTTOM_RESERVE = 18;
-const PANEL_FAN_HUB_ANIMATION_RESERVE = 48;
 
 interface FanOutButtonClusterProps {
   ownerButton: FlowCellButton;
@@ -103,15 +101,11 @@ interface FanOutButtonClusterProps {
   styleGroupOverride?: StyleGroup;
   importedSkinOverride?: ImportedSkin;
   resolveChildImportedSkinOverride?: (entry: FanClusterEntry) => ImportedSkin | undefined;
-  // Appearance-hub resolver: when it returns a skin for a button, that skin
-  // wins over style groups and overrides (explicit user assignment).
-  hubSkinResolver?: (button: FlowCellButton) => ImportedSkin | undefined;
   onOwnerClick: () => void;
   onChildClick: (entry: FanClusterEntry) => void;
   onChildHoverStart?: (entry: FanClusterEntry) => void;
   onChildHoverEnd?: (entry: FanClusterEntry) => void;
   onChildHoverCancel?: (entry: FanClusterEntry) => void;
-  onChildPlayChange?: (entry: FanClusterEntry, playing: boolean) => void;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -468,39 +462,6 @@ function finalizePanelLayout(args: {
     })),
     childLayouts
   };
-}
-
-function addPanelFanTransparentReserve(
-  layout: FanClusterPanelLayout,
-  reserve: number
-): FanClusterPanelLayout {
-  if (!Number.isFinite(reserve) || reserve <= 0) {
-    return layout;
-  }
-  const padding = Math.ceil(reserve);
-  return {
-    ...layout,
-    windowWidth: layout.windowWidth + padding * 2,
-    windowHeight: layout.windowHeight + padding * 2,
-    ownerLeft: layout.ownerLeft + padding,
-    ownerTop: layout.ownerTop + padding,
-    childRects: layout.childRects.map((entry) => ({
-      ...entry,
-      left: entry.left + padding,
-      top: entry.top + padding
-    })),
-    childLayouts: layout.childLayouts.map((entry) => ({
-      ...entry,
-      left: entry.left + padding,
-      top: entry.top + padding
-    }))
-  };
-}
-
-function resolvePanelFanTransparentReserve(importedSkins: Array<ImportedSkin | undefined>): number {
-  return importedSkins.some((skin) => skin?.hubPlayLatch === true)
-    ? PANEL_FAN_HUB_ANIMATION_RESERVE
-    : 0;
 }
 
 function computePanelLayout(args: {
@@ -912,13 +873,11 @@ export function FanOutButtonCluster({
   styleGroupOverride,
   importedSkinOverride,
   resolveChildImportedSkinOverride,
-  hubSkinResolver,
   onOwnerClick,
   onChildClick,
   onChildHoverStart,
   onChildHoverEnd,
-  onChildHoverCancel,
-  onChildPlayChange
+  onChildHoverCancel
 }: FanOutButtonClusterProps) {
   const closeTimerRef = useRef<number | undefined>(undefined);
   const postExpandHoverTimerRef = useRef<number | undefined>(undefined);
@@ -936,13 +895,6 @@ export function FanOutButtonCluster({
   ) => {
     const buttonStyleGroup = resolveStyleGroup(styleGroups, button.style_group_id ?? "");
     const styleGroup = buttonStyleGroup ?? explicitStyleGroupOverride ?? styleGroupOverride;
-    const hubImportedSkin = hubSkinResolver?.(button);
-    if (hubImportedSkin) {
-      return {
-        styleGroup,
-        importedSkin: hubImportedSkin
-      };
-    }
     const importedSkin =
       getImportedSkin(importedSkins, styleGroup?.importedSkinId) ??
       explicitImportedSkinOverride ??
@@ -959,7 +911,6 @@ export function FanOutButtonCluster({
   );
   const ownerStyleGroup = ownerVisuals.styleGroup;
   const ownerImportedSkin = ownerVisuals.importedSkin;
-  const ownerHasHubSkin = ownerImportedSkin?.hubPlayLatch === true;
   const ownerFootprintOverride = resolveFanOwnerFootprintOverride(ownerImportedSkin);
   const ownerClassName =
     variant === "panel-fan"
@@ -967,7 +918,6 @@ export function FanOutButtonCluster({
           "button-host",
           "fan-cluster__owner",
           "fan-cluster__owner--panel-fan",
-          ownerHasHubSkin ? "fan-cluster__owner--hub-skin" : "",
           "panel-rail__popout"
         ]
           .filter(Boolean)
@@ -1095,37 +1045,26 @@ export function FanOutButtonCluster({
   useLayoutEffect(() => {
     if (variant === "panel-fan") {
       const ownerMetrics = readPanelFanSlotVisualSize(ownerVisibleRef.current, ownerFootprintOverride);
-      const childMeasurements = childVisuals.map((entry) => {
+      const childSizes = childVisuals.map((entry) => {
         const entryVisuals = resolveButtonVisuals(
           entry.entry.button,
           undefined,
           resolveChildImportedSkinOverride?.(entry.entry)
         );
         const childFootprintOverride = resolveFanChildFootprintOverride(entryVisuals.importedSkin);
-        return {
-          size: readPanelFanSlotVisualSize(
-            visibleChildRefs.current.get(entry.key),
-            childFootprintOverride
-          ),
-          importedSkin: entryVisuals.importedSkin
-        };
+        return readPanelFanSlotVisualSize(
+          visibleChildRefs.current.get(entry.key),
+          childFootprintOverride
+        );
       });
       const panelOwnerMetrics = addPanelFanBottomReserve(ownerMetrics);
-      const panelChildSizes = childMeasurements.map((entry) =>
-        addPanelFanBottomReserve(entry.size)
-      );
-      const nextLayout = addPanelFanTransparentReserve(
-        computePanelLayout({
-          owner: panelOwnerMetrics,
-          childSizes: panelChildSizes,
-          layout: layout === "row" ? "grid" : layout,
-          placement
-        }),
-        resolvePanelFanTransparentReserve([
-          ownerImportedSkin,
-          ...childMeasurements.map((entry) => entry.importedSkin)
-        ])
-      );
+      const panelChildSizes = childSizes.map(addPanelFanBottomReserve);
+      const nextLayout = computePanelLayout({
+        owner: panelOwnerMetrics,
+        childSizes: panelChildSizes,
+        layout: layout === "row" ? "grid" : layout,
+        placement
+      });
       if (!arePanelLayoutsEqual(lastPanelLayoutRef.current, nextLayout)) {
         lastPanelLayoutRef.current = nextLayout;
         setPanelLayout(nextLayout);
@@ -1197,37 +1136,26 @@ export function FanOutButtonCluster({
           ownerVisibleRef.current,
           ownerFootprintOverride
         );
-        const childMeasurements = childVisuals.map((entry) => {
+        const childSizes = childVisuals.map((entry) => {
           const entryVisuals = resolveButtonVisuals(
             entry.entry.button,
             undefined,
             resolveChildImportedSkinOverride?.(entry.entry)
           );
           const childFootprintOverride = resolveFanChildFootprintOverride(entryVisuals.importedSkin);
-          return {
-            size: readPanelFanSlotVisualSize(
-              visibleChildRefs.current.get(entry.key),
-              childFootprintOverride
-            ),
-            importedSkin: entryVisuals.importedSkin
-          };
+          return readPanelFanSlotVisualSize(
+            visibleChildRefs.current.get(entry.key),
+            childFootprintOverride
+          );
         });
         const panelOwnerMetrics = addPanelFanBottomReserve(ownerMetrics);
-        const panelChildSizes = childMeasurements.map((entry) =>
-          addPanelFanBottomReserve(entry.size)
-        );
-        const nextLayout = addPanelFanTransparentReserve(
-          computePanelLayout({
-            owner: panelOwnerMetrics,
-            childSizes: panelChildSizes,
-            layout: layout === "row" ? "grid" : layout,
-            placement
-          }),
-          resolvePanelFanTransparentReserve([
-            ownerImportedSkin,
-            ...childMeasurements.map((entry) => entry.importedSkin)
-          ])
-        );
+        const panelChildSizes = childSizes.map(addPanelFanBottomReserve);
+        const nextLayout = computePanelLayout({
+          owner: panelOwnerMetrics,
+          childSizes: panelChildSizes,
+          layout: layout === "row" ? "grid" : layout,
+          placement
+        });
         if (!arePanelLayoutsEqual(lastPanelLayoutRef.current, nextLayout)) {
           lastPanelLayoutRef.current = nextLayout;
           setPanelLayout(nextLayout);
@@ -1338,7 +1266,6 @@ export function FanOutButtonCluster({
             const childFootprintOverride = resolveFanChildFootprintOverride(
               childVisuals.importedSkin
             );
-            const childHasHubSkin = childVisuals.importedSkin?.hubPlayLatch === true;
             const childStyle =
               childLayout
                 ? ({
@@ -1365,7 +1292,6 @@ export function FanOutButtonCluster({
                 className={[
                   "fan-cluster__child",
                   `fan-cluster__child--${variant}`,
-                  childHasHubSkin ? "fan-cluster__child--hub-skin" : "",
                   variant === "panel-fan" ? "panel-rail__popout" : ""
                 ]
                   .filter(Boolean)
@@ -1383,8 +1309,8 @@ export function FanOutButtonCluster({
                   onChildHoverCancel?.(entry.entry);
                 }}
               >
-                {(() => {
-                  const childButtonRecord = buildFanButtonRecord({
+                <ButtonHost
+                  button={buildFanButtonRecord({
                     button: entry.entry.button,
                     width: childLayout?.width ?? childFootprintOverride.width,
                     height:
@@ -1394,21 +1320,15 @@ export function FanOutButtonCluster({
                             childFootprintOverride.height
                           )
                         : childLayout?.height ?? childFootprintOverride.height
-                  });
-                  return (
-                    <ButtonHost
-                      button={childButtonRecord}
-                      absolute={false}
-                      importedSkinOverride={childVisuals.importedSkin}
-                      styleGroupOverride={childVisuals.styleGroup}
-                      onActivate={() => onChildClick(entry.entry)}
-                      onHoverStart={() => onChildHoverStart?.(entry.entry)}
-                      onHoverEnd={() => onChildHoverEnd?.(entry.entry)}
-                      onHoverCancel={() => onChildHoverCancel?.(entry.entry)}
-                      onHubPlayChange={(playing) => onChildPlayChange?.(entry.entry, playing)}
-                    />
-                  );
-                })()}
+                  })}
+                  absolute={false}
+                  importedSkinOverride={childVisuals.importedSkin}
+                  styleGroupOverride={childVisuals.styleGroup}
+                  onActivate={() => onChildClick(entry.entry)}
+                  onHoverStart={() => onChildHoverStart?.(entry.entry)}
+                  onHoverEnd={() => onChildHoverEnd?.(entry.entry)}
+                  onHoverCancel={() => onChildHoverCancel?.(entry.entry)}
+                />
               </div>
             );
           })}

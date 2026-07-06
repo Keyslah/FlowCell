@@ -30,9 +30,6 @@ export interface FlowButtonSkinContract {
   active?: boolean;
   pressed?: boolean;
   held?: boolean;
-  // One-shot play latch: set on click and held until the skin's play
-  // animations finish. Only hub-authored skins (hubPlayLatch) use it.
-  play?: boolean;
   disabled?: boolean;
   error?: boolean;
   compact?: boolean;
@@ -65,7 +62,6 @@ export function buildFlowButtonDataAttributes(contract: FlowButtonSkinContract) 
     "data-active": toBooleanData(contract.active),
     "data-pressed": toBooleanData(contract.pressed),
     "data-held": toBooleanData(contract.held),
-    "data-play": toBooleanData(contract.play),
     "data-disabled": toBooleanData(contract.disabled),
     "data-error": toBooleanData(contract.error),
     "data-action-phase": contract.actionPhase ?? (contract.error ? "error" : "idle"),
@@ -186,12 +182,6 @@ function mapButtonSkinSelectorToHost(selector: string): string {
             break;
           case ".is-held":
             hostStates.push('[data-held="true"]');
-            break;
-          case ".is-playing":
-            hostStates.push('[data-play="true"]');
-            break;
-          case ".is-release":
-            hostStates.push('[data-action-phase="release"]');
             break;
           case ".is-disabled":
             hostStates.push('[data-disabled="true"]');
