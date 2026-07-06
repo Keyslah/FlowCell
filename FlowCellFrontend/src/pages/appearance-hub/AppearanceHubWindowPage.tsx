@@ -1045,7 +1045,7 @@ export default function AppearanceHubWindowPage() {
         <div className="ahub-titlebar__brand">
           <span className="ahub-titlebar__pip" aria-hidden="true" />
           <span className="ahub-titlebar__name">Appearance</span>
-          <span className="ahub-titlebar__scope">skin bench · v8 · live</span>
+          <span className="ahub-titlebar__scope">skin bench · v9 · socket</span>
         </div>
         <div className="ahub-titlebar__actions">
           <button
