@@ -111,6 +111,32 @@
   display: flex;
 }
 
+.fan-cluster__owner--hub-skin,
+.fan-cluster__owner--hub-skin:hover,
+.fan-cluster__owner--hub-skin:active,
+.fan-cluster__child--hub-skin,
+.fan-cluster__child--hub-skin:hover,
+.fan-cluster__child--hub-skin:active {
+  background: transparent;
+  overflow: visible;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  color: inherit;
+}
+
+.fan-cluster__hub-button,
+.fan-cluster__hub-button:hover,
+.fan-cluster__hub-button:active {
+  background: transparent;
+  overflow: visible;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  color: inherit;
+  transition: none;
+}
+
 .fan-cluster__owner {
   z-index: 2;
 }

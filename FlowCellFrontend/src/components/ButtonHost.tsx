@@ -6,6 +6,8 @@ import type {
 import { HostSkinButton } from "./HostSkinButton";
 import { hideFlowTooltip, showFlowTooltipForElement } from "../lib/flowTooltip";
 import { DEFAULT_FLOW_IMPORTED_SKIN } from "../lib/theme";
+// The ONLY appearance-system import allowed in live code — the SkinPort socket.
+import { useSkinPort, type SkinPortAddress } from "../pages/appearance-hub/SkinPort";
 import type { ImportedSkin, StyleGroup } from "../types";
 import type { ButtonRecord } from "../pages/main/mainLayout";
 
@@ -25,6 +27,11 @@ type ButtonHostProps = {
   importedSkinOverride?: ImportedSkin;
   styleGroupOverride?: StyleGroup;
   skinProfileHighlight?: boolean;
+  // When set, ButtonHost asks the SkinPort for a hub skin at this address; a
+  // resolved skin replaces the stock look (and its measured footprint sizes
+  // the button). Absent = stock, always.
+  skinPortAddress?: SkinPortAddress | null;
+  onHubPlayChange?: (playing: boolean) => void;
 };
 
 type StyleWithVars = CSSProperties & Record<`--${string}`, string | number>;
@@ -50,8 +57,11 @@ export function ButtonHost({
   targetHeightOverride,
   importedSkinOverride,
   styleGroupOverride,
-  skinProfileHighlight = false
+  skinProfileHighlight = false,
+  skinPortAddress,
+  onHubPlayChange
 }: ButtonHostProps) {
+  const skinPort = useSkinPort(skinPortAddress ?? null);
   const isChromeAction =
     button.groupId === "top-left-actions" || button.groupId === "top-right-actions";
   const isSelectablePanelScript = button.actionId === "run-panel-script";
@@ -60,12 +70,15 @@ export function ButtonHost({
     button.actionId === "select-program-folder" ||
     button.actionId === "select-panel-folder";
   const allowVariableWidth = isChromeAction;
-  const renderedLabel = isChromeAction
+  const renderedDefaultLabel = isChromeAction
     ? button.label.replace(/ /g, "\u00A0")
     : button.label;
+  const renderedLabel =
+    skinPort?.labelOverride !== undefined ? skinPort.labelOverride : renderedDefaultLabel;
   const hoverDescription = button.tooltip?.trim() ?? "";
   const resolvedHeight = targetHeightOverride ?? button.height;
-  const resolvedImportedSkin = importedSkinOverride ?? DEFAULT_FLOW_IMPORTED_SKIN;
+  const resolvedImportedSkin =
+    skinPort?.importedSkin ?? importedSkinOverride ?? DEFAULT_FLOW_IMPORTED_SKIN;
   const resolvedStyleGroup = styleGroupOverride ?? MAIN_PAGE_IMPORTED_STYLE_GROUP;
   const heightRatio = button.height > 0 ? resolvedHeight / button.height : 1;
   const style: StyleWithVars = {
@@ -159,6 +172,7 @@ export function ButtonHost({
       autoInlineSize={allowVariableWidth}
       allowOverflow
       hostMode="neutral"
+      onHubPlayChange={onHubPlayChange}
       style={style}
       role="button"
       aria-label={button.label || button.actionId}

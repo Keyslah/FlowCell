@@ -84,6 +84,18 @@
   outline: none;
 }
 
+.script-group-popout__button--hub,
+.script-group-popout__button--hub:hover,
+.script-group-popout__button--hub:active {
+  background: transparent;
+  overflow: visible;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  color: inherit;
+  transition: none;
+}
+
 .script-group-popout__button--single {
   background: rgba(0, 0, 0, 0.5);
 }

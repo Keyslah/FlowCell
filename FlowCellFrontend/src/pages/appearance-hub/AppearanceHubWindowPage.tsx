@@ -1,8 +1,10 @@
-// Appearance Hub — an isolated skin-authoring bench for popout and fan
-// buttons. Skins pasted here render only inside this window's preview stage;
-// no live FlowCell button, skin store, or state file is read from or written
-// to (the sole exception: the titlebar button that opens the existing motion
-// settings window).
+// Appearance Hub v2 — button skin editor addressed to real buttons.
+//
+// Address model: program → panel → button → placement. Assignments live in
+// the hub's own localStorage map (liveBridge.ts) and are rendered by the live
+// surfaces (main page ButtonHost, script-group popouts, panel fans) through
+// the existing imported-skin pipeline. The selector rail reads real
+// program/panel/button lists read-only; nothing here writes FlowCellState.
 
 import {
   useCallback,
@@ -14,26 +16,42 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent
 } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import mainBackground from "../../assets/backgrounds/main-background.jpeg";
+import { HostSkinButton } from "../../components/HostSkinButton";
+import {
+  listPanelFolders,
+  listPanelScriptFiles,
+  listProgramFolders,
+  type PanelScriptFileRecord
+} from "../../lib/programRails";
+import { DEFAULT_FLOW_IMPORTED_SKIN, DEFAULT_POPOUT_IMPORTED_SKIN } from "../../lib/theme";
 import { openAppearanceWindow } from "../../lib/windowing";
 import {
-  buildScopeClassName,
   compileSkin,
-  renderStructureHtml,
-  splitSlotPaste
+  createEmptySlots,
+  renderStructureHtmlWithLines,
+  splitSlotPaste,
+  buildScopeClassName,
+  type SlotContentMap
 } from "./compileSkin";
 import {
-  createStarterSkin,
-  readHubState,
-  writeHubState,
-  type HubSkin,
-  type HubState,
-  type HubPrefs,
-  type HubStageBackground
-} from "./hubStore";
-import { FAN_CHILD_LABELS, PREVIEW_CONTEXTS } from "./previewHosts";
+  DEFAULT_HUB_TEXT_STYLE,
+  HUB_PANEL_BUTTON_KEY,
+  HUB_PLACEMENTS,
+  buildHubAddressKey,
+  normalizeHubScale,
+  normalizeHubTextStyle,
+  readHubAssignments,
+  subscribeHubSkins,
+  writeHubAssignments,
+  type HubAssignment,
+  type HubAssignmentMap,
+  type HubPlacement,
+  type HubTextStyle
+} from "./liveBridge";
 import {
   KEYFRAMES_SLOT_ID,
   STATE_SLOT_HINTS,
@@ -69,11 +87,97 @@ const PIN_CHOICES: readonly StateSlotId[] = STATE_SLOT_IDS.filter((slot) => slot
 
 const HELD_DELAY_MS = 400;
 const RELEASE_FLASH_MS = 280;
-// Play latch: if data-play produced no animation within the grace window the
-// latch clears (the skin has no play slot), and a hard cap guards against
-// runaway/infinite play animations that never fire animationend.
 const PLAY_GRACE_MS = 300;
 const PLAY_MAX_MS = 15_000;
+const ASSIGNMENT_WRITE_DEBOUNCE_MS = 400;
+
+const HUB_UI_PREFS_KEY = "flowcell.appearanceHub.ui.v2";
+const SKIN_FILE_FORMAT = "flowcell-button-skin-v1";
+
+const BASE_FONT_FAMILIES: readonly string[] = [
+  "Segoe UI",
+  "Arial",
+  "Bahnschrift",
+  "Calibri",
+  "Cambria",
+  "Candara",
+  "Comic Sans MS",
+  "Consolas",
+  "Constantia",
+  "Corbel",
+  "Courier New",
+  "Georgia",
+  "Impact",
+  "Tahoma",
+  "Times New Roman",
+  "Trebuchet MS",
+  "Verdana"
+];
+
+type HubUiPrefs = {
+  programName: string;
+  panelName: string;
+  buttonKey: string;
+  placement: HubPlacement;
+  background: "dark" | "light" | "main";
+  showHitbox: boolean;
+  pinnedStates: StateSlotId[];
+  codeOpen: boolean;
+  openSlots: Partial<Record<SlotId, boolean>>;
+  lastSkinDir: string | null;
+};
+
+const DEFAULT_UI_PREFS: HubUiPrefs = {
+  programName: "",
+  panelName: "",
+  buttonKey: HUB_PANEL_BUTTON_KEY,
+  placement: "main",
+  background: "dark",
+  showHitbox: false,
+  pinnedStates: [],
+  codeOpen: true,
+  openSlots: {},
+  lastSkinDir: null
+};
+
+function readUiPrefs(): HubUiPrefs {
+  try {
+    const raw = window.localStorage.getItem(HUB_UI_PREFS_KEY);
+    if (!raw) {
+      return { ...DEFAULT_UI_PREFS };
+    }
+    const parsed = JSON.parse(raw) as Partial<HubUiPrefs>;
+    return {
+      ...DEFAULT_UI_PREFS,
+      ...parsed,
+      pinnedStates: Array.isArray(parsed.pinnedStates)
+        ? parsed.pinnedStates.filter(
+            (state): state is StateSlotId =>
+              typeof state === "string" &&
+              (STATE_SLOT_IDS as readonly string[]).includes(state) &&
+              state !== "base"
+          )
+        : [],
+      openSlots: parsed.openSlots && typeof parsed.openSlots === "object" ? parsed.openSlots : {}
+    };
+  } catch {
+    return { ...DEFAULT_UI_PREFS };
+  }
+}
+
+function writeUiPrefs(prefs: HubUiPrefs): void {
+  try {
+    window.localStorage.setItem(HUB_UI_PREFS_KEY, JSON.stringify(prefs));
+  } catch {
+    // Non-fatal.
+  }
+}
+
+function placementsForButton(buttonKey: string): readonly HubPlacement[] {
+  return buttonKey === HUB_PANEL_BUTTON_KEY
+    ? (["main", "fan"] as const)
+    : (["main", "popped-single", "popped-group", "fan"] as const);
+}
 
 type InstanceMetrics = {
   coreWidth: number;
@@ -81,8 +185,6 @@ type InstanceMetrics = {
   wrapWidth: number;
   wrapHeight: number;
 };
-
-type MeasureHandler = (index: number, metrics: InstanceMetrics | null) => void;
 
 function metricsEqual(a: InstanceMetrics | null, b: InstanceMetrics | null): boolean {
   if (a === b) {
@@ -99,20 +201,18 @@ function metricsEqual(a: InstanceMetrics | null, b: InstanceMetrics | null): boo
   );
 }
 
-// One rendered skin instance. The wrapper is host-owned: it carries the scope
-// class plus the live/pinned state attributes the compiled CSS keys off.
+// One rendered bench instance (same latch/remount mechanics validated in v1;
+// the memoized element is load-bearing — see the React 19 innerHTML note).
 function SkinInstance({
   scopeClass,
   html,
   pinned,
-  index,
   onMeasure
 }: {
   scopeClass: string;
   html: string;
   pinned: readonly StateSlotId[];
-  index: number;
-  onMeasure?: MeasureHandler;
+  onMeasure?: (metrics: InstanceMetrics | null) => void;
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const heldTimerRef = useRef<number | null>(null);
@@ -122,9 +222,6 @@ function SkinInstance({
   const [held, setHeld] = useState(false);
   const [releaseFlash, setReleaseFlash] = useState(false);
   const [playing, setPlaying] = useState(false);
-  // Each play remounts the skin DOM (key bump) at start AND end of the round.
-  // Finished animations therefore never linger in the DOM, so later style
-  // recalcs (hover/press attribute flips) have nothing to re-trigger.
   const [playEpoch, setPlayEpoch] = useState(0);
   const playingRef = useRef(false);
   const playAnimationCountRef = useRef(0);
@@ -137,25 +234,16 @@ function SkinInstance({
     playingRef.current = false;
     playAnimationCountRef.current = 0;
     playSawAnimationRef.current = false;
-    if (playGraceTimerRef.current !== null) {
-      window.clearTimeout(playGraceTimerRef.current);
-      playGraceTimerRef.current = null;
-    }
-    if (playCapTimerRef.current !== null) {
-      window.clearTimeout(playCapTimerRef.current);
-      playCapTimerRef.current = null;
-    }
-    if (playSettleTimerRef.current !== null) {
-      window.clearTimeout(playSettleTimerRef.current);
-      playSettleTimerRef.current = null;
+    for (const timerRef of [playGraceTimerRef, playCapTimerRef, playSettleTimerRef]) {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
     }
     setPlaying(false);
     setPlayEpoch((epoch) => epoch + 1);
   }, []);
 
-  // Fallback for any start/end count imbalance (e.g. a restart swallowed an
-  // end event): shortly after each animationend, if nothing inside the
-  // instance is still running, the round is over regardless of the counter.
   const schedulePlaySettleCheck = useCallback(() => {
     if (playSettleTimerRef.current !== null) {
       window.clearTimeout(playSettleTimerRef.current);
@@ -167,12 +255,13 @@ function SkinInstance({
       }
       const wrapper = wrapperRef.current;
       const stillRunning = wrapper
-        ? document
-            .getAnimations()
-            .some((animation) => {
-              const target = animation.effect && "target" in animation.effect ? animation.effect.target : null;
-              return target instanceof Node && wrapper.contains(target) && animation.playState === "running";
-            })
+        ? document.getAnimations().some((animation) => {
+            const target =
+              animation.effect && "target" in animation.effect ? animation.effect.target : null;
+            return (
+              target instanceof Node && wrapper.contains(target) && animation.playState === "running"
+            );
+          })
         : false;
       if (!stillRunning) {
         stopPlay();
@@ -180,8 +269,6 @@ function SkinInstance({
     }, 180);
   }, [stopPlay]);
 
-  // One play per click; the latch survives pointer leave and release so a
-  // started one-shot always finishes before it can trigger again.
   const startPlay = () => {
     if (playingRef.current) {
       return;
@@ -201,20 +288,16 @@ function SkinInstance({
 
   useEffect(() => {
     return () => {
-      if (heldTimerRef.current !== null) {
-        window.clearTimeout(heldTimerRef.current);
-      }
-      if (releaseTimerRef.current !== null) {
-        window.clearTimeout(releaseTimerRef.current);
-      }
-      if (playGraceTimerRef.current !== null) {
-        window.clearTimeout(playGraceTimerRef.current);
-      }
-      if (playCapTimerRef.current !== null) {
-        window.clearTimeout(playCapTimerRef.current);
-      }
-      if (playSettleTimerRef.current !== null) {
-        window.clearTimeout(playSettleTimerRef.current);
+      for (const timerRef of [
+        heldTimerRef,
+        releaseTimerRef,
+        playGraceTimerRef,
+        playCapTimerRef,
+        playSettleTimerRef
+      ]) {
+        if (timerRef.current !== null) {
+          window.clearTimeout(timerRef.current);
+        }
       }
     };
   }, []);
@@ -226,11 +309,11 @@ function SkinInstance({
     const wrapper = wrapperRef.current;
     const core = wrapper?.querySelector<HTMLElement>("[data-core]") ?? null;
     if (!wrapper || !core) {
-      onMeasure(index, null);
+      onMeasure(null);
       return;
     }
     const report = () => {
-      onMeasure(index, {
+      onMeasure({
         coreWidth: core.offsetWidth,
         coreHeight: core.offsetHeight,
         wrapWidth: wrapper.offsetWidth,
@@ -242,7 +325,7 @@ function SkinInstance({
     observer.observe(core);
     observer.observe(wrapper);
     return () => observer.disconnect();
-  }, [html, index, onMeasure, playEpoch]);
+  }, [html, onMeasure, playEpoch]);
 
   const clearHeldTimer = () => {
     if (heldTimerRef.current !== null) {
@@ -281,12 +364,6 @@ function SkinInstance({
     setHeld(false);
   };
 
-  // Memoized element: re-renders of this wrapper (hover/press/release attr
-  // flips) hand React the IDENTICAL child element so it bails out without
-  // touching the skin DOM. Without this, React 19 re-applies
-  // dangerouslySetInnerHTML on every render (fresh {__html} wrapper object),
-  // recreating the children and restarting every CSS animation from zero —
-  // the "glitch start / runs again on hover-leave" bug.
   const skinContent = useMemo(
     () => <div key={playEpoch} dangerouslySetInnerHTML={{ __html: html }} />,
     [html, playEpoch]
@@ -340,120 +417,67 @@ function SkinInstance({
   );
 }
 
-// Popout: a single button — the bench label, nothing else. The measured core
-// (= the hitbox) is shown beneath it.
-function PopoutPreview({
-  scopeClass,
-  htmlByLabel,
-  label,
-  pinned
-}: {
-  scopeClass: string;
-  htmlByLabel: (label: string) => string;
-  label: string;
-  pinned: readonly StateSlotId[];
-}) {
-  const [metrics, setMetrics] = useState<InstanceMetrics | null>(null);
-
-  const handleMeasure = useCallback<MeasureHandler>((_index, next) => {
-    setMetrics((current) => (metricsEqual(current, next) ? current : next));
-  }, []);
-
-  return (
-    <div className="ahub-rowhost">
-      <div className="ahub-rowhost__frame">
-        <SkinInstance
-          scopeClass={scopeClass}
-          html={htmlByLabel(label)}
-          pinned={pinned}
-          index={0}
-          onMeasure={handleMeasure}
-        />
-      </div>
-      <div className="ahub-rowhost__stats">
-        core{" "}
-        <b>{metrics ? `${Math.round(metrics.coreWidth)}×${Math.round(metrics.coreHeight)}` : "—"}</b>
-        {" · footprint "}
-        <b>{metrics ? `${Math.round(metrics.wrapWidth)}×${Math.round(metrics.wrapHeight)}` : "—"}</b>
-      </div>
-    </div>
-  );
-}
-
-// Fan: owner pill plus child pills in the same skin. The collapsed native
-// window in the real app equals the owner footprint; the note shows the
-// measured owner core so that consequence stays visible while editing.
-function FanPreview({
-  scopeClass,
-  htmlByLabel,
-  ownerLabel,
-  pinned,
-  expanded
-}: {
-  scopeClass: string;
-  htmlByLabel: (label: string) => string;
-  ownerLabel: string;
-  pinned: readonly StateSlotId[];
-  expanded: boolean;
-}) {
-  const [ownerMetrics, setOwnerMetrics] = useState<InstanceMetrics | null>(null);
-
-  const handleMeasure = useCallback<MeasureHandler>((_index, next) => {
-    setOwnerMetrics((current) => (metricsEqual(current, next) ? current : next));
-  }, []);
-
-  return (
-    <div className="ahub-fanhost">
-      <div className="ahub-fanhost__owner">
-        <SkinInstance
-          scopeClass={scopeClass}
-          html={htmlByLabel(ownerLabel)}
-          pinned={pinned}
-          index={0}
-          onMeasure={handleMeasure}
-        />
-      </div>
-      <div className="ahub-fanhost__collapsed-note">
-        collapsed window = owner core{" "}
-        <b>
-          {ownerMetrics
-            ? `${Math.round(ownerMetrics.coreWidth)}×${Math.round(ownerMetrics.coreHeight)}`
-            : "—"}
-        </b>
-        {" · footprint "}
-        <b>
-          {ownerMetrics
-            ? `${Math.round(ownerMetrics.wrapWidth)}×${Math.round(ownerMetrics.wrapHeight)}`
-            : "—"}
-        </b>
-      </div>
-      {expanded ? (
-        <div className="ahub-fanhost__children">
-          {FAN_CHILD_LABELS.map((label, index) => (
-            <SkinInstance
-              key={label}
-              scopeClass={scopeClass}
-              html={htmlByLabel(label)}
-              pinned={pinned}
-              index={index + 1}
-            />
-          ))}
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
 export default function AppearanceHubWindowPage() {
-  const [hubState, setHubState] = useState<HubState>(() => readHubState());
+  const [prefs, setPrefs] = useState<HubUiPrefs>(() => readUiPrefs());
+  const [assignments, setAssignments] = useState<HubAssignmentMap>(() => readHubAssignments());
+  const [programs, setPrograms] = useState<string[]>([]);
+  const [panels, setPanels] = useState<string[]>([]);
+  const [scriptRecords, setScriptRecords] = useState<PanelScriptFileRecord[]>([]);
   const [pasteText, setPasteText] = useState("");
-  const [pasteReport, setPasteReport] = useState<string | null>(null);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [fontFamilies, setFontFamilies] = useState<string[]>(() => [...BASE_FONT_FAMILIES]);
+  const [draftText, setDraftText] = useState<HubTextStyle>({ ...DEFAULT_HUB_TEXT_STYLE });
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
+  const [previewMetrics, setPreviewMetrics] = useState<InstanceMetrics | null>(null);
+  const writeTimerRef = useRef<number | null>(null);
+  const pendingAssignmentsRef = useRef<HubAssignmentMap | null>(null);
 
   useEffect(() => {
-    writeHubState(hubState);
-  }, [hubState]);
+    writeUiPrefs(prefs);
+  }, [prefs]);
+
+  // Refresh when another window (or this one) changes assignments.
+  useEffect(
+    () =>
+      subscribeHubSkins(() => {
+        if (!pendingAssignmentsRef.current) {
+          setAssignments(readHubAssignments());
+        }
+      }),
+    []
+  );
+
+  // Debounced assignment writes: the map updates in memory immediately (so
+  // the bench is live) and lands in storage + other windows shortly after.
+  const commitAssignments = useCallback((next: HubAssignmentMap) => {
+    setAssignments(next);
+    pendingAssignmentsRef.current = next;
+    if (writeTimerRef.current !== null) {
+      window.clearTimeout(writeTimerRef.current);
+    }
+    writeTimerRef.current = window.setTimeout(() => {
+      writeTimerRef.current = null;
+      const pending = pendingAssignmentsRef.current;
+      pendingAssignmentsRef.current = null;
+      if (pending) {
+        writeHubAssignments(pending);
+      }
+    }, ASSIGNMENT_WRITE_DEBOUNCE_MS);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (writeTimerRef.current !== null) {
+        window.clearTimeout(writeTimerRef.current);
+      }
+      const pending = pendingAssignmentsRef.current;
+      pendingAssignmentsRef.current = null;
+      if (pending) {
+        writeHubAssignments(pending);
+      }
+    };
+  }, []);
 
   // Frameless window: hold Space then drag to move it.
   useEffect(() => {
@@ -491,84 +515,426 @@ export default function AppearanceHubWindowPage() {
     };
   }, []);
 
-  const selectedSkin = useMemo<HubSkin>(() => {
-    return (
-      hubState.skins.find((skin) => skin.id === hubState.selectedSkinId) ?? hubState.skins[0]
-    );
-  }, [hubState.skins, hubState.selectedSkinId]);
+  // ---- selector rail data ----
 
-  const compiled = useMemo(
-    () => compileSkin(selectedSkin.id, selectedSkin.slots, selectedSkin.text.fontSizePx),
-    [selectedSkin.id, selectedSkin.slots, selectedSkin.text.fontSizePx]
-  );
+  useEffect(() => {
+    let cancelled = false;
+    listProgramFolders()
+      .then((names) => {
+        if (cancelled) {
+          return;
+        }
+        setPrograms(names);
+        setPrefs((current) =>
+          current.programName && names.includes(current.programName)
+            ? current
+            : { ...current, programName: names[0] ?? "" }
+        );
+      })
+      .catch(() => setStatusMessage("Could not list programs."));
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const scopeClass = useMemo(() => buildScopeClassName(selectedSkin.id), [selectedSkin.id]);
-
-  const htmlByLabel = useCallback(
-    (label: string) =>
-      renderStructureHtml(selectedSkin.slots[STRUCTURE_SLOT_ID], label, selectedSkin.text.stacked),
-    [selectedSkin.slots, selectedSkin.text.stacked]
-  );
-
-  const updateSelectedSkin = (patch: (skin: HubSkin) => HubSkin) => {
-    setHubState((current) => ({
-      ...current,
-      skins: current.skins.map((skin) =>
-        skin.id === selectedSkin.id ? { ...patch(skin), updatedAt: new Date().toISOString() } : skin
-      )
-    }));
-  };
-
-  const updateSlot = (slotId: SlotId, value: string) => {
-    updateSelectedSkin((skin) => ({ ...skin, slots: { ...skin.slots, [slotId]: value } }));
-  };
-
-  const updatePrefs = (patch: Partial<HubPrefs>) => {
-    setHubState((current) => ({ ...current, prefs: { ...current.prefs, ...patch } }));
-  };
-
-  const handleNewSkin = () => {
-    const skin = { ...createStarterSkin(), name: `Skin ${hubState.skins.length + 1}` };
-    setHubState((current) => ({
-      ...current,
-      skins: [...current.skins, skin],
-      selectedSkinId: skin.id
-    }));
-  };
-
-  const handleDeleteSkin = () => {
-    if (!window.confirm(`Delete "${selectedSkin.name}" from the hub? This only affects the bench.`)) {
+  useEffect(() => {
+    if (!prefs.programName) {
+      setPanels([]);
       return;
     }
-    setHubState((current) => {
-      const remaining = current.skins.filter((skin) => skin.id !== selectedSkin.id);
-      const skins = remaining.length > 0 ? remaining : [createStarterSkin()];
-      return { ...current, skins, selectedSkinId: skins[0].id };
+    let cancelled = false;
+    listPanelFolders(prefs.programName)
+      .then((names) => {
+        if (cancelled) {
+          return;
+        }
+        setPanels(names);
+        setPrefs((current) =>
+          current.panelName && names.includes(current.panelName)
+            ? current
+            : { ...current, panelName: names[0] ?? "" }
+        );
+      })
+      .catch(() => setStatusMessage(`Could not list panels for ${prefs.programName}.`));
+    return () => {
+      cancelled = true;
+    };
+  }, [prefs.programName]);
+
+  useEffect(() => {
+    if (!prefs.programName || !prefs.panelName) {
+      setScriptRecords([]);
+      return;
+    }
+    let cancelled = false;
+    listPanelScriptFiles(prefs.programName, prefs.panelName)
+      .then((records) => {
+        if (cancelled) {
+          return;
+        }
+        setScriptRecords(records);
+        setPrefs((current) => {
+          const validKeys = new Set<string>([
+            HUB_PANEL_BUTTON_KEY,
+            ...records.map((record) => record.fileName)
+          ]);
+          if (validKeys.has(current.buttonKey)) {
+            return current;
+          }
+          return { ...current, buttonKey: HUB_PANEL_BUTTON_KEY };
+        });
+      })
+      .catch(() => setStatusMessage(`Could not list buttons for ${prefs.panelName}.`));
+    return () => {
+      cancelled = true;
+    };
+  }, [prefs.programName, prefs.panelName]);
+
+  const availablePlacements = placementsForButton(prefs.buttonKey);
+  const placement: HubPlacement = availablePlacements.includes(prefs.placement)
+    ? prefs.placement
+    : availablePlacements[0];
+
+  const addressKey = useMemo(
+    () =>
+      prefs.programName && prefs.panelName
+        ? buildHubAddressKey(prefs.programName, prefs.panelName, prefs.buttonKey, placement)
+        : null,
+    [prefs.programName, prefs.panelName, prefs.buttonKey, placement]
+  );
+
+  const assignment: HubAssignment | null = addressKey ? (assignments[addressKey] ?? null) : null;
+  const slots: SlotContentMap = assignment?.slots ?? createEmptySlots();
+
+  // Text drafts are per-address and only land on Apply.
+  useEffect(() => {
+    setDraftText(assignment ? { ...assignment.text } : { ...DEFAULT_HUB_TEXT_STYLE });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addressKey, assignment?.updatedAt]);
+
+  const selectedRecord = scriptRecords.find((record) => record.fileName === prefs.buttonKey) ?? null;
+  const realButtonLabel =
+    prefs.buttonKey === HUB_PANEL_BUTTON_KEY
+      ? prefs.panelName || "Panel"
+      : selectedRecord?.label?.trim() || prefs.buttonKey.replace(/\.[^.]+$/, "");
+  const previewLabel = draftText.labelOverride ?? realButtonLabel;
+
+  const updateAssignmentSlots = (slotId: SlotId, value: string) => {
+    if (!addressKey) {
+      return;
+    }
+    const nextSlots: SlotContentMap = { ...slots, [slotId]: value };
+    const next: HubAssignmentMap = {
+      ...assignments,
+      [addressKey]: {
+        slots: nextSlots,
+        text: assignment?.text ?? { ...DEFAULT_HUB_TEXT_STYLE },
+        scale: assignment?.scale ?? 1,
+        natural: assignment?.natural ?? null,
+        updatedAt: new Date().toISOString()
+      }
+    };
+    commitAssignments(next);
+  };
+
+  const updateAssignmentScale = (scale: number) => {
+    if (!addressKey || !assignment) {
+      return;
+    }
+    commitAssignments({
+      ...assignments,
+      [addressKey]: { ...assignment, scale, updatedAt: new Date().toISOString() }
     });
   };
+
+  const applyTextDraft = () => {
+    if (!addressKey) {
+      return;
+    }
+    const next: HubAssignmentMap = {
+      ...assignments,
+      [addressKey]: {
+        slots,
+        text: normalizeHubTextStyle(draftText),
+        scale: assignment?.scale ?? 1,
+        natural: assignment?.natural ?? null,
+        updatedAt: new Date().toISOString()
+      }
+    };
+    commitAssignments(next);
+    setStatusMessage("Text applied.");
+  };
+
+  const textDraftDirty = useMemo(() => {
+    const applied = assignment?.text ?? DEFAULT_HUB_TEXT_STYLE;
+    const draft = normalizeHubTextStyle(draftText);
+    return (
+      applied.fontFamily !== draft.fontFamily ||
+      applied.fontSizePx !== draft.fontSizePx ||
+      applied.lines !== draft.lines ||
+      (applied.labelOverride ?? null) !== (draft.labelOverride ?? null)
+    );
+  }, [assignment?.text, draftText]);
 
   const handleApplyPaste = () => {
-    const { slots, unknownSections } = splitSlotPaste(pasteText);
-    const appliedSlots = Object.keys(slots) as SlotId[];
-    if (appliedSlots.length === 0) {
-      setPasteReport("No `=== slot ===` sections found — nothing applied.");
+    if (!addressKey) {
       return;
     }
-    updateSelectedSkin((skin) => ({ ...skin, slots: { ...skin.slots, ...slots } }));
-    const parts = [`Applied: ${appliedSlots.join(", ")}.`];
-    if (unknownSections.length > 0) {
-      parts.push(`Ignored unknown sections: ${unknownSections.join(", ")}.`);
+    const { slots: pasted, unknownSections } = splitSlotPaste(pasteText);
+    const pastedIds = Object.keys(pasted) as SlotId[];
+    if (pastedIds.length === 0) {
+      setStatusMessage("No `=== slot ===` sections found — nothing applied.");
+      return;
     }
-    setPasteReport(parts.join(" "));
+    const nextSlots: SlotContentMap = { ...slots, ...pasted };
+    commitAssignments({
+      ...assignments,
+      [addressKey]: {
+        slots: nextSlots,
+        text: assignment?.text ?? { ...DEFAULT_HUB_TEXT_STYLE },
+        scale: assignment?.scale ?? 1,
+        natural: assignment?.natural ?? null,
+        updatedAt: new Date().toISOString()
+      }
+    });
+    const parts = [`Applied ${pastedIds.join(", ")} to ${realButtonLabel} · ${placement}.`];
+    if (unknownSections.length > 0) {
+      parts.push(`Ignored: ${unknownSections.join(", ")}.`);
+    }
+    setStatusMessage(parts.join(" "));
   };
 
-  const togglePin = (state: StateSlotId) => {
-    updatePrefs({
-      pinnedStates: hubState.prefs.pinnedStates.includes(state)
-        ? hubState.prefs.pinnedStates.filter((entry) => entry !== state)
-        : [...hubState.prefs.pinnedStates, state]
-    });
+  const handleRemoveSkin = () => {
+    if (!addressKey || !assignment) {
+      return;
+    }
+    if (!window.confirm(`Remove the skin from ${realButtonLabel} (${placement})?`)) {
+      return;
+    }
+    const next = { ...assignments };
+    delete next[addressKey];
+    commitAssignments(next);
+    setStatusMessage("Skin removed — button is back to its stock look.");
   };
+
+  const handleApplyToPanel = () => {
+    if (!addressKey || !assignment || !prefs.programName || !prefs.panelName) {
+      return;
+    }
+    const targetKeys: string[] = [];
+    if (placementsForButton(HUB_PANEL_BUTTON_KEY).includes(placement)) {
+      targetKeys.push(HUB_PANEL_BUTTON_KEY);
+    }
+    for (const record of scriptRecords) {
+      const isToolset = Array.isArray(record.children) && record.children.length > 0;
+      if (!isToolset) {
+        targetKeys.push(record.fileName);
+      }
+    }
+    if (
+      !window.confirm(
+        `Apply this skin to ${targetKeys.length} button(s) in "${prefs.panelName}" at placement "${placement}"?`
+      )
+    ) {
+      return;
+    }
+    const next = { ...assignments };
+    const stamp = new Date().toISOString();
+    for (const key of targetKeys) {
+      next[buildHubAddressKey(prefs.programName, prefs.panelName, key, placement)] = {
+        slots: { ...assignment.slots },
+        text: { ...assignment.text },
+        scale: assignment.scale,
+        natural: assignment.natural,
+        updatedAt: stamp
+      };
+    }
+    commitAssignments(next);
+    setStatusMessage(`Applied to ${targetKeys.length} buttons in ${prefs.panelName}.`);
+  };
+
+  const handleSaveSkin = async () => {
+    if (!assignment) {
+      setStatusMessage("Nothing to save — this button has no skin yet.");
+      return;
+    }
+    try {
+      const suggested = `${realButtonLabel.replace(/[^a-z0-9 _-]+/gi, "").trim() || "button"}.fcskin.json`;
+      const path = await invoke<string | null>("show_save_hub_skin_dialog", {
+        suggestedName: suggested,
+        initialDirectory: prefs.lastSkinDir,
+        parentLabel: "flowcell-appearance-hub"
+      });
+      if (!path) {
+        return;
+      }
+      await invoke<string>("save_hub_skin_file", {
+        path,
+        value: {
+          format: SKIN_FILE_FORMAT,
+          savedAt: new Date().toISOString(),
+          slots: assignment.slots,
+          text: assignment.text,
+          scale: assignment.scale,
+          natural: assignment.natural
+        }
+      });
+      const directory = path.replace(/[\\/][^\\/]*$/, "");
+      setPrefs((current) => ({ ...current, lastSkinDir: directory }));
+      setStatusMessage(`Saved skin to ${path}`);
+    } catch (error) {
+      setStatusMessage(`Save failed: ${String(error)}`);
+    }
+  };
+
+  const handleLoadSkin = async () => {
+    if (!addressKey) {
+      return;
+    }
+    try {
+      const path = await invoke<string | null>("show_open_hub_skin_dialog", {
+        initialDirectory: prefs.lastSkinDir,
+        parentLabel: "flowcell-appearance-hub"
+      });
+      if (!path) {
+        return;
+      }
+      const value = await invoke<Record<string, unknown>>("load_hub_skin_file", { path });
+      const loadedSlots = createEmptySlots();
+      const rawSlots = value.slots as Record<string, unknown> | undefined;
+      if (rawSlots && typeof rawSlots === "object") {
+        loadedSlots[STRUCTURE_SLOT_ID] =
+          typeof rawSlots[STRUCTURE_SLOT_ID] === "string" ? (rawSlots[STRUCTURE_SLOT_ID] as string) : "";
+        loadedSlots[KEYFRAMES_SLOT_ID] =
+          typeof rawSlots[KEYFRAMES_SLOT_ID] === "string" ? (rawSlots[KEYFRAMES_SLOT_ID] as string) : "";
+        for (const slotId of STATE_SLOT_IDS) {
+          loadedSlots[slotId] = typeof rawSlots[slotId] === "string" ? (rawSlots[slotId] as string) : "";
+        }
+      }
+      if (!loadedSlots[STRUCTURE_SLOT_ID].trim()) {
+        setStatusMessage("That file has no structure slot — not a button skin file?");
+        return;
+      }
+      const text = normalizeHubTextStyle(value.text as Partial<HubTextStyle> | undefined);
+      commitAssignments({
+        ...assignments,
+        [addressKey]: {
+          slots: loadedSlots,
+          text,
+          scale: normalizeHubScale(value.scale),
+          // Natural size is re-measured by the bench for this button's real
+          // label rather than trusted from the file.
+          natural: null,
+          updatedAt: new Date().toISOString()
+        }
+      });
+      setDraftText({ ...text });
+      const directory = path.replace(/[\\/][^\\/]*$/, "");
+      setPrefs((current) => ({ ...current, lastSkinDir: directory }));
+      setStatusMessage(`Loaded skin onto ${realButtonLabel} · ${placement}.`);
+    } catch (error) {
+      setStatusMessage(`Load failed: ${String(error)}`);
+    }
+  };
+
+  const handleLoadSystemFonts = async () => {
+    try {
+      const query = (
+        window as Window & {
+          queryLocalFonts?: () => Promise<Array<{ family: string }>>;
+        }
+      ).queryLocalFonts;
+      if (!query) {
+        setStatusMessage("System font listing is not available here — the base list stays.");
+        return;
+      }
+      const fonts = await query();
+      const families = Array.from(new Set(fonts.map((font) => font.family))).sort();
+      if (families.length > 0) {
+        setFontFamilies(families);
+        setStatusMessage(`Loaded ${families.length} system fonts.`);
+      }
+    } catch {
+      setStatusMessage("Could not read system fonts (permission denied?).");
+    }
+  };
+
+  // ---- preview ----
+
+  const compiled = useMemo(
+    () =>
+      compileSkin(
+        addressKey ?? "empty",
+        slots,
+        assignment?.text.fontSizePx ?? null,
+        assignment?.text.fontFamily ?? null
+      ),
+    [addressKey, slots, assignment?.text.fontSizePx, assignment?.text.fontFamily]
+  );
+  const scopeClass = useMemo(() => buildScopeClassName(addressKey ?? "empty"), [addressKey]);
+  const previewHtml = useMemo(
+    () =>
+      renderStructureHtmlWithLines(
+        slots[STRUCTURE_SLOT_ID],
+        previewLabel,
+        assignment?.text.lines ?? 1
+      ),
+    [slots, previewLabel, assignment?.text.lines]
+  );
+  const hasSkin = Boolean(assignment) && compiled.structureValid;
+
+  const handlePreviewMeasure = useCallback((metrics: InstanceMetrics | null) => {
+    setPreviewMetrics((current) => (metricsEqual(current, metrics) ? current : metrics));
+  }, []);
+
+  // The bench is the measuring instrument: record the skin's natural core
+  // size (scale 1, real label) into the assignment so the live compile can
+  // derive footprints from natural × scale. Converges because the write is
+  // skipped once the stored value matches the measurement.
+  useEffect(() => {
+    if (!addressKey || !assignment || !previewMetrics || !compiled.structureValid) {
+      return;
+    }
+    const width = Math.round(previewMetrics.coreWidth);
+    const height = Math.round(previewMetrics.coreHeight);
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    if (assignment.natural?.width === width && assignment.natural?.height === height) {
+      return;
+    }
+    commitAssignments({
+      ...assignments,
+      [addressKey]: { ...assignment, natural: { width, height } }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addressKey, assignment, previewMetrics, compiled.structureValid]);
+
+  const stageBackgroundClass: Record<HubUiPrefs["background"], string> = {
+    main: "ahub-stage--bg-main",
+    dark: "ahub-stage--bg-dark",
+    light: "ahub-stage--bg-light"
+  };
+  const stageStyle: CSSProperties =
+    prefs.background === "main" ? { backgroundImage: `url(${mainBackground})` } : {};
+
+  const currentLookSkin =
+    placement === "main" ? DEFAULT_FLOW_IMPORTED_SKIN : DEFAULT_POPOUT_IMPORTED_SKIN;
+
+  const structureErrors = compiled.slotErrors[STRUCTURE_SLOT_ID] ?? [];
+  const keyframesErrors = compiled.slotErrors[KEYFRAMES_SLOT_ID] ?? [];
+
+  const hasCodeAt = (buttonKey: string, forPlacement: HubPlacement): boolean => {
+    if (!prefs.programName || !prefs.panelName) {
+      return false;
+    }
+    return Boolean(
+      assignments[buildHubAddressKey(prefs.programName, prefs.panelName, buttonKey, forPlacement)]
+    );
+  };
+
+  const buttonHasAnyCode = (buttonKey: string): boolean =>
+    placementsForButton(buttonKey).some((forPlacement) => hasCodeAt(buttonKey, forPlacement));
 
   const startResizeDrag =
     (direction: ResizeDirection) => (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -600,17 +966,59 @@ export default function AppearanceHubWindowPage() {
       .catch(() => setSpaceDragging(false));
   };
 
-  const prefs = hubState.prefs;
-  const stageBackgroundClass: Record<HubStageBackground, string> = {
-    main: "ahub-stage--bg-main",
-    dark: "ahub-stage--bg-dark",
-    light: "ahub-stage--bg-light"
+  const togglePin = (state: StateSlotId) => {
+    setPrefs((current) => ({
+      ...current,
+      pinnedStates: current.pinnedStates.includes(state)
+        ? current.pinnedStates.filter((entry) => entry !== state)
+        : [...current.pinnedStates, state]
+    }));
   };
-  const stageStyle: CSSProperties =
-    prefs.background === "main" ? { backgroundImage: `url(${mainBackground})` } : {};
 
-  const structureErrors = compiled.slotErrors[STRUCTURE_SLOT_ID] ?? [];
-  const keyframesErrors = compiled.slotErrors[KEYFRAMES_SLOT_ID] ?? [];
+  const toggleSlotOpen = (slotId: SlotId, open: boolean) => {
+    setPrefs((current) => ({
+      ...current,
+      openSlots: { ...current.openSlots, [slotId]: open }
+    }));
+  };
+
+  const slotEditor = (slotId: SlotId, title: string, hint: string, extraClass = "") => {
+    const errors = compiled.slotErrors[slotId] ?? [];
+    const filled = Boolean(slots[slotId].trim());
+    return (
+      <details
+        key={slotId}
+        className="ahub-fold"
+        open={prefs.openSlots[slotId] ?? false}
+        onToggle={(event) => toggleSlotOpen(slotId, (event.target as HTMLDetailsElement).open)}
+      >
+        <summary className="ahub-fold__head">
+          <span className={`ahub-fold__dot${filled ? " ahub-fold__dot--on" : ""}${errors.length > 0 ? " ahub-fold__dot--error" : ""}`} />
+          <span className="ahub-fold__name">{title}</span>
+          <span className="ahub-fold__hint">{errors.length > 0 ? errors[0] : hint}</span>
+        </summary>
+        <textarea
+          className={`ahub-code ${extraClass}${errors.length > 0 ? " ahub-code--invalid" : ""}`}
+          value={slots[slotId]}
+          onChange={(event) => updateAssignmentSlots(slotId, event.target.value)}
+          spellCheck={false}
+        />
+        {errors.map((error) => (
+          <p key={error} className="ahub-err">
+            {error}
+          </p>
+        ))}
+      </details>
+    );
+  };
+
+  const codeFilledCount = [STRUCTURE_SLOT_ID, KEYFRAMES_SLOT_ID, ...STATE_SLOT_IDS].filter(
+    (slotId) => slots[slotId as SlotId].trim().length > 0
+  ).length;
+  const codeErrorCount = Object.values(compiled.slotErrors).reduce(
+    (total, errors) => total + (errors?.length ?? 0),
+    0
+  );
 
   return (
     <div
@@ -637,7 +1045,7 @@ export default function AppearanceHubWindowPage() {
         <div className="ahub-titlebar__brand">
           <span className="ahub-titlebar__pip" aria-hidden="true" />
           <span className="ahub-titlebar__name">Appearance</span>
-          <span className="ahub-titlebar__scope">skin bench · v7</span>
+          <span className="ahub-titlebar__scope">skin bench · v9 · socket</span>
         </div>
         <div className="ahub-titlebar__actions">
           <button
@@ -661,152 +1069,187 @@ export default function AppearanceHubWindowPage() {
       </header>
 
       <div className="ahub-body">
+        {/* ---- selector rail ---- */}
+        <div className="ahub-rail">
+          <div className="ahub-rail__field">
+            <span className="ahub-label">Program</span>
+            <select
+              className="ahub-select"
+              value={prefs.programName}
+              onChange={(event) => setPrefs((current) => ({ ...current, programName: event.target.value }))}
+            >
+              {programs.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="ahub-rail__field">
+            <span className="ahub-label">Panel</span>
+            <select
+              className="ahub-select"
+              value={prefs.panelName}
+              onChange={(event) => setPrefs((current) => ({ ...current, panelName: event.target.value }))}
+            >
+              {panels.map((name) => (
+                <option key={name} value={name}>
+                  {name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="ahub-rail__field">
+            <span className="ahub-label">Button</span>
+            <select
+              className="ahub-select"
+              value={prefs.buttonKey}
+              onChange={(event) => setPrefs((current) => ({ ...current, buttonKey: event.target.value }))}
+            >
+              <option value={HUB_PANEL_BUTTON_KEY}>
+                {`${buttonHasAnyCode(HUB_PANEL_BUTTON_KEY) ? "● " : ""}Panel button (${prefs.panelName || "—"})`}
+              </option>
+              {scriptRecords.map((record) => {
+                const isToolset = Array.isArray(record.children) && record.children.length > 0;
+                return (
+                  <option key={record.fileName} value={record.fileName} disabled={isToolset}>
+                    {`${buttonHasAnyCode(record.fileName) ? "● " : ""}${record.label || record.fileName}${isToolset ? " (toolset — later)" : ""}`}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+          <div className="ahub-rail__field">
+            <span className="ahub-label">Placement</span>
+            <select
+              className="ahub-select"
+              value={placement}
+              onChange={(event) =>
+                setPrefs((current) => ({ ...current, placement: event.target.value as HubPlacement }))
+              }
+            >
+              {availablePlacements.map((entry) => {
+                const meta = HUB_PLACEMENTS.find((candidate) => candidate.id === entry);
+                return (
+                  <option key={entry} value={entry}>
+                    {`${hasCodeAt(prefs.buttonKey, entry) ? "● " : ""}${meta?.label ?? entry}`}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          <div className="ahub-rail__actions">
+            <button type="button" className="ahub-btn" onClick={() => void handleSaveSkin()}>
+              Save skin…
+            </button>
+            <button type="button" className="ahub-btn" onClick={() => void handleLoadSkin()}>
+              Load skin…
+            </button>
+            <button
+              type="button"
+              className="ahub-btn"
+              disabled={!assignment}
+              title="Copy this skin to every button in the panel at this placement"
+              onClick={handleApplyToPanel}
+            >
+              Apply to panel
+            </button>
+            <button
+              type="button"
+              className="ahub-btn ahub-btn--danger"
+              disabled={!assignment}
+              onClick={handleRemoveSkin}
+            >
+              Remove skin
+            </button>
+          </div>
+          {statusMessage ? <p className="ahub-rail__status">{statusMessage}</p> : null}
+        </div>
+
+        {/* ---- editor column ---- */}
         <div className="ahub-editor">
           <section className="ahub-sec">
             <div className="ahub-sec__head">
-              <h2 className="ahub-sec__title">Skin</h2>
-              <span className="ahub-sec__hint">bench-only, never applied live</span>
-            </div>
-            <div className="ahub-row">
-              <select
-                className="ahub-select"
-                value={selectedSkin.id}
-                onChange={(event) =>
-                  setHubState((current) => ({ ...current, selectedSkinId: event.target.value }))
-                }
-              >
-                {hubState.skins.map((skin) => (
-                  <option key={skin.id} value={skin.id}>
-                    {skin.name}
-                  </option>
-                ))}
-              </select>
-              <button type="button" className="ahub-btn" onClick={handleNewSkin}>
-                New
-              </button>
-              <button type="button" className="ahub-btn ahub-btn--danger" onClick={handleDeleteSkin}>
-                Delete
-              </button>
-            </div>
-            <div className="ahub-row">
-              <span className="ahub-label">Name</span>
-              <input
-                className="ahub-input"
-                type="text"
-                value={selectedSkin.name}
-                onChange={(event) => updateSelectedSkin((skin) => ({ ...skin, name: event.target.value }))}
-              />
-            </div>
-          </section>
-
-          <section className="ahub-sec">
-            <div className="ahub-sec__head">
               <h2 className="ahub-sec__title">Paste skin</h2>
-              <span className="ahub-sec__hint">=== slot === sections</span>
+              <span className="ahub-sec__hint">
+                {realButtonLabel} · {HUB_PLACEMENTS.find((entry) => entry.id === placement)?.label}
+              </span>
             </div>
             <textarea
               className="ahub-code ahub-code--paste"
               value={pasteText}
-              onChange={(event) => {
-                setPasteText(event.target.value);
-                setPasteReport(null);
-              }}
-              placeholder={"=== structure ===\n<div data-core>{{label}}</div>\n=== hover ===\n--fx-edge: #fff;"}
+              onChange={(event) => setPasteText(event.target.value)}
+              placeholder={"=== structure ===\n<div data-core>{{label}}</div>\n=== play ===\n--anim-x: my-spin 1s linear 1;"}
               spellCheck={false}
             />
             <div className="ahub-row">
               <button type="button" className="ahub-btn" onClick={handleApplyPaste}>
-                Apply paste to slots
+                Apply paste to this button
               </button>
-              {pasteReport ? <span className="ahub-sec__hint">{pasteReport}</span> : null}
             </div>
           </section>
 
           <section className="ahub-sec">
             <div className="ahub-sec__head">
-              <h2 className="ahub-sec__title">Structure</h2>
-              <span className="ahub-sec__hint">{"{{label}} + one data-core"}</span>
-            </div>
-            <textarea
-              className={`ahub-code ahub-code--structure${structureErrors.length > 0 ? " ahub-code--invalid" : ""}`}
-              value={selectedSkin.slots[STRUCTURE_SLOT_ID]}
-              onChange={(event) => updateSlot(STRUCTURE_SLOT_ID, event.target.value)}
-              spellCheck={false}
-            />
-            {structureErrors.map((error) => (
-              <p key={error} className="ahub-err">
-                {error}
-              </p>
-            ))}
-          </section>
-
-          <section className="ahub-sec">
-            <div className="ahub-sec__head">
-              <h2 className="ahub-sec__title">Keyframes</h2>
-              <span className="ahub-sec__hint">@keyframes only — gate via animation vars</span>
-            </div>
-            <textarea
-              className={`ahub-code${keyframesErrors.length > 0 ? " ahub-code--invalid" : ""}`}
-              value={selectedSkin.slots[KEYFRAMES_SLOT_ID]}
-              onChange={(event) => updateSlot(KEYFRAMES_SLOT_ID, event.target.value)}
-              placeholder={"@keyframes my-spin {\n  0% { transform: rotate(0deg); }\n  100% { transform: rotate(360deg); }\n}"}
-              spellCheck={false}
-            />
-            {keyframesErrors.map((error) => (
-              <p key={error} className="ahub-err">
-                {error}
-              </p>
-            ))}
-          </section>
-
-          <section className="ahub-sec">
-            <div className="ahub-sec__head">
-              <h2 className="ahub-sec__title">Text bench</h2>
-              <span className="ahub-sec__hint">label first — size and hitbox follow</span>
+              <h2 className="ahub-sec__title">Text</h2>
+              <span className="ahub-sec__hint">applies on Apply, not while typing</span>
             </div>
             <div className="ahub-row">
-              <span className="ahub-label">Label</span>
-              <input
-                className="ahub-input"
-                type="text"
-                value={selectedSkin.text.label}
+              <span className="ahub-label">Font</span>
+              <select
+                className="ahub-select"
+                value={draftText.fontFamily ?? ""}
                 onChange={(event) =>
-                  updateSelectedSkin((skin) => ({
-                    ...skin,
-                    text: { ...skin.text, label: event.target.value }
+                  setDraftText((current) => ({
+                    ...current,
+                    fontFamily: event.target.value || null
                   }))
                 }
-              />
+              >
+                <option value="">Skin default</option>
+                {fontFamilies.map((family) => (
+                  <option key={family} value={family} style={{ fontFamily: family }}>
+                    {family}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="ahub-btn ahub-btn--quiet"
+                title="List every installed font"
+                onClick={() => void handleLoadSystemFonts()}
+              >
+                All fonts
+              </button>
             </div>
             <div className="ahub-row">
-              <label className="ahub-check">
+              <span className="ahub-label">Lines</span>
+              {[1, 2].map((lines) => (
+                <button
+                  key={lines}
+                  type="button"
+                  className={`ahub-chip${draftText.lines === lines ? " ahub-chip--on" : ""}`}
+                  onClick={() => setDraftText((current) => ({ ...current, lines: lines as 1 | 2 }))}
+                >
+                  {lines === 1 ? "One row" : "Two rows"}
+                </button>
+              ))}
+              <label className="ahub-check" style={{ marginLeft: "auto" }}>
                 <input
                   type="checkbox"
-                  checked={selectedSkin.text.stacked}
+                  checked={draftText.fontSizePx !== null}
                   onChange={(event) =>
-                    updateSelectedSkin((skin) => ({
-                      ...skin,
-                      text: { ...skin.text, stacked: event.target.checked }
+                    setDraftText((current) => ({
+                      ...current,
+                      fontSizePx: event.target.checked ? 13 : null
                     }))
                   }
                 />
-                Stack words
-              </label>
-              <label className="ahub-check">
-                <input
-                  type="checkbox"
-                  checked={selectedSkin.text.fontSizePx !== null}
-                  onChange={(event) =>
-                    updateSelectedSkin((skin) => ({
-                      ...skin,
-                      text: { ...skin.text, fontSizePx: event.target.checked ? 13 : null }
-                    }))
-                  }
-                />
-                Override text size
+                Size
               </label>
             </div>
-            {selectedSkin.text.fontSizePx !== null ? (
+            {draftText.fontSizePx !== null ? (
               <div className="ahub-row">
                 <input
                   className="ahub-range"
@@ -814,111 +1257,107 @@ export default function AppearanceHubWindowPage() {
                   min={8}
                   max={40}
                   step={1}
-                  value={selectedSkin.text.fontSizePx}
+                  value={draftText.fontSizePx}
                   onChange={(event) =>
-                    updateSelectedSkin((skin) => ({
-                      ...skin,
-                      text: { ...skin.text, fontSizePx: Number(event.target.value) }
-                    }))
+                    setDraftText((current) => ({ ...current, fontSizePx: Number(event.target.value) }))
                   }
                 />
-                <span className="ahub-label">{selectedSkin.text.fontSizePx}px</span>
+                <span className="ahub-label">{draftText.fontSizePx}px</span>
               </div>
             ) : null}
+            <div className="ahub-row">
+              <span className="ahub-label">Label</span>
+              <input
+                className="ahub-input"
+                type="text"
+                placeholder="No text"
+                value={draftText.labelOverride ?? realButtonLabel}
+                onChange={(event) =>
+                  setDraftText((current) => ({
+                    ...current,
+                    labelOverride: event.target.value
+                  }))
+                }
+              />
+              <button
+                type="button"
+                className="ahub-btn ahub-btn--quiet"
+                title="Use the button's normal label"
+                onClick={() =>
+                  setDraftText((current) => ({
+                    ...current,
+                    labelOverride: null
+                  }))
+                }
+              >
+                Use name
+              </button>
+              <button
+                type="button"
+                className={`ahub-btn${textDraftDirty ? "" : " ahub-btn--quiet"}`}
+                disabled={!textDraftDirty || !assignment}
+                title={assignment ? "Apply text settings to this button" : "Add skin code first"}
+                onClick={applyTextDraft}
+              >
+                Apply text
+              </button>
+            </div>
           </section>
 
           <section className="ahub-sec">
             <div className="ahub-sec__head">
-              <h2 className="ahub-sec__title">States</h2>
-              <span className="ahub-sec__hint">declarations only — no selectors</span>
+              <h2 className="ahub-sec__title">Scale</h2>
+              <span className="ahub-sec__hint">uniform — skin keeps its shape</span>
             </div>
-            {STATE_SLOT_IDS.map((slotId) => {
-              const errors = compiled.slotErrors[slotId] ?? [];
-              return (
-                <div key={slotId} className="ahub-slot">
-                  <div className="ahub-slot__head">
-                    <span className="ahub-slot__name">{slotId}</span>
-                    <span className="ahub-slot__hint">{STATE_SLOT_HINTS[slotId]}</span>
-                  </div>
-                  <textarea
-                    className={`ahub-code${errors.length > 0 ? " ahub-code--invalid" : ""}`}
-                    value={selectedSkin.slots[slotId]}
-                    onChange={(event) => updateSlot(slotId, event.target.value)}
-                    spellCheck={false}
-                  />
-                  {errors.map((error) => (
-                    <p key={error} className="ahub-err">
-                      {error}
-                    </p>
-                  ))}
-                </div>
-              );
-            })}
+            <div className="ahub-row">
+              <input
+                className="ahub-range"
+                type="range"
+                min={0.2}
+                max={4}
+                step={0.05}
+                disabled={!assignment}
+                value={assignment?.scale ?? 1}
+                onChange={(event) => updateAssignmentScale(normalizeHubScale(Number(event.target.value)))}
+              />
+              <span className="ahub-label">{(assignment?.scale ?? 1).toFixed(2)}×</span>
+              <button
+                type="button"
+                className="ahub-btn ahub-btn--quiet"
+                disabled={!assignment || (assignment?.scale ?? 1) === 1}
+                onClick={() => updateAssignmentScale(1)}
+              >
+                Reset
+              </button>
+            </div>
           </section>
+
+          <details
+            className="ahub-fold ahub-fold--master"
+            open={prefs.codeOpen}
+            onToggle={(event) =>
+              setPrefs((current) => ({
+                ...current,
+                codeOpen: (event.target as HTMLDetailsElement).open
+              }))
+            }
+          >
+            <summary className="ahub-fold__head">
+              <span className="ahub-fold__name">Code</span>
+              <span className="ahub-fold__hint">
+                {codeFilledCount} filled{codeErrorCount > 0 ? ` · ${codeErrorCount} errors` : ""}
+              </span>
+            </summary>
+            <div className="ahub-fold__body">
+              {slotEditor(STRUCTURE_SLOT_ID, "structure", "{{label}} + one data-core", "ahub-code--structure")}
+              {slotEditor(KEYFRAMES_SLOT_ID, "keyframes", "@keyframes only")}
+              {STATE_SLOT_IDS.map((slotId) => slotEditor(slotId, slotId, STATE_SLOT_HINTS[slotId]))}
+            </div>
+          </details>
         </div>
 
+        {/* ---- preview column ---- */}
         <div className="ahub-preview">
-          <div className="ahub-toolrow">
-            {PREVIEW_CONTEXTS.map((context) => (
-              <button
-                key={context.id}
-                type="button"
-                className={`ahub-chip${prefs.context === context.id ? " ahub-chip--on" : ""}`}
-                title={context.description}
-                onClick={() => updatePrefs({ context: context.id })}
-              >
-                {context.label}
-              </button>
-            ))}
-            <span className="ahub-toolrow__spacer" />
-            {(["dark", "light", "main"] as const).map((background) => (
-              <button
-                key={background}
-                type="button"
-                className={`ahub-chip${prefs.background === background ? " ahub-chip--on" : ""}`}
-                onClick={() => updatePrefs({ background })}
-              >
-                {background}
-              </button>
-            ))}
-            <label className="ahub-check">
-              <input
-                type="checkbox"
-                checked={prefs.showHitbox}
-                onChange={(event) => updatePrefs({ showHitbox: event.target.checked })}
-              />
-              Hitbox
-            </label>
-          </div>
-
-          <div className="ahub-toolrow">
-            <span className="ahub-label">Pin state</span>
-            {PIN_CHOICES.map((state) => (
-              <button
-                key={state}
-                type="button"
-                className={`ahub-chip${prefs.pinnedStates.includes(state) ? " ahub-chip--on" : ""}`}
-                title={STATE_SLOT_HINTS[state]}
-                onClick={() => togglePin(state)}
-              >
-                {state}
-              </button>
-            ))}
-          </div>
-
-          {prefs.context === "fan" ? (
-            <div className="ahub-toolrow">
-              <label className="ahub-check">
-                <input
-                  type="checkbox"
-                  checked={prefs.fanExpanded}
-                  onChange={(event) => updatePrefs({ fanExpanded: event.target.checked })}
-                />
-                Expanded fan
-              </label>
-            </div>
-          ) : null}
-
           <div
             className={[
               "ahub-stage",
@@ -930,29 +1369,76 @@ export default function AppearanceHubWindowPage() {
             style={stageStyle}
           >
             <style>{compiled.css}</style>
-            {compiled.structureValid ? (
-              prefs.context === "popout" ? (
-                <PopoutPreview
+            {hasSkin ? (
+              <div className="ahub-stage__center">
+                <SkinInstance
                   scopeClass={scopeClass}
-                  htmlByLabel={htmlByLabel}
-                  label={selectedSkin.text.label}
+                  html={previewHtml}
                   pinned={prefs.pinnedStates}
+                  onMeasure={handlePreviewMeasure}
                 />
-              ) : (
-                <FanPreview
-                  scopeClass={scopeClass}
-                  htmlByLabel={htmlByLabel}
-                  ownerLabel={selectedSkin.text.label}
-                  pinned={prefs.pinnedStates}
-                  expanded={prefs.fanExpanded}
-                />
-              )
+                <div className="ahub-rowhost__stats">
+                  core{" "}
+                  <b>
+                    {previewMetrics
+                      ? `${Math.round(previewMetrics.coreWidth)}×${Math.round(previewMetrics.coreHeight)}`
+                      : "—"}
+                  </b>
+                </div>
+              </div>
             ) : (
-              <p className="ahub-stage-empty">
-                Fix the structure slot to see the preview —<br />
-                it needs {"{{label}}"} and exactly one data-core element.
-              </p>
+              <div className="ahub-stage__center">
+                <span className="ahub-stage__badge">current look · no bench code</span>
+                <HostSkinButton
+                  label={previewLabel}
+                  importedSkin={currentLookSkin}
+                  hostMode="neutral"
+                  style={{ width: 189, height: 58 }}
+                />
+                {structureErrors.length > 0 && assignment ? (
+                  <p className="ahub-stage-empty">{structureErrors[0]}</p>
+                ) : null}
+              </div>
             )}
+          </div>
+
+          <div className="ahub-toolrow">
+            <span className="ahub-label">Pin</span>
+            {PIN_CHOICES.map((state) => (
+              <button
+                key={state}
+                type="button"
+                className={`ahub-chip${prefs.pinnedStates.includes(state) ? " ahub-chip--on" : ""}`}
+                title={STATE_SLOT_HINTS[state]}
+                onClick={() => togglePin(state)}
+              >
+                {state}
+              </button>
+            ))}
+            <span className="ahub-toolrow__spacer" />
+            {(["dark", "light", "main"] as const).map((background) => (
+              <button
+                key={background}
+                type="button"
+                className={`ahub-chip${prefs.background === background ? " ahub-chip--on" : ""}`}
+                onClick={() => setPrefs((current) => ({ ...current, background }))}
+              >
+                {background}
+              </button>
+            ))}
+            <label className="ahub-check">
+              <input
+                type="checkbox"
+                checked={prefs.showHitbox}
+                onChange={(event) =>
+                  setPrefs((current) => ({ ...current, showHitbox: event.target.checked }))
+                }
+              />
+              Hitbox
+            </label>
+            {keyframesErrors.length > 0 ? (
+              <span className="ahub-warn-text">{keyframesErrors[0]}</span>
+            ) : null}
           </div>
         </div>
       </div>

@@ -17,6 +17,7 @@ import {
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { ButtonHost } from "../../components/ButtonHost";
+import { HUB_PANEL_BUTTON_KEY, type SkinPortAddress } from "../appearance-hub/SkinPort";
 import { HostSkinButton } from "../../components/HostSkinButton";
 import { ExactPageFrame } from "../../components/ExactPageFrame";
 import { RailSurface } from "../../components/RailSurface";
@@ -3186,19 +3187,43 @@ export default function MainPage() {
               ))}
             </div>
           ) : null}
-          {independentlyPositionedButtons.map((button) => (
-            <ButtonHost
-              key={button.id}
-              button={button}
-              skinProfileHighlight
-              onActivate={handleButtonActivate}
-              onDoubleActivate={handleButtonDoubleActivate}
-              onRequestContextMenu={handleButtonContextMenu}
-              onHoverStart={handleButtonHoverStart}
-              onHoverEnd={handleButtonHoverEnd}
-              onHoverCancel={handleButtonHoverCancel}
-            />
-          ))}
+          {independentlyPositionedButtons.map((button) => {
+            let skinPortAddress: SkinPortAddress | null = null;
+            if (selectedProgramName && selectedPanelName) {
+              if (
+                (button.actionId === "run-panel-script" || button.actionId === "run-panel-macro") &&
+                button.scriptFileName
+              ) {
+                skinPortAddress = {
+                  programName: selectedProgramName,
+                  panelName: selectedPanelName,
+                  buttonKey: button.scriptFileName,
+                  placement: "main"
+                };
+              } else if (button.actionId === "select-panel-folder" && button.folderName) {
+                skinPortAddress = {
+                  programName: selectedProgramName,
+                  panelName: button.folderName,
+                  buttonKey: HUB_PANEL_BUTTON_KEY,
+                  placement: "main"
+                };
+              }
+            }
+            return (
+              <ButtonHost
+                key={button.id}
+                button={button}
+                skinProfileHighlight
+                skinPortAddress={skinPortAddress}
+                onActivate={handleButtonActivate}
+                onDoubleActivate={handleButtonDoubleActivate}
+                onRequestContextMenu={handleButtonContextMenu}
+                onHoverStart={handleButtonHoverStart}
+                onHoverEnd={handleButtonHoverEnd}
+                onHoverCancel={handleButtonHoverCancel}
+              />
+            );
+          })}
           <label
             className="main-page__poptype-control"
             style={{
