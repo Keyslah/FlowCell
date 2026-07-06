@@ -60,8 +60,41 @@ export const DEFAULT_HUB_TEXT_STYLE: HubTextStyle = {
 export type HubAssignment = {
   slots: SlotContentMap;
   text: HubTextStyle;
+  // Uniform user scale (1 = the skin's natural size). The skin dictates its
+  // shape and natural size; this multiplies it — nothing else touches size.
+  scale: number;
+  // Natural core size measured by the bench at scale 1 with the real label.
+  // The live compile derives every footprint (fan slots, window bounds) from
+  // natural × scale; when null the skin renders intrinsic and unplaced hosts
+  // fall back to their stock behavior for layout.
+  natural: { width: number; height: number } | null;
   updatedAt: string;
 };
+
+export function normalizeHubScale(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 1;
+  }
+  return Math.min(8, Math.max(0.1, value));
+}
+
+function normalizeHubNatural(value: unknown): { width: number; height: number } | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const record = value as { width?: unknown; height?: unknown };
+  if (
+    typeof record.width !== "number" ||
+    typeof record.height !== "number" ||
+    !Number.isFinite(record.width) ||
+    !Number.isFinite(record.height) ||
+    record.width <= 0 ||
+    record.height <= 0
+  ) {
+    return null;
+  }
+  return { width: Math.round(record.width), height: Math.round(record.height) };
+}
 
 export type HubAssignmentMap = Record<string, HubAssignment>;
 
@@ -126,6 +159,8 @@ function normalizeAssignment(candidate: unknown): HubAssignment | null {
   return {
     slots,
     text: normalizeHubTextStyle(record.text),
+    scale: normalizeHubScale(record.scale),
+    natural: normalizeHubNatural(record.natural),
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString()
   };
 }
@@ -234,12 +269,39 @@ const LIVE_STATE_SELECTOR: Record<StateSlotId, string> = {
 };
 
 function markCoreElement(markup: string): string {
-  // Exactly one data-core is enforced at authoring time; mark it as the
-  // pipeline's interactive + measure element.
-  return markup.replace(
-    /\bdata-core\b/,
-    'data-core data-flow-interactive="true" data-flow-measure="true"'
-  );
+  // Exactly one data-core is enforced at authoring time. The core is the
+  // pipeline's INTERACTIVE element only — its own shape (border-radius,
+  // clip-path, SVG geometry) is the hitbox. The measured layout box lives on
+  // the outer wrapper added in buildScaledSkinHtml.
+  return markup.replace(/\bdata-core\b/, 'data-core data-flow-interactive="true"');
+}
+
+// Skin dictates shape and natural size; the user's uniform scale multiplies
+// it. Because the bench records the natural core size, the wrapper gets an
+// exact pixel box (natural × scale) and the content scales into it with a
+// plain transform — the host never invents a size.
+function buildScaledSkinHtml(
+  innerMarkup: string,
+  natural: { width: number; height: number } | null,
+  scale: number
+): string {
+  const scaled =
+    natural !== null
+      ? {
+          width: Math.max(1, Math.round(natural.width * scale)),
+          height: Math.max(1, Math.round(natural.height * scale))
+        }
+      : null;
+  const wrapperStyle = [
+    "display:inline-block",
+    "line-height:0",
+    ...(scaled ? [`width:${scaled.width}px`, `height:${scaled.height}px`] : [])
+  ].join(";");
+  const innerStyle = [
+    "display:inline-block",
+    ...(scale !== 1 ? [`transform:scale(${scale})`, "transform-origin:top left"] : [])
+  ].join(";");
+  return `<div data-flow-measure="true" style="${wrapperStyle}"><div style="${innerStyle}">${innerMarkup}</div></div>`;
 }
 
 function wrapLabelPlaceholder(markup: string): string {
@@ -285,7 +347,12 @@ export function compileHubAssignmentToImportedSkin(
     return null;
   }
 
-  const html = wrapLabelPlaceholder(markCoreElement(sanitizeStructureMarkup(structure)));
+  const scale = normalizeHubScale(assignment.scale);
+  const html = buildScaledSkinHtml(
+    wrapLabelPlaceholder(markCoreElement(sanitizeStructureMarkup(structure))),
+    assignment.natural,
+    scale
+  );
 
   const cssParts: string[] = [];
   const keyframes = assignment.slots[KEYFRAMES_SLOT_ID].trim();
@@ -313,6 +380,14 @@ export function compileHubAssignmentToImportedSkin(
   }
   cssParts.push(...buildLiveTextCss(assignment.text));
 
+  const footprint =
+    assignment.natural !== null
+      ? {
+          width: Math.max(1, Math.round(assignment.natural.width * scale)),
+          height: Math.max(1, Math.round(assignment.natural.height * scale))
+        }
+      : null;
+
   return {
     id: `hub::${addressKey}`,
     name: `Appearance hub skin (${addressKey})`,
@@ -320,7 +395,20 @@ export function compileHubAssignmentToImportedSkin(
     css: cssParts.join("\n"),
     sizingMode: "intrinsic",
     allowOverflow: true,
-    hubPlayLatch: true
+    hubPlayLatch: true,
+    // The measured natural size × user scale IS the footprint every host
+    // consumes — fan slots and collapsed window bounds read these fields
+    // through the existing pipeline instead of falling back to pill baselines.
+    ...(footprint
+      ? {
+          fanOwnerWidth: footprint.width,
+          fanOwnerHeight: footprint.height,
+          fanChildWidth: footprint.width,
+          fanChildHeight: footprint.height,
+          fixedWidth: footprint.width,
+          fixedHeight: footprint.height
+        }
+      : {})
   };
 }
 

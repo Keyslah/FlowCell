@@ -42,6 +42,7 @@ import {
   HUB_PANEL_BUTTON_KEY,
   HUB_PLACEMENTS,
   buildHubAddressKey,
+  normalizeHubScale,
   normalizeHubTextStyle,
   readHubAssignments,
   subscribeHubSkins,
@@ -628,10 +629,22 @@ export default function AppearanceHubWindowPage() {
       [addressKey]: {
         slots: nextSlots,
         text: assignment?.text ?? { ...DEFAULT_HUB_TEXT_STYLE },
+        scale: assignment?.scale ?? 1,
+        natural: assignment?.natural ?? null,
         updatedAt: new Date().toISOString()
       }
     };
     commitAssignments(next);
+  };
+
+  const updateAssignmentScale = (scale: number) => {
+    if (!addressKey || !assignment) {
+      return;
+    }
+    commitAssignments({
+      ...assignments,
+      [addressKey]: { ...assignment, scale, updatedAt: new Date().toISOString() }
+    });
   };
 
   const applyTextDraft = () => {
@@ -643,6 +656,8 @@ export default function AppearanceHubWindowPage() {
       [addressKey]: {
         slots,
         text: normalizeHubTextStyle(draftText),
+        scale: assignment?.scale ?? 1,
+        natural: assignment?.natural ?? null,
         updatedAt: new Date().toISOString()
       }
     };
@@ -677,6 +692,8 @@ export default function AppearanceHubWindowPage() {
       [addressKey]: {
         slots: nextSlots,
         text: assignment?.text ?? { ...DEFAULT_HUB_TEXT_STYLE },
+        scale: assignment?.scale ?? 1,
+        natural: assignment?.natural ?? null,
         updatedAt: new Date().toISOString()
       }
     });
@@ -727,6 +744,8 @@ export default function AppearanceHubWindowPage() {
       next[buildHubAddressKey(prefs.programName, prefs.panelName, key, placement)] = {
         slots: { ...assignment.slots },
         text: { ...assignment.text },
+        scale: assignment.scale,
+        natural: assignment.natural,
         updatedAt: stamp
       };
     }
@@ -755,7 +774,9 @@ export default function AppearanceHubWindowPage() {
           format: SKIN_FILE_FORMAT,
           savedAt: new Date().toISOString(),
           slots: assignment.slots,
-          text: assignment.text
+          text: assignment.text,
+          scale: assignment.scale,
+          natural: assignment.natural
         }
       });
       const directory = path.replace(/[\\/][^\\/]*$/, "");
@@ -797,7 +818,15 @@ export default function AppearanceHubWindowPage() {
       const text = normalizeHubTextStyle(value.text as Partial<HubTextStyle> | undefined);
       commitAssignments({
         ...assignments,
-        [addressKey]: { slots: loadedSlots, text, updatedAt: new Date().toISOString() }
+        [addressKey]: {
+          slots: loadedSlots,
+          text,
+          scale: normalizeHubScale(value.scale),
+          // Natural size is re-measured by the bench for this button's real
+          // label rather than trusted from the file.
+          natural: null,
+          updatedAt: new Date().toISOString()
+        }
       });
       setDraftText({ ...text });
       const directory = path.replace(/[\\/][^\\/]*$/, "");
@@ -857,6 +886,29 @@ export default function AppearanceHubWindowPage() {
   const handlePreviewMeasure = useCallback((metrics: InstanceMetrics | null) => {
     setPreviewMetrics((current) => (metricsEqual(current, metrics) ? current : metrics));
   }, []);
+
+  // The bench is the measuring instrument: record the skin's natural core
+  // size (scale 1, real label) into the assignment so the live compile can
+  // derive footprints from natural × scale. Converges because the write is
+  // skipped once the stored value matches the measurement.
+  useEffect(() => {
+    if (!addressKey || !assignment || !previewMetrics || !compiled.structureValid) {
+      return;
+    }
+    const width = Math.round(previewMetrics.coreWidth);
+    const height = Math.round(previewMetrics.coreHeight);
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+    if (assignment.natural?.width === width && assignment.natural?.height === height) {
+      return;
+    }
+    commitAssignments({
+      ...assignments,
+      [addressKey]: { ...assignment, natural: { width, height } }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [addressKey, assignment, previewMetrics, compiled.structureValid]);
 
   const stageBackgroundClass: Record<HubUiPrefs["background"], string> = {
     main: "ahub-stage--bg-main",
@@ -1248,6 +1300,34 @@ export default function AppearanceHubWindowPage() {
                 onClick={applyTextDraft}
               >
                 Apply text
+              </button>
+            </div>
+          </section>
+
+          <section className="ahub-sec">
+            <div className="ahub-sec__head">
+              <h2 className="ahub-sec__title">Scale</h2>
+              <span className="ahub-sec__hint">uniform — skin keeps its shape</span>
+            </div>
+            <div className="ahub-row">
+              <input
+                className="ahub-range"
+                type="range"
+                min={0.2}
+                max={4}
+                step={0.05}
+                disabled={!assignment}
+                value={assignment?.scale ?? 1}
+                onChange={(event) => updateAssignmentScale(normalizeHubScale(Number(event.target.value)))}
+              />
+              <span className="ahub-label">{(assignment?.scale ?? 1).toFixed(2)}×</span>
+              <button
+                type="button"
+                className="ahub-btn ahub-btn--quiet"
+                disabled={!assignment || (assignment?.scale ?? 1) === 1}
+                onClick={() => updateAssignmentScale(1)}
+              >
+                Reset
               </button>
             </div>
           </section>
