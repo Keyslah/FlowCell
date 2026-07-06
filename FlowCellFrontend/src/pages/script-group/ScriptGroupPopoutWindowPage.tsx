@@ -15,12 +15,6 @@ import {
 import { runPanelButtonEvent, runPanelScript } from "../../lib/programRails";
 import { getScriptGroupPopoutTemplate } from "../../lib/scriptGroupPopoutTemplates";
 import { isNativeSpaceKeyDown } from "../../lib/nativeKeyState";
-import { HostSkinButton } from "../../components/HostSkinButton";
-import {
-  resolveHubLabelOverride,
-  resolveHubLiveSkin,
-  useHubSkinRevision
-} from "../appearance-hub/liveBridge";
 import type {
   ScriptGroupPopoutScript,
   ScriptGroupPopoutWindowContext
@@ -235,9 +229,6 @@ export default function ScriptGroupPopoutWindowPage({
       window.removeEventListener("blur", handleWindowBlur);
     };
   }, []);
-
-  // Re-renders when Appearance-hub skin assignments change in any window.
-  const hubSkinRevision = useHubSkinRevision();
 
   const resolvedContext = useMemo<ScriptGroupPopoutWindowContext>(
     () => ({
@@ -766,53 +757,6 @@ export default function ScriptGroupPopoutWindowPage({
 
               {buttons.map((button) => {
                 const isSingleButtonTemplate = template.type === "single";
-                const hubPlacement = isSingleButtonTemplate ? "popped-single" : "popped-group";
-                const hubImportedSkin = resolveHubLiveSkin(
-                  context.programName,
-                  context.panelName,
-                  button.fileName,
-                  hubPlacement
-                );
-                if (hubImportedSkin) {
-                  const hubLabelOverride = resolveHubLabelOverride(
-                    context.programName,
-                    context.panelName,
-                    button.fileName,
-                    hubPlacement
-                  );
-                  return (
-                    <HostSkinButton
-                      key={`${button.id}-hub-${hubSkinRevision}`}
-                      label={hubLabelOverride !== undefined ? hubLabelOverride : button.label}
-                      importedSkin={hubImportedSkin}
-                      sizingMode="fit-uniform"
-                      hostMode="neutral"
-                      className="script-group-popout__button script-group-popout__button--hub"
-                      data-script-file-name={button.fileName}
-                      data-flow-tooltip={button.tooltip?.trim() || button.label}
-                      aria-label={button.label}
-                      style={{
-                        position: "absolute",
-                        left: `${button.x}px`,
-                        top: `${button.y}px`,
-                        width: `${button.width}px`,
-                        height: `${button.height}px`
-                      }}
-                      onClick={() => {
-                        void handleButtonActivate(button.fileName);
-                      }}
-                      onPointerEnter={() => {
-                        handleButtonHoverStart(button.fileName);
-                      }}
-                      onPointerLeave={() => {
-                        handleButtonHoverEnd(button.fileName);
-                      }}
-                      onPointerCancel={() => {
-                        handleButtonHoverEnd(button.fileName);
-                      }}
-                    />
-                  );
-                }
                 const stackedLabelWords = isSingleButtonTemplate
                   ? null
                   : splitTwoWordButtonLabel(button.label);

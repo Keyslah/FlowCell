@@ -1,18 +1,11 @@
-import {
-  useMemo,
-  type CSSProperties,
-  type FocusEvent as ReactFocusEvent,
-  type MouseEvent as ReactMouseEvent
+import type {
+  CSSProperties,
+  FocusEvent as ReactFocusEvent,
+  MouseEvent as ReactMouseEvent
 } from "react";
 import { HostSkinButton } from "./HostSkinButton";
 import { hideFlowTooltip, showFlowTooltipForElement } from "../lib/flowTooltip";
 import { DEFAULT_FLOW_IMPORTED_SKIN } from "../lib/theme";
-import {
-  HUB_PANEL_BUTTON_KEY,
-  resolveHubLabelOverride,
-  resolveHubLiveSkin,
-  useHubSkinRevision
-} from "../pages/appearance-hub/liveBridge";
 import type { ImportedSkin, StyleGroup } from "../types";
 import type { ButtonRecord } from "../pages/main/mainLayout";
 
@@ -32,9 +25,6 @@ type ButtonHostProps = {
   importedSkinOverride?: ImportedSkin;
   styleGroupOverride?: StyleGroup;
   skinProfileHighlight?: boolean;
-  // Program/panel identity for Appearance-hub skin lookups ("main"
-  // placement). When absent, hub skins never apply to this host.
-  hubAddressContext?: { programName: string; panelName: string };
   onHubPlayChange?: (playing: boolean) => void;
 };
 
@@ -62,68 +52,8 @@ export function ButtonHost({
   importedSkinOverride,
   styleGroupOverride,
   skinProfileHighlight = false,
-  hubAddressContext,
   onHubPlayChange
 }: ButtonHostProps) {
-  const hubSkinRevision = useHubSkinRevision();
-  const hubMainAddress = useMemo(() => {
-    if (!hubAddressContext) {
-      return null;
-    }
-    const { programName, panelName } = hubAddressContext;
-    if (!programName || !panelName) {
-      return null;
-    }
-    const isPanelScript =
-      (button.actionId === "run-panel-script" || button.actionId === "run-panel-macro") &&
-      Boolean(button.scriptFileName);
-    if (isPanelScript && button.scriptFileName) {
-      return { programName, panelName, buttonKey: button.scriptFileName };
-    }
-    if (button.actionId === "select-panel-folder" && button.folderName) {
-      return { programName, panelName: button.folderName, buttonKey: HUB_PANEL_BUTTON_KEY };
-    }
-    return null;
-  }, [
-    hubAddressContext?.programName,
-    hubAddressContext?.panelName,
-    button.actionId,
-    button.scriptFileName,
-    button.folderName
-  ]);
-  const hubImportedSkin = useMemo(() => {
-    if (!hubMainAddress) {
-      return undefined;
-    }
-    return resolveHubLiveSkin(
-      hubMainAddress.programName,
-      hubMainAddress.panelName,
-      hubMainAddress.buttonKey,
-      "main"
-    );
-    // hubSkinRevision re-runs the lookup when hub assignments change.
-  }, [
-    hubMainAddress?.programName,
-    hubMainAddress?.panelName,
-    hubMainAddress?.buttonKey,
-    hubSkinRevision
-  ]);
-  const hubLabelOverride = useMemo(() => {
-    if (!hubMainAddress) {
-      return undefined;
-    }
-    return resolveHubLabelOverride(
-      hubMainAddress.programName,
-      hubMainAddress.panelName,
-      hubMainAddress.buttonKey,
-      "main"
-    );
-  }, [
-    hubMainAddress?.programName,
-    hubMainAddress?.panelName,
-    hubMainAddress?.buttonKey,
-    hubSkinRevision
-  ]);
   const isChromeAction =
     button.groupId === "top-left-actions" || button.groupId === "top-right-actions";
   const isSelectablePanelScript = button.actionId === "run-panel-script";
@@ -132,13 +62,12 @@ export function ButtonHost({
     button.actionId === "select-program-folder" ||
     button.actionId === "select-panel-folder";
   const allowVariableWidth = isChromeAction;
-  const renderedDefaultLabel = isChromeAction
+  const renderedLabel = isChromeAction
     ? button.label.replace(/ /g, "\u00A0")
     : button.label;
-  const renderedLabel = hubLabelOverride !== undefined ? hubLabelOverride : renderedDefaultLabel;
   const hoverDescription = button.tooltip?.trim() ?? "";
   const resolvedHeight = targetHeightOverride ?? button.height;
-  const resolvedImportedSkin = hubImportedSkin ?? importedSkinOverride ?? DEFAULT_FLOW_IMPORTED_SKIN;
+  const resolvedImportedSkin = importedSkinOverride ?? DEFAULT_FLOW_IMPORTED_SKIN;
   const resolvedStyleGroup = styleGroupOverride ?? MAIN_PAGE_IMPORTED_STYLE_GROUP;
   const heightRatio = button.height > 0 ? resolvedHeight / button.height : 1;
   const style: StyleWithVars = {

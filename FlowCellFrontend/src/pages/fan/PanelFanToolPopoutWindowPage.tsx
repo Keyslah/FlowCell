@@ -25,12 +25,6 @@ import {
 } from "../../lib/programRails";
 import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import { DEFAULT_POPOUT_IMPORTED_SKIN } from "../../lib/theme";
-import {
-  HUB_PANEL_BUTTON_KEY,
-  resolveHubLabelOverride,
-  resolveHubLiveSkin,
-  useHubSkinRevision
-} from "../appearance-hub/liveBridge";
 import type { PanelFanWindowContext } from "../../lib/windowContext";
 import type { FlowCellButton } from "../../types";
 import "../main/mainPage.css";
@@ -416,8 +410,6 @@ export default function PanelFanToolPopoutWindowPage({
     () => new Set(context.selectedFileNames),
     [context.selectedFileNames]
   );
-  const hubSkinRevision = useHubSkinRevision();
-
   useEffect(() => {
     let cancelled = false;
 
@@ -570,39 +562,16 @@ export default function PanelFanToolPopoutWindowPage({
 
   const childEntries = useMemo<FanClusterEntry[]>(() => {
     return resolvedRecords.map((record) => {
-      const hubLabelOverride = resolveHubLabelOverride(
-        context.programName,
-        context.panelName,
-        record.fileName,
-        "fan"
-      );
-      const label = hubLabelOverride !== undefined ? hubLabelOverride : record.label;
       return {
         programId: 0,
         panelId: context.panelName,
         panelName: context.panelName,
-        button: buildChildButton(record, label),
+        button: buildChildButton(record, record.label),
         childSlotId: record.fileName,
         events: record.events
       };
     });
-  }, [context.panelName, context.programName, hubSkinRevision, resolvedRecords]);
-
-  // Appearance-hub skins for the fan placement: the owner pill maps to the
-  // panel-button address, children map to their script file names.
-  const hubSkinResolver = useMemo(() => {
-    void hubSkinRevision;
-    return (button: FlowCellButton) => {
-      const buttonKey =
-        button.Kind === "panel_fan_owner"
-          ? HUB_PANEL_BUTTON_KEY
-          : (button.Target || button.Id || "").trim();
-      if (!buttonKey) {
-        return undefined;
-      }
-      return resolveHubLiveSkin(context.programName, context.panelName, buttonKey, "fan");
-    };
-  }, [context.programName, context.panelName, hubSkinRevision]);
+  }, [context.panelName, resolvedRecords]);
 
   const getHoverEventKey = (fileName: string) =>
     `${context.programName}\n${context.panelName}\n${fileName}`;
@@ -1525,10 +1494,7 @@ export default function PanelFanToolPopoutWindowPage({
     }
   };
 
-  const ownerButtonLabel =
-    resolveHubLabelOverride(context.programName, context.panelName, HUB_PANEL_BUTTON_KEY, "fan") ??
-    context.label ??
-    context.panelName;
+  const ownerButtonLabel = context.label ?? context.panelName;
 
   const handleShellPointerDownCapture = (event: ReactPointerEvent<HTMLElement>) => {
     if (!effectiveSpaceDragActive || spaceDragging || event.button !== 0) {
@@ -1597,7 +1563,6 @@ export default function PanelFanToolPopoutWindowPage({
             ownerImportedSkinOverride={DEFAULT_POPOUT_IMPORTED_SKIN}
             styleGroupOverride={MAIN_PAGE_IMPORTED_STYLE_GROUP}
             importedSkinOverride={DEFAULT_POPOUT_IMPORTED_SKIN}
-            hubSkinResolver={hubSkinResolver}
             onOwnerClick={handleOwnerClick}
             onChildClick={handleChildClick}
             onChildHoverStart={handleChildHoverStart}

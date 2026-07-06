@@ -3191,11 +3191,6 @@ export default function MainPage() {
               key={button.id}
               button={button}
               skinProfileHighlight
-              hubAddressContext={
-                selectedProgramName && selectedPanelName
-                  ? { programName: selectedProgramName, panelName: selectedPanelName }
-                  : undefined
-              }
               onActivate={handleButtonActivate}
               onDoubleActivate={handleButtonDoubleActivate}
               onRequestContextMenu={handleButtonContextMenu}
