@@ -141,44 +141,6 @@ function buildFanButtonRecord(args: {
   };
 }
 
-function renderHubFanButton(args: {
-  buttonRecord: ButtonRecord;
-  importedSkin: ImportedSkin;
-  className: string;
-  onActivate: () => void;
-  onHubPlayChange?: (playing: boolean) => void;
-}) {
-  const { buttonRecord, importedSkin, className, onActivate, onHubPlayChange } = args;
-  return (
-    <HostSkinButton
-      label={buttonRecord.label}
-      flowId={buttonRecord.id}
-      styleGroup={MAIN_PAGE_IMPORTED_STYLE_GROUP}
-      importedSkin={importedSkin}
-      hostMode="neutral"
-      className={className}
-      role="button"
-      aria-label={buttonRecord.label || buttonRecord.actionId}
-      aria-description={buttonRecord.tooltip?.trim() || undefined}
-      title={buttonRecord.tooltip?.trim() || undefined}
-      data-button-id={buttonRecord.id}
-      data-action-id={buttonRecord.actionId}
-      data-flow-tooltip={buttonRecord.tooltip?.trim() || undefined}
-      style={{
-        width: `${buttonRecord.width}px`,
-        height: `${buttonRecord.height}px`,
-        borderRadius: `${buttonRecord.radius ?? 0}px`
-      }}
-      onHubPlayChange={onHubPlayChange}
-      onClick={(event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        onActivate();
-      }}
-    />
-  );
-}
-
 function resolveInteractiveHoverNode(root: HTMLElement | null | undefined): HTMLElement | null {
   if (!root) {
     return null;
@@ -1357,22 +1319,13 @@ export function FanOutButtonCluster({
           onPointerEnter={requestExpand}
           onPointerLeave={scheduleCollapse}
         >
-          {ownerHasHubSkin && ownerImportedSkin
-            ? renderHubFanButton({
-                buttonRecord: ownerButtonRecord,
-                importedSkin: ownerImportedSkin,
-                className: "fan-cluster__hub-button fan-cluster__hub-button--owner",
-                onActivate: onOwnerClick
-              })
-            : (
-              <ButtonHost
-                button={ownerButtonRecord}
-                absolute={false}
-                importedSkinOverride={ownerImportedSkin}
-                styleGroupOverride={ownerStyleGroup}
-                onActivate={() => onOwnerClick()}
-              />
-            )}
+          <ButtonHost
+            button={ownerButtonRecord}
+            absolute={false}
+            importedSkinOverride={ownerImportedSkin}
+            styleGroupOverride={ownerStyleGroup}
+            onActivate={() => onOwnerClick()}
+          />
         </div>
         <div className="fan-cluster__children" aria-hidden={!childrenVisible}>
           {childVisuals.map((entry, index) => {
@@ -1442,28 +1395,19 @@ export function FanOutButtonCluster({
                           )
                         : childLayout?.height ?? childFootprintOverride.height
                   });
-                  return childHasHubSkin && childVisuals.importedSkin
-                    ? renderHubFanButton({
-                        buttonRecord: childButtonRecord,
-                        importedSkin: childVisuals.importedSkin,
-                        className: "fan-cluster__hub-button fan-cluster__hub-button--child",
-                        onActivate: () => onChildClick(entry.entry),
-                        onHubPlayChange: (playing) =>
-                          onChildPlayChange?.(entry.entry, playing)
-                      })
-                    : (
-                      <ButtonHost
-                        button={childButtonRecord}
-                        absolute={false}
-                        importedSkinOverride={childVisuals.importedSkin}
-                        styleGroupOverride={childVisuals.styleGroup}
-                        onActivate={() => onChildClick(entry.entry)}
-                        onHoverStart={() => onChildHoverStart?.(entry.entry)}
-                        onHoverEnd={() => onChildHoverEnd?.(entry.entry)}
-                        onHoverCancel={() => onChildHoverCancel?.(entry.entry)}
-                        onHubPlayChange={(playing) => onChildPlayChange?.(entry.entry, playing)}
-                      />
-                    );
+                  return (
+                    <ButtonHost
+                      button={childButtonRecord}
+                      absolute={false}
+                      importedSkinOverride={childVisuals.importedSkin}
+                      styleGroupOverride={childVisuals.styleGroup}
+                      onActivate={() => onChildClick(entry.entry)}
+                      onHoverStart={() => onChildHoverStart?.(entry.entry)}
+                      onHoverEnd={() => onChildHoverEnd?.(entry.entry)}
+                      onHoverCancel={() => onChildHoverCancel?.(entry.entry)}
+                      onHubPlayChange={(playing) => onChildPlayChange?.(entry.entry, playing)}
+                    />
+                  );
                 })()}
               </div>
             );

@@ -25,6 +25,7 @@ import {
 } from "../../lib/programRails";
 import { useNativeSpaceDragActive } from "../../lib/nativeKeyState";
 import { DEFAULT_POPOUT_IMPORTED_SKIN } from "../../lib/theme";
+import { createFanSkinPortResolver, useSkinPortRevision } from "../appearance-hub/SkinPort";
 import type { PanelFanWindowContext } from "../../lib/windowContext";
 import type { FlowCellButton } from "../../types";
 import "../main/mainPage.css";
@@ -143,26 +144,16 @@ function serializeScreenRect(rect: ScreenRect): Record<string, number> {
   };
 }
 
+// The native click-through / hover gate uses the pill WRAPPER's own layout
+// box — always present, correctly positioned, never async. (A previous
+// version dug into the skin's shadow DOM for [data-flow-interactive] and,
+// when that rect read empty or mid-animation, the transparent window went
+// click-through directly over a visible button = dead button.) The skin's
+// own clip-path/border-radius still governs actual in-window activation, so
+// shaped skins ignore clicks in their transparent corners; this gate only
+// decides whether the window swallows the cursor at all.
 function resolveInteractiveHitboxNode(root: HTMLElement): HTMLElement | null {
-  if (root.matches("[data-flow-interactive='true']")) {
-    return root;
-  }
-  const lightDomMatch = root.querySelector("[data-flow-interactive='true']") as HTMLElement | null;
-  if (lightDomMatch) {
-    return lightDomMatch;
-  }
-
-  const shadowHosts = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))];
-  for (const host of shadowHosts) {
-    const shadowMatch = host.shadowRoot?.querySelector(
-      "[data-flow-interactive='true']"
-    ) as HTMLElement | null;
-    if (shadowMatch) {
-      return shadowMatch;
-    }
-  }
-
-  return null;
+  return root;
 }
 
 function buildLiveInteractiveRects(args: {
@@ -572,6 +563,13 @@ export default function PanelFanToolPopoutWindowPage({
       };
     });
   }, [context.panelName, resolvedRecords]);
+
+  // Appearance-hub skins for the fan placement, via the SkinPort socket.
+  const skinPortRevision = useSkinPortRevision();
+  const fanSkinResolver = useMemo(() => {
+    void skinPortRevision;
+    return createFanSkinPortResolver(context.programName, context.panelName);
+  }, [context.programName, context.panelName, skinPortRevision]);
 
   const getHoverEventKey = (fileName: string) =>
     `${context.programName}\n${context.panelName}\n${fileName}`;
@@ -1563,6 +1561,7 @@ export default function PanelFanToolPopoutWindowPage({
             ownerImportedSkinOverride={DEFAULT_POPOUT_IMPORTED_SKIN}
             styleGroupOverride={MAIN_PAGE_IMPORTED_STYLE_GROUP}
             importedSkinOverride={DEFAULT_POPOUT_IMPORTED_SKIN}
+            hubSkinResolver={fanSkinResolver}
             onOwnerClick={handleOwnerClick}
             onChildClick={handleChildClick}
             onChildHoverStart={handleChildHoverStart}
