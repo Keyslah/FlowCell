@@ -1788,8 +1788,9 @@ export async function openScriptGroupPopoutWindow(args: {
       resizable: true,
       decorations: false,
       transparent: true,
+      backgroundColor: TRANSPARENT_WINDOW_BACKGROUND,
       shadow: false,
-      visible: true,
+      visible: false,
       focus: true,
       alwaysOnTop: false
     });

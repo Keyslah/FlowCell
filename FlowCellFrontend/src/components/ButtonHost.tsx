@@ -1,10 +1,8 @@
 import type {
   CSSProperties,
-  FocusEvent as ReactFocusEvent,
   MouseEvent as ReactMouseEvent
 } from "react";
 import { HostSkinButton } from "./HostSkinButton";
-import { hideFlowTooltip, showFlowTooltipForElement } from "../lib/flowTooltip";
 import { DEFAULT_FLOW_IMPORTED_SKIN } from "../lib/theme";
 // The ONLY appearance-system import allowed in live code — the SkinPort socket.
 import { useSkinPort, type SkinPortAddress } from "../pages/appearance-hub/SkinPort";
@@ -119,34 +117,16 @@ export function ButtonHost({
     onRequestContextMenu(button, event);
   };
 
-  const showTooltip = (element: HTMLElement) => {
-    if (!hoverDescription) {
-      return;
-    }
-    void showFlowTooltipForElement(hoverDescription, element);
-  };
-
   const handleTooltipPointerEnter = (event: ReactMouseEvent<HTMLElement>) => {
     onHoverStart?.(button, event);
-    showTooltip(event.currentTarget);
   };
 
   const handleTooltipPointerLeave = (event: ReactMouseEvent<HTMLElement>) => {
     onHoverEnd?.(button, event);
-    void hideFlowTooltip();
   };
 
   const handleTooltipPointerCancel = (event: ReactMouseEvent<HTMLElement>) => {
     onHoverCancel?.(button, event);
-    void hideFlowTooltip();
-  };
-
-  const handleTooltipFocus = (event: ReactFocusEvent<HTMLElement>) => {
-    showTooltip(event.currentTarget);
-  };
-
-  const handleTooltipBlur = () => {
-    void hideFlowTooltip();
   };
 
   const hostClassName = [
@@ -188,8 +168,6 @@ export function ButtonHost({
       onPointerEnter={handleTooltipPointerEnter}
       onPointerLeave={handleTooltipPointerLeave}
       onPointerCancel={handleTooltipPointerCancel}
-      onFocus={handleTooltipFocus}
-      onBlur={handleTooltipBlur}
       onClick={activate}
       onDoubleClick={handleDoubleClick}
       onContextMenu={handleContextMenu}

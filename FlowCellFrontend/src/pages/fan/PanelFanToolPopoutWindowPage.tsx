@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { MAIN_PAGE_IMPORTED_STYLE_GROUP } from "../../components/ButtonHost";
@@ -37,6 +38,8 @@ const PANEL_FAN_ANIMATION_MS = 140;
 const PANEL_FAN_BOUNDS_SETTLE_ATTEMPTS = 12;
 const PANEL_FAN_BOUNDS_SETTLE_DELAY_MS = 16;
 const PANEL_FAN_DRAG_SYNC_DELAY_MS = 48;
+const PANEL_FAN_TRANSPARENT_BACKGROUND: [number, number, number, number] = [0, 0, 0, 0];
+const PANEL_FAN_TRANSPARENCY_RESYNC_DELAYS_MS = [0, 16, 64, 140, 260];
 // Transparent undecorated Windows webviews can report a collapsed owner window a few logical
 // pixels larger than the measured pill footprint. Treat close matches as collapsed so we do not
 // misclassify a dropped owner window as an expanded fan and drift the anchor.
@@ -68,6 +71,17 @@ type ActivePanelFanHoverEvent = {
 
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+// The expanded fan's native WebView backing can repaint opaque white after a
+// native resize; reassert transparency on both the window and the WebView.
+// allSettled: either setter failing must not break the fan.
+async function applyPanelFanNativeTransparency(): Promise<void> {
+  await Promise.allSettled([
+    getCurrentWindow().setBackgroundColor(PANEL_FAN_TRANSPARENT_BACKGROUND),
+    getCurrentWebview().setBackgroundColor(PANEL_FAN_TRANSPARENT_BACKGROUND)
+  ]);
+  await getCurrentWindow().show().catch(() => {});
 }
 
 function areBoundsEqual(left: PhysicalBounds | null, right: PhysicalBounds): boolean {
@@ -152,7 +166,36 @@ function serializeScreenRect(rect: ScreenRect): Record<string, number> {
 // own clip-path/border-radius still governs actual in-window activation, so
 // shaped skins ignore clicks in their transparent corners; this gate only
 // decides whether the window swallows the cursor at all.
+function findFlowInteractiveNode(root: HTMLElement): HTMLElement | null {
+  if (root.matches("[data-flow-interactive='true']")) {
+    return root;
+  }
+
+  const lightDomMatch = root.querySelector("[data-flow-interactive='true']");
+  if (lightDomMatch instanceof HTMLElement) {
+    return lightDomMatch;
+  }
+
+  const shadowHosts = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))];
+  for (const host of shadowHosts) {
+    const shadowMatch = host.shadowRoot?.querySelector("[data-flow-interactive='true']");
+    if (shadowMatch instanceof HTMLElement) {
+      return shadowMatch;
+    }
+  }
+
+  return null;
+}
+
 function resolveInteractiveHitboxNode(root: HTMLElement): HTMLElement | null {
+  const interactiveNode = findFlowInteractiveNode(root);
+  if (interactiveNode) {
+    const rect = interactiveNode.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) {
+      return interactiveNode;
+    }
+  }
+
   return root;
 }
 
@@ -401,6 +444,35 @@ export default function PanelFanToolPopoutWindowPage({
     () => new Set(context.selectedFileNames),
     [context.selectedFileNames]
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    ignoreCursorStateRef.current = true;
+    void getCurrentWindow().setIgnoreCursorEvents(true).catch(() => {
+      ignoreCursorStateRef.current = null;
+    });
+    const syncTransparency = () => {
+      if (cancelled) {
+        return;
+      }
+      void applyPanelFanNativeTransparency();
+    };
+
+    syncTransparency();
+    // Staggered retries: the WebView backing can repaint white a few frames
+    // after creation while the compositor settles.
+    const timers = PANEL_FAN_TRANSPARENCY_RESYNC_DELAYS_MS.map((delayMs) => {
+      return window.setTimeout(syncTransparency, delayMs);
+    });
+
+    window.addEventListener("resize", syncTransparency);
+    return () => {
+      cancelled = true;
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("resize", syncTransparency);
+    };
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -1077,6 +1149,10 @@ export default function PanelFanToolPopoutWindowPage({
           targetBounds
         );
         if (!cancelled && matchedBounds) {
+          await applyPanelFanNativeTransparency();
+          if (cancelled) {
+            return;
+          }
           setLayoutBoundsReady(true);
           if (windowExpanded) {
             setChildrenVisible(true);
@@ -1102,6 +1178,10 @@ export default function PanelFanToolPopoutWindowPage({
         targetBounds
       );
       if (!cancelled && matchedBounds) {
+        await applyPanelFanNativeTransparency();
+        if (cancelled) {
+          return;
+        }
         setLayoutBoundsReady(true);
         if (windowExpanded) {
           setChildrenVisible(true);

@@ -31,9 +31,17 @@ import {
   listProgramFolders,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
+import {
+  buildPanelScriptButtonId,
+  readButtonLabelOverrides,
+  resolveButtonLabelOverride
+} from "../../lib/buttonLabelOverrides";
 import { readPanelFanOptions } from "../../lib/panelFanSettings";
+import { readScriptGroupPopoutType } from "../../lib/scriptGroupPopoutSettings";
 import { DEFAULT_FLOW_IMPORTED_SKIN, DEFAULT_POPOUT_IMPORTED_SKIN } from "../../lib/theme";
 import { openAppearanceWindow } from "../../lib/windowing";
+import { ScriptGroupPopoutSurface } from "../script-group/ScriptGroupPopoutSurface";
+import type { SkinPortResolution } from "./SkinPort";
 import {
   compileSkin,
   createEmptySlots,
@@ -43,11 +51,14 @@ import {
   type SlotContentMap
 } from "./compileSkin";
 import {
+  DEFAULT_HUB_POPOUT_RULES,
   DEFAULT_HUB_TEXT_STYLE,
   HUB_PANEL_BUTTON_KEY,
   HUB_PLACEMENTS,
   buildHubAddressKey,
   compileHubAssignmentToImportedSkin,
+  normalizeHubAssignment,
+  normalizeHubPopoutRules,
   normalizeHubScale,
   normalizeHubTextStyle,
   readHubAssignments,
@@ -56,6 +67,7 @@ import {
   type HubAssignment,
   type HubAssignmentMap,
   type HubPlacement,
+  type HubPopoutRules,
   type HubTextStyle
 } from "./liveBridge";
 import type { FlowCellButton, ImportedSkin, PanelFanOptions, StyleGroup } from "../../types";
@@ -100,6 +112,7 @@ const ASSIGNMENT_WRITE_DEBOUNCE_MS = 400;
 
 const HUB_UI_PREFS_KEY = "flowcell.appearanceHub.ui.v2";
 const SKIN_FILE_FORMAT = "flowcell-button-skin-v1";
+const SETUP_FILE_FORMAT = "flowcell-button-setup-v1";
 
 const BASE_FONT_FAMILIES: readonly string[] = [
   "Segoe UI",
@@ -425,6 +438,13 @@ function SkinInstance({
 const PANEL_FAN_OWNER_BUTTON_ID = "hub-preview-panel-fan-owner";
 const PANEL_FAN_OWNER_TOOLTIP = "Select the panel fan owner for editing.";
 
+// Appended to the selected address's compiled skin CSS when "Show hitbox" is
+// on. Same selector convention as buildLiveTextCss so the pipeline scopes it
+// into the shadow root; the dashed teal outline lands on the interactive core
+// (the actual hitbox) and scales with it.
+const HITBOX_OVERLAY_CSS =
+  ".button-skin [data-flow-interactive] { outline: 1px dashed rgba(95, 230, 205, 0.95); outline-offset: 0; }";
+
 // Marks the button as imported-skin driven so HostSkinButton renders our
 // compiled skin (skinId defaults to the stock "glass-card" otherwise).
 const IMPORTED_SKIN_STYLE_GROUP: StyleGroup = {
@@ -479,17 +499,10 @@ function buildPreviewPanelScriptButton(
   };
 }
 
-function PreviewAddressButton({
-  label,
-  skin,
-  selected,
-  onSelect
-}: {
-  label: string;
-  skin: ImportedSkin;
-  selected: boolean;
-  onSelect: () => void;
-}) {
+// Preview-only render of a button skin: no selection chrome, no side effects —
+// the picker strip below the stage is the only selector. Clicks are inert
+// (press/play states still run, like the real button minus the script).
+function PreviewAddressButton({ label, skin }: { label: string; skin: ImportedSkin }) {
   return (
     <HostSkinButton
       className="ahub-live__button"
@@ -498,11 +511,9 @@ function PreviewAddressButton({
       importedSkin={skin}
       hostMode="neutral"
       footprintOverride={fixedFootprintForSkin(skin)}
-      selected={selected}
       onClick={(event) => {
         event.preventDefault();
         event.stopPropagation();
-        onSelect();
       }}
     />
   );
@@ -514,26 +525,26 @@ function LiveAddressPlacementPreview({
   currentButtonKey,
   currentPlacement,
   liveSkin,
+  selectedLabelOverride,
   panelLabel,
   previewLabel,
   programName,
   panelName,
   scriptRecords,
-  fanOptions,
-  onSelectAddress
+  fanOptions
 }: {
   surface: HubPlacement;
   assignments: HubAssignmentMap;
   currentButtonKey: string;
   currentPlacement: HubPlacement;
   liveSkin: ImportedSkin | null;
+  selectedLabelOverride: string | undefined;
   panelLabel: string;
   previewLabel: string;
   programName: string;
   panelName: string;
   scriptRecords: PanelScriptFileRecord[];
   fanOptions: PanelFanOptions;
-  onSelectAddress: (buttonKey: string, placement: HubPlacement) => void;
 }) {
   const [fanExpanded, setFanExpanded] = useState(false);
   const [fanChildrenVisible, setFanChildrenVisible] = useState(false);
@@ -544,12 +555,6 @@ function LiveAddressPlacementPreview({
   );
   const selectedRecord =
     regularRecords.find((record) => record.fileName === currentButtonKey) ?? null;
-  const orderedRecords = selectedRecord
-    ? [
-        selectedRecord,
-        ...regularRecords.filter((record) => record.fileName !== selectedRecord.fileName)
-      ]
-    : regularRecords;
 
   useEffect(() => {
     setFanExpanded(false);
@@ -607,10 +612,39 @@ function LiveAddressPlacementPreview({
       key={`${placement}:${buttonKey}`}
       label={resolveAddressLabel(buttonKey, placement, fallbackLabel)}
       skin={resolveRequiredAddressSkin(buttonKey, placement)}
-      selected={isSelectedAddress(buttonKey, placement)}
-      onSelect={() => onSelectAddress(buttonKey, placement)}
     />
   );
+
+  // Popped previews render the REAL popout surface (same component as the
+  // live window). Base labels mirror the real path (lib label overrides);
+  // hub label overrides ride in through the skin resolver, with the selected
+  // address rendering the live draft.
+  const libLabelOverrides = readButtonLabelOverrides();
+  const baseScriptLabel = (record: PanelScriptFileRecord): string =>
+    resolveButtonLabelOverride(
+      buildPanelScriptButtonId(programName, panelName, record.fileName),
+      panelScriptLabel(record),
+      libLabelOverrides
+    );
+
+  const buildPoppedSkinResolver =
+    (placement: HubPlacement) =>
+    (fileName: string): SkinPortResolution | null => {
+      if (isSelectedAddress(fileName, placement)) {
+        return liveSkin
+          ? { importedSkin: liveSkin, labelOverride: selectedLabelOverride }
+          : null;
+      }
+      const skin = resolveAddressSkin(fileName, placement);
+      if (!skin) {
+        return null;
+      }
+      const key = addressKeyFor(fileName, placement);
+      const labelOverride = key
+        ? (assignments[key]?.text.labelOverride ?? undefined)
+        : undefined;
+      return { importedSkin: skin, labelOverride };
+    };
 
   if (surface === "fan") {
     const ownerLabel = resolveAddressLabel(HUB_PANEL_BUTTON_KEY, "fan", panelLabel);
@@ -625,12 +659,6 @@ function LiveAddressPlacementPreview({
         events: record.events
       };
     });
-    const selectedButtonId =
-      currentPlacement === "fan"
-        ? currentButtonKey === HUB_PANEL_BUTTON_KEY
-          ? PANEL_FAN_OWNER_BUTTON_ID
-          : currentButtonKey
-        : undefined;
     const requestFanOpen = () => {
       setFanExpanded(true);
       setFanChildrenVisible(true);
@@ -666,9 +694,9 @@ function LiveAddressPlacementPreview({
                 : (button.Target || button.Id || "").trim();
             return buttonKey ? resolveAddressSkin(buttonKey, "fan") : undefined;
           }}
-          selectedButtonId={selectedButtonId}
           onOwnerClick={() => {
-            onSelectAddress(HUB_PANEL_BUTTON_KEY, "fan");
+            // Same as the real fan: owner click pins open / unpins. No
+            // address selection here — the picker strip is the selector.
             if (fanPinnedOpen) {
               requestFanClose();
               return;
@@ -676,35 +704,42 @@ function LiveAddressPlacementPreview({
             setFanPinnedOpen(true);
             requestFanOpen();
           }}
-          onChildClick={(entry) => {
-            onSelectAddress(entry.childSlotId, "fan");
-            setFanPinnedOpen(true);
-            requestFanOpen();
+          onChildClick={() => {
+            // Real fan child click runs the script; the preview runs nothing.
           }}
         />
       </div>
     );
   }
 
-  if (surface === "popped-single") {
-    const record = selectedRecord ?? regularRecords[0] ?? null;
+  if (surface === "popped-single" || surface === "popped-group") {
+    // The literal popout: same surface component as the real window, same
+    // template geometry, same record order (selection never reorders), no
+    // selection chrome. Clicks run nothing.
+    const poppedRecords =
+      surface === "popped-group"
+        ? regularRecords
+        : selectedRecord
+          ? [selectedRecord]
+          : regularRecords.slice(0, 1);
+    const popoutType =
+      surface === "popped-single" ? "single" : readScriptGroupPopoutType(programName, panelName);
     return (
-      <div className="ahub-live ahub-live--single">
-        {record
-          ? renderAddressButton(record.fileName, "popped-single", panelScriptLabel(record))
-          : renderAddressButton(HUB_PANEL_BUTTON_KEY, "main", panelLabel)}
-      </div>
-    );
-  }
-
-  if (surface === "popped-group") {
-    return (
-      <div className="ahub-live ahub-live--group">
-        {orderedRecords.length > 0
-          ? orderedRecords.map((record) =>
-              renderAddressButton(record.fileName, "popped-group", panelScriptLabel(record))
-            )
-          : renderAddressButton(HUB_PANEL_BUTTON_KEY, "main", panelLabel)}
+      <div className="ahub-live ahub-live--pop">
+        <ScriptGroupPopoutSurface
+          programName={programName}
+          panelName={panelName}
+          popoutType={popoutType}
+          scripts={poppedRecords.map((record) => ({
+            fileName: record.fileName,
+            label: baseScriptLabel(record),
+            tooltip: record.tooltip?.trim() || undefined
+          }))}
+          skinResolver={buildPoppedSkinResolver(surface)}
+          onActivate={() => {
+            // Preview only: the real window runs the script here.
+          }}
+        />
       </div>
     );
   }
@@ -935,15 +970,6 @@ export default function AppearanceHubWindowPage() {
     [prefs.programName, prefs.panelName]
   );
 
-  const selectPreviewAddress = useCallback((buttonKey: string, nextPlacement: HubPlacement) => {
-    setPrefs((current) => ({
-      ...current,
-      buttonKey,
-      placement: nextPlacement
-    }));
-    setPreviewSurface(nextPlacement);
-  }, []);
-
   const updateAssignmentSlots = (slotId: SlotId, value: string) => {
     if (!addressKey) {
       return;
@@ -956,6 +982,7 @@ export default function AppearanceHubWindowPage() {
         text: assignment?.text ?? { ...DEFAULT_HUB_TEXT_STYLE },
         scale: assignment?.scale ?? 1,
         natural: assignment?.natural ?? null,
+        popout: assignment?.popout ?? { ...DEFAULT_HUB_POPOUT_RULES },
         updatedAt: new Date().toISOString()
       }
     };
@@ -972,6 +999,20 @@ export default function AppearanceHubWindowPage() {
     });
   };
 
+  const updateAssignmentRules = (rules: Partial<HubPopoutRules>) => {
+    if (!addressKey || !assignment) {
+      return;
+    }
+    commitAssignments({
+      ...assignments,
+      [addressKey]: {
+        ...assignment,
+        popout: { ...assignment.popout, ...rules },
+        updatedAt: new Date().toISOString()
+      }
+    });
+  };
+
   const applyTextDraft = () => {
     if (!addressKey) {
       return;
@@ -983,6 +1024,7 @@ export default function AppearanceHubWindowPage() {
         text: normalizeHubTextStyle(draftText),
         scale: assignment?.scale ?? 1,
         natural: assignment?.natural ?? null,
+        popout: assignment?.popout ?? { ...DEFAULT_HUB_POPOUT_RULES },
         updatedAt: new Date().toISOString()
       }
     };
@@ -1019,6 +1061,7 @@ export default function AppearanceHubWindowPage() {
         text: assignment?.text ?? { ...DEFAULT_HUB_TEXT_STYLE },
         scale: assignment?.scale ?? 1,
         natural: assignment?.natural ?? null,
+        popout: assignment?.popout ?? { ...DEFAULT_HUB_POPOUT_RULES },
         updatedAt: new Date().toISOString()
       }
     });
@@ -1071,6 +1114,7 @@ export default function AppearanceHubWindowPage() {
         text: { ...assignment.text },
         scale: assignment.scale,
         natural: assignment.natural,
+        popout: { ...assignment.popout },
         updatedAt: stamp
       };
     }
@@ -1101,7 +1145,8 @@ export default function AppearanceHubWindowPage() {
           slots: assignment.slots,
           text: assignment.text,
           scale: assignment.scale,
-          natural: assignment.natural
+          natural: assignment.natural,
+          popout: assignment.popout
         }
       });
       const directory = path.replace(/[\\/][^\\/]*$/, "");
@@ -1150,6 +1195,7 @@ export default function AppearanceHubWindowPage() {
           // Natural size is re-measured by the bench for this button's real
           // label rather than trusted from the file.
           natural: null,
+          popout: normalizeHubPopoutRules(value.popout),
           updatedAt: new Date().toISOString()
         }
       });
@@ -1159,6 +1205,132 @@ export default function AppearanceHubWindowPage() {
       setStatusMessage(`Loaded skin onto ${realButtonLabel} · ${placement}.`);
     } catch (error) {
       setStatusMessage(`Load failed: ${String(error)}`);
+    }
+  };
+
+  // ---- button setups: every assignment of the selected panel in one file ----
+
+  const collectPanelAddressEntries = (): Array<{
+    buttonKey: string;
+    placement: HubPlacement;
+    assignment: HubAssignment;
+  }> => {
+    if (!prefs.programName || !prefs.panelName) {
+      return [];
+    }
+    const buttonKeys = [
+      HUB_PANEL_BUTTON_KEY,
+      ...scriptRecords.filter((record) => !isToolsetRecord(record)).map((record) => record.fileName)
+    ];
+    const entries: Array<{ buttonKey: string; placement: HubPlacement; assignment: HubAssignment }> = [];
+    for (const buttonKey of buttonKeys) {
+      for (const entryPlacement of placementsForButton(buttonKey)) {
+        const key = buildHubAddressKey(prefs.programName, prefs.panelName, buttonKey, entryPlacement);
+        const entryAssignment = assignments[key];
+        if (entryAssignment) {
+          entries.push({ buttonKey, placement: entryPlacement, assignment: entryAssignment });
+        }
+      }
+    }
+    return entries;
+  };
+
+  const handleSaveSetup = async () => {
+    const entries = collectPanelAddressEntries();
+    if (entries.length === 0) {
+      setStatusMessage("Nothing to save — no skins on this panel yet.");
+      return;
+    }
+    try {
+      const suggested = `${(prefs.panelName || "panel").replace(/[^a-z0-9 _-]+/gi, "").trim() || "panel"}.fcsetup.json`;
+      const path = await invoke<string | null>("show_save_hub_skin_dialog", {
+        suggestedName: suggested,
+        initialDirectory: prefs.lastSkinDir,
+        parentLabel: "flowcell-appearance-hub"
+      });
+      if (!path) {
+        return;
+      }
+      await invoke<string>("save_hub_skin_file", {
+        path,
+        value: {
+          format: SETUP_FILE_FORMAT,
+          savedAt: new Date().toISOString(),
+          programName: prefs.programName,
+          panelName: prefs.panelName,
+          entries
+        }
+      });
+      const directory = path.replace(/[\\/][^\\/]*$/, "");
+      setPrefs((current) => ({ ...current, lastSkinDir: directory }));
+      setStatusMessage(`Saved setup (${entries.length} assignment(s)) to ${path}`);
+    } catch (error) {
+      setStatusMessage(`Setup save failed: ${String(error)}`);
+    }
+  };
+
+  const handleLoadSetup = async () => {
+    if (!prefs.programName || !prefs.panelName) {
+      return;
+    }
+    try {
+      const path = await invoke<string | null>("show_open_hub_skin_dialog", {
+        initialDirectory: prefs.lastSkinDir,
+        parentLabel: "flowcell-appearance-hub"
+      });
+      if (!path) {
+        return;
+      }
+      const value = await invoke<Record<string, unknown>>("load_hub_skin_file", { path });
+      const rawEntries = Array.isArray(value.entries) ? value.entries : null;
+      if (!rawEntries) {
+        setStatusMessage("That file has no setup entries — not a button setup file?");
+        return;
+      }
+      const loaded: Array<{ buttonKey: string; placement: HubPlacement; assignment: HubAssignment }> = [];
+      for (const raw of rawEntries) {
+        if (!raw || typeof raw !== "object") {
+          continue;
+        }
+        const entry = raw as { buttonKey?: unknown; placement?: unknown; assignment?: unknown };
+        const buttonKey = typeof entry.buttonKey === "string" ? entry.buttonKey : "";
+        const entryPlacement = HUB_PLACEMENTS.find(
+          (candidate) => candidate.id === entry.placement
+        )?.id;
+        const entryAssignment = normalizeHubAssignment(entry.assignment);
+        if (!buttonKey || !entryPlacement || !entryAssignment) {
+          continue;
+        }
+        loaded.push({ buttonKey, placement: entryPlacement, assignment: entryAssignment });
+      }
+      if (loaded.length === 0) {
+        setStatusMessage("No usable entries in that setup file.");
+        return;
+      }
+      if (
+        !window.confirm(
+          `Load ${loaded.length} assignment(s) onto "${prefs.panelName}"? Existing skins on this panel are replaced.`
+        )
+      ) {
+        return;
+      }
+      const next = { ...assignments };
+      for (const entry of collectPanelAddressEntries()) {
+        delete next[
+          buildHubAddressKey(prefs.programName, prefs.panelName, entry.buttonKey, entry.placement)
+        ];
+      }
+      for (const entry of loaded) {
+        next[
+          buildHubAddressKey(prefs.programName, prefs.panelName, entry.buttonKey, entry.placement)
+        ] = entry.assignment;
+      }
+      commitAssignments(next);
+      const directory = path.replace(/[\\/][^\\/]*$/, "");
+      setPrefs((current) => ({ ...current, lastSkinDir: directory }));
+      setStatusMessage(`Loaded setup: ${loaded.length} assignment(s) onto ${prefs.panelName}.`);
+    } catch (error) {
+      setStatusMessage(`Setup load failed: ${String(error)}`);
     }
   };
 
@@ -1186,25 +1358,21 @@ export default function AppearanceHubWindowPage() {
 
   // ---- preview ----
 
+  // Bench CSS/HTML compile from the DRAFT text style: the visible placement
+  // preview renders the draft live (liveSkin below), so the measuring bench
+  // must render the same draft or the measured footprint — and with it the
+  // preview's box, selected ring, and hitbox — lags the Text sliders until
+  // Apply and the button looks distorted against its own box.
   const compiled = useMemo(
     () =>
-      compileSkin(
-        addressKey ?? "empty",
-        slots,
-        assignment?.text.fontSizePx ?? null,
-        assignment?.text.fontFamily ?? null
-      ),
-    [addressKey, slots, assignment?.text.fontSizePx, assignment?.text.fontFamily]
+      compileSkin(addressKey ?? "empty", slots, draftText.fontSizePx, draftText.fontFamily),
+    [addressKey, slots, draftText.fontSizePx, draftText.fontFamily]
   );
   const scopeClass = useMemo(() => buildScopeClassName(addressKey ?? "empty"), [addressKey]);
   const previewHtml = useMemo(
     () =>
-      renderStructureHtmlWithLines(
-        slots[STRUCTURE_SLOT_ID],
-        previewLabel,
-        assignment?.text.lines ?? 1
-      ),
-    [slots, previewLabel, assignment?.text.lines]
+      renderStructureHtmlWithLines(slots[STRUCTURE_SLOT_ID], previewLabel, draftText.lines),
+    [slots, previewLabel, draftText.lines]
   );
   const hasSkin = Boolean(assignment) && compiled.structureValid;
 
@@ -1222,13 +1390,21 @@ export default function AppearanceHubWindowPage() {
           height: Math.round(previewMetrics.coreHeight)
         }
       : (assignment?.natural ?? null);
-    return compileHubAssignmentToImportedSkin(addressKey, {
+    const compiledSkin = compileHubAssignmentToImportedSkin(addressKey, {
       slots,
       text: normalizeHubTextStyle(draftText),
       scale: normalizeHubScale(assignment?.scale ?? 1),
       natural,
+      popout: assignment?.popout ?? { ...DEFAULT_HUB_POPOUT_RULES },
       updatedAt: assignment?.updatedAt ?? new Date().toISOString()
     });
+    if (!compiledSkin || !prefs.showHitbox) {
+      return compiledSkin;
+    }
+    // "Show hitbox": ride the real imported-skin pipeline into the shadow
+    // root so the outline sits on the rendered interactive core itself — the
+    // outlined rect IS the clickable hitbox, scaled exactly as rendered.
+    return { ...compiledSkin, css: `${compiledSkin.css}\n${HITBOX_OVERLAY_CSS}` };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     addressKey,
@@ -1238,7 +1414,9 @@ export default function AppearanceHubWindowPage() {
     assignment?.scale,
     assignment?.updatedAt,
     assignment?.natural,
-    previewMetrics
+    assignment?.popout,
+    previewMetrics,
+    prefs.showHitbox
   ]);
 
   const handlePreviewMeasure = useCallback((metrics: InstanceMetrics | null) => {
@@ -1251,6 +1429,13 @@ export default function AppearanceHubWindowPage() {
   // skipped once the stored value matches the measurement.
   useEffect(() => {
     if (!addressKey || !assignment || !previewMetrics || !compiled.structureValid) {
+      return;
+    }
+    // The bench renders the DRAFT text so the preview tracks the sliders
+    // live; persist natural only once the draft matches the stored text,
+    // otherwise a draft-sized natural would corrupt live-surface footprints
+    // for a text style that was never applied.
+    if (textDraftDirty) {
       return;
     }
     const width = Math.round(previewMetrics.coreWidth);
@@ -1266,7 +1451,7 @@ export default function AppearanceHubWindowPage() {
       [addressKey]: { ...assignment, natural: { width, height } }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [addressKey, assignment, previewMetrics, compiled.structureValid]);
+  }, [addressKey, assignment, previewMetrics, compiled.structureValid, textDraftDirty]);
 
   const stageBackgroundClass: Record<HubUiPrefs["background"], string> = {
     main: "ahub-stage--bg-main",
@@ -1403,7 +1588,7 @@ export default function AppearanceHubWindowPage() {
         <div className="ahub-titlebar__brand">
           <span className="ahub-titlebar__pip" aria-hidden="true" />
           <span className="ahub-titlebar__name">Appearance</span>
-          <span className="ahub-titlebar__scope">skin bench · v9 · socket</span>
+          <span className="ahub-titlebar__scope">skin bench · v12 · socket</span>
         </div>
         <div className="ahub-titlebar__actions">
           <button
@@ -1522,6 +1707,22 @@ export default function AppearanceHubWindowPage() {
               onClick={handleRemoveSkin}
             >
               Remove skin
+            </button>
+            <button
+              type="button"
+              className="ahub-btn"
+              title="Save every skin assignment of this panel (all buttons, all placements) to one setup file"
+              onClick={() => void handleSaveSetup()}
+            >
+              Save setup…
+            </button>
+            <button
+              type="button"
+              className="ahub-btn"
+              title="Load a setup file onto this panel, replacing its current skin assignments"
+              onClick={() => void handleLoadSetup()}
+            >
+              Load setup…
             </button>
           </div>
           {statusMessage ? <p className="ahub-rail__status">{statusMessage}</p> : null}
@@ -1664,6 +1865,61 @@ export default function AppearanceHubWindowPage() {
             </div>
           </section>
 
+          {placement === "popped-group" || placement === "popped-single" ? (
+            <section className="ahub-sec">
+              <div className="ahub-sec__head">
+                <h2 className="ahub-sec__title">Popout rules</h2>
+                <span className="ahub-sec__hint">
+                  {placement === "popped-group"
+                    ? "grid cell: every button identical, text fits per button"
+                    : "cell: fill the standard popped pill, text fits"}
+                </span>
+              </div>
+              <div className="ahub-row">
+                <span className="ahub-label">Size</span>
+                <button
+                  type="button"
+                  className={`ahub-chip${(assignment?.popout.sizing ?? "natural") === "natural" ? " ahub-chip--on" : ""}`}
+                  disabled={!assignment}
+                  title="The skin renders at its own natural size × Scale"
+                  onClick={() => updateAssignmentRules({ sizing: "natural" })}
+                >
+                  Skin size
+                </button>
+                <button
+                  type="button"
+                  className={`ahub-chip${assignment?.popout.sizing === "cell" ? " ahub-chip--on" : ""}`}
+                  disabled={!assignment}
+                  title="The skin fills the popout's uniform grid cell — all buttons the same size"
+                  onClick={() => updateAssignmentRules({ sizing: "cell" })}
+                >
+                  Uniform grid cell
+                </button>
+              </div>
+              {assignment?.popout.sizing === "cell" ? (
+                <div className="ahub-row">
+                  <span className="ahub-label">Text fit</span>
+                  {(
+                    [
+                      { id: "shrink", label: "Shrink text" },
+                      { id: "stack", label: "Stack words" },
+                      { id: "shrink-stack", label: "Shrink + stack" }
+                    ] as const
+                  ).map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`ahub-chip${assignment.popout.textFit === option.id ? " ahub-chip--on" : ""}`}
+                      onClick={() => updateAssignmentRules({ textFit: option.id })}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
           <section className="ahub-sec">
             <div className="ahub-sec__head">
               <h2 className="ahub-sec__title">Scale</h2>
@@ -1719,11 +1975,7 @@ export default function AppearanceHubWindowPage() {
         {/* ---- preview column ---- */}
         <div className="ahub-preview">
           <div
-            className={[
-              "ahub-stage",
-              stageBackgroundClass[prefs.background],
-              prefs.showHitbox ? "ahub-stage--hitbox" : ""
-            ]
+            className={["ahub-stage", stageBackgroundClass[prefs.background]]
               .filter(Boolean)
               .join(" ")}
             style={stageStyle}
@@ -1738,13 +1990,13 @@ export default function AppearanceHubWindowPage() {
                   currentButtonKey={prefs.buttonKey}
                   currentPlacement={placement}
                   liveSkin={liveSkin}
+                  selectedLabelOverride={draftText.labelOverride ?? undefined}
                   panelLabel={panelLabel}
                   previewLabel={previewLabel}
                   programName={prefs.programName}
                   panelName={prefs.panelName}
                   scriptRecords={scriptRecords}
                   fanOptions={fanPreviewOptions}
-                  onSelectAddress={selectPreviewAddress}
                 />
                 {/* Hidden measuring instrument: the bench render still measures
                     the skin's natural core size (feeds footprints above). */}
@@ -1779,6 +2031,35 @@ export default function AppearanceHubWindowPage() {
                 ) : null}
               </div>
             )}
+          </div>
+
+          {/* Button picker: THE selector. The preview above stays untouched —
+              no rings, no reordering — pick the button to edit down here. */}
+          <div className="ahub-toolrow ahub-picker">
+            <span className="ahub-label">Button</span>
+            <button
+              type="button"
+              className={`ahub-chip${prefs.buttonKey === HUB_PANEL_BUTTON_KEY ? " ahub-chip--on" : ""}`}
+              onClick={() =>
+                setPrefs((current) => ({ ...current, buttonKey: HUB_PANEL_BUTTON_KEY }))
+              }
+            >
+              {`${buttonHasAnyCode(HUB_PANEL_BUTTON_KEY) ? "● " : ""}Panel button`}
+            </button>
+            {scriptRecords
+              .filter((record) => !isToolsetRecord(record))
+              .map((record) => (
+                <button
+                  key={record.fileName}
+                  type="button"
+                  className={`ahub-chip${prefs.buttonKey === record.fileName ? " ahub-chip--on" : ""}`}
+                  onClick={() =>
+                    setPrefs((current) => ({ ...current, buttonKey: record.fileName }))
+                  }
+                >
+                  {`${buttonHasAnyCode(record.fileName) ? "● " : ""}${panelScriptLabel(record)}`}
+                </button>
+              ))}
           </div>
 
           <div className="ahub-toolrow">

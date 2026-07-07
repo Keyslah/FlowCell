@@ -315,6 +315,13 @@
 }
 .ahub-toolrow__spacer { flex: 1; }
 
+/* Button picker strip under the stage — the ONLY address selector for
+   buttons. Scrolls instead of swallowing the preview on large panels. */
+.ahub-picker {
+  max-height: 92px;
+  overflow-y: auto;
+}
+
 .ahub-stage {
   position: relative;
   flex: 1;
@@ -337,16 +344,11 @@
   background-position: center;
 }
 
-/* Hitbox overlay: solid teal on the measured core (the clickable rect),
-   faint dotted on the whole decorative footprint. */
-.ahub-stage--hitbox .ahub-inst [data-core] {
-  outline: 1px dashed rgba(95, 230, 205, 0.95);
-  outline-offset: 0;
-}
-.ahub-stage--hitbox .ahub-inst {
-  outline: 1px dotted rgba(240, 160, 90, 0.5);
-  outline-offset: 2px;
-}
+/* Hitbox overlay lives in HITBOX_OVERLAY_CSS (AppearanceHubWindowPage): it is
+   appended to the selected address's compiled skin CSS so it outlines the
+   interactive core inside the live preview's shadow root. Stage-level rules
+   cannot reach that core, and the only .ahub-inst on the stage is the
+   offscreen measuring instrument. */
 
 /* Bench instance kept only to measure the skin's natural core size; parked
    offscreen so the visible stage shows the placement-accurate live preview. */
@@ -366,27 +368,17 @@
   justify-content: center;
   gap: 16px;
 }
-.ahub-live--group {
+/* Popped previews mount the REAL popout surface (ScriptGroupPopoutSurface) at
+   canonical scale — the same render as the live window, no selection chrome.
+   The picker strip below the stage is the only selector. */
+.ahub-live--pop {
   flex-direction: row;
-  flex-wrap: wrap;
-  gap: 12px;
+  justify-content: center;
 }
 .ahub-live--fan {
   min-width: max-content;
   min-height: 96px;
   align-items: flex-start;
-}
-.ahub-live__button[data-selected="true"]::after,
-.ahub-live--fan .button-host[data-selected="true"]::after {
-  content: "";
-  position: absolute;
-  inset: -5px;
-  border: 1px solid rgba(95, 230, 205, 0.95);
-  border-radius: var(--button-radius, 9px);
-  box-shadow:
-    0 0 0 1px rgba(95, 230, 205, 0.22),
-    0 0 14px rgba(95, 230, 205, 0.22);
-  pointer-events: none;
 }
 .ahub-live__fan-owner {
   display: flex;

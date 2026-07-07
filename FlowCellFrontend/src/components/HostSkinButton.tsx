@@ -426,6 +426,12 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
       [className, "host-skin-button", isHubSkin ? "host-skin-button--hub" : ""],
       contract
     );
+    const skinSurfaceClassName = [
+      className,
+      isHubSkin ? "host-skin-button--hub" : ""
+    ]
+      .filter(Boolean)
+      .join(" ");
     const skinOwnsHitbox = usesSkinBridge;
     const resolvedStyle: CSSProperties = {
       ...(style ?? {}),
@@ -1169,7 +1175,7 @@ export const HostSkinButton = forwardRef<HTMLElement, HostSkinButtonProps>(
             selected,
             compact: resolvedSkinCompact,
             contract,
-            hostClassName: className,
+            hostClassName: skinSurfaceClassName,
             footprintMode,
             skinRef: skinRef,
             onSkinPointerEnter:

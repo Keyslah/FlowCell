@@ -383,6 +383,7 @@ type ImportedSkinBridgeMountOptions = {
   compactMaxInlineSize?: string;
   minFontScale?: number;
   labelScale?: number;
+  twoWordStack?: boolean;
 };
 
 type ImportedSkinBridgeApi = {
@@ -582,13 +583,16 @@ function installImportedSkinLabelSizing(args: {
   let resizeObserver: ResizeObserver | null = null;
   let animationFrameId = 0;
 
+  const allowTwoWordStack = options.twoWordStack !== false;
   const fitLabelToHostHeight = () => {
     removeImportedSkinTwoWordLabelOverlay(labelElement);
     labelElement.style.fontSize = `${baseScale}em`;
     const availableWidth = Math.max(0, host.clientWidth - 8);
     const availableHeight = Math.max(0, host.clientHeight - 4);
     if (availableWidth <= 0 || availableHeight <= 0) {
-      applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
+      if (allowTwoWordStack) {
+        applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
+      }
       return;
     }
 
@@ -605,7 +609,9 @@ function installImportedSkinLabelSizing(args: {
         }
     }
     captureImportedSkinMeasurement(measureElement);
-    applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
+    if (allowTwoWordStack) {
+      applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
+    }
     host.dispatchEvent(new CustomEvent("flow-skin-content-ready"));
   };
 
@@ -712,7 +718,7 @@ function installImportedSkinBridgeButton(args: {
           hostSurfaceIncludes
         })
       : () => undefined;
-  if (labelElement && measureElement) {
+  if (labelElement && measureElement && options.twoWordStack !== false) {
     applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
   }
 
@@ -874,7 +880,8 @@ function runImportedSkinBridge(args: {
           Number.isFinite(importedSkin.labelScale) &&
           importedSkin.labelScale > 0
             ? importedSkin.labelScale
-            : options.labelScale
+            : options.labelScale,
+        twoWordStack: importedSkin.labelStack === false ? false : options.twoWordStack
       };
       implicitCleanup = installImportedSkinBridgeButton({
         host,
@@ -938,6 +945,14 @@ function buildImportedButtonShadowCss(
     ...scopedCssBlocks,
     ":host([data-flow-surface~=\"button-host--skin-profile-highlight\"][data-selected=\"true\"]) [data-flow-measure=\"true\"]{position:relative;overflow:visible;}",
     ":host([data-flow-surface~=\"button-host--skin-profile-highlight\"][data-selected=\"true\"]) [data-flow-measure=\"true\"]::before{content:\"\";position:absolute;inset:-2px;border:2px solid var(--fc-selected-highlight,rgba(151,255,99,.98));border-radius:inherit;box-shadow:0 0 0 1px color-mix(in srgb,var(--fc-selected-highlight,rgba(151,255,99,.98)) 45%,transparent),0 0 14px color-mix(in srgb,var(--fc-selected-highlight,rgba(151,255,99,.98)) 70%,transparent),0 0 28px color-mix(in srgb,var(--fc-selected-highlight,rgba(151,255,99,.98)) 36%,transparent),inset 0 0 10px color-mix(in srgb,var(--fc-selected-highlight,rgba(151,255,99,.98)) 24%,transparent);pointer-events:none;z-index:4;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]){display:inline-grid!important;place-items:center!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;outline:0!important;background:transparent!important;background-color:transparent!important;background-image:none!important;box-shadow:none!important;overflow:visible!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"])::before,:host([data-flow-surface~=\"host-skin-button--hub\"])::after{background:transparent!important;background-color:transparent!important;background-image:none!important;border-color:transparent!important;box-shadow:none!important;filter:none!important;pointer-events:none!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html{background:transparent!important;background-color:transparent!important;background-image:none!important;min-width:0!important;min-height:0!important;overflow:visible!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html > :first-child:not([data-flow-measure=\"true\"]){background:transparent!important;background-color:transparent!important;background-image:none!important;min-width:0!important;min-height:0!important;overflow:visible!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html > :first-child:not([data-flow-measure=\"true\"])::before,:host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html > :first-child:not([data-flow-measure=\"true\"])::after{background:transparent!important;background-color:transparent!important;background-image:none!important;border-color:transparent!important;box-shadow:none!important;filter:none!important;pointer-events:none!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html :is(body,.body,.page,.demo,.demo-page,.preview,.stage,.scene,.app,.container,.wrapper):not([data-flow-measure=\"true\"]){background:transparent!important;background-color:transparent!important;background-image:none!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html :is(body,.body,.page,.demo,.demo-page,.preview,.stage,.scene,.app,.container,.wrapper):not([data-flow-measure=\"true\"])::before,:host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html :is(body,.body,.page,.demo,.demo-page,.preview,.stage,.scene,.app,.container,.wrapper):not([data-flow-measure=\"true\"])::after{background:transparent!important;background-color:transparent!important;background-image:none!important;border-color:transparent!important;box-shadow:none!important;filter:none!important;pointer-events:none!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html > :is(body,.body,.page,.demo,.demo-page,.preview,.stage,.scene,.app,.container,.wrapper):not([data-flow-measure=\"true\"]){display:inline-flex!important;align-items:center!important;justify-content:center!important;width:auto!important;height:auto!important;}",
     ".imported-html>.body{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:auto!important;height:auto!important;min-width:0!important;min-height:0!important;background:transparent!important;overflow:visible!important;}",
     ".imported-html>.body>*{min-width:0;min-height:0;}"
   ]

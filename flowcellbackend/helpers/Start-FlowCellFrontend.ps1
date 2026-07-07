@@ -1,6 +1,7 @@
 # Description: Starts the FlowCell Tauri frontend and keeps the backend host on the existing path.
 param(
-    [switch]$ForceRestart
+    [switch]$ForceRestart,
+    [switch]$ForceRebuild
 )
 
 Set-StrictMode -Version Latest
@@ -529,6 +530,10 @@ try {
     }
 
     $buildRequired = Test-FlowCellFrontendBuildRequired
+    if ($ForceRebuild) {
+        Write-LauncherLog 'Force-rebuild requested; release frontend build will run regardless of source stamps.'
+        $buildRequired = $true
+    }
 
     if ($script:FlowCellFrontendLaunchWaited -and (-not $buildRequired)) {
         $runningFrontend = @(Get-FlowCellFrontendProcess)

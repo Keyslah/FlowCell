@@ -10,7 +10,6 @@ const TOOLTIP_WIDTH = 420;
 const TOOLTIP_HEIGHT = 96;
 const TOOLTIP_GAP = 10;
 const SCREEN_MARGIN = 8;
-const LOCAL_TOOLTIP_ID = "flowcell-local-tooltip";
 const TOOLTIP_SHOW_DELAY_MS = 2000;
 const TOOLTIP_WINDOW_CREATE_TIMEOUT_MS = 800;
 const TRANSPARENT_TOOLTIP_BACKGROUND: [number, number, number, number] = [0, 0, 0, 0];
@@ -123,93 +122,6 @@ function clampScreenCoordinate(value: number): number {
   return Math.max(SCREEN_MARGIN, Math.round(value));
 }
 
-function clampLocalCoordinate(value: number, maxValue: number): number {
-  return Math.max(SCREEN_MARGIN, Math.min(Math.round(value), Math.max(SCREEN_MARGIN, maxValue)));
-}
-
-function getLocalTooltipElement(): HTMLDivElement | null {
-  if (typeof document === "undefined") {
-    return null;
-  }
-
-  const existing = document.getElementById(LOCAL_TOOLTIP_ID);
-  if (existing instanceof HTMLDivElement) {
-    return existing;
-  }
-
-  const element = document.createElement("div");
-  element.id = LOCAL_TOOLTIP_ID;
-  element.setAttribute("role", "tooltip");
-  Object.assign(element.style, {
-    position: "fixed",
-    left: "0",
-    top: "0",
-    width: `${TOOLTIP_WIDTH}px`,
-    minHeight: "32px",
-    maxWidth: "calc(100vw - 16px)",
-    padding: "8px 10px",
-    border: "1px solid rgba(235, 244, 238, 0.42)",
-    borderRadius: "8px",
-    background: "rgba(6, 9, 10, 0.97)",
-    boxShadow: "0 14px 30px rgba(0, 0, 0, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.1)",
-    color: "rgba(248, 252, 249, 0.98)",
-    font: '650 12px/1.25 "Segoe UI", sans-serif',
-    letterSpacing: "0",
-    textAlign: "center",
-    overflowWrap: "anywhere",
-    pointerEvents: "none",
-    opacity: "0",
-    transition: "opacity 60ms ease",
-    zIndex: "2147483647"
-  } satisfies Partial<CSSStyleDeclaration>);
-  document.body.appendChild(element);
-  return element;
-}
-
-function showLocalFlowTooltip(text: string, element: HTMLElement): void {
-  const tooltip = getLocalTooltipElement();
-  if (!tooltip) {
-    return;
-  }
-
-  tooltip.textContent = text;
-  tooltip.style.width = `${Math.min(TOOLTIP_WIDTH, Math.max(180, window.innerWidth - SCREEN_MARGIN * 2))}px`;
-  tooltip.style.opacity = "0";
-  tooltip.style.display = "block";
-
-  const sourceRect = element.getBoundingClientRect();
-  const tooltipRect = tooltip.getBoundingClientRect();
-  const tooltipWidth = tooltipRect.width || TOOLTIP_WIDTH;
-  const tooltipHeight = tooltipRect.height || 40;
-  const anchorX = sourceRect.left + sourceRect.width / 2;
-  const topCandidate = sourceRect.top - tooltipHeight - TOOLTIP_GAP;
-  const belowCandidate = sourceRect.bottom + TOOLTIP_GAP;
-  const nextX = clampLocalCoordinate(
-    anchorX - tooltipWidth / 2,
-    window.innerWidth - tooltipWidth - SCREEN_MARGIN
-  );
-  const nextY = clampLocalCoordinate(
-    topCandidate > SCREEN_MARGIN ? topCandidate : belowCandidate,
-    window.innerHeight - tooltipHeight - SCREEN_MARGIN
-  );
-
-  tooltip.style.left = `${nextX}px`;
-  tooltip.style.top = `${nextY}px`;
-  tooltip.style.opacity = "1";
-}
-
-function hideLocalFlowTooltip(): void {
-  if (typeof document === "undefined") {
-    return;
-  }
-
-  const tooltip = document.getElementById(LOCAL_TOOLTIP_ID);
-  if (tooltip instanceof HTMLElement) {
-    tooltip.style.opacity = "0";
-    tooltip.style.display = "none";
-  }
-}
-
 export async function showFlowTooltipForElement(
   text: string,
   element: HTMLElement
@@ -223,7 +135,6 @@ export async function showFlowTooltipForElement(
   const requestId = activeTooltipRequestId + 1;
   activeTooltipRequestId = requestId;
   clearPendingShowTimer();
-  hideLocalFlowTooltip();
   void hideTooltipWindow();
 
   pendingShowTimer = window.setTimeout(() => {
@@ -240,8 +151,6 @@ async function showFlowTooltipNow(
   if (requestId !== activeTooltipRequestId || !element.isConnected) {
     return;
   }
-
-  showLocalFlowTooltip(trimmedText, element);
 
   let sourceWindow: ReturnType<typeof getCurrentWindow>;
   try {
@@ -315,6 +224,5 @@ async function hideTooltipWindow(): Promise<void> {
 export async function hideFlowTooltip(): Promise<void> {
   activeTooltipRequestId += 1;
   clearPendingShowTimer();
-  hideLocalFlowTooltip();
   await hideTooltipWindow();
 }

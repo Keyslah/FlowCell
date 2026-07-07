@@ -131,6 +131,12 @@ function resolveTooltipElement(target: EventTarget | null): HTMLElement | null {
   return element;
 }
 
+function disablesFlowTooltipWindow(
+  windowContext: ReturnType<typeof getWindowContextFromLocation>
+): boolean {
+  return windowContext.kind === "panel-fan" || windowContext.kind === "script-group-popout";
+}
+
 export default function App() {
   const windowContext = getWindowContextFromLocation();
   const programName = resolveScopedTopmostProgramName(windowContext);
@@ -141,6 +147,10 @@ export default function App() {
       window as Window & { __TAURI_INTERNALS__?: { metadata?: unknown } }
     ).__TAURI_INTERNALS__;
     if (windowContext.kind === "tooltip" || !tauriInternals?.metadata) {
+      return;
+    }
+    if (disablesFlowTooltipWindow(windowContext)) {
+      void hideFlowTooltip();
       return;
     }
 

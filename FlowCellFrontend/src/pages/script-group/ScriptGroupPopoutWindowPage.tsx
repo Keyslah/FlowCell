@@ -13,10 +13,8 @@ import {
   resolveButtonLabelOverride
 } from "../../lib/buttonLabelOverrides";
 import { runPanelButtonEvent, runPanelScript } from "../../lib/programRails";
-import { getScriptGroupPopoutTemplate } from "../../lib/scriptGroupPopoutTemplates";
 import { isNativeSpaceKeyDown } from "../../lib/nativeKeyState";
-import { HostSkinButton } from "../../components/HostSkinButton";
-import { resolveSkinPort, useSkinPortRevision } from "../appearance-hub/SkinPort";
+import { ScriptGroupPopoutSurface } from "./ScriptGroupPopoutSurface";
 import type {
   ScriptGroupPopoutScript,
   ScriptGroupPopoutWindowContext
@@ -41,19 +39,6 @@ type ResizeSession = {
   initialHeight: number;
 };
 
-type PositionedScriptButton = {
-  id: string;
-  fileName: string;
-  label: string;
-  tooltip?: string;
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  rx: number;
-  ry: number;
-};
-
 type ScriptRunErrorState = {
   title: string;
   detail: string;
@@ -63,88 +48,6 @@ type ActiveScriptGroupHoverEvent = {
   fileName: string;
   events: NonNullable<ScriptGroupPopoutScript["events"]>;
 };
-
-const SINGLE_BUTTON_LABEL_HORIZONTAL_PADDING = 28;
-const SINGLE_BUTTON_LABEL_MIN_FONT_SIZE = 10;
-
-let textMeasureContext: CanvasRenderingContext2D | null = null;
-
-function getTextMeasureContext(): CanvasRenderingContext2D | null {
-  if (typeof document === "undefined") {
-    return null;
-  }
-
-  if (!textMeasureContext) {
-    textMeasureContext = document.createElement("canvas").getContext("2d");
-  }
-
-  return textMeasureContext;
-}
-
-function measureLabelWidth(label: string, fontSize: number): number {
-  const context = getTextMeasureContext();
-  if (!context) {
-    return label.trim().length * fontSize * 0.56;
-  }
-
-  context.font = `700 ${fontSize}px "Segoe UI", sans-serif`;
-  return context.measureText(label).width;
-}
-
-function resolveSingleButtonFontSize(label: string, buttonWidth: number, baseFontSize: number): number {
-  const availableWidth = Math.max(1, buttonWidth - SINGLE_BUTTON_LABEL_HORIZONTAL_PADDING);
-  const measuredWidth = Math.max(1, measureLabelWidth(label, baseFontSize));
-
-  if (measuredWidth <= availableWidth) {
-    return baseFontSize;
-  }
-
-  return Math.max(
-    SINGLE_BUTTON_LABEL_MIN_FONT_SIZE,
-    Math.floor((baseFontSize * availableWidth * 100) / measuredWidth) / 100
-  );
-}
-
-function splitTwoWordButtonLabel(label: string): [string, string] | null {
-  const words = label
-    .trim()
-    .split(/\s+/u)
-    .filter((word) => word.length > 0);
-
-  if (words.length !== 2) {
-    return null;
-  }
-
-  return [words[0], words[1]];
-}
-
-function buildScriptButtons(context: ScriptGroupPopoutWindowContext): PositionedScriptButton[] {
-  const template = getScriptGroupPopoutTemplate(context.popoutType);
-
-  return context.scripts.map((script, index) => {
-    const columnIndex = index % template.buttonsPerRow;
-    const rowIndex = Math.floor(index / template.buttonsPerRow);
-    const rect = template.rowRects[columnIndex];
-
-    return {
-      id: [
-        "script-group-popout",
-        context.programName.trim().toLowerCase(),
-        context.panelName.trim().toLowerCase(),
-        script.fileName.trim().toLowerCase()
-      ].join("::"),
-      fileName: script.fileName,
-      label: script.label,
-      tooltip: script.tooltip,
-      x: rect.x,
-      y: rect.y + template.rowHeight * rowIndex,
-      width: rect.width,
-      height: rect.height,
-      rx: rect.rx,
-      ry: rect.ry
-    };
-  });
-}
 
 export default function ScriptGroupPopoutWindowPage({
   context
@@ -169,10 +72,6 @@ export default function ScriptGroupPopoutWindowPage({
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
   const [scriptRunError, setScriptRunError] = useState<ScriptRunErrorState | null>(null);
-  const template = useMemo(
-    () => getScriptGroupPopoutTemplate(context.popoutType),
-    [context.popoutType]
-  );
 
   useEffect(() => {
     const handleStorage = () => {
@@ -247,23 +146,6 @@ export default function ScriptGroupPopoutWindowPage({
     }),
     [context, labelOverrides]
   );
-  const buttons = useMemo(() => buildScriptButtons(resolvedContext), [resolvedContext]);
-  // Re-render when hub assignments change in any window.
-  const skinPortRevision = useSkinPortRevision();
-  const hubPlacement = template.type === "single" ? "popped-single" : "popped-group";
-  const rowCount = Math.max(
-    1,
-    Math.ceil(Math.max(resolvedContext.scripts.length, 1) / template.buttonsPerRow)
-  );
-  const canonicalWidth = template.rowWidth;
-  const canonicalHeight = template.rowHeight * rowCount;
-  const uniformScale = Math.max(
-    0.1,
-    Math.min(windowSize.width / canonicalWidth, windowSize.height / canonicalHeight)
-  );
-  const scaledWidth = canonicalWidth * uniformScale;
-  const scaledHeight = canonicalHeight * uniformScale;
-
   const getHoverEventKey = (fileName: string) =>
     `${context.programName}\n${context.panelName}\n${fileName}`;
 
@@ -382,9 +264,11 @@ export default function ScriptGroupPopoutWindowPage({
         const scaleFactor =
           Number.isFinite(rawScaleFactor) && rawScaleFactor > 0 ? rawScaleFactor : 1;
         let hoveredFileName = "";
+        // Hub-skinned buttons carry their own class; include them so a
+        // hovered hub button is not force-left by this poll.
         const buttonElements = Array.from(
-          document.querySelectorAll<HTMLButtonElement>(
-            ".script-group-popout__button[data-script-file-name]"
+          document.querySelectorAll<HTMLElement>(
+            ".script-group-popout__button[data-script-file-name], .script-group-popout__button--hub[data-script-file-name]"
           )
         );
 
@@ -633,9 +517,10 @@ export default function ScriptGroupPopoutWindowPage({
         ? target.closest<HTMLButtonElement>(".script-group-popout__button")
         : null;
     const scriptFileName = scriptButton?.dataset.scriptFileName;
-
-    event.preventDefault();
-    event.stopPropagation();
+    const hubButton =
+      target instanceof HTMLElement
+        ? target.closest<HTMLElement>(".script-group-popout__button--hub")
+        : null;
 
     const startSpaceDrag = () => {
       setSpaceDragActive(true);
@@ -645,6 +530,23 @@ export default function ScriptGroupPopoutWindowPage({
         setSpaceDragging(false);
       });
     };
+
+    // Hub-skinned buttons: the skin's shadow-root bridge owns the gesture
+    // (pressed/held visuals, the one-shot play latch, and click activation
+    // through HostSkinButton onClick). Swallowing the pointerdown here would
+    // starve the bridge, so let it through — only the native space check may
+    // still hand the gesture over to a window drag.
+    if (hubButton && !spaceDragActive) {
+      void (async () => {
+        if (await isNativeSpaceKeyDown()) {
+          startSpaceDrag();
+        }
+      })();
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
 
     if (spaceDragActive) {
       startSpaceDrag();
@@ -715,176 +617,19 @@ export default function ScriptGroupPopoutWindowPage({
         />
 
         <div className="script-group-popout__viewport">
-          <div
-            className="script-group-popout__surface-frame"
-            style={{
-              width: `${scaledWidth}px`,
-              height: `${scaledHeight}px`
+          <ScriptGroupPopoutSurface
+            programName={context.programName}
+            panelName={context.panelName}
+            popoutType={context.popoutType}
+            scripts={resolvedContext.scripts}
+            availableWidth={windowSize.width}
+            availableHeight={windowSize.height}
+            onActivate={(fileName) => {
+              void handleButtonActivate(fileName);
             }}
-          >
-            <section
-              className="script-group-popout__surface"
-              style={{
-                width: `${canonicalWidth}px`,
-                height: `${canonicalHeight}px`,
-                transform: `scale(${uniformScale})`,
-                transformOrigin: "top left"
-              }}
-            >
-              <svg
-                className="script-group-popout__svg"
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox={`0 0 ${canonicalWidth} ${canonicalHeight}`}
-                aria-hidden="true"
-              >
-                {Array.from({ length: rowCount }, (_, rowIndex) => (
-                  <g
-                    key={`script-group-popout-row-${rowIndex}`}
-                    transform={`translate(0 ${template.rowHeight * rowIndex})`}
-                  >
-                    {template.rowRects.map((rect, rectIndex) => (
-                      <rect
-                        key={`script-group-popout-row-${rowIndex}-rect-${rectIndex}`}
-                        x={rect.x}
-                        y={rect.y}
-                        width={rect.width}
-                        height={rect.height}
-                        rx={rect.rx}
-                        ry={rect.ry}
-                        fill="none"
-                        stroke="#fff"
-                        strokeMiterlimit="10"
-                      />
-                    ))}
-                  </g>
-                ))}
-              </svg>
-
-              {buttons.map((button) => {
-                const isSingleButtonTemplate = template.type === "single";
-                const skinPort = resolveSkinPort({
-                  programName: context.programName,
-                  panelName: context.panelName,
-                  buttonKey: button.fileName,
-                  placement: hubPlacement
-                });
-                if (skinPort) {
-                  // Skin dictates its own size (natural x user scale, baked
-                  // into the skin html). The template rect only positions it;
-                  // it is centered on the rect and never forced to fit.
-                  return (
-                    <div
-                      key={`${button.id}-hub-${skinPortRevision}`}
-                      className="script-group-popout__hub-slot"
-                      style={{
-                        position: "absolute",
-                        left: `${button.x + button.width / 2}px`,
-                        top: `${button.y + button.height / 2}px`,
-                        transform: "translate(-50%, -50%)"
-                      }}
-                    >
-                      <HostSkinButton
-                        label={
-                          skinPort.labelOverride !== undefined ? skinPort.labelOverride : button.label
-                        }
-                        importedSkin={skinPort.importedSkin}
-                        hostMode="neutral"
-                        // Hub skins do NOT wear the stock popout button class
-                        // (no position/overflow/background from that pool). The
-                        // hub lane (.host-skin-button--hub) owns their look.
-                        className="script-group-popout__button--hub"
-                        data-script-file-name={button.fileName}
-                        data-flow-tooltip={button.tooltip?.trim() || button.label}
-                        aria-label={button.label}
-                        onClick={() => {
-                          void handleButtonActivate(button.fileName);
-                        }}
-                        onPointerEnter={() => handleButtonHoverStart(button.fileName)}
-                        onPointerLeave={() => handleButtonHoverEnd(button.fileName)}
-                        onPointerCancel={() => handleButtonHoverEnd(button.fileName)}
-                      />
-                    </div>
-                  );
-                }
-                const stackedLabelWords = isSingleButtonTemplate
-                  ? null
-                  : splitTwoWordButtonLabel(button.label);
-                const isStackedLabel = stackedLabelWords !== null;
-                const buttonFontSize = isSingleButtonTemplate
-                  ? resolveSingleButtonFontSize(
-                      button.label,
-                      button.width,
-                      template.buttonTextSize
-                    )
-                  : template.buttonTextSize * (isStackedLabel ? 0.82 : 1);
-
-                return (
-                  <button
-                    key={button.id}
-                    type="button"
-                    className={`script-group-popout__button${
-                      isSingleButtonTemplate ? " script-group-popout__button--single" : ""
-                    }`}
-                    aria-label={button.label}
-                    data-flow-tooltip={button.tooltip?.trim() || button.label}
-                    data-script-file-name={button.fileName}
-                    style={{
-                      left: `${button.x}px`,
-                      top: `${button.y}px`,
-                      width: `${button.width}px`,
-                      height: `${button.height}px`,
-                      borderRadius: `${Math.min(button.rx, button.ry)}px`,
-                      fontSize: `${buttonFontSize}px`
-                    }}
-                    onPointerDown={(event) => {
-                      if (event.button !== 0) {
-                        return;
-                      }
-
-                      event.preventDefault();
-                      event.stopPropagation();
-                      void handleButtonActivate(button.fileName);
-                    }}
-                    onPointerEnter={() => {
-                      handleButtonHoverStart(button.fileName);
-                    }}
-                    onPointerLeave={() => {
-                      handleButtonHoverEnd(button.fileName);
-                    }}
-                    onPointerCancel={() => {
-                      handleButtonHoverEnd(button.fileName);
-                    }}
-                    onClick={(event) => {
-                      if (event.detail === 0) {
-                        void handleButtonActivate(button.fileName);
-                        return;
-                      }
-
-                      event.preventDefault();
-                      event.stopPropagation();
-                    }}
-                  >
-                    <span
-                      className={`script-group-popout__button-label${
-                        isStackedLabel ? " script-group-popout__button-label--stacked" : ""
-                      }${
-                        isSingleButtonTemplate ? " script-group-popout__button-label--single" : ""
-                      }`}
-                    >
-                      {isStackedLabel ? (
-                        <>
-                          <span>{stackedLabelWords[0]}</span>
-                          <span>{stackedLabelWords[1]}</span>
-                        </>
-                      ) : (
-                        button.label
-                      )}
-                    </span>
-                  </button>
-                );
-              })}
-            </section>
-          </div>
+            onHoverStart={handleButtonHoverStart}
+            onHoverEnd={handleButtonHoverEnd}
+          />
         </div>
         {scriptRunError ? (
           <section className="script-group-popout__script-error" role="alert">

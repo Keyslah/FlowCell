@@ -12,7 +12,7 @@ Repository guardrails
 - Protect context aggressively.
 - Cap unknown command output by bytes.
 - Validate based on risk.
-- When a FlowCell change requires a new build, automatically run that build before finishing the task.
+- When a FlowCell change requires a new build, automatically run that build before finishing the task. If a running FlowCell frontend process blocks or would stale the build, stop/restart it as needed and rebuild before final response; use `flowcellbackend/helpers/Rebuild-FlowCellFrontend.ps1` for the standard frontend stop/rebuild/relaunch path.
 - Final summaries must state changed files, validation run, skipped validation reasons, and remaining risks.
 
 Command-output rules

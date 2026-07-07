@@ -124,10 +124,17 @@ export interface ImportedSkin {
   labelMaxWidth?: number;
   labelMinScale?: number;
   labelScale?: number;
+  // false disables the two-word stacked-label overlay for this skin (labels
+  // stay on one line and rely on font shrinking alone). Default: enabled.
+  labelStack?: boolean;
   // Set only on Appearance-hub-authored runtime skins: the host runs a
   // click-triggered play latch (data-play) that stays up until the skin's
   // play animations finish. Never persisted into FlowCellState.
   hubPlayLatch?: boolean;
+  // Hub group/single-popout rule: "cell" stretches the skin's core to fill
+  // the popout's uniform template cell (text fits via shrink/stack) instead
+  // of rendering at the skin's natural size.
+  hubPopoutFit?: "cell";
 }
 
 export interface StyleGroup {

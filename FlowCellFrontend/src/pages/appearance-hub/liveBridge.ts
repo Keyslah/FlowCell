@@ -57,6 +57,36 @@ export const DEFAULT_HUB_TEXT_STYLE: HubTextStyle = {
   labelOverride: null
 };
 
+// Popout placement rules. "natural" renders the skin at its own size (the
+// default, current behavior); "cell" stretches the skin's core to fill the
+// popout's uniform template cell so every button in the group is identical —
+// the label then fits per-button via font shrinking and/or two-word stacking.
+export type HubPopoutSizing = "natural" | "cell";
+export type HubPopoutTextFit = "shrink" | "stack" | "shrink-stack";
+export type HubPopoutRules = {
+  sizing: HubPopoutSizing;
+  textFit: HubPopoutTextFit;
+};
+
+export const DEFAULT_HUB_POPOUT_RULES: HubPopoutRules = {
+  sizing: "natural",
+  textFit: "shrink-stack"
+};
+
+export function normalizeHubPopoutRules(candidate: unknown): HubPopoutRules {
+  if (!candidate || typeof candidate !== "object") {
+    return { ...DEFAULT_HUB_POPOUT_RULES };
+  }
+  const record = candidate as Partial<HubPopoutRules>;
+  return {
+    sizing: record.sizing === "cell" ? "cell" : "natural",
+    textFit:
+      record.textFit === "shrink" || record.textFit === "stack"
+        ? record.textFit
+        : "shrink-stack"
+  };
+}
+
 export type HubAssignment = {
   slots: SlotContentMap;
   text: HubTextStyle;
@@ -68,6 +98,9 @@ export type HubAssignment = {
   // natural × scale; when null the skin renders intrinsic and unplaced hosts
   // fall back to their stock behavior for layout.
   natural: { width: number; height: number } | null;
+  // How the skin behaves inside popout placements (only consumed by
+  // popped-single/popped-group addresses; inert elsewhere).
+  popout: HubPopoutRules;
   updatedAt: string;
 };
 
@@ -138,7 +171,7 @@ export function normalizeHubTextStyle(candidate: Partial<HubTextStyle> | undefin
   };
 }
 
-function normalizeAssignment(candidate: unknown): HubAssignment | null {
+export function normalizeHubAssignment(candidate: unknown): HubAssignment | null {
   if (!candidate || typeof candidate !== "object") {
     return null;
   }
@@ -161,6 +194,7 @@ function normalizeAssignment(candidate: unknown): HubAssignment | null {
     text: normalizeHubTextStyle(record.text),
     scale: normalizeHubScale(record.scale),
     natural: normalizeHubNatural(record.natural),
+    popout: normalizeHubPopoutRules(record.popout),
     updatedAt: typeof record.updatedAt === "string" ? record.updatedAt : new Date().toISOString()
   };
 }
@@ -180,7 +214,7 @@ export function readHubAssignments(): HubAssignmentMap {
     }
     const assignments: HubAssignmentMap = {};
     for (const [key, value] of Object.entries(parsed)) {
-      const assignment = normalizeAssignment(value);
+      const assignment = normalizeHubAssignment(value);
       if (assignment) {
         assignments[key] = assignment;
       }
@@ -313,6 +347,15 @@ function buildLiveTextCss(text: HubTextStyle): string[] {
   return rules;
 }
 
+// Cell mode: stretch the imported structure so the interactive core fills the
+// host box (the popout's uniform template cell). Author inline display wins
+// where set; width/height land either way because the paste contract forbids
+// fixed core widths.
+const POPOUT_CELL_FILL_CSS = [
+  ".button-skin [data-flow-imported-html] > :first-child { width: 100%; height: 100%; box-sizing: border-box; }",
+  ".button-skin [data-flow-interactive] { width: 100%; height: 100%; box-sizing: border-box; min-width: 0; min-height: 0; }"
+].join("\n");
+
 export function compileHubAssignmentToImportedSkin(
   addressKey: string,
   assignment: HubAssignment
@@ -321,6 +364,13 @@ export function compileHubAssignmentToImportedSkin(
   if (validateStructure(structure).length > 0) {
     return null;
   }
+
+  // The address key ends in the placement. Script-group popout windows use a
+  // fixed SVG/template cell grid; letting a hub skin render at natural size
+  // there can collide with adjacent cells and expose pasted demo-page backing.
+  const placement = addressKey.split("::").pop() ?? "";
+  const cellFit =
+    placement === "popped-single" || placement === "popped-group";
 
   const scale = normalizeHubScale(assignment.scale);
   // Render the imported source LITERALLY. The host applies the uniform user
@@ -353,6 +403,9 @@ export function compileHubAssignmentToImportedSkin(
     }
   }
   cssParts.push(...buildLiveTextCss(assignment.text));
+  if (cellFit) {
+    cssParts.push(POPOUT_CELL_FILL_CSS);
+  }
 
   const footprint =
     assignment.natural !== null
@@ -361,6 +414,26 @@ export function compileHubAssignmentToImportedSkin(
           height: Math.max(1, Math.round(assignment.natural.height * scale))
         }
       : null;
+
+  if (cellFit) {
+    return {
+      id: `hub::${addressKey}`,
+      name: `Appearance hub skin (${addressKey})`,
+      html,
+      css: cssParts.join("\n"),
+      // fill-stretch: the host box (the popout hands over the uniform template
+      // cell as the footprint) is the size; the fill CSS above stretches the
+      // core into it and the label fits itself per button.
+      sizingMode: "fill-stretch",
+      allowOverflow: true,
+      hubPlayLatch: true,
+      hubPopoutFit: "cell",
+      // textFit: "shrink" scales the font down (min scale 0.58), "stack"
+      // keeps the font and stacks two-word labels, "shrink-stack" does both.
+      labelMinScale: assignment.popout.textFit === "stack" ? 1 : 0.58,
+      ...(assignment.popout.textFit === "shrink" ? { labelStack: false } : {})
+    };
+  }
 
   return {
     id: `hub::${addressKey}`,
