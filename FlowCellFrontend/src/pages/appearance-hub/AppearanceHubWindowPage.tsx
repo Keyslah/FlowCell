@@ -20,6 +20,10 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import mainBackground from "../../assets/backgrounds/main-background.jpeg";
+import {
+  FanOutButtonCluster,
+  type FanClusterEntry
+} from "../../components/FanOutButtonCluster";
 import { HostSkinButton } from "../../components/HostSkinButton";
 import {
   listPanelFolders,
@@ -27,6 +31,7 @@ import {
   listProgramFolders,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
+import { readPanelFanOptions } from "../../lib/panelFanSettings";
 import { DEFAULT_FLOW_IMPORTED_SKIN, DEFAULT_POPOUT_IMPORTED_SKIN } from "../../lib/theme";
 import { openAppearanceWindow } from "../../lib/windowing";
 import {
@@ -42,6 +47,7 @@ import {
   HUB_PANEL_BUTTON_KEY,
   HUB_PLACEMENTS,
   buildHubAddressKey,
+  compileHubAssignmentToImportedSkin,
   normalizeHubScale,
   normalizeHubTextStyle,
   readHubAssignments,
@@ -52,6 +58,7 @@ import {
   type HubPlacement,
   type HubTextStyle
 } from "./liveBridge";
+import type { FlowCellButton, ImportedSkin, PanelFanOptions, StyleGroup } from "../../types";
 import {
   KEYFRAMES_SLOT_ID,
   STATE_SLOT_HINTS,
@@ -173,10 +180,8 @@ function writeUiPrefs(prefs: HubUiPrefs): void {
   }
 }
 
-function placementsForButton(buttonKey: string): readonly HubPlacement[] {
-  return buttonKey === HUB_PANEL_BUTTON_KEY
-    ? (["main", "fan"] as const)
-    : (["main", "popped-single", "popped-group", "fan"] as const);
+function placementsForButton(_buttonKey: string): readonly HubPlacement[] {
+  return ["main", "popped-single", "popped-group", "fan"] as const;
 }
 
 type InstanceMetrics = {
@@ -417,8 +422,311 @@ function SkinInstance({
   );
 }
 
+const PANEL_FAN_OWNER_BUTTON_ID = "hub-preview-panel-fan-owner";
+const PANEL_FAN_OWNER_TOOLTIP = "Select the panel fan owner for editing.";
+
+// Marks the button as imported-skin driven so HostSkinButton renders our
+// compiled skin (skinId defaults to the stock "glass-card" otherwise).
+const IMPORTED_SKIN_STYLE_GROUP: StyleGroup = {
+  id: "hub-live-preview",
+  index: 0,
+  name: "Hub live preview",
+  skinId: "imported-skin",
+  accent: "#9cf667"
+};
+
+function isToolsetRecord(record: PanelScriptFileRecord): boolean {
+  return Array.isArray(record.children) && record.children.length > 0;
+}
+
+function panelScriptLabel(record: PanelScriptFileRecord): string {
+  return record.label?.trim() || record.fileName.replace(/\.[^.]+$/, "");
+}
+
+function stockSkinForPlacement(placement: HubPlacement): ImportedSkin {
+  return placement === "main" ? DEFAULT_FLOW_IMPORTED_SKIN : DEFAULT_POPOUT_IMPORTED_SKIN;
+}
+
+function fixedFootprintForSkin(skin: ImportedSkin): { width: number; height: number } | undefined {
+  return typeof skin.fixedWidth === "number" && typeof skin.fixedHeight === "number"
+    ? { width: skin.fixedWidth, height: skin.fixedHeight }
+    : undefined;
+}
+
+function buildPreviewPanelFanOwnerButton(label: string): FlowCellButton {
+  return {
+    Id: PANEL_FAN_OWNER_BUTTON_ID,
+    Kind: "panel_fan_owner",
+    command_id: "flowcell.run_builtin",
+    Label: label,
+    Target: "panel_fan_owner",
+    Tooltip: PANEL_FAN_OWNER_TOOLTIP
+  };
+}
+
+function buildPreviewPanelScriptButton(
+  record: PanelScriptFileRecord,
+  label: string
+): FlowCellButton {
+  return {
+    Id: record.fileName,
+    Kind: "panel_script",
+    command_id: "flowcell.run_script",
+    Label: label,
+    Target: record.fileName,
+    Tooltip: record.tooltip?.trim() || label,
+    ExecutionTarget: record.executionTarget
+  };
+}
+
+function PreviewAddressButton({
+  label,
+  skin,
+  selected,
+  onSelect
+}: {
+  label: string;
+  skin: ImportedSkin;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <HostSkinButton
+      className="ahub-live__button"
+      label={label}
+      styleGroup={IMPORTED_SKIN_STYLE_GROUP}
+      importedSkin={skin}
+      hostMode="neutral"
+      footprintOverride={fixedFootprintForSkin(skin)}
+      selected={selected}
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onSelect();
+      }}
+    />
+  );
+}
+
+function LiveAddressPlacementPreview({
+  surface,
+  assignments,
+  currentButtonKey,
+  currentPlacement,
+  liveSkin,
+  panelLabel,
+  previewLabel,
+  programName,
+  panelName,
+  scriptRecords,
+  fanOptions,
+  onSelectAddress
+}: {
+  surface: HubPlacement;
+  assignments: HubAssignmentMap;
+  currentButtonKey: string;
+  currentPlacement: HubPlacement;
+  liveSkin: ImportedSkin | null;
+  panelLabel: string;
+  previewLabel: string;
+  programName: string;
+  panelName: string;
+  scriptRecords: PanelScriptFileRecord[];
+  fanOptions: PanelFanOptions;
+  onSelectAddress: (buttonKey: string, placement: HubPlacement) => void;
+}) {
+  const [fanExpanded, setFanExpanded] = useState(false);
+  const [fanChildrenVisible, setFanChildrenVisible] = useState(false);
+  const [fanPinnedOpen, setFanPinnedOpen] = useState(false);
+  const regularRecords = useMemo(
+    () => scriptRecords.filter((record) => !isToolsetRecord(record)),
+    [scriptRecords]
+  );
+  const selectedRecord =
+    regularRecords.find((record) => record.fileName === currentButtonKey) ?? null;
+  const orderedRecords = selectedRecord
+    ? [
+        selectedRecord,
+        ...regularRecords.filter((record) => record.fileName !== selectedRecord.fileName)
+      ]
+    : regularRecords;
+
+  useEffect(() => {
+    setFanExpanded(false);
+    setFanChildrenVisible(false);
+    setFanPinnedOpen(false);
+  }, [panelName, programName, surface]);
+
+  const isSelectedAddress = (buttonKey: string, placement: HubPlacement): boolean =>
+    currentButtonKey === buttonKey && currentPlacement === placement;
+
+  const addressKeyFor = (buttonKey: string, placement: HubPlacement): string | null =>
+    programName && panelName ? buildHubAddressKey(programName, panelName, buttonKey, placement) : null;
+
+  const resolveAddressSkin = (
+    buttonKey: string,
+    placement: HubPlacement
+  ): ImportedSkin | undefined => {
+    if (isSelectedAddress(buttonKey, placement)) {
+      return liveSkin ?? undefined;
+    }
+    const nextAddressKey = addressKeyFor(buttonKey, placement);
+    const nextAssignment = nextAddressKey ? assignments[nextAddressKey] : null;
+    if (!nextAddressKey || !nextAssignment) {
+      return undefined;
+    }
+    return compileHubAssignmentToImportedSkin(nextAddressKey, nextAssignment) ?? undefined;
+  };
+
+  const resolveRequiredAddressSkin = (
+    buttonKey: string,
+    placement: HubPlacement
+  ): ImportedSkin => resolveAddressSkin(buttonKey, placement) ?? stockSkinForPlacement(placement);
+
+  const resolveAddressLabel = (
+    buttonKey: string,
+    placement: HubPlacement,
+    fallback: string
+  ): string => {
+    if (isSelectedAddress(buttonKey, placement)) {
+      return previewLabel;
+    }
+    const nextAddressKey = addressKeyFor(buttonKey, placement);
+    const labelOverride = nextAddressKey
+      ? assignments[nextAddressKey]?.text.labelOverride
+      : undefined;
+    return labelOverride !== null && labelOverride !== undefined ? labelOverride : fallback;
+  };
+
+  const renderAddressButton = (
+    buttonKey: string,
+    placement: HubPlacement,
+    fallbackLabel: string
+  ) => (
+    <PreviewAddressButton
+      key={`${placement}:${buttonKey}`}
+      label={resolveAddressLabel(buttonKey, placement, fallbackLabel)}
+      skin={resolveRequiredAddressSkin(buttonKey, placement)}
+      selected={isSelectedAddress(buttonKey, placement)}
+      onSelect={() => onSelectAddress(buttonKey, placement)}
+    />
+  );
+
+  if (surface === "fan") {
+    const ownerLabel = resolveAddressLabel(HUB_PANEL_BUTTON_KEY, "fan", panelLabel);
+    const childEntries: FanClusterEntry[] = regularRecords.map((record) => {
+      const childLabel = resolveAddressLabel(record.fileName, "fan", panelScriptLabel(record));
+      return {
+        programId: 0,
+        panelId: panelName,
+        panelName,
+        button: buildPreviewPanelScriptButton(record, childLabel),
+        childSlotId: record.fileName,
+        events: record.events
+      };
+    });
+    const selectedButtonId =
+      currentPlacement === "fan"
+        ? currentButtonKey === HUB_PANEL_BUTTON_KEY
+          ? PANEL_FAN_OWNER_BUTTON_ID
+          : currentButtonKey
+        : undefined;
+    const requestFanOpen = () => {
+      setFanExpanded(true);
+      setFanChildrenVisible(true);
+    };
+    const requestFanClose = () => {
+      setFanExpanded(false);
+      setFanChildrenVisible(false);
+      setFanPinnedOpen(false);
+    };
+
+    return (
+      <div className="ahub-live ahub-live--fan">
+        <FanOutButtonCluster
+          ownerButton={buildPreviewPanelFanOwnerButton(ownerLabel)}
+          layout={fanOptions.layout}
+          placement={fanOptions.placement}
+          variant="panel-fan"
+          pinnedOpen={fanPinnedOpen}
+          geometryExpanded={fanExpanded}
+          windowExpanded={fanExpanded}
+          childrenVisible={fanChildrenVisible}
+          onExpandRequest={requestFanOpen}
+          onCollapseRequest={requestFanClose}
+          childButtons={childEntries}
+          ownerStyleGroupOverride={IMPORTED_SKIN_STYLE_GROUP}
+          ownerImportedSkinOverride={DEFAULT_POPOUT_IMPORTED_SKIN}
+          styleGroupOverride={IMPORTED_SKIN_STYLE_GROUP}
+          importedSkinOverride={DEFAULT_POPOUT_IMPORTED_SKIN}
+          hubSkinResolver={(button) => {
+            const buttonKey =
+              button.Kind === "panel_fan_owner"
+                ? HUB_PANEL_BUTTON_KEY
+                : (button.Target || button.Id || "").trim();
+            return buttonKey ? resolveAddressSkin(buttonKey, "fan") : undefined;
+          }}
+          selectedButtonId={selectedButtonId}
+          onOwnerClick={() => {
+            onSelectAddress(HUB_PANEL_BUTTON_KEY, "fan");
+            if (fanPinnedOpen) {
+              requestFanClose();
+              return;
+            }
+            setFanPinnedOpen(true);
+            requestFanOpen();
+          }}
+          onChildClick={(entry) => {
+            onSelectAddress(entry.childSlotId, "fan");
+            setFanPinnedOpen(true);
+            requestFanOpen();
+          }}
+        />
+      </div>
+    );
+  }
+
+  if (surface === "popped-single") {
+    const record = selectedRecord ?? regularRecords[0] ?? null;
+    return (
+      <div className="ahub-live ahub-live--single">
+        {record
+          ? renderAddressButton(record.fileName, "popped-single", panelScriptLabel(record))
+          : renderAddressButton(HUB_PANEL_BUTTON_KEY, "main", panelLabel)}
+      </div>
+    );
+  }
+
+  if (surface === "popped-group") {
+    return (
+      <div className="ahub-live ahub-live--group">
+        {orderedRecords.length > 0
+          ? orderedRecords.map((record) =>
+              renderAddressButton(record.fileName, "popped-group", panelScriptLabel(record))
+            )
+          : renderAddressButton(HUB_PANEL_BUTTON_KEY, "main", panelLabel)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="ahub-live ahub-live--single">
+      {currentButtonKey === HUB_PANEL_BUTTON_KEY
+        ? renderAddressButton(HUB_PANEL_BUTTON_KEY, "main", panelLabel)
+        : renderAddressButton(
+            currentButtonKey,
+            "main",
+            selectedRecord?.label?.trim() ||
+              currentButtonKey.replace(/\.[^.]+$/, "") ||
+              "Button"
+          )}
+    </div>
+  );
+}
+
 export default function AppearanceHubWindowPage() {
   const [prefs, setPrefs] = useState<HubUiPrefs>(() => readUiPrefs());
+  const [previewSurface, setPreviewSurface] = useState<HubPlacement>("main");
   const [assignments, setAssignments] = useState<HubAssignmentMap>(() => readHubAssignments());
   const [programs, setPrograms] = useState<string[]>([]);
   const [panels, setPanels] = useState<string[]>([]);
@@ -618,6 +926,23 @@ export default function AppearanceHubWindowPage() {
       ? prefs.panelName || "Panel"
       : selectedRecord?.label?.trim() || prefs.buttonKey.replace(/\.[^.]+$/, "");
   const previewLabel = draftText.labelOverride ?? realButtonLabel;
+  const panelLabel = prefs.panelName || "Panel";
+  const fanPreviewOptions = useMemo<PanelFanOptions>(
+    () =>
+      prefs.programName && prefs.panelName
+        ? readPanelFanOptions(prefs.programName, prefs.panelName)
+        : { layout: "grid", placement: "bottom-left" },
+    [prefs.programName, prefs.panelName]
+  );
+
+  const selectPreviewAddress = useCallback((buttonKey: string, nextPlacement: HubPlacement) => {
+    setPrefs((current) => ({
+      ...current,
+      buttonKey,
+      placement: nextPlacement
+    }));
+    setPreviewSurface(nextPlacement);
+  }, []);
 
   const updateAssignmentSlots = (slotId: SlotId, value: string) => {
     if (!addressKey) {
@@ -883,6 +1208,39 @@ export default function AppearanceHubWindowPage() {
   );
   const hasSkin = Boolean(assignment) && compiled.structureValid;
 
+  // Compile the current draft into the same ImportedSkin the live surfaces
+  // consume, so the placement preview renders through the real pipeline. The
+  // natural core size comes from the bench measurement (below) so footprints
+  // match; before the first measurement it falls back to the stored natural.
+  const liveSkin = useMemo<ImportedSkin | null>(() => {
+    if (!addressKey || !hasSkin) {
+      return null;
+    }
+    const natural = previewMetrics
+      ? {
+          width: Math.round(previewMetrics.coreWidth),
+          height: Math.round(previewMetrics.coreHeight)
+        }
+      : (assignment?.natural ?? null);
+    return compileHubAssignmentToImportedSkin(addressKey, {
+      slots,
+      text: normalizeHubTextStyle(draftText),
+      scale: normalizeHubScale(assignment?.scale ?? 1),
+      natural,
+      updatedAt: assignment?.updatedAt ?? new Date().toISOString()
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    addressKey,
+    hasSkin,
+    slots,
+    draftText,
+    assignment?.scale,
+    assignment?.updatedAt,
+    assignment?.natural,
+    previewMetrics
+  ]);
+
   const handlePreviewMeasure = useCallback((metrics: InstanceMetrics | null) => {
     setPreviewMetrics((current) => (metricsEqual(current, metrics) ? current : metrics));
   }, []);
@@ -1124,9 +1482,11 @@ export default function AppearanceHubWindowPage() {
             <select
               className="ahub-select"
               value={placement}
-              onChange={(event) =>
-                setPrefs((current) => ({ ...current, placement: event.target.value as HubPlacement }))
-              }
+              onChange={(event) => {
+                const nextPlacement = event.target.value as HubPlacement;
+                setPrefs((current) => ({ ...current, placement: nextPlacement }));
+                setPreviewSurface(nextPlacement);
+              }}
             >
               {availablePlacements.map((entry) => {
                 const meta = HUB_PLACEMENTS.find((candidate) => candidate.id === entry);
@@ -1193,7 +1553,7 @@ export default function AppearanceHubWindowPage() {
           <section className="ahub-sec">
             <div className="ahub-sec__head">
               <h2 className="ahub-sec__title">Text</h2>
-              <span className="ahub-sec__hint">applies on Apply, not while typing</span>
+              <span className="ahub-sec__hint">preview updates live; Apply stores it</span>
             </div>
             <div className="ahub-row">
               <span className="ahub-label">Font</span>
@@ -1369,14 +1729,33 @@ export default function AppearanceHubWindowPage() {
             style={stageStyle}
           >
             <style>{compiled.css}</style>
-            {hasSkin ? (
+            {Boolean(previewSurface) ? (
               <div className="ahub-stage__center">
-                <SkinInstance
-                  scopeClass={scopeClass}
-                  html={previewHtml}
-                  pinned={prefs.pinnedStates}
-                  onMeasure={handlePreviewMeasure}
+                {!hasSkin ? <span className="ahub-stage__badge">current look · no bench code</span> : null}
+                <LiveAddressPlacementPreview
+                  surface={previewSurface}
+                  assignments={assignments}
+                  currentButtonKey={prefs.buttonKey}
+                  currentPlacement={placement}
+                  liveSkin={liveSkin}
+                  panelLabel={panelLabel}
+                  previewLabel={previewLabel}
+                  programName={prefs.programName}
+                  panelName={prefs.panelName}
+                  scriptRecords={scriptRecords}
+                  fanOptions={fanPreviewOptions}
+                  onSelectAddress={selectPreviewAddress}
                 />
+                {/* Hidden measuring instrument: the bench render still measures
+                    the skin's natural core size (feeds footprints above). */}
+                <div className="ahub-measure" aria-hidden="true">
+                  <SkinInstance
+                    scopeClass={scopeClass}
+                    html={previewHtml}
+                    pinned={prefs.pinnedStates}
+                    onMeasure={handlePreviewMeasure}
+                  />
+                </div>
                 <div className="ahub-rowhost__stats">
                   core{" "}
                   <b>
@@ -1400,6 +1779,20 @@ export default function AppearanceHubWindowPage() {
                 ) : null}
               </div>
             )}
+          </div>
+
+          <div className="ahub-toolrow">
+            <span className="ahub-label">Preview as</span>
+            {HUB_PLACEMENTS.map((entry) => (
+              <button
+                key={entry.id}
+                type="button"
+                className={`ahub-chip${previewSurface === entry.id ? " ahub-chip--on" : ""}`}
+                onClick={() => setPreviewSurface(entry.id)}
+              >
+                {entry.label}
+              </button>
+            ))}
           </div>
 
           <div className="ahub-toolrow">

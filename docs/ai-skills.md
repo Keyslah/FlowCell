@@ -1371,10 +1371,11 @@ Only `structure` is required. Omit sections the skin does not need. Section name
 #### Keyframes Rules (animation, gated per state)
 
 - The `keyframes` section may contain ONLY `@keyframes` (or `@-webkit-keyframes`) blocks — any other rule gets the section rejected. Prefix names with something skin-specific (e.g. `lsb-spin`) to avoid clashes.
-- Animations must never run unconditionally, and must NEVER be wired through CSS variables (`animation: var(--x, none)` is forbidden — Chromium restarts var()-referenced animations whenever any state attribute flips, which shows as glitchy multi-starts). The pattern:
+- Animations must NEVER be wired through CSS variables (`animation: var(--x, none)` is forbidden — Chromium restarts var()-referenced animations whenever any state attribute flips, which shows as glitchy multi-starts). Always-on ambient motion IS allowed — put the animation in the `base` slot (its selector is ungated, so the rule runs for the whole life of the button). The pattern:
   1. In structure, tag each animated child with `data-anim="<token>"` (lowercase letters/digits/hyphens) and give it NO inline `animation`.
-  2. In the state slot that should trigger the motion, write `--anim-<token>: <animation shorthand>;`. The hub compiles this into a real rule: `[state] [data-anim="<token>"] { animation: <shorthand>; }`. Two choices of state:
-     - `hover` slot: loops while the pointer stays over the button, cancels instantly on leave (use `infinite`). Good for ambient motion.
+  2. In the state slot that should carry the motion, write `--anim-<token>: <animation shorthand>;`. The hub compiles this into a real rule: `[state] [data-anim="<token>"] { animation: <shorthand>; }`. Choices of state:
+     - `base` slot: ungated, so the motion runs unconditionally for the button's whole life. Use for always-on ambient motion (use `infinite`).
+     - `hover` slot: loops while the pointer stays over the button, cancels instantly on leave (use `infinite`). Good for hover-gated ambient motion.
      - `play` slot: ONE-SHOT. Use iteration count `1` (e.g. `--anim-spin: lsb-spin 2s ease-in-out 1;`). The host sets `data-play` on pointer-down (click) and holds it until every started animation fires `animationend` — releasing or leaving fast cannot cut it short or restart it, and it cannot re-trigger until it finishes. This is the default choice for "do the animation once per click".
   3. When the state ends, the rule stops matching and the element snaps back to its resting inline pose.
 - Never use `infinite` in the `play` slot — an animation that never ends holds the latch until a ~15s safety cap.

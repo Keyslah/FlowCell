@@ -178,7 +178,6 @@ export function ButtonHost({
       aria-label={button.label || button.actionId}
       aria-description={button.tooltip?.trim() || undefined}
       aria-pressed={isSelectablePanelScript ? (button.isSelected ?? false) : undefined}
-      title={hoverDescription || undefined}
       disabled={button.disabled ?? false}
       data-button-id={button.id}
       data-action-id={button.actionId}

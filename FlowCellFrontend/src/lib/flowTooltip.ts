@@ -13,6 +13,7 @@ const SCREEN_MARGIN = 8;
 const LOCAL_TOOLTIP_ID = "flowcell-local-tooltip";
 const TOOLTIP_SHOW_DELAY_MS = 2000;
 const TOOLTIP_WINDOW_CREATE_TIMEOUT_MS = 800;
+const TRANSPARENT_TOOLTIP_BACKGROUND: [number, number, number, number] = [0, 0, 0, 0];
 
 export type FlowTooltipPayload = {
   text: string;
@@ -74,7 +75,7 @@ async function applyTooltipWindowChrome(window: WebviewWindow): Promise<void> {
     setBackgroundColor?: (color: [number, number, number, number]) => Promise<void>;
   };
   if (typeof backgroundTarget.setBackgroundColor === "function") {
-    await backgroundTarget.setBackgroundColor([0, 0, 0, 0]).catch(() => {});
+    await backgroundTarget.setBackgroundColor(TRANSPARENT_TOOLTIP_BACKGROUND).catch(() => {});
   }
 }
 
@@ -101,6 +102,7 @@ async function getTooltipWindow(initialText: string): Promise<WebviewWindow> {
       resizable: false,
       decorations: false,
       transparent: true,
+      backgroundColor: TRANSPARENT_TOOLTIP_BACKGROUND,
       shadow: false,
       visible: false,
       focus: false,

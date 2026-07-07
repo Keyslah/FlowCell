@@ -106,6 +106,7 @@ interface FanOutButtonClusterProps {
   // Appearance-hub resolver: when it returns a skin for a button, that skin
   // wins over style groups and overrides (explicit user assignment).
   hubSkinResolver?: (button: FlowCellButton) => ImportedSkin | undefined;
+  selectedButtonId?: string;
   onOwnerClick: () => void;
   onChildClick: (entry: FanClusterEntry) => void;
   onChildHoverStart?: (entry: FanClusterEntry) => void;
@@ -122,6 +123,7 @@ function buildFanButtonRecord(args: {
   button: FlowCellButton;
   width: number;
   height: number;
+  selected?: boolean;
 }): ButtonRecord {
   const normalizedWidth = Math.max(1, Math.round(args.width));
   const normalizedHeight = Math.max(1, Math.round(args.height));
@@ -137,7 +139,8 @@ function buildFanButtonRecord(args: {
     label: args.button.Label,
     tooltip: args.button.Tooltip,
     actionId: args.button.command_id || args.button.Kind || "fanout-button",
-    skinId: "imported-skin"
+    skinId: "imported-skin",
+    isSelected: args.selected
   };
 }
 
@@ -913,6 +916,7 @@ export function FanOutButtonCluster({
   importedSkinOverride,
   resolveChildImportedSkinOverride,
   hubSkinResolver,
+  selectedButtonId,
   onOwnerClick,
   onChildClick,
   onChildHoverStart,
@@ -1296,7 +1300,8 @@ export function FanOutButtonCluster({
     height:
       variant === "panel-fan"
         ? resolvePanelFanButtonHeight(activeLayout?.ownerHeight, ownerFootprintOverride.height)
-        : activeLayout?.ownerHeight ?? ownerFootprintOverride.height
+        : activeLayout?.ownerHeight ?? ownerFootprintOverride.height,
+    selected: selectedButtonId === ownerButton.Id
   });
 
   return (
@@ -1393,7 +1398,10 @@ export function FanOutButtonCluster({
                             childLayout?.height,
                             childFootprintOverride.height
                           )
-                        : childLayout?.height ?? childFootprintOverride.height
+                        : childLayout?.height ?? childFootprintOverride.height,
+                    selected:
+                      selectedButtonId === entry.entry.childSlotId ||
+                      selectedButtonId === entry.entry.button.Id
                   });
                   return (
                     <ButtonHost

@@ -1,5 +1,5 @@
 FlowCell Program Summary
-Last updated: 2026-07-05
+Last updated: 2026-07-07
 
 Purpose
 -------
@@ -49,6 +49,10 @@ Current frontend state
 - Blender Boolean Run now applies one Boolean modifier from the active mesh target to a single operand object. When multiple mesh cutters are selected, FlowCell builds a temporary combined cutter object, runs the operation once, then removes the temporary object while leaving the original cutters intact; HC still hides the original cutters after success. Its `S` backup refreshes the shared snapshot backend before running, then snapshots the active target with the same any-collection/root-creation behavior as the Collections Snapshot button. Successful Boolean toolbox button clicks update state silently; only failures surface in the toolbox window. Blender should reload the FlowCell add-on or restart after this Boolean action update.
 
 - Appearance Hub text overrides now treat an empty label as an intentional no-text button while `Use name` restores the real button label; live main, script-group popout, and panel-fan surfaces all honor those placement-specific label overrides. Hub-authored popped buttons render without the old stock popout background/blur/shadow wrapper, and hub-authored panel-fan owner/child buttons bypass the default popout imported skin entirely so their fanout render path stays transparent. Panel fans reserve transparent expanded-window padding for hub play animations while deferring collapse until the child skin's play latch completes, and the panel-fan WebView2 surface explicitly has the transparent background-color permission/config so the expanded transparent reserve does not show as a black rectangle.
+
+- Button hosts no longer set native HTML `title` attributes, so WebView2 cannot draw its own delayed white tooltip rectangle over transparent panel fans. FlowCell's custom tooltip window still uses `data-flow-tooltip`, but now requests a transparent WebView background at creation as well as after creation. This is host/window behavior only: imported skin markup stays literal, and hub fan hitboxes remain the skin-owned `data-core` element.
+
+- Appearance Hub's right preview is an interactive address picker. The Placement selector exposes all four address surfaces (`main`, `popped-single`, `popped-group`, `fan`) for panel buttons and script buttons. The preview can render main, single popped, group popped, and fan surfaces from real panel button records; clicking a preview button selects that exact program/panel/button/placement address for the paste/code/text editors without running the button action. Fan preview reuses `FanOutButtonCluster` locally, opens owner/children like the real panel fan, maps the owner to `__panel__/fan`, maps children to their script filename `/fan` addresses, and keeps selected preview buttons highlighted while draft text/code updates the selected preview skin live.
 
 - Blender's `Refresh FlowCell` Item-tab add-on resolves the FlowCell workspace from either the repository root (`...\flowcell`) or the backend folder (`...\flowcell\flowcellbackend`) so an env var or installed path that points at the renamed backend no longer fails workspace-root detection. After updating the installed Blender add-on copy, reload that add-on or restart Blender before pressing Refresh FlowCell again.
 
