@@ -293,13 +293,17 @@ export type CompiledSkin = {
 // the data-core element; custom properties land on the instance wrapper so
 // they cascade into decorative children. An optional text-bench font size is
 // appended last so it wins over the base slot at equal specificity.
+// `scopePrefix` is the required ancestor class: the hub bench uses its stage,
+// the popout skin lane passes its own root so the same compiled contract
+// (state data-attributes on the instance wrapper) renders identically there.
 export function compileSkin(
   skinId: string,
   slots: SlotContentMap,
   fontSizePx: number | null,
-  fontFamily?: string | null
+  fontFamily?: string | null,
+  scopePrefix: string = ".ahub-stage"
 ): CompiledSkin {
-  const scope = `.ahub-stage .${buildScopeClassName(skinId)}`;
+  const scope = `${scopePrefix} .${buildScopeClassName(skinId)}`;
   const slotErrors: Partial<Record<SlotId, string[]>> = {};
   const cssParts: string[] = [];
 

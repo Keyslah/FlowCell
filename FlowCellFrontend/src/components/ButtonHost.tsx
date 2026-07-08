@@ -25,6 +25,7 @@ type ButtonHostProps = {
   importedSkinOverride?: ImportedSkin;
   styleGroupOverride?: StyleGroup;
   skinProfileHighlight?: boolean;
+  surfaceClassName?: string;
   // When set, ButtonHost asks the SkinPort for a hub skin at this address; a
   // resolved skin replaces the stock look (and its measured footprint sizes
   // the button). Absent = stock, always.
@@ -56,6 +57,7 @@ export function ButtonHost({
   importedSkinOverride,
   styleGroupOverride,
   skinProfileHighlight = false,
+  surfaceClassName,
   skinPortAddress,
   onHubPlayChange
 }: ButtonHostProps) {
@@ -133,7 +135,8 @@ export function ButtonHost({
     "button-host",
     isChromeAction ? "chrome-action" : "",
     button.railId ? "rail-action" : "",
-    skinProfileHighlight ? "button-host--skin-profile-highlight" : ""
+    skinProfileHighlight ? "button-host--skin-profile-highlight" : "",
+    surfaceClassName ?? ""
   ]
     .filter(Boolean)
     .join(" ");

@@ -383,7 +383,6 @@ type ImportedSkinBridgeMountOptions = {
   compactMaxInlineSize?: string;
   minFontScale?: number;
   labelScale?: number;
-  twoWordStack?: boolean;
 };
 
 type ImportedSkinBridgeApi = {
@@ -437,6 +436,80 @@ function resolveImportedSkinElement(args: {
     (svgNode.firstElementChild as HTMLElement | null) ??
     null
   );
+}
+
+const HUB_NESTED_BUTTON_CORE_SELECTOR = [
+  ".button",
+  "button",
+  "[role='button']",
+  ".glass-hover-button",
+  ".black-tint-pill",
+  ".imported-pill",
+  ".glass-pill"
+].join(",");
+
+function findHubNestedButtonCore(element: HTMLElement | null): HTMLElement | null {
+  if (!element) {
+    return null;
+  }
+
+  const candidates = Array.from(
+    element.querySelectorAll(HUB_NESTED_BUTTON_CORE_SELECTOR)
+  ).filter((node): node is HTMLElement => node instanceof HTMLElement);
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const labelNode = element.querySelector("[data-flow-label-node]");
+  if (labelNode instanceof HTMLElement) {
+    const candidateWithLabel = candidates.find((candidate) =>
+      candidate.contains(labelNode)
+    );
+    if (candidateWithLabel) {
+      return candidateWithLabel;
+    }
+  }
+
+  return candidates[0] ?? null;
+}
+
+function markHubGeneratedCoreWrapper(element: HTMLElement) {
+  element.setAttribute("data-flow-core-wrapper", "true");
+}
+
+function retargetHubGeneratedCoreElements(args: {
+  hostSurfaceIncludes: (token: string) => boolean;
+  interactiveElement: HTMLElement | null;
+  measureElement: HTMLElement | null;
+}): {
+  interactiveElement: HTMLElement | null;
+  measureElement: HTMLElement | null;
+} {
+  const { hostSurfaceIncludes, interactiveElement, measureElement } = args;
+  if (!hostSurfaceIncludes("host-skin-button--hub")) {
+    return { interactiveElement, measureElement };
+  }
+
+  const interactiveNestedCore = findHubNestedButtonCore(interactiveElement);
+  const measureNestedCore = findHubNestedButtonCore(measureElement);
+  const nextInteractiveElement =
+    interactiveNestedCore ?? measureNestedCore ?? interactiveElement;
+  const nextMeasureElement =
+    measureNestedCore ?? interactiveNestedCore ?? measureElement;
+
+  if (interactiveElement && interactiveElement !== nextInteractiveElement) {
+    interactiveElement.removeAttribute("data-flow-interactive");
+    markHubGeneratedCoreWrapper(interactiveElement);
+  }
+  if (measureElement && measureElement !== nextMeasureElement) {
+    measureElement.removeAttribute("data-flow-measure");
+    markHubGeneratedCoreWrapper(measureElement);
+  }
+
+  return {
+    interactiveElement: nextInteractiveElement,
+    measureElement: nextMeasureElement
+  };
 }
 
 function captureImportedSkinMeasurement(measureElement: HTMLElement) {
@@ -583,16 +656,13 @@ function installImportedSkinLabelSizing(args: {
   let resizeObserver: ResizeObserver | null = null;
   let animationFrameId = 0;
 
-  const allowTwoWordStack = options.twoWordStack !== false;
   const fitLabelToHostHeight = () => {
     removeImportedSkinTwoWordLabelOverlay(labelElement);
     labelElement.style.fontSize = `${baseScale}em`;
     const availableWidth = Math.max(0, host.clientWidth - 8);
     const availableHeight = Math.max(0, host.clientHeight - 4);
     if (availableWidth <= 0 || availableHeight <= 0) {
-      if (allowTwoWordStack) {
-        applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
-      }
+      applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
       return;
     }
 
@@ -609,9 +679,7 @@ function installImportedSkinLabelSizing(args: {
         }
     }
     captureImportedSkinMeasurement(measureElement);
-    if (allowTwoWordStack) {
-      applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
-    }
+    applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
     host.dispatchEvent(new CustomEvent("flow-skin-content-ready"));
   };
 
@@ -651,7 +719,7 @@ function installImportedSkinBridgeButton(args: {
   hostSurfaceIncludes: (token: string) => boolean;
 }): () => void {
   const { host, shadowRoot, htmlNode, svgNode, options, hostSurfaceIncludes } = args;
-  const interactiveElement = resolveImportedSkinElement({
+  let interactiveElement = resolveImportedSkinElement({
     shadowRoot,
     htmlNode,
     svgNode,
@@ -666,7 +734,7 @@ function installImportedSkinBridgeButton(args: {
       ".glass-pill"
     ]
   });
-  const measureElement =
+  let measureElement =
     resolveImportedSkinElement({
       shadowRoot,
       htmlNode,
@@ -684,6 +752,13 @@ function installImportedSkinBridgeButton(args: {
         ".body"
       ]
     }) ?? interactiveElement;
+  const hubGeneratedCoreElements = retargetHubGeneratedCoreElements({
+    hostSurfaceIncludes,
+    interactiveElement,
+    measureElement
+  });
+  interactiveElement = hubGeneratedCoreElements.interactiveElement;
+  measureElement = hubGeneratedCoreElements.measureElement;
   const labelElement = resolveImportedSkinElement({
     shadowRoot,
     htmlNode,
@@ -718,7 +793,7 @@ function installImportedSkinBridgeButton(args: {
           hostSurfaceIncludes
         })
       : () => undefined;
-  if (labelElement && measureElement && options.twoWordStack !== false) {
+  if (labelElement && measureElement) {
     applyImportedSkinTwoWordLabelOverlay(labelElement, measureElement);
   }
 
@@ -880,8 +955,7 @@ function runImportedSkinBridge(args: {
           Number.isFinite(importedSkin.labelScale) &&
           importedSkin.labelScale > 0
             ? importedSkin.labelScale
-            : options.labelScale,
-        twoWordStack: importedSkin.labelStack === false ? false : options.twoWordStack
+            : options.labelScale
       };
       implicitCleanup = installImportedSkinBridgeButton({
         host,
@@ -948,11 +1022,15 @@ function buildImportedButtonShadowCss(
     ":host([data-flow-surface~=\"host-skin-button--hub\"]){display:inline-grid!important;place-items:center!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;outline:0!important;background:transparent!important;background-color:transparent!important;background-image:none!important;box-shadow:none!important;overflow:visible!important;}",
     ":host([data-flow-surface~=\"host-skin-button--hub\"])::before,:host([data-flow-surface~=\"host-skin-button--hub\"])::after{background:transparent!important;background-color:transparent!important;background-image:none!important;border-color:transparent!important;box-shadow:none!important;filter:none!important;pointer-events:none!important;}",
     ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html{background:transparent!important;background-color:transparent!important;background-image:none!important;min-width:0!important;min-height:0!important;overflow:visible!important;}",
-    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html > :first-child:not([data-flow-measure=\"true\"]){background:transparent!important;background-color:transparent!important;background-image:none!important;min-width:0!important;min-height:0!important;overflow:visible!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html > :first-child:not([data-flow-measure=\"true\"]){margin:0!important;padding:0!important;border:0!important;outline:0!important;background:transparent!important;background-color:transparent!important;background-image:none!important;min-width:0!important;min-height:0!important;line-height:0!important;overflow:visible!important;}",
     ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html > :first-child:not([data-flow-measure=\"true\"])::before,:host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html > :first-child:not([data-flow-measure=\"true\"])::after{background:transparent!important;background-color:transparent!important;background-image:none!important;border-color:transparent!important;box-shadow:none!important;filter:none!important;pointer-events:none!important;}",
-    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html :is(body,.body,.page,.demo,.demo-page,.preview,.stage,.scene,.app,.container,.wrapper):not([data-flow-measure=\"true\"]){background:transparent!important;background-color:transparent!important;background-image:none!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html [data-flow-core-wrapper=\"true\"]{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:auto!important;height:auto!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;outline:0!important;background:transparent!important;background-color:transparent!important;background-image:none!important;box-shadow:none!important;line-height:0!important;overflow:visible!important;pointer-events:none!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html [data-flow-core-wrapper=\"true\"]::before,:host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html [data-flow-core-wrapper=\"true\"]::after{background:transparent!important;background-color:transparent!important;background-image:none!important;border-color:transparent!important;box-shadow:none!important;filter:none!important;pointer-events:none!important;}",
+    ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html :is(body,.body,.page,.demo,.demo-page,.preview,.stage,.scene,.app,.container,.wrapper):not([data-flow-measure=\"true\"]){margin:0!important;padding:0!important;border:0!important;outline:0!important;background:transparent!important;background-color:transparent!important;background-image:none!important;line-height:0!important;}",
     ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html :is(body,.body,.page,.demo,.demo-page,.preview,.stage,.scene,.app,.container,.wrapper):not([data-flow-measure=\"true\"])::before,:host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html :is(body,.body,.page,.demo,.demo-page,.preview,.stage,.scene,.app,.container,.wrapper):not([data-flow-measure=\"true\"])::after{background:transparent!important;background-color:transparent!important;background-image:none!important;border-color:transparent!important;box-shadow:none!important;filter:none!important;pointer-events:none!important;}",
     ":host([data-flow-surface~=\"host-skin-button--hub\"]) .imported-html > :is(body,.body,.page,.demo,.demo-page,.preview,.stage,.scene,.app,.container,.wrapper):not([data-flow-measure=\"true\"]){display:inline-flex!important;align-items:center!important;justify-content:center!important;width:auto!important;height:auto!important;}",
+    ":host([data-flow-surface~=\"button-host--panel-fan-skin\"]) .imported-html [data-core] > *,:host([data-flow-surface~=\"script-group-popout__button\"]) .imported-html [data-core] > *{box-shadow:none!important;}",
+    ":host([data-flow-surface~=\"button-host--panel-fan-skin\"]) .imported-html [data-core] > *::before,:host([data-flow-surface~=\"button-host--panel-fan-skin\"]) .imported-html [data-core] > *::after,:host([data-flow-surface~=\"script-group-popout__button\"]) .imported-html [data-core] > *::before,:host([data-flow-surface~=\"script-group-popout__button\"]) .imported-html [data-core] > *::after{box-shadow:none!important;}",
     ".imported-html>.body{display:inline-flex!important;align-items:center!important;justify-content:center!important;width:auto!important;height:auto!important;min-width:0!important;min-height:0!important;background:transparent!important;overflow:visible!important;}",
     ".imported-html>.body>*{min-width:0;min-height:0;}"
   ]

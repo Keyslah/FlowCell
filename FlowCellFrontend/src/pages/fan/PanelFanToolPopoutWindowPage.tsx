@@ -59,6 +59,14 @@ interface ScreenRect {
   bottom: number;
 }
 
+interface HostWindowRegionRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  radius: number;
+}
+
 type ScriptRunErrorState = {
   title: string;
   detail: string;
@@ -351,6 +359,110 @@ function toFlowCellBounds(bounds: PhysicalBounds): {
     Width: Number(bounds.width.toFixed(3)),
     Height: Number(bounds.height.toFixed(3))
   };
+}
+
+const PANEL_FAN_INTERACTIVE_SELECTOR = "[data-flow-interactive='true']";
+
+function buildRegionRect(rect: DOMRect, scaleFactor: number): HostWindowRegionRect | null {
+  const left = Math.max(0, rect.left);
+  const top = Math.max(0, rect.top);
+  const right = Math.min(window.innerWidth, rect.right);
+  const bottom = Math.min(window.innerHeight, rect.bottom);
+  const cssWidth = right - left;
+  const cssHeight = bottom - top;
+  if (cssWidth <= 0 || cssHeight <= 0) {
+    return null;
+  }
+  const x = Math.round(left * scaleFactor);
+  const y = Math.round(top * scaleFactor);
+  const width = Math.round(cssWidth * scaleFactor);
+  const height = Math.round(cssHeight * scaleFactor);
+  if (width <= 0 || height <= 0) {
+    return null;
+  }
+  return {
+    x,
+    y,
+    width,
+    height,
+    radius: Math.round(Math.min(width, height) / 2)
+  };
+}
+
+function hasVisibleBackground(element: HTMLElement): boolean {
+  const color = getComputedStyle(element).backgroundColor.trim().toLowerCase();
+  return Boolean(
+    color &&
+      color !== "transparent" &&
+      color !== "rgba(0, 0, 0, 0)" &&
+      color !== "rgba(0,0,0,0)"
+  );
+}
+
+function resolvePanelFanRegionElement(element: HTMLElement): HTMLElement {
+  const candidates = [element, ...Array.from(element.querySelectorAll("*"))].filter(
+    (candidate): candidate is HTMLElement => candidate instanceof HTMLElement
+  );
+  const paintedCandidates = candidates.filter((candidate) => {
+    const rect = candidate.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && hasVisibleBackground(candidate);
+  });
+  return paintedCandidates.at(-1) ?? element;
+}
+
+function readInteractiveElements(root: ParentNode, elements: Set<HTMLElement>): void {
+  root.querySelectorAll(PANEL_FAN_INTERACTIVE_SELECTOR).forEach((element) => {
+    if (element instanceof HTMLElement) {
+      elements.add(element);
+    }
+  });
+  root.querySelectorAll("*").forEach((element) => {
+    if (element instanceof HTMLElement && element.shadowRoot) {
+      readInteractiveElements(element.shadowRoot, elements);
+    }
+  });
+}
+
+function readPanelFanContainerInteractiveElements(containerSelector: string): HTMLElement[] {
+  const elements = new Set<HTMLElement>();
+  document.querySelectorAll(containerSelector).forEach((container) => {
+    readInteractiveElements(container, elements);
+  });
+  return Array.from(elements);
+}
+
+function readPanelFanRegionRects(
+  scaleFactor: number,
+  includeChildren: boolean
+): HostWindowRegionRect[] {
+  const selectors = [
+    ".fan-cluster__owner",
+    ...(includeChildren
+      ? [".fan-cluster__child"]
+      : [])
+  ];
+  return selectors.flatMap((selector) =>
+    readPanelFanContainerInteractiveElements(selector)
+      .map((element) =>
+        element instanceof HTMLElement
+          ? buildRegionRect(
+              resolvePanelFanRegionElement(element).getBoundingClientRect(),
+              scaleFactor
+            )
+          : null
+      )
+      .filter((rect): rect is HostWindowRegionRect => Boolean(rect))
+  );
+}
+
+async function applyPanelFanWindowRegion(includeChildren: boolean): Promise<void> {
+  const currentWindow = getCurrentWindow();
+  const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+  const rects = readPanelFanRegionRects(scaleFactor, includeChildren);
+  await invoke("set_host_window_region", {
+    label: currentWindow.label,
+    rects
+  }).catch(() => {});
 }
 
 function resolveCollapsedOriginFromWindowBounds(args: {
@@ -1149,6 +1261,7 @@ export default function PanelFanToolPopoutWindowPage({
           targetBounds
         );
         if (!cancelled && matchedBounds) {
+          await applyPanelFanWindowRegion(windowExpanded);
           await applyPanelFanNativeTransparency();
           if (cancelled) {
             return;
@@ -1178,6 +1291,7 @@ export default function PanelFanToolPopoutWindowPage({
         targetBounds
       );
       if (!cancelled && matchedBounds) {
+        await applyPanelFanWindowRegion(windowExpanded);
         await applyPanelFanNativeTransparency();
         if (cancelled) {
           return;
@@ -1208,6 +1322,32 @@ export default function PanelFanToolPopoutWindowPage({
 
     setChildrenVisible(true);
   }, [layoutBoundsReady, windowExpanded]);
+
+  useEffect(() => {
+    if (!metrics || !layoutBoundsReady) {
+      return;
+    }
+
+    let cancelled = false;
+    const syncRegion = () => {
+      if (cancelled) {
+        return;
+      }
+      void applyPanelFanWindowRegion(windowExpanded || childrenVisible);
+    };
+
+    syncRegion();
+    const timers = PANEL_FAN_TRANSPARENCY_RESYNC_DELAYS_MS.map((delayMs) =>
+      window.setTimeout(syncRegion, delayMs)
+    );
+
+    window.addEventListener("resize", syncRegion);
+    return () => {
+      cancelled = true;
+      timers.forEach((timer) => window.clearTimeout(timer));
+      window.removeEventListener("resize", syncRegion);
+    };
+  }, [childrenVisible, layoutBoundsReady, metrics, windowExpanded]);
 
   useEffect(() => {
     if (!metrics) {

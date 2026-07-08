@@ -5,16 +5,15 @@
 // behavior: the real window activates scripts, the hub passes a no-op.
 
 import { useMemo } from "react";
-import { MAIN_PAGE_IMPORTED_STYLE_GROUP } from "../../components/ButtonHost";
-import { HostSkinButton } from "../../components/HostSkinButton";
 import { getScriptGroupPopoutTemplate } from "../../lib/scriptGroupPopoutTemplates";
 import type { ScriptGroupPopoutType } from "../../lib/scriptGroupPopoutSettings";
 import {
-  resolveSkinPort,
+  resolvePopoutSkinAssignment,
   useSkinPortRevision,
-  type HubPlacement,
-  type SkinPortResolution
+  type HubAssignment,
+  type HubPlacement
 } from "../appearance-hub/SkinPort";
+import { HubPopoutSkinButton } from "./HubPopoutSkinButton";
 import "./scriptGroupPopoutWindowPage.css";
 
 export type ScriptGroupPopoutSurfaceScript = {
@@ -33,9 +32,10 @@ type ScriptGroupPopoutSurfaceProps = {
   availableWidth?: number;
   availableHeight?: number;
   // Hub-skin resolver override: the hub preview injects a draft-aware
-  // resolver so unapplied text/code edits render live. Defaults to the live
-  // SkinPort resolution used by the real window.
-  skinResolver?: (fileName: string) => SkinPortResolution | null;
+  // resolver (raw assignment straight from its in-memory state, so every
+  // rules/text change re-renders the same frame). Defaults to the stored
+  // assignments used by the real window.
+  skinResolver?: (fileName: string) => HubAssignment | null;
   onActivate: (fileName: string) => void;
   onHoverStart?: (fileName: string) => void;
   onHoverEnd?: (fileName: string) => void;
@@ -164,7 +164,7 @@ export function ScriptGroupPopoutSurface({
   const resolveSkin =
     skinResolver ??
     ((fileName: string) =>
-      resolveSkinPort({
+      resolvePopoutSkinAssignment({
         programName,
         panelName,
         buttonKey: fileName,
@@ -231,73 +231,29 @@ export function ScriptGroupPopoutSurface({
 
         {buttons.map((button) => {
           const isSingleButtonTemplate = template.type === "single";
-          const skinPort = resolveSkin(button.fileName);
-          if (skinPort) {
-            // Sizing rule from the hub: "cell" fills the uniform template
-            // rect (all buttons identical, label shrinks/stacks inside);
-            // otherwise the skin renders at its natural size × user scale
-            // (the footprint the hub measured), centered on the rect.
-            const cellFit = skinPort.importedSkin.hubPopoutFit === "cell";
-            const naturalFootprint =
-              typeof skinPort.importedSkin.fixedWidth === "number" &&
-              typeof skinPort.importedSkin.fixedHeight === "number"
-                ? {
-                    width: skinPort.importedSkin.fixedWidth,
-                    height: skinPort.importedSkin.fixedHeight
-                  }
-                : undefined;
+          const hubAssignment = resolveSkin(button.fileName);
+          if (hubAssignment) {
+            // Popout skin lane: one self-contained component owns render,
+            // states, sizing (cell/natural rule), and text fit. The template
+            // rect is the cell.
             return (
-              <div
+              <HubPopoutSkinButton
                 key={`${button.id}-hub-${skinPortRevision}`}
-                className="script-group-popout__hub-slot"
-                style={
-                  cellFit
-                    ? {
-                        position: "absolute",
-                        left: `${button.x}px`,
-                        top: `${button.y}px`,
-                        width: `${button.width}px`,
-                        height: `${button.height}px`
-                      }
-                    : {
-                        position: "absolute",
-                        left: `${button.x + button.width / 2}px`,
-                        top: `${button.y + button.height / 2}px`,
-                        transform: "translate(-50%, -50%)"
-                      }
-                }
-              >
-                <HostSkinButton
-                  label={
-                    skinPort.labelOverride !== undefined ? skinPort.labelOverride : button.label
-                  }
-                  // renderButtonSkin only mounts the imported-skin shadow
-                  // root (and its interaction bridge) for skinId
-                  // "imported-skin" — without this the skin degrades to
-                  // an inert stock label.
-                  styleGroup={MAIN_PAGE_IMPORTED_STYLE_GROUP}
-                  importedSkin={skinPort.importedSkin}
-                  footprintOverride={
-                    cellFit
-                      ? { width: button.width, height: button.height }
-                      : naturalFootprint
-                  }
-                  hostMode="neutral"
-                  // Hub skins do NOT wear the stock popout button class
-                  // (no position/overflow/background from that pool). The
-                  // hub lane (.host-skin-button--hub) owns their look.
-                  className="script-group-popout__button--hub"
-                  data-script-file-name={button.fileName}
-                  data-flow-tooltip={button.tooltip?.trim() || button.label}
-                  aria-label={button.label}
-                  onClick={() => {
-                    onActivate(button.fileName);
-                  }}
-                  onPointerEnter={() => onHoverStart?.(button.fileName)}
-                  onPointerLeave={() => onHoverEnd?.(button.fileName)}
-                  onPointerCancel={() => onHoverEnd?.(button.fileName)}
-                />
-              </div>
+                instanceKey={button.id}
+                assignment={hubAssignment}
+                fallbackLabel={button.label}
+                fileName={button.fileName}
+                tooltip={button.tooltip}
+                cell={{
+                  x: button.x,
+                  y: button.y,
+                  width: button.width,
+                  height: button.height
+                }}
+                onActivate={onActivate}
+                onHoverStart={onHoverStart}
+                onHoverEnd={onHoverEnd}
+              />
             );
           }
           const stackedLabelWords = isSingleButtonTemplate

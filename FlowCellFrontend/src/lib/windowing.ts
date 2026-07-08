@@ -1105,7 +1105,7 @@ export async function openPanelFanWindow(args: {
       transparent: true,
       backgroundColor: TRANSPARENT_WINDOW_BACKGROUND,
       shadow: false,
-      visible: true,
+      visible: false,
       focus: false,
       alwaysOnTop: false
     });
@@ -1125,6 +1125,7 @@ export async function openPanelFanWindow(args: {
     await window
       .setSize(savedPhysicalPosition ? new LogicalSize(defaultPlacement.width, defaultPlacement.height) : placementSize(placement))
       .catch(() => {});
+    await window.show().catch(() => {});
   })().finally(() => {
     if (pendingPanelFanOpens.get(windowLabel) === openPromise) {
       pendingPanelFanOpens.delete(windowLabel);

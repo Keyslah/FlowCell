@@ -196,7 +196,18 @@ ResolveLegacyWindowsProgramPath(path, requireExisting := true) {
             return candidate
     }
 
+    legacySingleMonitorPath := GetFlowCellWorkspaceRoot() "\Programs\Windows\Panels\Utility\Toggle Monitors.vbs"
+    stableSingleMonitorPath := GetDefaultSingleMonitorScriptPath()
+    if StrLower(normalizedPath) = StrLower(legacySingleMonitorPath) {
+        if !requireExisting || FileExist(stableSingleMonitorPath)
+            return stableSingleMonitorPath
+    }
+
     return normalizedPath
+}
+
+GetDefaultSingleMonitorScriptPath() {
+    return GetFlowCellWorkspaceRoot() "\Programs\Windows\Windows Git Scripts\Utility\Toggle Monitors.vbs"
 }
 
 GetFlowCellIllustratorPrewarmScriptPath() {
@@ -208,7 +219,7 @@ GetFlowCellIllustratorAnchorScriptPath() {
 }
 
 GetDefaultSingleMonitorHotkeyBinding() {
-    scriptPath := GetFlowCellWorkspaceRoot() "\Programs\Windows\Panels\Utility\Toggle Monitors.vbs"
+    scriptPath := GetDefaultSingleMonitorScriptPath()
     if !FileExist(scriptPath)
         return ""
 
@@ -2764,6 +2775,11 @@ class FlowCellApp {
                 exitCode := RunWait('powershell.exe ' powershellArgs '-File "' scriptPath '"', , "Hide")
             } else if extension = ".cmd" || extension = ".bat" {
                 exitCode := RunWait(A_ComSpec ' /c "' scriptPath '"', , "Hide")
+            } else if extension = ".vbs" {
+                wscriptPath := A_WinDir "\System32\wscript.exe"
+                if !FileExist(wscriptPath)
+                    wscriptPath := "wscript.exe"
+                exitCode := RunWait('"' wscriptPath '" //nologo "' scriptPath '"', , "Hide")
             } else {
                 exitCode := RunWait('"' scriptPath '"')
             }

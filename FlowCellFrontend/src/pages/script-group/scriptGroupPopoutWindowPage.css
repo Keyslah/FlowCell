@@ -96,11 +96,29 @@
   transition: none;
 }
 
-/* The hub-slot only POSITIONS the skin (centered on the template rect). It must
-   be pointer-inert so its rectangle never becomes the hitbox — only the skin's
-   own shaped core (re-enabled inside the shadow root) receives clicks. */
-.script-group-popout__hub-slot {
-  pointer-events: none;
+/* Popout skin lane (HubPopoutSkinButton): the wrapper is the template cell,
+   the inst carries the state data-attributes the compiled skin CSS targets.
+   The inst grid uses EXPLICIT 100% tracks — auto tracks size to the skin's
+   natural content and make percentage sizing circular (the exact failure the
+   shared engine had), so the tracks must be definite all the way down. */
+.fc-popskin {
+  display: block;
+}
+.fc-popskin__inst {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 100%;
+  grid-template-rows: 100%;
+  place-items: center;
+  cursor: pointer;
+  line-height: normal;
+}
+.fc-popskin__content {
+  display: block;
+  min-width: 0;
+  min-height: 0;
 }
 
 .script-group-popout__button--single {

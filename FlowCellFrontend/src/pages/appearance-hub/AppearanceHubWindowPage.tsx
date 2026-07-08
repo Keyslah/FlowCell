@@ -41,13 +41,13 @@ import { readScriptGroupPopoutType } from "../../lib/scriptGroupPopoutSettings";
 import { DEFAULT_FLOW_IMPORTED_SKIN, DEFAULT_POPOUT_IMPORTED_SKIN } from "../../lib/theme";
 import { openAppearanceWindow } from "../../lib/windowing";
 import { ScriptGroupPopoutSurface } from "../script-group/ScriptGroupPopoutSurface";
-import type { SkinPortResolution } from "./SkinPort";
 import {
   compileSkin,
   createEmptySlots,
   renderStructureHtmlWithLines,
   splitSlotPaste,
   buildScopeClassName,
+  validateStructure,
   type SlotContentMap
 } from "./compileSkin";
 import {
@@ -525,7 +525,7 @@ function LiveAddressPlacementPreview({
   currentButtonKey,
   currentPlacement,
   liveSkin,
-  selectedLabelOverride,
+  selectedDraftAssignment,
   panelLabel,
   previewLabel,
   programName,
@@ -538,7 +538,9 @@ function LiveAddressPlacementPreview({
   currentButtonKey: string;
   currentPlacement: HubPlacement;
   liveSkin: ImportedSkin | null;
-  selectedLabelOverride: string | undefined;
+  // The selected address's live edit state (slots + draft text + rules) —
+  // the popout lane renders it directly so edits preview instantly.
+  selectedDraftAssignment: HubAssignment | null;
   panelLabel: string;
   previewLabel: string;
   programName: string;
@@ -616,9 +618,10 @@ function LiveAddressPlacementPreview({
   );
 
   // Popped previews render the REAL popout surface (same component as the
-  // live window). Base labels mirror the real path (lib label overrides);
-  // hub label overrides ride in through the skin resolver, with the selected
-  // address rendering the live draft.
+  // live window). Base labels mirror the real path (lib label overrides).
+  // The popout lane takes RAW assignments: the selected address gets the
+  // in-memory DRAFT (rules + text sliders update the preview the same
+  // frame), everything else gets its stored assignment.
   const libLabelOverrides = readButtonLabelOverrides();
   const baseScriptLabel = (record: PanelScriptFileRecord): string =>
     resolveButtonLabelOverride(
@@ -629,21 +632,16 @@ function LiveAddressPlacementPreview({
 
   const buildPoppedSkinResolver =
     (placement: HubPlacement) =>
-    (fileName: string): SkinPortResolution | null => {
+    (fileName: string): HubAssignment | null => {
       if (isSelectedAddress(fileName, placement)) {
-        return liveSkin
-          ? { importedSkin: liveSkin, labelOverride: selectedLabelOverride }
-          : null;
-      }
-      const skin = resolveAddressSkin(fileName, placement);
-      if (!skin) {
-        return null;
+        return selectedDraftAssignment;
       }
       const key = addressKeyFor(fileName, placement);
-      const labelOverride = key
-        ? (assignments[key]?.text.labelOverride ?? undefined)
-        : undefined;
-      return { importedSkin: skin, labelOverride };
+      const stored = key ? assignments[key] : undefined;
+      if (!stored || validateStructure(stored.slots[STRUCTURE_SLOT_ID]).length > 0) {
+        return null;
+      }
+      return stored;
     };
 
   if (surface === "fan") {
@@ -1003,6 +1001,10 @@ export default function AppearanceHubWindowPage() {
     if (!addressKey || !assignment) {
       return;
     }
+    // Snap the preview to the placement being edited so the rule change is
+    // immediately visible (the rules section keys off the Placement dropdown,
+    // but the preview otherwise shows the separate "Preview as" surface).
+    setPreviewSurface(placement);
     commitAssignments({
       ...assignments,
       [addressKey]: {
@@ -1042,6 +1044,23 @@ export default function AppearanceHubWindowPage() {
       (applied.labelOverride ?? null) !== (draft.labelOverride ?? null)
     );
   }, [assignment?.text, draftText]);
+
+  // The selected address's live edit state, handed to the popout skin lane
+  // preview as-is: slots + DRAFT text + committed rules. Every slider/chip
+  // change re-renders the preview immediately — no Apply, no compile flags.
+  const selectedDraftAssignment = useMemo<HubAssignment | null>(() => {
+    if (!assignment || validateStructure(slots[STRUCTURE_SLOT_ID]).length > 0) {
+      return null;
+    }
+    return {
+      slots,
+      text: normalizeHubTextStyle(draftText),
+      scale: assignment.scale,
+      natural: assignment.natural,
+      popout: assignment.popout,
+      updatedAt: assignment.updatedAt
+    };
+  }, [assignment, slots, draftText]);
 
   const handleApplyPaste = () => {
     if (!addressKey) {
@@ -1588,7 +1607,7 @@ export default function AppearanceHubWindowPage() {
         <div className="ahub-titlebar__brand">
           <span className="ahub-titlebar__pip" aria-hidden="true" />
           <span className="ahub-titlebar__name">Appearance</span>
-          <span className="ahub-titlebar__scope">skin bench · v12 · socket</span>
+          <span className="ahub-titlebar__scope">skin bench · v15 · lane</span>
         </div>
         <div className="ahub-titlebar__actions">
           <button
@@ -1879,21 +1898,21 @@ export default function AppearanceHubWindowPage() {
                 <span className="ahub-label">Size</span>
                 <button
                   type="button"
-                  className={`ahub-chip${(assignment?.popout.sizing ?? "natural") === "natural" ? " ahub-chip--on" : ""}`}
+                  className={`ahub-chip${(assignment?.popout.sizing ?? "cell") === "cell" ? " ahub-chip--on" : ""}`}
                   disabled={!assignment}
-                  title="The skin renders at its own natural size × Scale"
-                  onClick={() => updateAssignmentRules({ sizing: "natural" })}
-                >
-                  Skin size
-                </button>
-                <button
-                  type="button"
-                  className={`ahub-chip${assignment?.popout.sizing === "cell" ? " ahub-chip--on" : ""}`}
-                  disabled={!assignment}
-                  title="The skin fills the popout's uniform grid cell — all buttons the same size"
+                  title="The skin fills the popout's uniform grid cell — all buttons the same size (default)"
                   onClick={() => updateAssignmentRules({ sizing: "cell" })}
                 >
                   Uniform grid cell
+                </button>
+                <button
+                  type="button"
+                  className={`ahub-chip${assignment?.popout.sizing === "natural" ? " ahub-chip--on" : ""}`}
+                  disabled={!assignment}
+                  title="The skin renders at its own natural size × Scale, centered on the cell"
+                  onClick={() => updateAssignmentRules({ sizing: "natural" })}
+                >
+                  Skin size
                 </button>
               </div>
               {assignment?.popout.sizing === "cell" ? (
@@ -1990,7 +2009,7 @@ export default function AppearanceHubWindowPage() {
                   currentButtonKey={prefs.buttonKey}
                   currentPlacement={placement}
                   liveSkin={liveSkin}
-                  selectedLabelOverride={draftText.labelOverride ?? undefined}
+                  selectedDraftAssignment={selectedDraftAssignment}
                   panelLabel={panelLabel}
                   previewLabel={previewLabel}
                   programName={prefs.programName}

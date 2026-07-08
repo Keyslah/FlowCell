@@ -18,8 +18,10 @@ Dim scriptDir : scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
 ' is found by walking up to the FlowCell root.
 Dim scriptPath : scriptPath = FindEngineScript()
 
-' Per-button settings: each button file remembers its own monitor.
-Dim configPath : configPath = WScript.ScriptFullName & ".togglemonitors.txt"
+' Per-button settings: each button file remembers its own monitor. The tracked
+' default launcher keeps using the ignored panel-side settings file so existing
+' monitor choices survive migration away from the generated panel copy.
+Dim configPath : configPath = ResolveConfigPath()
 
 If scriptPath = "" Then
     MsgBox "Toggle Monitors could not find toggle_monitors.py." & vbCrLf & _
@@ -44,25 +46,34 @@ WScript.Quit 0
 
 Function FindEngineScript()
     FindEngineScript = ""
+    Dim workspaceRoot : workspaceRoot = FindWorkspaceRoot()
+    If workspaceRoot <> "" Then
+        Dim canon
+        canon = workspaceRoot & "\Programs\Windows\Windows Git Scripts\Utility\toggle_monitors.py"
+        If fso.FileExists(canon) Then
+            FindEngineScript = canon
+            Exit Function
+        End If
+    End If
+
+    ' Fallback for unusual layouts: an engine copied next to this button.
+    Dim localEngine : localEngine = fso.BuildPath(scriptDir, "toggle_monitors.py")
+    If fso.FileExists(localEngine) Then FindEngineScript = localEngine
+End Function
+
+Function FindWorkspaceRoot()
+    FindWorkspaceRoot = ""
     Dim dir : dir = scriptDir
     Do While dir <> ""
         If fso.FileExists(fso.BuildPath(dir, "PROGRAM_SUMMARY.txt")) And _
            fso.FolderExists(fso.BuildPath(dir, "flowcellbackend")) Then
-            Dim canon
-            canon = dir & "\Programs\Windows\Windows Git Scripts\Utility\toggle_monitors.py"
-            If fso.FileExists(canon) Then
-                FindEngineScript = canon
-                Exit Function
-            End If
+            FindWorkspaceRoot = dir
+            Exit Function
         End If
         Dim parent : parent = fso.GetParentFolderName(dir)
         If parent = dir Or parent = "" Then Exit Do
         dir = parent
     Loop
-
-    ' Fallback for unusual layouts: an engine copied next to this button.
-    Dim localEngine : localEngine = fso.BuildPath(scriptDir, "toggle_monitors.py")
-    If fso.FileExists(localEngine) Then FindEngineScript = localEngine
 End Function
 
 Function ResolvePythonw()
@@ -235,12 +246,39 @@ End Function
 
 Sub WriteConfig(pythonwVal, displayVal)
     Dim stream
+    EnsureParentFolder configPath
     Set stream = fso.OpenTextFile(configPath, 2, True)
     stream.WriteLine "# Toggle Monitors - this button's saved choices."
     stream.WriteLine "# Delete this file to make this button ask for its monitor again."
     stream.WriteLine "PYTHONW=" & pythonwVal
     stream.WriteLine "DISPLAY=" & displayVal
     stream.Close
+End Sub
+
+Function ResolveConfigPath()
+    ResolveConfigPath = WScript.ScriptFullName & ".togglemonitors.txt"
+
+    Dim workspaceRoot : workspaceRoot = FindWorkspaceRoot()
+    If workspaceRoot = "" Then Exit Function
+
+    Dim sourceLauncher
+    sourceLauncher = workspaceRoot & "\Programs\Windows\Windows Git Scripts\Utility\Toggle Monitors.vbs"
+    If StrComp(WScript.ScriptFullName, sourceLauncher, vbTextCompare) = 0 Then
+        ResolveConfigPath = workspaceRoot & "\Programs\Windows\Panels\Utility\Toggle Monitors.vbs.togglemonitors.txt"
+    End If
+End Function
+
+Sub EnsureParentFolder(path)
+    Dim parent : parent = fso.GetParentFolderName(path)
+    If parent <> "" Then EnsureFolder parent
+End Sub
+
+Sub EnsureFolder(path)
+    If path = "" Or fso.FolderExists(path) Then Exit Sub
+
+    Dim parent : parent = fso.GetParentFolderName(path)
+    If parent <> "" And Not fso.FolderExists(parent) Then EnsureFolder parent
+    fso.CreateFolder path
 End Sub
 
 Function ReadTextUtf8(path)

@@ -68,8 +68,11 @@ export type HubPopoutRules = {
   textFit: HubPopoutTextFit;
 };
 
+// Default is the uniform grid cell: a fresh skin lands sized to the popout
+// grid without touching rules ("just clear it to size"). "Skin size" is the
+// explicit opt-out.
 export const DEFAULT_HUB_POPOUT_RULES: HubPopoutRules = {
-  sizing: "natural",
+  sizing: "cell",
   textFit: "shrink-stack"
 };
 
@@ -79,7 +82,7 @@ export function normalizeHubPopoutRules(candidate: unknown): HubPopoutRules {
   }
   const record = candidate as Partial<HubPopoutRules>;
   return {
-    sizing: record.sizing === "cell" ? "cell" : "natural",
+    sizing: record.sizing === "natural" ? "natural" : "cell",
     textFit:
       record.textFit === "shrink" || record.textFit === "stack"
         ? record.textFit
@@ -199,6 +202,33 @@ export function normalizeHubAssignment(candidate: unknown): HubAssignment | null
   };
 }
 
+// One-time rules migration. Every assignment saved before the popout skin
+// lane (hub v11–v13) was auto-stamped `sizing: "natural"` — the era's default,
+// written on every edit whether or not the user ever touched the rules UI.
+// The rules toggles were broken then, so a stored "natural" is noise, not a
+// choice. Flip popped-placement rules to the real default ("cell") exactly
+// once; choices made after the marker exists persist untouched.
+const HUB_POPOUT_RULES_MIGRATED_KEY = "flowcell.appearanceHub.popoutRulesMigrated.v1";
+
+function migrateLegacyPopoutRules(assignments: HubAssignmentMap): void {
+  try {
+    if (window.localStorage.getItem(HUB_POPOUT_RULES_MIGRATED_KEY)) {
+      return;
+    }
+    for (const [key, assignment] of Object.entries(assignments)) {
+      const placement = key.split("::").pop();
+      if (placement === "popped-single" || placement === "popped-group") {
+        assignment.popout = { ...assignment.popout, sizing: "cell" };
+      }
+    }
+    window.localStorage.setItem(HUB_ASSIGNMENTS_STORAGE_KEY, JSON.stringify(assignments));
+    window.localStorage.setItem(HUB_POPOUT_RULES_MIGRATED_KEY, "1");
+  } catch {
+    // Storage unavailable — render this session with the migrated in-memory
+    // values anyway; the write retries on the next read.
+  }
+}
+
 export function readHubAssignments(): HubAssignmentMap {
   if (typeof window === "undefined") {
     return {};
@@ -219,6 +249,7 @@ export function readHubAssignments(): HubAssignmentMap {
         assignments[key] = assignment;
       }
     }
+    migrateLegacyPopoutRules(assignments);
     return assignments;
   } catch {
     return {};
@@ -347,15 +378,11 @@ function buildLiveTextCss(text: HubTextStyle): string[] {
   return rules;
 }
 
-// Cell mode: stretch the imported structure so the interactive core fills the
-// host box (the popout's uniform template cell). Author inline display wins
-// where set; width/height land either way because the paste contract forbids
-// fixed core widths.
-const POPOUT_CELL_FILL_CSS = [
-  ".button-skin [data-flow-imported-html] > :first-child { width: 100%; height: 100%; box-sizing: border-box; }",
-  ".button-skin [data-flow-interactive] { width: 100%; height: 100%; box-sizing: border-box; min-width: 0; min-height: 0; }"
-].join("\n");
-
+// NOTE: popped placements do NOT go through this compile anymore. The
+// script-group popout renders hub skins through its own lane
+// (pages/script-group/HubPopoutSkinButton.tsx) fed by
+// resolveHubPopoutSkinAssignment below — raw assignment in, bench-style
+// render out. This compile serves the remaining engine surfaces (fan, main).
 export function compileHubAssignmentToImportedSkin(
   addressKey: string,
   assignment: HubAssignment
@@ -364,13 +391,6 @@ export function compileHubAssignmentToImportedSkin(
   if (validateStructure(structure).length > 0) {
     return null;
   }
-
-  // The address key ends in the placement. Script-group popout windows use a
-  // fixed SVG/template cell grid; letting a hub skin render at natural size
-  // there can collide with adjacent cells and expose pasted demo-page backing.
-  const placement = addressKey.split("::").pop() ?? "";
-  const cellFit =
-    placement === "popped-single" || placement === "popped-group";
 
   const scale = normalizeHubScale(assignment.scale);
   // Render the imported source LITERALLY. The host applies the uniform user
@@ -403,9 +423,6 @@ export function compileHubAssignmentToImportedSkin(
     }
   }
   cssParts.push(...buildLiveTextCss(assignment.text));
-  if (cellFit) {
-    cssParts.push(POPOUT_CELL_FILL_CSS);
-  }
 
   const footprint =
     assignment.natural !== null
@@ -414,26 +431,6 @@ export function compileHubAssignmentToImportedSkin(
           height: Math.max(1, Math.round(assignment.natural.height * scale))
         }
       : null;
-
-  if (cellFit) {
-    return {
-      id: `hub::${addressKey}`,
-      name: `Appearance hub skin (${addressKey})`,
-      html,
-      css: cssParts.join("\n"),
-      // fill-stretch: the host box (the popout hands over the uniform template
-      // cell as the footprint) is the size; the fill CSS above stretches the
-      // core into it and the label fits itself per button.
-      sizingMode: "fill-stretch",
-      allowOverflow: true,
-      hubPlayLatch: true,
-      hubPopoutFit: "cell",
-      // textFit: "shrink" scales the font down (min scale 0.58), "stack"
-      // keeps the font and stacks two-word labels, "shrink-stack" does both.
-      labelMinScale: assignment.popout.textFit === "stack" ? 1 : 0.58,
-      ...(assignment.popout.textFit === "shrink" ? { labelStack: false } : {})
-    };
-  }
 
   return {
     id: `hub::${addressKey}`,
@@ -494,6 +491,29 @@ export function resolveHubLiveSkin(
     : null;
   resolveCache?.set(addressKey, compiled);
   return compiled ?? undefined;
+}
+
+// Popout skin lane resolver: hands the STORED assignment (skin code + text +
+// rules) straight to HubPopoutSkinButton — no ImportedSkin compile, no engine
+// flags. Returns undefined when there is no assignment or its structure is
+// invalid (the popout then renders the stock button).
+export function resolveHubPopoutSkinAssignment(
+  programName: string,
+  panelName: string,
+  buttonKey: string,
+  placement: HubPlacement
+): HubAssignment | undefined {
+  installGlobalSubscriptions();
+  if (!cachedAssignments) {
+    cachedAssignments = readHubAssignments();
+    resolveCache = new Map();
+  }
+  const assignment =
+    cachedAssignments[buildHubAddressKey(programName, panelName, buttonKey, placement)];
+  if (!assignment || validateStructure(assignment.slots[STRUCTURE_SLOT_ID]).length > 0) {
+    return undefined;
+  }
+  return assignment;
 }
 
 // Resolve the label to render for an assignment (hub label override wins).

@@ -40,6 +40,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 #[cfg(windows)]
 use windows_sys::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, POINT};
 #[cfg(windows)]
+use windows_sys::Win32::Graphics::Gdi::{
+    CombineRgn, CreateRectRgn, CreateRoundRectRgn, DeleteObject, SetWindowRgn, RGN_OR,
+};
+#[cfg(windows)]
 use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
@@ -51,8 +55,8 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_SPACE
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
     GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, IsWindowVisible,
-    SendMessageTimeoutW, SetWindowLongPtrW, WindowFromPoint, GA_ROOT, GWLP_HWNDPARENT, GW_HWNDNEXT,
-    SMTO_ABORTIFHUNG, WM_COPYDATA,
+    SendMessageTimeoutW, SetWindowLongPtrW, WindowFromPoint, GA_ROOT, GWLP_HWNDPARENT,
+    GW_HWNDNEXT, SMTO_ABORTIFHUNG, WM_COPYDATA,
 };
 
 #[cfg(windows)]
@@ -393,6 +397,17 @@ struct HostWindowBounds {
     y: f64,
     width: f64,
     height: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HostWindowRegionRect {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    #[serde(default)]
+    radius: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Default)]
@@ -1658,6 +1673,25 @@ fn resolve_legacy_windows_binding_path(raw_path: &str) -> String {
     }
     if let Some(rest) = normalized.strip_prefix(&(legacy_root.clone() + "\\")) {
         return format!("{managed_root}\\{rest}");
+    }
+
+    let legacy_single_monitor_path = repo_root
+        .join("Programs")
+        .join("Windows")
+        .join("Panels")
+        .join("Utility")
+        .join("Toggle Monitors.vbs");
+    let stable_single_monitor_path = resolve_default_single_monitor_script_path(&repo_root);
+    if normalized_lower
+        == legacy_single_monitor_path
+            .to_string_lossy()
+            .replace('/', "\\")
+            .to_ascii_lowercase()
+        && stable_single_monitor_path.is_file()
+    {
+        return stable_single_monitor_path
+            .to_string_lossy()
+            .replace('/', "\\");
     }
 
     normalized
@@ -7037,12 +7071,7 @@ fn resolve_bindings_file_path() -> Result<PathBuf, String> {
 
 fn resolve_single_monitor_binding() -> Option<(String, String, i64)> {
     let repo_root = resolve_repo_root()?;
-    let script_path = repo_root
-        .join("Programs")
-        .join("Windows")
-        .join("Panels")
-        .join("Utility")
-        .join("Toggle Monitors.vbs");
+    let script_path = resolve_default_single_monitor_script_path(&repo_root);
     if !script_path.is_file() {
         return None;
     }
@@ -7052,6 +7081,15 @@ fn resolve_single_monitor_binding() -> Option<(String, String, i64)> {
         script_path.to_string_lossy().to_string(),
         2,
     ))
+}
+
+fn resolve_default_single_monitor_script_path(repo_root: &Path) -> PathBuf {
+    repo_root
+        .join("Programs")
+        .join("Windows")
+        .join("Windows Git Scripts")
+        .join("Utility")
+        .join("Toggle Monitors.vbs")
 }
 
 fn should_restore_default_single_monitor(document: &IniDocument) -> bool {
@@ -10625,6 +10663,78 @@ fn set_host_window_bounds(
 }
 
 #[tauri::command]
+fn set_host_window_region(
+    app: AppHandle,
+    label: String,
+    rects: Vec<HostWindowRegionRect>,
+) -> Result<(), String> {
+    let window = app
+        .get_webview_window(&label)
+        .ok_or_else(|| format!("Window '{}' was not found.", label))?;
+
+    #[cfg(windows)]
+    {
+        let hwnd = window.hwnd().map_err(|error| error.to_string())?.0 as HWND;
+        if rects.is_empty() {
+            let result = unsafe { SetWindowRgn(hwnd, std::ptr::null_mut(), 1) };
+            if result == 0 {
+                return Err(String::from("Failed to clear host window region."));
+            }
+            return Ok(());
+        }
+
+        let combined = unsafe { CreateRectRgn(0, 0, 0, 0) };
+        if combined.is_null() {
+            return Err(String::from("Failed to create host window region."));
+        }
+
+        for rect in rects {
+            let left = rect.x.round() as i32;
+            let top = rect.y.round() as i32;
+            let right = (rect.x + rect.width).round().max(f64::from(left + 1)) as i32;
+            let bottom = (rect.y + rect.height).round().max(f64::from(top + 1)) as i32;
+            let diameter = (rect.radius.max(0.0) * 2.0).round() as i32;
+            let region = if diameter > 0 {
+                unsafe { CreateRoundRectRgn(left, top, right, bottom, diameter, diameter) }
+            } else {
+                unsafe { CreateRectRgn(left, top, right, bottom) }
+            };
+            if region.is_null() {
+                unsafe {
+                    let _ = DeleteObject(combined);
+                }
+                return Err(String::from("Failed to create host window subregion."));
+            }
+            let combine_result = unsafe { CombineRgn(combined, combined, region, RGN_OR) };
+            unsafe {
+                let _ = DeleteObject(region);
+            }
+            if combine_result == 0 {
+                unsafe {
+                    let _ = DeleteObject(combined);
+                }
+                return Err(String::from("Failed to combine host window region."));
+            }
+        }
+
+        let result = unsafe { SetWindowRgn(hwnd, combined, 1) };
+        if result == 0 {
+            unsafe {
+                let _ = DeleteObject(combined);
+            }
+            return Err(String::from("Failed to apply host window region."));
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        let _ = rects;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
 fn set_host_window_topmost(
     app: AppHandle,
     label: String,
@@ -13117,6 +13227,7 @@ fn main() {
         .manage(ScopedTopmostRegistry::default())
         .invoke_handler(tauri::generate_handler![
             set_host_window_bounds,
+            set_host_window_region,
             set_host_window_topmost,
             register_scoped_window_topmost,
             refresh_scoped_window_topmost,

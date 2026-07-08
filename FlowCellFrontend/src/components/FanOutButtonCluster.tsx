@@ -1329,6 +1329,9 @@ export function FanOutButtonCluster({
             absolute={false}
             importedSkinOverride={ownerImportedSkin}
             styleGroupOverride={ownerStyleGroup}
+            surfaceClassName={
+              variant === "panel-fan" ? "button-host--panel-fan-skin" : undefined
+            }
             onActivate={() => onOwnerClick()}
           />
         </div>
@@ -1409,6 +1412,9 @@ export function FanOutButtonCluster({
                       absolute={false}
                       importedSkinOverride={childVisuals.importedSkin}
                       styleGroupOverride={childVisuals.styleGroup}
+                      surfaceClassName={
+                        variant === "panel-fan" ? "button-host--panel-fan-skin" : undefined
+                      }
                       onActivate={() => onChildClick(entry.entry)}
                       onHoverStart={() => onChildHoverStart?.(entry.entry)}
                       onHoverEnd={() => onChildHoverEnd?.(entry.entry)}

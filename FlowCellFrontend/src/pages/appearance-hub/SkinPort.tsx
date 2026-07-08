@@ -17,12 +17,40 @@ import {
   HUB_PANEL_BUTTON_KEY,
   resolveHubLabelOverride,
   resolveHubLiveSkin,
+  resolveHubPopoutSkinAssignment,
   useHubSkinRevision,
+  type HubAssignment,
   type HubPlacement
 } from "./liveBridge";
 
 export { HUB_PANEL_BUTTON_KEY };
-export type { HubPlacement };
+export type { HubAssignment, HubPlacement };
+
+// Popout skin lane surface: the script-group popout renders hub skins itself
+// (HubPopoutSkinButton) from the raw stored assignment plus these bench
+// compile helpers — no ImportedSkin, no shared engine. Everything it needs
+// still flows through this one socket.
+export {
+  buildScopeClassName,
+  compileSkin,
+  renderStructureHtmlWithLines
+} from "./compileSkin";
+export { STRUCTURE_SLOT_ID } from "./slotSpec";
+
+export function resolvePopoutSkinAssignment(
+  address: SkinPortAddress
+): HubAssignment | null {
+  if (!SKIN_PORT_ENABLED) {
+    return null;
+  }
+  const { programName, panelName, buttonKey, placement } = address;
+  if (!programName || !panelName || !buttonKey) {
+    return null;
+  }
+  return (
+    resolveHubPopoutSkinAssignment(programName, panelName, buttonKey, placement) ?? null
+  );
+}
 
 export const SKIN_PORT_ENABLED = true;
 

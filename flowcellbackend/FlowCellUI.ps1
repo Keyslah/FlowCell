@@ -6657,6 +6657,14 @@ function Resolve-LegacyWindowsProgramPath {
         }
     }
 
+    $legacySingleMonitorPath = Join-Path $script:FlowCellHomeRoot 'Programs\Windows\Panels\Utility\Toggle Monitors.vbs'
+    $stableSingleMonitorPath = Join-Path $script:FlowCellHomeRoot 'Programs\Windows\Windows Git Scripts\Utility\Toggle Monitors.vbs'
+    if ($normalizedPath.Equals([System.IO.Path]::GetFullPath($legacySingleMonitorPath), $comparison)) {
+        if (-not $RequireExisting -or (Test-Path -LiteralPath $stableSingleMonitorPath -PathType Leaf)) {
+            return [System.IO.Path]::GetFullPath($stableSingleMonitorPath)
+        }
+    }
+
     return $normalizedPath
 }
 
@@ -6665,7 +6673,7 @@ function Get-DefaultSingleMonitorBinding {
         [object[]]$ProgramTabs = @()
     )
 
-    $targetPath = Join-Path $script:FlowCellHomeRoot 'Programs\Windows\Panels\Utility\Toggle Monitors.vbs'
+    $targetPath = Join-Path $script:FlowCellHomeRoot 'Programs\Windows\Windows Git Scripts\Utility\Toggle Monitors.vbs'
     if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) {
         return $null
     }
