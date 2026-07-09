@@ -1,0 +1,4 @@
+interface:
+  display_name: "MemTrace FlowCell Mentor"
+  short_description: "Use MemTrace first for FlowCell navigation"
+  default_prompt: "Use $memtrace-flowcell-mentor to navigate FlowCell with MemTrace before editing."
