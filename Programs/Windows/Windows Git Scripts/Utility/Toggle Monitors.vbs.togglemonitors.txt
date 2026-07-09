@@ -1,0 +1,4 @@
+# Toggle Monitors - this button's saved choices.
+# Delete this file to make this button ask for its monitor again.
+PYTHONW=C:\Users\aaron\AppData\Local\Programs\Python\Python311\pythonw.exe
+DISPLAY=AOC28E850.HDR
