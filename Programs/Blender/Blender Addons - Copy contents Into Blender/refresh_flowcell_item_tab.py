@@ -140,7 +140,7 @@ def _find_workspace_module_name(target_key: str, workspace_root: Path) -> str:
 
 
 def _get_workspace_runtime_paths(workspace_root: Path) -> dict[str, Path]:
-    flowcell_root = workspace_root / "FlowCell"
+    flowcell_root = workspace_root / "flowcellbackend"
     frontend_root = workspace_root / "FlowCellFrontend"
     return {
         "legacy_ui_script": (flowcell_root / "FlowCellUI.ps1").resolve(),

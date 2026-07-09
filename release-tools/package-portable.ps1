@@ -121,12 +121,12 @@ function Copy-PortableCore([string]$PackageRoot, [string]$BuiltExePath, [string]
   Copy-RootFile 'BUILD_FROM_SOURCE.md' $PackageRoot
   Copy-RootFile 'PROGRAM_SUMMARY.txt' $PackageRoot
 
-  Copy-Folder (Join-Path $RepoRoot 'FlowCell') (Join-Path $PackageRoot 'FlowCell')
+  Copy-Folder (Join-Path $RepoRoot 'flowcellbackend') (Join-Path $PackageRoot 'flowcellbackend')
   Copy-Folder (Join-Path $RepoRoot 'tools') (Join-Path $PackageRoot 'tools')
   Copy-Folder (Join-Path $RepoRoot 'docs') (Join-Path $PackageRoot 'docs')
   New-Item -ItemType Directory -Path (Join-Path $PackageRoot 'Programs') -Force | Out-Null
 
-  $runtime = Join-Path $PackageRoot 'FlowCell\runtime'
+  $runtime = Join-Path $PackageRoot 'flowcellbackend\runtime'
   New-Item -ItemType Directory -Path $runtime -Force | Out-Null
   Copy-Item -LiteralPath $AhkPath -Destination (Join-Path $runtime 'AutoHotkey64.exe') -Force
   Copy-Item -LiteralPath $AhkLicensePath -Destination (Join-Path $runtime 'AutoHotkey-LICENSE.txt') -Force

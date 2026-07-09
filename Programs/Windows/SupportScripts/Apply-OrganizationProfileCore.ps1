@@ -21,8 +21,8 @@ function Find-FlowCellRoot([string]$StartPath) {
 }
 
 $repo = Find-FlowCellRoot -StartPath $PSScriptRoot
-$profilesRoot = Join-Path $repo 'FlowCell\local\Folder Tree Profiles'
-$treesRoot = Join-Path $repo 'FlowCell\local\Folder Trees'
+$profilesRoot = Join-Path $repo 'flowcellbackend\local\Folder Tree Profiles'
+$treesRoot = Join-Path $repo 'flowcellbackend\local\Folder Trees'
 
 $savedProfilePath = ''
 $skeleton = ''

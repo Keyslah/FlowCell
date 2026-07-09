@@ -27,12 +27,12 @@
         return programRoot && programRoot.parent && programRoot.parent.parent ? programRoot.parent.parent : programRoot;
     }
     function localFile(name) {
-        var folder = new Folder(findRepoRoot().fsName + "/FlowCell/local");
+        var folder = new Folder(findRepoRoot().fsName + "/flowcellbackend/local");
         if (!folder.exists) { folder.create(); }
         return new File(folder.fsName + "/" + name);
     }
     function logFile(name) {
-        var folder = new Folder(findRepoRoot().fsName + "/FlowCell/local/logs");
+        var folder = new Folder(findRepoRoot().fsName + "/flowcellbackend/local/logs");
         if (!folder.exists) { folder.create(); }
         return new File(folder.fsName + "/" + name);
     }

@@ -25,7 +25,7 @@ function Find-FlowCellRoot([string]$StartPath) {
 }
 
 $repoRoot = Find-FlowCellRoot -StartPath $PSScriptRoot
-$flowCellLocalRoot = Join-Path $repoRoot 'FlowCell\local'
+$flowCellLocalRoot = Join-Path $repoRoot 'flowcellbackend\local'
 $statusPath = Join-Path $flowCellLocalRoot 'logs\last_action_status.txt'
 
 function Write-Status([string]$Message) {

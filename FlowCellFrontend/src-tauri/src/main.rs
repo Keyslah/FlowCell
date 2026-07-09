@@ -792,7 +792,7 @@ fn resolve_foreground_scoped_process_names(
 }
 
 fn frontend_launcher_path_from_repo_root(root: &Path) -> PathBuf {
-    root.join("FlowCell")
+    root.join("flowcellbackend")
         .join("helpers")
         .join("Start-FlowCellFrontend.ps1")
 }
@@ -1530,19 +1530,19 @@ fn try_set_description_at_path(path_value: &str, description: &str) -> Result<()
 fn resolve_flowcell_local_debug_root() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root()
         .ok_or_else(|| "FlowCell repo root could not be resolved for debug dumps.".to_string())?;
-    Ok(repo_root.join("FlowCell").join("local").join("debug"))
+    Ok(repo_root.join("flowcellbackend").join("local").join("debug"))
 }
 
 fn resolve_flowcell_local_root() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root()
         .ok_or_else(|| "FlowCell repo root could not be resolved for local data.".to_string())?;
-    Ok(repo_root.join("FlowCell").join("local"))
+    Ok(repo_root.join("flowcellbackend").join("local"))
 }
 
 fn resolve_flowcell_config_root() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root()
         .ok_or_else(|| "FlowCell repo root could not be resolved for config data.".to_string())?;
-    Ok(repo_root.join("FlowCell").join("config"))
+    Ok(repo_root.join("flowcellbackend").join("config"))
 }
 
 fn resolve_shortcut_profiles_config_root() -> Result<PathBuf, String> {
@@ -5895,7 +5895,7 @@ async fn run_illustrator_layers_action(args_json: String) -> Result<String, Stri
 
 /// Persists the FlowCell-highlighted layer keys so the Layers Builder panel
 /// buttons (which run inside Illustrator) can resolve the same targets. The
-/// canonical copy lives under FlowCell/local; a mirror is written to the OS temp
+/// canonical copy lives under flowcellbackend/local; a mirror is written to the OS temp
 /// folder because the in-Illustrator `.jsx` reads it via ExtendScript's
 /// `Folder.temp` (no repo-root path derivation needed).
 #[tauri::command]
@@ -8093,7 +8093,9 @@ fn resolve_flowcell_backend_script_path() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root().ok_or_else(|| {
         "FlowCell repo root could not be resolved for backend execution.".to_string()
     })?;
-    let backend_script_path = repo_root.join("FlowCell").join("FlowCellBackend.ahk");
+    let backend_script_path = repo_root
+        .join("flowcellbackend")
+        .join("FlowCellBackend.ahk");
     if backend_script_path.is_file() {
         Ok(backend_script_path)
     } else {
@@ -8109,7 +8111,7 @@ fn resolve_flowcell_command_backend_script_path() -> Result<PathBuf, String> {
         "FlowCell repo root could not be resolved for command backend execution.".to_string()
     })?;
     let backend_path = repo_root
-        .join("FlowCell")
+        .join("flowcellbackend")
         .join("FlowCellCommandBackend.ps1");
     if backend_path.is_file() {
         Ok(backend_path)
@@ -8125,7 +8127,9 @@ fn resolve_flowcell_backend_launcher_path() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root().ok_or_else(|| {
         "FlowCell repo root could not be resolved for backend launch.".to_string()
     })?;
-    let launcher_path = repo_root.join("FlowCell").join("run_backend_hidden.vbs");
+    let launcher_path = repo_root
+        .join("flowcellbackend")
+        .join("run_backend_hidden.vbs");
     if launcher_path.is_file() {
         Ok(launcher_path)
     } else {
@@ -8139,7 +8143,7 @@ fn resolve_flowcell_backend_launcher_path() -> Result<PathBuf, String> {
 fn resolve_flowcell_autohotkey_exe_path() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root()
         .ok_or_else(|| "FlowCell repo root could not be resolved for AutoHotkey.".to_string())?;
-    let flowcell_root = repo_root.join("FlowCell");
+    let flowcell_root = repo_root.join("flowcellbackend");
     let candidates = [
         flowcell_root.join("runtime").join("AutoHotkey64.exe"),
         flowcell_root.join("runtime").join("AutoHotkey.exe"),
@@ -12710,7 +12714,7 @@ function Get-ClipboardProjectPath {
 function Write-FlowCellStatus([string]$Message) {
     try {
         $repo = Find-FlowCellRoot -StartPath $PSScriptRoot
-        $statusPath = Join-Path $repo 'FlowCell\local\logs\last_action_status.txt'
+        $statusPath = Join-Path $repo 'flowcellbackend\local\logs\last_action_status.txt'
         New-Item -ItemType Directory -Path (Split-Path -Parent $statusPath) -Force | Out-Null
         Set-Content -LiteralPath $statusPath -Value $Message -Encoding UTF8
     } catch { }

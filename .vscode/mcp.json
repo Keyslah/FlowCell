@@ -1,0 +1,12 @@
+{
+  "servers": {
+    "memtrace": {
+      "type": "stdio",
+      "command": "memtrace",
+      "args": [
+        "mcp"
+      ],
+      "env": {}
+    }
+  }
+}

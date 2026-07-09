@@ -31,7 +31,7 @@ if (-not (Get-Variable -Name FlowCellRepoRoot -Scope Script -ErrorAction Silentl
 }
 
 function Get-FlowCellLocalRoot {
-    return (Join-Path $script:FlowCellRepoRoot 'FlowCell\local')
+    return (Join-Path $script:FlowCellRepoRoot 'flowcellbackend\local')
 }
 
 function Get-OrganizationRoot {

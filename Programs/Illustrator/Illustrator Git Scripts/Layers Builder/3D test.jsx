@@ -94,7 +94,7 @@ try {
     var ROOT_ARCHIVE = "Archive";
     var SCRIPT_ROOT = File($.fileName).parent;
     var REPO_ROOT = SCRIPT_ROOT.parent;
-    var HELPER_ROOT = REPO_ROOT.fsName.replace(/\\/g, "/") + "/FlowCell/helpers";
+    var HELPER_ROOT = REPO_ROOT.fsName.replace(/\\/g, "/") + "/flowcellbackend/helpers";
     var THREE_P5_WRAPPER = HELPER_ROOT + "/Run3DTest3p5mm.vbs";
     var P5_WRAPPER = HELPER_ROOT + "/Run3DTestp5mm.vbs";
     var THREE_P5_SIGNAL = Folder.temp.fsName + "/Illustrator_3D_Test_3p5mm.signal.txt";

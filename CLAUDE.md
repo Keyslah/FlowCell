@@ -16,7 +16,7 @@ of truth — do not duplicate rules here).
   task (`npm run tauri build` from `FlowCellFrontend`) so the app is up to date — don't leave
   it for the user to run. If a running FlowCell instance locks `flowcell_frontend.exe` and
   blocks the rebuild, stop that process and rebuild, then tell the user to relaunch.
-- After a manual `npm run tauri build`, run `FlowCell/helpers/Update-FrontendBuildStamp.ps1`.
+- After a manual `npm run tauri build`, run `flowcellbackend/helpers/Update-FrontendBuildStamp.ps1`.
   The launcher (`Start-FlowCellFrontend.ps1`) rebuilds the frontend on startup whenever the
   `target/release` freshness stamps don't match the source, and it only writes those stamps
   after its *own* build — so without this step the user's next launch rebuilds again (making

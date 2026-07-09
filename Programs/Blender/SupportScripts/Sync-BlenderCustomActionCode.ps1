@@ -13,7 +13,7 @@ if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) {
 }
 $supportRoot = Join-Path $projectRoot 'SupportScripts'
 $bridgeLayoutPath = Join-Path $supportRoot 'FlowCellBlenderBridgeLayout.ps1'
-$localConfigPath = Join-Path $repoRoot 'FlowCell\local\private\blender.config.local.json'
+$localConfigPath = Join-Path $repoRoot 'flowcellbackend\local\private\blender.config.local.json'
 if (-not (Test-Path -LiteralPath $bridgeLayoutPath -PathType Leaf)) {
     throw "Blender bridge layout helper not found: $bridgeLayoutPath"
 }

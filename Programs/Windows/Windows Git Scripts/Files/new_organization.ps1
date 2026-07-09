@@ -57,7 +57,7 @@ catch {
     else {
         try {
             $repoRoot = Find-FlowCellRoot -StartPath $PSScriptRoot
-            $statusPath = Join-Path $repoRoot 'FlowCell\local\logs\last_action_status.txt'
+            $statusPath = Join-Path $repoRoot 'flowcellbackend\local\logs\last_action_status.txt'
             New-Item -ItemType Directory -Path (Split-Path -Parent $statusPath) -Force | Out-Null
             Set-Content -LiteralPath $statusPath -Value $message -Encoding UTF8
         }

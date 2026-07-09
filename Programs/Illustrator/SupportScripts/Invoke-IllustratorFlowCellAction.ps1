@@ -37,7 +37,7 @@ $script:ManifestPath = if ([string]::IsNullOrWhiteSpace($ManifestPath)) {
   [System.IO.Path]::GetFullPath($ManifestPath)
 }
 $script:BridgeScript = Join-Path $script:ProgramRoot 'SupportScripts\Start-IllustratorFlowCellBridge.ps1'
-$script:PidPath = Join-Path $script:RepoRootPath 'FlowCell\local\illustrator-bridge.pid.json'
+$script:PidPath = Join-Path $script:RepoRootPath 'flowcellbackend\local\illustrator-bridge.pid.json'
 
 function ConvertTo-RequestLine {
   param([Parameter(Mandatory = $true)]$Value)

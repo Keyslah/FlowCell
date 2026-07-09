@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "memtrace": {
+      "command": "memtrace",
+      "args": [
+        "mcp"
+      ],
+      "env": {}
+    }
+  }
+}

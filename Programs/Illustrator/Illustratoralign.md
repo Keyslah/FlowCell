@@ -4,7 +4,7 @@ This note describes FlowCell's Illustrator `Ill Align` toolset. The tool moves s
 
 ## How It Works
 
-Install the Illustrator payload, then assign `Illustrator > Actions > Set Anchor` any available shortcut in Binds. Select one or more Illustrator page items and use that shortcut to store the current selection as the anchor. The helper stores only the selection's current visible-bounds box and center point in `FlowCell/local/illustrator_anchor_bounds.json`.
+Install the Illustrator payload, then assign `Illustrator > Actions > Set Anchor` any available shortcut in Binds. Select one or more Illustrator page items and use that shortcut to store the current selection as the anchor. The helper stores only the selection's current visible-bounds box and center point in `flowcellbackend/local/illustrator_anchor_bounds.json`.
 
 After the anchor is set, select the object or objects you want to move and press an align button. Anchor-based moves use the stored bounds and center as a fixed target and include every selected page item, including the object that originally captured the anchor. The `Art` button targets the active artboard directly.
 
@@ -31,4 +31,4 @@ After the anchor is set, select the object or objects you want to move and press
 - The tool works on Illustrator page items from the current selection.
 - Selection scans are capped to avoid Illustrator hangs; select 250 or fewer items.
 - Anchor lookup uses the stored bounds file directly; the helper does not scan the document for tagged anchor objects.
-- Command status is written to `FlowCell/local/logs/illustrator-anchor-status.txt`, and detailed activity is logged to `FlowCell/local/logs/illustrator-anchor.log`.
+- Command status is written to `flowcellbackend/local/logs/illustrator-anchor-status.txt`, and detailed activity is logged to `flowcellbackend/local/logs/illustrator-anchor.log`.

@@ -31,7 +31,7 @@ function Resolve-FlowCellRepoRoot {
 }
 
 $script:RepoRoot = Resolve-FlowCellRepoRoot
-$script:FlowCellLocalRoot = Join-Path $script:RepoRoot 'FlowCell\local'
+$script:FlowCellLocalRoot = Join-Path $script:RepoRoot 'flowcellbackend\local'
 $script:StatusPath = Join-Path $script:FlowCellLocalRoot 'logs\last_action_status.txt'
 $script:ConfigDirectory = Join-Path $script:FlowCellLocalRoot 'windows\temp-shots'
 $script:ConfigPath = Join-Path $script:ConfigDirectory 'temp-shots.config.json'

@@ -1,7 +1,7 @@
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 root = fso.GetParentFolderName(WScript.ScriptFullName)
-target = root & "\FlowCell\run_hidden.vbs"
+target = root & "\flowcellbackend\run_hidden.vbs"
 
 If Not fso.FileExists(target) Then
     WScript.Echo "FlowCell launcher was not found: " & target

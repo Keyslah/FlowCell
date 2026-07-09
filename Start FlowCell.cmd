@@ -3,9 +3,9 @@ setlocal
 
 set "ROOT=%~dp0"
 set "APP_EXE=%ROOT%FlowCell.exe"
-set "AHK_EXE=%ROOT%FlowCell\runtime\AutoHotkey64.exe"
-set "AHK_SCRIPT=%ROOT%FlowCell\FlowCellBackend.ahk"
-set "PREFLIGHT=%ROOT%FlowCell\helpers\Start-FlowCellPreflight.ps1"
+set "AHK_EXE=%ROOT%flowcellbackend\runtime\AutoHotkey64.exe"
+set "AHK_SCRIPT=%ROOT%flowcellbackend\FlowCellBackend.ahk"
+set "PREFLIGHT=%ROOT%flowcellbackend\helpers\Start-FlowCellPreflight.ps1"
 
 if not exist "%APP_EXE%" (
   echo [FlowCell] Missing FlowCell.exe next to Start FlowCell.cmd.

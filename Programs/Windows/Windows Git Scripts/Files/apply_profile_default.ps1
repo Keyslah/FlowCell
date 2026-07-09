@@ -29,7 +29,7 @@ function Get-ClipboardProjectPath {
 function Write-FlowCellStatus([string]$Message) {
     try {
         $repo = Find-FlowCellRoot -StartPath $PSScriptRoot
-        $statusPath = Join-Path $repo 'FlowCell\local\logs\last_action_status.txt'
+        $statusPath = Join-Path $repo 'flowcellbackend\local\logs\last_action_status.txt'
         New-Item -ItemType Directory -Path (Split-Path -Parent $statusPath) -Force | Out-Null
         Set-Content -LiteralPath $statusPath -Value $Message -Encoding UTF8
     } catch { }

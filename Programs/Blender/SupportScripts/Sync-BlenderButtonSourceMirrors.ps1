@@ -14,13 +14,13 @@ $projectRoot = Join-Path $repoRoot 'Programs\Blender'
 if (-not (Test-Path -LiteralPath $projectRoot -PathType Container)) {
     $projectRoot = Join-Path $repoRoot 'Blender'
 }
-$localConfigPath = Join-Path $repoRoot 'FlowCell\local\private\blender.config.local.json'
+$localConfigPath = Join-Path $repoRoot 'flowcellbackend\local\private\blender.config.local.json'
 $updateDescriptionPath = Join-Path $PSScriptRoot 'Update-BlenderFlowCellButtonDescription.ps1'
 $exportPath = Join-Path $PSScriptRoot 'Export-BlenderPanelAddScriptSources.ps1'
 $customActionSyncPath = Join-Path $PSScriptRoot 'Sync-BlenderCustomActionCode.ps1'
 
 if ([string]::IsNullOrWhiteSpace($StatePath)) {
-    $StatePath = Join-Path $repoRoot 'FlowCell\local\flowcell_state.json'
+    $StatePath = Join-Path $repoRoot 'flowcellbackend\local\flowcell_state.json'
 }
 if ([string]::IsNullOrWhiteSpace($ConfigPath)) {
     $ConfigPath = if (Test-Path -LiteralPath $localConfigPath -PathType Leaf) { $localConfigPath } else { Join-Path $projectRoot 'config.json' }

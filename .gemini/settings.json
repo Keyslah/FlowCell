@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "memtrace": {
+      "command": "memtrace",
+      "args": [
+        "mcp"
+      ],
+      "env": {}
+    }
+  },
+  "enableHooks": true,
+  "enableMessageBusIntegration": true,
+  "hooks": {
+    "BeforeTool": [
+      {
+        "matcher": "run_shell_command|read_file|read_many_files|glob|search_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "memtrace route --hook --host gemini"
+          }
+        ]
+      }
+    ]
+  }
+}

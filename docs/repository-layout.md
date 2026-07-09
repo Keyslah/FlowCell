@@ -25,7 +25,7 @@ Panel deletes and button deletes only remove the panel copy or panel record. The
 
 ## Ignored Local Data
 
-`FlowCell/local/` stores runtime state such as bindings, layouts, saved panels, recorded macros, logs, private settings, temp files, and build/runtime artifacts.
+`flowcellbackend/local/` stores runtime state such as bindings, layouts, saved panels, recorded macros, logs, private settings, temp files, and build/runtime artifacts.
 
 Program-local ignored data includes panel button folders, flat Local Scripts folders, ScriptDump contents, generated Blender actions, and caches.
 

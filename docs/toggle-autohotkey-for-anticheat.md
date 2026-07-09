@@ -1,4 +1,4 @@
-﻿# Toggle AutoHotkey for anti-cheat games
+# Toggle AutoHotkey for anti-cheat games
 
 Use this when a game blocks or warns about running AutoHotkey. The toggle turns off every running `AutoHotkey*.exe` process, saves enough information to restore those scripts later, and creates a desktop shortcut named `Toggle AutoHotkey.lnk`. The shortcut uses a green icon when AutoHotkey is active and an off/red icon only after AutoHotkey processes are verified stopped.
 
@@ -14,16 +14,16 @@ The launcher resolves `Toggle-AutoHotkey.ps1` from its own folder, so it works f
 
 1. If any AutoHotkey process is running, the script snapshots its executable path and command-line arguments, stops all `AutoHotkey*.exe` processes, waits for the process count to reach zero, then marks the state as `off` and shows a short popup. If any AutoHotkey process is still running, the shortcut stays green/on and the popup says AutoHotkey is still running.
 2. If AutoHotkey is already off, the script restores the saved snapshot. If no snapshot exists, it falls back to the managed launcher list.
-3. State files live in `FlowCell\local\autohotkey-toggle\`, which is ignored by Git. `AutoHotkeyToggleState.txt` stores `on` or `off`, and `AutoHotkeyToggleStatus.json` stores the process count, message, timestamp, and active/off colors.
+3. State files live in `flowcellbackend\local\autohotkey-toggle\`, which is ignored by Git. `AutoHotkeyToggleState.txt` stores `on` or `off`, and `AutoHotkeyToggleStatus.json` stores the process count, message, timestamp, and active/off colors.
 4. `Toggle-AutoHotkey-On.ico` is the green active icon. `Toggle-AutoHotkey-Off.ico` is the verified-off icon.
-5. AutoHotkey v2 is resolved from `FlowCell\runtime`, `FlowCell\local\bin`, or the default AutoHotkey v2 install folder under `C:\Program Files\AutoHotkey\v2`.
+5. AutoHotkey v2 is resolved from `flowcellbackend\runtime`, `flowcellbackend\local\bin`, or the default AutoHotkey v2 install folder under `C:\Program Files\AutoHotkey\v2`.
 
 ## Managed launchers
 
 The first off-toggle usually captures everything needed to turn AutoHotkey back on. For a first-time on-toggle, or for scripts that should always restart from known launchers, create this ignored local file:
 
 ```text
-<repo>\FlowCell\local\autohotkey-toggle\Managed-AutoHotkeyLaunchers.txt
+<repo>\flowcellbackend\local\autohotkey-toggle\Managed-AutoHotkeyLaunchers.txt
 ```
 
 Put one launcher per line. Quote paths that contain spaces. Optional arguments can follow the path. Blank lines and lines starting with `#` are ignored.
@@ -32,10 +32,10 @@ Put one launcher per line. Quote paths that contain spaces. Optional arguments c
 # Examples:
 "C:\Users\you\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\Startup\FlowCell Hotkeys Startup.vbs"
 "C:\Users\you\Documents\Hotkeys\MyHotkeys.ahk"
-"<repo>\FlowCell\FlowCellBackend.ahk" --headless
+"<repo>\flowcellbackend\FlowCellBackend.ahk" --headless
 ```
 
-If no managed list exists inside a FlowCell checkout, the script starts `FlowCell\FlowCellBackend.ahk --headless` through its own portable AutoHotkey resolver.
+If no managed list exists inside a FlowCell checkout, the script starts `flowcellbackend\FlowCellBackend.ahk --headless` through its own portable AutoHotkey resolver.
 
 ## Full VBS launcher
 
@@ -96,7 +96,7 @@ function Ensure-Directory {
 
 $script:FlowCellRoot = try { Find-FlowCellRoot -StartPath $PSScriptRoot } catch { $null }
 $script:ToggleRoot = if ($null -ne $script:FlowCellRoot) {
-    Join-Path $script:FlowCellRoot 'FlowCell\local\autohotkey-toggle'
+    Join-Path $script:FlowCellRoot 'flowcellbackend\local\autohotkey-toggle'
 }
 else {
     $PSScriptRoot
@@ -120,10 +120,10 @@ function Get-AutoHotkeyExePath {
     $paths = @()
     if ($null -ne $script:FlowCellRoot) {
         $paths += @(
-            (Join-Path $script:FlowCellRoot 'FlowCell\runtime\AutoHotkey64.exe'),
-            (Join-Path $script:FlowCellRoot 'FlowCell\runtime\AutoHotkey.exe'),
-            (Join-Path $script:FlowCellRoot 'FlowCell\local\bin\AutoHotkey64.exe'),
-            (Join-Path $script:FlowCellRoot 'FlowCell\local\bin\AutoHotkey.exe')
+            (Join-Path $script:FlowCellRoot 'flowcellbackend\runtime\AutoHotkey64.exe'),
+            (Join-Path $script:FlowCellRoot 'flowcellbackend\runtime\AutoHotkey.exe'),
+            (Join-Path $script:FlowCellRoot 'flowcellbackend\local\bin\AutoHotkey64.exe'),
+            (Join-Path $script:FlowCellRoot 'flowcellbackend\local\bin\AutoHotkey.exe')
         )
     }
 
@@ -138,7 +138,7 @@ function Get-AutoHotkeyExePath {
         }
     }
 
-    throw 'AutoHotkey v2 was not found. Install AutoHotkey v2 or place AutoHotkey64.exe in FlowCell\runtime or FlowCell\local\bin.'
+    throw 'AutoHotkey v2 was not found. Install AutoHotkey v2 or place AutoHotkey64.exe in flowcellbackend\runtime or flowcellbackend\local\bin.'
 }
 
 function Get-ManagedHotkeyLauncherListPath {
@@ -190,7 +190,7 @@ function Get-ManagedHotkeyLauncherPaths {
     }
 
     if ($null -ne $script:FlowCellRoot) {
-        $flowCellBackendScript = Join-Path $script:FlowCellRoot 'FlowCell\FlowCellBackend.ahk'
+        $flowCellBackendScript = Join-Path $script:FlowCellRoot 'flowcellbackend\FlowCellBackend.ahk'
         if (Test-Path -LiteralPath $flowCellBackendScript -PathType Leaf) {
             return @(
                 [pscustomobject]@{
