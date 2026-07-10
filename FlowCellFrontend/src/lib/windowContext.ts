@@ -132,12 +132,8 @@ export type WindowGridWindowContext = {
   kind: "window-grid";
 };
 
-export type AppearanceWindowContext = {
-  kind: "appearance";
-};
-
-export type AppearanceHubWindowContext = {
-  kind: "appearance-hub";
+export type MotionSettingsWindowContext = {
+  kind: "motion-settings";
 };
 
 export type MacroLabWindowContext = {
@@ -199,8 +195,7 @@ export type FlowCellWindowContext =
   | OrganizationSetupWindowContext
   | BuildLayersWindowContext
   | WindowGridWindowContext
-  | AppearanceWindowContext
-  | AppearanceHubWindowContext
+  | MotionSettingsWindowContext
   | MacroLabWindowContext
   | ScriptGroupPopoutWindowContext
   | CodexUsagePopoutWindowContext;
@@ -511,14 +506,9 @@ export function getWindowContextFromLocation(): FlowCellWindowContext {
         kind: "window-grid"
       };
     }
-    if (parsed.kind === "appearance") {
+    if (parsed.kind === "motion-settings") {
       return {
-        kind: "appearance"
-      };
-    }
-    if (parsed.kind === "appearance-hub") {
-      return {
-        kind: "appearance-hub"
+        kind: "motion-settings"
       };
     }
     if (
@@ -639,8 +629,7 @@ export function resolveWindowContextAfterBootstrap(
       nextContext.kind === "organization-setup" ||
       nextContext.kind === "build-layers" ||
       nextContext.kind === "window-grid" ||
-      nextContext.kind === "appearance" ||
-      nextContext.kind === "appearance-hub" ||
+      nextContext.kind === "motion-settings" ||
       nextContext.kind === "macro-lab" ||
       nextContext.kind === "button-reorder" ||
       nextContext.kind === "script-group-popout" ||

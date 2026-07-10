@@ -1,10 +1,10 @@
 import type { CSSProperties } from "react";
 
 import {
-  DEFAULT_APPEARANCE_SETTINGS,
+  DEFAULT_MOTION_SETTINGS,
   easingCss,
   type RailHoverMotionSettings
-} from "../lib/appearanceSettings";
+} from "../lib/motionSettings";
 import type { RailRecord } from "../pages/main/mainLayout";
 
 const REST_BLUR_PX = 34;
@@ -18,7 +18,7 @@ type RailSurfaceProps = {
 export function RailSurface({
   rail,
   isHovered = false,
-  motion = DEFAULT_APPEARANCE_SETTINGS.railHover
+  motion = DEFAULT_MOTION_SETTINGS.railHover
 }: RailSurfaceProps) {
   // The rail blur, drop, and transition stay inline: the current CSS build drops
   // backdrop-filter from the stylesheet, and inline values also keep the rest

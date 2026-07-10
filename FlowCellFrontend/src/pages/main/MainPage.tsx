@@ -76,7 +76,7 @@ import {
   type StartupSettings
 } from "../../lib/startupSettings";
 import {
-  openAppearanceHubWindow,
+  openMotionSettingsWindow,
   openButtonReorderWindow,
   openAlignmentToolboxWindow,
   openBooleanToolboxWindow,
@@ -99,10 +99,10 @@ import {
 } from "../../lib/windowing";
 import { MACRO_PANEL_CHANGED_EVENT, runFrontendMacro } from "../../lib/macros";
 import {
-  readAppearanceSettings,
-  subscribeAppearanceSettings,
-  type AppearanceSettings
-} from "../../lib/appearanceSettings";
+  readMotionSettings,
+  subscribeMotionSettings,
+  type MotionSettings
+} from "../../lib/motionSettings";
 import { showOpenFolderDialog } from "../../lib/tauri";
 import { buildScriptGroupPopoutWindowSize } from "../../lib/scriptGroupPopoutTemplates";
 import { DEFAULT_FLOW_IMPORTED_SKIN } from "../../lib/theme";
@@ -582,8 +582,8 @@ export default function MainPage() {
   );
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
-  const [appearanceSettings, setAppearanceSettings] = useState<AppearanceSettings>(() =>
-    readAppearanceSettings()
+  const [motionSettings, setMotionSettings] = useState<MotionSettings>(() =>
+    readMotionSettings()
   );
   const [hoveredRailId, setHoveredRailId] = useState<string | null>(null);
 
@@ -604,8 +604,8 @@ export default function MainPage() {
     };
   }, []);
 
-  // Appearance settings are edited in the Appearance window and applied live here.
-  useEffect(() => subscribeAppearanceSettings(setAppearanceSettings), []);
+  // Motion settings are edited in their own window and applied live here.
+  useEffect(() => subscribeMotionSettings(setMotionSettings), []);
 
   // Rails are pointer-events:none (so buttons on top keep their clicks). Detect the
   // hovered rail by hit-testing the pointer against each rail rect — no clicks are
@@ -2850,12 +2850,12 @@ export default function MainPage() {
       return;
     }
 
-    if (button.actionId === "open-appearance") {
+    if (button.actionId === "open-motion-settings") {
       try {
-        await openAppearanceHubWindow();
+        await openMotionSettingsWindow();
       } catch (error) {
-        console.error("Failed to open the Appearance Hub window.", error);
-        window.alert(`Appearance window could not be opened.\n\n${formatErrorMessage(error)}`);
+        console.error("Failed to open Motion Settings.", error);
+        window.alert(`Motion Settings could not be opened.\n\n${formatErrorMessage(error)}`);
       }
       return;
     }
@@ -3131,7 +3131,7 @@ export default function MainPage() {
               key={rail.id}
               rail={rail}
               isHovered={hoveredRailId === rail.id}
-              motion={appearanceSettings.railHover}
+              motion={motionSettings.railHover}
             />
           ))}
           {topLeftActionAnchor ? (

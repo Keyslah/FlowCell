@@ -11,7 +11,7 @@ This file embeds the FlowCell Codex skills directly so prompts can reference thi
 - [svgtools](#svgtools)
 - [blender-theme](#blender-theme)
 - [react-tauri-button-skin-contract](#react-tauri-button-skin-contract)
-- [appearance-hub-skin-author](#appearance-hub-skin-author)
+- [skin-author](#skin-author)
 
 ## Copy/Paste Prompt
 

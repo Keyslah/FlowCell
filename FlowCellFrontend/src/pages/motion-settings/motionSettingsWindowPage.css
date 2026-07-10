@@ -1,0 +1,324 @@
+/* Motion Settings window — a deliberately distinct "instrument panel" look, separate
+   from FlowCell's other windows and from the default flat UI. Deep matte shell,
+   engraved cards, and a single lime signal color for anything live/adjustable. */
+
+.motion-settings {
+  --motion-settings-bg: #0b0f0c;
+  --motion-settings-panel: #12181300;
+  --motion-settings-ink: #e8f3e2;
+  --motion-settings-ink-dim: #8fa389;
+  --motion-settings-line: rgba(150, 214, 120, 0.16);
+  --motion-settings-line-soft: rgba(150, 214, 120, 0.09);
+  --motion-settings-signal: #a6f05a;
+  --motion-settings-signal-dim: #5f8a37;
+  --motion-settings-glow: 0 0 14px rgba(166, 240, 90, 0.55);
+
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  color: var(--motion-settings-ink);
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background:
+    radial-gradient(120% 80% at 50% -10%, rgba(84, 132, 52, 0.22), transparent 60%),
+    radial-gradient(90% 70% at 50% 120%, rgba(20, 40, 16, 0.6), transparent 55%),
+    var(--motion-settings-bg);
+}
+
+.motion-settings--space-drag { cursor: grab; }
+.motion-settings--dragging { cursor: grabbing; }
+
+/* Fine engraved texture that reads as a machined faceplate. */
+.motion-settings::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: repeating-linear-gradient(
+    0deg,
+    rgba(255, 255, 255, 0.014) 0,
+    rgba(255, 255, 255, 0.014) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  opacity: 0.7;
+}
+
+.motion-settings-resize-handle { position: absolute; z-index: 40; }
+.motion-settings-resize-handle--north { top: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.motion-settings-resize-handle--south { bottom: 0; left: 8px; right: 8px; height: 6px; cursor: ns-resize; }
+.motion-settings-resize-handle--east { top: 8px; bottom: 8px; right: 0; width: 6px; cursor: ew-resize; }
+.motion-settings-resize-handle--west { top: 8px; bottom: 8px; left: 0; width: 6px; cursor: ew-resize; }
+.motion-settings-resize-handle--north-east { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+.motion-settings-resize-handle--north-west { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.motion-settings-resize-handle--south-east { bottom: 0; right: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+.motion-settings-resize-handle--south-west { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+
+.motion-settings-titlebar {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 46px;
+  padding: 0 10px 0 18px;
+  border-bottom: 1px solid var(--motion-settings-line);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent);
+}
+
+.motion-settings-titlebar__brand { display: flex; align-items: baseline; gap: 10px; }
+
+.motion-settings-titlebar__pip {
+  align-self: center;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--motion-settings-signal);
+  box-shadow: var(--motion-settings-glow);
+}
+
+.motion-settings-titlebar__name {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+}
+
+.motion-settings-titlebar__scope {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--motion-settings-signal-dim);
+}
+
+.motion-settings-titlebar__close {
+  width: 30px;
+  height: 30px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--motion-settings-ink-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+.motion-settings-titlebar__close:hover {
+  color: var(--motion-settings-ink);
+  border-color: var(--motion-settings-line);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.motion-settings-body {
+  position: relative;
+  z-index: 1;
+  height: calc(100% - 46px);
+  overflow-y: auto;
+  padding: 16px 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.motion-settings-lede {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--motion-settings-ink-dim);
+}
+
+/* Live preview — hover the rail to feel the current drop/rise settings. */
+.motion-settings-preview { display: block; }
+.motion-settings-preview__stage {
+  position: relative;
+  height: 118px;
+  border-radius: 14px;
+  overflow: hidden;
+  background-size: cover;
+  background-position: center;
+  border: 1px solid var(--motion-settings-line);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+.motion-settings-preview__rail {
+  position: absolute;
+  left: 34%;
+  top: -6%;
+  width: 32%;
+  height: 92%;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.02);
+  will-change: transform, backdrop-filter;
+}
+.motion-settings-preview__label {
+  position: absolute;
+  right: 10px;
+  bottom: 8px;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.82);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+}
+
+.motion-settings-group {
+  border: 1px solid var(--motion-settings-line);
+  border-radius: 14px;
+  padding: 14px 15px 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.028), rgba(255, 255, 255, 0)) ,
+    rgba(8, 12, 8, 0.5);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.motion-settings-group__head { display: flex; align-items: baseline; gap: 10px; }
+.motion-settings-group__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.motion-settings-group__hint {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--motion-settings-signal-dim);
+}
+
+.motion-settings-field { display: flex; flex-direction: column; gap: 9px; }
+.motion-settings-field__row { display: flex; align-items: baseline; justify-content: space-between; }
+.motion-settings-field__label {
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--motion-settings-ink-dim);
+}
+.motion-settings-field__value {
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--motion-settings-ink);
+}
+
+/* Custom slider: engraved track, lit fill, glowing thumb. */
+.motion-settings-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 20px;
+  background: transparent;
+  cursor: pointer;
+}
+.motion-settings-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background:
+    linear-gradient(90deg, var(--motion-settings-signal) 0, var(--motion-settings-signal-dim) var(--motion-settings-fill, 0%), transparent var(--motion-settings-fill, 0%)),
+    rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+.motion-settings-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  margin-top: -6px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f4ffe4, var(--motion-settings-signal) 55%, #5f8a37);
+  border: 1px solid rgba(0, 0, 0, 0.35);
+  box-shadow: var(--motion-settings-glow);
+}
+.motion-settings-slider:focus-visible { outline: none; }
+.motion-settings-slider:focus-visible::-webkit-slider-thumb {
+  box-shadow: var(--motion-settings-glow), 0 0 0 3px rgba(166, 240, 90, 0.25);
+}
+.motion-settings-slider__scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--motion-settings-ink-dim);
+  opacity: 0.7;
+}
+
+.motion-settings-curve-picker { display: flex; flex-wrap: wrap; gap: 6px; }
+.motion-settings-chip {
+  padding: 6px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--motion-settings-line);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--motion-settings-ink-dim);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+}
+.motion-settings-chip:hover { color: var(--motion-settings-ink); border-color: rgba(166, 240, 90, 0.4); }
+.motion-settings-chip--active {
+  color: #0c1207;
+  background: var(--motion-settings-signal);
+  border-color: var(--motion-settings-signal);
+  box-shadow: var(--motion-settings-glow);
+}
+
+/* Curve read-out: the math shape (left) plus a live timing tracer (below). */
+.motion-settings-curve {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 2px;
+}
+.motion-settings-curve__svg {
+  width: 100%;
+  height: 76px;
+  border: 1px solid var(--motion-settings-line-soft);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), rgba(0, 0, 0, 0.2));
+}
+.motion-settings-curve__grid { stroke: rgba(150, 214, 120, 0.14); stroke-width: 0.6; }
+.motion-settings-curve__diagonal { fill: none; stroke: rgba(150, 214, 120, 0.16); stroke-width: 0.8; stroke-dasharray: 3 3; }
+.motion-settings-curve__path {
+  fill: none;
+  stroke: var(--motion-settings-signal);
+  stroke-width: 2.4;
+  vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 3px rgba(166, 240, 90, 0.7));
+}
+.motion-settings-curve__track {
+  position: relative;
+  display: block;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.motion-settings-curve__tracer {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 10px;
+  height: 10px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #f4ffe4, var(--motion-settings-signal) 60%, #5f8a37);
+  box-shadow: var(--motion-settings-glow);
+  animation-name: motion-settings-trace;
+  animation-iteration-count: infinite;
+  animation-direction: alternate;
+}
+
+@keyframes motion-settings-trace {
+  from { left: 3px; }
+  to { left: calc(100% - 13px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .motion-settings-curve__tracer { animation: none; }
+}

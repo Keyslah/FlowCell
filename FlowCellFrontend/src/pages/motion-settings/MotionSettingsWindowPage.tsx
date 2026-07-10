@@ -12,15 +12,15 @@ import {
   DURATION_MIN_MS,
   EASING_OPTIONS,
   easingCss,
-  readAppearanceSettings,
+  readMotionSettings,
   resolveEasingOption,
-  subscribeAppearanceSettings,
-  writeAppearanceSettings,
-  type AppearanceSettings,
+  subscribeMotionSettings,
+  writeMotionSettings,
+  type MotionSettings,
   type EasingId,
   type RailHoverMotionSettings
-} from "../../lib/appearanceSettings";
-import "./appearanceWindowPage.css";
+} from "../../lib/motionSettings";
+import "./motionSettingsWindowPage.css";
 
 type ResizeDirection =
   | "East"
@@ -56,16 +56,16 @@ function CurvePreview({ easingId, durationMs }: { easingId: EasingId; durationMs
     animationTimingFunction: easingCss(easingId)
   };
   return (
-    <div className="ap-curve">
-      <svg className="ap-curve__svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
-        <line className="ap-curve__grid" x1="0" y1="50" x2="100" y2="50" />
-        <line className="ap-curve__grid" x1="50" y1="0" x2="50" y2="100" />
-        <path className="ap-curve__diagonal" d="M0,100 L100,0" />
-        <path className="ap-curve__path" d={path} />
+    <div className="motion-settings-curve">
+      <svg className="motion-settings-curve__svg" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+        <line className="motion-settings-curve__grid" x1="0" y1="50" x2="100" y2="50" />
+        <line className="motion-settings-curve__grid" x1="50" y1="0" x2="50" y2="100" />
+        <path className="motion-settings-curve__diagonal" d="M0,100 L100,0" />
+        <path className="motion-settings-curve__path" d={path} />
       </svg>
       {/* key forces the tracer to restart whenever the curve or duration changes. */}
-      <span className="ap-curve__track" aria-hidden="true">
-        <span className="ap-curve__tracer" key={`${easingId}-${durationMs}`} style={tracerStyle} />
+      <span className="motion-settings-curve__track" aria-hidden="true">
+        <span className="motion-settings-curve__tracer" key={`${easingId}-${durationMs}`} style={tracerStyle} />
       </span>
     </div>
   );
@@ -88,24 +88,24 @@ function MotionGroup({
   onDurationChange,
   onEasingChange
 }: MotionGroupProps) {
-  const sliderStyle = { "--ap-fill": `${durationToPercent(durationMs)}%` } as CSSProperties;
+  const sliderStyle = { "--motion-settings-fill": `${durationToPercent(durationMs)}%` } as CSSProperties;
   return (
-    <section className="ap-group">
-      <header className="ap-group__head">
-        <h2 className="ap-group__title">{title}</h2>
-        <span className="ap-group__hint">{hint}</span>
+    <section className="motion-settings-group">
+      <header className="motion-settings-group__head">
+        <h2 className="motion-settings-group__title">{title}</h2>
+        <span className="motion-settings-group__hint">{hint}</span>
       </header>
 
-      <div className="ap-field">
-        <div className="ap-field__row">
-          <label className="ap-field__label" htmlFor={`ap-duration-${title}`}>
+      <div className="motion-settings-field">
+        <div className="motion-settings-field__row">
+          <label className="motion-settings-field__label" htmlFor={`motion-settings-duration-${title}`}>
             Speed
           </label>
-          <span className="ap-field__value">{Math.round(durationMs)} ms</span>
+          <span className="motion-settings-field__value">{Math.round(durationMs)} ms</span>
         </div>
         <input
-          id={`ap-duration-${title}`}
-          className="ap-slider"
+          id={`motion-settings-duration-${title}`}
+          className="motion-settings-slider"
           style={sliderStyle}
           type="range"
           min={DURATION_MIN_MS}
@@ -114,20 +114,20 @@ function MotionGroup({
           value={durationMs}
           onChange={(event) => onDurationChange(Number(event.target.value))}
         />
-        <div className="ap-slider__scale">
+        <div className="motion-settings-slider__scale">
           <span>fast</span>
           <span>slow</span>
         </div>
       </div>
 
-      <div className="ap-field">
-        <span className="ap-field__label">Curve</span>
-        <div className="ap-curve-picker" role="group" aria-label={`${title} curve`}>
+      <div className="motion-settings-field">
+        <span className="motion-settings-field__label">Curve</span>
+        <div className="motion-settings-curve-picker" role="group" aria-label={`${title} curve`}>
           {EASING_OPTIONS.map((option) => (
             <button
               key={option.id}
               type="button"
-              className={`ap-chip${option.id === easingId ? " ap-chip--active" : ""}`}
+              className={`motion-settings-chip${option.id === easingId ? " motion-settings-chip--active" : ""}`}
               title={option.description}
               aria-pressed={option.id === easingId}
               onClick={() => onEasingChange(option.id)}
@@ -157,26 +157,26 @@ function PreviewRail({ motion }: { motion: RailHoverMotionSettings }) {
     transform: hovered ? `translateY(${motion.dropOffsetPx}px)` : undefined
   };
   return (
-    <div className="ap-preview">
+    <div className="motion-settings-preview">
       <div
-        className="ap-preview__stage"
+        className="motion-settings-preview__stage"
         style={{ backgroundImage: `url(${mainBackground})` }}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        <div className="ap-preview__rail" style={railStyle} aria-hidden="true" />
-        <span className="ap-preview__label">{hovered ? "clear" : "hover me"}</span>
+        <div className="motion-settings-preview__rail" style={railStyle} aria-hidden="true" />
+        <span className="motion-settings-preview__label">{hovered ? "clear" : "hover me"}</span>
       </div>
     </div>
   );
 }
 
-export default function AppearanceWindowPage() {
-  const [settings, setSettings] = useState<AppearanceSettings>(() => readAppearanceSettings());
+export default function MotionSettingsWindowPage() {
+  const [settings, setSettings] = useState<MotionSettings>(() => readMotionSettings());
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
 
-  useEffect(() => subscribeAppearanceSettings(setSettings), []);
+  useEffect(() => subscribeMotionSettings(setSettings), []);
 
   // Frameless window: hold Space then drag to move it.
   useEffect(() => {
@@ -215,11 +215,11 @@ export default function AppearanceWindowPage() {
   }, []);
 
   const updateRailHover = (patch: Partial<RailHoverMotionSettings>) => {
-    const next: AppearanceSettings = {
+    const next: MotionSettings = {
       ...settings,
       railHover: { ...settings.railHover, ...patch }
     };
-    setSettings(writeAppearanceSettings(next));
+    setSettings(writeMotionSettings(next));
   };
 
   const startResizeDrag =
@@ -241,7 +241,7 @@ export default function AppearanceWindowPage() {
       return;
     }
     const target = event.target;
-    if (target instanceof HTMLElement && target.closest(".ap-resize-handle")) {
+    if (target instanceof HTMLElement && target.closest(".motion-settings-resize-handle")) {
       return;
     }
     event.preventDefault();
@@ -255,9 +255,9 @@ export default function AppearanceWindowPage() {
   return (
     <div
       className={[
-        "ap",
-        spaceDragActive ? "ap--space-drag" : "",
-        spaceDragging ? "ap--dragging" : ""
+        "motion-settings",
+        spaceDragActive ? "motion-settings--space-drag" : "",
+        spaceDragging ? "motion-settings--dragging" : ""
       ]
         .filter(Boolean)
         .join(" ")}
@@ -268,21 +268,21 @@ export default function AppearanceWindowPage() {
       {RESIZE_HANDLES.map((handle) => (
         <div
           key={handle.modifier}
-          className={`ap-resize-handle ap-resize-handle--${handle.modifier}`}
+          className={`motion-settings-resize-handle motion-settings-resize-handle--${handle.modifier}`}
           onPointerDown={startResizeDrag(handle.direction)}
         />
       ))}
 
-      <header className="ap-titlebar">
-        <div className="ap-titlebar__brand">
-          <span className="ap-titlebar__pip" aria-hidden="true" />
-          <span className="ap-titlebar__name">Appearance</span>
-          <span className="ap-titlebar__scope">rail motion</span>
+      <header className="motion-settings-titlebar">
+        <div className="motion-settings-titlebar__brand">
+          <span className="motion-settings-titlebar__pip" aria-hidden="true" />
+          <span className="motion-settings-titlebar__name">Motion Settings</span>
+          <span className="motion-settings-titlebar__scope">rail motion</span>
         </div>
         <button
           type="button"
-          className="ap-titlebar__close"
-          title="Close the Appearance window"
+          className="motion-settings-titlebar__close"
+          title="Close Motion Settings"
           aria-label="Close"
           onClick={() => void getCurrentWindow().close().catch(() => {})}
         >
@@ -290,9 +290,9 @@ export default function AppearanceWindowPage() {
         </button>
       </header>
 
-      <div className="ap-body">
-        <p className="ap-lede">
-          Tune how a rail moves when you hover it. More of FlowCell&rsquo;s look lands here over time.
+      <div className="motion-settings-body">
+        <p className="motion-settings-lede">
+          Tune how a rail moves when you hover it.
         </p>
 
         <PreviewRail motion={settings.railHover} />

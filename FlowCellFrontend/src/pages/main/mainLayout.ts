@@ -363,9 +363,9 @@ export const staticButtons: ButtonRecord[] = [
     width: 92.446043,
     height: 37.294964,
     radius: 18.647463,
-    label: "Appearance",
-    tooltip: "Open FlowCell appearance controls.",
-    actionId: "open-appearance",
+    label: "Motion",
+    tooltip: "Open FlowCell motion settings.",
+    actionId: "open-motion-settings",
     ...defaultButtonVisual
   },
   {

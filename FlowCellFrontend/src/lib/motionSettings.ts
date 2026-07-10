@@ -1,15 +1,10 @@
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-// FlowCell appearance settings.
-//
-// This is intentionally a small, namespaced tree rather than a flat record so the
-// appearance system can grow to cover "every aspect of FlowCell's look" without
-// reshaping what already exists. Each future area (rails, buttons, panels, theme,
-// ...) becomes its own key under AppearanceSettings; readers merge against the
-// defaults, so older stored blobs keep working as new keys are added.
+// FlowCell rail-motion settings.
 
-const APPEARANCE_SETTINGS_STORAGE_KEY = "flowcell.appearance-settings.v1";
-export const APPEARANCE_SETTINGS_CHANGED_EVENT = "flowcell:appearance-settings-changed";
+const MOTION_SETTINGS_STORAGE_KEY = "flowcell.motion-settings.v1";
+const LEGACY_MOTION_SETTINGS_STORAGE_KEY = "flowcell.appearance-settings.v1";
+export const MOTION_SETTINGS_CHANGED_EVENT = "flowcell:motion-settings-changed";
 
 export type EasingId =
   | "accelerate"
@@ -90,7 +85,7 @@ export interface RailHoverMotionSettings {
   clearOnHover: boolean;
 }
 
-export interface AppearanceSettings {
+export interface MotionSettings {
   version: 1;
   railHover: RailHoverMotionSettings;
 }
@@ -100,7 +95,7 @@ export const DURATION_MAX_MS = 2000;
 export const DROP_OFFSET_MIN_PX = 0;
 export const DROP_OFFSET_MAX_PX = 60;
 
-export const DEFAULT_APPEARANCE_SETTINGS: AppearanceSettings = {
+export const DEFAULT_MOTION_SETTINGS: MotionSettings = {
   version: 1,
   railHover: {
     dropDurationMs: 420,
@@ -129,7 +124,7 @@ function normalizeEasingId(value: unknown, fallback: EasingId): EasingId {
 }
 
 function normalizeRailHover(value: unknown): RailHoverMotionSettings {
-  const defaults = DEFAULT_APPEARANCE_SETTINGS.railHover;
+  const defaults = DEFAULT_MOTION_SETTINGS.railHover;
   const source = (value ?? {}) as Partial<RailHoverMotionSettings>;
   return {
     dropDurationMs: clampNumber(
@@ -156,56 +151,63 @@ function normalizeRailHover(value: unknown): RailHoverMotionSettings {
   };
 }
 
-export function normalizeAppearanceSettings(value: unknown): AppearanceSettings {
-  const source = (value ?? {}) as Partial<AppearanceSettings>;
+export function normalizeMotionSettings(value: unknown): MotionSettings {
+  const source = (value ?? {}) as Partial<MotionSettings>;
   return {
     version: 1,
     railHover: normalizeRailHover(source.railHover)
   };
 }
 
-export function readAppearanceSettings(): AppearanceSettings {
+export function readMotionSettings(): MotionSettings {
   if (!canUseStorage()) {
-    return normalizeAppearanceSettings(null);
+    return normalizeMotionSettings(null);
   }
 
-  const rawValue = window.localStorage.getItem(APPEARANCE_SETTINGS_STORAGE_KEY);
+  const rawValue =
+    window.localStorage.getItem(MOTION_SETTINGS_STORAGE_KEY) ??
+    window.localStorage.getItem(LEGACY_MOTION_SETTINGS_STORAGE_KEY);
   if (!rawValue) {
-    return normalizeAppearanceSettings(null);
+    return normalizeMotionSettings(null);
   }
 
   try {
-    return normalizeAppearanceSettings(JSON.parse(rawValue));
+    return normalizeMotionSettings(JSON.parse(rawValue));
   } catch {
-    return normalizeAppearanceSettings(null);
+    return normalizeMotionSettings(null);
   }
 }
 
-export function writeAppearanceSettings(settings: AppearanceSettings): AppearanceSettings {
-  const normalized = normalizeAppearanceSettings(settings);
+export function writeMotionSettings(settings: MotionSettings): MotionSettings {
+  const normalized = normalizeMotionSettings(settings);
   if (canUseStorage()) {
     window.localStorage.setItem(
-      APPEARANCE_SETTINGS_STORAGE_KEY,
+      MOTION_SETTINGS_STORAGE_KEY,
       JSON.stringify(normalized)
     );
+    window.localStorage.removeItem(LEGACY_MOTION_SETTINGS_STORAGE_KEY);
   }
   // Broadcast to sibling windows. localStorage's own "storage" event does not fire
   // in the window that made the change, and does not cross Tauri webviews reliably,
   // so the Tauri event is the primary cross-window signal.
-  void emit(APPEARANCE_SETTINGS_CHANGED_EVENT, normalized).catch(() => {});
+  void emit(MOTION_SETTINGS_CHANGED_EVENT, normalized).catch(() => {});
   return normalized;
 }
 
-// Subscribe to appearance changes from any window. Fires with the freshly read
+// Subscribe to motion changes from any window. Fires with the freshly read
 // settings whenever this or another window writes them.
-export function subscribeAppearanceSettings(
-  onChange: (settings: AppearanceSettings) => void
+export function subscribeMotionSettings(
+  onChange: (settings: MotionSettings) => void
 ): () => void {
   const handleStorage = (event: StorageEvent) => {
-    if (event.key && event.key !== APPEARANCE_SETTINGS_STORAGE_KEY) {
+    if (
+      event.key &&
+      event.key !== MOTION_SETTINGS_STORAGE_KEY &&
+      event.key !== LEGACY_MOTION_SETTINGS_STORAGE_KEY
+    ) {
       return;
     }
-    onChange(readAppearanceSettings());
+    onChange(readMotionSettings());
   };
 
   if (typeof window !== "undefined") {
@@ -214,8 +216,8 @@ export function subscribeAppearanceSettings(
 
   let disposed = false;
   let unlisten: UnlistenFn | null = null;
-  void listen<AppearanceSettings>(APPEARANCE_SETTINGS_CHANGED_EVENT, (event) => {
-    onChange(normalizeAppearanceSettings(event.payload));
+  void listen<MotionSettings>(MOTION_SETTINGS_CHANGED_EVENT, (event) => {
+    onChange(normalizeMotionSettings(event.payload));
   })
     .then((fn) => {
       if (disposed) {

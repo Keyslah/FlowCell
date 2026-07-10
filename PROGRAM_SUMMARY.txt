@@ -9,7 +9,7 @@ Current Direction
 -----------------
 - Keep the app on the rolled-back stable base with the backend/runtime rooted at `flowcellbackend/`.
 - Preserve the Blender cycle/collection/tool work that existed at commit `03796bb`.
-- Do not reintroduce the later Appearance/SkinPort/live skin work unless it is rebuilt as a narrow, clean V2 slice.
+- Appearance Hub and its isolated skin bench have been removed. Future Button V2 visual work must be a narrow, clean-room slice. The skin paste-format spec is retained as reference in `docs/ai-skills.md` (appearance-hub-skin-author) and `.claude/skills/skin-author/`.
 - Treat `PROGRAM_SUMMARY.txt` as an orientation map, not a changelog or bug diary. Detailed fixes belong in commits, issue notes, or feature docs.
 
 Repository Map
@@ -41,7 +41,7 @@ Frontend Surfaces
 - Popouts, panel fans, toolboxes, utility windows, settings, layout picker, Window Grid, Binds, Macro Lab, and Organization Setup are separate managed Tauri windows.
 - Layout save/load stores managed window bounds and startup settings; the main window can restore the last layout on startup.
 - Organization Setup is a managed React window backed by Windows support scripts and saved profile data under `flowcellbackend/local/Folder Tree Profiles` and `flowcellbackend/local/Folder Trees`.
-- Appearance V1 / SkinPort / live imported-skin wiring is not the current direction after the rollback. Any future button visual work should be a clean-room V2 vertical slice, scoped before broad wiring.
+- Motion Settings remains a standalone rail-motion window reached from the main Motion control until the future Buttons page assumes that launcher.
 
 Blender And Program Bridges
 ---------------------------
