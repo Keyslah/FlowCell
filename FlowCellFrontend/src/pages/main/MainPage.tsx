@@ -1440,11 +1440,14 @@ export default function MainPage() {
         continue;
       }
 
-      let bounds =
-        registeredWindow.kind === "button-fan" &&
-        isValidFlowCellBounds(registeredWindow.snapshotBounds)
+      const isFixedButtonCanvas =
+        registeredWindow.kind === "button-popout" ||
+        registeredWindow.kind === "button-fan";
+      const bounds = isFixedButtonCanvas
+        ? isValidFlowCellBounds(registeredWindow.snapshotBounds)
           ? registeredWindow.snapshotBounds
-          : await captureWindowBounds(windowHandle);
+          : null
+        : await captureWindowBounds(windowHandle);
       if (!isValidFlowCellBounds(bounds)) {
         continue;
       }

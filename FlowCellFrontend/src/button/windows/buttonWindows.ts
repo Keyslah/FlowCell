@@ -1,8 +1,10 @@
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
+  currentMonitor,
   getCurrentWindow,
   LogicalPosition,
   LogicalSize,
+  monitorFromPoint,
   PhysicalPosition,
   PhysicalSize,
   Window as TauriWindow
@@ -26,6 +28,7 @@ import {
   type ButtonFanWindowContext,
   type ButtonPopoutWindowContext
 } from "../../lib/windowContext";
+import { resolveFixedButtonCanvasBounds } from "./buttonWindowGeometry";
 
 export const BUTTON_EDITOR_WINDOW_LABEL = "flowcell-button-editor";
 export const BUTTON_WINDOW_CONTEXT_UPDATE_EVENT = "flowcell:button-window-context";
@@ -54,6 +57,11 @@ type WindowPlacement = {
   y?: number;
   unit: "logical" | "physical";
 };
+
+export interface AppliedButtonCanvas {
+  bounds: FlowCellBounds;
+  scaleFactor: number;
+}
 
 const pendingButtonWindowOpens = new Map<string, Promise<void>>();
 
@@ -157,6 +165,89 @@ async function resolveDefaultPlacement(
   };
 }
 
+async function resolveDefaultContentBounds(
+  width: number,
+  height: number
+): Promise<FlowCellBounds> {
+  const currentWindow = getCurrentWindow();
+  const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+  const [position, size] = await Promise.all([
+    currentWindow.outerPosition().catch(() => null),
+    currentWindow.innerSize().catch(() => null)
+  ]);
+  const normalizedScale = Number.isFinite(scaleFactor) && scaleFactor > 0
+    ? scaleFactor
+    : 1;
+  const physicalWidth = Math.max(1, Math.round(width * normalizedScale));
+  const physicalHeight = Math.max(1, Math.round(height * normalizedScale));
+
+  if (!position || !size) {
+    return {
+      Left: 0,
+      Top: 0,
+      Width: physicalWidth,
+      Height: physicalHeight
+    };
+  }
+
+  return {
+    Left: position.x + Math.max((size.width - physicalWidth) / 2, 24 * normalizedScale),
+    Top: position.y + Math.max((size.height - physicalHeight) / 2, 24 * normalizedScale),
+    Width: physicalWidth,
+    Height: physicalHeight
+  };
+}
+
+async function resolveButtonContentBounds(
+  width: number,
+  height: number,
+  bounds?: FlowCellBounds | null
+): Promise<FlowCellBounds> {
+  if (isUsableBounds(bounds)) {
+    return { ...bounds };
+  }
+  return resolveDefaultContentBounds(width, height);
+}
+
+async function resolveButtonCanvasPlacement(
+  contentBounds: FlowCellBounds
+): Promise<{ placement: WindowPlacement; scaleFactor: number }> {
+  const centerX = contentBounds.Left + contentBounds.Width / 2;
+  const centerY = contentBounds.Top + contentBounds.Height / 2;
+  const monitor = await monitorFromPoint(centerX, centerY)
+    .catch(() => null) ?? await currentMonitor().catch(() => null);
+
+  if (!monitor) {
+    return {
+      placement: {
+        width: contentBounds.Width,
+        height: contentBounds.Height,
+        x: contentBounds.Left,
+        y: contentBounds.Top,
+        unit: "physical"
+      },
+      scaleFactor: 1
+    };
+  }
+
+  const canvasBounds = resolveFixedButtonCanvasBounds(contentBounds, {
+    Left: monitor.workArea.position.x,
+    Top: monitor.workArea.position.y,
+    Width: monitor.workArea.size.width,
+    Height: monitor.workArea.size.height
+  });
+  return {
+    placement: {
+      width: canvasBounds.Width,
+      height: canvasBounds.Height,
+      x: canvasBounds.Left,
+      y: canvasBounds.Top,
+      unit: "physical"
+    },
+    scaleFactor: monitor.scaleFactor
+  };
+}
+
 async function resolvePlacement(
   width: number,
   height: number,
@@ -198,7 +289,7 @@ async function applyButtonWindowChrome(
 ): Promise<void> {
   await target.setDecorations(false);
   await target.setShadow(false);
-  await target.setResizable(true);
+  await target.setResizable(!transparent);
   await target.setMinSize(null);
   await target.setMaxSize(null);
   await target.setAlwaysOnTop(false);
@@ -208,6 +299,7 @@ async function applyButtonWindowChrome(
       setBackgroundColor?: (color: [number, number, number, number]) => Promise<void>;
     };
     await backgroundTarget.setBackgroundColor?.([0, 0, 0, 0]);
+    await target.setIgnoreCursorEvents(true);
   }
 }
 
@@ -318,6 +410,26 @@ export async function applyCurrentButtonWindowPhysicalBounds(
   });
 }
 
+export async function applyCurrentButtonCanvasForContentBounds(
+  bounds: FlowCellBounds
+): Promise<AppliedButtonCanvas> {
+  if (!isUsableBounds(bounds)) {
+    throw new Error("Button content bounds must be finite positive physical pixels.");
+  }
+  const resolved = await resolveButtonCanvasPlacement(bounds);
+  const placement = resolved.placement;
+  await applyWindowPlacement(getCurrentWindow(), placement);
+  return {
+    bounds: {
+      Left: placement.x ?? 0,
+      Top: placement.y ?? 0,
+      Width: placement.width,
+      Height: placement.height
+    },
+    scaleFactor: resolved.scaleFactor
+  };
+}
+
 export async function setCurrentButtonWindowLogicalSize(
   width: number,
   height: number
@@ -424,6 +536,11 @@ export async function openButtonPopoutWindow(args: {
   }
 
   const openPromise = (async () => {
+    const contentBounds = await resolveButtonContentBounds(
+      DEFAULT_POPOUT_WIDTH,
+      DEFAULT_POPOUT_HEIGHT,
+      args.bounds
+    );
     const context: ButtonPopoutWindowContext = {
       kind: "button-popout",
       schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
@@ -433,13 +550,20 @@ export async function openButtonPopoutWindow(args: {
       ownerButtonId: args.ownerButtonId,
       initialDisplayMode: args.displayMode ?? "expanded",
       draftSessionId: args.draftSessionId,
+      initialBounds: contentBounds,
       restoreBounds: args.bounds ?? undefined
     };
-    const placement = await resolvePlacement(
-      DEFAULT_POPOUT_WIDTH,
-      DEFAULT_POPOUT_HEIGHT,
-      args.bounds
-    );
+    const placement = (await resolveButtonCanvasPlacement(contentBounds)).placement;
+    registerLayoutWindow({
+      windowLabel,
+      kind: "button-popout",
+      programName: args.programName,
+      panelName: args.panelName,
+      buttonPopoutUnitId: args.popoutUnitId,
+      buttonOwnerId: args.ownerButtonId,
+      buttonDisplayMode: context.initialDisplayMode,
+      snapshotBounds: contentBounds
+    });
     let target = await WebviewWindow.getByLabel(windowLabel);
     const existed = Boolean(target);
     let shown = false;
@@ -464,19 +588,7 @@ export async function openButtonPopoutWindow(args: {
 
       await applyButtonWindowChrome(target, true);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      if (args.bounds || !existed) {
-        await applyWindowPlacement(target, placement);
-      }
-      registerLayoutWindow({
-        windowLabel,
-        kind: "button-popout",
-        programName: args.programName,
-        panelName: args.panelName,
-        buttonPopoutUnitId: args.popoutUnitId,
-        buttonOwnerId: args.ownerButtonId,
-        buttonDisplayMode: context.initialDisplayMode,
-        snapshotBounds: args.bounds ?? undefined
-      });
+      await applyWindowPlacement(target, placement);
       await showWindow(target, false);
       shown = true;
       if (existed) {
@@ -521,6 +633,11 @@ export async function openButtonFanWindow(args: {
   }
 
   const openPromise = (async () => {
+    const contentBounds = await resolveButtonContentBounds(
+      DEFAULT_FAN_WIDTH,
+      DEFAULT_FAN_HEIGHT,
+      args.collapsedBounds
+    );
     const context: ButtonFanWindowContext = {
       kind: "button-fan",
       schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
@@ -529,13 +646,19 @@ export async function openButtonFanWindow(args: {
       fanSetupId: args.fanSetupId,
       panelOwnerButtonId: args.panelOwnerButtonId,
       draftSessionId: args.draftSessionId,
+      initialBounds: contentBounds,
       restoreBounds: args.collapsedBounds ?? undefined
     };
-    const placement = await resolvePlacement(
-      DEFAULT_FAN_WIDTH,
-      DEFAULT_FAN_HEIGHT,
-      args.collapsedBounds
-    );
+    const placement = (await resolveButtonCanvasPlacement(contentBounds)).placement;
+    registerLayoutWindow({
+      windowLabel,
+      kind: "button-fan",
+      programName: args.programName,
+      panelName: args.panelName,
+      buttonFanSetupId: args.fanSetupId,
+      buttonOwnerId: args.panelOwnerButtonId,
+      snapshotBounds: contentBounds
+    });
     let target = await WebviewWindow.getByLabel(windowLabel);
     const existed = Boolean(target);
     let shown = false;
@@ -560,18 +683,7 @@ export async function openButtonFanWindow(args: {
 
       await applyButtonWindowChrome(target, true);
       await applyProgramScopedTopmost(windowLabel, args.programName);
-      if (args.collapsedBounds || !existed) {
-        await applyWindowPlacement(target, placement);
-      }
-      registerLayoutWindow({
-        windowLabel,
-        kind: "button-fan",
-        programName: args.programName,
-        panelName: args.panelName,
-        buttonFanSetupId: args.fanSetupId,
-        buttonOwnerId: args.panelOwnerButtonId,
-        snapshotBounds: args.collapsedBounds ?? undefined
-      });
+      await applyWindowPlacement(target, placement);
       await showWindow(target, false);
       shown = true;
       if (existed) {

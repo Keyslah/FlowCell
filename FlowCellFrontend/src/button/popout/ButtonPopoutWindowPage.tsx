@@ -16,8 +16,8 @@ import {
   writeRegisteredLayoutWindowSnapshotBounds
 } from "../../lib/layoutSnapshots";
 import {
+  isNativePrimaryMouseButtonDown,
   useNativeSpaceDragActive,
-  waitForNativeWindowDragEnd
 } from "../../lib/nativeKeyState";
 import {
   publishButtonCommit,
@@ -29,31 +29,34 @@ import type {
   ButtonCoreMeasurement,
   ButtonDesktopBounds,
   ButtonPlacement,
-  ButtonPopoutUnit,
   ButtonRect,
   ButtonStateDocument,
   ButtonVisualMeasurement,
   ButtonVisualState
 } from "../types";
 import {
-  applyCurrentButtonWindowPhysicalBounds,
+  applyCurrentButtonCanvasForContentBounds,
   closeButtonPopoutWindow,
-  listenForButtonWindowContextUpdates
+  listenForButtonWindowContextUpdates,
+  type AppliedButtonCanvas
 } from "../windows/buttonWindows";
 import {
+  buttonDesktopBoundsInsideCanvas,
+  buttonDesktopBoundsToCanvasRect,
   buttonDesktopBoundsFromFlowCellBounds,
   buttonVisualStateNeedsWindowExpansion,
   buttonWindowRectsEqual,
   resolveAspectLockedWindowBounds,
+  resolveButtonFrameForScaleFactor,
   resolveButtonWindowEnvelope,
-  resolveExpandedPopoutBounds,
-  resolveInitialPhysicalButtonWindowEnvelopeBounds,
   resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin,
   resolvePopoutBoundsAfterDrag,
   resolveUniformSurfaceScale,
+  translateButtonDesktopBounds,
   type ButtonWindowResizeCorner
 } from "../windows/buttonWindowGeometry";
 import { useButtonWindowDocument } from "../windows/useButtonWindowDocument";
+import { useFixedButtonCanvasMetrics } from "../windows/useFixedButtonCanvas";
 import { useNativeButtonHitboxes } from "../windows/useNativeButtonHitboxes";
 import {
   setButtonWindowGeometryTransitionActive,
@@ -130,8 +133,11 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   const resizeFlushPromiseRef = useRef<Promise<void> | null>(null);
   const resizeApplyErrorRef = useRef<unknown>(null);
   const contentScaleRef = useRef<number | null>(null);
+  const expandedContentScaleRef = useRef(1);
   const surfaceOriginRef = useRef<{ x: number; y: number } | null>(null);
   const appliedEnvelopeRef = useRef<ButtonRect | null>(null);
+  const appliedFrameBoundsRef = useRef<ButtonDesktopBounds | null>(null);
+  const appliedCanvasRef = useRef<AppliedButtonCanvas | null>(null);
   const restingEnvelopeFrameRef = useRef<{
     envelope: ButtonRect;
     bounds: ButtonDesktopBounds;
@@ -147,17 +153,38 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   const [currentMeasurements, setCurrentMeasurements] = useState<Record<string, ButtonCoreMeasurement>>({});
   const [visualStates, setVisualStates] = useState<Record<string, ButtonVisualState>>({});
   const [appliedEnvelope, setAppliedEnvelope] = useState<ButtonRect | null>(null);
+  const [appliedFrameBounds, setAppliedFrameBounds] = useState<ButtonDesktopBounds | null>(null);
   const [geometryRefreshToken, setGeometryRefreshToken] = useState(0);
+  const [geometryInitialized, setGeometryInitialized] = useState(false);
   const [spaceKeyActive, setSpaceKeyActive] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [resizing, setResizing] = useState(false);
-  const [viewportSize, setViewportSize] = useState(() => ({
-    width: Math.max(1, window.innerWidth),
-    height: Math.max(1, window.innerHeight)
-  }));
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const canvasMetrics = useFixedButtonCanvasMetrics();
   const nativeSpaceKeyActive = useNativeSpaceDragActive();
   const spaceDragActive = spaceKeyActive || nativeSpaceKeyActive;
+  const applyCanvasForFrame = useCallback(async (
+    bounds: ButtonDesktopBounds,
+    padding = 0
+  ): Promise<AppliedButtonCanvas> => {
+    const applied = await applyCurrentButtonCanvasForContentBounds({
+      Left: bounds.left - padding,
+      Top: bounds.top - padding,
+      Width: bounds.width + padding * 2,
+      Height: bounds.height + padding * 2
+    });
+    appliedCanvasRef.current = applied;
+    return applied;
+  }, []);
+  const ensureCanvasContainsFrame = useCallback(async (
+    bounds: ButtonDesktopBounds
+  ): Promise<AppliedButtonCanvas> => {
+    const current = appliedCanvasRef.current;
+    if (current && buttonDesktopBoundsInsideCanvas(bounds, current.bounds)) {
+      return current;
+    }
+    return applyCanvasForFrame(bounds, 192);
+  }, [applyCanvasForFrame]);
   const { document, loading, error } = useButtonWindowDocument(
     activeContext.draftSessionId
   );
@@ -269,31 +296,8 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     : storedCollapsedWindowEnvelope;
   const storedWindowEnvelopeRef = useRef(storedWindowEnvelope);
   storedWindowEnvelopeRef.current = storedWindowEnvelope;
-  const viewportSurfaceScale = appliedEnvelope && (expandedSurface || geometryPlacements.length > 0)
-    ? resolveUniformSurfaceScale({
-        viewportWidth: viewportSize.width,
-        viewportHeight: viewportSize.height,
-        surfaceWidth: appliedEnvelope.width,
-        surfaceHeight: appliedEnvelope.height
-      })
-    : 1;
-  const surfaceScale = resizing
-    ? viewportSurfaceScale
-    : contentScaleRef.current ?? viewportSurfaceScale;
+  const surfaceScale = contentScaleRef.current ?? 1;
   const resizeHandlesVisible = Boolean(unit && renderedDisplayMode === "expanded");
-  const unitRef = useRef<ButtonPopoutUnit | null>(unit);
-  unitRef.current = unit;
-
-  const syncViewportSize = useCallback(() => {
-    const nextWidth = Math.max(1, window.innerWidth);
-    const nextHeight = Math.max(1, window.innerHeight);
-    setViewportSize((current) =>
-      current.width === nextWidth && current.height === nextHeight
-        ? current
-        : { width: nextWidth, height: nextHeight }
-    );
-  }, []);
-
   const commitAppliedEnvelope = useCallback(async (
     envelope: ButtonRect,
     contentScaleOverride?: number,
@@ -301,43 +305,64 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     onRenderCommit?: () => void
   ) => {
     const currentWindow = getCurrentWindow();
-    const [position, size, rawScaleFactor] = await Promise.all([
-      currentWindow.outerPosition(),
-      currentWindow.innerSize(),
-      currentWindow.scaleFactor().catch(() => 1)
-    ]);
+    const rawScaleFactor = appliedCanvasRef.current?.scaleFactor ??
+      await currentWindow.scaleFactor().catch(() => 1);
     const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
       ? rawScaleFactor
       : 1;
-    const logicalWidth = size.width / scaleFactor;
-    const logicalHeight = size.height / scaleFactor;
+    const anchorBounds =
+      expandedBoundsRef.current ??
+      restingEnvelopeFrameRef.current?.bounds ??
+      appliedFrameBoundsRef.current;
     const nextContentScale =
       typeof contentScaleOverride === "number" &&
       Number.isFinite(contentScaleOverride) &&
       contentScaleOverride > 0
         ? contentScaleOverride
-        : resolveUniformSurfaceScale({
-            viewportWidth: logicalWidth,
-            viewportHeight: logicalHeight,
-            surfaceWidth: envelope.width,
-            surfaceHeight: envelope.height
-          });
+        : anchorBounds
+          ? resolveUniformSurfaceScale({
+              viewportWidth: anchorBounds.width / scaleFactor,
+              viewportHeight: anchorBounds.height / scaleFactor,
+              surfaceWidth: envelope.width,
+              surfaceHeight: envelope.height
+            })
+          : contentScaleRef.current ?? 1;
     contentScaleRef.current = nextContentScale;
     if (reanchorSurface || !surfaceOriginRef.current) {
       const physicalPerDesignPixel = nextContentScale * scaleFactor;
+      const anchor = anchorBounds ?? {
+        left: activeContext.initialBounds?.Left ?? 0,
+        top: activeContext.initialBounds?.Top ?? 0,
+        width: Math.max(1, envelope.width * physicalPerDesignPixel),
+        height: Math.max(1, envelope.height * physicalPerDesignPixel)
+      };
       surfaceOriginRef.current = {
-        x: position.x - envelope.x * physicalPerDesignPixel,
-        y: position.y - envelope.y * physicalPerDesignPixel
+        x: anchor.left - envelope.x * physicalPerDesignPixel,
+        y: anchor.top - envelope.y * physicalPerDesignPixel
       };
     }
-    appliedEnvelopeRef.current = envelope;
-    setViewportSize({
-      width: Math.max(1, logicalWidth),
-      height: Math.max(1, logicalHeight)
+    let frameBounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+      surfaceOrigin: surfaceOriginRef.current,
+      envelope,
+      contentScale: nextContentScale,
+      scaleFactor
     });
+    const appliedCanvas = await ensureCanvasContainsFrame(frameBounds);
+    if (Math.abs(appliedCanvas.scaleFactor - scaleFactor) > 0.001) {
+      frameBounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+        surfaceOrigin: surfaceOriginRef.current,
+        envelope,
+        contentScale: nextContentScale,
+        scaleFactor: appliedCanvas.scaleFactor
+      });
+      await ensureCanvasContainsFrame(frameBounds);
+    }
+    appliedEnvelopeRef.current = envelope;
+    appliedFrameBoundsRef.current = frameBounds;
     onRenderCommit?.();
     setAppliedEnvelope(envelope);
-  }, []);
+    setAppliedFrameBounds(frameBounds);
+  }, [activeContext.initialBounds, ensureCanvasContainsFrame]);
 
   const scheduleNativeGeometryTransition = useCallback((work: () => Promise<void>) => {
     const transition = nativeGeometryTransitionRef.current
@@ -365,59 +390,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       );
       return;
     }
-    const currentWindow = getCurrentWindow();
-    const [position, size, rawScaleFactor] = await Promise.all([
-      currentWindow.outerPosition(),
-      currentWindow.innerSize(),
-      currentWindow.scaleFactor().catch(() => 1)
-    ]);
-    const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
-      ? rawScaleFactor
-      : 1;
-    if (!currentEnvelope) {
-      const initialBounds = resolveInitialPhysicalButtonWindowEnvelopeBounds({
-        currentPosition: position,
-        nextEnvelope,
-        scaleFactor
-      });
-      await applyCurrentButtonWindowPhysicalBounds({
-        Left: initialBounds.left,
-        Top: initialBounds.top,
-        Width: initialBounds.width,
-        Height: initialBounds.height
-      });
-      surfaceOriginRef.current = null;
-      await commitAppliedEnvelope(nextEnvelope, 1, true);
-      return;
-    }
-    const logicalWidth = size.width / scaleFactor;
-    const logicalHeight = size.height / scaleFactor;
-    const contentScale = contentScaleRef.current ?? resolveUniformSurfaceScale({
-      viewportWidth: logicalWidth,
-      viewportHeight: logicalHeight,
-      surfaceWidth: currentEnvelope.width,
-      surfaceHeight: currentEnvelope.height
-    });
-    contentScaleRef.current = contentScale;
-    const physicalPerDesignPixel = contentScale * scaleFactor;
-    const surfaceOrigin = surfaceOriginRef.current ?? {
-      x: position.x - currentEnvelope.x * physicalPerDesignPixel,
-      y: position.y - currentEnvelope.y * physicalPerDesignPixel
-    };
-    surfaceOriginRef.current = surfaceOrigin;
-    const bounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
-      surfaceOrigin,
-      envelope: nextEnvelope,
-      contentScale,
-      scaleFactor
-    });
-    await applyCurrentButtonWindowPhysicalBounds({
-      Left: bounds.left,
-      Top: bounds.top,
-      Width: bounds.width,
-      Height: bounds.height
-    });
-    await commitAppliedEnvelope(nextEnvelope, contentScale);
+    await commitAppliedEnvelope(nextEnvelope, contentScaleRef.current ?? 1);
   }, [commitAppliedEnvelope]);
 
   const applyEnvelope = useCallback((nextEnvelope: ButtonRect) =>
@@ -487,12 +460,6 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   ]);
 
   useEffect(() => {
-    syncViewportSize();
-    window.addEventListener("resize", syncViewportSize);
-    return () => window.removeEventListener("resize", syncViewportSize);
-  }, [syncViewportSize]);
-
-  useEffect(() => {
     if (!unit) {
       return;
     }
@@ -514,60 +481,8 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         const currentOwner = activeContext.ownerButtonId ?? activeContext.popoutUnitId;
         const nextOwner = nextContext.ownerButtonId ?? nextContext.popoutUnitId;
         if (currentOwner === nextOwner) {
-          const currentUnit = unitRef.current;
-          const restoredBounds = buttonDesktopBoundsFromFlowCellBounds(
-            nextContext.restoreBounds ?? nextContext.initialBounds
-          );
-          if (currentUnit?.kind === "tool-set") {
-            const currentWindow = getCurrentWindow();
-            const [position, scaleFactor] = await Promise.all([
-              currentWindow.outerPosition(),
-              currentWindow.scaleFactor().catch(() => 1)
-            ]);
-            const physicalPosition = restoredBounds
-              ? { x: restoredBounds.left, y: restoredBounds.top }
-              : position;
-            collapsedOriginRef.current =
-              nextContext.initialDisplayMode === "expanded"
-                ? {
-                    x: physicalPosition.x - currentUnit.canonicalBounds.x * scaleFactor,
-                    y: physicalPosition.y - currentUnit.canonicalBounds.y * scaleFactor
-                  }
-                : { x: physicalPosition.x, y: physicalPosition.y };
-            expandedBoundsRef.current =
-              nextContext.initialDisplayMode === "expanded" && restoredBounds
-                ? restoredBounds
-                : isUsableDesktopBounds(currentUnit.desktopBounds)
-                  ? currentUnit.desktopBounds
-                  : expandedBoundsRef.current;
-            if (nextContext.initialDisplayMode === "collapsed") {
-              expandedBoundsRef.current = resolveExpandedPopoutBounds({
-                collapsedOrigin: collapsedOriginRef.current,
-                canonicalBounds: currentUnit.canonicalBounds,
-                scaleFactor,
-                authoritativeExpandedBounds: expandedBoundsRef.current
-              });
-            }
-            setGeometryRefreshToken((current) => current + 1);
-          } else if (restoredBounds) {
-            expandedBoundsRef.current = restoredBounds;
-            const restoredEnvelope =
-              currentUnit?.desktopBoundsEnvelope ?? storedWindowEnvelopeRef.current.resting;
-            restingEnvelopeFrameRef.current = {
-              envelope: restoredEnvelope,
-              bounds: restoredBounds
-            };
-            await scheduleNativeGeometryTransition(async () => {
-              await applyCurrentButtonWindowPhysicalBounds({
-                Left: restoredBounds.left,
-                Top: restoredBounds.top,
-                Width: restoredBounds.width,
-                Height: restoredBounds.height
-              });
-              surfaceOriginRef.current = null;
-              await commitAppliedEnvelope(restoredEnvelope, undefined, true);
-            });
-          }
+          initializedUnitIdRef.current = null;
+          setGeometryInitialized(false);
           setActiveContext(nextContext);
           setDisplayMode(nextContext.initialDisplayMode);
         }
@@ -579,8 +494,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   }, [
     activeContext.ownerButtonId,
     activeContext.popoutUnitId,
-    commitAppliedEnvelope,
-    scheduleNativeGeometryTransition
+    activeContext.popoutUnitId
   ]);
 
   useEffect(() => {
@@ -617,104 +531,147 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   }, [activeContext.ownerButtonId, activeContext.popoutUnitId, displayMode, resizing, unit]);
 
   useEffect(() => {
-    if (!unit || initializedUnitIdRef.current === unit.id) {
+    if (!unit || !canvasMetrics.ready) {
       return;
     }
-    initializedUnitIdRef.current = unit.id;
+    const initializationKey = [
+      unit.id,
+      activeContext.initialDisplayMode,
+      activeContext.restoreBounds?.Left,
+      activeContext.restoreBounds?.Top,
+      activeContext.restoreBounds?.Width,
+      activeContext.restoreBounds?.Height,
+      activeContext.initialBounds?.Left,
+      activeContext.initialBounds?.Top
+    ].join(":");
+    if (initializedUnitIdRef.current === initializationKey) {
+      return;
+    }
+    initializedUnitIdRef.current = initializationKey;
+    setGeometryInitialized(false);
     collapsedOriginRef.current = null;
-    if (unit.kind === "tool-set") setRenderedToolSetMode("collapsed");
     const restoredBounds = buttonDesktopBoundsFromFlowCellBounds(
       activeContext.restoreBounds ?? activeContext.initialBounds
     );
-    const initialExpandedBounds =
-      activeContext.initialDisplayMode === "expanded" && restoredBounds
-        ? restoredBounds
-        : isUsableDesktopBounds(unit.desktopBounds)
-          ? unit.desktopBounds
-          : null;
-    expandedBoundsRef.current = initialExpandedBounds;
-    restingEnvelopeFrameRef.current = initialExpandedBounds
-      ? {
-          envelope: unit.desktopBoundsEnvelope ?? storedExpandedWindowEnvelope.resting,
-          bounds: initialExpandedBounds
-        }
-      : null;
     setRuntimeError(null);
     setIdleMeasurements({});
     setCurrentMeasurements({});
     setVisualStates({});
-    const initialAppliedEnvelope =
-      activeContext.initialDisplayMode === "expanded" && initialExpandedBounds
-      ? unit.desktopBoundsEnvelope ?? storedExpandedWindowEnvelope.resting
-      : null;
-    contentScaleRef.current = initialAppliedEnvelope ? null : 1;
     surfaceOriginRef.current = null;
     appliedEnvelopeRef.current = null;
+    appliedFrameBoundsRef.current = null;
     setAppliedEnvelope(null);
+    setAppliedFrameBounds(null);
     setPinned(unit.pinnedDefault && activeContext.initialDisplayMode === "expanded");
     setDisplayMode(activeContext.initialDisplayMode);
+    if (unit.kind === "tool-set") {
+      setRenderedToolSetMode(activeContext.initialDisplayMode);
+    }
 
     const initialization = scheduleNativeGeometryTransition(async () => {
       const currentWindow = getCurrentWindow();
-      const initialWindowBounds =
-        activeContext.initialDisplayMode === "expanded"
-          ? initialExpandedBounds
-          : restoredBounds;
-      if (initialWindowBounds) {
-        writeRegisteredLayoutWindowSnapshotBounds(currentWindow.label, {
-          Left: initialWindowBounds.left,
-          Top: initialWindowBounds.top,
-          Width: initialWindowBounds.width,
-          Height: initialWindowBounds.height
-        });
-        await applyCurrentButtonWindowPhysicalBounds({
-          Left: initialWindowBounds.left,
-          Top: initialWindowBounds.top,
-          Width: initialWindowBounds.width,
-          Height: initialWindowBounds.height
-        });
-        if (initialAppliedEnvelope) {
-          surfaceOriginRef.current = null;
-          await commitAppliedEnvelope(initialAppliedEnvelope, undefined, true);
-          const synchronizedSurfaceOrigin = surfaceOriginRef.current as {
-            x: number;
-            y: number;
-          } | null;
-          if (unit.kind === "tool-set" && synchronizedSurfaceOrigin) {
-            collapsedOriginRef.current = { ...synchronizedSurfaceOrigin };
-          }
-        } else {
-          syncViewportSize();
-        }
-      }
-      const [position, scaleFactor] = await Promise.all([
-        currentWindow.outerPosition(),
-        currentWindow.scaleFactor().catch(() => 1)
-      ]);
-      const physicalPosition = initialWindowBounds
-        ? { x: initialWindowBounds.left, y: initialWindowBounds.top }
-        : position;
-      collapsedOriginRef.current =
-        activeContext.initialDisplayMode === "expanded"
-          ? {
-              x: physicalPosition.x - unit.canonicalBounds.x * scaleFactor,
-              y: physicalPosition.y - unit.canonicalBounds.y * scaleFactor
-            }
-          : { x: physicalPosition.x, y: physicalPosition.y };
-      if (activeContext.initialDisplayMode === "collapsed") {
-        expandedBoundsRef.current = resolveExpandedPopoutBounds({
-          collapsedOrigin: collapsedOriginRef.current,
-          canonicalBounds: unit.canonicalBounds,
-          scaleFactor,
-          authoritativeExpandedBounds: expandedBoundsRef.current
-        });
-      } else if (!expandedBoundsRef.current) {
-        expandedBoundsRef.current = resolveExpandedPopoutBounds({
-          collapsedOrigin: collapsedOriginRef.current,
-          canonicalBounds: unit.canonicalBounds,
+      const canvasSeed = restoredBounds ?? {
+        left: canvasMetrics.left,
+        top: canvasMetrics.top,
+        width: 1,
+        height: 1
+      };
+      const initialCanvas = await applyCanvasForFrame(canvasSeed);
+      const scaleFactor = initialCanvas.scaleFactor;
+      const anchor = restoredBounds ?? {
+        left: canvasMetrics.left,
+        top: canvasMetrics.top,
+        width: 1,
+        height: 1
+      };
+      const expandedEnvelope = unit.desktopBoundsEnvelope ?? storedExpandedWindowEnvelope.resting;
+      let visibleBounds: ButtonDesktopBounds;
+
+      if (activeContext.initialDisplayMode === "expanded") {
+        const authoritativeBounds =
+          activeContext.restoreBounds && restoredBounds
+            ? restoredBounds
+            : isUsableDesktopBounds(unit.desktopBounds)
+              ? unit.desktopBounds
+              : null;
+        const expandedScale = authoritativeBounds
+          ? resolveUniformSurfaceScale({
+              viewportWidth: authoritativeBounds.width / scaleFactor,
+              viewportHeight: authoritativeBounds.height / scaleFactor,
+              surfaceWidth: expandedEnvelope.width,
+              surfaceHeight: expandedEnvelope.height
+            })
+          : 1;
+        expandedContentScaleRef.current = expandedScale;
+        contentScaleRef.current = expandedScale;
+        visibleBounds = authoritativeBounds ?? {
+          left: anchor.left,
+          top: anchor.top,
+          width: Math.max(1, Math.ceil(expandedEnvelope.width * scaleFactor)),
+          height: Math.max(1, Math.ceil(expandedEnvelope.height * scaleFactor))
+        };
+        expandedBoundsRef.current = visibleBounds;
+        restingEnvelopeFrameRef.current = {
+          envelope: expandedEnvelope,
+          bounds: visibleBounds
+        };
+        const physicalPerDesignPixel = expandedScale * scaleFactor;
+        surfaceOriginRef.current = {
+          x: visibleBounds.left - expandedEnvelope.x * physicalPerDesignPixel,
+          y: visibleBounds.top - expandedEnvelope.y * physicalPerDesignPixel
+        };
+      } else {
+        const collapsedEnvelope = collapsedWindowEnvelope.resting;
+        visibleBounds = activeContext.restoreBounds && restoredBounds
+          ? restoredBounds
+          : {
+              left: anchor.left,
+              top: anchor.top,
+              width: Math.max(1, Math.ceil(collapsedEnvelope.width * scaleFactor)),
+              height: Math.max(1, Math.ceil(collapsedEnvelope.height * scaleFactor))
+            };
+        contentScaleRef.current = 1;
+        surfaceOriginRef.current = {
+          x: visibleBounds.left - collapsedEnvelope.x * scaleFactor,
+          y: visibleBounds.top - collapsedEnvelope.y * scaleFactor
+        };
+        const savedExpandedBounds = isUsableDesktopBounds(unit.desktopBounds)
+          ? unit.desktopBounds
+          : null;
+        expandedContentScaleRef.current = savedExpandedBounds
+          ? resolveUniformSurfaceScale({
+              viewportWidth: savedExpandedBounds.width / scaleFactor,
+              viewportHeight: savedExpandedBounds.height / scaleFactor,
+              surfaceWidth: expandedEnvelope.width,
+              surfaceHeight: expandedEnvelope.height
+            })
+          : 1;
+        expandedBoundsRef.current = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+          surfaceOrigin: surfaceOriginRef.current,
+          envelope: expandedEnvelope,
+          contentScale: expandedContentScaleRef.current,
           scaleFactor
         });
+        restingEnvelopeFrameRef.current = savedExpandedBounds
+          ? { envelope: expandedEnvelope, bounds: expandedBoundsRef.current }
+          : null;
       }
+
+      collapsedOriginRef.current = { ...surfaceOriginRef.current };
+      appliedEnvelopeRef.current = activeContext.initialDisplayMode === "expanded"
+        ? expandedEnvelope
+        : collapsedWindowEnvelope.resting;
+      appliedFrameBoundsRef.current = visibleBounds;
+      setAppliedEnvelope(appliedEnvelopeRef.current);
+      setAppliedFrameBounds(visibleBounds);
+      writeRegisteredLayoutWindowSnapshotBounds(currentWindow.label, {
+        Left: visibleBounds.left,
+        Top: visibleBounds.top,
+        Width: visibleBounds.width,
+        Height: visibleBounds.height
+      });
+      setGeometryInitialized(true);
+      await ensureCanvasContainsFrame(visibleBounds);
     });
     void initialization.catch((initializationError) => {
       setRuntimeError(
@@ -724,116 +681,98 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       );
     });
   }, [
+    activeContext.initialBounds,
     activeContext.initialDisplayMode,
-    commitAppliedEnvelope,
+    activeContext.restoreBounds,
+    applyCanvasForFrame,
+    canvasMetrics.left,
+    canvasMetrics.ready,
+    canvasMetrics.scaleFactor,
+    canvasMetrics.top,
+    collapsedWindowEnvelope.resting,
+    ensureCanvasContainsFrame,
     scheduleNativeGeometryTransition,
     storedExpandedWindowEnvelope.resting,
-    syncViewportSize,
     unit
   ]);
 
   const ensureCollapsedOrigin = useCallback(
-    async (currentMode: "collapsed" | "expanded") => {
+    async (_currentMode: "collapsed" | "expanded") => {
       if (collapsedOriginRef.current) {
         return collapsedOriginRef.current;
       }
-      if (currentMode === "expanded" && surfaceOriginRef.current) {
+      if (surfaceOriginRef.current) {
         collapsedOriginRef.current = { ...surfaceOriginRef.current };
         return collapsedOriginRef.current;
       }
       const currentWindow = getCurrentWindow();
-      const [position, scaleFactor] = await Promise.all([
-        currentWindow.outerPosition(),
-        currentWindow.scaleFactor().catch(() => 1)
-      ]);
-      const origin =
-        currentMode === "expanded" && unit
-          ? {
-              x: position.x - unit.canonicalBounds.x * scaleFactor,
-              y: position.y - unit.canonicalBounds.y * scaleFactor
-            }
-          : {
-              x: position.x -
-                (appliedEnvelopeRef.current?.x ?? 0) *
-                (contentScaleRef.current ?? 1) *
-                scaleFactor,
-              y: position.y -
-                (appliedEnvelopeRef.current?.y ?? 0) *
-                (contentScaleRef.current ?? 1) *
-                scaleFactor
-            };
+      const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+      const frame = appliedFrameBoundsRef.current ?? expandedBoundsRef.current;
+      const envelope = appliedEnvelopeRef.current ?? windowEnvelope.resting;
+      const physicalPerDesignPixel = (contentScaleRef.current ?? 1) * scaleFactor;
+      const origin = frame
+        ? {
+            x: frame.left - envelope.x * physicalPerDesignPixel,
+            y: frame.top - envelope.y * physicalPerDesignPixel
+          }
+        : {
+            x: activeContext.initialBounds?.Left ?? canvasMetrics.left,
+            y: activeContext.initialBounds?.Top ?? canvasMetrics.top
+          };
       collapsedOriginRef.current = origin;
+      surfaceOriginRef.current = origin;
       return origin;
     },
-    [unit]
+    [activeContext.initialBounds, canvasMetrics.left, canvasMetrics.top, windowEnvelope.resting]
   );
 
   const applyCollapsedGeometry = useCallback(async (
     collapsedEnvelope = collapsedWindowEnvelope.resting,
     onRenderCommit?: () => void
   ) => {
-    const currentWindow = getCurrentWindow();
     const origin = await ensureCollapsedOrigin("collapsed");
-    const rawScaleFactor = await currentWindow.scaleFactor().catch(() => 1);
-    const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
-      ? rawScaleFactor
-      : 1;
-    const collapsedBounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
-      surfaceOrigin: origin,
-      envelope: collapsedEnvelope,
-      contentScale: 1,
-      scaleFactor
-    });
     surfaceOriginRef.current = origin;
-    await applyCurrentButtonWindowPhysicalBounds({
-      Left: collapsedBounds.left,
-      Top: collapsedBounds.top,
-      Width: collapsedBounds.width,
-      Height: collapsedBounds.height
-    });
     await commitAppliedEnvelope(collapsedEnvelope, 1, false, onRenderCommit);
+    const collapsedBounds = appliedFrameBoundsRef.current;
+    if (collapsedBounds) {
+      writeRegisteredLayoutWindowSnapshotBounds(getCurrentWindow().label, {
+        Left: collapsedBounds.left,
+        Top: collapsedBounds.top,
+        Width: collapsedBounds.width,
+        Height: collapsedBounds.height
+      });
+    }
   }, [collapsedWindowEnvelope.resting, commitAppliedEnvelope, ensureCollapsedOrigin]);
 
   const applyExpandedGeometry = useCallback(async (onRenderCommit?: () => void) => {
     if (!unit) {
       return;
     }
-    const currentWindow = getCurrentWindow();
     const origin = await ensureCollapsedOrigin("expanded");
-    const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
-    const authoritativeExpandedBounds =
-      expandedBoundsRef.current ??
-      (isUsableDesktopBounds(unit.desktopBounds) ? unit.desktopBounds : null);
-    const expandedBounds = authoritativeExpandedBounds ?? resolveExpandedPopoutBounds({
-      collapsedOrigin: origin,
-      canonicalBounds: unit.canonicalBounds,
-      scaleFactor
-    });
-    expandedBoundsRef.current = expandedBounds;
     const expandedEnvelope =
       restingEnvelopeFrameRef.current?.envelope ??
       unit.desktopBoundsEnvelope ??
       expandedWindowEnvelope.resting;
-    await applyCurrentButtonWindowPhysicalBounds({
-      Left: expandedBounds.left,
-      Top: expandedBounds.top,
-      Width: expandedBounds.width,
-      Height: expandedBounds.height
-    });
-    surfaceOriginRef.current = null;
-    await commitAppliedEnvelope(expandedEnvelope, undefined, true, onRenderCommit);
-    const synchronizedSurfaceOrigin = surfaceOriginRef.current as {
-      x: number;
-      y: number;
-    } | null;
-    if (synchronizedSurfaceOrigin) {
-      collapsedOriginRef.current = { ...synchronizedSurfaceOrigin };
+    surfaceOriginRef.current = origin;
+    contentScaleRef.current = expandedContentScaleRef.current;
+    await commitAppliedEnvelope(
+      expandedEnvelope,
+      expandedContentScaleRef.current,
+      false,
+      onRenderCommit
+    );
+    if (appliedFrameBoundsRef.current) {
+      expandedBoundsRef.current = appliedFrameBoundsRef.current;
+      restingEnvelopeFrameRef.current = {
+        envelope: expandedEnvelope,
+        bounds: appliedFrameBoundsRef.current
+      };
     }
   }, [commitAppliedEnvelope, ensureCollapsedOrigin, expandedWindowEnvelope.resting, unit]);
 
   useEffect(() => {
     writeRegisteredLayoutWindowButtonDisplayMode(getCurrentWindow().label, displayMode);
-    if (!unit) {
+    if (!geometryInitialized || !unit) {
       return;
     }
     // Regular Pops are already placed by the window opener; their envelope
@@ -868,6 +807,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   }, [
     displayMode,
     dragging,
+    geometryInitialized,
     geometryRefreshToken,
     scheduleNativeGeometryTransition,
     unit?.id
@@ -875,6 +815,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
 
   useEffect(() => {
     if (
+      !geometryInitialized ||
       !unit ||
       unit.kind !== "tool-set" ||
       displayMode !== "collapsed" ||
@@ -896,6 +837,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     collapsedWindowEnvelope.current,
     displayMode,
     dragging,
+    geometryInitialized,
     queueEnvelope,
     renderedDisplayMode,
     resizing,
@@ -904,6 +846,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
 
   useEffect(() => {
     if (
+      !geometryInitialized ||
       !unit ||
       renderedDisplayMode !== "expanded" ||
       (unit.kind === "tool-set" && displayMode !== renderedDisplayMode) ||
@@ -921,19 +864,19 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         pendingEnvelopeRef.current = null;
         return scheduleNativeGeometryTransition(async () => {
         if (cancelled) return;
-        await applyCurrentButtonWindowPhysicalBounds({
-          Left: savedRestingFrame.bounds.left,
-          Top: savedRestingFrame.bounds.top,
-          Width: savedRestingFrame.bounds.width,
-          Height: savedRestingFrame.bounds.height
-        });
+        expandedBoundsRef.current = savedRestingFrame.bounds;
+        surfaceOriginRef.current = null;
         await commitAppliedEnvelope(
           windowEnvelope.resting,
           contentScaleRef.current ?? undefined,
           true
         );
-        if (unit.kind === "tool-set" && surfaceOriginRef.current) {
-          collapsedOriginRef.current = { ...surfaceOriginRef.current };
+        const restoredSurfaceOrigin = surfaceOriginRef.current as {
+          x: number;
+          y: number;
+        } | null;
+        if (unit.kind === "tool-set" && restoredSurfaceOrigin) {
+          collapsedOriginRef.current = { ...restoredSurfaceOrigin };
         }
         });
       })()
@@ -946,42 +889,30 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
           !buttonWindowRectsEqual(appliedEnvelopeRef.current, windowEnvelope.resting)
         ) return;
         const currentWindow = getCurrentWindow();
-        const [position, size] = await Promise.all([
-          currentWindow.outerPosition(),
-          currentWindow.innerSize()
-        ]);
+        const restingBounds = appliedFrameBoundsRef.current;
         if (
           cancelled ||
+          !restingBounds ||
           !buttonWindowRectsEqual(appliedEnvelopeRef.current, windowEnvelope.resting)
         ) return;
-        const restingBounds = {
-          left: position.x,
-          top: position.y,
-          width: size.width,
-          height: size.height
-        };
         expandedBoundsRef.current = restingBounds;
+        expandedContentScaleRef.current = contentScaleRef.current ?? 1;
         restingEnvelopeFrameRef.current = {
           envelope: windowEnvelope.resting,
           bounds: restingBounds
         };
         writeRegisteredLayoutWindowSnapshotBounds(currentWindow.label, {
-          Left: position.x,
-          Top: position.y,
-          Width: size.width,
-          Height: size.height
+          Left: restingBounds.left,
+          Top: restingBounds.top,
+          Width: restingBounds.width,
+          Height: restingBounds.height
         });
         if (activeContext.draftSessionId) {
           await publishButtonRestingWindowBounds(activeContext.draftSessionId, {
             kind: "popout",
             popoutUnitId: unit.id,
             fitMode: unit.windowFitMode ?? "surface",
-            bounds: {
-              left: position.x,
-              top: position.y,
-              width: size.width,
-              height: size.height
-            },
+            bounds: restingBounds,
             envelope: windowEnvelope.resting
           });
         }
@@ -1001,14 +932,14 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     queueEnvelope,
     renderedDisplayMode,
     resizing,
+    geometryInitialized,
     scheduleNativeGeometryTransition,
     unit,
     windowEnvelope.current,
     windowEnvelope.resting,
     windowEnvelope.transient,
     activeContext.draftSessionId,
-    commitAppliedEnvelope,
-    syncViewportSize
+    commitAppliedEnvelope
   ]);
 
   useEffect(() => {
@@ -1094,8 +1025,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
 
   useNativeButtonHitboxes({
     rootRef,
-    enabled: !dragging && !resizing,
-    geometryKey: `${activeContext.popoutUnitId}:${renderedDisplayMode}:${unit?.windowFitMode ?? "surface"}:${appliedEnvelope?.x ?? "pending"}:${appliedEnvelope?.y ?? "pending"}:${appliedEnvelope?.width ?? "pending"}:${appliedEnvelope?.height ?? "pending"}`,
+    enabled: geometryInitialized && !dragging && !resizing,
     onHoverChange: handleNativeHoverChange
   });
 
@@ -1123,26 +1053,20 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       return;
     }
     const currentWindow = getCurrentWindow();
-    const [position, size, rawScaleFactor] = await Promise.all([
-      currentWindow.outerPosition(),
-      currentWindow.innerSize(),
-      currentWindow.scaleFactor().catch(() => 1)
-    ]);
+    const rawScaleFactor = await currentWindow.scaleFactor().catch(() => 1);
     const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
       ? rawScaleFactor
       : 1;
-    const liveBounds: ButtonDesktopBounds = {
-      left: position.x,
-      top: position.y,
-      width: size.width,
-      height: size.height
-    };
+    const liveBounds = appliedFrameBoundsRef.current;
+    if (!liveBounds) {
+      return;
+    }
     const toolSetCollapsed = unit.kind === "tool-set" && persistedMode === "collapsed";
     const appliedWindowEnvelope = appliedEnvelopeRef.current ?? windowEnvelope.resting;
     const physicalPerDesignPixel = (contentScaleRef.current ?? 1) * scaleFactor;
-    const liveSurfaceOrigin = {
-      x: position.x - appliedWindowEnvelope.x * physicalPerDesignPixel,
-      y: position.y - appliedWindowEnvelope.y * physicalPerDesignPixel
+    const liveSurfaceOrigin = surfaceOriginRef.current ?? {
+      x: liveBounds.left - appliedWindowEnvelope.x * physicalPerDesignPixel,
+      y: liveBounds.top - appliedWindowEnvelope.y * physicalPerDesignPixel
     };
     surfaceOriginRef.current = liveSurfaceOrigin;
     const collapsedOrigin = toolSetCollapsed ? liveSurfaceOrigin : null;
@@ -1180,6 +1104,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         surfaceWidth: windowEnvelope.resting.width,
         surfaceHeight: windowEnvelope.resting.height
       });
+      expandedContentScaleRef.current = contentScaleRef.current;
     }
     expandedBoundsRef.current = nextBounds;
     restingEnvelopeFrameRef.current = {
@@ -1238,12 +1163,33 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       while (pendingResizeBoundsRef.current) {
         const nextBounds = pendingResizeBoundsRef.current;
         pendingResizeBoundsRef.current = null;
-        await applyCurrentButtonWindowPhysicalBounds({
-          Left: nextBounds.left,
-          Top: nextBounds.top,
-          Width: nextBounds.width,
-          Height: nextBounds.height
+        const rawScaleFactor = await getCurrentWindow().scaleFactor().catch(() => 1);
+        const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
+          ? rawScaleFactor
+          : 1;
+        const nextScale = resolveUniformSurfaceScale({
+          viewportWidth: nextBounds.width / scaleFactor,
+          viewportHeight: nextBounds.height / scaleFactor,
+          surfaceWidth: windowEnvelope.resting.width,
+          surfaceHeight: windowEnvelope.resting.height
         });
+        contentScaleRef.current = nextScale;
+        expandedContentScaleRef.current = nextScale;
+        surfaceOriginRef.current = {
+          x: nextBounds.left - windowEnvelope.resting.x * nextScale * scaleFactor,
+          y: nextBounds.top - windowEnvelope.resting.y * nextScale * scaleFactor
+        };
+        collapsedOriginRef.current = { ...surfaceOriginRef.current };
+        expandedBoundsRef.current = nextBounds;
+        restingEnvelopeFrameRef.current = {
+          envelope: windowEnvelope.resting,
+          bounds: nextBounds
+        };
+        appliedEnvelopeRef.current = windowEnvelope.resting;
+        appliedFrameBoundsRef.current = nextBounds;
+        setAppliedEnvelope(windowEnvelope.resting);
+        setAppliedFrameBounds(nextBounds);
+        await ensureCanvasContainsFrame(nextBounds);
       }
     })()
       .catch((resizeError) => {
@@ -1302,6 +1248,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       (event: ReactPointerEvent<HTMLDivElement>) => {
         if (
           event.button !== 0 ||
+          !geometryInitialized ||
           dragging ||
           resizing ||
           spaceDragActive ||
@@ -1313,11 +1260,9 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
 
         event.preventDefault();
         event.stopPropagation();
-        const resizeHandle = event.currentTarget;
         const pointerId = event.pointerId;
         const fallbackScreenX = event.screenX;
         const fallbackScreenY = event.screenY;
-        resizeHandle.setPointerCapture(pointerId);
         resizeApplyErrorRef.current = null;
         pendingResizeBoundsRef.current = null;
         setRuntimeError(null);
@@ -1325,15 +1270,14 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
 
         void (async () => {
           const currentWindow = getCurrentWindow();
-          await currentWindow.setIgnoreCursorEvents(false);
+          await currentWindow.setIgnoreCursorEvents(true);
           await queueEnvelope(windowEnvelope.resting);
-          const [position, size, rawScaleFactor, initialPointer] = await Promise.all([
-            currentWindow.outerPosition().catch(() => null),
-            currentWindow.innerSize().catch(() => null),
+          const [rawScaleFactor, initialPointer] = await Promise.all([
             currentWindow.scaleFactor().catch(() => 1),
             cursorPosition().catch(() => null)
           ]);
-          if (!position || !size) {
+          const initialBounds = expandedBoundsRef.current ?? appliedFrameBoundsRef.current;
+          if (!initialBounds) {
             throw new Error("Could not read the Button Pop window bounds for resizing.");
           }
           const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
@@ -1347,12 +1291,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
               x: fallbackScreenX * scaleFactor,
               y: fallbackScreenY * scaleFactor
             },
-            initialBounds: {
-              left: position.x,
-              top: position.y,
-              width: size.width,
-              height: size.height
-            }
+            initialBounds
           };
 
           if (resizePollTimerRef.current !== null) {
@@ -1367,86 +1306,68 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
               .then((pointer) => updateResizeBoundsForPointer(session, pointer))
               .catch(() => {});
           }, 16);
-        })().catch((resizeError) => {
-          if (resizeHandle.hasPointerCapture(pointerId)) {
-            resizeHandle.releasePointerCapture(pointerId);
+
+          while (await isNativePrimaryMouseButtonDown()) {
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+          }
+          const session = resizeSessionRef.current;
+          if (session) {
+            const finalPointer = await cursorPosition().catch(() => session.initialPointer);
+            updateResizeBoundsForPointer(session, finalPointer);
+          }
+          if (resizePollTimerRef.current !== null) {
+            window.clearInterval(resizePollTimerRef.current);
+            resizePollTimerRef.current = null;
           }
           resizeSessionRef.current = null;
-          setResizing(false);
-          setRuntimeError(
-            resizeError instanceof Error ? resizeError.message : String(resizeError)
-          );
-        });
+          await waitForQueuedResizeBounds();
+          let finalBounds = expandedBoundsRef.current;
+          if (finalBounds) {
+            const appliedCanvas = await applyCanvasForFrame(finalBounds);
+            const logicalScale = expandedContentScaleRef.current;
+            if (
+              session &&
+              Math.abs(appliedCanvas.scaleFactor - session.fallbackPointerScale) > 0.001
+            ) {
+              finalBounds = resolveButtonFrameForScaleFactor({
+                bounds: finalBounds,
+                envelope: windowEnvelope.resting,
+                contentScale: logicalScale,
+                scaleFactor: appliedCanvas.scaleFactor,
+                anchorCorner: corner
+              });
+              queueResizeBounds(finalBounds);
+              await waitForQueuedResizeBounds();
+              await applyCanvasForFrame(finalBounds);
+            }
+          }
+          await persistPopoutBounds("expanded");
+        })()
+          .catch((resizeError) => {
+            setRuntimeError(
+              resizeError instanceof Error ? resizeError.message : String(resizeError)
+            );
+          })
+          .finally(() => {
+            if (resizePollTimerRef.current !== null) {
+              window.clearInterval(resizePollTimerRef.current);
+              resizePollTimerRef.current = null;
+            }
+            resizeSessionRef.current = null;
+            resizeApplyErrorRef.current = null;
+            setResizing(false);
+          });
       };
 
-  const handleResizePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const session = resizeSessionRef.current;
-    if (!session || session.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    void cursorPosition()
-      .then((pointer) => updateResizeBoundsForPointer(session, pointer))
-      .catch(() => updateResizeBoundsForPointer(session, {
-        x: event.screenX * session.fallbackPointerScale,
-        y: event.screenY * session.fallbackPointerScale
-      }));
-  };
-
-  const endResizeDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const session = resizeSessionRef.current;
-    if (!session || session.pointerId !== event.pointerId) {
-      return;
-    }
-    event.preventDefault();
-    event.stopPropagation();
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    if (resizePollTimerRef.current !== null) {
-      window.clearInterval(resizePollTimerRef.current);
-      resizePollTimerRef.current = null;
-    }
-    resizeSessionRef.current = null;
-    const fallbackPointer = {
-      x: event.screenX * session.fallbackPointerScale,
-      y: event.screenY * session.fallbackPointerScale
-    };
-
-    void (async () => {
-      const finalPointer = await cursorPosition().catch(() => fallbackPointer);
-      queueResizeBounds(resolveAspectLockedWindowBounds({
-        initialBounds: session.initialBounds,
-        initialPointer: session.initialPointer,
-        pointer: finalPointer,
-        corner: session.corner
-      }));
-      await waitForQueuedResizeBounds();
-      surfaceOriginRef.current = null;
-      await commitAppliedEnvelope(windowEnvelope.resting, undefined, true);
-      const synchronizedSurfaceOrigin = surfaceOriginRef.current as {
-        x: number;
-        y: number;
-      } | null;
-      if (unit?.kind === "tool-set" && synchronizedSurfaceOrigin) {
-        collapsedOriginRef.current = { ...synchronizedSurfaceOrigin };
-      }
-      await persistPopoutBounds("expanded");
-    })()
-      .catch((resizeError) => {
-        setRuntimeError(
-          resizeError instanceof Error ? resizeError.message : String(resizeError)
-        );
-      })
-      .finally(() => {
-        resizeApplyErrorRef.current = null;
-        setResizing(false);
-      });
-  };
-
   const handlePointerDownCapture = (event: ReactPointerEvent<HTMLElement>) => {
-    if (!spaceDragActive || dragging || resizing || event.button !== 0 || !unit) {
+    if (
+      !geometryInitialized ||
+      !spaceDragActive ||
+      dragging ||
+      resizing ||
+      event.button !== 0 ||
+      !unit
+    ) {
       return;
     }
     event.preventDefault();
@@ -1454,7 +1375,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     setDragging(true);
     void (async () => {
       try {
-        await getCurrentWindow().setIgnoreCursorEvents(false);
+        await getCurrentWindow().setIgnoreCursorEvents(true);
         if (unit.kind === "regular" || displayMode === "collapsed") {
           await queueEnvelope(windowEnvelope.resting);
         }
@@ -1479,8 +1400,69 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
             await applyCollapsedGeometry(immediateCollapsedEnvelope);
           });
         }
-        await getCurrentWindow().startDragging();
-        await waitForNativeWindowDragEnd();
+
+        const initialPointer = await cursorPosition();
+        const initialVisibleBounds = appliedFrameBoundsRef.current;
+        const initialExpandedBounds = expandedBoundsRef.current;
+        const initialSurfaceOrigin = surfaceOriginRef.current;
+        if (!initialVisibleBounds || !initialExpandedBounds || !initialSurfaceOrigin) {
+          throw new Error("Could not read the Button Pop content frame for dragging.");
+        }
+
+        let finalVisibleBounds = initialVisibleBounds;
+        while (await isNativePrimaryMouseButtonDown()) {
+          const pointer = await cursorPosition().catch(() => initialPointer);
+          const delta = {
+            x: pointer.x - initialPointer.x,
+            y: pointer.y - initialPointer.y
+          };
+          finalVisibleBounds = translateButtonDesktopBounds(initialVisibleBounds, delta);
+          const nextExpandedBounds = translateButtonDesktopBounds(initialExpandedBounds, delta);
+          surfaceOriginRef.current = {
+            x: initialSurfaceOrigin.x + delta.x,
+            y: initialSurfaceOrigin.y + delta.y
+          };
+          collapsedOriginRef.current = { ...surfaceOriginRef.current };
+          expandedBoundsRef.current = nextExpandedBounds;
+          if (restingEnvelopeFrameRef.current) {
+            restingEnvelopeFrameRef.current = {
+              ...restingEnvelopeFrameRef.current,
+              bounds: nextExpandedBounds
+            };
+          }
+          appliedFrameBoundsRef.current = finalVisibleBounds;
+          setAppliedFrameBounds(finalVisibleBounds);
+          await ensureCanvasContainsFrame(finalVisibleBounds);
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+        }
+
+        const appliedCanvas = await applyCanvasForFrame(finalVisibleBounds);
+        const envelope = appliedEnvelopeRef.current ?? windowEnvelope.resting;
+        const logicalScale = contentScaleRef.current ?? 1;
+        surfaceOriginRef.current = {
+          x: finalVisibleBounds.left - envelope.x * logicalScale * appliedCanvas.scaleFactor,
+          y: finalVisibleBounds.top - envelope.y * logicalScale * appliedCanvas.scaleFactor
+        };
+        collapsedOriginRef.current = { ...surfaceOriginRef.current };
+        finalVisibleBounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+          surfaceOrigin: surfaceOriginRef.current,
+          envelope,
+          contentScale: logicalScale,
+          scaleFactor: appliedCanvas.scaleFactor
+        });
+        appliedFrameBoundsRef.current = finalVisibleBounds;
+        setAppliedFrameBounds(finalVisibleBounds);
+        if (unit.kind === "regular") {
+          expandedBoundsRef.current = finalVisibleBounds;
+          expandedContentScaleRef.current = logicalScale;
+        } else {
+          expandedBoundsRef.current = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+            surfaceOrigin: surfaceOriginRef.current,
+            envelope: expandedWindowEnvelope.resting,
+            contentScale: expandedContentScaleRef.current,
+            scaleFactor: appliedCanvas.scaleFactor
+          });
+        }
         await persistPopoutBounds(
           unit.kind === "tool-set" ? "collapsed" : displayMode
         );
@@ -1525,6 +1507,10 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       : { ...current, [placementId]: state });
   }, []);
 
+  const contentFrameRect = canvasMetrics.ready
+    ? buttonDesktopBoundsToCanvasRect(appliedFrameBounds, canvasMetrics)
+    : null;
+
   return (
     <main
       ref={rootRef}
@@ -1538,38 +1524,45 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       onPointerDownCapture={handlePointerDownCapture}
       aria-label={`${unit?.name ?? "Button popout"} — ${unit?.windowFitMode ?? "surface"} fit — ${activeContext.draftSessionId ? "live draft" : "saved state"}`}
     >
-      {resizeHandlesVisible
-        ? BUTTON_POPOUT_RESIZE_CORNERS.map(({ corner, modifier }) => (
-            <div
-              key={corner}
-              className={`button-popout-window__resize-handle button-popout-window__resize-handle--${modifier}`}
-              data-button-window-resize-handle={corner}
-              aria-hidden="true"
-              onPointerDown={startResizeDrag(corner)}
-              onPointerMove={handleResizePointerMove}
-              onPointerUp={endResizeDrag}
-              onPointerCancel={endResizeDrag}
-            />
-          ))
-        : null}
       {loading ? <div className="button-window-error">Loading Button popout...</div> : null}
       {error ? <div className="button-window-error">{error}</div> : null}
       {!loading && !error && !unit ? (
         <div className="button-window-error">Saved popout unit was not found.</div>
       ) : null}
       {runtimeError ? <div className="button-window-error">{runtimeError}</div> : null}
-      {document && unit ? (
-        <ButtonPopoutRenderer
-          document={document}
-          unit={unit}
-          displayMode={renderedDisplayMode}
-          surfaceScale={surfaceScale}
-          surfaceEnvelope={appliedEnvelope ?? windowEnvelope.current}
-          onOwnerActivate={handleOwnerActivate}
-          onPlacementVisualMeasurement={handlePlacementVisualMeasurement}
-          onPreparePlacementVisualStateChange={preparePlacementVisualStateChange}
-          onPlacementVisualStateChange={handlePlacementVisualStateChange}
-        />
+      {document && unit && contentFrameRect ? (
+        <div
+          className="button-popout-window__content-frame"
+          style={{
+            left: contentFrameRect.left,
+            top: contentFrameRect.top,
+            width: contentFrameRect.width,
+            height: contentFrameRect.height
+          }}
+        >
+          {resizeHandlesVisible
+            ? BUTTON_POPOUT_RESIZE_CORNERS.map(({ corner, modifier }) => (
+                <div
+                  key={corner}
+                  className={`button-popout-window__resize-handle button-popout-window__resize-handle--${modifier}`}
+                  data-button-window-resize-handle={corner}
+                  aria-hidden="true"
+                  onPointerDown={startResizeDrag(corner)}
+                />
+              ))
+            : null}
+          <ButtonPopoutRenderer
+            document={document}
+            unit={unit}
+            displayMode={renderedDisplayMode}
+            surfaceScale={surfaceScale}
+            surfaceEnvelope={appliedEnvelope ?? windowEnvelope.current}
+            onOwnerActivate={handleOwnerActivate}
+            onPlacementVisualMeasurement={handlePlacementVisualMeasurement}
+            onPreparePlacementVisualStateChange={preparePlacementVisualStateChange}
+            onPlacementVisualStateChange={handlePlacementVisualStateChange}
+          />
+        </div>
       ) : null}
     </main>
   );

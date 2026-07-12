@@ -76,14 +76,15 @@ Core utility windows such as Binds, Macro Lab, Organization Setup, Window Grid, 
 ### Layout contracts
 
 - Placement geometry uses canonical surface design units.
-- Saved native window bounds use physical desktop pixels.
-- Restore position before size and do not divide saved physical bounds by the current scale factor.
+- Saved Button Editor bounds and Pop/Fan semantic content frames use physical desktop pixels; the oversized Pop/Fan host canvas is runtime-only.
+- Restore physical semantic bounds verbatim. Pop/Fan must derive local CSS coordinates from the fixed canvas origin and DPI rather than reading the host HWND as saved content geometry.
 - Stable native labels derive from stable IDs, never editable labels.
 - A panel Fan and the Main-page panel rail share one stable `panel-owner` Button identity, but each occurrence is resolved through its own placement ID and may have its own geometry and skin override.
 - Exact saved geometry wins; do not rerun starter layout during restoration.
 - Reorder and `Snap to top left corner` are explicit undoable Editor actions that rewrite exact placement geometry and z-order; restore continues to use the saved result without reflowing it.
-- On a Pop or Fan surface, the selected `windowFitMode` is the Editor's immediate labeled window frame for Saved Surface, all Button hitboxes, or current Button visuals. The frame mirrors transient active overflow; opening the real native draft remains a separate `Open Pop` or `Open Fan` action, and Save persists the fit.
-- Scaled Pop/Fan rendering must normalize ancestor window scale to canonical design units while retaining skin-root and animated shadow/outline scale. New unsized Pops start at 1:1 logical scale, restored scale comes from the applied physical frame and its actual monitor DPI, and every window keeps an invariant physical surface origin. Desired envelope translation must not render until the corresponding serialized native bounds have applied, idle restore cancels stale pending hover frames, and a conservative active envelope must apply before authored hover pixels paint; otherwise hover polling can create clipping, resize feedback, or fractional-pixel drift. Native hover is the placement host rectangle, never the animated core rectangle, so glow/squish/rotation cannot self-trigger pointer leave. Fan/tool-set expansion applies native bounds before expanded content renders; collapse renders the owner against the expanded envelope before shrinking. Both directions keep the collapsed owner's visual-envelope surface origin fixed.
+- On a Pop or Fan surface, the selected `windowFitMode` is the Editor's immediate labeled semantic frame for Saved Surface, all Button hitboxes, or current Button visuals. The frame mirrors transient active overflow; opening the real native draft remains a separate `Open Pop` or `Open Fan` action, and Save persists only the resting fit.
+- Native Pop/Fan windows are fixed, non-resizable transparent canvases covering the active monitor work area and any outlying semantic content. Set cursor-ignore before show. Global physical-cursor polling may enable the HWND only over placement-owned Button hosts, tool fields, and Pop resize handles; gaps and effect cleanup must return it to ignored. The hit-test hook reads live DOM geometry each frame and must not restart merely because an envelope or content frame moved.
+- Render the visible frame absolutely inside that canvas. Fit changes, hover overflow, Fan expansion, and tool-set collapse/expansion change only semantic frame/envelope state. Grow or rehome the native canvas only when content escapes it, and use a capacity margin while dragging/resizing so monitor-edge motion stays visible. New unsized Pops start at 1:1 logical scale; restored scale comes from the destination canvas DPI. Preserve one invariant physical surface origin, normalize ancestor content scale to design units, and retain skin-root/animated overflow scale. Persist Pop/Fan semantic physical bounds and layout snapshots, never the monitor-sized host or transient envelope.
 - Layout snapshots are strict version 8 `FlowCellWindowLayout` documents and persist only `button-editor`, `button-popout`, and `button-fan` Button window kinds; unknown fields and old window kinds are rejected.
 - Only measured visible `[data-core]` regions are native hit-test regions. Gaps stay pointer-inert.
 - Program-scoped topmost must not cover Windows taskbar previews.
@@ -91,6 +92,7 @@ Core utility windows such as Binds, Macro Lab, Organization Setup, Window Grid, 
 ### Primary files
 
 - `FlowCellFrontend/src/button/windows/buttonWindows.ts`
+- `FlowCellFrontend/src/button/windows/useFixedButtonCanvas.ts`
 - `FlowCellFrontend/src/button/windows/useNativeButtonHitboxes.ts`
 - `FlowCellFrontend/src/button/popout/ButtonPopoutWindowPage.tsx`
 - `FlowCellFrontend/src/button/fan/ButtonFanWindowPage.tsx`

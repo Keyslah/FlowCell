@@ -108,8 +108,9 @@ Fan owner placement. Run preview honors the setup's saved open, close, and
 pinned defaults; a default Fan begins collapsed on that owner, expands on hover,
 collapses after hover-out when unpinned, pins on click, and collapses on the next
 pinned click. Saved Fan placement keeps the owner's surface origin fixed, while
-the collapsed native frame follows the applied visual envelope and monitor DPI
-so skin overflow cannot be clipped or shift the later expanded frame. Generic
+the collapsed semantic frame follows the applied visual envelope and monitor DPI
+inside the fixed native canvas, so skin overflow cannot be clipped or shift the
+later expanded frame. Generic
 Delete Button remains disabled for a `panel-owner`; deleting its panel or program
 owns that lifecycle.
 
@@ -144,34 +145,35 @@ preview-only.
 
 Every regular/tool-set Pop and Fan setup has a window-fit mode: saved `surface`,
 the union of all Button hitboxes, or the current measured visual union. Selecting
-the fit immediately applies it to the draft and draws that exact labeled window
-frame over the Editor workspace, including Saved Surface. The frame mirrors
-hover, press, hold, and play expansion for changing visual overflow and the
-surface glow allowance, then collapses to the selected resting fit on
-release/leave. `Open Pop` or `Open Fan` is a separate native-window preview of
-the same live draft, and Save persists the selected fit. Cropped fits translate
-the rendered canonical surface while applying the inverse native-frame offset,
-so the Buttons keep the same desktop positions; temporary expanded geometry is
-never saved. A Pop without saved desktop bounds opens at one design pixel per
-logical desktop pixel instead of inheriting the generic bootstrap window's
-scale. Skin/core measurements inside a scaled window normalize ancestor window
-scale back to canonical design units while retaining skin-root and animated
-shadow/outline scale. Pop and Fan retain one invariant physical surface origin,
-serialize native envelope changes, cancel stale pending hover frames on leave,
-and switch crop translation only after the matching native bounds have applied.
-Restored Pop scale comes from the applied physical frame and its actual monitor
-DPI; repeated hover/leave cycles therefore cannot jitter, progressively shrink
-the frame, or make Buttons outgrow their slots. Pop/Fan applies the conservative
-active envelope before authored hover pixels paint, and native hover remains
-attached to the placement-owned host rectangle while the authored core glows,
-squishes, rotates, or moves. A top/left edge therefore cannot clip its first
-active frame or oscillate between enter and leave. Fan/tool-set expansion grows
-the native frame before expanded content renders; collapse swaps to the owner
-against the expanded envelope before shrinking the frame.
-Hold Space and drag any Button in the live window to move its resting frame. Pop
-corner resize restores resting geometry first, keeps the aspect ratio/opposite
-corner, and persists physical desktop bounds; transparent gaps remain
-pointer-inert.
+the fit immediately applies it to the draft and draws that exact labeled frame
+over the Editor workspace. `Open Pop` and `Open Fan` remain separate native
+previews of the same live draft, and Save persists the resting fit.
+
+The native Pop/Fan window is now a non-resizable transparent canvas covering the
+active monitor work area, enlarged only when the visible content would escape it.
+It starts in Windows click-through mode. Global cursor polling turns input on only
+over placement-owned Button hosts, tool fields, or Pop resize handles, then turns
+click-through back on immediately after leaving; the rest of the large invisible
+window never blocks Blender, Illustrator, or the desktop underneath it.
+
+The visible Pop/Fan frame is absolutely positioned inside that canvas in physical
+desktop coordinates. Cropped fits translate the canonical surface inside this
+semantic frame, so hover/press/hold/play overflow, Fan expansion, and tool-set
+collapse/expansion no longer resize or move the HWND. The canvas grows or rehomes
+only at a capacity or monitor boundary, with spare margin during a drag/resize so
+the content remains visible across the edge. A Pop without saved desktop bounds
+starts at one design pixel per logical desktop pixel. Restored scale comes from
+the destination canvas DPI; skin measurements normalize ancestor content scale
+while retaining authored and animated shadow/outline scale. One invariant physical
+surface origin prevents fit changes and repeated hover cycles from moving the
+Buttons or accumulating fractional drift.
+
+Hold Space and drag any visible Button to move the semantic resting frame. Pop
+corner handles restore resting geometry first and preserve the aspect ratio and
+opposite corner. On release, Pop `desktopBounds`, Fan
+`collapsedPanelOwnerBounds`, and layout snapshots store the visible semantic
+physical-pixel frame—not the monitor-sized host. Transient active envelopes are
+never saved.
 
 Panel and program renames keep stable Button, placement, skin, Pop, and Fan IDs.
 The rename migrates canonical source identities, typed execution targets, active

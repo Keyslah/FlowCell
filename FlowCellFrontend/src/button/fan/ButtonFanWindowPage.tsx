@@ -6,12 +6,12 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent
 } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { ButtonFanWindowContext } from "../../lib/windowContext";
 import { writeRegisteredLayoutWindowSnapshotBounds } from "../../lib/layoutSnapshots";
 import {
+  isNativePrimaryMouseButtonDown,
   useNativeSpaceDragActive,
-  waitForNativeWindowDragEnd
 } from "../../lib/nativeKeyState";
 import {
   publishButtonCommit,
@@ -30,17 +30,22 @@ import type {
   ButtonVisualState
 } from "../types";
 import {
-  applyCurrentButtonWindowPhysicalBounds,
-  listenForButtonWindowContextUpdates
+  applyCurrentButtonCanvasForContentBounds,
+  listenForButtonWindowContextUpdates,
+  type AppliedButtonCanvas
 } from "../windows/buttonWindows";
 import {
+  buttonDesktopBoundsInsideCanvas,
+  buttonDesktopBoundsToCanvasRect,
   buttonDesktopBoundsFromFlowCellBounds,
   buttonVisualStateNeedsWindowExpansion,
   buttonWindowRectsEqual,
   resolveButtonWindowEnvelope,
-  resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin
+  resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin,
+  translateButtonDesktopBounds
 } from "../windows/buttonWindowGeometry";
 import { useButtonWindowDocument } from "../windows/useButtonWindowDocument";
+import { useFixedButtonCanvasMetrics } from "../windows/useFixedButtonCanvas";
 import { useNativeButtonHitboxes } from "../windows/useNativeButtonHitboxes";
 import {
   setButtonWindowGeometryTransitionActive,
@@ -99,10 +104,13 @@ export interface ButtonFanWindowPageProps {
 
 export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   const rootRef = useRef<HTMLElement | null>(null);
+  const initializedSetupKeyRef = useRef<string | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const collapsedBoundsRef = useRef<ButtonDesktopBounds | null>(null);
   const surfaceOriginRef = useRef<{ x: number; y: number } | null>(null);
   const appliedEnvelopeRef = useRef<ButtonRect | null>(null);
+  const appliedFrameBoundsRef = useRef<ButtonDesktopBounds | null>(null);
+  const appliedCanvasRef = useRef<AppliedButtonCanvas | null>(null);
   const restingEnvelopeFrameRef = useRef<{
     envelope: ButtonRect;
     bounds: ButtonDesktopBounds;
@@ -120,12 +128,37 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   const [currentMeasurements, setCurrentMeasurements] = useState<Record<string, ButtonCoreMeasurement>>({});
   const [visualStates, setVisualStates] = useState<Record<string, ButtonVisualState>>({});
   const [appliedEnvelope, setAppliedEnvelope] = useState<ButtonRect | null>(null);
+  const [appliedFrameBounds, setAppliedFrameBounds] = useState<ButtonDesktopBounds | null>(null);
+  const [geometryInitialized, setGeometryInitialized] = useState(false);
   const [geometryRefreshToken, setGeometryRefreshToken] = useState(0);
   const [spaceKeyActive, setSpaceKeyActive] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const canvasMetrics = useFixedButtonCanvasMetrics();
   const nativeSpaceKeyActive = useNativeSpaceDragActive();
   const spaceDragActive = spaceKeyActive || nativeSpaceKeyActive;
+  const applyCanvasForFrame = useCallback(async (
+    bounds: ButtonDesktopBounds,
+    padding = 0
+  ): Promise<AppliedButtonCanvas> => {
+    const applied = await applyCurrentButtonCanvasForContentBounds({
+      Left: bounds.left - padding,
+      Top: bounds.top - padding,
+      Width: bounds.width + padding * 2,
+      Height: bounds.height + padding * 2
+    });
+    appliedCanvasRef.current = applied;
+    return applied;
+  }, []);
+  const ensureCanvasContainsFrame = useCallback(async (
+    bounds: ButtonDesktopBounds
+  ): Promise<AppliedButtonCanvas> => {
+    const current = appliedCanvasRef.current;
+    if (current && buttonDesktopBoundsInsideCanvas(bounds, current.bounds)) {
+      return current;
+    }
+    return applyCanvasForFrame(bounds, 192);
+  }, [applyCanvasForFrame]);
   const { document, loading, error } = useButtonWindowDocument(
     activeContext.draftSessionId
   );
@@ -214,23 +247,50 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     onRenderCommit?: () => void
   ) => {
     const currentWindow = getCurrentWindow();
-    const [position, rawScaleFactor] = await Promise.all([
-      currentWindow.outerPosition(),
-      currentWindow.scaleFactor().catch(() => 1)
-    ]);
+    const rawScaleFactor = appliedCanvasRef.current?.scaleFactor ??
+      await currentWindow.scaleFactor().catch(() => 1);
     const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
       ? rawScaleFactor
       : 1;
     if (reanchorSurface || !surfaceOriginRef.current) {
+      const anchor = collapsedBoundsRef.current ?? appliedFrameBoundsRef.current ?? {
+        left: activeContext.initialBounds?.Left ?? canvasMetrics.left,
+        top: activeContext.initialBounds?.Top ?? canvasMetrics.top,
+        width: 1,
+        height: 1
+      };
       surfaceOriginRef.current = {
-        x: position.x - envelope.x * scaleFactor,
-        y: position.y - envelope.y * scaleFactor
+        x: anchor.left - envelope.x * scaleFactor,
+        y: anchor.top - envelope.y * scaleFactor
       };
     }
+    let frameBounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+      surfaceOrigin: surfaceOriginRef.current,
+      envelope,
+      contentScale: 1,
+      scaleFactor
+    });
+    const appliedCanvas = await ensureCanvasContainsFrame(frameBounds);
+    if (Math.abs(appliedCanvas.scaleFactor - scaleFactor) > 0.001) {
+      frameBounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+        surfaceOrigin: surfaceOriginRef.current,
+        envelope,
+        contentScale: 1,
+        scaleFactor: appliedCanvas.scaleFactor
+      });
+      await ensureCanvasContainsFrame(frameBounds);
+    }
     appliedEnvelopeRef.current = envelope;
+    appliedFrameBoundsRef.current = frameBounds;
     onRenderCommit?.();
     setAppliedEnvelope(envelope);
-  }, []);
+    setAppliedFrameBounds(frameBounds);
+  }, [
+    activeContext.initialBounds,
+    canvasMetrics.left,
+    canvasMetrics.top,
+    ensureCanvasContainsFrame
+  ]);
 
   const scheduleNativeGeometryTransition = useCallback((work: () => Promise<void>) => {
     const transition = nativeGeometryTransitionRef.current
@@ -258,32 +318,6 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       );
       return;
     }
-    const currentWindow = getCurrentWindow();
-    const [position, rawScaleFactor] = await Promise.all([
-      currentWindow.outerPosition(),
-      currentWindow.scaleFactor().catch(() => 1)
-    ]);
-    const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
-      ? rawScaleFactor
-      : 1;
-    const anchorEnvelope = currentEnvelope ?? nextEnvelope;
-    const surfaceOrigin = surfaceOriginRef.current ?? {
-      x: position.x - anchorEnvelope.x * scaleFactor,
-      y: position.y - anchorEnvelope.y * scaleFactor
-    };
-    surfaceOriginRef.current = surfaceOrigin;
-    const bounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
-      surfaceOrigin,
-      envelope: nextEnvelope,
-      contentScale: 1,
-      scaleFactor
-    });
-    await applyCurrentButtonWindowPhysicalBounds({
-      Left: bounds.left,
-      Top: bounds.top,
-      Width: bounds.width,
-      Height: bounds.height
-    });
     await commitAppliedEnvelope(nextEnvelope);
   }, [commitAppliedEnvelope]);
 
@@ -370,6 +404,8 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
           nextContext.kind === "button-fan" &&
           nextContext.panelOwnerButtonId === activeContext.panelOwnerButtonId
         ) {
+          initializedSetupKeyRef.current = null;
+          setGeometryInitialized(false);
           const restoredBounds = buttonDesktopBoundsFromFlowCellBounds(
             nextContext.restoreBounds ?? nextContext.initialBounds
           );
@@ -421,83 +457,141 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   }, []);
 
   useEffect(() => {
-    if (!setup) {
+    if (!setup || !canvasMetrics.ready) {
       return;
     }
+    const initializationKey = [
+      setup.id,
+      activeContext.restoreBounds?.Left,
+      activeContext.restoreBounds?.Top,
+      activeContext.restoreBounds?.Width,
+      activeContext.restoreBounds?.Height,
+      activeContext.initialBounds?.Left,
+      activeContext.initialBounds?.Top
+    ].join(":");
+    if (initializedSetupKeyRef.current === initializationKey) {
+      return;
+    }
+    initializedSetupKeyRef.current = initializationKey;
+    setGeometryInitialized(false);
     setRuntimeError(null);
     setOwnerMeasurement(null);
     setIdleMeasurements({});
     setCurrentMeasurements({});
     setVisualStates({});
     surfaceOriginRef.current = null;
+    collapsedBoundsRef.current = null;
     appliedEnvelopeRef.current = null;
+    appliedFrameBoundsRef.current = null;
+    restingEnvelopeFrameRef.current = null;
+    appliedExpandedRef.current = false;
     setAppliedEnvelope(null);
+    setAppliedFrameBounds(null);
     setPinned(setup.pinnedDefault);
     setExpanded(setup.pinnedDefault);
     setRenderedExpanded(false);
-    collapsedBoundsRef.current =
-      buttonDesktopBoundsFromFlowCellBounds(
+    void (async () => {
+      const contextBounds = buttonDesktopBoundsFromFlowCellBounds(
         activeContext.restoreBounds ?? activeContext.initialBounds
-      ) ??
-      (isUsableDesktopBounds(setup.collapsedPanelOwnerBounds)
+      );
+      const savedBounds = isUsableDesktopBounds(setup.collapsedPanelOwnerBounds)
         ? setup.collapsedPanelOwnerBounds
-        : null);
-    if (collapsedBoundsRef.current) {
+        : null;
+      const exactBounds = activeContext.restoreBounds ? contextBounds : savedBounds;
+      const canvasSeed = exactBounds ?? contextBounds ?? {
+        left: canvasMetrics.left,
+        top: canvasMetrics.top,
+        width: 1,
+        height: 1
+      };
+      const initialCanvas = await applyCanvasForFrame(canvasSeed);
+      if (initializedSetupKeyRef.current !== initializationKey) return;
+      const scaleFactor = initialCanvas.scaleFactor;
+      const collapsedBounds = exactBounds ?? {
+        left: contextBounds?.left ?? canvasMetrics.left,
+        top: contextBounds?.top ?? canvasMetrics.top,
+        width: Math.max(1, Math.ceil(storedCollapsedEnvelope.resting.width * scaleFactor)),
+        height: Math.max(1, Math.ceil(storedCollapsedEnvelope.resting.height * scaleFactor))
+      };
+      collapsedBoundsRef.current = collapsedBounds;
       restingEnvelopeFrameRef.current = {
         envelope: setup.collapsedBoundsEnvelope ?? storedCollapsedEnvelope.resting,
-        bounds: collapsedBoundsRef.current
+        bounds: collapsedBounds
       };
       writeRegisteredLayoutWindowSnapshotBounds(getCurrentWindow().label, {
-        Left: collapsedBoundsRef.current.left,
-        Top: collapsedBoundsRef.current.top,
-        Width: collapsedBoundsRef.current.width,
-        Height: collapsedBoundsRef.current.height
+        Left: collapsedBounds.left,
+        Top: collapsedBounds.top,
+        Width: collapsedBounds.width,
+        Height: collapsedBounds.height
       });
-    } else {
-      restingEnvelopeFrameRef.current = null;
-    }
-
-  }, [setup?.id]);
+      const collapsedEnvelope = setup.collapsedBoundsEnvelope ?? storedCollapsedEnvelope.resting;
+      surfaceOriginRef.current = {
+        x: collapsedBounds.left - collapsedEnvelope.x * scaleFactor,
+        y: collapsedBounds.top - collapsedEnvelope.y * scaleFactor
+      };
+      appliedEnvelopeRef.current = collapsedEnvelope;
+      appliedFrameBoundsRef.current = collapsedBounds;
+      setAppliedEnvelope(collapsedEnvelope);
+      setAppliedFrameBounds(collapsedBounds);
+      setGeometryInitialized(true);
+      await ensureCanvasContainsFrame(collapsedBounds);
+    })().catch((geometryError) => {
+      if (initializedSetupKeyRef.current === initializationKey) {
+        setRuntimeError(
+          geometryError instanceof Error ? geometryError.message : String(geometryError)
+        );
+      }
+    });
+  }, [
+    activeContext.initialBounds,
+    activeContext.restoreBounds,
+    applyCanvasForFrame,
+    canvasMetrics.left,
+    canvasMetrics.ready,
+    canvasMetrics.scaleFactor,
+    canvasMetrics.top,
+    ensureCanvasContainsFrame,
+    setup?.id,
+    storedCollapsedEnvelope.resting
+  ]);
 
   const applyCollapsedGeometry = useCallback(async (onRenderCommit?: () => void) => {
     const currentWindow = getCurrentWindow();
     const bounds = collapsedBoundsRef.current;
     if (isUsableDesktopBounds(bounds)) {
       const target = setup?.collapsedBoundsEnvelope ?? storedCollapsedEnvelope.resting;
-      await applyCurrentButtonWindowPhysicalBounds({
-        Left: bounds.left,
-        Top: bounds.top,
-        Width: bounds.width,
-        Height: bounds.height
-      });
-      surfaceOriginRef.current = null;
-      await commitAppliedEnvelope(target, true, onRenderCommit);
+      const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+      surfaceOriginRef.current = {
+        x: bounds.left - target.x * scaleFactor,
+        y: bounds.top - target.y * scaleFactor
+      };
+      await commitAppliedEnvelope(target, false, onRenderCommit);
       return;
     }
-    const [position, rawScaleFactor] = await Promise.all([
-      currentWindow.outerPosition(),
-      currentWindow.scaleFactor().catch(() => 1)
-    ]);
+    const rawScaleFactor = await currentWindow.scaleFactor().catch(() => 1);
     const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
       ? rawScaleFactor
       : 1;
     const target = collapsedEnvelope.resting;
+    const anchor = buttonDesktopBoundsFromFlowCellBounds(activeContext.initialBounds) ?? {
+      left: canvasMetrics.left,
+      top: canvasMetrics.top,
+      width: 1,
+      height: 1
+    };
     const collapsedBounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
-      surfaceOrigin: position,
+      surfaceOrigin: { x: anchor.left, y: anchor.top },
       envelope: target,
       contentScale: 1,
       scaleFactor
     });
-    surfaceOriginRef.current = position;
-    await applyCurrentButtonWindowPhysicalBounds({
-      Left: collapsedBounds.left,
-      Top: collapsedBounds.top,
-      Width: collapsedBounds.width,
-      Height: collapsedBounds.height
-    });
+    surfaceOriginRef.current = { x: anchor.left, y: anchor.top };
     collapsedBoundsRef.current = collapsedBounds;
     await commitAppliedEnvelope(target, false, onRenderCommit);
   }, [
+    activeContext.initialBounds,
+    canvasMetrics.left,
+    canvasMetrics.top,
     collapsedEnvelope.resting,
     commitAppliedEnvelope,
     setup?.collapsedBoundsEnvelope,
@@ -509,14 +603,12 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       return;
     }
     const currentWindow = getCurrentWindow();
-    const [currentPosition, initialScaleFactor] = await Promise.all([
-      currentWindow.outerPosition(),
-      currentWindow.scaleFactor().catch(() => 1)
-    ]);
+    const initialScaleFactor = await currentWindow.scaleFactor().catch(() => 1);
     if (!collapsedBoundsRef.current) {
+      const initialAnchor = buttonDesktopBoundsFromFlowCellBounds(activeContext.initialBounds);
       collapsedBoundsRef.current = {
-        left: currentPosition.x,
-        top: currentPosition.y,
+        left: initialAnchor?.left ?? canvasMetrics.left,
+        top: initialAnchor?.top ?? canvasMetrics.top,
         width: Math.max(
           1,
           Math.round((ownerMeasurement?.width ?? 1) * initialScaleFactor)
@@ -552,27 +644,12 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       };
     };
     let expandedFrame = resolveExpandedFrame(initialScaleFactor);
-    await applyCurrentButtonWindowPhysicalBounds({
-      Left: expandedFrame.bounds.left,
-      Top: expandedFrame.bounds.top,
-      Width: expandedFrame.bounds.width,
-      Height: expandedFrame.bounds.height
-    });
-    const positionedScaleFactor = await currentWindow.scaleFactor().catch(
-      () => initialScaleFactor
-    );
-    if (Math.abs(positionedScaleFactor - initialScaleFactor) > 0.001) {
-      expandedFrame = resolveExpandedFrame(positionedScaleFactor);
-      await applyCurrentButtonWindowPhysicalBounds({
-        Left: expandedFrame.bounds.left,
-        Top: expandedFrame.bounds.top,
-        Width: expandedFrame.bounds.width,
-        Height: expandedFrame.bounds.height
-      });
-    }
     surfaceOriginRef.current = expandedFrame.surfaceOrigin;
     await commitAppliedEnvelope(expandedTargetEnvelope, false, onRenderCommit);
   }, [
+    activeContext.initialBounds,
+    canvasMetrics.left,
+    canvasMetrics.top,
     commitAppliedEnvelope,
     expandedEnvelope.current,
     ownerMeasurement,
@@ -584,7 +661,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   ]);
 
   useEffect(() => {
-    if (dragging) return;
+    if (!geometryInitialized || dragging) return;
     let cancelled = false;
     pendingEnvelopeRef.current = null;
     void (async () => {
@@ -612,10 +689,22 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     return () => {
       cancelled = true;
     };
-  }, [dragging, expanded, geometryRefreshToken, scheduleNativeGeometryTransition, setup?.id]);
+  }, [
+    dragging,
+    expanded,
+    geometryInitialized,
+    geometryRefreshToken,
+    scheduleNativeGeometryTransition,
+    setup?.id
+  ]);
 
   useEffect(() => {
-    if (dragging || appliedExpandedRef.current !== expanded || renderedExpanded !== expanded) return;
+    if (
+      !geometryInitialized ||
+      dragging ||
+      appliedExpandedRef.current !== expanded ||
+      renderedExpanded !== expanded
+    ) return;
     let cancelled = false;
     const savedRestingFrame = restingEnvelopeFrameRef.current;
     const restoreSavedRestingFrame =
@@ -627,12 +716,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
         pendingEnvelopeRef.current = null;
         return scheduleNativeGeometryTransition(async () => {
           if (cancelled) return;
-          await applyCurrentButtonWindowPhysicalBounds({
-            Left: savedRestingFrame.bounds.left,
-            Top: savedRestingFrame.bounds.top,
-            Width: savedRestingFrame.bounds.width,
-            Height: savedRestingFrame.bounds.height
-          });
+          collapsedBoundsRef.current = savedRestingFrame.bounds;
           surfaceOriginRef.current = null;
           await commitAppliedEnvelope(windowEnvelope.resting, true);
         });
@@ -646,20 +730,12 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
           !buttonWindowRectsEqual(appliedEnvelopeRef.current, windowEnvelope.resting)
         ) return;
         const currentWindow = getCurrentWindow();
-        const [position, size] = await Promise.all([
-          currentWindow.outerPosition(),
-          currentWindow.innerSize()
-        ]);
+        const bounds = appliedFrameBoundsRef.current;
         if (
           cancelled ||
+          !bounds ||
           !buttonWindowRectsEqual(appliedEnvelopeRef.current, windowEnvelope.resting)
         ) return;
-        const bounds = {
-          left: position.x,
-          top: position.y,
-          width: size.width,
-          height: size.height
-        };
         restingEnvelopeFrameRef.current = {
           envelope: windowEnvelope.resting,
           bounds
@@ -695,6 +771,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     activeContext.draftSessionId,
     dragging,
     expanded,
+    geometryInitialized,
     renderedExpanded,
     queueEnvelope,
     setup,
@@ -750,8 +827,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
 
   useNativeButtonHitboxes({
     rootRef,
-    enabled: !dragging,
-    geometryKey: `${activeContext.fanSetupId}:${renderedExpanded}:${setup?.windowFitMode ?? "surface"}`,
+    enabled: geometryInitialized && !dragging,
     onHoverChange: handleNativeHoverChange
   });
 
@@ -774,26 +850,10 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       return;
     }
     const currentWindow = getCurrentWindow();
-    const [position, size, rawScaleFactor] = await Promise.all([
-      currentWindow.outerPosition(),
-      currentWindow.innerSize(),
-      currentWindow.scaleFactor().catch(() => 1)
-    ]);
-    const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
-      ? rawScaleFactor
-      : 1;
-    const liveBounds: ButtonDesktopBounds = {
-      left: position.x,
-      top: position.y,
-      width: size.width,
-      height: size.height
-    };
-    const appliedCollapsedEnvelope = appliedEnvelopeRef.current ?? collapsedEnvelope.resting;
-    surfaceOriginRef.current = {
-      x: position.x - appliedCollapsedEnvelope.x * scaleFactor,
-      y: position.y - appliedCollapsedEnvelope.y * scaleFactor
-    };
-    const nextBounds = liveBounds;
+    const nextBounds = collapsedBoundsRef.current ?? appliedFrameBoundsRef.current;
+    if (!nextBounds) {
+      return;
+    }
     collapsedBoundsRef.current = nextBounds;
     restingEnvelopeFrameRef.current = {
       envelope: collapsedEnvelope.resting,
@@ -834,7 +894,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   }, [activeContext.draftSessionId, collapsedEnvelope.resting, document, setup]);
 
   const handlePointerDownCapture = (event: ReactPointerEvent<HTMLElement>) => {
-    if (!spaceDragActive || dragging || event.button !== 0) {
+    if (!geometryInitialized || !spaceDragActive || dragging || event.button !== 0) {
       return;
     }
     event.preventDefault();
@@ -844,7 +904,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     setExpanded(false);
     void (async () => {
       try {
-        await getCurrentWindow().setIgnoreCursorEvents(false);
+        await getCurrentWindow().setIgnoreCursorEvents(true);
         pendingEnvelopeRef.current = null;
         await scheduleNativeGeometryTransition(async () => {
           setRenderedExpanded(false);
@@ -854,8 +914,54 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
           });
         });
         await queueEnvelope(collapsedEnvelope.resting);
-        await getCurrentWindow().startDragging();
-        await waitForNativeWindowDragEnd();
+
+        const initialPointer = await cursorPosition();
+        const initialBounds = collapsedBoundsRef.current ?? appliedFrameBoundsRef.current;
+        const initialSurfaceOrigin = surfaceOriginRef.current;
+        if (!initialBounds || !initialSurfaceOrigin) {
+          throw new Error("Could not read the Button Fan content frame for dragging.");
+        }
+        let nextBounds = initialBounds;
+        while (await isNativePrimaryMouseButtonDown()) {
+          const pointer = await cursorPosition().catch(() => initialPointer);
+          const delta = {
+            x: pointer.x - initialPointer.x,
+            y: pointer.y - initialPointer.y
+          };
+          nextBounds = translateButtonDesktopBounds(initialBounds, delta);
+          surfaceOriginRef.current = {
+            x: initialSurfaceOrigin.x + delta.x,
+            y: initialSurfaceOrigin.y + delta.y
+          };
+          collapsedBoundsRef.current = nextBounds;
+          appliedFrameBoundsRef.current = nextBounds;
+          restingEnvelopeFrameRef.current = {
+            envelope: collapsedEnvelope.resting,
+            bounds: nextBounds
+          };
+          setAppliedFrameBounds(nextBounds);
+          await ensureCanvasContainsFrame(nextBounds);
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
+        }
+
+        const appliedCanvas = await applyCanvasForFrame(nextBounds);
+        surfaceOriginRef.current = {
+          x: nextBounds.left - collapsedEnvelope.resting.x * appliedCanvas.scaleFactor,
+          y: nextBounds.top - collapsedEnvelope.resting.y * appliedCanvas.scaleFactor
+        };
+        nextBounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+          surfaceOrigin: surfaceOriginRef.current,
+          envelope: collapsedEnvelope.resting,
+          contentScale: 1,
+          scaleFactor: appliedCanvas.scaleFactor
+        });
+        collapsedBoundsRef.current = nextBounds;
+        appliedFrameBoundsRef.current = nextBounds;
+        restingEnvelopeFrameRef.current = {
+          envelope: collapsedEnvelope.resting,
+          bounds: nextBounds
+        };
+        setAppliedFrameBounds(nextBounds);
         await persistCollapsedAnchor();
       } catch (dragError) {
         setRuntimeError(dragError instanceof Error ? dragError.message : String(dragError));
@@ -905,6 +1011,9 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
         y: appliedEnvelope.y - (ownerPlacement?.y ?? 0)
       }
     : appliedEnvelope ?? windowEnvelope.current;
+  const contentFrameRect = canvasMetrics.ready
+    ? buttonDesktopBoundsToCanvasRect(appliedFrameBounds, canvasMetrics)
+    : null;
 
   return (
     <main
@@ -924,22 +1033,32 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
         <div className="button-window-error">Saved fan setup was not found.</div>
       ) : null}
       {runtimeError ? <div className="button-window-error">{runtimeError}</div> : null}
-      {document && setup ? (
-        <ButtonFanRenderer
-          document={document}
-          setup={setup}
-          expanded={renderedExpanded}
-          surfaceEnvelope={renderedEnvelope}
-          onOwnerActivate={handleOwnerActivate}
-          onPlacementMeasurement={(placementId, measurement) => {
-            if (!renderedExpanded && placementId.includes(setup.panelOwnerButtonId)) {
-              setOwnerMeasurement(measurement);
-            }
+      {document && setup && contentFrameRect ? (
+        <div
+          className="button-fan-window__content-frame"
+          style={{
+            left: contentFrameRect.left,
+            top: contentFrameRect.top,
+            width: contentFrameRect.width,
+            height: contentFrameRect.height
           }}
-          onPlacementVisualMeasurement={handlePlacementVisualMeasurement}
-          onPreparePlacementVisualStateChange={preparePlacementVisualStateChange}
-          onPlacementVisualStateChange={handlePlacementVisualStateChange}
-        />
+        >
+          <ButtonFanRenderer
+            document={document}
+            setup={setup}
+            expanded={renderedExpanded}
+            surfaceEnvelope={renderedEnvelope}
+            onOwnerActivate={handleOwnerActivate}
+            onPlacementMeasurement={(placementId, measurement) => {
+              if (!renderedExpanded && placementId.includes(setup.panelOwnerButtonId)) {
+                setOwnerMeasurement(measurement);
+              }
+            }}
+            onPlacementVisualMeasurement={handlePlacementVisualMeasurement}
+            onPreparePlacementVisualStateChange={preparePlacementVisualStateChange}
+            onPlacementVisualStateChange={handlePlacementVisualStateChange}
+          />
+        </div>
       ) : null}
     </main>
   );

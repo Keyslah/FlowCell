@@ -479,6 +479,9 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     if (!BUTTON_WINDOW_FIT_MODES.has(unit.desktopBoundsFitMode ?? "surface")) {
       addIssue(issues, `${path}.desktopBoundsFitMode`, "Popout desktop-bounds fit mode is invalid.");
     }
+    if (unit.desktopBounds !== null && !isUsableDesktopBounds(unit.desktopBounds)) {
+      addIssue(issues, `${path}.desktopBounds`, "Popout desktop bounds must be null or finite with positive dimensions.");
+    }
     if (unit.desktopBoundsEnvelope && !isUsableButtonRect(unit.desktopBoundsEnvelope)) {
       addIssue(issues, `${path}.desktopBoundsEnvelope`, "Popout desktop-bounds envelope is invalid.");
     }

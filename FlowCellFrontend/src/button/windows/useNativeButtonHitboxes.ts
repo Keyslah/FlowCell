@@ -55,7 +55,6 @@ function pointHitsInteractiveElement(
 export function useNativeButtonHitboxes(args: {
   rootRef: RefObject<HTMLElement | null>;
   enabled?: boolean;
-  geometryKey?: string | number;
   onHoverChange?: (hovered: boolean) => void;
 }): void {
   const onHoverChangeRef = useRef(args.onHoverChange);
@@ -108,7 +107,7 @@ export function useNativeButtonHitboxes(args: {
           currentHoverState = false;
           onHoverChangeRef.current?.(false);
         }
-        await setIgnored(false);
+        await setIgnored(true);
         return;
       }
 
@@ -271,7 +270,7 @@ export function useNativeButtonHitboxes(args: {
       }
       unlistenMoved?.();
       unlistenScaleChanged?.();
-      void setIgnored(false, true);
+      void setIgnored(true, true);
     };
-  }, [args.enabled, args.geometryKey, args.rootRef]);
+  }, [args.enabled, args.rootRef]);
 }

@@ -100,17 +100,22 @@ import {
   registerButtonCoreAction
 } from "./.compiled-button-system/button/runtime/ButtonRuntimeAdapter.js";
 import {
+  buttonDesktopBoundsInsideCanvas,
+  buttonDesktopBoundsToCanvasRect,
   buttonDesktopBoundsFromFlowCellBounds,
   physicalSurfaceSize,
   resolveAspectLockedWindowBounds,
+  resolveButtonFrameForScaleFactor,
   resolveButtonWindowEnvelope,
   resolveExpandedPopoutBounds,
+  resolveFixedButtonCanvasBounds,
   resolveInitialPhysicalButtonWindowEnvelopeBounds,
   resolveMeasuredCollapsedButtonBounds,
   resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin,
   resolvePhysicalButtonWindowEnvelopeBounds,
   resolvePopoutBoundsAfterDrag,
-  resolveUniformSurfaceScale
+  resolveUniformSurfaceScale,
+  translateButtonDesktopBounds
 } from "./.compiled-button-system/button/windows/buttonWindowGeometry.js";
 import {
   buildButtonEditorButtonOptions,
@@ -522,6 +527,69 @@ test("Button window geometry keeps restored and expanded bounds in physical pixe
     top: 320,
     width: 160,
     height: 44
+  });
+});
+
+test("fixed Button canvas maps physical desktop frames into local CSS pixels", () => {
+  const bounds = { left: -1600, top: 90, width: 500, height: 250 };
+  const workArea = { Left: -1920, Top: 0, Width: 1920, Height: 1040 };
+  assert.deepEqual(resolveFixedButtonCanvasBounds({
+    Left: bounds.left,
+    Top: bounds.top,
+    Width: bounds.width,
+    Height: bounds.height
+  }, workArea), workArea);
+  assert.deepEqual(resolveFixedButtonCanvasBounds({
+    Left: -2000,
+    Top: -60,
+    Width: 500,
+    Height: 250
+  }, workArea), {
+    Left: -2000,
+    Top: -60,
+    Width: 2000,
+    Height: 1100
+  });
+  assert.equal(buttonDesktopBoundsInsideCanvas(bounds, workArea), true);
+  assert.equal(buttonDesktopBoundsInsideCanvas({
+    left: -2000,
+    top: -60,
+    width: 500,
+    height: 250
+  }, workArea), false);
+  assert.deepEqual(buttonDesktopBoundsToCanvasRect(bounds, {
+    left: -1920,
+    top: 0,
+    scaleFactor: 1.25
+  }), {
+    left: 256,
+    top: 72,
+    width: 400,
+    height: 200
+  });
+  assert.deepEqual(translateButtonDesktopBounds(bounds, { x: 275, y: -40 }), {
+    left: -1325,
+    top: 50,
+    width: 500,
+    height: 250
+  });
+});
+
+test("fixed Button frame rescaling preserves the opposite resize corner", () => {
+  const bounds = { left: 100, top: 200, width: 400, height: 200 };
+  const envelope = { x: -8, y: -6, width: 200, height: 100 };
+  const common = { bounds, envelope, contentScale: 2, scaleFactor: 1.25 };
+  assert.deepEqual(resolveButtonFrameForScaleFactor({ ...common, anchorCorner: "SouthEast" }), {
+    left: 100, top: 200, width: 500, height: 250
+  });
+  assert.deepEqual(resolveButtonFrameForScaleFactor({ ...common, anchorCorner: "NorthEast" }), {
+    left: 100, top: 150, width: 500, height: 250
+  });
+  assert.deepEqual(resolveButtonFrameForScaleFactor({ ...common, anchorCorner: "SouthWest" }), {
+    left: 0, top: 200, width: 500, height: 250
+  });
+  assert.deepEqual(resolveButtonFrameForScaleFactor({ ...common, anchorCorner: "NorthWest" }), {
+    left: 0, top: 150, width: 500, height: 250
   });
 });
 
@@ -2381,9 +2449,16 @@ test("window fit normalization backfills missing modes but preserves invalid exp
   assert.equal(normalized.popoutUnits[popout.id].windowFitMode, "surface");
 
   normalized.popoutUnits[popout.id].windowFitMode = "not-a-fit-mode";
+  normalized.popoutUnits[popout.id].desktopBounds = {
+    left: 40,
+    top: 40,
+    width: 160,
+    height: 0
+  };
   const validation = validateButtonStateDocument(normalized);
   assert.equal(validation.valid, false);
   assert.equal(validation.issues.some((issue) => issue.path === `popoutUnits.${popout.id}.windowFitMode`), true);
+  assert.equal(validation.issues.some((issue) => issue.path === `popoutUnits.${popout.id}.desktopBounds`), true);
 });
 
 test("matched-core reconciliation discards stale geometry and presentation measurements", () => {

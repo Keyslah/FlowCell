@@ -20,8 +20,14 @@
   user-select: none;
 }
 
+.button-popout-window__content-frame {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
 .button-popout-window__resize-handle {
-  position: fixed;
+  position: absolute;
   z-index: 2147483646;
   width: 24px;
   height: 24px;
@@ -31,26 +37,26 @@
 }
 
 .button-popout-window__resize-handle--north-east {
-  top: 0;
-  right: 0;
+  top: -12px;
+  right: -12px;
   cursor: ne-resize;
 }
 
 .button-popout-window__resize-handle--north-west {
-  top: 0;
-  left: 0;
+  top: -12px;
+  left: -12px;
   cursor: nw-resize;
 }
 
 .button-popout-window__resize-handle--south-east {
-  right: 0;
-  bottom: 0;
+  right: -12px;
+  bottom: -12px;
   cursor: se-resize;
 }
 
 .button-popout-window__resize-handle--south-west {
-  bottom: 0;
-  left: 0;
+  bottom: -12px;
+  left: -12px;
   cursor: sw-resize;
 }
 

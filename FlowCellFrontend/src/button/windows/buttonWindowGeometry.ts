@@ -19,7 +19,74 @@ export interface ButtonWindowPoint {
   y: number;
 }
 
+export interface ButtonCanvasMetrics {
+  left: number;
+  top: number;
+  scaleFactor: number;
+}
+
 const EMPTY_RECT: ButtonRect = { x: 0, y: 0, width: 1, height: 1 };
+
+export function buttonDesktopBoundsToCanvasRect(
+  bounds: ButtonDesktopBounds | null | undefined,
+  canvas: ButtonCanvasMetrics
+): { left: number; top: number; width: number; height: number } | null {
+  if (!bounds) return null;
+  const scaleFactor = positiveOr(canvas.scaleFactor, 1);
+  return {
+    left: (bounds.left - canvas.left) / scaleFactor,
+    top: (bounds.top - canvas.top) / scaleFactor,
+    width: bounds.width / scaleFactor,
+    height: bounds.height / scaleFactor
+  };
+}
+
+export function translateButtonDesktopBounds(
+  bounds: ButtonDesktopBounds,
+  delta: ButtonWindowPoint
+): ButtonDesktopBounds {
+  return {
+    ...bounds,
+    left: bounds.left + delta.x,
+    top: bounds.top + delta.y
+  };
+}
+
+export function resolveFixedButtonCanvasBounds(
+  contentBounds: FlowCellBounds,
+  workArea: FlowCellBounds | null | undefined
+): FlowCellBounds {
+  if (!workArea) return { ...contentBounds };
+  const left = Math.min(workArea.Left, contentBounds.Left);
+  const top = Math.min(workArea.Top, contentBounds.Top);
+  const right = Math.max(
+    workArea.Left + workArea.Width,
+    contentBounds.Left + contentBounds.Width
+  );
+  const bottom = Math.max(
+    workArea.Top + workArea.Height,
+    contentBounds.Top + contentBounds.Height
+  );
+  return {
+    Left: left,
+    Top: top,
+    Width: right - left,
+    Height: bottom - top
+  };
+}
+
+export function buttonDesktopBoundsInsideCanvas(
+  bounds: ButtonDesktopBounds,
+  canvas: FlowCellBounds,
+  tolerance = 0.5
+): boolean {
+  return (
+    bounds.left >= canvas.Left - tolerance &&
+    bounds.top >= canvas.Top - tolerance &&
+    bounds.left + bounds.width <= canvas.Left + canvas.Width + tolerance &&
+    bounds.top + bounds.height <= canvas.Top + canvas.Height + tolerance
+  );
+}
 
 function isUsableRect(rect: ButtonRect | null | undefined): rect is ButtonRect {
   return Boolean(
@@ -288,6 +355,33 @@ export function resolveAspectLockedWindowBounds(args: {
     width,
     height
   };
+}
+
+export function resolveButtonFrameForScaleFactor(args: {
+  bounds: ButtonDesktopBounds;
+  envelope: ButtonRect;
+  contentScale: number;
+  scaleFactor: number;
+  anchorCorner?: ButtonWindowResizeCorner;
+}): ButtonDesktopBounds {
+  const contentScale = positiveOr(args.contentScale, 1);
+  const scaleFactor = positiveOr(args.scaleFactor, 1);
+  const width = Math.max(1, Math.ceil(args.envelope.width * contentScale * scaleFactor));
+  const height = Math.max(1, Math.ceil(args.envelope.height * contentScale * scaleFactor));
+  const right = args.bounds.left + args.bounds.width;
+  const bottom = args.bounds.top + args.bounds.height;
+
+  switch (args.anchorCorner) {
+    case "NorthEast":
+      return { left: args.bounds.left, top: bottom - height, width, height };
+    case "NorthWest":
+      return { left: right - width, top: bottom - height, width, height };
+    case "SouthWest":
+      return { left: right - width, top: args.bounds.top, width, height };
+    case "SouthEast":
+    default:
+      return { left: args.bounds.left, top: args.bounds.top, width, height };
+  }
 }
 
 export function buttonDesktopBoundsFromFlowCellBounds(
