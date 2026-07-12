@@ -1,0 +1,128 @@
+.button-popout-window {
+  position: relative;
+  box-sizing: border-box;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+  user-select: none;
+}
+
+.button-popout-renderer,
+.button-popout-renderer__surface-frame {
+  position: relative;
+  margin: 0;
+  overflow: visible;
+  background: transparent;
+  pointer-events: none;
+  user-select: none;
+}
+
+.button-popout-window__resize-handle {
+  position: fixed;
+  z-index: 2147483646;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.button-popout-window__resize-handle--north-east {
+  top: 0;
+  right: 0;
+  cursor: ne-resize;
+}
+
+.button-popout-window__resize-handle--north-west {
+  top: 0;
+  left: 0;
+  cursor: nw-resize;
+}
+
+.button-popout-window__resize-handle--south-east {
+  right: 0;
+  bottom: 0;
+  cursor: se-resize;
+}
+
+.button-popout-window__resize-handle--south-west {
+  bottom: 0;
+  left: 0;
+  cursor: sw-resize;
+}
+
+.button-popout-window--space-drag .button-popout-window__resize-handle {
+  cursor: move;
+}
+
+.button-popout-renderer .button-tool-field[data-button-tool-field-id] {
+  pointer-events: auto;
+}
+
+.button-popout-renderer .button-tool-field {
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 6px;
+  color: #f2f2f2;
+  border: 1px solid rgb(255 255 255 / 16%);
+  border-radius: 5px;
+  background: rgb(20 20 22 / 92%);
+  font: 12px/1.2 system-ui, sans-serif;
+}
+
+.button-popout-renderer .button-tool-field > span:first-child {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.button-popout-renderer .button-tool-field input,
+.button-popout-renderer .button-tool-field select {
+  min-width: 0;
+  flex: 1 1 auto;
+  box-sizing: border-box;
+}
+
+.button-popout-renderer .button-tool-field__path {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 4px;
+}
+
+.button-popout-renderer .button-tool-field--toggle {
+  justify-content: center;
+}
+
+.button-popout-renderer .button-tool-field--toggle input {
+  flex: 0 0 auto;
+}
+
+.button-popout-window--space-drag .button-tool-field[data-button-tool-field-id] {
+  cursor: move;
+}
+
+.button-window-error {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 100%;
+  padding: 8px 10px;
+  color: #ffd6d6;
+  border: 1px solid rgb(255 105 105 / 55%);
+  border-radius: 6px;
+  background: rgb(38 10 10 / 94%);
+  font: 12px/1.35 system-ui, sans-serif;
+  pointer-events: none;
+}

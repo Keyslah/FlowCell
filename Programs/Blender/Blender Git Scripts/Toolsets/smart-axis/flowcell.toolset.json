@@ -1,0 +1,66 @@
+{
+    "schemaVersion":  1,
+    "id":  "blender.smart-axis",
+    "version":  "1.0.0",
+    "label":  "smart axis",
+    "tooltip":  "Smart Axis Lock stores selected object bounds, cycles pinned axis sides, and can run live while scaling.",
+    "kind":  "toolset",
+    "program":  "Blender",
+    "source":  "smart axis.py",
+    "bridgeData":  {
+
+                   },
+    "children":  [
+                     {
+                         "slot":  "baseline",
+                         "label":  "Base",
+                         "tooltip":  "Store the current bounds as the Smart Axis baseline.",
+                         "payload":  {
+                                         "command":  "baseline",
+                                         "action":  "baseline"
+                                     }
+                     },
+                     {
+                         "slot":  "cycle_x",
+                         "label":  "X",
+                         "tooltip":  "Cycle Smart Axis X between none, minus, and plus pinning.",
+                         "payload":  {
+                                         "command":  "cycle_x",
+                                         "action":  "cycle_x"
+                                     }
+                     },
+                     {
+                         "slot":  "cycle_y",
+                         "label":  "Y",
+                         "tooltip":  "Cycle Smart Axis Y between none, minus, and plus pinning.",
+                         "payload":  {
+                                         "command":  "cycle_y",
+                                         "action":  "cycle_y"
+                                     }
+                     },
+                     {
+                         "slot":  "cycle_z",
+                         "label":  "Z",
+                         "tooltip":  "Cycle Smart Axis Z between none, minus, and plus pinning.",
+                         "payload":  {
+                                         "command":  "cycle_z",
+                                         "action":  "cycle_z"
+                                     }
+                     },
+                     {
+                         "slot":  "toggle_live",
+                         "label":  "Live",
+                         "tooltip":  "Toggle Smart Axis live pinning.",
+                         "payload":  {
+                                         "command":  "toggle_live",
+                                         "action":  "toggle_live"
+                                     }
+                     }
+                 ],
+    "layout":  {
+                   "mode":  "grid",
+                   "columns":  4,
+                   "gap":  8,
+                   "padding":  8
+               }
+}

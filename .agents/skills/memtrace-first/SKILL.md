@@ -1,15 +1,25 @@
 ---
 name: memtrace-first
-description: "Route code discovery, debugging, flow tracing, how-code-works questions, and pre-edit rationale checks in indexed source-code repos to Memtrace graph plus Cortex decision tools. Use first before searching/reading code, and before editing, refactoring, deleting, or re-picking an approach that may have a recorded decision, ban, convention, or contract. Do not use Grep, Glob, rg, find, or manual file browsing for code discovery when Memtrace is indexed. Zero results are not permission to grep; diagnose/reindex with Memtrace."
+description: "Opt-in Memtrace graph navigation for indexed source-code repositories. Use only when the user explicitly names Memtrace in the current request or invokes $memtrace-first. Do not trigger for ordinary code discovery, debugging, refactoring, impact, history, architecture, or FlowCell work. Once explicitly invoked, use graph and Cortex tools to produce the requested scope, relationships, blast radius, or rationale."
 ---
 
 
-# Memtrace First
+# Memtrace First (Explicit Opt-in)
 
-## The Iron Law
+## Activation Gate
+
+Do not use Memtrace unless the current user request explicitly names `Memtrace`
+or invokes `$memtrace-first`. Requests for code discovery, debugging, scope,
+impact, history, architecture, or refactoring do not imply opt-in.
+
+If Memtrace was not explicitly requested, use the repository's normal local
+workflow. In FlowCell, follow `AGENTS.md`: current files, narrow `rg`, bounded
+reads, focused docs, fresh logs, and live runtime validation.
+
+## Workflow Once Invoked
 
 ```
-IF THE REPO IS INDEXED IN MEMTRACE → USE MEMTRACE TOOLS FIRST.
+IF THE USER EXPLICITLY REQUESTED MEMTRACE → USE MEMTRACE TOOLS FOR THAT REQUEST.
 After a search hit, route to GRAPH tools (get_symbol_context, get_impact,
 analyze_relationships) — that's what Memtrace uniquely provides. Read source
 ONLY when you're about to edit or quote, and read only the bounded span
@@ -24,9 +34,9 @@ tools for structure and blast radius; use Cortex for rationale, bans, and
 contracts.
 ```
 
-Memtrace is the **memory layer** of the codebase, not a search engine that returns code. It has the full knowledge graph — every symbol, call, import, community, process, and API — with a time dimension. The point is to navigate that graph: who calls this, what's the blast radius, when did this change, what community is it part of. File tools are blind to all of that.
-
-**No exceptions for what's in the graph.**
+Memtrace is an optional graph and decision-memory layer for the explicitly
+requested pass. Treat it as navigation evidence, verify freshness, and confirm
+critical claims against current source or runtime evidence.
 
 ## Value Tracking
 
@@ -68,7 +78,8 @@ These are the ONLY cases where file tools beat memtrace:
 - **Pure file-inventory questions.** "How many `*.test.ts` files exist", "list every Markdown file in `docs/`". You're asking for a file count, not a symbol search.
 - **Reading at a known path outside Memtrace.** For configs, docs, or non-source artifacts that Memtrace cannot index, file `Read` is fine. For source-code spans returned by Memtrace, read the precise line range (your harness's `Read` with offset/limit, or `get_source_window` if your harness lacks bounded reads). Do not whole-file Read when you have a span.
 
-For everything else inside the indexed repo, memtrace is the right tool.
+During an explicitly requested Memtrace pass, use the graph for indexed source
+relationships and the listed file-tool exceptions for non-source evidence.
 
 ## The decision rule
 
@@ -116,7 +127,7 @@ Full parameter spec for every Memtrace tool: `references/mcp-parameters.md` (bun
 mcp__memtrace__list_indexed_repositories
 ```
 
-If the current repo appears → Memtrace is active. Follow this skill for ALL code tasks.
+If the current repo appears → Memtrace is active. Follow this skill for the current explicitly requested pass.
 If not indexed → offer to index with `mcp__memtrace__index_directory`, then follow this skill.
 
 ## Task → Tool Map
@@ -188,7 +199,7 @@ You are violating this skill if you think:
 | "I don't know if it's indexed" | Check with `list_indexed_repositories` first — takes 1 second |
 | "Memtrace returned 0 results" | Broaden the Memtrace query, check repo_id/path coverage, then reindex if needed |
 | "Stats only show Rust, but I need `ui/` or `memtrace-ui/`" | That is a coverage diagnostic. Reindex the repo root; do not grep source code. |
-| "The user didn't say to use Memtrace" | User asked about the code. Repo is indexed. Use Memtrace. |
+| "The user didn't say to use Memtrace" | Do not use Memtrace. Follow the repository's normal local workflow. |
 | "This is a simple question" | Simple questions benefit most — one `find_symbol` vs 20 file reads |
 
 ## When File Tools Are Still Correct
@@ -204,13 +215,15 @@ your harness's `Read(file, offset, limit)` with the returned `start_line` /
 `end_line`, or `get_source_window` if your harness lacks bounded reads. Do
 not read the whole file.
 
-Never use file tools as a **discovery** mechanism when Memtrace is available.
+During an explicitly requested Memtrace pass, use graph tools for indexed
+source discovery and file tools for the documented exceptions and verification.
 
 ## Skill Priority
 
-This skill is a **process skill** — it runs BEFORE any implementation or search skill.
+This skill is an opt-in process skill. It runs before implementation or search
+skills only for the request that explicitly invoked Memtrace.
 
-When this skill applies, it overrides default file-search behavior. Use the specific Memtrace sub-skills for deep detail on each tool:
+When explicitly invoked, use the specific Memtrace sub-skills for deep detail on each tool:
 
 - Discovery → `memtrace-search`
 - Impact analysis → `memtrace-impact`

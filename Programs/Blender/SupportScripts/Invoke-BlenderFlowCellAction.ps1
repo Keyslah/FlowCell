@@ -6,7 +6,6 @@ param(
     [string]$Direction = '',
     [string]$DataJson = '',
     [switch]$PassThruResponse,
-    [switch]$SuppressToast,
     [string]$ConfigPath = '',
     [string]$StatusPath = ''
 )
@@ -39,9 +38,6 @@ if ([string]::IsNullOrWhiteSpace($StatusPath)) {
     $StatusPath = Join-Path $flowCellLocalRoot 'logs\last_action_status.txt'
 }
 
-Add-Type -AssemblyName Microsoft.VisualBasic
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -AssemblyName System.Drawing
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
@@ -74,102 +70,6 @@ function Write-Status([string]$Message) {
         Set-Content -LiteralPath $StatusPath -Value $Message -Encoding UTF8
     }
     catch {
-    }
-}
-
-function Show-ActionToast([string]$Title, [string]$Message, [string]$Kind = 'Information') {
-    try {
-        $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-        $width = 420
-        $height = 104
-        $margin = 18
-
-        $backgroundColor = switch ($Kind) {
-            'Error' { [System.Drawing.Color]::FromArgb(188, 42, 54) }
-            default { [System.Drawing.Color]::FromArgb(37, 117, 70) }
-        }
-
-        $form = New-Object System.Windows.Forms.Form
-        $form.Text = $Title
-        $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::None
-        $form.StartPosition = [System.Windows.Forms.FormStartPosition]::Manual
-        $form.ShowInTaskbar = $false
-        $form.TopMost = $true
-        $form.BackColor = $backgroundColor
-        $form.ForeColor = [System.Drawing.Color]::White
-        $form.Size = New-Object System.Drawing.Size($width, $height)
-        $centeredLeft = [int]($screen.Left + (($screen.Width - $width) / 2))
-        $form.Location = New-Object System.Drawing.Point($centeredLeft, ($screen.Bottom - $height - $margin))
-        $form.Padding = New-Object System.Windows.Forms.Padding(16, 12, 16, 12)
-        $form.Opacity = 0.97
-
-        $titleLabel = New-Object System.Windows.Forms.Label
-        $titleLabel.AutoSize = $false
-        $titleLabel.Text = $Title
-        $titleLabel.Font = New-Object System.Drawing.Font('Segoe UI Semibold', 12, [System.Drawing.FontStyle]::Bold)
-        $titleLabel.ForeColor = [System.Drawing.Color]::White
-        $titleLabel.Location = New-Object System.Drawing.Point(16, 12)
-        $titleLabel.Size = New-Object System.Drawing.Size(($width - 32), 24)
-
-        $messageLabel = New-Object System.Windows.Forms.Label
-        $messageLabel.AutoSize = $false
-        $messageLabel.Text = $Message
-        $messageLabel.Font = New-Object System.Drawing.Font('Segoe UI', 10)
-        $messageLabel.ForeColor = [System.Drawing.Color]::White
-        $messageLabel.Location = New-Object System.Drawing.Point(16, 40)
-        $messageLabel.Size = New-Object System.Drawing.Size(($width - 32), 48)
-
-        $form.Controls.Add($titleLabel)
-        $form.Controls.Add($messageLabel)
-
-        $fadeTimer = New-Object System.Windows.Forms.Timer
-        $fadeTimer.Interval = 65
-        $fadeTimer.Add_Tick({
-            $form.Opacity = [Math]::Max(0.0, ($form.Opacity - 0.12))
-            if ($form.Opacity -le 0.01) {
-                $fadeTimer.Stop()
-                $form.Close()
-            }
-        })
-
-        $displayTimer = New-Object System.Windows.Forms.Timer
-        $displayTimer.Interval = 2600
-        $displayTimer.Add_Tick({
-            $displayTimer.Stop()
-            $fadeTimer.Start()
-        })
-
-        $form.Add_Shown({
-            $displayTimer.Start()
-        })
-
-        [void]$form.ShowDialog()
-    }
-    catch {
-    }
-}
-
-function Test-ActionToastEnabled([string]$Action) {
-    return @(
-        'save_selected_stl_to_assets',
-        'render_active_object_png_to_images'
-    ) -contains ([string]$Action)
-}
-
-function Get-ActionToastTitle([string]$Action, [bool]$Failed = $false) {
-    switch ([string]$Action) {
-        'save_selected_stl_to_assets' {
-            if ($Failed) { return 'Save STL Failed' }
-            return 'Save STL'
-        }
-        'render_active_object_png_to_images' {
-            if ($Failed) { return 'Save PNG Failed' }
-            return 'Save PNG'
-        }
-        default {
-            if ($Failed) { return 'Blender Action Failed' }
-            return 'Blender Action'
-        }
     }
 }
 
@@ -408,10 +308,6 @@ function Get-BridgeFolderCandidates([object]$Config, [int]$TargetBlenderProcessI
         if (-not [string]::IsNullOrWhiteSpace($bridgeFolderLeafName)) {
             [void]$bridgeLeafNames.Add($bridgeFolderLeafName)
         }
-        if ([string]$Action -ieq 'flowcell_custom_rotate' -and -not $bridgeLeafNames.Contains('blender_bridge_flowcell')) {
-            [void]$bridgeLeafNames.Add('blender_bridge_flowcell')
-        }
-
         foreach ($versionDirectory in @(Get-ChildItem -LiteralPath $blenderAppDataRoot -Directory -ErrorAction SilentlyContinue | Sort-Object Name -Descending)) {
             foreach ($leafName in @($bridgeLeafNames)) {
                 $fallbackBridgeRoot = Join-Path $versionDirectory.FullName ('scripts\addons\{0}' -f $leafName)
@@ -549,9 +445,6 @@ try {
     $targetBlenderProcessId = Get-TargetBlenderProcessId
     $requestId = [guid]::NewGuid().ToString('N')
     $timeoutSeconds = [Math]::Max([int]$config.automation.responseTimeoutSeconds, 1)
-    if ([string]$Action -eq 'render_active_object_png_to_images') {
-        $timeoutSeconds = [Math]::Max($timeoutSeconds, 60)
-    }
     $bridgeFolders = @(Get-BridgeFolderCandidates -Config $config -TargetBlenderProcessId $targetBlenderProcessId)
 
     $data = [ordered]@{}
@@ -563,25 +456,6 @@ try {
     }
     if (-not [string]::IsNullOrWhiteSpace($Direction)) {
         $data.direction = $Direction
-    }
-
-    if ([string]$Action -eq 'new_collection') {
-        $name = [Microsoft.VisualBasic.Interaction]::InputBox(
-            'Name for the new collection:',
-            'New Collection',
-            'Collection'
-        )
-
-        if ($null -eq $name) {
-            Write-Status ('Cancelled Blender action: {0}' -f $Label)
-            exit 1
-        }
-
-        $name = $name.Trim()
-        if ([string]::IsNullOrWhiteSpace($name)) {
-            $name = 'Collection'
-        }
-        $data.name = $name
     }
 
     $payload = [pscustomobject][ordered]@{
@@ -618,8 +492,7 @@ try {
         [System.IO.File]::WriteAllText($temporaryRequestPath, $json, $utf8NoBom)
         Move-Item -LiteralPath $temporaryRequestPath -Destination $requestPath -Force
 
-        $waitForResponse = [bool]$PassThruResponse -or (Test-ActionToastEnabled -Action $Action)
-        if (-not $waitForResponse) {
+        if (-not $PassThruResponse) {
             Write-Status ('Queued Blender action: {0}' -f $Label)
             exit 0
         }
@@ -650,9 +523,6 @@ try {
                 'Blender action completed.'
             }
             Write-Status $message
-            if ((Test-ActionToastEnabled -Action $Action) -and -not $SuppressToast) {
-                Show-ActionToast -Title (Get-ActionToastTitle -Action $Action) -Message $message -Kind 'Information'
-            }
             if ($PassThruResponse) {
                 $response
             }
@@ -660,9 +530,6 @@ try {
         }
 
         $errorMessage = if ($response.PSObject.Properties['message']) { [string]$response.message } else { 'Blender returned an error.' }
-        if ((Test-ActionToastEnabled -Action $Action) -and -not $SuppressToast) {
-            Show-ActionToast -Title (Get-ActionToastTitle -Action $Action -Failed $true) -Message $errorMessage -Kind 'Error'
-        }
         throw $errorMessage
     }
 
@@ -670,9 +537,6 @@ try {
 }
 catch {
     Write-Status $_.Exception.Message
-    if ((Test-ActionToastEnabled -Action $Action) -and -not $SuppressToast) {
-        Show-ActionToast -Title (Get-ActionToastTitle -Action $Action -Failed $true) -Message $_.Exception.Message -Kind 'Error'
-    }
     exit 1
 }
 

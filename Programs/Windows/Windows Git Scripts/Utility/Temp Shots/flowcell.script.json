@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.temp-shots",
+  "label": "Temp Shots",
+  "tooltip": "Open Windows screen snip and save the capture to the chosen Temp Shots folder.",
+  "program": "Windows",
+  "source": "Temp_Shots.vbs"
+}

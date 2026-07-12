@@ -1,38 +1,128 @@
 # Repository Layout
 
-## Program Script Workflow
+## Top-Level Owners
 
-`Programs/` is the visible program rail source. Each program folder owns three script areas:
+- `FlowCellFrontend/`: React/Tauri application, canonical Button UI, editor,
+  window runtime, native persistence, and program-source transactions.
+- `flowcellbackend/`: AutoHotkey/PowerShell runtime, helpers, and ignored local
+  state under `flowcellbackend/local/`.
+- `Programs/`: manifest-defined program packages, shareable source catalogs,
+  installed Local Scripts packages, active panel source records, and
+  program-specific runtime adapters.
+- `docs/`: current architecture and authoring contracts.
 
-- `Programs/<Program>/Panels/<Panel>/`: local panel buttons and panel-local runnable script copies. This is ignored by Git.
-- `Programs/<Program>/<Program> Local Scripts/`: flat private backup/core copies created by Add Script/Add Button. This is ignored by Git and is never automatically pruned.
-- `Programs/<Program>/<Program> Git Scripts/`: tracked shared script sources. This is the only program script library intended to move through GitHub.
+## Program Package Shape
 
-Add Script/Add Button copies selected scripts into both the selected panel folder and the flat Local Scripts folder. If Local Scripts already has a byte-identical file, it reuses that copy; if a same-named file differs, the new copy gets a suffix such as `script__2.py`.
+Each program is defined by `Programs/<Program>/flowcell.program.json`:
 
-Panel deletes and button deletes only remove the panel copy or panel record. They do not remove files from Local Scripts.
+```text
+Programs/<Program>/
+|-- flowcell.program.json
+|-- <Program> Git Scripts/
+|   `-- <catalog package or source>
+|-- <Program> Local Scripts/
+|   `-- <ownerButtonId>/
+|       |-- flowcell.install.json
+|       `-- source/
+|           `-- <installed package copy>
+|-- Panels/
+|   `-- <Panel>/
+|       `-- <ownerButtonId>.flowcell-source.json
+`-- SupportScripts/
+    `-- <runner-specific install/delete support>
+```
 
-## Public Source
+The folder names and runner are declared by the program manifest. Do not infer
+them from the program name in new code.
 
-- `FlowCell/`: PowerShell UI, AutoHotkey backend, helpers, and vendored libraries.
-- `FlowCellFrontend/`: React/Tauri desktop frontend and native command host.
-- `Programs/<Program>/<Program> Git Scripts/`: shared Git-synced script libraries, organized by panel subfolder.
-- `Programs/Blender/SupportScripts/`: Blender installer, dispatcher, cleanup, and sync plumbing.
-- `Programs/Blender/Blender Addons - Copy contents Into Blender/`: paste-ready Blender add-on files for Blender's `scripts/addons` folder.
-- `Programs/*/ScriptDump/`: ignored loose/testing/old scripts with placeholder folders tracked.
-- `tools/launcher/`: optional launcher source.
+## Canonical Script Chain
 
+```text
+Git Scripts or any selected source
+        -> install-time input only
+owned Local Scripts package
+        -> installed executable source of truth
+.flowcell-source.json
+        -> active owner/runner/source identity
+button-state.json
+        -> canonical Button UI and interaction state
+```
 
-## Ignored Local Data
+`<Program> Git Scripts` is the tracked, shareable catalog. Add Script and Add
+Tool Set may select from that catalog or from any other user-chosen source. The
+catalog is never the live installed source.
 
-`flowcellbackend/local/` stores runtime state such as bindings, layouts, saved panels, recorded macros, logs, private settings, temp files, and build/runtime artifacts.
+Installation copies the selected file or manifest package into
+`<Program> Local Scripts/<ownerButtonId>/source/`. That owned copy is the only
+source normal execution may run. A Git pull, catalog edit, rename, or deletion
+does not silently change an installed Button. Use Update to replace the owned
+package deliberately.
 
-Program-local ignored data includes panel button folders, flat Local Scripts folders, ScriptDump contents, generated Blender actions, and caches.
+The panel folder contains active source records, not runnable duplicate scripts.
+Each `<ownerButtonId>.flowcell-source.json` identifies the matching Local
+package, installed source, runner, program/panel identity, and optional tool-set
+or event metadata. Runtime rejects an active record whose package, owner, path,
+or program manifest no longer agrees.
 
-## Panel Script Import
+`flowcellbackend/local/button-system/button-state.json` is canonical for Button
+records, geometry, skins, popouts, fans, and settings. It references active
+sources by stable source identity; it does not duplicate source packages.
 
-The main FlowCell Add Script button opens in the selected program's Git Scripts folder, preferring the current panel's subfolder when present. The selected scripts can still come from anywhere.
+## Tracked and Local Data
 
-For Windows, Illustrator, and Photoshop, the panel copy is the runnable script. For Blender, Add script creates/keeps the panel-local `.py` copy plus the `.flowcell-panel-item.json` button record, and the record points at the panel-local source.
+Tracked:
 
-Git Scripts are not modified by Add Script/Add Button after the initial migration; they change only through normal repo edits and Git pulls.
+- program manifests and runner adapters;
+- Git Scripts catalog packages;
+- frontend/native implementation;
+- documentation.
+
+Ignored local/install state:
+
+- `flowcellbackend/local/`, including `button-system/button-state.json`;
+- `Programs/*/* Local Scripts/**`;
+- `Programs/*/Panels/**`;
+- generated program runtime output and caches.
+
+Ignored does not mean disposable. Local Scripts packages and active records are
+owned installed state and are managed through Button install/update/delete
+transactions.
+
+## Add, Update, and Delete
+
+Add creates a fresh owner Button ID, Local package, install record, active source
+record, and Button graph. It refuses to overwrite an existing owner.
+
+Update requires that owner's existing package and active record. It stages a
+replacement package, deploys runner-specific output, atomically replaces the
+active record, and sends the previous package to the Recycle Bin only after the
+replacement succeeds.
+
+Delete removes the full owned lifecycle:
+
+- the owner Button and dependent placements, child Buttons, popouts, and fan
+  memberships from canonical Button state;
+- bindings whose script path or action belongs to the owner;
+- runner-specific generated runtime artifacts and registrations;
+- the active `.flowcell-source.json` record;
+- the complete Local Scripts owner package.
+
+Destructive steps are quarantined and rollback capable. Final owned files are
+sent to the Recycle Bin. The selected/catalog source remains untouched.
+
+## Program Registration
+
+Startup preflight reads each `flowcell.program.json`, creates its declared Local
+Scripts and Panels roots when needed, and synchronizes program registration into
+`flowcellbackend/local/bindings.ini`. Program registration makes a program rail
+available; it does not create program-specific script Buttons.
+
+See `docs/flowcell-program-registry.md` for the manifest contract.
+
+## Migration Boundary
+
+Only `FlowCellFrontend/src-tauri/src/program_sources/migrate.rs` may read old
+program-script records or source comment directives. It converts them into owned
+Local packages and active records during one-time bootstrap/recovery. Normal
+runtime modules consume only program manifests, owned Local Scripts packages,
+`.flowcell-source.json`, and canonical Button state.

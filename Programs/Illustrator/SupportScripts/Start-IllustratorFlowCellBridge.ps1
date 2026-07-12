@@ -2,7 +2,6 @@
 [CmdletBinding()]
 param(
   [string]$RepoRoot,
-  [string]$ManifestPath,
   [string]$PipeName = 'FlowCell.Illustrator.Bridge.v1',
   [string]$PidPath,
   [string]$LogPath,
@@ -25,11 +24,7 @@ function Get-FlowCellRepoRoot {
 
 $script:RepoRootPath = Get-FlowCellRepoRoot
 $script:ProgramRoot = Join-Path $script:RepoRootPath 'Programs\Illustrator'
-$script:ManifestPath = if ([string]::IsNullOrWhiteSpace($ManifestPath)) {
-  Join-Path $script:ProgramRoot 'illustrator-actions.json'
-} else {
-  [System.IO.Path]::GetFullPath($ManifestPath)
-}
+$script:LocalScriptsRoot = Join-Path $script:ProgramRoot 'Illustrator Local Scripts'
 $script:PidPath = if ([string]::IsNullOrWhiteSpace($PidPath)) {
   Join-Path $script:RepoRootPath 'flowcellbackend\local\illustrator-bridge.pid.json'
 } else {
@@ -41,7 +36,6 @@ $script:LogPath = if ([string]::IsNullOrWhiteSpace($LogPath)) {
   [System.IO.Path]::GetFullPath($LogPath)
 }
 $script:IllustratorApp = $null
-$script:ActionMap = @{}
 
 function Write-BridgeLog {
   param(
@@ -89,62 +83,18 @@ function Test-IsUnderRoot {
   return $fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function Resolve-ProgramRelativePath {
+function Resolve-InstalledScriptPath {
   param([Parameter(Mandatory = $true)][string]$Path)
 
-  $candidate = if ([System.IO.Path]::IsPathRooted($Path)) {
-    [System.IO.Path]::GetFullPath($Path)
-  } else {
-    [System.IO.Path]::GetFullPath((Join-Path $script:ProgramRoot $Path))
+  $candidate = [System.IO.Path]::GetFullPath($Path)
+  if (-not (Test-IsUnderRoot -Path $candidate -Root $script:LocalScriptsRoot)) {
+    throw "Refusing Illustrator script outside Button-owned Local Scripts: $Path"
   }
-
-  if (-not (Test-IsUnderRoot -Path $candidate -Root $script:ProgramRoot)) {
-    throw "Refusing Illustrator action path outside program root: $Path"
+  $extension = [System.IO.Path]::GetExtension($candidate)
+  if (($extension -ine '.jsx' -and $extension -ine '.js') -or -not [System.IO.File]::Exists($candidate)) {
+    throw "Installed Illustrator script was not found or is unsupported: $candidate"
   }
-
   return $candidate
-}
-
-function Import-ActionManifest {
-  if (-not [System.IO.File]::Exists($script:ManifestPath)) {
-    throw "Illustrator action manifest not found: $script:ManifestPath"
-  }
-
-  $manifest = Get-Content -LiteralPath $script:ManifestPath -Raw | ConvertFrom-Json
-  if ($null -eq $manifest.actions) {
-    throw "Illustrator action manifest has no actions array: $script:ManifestPath"
-  }
-
-  $map = @{}
-  foreach ($action in @($manifest.actions)) {
-    if ([string]::IsNullOrWhiteSpace($action.id)) {
-      throw 'Illustrator action manifest contains an action without an id.'
-    }
-    if ([string]::IsNullOrWhiteSpace($action.script)) {
-      throw "Illustrator action '$($action.id)' does not declare a script path."
-    }
-
-    $key = $action.id.ToLowerInvariant()
-    if ($map.ContainsKey($key)) {
-      throw "Duplicate Illustrator action id: $($action.id)"
-    }
-
-    $scriptPath = Resolve-ProgramRelativePath -Path $action.script
-    if (-not [System.IO.File]::Exists($scriptPath)) {
-      throw "Illustrator action '$($action.id)' script not found: $scriptPath"
-    }
-
-    $map[$key] = [pscustomobject]@{
-      id = [string]$action.id
-      label = [string]$action.label
-      script = [string]$action.script
-      scriptPath = $scriptPath
-      description = if ($action.PSObject.Properties.Name -contains 'description') { [string]$action.description } else { '' }
-    }
-  }
-
-  $script:ActionMap = $map
-  Write-BridgeLog "Loaded $($map.Count) Illustrator action(s) from $script:ManifestPath"
 }
 
 function Get-IllustratorApplication {
@@ -177,15 +127,21 @@ function Get-IllustratorApplication {
 function Invoke-IllustratorAction {
   param(
     [Parameter(Mandatory = $true)][string]$ActionId,
+    [string]$ScriptPath,
     [AllowNull()]$Arguments
   )
 
-  $key = $ActionId.ToLowerInvariant()
-  if (-not $script:ActionMap.ContainsKey($key)) {
-    throw "Unknown Illustrator action id: $ActionId"
+  if ([string]::IsNullOrWhiteSpace($ScriptPath)) {
+    throw 'Illustrator action is missing its Button-owned installed script path.'
   }
-
-  $action = $script:ActionMap[$key]
+  $resolvedScriptPath = Resolve-InstalledScriptPath -Path $ScriptPath
+  $action = [pscustomobject]@{
+    id = $ActionId
+    label = $ActionId
+    script = $resolvedScriptPath
+    scriptPath = $resolvedScriptPath
+    description = 'Button-owned installed Illustrator script'
+  }
   $app = Get-IllustratorApplication
   $timer = [System.Diagnostics.Stopwatch]::StartNew()
   Write-BridgeLog "Running Illustrator action '$($action.id)' from $($action.scriptPath)"
@@ -228,7 +184,6 @@ function Write-PidFile {
   [pscustomobject]@{
     pid = $PID
     pipeName = $PipeName
-    manifestPath = $script:ManifestPath
     startedAt = (Get-Date).ToString('o')
   } | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath $script:PidPath -Encoding UTF8
 }
@@ -246,30 +201,7 @@ function Handle-Request {
         requestId = $requestId
         pid = $PID
         pipeName = $PipeName
-        actionCount = $script:ActionMap.Count
         apartment = [System.Threading.Thread]::CurrentThread.GetApartmentState().ToString()
-      }
-    }
-    'reload-manifest' {
-      Import-ActionManifest
-      return [pscustomobject]@{
-        ok = $true
-        requestId = $requestId
-        actionCount = $script:ActionMap.Count
-      }
-    }
-    'list-actions' {
-      return [pscustomobject]@{
-        ok = $true
-        requestId = $requestId
-        actions = @($script:ActionMap.Values | Sort-Object id | ForEach-Object {
-          [pscustomobject]@{
-            id = $_.id
-            label = $_.label
-            script = $_.script
-            description = $_.description
-          }
-        })
       }
     }
     'run' {
@@ -277,15 +209,17 @@ function Handle-Request {
       if ([string]::IsNullOrWhiteSpace($actionId)) {
         throw 'Run request missing actionId.'
       }
-      if (-not $script:ActionMap.ContainsKey($actionId.ToLowerInvariant())) {
-        throw "Unknown Illustrator action id: $actionId"
+      $installedScriptPath = if ($Request.PSObject.Properties.Name -contains 'scriptPath') { [string]$Request.scriptPath } else { '' }
+      if ([string]::IsNullOrWhiteSpace($installedScriptPath)) {
+        throw 'Run request missing Button-owned installed scriptPath.'
       }
+      $installedScriptPath = Resolve-InstalledScriptPath -Path $installedScriptPath
 
       $arguments = if ($Request.PSObject.Properties.Name -contains 'args') { $Request.args } else { $null }
       $wait = if ($Request.PSObject.Properties.Name -contains 'wait') { [bool]$Request.wait } else { $false }
 
       if ($wait) {
-        $result = Invoke-IllustratorAction -ActionId $actionId -Arguments $arguments
+        $result = Invoke-IllustratorAction -ActionId $actionId -ScriptPath $installedScriptPath -Arguments $arguments
         $result | Add-Member -NotePropertyName requestId -NotePropertyValue $requestId -Force
         return $result
       }
@@ -307,7 +241,6 @@ if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne [System.Thr
   throw 'Start-IllustratorFlowCellBridge.ps1 must run in an STA PowerShell host. Use powershell.exe -Sta.'
 }
 
-Import-ActionManifest
 Write-PidFile
 Write-BridgeLog "Illustrator bridge started on pipe '$PipeName' with PID $PID"
 
@@ -373,7 +306,8 @@ while ($true) {
   if ($null -ne $pendingRun) {
     try {
       $arguments = if ($pendingRun.PSObject.Properties.Name -contains 'args') { $pendingRun.args } else { $null }
-      [void](Invoke-IllustratorAction -ActionId ([string]$pendingRun.actionId) -Arguments $arguments)
+      $installedScriptPath = if ($pendingRun.PSObject.Properties.Name -contains 'scriptPath') { [string]$pendingRun.scriptPath } else { '' }
+      [void](Invoke-IllustratorAction -ActionId ([string]$pendingRun.actionId) -ScriptPath $installedScriptPath -Arguments $arguments)
     } catch {
       Write-BridgeLog "Async Illustrator action '$($pendingRun.actionId)' failed: $($_.Exception.Message)" 'ERROR'
     }

@@ -1,21 +1,17 @@
 import type { FlowCellBounds, LayoutSnapshotWindowKind } from "../types";
 
-const MANAGED_LAYOUT_WINDOWS_STORAGE_KEY = "flowcell.layout-windows.v1";
+const MANAGED_LAYOUT_WINDOWS_STORAGE_KEY = "flowcell.button-layout-windows.v2";
 const LAST_LAYOUT_DIRECTORY_STORAGE_KEY = "flowcell.last-layout-directory.v1";
-const LEGACY_STORAGE_PREFIX = ["flow", "test", "-bare", "clone"].join("");
-const LEGACY_MANAGED_LAYOUT_WINDOWS_STORAGE_KEY =
-  `${LEGACY_STORAGE_PREFIX}.layout-windows.v1`;
-const LEGACY_LAST_LAYOUT_DIRECTORY_STORAGE_KEY =
-  `${LEGACY_STORAGE_PREFIX}.last-layout-directory.v1`;
 
 export interface RegisteredLayoutWindow {
   windowLabel: string;
   kind: LayoutSnapshotWindowKind;
   programName?: string;
   panelName?: string;
-  fileName?: string;
-  label?: string;
-  selectedFileNames?: string[];
+  buttonPopoutUnitId?: string;
+  buttonFanSetupId?: string;
+  buttonOwnerId?: string;
+  buttonDisplayMode?: "collapsed" | "expanded";
   snapshotBounds?: FlowCellBounds;
 }
 
@@ -44,29 +40,12 @@ function canUseStorage(): boolean {
   return typeof window !== "undefined" && typeof window.localStorage !== "undefined";
 }
 
-function readMigratedStorageValue(storageKey: string, legacyStorageKey: string): string | null {
-  const currentValue = window.localStorage.getItem(storageKey);
-  if (currentValue) {
-    return currentValue;
-  }
-
-  const legacyValue = window.localStorage.getItem(legacyStorageKey);
-  if (legacyValue) {
-    window.localStorage.setItem(storageKey, legacyValue);
-    window.localStorage.removeItem(legacyStorageKey);
-  }
-  return legacyValue;
-}
-
 function readRegisteredLayoutWindowMap(): Record<string, RegisteredLayoutWindow> {
   if (!canUseStorage()) {
     return {};
   }
 
-  const rawValue = readMigratedStorageValue(
-    MANAGED_LAYOUT_WINDOWS_STORAGE_KEY,
-    LEGACY_MANAGED_LAYOUT_WINDOWS_STORAGE_KEY
-  );
+  const rawValue = window.localStorage.getItem(MANAGED_LAYOUT_WINDOWS_STORAGE_KEY);
   if (!rawValue) {
     return {};
   }
@@ -76,7 +55,13 @@ function readRegisteredLayoutWindowMap(): Record<string, RegisteredLayoutWindow>
     if (!parsed || typeof parsed !== "object") {
       return {};
     }
-    return parsed;
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, entry]) =>
+        entry?.kind === "button-editor" ||
+        entry?.kind === "button-popout" ||
+        entry?.kind === "button-fan"
+      )
+    );
   } catch {
     return {};
   }
@@ -93,7 +78,6 @@ function writeRegisteredLayoutWindowMap(
     MANAGED_LAYOUT_WINDOWS_STORAGE_KEY,
     JSON.stringify(nextValue)
   );
-  window.localStorage.removeItem(LEGACY_MANAGED_LAYOUT_WINDOWS_STORAGE_KEY);
 }
 
 export function registerLayoutWindow(entry: RegisteredLayoutWindow): void {
@@ -108,12 +92,13 @@ export function registerLayoutWindow(entry: RegisteredLayoutWindow): void {
     kind: entry.kind,
     programName: entry.programName?.trim() || undefined,
     panelName: entry.panelName?.trim() || undefined,
-    fileName: entry.fileName?.trim() || undefined,
-    label: entry.label?.trim() || undefined,
-    selectedFileNames:
-      entry.selectedFileNames
-        ?.map((value) => value.trim())
-        .filter((value) => value.length > 0) ?? undefined,
+    buttonPopoutUnitId: entry.buttonPopoutUnitId?.trim() || undefined,
+    buttonFanSetupId: entry.buttonFanSetupId?.trim() || undefined,
+    buttonOwnerId: entry.buttonOwnerId?.trim() || undefined,
+    buttonDisplayMode:
+      entry.buttonDisplayMode === "collapsed" || entry.buttonDisplayMode === "expanded"
+        ? entry.buttonDisplayMode
+        : previousEntry?.buttonDisplayMode,
     snapshotBounds:
       normalizeBounds(entry.snapshotBounds) ?? normalizeBounds(previousEntry?.snapshotBounds)
   };
@@ -148,7 +133,9 @@ export function findRegisteredLayoutWindow(args: {
   kind: LayoutSnapshotWindowKind;
   programName?: string;
   panelName?: string;
-  fileName?: string;
+  buttonPopoutUnitId?: string;
+  buttonFanSetupId?: string;
+  buttonOwnerId?: string;
 }): RegisteredLayoutWindow | null {
   const entries = Object.values(readRegisteredLayoutWindowMap());
   return (
@@ -157,7 +144,9 @@ export function findRegisteredLayoutWindow(args: {
         entry.kind === args.kind &&
         (entry.programName ?? "") === (args.programName ?? "") &&
         (entry.panelName ?? "") === (args.panelName ?? "") &&
-        (entry.fileName ?? "") === (args.fileName ?? "")
+        (entry.buttonPopoutUnitId ?? "") === (args.buttonPopoutUnitId ?? "") &&
+        (entry.buttonFanSetupId ?? "") === (args.buttonFanSetupId ?? "") &&
+        (entry.buttonOwnerId ?? "") === (args.buttonOwnerId ?? "")
       );
     }) ?? null
   );
@@ -189,15 +178,31 @@ export function writeRegisteredLayoutWindowSnapshotBounds(
   writeRegisteredLayoutWindowMap(nextValue);
 }
 
+export function writeRegisteredLayoutWindowButtonDisplayMode(
+  windowLabel: string,
+  displayMode: "collapsed" | "expanded"
+): void {
+  if (!windowLabel.trim()) {
+    return;
+  }
+  const nextValue = readRegisteredLayoutWindowMap();
+  const existing = nextValue[windowLabel];
+  if (!existing) {
+    return;
+  }
+  nextValue[windowLabel] = {
+    ...existing,
+    buttonDisplayMode: displayMode
+  };
+  writeRegisteredLayoutWindowMap(nextValue);
+}
+
 export function readLastLayoutDirectory(): string | null {
   if (!canUseStorage()) {
     return null;
   }
 
-  const rawValue = readMigratedStorageValue(
-    LAST_LAYOUT_DIRECTORY_STORAGE_KEY,
-    LEGACY_LAST_LAYOUT_DIRECTORY_STORAGE_KEY
-  )?.trim();
+  const rawValue = window.localStorage.getItem(LAST_LAYOUT_DIRECTORY_STORAGE_KEY)?.trim();
   return rawValue ? rawValue : null;
 }
 
@@ -209,10 +214,8 @@ export function writeLastLayoutDirectory(directory: string | null | undefined): 
   const normalized = directory?.trim();
   if (!normalized) {
     window.localStorage.removeItem(LAST_LAYOUT_DIRECTORY_STORAGE_KEY);
-    window.localStorage.removeItem(LEGACY_LAST_LAYOUT_DIRECTORY_STORAGE_KEY);
     return;
   }
 
   window.localStorage.setItem(LAST_LAYOUT_DIRECTORY_STORAGE_KEY, normalized);
-  window.localStorage.removeItem(LEGACY_LAST_LAYOUT_DIRECTORY_STORAGE_KEY);
 }

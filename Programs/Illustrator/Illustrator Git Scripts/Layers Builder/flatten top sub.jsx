@@ -1,5 +1,4 @@
-// FlowCell Layers Builder button (GENERATED - do not edit by hand).
-// Regenerate with SupportScripts/New-IllustratorLayersBuilderPanel.ps1.
+// FlowCell Layers Builder catalog source.
 // Runs the original Layers script "flatten top sub" against the
 // FlowCell-highlighted layers.
 #target illustrator

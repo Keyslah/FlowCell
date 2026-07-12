@@ -1,0 +1,266 @@
+{
+    "schemaVersion":  1,
+    "id":  "blender.theme",
+    "version":  "1.0.0",
+    "label":  "theme",
+    "tooltip":  "Set Blender UI theme and HDRI values, plus Place Picture fake gizmos and fake grid over a background image.",
+    "kind":  "toolset",
+    "program":  "Blender",
+    "source":  "theme.py",
+    "bridgeData":  {
+                       "capabilities":  [
+                                              "restore-project-theme-state"
+                                          ]
+                   },
+    "children":  [
+                     {
+                         "slot":  "browse_theme",
+                         "label":  "Browse",
+                         "tooltip":  "Choose a theme source image and sample its colors into the tool fields.",
+                         "executionTarget":  {
+                                                   "kind":  "core-action",
+                                                   "actionId":  "sample-blender-theme-image"
+                                               },
+                         "payload":  {
+                                         "command":  "browse_theme",
+                                         "action":  "browse_theme"
+                                     }
+                     },
+                     {
+                         "slot":  "absorb_theme",
+                         "label":  "Absorb Theme",
+                         "tooltip":  "Pull the current Blender theme values back into the tool fields.",
+                         "payload":  {
+                                         "command":  "absorb_theme",
+                                         "action":  "absorb_theme"
+                                     }
+                     },
+                     {
+                         "slot":  "save_theme",
+                         "label":  "Save Buckets",
+                         "tooltip":  "Save the currently staged Blender theme buckets.",
+                         "executionTarget":  {
+                                                   "kind":  "core-action",
+                                                   "actionId":  "save-blender-theme-fields"
+                                               },
+                         "payload":  {
+                                         "command":  "save_theme",
+                                         "action":  "save_theme"
+                                     }
+                     },
+                     {
+                         "slot":  "load_theme",
+                         "label":  "Load Buckets",
+                         "tooltip":  "Load saved Blender theme buckets into the tool fields.",
+                         "executionTarget":  {
+                                                   "kind":  "core-action",
+                                                   "actionId":  "load-blender-theme-fields"
+                                               },
+                         "payload":  {
+                                         "command":  "load_theme",
+                                         "action":  "load_theme"
+                                     }
+                     },
+                     {
+                         "slot":  "dark_theme",
+                         "label":  "Dark Theme",
+                         "tooltip":  "Stage the sampled palette as a dark Blender theme.",
+                         "payload":  {
+                                         "command":  "dark_theme",
+                                         "action":  "dark_theme"
+                                     }
+                     },
+                     {
+                         "slot":  "light_theme",
+                         "label":  "Light Theme",
+                         "tooltip":  "Stage the sampled palette as a light Blender theme.",
+                         "payload":  {
+                                         "command":  "light_theme",
+                                         "action":  "light_theme"
+                                     }
+                     },
+                     {
+                         "slot":  "apply_theme",
+                         "label":  "Apply",
+                         "tooltip":  "Apply the currently visible Blender theme role colors.",
+                         "payload":  {
+                                         "command":  "apply_theme",
+                                         "action":  "apply_theme"
+                                     }
+                     },
+                     {
+                         "slot":  "apply_background_pic",
+                         "label":  "Place Picture",
+                         "tooltip":  "Creates fake gizmos and a fake grid on top of a background image.",
+                         "payload":  {
+                                         "command":  "apply_background_pic",
+                                         "action":  "apply_background_pic"
+                                     }
+                     },
+                     {
+                         "slot":  "apply_grid",
+                         "label":  "Grid",
+                         "tooltip":  "Apply near and far grid spacing using the world-origin distance threshold.",
+                         "payload":  {
+                                         "command":  "apply_grid",
+                                         "action":  "apply_grid"
+                                     }
+                     },
+                     {
+                         "slot":  "browse_background_pic",
+                         "label":  "Browse",
+                         "tooltip":  "Choose the Place Picture background image path.",
+                         "payload":  {
+                                         "command":  "browse_background_pic",
+                                         "action":  "browse_background_pic"
+                                     }
+                     },
+                     {
+                         "slot":  "startup_background_pic",
+                         "label":  "Startup",
+                         "tooltip":  "Save the current Place Picture image so Blender restores it on startup.",
+                         "payload":  {
+                                         "command":  "startup_background_pic",
+                                         "action":  "startup_background_pic"
+                                     }
+                     },
+                     {
+                         "slot":  "clear_background_pic",
+                         "label":  "Clear",
+                         "tooltip":  "Remove the Place Picture fake background, grid, and gizmos while keeping the path field.",
+                         "payload":  {
+                                         "command":  "clear_background_pic",
+                                         "action":  "clear_background_pic"
+                                     }
+                     },
+                     {
+                         "slot":  "apply_hdri",
+                         "label":  "HDRI Apply",
+                         "tooltip":  "Apply the HDRI path in the field.",
+                         "payload":  {
+                                         "command":  "apply_hdri",
+                                         "action":  "apply_hdri"
+                                     }
+                     },
+                     {
+                         "slot":  "clear_world",
+                         "label":  "Clear",
+                         "tooltip":  "Reset the current file to a plain world without the staged HDRI.",
+                         "payload":  {
+                                         "command":  "clear_world",
+                                         "action":  "clear_world"
+                                     }
+                     },
+                     {
+                         "slot":  "reset_world",
+                         "label":  "Reset",
+                         "tooltip":  "Rebuild a clean world and reapply the staged HDRI values.",
+                         "payload":  {
+                                         "command":  "reset_world",
+                                         "action":  "reset_world"
+                                     }
+                     },
+                     {
+                         "slot":  "browse_hdri",
+                         "label":  "HDRI Browse",
+                         "tooltip":  "Choose the HDRI file path.",
+                         "payload":  {
+                                         "command":  "browse_hdri",
+                                         "action":  "browse_hdri"
+                                     }
+                     },
+                     {
+                         "slot":  "apply_rotation_z",
+                         "label":  "Z",
+                         "tooltip":  "Apply the staged Z rotation value.",
+                         "payload":  {
+                                         "command":  "apply_rotation_z",
+                                         "action":  "apply_rotation_z"
+                                     }
+                     },
+                     {
+                         "slot":  "apply_rotation_y",
+                         "label":  "Y",
+                         "tooltip":  "Apply the staged Y rotation value.",
+                         "payload":  {
+                                         "command":  "apply_rotation_y",
+                                         "action":  "apply_rotation_y"
+                                     }
+                     },
+                     {
+                         "slot":  "apply_rotation_x",
+                         "label":  "X",
+                         "tooltip":  "Apply the staged X rotation value.",
+                         "payload":  {
+                                         "command":  "apply_rotation_x",
+                                         "action":  "apply_rotation_x"
+                                     }
+                     },
+                     {
+                         "slot":  "apply_world_strength",
+                         "label":  "WS",
+                         "tooltip":  "Apply the staged world strength value.",
+                         "payload":  {
+                                         "command":  "apply_world_strength",
+                                         "action":  "apply_world_strength"
+                                     }
+                     }
+                 ],
+    "layout":  {
+                   "mode":  "grid",
+                   "columns":  4,
+                   "gap":  8,
+                   "padding":  8,
+                   "width":  920,
+                   "height":  720,
+                   "fields":  [
+                       { "id": "theme_image_path", "kind": "path", "label": "Theme image", "payloadKey": "theme_image_path", "defaultValue": "", "pathKind": "file", "filter": "Images (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp", "x": 8, "y": 520, "width": 440, "height": 36, "zIndex": 2 },
+                       { "id": "visual_mode", "kind": "select", "label": "Theme mode", "payloadKey": "visual_mode", "defaultValue": "dark", "options": [{ "id": "dark", "label": "Dark", "value": "dark" }, { "id": "light", "label": "Light", "value": "light" }], "x": 456, "y": 520, "width": 180, "height": 36, "zIndex": 2 },
+                       { "id": "tabs_hex", "kind": "color", "label": "Tabs", "payloadKey": "tabs_hex", "defaultValue": "#2D383A", "x": 8, "y": 568, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "tabs_text_hex", "kind": "color", "label": "Tab text", "payloadKey": "tabs_text_hex", "defaultValue": "#FFFFFF", "x": 146, "y": 568, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "headers_hex", "kind": "color", "label": "Headers", "payloadKey": "headers_hex", "defaultValue": "#4D686B", "x": 284, "y": 568, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "header_text_hex", "kind": "color", "label": "Header text", "payloadKey": "header_text_hex", "defaultValue": "#FFFFFF", "x": 422, "y": 568, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "text_hex", "kind": "color", "label": "Text", "payloadKey": "text_hex", "defaultValue": "#FFFFFF", "x": 560, "y": 568, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "control_text_hex", "kind": "color", "label": "Control text", "payloadKey": "control_text_hex", "defaultValue": "#FFFFFF", "x": 698, "y": 568, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "accent_text_hex", "kind": "color", "label": "Accent text", "payloadKey": "accent_text_hex", "defaultValue": "#FFFFFF", "x": 8, "y": 612, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "editor_background_hex", "kind": "color", "label": "Editor", "payloadKey": "editor_background_hex", "defaultValue": "#1E2728", "x": 146, "y": 612, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "scene_hex", "kind": "color", "label": "Scene", "payloadKey": "scene_hex", "defaultValue": "#2D383A", "x": 284, "y": 612, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "controls_hex", "kind": "color", "label": "Controls", "payloadKey": "controls_hex", "defaultValue": "#4D686B", "x": 422, "y": 612, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "highlights_hex", "kind": "color", "label": "Highlights", "payloadKey": "highlights_hex", "defaultValue": "#7BA8B7", "x": 560, "y": 612, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "viewport_background_hex", "kind": "color", "label": "Viewport", "payloadKey": "viewport_background_hex", "defaultValue": "#1E2728", "x": 698, "y": 612, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "viewport_gradient_enabled", "kind": "toggle", "label": "Gradient", "payloadKey": "viewport_gradient_enabled", "defaultValue": true, "x": 8, "y": 656, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "viewport_gradient_hex", "kind": "color", "label": "Gradient color", "payloadKey": "viewport_gradient_hex", "defaultValue": "#2D383A", "x": 146, "y": 656, "width": 130, "height": 36, "zIndex": 2 },
+                       { "id": "static_background_path", "kind": "path", "label": "Place Picture", "payloadKey": "static_background_path", "defaultValue": "", "pathKind": "file", "filter": "Images (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp", "x": 284, "y": 656, "width": 268, "height": 36, "zIndex": 2 },
+                       { "id": "grid_spacing_m", "kind": "number", "label": "Near grid", "payloadKey": "grid_spacing_m", "defaultValue": 1, "minimum": 0.0001, "step": 0.01, "x": 560, "y": 656, "width": 112, "height": 36, "zIndex": 2 },
+                       { "id": "grid_distance_m", "kind": "number", "label": "Distance", "payloadKey": "grid_distance_m", "defaultValue": 5, "minimum": 0.0001, "step": 0.01, "x": 680, "y": 656, "width": 112, "height": 36, "zIndex": 2 },
+                       { "id": "grid_far_spacing_m", "kind": "number", "label": "Far grid", "payloadKey": "grid_far_spacing_m", "defaultValue": 1, "minimum": 0.0001, "step": 0.01, "x": 800, "y": 656, "width": 112, "height": 36, "zIndex": 2 },
+                       { "id": "hdri_path", "kind": "path", "label": "HDRI", "payloadKey": "hdri_path", "defaultValue": "", "pathKind": "file", "filter": "HDRI (*.hdr;*.exr)|*.hdr;*.exr", "x": 8, "y": 476, "width": 440, "height": 36, "zIndex": 2 },
+                       { "id": "rotation_x_deg", "kind": "number", "label": "Rotate X", "payloadKey": "rotation_x_deg", "defaultValue": 90, "step": 1, "x": 456, "y": 476, "width": 105, "height": 36, "zIndex": 2 },
+                       { "id": "rotation_y_deg", "kind": "number", "label": "Rotate Y", "payloadKey": "rotation_y_deg", "defaultValue": 0, "step": 1, "x": 569, "y": 476, "width": 105, "height": 36, "zIndex": 2 },
+                       { "id": "rotation_z_deg", "kind": "number", "label": "Rotate Z", "payloadKey": "rotation_z_deg", "defaultValue": 30, "step": 1, "x": 682, "y": 476, "width": 105, "height": 36, "zIndex": 2 },
+                       { "id": "world_strength", "kind": "number", "label": "Strength", "payloadKey": "world_strength", "defaultValue": 0.25, "minimum": 0, "step": 0.05, "x": 795, "y": 476, "width": 117, "height": 36, "zIndex": 2 }
+                   ],
+                   "childBehaviors": {
+                       "browse_theme": { "activateField": "theme_image_path", "execute": true },
+                       "absorb_theme": { "execute": true, "payloadTemplate": { "command": "absorb_theme" } },
+                       "save_theme": { "execute": true },
+                       "load_theme": { "execute": true },
+                       "dark_theme": { "fieldPatch": { "visual_mode": "dark" }, "execute": false },
+                       "light_theme": { "fieldPatch": { "visual_mode": "light" }, "execute": false },
+                       "apply_theme": { "execute": true, "payloadTemplate": { "command": "apply_theme_from_photo_manual_colors", "visual_mode": { "$field": "visual_mode" }, "tabs_hex": { "$field": "tabs_hex" }, "tabs_text_hex": { "$field": "tabs_text_hex" }, "headers_hex": { "$field": "headers_hex" }, "header_text_hex": { "$field": "header_text_hex" }, "text_hex": { "$field": "text_hex" }, "control_text_hex": { "$field": "control_text_hex" }, "accent_text_hex": { "$field": "accent_text_hex" }, "editor_background_hex": { "$field": "editor_background_hex" }, "scene_hex": { "$field": "scene_hex" }, "controls_hex": { "$field": "controls_hex" }, "borders_hex": { "$field": "editor_background_hex" }, "darks_hex": { "$field": "editor_background_hex" }, "highlights_hex": { "$field": "highlights_hex" }, "viewport_background_hex": { "$field": "viewport_background_hex" }, "viewport_gradient_enabled": { "$field": "viewport_gradient_enabled" }, "viewport_gradient_hex": { "$field": "viewport_gradient_hex" } } },
+                       "apply_background_pic": { "execute": true, "payloadTemplate": { "command": "place_picture", "static_background_path": { "$field": "static_background_path" }, "grid_spacing_m": { "$field": "grid_spacing_m" }, "grid_distance_m": { "$field": "grid_distance_m" }, "grid_far_spacing_m": { "$field": "grid_far_spacing_m" } } },
+                       "apply_grid": { "execute": true, "payloadTemplate": { "command": "set_grid_spacing", "grid_spacing_m": { "$field": "grid_spacing_m" }, "grid_distance_m": { "$field": "grid_distance_m" }, "grid_far_spacing_m": { "$field": "grid_far_spacing_m" } } },
+                       "browse_background_pic": { "activateField": "static_background_path", "execute": false },
+                       "startup_background_pic": { "execute": true, "payloadTemplate": { "command": "set_place_picture_startup", "static_background_path": { "$field": "static_background_path" }, "grid_spacing_m": { "$field": "grid_spacing_m" }, "grid_distance_m": { "$field": "grid_distance_m" }, "grid_far_spacing_m": { "$field": "grid_far_spacing_m" } } },
+                       "clear_background_pic": { "execute": true, "payloadTemplate": { "command": "clear_place_picture" } },
+                       "apply_hdri": { "execute": true, "payloadTemplate": { "command": "set_hdri_path", "hdri_path": { "$field": "hdri_path" } } },
+                       "clear_world": { "execute": true, "payloadTemplate": { "command": "clear_world" } },
+                       "reset_world": { "execute": true, "payloadTemplate": { "command": "reset_world", "hdri_path": { "$field": "hdri_path" }, "rotation_x_deg": { "$field": "rotation_x_deg" }, "rotation_y_deg": { "$field": "rotation_y_deg" }, "rotation_z_deg": { "$field": "rotation_z_deg" }, "world_strength": { "$field": "world_strength" } } },
+                       "browse_hdri": { "activateField": "hdri_path", "execute": false },
+                       "apply_rotation_x": { "execute": true, "payloadTemplate": { "command": "set_rotation_x", "rotation_x_deg": { "$field": "rotation_x_deg" } } },
+                       "apply_rotation_y": { "execute": true, "payloadTemplate": { "command": "set_rotation_y", "rotation_y_deg": { "$field": "rotation_y_deg" } } },
+                       "apply_rotation_z": { "execute": true, "payloadTemplate": { "command": "set_rotation_z", "rotation_z_deg": { "$field": "rotation_z_deg" } } },
+                       "apply_world_strength": { "execute": true, "payloadTemplate": { "command": "set_world_strength", "world_strength": { "$field": "world_strength" } } }
+                   }
+               }
+}

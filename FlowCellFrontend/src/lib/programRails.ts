@@ -1,21 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
-import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { LayoutSnapshot } from "../types";
-import {
-  applySlicerButtonAssignmentLabels,
-  clearSlicerButtonAssignments,
-  handleSlicerLaunchForPanelButton
-} from "./slicerLauncherAssignments";
-import {
-  openBuildLayersWindow,
-  openOrganizationSetupWindow,
-  openWindowGridWindow
-} from "./windowing";
+import type { LayoutSnapshot } from "../types.js";
+import { showOpenFileDialog } from "./tauri.js";
 
-// Broadcast when an Illustrator layers panel button runs, so the Build Layers
-// window can re-scan and reflect the change (it runs the JSX out-of-process).
-export const ILLUSTRATOR_LAYERS_CHANGED_EVENT = "flowcell:illustrator-layers-changed";
+export const ILLUSTRATOR_LAYERS_CHANGED_EVENT = "flowcell://illustrator-layers-changed";
 
 export interface PanelScriptChildRecord {
   slot: string;
@@ -42,6 +30,12 @@ export interface PanelScriptFileRecord {
   events?: PanelButtonEventsRecord;
   children?: PanelScriptChildRecord[];
   macroId?: string;
+  canonicalPlacement?: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 }
 
 export interface CreateProgramFolderResult {
@@ -49,47 +43,9 @@ export interface CreateProgramFolderResult {
   statusMessage?: string;
 }
 
-export interface SmartAxisToolStateResponse {
-  message?: string;
-  registered?: boolean;
-  runner_active?: boolean;
-  enabled_tool_count?: number;
-  modes?: Partial<Record<"X" | "Y" | "Z", string>>;
-  active_axes?: string[];
-  selected?: number;
-  selection?: string[];
-  live_enabled?: boolean;
-  axis?: string;
-  mode?: string;
-}
-
 export interface ToolsetActionResponse {
   message?: string;
   display?: string;
-  [key: string]: unknown;
-}
-
-interface PanelScriptRunResponse {
-  message?: string;
-  display?: string;
-  requires_flowcell_organization_setup_open?: boolean;
-  requiresFlowCellOrganizationSetupOpen?: boolean;
-  requires_flowcell_slicer_launch?: boolean;
-  requiresFlowCellSlicerLaunch?: boolean;
-  requires_flowcell_orca_launch?: boolean;
-  requiresFlowCellOrcaLaunch?: boolean;
-  requires_flowcell_cura_launch?: boolean;
-  requiresFlowCellCuraLaunch?: boolean;
-  slicer_id?: string;
-  slicerId?: string;
-  slicer_display_name?: string;
-  slicerDisplayName?: string;
-  executable_label?: string;
-  executableLabel?: string;
-  detected_executable?: string;
-  detectedExecutable?: string;
-  exported_paths?: unknown;
-  exportedPaths?: unknown;
   [key: string]: unknown;
 }
 
@@ -144,74 +100,78 @@ function responseMessage(response: unknown): string {
   );
 }
 
-export function readPanelScriptStatusMessage(message: string): string {
-  const trimmed = readString(message);
-  return trimmed && trimmed !== "Script completed." ? trimmed : "";
-}
-
-function isOrganizationSetupLauncher(fileName: string): boolean {
-  return fileName.trim().toLowerCase() === "setup_organization.ps1";
-}
-
-function isBuildLayersLauncher(fileName: string): boolean {
-  return fileName.trim().toLowerCase() === "build layers.jsx";
-}
-
-// A panel button with any of these base names (any extension) opens the Window
-// Grid overlay. Put it in whatever panel you like.
-const WINDOW_GRID_LAUNCHER_BASE_NAMES = new Set([
-  "window grid",
-  "windows grid",
-  "window-grid",
-  "all windows"
-]);
-
-function isWindowGridLauncher(fileName: string): boolean {
-  const base = fileName
-    .trim()
-    .toLowerCase()
-    .replace(/\.[^.]+$/, "")
-    .replace(/[_-]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return WINDOW_GRID_LAUNCHER_BASE_NAMES.has(base);
-}
-
 type SlicerLauncherId = "orca" | "cura" | "slicer";
 
-function isFlowCellSlicerLaunchResponse(
-  response: unknown
-): response is PanelScriptRunResponse {
-  return (
-    isRecord(response) &&
-    (response.requires_flowcell_slicer_launch === true ||
-      response.requiresFlowCellSlicerLaunch === true ||
-      response.requires_flowcell_orca_launch === true ||
-      response.requiresFlowCellOrcaLaunch === true ||
-      response.requires_flowcell_cura_launch === true ||
-      response.requiresFlowCellCuraLaunch === true)
-  );
-}
+function slicerLaunchRequest(response: unknown): {
+  slicerId: SlicerLauncherId;
+  exportedPaths: string[];
+  detectedExecutable: string;
+} | null {
+  if (!isRecord(response)) return null;
+  const requested =
+    response.requires_flowcell_slicer_launch === true ||
+    response.requiresFlowCellSlicerLaunch === true ||
+    response.requires_flowcell_orca_launch === true ||
+    response.requiresFlowCellOrcaLaunch === true ||
+    response.requires_flowcell_cura_launch === true ||
+    response.requiresFlowCellCuraLaunch === true;
+  if (!requested) return null;
 
-function isFlowCellOrganizationSetupResponse(
-  response: unknown
-): response is PanelScriptRunResponse {
-  return (
-    isRecord(response) &&
-    (response.requires_flowcell_organization_setup_open === true ||
-      response.requiresFlowCellOrganizationSetupOpen === true)
-  );
-}
-
-async function launchSlicer(
-  slicerId: SlicerLauncherId,
-  executablePath: string,
-  exportedPaths: string[]
-): Promise<string> {
-  return invokeProgramRailCommand<string>("launch_slicer", {
+  const rawId = readString(response.slicer_id) || readString(response.slicerId);
+  const slicerId: SlicerLauncherId =
+    response.requires_flowcell_orca_launch === true ||
+    response.requiresFlowCellOrcaLaunch === true ||
+    rawId.toLowerCase().includes("orca")
+      ? "orca"
+      : response.requires_flowcell_cura_launch === true ||
+          response.requiresFlowCellCuraLaunch === true ||
+          rawId.toLowerCase().includes("cura")
+        ? "cura"
+        : "slicer";
+  const rawPaths = Array.isArray(response.exported_paths)
+    ? response.exported_paths
+    : Array.isArray(response.exportedPaths)
+      ? response.exportedPaths
+      : [];
+  const exportedPaths = rawPaths.map(readString).filter(Boolean);
+  if (exportedPaths.length === 0) {
+    throw new Error("The slicer script did not return any exported model paths.");
+  }
+  return {
     slicerId,
+    exportedPaths,
+    detectedExecutable:
+      readString(response.detected_executable) || readString(response.detectedExecutable)
+  };
+}
+
+async function handleSlicerLaunchRequest(request: {
+  slicerId: SlicerLauncherId;
+  exportedPaths: string[];
+  detectedExecutable: string;
+}): Promise<string> {
+  let executablePath = await invokeProgramRailCommand<string | null>("load_slicer_executable", {
+    slicerId: request.slicerId
+  });
+  executablePath ||= request.detectedExecutable || null;
+  if (!executablePath) {
+    const displayName = request.slicerId === "orca"
+      ? "OrcaSlicer"
+      : request.slicerId === "cura"
+        ? "UltiMaker Cura"
+        : "slicer";
+    const selectedPaths = await showOpenFileDialog({
+      title: `Choose ${displayName} executable`,
+      filter: "Applications (*.exe)|*.exe|All Files (*.*)|*.*",
+      multiselect: false
+    });
+    executablePath = selectedPaths[0]?.trim() || null;
+  }
+  if (!executablePath) return "Slicer launch cancelled.";
+  return invokeProgramRailCommand<string>("launch_slicer", {
+    slicerId: request.slicerId,
     executablePath,
-    exportedPaths
+    exportedPaths: request.exportedPaths
   });
 }
 
@@ -314,59 +274,7 @@ export async function listPanelScriptFiles(
     programName,
     panelName
   });
-  return applySlicerButtonAssignmentLabels(programName, panelName, records);
-}
-
-export async function addPanelScripts(
-  programName: string,
-  panelName: string
-): Promise<PanelScriptFileRecord[]> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Panel scripts can only be added from the desktop host.");
-  }
-
-  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("add_panel_scripts", {
-    programName,
-    panelName
-  });
-  return applySlicerButtonAssignmentLabels(programName, panelName, records);
-}
-
-export async function deletePanelScripts(
-  programName: string,
-  panelName: string,
-  fileNames: string[]
-): Promise<PanelScriptFileRecord[]> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Panel scripts can only be deleted from the desktop host.");
-  }
-
-  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("delete_panel_scripts", {
-    programName,
-    panelName,
-    fileNames
-  });
-  clearSlicerButtonAssignments(programName, panelName, fileNames);
-  return applySlicerButtonAssignmentLabels(programName, panelName, records);
-}
-
-export async function updatePanelScriptDescription(
-  programName: string,
-  panelName: string,
-  fileName: string,
-  description: string
-): Promise<PanelScriptFileRecord[]> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Panel script descriptions can only be updated from the desktop host.");
-  }
-
-  const records = await invokeProgramRailCommand<PanelScriptFileRecord[]>("update_panel_script_description", {
-    programName,
-    panelName,
-    fileName,
-    description
-  });
-  return applySlicerButtonAssignmentLabels(programName, panelName, records);
+  return records;
 }
 
 export async function runPanelScript(
@@ -378,43 +286,14 @@ export async function runPanelScript(
     throw new Error("Panel scripts can only be run from the desktop host.");
   }
 
-  if (isOrganizationSetupLauncher(fileName)) {
-    await openOrganizationSetupWindow();
-    return "Script completed.";
-  }
-
-  if (isBuildLayersLauncher(fileName)) {
-    await openBuildLayersWindow({ programName, panelName, label: "Layers Builder" });
-    return "Script completed.";
-  }
-
-  if (isWindowGridLauncher(fileName)) {
-    await openWindowGridWindow();
-    return "Script completed.";
-  }
-
   const response = await invokeProgramRailCommand<unknown>("run_panel_script_response", {
     programName,
     panelName,
     fileName
   });
 
-  const normalizedPanel = panelName.trim().toLowerCase();
-  if (
-    programName.trim().toLowerCase().includes("illustrator") &&
-    (normalizedPanel === "layers builder" || normalizedPanel === "layers")
-  ) {
-    void emit(ILLUSTRATOR_LAYERS_CHANGED_EVENT, { panelName, fileName }).catch(() => {});
-  }
-
-  if (isFlowCellOrganizationSetupResponse(response)) {
-    await openOrganizationSetupWindow();
-    return "Script completed.";
-  }
-
-  if (isFlowCellSlicerLaunchResponse(response)) {
-    return handleSlicerLaunchForPanelButton(response, { programName, panelName, fileName }, launchSlicer);
-  }
+  const slicerRequest = slicerLaunchRequest(response);
+  if (slicerRequest) return handleSlicerLaunchRequest(slicerRequest);
 
   return responseMessage(response);
 }
@@ -482,83 +361,6 @@ export async function loadLayoutSnapshot(path: string): Promise<LayoutSnapshot> 
   }
 
   return invokeProgramRailCommand<LayoutSnapshot>("load_layout_snapshot", { path });
-}
-
-export async function runBlenderRotateTool(args: {
-  programName: string;
-  panelName: string;
-  fileName: string;
-  axis: string;
-  centerMode: string;
-  operationMode: string;
-  angleDeg: number;
-  distributeCount: number;
-}): Promise<string> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Blender tools can only be run from the desktop host.");
-  }
-
-  return invokeProgramRailCommand<string>("run_blender_rotate_tool", args);
-}
-
-export async function runBlenderAlignmentTool(args: {
-  programName: string;
-  panelName: string;
-  fileName: string;
-  command: string;
-  axis: string;
-  mode: string;
-  modifier: string;
-}): Promise<string> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Blender tools can only be run from the desktop host.");
-  }
-
-  return invokeProgramRailCommand<string>("run_blender_alignment_tool", args);
-}
-
-export async function runIllustratorAlignmentTool(args: {
-  programName: string;
-  panelName: string;
-  fileName: string;
-  command: string;
-  axis: string;
-  mode: string;
-  modifier: string;
-  groupMode: boolean;
-}): Promise<string> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Illustrator tools can only be run from the desktop host.");
-  }
-
-  return invokeProgramRailCommand<string>("run_illustrator_alignment_tool", args);
-}
-
-export async function runBlenderSmartAxisTool(args: {
-  programName: string;
-  panelName: string;
-  fileName: string;
-  command: string;
-}): Promise<SmartAxisToolStateResponse> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Blender tools can only be run from the desktop host.");
-  }
-
-  return invokeProgramRailCommand<SmartAxisToolStateResponse>("run_blender_smart_axis_tool", args);
-}
-
-export async function runBlenderToolsetAction(args: {
-  programName: string;
-  panelName: string;
-  fileName: string;
-  command: string;
-  payload?: Record<string, unknown>;
-}): Promise<ToolsetActionResponse> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Blender tools can only be run from the desktop host.");
-  }
-
-  return invokeProgramRailCommand<ToolsetActionResponse>("run_blender_toolset_action", args);
 }
 
 export async function runToolsetAction(args: {

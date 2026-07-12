@@ -24,6 +24,13 @@ def _active_mesh_object(context=None):
     return obj
 
 
+def _split_base_name(object_name):
+    stem, separator, suffix = object_name.rpartition(".")
+    if separator and stem and len(suffix) == 3 and suffix.isdigit():
+        return stem
+    return object_name
+
+
 def connected_components(bm):
     bm.verts.ensure_lookup_table()
     for vert in bm.verts:
@@ -86,6 +93,8 @@ def perform_split_loose_parts(context=None, data=None):
     del data
     ctx = _ctx(context)
     obj = _active_mesh_object(ctx)
+    source_name = obj.name
+    split_base_name = _split_base_name(source_name)
 
     if ctx.mode != "OBJECT":
         bpy.ops.object.mode_set(mode="OBJECT")
@@ -106,12 +115,20 @@ def perform_split_loose_parts(context=None, data=None):
         if len(components) <= 1:
             return _result("CANCELLED", "No disjoint loose parts were found on the active mesh.")
 
+        part_names = [f"{split_base_name} {index}" for index in range(1, len(components) + 1)]
+        collisions = [name for name in part_names if bpy.data.objects.get(name) is not None]
+        if collisions:
+            return _result(
+                "CANCELLED",
+                f"Cannot split because target object names already exist: {', '.join(collisions)}.",
+            )
+
         collections = list(obj.users_collection) or [ctx.scene.collection]
         new_objects = []
 
-        for index, component in enumerate(components, 1):
+        for component, part_name in zip(components, part_names):
             part_bmesh = build_submesh(bm, component)
-            part_mesh = bpy.data.meshes.new(f"{mesh.name}_part_{index:03d}")
+            part_mesh = bpy.data.meshes.new(part_name)
 
             try:
                 part_bmesh.to_mesh(part_mesh)
@@ -121,7 +138,7 @@ def perform_split_loose_parts(context=None, data=None):
             for material in mesh.materials:
                 part_mesh.materials.append(material)
 
-            part_object = bpy.data.objects.new(f"{obj.name}_part_{index:03d}", part_mesh)
+            part_object = bpy.data.objects.new(part_name, part_mesh)
             part_object.matrix_world = obj.matrix_world.copy()
 
             for collection in collections:
@@ -150,7 +167,7 @@ def perform_split_loose_parts(context=None, data=None):
 
     return _result(
         "FINISHED",
-        f"Split '{obj.name}' into {len(new_objects)} loose parts and set origins to geometry.",
+        f"Split '{source_name}' into {len(new_objects)} loose parts and set origins to geometry.",
         changed=len(new_objects),
         created_objects=[new_object.name for new_object in new_objects],
     )

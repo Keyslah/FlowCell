@@ -1,4 +1,22 @@
 import { invoke } from "@tauri-apps/api/core";
+import { cloneButtonDocument } from "../../button/state/buttonDefaults";
+import { publishButtonCommit } from "../../button/state/ButtonDraftBus";
+import {
+  installButtonSource,
+  loadButtonStateDocument,
+  saveButtonStateDocument,
+  uninstallButtonSource,
+  updateButtonSource,
+  type InstallButtonSourceResult
+} from "../../button/state/ButtonStateRepository";
+import {
+  attachCanonicalOrganizationProfileButton,
+  isCanonicalOrganizationProfileButton,
+  ORGANIZATION_PROFILE_PANEL_NAME,
+  ORGANIZATION_PROFILE_PROGRAM_NAME,
+  organizationProfileOwnerButtonId,
+  resolveOrganizationProfileOwnerButtonId
+} from "../../button/state/organizationProfileButtonOperations";
 import type { LooseFileInfo, OrganizationProfile } from "./types";
 
 export type OrganizationProjectScan = {
@@ -80,8 +98,84 @@ export function makeOrganizationProfileScript(name: string): Promise<string> {
   return invokeOrganizationCommand("make_organization_profile_script", { name });
 }
 
-export function makeOrganizationProfileButton(name: string): Promise<string> {
-  return invokeOrganizationCommand("make_organization_profile_button", { name });
+function isButtonRevisionConflict(error: unknown): boolean {
+  return formatInvokeError(error).includes("Button state changed before Save.");
+}
+
+export async function makeOrganizationProfileButton(name: string): Promise<string> {
+  if (!(typeof window !== "undefined" && "__TAURI_INTERNALS__" in window)) {
+    throw new Error("Organization profile Buttons can only be created from the desktop host.");
+  }
+  const profileName = name.trim();
+  if (!profileName) throw new Error("Save or load a profile before making its Button.");
+
+  const sourcePath = await makeOrganizationProfileScript(profileName);
+  let current = await loadButtonStateDocument();
+  const existingOwnerButtonId = resolveOrganizationProfileOwnerButtonId(current, profileName);
+  const ownerButtonId = existingOwnerButtonId ?? organizationProfileOwnerButtonId(profileName);
+  const occupied = current.buttons[ownerButtonId];
+  if (occupied && !isCanonicalOrganizationProfileButton(occupied, profileName)) {
+    throw new Error(`Canonical organization profile Button ID '${ownerButtonId}' is already in use.`);
+  }
+
+  const request = {
+    ownerButtonId,
+    programName: ORGANIZATION_PROFILE_PROGRAM_NAME,
+    panelName: ORGANIZATION_PROFILE_PANEL_NAME,
+    sourcePath,
+    importKind: "script" as const
+  };
+  let installed: InstallButtonSourceResult;
+  const createdInstall = existingOwnerButtonId === null;
+  if (createdInstall) {
+    installed = await installButtonSource(request);
+  } else {
+    installed = await updateButtonSource(request);
+  }
+  if (installed.children.length > 0 || !installed.executionTarget) {
+    if (createdInstall) {
+      await uninstallButtonSource({
+        ownerButtonId: installed.ownerButtonId,
+        sourceIdentity: installed.sourceIdentity
+      }).catch(() => {});
+    }
+    throw new Error("Organization profile source did not install as a single-script Button.");
+  }
+
+  let stateCommitted = false;
+  try {
+    let saved = current;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const next = cloneButtonDocument(current);
+      const result = attachCanonicalOrganizationProfileButton(next, profileName, installed);
+      if (!result.changed) {
+        saved = current;
+        stateCommitted = true;
+        break;
+      }
+      try {
+        saved = await saveButtonStateDocument(next, current.revision);
+        stateCommitted = true;
+        break;
+      } catch (error) {
+        if (attempt === 2 || !isButtonRevisionConflict(error)) throw error;
+        current = await loadButtonStateDocument();
+      }
+    }
+    if (!stateCommitted) {
+      throw new Error("Canonical organization profile Button state could not be committed.");
+    }
+    await publishButtonCommit(saved);
+    return installed.ownerButtonId;
+  } catch (error) {
+    if (createdInstall && !stateCommitted) {
+      await uninstallButtonSource({
+        ownerButtonId: installed.ownerButtonId,
+        sourceIdentity: installed.sourceIdentity
+      }).catch(() => {});
+    }
+    throw error;
+  }
 }
 
 export function createOrganizationFolder(

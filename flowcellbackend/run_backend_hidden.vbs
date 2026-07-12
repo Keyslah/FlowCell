@@ -4,18 +4,9 @@ Set fso = CreateObject("Scripting.FileSystemObject")
 Set wmi = GetObject("winmgmts:\\.\root\cimv2")
 
 root = fso.GetParentFolderName(WScript.ScriptFullName)
-repoRoot = fso.GetParentFolderName(root)
-patchScript = root & "\Fix-BlenderBridgeRouting.ps1"
 backendScript = root & "\FlowCellBackend.ahk"
 ahkExe = root & "\runtime\AutoHotkey64.exe"
 backendFound = False
-
-If fso.FileExists(patchScript) Then
-    patchCommand = "powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File " & Chr(34) & patchScript & Chr(34) & " -RepoRoot " & Chr(34) & repoRoot & Chr(34)
-    On Error Resume Next
-    shell.Run patchCommand, 0, True
-    On Error GoTo 0
-End If
 
 If Not fso.FileExists(ahkExe) Then
     ahkExe = root & "\runtime\AutoHotkey.exe"

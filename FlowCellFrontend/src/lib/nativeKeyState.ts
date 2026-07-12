@@ -9,6 +9,32 @@ export async function isNativeSpaceKeyDown(): Promise<boolean> {
   }
 }
 
+export async function isNativePrimaryMouseButtonDown(): Promise<boolean> {
+  try {
+    return await invoke<boolean>("is_primary_mouse_button_down");
+  } catch {
+    return false;
+  }
+}
+
+export async function waitForNativeWindowDragEnd(options?: {
+  pollMs?: number;
+  settleMs?: number;
+  maxWaitMs?: number;
+}): Promise<void> {
+  const pollMs = options?.pollMs ?? 40;
+  const settleMs = options?.settleMs ?? 80;
+  const maxWaitMs = options?.maxWaitMs ?? 30000;
+  const deadline = Date.now() + maxWaitMs;
+  while (Date.now() < deadline) {
+    if (!(await isNativePrimaryMouseButtonDown())) {
+      break;
+    }
+    await new Promise<void>((resolve) => window.setTimeout(resolve, pollMs));
+  }
+  await new Promise<void>((resolve) => window.setTimeout(resolve, settleMs));
+}
+
 export function useNativeSpaceDragActive(pollMs = 32): boolean {
   const [spaceDown, setSpaceDown] = useState(false);
 

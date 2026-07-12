@@ -48,67 +48,6 @@ if (Test-Path -LiteralPath $customRegistryPath -PathType Leaf) {
     }
 }
 
-function Get-FlowCellBundledCustomRegistryPath {
-    $bridgeFolderName = [string]$bridgeLayout.BridgeFolderName
-    $customActionsFileName = [string]$bridgeLayout.CustomActionsFileName
-    if ([string]::IsNullOrWhiteSpace($bridgeFolderName) -or [string]::IsNullOrWhiteSpace($customActionsFileName)) {
-        return ''
-    }
-
-    $candidate = Join-Path $projectRoot ('Blender Addons - Copy contents Into Blender\{0}\{1}' -f $bridgeFolderName, $customActionsFileName)
-    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-        return $candidate
-    }
-
-    return ''
-}
-
-function Resolve-FlowCellBundledActionSourcePath {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$BundledRegistryPath,
-        [Parameter(Mandatory = $true)]
-        [object]$Entry
-    )
-
-    $sourcePythonPath = [string](Get-FlowCellObjectPropertyValue -InputObject $Entry -Name 'sourcePythonPath')
-    if ([string]::IsNullOrWhiteSpace($sourcePythonPath)) {
-        $sourcePythonPath = [string](Get-FlowCellObjectPropertyValue -InputObject $Entry -Name 'pythonPath')
-    }
-    if ([string]::IsNullOrWhiteSpace($sourcePythonPath)) {
-        return ''
-    }
-
-    $managedSourcePath = Join-Path (Join-Path $projectRoot 'ManagedActions') (Split-Path -Leaf $sourcePythonPath)
-    if (Test-Path -LiteralPath $managedSourcePath -PathType Leaf) {
-        return [System.IO.Path]::GetFullPath($managedSourcePath)
-    }
-
-    try {
-        if ([System.IO.Path]::IsPathRooted($sourcePythonPath)) {
-            $absolutePath = [System.IO.Path]::GetFullPath($sourcePythonPath)
-            if (Test-Path -LiteralPath $absolutePath -PathType Leaf) {
-                return $absolutePath
-            }
-        }
-    }
-    catch {
-    }
-
-    $projectSourcePath = Join-Path $projectRoot $sourcePythonPath
-    if (Test-Path -LiteralPath $projectSourcePath -PathType Leaf) {
-        return [System.IO.Path]::GetFullPath($projectSourcePath)
-    }
-
-    $addonTemplateRoot = Split-Path -Parent (Split-Path -Parent $BundledRegistryPath)
-    $templateSourcePath = Join-Path $addonTemplateRoot $sourcePythonPath
-    if (Test-Path -LiteralPath $templateSourcePath -PathType Leaf) {
-        return [System.IO.Path]::GetFullPath($templateSourcePath)
-    }
-
-    return ''
-}
-
 function Resolve-FlowCellRegistryPythonPath {
     param(
         [Parameter(Mandatory = $true)]
@@ -150,93 +89,6 @@ function Resolve-FlowCellRegistryPythonPath {
     }
 
     return ''
-}
-
-function Get-FlowCellRequiredBundledActionNames {
-    $requiredActions = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($button in @($config.buttons)) {
-        $actionName = [string](Get-FlowCellObjectPropertyValue -InputObject $button -Name 'action')
-        if ([string]::IsNullOrWhiteSpace($actionName)) {
-            continue
-        }
-        [void]$requiredActions.Add($actionName.Trim())
-        if ($actionName.Trim() -ieq 'flowcell_custom_theme' -or $actionName.Trim() -ieq 'flowcell_custom_hdri_world_tools') {
-            [void]$requiredActions.Add('custom_hdri_world_tools')
-        }
-    }
-
-    return $requiredActions
-}
-
-function Merge-FlowCellBundledCustomActions {
-    $bundledRegistryPath = Get-FlowCellBundledCustomRegistryPath
-    if ([string]::IsNullOrWhiteSpace($bundledRegistryPath)) {
-        return
-    }
-
-    try {
-        $bundledRegistry = Get-Content -LiteralPath $bundledRegistryPath -Raw | ConvertFrom-Json
-    }
-    catch {
-        return
-    }
-    if ($null -eq $bundledRegistry.actions) {
-        return
-    }
-
-    $requiredActions = Get-FlowCellRequiredBundledActionNames
-    if ($requiredActions.Count -eq 0) {
-        return
-    }
-
-    $existingActions = New-Object System.Collections.Generic.HashSet[string]([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($entry in @($registry.actions)) {
-        $actionName = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'action')
-        if (-not [string]::IsNullOrWhiteSpace($actionName)) {
-            [void]$existingActions.Add($actionName.Trim())
-        }
-    }
-
-    $mergedActions = New-Object System.Collections.Generic.List[object]
-    foreach ($entry in @($registry.actions)) {
-        if ($null -ne $entry) {
-            [void]$mergedActions.Add($entry)
-        }
-    }
-
-    foreach ($entry in @($bundledRegistry.actions)) {
-        $actionName = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'action')
-        if ([string]::IsNullOrWhiteSpace($actionName)) {
-            continue
-        }
-        $actionName = $actionName.Trim()
-        if (-not $requiredActions.Contains($actionName) -or $existingActions.Contains($actionName)) {
-            continue
-        }
-
-        $sourcePythonPath = Resolve-FlowCellBundledActionSourcePath -BundledRegistryPath $bundledRegistryPath -Entry $entry
-        if ([string]::IsNullOrWhiteSpace($sourcePythonPath)) {
-            continue
-        }
-
-        $entryMap = [ordered]@{}
-        foreach ($prop in @($entry.PSObject.Properties)) {
-            $entryMap[[string]$prop.Name] = $prop.Value
-        }
-        $entryMap.action = $actionName
-        $entryMap.pythonPath = $sourcePythonPath
-        $entryMap.sourcePythonPath = $sourcePythonPath
-        if (-not $entryMap.Contains('sourceFunctionName')) {
-            $entryMap.sourceFunctionName = ''
-        }
-        if (-not $entryMap.Contains('functionName')) {
-            $entryMap.functionName = ''
-        }
-        [void]$mergedActions.Add([pscustomobject]$entryMap)
-        [void]$existingActions.Add($actionName)
-    }
-
-    $registry.actions = @($mergedActions.ToArray())
 }
 
 function Get-PythonFunctionMetadata([string]$Path, [string]$PreferredFunctionName = '') {
@@ -445,105 +297,6 @@ function Get-FlowCellObjectPropertyValue {
     return $property.Value
 }
 
-function Get-FlowCellLegacyFlowCellBridgeRoot {
-    $blenderAppDataRoot = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Blender Foundation\Blender'
-    if (-not (Test-Path -LiteralPath $blenderAppDataRoot -PathType Container)) {
-        return ''
-    }
-
-    $versionDirectory = Get-ChildItem -LiteralPath $blenderAppDataRoot -Directory -ErrorAction SilentlyContinue |
-        Sort-Object Name -Descending |
-        Select-Object -First 1
-    if ($null -eq $versionDirectory) {
-        return ''
-    }
-
-    $bridgeRoot = Join-Path $versionDirectory.FullName 'scripts\addons\blender_bridge_flowcell'
-    if (-not (Test-Path -LiteralPath $bridgeRoot -PathType Container)) {
-        return ''
-    }
-
-    return $bridgeRoot
-}
-
-function Sync-LegacyFlowCellCompatibilityRegistry {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object[]]$NormalizedEntries
-    )
-
-    $legacyBridgeRoot = Get-FlowCellLegacyFlowCellBridgeRoot
-    if ([string]::IsNullOrWhiteSpace($legacyBridgeRoot)) {
-        return $null
-    }
-
-    $legacyRegistryPath = Join-Path $legacyBridgeRoot 'flowcell_custom_actions.json'
-    $legacyRegistry = [pscustomobject]@{ actions = @() }
-    if (Test-Path -LiteralPath $legacyRegistryPath -PathType Leaf) {
-        try {
-            $legacyRegistry = Get-Content -LiteralPath $legacyRegistryPath -Raw | ConvertFrom-Json
-            if ($null -eq $legacyRegistry.actions) {
-                $legacyRegistry | Add-Member -MemberType NoteProperty -Name actions -Value @() -Force
-            }
-        }
-        catch {
-            $legacyRegistry = [pscustomobject]@{ actions = @() }
-        }
-    }
-
-    $legacyEntries = New-Object System.Collections.Generic.List[object]
-    foreach ($entry in @($legacyRegistry.actions)) {
-        if ($null -eq $entry) {
-            continue
-        }
-
-        $legacyActionName = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'action')
-        if ($legacyActionName -ieq 'flowcell_custom_rotate') {
-            continue
-        }
-
-        [void]$legacyEntries.Add($entry)
-    }
-
-    foreach ($entry in @($NormalizedEntries)) {
-        $actionName = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'action')
-        if ($actionName -ine 'flowcell_custom_rotate') {
-            continue
-        }
-
-        $description = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'description')
-        $sourcePythonPath = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'sourcePythonPath')
-        $sourceFunctionName = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'sourceFunctionName')
-        $startLine = Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'startLine'
-        if ([string]::IsNullOrWhiteSpace($sourcePythonPath) -or [string]::IsNullOrWhiteSpace($sourceFunctionName)) {
-            continue
-        }
-
-        $compatEntry = [pscustomobject][ordered]@{
-            action = $actionName
-            description = $description
-            pythonPath = $sourcePythonPath
-            functionName = $sourceFunctionName
-            sourcePythonPath = $sourcePythonPath
-            sourceFunctionName = $sourceFunctionName
-            startLine = $startLine
-        }
-        [void]$legacyEntries.Add($compatEntry)
-    }
-
-    $legacyRegistry.actions = @($legacyEntries.ToArray())
-    Set-Content -LiteralPath $legacyRegistryPath -Value ($legacyRegistry | ConvertTo-Json -Depth 8) -Encoding UTF8
-
-    return [pscustomobject]@{
-        RegistryPath = $legacyRegistryPath
-        CompatibilityActions = @($legacyRegistry.actions | Where-Object {
-            [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'action') -ieq 'flowcell_custom_rotate'
-        }).Count
-    }
-}
-
-Merge-FlowCellBundledCustomActions
-
 function Get-FlowCellNormalizedPathKey([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path)) {
         return ''
@@ -655,12 +408,8 @@ Set-Content -LiteralPath $customRegistryPath -Value ($registry | ConvertTo-Json 
 # Custom actions dispatch per-file from the registry; strip any legacy auto-generated wrapper section.
 Set-GeneratedCustomSection -Path $addonActionsPath -SectionText ''
 
-$legacyCompatibility = Sync-LegacyFlowCellCompatibilityRegistry -NormalizedEntries @($normalizedEntries.ToArray())
-
 [pscustomobject]@{
     RegistryPath = $customRegistryPath
     AddonActionsPath = $addonActionsPath
     UpdatedActions = @($registry.actions).Count
-    LegacyCompatibilityRegistryPath = if ($null -ne $legacyCompatibility) { [string]$legacyCompatibility.RegistryPath } else { '' }
-    LegacyCompatibilityActions = if ($null -ne $legacyCompatibility) { [int]$legacyCompatibility.CompatibilityActions } else { 0 }
 } | ConvertTo-Json -Depth 4

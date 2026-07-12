@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "programId": "windows",
+  "label": "Windows",
+  "programType": "local-script",
+  "defaultPanels": ["Files", "Utility"],
+  "processNames": ["explorer", "dopus", "dopusrt"],
+  "exePath": "explorer.exe",
+  "gitScriptsFolder": "Windows Git Scripts",
+  "panelsFolder": "Panels",
+  "localScriptsFolder": "Windows Local Scripts",
+  "supportScriptsFolder": "SupportScripts",
+  "allowedScriptExtensions": ["ps1", "cmd", "bat", "exe", "lnk", "vbs", "ahk"],
+  "allowedManifestFileNames": ["flowcell.script.json"],
+  "supportsToolsetManifests": false,
+  "runner": {
+    "kind": "windows-script",
+    "programKey": "windows_generic",
+    "installScript": "",
+    "deleteScript": ""
+  },
+  "addonReloadNotes": "",
+  "appRestartNotes": "Restart FlowCell after changing this program manifest."
+}

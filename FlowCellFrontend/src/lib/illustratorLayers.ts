@@ -15,6 +15,12 @@ export type LayerTreeSnapshot = {
   tree: LayerNode[];
 };
 
+export type IllustratorLayerSource = {
+  programName: string;
+  panelName: string;
+  fileName: string;
+};
+
 type IllLayersOp =
   | { op: "scan" }
   | { op: "create"; parentKey?: string; name?: string }
@@ -48,8 +54,14 @@ function normalizeNode(value: unknown): LayerNode | null {
   };
 }
 
-async function runIllLayersOp(op: IllLayersOp): Promise<LayerTreeSnapshot> {
+async function runIllLayersOp(
+  source: IllustratorLayerSource,
+  op: IllLayersOp
+): Promise<LayerTreeSnapshot> {
   const raw = await invoke<string>("run_illustrator_layers_action", {
+    programName: source.programName,
+    panelName: source.panelName,
+    fileName: source.fileName,
     argsJson: JSON.stringify(op)
   });
 
@@ -88,40 +100,40 @@ async function runIllLayersOp(op: IllLayersOp): Promise<LayerTreeSnapshot> {
   };
 }
 
-export async function scanLayers(): Promise<LayerTreeSnapshot> {
-  return runIllLayersOp({ op: "scan" });
+export async function scanLayers(source: IllustratorLayerSource): Promise<LayerTreeSnapshot> {
+  return runIllLayersOp(source, { op: "scan" });
 }
 
-export async function createLayer(parentKey: string, name: string): Promise<LayerTreeSnapshot> {
-  return runIllLayersOp({ op: "create", parentKey, name });
+export async function createLayer(source: IllustratorLayerSource, parentKey: string, name: string): Promise<LayerTreeSnapshot> {
+  return runIllLayersOp(source, { op: "create", parentKey, name });
 }
 
-export async function renameLayer(key: string, name: string): Promise<LayerTreeSnapshot> {
-  return runIllLayersOp({ op: "rename", key, name });
+export async function renameLayer(source: IllustratorLayerSource, key: string, name: string): Promise<LayerTreeSnapshot> {
+  return runIllLayersOp(source, { op: "rename", key, name });
 }
 
-export async function deleteLayers(keys: string[], force: boolean): Promise<LayerTreeSnapshot> {
-  return runIllLayersOp({ op: "delete", keys, force });
+export async function deleteLayers(source: IllustratorLayerSource, keys: string[], force: boolean): Promise<LayerTreeSnapshot> {
+  return runIllLayersOp(source, { op: "delete", keys, force });
 }
 
-export async function duplicateLayers(keys: string[]): Promise<LayerTreeSnapshot> {
-  return runIllLayersOp({ op: "duplicate", keys });
+export async function duplicateLayers(source: IllustratorLayerSource, keys: string[]): Promise<LayerTreeSnapshot> {
+  return runIllLayersOp(source, { op: "duplicate", keys });
 }
 
-export async function setLayersLocked(keys: string[], locked: boolean): Promise<LayerTreeSnapshot> {
-  return runIllLayersOp({ op: "setlock", keys, locked });
+export async function setLayersLocked(source: IllustratorLayerSource, keys: string[], locked: boolean): Promise<LayerTreeSnapshot> {
+  return runIllLayersOp(source, { op: "setlock", keys, locked });
 }
 
-export async function setLayersVisible(keys: string[], visible: boolean): Promise<LayerTreeSnapshot> {
-  return runIllLayersOp({ op: "setvis", keys, visible });
+export async function setLayersVisible(source: IllustratorLayerSource, keys: string[], visible: boolean): Promise<LayerTreeSnapshot> {
+  return runIllLayersOp(source, { op: "setvis", keys, visible });
 }
 
-export async function moveLayer(key: string, targetKey: string): Promise<LayerTreeSnapshot> {
-  return runIllLayersOp({ op: "move", key, targetKey });
+export async function moveLayer(source: IllustratorLayerSource, key: string, targetKey: string): Promise<LayerTreeSnapshot> {
+  return runIllLayersOp(source, { op: "move", key, targetKey });
 }
 
-export async function selectLayerObjects(key: string): Promise<LayerTreeSnapshot> {
-  return runIllLayersOp({ op: "select", key });
+export async function selectLayerObjects(source: IllustratorLayerSource, key: string): Promise<LayerTreeSnapshot> {
+  return runIllLayersOp(source, { op: "select", key });
 }
 
 export async function writeHighlightedLayerKeys(keys: string[]): Promise<void> {

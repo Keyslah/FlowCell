@@ -1,0 +1,48 @@
+{
+    "schemaVersion":  1,
+    "id":  "blender.xyz-dimensions",
+    "version":  "1.0.0",
+    "label":  "xyz dimensions",
+    "tooltip":  "Show live X, Y, and Z dimensions for the active selected object in inches.",
+    "kind":  "toolset",
+    "program":  "Blender",
+    "source":  "xyz dimensions.py",
+    "bridgeData":  {
+
+                   },
+    "children":  [
+                     {
+                         "slot":  "dimension_x",
+                         "label":  "X",
+                         "tooltip":  "Display the active selected object\u0027s X dimension in inches.",
+                         "payload":  {
+                                         "command":  "dimension_x",
+                                         "action":  "dimension_x"
+                                     }
+                     },
+                     {
+                         "slot":  "dimension_y",
+                         "label":  "Y",
+                         "tooltip":  "Display the active selected object\u0027s Y dimension in inches.",
+                         "payload":  {
+                                         "command":  "dimension_y",
+                                         "action":  "dimension_y"
+                                     }
+                     },
+                     {
+                         "slot":  "dimension_z",
+                         "label":  "Z",
+                         "tooltip":  "Display the active selected object\u0027s Z dimension in inches.",
+                         "payload":  {
+                                         "command":  "dimension_z",
+                                         "action":  "dimension_z"
+                                     }
+                     }
+                 ],
+    "layout":  {
+                   "mode":  "grid",
+                   "columns":  3,
+                   "gap":  8,
+                   "padding":  8
+               }
+}

@@ -1,0 +1,406 @@
+import type { FlowCellBounds } from "../../types.js";
+import type {
+  ButtonCoreMeasurement,
+  ButtonDesktopBounds,
+  ButtonPlacement,
+  ButtonRect,
+  ButtonVisualState,
+  ButtonWindowFitMode
+} from "../types.js";
+
+export type ButtonWindowResizeCorner =
+  | "NorthEast"
+  | "NorthWest"
+  | "SouthEast"
+  | "SouthWest";
+
+export interface ButtonWindowPoint {
+  x: number;
+  y: number;
+}
+
+const EMPTY_RECT: ButtonRect = { x: 0, y: 0, width: 1, height: 1 };
+
+function isUsableRect(rect: ButtonRect | null | undefined): rect is ButtonRect {
+  return Boolean(
+    rect &&
+      Number.isFinite(rect.x) &&
+      Number.isFinite(rect.y) &&
+      Number.isFinite(rect.width) &&
+      Number.isFinite(rect.height) &&
+      rect.width > 0 &&
+      rect.height > 0
+  );
+}
+
+export function unionButtonWindowRects(
+  rects: readonly (ButtonRect | null | undefined)[],
+  fallback: ButtonRect = EMPTY_RECT
+): ButtonRect {
+  const usable = rects.filter(isUsableRect);
+  if (usable.length === 0) return { ...fallback };
+  const left = Math.min(...usable.map((rect) => rect.x));
+  const top = Math.min(...usable.map((rect) => rect.y));
+  const right = Math.max(...usable.map((rect) => rect.x + rect.width));
+  const bottom = Math.max(...usable.map((rect) => rect.y + rect.height));
+  return { x: left, y: top, width: right - left, height: bottom - top };
+}
+
+export function buttonWindowRectsEqual(
+  left: ButtonRect | null | undefined,
+  right: ButtonRect | null | undefined,
+  tolerance = 0.05
+): boolean {
+  return Boolean(
+    left &&
+      right &&
+      Math.abs(left.x - right.x) <= tolerance &&
+      Math.abs(left.y - right.y) <= tolerance &&
+      Math.abs(left.width - right.width) <= tolerance &&
+      Math.abs(left.height - right.height) <= tolerance
+  );
+}
+
+export function measuredButtonVisualRect(
+  placement: ButtonPlacement,
+  measurement: ButtonCoreMeasurement | null | undefined
+): ButtonRect {
+  if (!measurement || measurement.width <= 0 || measurement.height <= 0) {
+    return { x: placement.x, y: placement.y, width: placement.width, height: placement.height };
+  }
+  const scaleX = placement.width / measurement.width;
+  const scaleY = placement.height / measurement.height;
+  const left = Math.max(0, measurement.visualOverflow.left) * scaleX;
+  const right = Math.max(0, measurement.visualOverflow.right) * scaleX;
+  const top = Math.max(0, measurement.visualOverflow.top) * scaleY;
+  const bottom = Math.max(0, measurement.visualOverflow.bottom) * scaleY;
+  return {
+    x: placement.x - left,
+    y: placement.y - top,
+    width: placement.width + left + right,
+    height: placement.height + top + bottom
+  };
+}
+
+function expandedRect(rect: ButtonRect, allowance: number): ButtonRect {
+  const amount = Number.isFinite(allowance) ? Math.max(0, allowance) : 0;
+  return {
+    x: rect.x - amount,
+    y: rect.y - amount,
+    width: rect.width + amount * 2,
+    height: rect.height + amount * 2
+  };
+}
+
+export function buttonVisualStateNeedsWindowExpansion(
+  state: ButtonVisualState | null | undefined
+): boolean {
+  return Boolean(state && (state.hovered || state.pressed || state.held || state.play));
+}
+
+export function resolveButtonWindowEnvelope(args: {
+  mode: ButtonWindowFitMode;
+  surfaceBounds: ButtonRect;
+  placements: readonly ButtonPlacement[];
+  idleMeasurements?: Readonly<Record<string, ButtonCoreMeasurement>>;
+  currentMeasurements?: Readonly<Record<string, ButtonCoreMeasurement>>;
+  visualStates?: Readonly<Record<string, ButtonVisualState>>;
+  visualOverflowAllowance?: number;
+  fixedRects?: readonly ButtonRect[];
+}): { resting: ButtonRect; current: ButtonRect; transient: boolean } {
+  const hitboxRects = [
+    ...args.placements.map((placement) => ({
+      x: placement.x,
+      y: placement.y,
+      width: placement.width,
+      height: placement.height
+    })),
+    ...(args.fixedRects ?? [])
+  ];
+  const hitboxEnvelope = unionButtonWindowRects(hitboxRects, args.surfaceBounds);
+  const visualEnvelope = unionButtonWindowRects([
+    ...args.placements.map((placement) => measuredButtonVisualRect(
+      placement,
+      args.idleMeasurements?.[placement.id]
+    )),
+    ...(args.fixedRects ?? [])
+  ], hitboxEnvelope);
+  const resting = args.mode === "surface"
+    ? { ...args.surfaceBounds }
+    : args.mode === "hitbox"
+      ? hitboxEnvelope
+      : visualEnvelope;
+  const activeRects = args.placements.flatMap((placement) => {
+    if (!buttonVisualStateNeedsWindowExpansion(args.visualStates?.[placement.id])) {
+      return [];
+    }
+    const coreRect = {
+      x: placement.x,
+      y: placement.y,
+      width: placement.width,
+      height: placement.height
+    };
+    return [
+      measuredButtonVisualRect(placement, args.currentMeasurements?.[placement.id]),
+      expandedRect(coreRect, args.visualOverflowAllowance ?? 0)
+    ];
+  });
+  if (activeRects.length === 0) {
+    return { resting, current: resting, transient: false };
+  }
+  return {
+    resting,
+    current: unionButtonWindowRects([resting, ...activeRects], resting),
+    transient: true
+  };
+}
+
+export function resolvePhysicalButtonWindowEnvelopeBounds(args: {
+  currentBounds: ButtonDesktopBounds;
+  currentEnvelope: ButtonRect;
+  nextEnvelope: ButtonRect;
+  contentScale: number;
+  scaleFactor: number;
+}): ButtonDesktopBounds {
+  const contentScale = positiveOr(args.contentScale, 1);
+  const scaleFactor = positiveOr(args.scaleFactor, 1);
+  const physicalPerDesignPixel = contentScale * scaleFactor;
+  const surfaceLeft = args.currentBounds.left - args.currentEnvelope.x * physicalPerDesignPixel;
+  const surfaceTop = args.currentBounds.top - args.currentEnvelope.y * physicalPerDesignPixel;
+  const exactLeft = surfaceLeft + args.nextEnvelope.x * physicalPerDesignPixel;
+  const exactTop = surfaceTop + args.nextEnvelope.y * physicalPerDesignPixel;
+  const left = Math.floor(exactLeft);
+  const top = Math.floor(exactTop);
+  const right = Math.ceil(
+    surfaceLeft + (args.nextEnvelope.x + args.nextEnvelope.width) * physicalPerDesignPixel
+  );
+  const bottom = Math.ceil(
+    surfaceTop + (args.nextEnvelope.y + args.nextEnvelope.height) * physicalPerDesignPixel
+  );
+  return {
+    left,
+    top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top)
+  };
+}
+
+export function resolveInitialPhysicalButtonWindowEnvelopeBounds(args: {
+  currentPosition: ButtonWindowPoint;
+  nextEnvelope: ButtonRect;
+  scaleFactor: number;
+}): ButtonDesktopBounds {
+  const scaleFactor = positiveOr(args.scaleFactor, 1);
+  return {
+    left: args.currentPosition.x,
+    top: args.currentPosition.y,
+    width: Math.max(1, Math.ceil(args.nextEnvelope.width * scaleFactor)),
+    height: Math.max(1, Math.ceil(args.nextEnvelope.height * scaleFactor))
+  };
+}
+
+export function resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin(args: {
+  surfaceOrigin: ButtonWindowPoint;
+  envelope: ButtonRect;
+  contentScale: number;
+  scaleFactor: number;
+}): ButtonDesktopBounds {
+  const physicalPerDesignPixel =
+    positiveOr(args.contentScale, 1) * positiveOr(args.scaleFactor, 1);
+  const exactLeft = args.surfaceOrigin.x + args.envelope.x * physicalPerDesignPixel;
+  const exactTop = args.surfaceOrigin.y + args.envelope.y * physicalPerDesignPixel;
+  const left = Math.floor(exactLeft);
+  const top = Math.floor(exactTop);
+  const right = Math.ceil(
+    args.surfaceOrigin.x +
+    (args.envelope.x + args.envelope.width) * physicalPerDesignPixel
+  );
+  const bottom = Math.ceil(
+    args.surfaceOrigin.y +
+    (args.envelope.y + args.envelope.height) * physicalPerDesignPixel
+  );
+  return {
+    left,
+    top,
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top)
+  };
+}
+
+function positiveOr(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) && (value ?? 0) > 0 ? value! : fallback;
+}
+
+export function resolveUniformSurfaceScale(args: {
+  viewportWidth: number;
+  viewportHeight: number;
+  surfaceWidth: number;
+  surfaceHeight: number;
+}): number {
+  const viewportWidth = positiveOr(args.viewportWidth, 1);
+  const viewportHeight = positiveOr(args.viewportHeight, 1);
+  const surfaceWidth = positiveOr(args.surfaceWidth, 1);
+  const surfaceHeight = positiveOr(args.surfaceHeight, 1);
+  return Math.min(viewportWidth / surfaceWidth, viewportHeight / surfaceHeight);
+}
+
+export function resolveAspectLockedWindowBounds(args: {
+  initialBounds: ButtonDesktopBounds;
+  initialPointer: ButtonWindowPoint;
+  pointer: ButtonWindowPoint;
+  corner: ButtonWindowResizeCorner;
+  minimumWidth?: number;
+  minimumHeight?: number;
+  minimumScale?: number;
+}): ButtonDesktopBounds {
+  const initialWidth = positiveOr(args.initialBounds.width, 1);
+  const initialHeight = positiveOr(args.initialBounds.height, 1);
+  const minimumWidth = positiveOr(args.minimumWidth, 120);
+  const minimumHeight = positiveOr(args.minimumHeight, 50);
+  const minimumScale = positiveOr(args.minimumScale, 0.35);
+  const horizontalSign = args.corner.includes("East") ? 1 : -1;
+  const verticalSign = args.corner.includes("South") ? 1 : -1;
+  const proposedWidth = Math.max(
+    minimumWidth,
+    initialWidth + (args.pointer.x - args.initialPointer.x) * horizontalSign
+  );
+  const proposedHeight = Math.max(
+    minimumHeight,
+    initialHeight + (args.pointer.y - args.initialPointer.y) * verticalSign
+  );
+  const scale = Math.max(
+    proposedWidth / initialWidth,
+    proposedHeight / initialHeight,
+    minimumScale
+  );
+  // Tauri applies these as physical desktop pixels. Round once here so every
+  // queued resize uses stable bounds while the anchored corner stays exact.
+  const width = Math.max(1, Math.round(initialWidth * scale));
+  const height = Math.max(1, Math.round(initialHeight * scale));
+
+  return {
+    left: args.corner.includes("West")
+      ? args.initialBounds.left + initialWidth - width
+      : args.initialBounds.left,
+    top: args.corner.includes("North")
+      ? args.initialBounds.top + initialHeight - height
+      : args.initialBounds.top,
+    width,
+    height
+  };
+}
+
+export function buttonDesktopBoundsFromFlowCellBounds(
+  bounds: FlowCellBounds | null | undefined
+): ButtonDesktopBounds | null {
+  if (
+    !bounds ||
+    !Number.isFinite(bounds.Left) ||
+    !Number.isFinite(bounds.Top) ||
+    !Number.isFinite(bounds.Width) ||
+    !Number.isFinite(bounds.Height) ||
+    bounds.Width <= 0 ||
+    bounds.Height <= 0
+  ) {
+    return null;
+  }
+
+  return {
+    left: bounds.Left,
+    top: bounds.Top,
+    width: bounds.Width,
+    height: bounds.Height
+  };
+}
+
+export function resolveExpandedPopoutBounds(args: {
+  collapsedOrigin: { x: number; y: number };
+  canonicalBounds: ButtonRect;
+  scaleFactor: number;
+  authoritativeExpandedBounds?: ButtonDesktopBounds | null;
+}): ButtonDesktopBounds {
+  const scaleFactor = Number.isFinite(args.scaleFactor) && args.scaleFactor > 0
+    ? args.scaleFactor
+    : 1;
+  const authoritative = args.authoritativeExpandedBounds;
+
+  return {
+    left: args.collapsedOrigin.x + args.canonicalBounds.x * scaleFactor,
+    top: args.collapsedOrigin.y + args.canonicalBounds.y * scaleFactor,
+    width: authoritative?.width ?? Math.max(
+      1,
+      Math.round(args.canonicalBounds.width * scaleFactor)
+    ),
+    height: authoritative?.height ?? Math.max(
+      1,
+      Math.round(args.canonicalBounds.height * scaleFactor)
+    )
+  };
+}
+
+export function physicalSurfaceSize(
+  width: number,
+  height: number,
+  scaleFactor: number
+): { width: number; height: number } {
+  const normalizedScale = Number.isFinite(scaleFactor) && scaleFactor > 0
+    ? scaleFactor
+    : 1;
+  return {
+    width: Math.max(1, Math.round(width * normalizedScale)),
+    height: Math.max(1, Math.round(height * normalizedScale))
+  };
+}
+
+export function resolveMeasuredCollapsedButtonBounds(args: {
+  anchor: ButtonDesktopBounds;
+  measuredWidth: number;
+  measuredHeight: number;
+  scaleFactor: number;
+}): ButtonDesktopBounds {
+  const hasMeasuredWidth = Number.isFinite(args.measuredWidth) && args.measuredWidth > 0;
+  const hasMeasuredHeight = Number.isFinite(args.measuredHeight) && args.measuredHeight > 0;
+  const size = physicalSurfaceSize(
+    hasMeasuredWidth ? args.measuredWidth : 1,
+    hasMeasuredHeight ? args.measuredHeight : 1,
+    args.scaleFactor
+  );
+  return {
+    left: args.anchor.left,
+    top: args.anchor.top,
+    width: hasMeasuredWidth ? size.width : positiveOr(args.anchor.width, 1),
+    height: hasMeasuredHeight ? size.height : positiveOr(args.anchor.height, 1)
+  };
+}
+
+export function resolvePopoutBoundsAfterDrag(args: {
+  liveWindowBounds: ButtonDesktopBounds;
+  toolSetCollapsed: boolean;
+  canonicalBounds: ButtonRect;
+  scaleFactor: number;
+  authoritativeExpandedBounds?: ButtonDesktopBounds | null;
+  collapsedOrigin?: ButtonWindowPoint | null;
+}): {
+  desktopBounds: ButtonDesktopBounds;
+  layoutSnapshotBounds: ButtonDesktopBounds;
+} {
+  if (!args.toolSetCollapsed) {
+    return {
+      desktopBounds: args.liveWindowBounds,
+      layoutSnapshotBounds: args.liveWindowBounds
+    };
+  }
+
+  return {
+    desktopBounds: resolveExpandedPopoutBounds({
+      collapsedOrigin: args.collapsedOrigin ?? {
+        x: args.liveWindowBounds.left,
+        y: args.liveWindowBounds.top
+      },
+      canonicalBounds: args.canonicalBounds,
+      scaleFactor: args.scaleFactor,
+      authoritativeExpandedBounds: args.authoritativeExpandedBounds
+    }),
+    layoutSnapshotBounds: args.liveWindowBounds
+  };
+}

@@ -30,6 +30,7 @@ PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY = "flowcell_project_theme_poll_restore_a
 PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY = "flowcell_project_theme_poll_restore_next_time"
 PROJECT_THEME_POLL_RESTORE_MAX_ATTEMPTS = 240
 PROJECT_THEME_STARTUP_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
+PROJECT_THEME_RESTORE_CAPABILITY = "restore-project-theme-state"
 SMART_AXIS_LOCK_TOOL_ID = "smart_axis_lock"
 SMART_AXIS_SUPPORTED_TYPES = {"MESH", "CURVE", "SURFACE", "FONT", "META"}
 SMART_AXIS_AXES = "XYZ"
@@ -968,6 +969,28 @@ def load_custom_actions_registry() -> list[dict[str, object]]:
     return [entry for entry in actions_payload if isinstance(entry, dict)]
 
 
+def get_custom_action_names_for_capability(capability: str) -> list[str]:
+    normalized_capability = str(capability or "").strip().lower()
+    if not normalized_capability:
+        return []
+
+    matches: list[str] = []
+    for entry in load_custom_actions_registry():
+        bridge_data = entry.get("bridgeData", {})
+        if not isinstance(bridge_data, dict):
+            continue
+        capabilities = bridge_data.get("capabilities", [])
+        if not isinstance(capabilities, list) or not any(
+            str(value or "").strip().lower() == normalized_capability
+            for value in capabilities
+        ):
+            continue
+        action_name = str(entry.get("action", "")).strip().lower()
+        if action_name and action_name not in matches:
+            matches.append(action_name)
+    return matches
+
+
 def resolve_custom_action_script_path(python_path: str) -> Path:
     raw_path = str(python_path or "").strip()
     script_path = Path(raw_path).expanduser()
@@ -1075,6 +1098,24 @@ def execute_custom_action(normalized_action: str, data: dict) -> dict[str, objec
     return None
 
 
+def execute_custom_action_for_capability(
+    capability: str,
+    data: dict,
+) -> dict[str, object] | None:
+    last_error: Exception | None = None
+    for action_name in get_custom_action_names_for_capability(capability):
+        try:
+            result = execute_custom_action(action_name, data)
+        except Exception as exc:
+            last_error = exc
+            continue
+        if result is not None:
+            return result
+    if last_error is not None:
+        raise last_error
+    return None
+
+
 def get_request_path() -> Path:
     return get_bridge_directory() / REQUEST_FILE_NAME
 
@@ -1145,8 +1186,8 @@ def _maybe_restore_startup_place_picture() -> None:
         return
 
     try:
-        runtime_state = execute_custom_action(
-            "flowcell_custom_theme",
+        runtime_state = execute_custom_action_for_capability(
+            PROJECT_THEME_RESTORE_CAPABILITY,
             {"command": "read_place_picture_runtime_state"},
         )
         if isinstance(runtime_state, dict) and bool(runtime_state.get("place_picture_runtime_enabled")):
@@ -1155,8 +1196,8 @@ def _maybe_restore_startup_place_picture() -> None:
             _write_runtime_status("startup_place_picture_already_restored")
             return
 
-        result = execute_custom_action(
-            "flowcell_custom_theme",
+        result = execute_custom_action_for_capability(
+            PROJECT_THEME_RESTORE_CAPABILITY,
             {"command": "restore_project_startup_state"},
         )
         if isinstance(result, dict) and bool(result.get("restored_place_picture")):

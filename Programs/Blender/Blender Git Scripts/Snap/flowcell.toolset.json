@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "id": "blender.snap",
+  "version": "1.0.0",
+  "label": "Snap",
+  "tooltip": "Snap selections and the 3D cursor with explicit per-Button commands.",
+  "kind": "toolset",
+  "program": "Blender",
+  "source": "snap.py",
+  "bridgeData": {},
+  "children": [
+    {
+      "slot": "active",
+      "label": "Active",
+      "tooltip": "Toggle between moving the selection to active and moving the cursor to active.",
+      "payload": { "command": "active" }
+    },
+    {
+      "slot": "cursor",
+      "label": "Cursor",
+      "tooltip": "Toggle between moving the selection to the cursor and moving the cursor to the selection.",
+      "payload": { "command": "cursor" }
+    },
+    {
+      "slot": "grid",
+      "label": "Grid",
+      "tooltip": "Toggle between moving the selection to the grid and moving the cursor to the grid.",
+      "payload": { "command": "grid" }
+    },
+    {
+      "slot": "offset",
+      "label": "Offset",
+      "tooltip": "Move the selection to the cursor while preserving its offset.",
+      "payload": { "command": "offset" }
+    },
+    {
+      "slot": "worigin",
+      "label": "Worigin",
+      "tooltip": "Move the 3D cursor to the world origin.",
+      "payload": { "command": "worigin" }
+    }
+  ]
+}

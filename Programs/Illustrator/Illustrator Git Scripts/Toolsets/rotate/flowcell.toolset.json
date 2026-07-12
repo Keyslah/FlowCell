@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.rotate",
+  "version": "1.0.0",
+  "label": "Illustrator Rotate",
+  "tooltip": "Rotate a selection or distribute rotated copies around an artboard or anchor pivot.",
+  "kind": "toolset",
+  "program": "Illustrator",
+  "source": "Illustrator Rotate.jsx",
+  "execution": {
+    "programKey": "illustrator_automation",
+    "commandFile": "illustrator_rotate_command.json"
+  },
+  "children": [
+    { "slot": "center_world", "label": "Art", "tooltip": "Use the active artboard center.", "payload": { "center_mode": "ARTBOARD" } },
+    { "slot": "center_cursor", "label": "Anchor", "tooltip": "Use the stored FlowCell anchor.", "payload": { "center_mode": "ANCHOR" } },
+    { "slot": "preset_30", "label": "30 deg", "tooltip": "Apply a positive 30 degree rotation.", "payload": { "command": "apply", "angle_deg": 30 } },
+    { "slot": "preset_45", "label": "45 deg", "tooltip": "Apply a positive 45 degree rotation.", "payload": { "command": "apply", "angle_deg": 45 } },
+    { "slot": "preset_90", "label": "90 deg", "tooltip": "Apply a positive 90 degree rotation.", "payload": { "command": "apply", "angle_deg": 90 } },
+    { "slot": "mode_transform", "label": "Transform", "tooltip": "Rotate the selection.", "payload": { "operation_mode": "TRANSFORM" } },
+    { "slot": "mode_distribute", "label": "Distribute", "tooltip": "Create rotated copies.", "payload": { "operation_mode": "DISTRIBUTE" } },
+    { "slot": "apply_negative", "label": "Negative", "tooltip": "Apply in the negative direction.", "payload": { "command": "apply", "direction": "negative" } },
+    { "slot": "apply_positive", "label": "Positive", "tooltip": "Apply in the positive direction.", "payload": { "command": "apply", "direction": "positive" } }
+  ],
+  "layout": {
+    "mode": "grid",
+    "columns": 3,
+    "gap": 8,
+    "padding": 8,
+    "width": 520,
+    "height": 236,
+    "fields": [
+      { "id": "center_mode", "kind": "select", "label": "Center", "payloadKey": "center_mode", "defaultValue": "ARTBOARD", "options": [{ "id": "artboard", "label": "Artboard", "value": "ARTBOARD" }, { "id": "anchor", "label": "Anchor", "value": "ANCHOR" }], "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true },
+      { "id": "operation_mode", "kind": "select", "label": "Mode", "payloadKey": "operation_mode", "defaultValue": "TRANSFORM", "options": [{ "id": "transform", "label": "Transform", "value": "TRANSFORM" }, { "id": "distribute", "label": "Distribute", "value": "DISTRIBUTE" }], "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true },
+      { "id": "angle_deg", "kind": "number", "label": "Angle", "payloadKey": "angle_deg", "defaultValue": 30, "minimum": 0, "maximum": 360, "step": 1, "x": 8, "y": 188, "width": 150, "height": 36, "zIndex": 2 },
+      { "id": "distribute_count", "kind": "number", "label": "Copies", "payloadKey": "distribute_count", "defaultValue": 3, "minimum": 1, "maximum": 360, "step": 1, "x": 166, "y": 188, "width": 150, "height": 36, "zIndex": 2 }
+    ],
+    "childBehaviors": {
+      "center_world": { "fieldPatch": { "center_mode": "ARTBOARD" }, "execute": false },
+      "center_cursor": { "fieldPatch": { "center_mode": "ANCHOR" }, "execute": false },
+      "mode_transform": { "fieldPatch": { "operation_mode": "TRANSFORM" }, "execute": false },
+      "mode_distribute": { "fieldPatch": { "operation_mode": "DISTRIBUTE" }, "execute": false },
+      "preset_30": { "fieldPatch": { "angle_deg": 30 }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "angle_deg": { "$field": "angle_deg" }, "distribute_count": { "$field": "distribute_count" } } },
+      "preset_45": { "fieldPatch": { "angle_deg": 45 }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "angle_deg": { "$field": "angle_deg" }, "distribute_count": { "$field": "distribute_count" } } },
+      "preset_90": { "fieldPatch": { "angle_deg": 90 }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "angle_deg": { "$field": "angle_deg" }, "distribute_count": { "$field": "distribute_count" } } },
+      "apply_negative": { "execute": true, "payloadTemplate": { "command": "apply", "direction": "negative", "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "angle_deg": { "$field": "angle_deg" }, "distribute_count": { "$field": "distribute_count" } } },
+      "apply_positive": { "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "angle_deg": { "$field": "angle_deg" }, "distribute_count": { "$field": "distribute_count" } } }
+    }
+  }
+}

@@ -1,11 +1,7 @@
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  loadBindsWorkspace,
-  saveBindShortcut,
-  saveCoreActionShortcut
-} from "../../lib/binds";
+import { loadBindsWorkspace, saveBindShortcut } from "../../lib/binds";
 import { formatShortcutForDisplay, parseShortcutInput } from "../../lib/bindings";
 import {
   MACRO_PANEL_CHANGED_EVENT,
@@ -19,7 +15,7 @@ import {
   UNBOUND_SHORTCUT_LABEL,
   validateShortcutInput
 } from "../../lib/shortcutProfiles";
-import { openMacroLabWindow } from "../../lib/windowing";
+import { openMacroLabWindow } from "../../lib/coreWindows";
 import { BINDS_PREFILL_EVENT } from "../../lib/windowContext";
 import type { BindsButtonPrefill, BindsWindowContext } from "../../lib/windowContext";
 import type {
@@ -468,16 +464,6 @@ export default function BindsWindowPage({
         validation.warning ? `${message} ${validation.warning}` : message;
       if (activeButton.kind.trim().toLowerCase() === "macro") {
         const result = await saveMacroShortcut({
-          actionId: activeButton.target,
-          shortcut: validation.shortcut
-        });
-        await reloadWorkspace(selection);
-        setStatusMessage(statusWithWarning(result.message));
-        return;
-      }
-
-      if (activeButton.kind.trim().toLowerCase() === "core_action") {
-        const result = await saveCoreActionShortcut({
           actionId: activeButton.target,
           shortcut: validation.shortcut
         });

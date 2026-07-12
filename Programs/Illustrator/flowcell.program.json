@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "programId": "illustrator",
+  "label": "Illustrator",
+  "programType": "direct-script",
+  "defaultPanels": ["Layers", "Files", "Utility"],
+  "processNames": ["illustrator"],
+  "gitScriptsFolder": "Illustrator Git Scripts",
+  "panelsFolder": "Panels",
+  "localScriptsFolder": "Illustrator Local Scripts",
+  "supportScriptsFolder": "SupportScripts",
+  "allowedScriptExtensions": ["jsx", "js"],
+  "allowedManifestFileNames": ["flowcell.script.json", "flowcell.toolset.json"],
+  "supportsToolsetManifests": true,
+  "runner": {
+    "kind": "illustrator-direct",
+    "programKey": "illustrator_automation",
+    "installScript": "",
+    "deleteScript": ""
+  },
+  "addonReloadNotes": "",
+  "appRestartNotes": "Restart FlowCell after changing this program manifest."
+}

@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layer-tree",
+  "label": "Layer Tree",
+  "tooltip": "Open FlowCell's live Illustrator layer and sublayer tree.",
+  "program": "Illustrator",
+  "source": "layers.jsx",
+  "bridgeData": {
+    "capabilities": ["illustrator-layer-tree"]
+  },
+  "executionTarget": {
+    "kind": "core-action",
+    "actionId": "open-illustrator-layer-tree"
+  }
+}

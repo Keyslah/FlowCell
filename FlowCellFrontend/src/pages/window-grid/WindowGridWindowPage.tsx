@@ -78,7 +78,12 @@ export default function WindowGridWindowPage() {
       const known = KNOWN_WINDOWS[label];
       const program = (meta?.programName || known?.program || "Other").trim() || "Other";
       const panel = (meta?.panelName || known?.panel || "").trim();
-      const title = (meta?.label || meta?.fileName || known?.title || label).trim() || label;
+      const title = (
+        known?.title ||
+        meta?.buttonPopoutUnitId ||
+        meta?.buttonFanSetupId ||
+        (meta?.kind === "button-editor" ? "Buttons Editor" : label)
+      ).trim() || label;
       const closeable = known?.closeable !== false && label !== "main";
       next.push({ label, program, panel, title, closeable });
     }

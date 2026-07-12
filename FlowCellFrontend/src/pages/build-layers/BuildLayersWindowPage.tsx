@@ -72,6 +72,14 @@ export default function BuildLayersWindowPage({
 
   const surfaceScale = Math.max(0.4, windowSize.width / CANONICAL_WIDTH);
   const surfaceHeight = Math.max(1, windowSize.height / surfaceScale);
+  const layerSource = useMemo(
+    () => ({
+      programName: context.programName,
+      panelName: context.panelName,
+      fileName: context.fileName
+    }),
+    [context.fileName, context.panelName, context.programName]
+  );
 
   type ResizeDirection =
     | "East"
@@ -116,8 +124,8 @@ export default function BuildLayersWindowPage({
   );
 
   useEffect(() => {
-    void run(scanLayers);
-  }, [run]);
+    void run(() => scanLayers(layerSource));
+  }, [layerSource, run]);
 
   // Keep the persisted highlight set (read by the panel buttons) in sync.
   useEffect(() => {
@@ -136,8 +144,8 @@ export default function BuildLayersWindowPage({
         unlisten = await listen(ILLUSTRATOR_LAYERS_CHANGED_EVENT, () => {
           timers.forEach((timer) => window.clearTimeout(timer));
           timers.length = 0;
-          timers.push(window.setTimeout(() => void run(scanLayers), 350));
-          timers.push(window.setTimeout(() => void run(scanLayers), 1100));
+          timers.push(window.setTimeout(() => void run(() => scanLayers(layerSource)), 350));
+          timers.push(window.setTimeout(() => void run(() => scanLayers(layerSource)), 1100));
         });
       } catch {
         // Event listener unavailable; manual Refresh still works.
@@ -149,7 +157,7 @@ export default function BuildLayersWindowPage({
         unlisten();
       }
     };
-  }, [run]);
+  }, [layerSource, run]);
 
   const rows = useMemo(() => {
     const out: FlatRow[] = [];
@@ -287,7 +295,7 @@ export default function BuildLayersWindowPage({
   };
 
   const handleNewLayer = () => {
-    void run(() => createLayer("", "Layer"));
+    void run(() => createLayer(layerSource, "", "Layer"));
   };
 
   const handleNewSublayer = () => {
@@ -295,7 +303,7 @@ export default function BuildLayersWindowPage({
       setError("Highlight exactly one layer to add a sublayer under it.");
       return;
     }
-    void run(() => createLayer(singleHighlight, "Sublayer"));
+    void run(() => createLayer(layerSource, singleHighlight, "Sublayer"));
   };
 
   const handleRename = () => {
@@ -308,7 +316,7 @@ export default function BuildLayersWindowPage({
     if (nextName === null || nextName.trim() === "") {
       return;
     }
-    void run(() => renameLayer(singleHighlight, nextName.trim()));
+    void run(() => renameLayer(layerSource, singleHighlight, nextName.trim()));
   };
 
   const handleDelete = (force: boolean) => {
@@ -316,7 +324,7 @@ export default function BuildLayersWindowPage({
       setError("Highlight one or more layers to delete.");
       return;
     }
-    void run(() => deleteLayers(highlightedKeys, force));
+    void run(() => deleteLayers(layerSource, highlightedKeys, force));
   };
 
   const handleDuplicate = () => {
@@ -324,19 +332,19 @@ export default function BuildLayersWindowPage({
       setError("Highlight one or more layers to duplicate.");
       return;
     }
-    void run(() => duplicateLayers(highlightedKeys));
+    void run(() => duplicateLayers(layerSource, highlightedKeys));
   };
 
   const handleToggleLock = (node: LayerNode) => {
-    void run(() => setLayersLocked([node.key], !node.locked));
+    void run(() => setLayersLocked(layerSource, [node.key], !node.locked));
   };
 
   const handleToggleVisible = (node: LayerNode) => {
-    void run(() => setLayersVisible([node.key], node.hidden));
+    void run(() => setLayersVisible(layerSource, [node.key], node.hidden));
   };
 
   const handleSelectObjects = (node: LayerNode) => {
-    void run(() => selectLayerObjects(node.key));
+    void run(() => selectLayerObjects(layerSource, node.key));
   };
 
   return (
@@ -406,7 +414,7 @@ export default function BuildLayersWindowPage({
         <button type="button" onClick={handleRename} disabled={busy}>
           Rename
         </button>
-        <button type="button" onClick={() => void run(scanLayers)} disabled={busy}>
+        <button type="button" onClick={() => void run(() => scanLayers(layerSource))} disabled={busy}>
           Refresh
         </button>
         <button type="button" onClick={handleDuplicate} disabled={busy}>

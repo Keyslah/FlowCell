@@ -218,8 +218,10 @@
         return status("centered " + items.length + " object(s) on active artboard using " + BOUNDS_MODE);
     }
     function main() {
-        var data = readCommand();
-        var command = String(data.command || "status").toLowerCase();
+        var envelope = readCommand();
+        var data = envelope && envelope.payload ? envelope.payload : envelope;
+        data = data || {};
+        var command = String(data.command || envelope.command || "status").toLowerCase();
         writeLog("command requested: " + command);
         try {
             if (command === "set_anchor") { return setAnchor(); }

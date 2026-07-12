@@ -72,28 +72,6 @@ function Get-FlowCellNormalizedPath([string]$Path) {
     }
 }
 
-function Get-FlowCellSmartAxisLockCommandForScriptPath([string]$ScriptPath) {
-    if ([string]::IsNullOrWhiteSpace($ScriptPath)) { return '' }
-    $fileName = [System.IO.Path]::GetFileName([string]$ScriptPath)
-    switch ([string]$fileName.ToLowerInvariant()) {
-        'util_smart_axis_base.ps1' { return 'baseline' }
-        'util_smart_axis_x.ps1' { return 'cycle_x' }
-        'util_smart_axis_y.ps1' { return 'cycle_y' }
-        'util_smart_axis_z.ps1' { return 'cycle_z' }
-        'util_smart_axis_live.ps1' { return 'toggle_live' }
-        default { return '' }
-    }
-}
-
-function Get-FlowCellBlenderProgramRoot {
-    $programsRoot = Join-Path $script:FlowCellHomeRoot 'Programs\Blender'
-    if (Test-Path -LiteralPath $programsRoot -PathType Container) {
-        return $programsRoot
-    }
-
-    return (Join-Path $script:FlowCellHomeRoot 'Blender')
-}
-
 function Get-FlowCellJsonStringProperty($Source, [string]$Name) {
     if ($null -eq $Source -or [string]::IsNullOrWhiteSpace($Name)) {
         return ''
@@ -113,53 +91,42 @@ function Resolve-FlowCellBlenderBridgeActionForScriptPath([string]$ScriptPath) {
         return ''
     }
 
-    if ([string]$ScriptPath -imatch '\.flowcell-panel-item\.json$' -and (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
+    $panelsRoot = Join-Path $script:FlowCellHomeRoot 'Programs\Blender\Panels'
+    if (-not (Test-Path -LiteralPath $panelsRoot -PathType Container)) {
+        return ''
+    }
+
+    $resolvedAction = ''
+    foreach ($recordPath in @(Get-ChildItem -LiteralPath $panelsRoot -Recurse -Filter '*.flowcell-source.json' -File -ErrorAction SilentlyContinue)) {
         try {
-            $record = Get-Content -LiteralPath $ScriptPath -Raw | ConvertFrom-Json
-            $action = Get-FlowCellJsonStringProperty -Source $record -Name 'bridgeAction'
-            if (-not [string]::IsNullOrWhiteSpace($action)) {
-                return $action.Trim()
+            $record = Get-Content -LiteralPath $recordPath.FullName -Raw | ConvertFrom-Json
+            $schemaVersion = $record.PSObject.Properties['schemaVersion']
+            if ($null -eq $schemaVersion -or [int]$schemaVersion.Value -ne 1) {
+                continue
             }
         }
         catch {
+            continue
         }
+
+        $sourcePath = Get-FlowCellJsonStringProperty -Source $record -Name 'sourcePath'
+        $bridgeAction = Get-FlowCellJsonStringProperty -Source $record -Name 'bridgeAction'
+        if (
+            [string]::IsNullOrWhiteSpace($sourcePath) -or
+            [string]::IsNullOrWhiteSpace($bridgeAction) -or
+            (Get-FlowCellNormalizedPath $sourcePath) -ne $normalizedScriptPath
+        ) {
+            continue
+        }
+
+        $bridgeAction = $bridgeAction.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($resolvedAction) -and $resolvedAction -ine $bridgeAction) {
+            throw ("Active Blender source records disagree about the bridge action for {0}." -f $ScriptPath)
+        }
+        $resolvedAction = $bridgeAction
     }
 
-    $blenderRoot = Get-FlowCellBlenderProgramRoot
-    $panelsRoot = Join-Path $blenderRoot 'Panels'
-    if (Test-Path -LiteralPath $panelsRoot -PathType Container) {
-        foreach ($recordPath in @(Get-ChildItem -LiteralPath $panelsRoot -Recurse -Filter '*.flowcell-panel-item.json' -File -ErrorAction SilentlyContinue)) {
-            try {
-                $record = Get-Content -LiteralPath $recordPath.FullName -Raw | ConvertFrom-Json
-                $sourcePath = Get-FlowCellJsonStringProperty -Source $record -Name 'sourcePath'
-                $executionTarget = Get-FlowCellJsonStringProperty -Source $record -Name 'executionTarget'
-                if (
-                    (Get-FlowCellNormalizedPath $sourcePath) -eq $normalizedScriptPath -or
-                    (Get-FlowCellNormalizedPath $executionTarget) -eq $normalizedScriptPath
-                ) {
-                    $action = Get-FlowCellJsonStringProperty -Source $record -Name 'bridgeAction'
-                    if (-not [string]::IsNullOrWhiteSpace($action)) {
-                        return $action.Trim()
-                    }
-                }
-            }
-            catch {
-            }
-        }
-    }
-
-    $managedRoot = Join-Path $blenderRoot 'ManagedActions'
-    if (Test-Path -LiteralPath $managedRoot -PathType Container) {
-        $normalizedManagedRoot = Get-FlowCellNormalizedPath $managedRoot
-        if ($normalizedScriptPath -eq $normalizedManagedRoot -or $normalizedScriptPath.StartsWith($normalizedManagedRoot + '\')) {
-            $stem = [System.IO.Path]::GetFileNameWithoutExtension([string]$ScriptPath)
-            if (-not [string]::IsNullOrWhiteSpace($stem)) {
-                return $stem
-            }
-        }
-    }
-
-    return ''
+    return $resolvedAction
 }
 
 function Get-FlowCellBlenderConfigPath {
@@ -501,48 +468,6 @@ function Invoke-FlowCellBlenderBridgeRequest([string]$Action, [hashtable]$Data =
     throw ("Timed out waiting for Blender. Target PID {0}. Checked bridge path(s): {1}" -f $targetBlenderProcessId, ($bridgeFolders -join '; '))
 }
 
-function Convert-FlowCellSmartAxisLockResponseToResult($Response) {
-    $statusText = if ($Response.PSObject.Properties['message']) { [string]$Response.message } else { 'Smart Axis Lock complete.' }
-    if ([string]::IsNullOrWhiteSpace($statusText)) {
-        $statusText = 'Smart Axis Lock complete.'
-    }
-    $modes = @{ X = 'NONE'; Y = 'NONE'; Z = 'NONE' }
-    if ($Response.PSObject.Properties['modes'] -and $Response.modes) {
-        foreach ($axis in @('X', 'Y', 'Z')) {
-            if ($Response.modes.PSObject.Properties[$axis]) {
-                $modes[$axis] = [string]$Response.modes.$axis
-            }
-        }
-    }
-    return [pscustomobject]@{
-        Succeeded = $true
-        Message = $statusText
-        Modes = $modes
-        LiveEnabled = [bool]$(if ($Response.PSObject.Properties['live_enabled']) { $Response.live_enabled } else { $false })
-        RunnerActive = [bool]$(if ($Response.PSObject.Properties['runner_active']) { $Response.runner_active } else { $false })
-        Selected = [int]$(if ($Response.PSObject.Properties['selected']) { $Response.selected } else { 0 })
-        EnabledToolCount = [int]$(if ($Response.PSObject.Properties['enabled_tool_count']) { $Response.enabled_tool_count } else { 0 })
-        Registered = [bool]$(if ($Response.PSObject.Properties['registered']) { $Response.registered } else { $false })
-    }
-}
-
-function New-FlowCellSmartAxisLockFailedResult([string]$Message) {
-    $resolvedMessage = [string]$Message
-    if ($resolvedMessage -match 'Unsupported action:\s*smart_axis_lock') {
-        $resolvedMessage = 'Reload the FlowCell Blender add-on or restart Blender once.'
-    }
-    return [pscustomobject]@{
-        Succeeded = $false
-        Message = $resolvedMessage
-        Modes = @{ X = 'NONE'; Y = 'NONE'; Z = 'NONE' }
-        LiveEnabled = $false
-        RunnerActive = $false
-        Selected = 0
-        EnabledToolCount = 0
-        Registered = $false
-    }
-}
-
 function Get-FlowCellAutoHotkeyExePath {
     $candidates = @(
         (Join-Path $script:ProjectRoot 'runtime\AutoHotkey64.exe'),
@@ -594,9 +519,6 @@ function New-BackendResult {
         [string]$Message,
         [string]$ResolvedTarget = '',
         [string]$ExecutionMethod = '',
-        [string]$ClientAction = '',
-        [object]$SmartAxisResult = $null,
-        [object]$ToolOptionState = $null,
         [object]$Details = $null
     )
     return [pscustomobject]@{
@@ -604,52 +526,7 @@ function New-BackendResult {
         Message = [string]$Message
         ResolvedTarget = [string]$ResolvedTarget
         ExecutionMethod = [string]$ExecutionMethod
-        ClientAction = [string]$ClientAction
-        SmartAxisResult = $SmartAxisResult
-        ToolOptionState = $ToolOptionState
         Details = $Details
-    }
-}
-
-function Get-FlowCellObjectValue($Source, [string]$Name, $Default = $null) {
-    if ($null -eq $Source -or [string]::IsNullOrWhiteSpace($Name)) {
-        return $Default
-    }
-
-    if ($Source -is [System.Collections.IDictionary]) {
-        foreach ($key in $Source.Keys) {
-            if ([string]$key -ieq $Name) {
-                return $Source[$key]
-            }
-        }
-    }
-
-    if ($Source.PSObject.Properties[$Name]) {
-        return $Source.$Name
-    }
-
-    return $Default
-}
-
-function ConvertTo-FlowCellSmartAxisToolOptionState($StateSource) {
-    $modeSource = Get-FlowCellObjectValue -Source $StateSource -Name 'Modes'
-    $statusMessage = [string](Get-FlowCellObjectValue -Source $StateSource -Name 'Message' -Default '')
-    if ([string]::IsNullOrWhiteSpace($statusMessage)) {
-        $statusMessage = [string](Get-FlowCellObjectValue -Source $StateSource -Name 'LastMessage' -Default 'Smart Axis Lock ready.')
-    }
-
-    return [pscustomobject]@{
-        Modes = [pscustomobject]@{
-            X = [string](Get-FlowCellObjectValue -Source $modeSource -Name 'X' -Default 'NONE')
-            Y = [string](Get-FlowCellObjectValue -Source $modeSource -Name 'Y' -Default 'NONE')
-            Z = [string](Get-FlowCellObjectValue -Source $modeSource -Name 'Z' -Default 'NONE')
-        }
-        LiveEnabled = [bool](Get-FlowCellObjectValue -Source $StateSource -Name 'LiveEnabled' -Default $false)
-        RunnerActive = [bool](Get-FlowCellObjectValue -Source $StateSource -Name 'RunnerActive' -Default $false)
-        Selected = [int](Get-FlowCellObjectValue -Source $StateSource -Name 'Selected' -Default 0)
-        EnabledToolCount = [int](Get-FlowCellObjectValue -Source $StateSource -Name 'EnabledToolCount' -Default 0)
-        Registered = [bool](Get-FlowCellObjectValue -Source $StateSource -Name 'Registered' -Default $false)
-        LastMessage = $statusMessage
     }
 }
 
@@ -664,186 +541,11 @@ function Write-FlowCellResultJsonFile {
     [System.IO.File]::WriteAllText($Path, $rendered, $encoding)
 }
 
-function Invoke-FlowCellToolCommand($Envelope) {
-    $payload = $Envelope.payload
-    $toolId = [string]$payload.tool
-    $toolCommand = [string]$payload.command
-    Write-CommandHostLog ('Resolved execution target. CommandId={0}; Tool={1}; ToolCommand={2}; Target={3}' -f [string]$Envelope.command_id, $toolId, $toolCommand, [string]$payload.resolved_target)
-
-    switch ([string]$toolId) {
-        'alignment' {
-            $actionType = [string]$payload.action_type
-            switch ([string]$actionType) {
-                'toggle_modifier' {
-                    $statusText = if ($payload.PSObject.Properties['status_message']) { [string]$payload.status_message } else { '' }
-                    if ([string]::IsNullOrWhiteSpace($statusText)) {
-                        $statusText = 'Alignment modifier updated.'
-                    }
-                    Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
-                    Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=state_only; Status=ok; Message={1}' -f [string]$Envelope.command_id, $statusText)
-                    return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'state_only')
-                }
-                'align_axis' {
-                    $response = Invoke-FlowCellBlenderBridgeRequest -Action 'alignment_tools' -Data @{
-                        command = 'align_axis'
-                        axis = [string]$payload.axis
-                        mode = [string]$payload.mode
-                        modifier = [string]$(if ($payload.PSObject.Properties['modifier']) { $payload.modifier } else { '' })
-                    }
-                    $statusText = if ($response.PSObject.Properties['message']) { [string]$response.message } else { 'Alignment complete.' }
-                    Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
-                    Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=ok; Message={1}' -f [string]$Envelope.command_id, $statusText)
-                    return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge')
-                }
-                'center_all' {
-                    $response = Invoke-FlowCellBlenderBridgeRequest -Action 'alignment_tools' -Data @{ command = 'center_all' }
-                    $statusText = if ($response.PSObject.Properties['message']) { [string]$response.message } else { 'Alignment complete.' }
-                    Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
-                    Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=ok; Message={1}' -f [string]$Envelope.command_id, $statusText)
-                    return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge')
-                }
-            }
-            throw ("Unsupported alignment action type: {0}" -f $actionType)
-        }
-        'flatten_revolve' {
-            $data = @{
-                command = [string]$toolCommand
-                center_mode = [string]$payload.center_mode
-                angle_deg = [double]$payload.angle_deg
-                revolve_steps = [int]$payload.revolve_steps
-                merge_distance = [double]$payload.merge_distance
-            }
-            if ($payload.PSObject.Properties['flatten_axis']) {
-                $data.flatten_axis = [string]$payload.flatten_axis
-            }
-            if ($payload.PSObject.Properties['revolve_axis']) {
-                $data.revolve_axis = [string]$payload.revolve_axis
-            }
-
-            try {
-                $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flatten_revolve_tools' -Data $data
-            }
-            catch {
-                if ($_.Exception.Message -notmatch 'Unsupported action:\s*flatten_revolve_tools') {
-                    throw
-                }
-                $data.tool = 'flatten_revolve'
-                $data.tool_command = [string]$toolCommand
-                $response = Invoke-FlowCellBlenderBridgeRequest -Action 'alignment_tools' -Data $data
-            }
-            $statusText = if ($response.PSObject.Properties['message']) { [string]$response.message } else { 'Flatten/revolve complete.' }
-            Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
-            Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=ok; Message={1}' -f [string]$Envelope.command_id, $statusText)
-            return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge')
-        }
-        'hdri_world' {
-            $data = @{
-                command = [string]$toolCommand
-                visual_mode = [string]$(if ($payload.PSObject.Properties['visual_mode']) { $payload.visual_mode } else { '' })
-                hdri_path = [string]$(if ($payload.PSObject.Properties['hdri_path']) { $payload.hdri_path } else { '' })
-                static_background_path = [string]$(if ($payload.PSObject.Properties['static_background_path']) { $payload.static_background_path } else { '' })
-                grid_spacing_m = [double]$(if ($payload.PSObject.Properties['grid_spacing_m']) { $payload.grid_spacing_m } else { 1 })
-                grid_distance_m = [double]$(if ($payload.PSObject.Properties['grid_distance_m']) { $payload.grid_distance_m } else { 5 })
-                grid_far_spacing_m = [double]$(if ($payload.PSObject.Properties['grid_far_spacing_m']) { $payload.grid_far_spacing_m } else { 1 })
-                bucket = [string]$(if ($payload.PSObject.Properties['bucket']) { $payload.bucket } else { '' })
-                bucket_hex = [string]$(if ($payload.PSObject.Properties['bucket_hex']) { $payload.bucket_hex } else { '' })
-                tabs_hex = [string]$(if ($payload.PSObject.Properties['tabs_hex']) { $payload.tabs_hex } else { '' })
-                tabs_text_hex = [string]$(if ($payload.PSObject.Properties['tabs_text_hex']) { $payload.tabs_text_hex } else { '' })
-                headers_hex = [string]$(if ($payload.PSObject.Properties['headers_hex']) { $payload.headers_hex } else { '' })
-                header_text_hex = [string]$(if ($payload.PSObject.Properties['header_text_hex']) { $payload.header_text_hex } else { '' })
-                text_hex = [string]$(if ($payload.PSObject.Properties['text_hex']) { $payload.text_hex } else { '' })
-                control_text_hex = [string]$(if ($payload.PSObject.Properties['control_text_hex']) { $payload.control_text_hex } else { '' })
-                accent_text_hex = [string]$(if ($payload.PSObject.Properties['accent_text_hex']) { $payload.accent_text_hex } else { '' })
-                editor_background_hex = [string]$(if ($payload.PSObject.Properties['editor_background_hex']) { $payload.editor_background_hex } else { '' })
-                scene_hex = [string]$(if ($payload.PSObject.Properties['scene_hex']) { $payload.scene_hex } else { '' })
-                controls_hex = [string]$(if ($payload.PSObject.Properties['controls_hex']) { $payload.controls_hex } else { '' })
-                borders_hex = [string]$(if ($payload.PSObject.Properties['borders_hex']) { $payload.borders_hex } else { '' })
-                darks_hex = [string]$(if ($payload.PSObject.Properties['darks_hex']) { $payload.darks_hex } else { '' })
-                highlights_hex = [string]$(if ($payload.PSObject.Properties['highlights_hex']) { $payload.highlights_hex } else { '' })
-                viewport_background_hex = [string]$(if ($payload.PSObject.Properties['viewport_background_hex']) { $payload.viewport_background_hex } else { '' })
-                viewport_gradient_enabled = [bool]$(if ($payload.PSObject.Properties['viewport_gradient_enabled']) { $payload.viewport_gradient_enabled } else { $false })
-                viewport_gradient_hex = [string]$(if ($payload.PSObject.Properties['viewport_gradient_hex']) { $payload.viewport_gradient_hex } else { '' })
-                rotation_x_deg = [double]$(if ($payload.PSObject.Properties['rotation_x_deg']) { $payload.rotation_x_deg } else { 0 })
-                rotation_y_deg = [double]$(if ($payload.PSObject.Properties['rotation_y_deg']) { $payload.rotation_y_deg } else { 0 })
-                rotation_z_deg = [double]$(if ($payload.PSObject.Properties['rotation_z_deg']) { $payload.rotation_z_deg } else { 0 })
-                world_strength = [double]$(if ($payload.PSObject.Properties['world_strength']) { $payload.world_strength } else { 0 })
-            }
-            try {
-                $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowcell_custom_hdri_world_tools' -Data $data
-            }
-            catch {
-                if ($_.Exception.Message -notmatch 'Unsupported action:\s*flowcell_custom_hdri_world_tools') {
-                    throw
-                }
-                $response = Invoke-FlowCellBlenderBridgeRequest -Action 'custom_hdri_world_tools' -Data $data
-            }
-            $statusText = if ($response.PSObject.Properties['message']) { [string]$response.message } else { 'HDRI world settings applied.' }
-            Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
-            Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=ok; Message={1}' -f [string]$Envelope.command_id, $statusText)
-            return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge' -Details $response)
-        }
-        'quick_rotate_group' {
-            $response = Invoke-FlowCellBlenderBridgeRequest -Action 'flowcell_custom_quick_rotate_group' -Data @{
-                command = [string]$toolCommand
-                axis = [string]$payload.axis
-                center_mode = [string]$payload.center_mode
-                operation_mode = [string]$payload.operation_mode
-                angle_deg = [double]$payload.angle_deg
-                distribute_count = [int]$(if ($payload.PSObject.Properties['distribute_count']) { $payload.distribute_count } else { 3 })
-            }
-            $statusText = if ($response.PSObject.Properties['message']) { [string]$response.message } else { 'Quick rotate complete.' }
-            Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
-            Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=ok; Message={1}' -f [string]$Envelope.command_id, $statusText)
-            return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge')
-        }
-        'smart_axis_lock' {
-            try {
-                $response = Invoke-FlowCellBlenderBridgeRequest -Action 'smart_axis_lock' -Data @{
-                    command = [string]$toolCommand
-                }
-                $result = Convert-FlowCellSmartAxisLockResponseToResult -Response $response
-                $toolOptionState = ConvertTo-FlowCellSmartAxisToolOptionState -StateSource $result
-                Write-SharedTextFile -Path $script:LastActionStatusPath -Text ([string]$result.Message)
-                Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=ok; Message={1}' -f [string]$Envelope.command_id, [string]$result.Message)
-                return (New-BackendResult -Succeeded $true -Message ([string]$result.Message) -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge' -SmartAxisResult $result -ToolOptionState $toolOptionState)
-            }
-            catch {
-                $result = New-FlowCellSmartAxisLockFailedResult -Message $_.Exception.Message
-                $toolOptionState = ConvertTo-FlowCellSmartAxisToolOptionState -StateSource $result
-                Write-SharedTextFile -Path $script:LastActionStatusPath -Text ([string]$result.Message)
-                Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=error; Message={1}' -f [string]$Envelope.command_id, [string]$result.Message)
-                return (New-BackendResult -Succeeded $false -Message ([string]$result.Message) -ResolvedTarget ([string]$payload.resolved_target) -ExecutionMethod 'blender_bridge' -SmartAxisResult $result -ToolOptionState $toolOptionState)
-            }
-        }
-        default {
-            throw ("Unsupported tool action: {0}" -f $toolId)
-        }
-    }
-}
-
 function Invoke-FlowCellScriptCommand($Envelope) {
     $payload = $Envelope.payload
     $resolvedTarget = [string]$payload.resolved_target
     if ([string]::IsNullOrWhiteSpace($resolvedTarget) -or -not (Test-Path -LiteralPath $resolvedTarget -PathType Leaf)) {
         throw ("Script target was not found: {0}" -f $resolvedTarget)
-    }
-
-    $smartAxisCommand = Get-FlowCellSmartAxisLockCommandForScriptPath -ScriptPath $resolvedTarget
-    if (-not [string]::IsNullOrWhiteSpace($smartAxisCommand)) {
-        Write-CommandHostLog ('Resolved execution target. CommandId={0}; Method=blender_bridge; Target={1}; SmartAxisCommand={2}' -f [string]$Envelope.command_id, $resolvedTarget, $smartAxisCommand)
-        try {
-            $response = Invoke-FlowCellBlenderBridgeRequest -Action 'smart_axis_lock' -Data @{ command = [string]$smartAxisCommand }
-            $result = Convert-FlowCellSmartAxisLockResponseToResult -Response $response
-            Write-SharedTextFile -Path $script:LastActionStatusPath -Text ([string]$result.Message)
-            Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=ok; Message={1}' -f [string]$Envelope.command_id, [string]$result.Message)
-            return (New-BackendResult -Succeeded $true -Message ([string]$result.Message) -ResolvedTarget $resolvedTarget -ExecutionMethod 'blender_bridge' -SmartAxisResult $result)
-        }
-        catch {
-            $result = New-FlowCellSmartAxisLockFailedResult -Message $_.Exception.Message
-            Write-SharedTextFile -Path $script:LastActionStatusPath -Text ([string]$result.Message)
-            Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge; Status=error; Message={1}' -f [string]$Envelope.command_id, [string]$result.Message)
-            return (New-BackendResult -Succeeded $false -Message ([string]$result.Message) -ResolvedTarget $resolvedTarget -ExecutionMethod 'blender_bridge' -SmartAxisResult $result)
-        }
     }
 
     $programLabel = if ($Envelope.program.PSObject.Properties['label']) { [string]$Envelope.program.label } else { '' }
@@ -889,18 +591,6 @@ function Invoke-FlowCellMacroCommand($Envelope) {
     return (New-BackendResult -Succeeded ($exitCode -eq 0) -Message $statusText -ResolvedTarget $actionId -ExecutionMethod 'controller_cli')
 }
 
-function Invoke-FlowCellBuiltinCommand($Envelope) {
-    $payload = $Envelope.payload
-    $target = [string]$payload.target
-    if ([string]$target -eq 'flowcell_toggle_popouts_minimized') {
-        $statusText = 'Pop-out window minimize toggle requested.'
-        Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
-        Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=frontend_callback; ClientAction={1}; Message={2}' -f [string]$Envelope.command_id, $target, $statusText)
-        return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget $target -ExecutionMethod 'frontend_callback' -ClientAction $target)
-    }
-    throw ("Unknown builtin action: {0}" -f $target)
-}
-
 try {
     Ensure-CommandHostDirectory -Path $script:LogsDir
     $envelope = Get-Content -LiteralPath $EnvelopePath -Raw | ConvertFrom-Json
@@ -922,15 +612,13 @@ try {
     if (-not $envelope.PSObject.Properties['payload'] -or $null -eq $envelope.payload) {
         throw 'Command envelope is missing payload.'
     }
-    Write-CommandHostLog ('State/payload validation passed. CommandId={0}; Kind={1}; Tool={2}' -f [string]$envelope.command_id, [string]$(if ($envelope.payload.PSObject.Properties['kind']) { $envelope.payload.kind } else { '' }), [string]$(if ($envelope.payload.PSObject.Properties['tool']) { $envelope.payload.tool } else { '' }))
+    Write-CommandHostLog ('State/payload validation passed. CommandId={0}; Kind={1}' -f [string]$envelope.command_id, [string]$(if ($envelope.payload.PSObject.Properties['kind']) { $envelope.payload.kind } else { '' }))
 
     $result = switch ([string]$envelope.command_id) {
         'flowcell.run_script' { Invoke-FlowCellScriptCommand -Envelope $envelope; break }
         'windows.chrome_workspace.save' { Invoke-FlowCellScriptCommand -Envelope $envelope; break }
         'windows.chrome_workspace.open' { Invoke-FlowCellScriptCommand -Envelope $envelope; break }
         'flowcell.run_macro' { Invoke-FlowCellMacroCommand -Envelope $envelope; break }
-        'flowcell.run_tool_action' { Invoke-FlowCellToolCommand -Envelope $envelope; break }
-        'flowcell.run_builtin' { Invoke-FlowCellBuiltinCommand -Envelope $envelope; break }
         default { throw ("Unsupported command id: {0}" -f [string]$envelope.command_id) }
     }
 

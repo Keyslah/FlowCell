@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.open-chrome-workspace",
+  "label": "Open Chrome Workspace",
+  "tooltip": "Open the saved Chrome workspace.",
+  "program": "Windows",
+  "source": "open_chrome_workspace.ps1"
+}

@@ -1,0 +1,282 @@
+{
+    "schemaVersion":  1,
+    "id":  "blender.rotate",
+    "version":  "1.0.0",
+    "label":  "rotate",
+    "tooltip":  "rotate objects with, transform, and distribute(evenly spaced copies around pivot)",
+    "kind":  "toolset",
+    "program":  "Blender",
+    "source":  "rotate.py",
+    "bridgeData":  {
+
+                   },
+    "children":  [
+                     {
+                         "slot":  "axis_z",
+                         "label":  "Z",
+                         "tooltip":  "Set the quick-rotate axis to Z.",
+                         "payload":  {
+                                         "command":  "axis_z",
+                                         "action":  "axis_z"
+                                     }
+                     },
+                     {
+                         "slot":  "axis_y",
+                         "label":  "Y",
+                         "tooltip":  "Set the quick-rotate axis to Y.",
+                         "payload":  {
+                                         "command":  "axis_y",
+                                         "action":  "axis_y"
+                                     }
+                     },
+                     {
+                         "slot":  "axis_x",
+                         "label":  "X",
+                         "tooltip":  "Set the quick-rotate axis to X.",
+                         "payload":  {
+                                         "command":  "axis_x",
+                                         "action":  "axis_x"
+                                     }
+                     },
+                     {
+                         "slot":  "preset_30",
+                         "label":  "30 deg",
+                         "tooltip":  "Apply a 30 degree positive quick-rotate immediately and stage the angle.",
+                         "payload":  {
+                                         "command":  "preset_30",
+                                         "action":  "preset_30"
+                                     }
+                     },
+                     {
+                         "slot":  "preset_45",
+                         "label":  "45 deg",
+                         "tooltip":  "Apply a 45 degree positive quick-rotate immediately and stage the angle.",
+                         "payload":  {
+                                         "command":  "preset_45",
+                                         "action":  "preset_45"
+                                     }
+                     },
+                     {
+                         "slot":  "preset_90",
+                         "label":  "90 deg",
+                         "tooltip":  "Apply a 90 degree positive quick-rotate immediately and stage the angle.",
+                         "payload":  {
+                                         "command":  "preset_90",
+                                         "action":  "preset_90"
+                                     }
+                     },
+                     {
+                         "slot":  "preset_180",
+                         "label":  "180 deg",
+                         "tooltip":  "Apply a 180 degree positive quick-rotate immediately and stage the angle.",
+                         "payload":  {
+                                         "command":  "preset_180",
+                                         "action":  "preset_180"
+                                     }
+                     },
+                     {
+                         "slot":  "preset_270",
+                         "label":  "270 deg",
+                         "tooltip":  "Apply a 270 degree positive quick-rotate immediately and stage the angle.",
+                         "payload":  {
+                                         "command":  "preset_270",
+                                         "action":  "preset_270"
+                                     }
+                     },
+                     {
+                         "slot":  "center_geometry",
+                         "label":  "Geometry",
+                         "tooltip":  "Use geometry center as the quick-rotate pivot.",
+                         "payload":  {
+                                         "command":  "center_geometry",
+                                         "action":  "center_geometry"
+                                     }
+                     },
+                     {
+                         "slot":  "center_origin",
+                         "label":  "Origin",
+                         "tooltip":  "Use object origin as the quick-rotate pivot.",
+                         "payload":  {
+                                         "command":  "center_origin",
+                                         "action":  "center_origin"
+                                     }
+                     },
+                     {
+                         "slot":  "center_world",
+                         "label":  "World",
+                         "tooltip":  "Use world origin as the quick-rotate pivot.",
+                         "payload":  {
+                                         "command":  "center_world",
+                                         "action":  "center_world"
+                                     }
+                     },
+                     {
+                         "slot":  "center_cursor",
+                         "label":  "Cursor",
+                         "tooltip":  "Use 3D cursor as the quick-rotate pivot.",
+                         "payload":  {
+                                         "command":  "center_cursor",
+                                         "action":  "center_cursor"
+                                     }
+                     },
+                     {
+                         "slot":  "center_object",
+                         "label":  "Object",
+                         "tooltip":  "Use the active object as the quick-rotate pivot.",
+                         "payload":  {
+                                         "command":  "center_object",
+                                         "action":  "center_object"
+                                     }
+                     },
+                     {
+                         "slot":  "mode_transform",
+                         "label":  "Transform",
+                         "tooltip":  "Use quick rotate in transform mode.",
+                         "payload":  {
+                                         "command":  "mode_transform",
+                                         "action":  "mode_transform"
+                                     }
+                     },
+                     {
+                         "slot":  "mode_distribute",
+                         "label":  "Distribute",
+                         "tooltip":  "Use quick rotate in distribute mode.",
+                         "payload":  {
+                                         "command":  "mode_distribute",
+                                         "action":  "mode_distribute"
+                                     }
+                     },
+                     {
+                         "slot":  "apply_negative",
+                         "label":  "Negative",
+                         "tooltip":  "Apply the staged quick-rotate values in the negative direction.",
+                         "payload":  {
+                                         "command":  "apply_negative",
+                                         "action":  "apply_negative"
+                                     }
+                     },
+                     {
+                         "slot":  "apply_positive",
+                         "label":  "Positive",
+                         "tooltip":  "Apply the staged quick-rotate values in the positive direction.",
+                         "payload":  {
+                                         "command":  "apply_positive",
+                                         "action":  "apply_positive"
+                                     }
+                     }
+                 ],
+    "layout":  {
+                   "mode":  "grid",
+                   "columns":  4,
+                   "gap":  8,
+                   "padding":  8,
+                   "width":  640,
+                   "height":  300,
+                   "fields":  [
+                                  {
+                                      "id":  "axis",
+                                      "kind":  "select",
+                                      "label":  "Axis",
+                                      "payloadKey":  "axis",
+                                      "defaultValue":  "Z",
+                                      "options":  [
+                                                      { "id": "axis-x", "label": "X", "value": "X" },
+                                                      { "id": "axis-y", "label": "Y", "value": "Y" },
+                                                      { "id": "axis-z", "label": "Z", "value": "Z" }
+                                                  ],
+                                      "x":  8,
+                                      "y":  8,
+                                      "width":  120,
+                                      "height":  36,
+                                      "zIndex":  1,
+                                      "hidden":  true
+                                  },
+                                  {
+                                      "id":  "angle_deg",
+                                      "kind":  "number",
+                                      "label":  "Angle",
+                                      "payloadKey":  "angle_deg",
+                                      "defaultValue":  15,
+                                      "minimum":  0,
+                                      "maximum":  360,
+                                      "step":  1,
+                                      "x":  8,
+                                      "y":  248,
+                                      "width":  132,
+                                      "height":  36,
+                                      "zIndex":  2
+                                  },
+                                  {
+                                      "id":  "center_mode",
+                                      "kind":  "select",
+                                      "label":  "Center",
+                                      "payloadKey":  "center_mode",
+                                      "defaultValue":  "WORLD",
+                                      "options":  [
+                                                      { "id": "geometry", "label": "Geometry", "value": "GEOMETRY" },
+                                                      { "id": "origin", "label": "Origin", "value": "ORIGIN" },
+                                                      { "id": "world", "label": "World", "value": "WORLD" },
+                                                      { "id": "cursor", "label": "Cursor", "value": "CURSOR" },
+                                                      { "id": "object", "label": "Object", "value": "OBJECT" }
+                                                  ],
+                                      "x":  148,
+                                      "y":  248,
+                                      "width":  132,
+                                      "height":  36,
+                                      "zIndex":  1,
+                                      "hidden":  true
+                                  },
+                                  {
+                                      "id":  "operation_mode",
+                                      "kind":  "select",
+                                      "label":  "Mode",
+                                      "payloadKey":  "operation_mode",
+                                      "defaultValue":  "TRANSFORM",
+                                      "options":  [
+                                                      { "id": "transform", "label": "Transform", "value": "TRANSFORM" },
+                                                      { "id": "distribute", "label": "Distribute", "value": "DISTRIBUTE" }
+                                                  ],
+                                      "x":  288,
+                                      "y":  248,
+                                      "width":  132,
+                                      "height":  36,
+                                      "zIndex":  1,
+                                      "hidden":  true
+                                  },
+                                  {
+                                      "id":  "distribute_count",
+                                      "kind":  "number",
+                                      "label":  "Copies",
+                                      "payloadKey":  "distribute_count",
+                                      "defaultValue":  3,
+                                      "minimum":  1,
+                                      "maximum":  360,
+                                      "step":  1,
+                                      "x":  148,
+                                      "y":  248,
+                                      "width":  132,
+                                      "height":  36,
+                                      "zIndex":  2
+                                  }
+                              ],
+                   "childBehaviors":  {
+                                          "axis_x":  { "fieldPatch": { "axis": "X" }, "execute": false },
+                                          "axis_y":  { "fieldPatch": { "axis": "Y" }, "execute": false },
+                                          "axis_z":  { "fieldPatch": { "axis": "Z" }, "execute": false },
+                                          "center_geometry":  { "fieldPatch": { "center_mode": "GEOMETRY" }, "execute": false },
+                                          "center_origin":  { "fieldPatch": { "center_mode": "ORIGIN" }, "execute": false },
+                                          "center_world":  { "fieldPatch": { "center_mode": "WORLD" }, "execute": false },
+                                          "center_cursor":  { "fieldPatch": { "center_mode": "CURSOR" }, "execute": false },
+                                          "center_object":  { "fieldPatch": { "center_mode": "OBJECT" }, "execute": false },
+                                          "mode_transform":  { "fieldPatch": { "operation_mode": "TRANSFORM" }, "execute": false },
+                                          "mode_distribute":  { "fieldPatch": { "operation_mode": "DISTRIBUTE" }, "execute": false },
+                                          "preset_30":  { "fieldPatch": { "angle_deg": 30, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
+                                          "preset_45":  { "fieldPatch": { "angle_deg": 45, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
+                                          "preset_90":  { "fieldPatch": { "angle_deg": 90, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
+                                          "preset_180":  { "fieldPatch": { "angle_deg": 180, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
+                                          "preset_270":  { "fieldPatch": { "angle_deg": 270, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
+                                          "apply_negative":  { "execute": true, "payloadTemplate": { "command": "apply", "direction": "negative", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
+                                          "apply_positive":  { "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } }
+                                      }
+               }
+}

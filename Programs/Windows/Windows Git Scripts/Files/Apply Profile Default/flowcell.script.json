@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.organization-profile.default",
+  "label": "default",
+  "tooltip": "Apply the saved 'default' organization profile to the clipboard folder.",
+  "program": "Windows",
+  "source": "apply_profile_default.ps1"
+}

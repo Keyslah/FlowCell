@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.save-chrome-workspace",
+  "label": "Save Chrome Workspace",
+  "tooltip": "Save the current Chrome workspace.",
+  "program": "Windows",
+  "source": "save_chrome_workspace.ps1"
+}

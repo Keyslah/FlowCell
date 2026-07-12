@@ -1,30 +1,30 @@
-# Illustrator Program Workflow
+# Illustrator Program Package
 
-Illustrator uses the shared Git/local/panel script workflow.
+Illustrator uses the canonical FlowCell Button lifecycle.
 
-- `Illustrator Git Scripts/`: tracked shareable source scripts, organized by panel subfolder.
-- `Illustrator Local Scripts/`: ignored flat private backup/core copies. FlowCell never auto-deletes these.
-- `Panels/`: ignored local panel runnable script copies.
-- `HelperScripts/`: internal Illustrator helpers only.
-- `SupportScripts/`: FlowCell-owned Illustrator runner helpers.
-- `illustrator-actions.json`: manifest of action IDs mapped to tracked JSX sources.
-- `Illustrator Git Scripts/FlowCell Buttons/`: tracked wrapper button sources that send action IDs to the warm Illustrator bridge.
-- `ScriptDump/`: ignored loose/testing/old scripts.
+- `Illustrator Git Scripts/` is a tracked catalog only.
+- Add/import copies the selected script or complete tool-set package into
+  `Illustrator Local Scripts/<ownerButtonId>/source/`.
+- The Button-owned Local Scripts copy is the installed runtime source of truth.
+- `Panels/<Panel>/<ownerButtonId>.flowcell-source.json` is the active record.
+- Deleting the Button removes its canonical graph, active record, owned Local
+  package, and bindings through the normal transactional delete path.
 
-Add Script copies the selected source into both `Illustrator Local Scripts` and the selected panel folder. Deleting a panel button never deletes the Local Scripts copy.
+Tool sets are self-contained packages under `Illustrator Git Scripts/Toolsets/`
+with `flowcell.toolset.json` plus their JSX source. There are no generated
+button wrappers or program-level pre-baked Button entries.
 
-## Fast action bridge
+## Illustrator bridge
 
-The fast bridge keeps one STA Windows PowerShell process alive with an Illustrator COM connection. Button wrappers call `SupportScripts/Invoke-IllustratorFlowCellAction.ps1`, which validates the action ID against `illustrator-actions.json`, starts the bridge if needed, sends one named-pipe request, and returns as soon as the bridge accepts the action.
+The Illustrator bridge has no program-level action or Button registry. The
+Layer Tree is the explicit catalog package at
+`Illustrator Git Scripts/LayersBuilder/flowcell.script.json`. Importing that
+package creates the canonical Button and owned Local Scripts copy. The core
+window resolves the exact active record and runs only that installed source by
+its `illustrator-layer-tree` capability; it never executes the Git copy.
 
-Useful commands:
+The bridge itself may be inspected directly when diagnosing connectivity:
 
 ```powershell
-Programs\Illustrator\SupportScripts\Invoke-IllustratorFlowCellAction.ps1 -ListActions
 Programs\Illustrator\SupportScripts\Invoke-IllustratorFlowCellAction.ps1 -StartOnly
-Programs\Illustrator\SupportScripts\Invoke-IllustratorFlowCellAction.ps1 -ActionId ill-align
-Programs\Illustrator\SupportScripts\Invoke-IllustratorFlowCellAction.ps1 -ActionId ill-align -Wait
-Programs\Illustrator\SupportScripts\New-IllustratorFlowCellButtonWrappers.ps1
 ```
-
-Add new fast buttons by adding an action entry to `illustrator-actions.json`, then run `New-IllustratorFlowCellButtonWrappers.ps1` to write the matching wrapper under `Illustrator Git Scripts/FlowCell Buttons/`.

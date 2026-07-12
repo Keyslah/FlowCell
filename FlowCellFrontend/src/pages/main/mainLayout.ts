@@ -1,4 +1,3 @@
-import { buildPanelScriptButtonId } from "../../lib/buttonLabelOverrides";
 import type { PanelButtonEventsRecord } from "../../lib/programRails";
 
 export type PageRecord = {
@@ -21,8 +20,6 @@ export type RailRecord = {
   background: string;
 };
 
-export type ShapeType = "roundedRect" | "rect";
-
 export type ButtonRecord = {
   id: string;
   railId?: string;
@@ -34,17 +31,12 @@ export type ButtonRecord = {
   y: number;
   width: number;
   height: number;
-  shapeType: ShapeType;
   radius?: number;
-  strokeWidth: number;
   label: string;
   tooltip?: string;
   actionId: string;
   bridgeAction?: string;
   events?: PanelButtonEventsRecord;
-  skinId: string;
-  border?: string;
-  background?: string;
   allowRename?: boolean;
   isSelected?: boolean;
   disabled?: boolean;
@@ -55,14 +47,6 @@ export const page: PageRecord = {
   width: 1225,
   height: 721,
   viewBox: "0 0 1225 721"
-};
-
-const defaultButtonVisual = {
-  border: "#231f20",
-  background: "transparent",
-  shapeType: "roundedRect" as const,
-  strokeWidth: 1,
-  skinId: "glass"
 };
 
 export const rails: RailRecord[] = [
@@ -137,6 +121,21 @@ const railButtonGeometry = {
   radius: 18.647463
 } as const;
 
+export type PanelRailOwnerEntry = {
+  panelName: string;
+  rect: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
+};
+
+export const panelRailOwnerSurfaceBounds = {
+  width: page.width,
+  height: page.height
+} as const;
+
 const programRailDefinition: FolderRailDefinition = {
   railId: "program-rail",
   listButtonIdPrefix: "program-button",
@@ -187,6 +186,7 @@ export const buttonsSurfacePopTypeControlGeometry = {
 
 interface ButtonsSurfaceBuildOptions {
   selectedScriptFileNames?: readonly string[];
+  fanSelectionCount?: number;
   deleteSelectionDisabled?: boolean;
   selectAllDisabled?: boolean;
   allSelectableScriptsSelected?: boolean;
@@ -195,8 +195,6 @@ interface ButtonsSurfaceBuildOptions {
   fanDisabled?: boolean;
   fanOptionsDisabled?: boolean;
 }
-
-export { buildPanelScriptButtonId };
 
 function equalsFolderName(left: string | null | undefined, right: string): boolean {
   return typeof left === "string" && left.localeCompare(right, undefined, { sensitivity: "accent" }) === 0;
@@ -251,8 +249,7 @@ function buildFolderRailButtons(
     label: name,
     actionId: definition.listActionId,
     allowRename: false,
-    isSelected: equalsFolderName(selectedName, name),
-    ...defaultButtonVisual
+    isSelected: equalsFolderName(selectedName, name)
   }));
 
   buttons.push({
@@ -269,8 +266,7 @@ function buildFolderRailButtons(
         ? "Add a program by selecting its executable."
         : "Add a panel folder to the selected program.",
     actionId: definition.footerActionId,
-    allowRename: false,
-    ...defaultButtonVisual
+    allowRename: false
   });
 
   return buttons;
@@ -287,8 +283,7 @@ export const staticButtons: ButtonRecord[] = [
     radius: 18.647463,
     label: "Save Layout",
     tooltip: "Save the main window and open popout positions to a layout file.",
-    actionId: "top-left-button-1",
-    ...defaultButtonVisual
+    actionId: "top-left-button-1"
   },
   {
     id: "top-left-button-2",
@@ -300,8 +295,7 @@ export const staticButtons: ButtonRecord[] = [
     radius: 18.647463,
     label: "Load Layout",
     tooltip: "Load a saved FlowCell layout and reopen its saved popout windows.",
-    actionId: "top-left-button-2",
-    ...defaultButtonVisual
+    actionId: "top-left-button-2"
   },
   {
     id: "top-left-button-3",
@@ -313,8 +307,7 @@ export const staticButtons: ButtonRecord[] = [
     radius: 18.647463,
     label: "Binds",
     tooltip: "Open the shortcut binding window for panel buttons and macros.",
-    actionId: "top-left-button-3",
-    ...defaultButtonVisual
+    actionId: "top-left-button-3"
   },
   {
     id: "top-left-button-6",
@@ -326,8 +319,7 @@ export const staticButtons: ButtonRecord[] = [
     radius: 18.647463,
     label: "Macro Lab",
     tooltip: "Open Macro Lab for the selected program and panel.",
-    actionId: "open-macro-lab",
-    ...defaultButtonVisual
+    actionId: "open-macro-lab"
   },
   {
     id: "top-left-button-7",
@@ -339,8 +331,7 @@ export const staticButtons: ButtonRecord[] = [
     radius: 18.647463,
     label: "Refresh",
     tooltip: "Reload the FlowCell frontend after file, script, or layout changes.",
-    actionId: "top-left-button-7",
-    ...defaultButtonVisual
+    actionId: "top-left-button-7"
   },
   {
     id: "top-left-button-8",
@@ -352,8 +343,7 @@ export const staticButtons: ButtonRecord[] = [
     radius: 18.647463,
     label: "Settings",
     tooltip: "Open FlowCell startup settings.",
-    actionId: "open-settings",
-    ...defaultButtonVisual
+    actionId: "open-settings"
   },
   {
     id: "top-left-button-9",
@@ -363,10 +353,9 @@ export const staticButtons: ButtonRecord[] = [
     width: 92.446043,
     height: 37.294964,
     radius: 18.647463,
-    label: "Motion",
-    tooltip: "Open FlowCell motion settings.",
-    actionId: "open-motion-settings",
-    ...defaultButtonVisual
+    label: "Buttons",
+    tooltip: "Open the FlowCell Buttons Editor.",
+    actionId: "open-button-editor"
   },
   {
     id: "top-right-button-1",
@@ -378,8 +367,7 @@ export const staticButtons: ButtonRecord[] = [
     radius: 18.647463,
     label: "min",
     tooltip: "Minimize the main FlowCell window.",
-    actionId: "top-right-button-1",
-    ...defaultButtonVisual
+    actionId: "top-right-button-1"
   },
   {
     id: "top-right-button-2",
@@ -391,8 +379,7 @@ export const staticButtons: ButtonRecord[] = [
     radius: 18.647463,
     label: "max",
     tooltip: "Maximize or restore the main FlowCell window.",
-    actionId: "top-right-button-2",
-    ...defaultButtonVisual
+    actionId: "top-right-button-2"
   },
   {
     id: "top-right-button-3",
@@ -404,8 +391,7 @@ export const staticButtons: ButtonRecord[] = [
     radius: 18.647463,
     label: "close",
     tooltip: "Close the main FlowCell window.",
-    actionId: "top-right-button-3",
-    ...defaultButtonVisual
+    actionId: "top-right-button-3"
   }
 ];
 
@@ -423,10 +409,23 @@ export function buildPanelRailButtons(
   return buildFolderRailButtons(panelRailDefinition, names, selectedName);
 }
 
+export function buildPanelRailOwnerEntries(
+  panelNames: readonly string[]
+): PanelRailOwnerEntry[] {
+  return panelNames.map((panelName, index) => ({
+    panelName,
+    rect: {
+      x: index === 0 ? panelRailDefinition.firstX : panelRailDefinition.otherX,
+      y: railButtonGeometry.firstY + railButtonGeometry.stepY * index,
+      width: railButtonGeometry.width,
+      height: railButtonGeometry.height
+    }
+  }));
+}
+
 export function buildButtonsSurfaceButtons(
-  programName: string | null,
-  panelName: string | null,
   scripts: readonly {
+    canonicalButtonId: string;
     fileName: string;
     label: string;
     tooltip?: string;
@@ -434,10 +433,17 @@ export function buildButtonsSurfaceButtons(
     bridgeAction?: string;
     events?: PanelButtonEventsRecord;
     macroId?: string;
+    canonicalPlacement: {
+      x: number;
+      y: number;
+      width: number;
+      height: number;
+    };
   }[],
   options: ButtonsSurfaceBuildOptions = {}
 ): ButtonRecord[] {
   const selectedScriptFileNames = new Set(options.selectedScriptFileNames ?? []);
+  const fanSelectionCount = Math.max(0, options.fanSelectionCount ?? 0);
   const buttons: ButtonRecord[] = [
     {
       id: "buttons-add-script",
@@ -450,8 +456,7 @@ export function buildButtonsSurfaceButtons(
       label: "Add Script",
       tooltip: "Add one or more script buttons to the selected panel.",
       actionId: "add-panel-script",
-      allowRename: false,
-      ...defaultButtonVisual
+      allowRename: false
     },
     {
       id: "buttons-add-macro",
@@ -464,8 +469,7 @@ export function buildButtonsSurfaceButtons(
       label: "Add Macro",
       tooltip: "Create or attach a macro button to the selected panel.",
       actionId: "add-panel-macro",
-      allowRename: false,
-      ...defaultButtonVisual
+      allowRename: false
     },
     {
       id: "buttons-fan-selection",
@@ -475,12 +479,13 @@ export function buildButtonsSurfaceButtons(
       width: buttonsSurfaceGeometry.width,
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
-      label: "Fan",
-      tooltip: "Open the selected buttons as a panel fan popout.",
-      actionId: "fan-panel-script-selection",
+      label: fanSelectionCount > 0 ? `Fan (${fanSelectionCount})` : "Fan",
+      tooltip: fanSelectionCount > 0
+        ? `Open a Fan from the exact ${fanSelectionCount} selected ${fanSelectionCount === 1 ? "Button" : "Buttons"}.`
+        : "Open the panel's fan. Creates a generic fan of the panel's script Buttons the first time; lists saved setups when several exist.",
+      actionId: "open-fan-setup-menu",
       allowRename: false,
-      disabled: options.fanDisabled ?? true,
-      ...defaultButtonVisual
+      disabled: options.fanDisabled ?? true
     },
     {
       id: "buttons-fan-options",
@@ -491,11 +496,10 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Fan Options",
-      tooltip: "Choose how the selected panel fan opens and lays out.",
-      actionId: "open-panel-fan-options",
+      tooltip: "Edit the selected panel's named fan setups in Buttons Editor.",
+      actionId: "edit-fan-setups",
       allowRename: false,
-      disabled: options.fanOptionsDisabled ?? true,
-      ...defaultButtonVisual
+      disabled: options.fanOptionsDisabled ?? true
     },
     {
       id: "buttons-order",
@@ -506,11 +510,10 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Order",
-      tooltip: "Open the selected panel's button ordering window.",
-      actionId: "open-button-order",
+      tooltip: "Edit the selected panel's Button order and placement.",
+      actionId: "edit-button-layout",
       allowRename: false,
-      disabled: options.orderDisabled ?? true,
-      ...defaultButtonVisual
+      disabled: options.orderDisabled ?? true
     },
     {
       id: "buttons-delete-selection",
@@ -524,8 +527,7 @@ export function buildButtonsSurfaceButtons(
       tooltip: "Move the selected panel buttons and backing files to the Recycle Bin.",
       actionId: "delete-selected-panel-scripts",
       allowRename: false,
-      disabled: options.deleteSelectionDisabled ?? true,
-      ...defaultButtonVisual
+      disabled: options.deleteSelectionDisabled ?? true
     },
     {
       id: "buttons-select-all",
@@ -541,8 +543,7 @@ export function buildButtonsSurfaceButtons(
         : "Select every visible script button in this panel.",
       actionId: "toggle-all-panel-scripts",
       allowRename: false,
-      disabled: options.selectAllDisabled ?? true,
-      ...defaultButtonVisual
+      disabled: options.selectAllDisabled ?? true
     },
     {
       id: "buttons-pop-selection",
@@ -556,8 +557,7 @@ export function buildButtonsSurfaceButtons(
       tooltip: "Open the selected regular buttons or toolsets as popout windows.",
       actionId: "pop-panel-script",
       allowRename: false,
-      disabled: options.popDisabled ?? true,
-      ...defaultButtonVisual
+      disabled: options.popDisabled ?? true
     }
   ];
 
@@ -565,24 +565,18 @@ export function buildButtonsSurfaceButtons(
     0,
     buttonsSurfaceGeometry.columnCount * buttonsSurfaceGeometry.scriptRowCount
   );
-  visibleScripts.forEach((script, index) => {
-    const columnIndex = index % buttonsSurfaceGeometry.columnCount;
-    const rowIndex = Math.floor(index / buttonsSurfaceGeometry.columnCount);
+  visibleScripts.forEach((script) => {
     const isMacro = script.kind?.trim().toLowerCase() === "macro" && Boolean(script.macroId?.trim());
-    const buttonId =
-      programName && panelName
-        ? buildPanelScriptButtonId(programName, panelName, script.fileName)
-        : `panel-script-${index + 1}`;
-
+    const canonicalPlacement = script.canonicalPlacement;
     buttons.push({
-      id: buttonId,
+      id: script.canonicalButtonId,
       railId: "buttons-rail",
       scriptFileName: script.fileName,
       macroId: isMacro ? script.macroId : undefined,
-      x: buttonsSurfaceGeometry.scriptStartX + buttonsSurfaceGeometry.stepX * columnIndex,
-      y: buttonsSurfaceGeometry.scriptStartY + buttonsSurfaceGeometry.stepY * rowIndex,
-      width: buttonsSurfaceGeometry.width,
-      height: buttonsSurfaceGeometry.height,
+      x: buttonsSurfaceGeometry.scriptStartX + canonicalPlacement.x,
+      y: buttonsSurfaceGeometry.scriptStartY + canonicalPlacement.y,
+      width: canonicalPlacement.width,
+      height: canonicalPlacement.height,
       radius: buttonsSurfaceGeometry.radius,
       label: script.label,
       tooltip: script.tooltip,
@@ -590,8 +584,7 @@ export function buildButtonsSurfaceButtons(
       bridgeAction: script.bridgeAction,
       events: script.events,
       allowRename: true,
-      isSelected: selectedScriptFileNames.has(script.fileName),
-      ...defaultButtonVisual
+      isSelected: selectedScriptFileNames.has(script.fileName)
     });
   });
 

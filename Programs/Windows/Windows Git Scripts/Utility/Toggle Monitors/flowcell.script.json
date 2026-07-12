@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.toggle-monitors",
+  "label": "Toggle Monitors",
+  "tooltip": "Toggle to one remembered monitor using the engine owned by this Button package.",
+  "program": "Windows",
+  "source": "Toggle Monitors.vbs"
+}

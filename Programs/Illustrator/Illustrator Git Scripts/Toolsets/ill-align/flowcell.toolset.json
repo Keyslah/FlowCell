@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.ill-align",
+  "version": "1.0.0",
+  "label": "Ill Align",
+  "tooltip": "Align Illustrator selections to the FlowCell anchor or active artboard.",
+  "kind": "toolset",
+  "program": "Illustrator",
+  "source": "Ill Align.jsx",
+  "execution": {
+    "programKey": "illustrator_automation",
+    "commandFile": "illustrator_anchor_command.json"
+  },
+  "children": [
+    { "slot": "x_min", "label": "X Min", "tooltip": "Align left edges to the anchor.", "payload": { "command": "align_axis", "axis": "X", "mode": "MIN", "modifier": "" } },
+    { "slot": "x_center", "label": "X Center", "tooltip": "Align horizontal centers to the anchor.", "payload": { "command": "align_axis", "axis": "X", "mode": "CENTER", "modifier": "" } },
+    { "slot": "x_max", "label": "X Max", "tooltip": "Align right edges to the anchor.", "payload": { "command": "align_axis", "axis": "X", "mode": "MAX", "modifier": "" } },
+    { "slot": "x_surface", "label": "X Surface", "tooltip": "Align X surfaces against the anchor.", "payload": { "command": "align_axis", "axis": "X", "mode": "CENTER", "modifier": "SURFACE" } },
+    { "slot": "x_geo", "label": "X Origin", "tooltip": "Align object centers to the anchor on X.", "payload": { "command": "align_axis", "axis": "X", "mode": "CENTER", "modifier": "GEOCENTER" } },
+    { "slot": "y_min", "label": "Y Min", "tooltip": "Align bottom edges to the anchor.", "payload": { "command": "align_axis", "axis": "Y", "mode": "MIN", "modifier": "" } },
+    { "slot": "y_center", "label": "Y Center", "tooltip": "Align vertical centers to the anchor.", "payload": { "command": "align_axis", "axis": "Y", "mode": "CENTER", "modifier": "" } },
+    { "slot": "y_max", "label": "Y Max", "tooltip": "Align top edges to the anchor.", "payload": { "command": "align_axis", "axis": "Y", "mode": "MAX", "modifier": "" } },
+    { "slot": "y_surface", "label": "Y Surface", "tooltip": "Align Y surfaces against the anchor.", "payload": { "command": "align_axis", "axis": "Y", "mode": "CENTER", "modifier": "SURFACE" } },
+    { "slot": "y_geo", "label": "Y Origin", "tooltip": "Align object centers to the anchor on Y.", "payload": { "command": "align_axis", "axis": "Y", "mode": "CENTER", "modifier": "GEOCENTER" } },
+    { "slot": "center_artboard", "label": "Art", "tooltip": "Center on the active artboard.", "payload": { "command": "center_artboard" } },
+    { "slot": "center_everything", "label": "Anchor", "tooltip": "Center on the stored FlowCell anchor.", "payload": { "command": "center_all" } },
+    { "slot": "toggle_group", "label": "Group", "tooltip": "Toggle moving the selection as one virtual group.", "payload": { "command": "status" } }
+  ],
+  "layout": {
+    "mode": "grid",
+    "columns": 5,
+    "gap": 8,
+    "padding": 8,
+    "width": 620,
+    "height": 236,
+    "fields": [
+      { "id": "group", "kind": "toggle", "label": "Group selection", "payloadKey": "group", "defaultValue": false, "x": 8, "y": 188, "width": 180, "height": 36, "zIndex": 2 }
+    ],
+    "childBehaviors": {
+      "x_min": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "X", "mode": "MIN", "modifier": "", "group": { "$field": "group" } } },
+      "x_center": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "X", "mode": "CENTER", "modifier": "", "group": { "$field": "group" } } },
+      "x_max": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "X", "mode": "MAX", "modifier": "", "group": { "$field": "group" } } },
+      "x_surface": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "X", "mode": "CENTER", "modifier": "SURFACE", "group": { "$field": "group" } } },
+      "x_geo": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "X", "mode": "CENTER", "modifier": "GEOCENTER", "group": { "$field": "group" } } },
+      "y_min": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "Y", "mode": "MIN", "modifier": "", "group": { "$field": "group" } } },
+      "y_center": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "Y", "mode": "CENTER", "modifier": "", "group": { "$field": "group" } } },
+      "y_max": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "Y", "mode": "MAX", "modifier": "", "group": { "$field": "group" } } },
+      "y_surface": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "Y", "mode": "CENTER", "modifier": "SURFACE", "group": { "$field": "group" } } },
+      "y_geo": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "Y", "mode": "CENTER", "modifier": "GEOCENTER", "group": { "$field": "group" } } },
+      "center_artboard": { "execute": true, "payloadTemplate": { "command": "center_artboard", "group": { "$field": "group" } } },
+      "center_everything": { "execute": true, "payloadTemplate": { "command": "center_all", "group": { "$field": "group" } } },
+      "toggle_group": { "toggleFields": ["group"], "execute": false }
+    }
+  }
+}

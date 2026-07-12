@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.dynamic-organization",
+  "label": "Dynamic Organization",
+  "tooltip": "Organize the clipboard project with this Button package's owned dynamic and profile cores.",
+  "program": "Windows",
+  "source": "dynamic_organization.ps1"
+}

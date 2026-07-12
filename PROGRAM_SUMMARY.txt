@@ -1,66 +1,93 @@
 FlowCell Program Summary
-Last updated: 2026-07-08
+Last updated: 2026-07-11
 
 Purpose
 -------
-FlowCell is a Windows desktop command surface for program-specific panels, script buttons, popouts/fans, Blender bridge actions, layout restore, and local runtime automation.
+FlowCell is a Windows desktop command surface for program-specific script Buttons, editable skins and geometry, popouts/fans, program bridges, layouts, bindings, and local automation.
 
-Current Direction
------------------
-- Keep the app on the rolled-back stable base with the backend/runtime rooted at `flowcellbackend/`.
-- Preserve the Blender cycle/collection/tool work that existed at commit `03796bb`.
-- Appearance Hub and its isolated skin bench have been removed. Future Button V2 visual work must be a narrow, clean-room slice. The skin paste-format spec is retained as reference in `docs/ai-skills.md` (appearance-hub-skin-author) and `.claude/skills/skin-author/`.
-- Treat `PROGRAM_SUMMARY.txt` as an orientation map, not a changelog or bug diary. Detailed fixes belong in commits, issue notes, or feature docs.
+Current Architecture
+--------------------
+- The canonical Button system is the only Button runtime. It owns main-panel Buttons, tool-set children, popouts, fans, skins, geometry, editing, and execution targets.
+- `flowcellbackend/local/button-system/button-state.json` is canonical Button state.
+- Program manifests and owned source packages replace program-specific script/button inventories in application core.
+- Legacy program-script records and source comment directives are migration input only; `FlowCellFrontend/src-tauri/src/program_sources/migrate.rs` is their sole reader and preserves raw legacy Button metadata through an owned migration package.
+- Keep this file structural and current. Detailed behavior belongs in the focused docs and implementation.
 
 Repository Map
 --------------
-- `FlowCellFrontend/` is the active Tauri + React frontend.
-- `FlowCellFrontend/src-tauri/src/main.rs` owns native commands, path resolution, dialogs, script execution bridges, and file/layout persistence.
-- `FlowCellFrontend/src/lib/windowing.ts` owns managed window creation and sizing for popouts, fans, toolboxes, layout picker, settings, and utility windows.
-- `flowcellbackend/` is the canonical backend/runtime folder.
-- `flowcellbackend/FlowCellBackend.ahk` is the live AutoHotkey backend for hotkeys, direct script receiver, macro handling, and backend-run actions.
-- `flowcellbackend/FlowCellCommandBackend.ps1` is the PowerShell command host used by backend actions.
-- `flowcellbackend/helpers/Start-FlowCellFrontend.ps1` is the standard frontend stop/build/relaunch entrypoint.
-- `flowcellbackend/local/` is ignored durable runtime state: bindings, layouts, logs, private config, temp files, theme packages, and generated local data.
-- `FlowCell/local/` is legacy ignored local state only. It is not the active runtime source.
-- `Programs/` contains program-specific panels, Git Scripts, support scripts, generated panel items, and bridge payloads.
+- `FlowCellFrontend/src/button/` owns the Button schema, host, renderer, surfaces, editor, skins, state, runtime dispatch, geometry, popouts, fans, and Button windows.
+- `FlowCellFrontend/src/pages/main/MainButtonHost.tsx` integrates canonical Buttons into the main window.
+- `FlowCellFrontend/src-tauri/src/button_state.rs` owns revisioned, atomic Button-state commits and uninstall coordination.
+- `FlowCellFrontend/src-tauri/src/program_sources/` owns program manifest loading, source install/update, active records, execution, deletion, and one-time migration.
+- `FlowCellFrontend/src-tauri/src/main.rs` is composition only. Focused owners under `FlowCellFrontend/src-tauri/src/commands/` handle programs, bindings, macros, files/recycling, execution bridges, windows/topmost, layouts, organization, Illustrator utilities, slicers, and themes.
+- `flowcellbackend/` is the canonical AutoHotkey/PowerShell backend and launcher root.
+- `flowcellbackend/local/` is ignored durable runtime state: bindings, Button state, layouts, logs, profiles, command payloads, and private configuration.
+- `Programs/` contains manifest-defined program packages, tracked Git Scripts catalogs, ignored owned Local Scripts installs, active panel source records, and runner adapters.
+- `docs/buttons.md` is the Button owner/file map. `docs/repository-layout.md`, `docs/flowcell-program-registry.md`, `docs/flowcell-toolset-manifest.md`, and `docs/blender-scripts.md` define source/package contracts.
 
-Runtime Contracts
------------------
-- Program rail registration and shortcut bindings are read from `flowcellbackend/local/bindings.ini`.
-- Startup preflight repairs built-in program registrations from existing `Programs/<Program>` folders before frontend launch.
-- The default built-in program tabs are Illustrator, Windows, Blender, and Photoshop when their folders are present.
-- Program panel buttons execute through the shared script runner; Windows scripts run as generic Windows actions without forcing Explorer focus first.
-- Mutable user/runtime data must stay under `flowcellbackend/local/`, not in tracked source folders.
-- Deletions from user-facing flows must go to the Recycle Bin unless the user explicitly asks for permanent deletion.
-- Managed windows and layouts should restore from saved bounds without guessing monitor layout or silently changing window geometry.
+Canonical Contracts
+-------------------
+- `button-state.json` owns Button records, placements, surfaces, skins, popouts, fans, and settings. No parallel Button state file is authoritative.
+- Button-owned Local Scripts packages are the installed source of truth. Each source owner has `Programs/<Program>/<Program> Local Scripts/<ownerButtonId>/` plus `Programs/<Program>/Panels/<Panel>/<ownerButtonId>.flowcell-source.json`.
+- `<Program> Git Scripts` is a tracked catalog only. Add copies from the selected source into the owned Local Scripts package; Git changes do not silently modify an installed Button.
+- Add creates a fresh owner. Selecting a manifest package's declared entry file promotes the whole package; selecting a companion file is rejected. Buttons Editor Update replaces source while preserving owner/placement IDs, presentation, dependent popout/fan references, and the owner's `runtime/` state; role or tool-set slot changes require delete/re-add. Delete removes the complete owned Button graph, bindings, program runtime artifacts, active record, Local package, and runtime state. Cancel and native Editor close discard staged imports sequentially; failed cleanup keeps the Editor open and the staged owner tracked for retry.
+- Buttons Editor navigation resolves the exact occurrence through Program, Panel, Button, and Placement selectors; placement identity selects the Main page, Pop, or saved Fan surface while the workspace keeps every sibling Button visible and editable. A panel owner without a saved Fan offers `Fan — Default grid`; selecting it creates a draft setup from that panel's single-script Buttons and focuses the exact Fan owner placement. A tool-set owner offers `Main page` (its single owner placement) plus a `Pop — <name>` option that opens the tool-set popout surface in the workspace with every child Button visible; selecting it focuses the first child placement so each child can be selected and edited individually. Fan Builder exposes the current panel's single-script Buttons and Tool Set owners by canonical ID; an exact nonempty subset can create a new Fan or update the active Fan while retaining its setup ID, surviving placement/skin geometry, rules, animation, and surviving Tool Set anchors.
+- Every real program panel has one source-free `panel-owner` Button on that program's main panel-rail surface. It is the actual main-page panel selector, including Utility, and panel/program folder lifecycle creates, renames, or removes it; generic Button deletion cannot remove it.
+- A panel owner's Main placement and each saved Fan placement reuse that same Button identity while retaining placement-specific geometry and skin overrides. Fan Run preview uses the saved open, close, and pinned rules; the default starts on the real owner, hover opens and hover-out collapses, owner click pins, and the next pinned click collapses. Edit mode exposes the complete grid, and the Editor never creates an empty fan merely to offer a Fan choice.
+- A fan setup's `collapsedPanelOwnerBounds` desktop anchor is optional: it is absent until the user space-drags the collapsed fan window, which persists real physical-pixel bounds. The collapsed native frame is derived from the owner's applied visual envelope and current monitor DPI while preserving the owner's surface origin, so shadows and other overflow do not clip or shift the later expanded frame. Unanchored fans open centered over the launching window, and loading strips legacy `{left: 0, top: 0}` placeholder anchors.
+- The main-page Fan button prioritizes an exact nonempty panel selection (single-script Buttons plus Tool Set owners), labels itself `Fan (N)`, creates/reuses that member-set Fan, and opens it. With no selection it retains the saved/default workflow: no saved setup creates a persisted generic Fan, one opens directly, and several show the saved-setup menu. `ensureFanSetup` is idempotent per member set.
+- Panel/program rename preserves stable Button and presentation IDs while migrating canonical identities, active/install records, typed targets, source paths, catalog manifests, panels, fans, and popouts. Native folder/record/bindings changes and the canonical Button-state change compensate in reverse if their later step fails.
+- Panel/program deletion removes canonical owned source graphs and packages first, closes removed Button windows, then recycles the remaining folder.
+- User-facing deletions go to the Recycle Bin. Source transactions quarantine and roll back on failure.
+- `flowcell.program.json` defines program identity, folder roles, allowed source types, and runner. Registering a program never creates script Buttons.
+- `flowcell.script.json` describes a single-script catalog package. `flowcell.toolset.json` describes one owner, child slots/payloads, and optional tool-set layout/fields.
+- Normal execution resolves only a valid `.flowcell-source.json` record whose installed source is inside its matching owner Local Scripts package.
 
-Frontend Surfaces
------------------
-- Main page owns the program rails, panel buttons, Add Program flow, top-left actions, and main-window Space-drag behavior.
-- Popouts, panel fans, toolboxes, utility windows, settings, layout picker, Window Grid, Binds, Macro Lab, and Organization Setup are separate managed Tauri windows.
-- Layout save/load stores managed window bounds and startup settings; the main window can restore the last layout on startup.
-- Organization Setup is a managed React window backed by Windows support scripts and saved profile data under `flowcellbackend/local/Folder Tree Profiles` and `flowcellbackend/local/Folder Trees`.
-- Motion Settings remains a standalone rail-motion window reached from the main Motion control until the future Buttons page assumes that launcher.
+Button Host And Skin Contract
+-----------------------------
+- The functional host owns interaction state, keyboard/pointer behavior, accessibility, validation, dispatch, and lifecycle.
+- Skins are render-only and isolated. They cannot execute actions, mutate state, own bindings, or define source targets.
+- Every skin contains exactly one `[data-core]` and one `{{label}}` inside it.
+- The compiler lifts the core's inline `style` into a lowest-priority `[data-core]` rule so ordinary state declarations override that core; nested visuals remain literal and consume custom properties initialized in Base. Skin paste headers tolerate whitespace and case.
+- Placement `matchHitboxToSkin` defaults on, scales the complete authored skin root from its measured `[data-core]`, normalizes authored core offsets to the placement origin, and reconciles Editor geometry to the transformed core; turning it off retains core-only sizing. `allowStretching` defaults off, so editor drag and numeric width/height edits keep the current aspect ratio; enabling it permits independent axes, while Shift still temporarily locks them.
+- After label injection and host scaling, the transformed `[data-core]` is the Button hitbox for DOM, Editor selection/collision geometry, and transparent native-window hit testing. Normal Edit drag and resize sample the complete pointer path and stop at the furthest valid edge without reflowing the workspace with collision warnings. The separate undoable Reorder mode pulls the grabbed Button out of reflow so it follows the pointer at animation-frame speed, chooses a stable gap-free insertion slot with hysteresis, smoothly moves neighboring Buttons out of the way, and normalizes saved placement z-index; `Snap to top left corner` gaplessly compacts that saved order from surface origin without changing Button sizes. No compatibility rectangle is overlaid and authored skin source is never rewritten for sizing.
+- Placements may save a live `textSizeOverride`; null uses the skin's authored size, while `minimumFontSize` is only the lower bound used when text fitting shrinks a label. Inspector Label and Font size edits publish to attached native Pop/Fan draft windows; the Skin editor's Text Preview Bench is explicitly preview-only.
+- Visual overflow and active visual state are measured separately from the interactive core. Active hover/press/hold/play measurement may resize a transparent native envelope without changing the authored skin or `[data-core]` hit testing.
+- A mounted skin's shadow DOM is stable: it remounts only when the compiled skin identity (skin id + source fingerprint), label, or text-fit inputs change. Parent re-renders, re-cloned documents, and recreated callbacks never rebuild it (a rebuild restarts every skin animation), and placement resizes re-run text fit in place. Host pointer/keyboard listeners likewise stay attached across re-renders, and transparent Pop/Fan windows synthesize the `pointerleave` a cursor-ignoring window would otherwise never deliver.
+- Skin source, validation, compilation, and rendering live only under `FlowCellFrontend/src/button/skins/`; there is no separate skin registry.
 
-Blender And Program Bridges
+Program And Bridge Runtime
+--------------------------
+- Startup preflight reads `Programs/*/flowcell.program.json`, creates declared local roots, and synchronizes program registration into `flowcellbackend/local/bindings.ini`.
+- The resident AutoHotkey backend launches the Windows Temp Shots overlay directly, then starts the installed package's sibling PowerShell saver asynchronously; cancelling one snip does not block the next launch.
+- Each registered program selects its transport through `flowcell.program.json`; runner code may know that transport but never owns a pre-baked script or Button inventory.
+- Catalog manifests may name only the small registered core-action allowlist for utility services; those services become reachable only through an installed owner package and its validated capability/active identity.
+- Blender installs require a top-level `run_flowcell_action(context=None, data=None)`. Deployment generates an owner-scoped bridge action from the installed Local source.
+- Blender actions that remove or replace Blender data capture response metadata before invalidating the corresponding RNA references; Split strips Blender's generated `.###` suffix and names results `<source> 1` through `<source> N`.
+- Blender bridge/add-on deployment changes require reloading the FlowCell add-on or restarting Blender before runtime verification.
+- Tool-set child payloads merge manifest defaults, child defaults, and live Button field/behavior values; child slots are validated against the active record.
+
+Managed Windows And Layouts
 ---------------------------
-- Blender actions should route through `Programs/Blender` sources and support scripts, then into the installed FlowCell Blender add-on or action registry.
-- Blender bridge changes usually require reloading the FlowCell Blender add-on or restarting Blender.
-- Cycle Collection, Boolean, Alignment, Snapshot, Theme, Place Picture, and related Blender tools should keep their source-of-truth scripts in the Git Scripts/support-script path, not in generated local copies.
-- Illustrator bridge and layer tooling use `Programs/Illustrator` support scripts and store shared runtime state under `flowcellbackend/local`.
-- Windows utility scripts under `Programs/Windows/Windows Git Scripts` should write status/log/config data through `flowcellbackend/local`.
+- `FlowCellFrontend/src/button/windows/`, `FlowCellFrontend/src/lib/windowContext.ts`, `FlowCellFrontend/src/lib/layoutSnapshots.ts`, and `FlowCellFrontend/src/AppBase.tsx` own Button editor, popout, and fan window creation/routing/restore.
+- Layout restore and collapse/expand use saved physical-pixel managed-window bounds and canonical Button surface identities, preserving mixed-DPI size and owner anchors.
+- Pop and Fan setups save a `surface`, `hitbox`, or `visual` window-fit mode. Hitbox and visual modes crop to the union envelope and translate the canonical surface while moving the native frame by the inverse offset, so fitting never moves a Button on screen. The selected fit immediately drives the Editor's labeled window frame for all three modes; the frame mirrors transient hover/press/hold/play expansion for current visual overflow and glow allowance, then collapses on release/leave. `Open Pop` or `Open Fan` separately opens the real native window on the same live draft, while Save persists the fit; transient bounds are never persisted. An unsized Pop starts at one design pixel per logical desktop pixel, restored content scale is derived from the applied physical frame and its actual monitor DPI, and scaled skin measurements preserve skin-root and animated shadow/outline scale while normalizing ancestor window scale back into design units. Pop and Fan keep an invariant physical surface origin, serialize every native envelope change, cancel stale pending hover frames on leave, and change rendered crop translation only after the matching native frame applies. Before authored hover pixels can paint, the native window applies a conservative active envelope; native hover then remains on the placement-owned host rectangle, so glow, squish, rotation, or press animation cannot clip its first frame or shrink the pointer target at a top/left edge and trigger leave/re-enter flicker. Fan/tool-set expansion applies the full native frame before rendering expanded content, while collapse renders the owner against the still-expanded envelope before shrinking the native frame. In a live transparent window, hold Space and drag any Button to move the resting frame; the new resting bounds persist only after the native drag actually ends (the frontend polls the native primary mouse button via `is_primary_mouse_button_down` until release), so the dropped position survives hover-out instead of snapping back to a mid-drag snapshot. Pop corner resize first restores the resting envelope, preserves aspect/opposite corner, and persists physical bounds.
+- Layout snapshots are strict version 8 `FlowCellWindowLayout` documents and accept only Button editor, popout, and fan windows.
+- The frameless Buttons Editor window renders its own title bar (all load/error/ready states): drag the bar to move, double-click it to maximize/restore, with minimize, maximize/restore, and close controls. Close routes through the window's close-requested handler so staged-import cleanup still runs.
+- Other FlowCell utility windows remain managed Tauri windows but do not own a separate Button implementation.
+- `FlowCellFrontend/src-tauri/capabilities/default.json` must list every managed window label and every window/webview command the frontend calls, including both background-color grants for transparent Pop/Fan windows and the force-destroy grant used only after Editor cleanup; a missing grant surfaces as a runtime "not allowed" ACL error, and changes to it require a Tauri rebuild.
 
 Validation
 ----------
-- For frontend/Tauri changes, run the relevant frontend build before finishing. Prefer `flowcellbackend/helpers/Start-FlowCellFrontend.ps1 -ForceRestart` when the running app must be refreshed.
-- For backend AutoHotkey changes, validate `flowcellbackend/FlowCellBackend.ahk` with AutoHotkey v2 and restart the hidden backend.
-- For PowerShell support-script changes, parse touched `.ps1` files and run the narrow behavior check when possible.
-- For Blender bridge changes, verify both source scripts and any live/generated add-on copies that must be reloaded.
+- Frontend/Tauri changes: run the relevant frontend build; use `flowcellbackend/helpers/Start-FlowCellFrontend.ps1` with `-ForceRestart` when the running frontend must refresh.
+- Rust changes: run `cargo check` plus focused tests.
+- AutoHotkey changes: validate with AutoHotkey v2 and restart the hidden backend.
+- PowerShell changes: parse-check touched scripts and run the narrow behavior test when practical.
+- Blender source/bridge changes: compile-check Python where applicable and verify after add-on reload or Blender restart.
+- Documentation-only changes: validate headings, links/paths, and stale-term removal; no application build is required.
 
 Update Rules For This File
 --------------------------
-- Keep this file short and structural.
-- Add or change bullets only when ownership, runtime paths, major active surfaces, or direction changes.
-- Do not paste long UI behavior descriptions, incident timelines, implementation traces, or bug postmortems here.
-- One feature should usually get one concise bullet plus file/path references.
+- Update this file whenever FlowCell ownership, runtime paths, canonical state, or major architecture changes.
+- Keep it concise: one contract or owner per bullet, with focused docs carrying the details.
+- Do not add historical compatibility narratives, incident timelines, or per-feature implementation diaries.

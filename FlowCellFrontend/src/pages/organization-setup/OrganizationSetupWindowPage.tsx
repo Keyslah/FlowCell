@@ -764,7 +764,7 @@ export default function OrganizationSetupWindowPage() {
     try {
       await makeOrganizationProfileButton(name);
       setStatus(
-        `Made button "${name}" in the Windows Files panel. Reselect the Files panel to see it.`
+        `Made Button "${name}" in Windows / Files.`
       );
       setStatusTone("is-success");
     } catch (error) {

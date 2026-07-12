@@ -1,0 +1,43 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "skipLibCheck": true,
+    "rootDir": "src",
+    "outDir": "tests/.compiled-button-system",
+    "declaration": false,
+    "sourceMap": false,
+    "noEmit": false
+  },
+  "include": [
+    "src/button/types.ts",
+    "src/button/state/buttonDefaults.ts",
+    "src/button/state/ButtonStateRepository.ts",
+    "src/button/state/buttonStateValidation.ts",
+    "src/button/state/buttonDocumentOperations.ts",
+    "src/button/state/buttonDocumentScopeOperations.ts",
+    "src/button/state/frontendMacroButtonOperations.ts",
+    "src/button/state/organizationProfileButtonOperations.ts",
+    "src/button/state/panelOwnerButtonOperations.ts",
+    "src/button/state/sourceIdentity.ts",
+    "src/button/state/sourceUpdateOperations.ts",
+    "src/button/runtime/ButtonRuntimeAdapter.ts",
+    "src/button/geometry/buttonGeometry.ts",
+    "src/button/geometry/labelGrowth.ts",
+    "src/button/editor/buttonEditorSelection.ts",
+    "src/button/editor/buttonFanDisclosure.ts",
+    "src/button/editor/buttonMeasurementReconciliation.ts",
+    "src/button/editor/stagedInstallCleanup.ts",
+    "src/button/windows/buttonWindowGeometry.ts",
+    "src/button/text/textFit.ts",
+    "src/button/skins/buttonSkinFormat.ts",
+    "src/button/skins/defaultButtonSkin.ts",
+    "src/button/skins/cssSyntax.ts",
+    "src/button/skins/skinPasteParser.ts",
+    "src/button/skins/skinValidator.ts",
+    "src/button/skins/skinCompiler.ts"
+  ]
+}

@@ -1,0 +1,36 @@
+import type {
+  ButtonCoreMeasurement,
+  ButtonPlacement,
+  ButtonRecord
+} from "../types.js";
+
+export interface PendingMatchedMeasurement {
+  measurement: ButtonCoreMeasurement;
+  sourceWidth: number;
+  sourceHeight: number;
+  sourceAllowStretching: boolean;
+  sourceTextSizeOverride: number | null;
+  sourceSkinId: string;
+  sourceLabel: string;
+}
+
+export function shouldApplyMatchedButtonMeasurement(
+  placement: ButtonPlacement | undefined,
+  button: ButtonRecord | undefined,
+  source: PendingMatchedMeasurement
+): boolean {
+  return Boolean(
+    placement?.matchHitboxToSkin &&
+    button &&
+    placement.width === source.sourceWidth &&
+    placement.height === source.sourceHeight &&
+    placement.allowStretching === source.sourceAllowStretching &&
+    placement.textSizeOverride === source.sourceTextSizeOverride &&
+    (placement.skinOverrideId ?? button.defaultSkinId) === source.sourceSkinId &&
+    button.label === source.sourceLabel &&
+    (
+      Math.abs(placement.width - source.measurement.width) > 0.5 ||
+      Math.abs(placement.height - source.measurement.height) > 0.5
+    )
+  );
+}

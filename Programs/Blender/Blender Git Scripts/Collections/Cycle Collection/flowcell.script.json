@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "id": "blender.cycle-collection",
+  "label": "Cycle Collection",
+  "tooltip": "Use the selected object's collection and show one direct object at a time while selecting it.",
+  "program": "Blender",
+  "source": "cycle collection.py",
+  "events": {
+    "hoverEnter": {
+      "type": "blenderBridge",
+      "action": "cycle_collection_hover_save_visibility"
+    },
+    "hoverLeave": {
+      "type": "blenderBridge",
+      "action": "cycle_collection_hover_restore_visibility"
+    }
+  }
+}

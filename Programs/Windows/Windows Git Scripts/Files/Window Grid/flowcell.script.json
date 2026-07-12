@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.window-grid",
+  "label": "Window Grid",
+  "tooltip": "Open the managed grid of current FlowCell windows.",
+  "program": "Windows",
+  "source": "window_grid.ps1",
+  "executionTarget": {
+    "kind": "core-action",
+    "actionId": "open-window-grid"
+  }
+}

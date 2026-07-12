@@ -1,0 +1,165 @@
+{
+    "schemaVersion":  1,
+    "id":  "blender.alignment-tools",
+    "version":  "1.0.0",
+    "label":  "alignment tools",
+    "tooltip":  "Selected objects go to the active-object min, center, max, surface, and origin alignment.",
+    "kind":  "toolset",
+    "program":  "Blender",
+    "source":  "alignment tools.py",
+    "bridgeData":  {
+
+                   },
+    "children":  [
+                     {
+                         "slot":  "z_min",
+                         "label":  "Z Min",
+                         "tooltip":  "Align the active object to the minimum Z bound of the selection.",
+                         "payload":  {
+                                         "command":  "z_min",
+                                         "action":  "z_min"
+                                     }
+                     },
+                     {
+                         "slot":  "z_center",
+                         "label":  "Z Center",
+                         "tooltip":  "Align the active object to the center Z position of the selection.",
+                         "payload":  {
+                                         "command":  "z_center",
+                                         "action":  "z_center"
+                                     }
+                     },
+                     {
+                         "slot":  "z_max",
+                         "label":  "Z Max",
+                         "tooltip":  "Align the active object to the maximum Z bound of the selection.",
+                         "payload":  {
+                                         "command":  "z_max",
+                                         "action":  "z_max"
+                                     }
+                     },
+                     {
+                         "slot":  "z_surface",
+                         "label":  "Z Surface",
+                         "tooltip":  "Align the active object using the saved Z surface modifier.",
+                         "payload":  {
+                                         "command":  "z_surface",
+                                         "action":  "z_surface"
+                                     }
+                     },
+                     {
+                         "slot":  "z_geo",
+                         "label":  "Z Origin",
+                         "tooltip":  "Align the active object using the saved Z origin modifier.",
+                         "payload":  {
+                                         "command":  "z_geo",
+                                         "action":  "z_geo"
+                                     }
+                     },
+                     {
+                         "slot":  "y_min",
+                         "label":  "Y Min",
+                         "tooltip":  "Align the active object to the minimum Y bound of the selection.",
+                         "payload":  {
+                                         "command":  "y_min",
+                                         "action":  "y_min"
+                                     }
+                     },
+                     {
+                         "slot":  "y_center",
+                         "label":  "Y Center",
+                         "tooltip":  "Align the active object to the center Y position of the selection.",
+                         "payload":  {
+                                         "command":  "y_center",
+                                         "action":  "y_center"
+                                     }
+                     },
+                     {
+                         "slot":  "y_max",
+                         "label":  "Y Max",
+                         "tooltip":  "Align the active object to the maximum Y bound of the selection.",
+                         "payload":  {
+                                         "command":  "y_max",
+                                         "action":  "y_max"
+                                     }
+                     },
+                     {
+                         "slot":  "y_surface",
+                         "label":  "Y Surface",
+                         "tooltip":  "Align the active object using the saved Y surface modifier.",
+                         "payload":  {
+                                         "command":  "y_surface",
+                                         "action":  "y_surface"
+                                     }
+                     },
+                     {
+                         "slot":  "y_geo",
+                         "label":  "Y Origin",
+                         "tooltip":  "Align the active object using the saved Y origin modifier.",
+                         "payload":  {
+                                         "command":  "y_geo",
+                                         "action":  "y_geo"
+                                     }
+                     },
+                     {
+                         "slot":  "x_min",
+                         "label":  "X Min",
+                         "tooltip":  "Align the active object to the minimum X bound of the selection.",
+                         "payload":  {
+                                         "command":  "x_min",
+                                         "action":  "x_min"
+                                     }
+                     },
+                     {
+                         "slot":  "x_center",
+                         "label":  "X Center",
+                         "tooltip":  "Align the active object to the center X position of the selection.",
+                         "payload":  {
+                                         "command":  "x_center",
+                                         "action":  "x_center"
+                                     }
+                     },
+                     {
+                         "slot":  "x_max",
+                         "label":  "X Max",
+                         "tooltip":  "Align the active object to the maximum X bound of the selection.",
+                         "payload":  {
+                                         "command":  "x_max",
+                                         "action":  "x_max"
+                                     }
+                     },
+                     {
+                         "slot":  "x_surface",
+                         "label":  "X Surface",
+                         "tooltip":  "Align the active object using the saved X surface modifier.",
+                         "payload":  {
+                                         "command":  "x_surface",
+                                         "action":  "x_surface"
+                                     }
+                     },
+                     {
+                         "slot":  "x_geo",
+                         "label":  "X Origin",
+                         "tooltip":  "Align the active object using the saved X origin modifier.",
+                         "payload":  {
+                                         "command":  "x_geo",
+                                         "action":  "x_geo"
+                                     }
+                     },
+                     {
+                         "slot":  "center_everything",
+                         "label":  "Center Everything",
+                         "tooltip":  "Center the full selection across all supported axes.",
+                         "payload":  {
+                                         "command":  "center_everything",
+                                         "action":  "center_everything"
+                                     }
+                     }
+                 ],
+    "layout":  {
+                   "mode":  "grid",
+                   "columns":  4,
+                   "gap":  8,
+                   "padding":  8
+               }
+}

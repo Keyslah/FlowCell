@@ -15,6 +15,12 @@ Repository guardrails
 - When a FlowCell change requires a new build, automatically run that build before finishing the task.
 - Final summaries must state changed files, validation run, skipped validation reasons, and remaining risks.
 
+Optional Memtrace policy
+- Memtrace is explicit opt-in for FlowCell. Do not invoke any `memtrace-*` skill or MCP tool, run Memtrace Rail, start/index/repair Memtrace, or require Memtrace unless the user explicitly names Memtrace in the current request.
+- Requests for code discovery, scope, impact, history, architecture, debugging, or refactoring do not imply permission to use Memtrace. Default to current repo files, narrow `rg`, bounded reads, focused docs, fresh logs, and live runtime validation.
+- When the user explicitly asks for Memtrace, default to a read-only scope report and stop before editing unless the same request also asks for implementation. Verify that the index is current and confirm critical findings against current files or logs.
+- If Memtrace is unavailable or stale, say so plainly. Do not silently substitute ordinary file search and present it as Memtrace output.
+
 Command-output rules
 - Never use unbounded `cat`, `rg`, `find`, `ls -R`, `git diff`, or test/build output.
 - Use `head -c` / `tail -c` caps, or the PowerShell equivalent when needed.

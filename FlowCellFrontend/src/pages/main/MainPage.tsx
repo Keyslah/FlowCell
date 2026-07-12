@@ -1,10 +1,10 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
   useState,
-  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent
 } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -16,53 +16,25 @@ import {
 } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-import { ButtonHost } from "../../components/ButtonHost";
-import { HostSkinButton } from "../../components/HostSkinButton";
+import { CanonicalActionButton } from "../../button/CanonicalActionButton";
 import { ExactPageFrame } from "../../components/ExactPageFrame";
 import { RailSurface } from "../../components/RailSurface";
 import {
-  applyButtonLabelOverridesToPanelScriptRecords,
-  normalizeButtonLabelInput,
-  readButtonLabelOverrides,
-  writeButtonLabelOverrides
-} from "../../lib/buttonLabelOverrides";
-import { writePanelFanDiagnostics } from "../../lib/panelFanDiagnostics";
-import {
-  applyPanelButtonOrder,
-  getPanelButtonOrderStorageKey,
-  PANEL_BUTTON_ORDER_CHANGED_EVENT,
-  readPanelButtonOrder,
-  type PanelButtonOrderChangedPayload
-} from "../../lib/panelButtonOrder";
-import {
-  addPanelScripts,
   createPanelFolder,
   createProgramFolder,
   deletePanelFolder,
   deleteProgramFolder,
-  deletePanelScripts,
   loadLayoutSnapshot,
   listPanelFolders,
   listPanelScriptFiles,
   listProgramFolders,
   renamePanelFolder,
   renameProgramFolder,
-  runPanelScript,
-  runPanelButtonEvent,
   saveLayoutSnapshot,
   showOpenLayoutDialog,
   showSaveLayoutDialog,
-  updatePanelScriptDescription,
   type PanelScriptFileRecord
 } from "../../lib/programRails";
-import {
-  DEFAULT_SCRIPT_GROUP_POPOUT_TYPE,
-  SCRIPT_GROUP_POPOUT_TYPE_OPTIONS,
-  getScriptGroupPopoutTypeStorageKey,
-  readScriptGroupPopoutType,
-  writeScriptGroupPopoutType,
-  type ScriptGroupPopoutType
-} from "../../lib/scriptGroupPopoutSettings";
 import {
   readLastLayoutDirectory,
   readRegisteredLayoutWindow,
@@ -76,48 +48,73 @@ import {
   type StartupSettings
 } from "../../lib/startupSettings";
 import {
-  openMotionSettingsWindow,
-  openButtonReorderWindow,
-  openAlignmentToolboxWindow,
-  openBooleanToolboxWindow,
-  openDimensionsToolboxWindow,
-  openFlattenRevolveToolboxWindow,
   openBindsWindow,
-  openCodexUsagePopoutWindow,
-  openGenericToolboxWindow,
   openMacroLabWindow,
-  openOrganizationSetupWindow,
-  openPanelFanOptionsWindow,
-  openPanelFanWindow,
-  openRemeshToolboxWindow,
-  openRotateToolboxWindow,
-  openSmartAxisToolboxWindow,
-  openScriptGroupPopoutWindow,
-  openThemeToolboxWindow,
-  openTriPolyToolboxWindow,
   reloadCurrentHostWindow
-} from "../../lib/windowing";
-import { MACRO_PANEL_CHANGED_EVENT, runFrontendMacro } from "../../lib/macros";
+} from "../../lib/coreWindows";
+import {
+  closeButtonFanWindow,
+  closeButtonPopoutWindow,
+  openButtonEditorWindow,
+  openButtonFanWindow,
+  openButtonPopoutWindow
+} from "../../button/windows/buttonWindows";
+import {
+  loadButtonStateDocument,
+  saveButtonStateDocument
+} from "../../button/state/ButtonStateRepository";
+import {
+  publishButtonCommit,
+  subscribeButtonCommits
+} from "../../button/state/ButtonDraftBus";
+import { cloneButtonDocument } from "../../button/state/buttonDefaults";
+import {
+  ensureFanSetup,
+  ensureRegularPopout,
+  removeOwnedButtonGraph
+} from "../../button/state/buttonDocumentOperations";
+import {
+  reconcileProgramPanelOwners,
+  resolvePanelOwnerMainPlacement
+} from "../../button/state/panelOwnerButtonOperations";
+import {
+  removePanelButtonDocumentScope,
+  removeProgramButtonDocumentScope,
+  renamePanelButtonDocumentScope,
+  renameProgramButtonDocumentScope
+} from "../../button/state/buttonDocumentScopeOperations";
+import { executeButtonRecord } from "../../button/runtime/ButtonRuntimeAdapter";
+import type {
+  ButtonRecord as CanonicalButtonRecord,
+  ButtonSourceIdentity,
+  ButtonStateDocument,
+  ToolSetButtonPopoutUnit
+} from "../../button/types";
+import {
+  listFrontendPanelMacros,
+  MACRO_PANEL_CHANGED_EVENT,
+  runFrontendMacro
+} from "../../lib/macros";
 import {
   readMotionSettings,
   subscribeMotionSettings,
   type MotionSettings
 } from "../../lib/motionSettings";
 import { showOpenFolderDialog } from "../../lib/tauri";
-import { buildScriptGroupPopoutWindowSize } from "../../lib/scriptGroupPopoutTemplates";
-import { DEFAULT_FLOW_IMPORTED_SKIN } from "../../lib/theme";
 import mainBackground from "../../assets/backgrounds/main-background.jpeg";
-import type { FlowCellBounds, LayoutSnapshot, LayoutSnapshotWindow, StyleGroup } from "../../types";
+import type { FlowCellBounds, LayoutSnapshot, LayoutSnapshotWindow } from "../../types";
 import {
   buildButtonsSurfaceButtons,
-  buttonsSurfacePopTypeControlGeometry,
   buildPanelRailButtons,
+  buildPanelRailOwnerEntries,
   buildProgramRailButtons,
   page,
+  panelRailOwnerSurfaceBounds,
   rails,
   staticButtons,
   type ButtonRecord
 } from "./mainLayout";
+import { MainButtonHost, MainControlHost } from "./MainButtonHost";
 import "./mainPage.css";
 
 type ButtonContextMenuState = {
@@ -126,21 +123,14 @@ type ButtonContextMenuState = {
   y: number;
 };
 
-type ScriptRunErrorState = {
-  title: string;
-  detail: string;
+type FanSetupMenuState = {
+  left: number;
+  top: number;
 };
 
 type MacroPanelChangedPayload = {
   programName?: string;
   panelName?: string;
-};
-
-type ActiveHoverButtonEvent = {
-  buttonId: string;
-  programName: string;
-  panelName: string;
-  fileName: string;
 };
 
 const BUTTON_CONTEXT_MENU_WIDTH = 168;
@@ -150,18 +140,224 @@ const PANEL_SCRIPT_DOUBLE_CLICK_MS = 220;
 // Version 7 marks bounds stored in physical desktop pixels, captured exactly
 // as the window sits on its monitor and restored verbatim (position first,
 // then size — see applyWindowBounds / windowing's applyWindowPlacement).
-const LAYOUT_SNAPSHOT_VERSION = 7;
-const CONTEXT_MENU_STYLE_GROUP: StyleGroup = {
-  id: "main-page-context-menu-style",
-  index: 0,
-  name: "Context Menu Imported Button",
-  skinId: "imported-skin",
-  importedSkinId: DEFAULT_FLOW_IMPORTED_SKIN.id,
-  accent: "#d2b28a"
-};
+const LAYOUT_SNAPSHOT_VERSION = 8;
 
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+type ButtonStateMutationResult = boolean | {
+  changed: boolean;
+  uninstallOwnerButtonIds?: readonly string[];
+};
+
+async function commitButtonStateMutationWithRetry(
+  mutate: (document: ButtonStateDocument) => ButtonStateMutationResult
+): Promise<ButtonStateDocument> {
+  let current = await loadButtonStateDocument();
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const draft = cloneButtonDocument(current);
+    const result = mutate(draft);
+    const changed = typeof result === "boolean" ? result : result.changed;
+    const uninstallOwnerButtonIds = typeof result === "boolean"
+      ? []
+      : result.uninstallOwnerButtonIds ?? [];
+    if (!changed) return current;
+    let saved: ButtonStateDocument;
+    try {
+      saved = await saveButtonStateDocument(
+        draft,
+        current.revision,
+        uninstallOwnerButtonIds
+      );
+    } catch (error) {
+      const latest = await loadButtonStateDocument();
+      const verificationDraft = cloneButtonDocument(latest);
+      const verificationResult = mutate(verificationDraft);
+      const mutationAlreadyApplied = typeof verificationResult === "boolean"
+        ? !verificationResult
+        : !verificationResult.changed;
+      if (mutationAlreadyApplied) {
+        return latest;
+      }
+      if (attempt === 0 && latest.revision !== current.revision) {
+        current = latest;
+        continue;
+      }
+      throw error;
+    }
+    try {
+      await publishButtonCommit(saved);
+    } catch (error) {
+      console.error(
+        "Canonical Button state was saved, but its cross-window commit event failed.",
+        error
+      );
+    }
+    return saved;
+  }
+  return current;
+}
+
+async function closePanelOwnerFanWindows(ownerButtonIds: readonly string[]): Promise<void> {
+  await Promise.all(
+    [...new Set(ownerButtonIds)].map((ownerButtonId) => closeButtonFanWindow(ownerButtonId))
+  );
+}
+
+async function closeRemovedButtonWindows(
+  previous: ButtonStateDocument,
+  next: ButtonStateDocument
+): Promise<void> {
+  const operations: Promise<void>[] = [];
+  for (const unit of Object.values(previous.popoutUnits)) {
+    if (next.popoutUnits[unit.id]) continue;
+    operations.push(closeButtonPopoutWindow({
+      popoutUnitId: unit.id,
+      ownerButtonId: unit.kind === "tool-set" ? unit.ownerButtonId : undefined
+    }));
+  }
+  const removedFanOwnerIds = Object.values(previous.fanSetups)
+    .filter((setup) => !next.fanSetups[setup.id])
+    .map((setup) => setup.panelOwnerButtonId);
+  operations.push(...[...new Set(removedFanOwnerIds)].map(closeButtonFanWindow));
+  await Promise.allSettled(operations);
+}
+
+function sourceIdentityMatchesFolderScope(
+  identity: ButtonSourceIdentity | null,
+  programName: string,
+  panelName?: string
+): boolean {
+  return Boolean(
+    identity &&
+    areFolderNamesEqual(identity.displayProgramName, programName) &&
+    (panelName === undefined || areFolderNamesEqual(identity.displayPanelName, panelName))
+  );
+}
+
+type CanonicalRenameScope = {
+  programName: string;
+  panelName?: string;
+};
+
+function canonicalButtonMatchesRenameScope(
+  button: CanonicalButtonRecord,
+  scope: CanonicalRenameScope
+): boolean {
+  if (
+    button.role !== "tool-set-child" &&
+    sourceIdentityMatchesFolderScope(
+      button.sourceIdentity,
+      scope.programName,
+      scope.panelName
+    )
+  ) {
+    return true;
+  }
+  return Boolean(
+    button.role === "panel-owner" &&
+    typeof button.metadata.programName === "string" &&
+    areFolderNamesEqual(button.metadata.programName, scope.programName) &&
+    (scope.panelName === undefined || (
+      typeof button.metadata.panelName === "string" &&
+      areFolderNamesEqual(button.metadata.panelName, scope.panelName)
+    ))
+  );
+}
+
+function collectCanonicalRenameButtonIds(
+  document: ButtonStateDocument,
+  scope: CanonicalRenameScope
+): string[] {
+  return Object.values(document.buttons)
+    .filter((button) => canonicalButtonMatchesRenameScope(button, scope))
+    .map((button) => button.id)
+    .sort();
+}
+
+function canonicalRenameWasPersisted(
+  document: ButtonStateDocument,
+  buttonIds: readonly string[],
+  previousScope: CanonicalRenameScope,
+  nextScope: CanonicalRenameScope
+): boolean {
+  const trackedButtonsMigratedOrRemoved = buttonIds.every((buttonId) => {
+    const button = document.buttons[buttonId];
+    return !button || canonicalButtonMatchesRenameScope(button, nextScope);
+  });
+  const previousScopeRemains = Object.values(document.buttons).some((button) =>
+    canonicalButtonMatchesRenameScope(button, previousScope)
+  );
+  return trackedButtonsMigratedOrRemoved && !previousScopeRemains;
+}
+
+async function recoverCanonicalRenameOrRollback(
+  error: unknown,
+  args: {
+    affectedButtonIds: readonly string[];
+    previousScope: CanonicalRenameScope;
+    nextScope: CanonicalRenameScope;
+    rollback: () => Promise<unknown>;
+    label: string;
+  }
+): Promise<ButtonStateDocument> {
+  let latest: ButtonStateDocument;
+  try {
+    latest = await loadButtonStateDocument();
+  } catch (verificationError) {
+    throw new Error(
+      `${formatErrorMessage(error)}\n\nThe canonical Button state could not be verified, so the ${args.label} rename was retained to avoid an unsafe rollback. Verification also failed: ${formatErrorMessage(verificationError)}`
+    );
+  }
+  if (canonicalRenameWasPersisted(
+    latest,
+    args.affectedButtonIds,
+    args.previousScope,
+    args.nextScope
+  )) {
+    return latest;
+  }
+  try {
+    await args.rollback();
+  } catch (rollbackError) {
+    throw new Error(
+      `${formatErrorMessage(error)}\n\nThe canonical Button update failed and the ${args.label} rename could not be rolled back: ${formatErrorMessage(rollbackError)}`
+    );
+  }
+  throw error;
+}
+
+async function closeRenamedButtonWindows(
+  document: ButtonStateDocument,
+  programName: string,
+  panelName?: string
+): Promise<void> {
+  const operations: Promise<void>[] = [];
+  for (const unit of Object.values(document.popoutUnits)) {
+    const belongsToScope = unit.kind === "regular"
+      ? unit.memberSourceIdentities.some((identity) =>
+          sourceIdentityMatchesFolderScope(identity, programName, panelName)
+        )
+      : sourceIdentityMatchesFolderScope(
+          document.buttons[unit.ownerButtonId]?.sourceIdentity ?? null,
+          programName,
+          panelName
+        );
+    if (!belongsToScope) continue;
+    operations.push(closeButtonPopoutWindow({
+      popoutUnitId: unit.id,
+      ownerButtonId: unit.kind === "tool-set" ? unit.ownerButtonId : undefined
+    }));
+  }
+  const fanOwnerIds = Object.values(document.fanSetups)
+    .filter((setup) =>
+      areFolderNamesEqual(setup.programName, programName) &&
+      (panelName === undefined || areFolderNamesEqual(setup.panelName, panelName))
+    )
+    .map((setup) => setup.panelOwnerButtonId);
+  operations.push(...[...new Set(fanOwnerIds)].map(closeButtonFanWindow));
+  await Promise.allSettled(operations);
 }
 
 function inferProgramNameFromExePath(exePath: string): string {
@@ -241,203 +437,40 @@ function serializeButtonLayoutRect(button: ButtonRecord | null | undefined) {
   };
 }
 
-function isRotateToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  return record?.kind === "rotate_toolset" || record?.kind === "illustrator_rotate_toolset";
+function isToolSetRecord(record: PanelScriptFileRecord | null | undefined): boolean {
+  return Boolean(record && (record.children?.length ?? 0) > 0);
 }
 
-function isAlignmentToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  return record?.kind === "alignment_toolset";
+async function listPanelButtonRecords(
+  programName: string,
+  panelName: string
+): Promise<PanelScriptFileRecord[]> {
+  const [sources, macros] = await Promise.all([
+    listPanelScriptFiles(programName, panelName),
+    listFrontendPanelMacros(programName, panelName)
+  ]);
+  return [
+    ...sources,
+    ...macros.map((macro) => ({
+      fileName: `macro:${macro.id}`,
+      label: macro.label,
+      tooltip: `Run the saved '${macro.label}' macro.`,
+      kind: "macro",
+      macroId: macro.id
+    }))
+  ].sort((left, right) => left.label.localeCompare(right.label));
 }
 
-function isIllustratorAlignmentToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  return record?.kind === "illustrator_alignment_toolset";
+function canonicalButtonSourceKey(programName: string, panelName: string, fileName: string): string {
+  return [programName, panelName, fileName]
+    .map((value) => value.trim().normalize("NFKC").toLocaleLowerCase("en-US"))
+    .join("\u001f");
 }
 
-function isBooleanToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  if (!record) {
-    return false;
-  }
-
-  if (record.kind === "boolean_toolset") {
-    return true;
-  }
-
-  const normalizedBridgeAction = record.bridgeAction?.trim().toLowerCase() ?? "";
-  if (normalizedBridgeAction === "flowcell_custom_boolean") {
-    return true;
-  }
-
-  const slots = new Set((record.children ?? []).map((child) => child.slot.trim().toLowerCase()));
-  const hasBooleanSignature =
-    slots.has("operation_intersect") &&
-    slots.has("operation_union") &&
-    slots.has("operation_difference") &&
-    slots.has("toggle_self_intersection") &&
-    slots.has("toggle_hole_tolerant") &&
-    slots.has("toggle_hide_cutter") &&
-    slots.has("toggle_backup_active") &&
-    slots.has("run_boolean");
-  if (hasBooleanSignature) {
-    return true;
-  }
-
-  const normalizedLabel = record.label.trim().toLowerCase();
-  const normalizedFileName = record.fileName.trim().toLowerCase();
-  return (
-    (record.children?.length ?? 0) > 0 &&
-    (normalizedLabel === "boolean" ||
-      normalizedFileName === "boolean.flowcell-panel-item.json" ||
-      normalizedFileName.startsWith("boolean."))
-  );
-}
-
-function isRemeshToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  if (!record) {
-    return false;
-  }
-
-  if (record.kind === "remesh_toolset") {
-    return true;
-  }
-
-  const normalizedBridgeAction = record.bridgeAction?.trim().toLowerCase() ?? "";
-  if (normalizedBridgeAction === "flowcell_custom_remesh") {
-    return true;
-  }
-
-  const slots = new Set((record.children ?? []).map((child) => child.slot.trim().toLowerCase()));
-  return (
-    slots.has("mode_voxel") &&
-    slots.has("mode_smooth") &&
-    slots.has("mode_sharp") &&
-    slots.has("mode_blocks") &&
-    slots.has("create_update_remesh") &&
-    slots.has("apply_remesh")
-  );
-}
-
-function isTriPolyToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  if (!record) {
-    return false;
-  }
-
-  if (record.kind === "tri_poly_toolset") {
-    return true;
-  }
-
-  const normalizedBridgeAction = record.bridgeAction?.trim().toLowerCase() ?? "";
-  if (normalizedBridgeAction === "flowcell_custom_tri_poly") {
-    return true;
-  }
-
-  const slots = new Set((record.children ?? []).map((child) => child.slot.trim().toLowerCase()));
-  return (
-    slots.has("triangle_equilateral") &&
-    slots.has("triangle_isosceles") &&
-    slots.has("triangle_50") &&
-    slots.has("triangle_right") &&
-    slots.has("triangle_scalene") &&
-    slots.has("polygon_create")
-  );
-}
-
-function isDimensionsToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  if (!record) {
-    return false;
-  }
-
-  if (record.kind === "dimensions_toolset") {
-    return true;
-  }
-
-  const normalizedBridgeAction = record.bridgeAction?.trim().toLowerCase() ?? "";
-  if (normalizedBridgeAction === "flowcell_custom_xyz_dimensions") {
-    return true;
-  }
-
-  const slots = new Set((record.children ?? []).map((child) => child.slot.trim().toLowerCase()));
-  return slots.has("dimension_x") && slots.has("dimension_y") && slots.has("dimension_z");
-}
-
-function isFlattenRevolveToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  if (!record) {
-    return false;
-  }
-
-  const normalizedBridgeAction = record.bridgeAction?.trim().toLowerCase() ?? "";
-  if (normalizedBridgeAction === "flowcell_custom_flatten_revolve") {
-    return true;
-  }
-
-  const slots = new Set((record.children ?? []).map((child) => child.slot.trim().toLowerCase()));
-  return slots.has("flatten_profile") && slots.has("generate_revolve");
-}
-
-function isSmartAxisToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  return record?.kind === "smart_axis_toolset";
-}
-
-function isThemeToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  if (!record) {
-    return false;
-  }
-
-  const normalizedBridgeAction = record.bridgeAction?.trim().toLowerCase() ?? "";
-  if (normalizedBridgeAction === "flowcell_custom_theme") {
-    return true;
-  }
-
-  const slots = new Set((record.children ?? []).map((child) => child.slot.trim().toLowerCase()));
-  const hasThemeSignature =
-    slots.has("browse_theme") &&
-    slots.has("absorb_theme") &&
-    slots.has("apply_theme") &&
-    slots.has("apply_hdri") &&
-    slots.has("apply_world_strength");
-  if (hasThemeSignature) {
-    return true;
-  }
-
-  const normalizedLabel = record.label.trim().toLowerCase();
-  const normalizedFileName = record.fileName.trim().toLowerCase();
-  return (
-    (record.children?.length ?? 0) > 0 &&
-    (normalizedLabel === "theme" ||
-      normalizedFileName === "theme.flowcell-panel-item.json" ||
-      normalizedFileName.startsWith("theme."))
-  );
-}
-
-function isGenericToolboxRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  return Boolean(
-    record &&
-      (record.children?.length ?? 0) > 0 &&
-      !isFlattenRevolveToolboxRecord(record) &&
-      !isRotateToolboxRecord(record) &&
-      !isAlignmentToolboxRecord(record) &&
-      !isBooleanToolboxRecord(record) &&
-      !isRemeshToolboxRecord(record) &&
-      !isTriPolyToolboxRecord(record) &&
-      !isDimensionsToolboxRecord(record) &&
-      !isThemeToolboxRecord(record) &&
-      !isSmartAxisToolboxRecord(record)
-  );
-}
-
-function isToolPopoutRecord(record: PanelScriptFileRecord | null | undefined): boolean {
-  return (
-    isFlattenRevolveToolboxRecord(record) ||
-    isRotateToolboxRecord(record) ||
-    isAlignmentToolboxRecord(record) ||
-    isIllustratorAlignmentToolboxRecord(record) ||
-    isBooleanToolboxRecord(record) ||
-    isRemeshToolboxRecord(record) ||
-    isTriPolyToolboxRecord(record) ||
-    isDimensionsToolboxRecord(record) ||
-    isSmartAxisToolboxRecord(record) ||
-    isThemeToolboxRecord(record) ||
-    isGenericToolboxRecord(record)
-  );
+function canonicalProgramPanelKey(programName: string, panelName: string): string {
+  return [programName, panelName]
+    .map((value) => value.trim().normalize("NFKC").toLocaleLowerCase("en-US"))
+    .join("\u001f");
 }
 
 function isPanelScriptButtonAction(actionId: string): boolean {
@@ -468,18 +501,6 @@ function areFolderNamesEqual(
     typeof left === "string" &&
     typeof right === "string" &&
     left.localeCompare(right, undefined, { sensitivity: "accent" }) === 0
-  );
-}
-
-function isCodexUsageLauncher(
-  programName: string,
-  panelName: string,
-  fileName: string
-): boolean {
-  return (
-    areFolderNamesEqual(programName, "Windows") &&
-    areFolderNamesEqual(panelName, "Utility") &&
-    fileName.trim().localeCompare("codex_usage.vbs", undefined, { sensitivity: "accent" }) === 0
   );
 }
 
@@ -560,22 +581,17 @@ async function applyWindowBounds(
 export default function MainPage() {
   const topLeftActionGroupRef = useRef<HTMLDivElement | null>(null);
   const layoutActionPendingRef = useRef(false);
-  const activeHoverButtonEventsRef = useRef<Map<string, ActiveHoverButtonEvent>>(new Map());
   const pendingPanelScriptActionTimersRef = useRef<Record<string, number>>({});
   const preferredPanelSelectionRef = useRef<string | null>(null);
   const preferredSelectedPanelScriptFileNamesRef = useRef<string[] | null>(null);
-  const [labelOverrides, setLabelOverrides] = useState(() => readButtonLabelOverrides());
   const [contextMenu, setContextMenu] = useState<ButtonContextMenuState | null>(null);
+  const [fanSetupMenu, setFanSetupMenu] = useState<FanSetupMenuState | null>(null);
   const [programNames, setProgramNames] = useState<string[]>([]);
   const [selectedProgramName, setSelectedProgramName] = useState<string | null>(null);
   const [panelNames, setPanelNames] = useState<string[]>([]);
   const [selectedPanelName, setSelectedPanelName] = useState<string | null>(null);
   const [panelScripts, setPanelScripts] = useState<PanelScriptFileRecord[]>([]);
-  const [panelButtonOrder, setPanelButtonOrder] = useState<string[]>([]);
   const [selectedPanelScriptFileNames, setSelectedPanelScriptFileNames] = useState<string[]>([]);
-  const [scriptRunError, setScriptRunError] = useState<ScriptRunErrorState | null>(null);
-  const [selectedScriptGroupPopoutType, setSelectedScriptGroupPopoutType] =
-    useState<ScriptGroupPopoutType>(DEFAULT_SCRIPT_GROUP_POPOUT_TYPE);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [startupSettings, setStartupSettings] = useState<StartupSettings>(() =>
     readStartupSettings()
@@ -586,23 +602,35 @@ export default function MainPage() {
     readMotionSettings()
   );
   const [hoveredRailId, setHoveredRailId] = useState<string | null>(null);
+  const [buttonDocument, setButtonDocument] = useState<ButtonStateDocument | null>(null);
+  const commitButtonDocumentMutation = useCallback(async (
+    mutate: (document: ButtonStateDocument) => ButtonStateMutationResult
+  ) => {
+    const saved = await commitButtonStateMutationWithRetry(mutate);
+    setButtonDocument(saved);
+    return saved;
+  }, []);
 
   useEffect(() => {
+    let disposed = false;
+    void loadButtonStateDocument()
+      .then((document) => {
+        if (!disposed) setButtonDocument(document);
+      })
+      .catch((error) => console.error("Failed to load canonical Button state.", error));
+    const unlistenPromise = subscribeButtonCommits(async (document) => {
+      if (disposed) return;
+      setButtonDocument(document);
+      if (selectedProgramName && selectedPanelName) {
+        const records = await listPanelButtonRecords(selectedProgramName, selectedPanelName);
+        if (!disposed) setPanelScripts(records);
+      }
+    });
     return () => {
-      const activeEvents = Array.from(activeHoverButtonEventsRef.current.values());
-      activeHoverButtonEventsRef.current.clear();
-      activeEvents.forEach((event) => {
-        void runPanelButtonEvent(
-          event.programName,
-          event.panelName,
-          event.fileName,
-          "hoverLeave"
-        ).catch((error) => {
-          console.warn("Failed to run button hoverLeave cleanup.", error);
-        });
-      });
+      disposed = true;
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
     };
-  }, []);
+  }, [selectedPanelName, selectedProgramName]);
 
   // Motion settings are edited in their own window and applied live here.
   useEffect(() => subscribeMotionSettings(setMotionSettings), []);
@@ -628,7 +656,6 @@ export default function MainPage() {
       }
     });
     setHoveredRailId((current) => (current === nextRailId ? current : nextRailId));
-    syncButtonHoverFromPointerEvent(event);
   };
 
   // Frameless window: hold Space then drag to move it.
@@ -691,84 +718,6 @@ export default function MainPage() {
     };
   }, []);
 
-  useEffect(() => {
-    writeButtonLabelOverrides(labelOverrides);
-  }, [labelOverrides]);
-
-  useEffect(() => {
-    if (!selectedProgramName || !selectedPanelName) {
-      setSelectedScriptGroupPopoutType(DEFAULT_SCRIPT_GROUP_POPOUT_TYPE);
-      return;
-    }
-
-    const storageKey = getScriptGroupPopoutTypeStorageKey(selectedProgramName, selectedPanelName);
-    const syncPopoutType = () => {
-      setSelectedScriptGroupPopoutType(
-        readScriptGroupPopoutType(selectedProgramName, selectedPanelName)
-      );
-    };
-
-    syncPopoutType();
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key && event.key !== storageKey) {
-        return;
-      }
-
-      syncPopoutType();
-    };
-
-    window.addEventListener("storage", handleStorage);
-    return () => {
-      window.removeEventListener("storage", handleStorage);
-    };
-  }, [selectedPanelName, selectedProgramName]);
-
-  useEffect(() => {
-    if (!selectedProgramName || !selectedPanelName) {
-      setPanelButtonOrder([]);
-      return;
-    }
-
-    const storageKey = getPanelButtonOrderStorageKey(
-      selectedProgramName,
-      selectedPanelName
-    );
-    const syncButtonOrder = () => {
-      setPanelButtonOrder(readPanelButtonOrder(selectedProgramName, selectedPanelName));
-    };
-
-    syncButtonOrder();
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key && event.key !== storageKey) {
-        return;
-      }
-
-      syncButtonOrder();
-    };
-
-    const unlistenPromise = listen<PanelButtonOrderChangedPayload>(
-      PANEL_BUTTON_ORDER_CHANGED_EVENT,
-      (event) => {
-        if (
-          event.payload?.programName !== selectedProgramName ||
-          event.payload?.panelName !== selectedPanelName
-        ) {
-          return;
-        }
-
-        syncButtonOrder();
-      }
-    );
-
-    window.addEventListener("storage", handleStorage);
-    return () => {
-      window.removeEventListener("storage", handleStorage);
-      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
-    };
-  }, [selectedPanelName, selectedProgramName]);
-
   useEffect(
     () => () => {
       Object.values(pendingPanelScriptActionTimersRef.current).forEach((timerId) => {
@@ -828,6 +777,21 @@ export default function MainPage() {
           return;
         }
 
+        let removedOwnerButtonIds: string[] = [];
+        await commitButtonDocumentMutation((document) => {
+          const result = reconcileProgramPanelOwners(document, {
+            programName: selectedProgramName,
+            panels: buildPanelRailOwnerEntries(nextPanelNames),
+            surfaceBounds: panelRailOwnerSurfaceBounds
+          });
+          removedOwnerButtonIds = result.removedOwnerButtonIds;
+          return result.changed;
+        });
+        await closePanelOwnerFanWindows(removedOwnerButtonIds);
+        if (cancelled) {
+          return;
+        }
+
         setPanelNames(nextPanelNames);
         setSelectedPanelName((current) => {
           const resolved = resolveFolderSelection(
@@ -844,15 +808,20 @@ export default function MainPage() {
           return;
         }
 
-        console.error(`Failed to load panel folders for ${selectedProgramName}.`, error);
-        window.alert(`Panel folders failed to load.\n\n${formatErrorMessage(error)}`);
+        console.error(
+          `Failed to load panel folders or reconcile panel Buttons for ${selectedProgramName}.`,
+          error
+        );
+        window.alert(
+          `Panel folders or their canonical Buttons failed to load.\n\n${formatErrorMessage(error)}`
+        );
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [selectedProgramName]);
+  }, [commitButtonDocumentMutation, selectedProgramName]);
 
   useEffect(() => {
     if (!selectedProgramName || !selectedPanelName) {
@@ -865,7 +834,7 @@ export default function MainPage() {
 
     void (async () => {
       try {
-        const nextPanelScripts = await listPanelScriptFiles(selectedProgramName, selectedPanelName);
+        const nextPanelScripts = await listPanelButtonRecords(selectedProgramName, selectedPanelName);
         if (cancelled) {
           return;
         }
@@ -920,7 +889,7 @@ export default function MainPage() {
 
         void (async () => {
           try {
-            const nextPanelScripts = await listPanelScriptFiles(
+            const nextPanelScripts = await listPanelButtonRecords(
               selectedProgramName,
               selectedPanelName
             );
@@ -946,22 +915,148 @@ export default function MainPage() {
   );
 
   const orderedPanelScripts = useMemo(
-    () => applyPanelButtonOrder(panelScripts, panelButtonOrder),
-    [panelButtonOrder, panelScripts]
+    () => {
+      if (!buttonDocument || !selectedProgramName || !selectedPanelName) return panelScripts;
+      const placementRank = (record: PanelScriptFileRecord) => {
+        const button = Object.values(buttonDocument.buttons).find((candidate) => {
+          const identity = candidate.sourceIdentity;
+          return Boolean(identity && canonicalButtonSourceKey(
+            identity.displayProgramName,
+            identity.displayPanelName,
+            identity.displayFileName
+          ) === canonicalButtonSourceKey(selectedProgramName, selectedPanelName, record.fileName));
+        });
+        const placement = button && Object.values(buttonDocument.placements)
+          .filter((candidate) => candidate.buttonId === button.id)
+          .find((candidate) => {
+            const kind = buttonDocument.surfaces[candidate.surfaceId]?.kind;
+            return kind === "main" || kind === "panel";
+          });
+        return placement
+          ? [placement.y, placement.x, placement.zIndex]
+          : [Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER];
+      };
+      return [...panelScripts].sort((left, right) => {
+        const leftRank = placementRank(left);
+        const rightRank = placementRank(right);
+        return leftRank[0] - rightRank[0] || leftRank[1] - rightRank[1] ||
+          leftRank[2] - rightRank[2] || left.label.localeCompare(right.label);
+      });
+    },
+    [buttonDocument, panelScripts, selectedPanelName, selectedProgramName]
+  );
+  const canonicalButtonsBySource = useMemo(() => {
+    const entries = new Map<string, CanonicalButtonRecord>();
+    if (!buttonDocument) return entries;
+    for (const button of Object.values(buttonDocument.buttons)) {
+      const identity = button.sourceIdentity;
+      if (!identity || button.role === "tool-set-child") continue;
+      entries.set(
+        canonicalButtonSourceKey(
+          identity.displayProgramName,
+          identity.displayPanelName,
+          identity.displayFileName
+        ),
+        button
+      );
+    }
+    return entries;
+  }, [buttonDocument]);
+  const canonicalPresentationsBySource = useMemo(() => {
+    const entries = new Map<string, {
+      button: CanonicalButtonRecord;
+      placement: ButtonStateDocument["placements"][string];
+      skin: ButtonStateDocument["skins"][string];
+    }>();
+    if (!buttonDocument) return entries;
+    for (const button of Object.values(buttonDocument.buttons)) {
+      const identity = button.sourceIdentity;
+      if (!identity || button.role === "tool-set-child") continue;
+      const placement = Object.values(buttonDocument.placements)
+        .filter((candidate) => candidate.buttonId === button.id)
+        .sort((left, right) => {
+          const rank = (placementId: string) => {
+            const kind = buttonDocument.surfaces[buttonDocument.placements[placementId]?.surfaceId]?.kind;
+            return kind === "panel" ? 0 : kind === "main" ? 1 : 2;
+          };
+          return rank(left.id) - rank(right.id) || left.id.localeCompare(right.id);
+        })[0];
+      if (!placement) continue;
+      const skin = buttonDocument.skins[placement.skinOverrideId ?? button.defaultSkinId];
+      if (!skin) continue;
+      entries.set(
+        canonicalButtonSourceKey(
+          identity.displayProgramName,
+          identity.displayPanelName,
+          identity.displayFileName
+        ),
+        { button, placement, skin }
+      );
+    }
+    return entries;
+  }, [buttonDocument]);
+  const canonicalPanelOwnerPresentations = useMemo(() => {
+    const byPanel = new Map<string, {
+      button: CanonicalButtonRecord;
+      placement: ButtonStateDocument["placements"][string];
+      skin: ButtonStateDocument["skins"][string];
+    }>();
+    const byButtonId = new Map<string, {
+      button: CanonicalButtonRecord;
+      placement: ButtonStateDocument["placements"][string];
+      skin: ButtonStateDocument["skins"][string];
+    }>();
+    if (!buttonDocument) return { byPanel, byButtonId };
+    for (const button of Object.values(buttonDocument.buttons)) {
+      if (button.role !== "panel-owner") continue;
+      const programName = typeof button.metadata.programName === "string"
+        ? button.metadata.programName.trim()
+        : "";
+      const panelName = typeof button.metadata.panelName === "string"
+        ? button.metadata.panelName.trim()
+        : "";
+      if (!programName || !panelName) continue;
+      const placement = resolvePanelOwnerMainPlacement(
+        buttonDocument,
+        programName,
+        panelName
+      );
+      if (!placement || placement.buttonId !== button.id) continue;
+      const skin = buttonDocument.skins[placement.skinOverrideId ?? button.defaultSkinId];
+      if (!skin) continue;
+      const presentation = { button, placement, skin };
+      byPanel.set(canonicalProgramPanelKey(programName, panelName), presentation);
+      byButtonId.set(button.id, presentation);
+    }
+    return { byPanel, byButtonId };
+  }, [buttonDocument]);
+  const resolvedPanelScripts = useMemo(
+    () => {
+      if (!selectedProgramName || !selectedPanelName) return [];
+      return orderedPanelScripts.flatMap((record) => {
+        const presentation = canonicalPresentationsBySource.get(
+          canonicalButtonSourceKey(selectedProgramName, selectedPanelName, record.fileName)
+        );
+        if (!presentation) return [];
+        return [{
+          ...record,
+          canonicalButtonId: presentation.button.id,
+          label: presentation.button.label,
+          tooltip: presentation.button.tooltip,
+          canonicalPlacement: {
+            x: presentation.placement.x,
+            y: presentation.placement.y,
+            width: presentation.placement.width,
+            height: presentation.placement.height
+          }
+        }];
+      });
+    },
+    [canonicalPresentationsBySource, orderedPanelScripts, selectedPanelName, selectedProgramName]
   );
   const selectablePanelScriptFileNames = useMemo(
-    () => orderedPanelScripts.map((record) => record.fileName),
-    [orderedPanelScripts]
-  );
-  const resolvedPanelScripts = useMemo(
-    () =>
-      applyButtonLabelOverridesToPanelScriptRecords(
-        orderedPanelScripts,
-        labelOverrides,
-        selectedProgramName,
-        selectedPanelName
-      ),
-    [labelOverrides, orderedPanelScripts, selectedPanelName, selectedProgramName]
+    () => resolvedPanelScripts.map((record) => record.fileName),
+    [resolvedPanelScripts]
   );
   const resolvedPanelScriptsByFileName = useMemo(
     () => new Map(resolvedPanelScripts.map((record) => [record.fileName, record])),
@@ -986,38 +1081,34 @@ export default function MainPage() {
       resolvedPanelScripts.filter((record) => selectedPanelScriptFileNameSet.has(record.fileName)),
     [resolvedPanelScripts, selectedPanelScriptFileNameSet]
   );
-  const selectedToolPopoutRecords = useMemo(
-    () => selectedPanelScriptRecords.filter((record) => isToolPopoutRecord(record)),
+  const selectedToolSetRecords = useMemo(
+    () => selectedPanelScriptRecords.filter((record) => isToolSetRecord(record)),
     [selectedPanelScriptRecords]
   );
-  const selectedCodexUsageLauncherRecords = useMemo(
-    () =>
-      selectedPanelScriptRecords.filter(
-        (record) =>
-          selectedProgramName &&
-          selectedPanelName &&
-          isCodexUsageLauncher(selectedProgramName, selectedPanelName, record.fileName)
-      ),
-    [selectedPanelName, selectedPanelScriptRecords, selectedProgramName]
-  );
   const selectedRegularPanelScriptRecords = useMemo(
-    () =>
-      selectedPanelScriptRecords.filter(
-        (record) =>
-          !isToolPopoutRecord(record) &&
-          !(
-            selectedProgramName &&
-            selectedPanelName &&
-            isCodexUsageLauncher(selectedProgramName, selectedPanelName, record.fileName)
-          )
-      ),
-    [selectedPanelName, selectedPanelScriptRecords, selectedProgramName]
+    () => selectedPanelScriptRecords.filter((record) => !isToolSetRecord(record)),
+    [selectedPanelScriptRecords]
   );
   const popSelectionDisabled = selectedPanelScriptRecords.length === 0;
-  const fanSelectionDisabled = selectedPanelScriptRecords.length === 0;
+  const fanMenuDisabled = !selectedProgramName || !selectedPanelName;
   const fanOptionsDisabled = !selectedProgramName || !selectedPanelName;
   const orderButtonDisabled =
-    !selectedProgramName || !selectedPanelName || orderedPanelScripts.length <= 1;
+    !selectedProgramName || !selectedPanelName || resolvedPanelScripts.length <= 1;
+  const panelFanSetups = useMemo(
+    () =>
+      Object.values(buttonDocument?.fanSetups ?? {})
+        .filter(
+          (setup) =>
+            areFolderNamesEqual(setup.programName, selectedProgramName) &&
+            areFolderNamesEqual(setup.panelName, selectedPanelName)
+        )
+        .sort((left, right) => left.name.localeCompare(right.name)),
+    [buttonDocument, selectedPanelName, selectedProgramName]
+  );
+
+  useEffect(() => {
+    setFanSetupMenu(null);
+  }, [selectedPanelName, selectedProgramName]);
 
   useEffect(() => {
     const nextSelectableScriptFileNames = new Set(selectablePanelScriptFileNames);
@@ -1028,8 +1119,35 @@ export default function MainPage() {
   }, [selectablePanelScriptFileNames]);
 
   const panelRailButtons = useMemo(
-    () => buildPanelRailButtons(panelNames, selectedPanelName),
-    [panelNames, selectedPanelName]
+    () => buildPanelRailButtons(panelNames, selectedPanelName).map((button) => {
+      if (
+        button.actionId !== "select-panel-folder" ||
+        !button.folderName ||
+        !selectedProgramName
+      ) {
+        return button;
+      }
+      const presentation = canonicalPanelOwnerPresentations.byPanel.get(
+        canonicalProgramPanelKey(selectedProgramName, button.folderName)
+      );
+      if (!presentation) return button;
+      return {
+        ...button,
+        id: presentation.button.id,
+        x: presentation.placement.x,
+        y: presentation.placement.y,
+        width: presentation.placement.width,
+        height: presentation.placement.height,
+        label: presentation.button.label,
+        tooltip: presentation.button.tooltip
+      };
+    }),
+    [
+      canonicalPanelOwnerPresentations,
+      panelNames,
+      selectedPanelName,
+      selectedProgramName
+    ]
   );
 
   const baseButtons = useMemo(
@@ -1038,17 +1156,16 @@ export default function MainPage() {
       ...programRailButtons,
       ...panelRailButtons,
       ...buildButtonsSurfaceButtons(
-        selectedProgramName,
-        selectedPanelName,
-        orderedPanelScripts,
+        resolvedPanelScripts,
         {
           selectedScriptFileNames: selectedPanelScriptFileNames,
+          fanSelectionCount: selectedPanelScriptRecords.length,
           deleteSelectionDisabled: deleteSelectedPanelScriptsDisabled,
           selectAllDisabled: toggleAllPanelScriptsDisabled,
           allSelectableScriptsSelected: allSelectablePanelScriptsSelected,
           orderDisabled: orderButtonDisabled,
           popDisabled: popSelectionDisabled,
-          fanDisabled: fanSelectionDisabled,
+          fanDisabled: fanMenuDisabled,
           fanOptionsDisabled
         }
       )
@@ -1057,7 +1174,7 @@ export default function MainPage() {
       allSelectablePanelScriptsSelected,
       deleteSelectedPanelScriptsDisabled,
       fanOptionsDisabled,
-      fanSelectionDisabled,
+      fanMenuDisabled,
       orderButtonDisabled,
       panelRailButtons,
       popSelectionDisabled,
@@ -1065,28 +1182,13 @@ export default function MainPage() {
       selectedPanelName,
       selectedProgramName,
       selectedPanelScriptFileNames,
-      orderedPanelScripts,
+      selectedPanelScriptRecords.length,
+      resolvedPanelScripts,
       toggleAllPanelScriptsDisabled
     ]
   );
 
-  const baseButtonsById = useMemo(
-    () => new Map(baseButtons.map((button) => [button.id, button])),
-    [baseButtons]
-  );
-  const allButtons = useMemo(
-    () =>
-      baseButtons.map((button) => {
-        const overrideLabel = labelOverrides[button.id];
-        return overrideLabel && overrideLabel !== button.label
-          ? {
-              ...button,
-              label: overrideLabel
-            }
-          : button;
-      }),
-    [baseButtons, labelOverrides]
-  );
+  const allButtons = baseButtons;
   const topLeftActionButtons = useMemo(
     () => allButtons.filter((button) => button.groupId === "top-left-actions"),
     [allButtons]
@@ -1253,7 +1355,7 @@ export default function MainPage() {
 
   const handleButtonContextMenu = (
     button: ButtonRecord,
-    event: ReactMouseEvent<HTMLElement>
+    event: MouseEvent
   ) => {
     const isPanelScriptButton =
       isPanelScriptButtonAction(button.actionId) && Boolean(button.scriptFileName);
@@ -1294,42 +1396,6 @@ export default function MainPage() {
 
     window.clearTimeout(timerId);
     delete pendingPanelScriptActionTimersRef.current[fileName];
-  };
-
-  const handleRunPanelScript = async (fileName: string) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      setScriptRunError({
-        title: "Script could not be run.",
-        detail: "Select a program and panel before running a script."
-      });
-      return;
-    }
-
-    if (isCodexUsageLauncher(selectedProgramName, selectedPanelName, fileName)) {
-      try {
-        await openCodexUsagePopoutWindow({
-          programName: selectedProgramName,
-          panelName: selectedPanelName
-        });
-      } catch (error) {
-        console.error("Failed to open Codex usage popout.", error);
-        window.alert(`Pop window could not be opened.\n\n${formatErrorMessage(error)}`);
-      }
-      return;
-    }
-
-    try {
-      setScriptRunError(null);
-      // Success needs no on-screen confirmation — the slicer/app coming to the
-      // front with the model is the confirmation. Only failures are surfaced.
-      await runPanelScript(selectedProgramName, selectedPanelName, fileName);
-    } catch (error) {
-      console.error(`Failed to run panel script for ${selectedProgramName}.`, error);
-      setScriptRunError({
-        title: "Script could not be run.",
-        detail: formatErrorMessage(error)
-      });
-    }
   };
 
   const handleRunPanelMacro = async (macroId: string) => {
@@ -1375,31 +1441,21 @@ export default function MainPage() {
       }
 
       let bounds =
-        registeredWindow.kind === "panel-fan" && isValidFlowCellBounds(registeredWindow.snapshotBounds)
+        registeredWindow.kind === "button-fan" &&
+        isValidFlowCellBounds(registeredWindow.snapshotBounds)
           ? registeredWindow.snapshotBounds
           : await captureWindowBounds(windowHandle);
       if (!isValidFlowCellBounds(bounds)) {
         continue;
       }
-      if (
-        registeredWindow.kind === "script-group-popout" &&
-        (registeredWindow.selectedFileNames?.length ?? 0) === 1
-      ) {
-        const singleButtonSize = buildScriptGroupPopoutWindowSize("single", 1);
-        bounds = {
-          ...bounds,
-          Width: singleButtonSize.width,
-          Height: singleButtonSize.height
-        };
-      }
-
       managedWindows.push({
         Kind: registeredWindow.kind,
         ProgramName: registeredWindow.programName,
         PanelName: registeredWindow.panelName,
-        FileName: registeredWindow.fileName,
-        Label: registeredWindow.label,
-        SelectedFileNames: registeredWindow.selectedFileNames,
+        ButtonPopoutUnitId: registeredWindow.buttonPopoutUnitId,
+        ButtonFanSetupId: registeredWindow.buttonFanSetupId,
+        ButtonOwnerId: registeredWindow.buttonOwnerId,
+        ButtonDisplayMode: registeredWindow.buttonDisplayMode,
         Bounds: bounds
       });
     }
@@ -1460,7 +1516,7 @@ export default function MainPage() {
         setPanelScripts([]);
         setSelectedPanelScriptFileNames([]);
       } else {
-        nextPanelScripts = await listPanelScriptFiles(nextProgramName, nextPanelName);
+        nextPanelScripts = await listPanelButtonRecords(nextProgramName, nextPanelName);
         setPanelScripts(nextPanelScripts);
         const nextSelectableFileNames = new Set(
           nextPanelScripts.map((record) => record.fileName)
@@ -1479,270 +1535,39 @@ export default function MainPage() {
       }
 
       switch (windowEntry.Kind) {
-        case "flatten-revolve-toolbox":
+        case "button-editor":
+          await openButtonEditorWindow({
+            programName: windowEntry.ProgramName,
+            panelName: windowEntry.PanelName,
+            bounds: windowEntry.Bounds
+          });
+          break;
+        case "button-popout":
+          if (windowEntry.ProgramName && windowEntry.ButtonPopoutUnitId) {
+            await openButtonPopoutWindow({
+              programName: windowEntry.ProgramName,
+              panelName: windowEntry.PanelName,
+              popoutUnitId: windowEntry.ButtonPopoutUnitId,
+              ownerButtonId: windowEntry.ButtonOwnerId,
+              displayMode: windowEntry.ButtonDisplayMode,
+              bounds: windowEntry.Bounds
+            });
+          }
+          break;
+        case "button-fan":
           if (
             windowEntry.ProgramName &&
             windowEntry.PanelName &&
-            windowEntry.FileName
+            windowEntry.ButtonFanSetupId &&
+            windowEntry.ButtonOwnerId
           ) {
-            await openFlattenRevolveToolboxWindow({
+            await openButtonFanWindow({
               programName: windowEntry.ProgramName,
               panelName: windowEntry.PanelName,
-              fileName: windowEntry.FileName,
-              label: windowEntry.Label ?? windowEntry.FileName,
-              bounds: windowEntry.Bounds
+              fanSetupId: windowEntry.ButtonFanSetupId,
+              panelOwnerButtonId: windowEntry.ButtonOwnerId,
+              collapsedBounds: windowEntry.Bounds
             });
-          }
-          break;
-        case "generic-toolbox":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.FileName
-          ) {
-            await openGenericToolboxWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              fileName: windowEntry.FileName,
-              label: windowEntry.Label ?? windowEntry.FileName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "theme-toolbox":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.FileName
-          ) {
-            await openThemeToolboxWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              fileName: windowEntry.FileName,
-              label: windowEntry.Label ?? windowEntry.FileName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "rotate-toolbox":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.FileName
-          ) {
-            await openRotateToolboxWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              fileName: windowEntry.FileName,
-              label: windowEntry.Label ?? windowEntry.FileName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "alignment-toolbox":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.FileName
-          ) {
-            await openAlignmentToolboxWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              fileName: windowEntry.FileName,
-              label: windowEntry.Label ?? windowEntry.FileName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "boolean-toolbox":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.FileName
-          ) {
-            await openBooleanToolboxWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              fileName: windowEntry.FileName,
-              label: windowEntry.Label ?? windowEntry.FileName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "remesh-toolbox":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.FileName
-          ) {
-            await openRemeshToolboxWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              fileName: windowEntry.FileName,
-              label: windowEntry.Label ?? windowEntry.FileName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "tri-poly-toolbox":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.FileName
-          ) {
-            await openTriPolyToolboxWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              fileName: windowEntry.FileName,
-              label: windowEntry.Label ?? windowEntry.FileName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "dimensions-toolbox":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.FileName
-          ) {
-            await openDimensionsToolboxWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              fileName: windowEntry.FileName,
-              label: windowEntry.Label ?? windowEntry.FileName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "smart-axis-toolbox":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.FileName
-          ) {
-            await openSmartAxisToolboxWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              fileName: windowEntry.FileName,
-              label: windowEntry.Label ?? windowEntry.FileName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "panel-fan":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.SelectedFileNames &&
-            windowEntry.SelectedFileNames.length > 0
-          ) {
-            await openPanelFanWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              selectedFileNames: windowEntry.SelectedFileNames,
-              label: windowEntry.Label ?? windowEntry.PanelName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "panel-fan-options":
-          if (windowEntry.ProgramName && windowEntry.PanelName) {
-            await openPanelFanOptionsWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "codex-usage-popout":
-          if (windowEntry.ProgramName && windowEntry.PanelName) {
-            await openCodexUsagePopoutWindow({
-              programName: windowEntry.ProgramName,
-              panelName: windowEntry.PanelName,
-              bounds: windowEntry.Bounds
-            });
-          }
-          break;
-        case "script-group-popout":
-          if (
-            windowEntry.ProgramName &&
-            windowEntry.PanelName &&
-            windowEntry.SelectedFileNames &&
-            windowEntry.SelectedFileNames.length > 0
-          ) {
-            const availableScripts = applyButtonLabelOverridesToPanelScriptRecords(
-              nextProgramName === windowEntry.ProgramName &&
-                nextPanelName === windowEntry.PanelName
-                ? nextPanelScripts
-                : await listPanelScriptFiles(windowEntry.ProgramName, windowEntry.PanelName),
-              labelOverrides,
-              windowEntry.ProgramName,
-              windowEntry.PanelName
-            );
-            const selectedScripts = windowEntry.SelectedFileNames.map((fileName) => {
-              const matchedRecord =
-                availableScripts.find((record) => record.fileName === fileName) ?? null;
-              if (
-                isCodexUsageLauncher(
-                  windowEntry.ProgramName ?? "",
-                  windowEntry.PanelName ?? "",
-                  fileName
-                )
-              ) {
-                return null;
-              }
-              return matchedRecord && !isToolPopoutRecord(matchedRecord)
-                ? {
-                    fileName: matchedRecord.fileName,
-                    label: matchedRecord.label,
-                    tooltip: matchedRecord.tooltip,
-                    events: matchedRecord.events
-                  }
-                : null;
-            }).filter(
-              (
-                record
-              ): record is {
-                fileName: string;
-                label: string;
-                tooltip: string | undefined;
-                events: PanelScriptFileRecord["events"];
-              } =>
-                Boolean(record)
-            );
-
-            if (selectedScripts.length > 0) {
-              const popoutType = readScriptGroupPopoutType(
-                windowEntry.ProgramName,
-                windowEntry.PanelName
-              );
-              await openScriptGroupPopoutWindow({
-                programName: windowEntry.ProgramName,
-                panelName: windowEntry.PanelName,
-                scripts: selectedScripts,
-                popoutType,
-                label:
-                  windowEntry.Label ??
-                  (selectedScripts.length === 1
-                    ? selectedScripts[0].label
-                    : `${selectedScripts.length} Buttons`),
-                bounds: windowEntry.Bounds
-              });
-            } else if (
-              windowEntry.SelectedFileNames.some((fileName) =>
-                isCodexUsageLauncher(
-                  windowEntry.ProgramName ?? "",
-                  windowEntry.PanelName ?? "",
-                  fileName
-                )
-              )
-            ) {
-              await openCodexUsagePopoutWindow({
-                programName: windowEntry.ProgramName,
-                panelName: windowEntry.PanelName,
-                bounds: windowEntry.Bounds
-              });
-            }
           }
           break;
       }
@@ -1823,6 +1648,7 @@ export default function MainPage() {
               writeLastLayoutPath(lastLayoutPath);
             }
           } catch (error) {
+            writeLastLayoutPath(null);
             console.error("Failed to load last layout on startup.", error);
           }
         }
@@ -1843,200 +1669,47 @@ export default function MainPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleOpenRotateToolbox = async (record: PanelScriptFileRecord) => {
+  const handleOpenToolSet = async (record: PanelScriptFileRecord) => {
     if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the rotate tool.");
-      return;
+      throw new Error("Select a program and panel before opening a tool set.");
     }
-
-    await openRotateToolboxWindow({
+    const document = buttonDocument ?? await loadButtonStateDocument();
+    if (!buttonDocument) setButtonDocument(document);
+    const owner = canonicalButtonsBySource.get(
+      canonicalButtonSourceKey(selectedProgramName, selectedPanelName, record.fileName)
+    ) ?? Object.values(document.buttons).find((button) => {
+      const identity = button.sourceIdentity;
+      return Boolean(
+        identity &&
+        canonicalButtonSourceKey(
+          identity.displayProgramName,
+          identity.displayPanelName,
+          identity.displayFileName
+        ) === canonicalButtonSourceKey(selectedProgramName, selectedPanelName, record.fileName)
+      );
+    });
+    if (!owner || owner.role !== "tool-set-owner") {
+      throw new Error(`Canonical tool-set owner was not found for '${record.label}'.`);
+    }
+    const unit = Object.values(document.popoutUnits).find(
+      (candidate) => candidate.kind === "tool-set" && candidate.ownerButtonId === owner.id
+    );
+    if (!unit) throw new Error(`Tool-set popout '${record.label}' has no canonical popout unit.`);
+    const bounds = unit.desktopBounds
+      ? {
+          Left: unit.desktopBounds.left,
+          Top: unit.desktopBounds.top,
+          Width: unit.desktopBounds.width,
+          Height: unit.desktopBounds.height
+        }
+      : undefined;
+    await openButtonPopoutWindow({
       programName: selectedProgramName,
       panelName: selectedPanelName,
-      fileName: record.fileName,
-      label: record.label
+      popoutUnitId: unit.id,
+      ownerButtonId: owner.id,
+      bounds
     });
-  };
-
-  const handleOpenAlignmentToolbox = async (record: PanelScriptFileRecord) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the alignment tool.");
-      return;
-    }
-
-    await openAlignmentToolboxWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      fileName: record.fileName,
-      label: record.label
-    });
-  };
-
-  const handleOpenBooleanToolbox = async (record: PanelScriptFileRecord) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the Boolean tool.");
-      return;
-    }
-
-    await openBooleanToolboxWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      fileName: record.fileName,
-      label: record.label
-    });
-  };
-
-  const handleOpenRemeshToolbox = async (record: PanelScriptFileRecord) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the Remesh tool.");
-      return;
-    }
-
-    await openRemeshToolboxWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      fileName: record.fileName,
-      label: record.label
-    });
-  };
-
-  const handleOpenTriPolyToolbox = async (record: PanelScriptFileRecord) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the Tri & Poly tool.");
-      return;
-    }
-
-    await openTriPolyToolboxWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      fileName: record.fileName,
-      label: record.label
-    });
-  };
-
-  const handleOpenDimensionsToolbox = async (record: PanelScriptFileRecord) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the XYZ Dimensions tool.");
-      return;
-    }
-
-    await openDimensionsToolboxWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      fileName: record.fileName,
-      label: record.label
-    });
-  };
-
-  const handleOpenFlattenRevolveToolbox = async (record: PanelScriptFileRecord) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the flatten revolve tool.");
-      return;
-    }
-
-    await openFlattenRevolveToolboxWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      fileName: record.fileName,
-      label: record.label
-    });
-  };
-
-  const handleOpenSmartAxisToolbox = async (record: PanelScriptFileRecord) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the Smart Axis tool.");
-      return;
-    }
-
-    await openSmartAxisToolboxWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      fileName: record.fileName,
-      label: record.label
-    });
-  };
-
-  const handleOpenThemeToolbox = async (record: PanelScriptFileRecord) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the theme tool.");
-      return;
-    }
-
-    await openThemeToolboxWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      fileName: record.fileName,
-      label: record.label
-    });
-  };
-
-  const handleOpenGenericToolbox = async (record: PanelScriptFileRecord) => {
-    if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the tool set.");
-      return;
-    }
-
-    await openGenericToolboxWindow({
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      fileName: record.fileName,
-      label: record.label
-    });
-  };
-
-  const handleOpenToolPopout = async (record: PanelScriptFileRecord) => {
-    if (isFlattenRevolveToolboxRecord(record)) {
-      await handleOpenFlattenRevolveToolbox(record);
-      return;
-    }
-
-    if (isRotateToolboxRecord(record)) {
-      await handleOpenRotateToolbox(record);
-      return;
-    }
-
-    if (isAlignmentToolboxRecord(record)) {
-      await handleOpenAlignmentToolbox(record);
-      return;
-    }
-
-    if (isIllustratorAlignmentToolboxRecord(record)) {
-      await handleOpenAlignmentToolbox(record);
-      return;
-    }
-
-    if (isBooleanToolboxRecord(record)) {
-      await handleOpenBooleanToolbox(record);
-      return;
-    }
-
-    if (isRemeshToolboxRecord(record)) {
-      await handleOpenRemeshToolbox(record);
-      return;
-    }
-
-    if (isTriPolyToolboxRecord(record)) {
-      await handleOpenTriPolyToolbox(record);
-      return;
-    }
-
-    if (isDimensionsToolboxRecord(record)) {
-      await handleOpenDimensionsToolbox(record);
-      return;
-    }
-
-    if (isSmartAxisToolboxRecord(record)) {
-      await handleOpenSmartAxisToolbox(record);
-      return;
-    }
-
-    if (isThemeToolboxRecord(record)) {
-      await handleOpenThemeToolbox(record);
-      return;
-    }
-
-    if (isGenericToolboxRecord(record)) {
-      await handleOpenGenericToolbox(record);
-    }
   };
 
   const handlePerformPanelScriptPrimaryAction = async (
@@ -2045,21 +1718,41 @@ export default function MainPage() {
   ) => {
     const matchedRecord =
       record ?? resolvedPanelScriptsByFileName.get(fileName) ?? null;
-    if (fileName.trim().toLowerCase() === "setup_organization.ps1") {
-      await openOrganizationSetupWindow();
-      return;
-    }
     if (matchedRecord?.kind?.trim().toLowerCase() === "macro") {
       await handleRunPanelMacro(matchedRecord.macroId ?? "");
       return;
     }
 
-    if (matchedRecord && isToolPopoutRecord(matchedRecord)) {
-      await handleOpenToolPopout(matchedRecord);
+    if (matchedRecord && isToolSetRecord(matchedRecord)) {
+      await handleOpenToolSet(matchedRecord);
       return;
     }
 
-    await handleRunPanelScript(fileName);
+    if (!selectedProgramName || !selectedPanelName) {
+      throw new Error("Select a program and panel before running a Button.");
+    }
+    let canonical = canonicalButtonsBySource.get(
+      canonicalButtonSourceKey(selectedProgramName, selectedPanelName, fileName)
+    );
+    if (!canonical) {
+      const document = buttonDocument ?? await loadButtonStateDocument();
+      if (!buttonDocument) setButtonDocument(document);
+      canonical = Object.values(document.buttons).find((button) => {
+        const identity = button.sourceIdentity;
+        return Boolean(
+          identity &&
+          canonicalButtonSourceKey(
+            identity.displayProgramName,
+            identity.displayPanelName,
+            identity.displayFileName
+          ) === canonicalButtonSourceKey(selectedProgramName, selectedPanelName, fileName)
+        );
+      });
+    }
+    if (!canonical) {
+      throw new Error(`Installed source '${fileName}' has no canonical Button record.`);
+    }
+    await executeButtonRecord(canonical, "click");
   };
 
   const queuePanelScriptSelectionToggle = (fileName: string) => {
@@ -2089,42 +1782,47 @@ export default function MainPage() {
 
     const confirmMessage =
       normalizedFileNames.length === 1
-        ? "Delete the selected button? Its backing file will be moved to the Recycle Bin."
-        : `Delete ${normalizedFileNames.length} selected buttons? Their backing files will be moved to the Recycle Bin.`;
+        ? "Delete the selected Button and its owned Local Scripts package?"
+        : `Delete ${normalizedFileNames.length} selected Buttons and their owned Local Scripts packages?`;
     if (!window.confirm(confirmMessage)) {
       return false;
     }
 
     try {
-      const nextPanelScripts = await deletePanelScripts(
-        selectedProgramName,
-        selectedPanelName,
-        normalizedFileNames
+      const currentDocument = buttonDocument ?? await loadButtonStateDocument();
+      const nextDocument = cloneButtonDocument(currentDocument);
+      const uninstallOwnerIds = new Set<string>();
+      for (const fileName of normalizedFileNames) {
+        const key = canonicalButtonSourceKey(selectedProgramName, selectedPanelName, fileName);
+        const root = Object.values(nextDocument.buttons).find((button) => {
+          const identity = button.sourceIdentity;
+          return Boolean(
+            identity &&
+            button.role !== "tool-set-child" &&
+            canonicalButtonSourceKey(
+              identity.displayProgramName,
+              identity.displayPanelName,
+              identity.displayFileName
+            ) === key
+          );
+        });
+        if (!root) throw new Error(`Canonical Button owner was not found for '${fileName}'.`);
+        const removed = removeOwnedButtonGraph(nextDocument, root.id);
+        removed.uninstallOwnerButtonIds.forEach((ownerId) => uninstallOwnerIds.add(ownerId));
+      }
+      const saved = await saveButtonStateDocument(
+        nextDocument,
+        currentDocument.revision,
+        [...uninstallOwnerIds]
       );
+      setButtonDocument(saved);
+      await publishButtonCommit(saved);
+      const nextPanelScripts = await listPanelButtonRecords(selectedProgramName, selectedPanelName);
       const deletedFileNameSet = new Set(normalizedFileNames);
-      const deletedButtonIds = new Set(
-        baseButtons
-          .filter(
-            (button) =>
-              isPanelScriptButtonAction(button.actionId) &&
-              button.scriptFileName &&
-              deletedFileNameSet.has(button.scriptFileName)
-          )
-          .map((button) => button.id)
-      );
       setPanelScripts(nextPanelScripts);
       setSelectedPanelScriptFileNames((current) =>
         current.filter((fileName) => !deletedFileNameSet.has(fileName))
       );
-      if (deletedButtonIds.size > 0) {
-        setLabelOverrides((current) => {
-          const next = { ...current };
-          deletedButtonIds.forEach((buttonId) => {
-            delete next[buttonId];
-          });
-          return next;
-        });
-      }
       return true;
     } catch (error) {
       console.error(`Failed to delete panel scripts for ${selectedProgramName}.`, error);
@@ -2192,65 +1890,33 @@ export default function MainPage() {
       return;
     }
 
-    const matchedRecord = resolvedPanelScriptsByFileName.get(scriptFileName) ?? null;
-    const currentDescription =
-      matchedRecord?.tooltip?.trim() || contextMenuButton.tooltip?.trim() || "";
     closeContextMenu();
-
-    const requestedDescription = window.prompt(
-      "Enter the new hover description.",
-      currentDescription
+    const owner = canonicalButtonsBySource.get(
+      canonicalButtonSourceKey(selectedProgramName, selectedPanelName, scriptFileName)
     );
-    if (requestedDescription === null) {
-      return;
-    }
-
-    try {
-      const nextPanelScripts = await updatePanelScriptDescription(
-        selectedProgramName,
-        selectedPanelName,
-        scriptFileName,
-        requestedDescription
-      );
-      setPanelScripts(nextPanelScripts);
-    } catch (error) {
-      console.error(
-        `Failed to update panel script description for ${selectedProgramName}/${selectedPanelName}.`,
-        error
-      );
-      window.alert(`Button description could not be updated.\n\n${formatErrorMessage(error)}`);
-    }
+    await openButtonEditorWindow({
+      programName: selectedProgramName,
+      panelName: selectedPanelName,
+      buttonId: owner?.id
+    });
   };
 
-  const handleRenameContextMenuButton = () => {
+  const handleRenameContextMenuButton = async () => {
     if (!contextMenuButton || !isPanelScriptButtonAction(contextMenuButton.actionId)) {
       closeContextMenu();
       return;
     }
 
-    const currentButton = contextMenuButton;
-    const baseButton = baseButtonsById.get(currentButton.id) ?? currentButton;
+    const scriptFileName = contextMenuButton.scriptFileName;
     closeContextMenu();
-
-    const requestedLabel = window.prompt("Enter the new button name.", currentButton.label);
-    if (requestedLabel === null) {
-      return;
-    }
-
-    const normalizedLabel = normalizeButtonLabelInput(requestedLabel);
-    if (!normalizedLabel) {
-      window.alert("Button name cannot be empty.");
-      return;
-    }
-
-    setLabelOverrides((current) => {
-      const next = { ...current };
-      if (normalizedLabel === baseButton.label) {
-        delete next[currentButton.id];
-      } else {
-        next[currentButton.id] = normalizedLabel;
-      }
-      return next;
+    if (!selectedProgramName || !selectedPanelName || !scriptFileName) return;
+    const owner = canonicalButtonsBySource.get(
+      canonicalButtonSourceKey(selectedProgramName, selectedPanelName, scriptFileName)
+    );
+    await openButtonEditorWindow({
+      programName: selectedProgramName,
+      panelName: selectedPanelName,
+      buttonId: owner?.id
     });
   };
 
@@ -2283,7 +1949,29 @@ export default function MainPage() {
     }
 
     try {
+      const currentDocument = await loadButtonStateDocument();
+      const affectedButtonIds = collectCanonicalRenameButtonIds(currentDocument, {
+        programName: currentName
+      });
       const renamedProgramName = await renameProgramFolder(currentName, trimmedName);
+      try {
+        await commitButtonDocumentMutation((document) =>
+          renameProgramButtonDocumentScope(document, {
+            currentProgramName: currentName,
+            nextProgramName: renamedProgramName
+          }).changed
+        );
+      } catch (error) {
+        const recoveredDocument = await recoverCanonicalRenameOrRollback(error, {
+          affectedButtonIds,
+          previousScope: { programName: currentName },
+          nextScope: { programName: renamedProgramName },
+          rollback: () => renameProgramFolder(renamedProgramName, currentName),
+          label: "program folder"
+        });
+        setButtonDocument(recoveredDocument);
+      }
+      await closeRenamedButtonWindows(currentDocument, currentName);
       const nextProgramNames = await listProgramFolders();
       const selectedProgramWasRenamed = areFolderNamesEqual(selectedProgramName, currentName);
       setProgramNames(nextProgramNames);
@@ -2294,8 +1982,8 @@ export default function MainPage() {
         )
       );
     } catch (error) {
-      console.error(`Failed to rename program folder ${currentName}.`, error);
-      window.alert(`Program folder could not be renamed.\n\n${formatErrorMessage(error)}`);
+      console.error(`Failed to rename program folder or its canonical Buttons for ${currentName}.`, error);
+      window.alert(`Program rename or canonical Button update failed.\n\n${formatErrorMessage(error)}`);
     }
   };
 
@@ -2321,6 +2009,11 @@ export default function MainPage() {
     }
 
     try {
+      const currentDocument = await loadButtonStateDocument();
+      const savedDocument = await commitButtonDocumentMutation((document) =>
+        removeProgramButtonDocumentScope(document, { programName: currentName })
+      );
+      await closeRemovedButtonWindows(currentDocument, savedDocument);
       await deleteProgramFolder(currentName);
       const nextProgramNames = await listProgramFolders();
       const selectedProgramWasDeleted = areFolderNamesEqual(selectedProgramName, currentName);
@@ -2338,8 +2031,8 @@ export default function MainPage() {
         setSelectedPanelScriptFileNames([]);
       }
     } catch (error) {
-      console.error(`Failed to delete program folder ${currentName}.`, error);
-      window.alert(`Program folder could not be deleted.\n\n${formatErrorMessage(error)}`);
+      console.error(`Failed to delete program folder or clean up its canonical Buttons for ${currentName}.`, error);
+      window.alert(`Program deletion or canonical Button cleanup failed.\n\n${formatErrorMessage(error)}`);
     }
   };
 
@@ -2378,10 +2071,48 @@ export default function MainPage() {
     }
 
     try {
+      const currentDocument = await loadButtonStateDocument();
+      const affectedButtonIds = collectCanonicalRenameButtonIds(currentDocument, {
+        programName: selectedProgramName,
+        panelName: currentName
+      });
       const renamedPanelName = await renamePanelFolder(
         selectedProgramName,
         currentName,
         trimmedName
+      );
+      try {
+        await commitButtonDocumentMutation((document) =>
+          renamePanelButtonDocumentScope(document, {
+            programName: selectedProgramName,
+            currentPanelName: currentName,
+            nextPanelName: renamedPanelName
+          }).changed
+        );
+      } catch (error) {
+        const recoveredDocument = await recoverCanonicalRenameOrRollback(error, {
+          affectedButtonIds,
+          previousScope: {
+            programName: selectedProgramName,
+            panelName: currentName
+          },
+          nextScope: {
+            programName: selectedProgramName,
+            panelName: renamedPanelName
+          },
+          rollback: () => renamePanelFolder(
+            selectedProgramName,
+            renamedPanelName,
+            currentName
+          ),
+          label: "panel folder"
+        });
+        setButtonDocument(recoveredDocument);
+      }
+      await closeRenamedButtonWindows(
+        currentDocument,
+        selectedProgramName,
+        currentName
       );
       const nextPanelNames = await listPanelFolders(selectedProgramName);
       const selectedPanelWasRenamed = areFolderNamesEqual(selectedPanelName, currentName);
@@ -2394,10 +2125,10 @@ export default function MainPage() {
       );
     } catch (error) {
       console.error(
-        `Failed to rename panel folder ${selectedProgramName}/${currentName}.`,
+        `Failed to rename panel folder or its canonical Buttons ${selectedProgramName}/${currentName}.`,
         error
       );
-      window.alert(`Panel folder could not be renamed.\n\n${formatErrorMessage(error)}`);
+      window.alert(`Panel rename or canonical Button updates failed.\n\n${formatErrorMessage(error)}`);
     }
   };
 
@@ -2429,6 +2160,14 @@ export default function MainPage() {
     }
 
     try {
+      const currentDocument = await loadButtonStateDocument();
+      const savedDocument = await commitButtonDocumentMutation((document) =>
+        removePanelButtonDocumentScope(document, {
+          programName: selectedProgramName,
+          panelName: currentName
+        })
+      );
+      await closeRemovedButtonWindows(currentDocument, savedDocument);
       await deletePanelFolder(selectedProgramName, currentName);
       const nextPanelNames = await listPanelFolders(selectedProgramName);
       const selectedPanelWasDeleted = areFolderNamesEqual(selectedPanelName, currentName);
@@ -2445,117 +2184,127 @@ export default function MainPage() {
       }
     } catch (error) {
       console.error(
-        `Failed to delete panel folder ${selectedProgramName}/${currentName}.`,
+        `Failed to delete panel folder or clean up its canonical Buttons ${selectedProgramName}/${currentName}.`,
         error
       );
-      window.alert(`Panel folder could not be deleted.\n\n${formatErrorMessage(error)}`);
+      window.alert(`Panel deletion or canonical Button cleanup failed.\n\n${formatErrorMessage(error)}`);
     }
   };
 
-  const handleOpenPanelFan = async () => {
+  const handleOpenSavedFanSetup = async (
+    fanSetupId: string,
+    sourceDocument?: ButtonStateDocument
+  ) => {
     if (!selectedProgramName || !selectedPanelName) {
-      window.alert("Select a program and panel before opening the panel fan.");
-      return;
-    }
-
-    if (fanSelectionDisabled) {
+      window.alert("Select a program and panel before opening a fan setup.");
       return;
     }
 
     try {
-      const fanButtonRecord =
-        resolvedButtonsById.get("buttons-fan-selection") ?? null;
-      const selectAllButtonRecord =
-        resolvedButtonsById.get("buttons-select-all") ?? null;
-      const filesPanelButtonRecord =
-        panelRailButtons.find((button) => button.folderName === selectedPanelName) ?? null;
-      void writePanelFanDiagnostics("panel-fan-main-debug.json", {
-        capturedAt: new Date().toISOString(),
-        surface: "main",
-        selectedProgramName,
-        selectedPanelName,
-        selectedFileNames: selectedPanelScriptRecords.map((record) => record.fileName),
-        selectedLabels: selectedPanelScriptRecords.map((record) => record.label),
-        window: {
-          screenX: window.screenX,
-          screenY: window.screenY,
-          innerWidth: window.innerWidth,
-          innerHeight: window.innerHeight,
-          outerWidth: window.outerWidth,
-          outerHeight: window.outerHeight
-        },
-        fanButton: {
-          buttonId: fanButtonRecord?.id ?? null,
-          label: fanButtonRecord?.label ?? null,
-          layoutRect: serializeButtonLayoutRect(fanButtonRecord),
-          viewportRect: serializeDomRect(
-            document.querySelector("[data-button-id='buttons-fan-selection']")
-          )
-        },
-        selectAllButton: {
-          buttonId: selectAllButtonRecord?.id ?? null,
-          label: selectAllButtonRecord?.label ?? null,
-          layoutRect: serializeButtonLayoutRect(selectAllButtonRecord),
-          viewportRect: serializeDomRect(
-            document.querySelector("[data-button-id='buttons-select-all']")
-          )
-        },
-        selectedPanelButton: {
-          buttonId: filesPanelButtonRecord?.id ?? null,
-          label: filesPanelButtonRecord?.label ?? null,
-          layoutRect: serializeButtonLayoutRect(filesPanelButtonRecord),
-          viewportRect: filesPanelButtonRecord
-            ? serializeDomRect(
-                document.querySelector(
-                  `[data-button-id='${CSS.escape(filesPanelButtonRecord.id)}']`
-                )
-              )
-            : null
-        }
+      const document = sourceDocument ?? buttonDocument ?? await loadButtonStateDocument();
+      const setup = document.fanSetups[fanSetupId];
+      if (
+        !setup ||
+        !areFolderNamesEqual(setup.programName, selectedProgramName) ||
+        !areFolderNamesEqual(setup.panelName, selectedPanelName)
+      ) {
+        throw new Error("That saved fan setup no longer belongs to the selected panel.");
+      }
+
+      const selectedToolSetOwnerIds = new Set(setup.selectedToolSetOwnerButtonIds);
+      const panelToolSetUnits = Object.values(document.popoutUnits).filter(
+        (unit): unit is ToolSetButtonPopoutUnit => {
+        if (unit.kind !== "tool-set") return false;
+        const owner = document.buttons[unit.ownerButtonId];
+        const identity = owner?.sourceIdentity;
+        return Boolean(
+          identity &&
+            areFolderNamesEqual(identity.displayProgramName, selectedProgramName) &&
+            areFolderNamesEqual(identity.displayPanelName, selectedPanelName)
+        );
       });
 
-      if (selectedToolPopoutRecords.length > 0) {
-        await Promise.all(
-          selectedToolPopoutRecords.map((record) => handleOpenToolPopout(record))
-        );
-      }
-      if (selectedCodexUsageLauncherRecords.length > 0) {
-        await Promise.all(
-          selectedCodexUsageLauncherRecords.map(() =>
-            openCodexUsagePopoutWindow({
-              programName: selectedProgramName,
-              panelName: selectedPanelName
+      await Promise.all(
+        panelToolSetUnits
+          .filter((unit) => !selectedToolSetOwnerIds.has(unit.ownerButtonId))
+          .map((unit) =>
+            closeButtonPopoutWindow({
+              popoutUnitId: unit.id,
+              ownerButtonId: unit.ownerButtonId
             })
           )
+      );
+
+      const fanWindowPromise = setup.fanMemberButtonIds.length > 0
+        ? openButtonFanWindow({
+            programName: setup.programName,
+            panelName: setup.panelName,
+            fanSetupId: setup.id,
+            panelOwnerButtonId: setup.panelOwnerButtonId,
+            collapsedBounds: setup.collapsedPanelOwnerBounds
+              ? {
+                  Left: setup.collapsedPanelOwnerBounds.left,
+                  Top: setup.collapsedPanelOwnerBounds.top,
+                  Width: setup.collapsedPanelOwnerBounds.width,
+                  Height: setup.collapsedPanelOwnerBounds.height
+                }
+              : null
+          })
+        : closeButtonFanWindow(setup.panelOwnerButtonId);
+
+      const toolSetWindowPromises = setup.selectedToolSetOwnerButtonIds.map((ownerButtonId) => {
+        const unit = panelToolSetUnits.find(
+          (candidate) => candidate.ownerButtonId === ownerButtonId
         );
-      }
-
-      if (selectedRegularPanelScriptRecords.length === 0) {
-        return;
-      }
-
-      await openPanelFanWindow({
-        programName: selectedProgramName,
-        panelName: selectedPanelName,
-        selectedFileNames: selectedRegularPanelScriptRecords.map((record) => record.fileName),
-        label: selectedPanelName
+        const anchor = setup.toolSetOwnerAnchors[ownerButtonId];
+        if (!unit) {
+          throw new Error(`Tool-set owner '${ownerButtonId}' has no canonical popout unit.`);
+        }
+        if (!anchor) {
+          throw new Error(`Fan setup '${setup.name}' is missing the saved anchor for '${ownerButtonId}'.`);
+        }
+        return openButtonPopoutWindow({
+          programName: setup.programName,
+          panelName: setup.panelName,
+          popoutUnitId: unit.id,
+          ownerButtonId,
+          displayMode: "collapsed",
+          bounds: {
+            Left: anchor.left,
+            Top: anchor.top,
+            Width: anchor.width,
+            Height: anchor.height
+          }
+        });
       });
+
+      await Promise.all([fanWindowPromise, ...toolSetWindowPromises]);
+      setFanSetupMenu(null);
     } catch (error) {
-      console.error(`Failed to open panel fan for ${selectedProgramName}/${selectedPanelName}.`, error);
-      window.alert(`Panel fan could not be opened.\n\n${formatErrorMessage(error)}`);
+      console.error(
+        `Failed to open saved fan setup for ${selectedProgramName}/${selectedPanelName}.`,
+        error
+      );
+      window.alert(`Fan setup could not be opened.\n\n${formatErrorMessage(error)}`);
     }
   };
 
-  const handleOpenPanelFanOptions = async () => {
+  const handleEditFanSetups = async () => {
     if (!selectedProgramName || !selectedPanelName) {
       window.alert("Select a program and panel before opening fan options.");
       return;
     }
 
     try {
-      await openPanelFanOptionsWindow({
+      const document = buttonDocument ?? await loadButtonStateDocument();
+      const setup = Object.values(document.fanSetups).find(
+        (candidate) =>
+          candidate.programName === selectedProgramName && candidate.panelName === selectedPanelName
+      );
+      await openButtonEditorWindow({
         programName: selectedProgramName,
-        panelName: selectedPanelName
+        panelName: selectedPanelName,
+        surfaceId: setup?.fanSurfaceId
       });
     } catch (error) {
       console.error(
@@ -2573,7 +2322,7 @@ export default function MainPage() {
     }
 
     try {
-      await openButtonReorderWindow({
+      await openButtonEditorWindow({
         programName: selectedProgramName,
         panelName: selectedPanelName
       });
@@ -2592,40 +2341,51 @@ export default function MainPage() {
     }
 
     try {
-      if (selectedToolPopoutRecords.length > 0) {
+      if (selectedToolSetRecords.length > 0) {
         await Promise.all(
-          selectedToolPopoutRecords.map((record) => handleOpenToolPopout(record))
+          selectedToolSetRecords.map((record) => handleOpenToolSet(record))
         );
       }
-      if (selectedCodexUsageLauncherRecords.length > 0) {
-        await Promise.all(
-          selectedCodexUsageLauncherRecords.map(() =>
-            openCodexUsagePopoutWindow({
-              programName: selectedProgramName,
-              panelName: selectedPanelName
-            })
-          )
-        );
-      }
-
       if (selectedRegularPanelScriptRecords.length === 0) {
         return;
       }
-
-      await openScriptGroupPopoutWindow({
+      const currentDocument = buttonDocument ?? await loadButtonStateDocument();
+      const draft = cloneButtonDocument(currentDocument);
+      const selectedButtons = selectedRegularPanelScriptRecords.map((record) => {
+        const button = canonicalButtonsBySource.get(
+          canonicalButtonSourceKey(selectedProgramName, selectedPanelName, record.fileName)
+        ) ?? Object.values(draft.buttons).find((candidate) => {
+          const identity = candidate.sourceIdentity;
+          return Boolean(identity && canonicalButtonSourceKey(
+            identity.displayProgramName,
+            identity.displayPanelName,
+            identity.displayFileName
+          ) === canonicalButtonSourceKey(selectedProgramName, selectedPanelName, record.fileName));
+        });
+        if (!button) throw new Error(`Canonical Button was not found for '${record.label}'.`);
+        return button;
+      });
+      const unit = ensureRegularPopout(draft, selectedButtons);
+      const document = currentDocument.popoutUnits[unit.id]
+        ? currentDocument
+        : await saveButtonStateDocument(draft, currentDocument.revision);
+      if (document !== currentDocument) {
+        setButtonDocument(document);
+        await publishButtonCommit(document);
+      }
+      const storedUnit = document.popoutUnits[unit.id];
+      await openButtonPopoutWindow({
         programName: selectedProgramName,
         panelName: selectedPanelName,
-        scripts: selectedRegularPanelScriptRecords.map((record) => ({
-          fileName: record.fileName,
-          label: record.label,
-          tooltip: record.tooltip,
-          events: record.events
-        })),
-        popoutType: selectedScriptGroupPopoutType,
-        label:
-          selectedRegularPanelScriptRecords.length === 1
-            ? selectedRegularPanelScriptRecords[0].label
-            : `${selectedRegularPanelScriptRecords.length} Buttons`
+        popoutUnitId: storedUnit.id,
+        bounds: storedUnit.desktopBounds
+          ? {
+              Left: storedUnit.desktopBounds.left,
+              Top: storedUnit.desktopBounds.top,
+              Width: storedUnit.desktopBounds.width,
+              Height: storedUnit.desktopBounds.height
+            }
+          : undefined
       });
     } catch (error) {
       console.error(
@@ -2636,14 +2396,120 @@ export default function MainPage() {
     }
   };
 
-  const handleScriptGroupPopoutTypeChange = (popoutType: ScriptGroupPopoutType) => {
+  const handleOpenGenericFanSetup = async () => {
     if (!selectedProgramName || !selectedPanelName) {
-      setSelectedScriptGroupPopoutType(popoutType);
       return;
     }
 
-    writeScriptGroupPopoutType(selectedProgramName, selectedPanelName, popoutType);
-    setSelectedScriptGroupPopoutType(popoutType);
+    try {
+      const currentDocument = buttonDocument ?? await loadButtonStateDocument();
+      const draft = cloneButtonDocument(currentDocument);
+      const memberButtons = Object.values(draft.buttons).filter(
+        (candidate) =>
+          candidate.role === "single-script" &&
+          sourceIdentityMatchesFolderScope(
+            candidate.sourceIdentity,
+            selectedProgramName,
+            selectedPanelName
+          )
+      );
+      const setup = ensureFanSetup({
+        document: draft,
+        programName: selectedProgramName,
+        panelName: selectedPanelName,
+        buttons: memberButtons
+      });
+      const document = currentDocument.fanSetups[setup.id]
+        ? currentDocument
+        : await saveButtonStateDocument(draft, currentDocument.revision);
+      if (document !== currentDocument) {
+        setButtonDocument(document);
+        await publishButtonCommit(document);
+      }
+      const storedSetup = document.fanSetups[setup.id];
+      await openButtonFanWindow({
+        programName: storedSetup.programName,
+        panelName: storedSetup.panelName,
+        fanSetupId: storedSetup.id,
+        panelOwnerButtonId: storedSetup.panelOwnerButtonId,
+        collapsedBounds: storedSetup.collapsedPanelOwnerBounds
+          ? {
+              Left: storedSetup.collapsedPanelOwnerBounds.left,
+              Top: storedSetup.collapsedPanelOwnerBounds.top,
+              Width: storedSetup.collapsedPanelOwnerBounds.width,
+              Height: storedSetup.collapsedPanelOwnerBounds.height
+            }
+          : null
+      });
+    } catch (error) {
+      console.error(
+        `Failed to open a generic fan for ${selectedProgramName}/${selectedPanelName}.`,
+        error
+      );
+      window.alert(`Fan could not be opened.\n\n${formatErrorMessage(error)}`);
+    }
+  };
+
+  const handleOpenSelectedFanSetup = async () => {
+    if (
+      !selectedProgramName ||
+      !selectedPanelName ||
+      selectedPanelScriptRecords.length === 0
+    ) {
+      return;
+    }
+
+    try {
+      const currentDocument = buttonDocument ?? await loadButtonStateDocument();
+      const draft = cloneButtonDocument(currentDocument);
+      const selectedButtons = selectedPanelScriptRecords.map((record) => {
+        const sourceKey = canonicalButtonSourceKey(
+          selectedProgramName,
+          selectedPanelName,
+          record.fileName
+        );
+        const button = canonicalButtonsBySource.get(sourceKey) ??
+          Object.values(draft.buttons).find((candidate) => {
+            const identity = candidate.sourceIdentity;
+            return Boolean(
+              identity &&
+              candidate.role !== "tool-set-child" &&
+              canonicalButtonSourceKey(
+                identity.displayProgramName,
+                identity.displayPanelName,
+                identity.displayFileName
+              ) === sourceKey
+            );
+          });
+        if (
+          !button ||
+          (button.role !== "single-script" && button.role !== "tool-set-owner")
+        ) {
+          throw new Error(`Canonical Button was not found for '${record.label}'.`);
+        }
+        return button;
+      });
+      const setup = ensureFanSetup({
+        document: draft,
+        programName: selectedProgramName,
+        panelName: selectedPanelName,
+        buttons: selectedButtons
+      });
+      const document = currentDocument.fanSetups[setup.id]
+        ? currentDocument
+        : await saveButtonStateDocument(draft, currentDocument.revision);
+      if (document !== currentDocument) {
+        setButtonDocument(document);
+        await publishButtonCommit(document);
+      }
+      await handleOpenSavedFanSetup(setup.id, document);
+    } catch (error) {
+      console.error(
+        `Failed to open a selected Fan for ${selectedProgramName}/${selectedPanelName}.`,
+        error
+      );
+      window.alert(`Selected Fan could not be opened.\n\n${formatErrorMessage(error)}`);
+    }
   };
 
   const getMainChromeWindow = () => {
@@ -2673,142 +2539,9 @@ export default function MainPage() {
     await getMainChromeWindow()?.close();
   };
 
-  const getButtonEvent = (button: ButtonRecord, eventName: string) => {
-    return button.events?.[eventName];
-  };
-
-  const getPanelButtonEventTarget = (button: ButtonRecord): ActiveHoverButtonEvent | null => {
-    if (!selectedProgramName || !selectedPanelName || !button.scriptFileName) {
-      return null;
-    }
-    if (button.actionId !== "run-panel-script") {
-      return null;
-    }
-
-    return {
-      buttonId: button.id,
-      programName: selectedProgramName,
-      panelName: selectedPanelName,
-      fileName: button.scriptFileName
-    };
-  };
-
-  const getPanelButtonEventKey = (target: ActiveHoverButtonEvent): string => {
-    return `${target.programName}\n${target.panelName}\n${target.fileName}`;
-  };
-
-  const runButtonHoverLeave = (target: ActiveHoverButtonEvent, key: string) => {
-    activeHoverButtonEventsRef.current.delete(key);
-    void runPanelButtonEvent(target.programName, target.panelName, target.fileName, "hoverLeave").catch(
-      (error) => {
-        console.warn("Failed to run button hoverLeave event.", error);
-      }
-    );
-  };
-
-  const cleanupActiveHoverButtonEvents = () => {
-    const activeEvents = Array.from(activeHoverButtonEventsRef.current.entries());
-    activeEvents.forEach(([key, target]) => runButtonHoverLeave(target, key));
-  };
-
-  const findButtonIdFromPointerEvent = (event: ReactPointerEvent<HTMLElement>): string | null => {
-    const path = event.nativeEvent.composedPath?.() ?? [];
-    for (const pathItem of path) {
-      if (!(pathItem instanceof HTMLElement)) {
-        continue;
-      }
-      const buttonElement = pathItem.dataset.buttonId
-        ? pathItem
-        : pathItem.closest<HTMLElement>("[data-button-id]");
-      if (buttonElement?.dataset.buttonId) {
-        return buttonElement.dataset.buttonId;
-      }
-    }
-
-    const hitElement = document.elementFromPoint(event.clientX, event.clientY);
-    const buttonElement = hitElement?.closest<HTMLElement>("[data-button-id]");
-    return buttonElement?.dataset.buttonId ?? null;
-  };
-
-  const syncButtonHoverFromPointerEvent = (event: ReactPointerEvent<HTMLElement>) => {
-    const hoveredButtonId = findButtonIdFromPointerEvent(event);
-    const activeEvents = Array.from(activeHoverButtonEventsRef.current.entries());
-    activeEvents.forEach(([key, target]) => {
-      if (target.buttonId !== hoveredButtonId) {
-        runButtonHoverLeave(target, key);
-      }
-    });
-
-    if (!hoveredButtonId) {
-      return;
-    }
-
-    const hoveredButton = resolvedButtonsById.get(hoveredButtonId);
-    if (!hoveredButton || !getButtonEvent(hoveredButton, "hoverEnter")) {
-      return;
-    }
-
-    handleButtonHoverStart(hoveredButton);
-  };
-
-  const handleButtonHoverStart = (button: ButtonRecord) => {
-    if (!getButtonEvent(button, "hoverEnter")) {
-      return;
-    }
-
-    const target = getPanelButtonEventTarget(button);
-    if (!target) {
-      return;
-    }
-
-    const key = getPanelButtonEventKey(target);
-    if (activeHoverButtonEventsRef.current.has(key)) {
-      return;
-    }
-
-    activeHoverButtonEventsRef.current.set(key, target);
-    void runPanelButtonEvent(target.programName, target.panelName, target.fileName, "hoverEnter").catch(
-      (error) => {
-        activeHoverButtonEventsRef.current.delete(key);
-        console.warn("Failed to run button hoverEnter event.", error);
-      }
-    );
-  };
-
-  const handleButtonHoverEnd = (button: ButtonRecord) => {
-    const target = getPanelButtonEventTarget(button);
-    if (!target) {
-      return;
-    }
-
-    const key = getPanelButtonEventKey(target);
-    const activeTarget = activeHoverButtonEventsRef.current.get(key);
-    if (!activeTarget || !getButtonEvent(button, "hoverLeave")) {
-      activeHoverButtonEventsRef.current.delete(key);
-      return;
-    }
-
-    runButtonHoverLeave(activeTarget, key);
-  };
-
-  const handleButtonHoverCancel = (button: ButtonRecord) => {
-    const target = getPanelButtonEventTarget(button);
-    if (!target) {
-      return;
-    }
-
-    const key = getPanelButtonEventKey(target);
-    const activeTarget = activeHoverButtonEventsRef.current.get(key);
-    if (!activeTarget) {
-      return;
-    }
-
-    runButtonHoverLeave(activeTarget, key);
-  };
-
   const handleButtonActivate = async (
     button: ButtonRecord,
-    event: ReactMouseEvent<HTMLElement>
+    event: PointerEvent | KeyboardEvent
   ) => {
     if (button.actionId === "top-left-button-1") {
       try {
@@ -2850,12 +2583,12 @@ export default function MainPage() {
       return;
     }
 
-    if (button.actionId === "open-motion-settings") {
+    if (button.actionId === "open-button-editor") {
       try {
-        await openMotionSettingsWindow();
+        await openButtonEditorWindow();
       } catch (error) {
-        console.error("Failed to open Motion Settings.", error);
-        window.alert(`Motion Settings could not be opened.\n\n${formatErrorMessage(error)}`);
+        console.error("Failed to open Buttons Editor.", error);
+        window.alert(`Buttons Editor could not be opened.\n\n${formatErrorMessage(error)}`);
       }
       return;
     }
@@ -2956,11 +2689,18 @@ export default function MainPage() {
       try {
         const createdPanelName = await createPanelFolder(selectedProgramName, trimmedName);
         const nextPanelNames = await listPanelFolders(selectedProgramName);
+        await commitButtonDocumentMutation((document) =>
+          reconcileProgramPanelOwners(document, {
+            programName: selectedProgramName,
+            panels: buildPanelRailOwnerEntries(nextPanelNames),
+            surfaceBounds: panelRailOwnerSurfaceBounds
+          }).changed
+        );
         setPanelNames(nextPanelNames);
         setSelectedPanelName(resolveFolderSelection(nextPanelNames, createdPanelName));
       } catch (error) {
-        console.error("Failed to create panel folder.", error);
-        window.alert(`Panel folder could not be created.\n\n${formatErrorMessage(error)}`);
+        console.error("Failed to create the panel folder or its canonical Button.", error);
+        window.alert(`Panel creation or canonical Button setup failed.\n\n${formatErrorMessage(error)}`);
       }
 
       return;
@@ -2978,8 +2718,10 @@ export default function MainPage() {
       }
 
       try {
-        const nextPanelScripts = await addPanelScripts(selectedProgramName, selectedPanelName);
-        setPanelScripts(nextPanelScripts);
+        await openButtonEditorWindow({
+          programName: selectedProgramName,
+          panelName: selectedPanelName
+        });
       } catch (error) {
         console.error(`Failed to add panel script for ${selectedProgramName}.`, error);
         window.alert(`Script could not be added.\n\n${formatErrorMessage(error)}`);
@@ -3030,17 +2772,39 @@ export default function MainPage() {
       return;
     }
 
-    if (button.actionId === "fan-panel-script-selection") {
-      await handleOpenPanelFan();
+    if (button.actionId === "open-fan-setup-menu") {
+      if (fanMenuDisabled) return;
+      if (selectedPanelScriptRecords.length > 0) {
+        await handleOpenSelectedFanSetup();
+        return;
+      }
+      if (panelFanSetups.length === 0) {
+        await handleOpenGenericFanSetup();
+        return;
+      }
+      if (panelFanSetups.length === 1) {
+        await handleOpenSavedFanSetup(panelFanSetups[0].id);
+        return;
+      }
+      const target = event.currentTarget;
+      const rect = target instanceof Element ? target.getBoundingClientRect() : null;
+      setFanSetupMenu((current) =>
+        current
+          ? null
+          : {
+              left: rect?.left ?? button.x,
+              top: (rect?.bottom ?? button.y + button.height) + 6
+            }
+      );
       return;
     }
 
-    if (button.actionId === "open-panel-fan-options") {
-      await handleOpenPanelFanOptions();
+    if (button.actionId === "edit-fan-setups") {
+      await handleEditFanSetups();
       return;
     }
 
-    if (button.actionId === "open-button-order") {
+    if (button.actionId === "edit-button-layout") {
       if (orderButtonDisabled) {
         return;
       }
@@ -3086,7 +2850,7 @@ export default function MainPage() {
 
   const handleButtonDoubleActivate = async (
     button: ButtonRecord,
-    _event: ReactMouseEvent<HTMLElement>
+    _event: MouseEvent
   ) => {
     if (!isPanelScriptButtonAction(button.actionId) || !button.scriptFileName) {
       return;
@@ -3096,6 +2860,19 @@ export default function MainPage() {
     const matchedRecord =
       resolvedPanelScriptsByFileName.get(button.scriptFileName) ?? null;
     void handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord);
+  };
+
+  const canonicalPresentationForMainButton = (button: ButtonRecord) => {
+    if (button.scriptFileName && selectedProgramName && selectedPanelName) {
+      return canonicalPresentationsBySource.get(
+        canonicalButtonSourceKey(
+          selectedProgramName,
+          selectedPanelName,
+          button.scriptFileName
+        )
+      );
+    }
+    return canonicalPanelOwnerPresentations.byButtonId.get(button.id);
   };
 
   return (
@@ -3111,12 +2888,10 @@ export default function MainPage() {
       onPointerMove={handleRailHoverPointerMove}
       onPointerLeave={() => {
         setHoveredRailId(null);
-        cleanupActiveHoverButtonEvents();
       }}
       onPointerUp={() => setSpaceDragging(false)}
       onPointerCancel={() => {
         setSpaceDragging(false);
-        cleanupActiveHoverButtonEvents();
       }}
     >
       <ExactPageFrame page={page}>
@@ -3145,18 +2920,14 @@ export default function MainPage() {
               }}
             >
               {topLeftActionButtons.map((button) => (
-                <ButtonHost
+                <MainControlHost
                   key={button.id}
-                  button={button}
+                  control={button}
                   absolute={false}
                   targetHeightOverride={topLeftActionHeight}
-                  skinProfileHighlight
                   onActivate={handleButtonActivate}
                   onDoubleActivate={handleButtonDoubleActivate}
                   onRequestContextMenu={handleButtonContextMenu}
-                  onHoverStart={handleButtonHoverStart}
-                  onHoverEnd={handleButtonHoverEnd}
-                  onHoverCancel={handleButtonHoverCancel}
                 />
               ))}
             </div>
@@ -3171,63 +2942,88 @@ export default function MainPage() {
               }}
             >
               {topRightActionButtons.map((button) => (
-                <ButtonHost
+                <MainControlHost
                   key={button.id}
-                  button={button}
+                  control={button}
                   absolute={false}
-                  skinProfileHighlight
                   onActivate={handleButtonActivate}
                   onDoubleActivate={handleButtonDoubleActivate}
                   onRequestContextMenu={handleButtonContextMenu}
-                  onHoverStart={handleButtonHoverStart}
-                  onHoverEnd={handleButtonHoverEnd}
-                  onHoverCancel={handleButtonHoverCancel}
                 />
               ))}
             </div>
           ) : null}
-          {independentlyPositionedButtons.map((button) => (
-            <ButtonHost
-              key={button.id}
-              button={button}
-              skinProfileHighlight
-              onActivate={handleButtonActivate}
-              onDoubleActivate={handleButtonDoubleActivate}
-              onRequestContextMenu={handleButtonContextMenu}
-              onHoverStart={handleButtonHoverStart}
-              onHoverEnd={handleButtonHoverEnd}
-              onHoverCancel={handleButtonHoverCancel}
-            />
-          ))}
-          <label
-            className="main-page__poptype-control"
-            style={{
-              left: `${buttonsSurfacePopTypeControlGeometry.x}px`,
-              top: `${buttonsSurfacePopTypeControlGeometry.y}px`,
-              width: `${buttonsSurfacePopTypeControlGeometry.width}px`,
-              height: `${buttonsSurfacePopTypeControlGeometry.height}px`,
-              borderRadius: `${buttonsSurfacePopTypeControlGeometry.radius}px`
-            }}
-          >
-            <span className="main-page__poptype-label">PopType</span>
-            <select
-              className="main-page__poptype-select"
-              aria-label="Popout type"
-              value={selectedScriptGroupPopoutType}
-              disabled={!selectedProgramName || !selectedPanelName}
-              onChange={(event) =>
-                handleScriptGroupPopoutTypeChange(
-                  event.target.value as ScriptGroupPopoutType
-                )
-              }
-            >
-              {SCRIPT_GROUP_POPOUT_TYPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          {independentlyPositionedButtons.map((button) => {
+            const canonicalPresentation = canonicalPresentationForMainButton(button);
+            const requiresCanonicalPresentation = Boolean(button.scriptFileName) ||
+              button.actionId === "select-panel-folder";
+            return canonicalPresentation ? (
+              <MainButtonHost
+                key={button.id}
+                button={button}
+                canonicalPresentation={canonicalPresentation}
+                onActivate={handleButtonActivate}
+                onDoubleActivate={handleButtonDoubleActivate}
+                onRequestContextMenu={handleButtonContextMenu}
+              />
+            ) : requiresCanonicalPresentation ? null : (
+              <MainControlHost
+                key={button.id}
+                control={button}
+                onActivate={handleButtonActivate}
+                onDoubleActivate={handleButtonDoubleActivate}
+                onRequestContextMenu={handleButtonContextMenu}
+              />
+            );
+          })}
+          {fanSetupMenu ? (
+            <>
+              <div
+                className="fan-setup-menu__backdrop"
+                aria-hidden="true"
+                onMouseDown={() => setFanSetupMenu(null)}
+              />
+              <div
+                className="fan-setup-menu"
+                role="menu"
+                aria-label={`Saved fan setups for ${selectedPanelName ?? "panel"}`}
+                style={{ left: fanSetupMenu.left, top: fanSetupMenu.top }}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="fan-setup-menu__title">Fan setups</div>
+                {panelFanSetups.length > 0 ? (
+                  panelFanSetups.map((setup) => (
+                    <CanonicalActionButton
+                      key={setup.id}
+                      id={`fan-setup-menu:${setup.id}`}
+                      label={setup.name}
+                      tooltip={`Open the exact saved '${setup.name}' fan arrangement.`}
+                      className="fan-setup-menu__item"
+                      onActivate={() => handleOpenSavedFanSetup(setup.id)}
+                    />
+                  ))
+                ) : (
+                  <>
+                    <p className="fan-setup-menu__empty">
+                      No saved fan setup exists for this panel.
+                    </p>
+                    <CanonicalActionButton
+                      id="fan-setup-menu:open-editor"
+                      label="Open Buttons Editor"
+                      className="fan-setup-menu__item"
+                      onActivate={async () => {
+                        setFanSetupMenu(null);
+                        await openButtonEditorWindow({
+                          programName: selectedProgramName ?? undefined,
+                          panelName: selectedPanelName ?? undefined
+                        });
+                      }}
+                    />
+                  </>
+                )}
+              </div>
+            </>
+          ) : null}
           {contextMenu &&
           contextMenuButton &&
           (isScriptContextMenu || isProgramFolderContextMenu || isPanelFolderContextMenu) ? (
@@ -3249,51 +3045,31 @@ export default function MainPage() {
               >
                 {isScriptContextMenu ? (
                   <>
-                    <HostSkinButton
-                      type="button"
+                    <CanonicalActionButton
+                      id={`button-context-description:${contextMenuButton.id}`}
                       label="Update Description"
-                      flowId={`button-context-description:${contextMenuButton.id}`}
                       className="button-context-menu__item"
-                      styleGroup={CONTEXT_MENU_STYLE_GROUP}
-                      importedSkin={DEFAULT_FLOW_IMPORTED_SKIN}
-                      hostMode="neutral"
-                      targetHeight={44}
-                      onClick={() => {
+                      onActivate={() => {
                         void handleUpdateDescriptionContextMenuButton();
                       }}
                     />
-                    <HostSkinButton
-                      type="button"
+                    <CanonicalActionButton
+                      id={`button-context-rename:${contextMenuButton.id}`}
                       label="Rename Button"
-                      flowId={`button-context-rename:${contextMenuButton.id}`}
                       className="button-context-menu__item"
-                      styleGroup={CONTEXT_MENU_STYLE_GROUP}
-                      importedSkin={DEFAULT_FLOW_IMPORTED_SKIN}
-                      hostMode="neutral"
-                      targetHeight={44}
-                      onClick={handleRenameContextMenuButton}
+                      onActivate={handleRenameContextMenuButton}
                     />
-                    <HostSkinButton
-                      type="button"
+                    <CanonicalActionButton
+                      id={`button-context-binds:${contextMenuButton.id}`}
                       label="Binds"
-                      flowId={`button-context-binds:${contextMenuButton.id}`}
                       className="button-context-menu__item"
-                      styleGroup={CONTEXT_MENU_STYLE_GROUP}
-                      importedSkin={DEFAULT_FLOW_IMPORTED_SKIN}
-                      hostMode="neutral"
-                      targetHeight={44}
-                      onClick={handleBindsContextMenuButton}
+                      onActivate={handleBindsContextMenuButton}
                     />
-                    <HostSkinButton
-                      type="button"
+                    <CanonicalActionButton
+                      id={`button-context-delete:${contextMenuButton.id}`}
                       label="Delete Button"
-                      flowId={`button-context-delete:${contextMenuButton.id}`}
                       className="button-context-menu__item"
-                      styleGroup={CONTEXT_MENU_STYLE_GROUP}
-                      importedSkin={DEFAULT_FLOW_IMPORTED_SKIN}
-                      hostMode="neutral"
-                      targetHeight={44}
-                      onClick={() => {
+                      onActivate={() => {
                         void handleDeleteContextMenuButton();
                       }}
                     />
@@ -3301,29 +3077,19 @@ export default function MainPage() {
                 ) : null}
                 {isProgramFolderContextMenu ? (
                   <>
-                    <HostSkinButton
-                      type="button"
+                    <CanonicalActionButton
+                      id={`button-context-rename-program:${contextMenuButton.id}`}
                       label="Rename Program"
-                      flowId={`button-context-rename-program:${contextMenuButton.id}`}
                       className="button-context-menu__item"
-                      styleGroup={CONTEXT_MENU_STYLE_GROUP}
-                      importedSkin={DEFAULT_FLOW_IMPORTED_SKIN}
-                      hostMode="neutral"
-                      targetHeight={44}
-                      onClick={() => {
+                      onActivate={() => {
                         void handleRenameProgramContextMenuButton();
                       }}
                     />
-                    <HostSkinButton
-                      type="button"
+                    <CanonicalActionButton
+                      id={`button-context-delete-program:${contextMenuButton.id}`}
                       label="Delete Program"
-                      flowId={`button-context-delete-program:${contextMenuButton.id}`}
                       className="button-context-menu__item"
-                      styleGroup={CONTEXT_MENU_STYLE_GROUP}
-                      importedSkin={DEFAULT_FLOW_IMPORTED_SKIN}
-                      hostMode="neutral"
-                      targetHeight={44}
-                      onClick={() => {
+                      onActivate={() => {
                         void handleDeleteProgramContextMenuButton();
                       }}
                     />
@@ -3331,29 +3097,19 @@ export default function MainPage() {
                 ) : null}
                 {isPanelFolderContextMenu ? (
                   <>
-                    <HostSkinButton
-                      type="button"
+                    <CanonicalActionButton
+                      id={`button-context-rename-panel:${contextMenuButton.id}`}
                       label="Rename Panel"
-                      flowId={`button-context-rename-panel:${contextMenuButton.id}`}
                       className="button-context-menu__item"
-                      styleGroup={CONTEXT_MENU_STYLE_GROUP}
-                      importedSkin={DEFAULT_FLOW_IMPORTED_SKIN}
-                      hostMode="neutral"
-                      targetHeight={44}
-                      onClick={() => {
+                      onActivate={() => {
                         void handleRenamePanelContextMenuButton();
                       }}
                     />
-                    <HostSkinButton
-                      type="button"
+                    <CanonicalActionButton
+                      id={`button-context-delete-panel:${contextMenuButton.id}`}
                       label="Delete Panel"
-                      flowId={`button-context-delete-panel:${contextMenuButton.id}`}
                       className="button-context-menu__item"
-                      styleGroup={CONTEXT_MENU_STYLE_GROUP}
-                      importedSkin={DEFAULT_FLOW_IMPORTED_SKIN}
-                      hostMode="neutral"
-                      targetHeight={44}
-                      onClick={() => {
+                      onActivate={() => {
                         void handleDeletePanelContextMenuButton();
                       }}
                     />
@@ -3361,20 +3117,6 @@ export default function MainPage() {
                 ) : null}
               </div>
             </>
-          ) : null}
-          {scriptRunError ? (
-            <section className="main-page__script-error" role="alert">
-              <button
-                type="button"
-                className="main-page__script-error-close"
-                aria-label="Dismiss script error"
-                onClick={() => setScriptRunError(null)}
-              >
-                X
-              </button>
-              <strong>{scriptRunError.title}</strong>
-              <p>{scriptRunError.detail}</p>
-            </section>
           ) : null}
           {isSettingsOpen ? (
             <>

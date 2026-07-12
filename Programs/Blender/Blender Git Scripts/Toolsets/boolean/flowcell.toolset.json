@@ -1,0 +1,120 @@
+{
+    "schemaVersion":  1,
+    "id":  "blender.boolean",
+    "version":  "1.0.0",
+    "label":  "boolean",
+    "tooltip":  "Quick Boolean with I/U/D operation buttons, solver fanout, SI/HT/HC/S toggles, and Run.",
+    "kind":  "toolset",
+    "program":  "Blender",
+    "source":  "boolean.py",
+    "bridgeData":  {
+
+                   },
+    "children":  [
+                     {
+                         "slot":  "operation_intersect",
+                         "label":  "I",
+                         "tooltip":  "Set the boolean operation to Intersect.",
+                         "payload":  {
+                                         "command":  "operation_intersect",
+                                         "action":  "operation_intersect"
+                                     }
+                     },
+                     {
+                         "slot":  "operation_union",
+                         "label":  "U",
+                         "tooltip":  "Set the boolean operation to Union.",
+                         "payload":  {
+                                         "command":  "operation_union",
+                                         "action":  "operation_union"
+                                     }
+                     },
+                     {
+                         "slot":  "operation_difference",
+                         "label":  "D",
+                         "tooltip":  "Set the boolean operation to Difference.",
+                         "payload":  {
+                                         "command":  "operation_difference",
+                                         "action":  "operation_difference"
+                                     }
+                     },
+                     {
+                         "slot":  "solver_fast",
+                         "label":  "Float",
+                         "tooltip":  "Use Blender\u0027s Float boolean solver.",
+                         "payload":  {
+                                         "command":  "solver_fast",
+                                         "action":  "solver_fast"
+                                     }
+                     },
+                     {
+                         "slot":  "solver_exact",
+                         "label":  "Exact",
+                         "tooltip":  "Use Blender\u0027s Exact boolean solver.",
+                         "payload":  {
+                                         "command":  "solver_exact",
+                                         "action":  "solver_exact"
+                                     }
+                     },
+                     {
+                         "slot":  "solver_manifold",
+                         "label":  "Manifold",
+                         "tooltip":  "Use Blender\u0027s Manifold boolean solver.",
+                         "payload":  {
+                                         "command":  "solver_manifold",
+                                         "action":  "solver_manifold"
+                                     }
+                     },
+                     {
+                         "slot":  "toggle_self_intersection",
+                         "label":  "SI",
+                         "tooltip":  "Toggle self-intersection support.",
+                         "payload":  {
+                                         "command":  "toggle_self_intersection",
+                                         "action":  "toggle_self_intersection"
+                                     }
+                     },
+                     {
+                         "slot":  "toggle_hole_tolerant",
+                         "label":  "HT",
+                         "tooltip":  "Toggle hole-tolerant solving.",
+                         "payload":  {
+                                         "command":  "toggle_hole_tolerant",
+                                         "action":  "toggle_hole_tolerant"
+                                     }
+                     },
+                     {
+                         "slot":  "toggle_hide_cutter",
+                         "label":  "HC",
+                         "tooltip":  "Toggle hiding the cutter after running.",
+                         "payload":  {
+                                         "command":  "toggle_hide_cutter",
+                                         "action":  "toggle_hide_cutter"
+                                     }
+                     },
+                     {
+                         "slot":  "toggle_backup_active",
+                         "label":  "S",
+                         "tooltip":  "Toggle taking a FlowCell snapshot before running.",
+                         "payload":  {
+                                         "command":  "toggle_backup_active",
+                                         "action":  "toggle_backup_active"
+                                     }
+                     },
+                     {
+                         "slot":  "run_boolean",
+                         "label":  "Run",
+                         "tooltip":  "Run the quick boolean operation.",
+                         "payload":  {
+                                         "command":  "run_boolean",
+                                         "action":  "run_boolean"
+                                     }
+                     }
+                 ],
+    "layout":  {
+                   "mode":  "grid",
+                   "columns":  4,
+                   "gap":  8,
+                   "padding":  8
+               }
+}

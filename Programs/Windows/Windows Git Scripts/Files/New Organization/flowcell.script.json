@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.new-organization",
+  "label": "New Organization",
+  "tooltip": "Apply the active organization profile with this Button package's owned profile core.",
+  "program": "Windows",
+  "source": "new_organization.ps1"
+}

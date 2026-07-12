@@ -10,7 +10,6 @@ $LocalRoot = Join-Path $FlowCellRoot 'flowcellbackend\local'
 $LogRoot = Join-Path $LocalRoot 'logs'
 $LogPath = Join-Path $LogRoot 'startup-preflight.log'
 $BindingsPath = Join-Path $LocalRoot 'bindings.ini'
-$script:RepairedLegacyBlenderWrapper = $false
 
 function Write-PreflightLog {
     param([string]$Message)
@@ -19,82 +18,6 @@ function Write-PreflightLog {
         $timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
         Add-Content -LiteralPath $LogPath -Value "[$timestamp] $Message" -Encoding UTF8
     } catch {
-    }
-}
-
-function Merge-DirectoryContents {
-    param(
-        [string]$Source,
-        [string]$Destination
-    )
-
-    if (-not (Test-Path -LiteralPath $Destination -PathType Container)) {
-        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    }
-
-    Get-ChildItem -LiteralPath $Source -Force -ErrorAction SilentlyContinue | ForEach-Object {
-        $target = Join-Path $Destination $_.Name
-        if (-not (Test-Path -LiteralPath $target)) {
-            Move-Item -LiteralPath $_.FullName -Destination $target
-            Write-PreflightLog "Moved legacy payload item to $target"
-        } elseif ($_.PSIsContainer -and (Test-Path -LiteralPath $target -PathType Container)) {
-            Merge-DirectoryContents -Source $_.FullName -Destination $target
-        } else {
-            Write-PreflightLog "Preserved existing target and left conflicting legacy item at $($_.FullName)"
-        }
-    }
-}
-
-function Repair-ProgramPackageWrappers {
-    $legacyBlenderPayload = Join-Path $ProgramsRoot 'FlowCell-Blender\Programs\Blender'
-    if (-not (Test-Path -LiteralPath $legacyBlenderPayload -PathType Container)) {
-        return
-    }
-
-    $target = Join-Path $ProgramsRoot 'Blender'
-    if (-not (Test-Path -LiteralPath $target)) {
-        Move-Item -LiteralPath $legacyBlenderPayload -Destination $target
-        Write-PreflightLog "Moved legacy Blender payload to $target"
-    } else {
-        Merge-DirectoryContents -Source $legacyBlenderPayload -Destination $target
-        Write-PreflightLog "Merged non-conflicting legacy Blender payload items into $target"
-    }
-
-    $script:RepairedLegacyBlenderWrapper = $true
-}
-
-function Move-EmptyDirectoryToRecycleBin {
-    param([string]$Path)
-
-    Add-Type -AssemblyName Microsoft.VisualBasic
-    [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
-        $Path,
-        [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
-        [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
-    )
-}
-
-function Remove-EmptyAutoCreatedPanels {
-    if (-not $script:RepairedLegacyBlenderWrapper) {
-        return
-    }
-
-    $panelsRoot = Join-Path $ProgramsRoot 'Blender\Panels'
-    if (-not (Test-Path -LiteralPath $panelsRoot -PathType Container)) {
-        return
-    }
-
-    foreach ($panelName in @('Collections', 'Files', 'Utility', 'Layers')) {
-        $panelPath = Join-Path $panelsRoot $panelName
-        if (-not (Test-Path -LiteralPath $panelPath -PathType Container)) {
-            continue
-        }
-
-        $children = @(Get-ChildItem -LiteralPath $panelPath -Force -ErrorAction SilentlyContinue)
-        if ($children.Count -eq 0) {
-            Move-EmptyDirectoryToRecycleBin -Path $panelPath
-            Write-PreflightLog "Moved empty legacy auto-created panel to the Recycle Bin: $panelPath"
-        }
     }
 }
 
@@ -226,7 +149,7 @@ function New-ProgramTabSectionName {
     return "ProgramTab_$nextId"
 }
 
-function Set-CoreProgramRegistration {
+function Set-ManifestProgramRegistration {
     param(
         [System.Collections.IDictionary]$Document,
         [string]$Label,
@@ -267,138 +190,101 @@ function Set-CoreProgramRegistration {
     $section['ScriptFolder'] = $ScriptFolder
 }
 
-function Ensure-CoreProgramStructure {
+function Ensure-ManifestProgramStructure {
     New-Item -ItemType Directory -Path $ProgramsRoot -Force | Out-Null
-
-    $windowsRoot = Join-Path $ProgramsRoot 'Windows'
-    $windowsGitScripts = Join-Path $windowsRoot 'Windows Git Scripts'
-    $windowsGitFiles = Join-Path $windowsGitScripts 'Files'
-    $windowsLocalScripts = Join-Path $windowsRoot 'Windows Local Scripts'
-    $windowsSupportScripts = Join-Path $windowsRoot 'SupportScripts'
-
-    foreach ($path in @($windowsRoot, $windowsGitScripts, $windowsGitFiles, $windowsLocalScripts, $windowsSupportScripts)) {
-        if (-not (Test-Path -LiteralPath $path -PathType Container)) {
-            New-Item -ItemType Directory -Path $path -Force | Out-Null
-            Write-PreflightLog "Created core Windows structure: $path"
-        }
-    }
-
     $document = Read-PreflightIni -Path $BindingsPath
     if (-not $document.Contains('Meta')) {
         $document['Meta'] = [ordered]@{}
     }
 
-    Set-CoreProgramRegistration `
-        -Document $document `
-        -Label 'Windows' `
-        -PreferredId 2 `
-        -ScriptFolder $windowsGitScripts `
-        -ProgramType 'generic' `
-        -ExePath 'explorer.exe' `
-        -RunMethod 'generic' `
-        -AllowedScriptExtensions '.ps1|.cmd|.bat|.exe|.lnk|.vbs|.ahk' `
-        -BridgeFolder '' `
-        -RequiresRestart '0' `
-        -DefaultPanels 'Files|Utility' `
-        -ProcessNames 'explorer|dopus|dopusrt'
-
-    $corePrograms = @(
-        @{
-            Label = 'Illustrator'
-            PreferredId = 1
-            ScriptFolderName = 'Illustrator Git Scripts'
-            ProgramType = 'adobe_direct_script_runner'
-            ExePath = ''
-            RunMethod = 'illustrator_direct'
-            AllowedScriptExtensions = '.jsx|.js'
-            BridgeFolder = ''
-            RequiresRestart = '0'
-            DefaultPanels = 'Layers|Files|Utility'
-            ProcessNames = 'illustrator'
-        },
-        @{
-            Label = 'Blender'
-            PreferredId = 3
-            ScriptFolderName = 'Blender Git Scripts'
-            ProgramType = 'bridge_runner'
-            ExePath = ''
-            RunMethod = 'blender_bridge'
-            AllowedScriptExtensions = '.ps1|.py|.blend|.exe|.lnk'
-            BridgeFolder = Join-Path $ProgramsRoot 'Blender'
-            RequiresRestart = '0'
-            DefaultPanels = 'Collections|Files|Utility'
-            ProcessNames = 'blender|blender-launcher'
-        },
-        @{
-            Label = 'Photoshop'
-            PreferredId = 4
-            ScriptFolderName = 'Photoshop Git Scripts'
-            ProgramType = 'adobe_direct_script_runner'
-            ExePath = ''
-            RunMethod = 'photoshop_direct'
-            AllowedScriptExtensions = '.jsx|.js'
-            BridgeFolder = ''
-            RequiresRestart = '0'
-            DefaultPanels = 'Layers|Files|Utility'
-            ProcessNames = 'photoshop'
-        }
-    )
-
-    foreach ($program in $corePrograms) {
-        $programRoot = Join-Path $ProgramsRoot $program.Label
-        if (-not (Test-Path -LiteralPath $programRoot -PathType Container)) {
+    $usedIds = @(Get-ProgramTabIdsFromDocument -Document $document)
+    foreach ($programDirectory in @(Get-ChildItem -LiteralPath $ProgramsRoot -Directory -ErrorAction Stop | Sort-Object Name)) {
+        $manifestPath = Join-Path $programDirectory.FullName 'flowcell.program.json'
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
             continue
         }
+        try {
+            $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+        }
+        catch {
+            throw "Program manifest is invalid: $manifestPath. $($_.Exception.Message)"
+        }
+        if ([int]$manifest.schemaVersion -ne 1 -or [string]::IsNullOrWhiteSpace([string]$manifest.programId) -or [string]::IsNullOrWhiteSpace([string]$manifest.label)) {
+            throw "Program manifest requires schemaVersion 1, programId, and label: $manifestPath"
+        }
+        if (-not ([string]$manifest.label).Equals($programDirectory.Name, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Program manifest label '$($manifest.label)' does not match folder '$($programDirectory.Name)'."
+        }
 
-        Set-CoreProgramRegistration `
+        $localScripts = Join-Path $programDirectory.FullName ([string]$manifest.localScriptsFolder)
+        $panels = Join-Path $programDirectory.FullName ([string]$manifest.panelsFolder)
+        foreach ($requiredPath in @($localScripts, $panels)) {
+            if (-not (Test-Path -LiteralPath $requiredPath -PathType Container)) {
+                New-Item -ItemType Directory -Path $requiredPath -Force | Out-Null
+                Write-PreflightLog "Created manifest-owned program structure: $requiredPath"
+            }
+        }
+
+        $existingSection = Get-ProgramTabSectionNameByLabel -Document $document -Label ([string]$manifest.label)
+        $preferredId = 1
+        if (-not [string]::IsNullOrWhiteSpace($existingSection) -and $existingSection -match '^ProgramTab_(\d+)$') {
+            $preferredId = [int]$matches[1]
+        }
+        elseif ($usedIds.Count -gt 0) {
+            $preferredId = ([int]($usedIds | Measure-Object -Maximum).Maximum) + 1
+        }
+        $usedIds += $preferredId
+
+        $runnerKind = [string]$manifest.runner.kind
+        $runMethod = switch ($runnerKind) {
+            'windows-script' { 'windows_generic' }
+            'illustrator-direct' { 'illustrator_direct' }
+            'photoshop-direct' { 'photoshop_direct' }
+            'blender-bridge' { 'blender_bridge' }
+            default { throw "Unsupported runner kind '$runnerKind' in $manifestPath" }
+        }
+        $allowedExtensions = @($manifest.allowedScriptExtensions | ForEach-Object {
+            $value = ([string]$_).Trim()
+            if ($value -ne '' -and -not $value.StartsWith('.')) { '.' + $value } else { $value }
+        } | Where-Object { $_ -ne '' }) -join '|'
+        $defaultPanels = @($manifest.defaultPanels | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -ne '' }) -join '|'
+        if ([string]::IsNullOrWhiteSpace($defaultPanels)) {
+            $defaultPanels = @(Get-ChildItem -LiteralPath $panels -Directory -ErrorAction SilentlyContinue | ForEach-Object Name) -join '|'
+        }
+        $processNames = @($manifest.processNames | ForEach-Object { ([string]$_).Trim() } | Where-Object { $_ -ne '' }) -join '|'
+        $exePath = if ($manifest.PSObject.Properties['exePath']) { [string]$manifest.exePath } else { '' }
+        $bridgeFolder = if ($runnerKind -eq 'blender-bridge') { $programDirectory.FullName } else { '' }
+
+        Set-ManifestProgramRegistration `
             -Document $document `
-            -Label $program.Label `
-            -PreferredId $program.PreferredId `
-            -ScriptFolder (Join-Path $programRoot $program.ScriptFolderName) `
-            -ProgramType $program.ProgramType `
-            -ExePath $program.ExePath `
-            -RunMethod $program.RunMethod `
-            -AllowedScriptExtensions $program.AllowedScriptExtensions `
-            -BridgeFolder $program.BridgeFolder `
-            -RequiresRestart $program.RequiresRestart `
-            -DefaultPanels $program.DefaultPanels `
-            -ProcessNames $program.ProcessNames
+            -Label ([string]$manifest.label) `
+            -PreferredId $preferredId `
+            -ScriptFolder $localScripts `
+            -ProgramType ([string]$manifest.programType) `
+            -ExePath $exePath `
+            -RunMethod $runMethod `
+            -AllowedScriptExtensions $allowedExtensions `
+            -BridgeFolder $bridgeFolder `
+            -RequiresRestart '0' `
+            -DefaultPanels $defaultPanels `
+            -ProcessNames $processNames
     }
 
     $programIds = @(Get-ProgramTabIdsFromDocument -Document $document)
     $document['Meta']['ProgramTabIds'] = ($programIds -join '|')
-    $nextProgramId = 1
-    if ($programIds.Count -gt 0) {
-        $nextProgramId = ([int]($programIds | Measure-Object -Maximum).Maximum) + 1
-    }
-    $document['Meta']['ProgramTabNextId'] = [string]$nextProgramId
+    $document['Meta']['ProgramTabNextId'] = [string]$(if ($programIds.Count -gt 0) { ([int]($programIds | Measure-Object -Maximum).Maximum) + 1 } else { 1 })
     $selectedProgramTabId = 0
     if (-not $document['Meta'].Contains('SelectedProgramTabId') -or -not [int]::TryParse([string]$document['Meta']['SelectedProgramTabId'], [ref]$selectedProgramTabId) -or -not (@($programIds) -contains $selectedProgramTabId)) {
         $document['Meta']['SelectedProgramTabId'] = [string]($programIds | Select-Object -First 1)
     }
-
     Write-PreflightIni -Path $BindingsPath -Document $document
 }
 
 try {
-    Ensure-CoreProgramStructure
+    Ensure-ManifestProgramStructure
 } catch {
-    Write-PreflightLog "Core program repair failed: $($_.Exception.Message)"
+    Write-PreflightLog "Manifest program repair failed: $($_.Exception.Message)"
     throw
-}
-
-try {
-    Repair-ProgramPackageWrappers
-} catch {
-    Write-PreflightLog "Program wrapper repair failed: $($_.Exception.Message)"
-}
-
-if ($script:RepairedLegacyBlenderWrapper) {
-    try {
-        Remove-EmptyAutoCreatedPanels
-    } catch {
-        Write-PreflightLog "Legacy auto panel cleanup failed: $($_.Exception.Message)"
-    }
 }
 
 Write-PreflightLog 'Startup preflight completed.'

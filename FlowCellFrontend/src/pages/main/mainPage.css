@@ -68,12 +68,6 @@
   overflow: visible;
 }
 
-.button-host .host-skin-button__frame {
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-
 .main-page__button-group {
   position: absolute;
   display: flex;
@@ -166,92 +160,6 @@
   background: rgba(255, 255, 255, 0.16);
 }
 
-.main-page__rotate-toolbox {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  padding: 6px;
-}
-
-.main-page__rotate-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.main-page__rotate-row--top {
-  gap: 8px;
-}
-
-.main-page__rotate-row--wide {
-  justify-content: space-between;
-}
-
-.main-page__rotate-row--bottom {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.main-page__rotate-button {
-  position: relative;
-  min-height: 44px;
-}
-
-.main-page__rotate-field {
-  display: flex;
-  align-items: center;
-  min-height: 44px;
-  padding: 0 14px;
-  border-radius: 18px;
-  background: rgba(9, 14, 12, 0.92);
-  border: 1px solid rgba(223, 233, 227, 0.18);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.08),
-    0 10px 18px rgba(0, 0, 0, 0.18);
-}
-
-.main-page__rotate-field input {
-  width: 100%;
-  padding: 0;
-  border: 0;
-  outline: none;
-  background: transparent;
-  color: rgba(244, 247, 241, 0.96);
-  font: 600 30px/1 "Segoe UI", sans-serif;
-  letter-spacing: 0.01em;
-}
-
-.main-page__rotate-field input::selection {
-  background: rgba(180, 211, 125, 0.32);
-}
-
-.main-page__alignment-toolbox {
-  position: relative;
-  display: block;
-}
-
-.main-page__alignment-row {
-  display: block;
-}
-
-.main-page__alignment-axis {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: rgba(244, 247, 241, 0.9);
-  font: 700 0.74rem/1 "Segoe UI", sans-serif;
-  letter-spacing: 0.14em;
-  text-align: center;
-  text-transform: uppercase;
-}
-
-.main-page__alignment-button {
-  position: relative;
-  min-height: 44px;
-}
-
 .sr-only {
   position: absolute;
   width: 1px;
@@ -274,10 +182,6 @@
     0 0 0 1px rgba(151, 255, 99, 0.28),
     0 0 10px rgba(151, 255, 99, 0.3);
   pointer-events: none;
-}
-
-.button-host.button-host--skin-profile-highlight[data-selected="true"]::after {
-  content: none;
 }
 
 .button-host:focus-visible {
@@ -319,9 +223,50 @@
   color: inherit;
 }
 
-.button-context-menu__item .host-skin-button__frame {
-  width: 100%;
-  height: 100%;
+.fan-setup-menu__backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 39;
+}
+
+.fan-setup-menu {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  gap: 6px;
+  width: 236px;
+  max-height: min(520px, calc(100vh - 24px));
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.05)),
+    rgba(12, 16, 18, 0.96);
+  box-shadow:
+    0 20px 48px rgba(0, 0, 0, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: rgba(244, 247, 241, 0.96);
+  backdrop-filter: blur(18px);
+}
+
+.fan-setup-menu__title {
+  padding: 4px 6px 6px;
+  font: 800 12px/1 "Segoe UI", sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.fan-setup-menu__empty {
+  margin: 0;
+  padding: 6px;
+  color: rgba(224, 231, 232, 0.76);
+  font: 600 12px/1.4 "Segoe UI", sans-serif;
+}
+
+.fan-setup-menu__item {
+  width: 220px;
+  height: 44px;
 }
 
 .main-page__settings-backdrop {
@@ -392,4 +337,3 @@
   margin: 0;
   cursor: pointer;
 }
-

@@ -3,6 +3,10 @@ param(
     [string]$SelectedPathsJson = '',
     [Parameter(Mandatory = $true)]
     [string]$PanelName,
+    [Parameter(Mandatory = $true)]
+    [ValidatePattern('^[A-Za-z0-9_-]{1,128}$')]
+    [string]$OwnerButtonId,
+    [string]$BridgeDataJson = '{}',
     [string]$ConfigPath = '',
     [string]$BridgeFolder = '',
     [switch]$SkipSync
@@ -51,8 +55,6 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
 }
 
 $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
-if ($null -eq $config.buttons) { $config | Add-Member -MemberType NoteProperty -Name buttons -Value @() }
-$config.buttons = @($config.buttons)
 $bridgeLayout = Get-FlowCellBlenderBridgeLayout -Config $config -BridgeFolder $BridgeFolder
 $BridgeFolder = [string]$bridgeLayout.BridgeFolder
 Ensure-FlowCellBlenderBridgeRuntime -Layout $bridgeLayout
@@ -76,12 +78,6 @@ if (Test-Path -LiteralPath $customRegistryPath -PathType Leaf) {
     }
 }
 $registry.actions = @($registry.actions)
-
-function Get-SafeName([string]$Value) {
-    $safe = (($Value -replace '[^A-Za-z0-9]+', '_').Trim('_')).ToLowerInvariant()
-    if ([string]::IsNullOrWhiteSpace($safe)) { return 'button' }
-    return $safe
-}
 
 function Write-FlowCellTextFile {
     param(
@@ -145,185 +141,6 @@ function Get-FlowCellObjectPropertyValue {
     }
 
     return $property.Value
-}
-
-function Get-FlowCellSupportedCommentBody {
-    param([AllowEmptyString()][string]$Line)
-
-    $trimmed = ([string]$Line).TrimStart()
-    if ($trimmed.StartsWith('#')) { return $trimmed.Substring(1) }
-    if ($trimmed.StartsWith('//')) { return $trimmed.Substring(2) }
-    if ($trimmed.StartsWith(';')) { return $trimmed.Substring(1) }
-    if ($trimmed.StartsWith("'")) { return $trimmed.Substring(1) }
-    if ($trimmed.StartsWith('REM', [System.StringComparison]::OrdinalIgnoreCase) -and $trimmed.Length -gt 3 -and [char]::IsWhiteSpace($trimmed[3])) {
-        return $trimmed.Substring(3)
-    }
-
-    return $null
-}
-
-function Get-FlowCellDirectiveValue {
-    param(
-        [AllowEmptyString()][string]$Line,
-        [Parameter(Mandatory = $true)]
-        [string]$Directive
-    )
-
-    $body = Get-FlowCellSupportedCommentBody -Line $Line
-    if ($null -eq $body) { return $null }
-
-    $trimmedBody = ([string]$body).TrimStart()
-    if (-not $trimmedBody.StartsWith($Directive, [System.StringComparison]::OrdinalIgnoreCase)) {
-        return $null
-    }
-
-    $rest = $trimmedBody.Substring($Directive.Length).TrimStart()
-    if (-not $rest.StartsWith(':')) { return $null }
-    return $rest.Substring(1).Trim()
-}
-
-function Get-FlowCellButtonEventName {
-    param([AllowEmptyString()][string]$Name)
-
-    $normalized = (([string]$Name).Trim() -replace '[_\-\s]+', '').ToLowerInvariant()
-    switch ($normalized) {
-        'click' { return 'click' }
-        'doubleclick' { return 'doubleClick' }
-        'contextmenu' { return 'contextMenu' }
-        'rightclick' { return 'contextMenu' }
-        'hoverenter' { return 'hoverEnter' }
-        'pointerenter' { return 'hoverEnter' }
-        'mouseenter' { return 'hoverEnter' }
-        'hoverleave' { return 'hoverLeave' }
-        'pointerleave' { return 'hoverLeave' }
-        'mouseleave' { return 'hoverLeave' }
-        'pressdown' { return 'pressDown' }
-        'pointerdown' { return 'pressDown' }
-        'mousedown' { return 'pressDown' }
-        'pressup' { return 'pressUp' }
-        'pointerup' { return 'pressUp' }
-        'mouseup' { return 'pressUp' }
-        'pointercancel' { return 'pressUp' }
-        'focus' { return 'focus' }
-        'blur' { return 'blur' }
-        default { return '' }
-    }
-}
-
-function Get-FlowCellButtonActionType {
-    param([AllowEmptyString()][string]$Type)
-
-    $normalized = (([string]$Type).Trim() -replace '[_\-\s]+', '').ToLowerInvariant()
-    switch ($normalized) {
-        '' { return 'blenderBridge' }
-        'bridge' { return 'blenderBridge' }
-        'blenderbridge' { return 'blenderBridge' }
-        'noop' { return 'none' }
-        'noaction' { return 'none' }
-        'none' { return 'none' }
-        default { return ([string]$Type).Trim() }
-    }
-}
-
-function Get-FlowCellButtonEvents {
-    param([string]$Path)
-
-    if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        return $null
-    }
-
-    $events = [ordered]@{}
-    foreach ($line in @(Get-Content -LiteralPath $Path)) {
-        $eventsJson = Get-FlowCellDirectiveValue -Line ([string]$line) -Directive 'FLOWCELL_EVENTS'
-        if (-not [string]::IsNullOrWhiteSpace($eventsJson)) {
-            $parsedEvents = $eventsJson | ConvertFrom-Json -ErrorAction Stop
-            foreach ($property in @($parsedEvents.PSObject.Properties)) {
-                $eventName = Get-FlowCellButtonEventName -Name ([string]$property.Name)
-                if ([string]::IsNullOrWhiteSpace($eventName)) { continue }
-
-                $record = $property.Value
-                $actionType = Get-FlowCellButtonActionType -Type ([string](Get-FlowCellObjectPropertyValue -InputObject $record -Name 'type'))
-                $actionName = ([string](Get-FlowCellObjectPropertyValue -InputObject $record -Name 'action')).Trim()
-                if ($actionType -ne 'none' -and [string]::IsNullOrWhiteSpace($actionName)) { continue }
-
-                $eventRecord = [ordered]@{
-                    type = $actionType
-                    action = $actionName
-                }
-                $data = Get-FlowCellObjectPropertyValue -InputObject $record -Name 'data'
-                if ($null -ne $data) {
-                    $eventRecord.data = $data
-                }
-                $events[$eventName] = [pscustomobject]$eventRecord
-            }
-            continue
-        }
-
-        $eventValue = Get-FlowCellDirectiveValue -Line ([string]$line) -Directive 'FLOWCELL_EVENT'
-        if ([string]::IsNullOrWhiteSpace($eventValue)) { continue }
-
-        $parts = @(([string]$eventValue).Split([char]'|', 4) | ForEach-Object { ([string]$_).Trim() })
-        if ($parts.Count -lt 2) { continue }
-
-        $eventName = Get-FlowCellButtonEventName -Name $parts[0]
-        if ([string]::IsNullOrWhiteSpace($eventName)) { continue }
-
-        if ($parts.Count -ge 3) {
-            $actionType = Get-FlowCellButtonActionType -Type $parts[1]
-            $actionName = ([string]$parts[2]).Trim()
-            $dataText = if ($parts.Count -ge 4) { ([string]$parts[3]).Trim() } else { '' }
-        }
-        else {
-            $actionType = 'blenderBridge'
-            $actionName = ([string]$parts[1]).Trim()
-            $dataText = ''
-        }
-
-        if ($actionType -ne 'none' -and [string]::IsNullOrWhiteSpace($actionName)) { continue }
-        $eventRecord = [ordered]@{
-            type = $actionType
-            action = $actionName
-        }
-        if (-not [string]::IsNullOrWhiteSpace($dataText)) {
-            $eventRecord.data = $dataText | ConvertFrom-Json -ErrorAction Stop
-        }
-        $events[$eventName] = [pscustomobject]$eventRecord
-    }
-
-    if ($events.Count -le 0) { return $null }
-    return [pscustomobject]$events
-}
-
-function Set-FlowCellButtonPanel {
-    param(
-        [Parameter(Mandatory = $true)]
-        [object]$Button,
-        [Parameter(Mandatory = $true)]
-        [string]$PanelName
-    )
-
-    $resolvedPanelName = ([string]$PanelName).Trim()
-    if ([string]::IsNullOrWhiteSpace($resolvedPanelName)) {
-        return
-    }
-
-    if ($Button.PSObject.Properties['panel']) {
-        $Button.panel = $resolvedPanelName
-    }
-    else {
-        $Button | Add-Member -MemberType NoteProperty -Name panel -Value $resolvedPanelName -Force
-    }
-}
-
-function Get-UniqueActionName([string]$BaseName, [System.Collections.Generic.HashSet[string]]$Taken) {
-    $candidate = $BaseName
-    $suffix = 2
-    while ($Taken.Contains($candidate)) {
-        $candidate = ('{0}_{1}' -f $BaseName, $suffix)
-        $suffix++
-    }
-    [void]$Taken.Add($candidate)
-    return $candidate
 }
 
 function Get-PythonFunctionMetadata([string]$Path, [string]$PreferredFunctionName = '') {
@@ -534,24 +351,6 @@ function Get-FlowCellPythonBootstrapHint([string]$Path, [string[]]$AvailableFunc
     return ''
 }
 
-function Get-FriendlyBlenderButtonLabel([string]$RawLabel) {
-    if ([string]::IsNullOrWhiteSpace($RawLabel)) {
-        return 'button'
-    }
-
-    $label = [string]$RawLabel
-    $match = [System.Text.RegularExpressions.Regex]::Match(
-        $label,
-        '^(?:util_)?(?:flowcell_custom_)?util_boolsafe_(?<shape>cylinder|cone|cube|sphere|triangle)(?:_\d+)?$',
-        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
-    )
-    if ($match.Success) {
-        return $match.Groups['shape'].Value.ToLowerInvariant()
-    }
-
-    return $label
-}
-
 function Get-TopDescription([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
     $lines = @(Get-Content -LiteralPath $Path -TotalCount 32)
@@ -615,24 +414,32 @@ function Set-TopDescription([string]$Path, [string]$NextDescription) {
     Write-FlowCellTextFile -Path $Path -Value (($nextLines -join "`r`n") + "`r`n") -Encoding UTF8
 }
 
-$takenActionNames = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
-foreach ($button in @($config.buttons)) {
-    $buttonAction = [string](Get-FlowCellObjectPropertyValue -InputObject $button -Name 'action')
-    if (-not [string]::IsNullOrWhiteSpace($buttonAction)) { [void]$takenActionNames.Add($buttonAction) }
-    $buttonLocalAction = [string](Get-FlowCellObjectPropertyValue -InputObject $button -Name 'localAction')
-    if (-not [string]::IsNullOrWhiteSpace($buttonLocalAction)) { [void]$takenActionNames.Add($buttonLocalAction) }
-}
-foreach ($entry in @($registry.actions)) {
-    $entryAction = [string](Get-FlowCellObjectPropertyValue -InputObject $entry -Name 'action')
-    if (-not [string]::IsNullOrWhiteSpace($entryAction)) { [void]$takenActionNames.Add($entryAction) }
+$selectedFilePaths = @($SelectedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
+if ($selectedFilePaths.Count -ne 1) {
+    throw 'An owned Blender Button install requires exactly one Local source file.'
 }
 
+try {
+    $bridgeData = if ([string]::IsNullOrWhiteSpace($BridgeDataJson)) {
+        [pscustomobject]@{}
+    }
+    else {
+        ConvertFrom-Json -InputObject $BridgeDataJson -ErrorAction Stop
+    }
+    if ($null -eq $bridgeData -or
+        ($bridgeData -isnot [System.Management.Automation.PSCustomObject] -and
+         $bridgeData -isnot [System.Collections.IDictionary])) {
+        throw 'bridgeData must be a JSON object.'
+    }
+}
+catch {
+    throw "Could not parse -BridgeDataJson for Blender Button install: $($_.Exception.Message)"
+}
+$actionName = ('flowcell_button_{0}' -f $OwnerButtonId.ToLowerInvariant())
+
 $installResults = New-Object System.Collections.Generic.List[object]
-$addedConfigButtons = 0
-$updatedConfigButtons = 0
 $registeredActions = 0
 $regeneratedFlowcellActions = $false
-$syncedFlowCellButtons = $false
 $callableCheckStatus = 'skipped'
 $statusMessage = ''
 
@@ -658,14 +465,10 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             continue
         }
 
-        $label = Get-FriendlyBlenderButtonLabel ([System.IO.Path]::GetFileNameWithoutExtension($fullPath))
+        $label = [System.IO.Path]::GetFileNameWithoutExtension($fullPath)
         if ([string]::IsNullOrWhiteSpace($label)) { $label = 'button' }
-        $safeLabel = Get-SafeName $label
-        $actionName = Get-UniqueActionName -BaseName ('{0}{1}' -f [string]$bridgeLayout.GeneratedActionPrefix, $safeLabel) -Taken $takenActionNames
         $description = Get-TopDescription -Path $fullPath
         if ([string]::IsNullOrWhiteSpace($description)) { $description = ('Run {0} through the {1} Blender bridge.' -f $label, [string]$bridgeLayout.AddonDisplayName) }
-        Set-TopDescription -Path $fullPath -NextDescription $description
-        $buttonEvents = Get-FlowCellButtonEvents -Path $fullPath
 
         $pythonPath = ''
         $functionName = ''
@@ -695,6 +498,17 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             continue
         }
 
+        $existingEntry = @($registry.actions | Where-Object { [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'action') -ieq $actionName } | Select-Object -First 1)
+        if (@($registry.actions | Where-Object { [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'action') -ieq $actionName }).Count -gt 1) {
+            throw ('Blender action {0} has duplicate registry entries and cannot be safely updated.' -f $actionName)
+        }
+        if (@($existingEntry).Count -gt 0) {
+            $existingOwner = [string](Get-FlowCellObjectPropertyValue -InputObject $existingEntry[0] -Name 'ownerButtonId')
+            if ($existingOwner -cne $OwnerButtonId) {
+                throw ('Blender action {0} is not owned by Button {1}.' -f $actionName, $OwnerButtonId)
+            }
+        }
+
         $sourcePythonPath = [System.IO.Path]::GetFullPath($fullPath)
         $managedPythonPath = Join-Path $managedActionRoot ('{0}.py' -f $actionName)
         Copy-Item -LiteralPath $fullPath -Destination $managedPythonPath -Force
@@ -704,51 +518,27 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
         $functionName = [string]$meta.FunctionName
         $startLine = [int]$meta.StartLine
 
-        $existingButton = @($config.buttons | Where-Object { [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'action') -ieq $actionName } | Select-Object -First 1)
-        if (@($existingButton).Count -gt 0) {
-            $existingButton[0].label = [string]$label
-            $existingButton[0].tooltip = [string]$description
-            Set-FlowCellButtonPanel -Button $existingButton[0] -PanelName $PanelName
-            if ($null -ne $buttonEvents) {
-                $existingButton[0] | Add-Member -MemberType NoteProperty -Name events -Value $buttonEvents -Force
-            }
-            elseif ($existingButton[0].PSObject.Properties['events']) {
-                $existingButton[0].PSObject.Properties.Remove('events')
-            }
-            $updatedConfigButtons++
-        }
-        else {
-            $newButton = [ordered]@{
-                label = [string]$label
-                tooltip = [string]$description
-                action = [string]$actionName
-                panel = [string]$PanelName
-            }
-            if ($null -ne $buttonEvents) {
-                $newButton.events = $buttonEvents
-            }
-            $config.buttons = @($config.buttons) + @([pscustomobject]$newButton)
-            $addedConfigButtons++
-        }
-
-        $existingEntry = @($registry.actions | Where-Object { [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'action') -ieq $actionName } | Select-Object -First 1)
         if (@($existingEntry).Count -gt 0) {
             $existingEntry[0].pythonPath = [string]$pythonPath
             $existingEntry[0].functionName = [string]$functionName
+            $existingEntry[0] | Add-Member -MemberType NoteProperty -Name ownerButtonId -Value ([string]$OwnerButtonId) -Force
             $existingEntry[0] | Add-Member -MemberType NoteProperty -Name sourcePythonPath -Value ([string]$sourcePythonPath) -Force
             $existingEntry[0] | Add-Member -MemberType NoteProperty -Name sourceFunctionName -Value ([string]$functionName) -Force
             $existingEntry[0] | Add-Member -MemberType NoteProperty -Name startLine -Value ([int]$startLine) -Force
             $existingEntry[0] | Add-Member -MemberType NoteProperty -Name description -Value ([string]$description) -Force
+            $existingEntry[0] | Add-Member -MemberType NoteProperty -Name bridgeData -Value $bridgeData -Force
         }
         else {
             $registry.actions = @($registry.actions) + @([pscustomobject]@{
                 action = [string]$actionName
+                ownerButtonId = [string]$OwnerButtonId
                 pythonPath = [string]$pythonPath
                 functionName = [string]$functionName
                 sourcePythonPath = [string]$sourcePythonPath
                 sourceFunctionName = [string]$functionName
                 startLine = [int]$startLine
                 description = [string]$description
+                bridgeData = $bridgeData
             })
             $registeredActions++
         }
@@ -759,7 +549,6 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
             Action = $actionName
             Label = [string]$label
             Tooltip = [string]$description
-            Events = $buttonEvents
             PythonPath = $pythonPath
             FunctionName = $functionName
         }) | Out-Null
@@ -774,7 +563,6 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
     }
 }
 
-Write-FlowCellTextFile -Path $ConfigPath -Value ($config | ConvertTo-Json -Depth 16) -Encoding UTF8
 Write-FlowCellTextFile -Path $customRegistryPath -Value ($registry | ConvertTo-Json -Depth 8) -Encoding UTF8
 
 if (Test-Path -LiteralPath $customActionSyncPath -PathType Leaf) {
@@ -799,7 +587,7 @@ $firstInstalled = @($installResults | Where-Object { [bool]$_.Installed } | Sele
 if (@($firstInstalled).Count -gt 0) {
     $dispatcherPath = Join-Path $supportRoot 'Invoke-BlenderFlowCellAction.ps1'
     if (Test-Path -LiteralPath $dispatcherPath -PathType Leaf) {
-        $response = & $dispatcherPath -Action ([string]$firstInstalled[0].Action) -Label ([string]$firstInstalled[0].Action) -PassThruResponse -SuppressToast 2>$null
+        $response = & $dispatcherPath -Action ([string]$firstInstalled[0].Action) -Label ([string]$firstInstalled[0].Action) -PassThruResponse 2>$null
         if ($LASTEXITCODE -ne 0) {
             $reloadRequired = $true
             $reloadReason = ('Blender must reload the addon or restart to use newly registered action ''{0}''.' -f [string]$firstInstalled[0].Action)
@@ -855,24 +643,33 @@ else {
     }
 }
 
+$publicResults = @($installResults.ToArray() | ForEach-Object {
+    [pscustomobject]@{
+        source = [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'Source')
+        installed = [bool](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'Installed')
+        action = [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'Action')
+        label = [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'Label')
+        tooltip = [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'Tooltip')
+        pythonPath = [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'PythonPath')
+        functionName = [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'FunctionName')
+        message = [string](Get-FlowCellObjectPropertyValue -InputObject $_ -Name 'Message')
+    }
+})
 $scriptResult = [pscustomobject]@{
-    InstalledCount = $installedCount
-    FailedCount = $failedCount
-    AddedConfigButtons = $addedConfigButtons
-    UpdatedConfigButtons = $updatedConfigButtons
-    RegisteredActions = $registeredActions
-    RegeneratedFlowcellActions = $regeneratedFlowcellActions
-    SyncedFlowCellButtons = $syncedFlowCellButtons
-    CallableCheckStatus = $callableCheckStatus
-    ConfigPath = $ConfigPath
-    RegistryPath = $customRegistryPath
-    ReloadRequired = $reloadRequired
-    ReloadReason = $reloadReason
-    FirstFailureMessage = $firstFailureMessage
-    StatusMessage = $statusMessage
-    AddonActionsFileName = [string]$bridgeLayout.AddonActionsFileName
-    BridgeFolder = [string]$BridgeFolder
-    Results = @($installResults.ToArray())
+    installedCount = $installedCount
+    failedCount = $failedCount
+    registeredActions = $registeredActions
+    regeneratedFlowcellActions = $regeneratedFlowcellActions
+    callableCheckStatus = $callableCheckStatus
+    configPath = $ConfigPath
+    registryPath = $customRegistryPath
+    reloadRequired = $reloadRequired
+    reloadReason = $reloadReason
+    firstFailureMessage = $firstFailureMessage
+    statusMessage = $statusMessage
+    addonActionsFileName = [string]$bridgeLayout.AddonActionsFileName
+    bridgeFolder = [string]$BridgeFolder
+    results = $publicResults
 }
 
 $global:LASTEXITCODE = 0

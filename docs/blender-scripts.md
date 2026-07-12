@@ -1,334 +1,199 @@
+# Blender Script Packages
 
+Blender Buttons use the same owned source lifecycle as every other program. The
+Blender-specific part is the runner adapter that deploys the installed Local
+Scripts copy into the FlowCell Blender bridge.
 
-# Blender Scripts
+## Source of Truth
+
+- `Programs/Blender/Blender Git Scripts/` is the tracked catalog.
+- `Programs/Blender/Blender Local Scripts/<ownerButtonId>/` is the installed
+  source of truth for that Button.
+- `Programs/Blender/Panels/<Panel>/<ownerButtonId>.flowcell-source.json` is the
+  active owner/runner record.
+- `flowcellbackend/local/button-system/button-state.json` is canonical Button
+  UI state.
+- The Blender add-on's `ManagedActions/flowcell_button_<ownerButtonId>.py` and
+  custom-action registry entry are generated runtime output.
+
+Normal execution never runs a Git Scripts file, guesses an action from a file
+name, or selects a pre-baked program action.
 
 ## Blender Setup
 
-Blender needs FlowCell bridge files installed into Blender's user add-ons folder.
+Install the contents of
+`Programs/Blender/Blender Addons - Copy contents Into Blender/` in Blender's user
+add-ons folder:
 
-Use `Programs\Blender\Blender Addons - Copy contents Into Blender`.
-
-`%APPDATA%\Blender Foundation\Blender\<Blender version>\scripts\addons`
-
-make sure that add-ons folder contains:
-
-- `flowcell_actions.py`
-- `flowcell_bridge.py`
-- `blender_bridge_flowcell\`
-
-After fresh install or added script:
-1. uncheck and recheck Blender add-on or restart Blender after FlowCell registers new generated actions
-2. Enable the `FlowCell` add-on in Blender if it is not already enabled.
-3. Start FlowCell and select the Blender program tab.
-4. Refresh the Blender add-on or restart Blender after FlowCell registers new generated actions.
-
-## Add Script Prompt
-
-Use this prompt when you want Codex to turn pasted Blender Python into a FlowCell-ready Add Script file. Single script buttons and child-bearing toolsets use the same prompt, but toolsets must include the FlowCell metadata comments and command routing shown below.
-
-Before generating the script, tell Codex: `Use the FlowCell AI skills in docs/ai-skills.md. For Blender Add Script/toolset work, use flowcell and toolsets; add svgtools for exact SVG layouts, blender-theme for theme/HDRI work, and react-tauri-button-skin-contract when button skins, hitboxes, or imported visual code are involved.`
-
-Convert the pasted Blender Python functionality into one clean FlowCell-ready Blender `.py` action file. First inspect the source and briefly confirm what the tool actually does, including prompts, file pickers, modal behavior, scene properties, selected-object requirements, and UI controls the user expects.
-
-Preserve the useful behavior, but remove full add-on packaging, panels, menus, keymaps, startup handlers, modal listeners that run forever, and automatic execution on import. Do not create a Blender UI panel for FlowCell. `register()` may register only scene properties/classes required by the action logic. All actual work must run through `run_flowcell_action(context=None, data=None)`.
-
-Output a normal Python file with:
-
-- `# Description: ...` as the first meaningful comment.
-- `run_flowcell_action(context=None, data=None)` as the main entrypoint.
-- Optional `perform_<short_action_name>(context=None, data=None)` helper entrypoints for child actions.
-- No import-time execution except constant definitions and function/class definitions.
-- A dictionary return value with at least `status` and `message`.
-- For toolboxes, a `status` or `state` command that returns current UI state fields.
-- Child command routing through `data.get("command") or data.get("action")`.
-- Short child labels and tooltips that fit FlowCell capsules.
-
-If the tool has more than one button/control, make it a FlowCell toolset. Add `FLOWCELL_KIND` when it matches a dedicated FlowCell layout, and add one `FLOWCELL_CHILD` line for every child button/control.
-
-## FlowCell Metadata Contract
-
-FlowCell reads these source comments when `Add Script` creates the panel record:
-
-```python
-# Description: Short tooltip for the owner button.
-# FLOWCELL_KIND: remesh_toolset
-# FLOWCELL_CHILD: mode_voxel | Voxel | Use Voxel remesh mode.
-# FLOWCELL_CHILD: create_update_remesh | Create | Create or update the active object's Remesh modifier.
+```text
+%APPDATA%/Blender Foundation/Blender/<version>/scripts/addons/
 ```
 
-The parser uses:
+Enable the FlowCell add-on. After an install, update, delete, registry change, or
+bridge deployment change, reload the add-on or restart Blender before testing
+the new runtime state.
 
-- `FLOWCELL_KIND` -> `PanelScriptFileRecord.kind`
-- `FLOWCELL_CHILD` -> `PanelScriptFileRecord.children`
-- child fields -> `PanelScriptChildRecord { slot, label, tooltip }`
-- `slot` -> the `command`/`action` value sent to `run_flowcell_action`
+## Python Action Contract
 
-## Runtime Cleanup
-
-Deleting an installed Blender script/toolset is a runtime cleanup operation. FlowCell should remove the active button/config entry, custom-action registry entry, generated `ManagedActions` copy, stale unreferenced same-family variants, and panel metadata references for that action. It should not delete the source file from `Programs/Blender/Blender Git Scripts` unless the user explicitly deletes that source script.
-
-Known dedicated Blender toolset kinds and required slots:
-
-| Kind | Required slots |
-| --- | --- |
-| `rotate_toolset` | `axis_z`, `axis_y`, `axis_x`, `preset_30`, `preset_45`, `preset_90`, `preset_180`, `preset_270`, `center_geometry`, `center_origin`, `center_world`, `center_cursor`, `center_object`, `mode_transform`, `mode_distribute`, `apply_negative`, `apply_positive` |
-| `alignment_toolset` | `z_min`, `z_center`, `z_max`, `z_surface`, `z_geo`, `y_min`, `y_center`, `y_max`, `y_surface`, `y_geo`, `x_min`, `x_center`, `x_max`, `x_surface`, `x_geo`, `center_everything` |
-| `boolean_toolset` | `operation_intersect`, `operation_union`, `operation_difference`, `toggle_self_intersection`, `toggle_hole_tolerant`, `toggle_hide_cutter`, `toggle_backup_active`, `run_boolean` |
-| `remesh_toolset` | `mode_voxel`, `mode_smooth`, `mode_sharp`, `mode_blocks`, `create_update_remesh`, `apply_remesh` |
-| `tri_poly_toolset` | `triangle_equilateral`, `triangle_isosceles`, `triangle_50`, `triangle_right`, `triangle_scalene`, `polygon_create` |
-| `dimensions_toolset` | `dimension_x`, `dimension_y`, `dimension_z` |
-| `smart_axis_toolset` | `baseline`, `cycle_x`, `cycle_y`, `cycle_z`, `toggle_live` |
-| `toolset` | Any child-bearing script that should open in the generic FlowCell toolbox. |
-
-Special signatures:
-
-- Flatten/Revolve opens its dedicated toolbox when children include `flatten_profile` and `generate_revolve`.
-- Theme opens its dedicated toolbox when children include `browse_theme`, `absorb_theme`, `apply_theme`, `apply_hdri`, and `apply_world_strength`.
-
-## Single Button Example
-
-Use this shape for one normal button:
+An installable `.py` source must expose this top-level entrypoint:
 
 ```python
-# Description: Move the selected objects to the world origin.
-
-from __future__ import annotations
-
-import bpy
-
-
-def _ctx(context=None):
-    return context or bpy.context
-
-
-def run_flowcell_action(context=None, data=None):
-    ctx = _ctx(context)
-    selected = list(getattr(ctx, "selected_objects", []) or [])
-    if not selected:
-        return {"status": "error", "message": "Select at least one object."}
-
-    for obj in selected:
-        obj.location = (0.0, 0.0, 0.0)
-
-    return {
-        "status": "ok",
-        "message": f"Moved {len(selected)} object(s) to world origin.",
-        "changed": len(selected),
-    }
-```
-
-## Generic Toolset Example
-
-Use this shape when the tool has multiple child buttons but does not need a dedicated FlowCell layout:
-
-```python
-# Description: Simple transform nudge toolset.
-# FLOWCELL_KIND: toolset
-# FLOWCELL_CHILD: nudge_x_plus | X+ | Move selection one unit on X.
-# FLOWCELL_CHILD: nudge_x_minus | X- | Move selection negative one unit on X.
-# FLOWCELL_CHILD: status | Status | Report selected-object count.
-
-from __future__ import annotations
-
-import bpy
-
-
-def _ctx(context=None):
-    return context or bpy.context
-
-
-def _result(status="ok", message="", **extra):
-    return {"status": status, "message": message, **extra}
-
-
-def _selected(context=None):
-    return list(getattr(_ctx(context), "selected_objects", []) or [])
-
-
-def _nudge(context=None, amount=1.0):
-    objects = _selected(context)
-    if not objects:
-        return _result("error", "Select at least one object.", selected=0)
-    for obj in objects:
-        obj.location.x += amount
-    return _result("ok", f"Nudged {len(objects)} object(s).", selected=len(objects), amount=amount)
-
-
 def run_flowcell_action(context=None, data=None):
     data = data or {}
-    command = str(data.get("command") or data.get("action") or "status").strip().lower()
-
-    if command in {"", "status", "state"}:
-        return _result("ok", "Nudge toolset ready.", selected=len(_selected(context)))
-    if command == "nudge_x_plus":
-        return _nudge(context, 1.0)
-    if command == "nudge_x_minus":
-        return _nudge(context, -1.0)
-
-    raise ValueError(f"Unsupported nudge command: {command}")
+    return {"status": "ok", "message": "Completed."}
 ```
 
-## Stateful Toolset Example
+Requirements:
 
-Use this shape for a dedicated layout or any toolbox with toggles, values, and a live state display:
+- `run_flowcell_action(context=None, data=None)` must be a top-level function.
+- Do not execute the action on import.
+- Keep persistent listeners, keymaps, panels, and unrelated add-on bootstrap
+  code out of an action source.
+- Use `context or bpy.context` when Blender context is optional.
+- Treat `data` as the complete command payload. Tool sets normally route on
+  `data.get("command") or data.get("action")`.
+- Return a JSON-compatible dictionary with useful `status` and `message`
+  fields. State-aware tools may return additional fields.
+- Put `# Description: ...` near the top when a bare `.py` file should supply its
+  tooltip. Package manifests provide the preferred label and tooltip contract.
+
+## Single Script Package
+
+A single script may be installed as a bare allowed `.py` file. For a durable
+catalog package, place `flowcell.script.json` beside the source:
+
+```text
+Cycle Collection/
+|-- flowcell.script.json
+`-- cycle collection.py
+```
+
+```json
+{
+  "schemaVersion": 1,
+  "id": "blender.cycle-collection",
+  "label": "Cycle Collection",
+  "tooltip": "Cycle direct objects in the selected object's collection.",
+  "program": "Blender",
+  "source": "cycle collection.py",
+  "bridgeData": {
+    "command": "cycle"
+  },
+  "events": {
+    "hoverEnter": {
+      "type": "blenderBridge",
+      "data": { "command": "hover_enter" }
+    },
+    "hoverLeave": {
+      "type": "blenderBridge",
+      "data": { "command": "hover_leave" }
+    }
+  }
+}
+```
+
+`schemaVersion`, `label`, and `source` are required. `source` must be a relative
+path inside the package and must resolve to an allowed file. `id`, `tooltip`,
+`program`, `bridgeData`, `events`, runner-specific `execution`, and a restricted
+registered-core `executionTarget` are optional; when `program` is present it
+must match `Blender`. Unknown fields are rejected. Ordinary Blender scripts
+omit `executionTarget` and execute through their owner-generated bridge action.
+
+`bridgeData` is the default payload for the Button's normal execution. An event
+entry may specify `type: "blenderBridge"` and `data`; it runs through the same
+owner-generated bridge action. A source manifest does not choose or own a bridge
+action ID.
+
+## Tool-Set Package
+
+A tool set is a directory containing `flowcell.toolset.json` and its source:
+
+```text
+My Tool Set/
+|-- flowcell.toolset.json
+`-- my tool set.py
+```
+
+The manifest declares owner metadata, child slots, child payload defaults, and
+optional popout layout/fields. Add Tool Set copies the entire directory into the
+owner's Local Scripts package. See `docs/flowcell-toolset-manifest.md` for the
+complete contract.
+
+The Python source still has one entrypoint:
 
 ```python
-# Description: Example Remesh-style toolset with mode, value, toggle, create, and apply commands.
-# FLOWCELL_KIND: remesh_toolset
-# FLOWCELL_CHILD: mode_voxel | Voxel | Use Voxel remesh mode.
-# FLOWCELL_CHILD: mode_smooth | Smooth | Use Smooth remesh mode.
-# FLOWCELL_CHILD: mode_sharp | Sharp | Use Sharp remesh mode.
-# FLOWCELL_CHILD: mode_blocks | Blocks | Use Blocks remesh mode.
-# FLOWCELL_CHILD: set_voxel_size_mm | 0.10 | Set Voxel Size in millimeters.
-# FLOWCELL_CHILD: toggle_smooth_shading | SS | Toggle Smooth Shading.
-# FLOWCELL_CHILD: create_update_remesh | Create | Create or update the active object's Remesh modifier.
-# FLOWCELL_CHILD: apply_remesh | Apply | Apply the active object's Remesh modifier.
-
-from __future__ import annotations
-
-import bpy
-
-
-DEFAULT_MODE = "VOXEL"
-DEFAULT_VOXEL_SIZE_MM = 0.10
-MODIFIER_NAME = "FlowCell_Remesh"
-
-
-def _ctx(context=None):
-    return context or bpy.context
-
-
-def _ensure_scene_props():
-    if not hasattr(bpy.types.Scene, "flowcell_example_remesh_mode"):
-        bpy.types.Scene.flowcell_example_remesh_mode = bpy.props.EnumProperty(
-            name="Mode",
-            items=[("VOXEL", "Voxel", ""), ("SMOOTH", "Smooth", ""), ("SHARP", "Sharp", ""), ("BLOCKS", "Blocks", "")],
-            default=DEFAULT_MODE,
-        )
-    if not hasattr(bpy.types.Scene, "flowcell_example_voxel_size_mm"):
-        bpy.types.Scene.flowcell_example_voxel_size_mm = bpy.props.FloatProperty(
-            name="Voxel Size (mm)",
-            default=DEFAULT_VOXEL_SIZE_MM,
-            min=0.001,
-        )
-    if not hasattr(bpy.types.Scene, "flowcell_example_smooth"):
-        bpy.types.Scene.flowcell_example_smooth = bpy.props.BoolProperty(name="Smooth Shading", default=False)
-
-
-def _state(context=None, message="Remesh example ready."):
-    scene = _ctx(context).scene
-    _ensure_scene_props()
-    return {
-        "status": "ok",
-        "message": message,
-        "mode": scene.flowcell_example_remesh_mode,
-        "voxelSizeMm": float(scene.flowcell_example_voxel_size_mm),
-        "smoothShading": bool(scene.flowcell_example_smooth),
-    }
-
-
-def _active_mesh(context=None):
-    obj = getattr(_ctx(context), "active_object", None)
-    if not obj or getattr(obj, "type", None) != "MESH":
-        raise ValueError("Select an active mesh object.")
-    return obj
-
-
-def _get_or_create_modifier(obj):
-    modifier = obj.modifiers.get(MODIFIER_NAME)
-    if modifier is None:
-        modifier = obj.modifiers.new(MODIFIER_NAME, "REMESH")
-    return modifier
-
-
-def _apply_settings(modifier, context=None):
-    scene = _ctx(context).scene
-    modifier.mode = scene.flowcell_example_remesh_mode
-    if hasattr(modifier, "voxel_size"):
-        modifier.voxel_size = float(scene.flowcell_example_voxel_size_mm) / 1000.0
-    if hasattr(modifier, "use_smooth_shade"):
-        modifier.use_smooth_shade = bool(scene.flowcell_example_smooth)
-
-
 def run_flowcell_action(context=None, data=None):
-    ctx = _ctx(context)
     data = data or {}
-    _ensure_scene_props()
-    scene = ctx.scene
-    command = str(data.get("command") or data.get("action") or "status").strip().lower()
+    command = str(data.get("command") or data.get("action") or "status")
 
-    if command in {"", "status", "state"}:
-        return _state(ctx)
-    if command in {"mode_voxel", "mode_smooth", "mode_sharp", "mode_blocks"}:
-        scene.flowcell_example_remesh_mode = command.replace("mode_", "").upper()
-        return _state(ctx, f"Mode set to {scene.flowcell_example_remesh_mode}.")
-    if command == "set_voxel_size_mm":
-        scene.flowcell_example_voxel_size_mm = max(0.001, float(data.get("value", scene.flowcell_example_voxel_size_mm)))
-        return _state(ctx, f"Voxel size set to {scene.flowcell_example_voxel_size_mm:.3f} mm.")
-    if command == "toggle_smooth_shading":
-        scene.flowcell_example_smooth = not bool(scene.flowcell_example_smooth)
-        return _state(ctx, "Smooth Shading toggled.")
-    if command in {"create_update_remesh", "create", "update"}:
-        obj = _active_mesh(ctx)
-        modifier = _get_or_create_modifier(obj)
-        _apply_settings(modifier, ctx)
-        return _state(ctx, f"Updated {modifier.name} on {obj.name}.")
-    if command in {"apply_remesh", "apply"}:
-        obj = _active_mesh(ctx)
-        modifier = _get_or_create_modifier(obj)
-        _apply_settings(modifier, ctx)
-        ctx.view_layer.objects.active = obj
-        bpy.ops.object.modifier_apply(modifier=modifier.name)
-        return _state(ctx, f"Applied {MODIFIER_NAME} on {obj.name}.")
-
-    raise ValueError(f"Unsupported remesh command: {command}")
-
-
-def register():
-    _ensure_scene_props()
+    if command == "status":
+        return {"status": "ok", "message": "Ready."}
+    if command == "create":
+        return create_result(context, data)
+    raise ValueError(f"Unsupported command: {command}")
 ```
 
-## Live Tool Note
+Child slots are data, not hardcoded FlowCell commands. The active record stores
+the declared children, and the runtime validates the requested slot before it
+calls Blender.
 
-Only use `import flowcell_bridge as live_bridge` when a tool truly needs a live timer, like Smart Axis. In that case, register a stable tool id with `live_bridge.register_live_tool(...)`, return live status fields from `status`, and still route button clicks through `run_flowcell_action`.
+## Payload Contract
 
-## Public Sharing Flow
+For a tool-set child, FlowCell merges payloads in this order:
 
-1. Put shareable scripts in `Programs\Blender\Blender Git Scripts`, usually under the matching panel subfolder. This is the source library.
-2. Open the Blender tab in FlowCell.
-3. Click `Add Script`.
-4. Select one or more `.py` files.
-5. FlowCell validates each selected source, installs a generated runtime copy into `ManagedActions`, and registers the action.
-6. Reload the Blender FlowCell add-on or restart Blender if FlowCell says runtime reload is required.
-7. Use the new script button.
+1. manifest `bridgeData`;
+2. that child's `payload`;
+3. runtime payload produced by Button fields and child behavior.
 
-## What Add Script Does
+Later values win. If the merged object does not already contain them, FlowCell
+adds both `command` and `action` using the child slot. Payloads at all three
+levels must be JSON objects.
 
-1. Opens in the current panel's `Blender Git Scripts` folder when available.
-2. Validates that the file exposes callable `run_flowcell_action(context=None, data=None)`. That is the only gate — a single script, a toolset, or a thin wrapper whose `run_flowcell_action` calls `bridge.execute_bridge_operator(...)` are all accepted the same way, so any button can be added, deleted, and re-added through Add Script.
-3. Copies the validated source into `ManagedActions` as generated installed runtime output.
-4. Registers each tool in `flowcell_custom_actions.json` with `pythonPath` pointing at the runtime copy and `sourcePythonPath` pointing at the original source.
-5. Preserves `FLOWCELL_KIND` and `FLOWCELL_CHILD` metadata in the panel `.flowcell-panel-item.json` record.
-6. Leaves `executionTarget` empty for Blender script buttons so runtime clicks go through the bridge registry.
-7. Tells you whether Blender must reload the FlowCell add-on or restart before runtime verification reflects the new code.
+This lets the manifest provide stable defaults while canonical Button state owns
+editable field values, field patches, toggle behavior, and payload templates.
 
-## Folder Roles
+## Install and Update Lifecycle
 
-- `Blender Git Scripts`: tracked shareable source tools, organized by panel subfolder. Actual unique downloadable logic must live here.
-- `Blender Local Scripts`: ignored flat private backup/core copies. FlowCell never auto-deletes these.
-- `Panels\<Panel>`: ignored local button records and panel-local runnable `.py` copies.
-- `ManagedActions`: generated installed runtime copies. Do not edit this as the source of a downloadable tool.
-- `FlowCellButtons`: deprecated per-button wrapper location, retained only as a purged compatibility folder.
-- `SupportScripts`: dispatcher/sync plumbing only.
-- `Blender Addons - Copy contents Into Blender`: paste-ready Blender add-on files for Blender's `scripts\addons` folder.
-- `ScriptDump`: ignored loose/testing/old scripts.
+1. Add Script or Add Tool Set accepts a bare source, package folder, or manifest
+   file.
+2. FlowCell validates `flowcell.program.json`, the package manifest, the source
+   path, and `run_flowcell_action`.
+3. It copies the selected package into
+   `Blender Local Scripts/<ownerButtonId>/source/` and writes
+   `flowcell.install.json`.
+4. The Blender install adapter generates the owner-scoped runtime action
+   `flowcell_button_<ownerButtonId>`, copies the installed source into the
+   add-on's `ManagedActions`, and registers that owner/action pair.
+5. FlowCell writes `<ownerButtonId>.flowcell-source.json` with the installed
+   Local source path and generated `bridgeAction`.
+6. The Buttons Editor adds the owner and any children/layout to canonical Button
+   state.
 
-## Delete Behavior
+Update keeps the owner Button ID and transactionally replaces its package,
+runtime deployment, and active record. The old package is sent to the Recycle
+Bin only after the replacement commits. Editing the catalog alone never updates
+an installed Button.
 
-Deleting a Blender script button calls `delete_blender_action(action_id)`: it removes matching `Programs\Blender\config.json` entries, prunes `flowcell_custom_actions.json`, recycles unreferenced generated `ManagedActions` files for that action family (including stale `_2`, `_3`, `_4` variants when no remaining button references them), regenerates cached registration, and verifies no config or registry reference remains. It does not delete from `Blender Git Scripts`; delete source files only when you explicitly mean to remove the source library entry.
+## Runtime and Delete Lifecycle
 
-## Runtime Reload Rule
+At click time FlowCell resolves only the `.flowcell-source.json` record, verifies
+that its `sourcePath` is inside the matching owner Local package's `source/`
+root, and dispatches
+the generated `bridgeAction`. Tool-set commands are checked against the active
+record's child slots before payload merge and dispatch.
 
-After Blender bridge, add-on, registry, generated-action, or managed-action changes, Blender must reload the FlowCell add-on or restart before runtime verification reflects the new code. FlowCell reports this when it can detect that the action is not yet callable in the current Blender session.
+Deleting the owner Button is one transaction. It removes dependent Button
+state, owned bindings, the active record, the Local package, the Blender config
+and custom-action registry entries, generated owner runtime files, and matching
+Blender bytecode-cache artifacts. Owned files are sent to the Recycle Bin. The Git Scripts catalog package is not
+deleted.
 
-FlowCell resolves the bridge folder itself. If `automation.bridgeFolder` is already set, FlowCell uses that first; otherwise it scans Blender's user add-ons folders for `blender_bridge_flowcell`. You should only edit `automation.bridgeFolder` for a nonstandard Blender setup that auto-detection cannot see.
+If cleanup or state commit fails, FlowCell restores the quarantined package,
+record, bindings, and Blender deployment instead of leaving half an uninstall.
+
+## Migration Boundary
+
+Old panel script/tool-set records and source comment directives are understood
+only by `FlowCellFrontend/src-tauri/src/program_sources/migrate.rs` during
+one-time bootstrap/recovery. Do not author them and do not add fallback parsing
+to the normal Blender install or runtime paths.

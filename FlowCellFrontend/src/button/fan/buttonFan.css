@@ -1,0 +1,35 @@
+.button-fan-window,
+.button-fan-renderer,
+.button-fan-renderer__surface-frame {
+  position: relative;
+  margin: 0;
+  overflow: visible;
+  background: transparent;
+  pointer-events: none;
+  user-select: none;
+}
+
+.button-fan-renderer [data-core] {
+  pointer-events: auto;
+}
+
+.button-fan-window--space-drag .button-fan-renderer [data-core] {
+  cursor: move;
+}
+
+.button-fan-window .button-window-error {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: 100%;
+  padding: 8px 10px;
+  color: #ffd6d6;
+  border: 1px solid rgb(255 105 105 / 55%);
+  border-radius: 6px;
+  background: rgb(38 10 10 / 94%);
+  font: 12px/1.35 system-ui, sans-serif;
+  pointer-events: none;
+}

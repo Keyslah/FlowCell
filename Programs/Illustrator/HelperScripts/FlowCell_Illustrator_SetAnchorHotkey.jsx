@@ -1,7 +1,5 @@
 //@target illustrator
-// Description: FlowCell Illustrator anchor capture for the Core Set Anchor action.
-// FLOWCELL_REQUIRES_ACTIVE_ILLUSTRATOR: true
-
+// Description: FlowCell Illustrator anchor capture helper.
 (function () {
     function findProgramRoot() {
         var folder = new File($.fileName).parent;

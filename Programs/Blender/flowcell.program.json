@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "programId": "blender",
+  "label": "Blender",
+  "programType": "bridge",
+  "defaultPanels": ["Collections", "Files", "Utility"],
+  "processNames": ["blender", "blender-launcher"],
+  "gitScriptsFolder": "Blender Git Scripts",
+  "panelsFolder": "Panels",
+  "localScriptsFolder": "Blender Local Scripts",
+  "supportScriptsFolder": "SupportScripts",
+  "allowedScriptExtensions": ["py"],
+  "allowedManifestFileNames": ["flowcell.script.json", "flowcell.toolset.json"],
+  "supportsToolsetManifests": true,
+  "runner": {
+    "kind": "blender-bridge",
+    "programKey": "blender_bridge",
+    "installScript": "Install-BlenderFlowCellButtons.ps1",
+    "deleteScript": "Remove-BlenderFlowCellButton.ps1"
+  },
+  "addonReloadNotes": "Reload the FlowCell Blender add-on or restart Blender after bridge deployment changes.",
+  "appRestartNotes": "Restart FlowCell after changing this program manifest."
+}

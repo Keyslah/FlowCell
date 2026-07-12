@@ -172,64 +172,15 @@ GetFlowCellWorkspaceRoot() {
     return workspaceRoot
 }
 
-ResolveLegacyWindowsProgramPath(path, requireExisting := true) {
+NormalizeFlowCellProgramPath(path) {
     path := Trim(path "")
     if path = ""
         return path
-
-    normalizedPath := StrReplace(path, "/", "\")
-    workspaceRoot := GetFlowCellWorkspaceRoot()
-    legacyRoot := StrReplace(workspaceRoot "\Windows", "/", "\")
-    managedRoot := StrReplace(workspaceRoot "\Programs\Windows", "/", "\")
-    lowerPath := StrLower(normalizedPath)
-    lowerLegacyRoot := StrLower(legacyRoot)
-    candidate := ""
-
-    if lowerPath = lowerLegacyRoot {
-        candidate := managedRoot
-    } else if InStr(lowerPath, lowerLegacyRoot "\") = 1 {
-        candidate := managedRoot SubStr(normalizedPath, StrLen(legacyRoot) + 1)
-    }
-
-    if candidate != "" {
-        if !requireExisting || FileExist(candidate)
-            return candidate
-    }
-
-    return normalizedPath
+    return StrReplace(path, "/", "\")
 }
 
 GetFlowCellIllustratorPrewarmScriptPath() {
     return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_Prewarm.jsx"
-}
-
-GetFlowCellIllustratorAnchorScriptPath() {
-    return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_SetAnchorHotkey.jsx"
-}
-
-GetDefaultSingleMonitorHotkeyBinding() {
-    scriptPath := GetFlowCellWorkspaceRoot() "\Programs\Windows\Panels\Utility\Toggle Monitors.vbs"
-    if !FileExist(scriptPath)
-        return ""
-
-    return {
-        shortcut: "^+F2",
-        scriptPath: scriptPath,
-        programTabId: 2
-    }
-}
-
-ShouldRestoreDefaultSingleMonitorBinding(bindingFilePath) {
-    if bindingFilePath = "" || !FileExist(bindingFilePath)
-        return true
-    try {
-        iniText := ReadUtf8TextFileWithoutBom(bindingFilePath)
-        rawValue := GetIniTextValue(iniText, "Meta", "SingleMonitorDefaultEnabled", "1")
-        normalized := StrLower(Trim(rawValue ""))
-        return normalized != "0" && normalized != "false" && normalized != "no"
-    } catch {
-        return true
-    }
 }
 
 ReadUtf8TextFileWithoutBom(path) {
@@ -291,11 +242,6 @@ class FlowCellApp {
         this.illustratorAutomationLastDirectActionTick := 0
         this.illustratorAutomationPrewarmTimer := ""
         this.actions := []
-        if FileExist(GetFlowCellIllustratorAnchorScriptPath())
-            this.actions.Push(SetIllustratorAnchorAction(this))
-        this.actions.Push(SaveSelectedObjToProject3DAction(this))
-        this.actions.Push(SaveSelectedObjToBlenderAction(this))
-        this.actions.Push(SaveSelectedPngToBlenderLithoAction(this))
         for recordedAction in this.recordedActionStore.LoadActions(this)
             this.actions.Push(recordedAction)
         this.scanResult := ""
@@ -938,7 +884,7 @@ class FlowCellApp {
                     message: "Choose an action first."
                 }
             } else {
-            targetActionId := actionId != "" ? actionId : "layers_delete_selection"
+            targetActionId := actionId
             if IsObject(existingRef) && existingRef.kind = "action" && existingRef.id != targetActionId {
                 result := {
                     ok: false,
@@ -1159,18 +1105,13 @@ class FlowCellApp {
 
     HandleShortcutInvocation(binding) {
         global flowCellLastActionStatusPath
-        if this.IsTempShotsShortcutScript(binding.scriptPath) {
+        if this.IsTempShotsScript(binding.scriptPath) {
             this.HandleTempShotsShortcutInvocation(binding)
             return
         }
 
         this.logger.Info("Script hotkey requested. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
         result := this.RunBackendScriptCommand(binding.scriptPath, binding.HasOwnProp("programTabId") ? binding.programTabId : 0, "hotkey " binding.shortcut)
-        if binding.HasOwnProp("sendKeyAfter") && binding.sendKeyAfter != "" && WinActive("ahk_exe Illustrator.exe") {
-            try Send "{" binding.sendKeyAfter "}"
-            catch as sendErr
-                this.logger.Warn("Post-hotkey key pass-through failed. Shortcut=" binding.shortcut " | Error=" sendErr.Message)
-        }
         lines := [
             "Shortcut: " binding.shortcut,
             "Script: " binding.scriptPath,
@@ -1184,43 +1125,18 @@ class FlowCellApp {
         this.logger.Info("Script hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
     }
 
-    IsTempShotsShortcutScript(scriptPath) {
-        resolvedScriptPath := ResolveLegacyWindowsProgramPath(scriptPath, false)
+    IsTempShotsScript(scriptPath) {
+        resolvedScriptPath := NormalizeFlowCellProgramPath(scriptPath)
         SplitPath resolvedScriptPath, &fileName
         return StrLower(Trim(fileName)) = "temp_shots.vbs"
     }
 
     HandleTempShotsShortcutInvocation(binding) {
         global flowCellLastActionStatusPath
-        scriptPath := ResolveLegacyWindowsProgramPath(binding.scriptPath)
+        scriptPath := NormalizeFlowCellProgramPath(binding.scriptPath)
         this.logger.Info("Temp Shots hotkey requested. Shortcut=" binding.shortcut " | Script=" scriptPath)
 
-        result := this.TryLaunchTempShotsFastShortcut(scriptPath)
-
-        if !result.attempted {
-            result := {
-                attempted: true,
-                succeeded: false,
-                method: "temp_shots_wscript_async",
-                detail: ""
-            }
-
-            if !FileExist(scriptPath) {
-                result.detail := "Temp Shots launcher was not found."
-            } else {
-                wscriptPath := A_WinDir "\System32\wscript.exe"
-                if !FileExist(wscriptPath)
-                    wscriptPath := "wscript.exe"
-                try {
-                    Run('"' wscriptPath '" //nologo "' scriptPath '"', , "Hide")
-                    result.succeeded := true
-                    result.detail := "Temp Shots launched."
-                } catch as err {
-                    result.detail := "Launching Temp Shots failed. " err.Message
-                }
-            }
-        }
-
+        result := this.RunTempShotsScript(scriptPath)
         lines := [
             "Shortcut: " binding.shortcut,
             "Script: " scriptPath,
@@ -1235,7 +1151,37 @@ class FlowCellApp {
         this.logger.Info("Temp Shots hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
     }
 
-    TryLaunchTempShotsFastShortcut(launcherPath) {
+    RunTempShotsScript(launcherPath) {
+        result := this.TryLaunchTempShotsFast(launcherPath)
+        if result.attempted
+            return result
+
+        result := {
+            attempted: true,
+            succeeded: false,
+            method: "temp_shots_wscript_async",
+            detail: ""
+        }
+        launcherPath := NormalizeFlowCellProgramPath(launcherPath)
+        if !FileExist(launcherPath) {
+            result.detail := "Temp Shots launcher was not found."
+            return result
+        }
+
+        wscriptPath := A_WinDir "\System32\wscript.exe"
+        if !FileExist(wscriptPath)
+            wscriptPath := "wscript.exe"
+        try {
+            Run('"' wscriptPath '" //nologo "' launcherPath '"', , "Hide")
+            result.succeeded := true
+            result.detail := "Temp Shots launched."
+        } catch as err {
+            result.detail := "Launching Temp Shots failed. " err.Message
+        }
+        return result
+    }
+
+    TryLaunchTempShotsFast(launcherPath) {
         global flowCellLastActionStatusPath
         result := {
             attempted: false,
@@ -1250,8 +1196,7 @@ class FlowCellApp {
             return result
         }
 
-        targetFolder := this.ReadTempShotsFastFolder()
-        if targetFolder = "" {
+        if this.ReadTempShotsFastFolder() = "" {
             result.detail := "Temp Shots folder has not been selected yet."
             return result
         }
@@ -1277,67 +1222,27 @@ class FlowCellApp {
     }
 
     ResolveTempShotsPowerShellScriptPath(launcherPath) {
-        repoScript := GetFlowCellWorkspaceRoot() "\Programs\Windows\Windows Git Scripts\Utility\Temp Shots.ps1"
-        if FileExist(repoScript)
-            return repoScript
+        launcherPath := NormalizeFlowCellProgramPath(launcherPath)
+        if launcherPath = ""
+            return ""
 
-        if launcherPath != "" {
-            SplitPath launcherPath, , &launcherDir
-            siblingScript := launcherDir "\Temp Shots.ps1"
-            if FileExist(siblingScript)
-                return siblingScript
-        }
-
-        localScript := GetFlowCellWorkspaceRoot() "\Programs\Windows\Windows Local Scripts\Temp Shots.ps1"
-        if FileExist(localScript)
-            return localScript
-
-        return ""
+        SplitPath launcherPath, , &launcherDir
+        siblingScript := launcherDir "\Temp Shots.ps1"
+        return FileExist(siblingScript) ? siblingScript : ""
     }
 
     ReadTempShotsFastFolder() {
         global flowCellLocalRoot
         folderCachePath := flowCellLocalRoot "\windows\temp-shots\temp-shots.folder.txt"
-        if FileExist(folderCachePath) {
-            try {
-                folder := Trim(ReadUtf8TextFileWithoutBom(folderCachePath), "`r`n`t ")
-                if folder != "" && DirExist(folder)
-                    return folder
-            } catch {
-            }
-        }
-
-        configPath := flowCellLocalRoot "\windows\temp-shots\temp-shots.config.json"
-        if !FileExist(configPath)
+        if !FileExist(folderCachePath)
             return ""
 
         try {
-            configText := ReadUtf8TextFileWithoutBom(configPath)
-            if RegExMatch(configText, '"folder"\s*:\s*"((?:\\.|[^"\\])*)"', &match) {
-                folder := this.UnescapeJsonString(match[1])
-                if folder != "" && DirExist(folder) {
-                    try {
-                        if !DirExist(flowCellLocalRoot "\windows\temp-shots")
-                            DirCreate flowCellLocalRoot "\windows\temp-shots"
-                        if FileExist(folderCachePath)
-                            FileDelete folderCachePath
-                        FileAppend folder, folderCachePath, "UTF-8-RAW"
-                    } catch {
-                    }
-                    return folder
-                }
-            }
+            folder := Trim(ReadUtf8TextFileWithoutBom(folderCachePath), "`r`n`t ")
+            return folder != "" && DirExist(folder) ? folder : ""
         } catch {
+            return ""
         }
-
-        return ""
-    }
-
-    UnescapeJsonString(value) {
-        value := StrReplace(value, '\"', '"')
-        value := StrReplace(value, '\/', '/')
-        value := StrReplace(value, '\\', '\')
-        return value
     }
 
     StartTempShotsScreenSnip() {
@@ -1354,9 +1259,8 @@ class FlowCellApp {
             Run('SnippingTool.exe /clip', , "Hide")
             return true
         } catch {
+            return false
         }
-
-        return false
     }
 
     RunBackendCommand(commandId, payloadJson, programTabId := 0, programName := "", sourceButtonId := "", runAsync := false) {
@@ -1488,13 +1392,7 @@ class FlowCellApp {
             . '"kind":"script",'
             . '"label":"' JsonEscape(label) '",'
             . '"target":"' JsonEscape(resolvedScriptPath) '",'
-            . '"resolved_target":"' JsonEscape(resolvedScriptPath) '",'
-            . '"tool":"",'
-            . '"intent":"",'
-            . '"owner_button_id":"",'
-            . '"owner_panel_id":"",'
-            . '"style_group_id":"",'
-            . '"compound_tool_id":""'
+            . '"resolved_target":"' JsonEscape(resolvedScriptPath) '"'
             . "}"
         sourceButtonId := runAsync ? "hotkey_script_async" : "hotkey_script"
         return this.RunBackendCommand("flowcell.run_script", payloadJson, programTabId, programName, sourceButtonId, runAsync)
@@ -1505,13 +1403,7 @@ class FlowCellApp {
             . '"kind":"macro",'
             . '"label":"' JsonEscape(this.GetActionLabelById(actionId)) '",'
             . '"target":"' JsonEscape(actionId) '",'
-            . '"resolved_target":"' JsonEscape(actionId) '",'
-            . '"tool":"",'
-            . '"intent":"",'
-            . '"owner_button_id":"",'
-            . '"owner_panel_id":"",'
-            . '"style_group_id":"",'
-            . '"compound_tool_id":""'
+            . '"resolved_target":"' JsonEscape(actionId) '"'
             . "}"
         return this.RunBackendCommand("flowcell.run_macro", payloadJson, 0, "", "hotkey_action")
     }
@@ -1593,7 +1485,7 @@ class FlowCellApp {
             normalizedName := IniRead(bindingFilePath, section, "NormalizedName", "")
             config.label := label
             config.normalizedName := normalizedName != "" ? StrLower(Trim(normalizedName)) : StrLower(Trim(label))
-            config.scriptFolder := ResolveLegacyWindowsProgramPath(IniRead(bindingFilePath, section, "ScriptFolder", ""))
+            config.scriptFolder := NormalizeFlowCellProgramPath(IniRead(bindingFilePath, section, "ScriptFolder", ""))
             config.programType := IniRead(bindingFilePath, section, "ProgramType", "")
             config.exePath := IniRead(bindingFilePath, section, "ExePath", "")
             config.runMethod := IniRead(bindingFilePath, section, "RunMethod", "")
@@ -1672,47 +1564,6 @@ class FlowCellApp {
             Sleep(35)
         }
         throw Error("Photoshop is running, but no active COM automation handle was available.")
-    }
-
-    IsFlowCellIllustratorActiveOnlyScript(scriptPath) {
-        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
-        SplitPath scriptPath, &fileName
-        if StrLower(fileName) = "set illustrator anchor.jsx"
-            return true
-        if StrLower(fileName) = "flowcell_illustrator_setanchorhotkey.jsx"
-            return true
-
-        try {
-            file := FileOpen(scriptPath, "r", "UTF-8")
-            if !IsObject(file)
-                return false
-            header := file.Read(4096)
-            file.Close()
-            return InStr(StrLower(header), "flowcell_requires_active_illustrator") > 0
-        } catch {
-            return false
-        }
-    }
-
-    IsFlowCellIllustratorSelectionToolAnchorHotkey(scriptPath) {
-        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
-        SplitPath scriptPath, &fileName
-        return StrLower(fileName) = "flowcell_illustrator_setanchorhotkey.jsx"
-    }
-
-    IsFlowCellIllustratorModalDialogScript(scriptPath) {
-        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
-        try {
-            file := FileOpen(scriptPath, "r", "UTF-8")
-            if !IsObject(file)
-                return false
-            source := StrLower(file.Read(32768))
-            file.Close()
-            return InStr(source, "flowcell_illustrator_modal_dialog") > 0
-                || RegExMatch(source, "\b(prompt|alert|confirm)\s*\(")
-        } catch {
-            return false
-        }
     }
 
     ReadFlowCellIllustratorScriptStatus() {
@@ -1883,7 +1734,7 @@ class FlowCellApp {
             if this.directScriptBusy
                 return flowCellDirectScriptBusy
 
-            scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
+            scriptPath := NormalizeFlowCellProgramPath(scriptPath)
             if !FileExist(scriptPath)
                 return flowCellDirectScriptBadScript
 
@@ -1935,7 +1786,7 @@ class FlowCellApp {
             return result
         }
 
-        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
+        scriptPath := NormalizeFlowCellProgramPath(scriptPath)
         if !FileExist(scriptPath) {
             result.detail := "Script file not found."
             return result
@@ -2041,7 +1892,7 @@ class FlowCellApp {
 
         stableHwnd := 0
 
-        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
+        scriptPath := NormalizeFlowCellProgramPath(scriptPath)
         this.logger.Info("Script run requested. Source=" source " | Script=" scriptPath)
 
         if scriptPath = "" {
@@ -2056,15 +1907,6 @@ class FlowCellApp {
             return result
         }
 
-        if this.IsFlowCellIllustratorActiveOnlyScript(scriptPath) && !WinActive("ahk_exe Illustrator.exe") {
-            result.succeeded := true
-            result.method := "illustrator_active_target_guard"
-            result.detail := "Set Illustrator Anchor ignored because Illustrator is not the active target app."
-            this.logger.Info(result.detail " Source=" source " | Script=" scriptPath)
-            return result
-        }
-
-        modalDialogScript := !allowProcessFallback && this.IsFlowCellIllustratorModalDialogScript(scriptPath)
         stableHwnd := this.FindStableIllustratorWindow(programConfig)
         if !stableHwnd {
             if !allowProcessFallback {
@@ -2096,7 +1938,7 @@ class FlowCellApp {
         result.attempted := true
         result.method := allowProcessFallback
             ? "illustrator_com_activeobject"
-            : (modalDialogScript ? "illustrator_com_automation_modal" : "illustrator_com_automation_only")
+            : "illustrator_com_automation_only"
         skipComProbe := false
         try {
             if this.HasProp("IllustratorComRetryAfterTick") && Integer(this.IllustratorComRetryAfterTick) > A_TickCount
@@ -2117,17 +1959,13 @@ class FlowCellApp {
                 return fallback
             }
         }
-        foregroundAutomationOnly := !allowProcessFallback && !modalDialogScript && StrLower(Trim(source)) != "illustrator automation prewarm"
+        foregroundAutomationOnly := !allowProcessFallback && StrLower(Trim(source)) != "illustrator automation prewarm"
         try {
-            if allowProcessFallback || modalDialogScript || foregroundAutomationOnly {
+            if allowProcessFallback || foregroundAutomationOnly {
                 try {
                     WinActivate "ahk_id " stableHwnd
-                    if foregroundAutomationOnly {
-                        Sleep 20
-                    } else {
-                        WinWaitActive "ahk_id " stableHwnd, , 2
-                        Sleep 80
-                    }
+                    WinWaitActive "ahk_id " stableHwnd, , 2
+                    Sleep 80
                 } catch as activationErr {
                     this.logger.Warn("Could not activate the stable Illustrator 2026 window before COM. Continuing with COM. " activationErr.Message)
                 }
@@ -2137,7 +1975,7 @@ class FlowCellApp {
                 }
             }
 
-            app := this.GetIllustratorApplication(250, allowProcessFallback || modalDialogScript || foregroundAutomationOnly)
+            app := this.GetIllustratorApplication(250, allowProcessFallback || foregroundAutomationOnly)
             returnValue := app.DoJavaScriptFile(scriptPath)
             this.IllustratorComRetryAfterTick := 0
             result.succeeded := true
@@ -2193,207 +2031,6 @@ class FlowCellApp {
         }
     }
 
-    IsFlowCellIllustratorLayersPanelScript(scriptPath) {
-        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath, false)
-        if scriptPath = ""
-            return false
-
-        normalizedPath := StrLower(StrReplace(scriptPath, "/", "\"))
-        layersRoot := StrLower(StrReplace(GetFlowCellWorkspaceRoot() "\Programs\Illustrator\Panels\Layers", "/", "\"))
-        return InStr(normalizedPath, layersRoot "\") = 1
-    }
-
-    GetFlowCellIllustratorInstalledScriptsDir() {
-        return "C:\Program Files\Adobe\Adobe Illustrator 2026\Presets\en_US\Scripts"
-    }
-
-    GetFlowCellIllustratorLayersInstalledScriptName(scriptPath) {
-        SplitPath scriptPath, &scriptFileName
-        scriptFileName := StrLower(Trim(scriptFileName))
-        switch scriptFileName {
-            case "new sub.jsx":
-                return "00 new sub layer.jsx"
-            case "make layers.jsx":
-                return "00_Init_Live_Snapshots_Trash_Archive.jsx"
-            case "snapshot.jsx":
-                return "01_Save_Snapshot.jsx"
-            case "back.jsx":
-                return "02_Back_From_Previous_Snapshot.jsx"
-            case "restore.jsx":
-                return "03_Restore_Latest_Snapshot.jsx"
-            case "trash.jsx":
-                return "04_Move_To_Trash.jsx"
-            case "archive.jsx":
-                return "05_Archive.jsx"
-            case "empty trash.jsx":
-                return "06_Empty_Trash.jsx"
-            case "add to live.jsx":
-                return "07_Add_Selected_To_Live.jsx"
-            case "sort.jsx":
-                return "08_Sort_Layers_Into_Live_Snapshots_Trash.jsx"
-            case "b vis.jsx":
-                return "09_Baseline_Visibility.jsx"
-            case "set vis.jsx":
-                return "10_Set_Visibility.jsx"
-            case "b lock.jsx":
-                return "11_Baseline_Lock.jsx"
-            case "set lock.jsx":
-                return "12_Set_Lock.jsx"
-            case "flatten top sub.jsx":
-                return "13_Flatten_Selected_Into_Top_Sublayer.jsx"
-            case "3d.jsx":
-                return "14_Save_3D.jsx"
-            case "copy live.jsx":
-                return "15_Copy_Selected_To_New_Live_Sublayer.jsx"
-            case "3d test.jsx":
-                return "16_Save_3D_Test.jsx"
-            case "empty sublayers.jsx":
-                return "Delete Empty Sublayers.jsx"
-            case "delete sublayer.jsx":
-                return "delete sublayer.jsx"
-            default:
-                return ""
-        }
-    }
-
-    SyncFlowCellIllustratorLayersInstalledScript(scriptPath) {
-        result := {
-            succeeded: false,
-            installedPath: "",
-            installedName: "",
-            detail: ""
-        }
-
-        installedName := this.GetFlowCellIllustratorLayersInstalledScriptName(scriptPath)
-        if installedName = "" {
-            result.detail := "No installed Illustrator Scripts menu name is mapped for this Layers script."
-            return result
-        }
-
-        installedDir := this.GetFlowCellIllustratorInstalledScriptsDir()
-        installedPath := installedDir "\" installedName
-        result.installedName := installedName
-        result.installedPath := installedPath
-
-        if !FileExist(scriptPath) {
-            result.detail := "Panel-local Layers script was not found. Script=" scriptPath
-            return result
-        }
-
-        if !InStr(FileExist(installedDir), "D") {
-            result.detail := "Illustrator installed Scripts folder was not found. Folder=" installedDir
-            return result
-        }
-
-        needsCopy := true
-        if FileExist(installedPath) {
-            try {
-                needsCopy := FileGetSize(scriptPath) != FileGetSize(installedPath)
-                    || FileGetTime(scriptPath, "M") != FileGetTime(installedPath, "M")
-            } catch {
-                needsCopy := true
-            }
-        }
-
-        if needsCopy {
-            try {
-                FileCopy scriptPath, installedPath, 1
-                result.detail := "Synced panel-local Layers script to Illustrator Scripts menu file " installedName "."
-            } catch as err {
-                result.detail := "Failed to sync panel-local Layers script to Illustrator Scripts menu file " installedName ". " err.Message
-                return result
-            }
-        } else {
-            result.detail := "Illustrator Scripts menu file " installedName " is already current."
-        }
-
-        result.succeeded := true
-        return result
-    }
-
-    RunFlowCellIllustratorLayersScriptViaMenu(scriptPath, source, programConfig := 0, stableHwnd := 0) {
-        result := {
-            attempted: false,
-            succeeded: false,
-            method: "illustrator_layers_native_menu_not_started",
-            detail: ""
-        }
-
-        startedAt := A_TickCount
-        syncResult := this.SyncFlowCellIllustratorLayersInstalledScript(scriptPath)
-        if !syncResult.succeeded {
-            result.method := "illustrator_layers_native_menu_sync_failed"
-            result.detail := syncResult.detail
-            this.logger.Error(
-                "Illustrator Layers native menu dispatch blocked before COM. Source="
-                . source
-                . " | Script="
-                . scriptPath
-                . " | Detail="
-                . syncResult.detail
-            )
-            return result
-        }
-
-        if !stableHwnd
-            stableHwnd := this.FindStableIllustratorWindow(programConfig)
-
-        if !stableHwnd {
-            result.detail := "Stable Illustrator 2026 is not running. Layers panel scripts require native File > Scripts dispatch and will not fall back to COM."
-            this.logger.Warn("Illustrator Layers native menu dispatch blocked because no stable Illustrator 2026 window was found. Script=" scriptPath)
-            return result
-        }
-
-        result.attempted := true
-        this.logger.Info(
-            "Illustrator Layers native menu dispatch requested. Source="
-            . source
-            . " | Script="
-            . scriptPath
-            . " | InstalledScript="
-            . syncResult.installedPath
-        )
-
-        menuResult := this.TryRunIllustratorScriptViaMenu(syncResult.installedPath, stableHwnd)
-        elapsedMs := A_TickCount - startedAt
-        if menuResult.succeeded {
-            result.succeeded := true
-            result.method := "illustrator_layers_native_menu"
-            result.detail := syncResult.detail " Native File > Scripts dispatch returned in " elapsedMs " ms via " menuResult.method ". " menuResult.detail
-            this.logger.Info(
-                "Illustrator Layers native menu dispatch succeeded. Source="
-                . source
-                . " | Script="
-                . scriptPath
-                . " | InstalledScript="
-                . syncResult.installedPath
-                . " | DispatchMs="
-                . elapsedMs
-                . " | MenuMethod="
-                . menuResult.method
-            )
-            return result
-        }
-
-        result.method := "illustrator_layers_native_menu_failed"
-        result.detail := syncResult.detail " Native File > Scripts dispatch failed after " elapsedMs " ms via " menuResult.method ". " menuResult.detail
-        this.logger.Error(
-            "Illustrator Layers native menu dispatch failed before COM fallback. Source="
-            . source
-            . " | Script="
-            . scriptPath
-            . " | InstalledScript="
-            . syncResult.installedPath
-            . " | DispatchMs="
-            . elapsedMs
-            . " | MenuMethod="
-            . menuResult.method
-            . " | Detail="
-            . menuResult.detail
-        )
-        return result
-    }
-
     TryRunIllustratorScriptViaProcess(scriptPath, hwnd := 0, programConfig := 0) {
         result := {
             attempted: true,
@@ -2446,7 +2083,7 @@ class FlowCellApp {
             detail: ""
         }
 
-        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
+        scriptPath := NormalizeFlowCellProgramPath(scriptPath)
         this.logger.Info("Photoshop script run requested. Source=" source " | Script=" scriptPath)
 
         if scriptPath = "" {
@@ -2677,44 +2314,33 @@ class FlowCellApp {
                 return this.RunGenericScript(scriptPath, source, activateExe, "blender_bridge")
             case "generic":
                 activateExe := this.ResolveConfiguredProgramExePath(programConfig)
-                normalizedGenericProgram := StrLower(Trim(resolvedProgramName))
-                genericExeName := StrLower(Trim(activateExe))
-                if genericExeName != ""
-                    SplitPath genericExeName, &genericExeName
-                if normalizedGenericProgram = "windows" || genericExeName = "explorer.exe" || genericExeName = "dopus.exe" || genericExeName = "dopusrt.exe"
-                    return this.RunGenericScript(scriptPath, source, "", "windows_generic")
                 return this.RunGenericScript(scriptPath, source, activateExe, "generic")
+            case "windows_generic":
+                return this.RunGenericScript(scriptPath, source, "", "windows_generic")
         }
 
-        switch StrLower(Trim(resolvedProgramName)) {
-            case "blender":
-                return this.RunGenericScript(scriptPath, source, "Blender.exe", "blender_generic")
-            case "photoshop":
-                return this.RunPhotoshopScript(scriptPath, source, programConfig)
-            case "windows":
-                return this.RunGenericScript(scriptPath, source, "", "windows_generic")
-            default:
-                return this.RunIllustratorScript(scriptPath, source, programConfig)
-        }
+        return this.RunGenericScript(
+            scriptPath,
+            source,
+            this.ResolveConfiguredProgramExePath(programConfig),
+            "generic"
+        )
     }
 
     GetProgramNameFromBinding(programTabId, scriptPath := "") {
-        switch Integer(programTabId) {
-            case 1:
-                return "Illustrator"
-            case 2:
-                return "Windows"
-            case 3:
-                return "Blender"
-            case 4:
-                return "Photoshop"
+        config := this.GetProgramTabConfig(programTabId)
+        if Trim(config.label) != ""
+            return Trim(config.label)
+        normalizedPath := StrReplace(scriptPath, "/", "\")
+        marker := "\Programs\"
+        markerIndex := InStr(StrLower(normalizedPath), StrLower(marker))
+        if markerIndex > 0 {
+            remainder := SubStr(normalizedPath, markerIndex + StrLen(marker))
+            separatorIndex := InStr(remainder, "\")
+            if separatorIndex > 1
+                return SubStr(remainder, 1, separatorIndex - 1)
         }
-
-        SplitPath scriptPath, , , &ext
-        ext := "." StrLower(ext)
-        if ext = ".jsx" || ext = ".js"
-            return "Illustrator"
-        return "Windows"
+        return ""
     }
 
     RunGenericScript(scriptPath, source, activateExe := "", methodPrefix := "generic") {
@@ -2728,7 +2354,7 @@ class FlowCellApp {
             statusText: ""
         }
 
-        scriptPath := ResolveLegacyWindowsProgramPath(scriptPath)
+        scriptPath := NormalizeFlowCellProgramPath(scriptPath)
         if scriptPath = "" {
             result.detail := "No script path was provided."
             return result
@@ -2755,12 +2381,7 @@ class FlowCellApp {
             extension := "." StrLower(extension)
             exitCode := 0
             if extension = ".ps1" {
-                powershellArgs := '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass '
-                if this.ScriptRequiresVisibleWindow(scriptPath) {
-                    powershellArgs .= '-Sta '
-                } else {
-                    powershellArgs .= '-NonInteractive '
-                }
+                powershellArgs := '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Sta '
                 exitCode := RunWait('powershell.exe ' powershellArgs '-File "' scriptPath '"', , "Hide")
             } else if extension = ".cmd" || extension = ".bat" {
                 exitCode := RunWait(A_ComSpec ' /c "' scriptPath '"', , "Hide")
@@ -2794,15 +2415,6 @@ class FlowCellApp {
             result.detail := err.Message
         }
         return result
-    }
-
-    ScriptRequiresVisibleWindow(scriptPath) {
-        SplitPath scriptPath, &fileName
-        fileName := StrLower(Trim(fileName))
-        return InStr(fileName, "rename_selected") > 0
-            || InStr(fileName, "update_github") > 0
-            || InStr(fileName, "organize_folder") > 0
-            || InStr(fileName, "_dialog") > 0
     }
 
     ResetMacroStop() {
@@ -2881,3032 +2493,6 @@ class FlowCellApp {
             Sleep(25)
         }
         throw Error("Illustrator is running, but no active COM automation handle was available.")
-    }
-}
-
-class LayersDeleteSelectionAction {
-    __New(app) {
-        this.app := app
-        this.Id := "layers_delete_selection"
-        this.Label := "Run Layers panel Delete Selection"
-        this.RequiresExactLayersScan := true
-    }
-
-    Run(scanResult) {
-        if IsObject(scanResult) && scanResult.readyForActions {
-            if attempt := this.TryExactDeleteControl(scanResult)
-                return attempt
-
-            if attempt := this.TryExactMenuPath(scanResult)
-                return attempt
-
-            if fallbackAttempt := this.TryFocusedFallback(scanResult)
-                return fallbackAttempt
-        }
-
-        if cachedAttempt := this.TryCachedDeleteControl(scanResult)
-            return cachedAttempt
-
-        if !IsObject(scanResult) || !scanResult.readyForActions {
-            return {
-                attempted: false,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "no_cached_delete_target",
-                detail: "No cached Layers delete target is available yet.",
-                note: "Run Scan Illustrator UI once with the Layers panel visible, then try Delete Selection again."
-            }
-        }
-
-        return {
-            attempted: false,
-            deliverySucceeded: false,
-            effectConfirmed: false,
-            method: "delete_target_failed",
-            detail: "The exact Layers delete control was exposed, but it could not be delivered successfully.",
-            note: "Re-scan with the Layers panel visible if the right-side panel layout changed."
-        }
-    }
-
-    TryCachedDeleteControl(scanResult) {
-        cached := this.app.scanner.LoadExactDeleteControlCache()
-        if !IsObject(cached) || cached.w <= 0 || cached.h <= 0
-            return ""
-
-        prep := this.PrepareIllustrator(scanResult)
-        if !prep.ok
-            return {
-                attempted: false,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "illustrator_not_ready",
-                detail: prep.detail,
-                note: "Open Illustrator and the intended document, then try again."
-            }
-
-        clickMethod := this.ClickIllustratorClientRectCenter(prep.hwnd, cached.x, cached.y, cached.w, cached.h, "cached delete action")
-        if clickMethod = ""
-            clickMethod := this.ClickRectCenter(cached.x, cached.y, cached.w, cached.h, "cached delete action")
-        if clickMethod = ""
-            return ""
-
-        confirmResult := this.TryAcceptDeleteConfirmation(scanResult, 1800)
-        confirmDetail := confirmResult.HasOwnProp("detail") ? confirmResult.detail : "No Illustrator confirmation dialog appeared within the wait window."
-        detail := "Attempted the cached Layers delete control using " clickMethod ". Cached bounds: " cached.x "," cached.y "," cached.w "," cached.h ". Confirmation dialog handling: " confirmDetail
-        note := confirmResult.found
-            ? "The cached delete target was invoked and the Illustrator confirmation was handled automatically."
-            : "The cached delete target was clicked, but no Illustrator confirmation dialog was seen."
-
-        this.app.logger.Info("Layers delete attempt via cached bounds. Method=" clickMethod " | Bounds=" cached.x "," cached.y "," cached.w "," cached.h)
-        return {
-            attempted: true,
-            deliverySucceeded: true,
-            effectConfirmed: confirmResult.found,
-            method: "cached_layers_delete_control",
-            detail: detail,
-            note: note
-        }
-    }
-
-    TryExactDeleteControl(scanResult) {
-        if !IsObject(scanResult.exactDeleteControl)
-            return ""
-
-        candidate := scanResult.exactDeleteControl
-        prep := this.PrepareIllustrator(scanResult)
-        if !prep.ok
-            return ""
-        clickMethod := this.TryPatternClick(candidate.element)
-        if clickMethod = ""
-            clickMethod := this.TryCenterClick(candidate.element)
-        if clickMethod = ""
-            return ""
-
-        confirmResult := this.TryAcceptDeleteConfirmation(scanResult, 1800)
-        confirmDetail := confirmResult.HasOwnProp("detail") ? confirmResult.detail : "No Illustrator confirmation dialog appeared within the wait window."
-
-        this.app.logger.Info(
-            "Layers delete attempt via exact UIA delete control. Method="
-            . clickMethod
-            . " | Basis="
-            . candidate.reason
-        )
-
-        detail := "Attempted the exposed Layers-panel delete control using " clickMethod ". " candidate.reason " Confirmation dialog handling: " confirmDetail
-        note := confirmResult.found
-            ? "The exact control was invoked and the Illustrator delete confirmation was handled automatically."
-            : "The exact control was invoked, but no Illustrator confirmation dialog was seen."
-
-        return {
-            attempted: true,
-            deliverySucceeded: true,
-            effectConfirmed: confirmResult.found,
-            method: "true_uia_exact_layers_trash_control",
-            detail: detail,
-            note: note
-        }
-    }
-
-    TryExactMenuPath(scanResult) {
-        if !scanResult.HasOwnProp("panelMenuButton") || !IsObject(scanResult.panelMenuButton)
-            return ""
-
-        menuButton := scanResult.panelMenuButton
-        prep := this.PrepareIllustrator(scanResult)
-        if !prep.ok
-            return ""
-        openMethod := this.TryPatternClick(menuButton.element)
-        if openMethod = "" {
-            this.app.logger.Warn("Layers panel menu button was present, but no UIA pattern could open it.")
-            return ""
-        }
-
-        Sleep 200
-        desktop := UIA.GetRootElement()
-        deleteItem := ""
-        try deleteItem := desktop.WaitElement({Type:"MenuItem", Name:"Delete Selection"}, 1200)
-        catch
-            deleteItem := ""
-
-        if !IsObject(deleteItem) {
-            SendEvent "{Escape}"
-            this.app.logger.Warn("Exact menu item 'Delete Selection' was not exposed after opening the Layers panel menu.")
-            return ""
-        }
-
-        invokeMethod := this.TryPatternClick(deleteItem)
-        if invokeMethod = "" {
-            SendEvent "{Escape}"
-            this.app.logger.Warn("Exact menu item 'Delete Selection' was found but could not be invoked through UIA.")
-            return ""
-        }
-
-        confirmResult := {found: false, detail: ""}
-        confirmResult := this.TryAcceptDeleteConfirmation(scanResult, 1200)
-        if !IsObject(confirmResult) || !confirmResult.found {
-            SendEvent "{Escape}"
-            this.app.logger.Warn("Exact menu item 'Delete Selection' was invoked, but no Illustrator confirmation dialog appeared.")
-            return ""
-        }
-
-        confirmDetail := (IsObject(confirmResult) && confirmResult.HasOwnProp("detail")) ? confirmResult.detail : ""
-
-        this.app.logger.Info(
-            "Layers delete attempt via exact menu path. OpenMethod="
-            . openMethod
-            . " | ItemMethod="
-            . invokeMethod
-        )
-        detailText := Format(
-            "Opened the exposed Layers panel menu via {1} and invoked the exact menu item Delete Selection via {2}. Confirmation dialog handling: {3}",
-            openMethod,
-            invokeMethod,
-            confirmDetail
-        )
-        noteText := "The exact Layers panel menu path was invoked and the Illustrator confirmation was handled automatically."
-        return {
-            attempted: true,
-            deliverySucceeded: true,
-            effectConfirmed: false,
-            method: "exact_layers_panel_menu_path_delete_selection",
-            detail: detailText,
-            note: noteText
-        }
-    }
-
-    TryFocusedFallback(scanResult) {
-        if !scanResult.HasOwnProp("fallbackTarget") || !IsObject(scanResult.fallbackTarget)
-            return ""
-
-        target := scanResult.fallbackTarget
-        prep := this.PrepareIllustrator(scanResult)
-        if !prep.ok
-            return ""
-
-        try target.element.SetFocus()
-        catch {
-            this.app.logger.Warn("Fallback target existed but SetFocus() failed.")
-            return ""
-        }
-
-        Sleep 100
-        focused := ""
-        try focused := UIA.GetFocusedElement()
-        catch
-            focused := ""
-
-        if !IsObject(focused) || !UIA.CompareElementsEx(focused, target.element) {
-            this.app.logger.Warn("Fallback refused because focus did not land on the scanned Layers-panel target.")
-            return ""
-        }
-
-        SendEvent "{Delete}"
-        confirmResult := this.TryAcceptDeleteConfirmation(scanResult, 1200)
-        this.app.logger.Warn(
-            "Layers delete attempt via fallback. Focused Layers-panel target and sent Delete. Target="
-            . target.summary
-        )
-
-        detail := "Focused the scanned Layers-panel target and sent Delete as an explicit fallback."
-        note := "This fallback is only allowed after a live scan found a focusable Layers-panel target. It does not substitute document-artwork delete."
-        if confirmResult.found {
-            detail .= " Confirmation dialog handling: " confirmResult.detail
-            note := "The scanned Layers-panel target was focused, Delete was sent, and the Illustrator confirmation was handled automatically."
-        }
-
-        return {
-            attempted: true,
-            deliverySucceeded: true,
-            effectConfirmed: confirmResult.found,
-            method: "fallback_layers_panel_focus_then_delete_key",
-            detail: detail,
-            note: note
-        }
-    }
-
-    PrepareIllustrator(scanResult) {
-        hwnd := 0
-        if IsObject(scanResult) && IsObject(scanResult.activeWindow)
-            hwnd := scanResult.activeWindow.hwnd
-        if !hwnd
-            hwnd := WinActive("ahk_exe Illustrator.exe")
-        if !hwnd
-            hwnd := WinExist("ahk_exe Illustrator.exe")
-        if !hwnd {
-            return {
-                ok: false,
-                detail: "Illustrator is not running or no Illustrator window could be found."
-            }
-        }
-
-        WinActivate "ahk_id " hwnd
-        WinWaitActive "ahk_id " hwnd, , 2
-        Sleep 120
-        return {
-            ok: true,
-            hwnd: hwnd
-        }
-    }
-
-    TryPatternClick(element) {
-        try {
-            result := element.Click()
-            if result
-                return result
-        } catch as err {
-            this.app.logger.Warn("UIA click failed: " err.Message)
-        }
-        return ""
-    }
-
-    TryActivateDeleteElement(element, hwnd, scanResult, context) {
-        if !IsObject(element)
-            return ""
-
-        if clickMethod := this.TryPatternClick(element) {
-            confirmResult := this.TryAcceptDeleteConfirmation(scanResult, 1000)
-            if confirmResult.found
-                return {method: clickMethod, confirm: confirmResult}
-        }
-
-        rect := this.GetElementRect(element)
-        if !IsObject(rect)
-            return ""
-
-        return this.TryActivateDeleteRect(hwnd, scanResult, rect.x, rect.y, rect.w, rect.h, context)
-    }
-
-    TryActivateDeleteRect(hwnd, scanResult, x, y, w, h, context) {
-        if hwnd {
-            if clickMethod := this.ClickIllustratorClientRectCenter(hwnd, x, y, w, h, context) {
-                confirmResult := this.TryAcceptDeleteConfirmation(scanResult, 1000)
-                if confirmResult.found
-                    return {method: clickMethod, confirm: confirmResult}
-            }
-        }
-
-        if clickMethod := this.ClickRectCenter(x, y, w, h, context) {
-            confirmResult := this.TryAcceptDeleteConfirmation(scanResult, 1000)
-            if confirmResult.found
-                return {method: clickMethod, confirm: confirmResult}
-        }
-
-        return ""
-    }
-
-    TryControlClick(element) {
-        if !IsObject(element)
-            return ""
-        try element.SetFocus()
-        catch {
-        }
-        return this.TryCenterClick(element)
-    }
-
-    TryCenterClick(element) {
-        rect := this.GetElementRect(element)
-        if !IsObject(rect)
-            return ""
-
-        return this.ClickRectCenter(rect.x, rect.y, rect.w, rect.h, "delete action")
-    }
-
-    ClickRectCenter(x, y, w, h, context := "delete action") {
-        centerX := x + Floor(w / 2)
-        centerY := y + Floor(h / 2)
-        MouseGetPos &origX, &origY
-        try MouseMove centerX, centerY, 0
-        catch as err {
-            this.app.logger.Warn("Screen-click move failed for " context ": " err.Message)
-            return ""
-        }
-
-        Click
-        Sleep 80
-        try MouseMove origX, origY, 0
-        catch {
-        }
-        this.app.logger.Info("Center-click delivered for " context ". Bounds=" x "," y "," w "," h)
-        return "center_click"
-    }
-
-    ClickIllustratorClientRectCenter(hwnd, x, y, w, h, context := "delete action") {
-        if !hwnd
-            return ""
-
-        centerX := x + Floor(w / 2)
-        centerY := y + Floor(h / 2)
-        point := Buffer(8, 0)
-        NumPut("int", centerX, point, 0)
-        NumPut("int", centerY, point, 4)
-        if !DllCall("ScreenToClient", "ptr", hwnd, "ptr", point, "int") {
-            this.app.logger.Warn("ScreenToClient failed for " context ".")
-            return ""
-        }
-
-        clientX := NumGet(point, 0, "int")
-        clientY := NumGet(point, 4, "int")
-        try {
-            ControlClick "x" clientX " y" clientY, "ahk_id " hwnd, , "Left", 1, "NA"
-            Sleep 80
-            this.app.logger.Info("ControlClick delivered for " context ". Client=" clientX "," clientY " | Bounds=" x "," y "," w "," h)
-            return "control_click"
-        } catch as err {
-            this.app.logger.Warn("ControlClick failed for " context ": " err.Message)
-            return ""
-        }
-    }
-
-    GetElementRect(element) {
-        try {
-            rect := element.Location
-            if rect.w <= 0 || rect.h <= 0
-                return ""
-            return rect
-        } catch {
-            return ""
-        }
-    }
-
-    TryAcceptDeleteConfirmation(scanResult, timeoutMs := 4000) {
-        deadline := A_TickCount + timeoutMs
-        while A_TickCount < deadline {
-            if hwnd := this.FindDeleteConfirmationWindowHandle(scanResult) {
-                WinActivate "ahk_id " hwnd
-                WinWaitActive "ahk_id " hwnd, , 1
-                Sleep 60
-                SendEvent "{Enter}"
-                this.app.logger.Warn("Illustrator delete confirmation dialog was found and Enter was sent to accept it.")
-                return {
-                    found: true,
-                    detail: "The Illustrator confirmation dialog was found and Enter was sent to accept it."
-                }
-            }
-
-            dialog := this.FindDeleteConfirmationDialog()
-            if IsObject(dialog) {
-                yesButton := this.FindDialogYesButton(dialog)
-                if IsObject(yesButton) {
-                    clickMethod := this.TryControlClick(yesButton)
-                    if clickMethod != "" {
-                        this.app.logger.Info(
-                            "Illustrator delete confirmation accepted automatically. Method="
-                            . clickMethod
-                        )
-                        return {
-                            found: true,
-                            detail: "The Illustrator confirmation dialog was found and `"`"Yes`"`" was clicked via " clickMethod "."
-                        }
-                    }
-                }
-            }
-            Sleep 75
-        }
-
-        this.app.logger.Info("No Illustrator delete confirmation dialog appeared after the exact Layers delete control was invoked.")
-        return {
-            found: false,
-            detail: "No Illustrator delete confirmation dialog appeared within the wait window."
-        }
-    }
-
-    FindDeleteConfirmationDialog() {
-        desktop := UIA.GetRootElement()
-        windows := []
-        try windows := desktop.FindElements({Type:"Window"})
-        catch
-            windows := []
-
-        for dialog in windows {
-            descriptor := this.DescriptorText(dialog)
-            if InStr(descriptor, "delete the selection") || (InStr(descriptor, "delete") && InStr(descriptor, "selection"))
-                return dialog
-
-            textNodes := []
-            try textNodes := dialog.FindElements([{Type:"Text"}, {Type:"Document"}, {Type:"Pane"}])
-            catch
-                textNodes := []
-
-            for textNode in textNodes {
-                textDescriptor := this.DescriptorText(textNode)
-                if InStr(textDescriptor, "delete the selection") || (InStr(textDescriptor, "delete") && InStr(textDescriptor, "selection"))
-                    return dialog
-            }
-        }
-
-        return ""
-    }
-
-    FindDeleteConfirmationWindowHandle(scanResult) {
-        illustratorPid := 0
-        if IsObject(scanResult) && IsObject(scanResult.activeWindow) {
-            try illustratorPid := WinGetPID("ahk_id " scanResult.activeWindow.hwnd)
-        }
-
-        for hwnd in WinGetList() {
-            try {
-                if !WinExist("ahk_id " hwnd)
-                    continue
-                if !DllCall("IsWindowVisible", "ptr", hwnd, "int")
-                    continue
-                if illustratorPid {
-                    pid := WinGetPID("ahk_id " hwnd)
-                    if pid != illustratorPid
-                        continue
-                }
-                title := StrLower(WinGetTitle("ahk_id " hwnd))
-                text := ""
-                try text := StrLower(WinGetText("ahk_id " hwnd))
-                className := ""
-                try className := WinGetClass("ahk_id " hwnd)
-                if InStr(text, "delete the selection") || (InStr(text, "delete") && InStr(text, "selection"))
-                    return hwnd
-                if className = "#32770" && (InStr(title, "adobe illustrator") || InStr(text, "warning"))
-                    return hwnd
-            } catch {
-            }
-        }
-        return 0
-    }
-
-    FindDialogYesButton(dialog) {
-        buttons := []
-        try buttons := dialog.FindElements({Type:"Button"})
-        catch
-            buttons := []
-
-        for button in buttons {
-            descriptor := this.DescriptorText(button)
-            if InStr(descriptor, "yes")
-                return button
-        }
-
-        return ""
-    }
-
-    DescriptorText(element) {
-        parts := [
-            this.SafePropText(element, "Name"),
-            this.SafePropText(element, "HelpText"),
-            this.SafePropText(element, "AutomationId"),
-            this.SafePropText(element, "FullDescription"),
-            this.SafePropText(element, "LegacyIAccessibleName"),
-            this.SafePropText(element, "LegacyIAccessibleDescription"),
-            this.SafePropText(element, "LocalizedControlType")
-        ]
-        return StrLower(JoinLines(parts, " "))
-    }
-
-    SafePropText(element, propName) {
-        try {
-            value := element.%propName%
-            return value != "" ? value : ""
-        } catch {
-            return ""
-        }
-    }
-
-}
-
-class ThreeDExtrudeDepth16mmAction {
-    __New(app) {
-        this.app := app
-        this.Id := "three_d_extrude_depth_16mm"
-        this.Label := "3D Extrude Depth 16 mm"
-        this.RequiresExactLayersScan := false
-    }
-
-    Run(scanResult) {
-        panelContext := this.GetThreeDPanelContext(scanResult, false)
-        if !panelContext.ok {
-            return {
-                attempted: false,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: panelContext.method,
-                detail: panelContext.detail,
-                note: panelContext.note
-            }
-        }
-
-        panelClick := panelContext.method
-        topMethod := this.ScrollPanelToTop(panelContext.panelRoot)
-        extrude := this.FindExtrudeControl(panelContext.panelRoot)
-        if !IsObject(extrude) {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "extrude_not_exposed",
-                detail: "The Extrude control was not exposed inside the visible 3D and Materials panel.",
-                note: "Keep the 3D and Materials panel visible on the Object tab, then try again."
-            }
-        }
-
-        extrudeClick := this.TryUpperTileClick(extrude, "3D Extrude tile")
-        if extrudeClick = "" {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "extrude_click_failed",
-                detail: "The Extrude control inside the visible 3D and Materials panel could not be activated.",
-                note: "Keep the 3D and Materials panel visible on the Object tab, then try again."
-            }
-        }
-
-        Sleep 1300
-        panelContext := this.GetThreeDPanelContext(scanResult, false)
-        if !panelContext.ok {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: panelContext.method,
-                detail: panelContext.detail,
-                note: panelContext.note
-            }
-        }
-
-        depthField := this.FindDepthField([panelContext.panelRoot])
-        scrollMethod := topMethod != "" ? topMethod : "not_needed"
-        if !IsObject(depthField) {
-            scrollResult := this.TryScrollPanelForDepth(panelContext.panelRoot, scanResult)
-            scrollMethod := scrollResult.method
-            depthField := scrollResult.field
-        }
-        if !IsObject(depthField) {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "depth_field_not_exposed",
-                detail: "The Depth input was not exposed through UI Automation after selecting Extrude.",
-                note: "The panel may need to stay visible and the selected object must support 3D Extrude controls."
-            }
-        }
-
-        setResult := this.SetDepthValue(depthField, panelContext.panelRoot, "16 mm")
-        if !setResult.ok {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "depth_set_failed",
-                detail: setResult.detail,
-                note: "The action reached the Depth field, but the value could not be delivered."
-            }
-        }
-
-        this.app.logger.Info(
-            "3D Extrude Depth 16 mm action succeeded. PanelMethod="
-            . panelClick
-            . " | TopMethod="
-            . scrollMethod
-            . " | ExtrudeMethod="
-            . extrudeClick
-            . " | DepthMethod="
-            . setResult.method
-        )
-
-        return {
-            attempted: true,
-            deliverySucceeded: true,
-            effectConfirmed: false,
-            method: "uia_3d_extrude_depth_16mm",
-                detail: "Used the visible 3D and Materials panel, selected Extrude, and delivered `"`"16 mm`"`" to the Depth field.",
-                note: "This action now refuses to guess across other Illustrator panels."
-        }
-    }
-
-    GetThreeDPanelContext(scanResult, allowPanelActivation := true) {
-        prep := this.PrepareIllustrator(scanResult)
-        if !prep.ok {
-            return {
-                ok: false,
-                method: "illustrator_not_ready",
-                detail: prep.detail,
-                note: "Open Illustrator and make the 3D and Materials panel visible."
-            }
-        }
-
-        panelRoot := this.FindThreeDPanelRoot(prep.roots)
-        if IsObject(panelRoot) {
-            return {
-                ok: true,
-                method: "already_visible",
-                detail: "The 3D and Materials panel is already visible.",
-                note: "",
-                panelRoot: panelRoot,
-                roots: prep.roots
-            }
-        }
-
-        if !allowPanelActivation {
-            return {
-                ok: false,
-                method: "panel_not_visible",
-                detail: "The 3D and Materials panel is not visible.",
-                note: "Open the 3D and Materials panel, then try again."
-            }
-        }
-
-        panelIcon := this.FindThreeDPanelIcon(prep.roots)
-        if !IsObject(panelIcon) {
-            return {
-                ok: false,
-                method: "panel_icon_not_exposed",
-                detail: "The 3D and Materials panel icon was not exposed through UI Automation.",
-                note: "Keep the right-side panel rail visible, then try again."
-            }
-        }
-
-        openMethod := this.TryControlClick(panelIcon)
-        if openMethod = "" {
-            return {
-                ok: false,
-                method: "panel_icon_click_failed",
-                detail: "The 3D and Materials panel icon was found, but it could not be clicked.",
-                note: "Keep Illustrator frontmost and the right-side panel rail unobstructed, then try again."
-            }
-        }
-
-        Sleep 220
-        prep := this.PrepareIllustrator(scanResult)
-        if !prep.ok {
-            return {
-                ok: false,
-                method: "illustrator_not_ready_after_panel_open",
-                detail: prep.detail,
-                note: "Open Illustrator and try again."
-            }
-        }
-
-        panelRoot := this.FindThreeDPanelRoot(prep.roots)
-        if !IsObject(panelRoot) {
-            return {
-                ok: false,
-                method: "panel_not_visible_after_open",
-                detail: "The 3D and Materials panel did not appear after clicking its icon.",
-                note: "Open the 3D and Materials panel manually, then try again."
-            }
-        }
-
-        return {
-            ok: true,
-            method: openMethod,
-            detail: "Opened the 3D and Materials panel.",
-            note: "",
-            panelRoot: panelRoot,
-            roots: prep.roots
-        }
-    }
-
-    PrepareIllustrator(scanResult) {
-        hwnd := 0
-        if IsObject(scanResult) && IsObject(scanResult.activeWindow)
-            hwnd := scanResult.activeWindow.hwnd
-        if !hwnd
-            hwnd := WinActive("ahk_exe Illustrator.exe")
-        if !hwnd
-            hwnd := WinExist("ahk_exe Illustrator.exe")
-        if !hwnd {
-            return {
-                ok: false,
-                detail: "Illustrator is not running or no Illustrator window could be found."
-            }
-        }
-
-        try WinActivate "ahk_id " hwnd
-        try WinWaitActive "ahk_id " hwnd, , 2
-        Sleep 150
-
-        roots := []
-        try {
-            root := UIA.ElementFromHandle("ahk_id " hwnd, , false)
-            if IsObject(root)
-                roots.Push(root)
-        }
-        catch {
-        }
-
-        try {
-            desktop := UIA.GetRootElement()
-            if IsObject(desktop)
-                roots.Push(desktop)
-        }
-        catch {
-        }
-
-        return {
-            ok: roots.Length > 0,
-            detail: roots.Length > 0 ? "" : "No UI Automation root could be created for the active Illustrator window.",
-            roots: roots,
-            hwnd: hwnd
-        }
-    }
-
-    FindNamedControl(roots, nameText, allowedTypes) {
-        candidates := this.FindNamedControls(roots, nameText, allowedTypes)
-        return candidates.Length > 0 ? candidates[1] : ""
-    }
-
-    FindExtrudeControl(panelRoot) {
-        if !IsObject(panelRoot)
-            return ""
-        panelRect := this.GetElementRect(panelRoot)
-        candidates := this.FindNamedControls([panelRoot], "Extrude", ["Button", "TabItem", "RadioButton", "Text", "Custom"])
-        best := ""
-        bestScore := -1
-        for candidate in candidates {
-            rect := this.GetElementRect(candidate)
-            if !IsObject(rect)
-                continue
-            if IsObject(panelRect) {
-                if rect.y > panelRect.y + Floor(panelRect.h * 0.40)
-                    continue
-                if rect.x < panelRect.x || rect.x > panelRect.x + panelRect.w
-                    continue
-            }
-            score := 100000 - Abs((rect.y + Floor(rect.h / 2)) - (panelRect.y + 160))
-            if score > bestScore {
-                best := candidate
-                bestScore := score
-            }
-        }
-        return best
-    }
-
-    FindNamedControls(roots, nameText, allowedTypes) {
-        matches := []
-        for root in roots {
-            namedCandidates := []
-            try namedCandidates := root.FindElements({Name:nameText, mm:"Substring"})
-            catch
-                namedCandidates := []
-
-            for candidate in namedCandidates {
-                if !this.MatchesType(candidate, allowedTypes)
-                    continue
-                if !this.IsVisibleElement(candidate)
-                    continue
-                matches.Push(candidate)
-            }
-        }
-        return matches
-    }
-
-    FindDepthField(roots) {
-        for root in roots {
-            likelyField := this.FindLikelyDepthField(root)
-            if IsObject(likelyField)
-                return likelyField
-
-            candidates := []
-            try candidates := root.FindElements([{Type:"Edit"}, {Type:"Spinner"}, {Type:"ComboBox"}, {Type:"Custom"}])
-            catch
-                candidates := []
-
-            for candidate in candidates {
-                if !this.IsVisibleElement(candidate)
-                    continue
-                if InStr(this.DescriptorText(candidate), "depth")
-                    return candidate
-            }
-
-            labels := []
-            try labels := root.FindElements({Name:"Depth", mm:"Substring"})
-            catch
-                labels := []
-
-            for label in labels {
-                field := this.FindEditableNear(label)
-                if IsObject(field)
-                    return field
-            }
-        }
-        return ""
-    }
-
-    FindLikelyDepthField(panelRoot) {
-        if !IsObject(panelRoot)
-            return ""
-        panelRect := this.GetElementRect(panelRoot)
-        if !IsObject(panelRect)
-            return ""
-
-        candidates := []
-        try candidates := panelRoot.FindElements([{Type:"Edit"}, {Type:"Spinner"}, {Type:"ComboBox"}])
-        catch
-            candidates := []
-
-        best := ""
-        bestScore := -1
-        for candidate in candidates {
-            rect := this.GetElementRect(candidate)
-            if !IsObject(rect)
-                continue
-            if rect.y < panelRect.y + 170 || rect.y > panelRect.y + Min(Floor(panelRect.h * 0.34), 360)
-                continue
-            if rect.x < panelRect.x + Floor(panelRect.w * 0.55)
-                continue
-            descriptor := this.DescriptorText(candidate)
-            score := 0
-            if InStr(descriptor, "mm")
-                score += 2000
-            score += 1200 - Abs(rect.y - (panelRect.y + 255))
-            if score > bestScore {
-                best := candidate
-                bestScore := score
-            }
-        }
-        return best
-    }
-
-    FindEditableNear(label) {
-        searchRoots := [label]
-        try {
-            parent := label.Parent
-            if IsObject(parent)
-                searchRoots.Push(parent)
-            if IsObject(parent) {
-                grandParent := parent.Parent
-                if IsObject(grandParent)
-                    searchRoots.Push(grandParent)
-            }
-        }
-        catch {
-        }
-
-        for searchRoot in searchRoots {
-            candidates := []
-            try candidates := searchRoot.FindElements([{Type:"Edit"}, {Type:"Spinner"}, {Type:"ComboBox"}, {Type:"Custom"}])
-            catch
-                candidates := []
-
-            for candidate in candidates {
-                if !this.IsVisibleElement(candidate)
-                    continue
-                descriptor := this.DescriptorText(candidate)
-                if InStr(descriptor, "depth")
-                    return candidate
-            }
-        }
-
-        for searchRoot in searchRoots {
-            candidates := []
-            try candidates := searchRoot.FindElements([{Type:"Edit"}, {Type:"Spinner"}, {Type:"ComboBox"}])
-            catch
-                candidates := []
-            for candidate in candidates {
-                if this.IsVisibleElement(candidate)
-                    return candidate
-            }
-        }
-
-        return ""
-    }
-
-    SetDepthValue(field, panelRoot, valueText) {
-        try field.SetFocus()
-        catch {
-        }
-
-        clickMethod := this.TryControlClick(field)
-        Sleep 120
-        SendEvent "^a"
-        Sleep 60
-        SendText valueText
-        Sleep 60
-        SendEvent "{Enter}"
-        Sleep 180
-
-        if this.DepthFieldLooksUpdated(field, panelRoot, valueText) {
-            return {
-                ok: true,
-                detail: "Focused the Depth field and sent `"`"" valueText "`"`" followed by Enter.",
-                method: clickMethod != "" ? clickMethod "_plus_keyboard" : "keyboard_after_focus"
-            }
-        }
-
-        return {
-            ok: false,
-            detail: "The action typed `"`"" valueText "`"`" into a likely field, but the visible field value did not read back as 16 mm.",
-            method: clickMethod != "" ? clickMethod "_plus_keyboard" : "keyboard_after_focus"
-        }
-    }
-
-    DepthFieldLooksUpdated(field, panelRoot, valueText) {
-        normalizedTarget := StrLower(StrReplace(valueText, " ", ""))
-        for candidate in [field, this.FindLikelyDepthField(panelRoot)] {
-            if !IsObject(candidate)
-                continue
-            descriptor := StrLower(StrReplace(this.DescriptorText(candidate), " ", ""))
-            value := StrLower(StrReplace(this.ReadFieldValue(candidate), " ", ""))
-            if InStr(descriptor, normalizedTarget) || InStr(value, normalizedTarget)
-                return true
-        }
-        return false
-    }
-
-    ReadFieldValue(field) {
-        if !IsObject(field)
-            return ""
-        for propName in ["Value", "Name", "LegacyIAccessibleValue", "HelpText"] {
-            try {
-                value := field.%propName%
-                if value != ""
-                    return value
-            } catch {
-            }
-        }
-        return ""
-    }
-
-    TryControlClick(element) {
-        if !IsObject(element)
-            return ""
-        try element.SetFocus()
-        catch {
-        }
-        return this.TryCenterClick(element)
-    }
-
-    TryUpperTileClick(element, context := "3D tile") {
-        if !IsObject(element)
-            return ""
-        try element.SetFocus()
-        catch {
-        }
-        rect := this.GetElementRect(element)
-        if !IsObject(rect)
-            return ""
-
-        targetX := rect.x + Floor(rect.w * 0.28)
-        targetY := rect.y + Floor(rect.h * 0.18)
-        return this.ClickPoint(targetX, targetY, context)
-    }
-
-    TryPatternClick(element) {
-        try {
-            result := element.Click()
-            if result
-                return result
-        } catch as err {
-            this.app.logger.Warn("UIA click failed for 3D action: " err.Message)
-        }
-        return ""
-    }
-
-    TryCenterClick(element) {
-        rect := this.GetElementRect(element)
-        if !IsObject(rect)
-            return ""
-
-        centerX := rect.x + Floor(rect.w / 2)
-        centerY := rect.y + Floor(rect.h / 2)
-        return this.ClickPoint(centerX, centerY, "3D action")
-    }
-
-    ClickPoint(x, y, context := "3D action") {
-        MouseGetPos &origX, &origY
-        try MouseMove x, y, 0
-        catch as err {
-            this.app.logger.Warn("Screen-click move failed for 3D action: " err.Message)
-            return ""
-        }
-
-        Click
-        Sleep 80
-        try MouseMove origX, origY, 0
-        catch {
-        }
-        this.app.logger.Info("Point-click delivered for " context ". Target=" x "," y)
-        return "point_click"
-    }
-
-    FindThreeDPanelRoot(roots) {
-        exactRoots := []
-        for root in roots {
-            namedCandidates := []
-            try namedCandidates := root.FindElements({Name:"3D and Materials"})
-            catch
-                namedCandidates := []
-            for candidate in namedCandidates {
-                rect := this.GetElementRect(candidate)
-                if !IsObject(rect)
-                    continue
-                className := this.SafePropText(candidate, "ClassName")
-                if rect.w >= 240 && rect.w <= 520 && rect.h >= 320 && rect.h <= 1600 && className = "DroverLord - Window Class"
-                    exactRoots.Push(candidate)
-            }
-        }
-        if exactRoots.Length > 0
-            return exactRoots[1]
-        return ""
-    }
-
-    FindThreeDPanelIcon(roots) {
-        candidates := this.FindNamedControls(roots, "3D and Materials", ["Button", "Custom", "Group", "Text"])
-        best := ""
-        bestScore := -1
-        for candidate in candidates {
-            rect := this.GetElementRect(candidate)
-            if !IsObject(rect)
-                continue
-            if rect.w < 18 || rect.h < 18 || rect.w > 120 || rect.h > 120
-                continue
-            if Abs(rect.w - rect.h) > 40
-                continue
-            score := rect.x + rect.y + 1000 - Abs(rect.w - rect.h)
-            if score > bestScore {
-                best := candidate
-                bestScore := score
-            }
-        }
-        return best
-    }
-
-    ContainsNamedVisibleControl(root, nameText) {
-        if !IsObject(root)
-            return false
-        candidates := []
-        try candidates := root.FindElements({Name:nameText, mm:"Substring"})
-        catch
-            candidates := []
-        for candidate in candidates {
-            if this.IsVisibleElement(candidate)
-                return true
-        }
-        return false
-    }
-
-    TryScrollPanelForDepth(panelRoot, scanResult) {
-        if !IsObject(panelRoot) {
-            return {
-                field: "",
-                method: "panel_scroll_unavailable"
-            }
-        }
-
-        rect := this.GetElementRect(panelRoot)
-        if !IsObject(rect) {
-            return {
-                field: "",
-                method: "panel_rect_unavailable"
-            }
-        }
-
-        targetX := rect.x + Floor(rect.w / 2)
-        targetY := rect.y + Floor(rect.h * 0.60)
-        if targetY > rect.y + rect.h - 40
-            targetY := rect.y + rect.h - 40
-        if targetY < rect.y + 80
-            targetY := rect.y + 80
-
-        MouseGetPos &origX, &origY
-        Loop 3 {
-            MouseMove targetX, targetY, 0
-            SendEvent "{WheelDown 3}"
-            Sleep 140
-            refreshedContext := this.GetThreeDPanelContext(scanResult, false)
-            if refreshedContext.ok {
-                field := this.FindDepthField([refreshedContext.panelRoot])
-                if IsObject(field) {
-                    try MouseMove origX, origY, 0
-                    catch {
-                    }
-                    return {
-                        field: field,
-                        method: "panel_mouse_wheel_scroll"
-                    }
-                }
-            }
-        }
-
-        try MouseMove origX, origY, 0
-        catch {
-        }
-        return {
-            field: "",
-            method: "panel_mouse_wheel_scroll_failed"
-        }
-    }
-
-    ScrollPanelToTop(panelRoot) {
-        rect := this.GetElementRect(panelRoot)
-        if !IsObject(rect)
-            return ""
-
-        targetX := rect.x + Floor(rect.w / 2)
-        targetY := rect.y + Min(140, Floor(rect.h * 0.20))
-        MouseGetPos &origX, &origY
-        try {
-            MouseMove targetX, targetY, 0
-            SendEvent "{WheelUp 6}"
-            Sleep 120
-        } catch {
-            return ""
-        } finally {
-            try MouseMove origX, origY, 0
-            catch {
-            }
-        }
-        return "panel_scroll_top"
-    }
-
-    ClickPanelRelative(panelRoot, xRatio, yRatio, context) {
-        rect := this.GetElementRect(panelRoot)
-        if !IsObject(rect)
-            return ""
-
-        targetW := 18
-        targetH := 18
-        targetX := rect.x + Floor(rect.w * xRatio) - Floor(targetW / 2)
-        targetY := rect.y + Floor(rect.h * yRatio) - Floor(targetH / 2)
-        return this.ClickRectCenter(targetX, targetY, targetW, targetH, context)
-    }
-
-    GetElementRect(element) {
-        try {
-            rect := element.Location
-            if rect.w <= 0 || rect.h <= 0
-                return ""
-            return rect
-        } catch {
-            return ""
-        }
-    }
-
-    MatchesType(element, allowedTypes) {
-        try typeName := UIA.Type[element.Type]
-        catch
-            typeName := ""
-        if typeName = ""
-            return false
-        for allowedType in allowedTypes {
-            if typeName = allowedType
-                return true
-        }
-        return false
-    }
-
-    IsVisibleElement(element) {
-        try rect := element.Location
-        catch
-            rect := ""
-        return IsObject(rect) && rect.w > 0 && rect.h > 0
-    }
-
-    DescriptorText(element) {
-        parts := [
-            this.SafePropText(element, "Name"),
-            this.SafePropText(element, "HelpText"),
-            this.SafePropText(element, "AutomationId"),
-            this.SafePropText(element, "FullDescription"),
-            this.SafePropText(element, "LegacyIAccessibleName"),
-            this.SafePropText(element, "LegacyIAccessibleDescription"),
-            this.SafePropText(element, "LocalizedControlType")
-        ]
-        return StrLower(JoinLines(parts, " "))
-    }
-
-    SafePropText(element, propName) {
-        try {
-            value := element.%propName%
-            return value != "" ? value : ""
-        } catch {
-            return ""
-        }
-    }
-}
-
-class SetIllustratorAnchorAction {
-    __New(app) {
-        this.app := app
-        this.Id := "illustrator_set_anchor"
-        this.Label := "Set Anchor"
-        this.RequiresExactLayersScan := false
-        this.RunFromHotkeyDirect := true
-        this.HotIfWinTitle := "ahk_exe Illustrator.exe"
-    }
-
-    Run(scanResult) {
-        helperPath := GetFlowCellIllustratorAnchorScriptPath()
-        helperResult := this.app.RunIllustratorScript(
-            helperPath,
-            "action " this.Id,
-            0,
-            false
-        )
-        normalizedDetail := StrLower(helperResult.detail)
-        effectConfirmed := helperResult.succeeded && InStr(normalizedDetail, "anchor set") > 0
-        return {
-            attempted: helperResult.attempted,
-            deliverySucceeded: helperResult.succeeded,
-            effectConfirmed: effectConfirmed,
-            method: helperResult.method,
-            detail: helperResult.detail,
-            note: effectConfirmed
-                ? "The current Illustrator selection is now the shared FlowCell anchor."
-                : "Select one or more unlocked Illustrator objects, then run Set Anchor again."
-        }
-    }
-}
-
-class SaveSelectedObjToProject3DAction extends ThreeDExtrudeDepth16mmAction {
-    __New(app) {
-        this.app := app
-        this.Id := "save_selected_obj_to_project_3d"
-        this.Label := "save obj"
-        this.RequiresExactLayersScan := false
-    }
-
-    Run(scanResult) {
-        return this.RunExportToProject3D(scanResult)
-    }
-
-    RunExportToProject3D(scanResult) {
-        helperPath := this.GetWorkspaceHelperScriptPath()
-        contextPath := A_Temp "\FlowCell_Selected_OBJ_Export_Context.txt"
-
-        if FileExist(contextPath) {
-            try FileDelete contextPath
-            catch {
-            }
-        }
-
-        helperResult := this.app.RunIllustratorScript(helperPath, "action " this.Id)
-        if !helperResult.succeeded {
-            return {
-                attempted: helperResult.attempted,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: helperResult.method,
-                detail: helperResult.detail != "" ? helperResult.detail : "The Illustrator prep script did not run.",
-                note: "The export button needs Illustrator frontmost with a valid selection."
-            }
-        }
-
-        openResult := this.OpenExportSelectionWindow(scanResult, 14000)
-        if !openResult.ok {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: openResult.method,
-                detail: openResult.detail,
-                note: openResult.note
-            }
-        }
-
-        context := this.WaitForContextFile(contextPath, 8000)
-        if !context.HasOwnProp("Status") {
-            this.CloseExportSelectionWindowIfPresent()
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "context_missing",
-                detail: "The prep script finished but did not write export context.",
-                note: "Make sure the selection is inside one named asset layer and try again."
-            }
-        }
-
-        if context.Status != "Ready" {
-            this.CloseExportSelectionWindowIfPresent()
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "context_error",
-                detail: context.HasOwnProp("Message") ? context.Message : "The prep script blocked the export.",
-                note: "This button exports the current selection from the resolved asset layer."
-            }
-        }
-
-        exportFolder := context.HasOwnProp("AssetFolder") ? context.AssetFolder : ""
-        targetStem := context.HasOwnProp("AssetName") ? context.AssetName : ""
-        if exportFolder = "" || targetStem = "" {
-            this.CloseExportSelectionWindowIfPresent()
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "export_path_missing",
-                detail: "The prep script did not resolve the target OBJ name and folder.",
-                note: "The current selection must resolve to a named asset layer in the project."
-            }
-        }
-
-        flowResult := this.RunExportSelectionFlowFromWindow(openResult.window, openResult.method, exportFolder, targetStem)
-        if !flowResult.ok {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: flowResult.method,
-                detail: flowResult.detail,
-                note: flowResult.note
-            }
-        }
-
-        return {
-            attempted: true,
-            deliverySucceeded: true,
-            effectConfirmed: flowResult.effectConfirmed,
-            method: flowResult.method,
-            detail: "Exported the current selection to " flowResult.finalPath ".",
-            note: flowResult.effectConfirmed
-                ? "The OBJ filename came from the resolved asset layer above the current selection."
-                : flowResult.note,
-            finalPath: flowResult.finalPath
-        }
-    }
-
-    GetWorkspaceHelperScriptPath() {
-        return A_ScriptDir "\..\Programs\Illustrator\HelperScripts\18_Prepare_Selected_OBJ_Export.jsx"
-    }
-
-    GetInstalledHelperScriptPath() {
-        return "C:\Program Files\Adobe\Adobe Illustrator 2026\Presets\en_US\Scripts\18_Prepare_Selected_OBJ_Export.jsx"
-    }
-
-    SyncInstalledHelperScript() {
-        sourcePath := this.GetWorkspaceHelperScriptPath()
-        targetPath := this.GetInstalledHelperScriptPath()
-        if !FileExist(sourcePath)
-            return false
-
-        targetExists := FileExist(targetPath)
-        if targetExists {
-            try {
-                sourceSize := FileGetSize(sourcePath)
-                targetSize := FileGetSize(targetPath)
-                sourceStamp := FileGetTime(sourcePath, "M")
-                targetStamp := FileGetTime(targetPath, "M")
-                if sourceSize = targetSize && sourceStamp = targetStamp
-                    return true
-            } catch {
-            }
-        }
-
-        try {
-            FileCopy sourcePath, targetPath, 1
-            return true
-        } catch {
-            return false
-        }
-    }
-
-    TryRunInstalledHelperScriptFast(scriptPath, contextPath, scanResult) {
-        result := {
-            attempted: false,
-            succeeded: false,
-            method: "helper_fast_not_started",
-            detail: ""
-        }
-
-        if !FileExist(scriptPath) {
-            result.detail := "Installed helper script was not found."
-            return result
-        }
-
-        prep := this.PrepareIllustrator(scanResult)
-        if !prep.ok {
-            result.detail := prep.detail
-            return result
-        }
-
-        scriptFileName := ""
-        scriptBaseName := ""
-        SplitPath scriptPath, &scriptFileName, , , &scriptBaseName
-        if scriptBaseName = ""
-            scriptBaseName := scriptFileName
-        if scriptBaseName = "" {
-            result.detail := "The installed helper script name could not be resolved."
-            return result
-        }
-
-        result.attempted := true
-        this.app.logger.Info("Trying fast installed helper script path. Script=" scriptPath)
-        SendEvent "{Escape}"
-        Sleep 40
-        SendEvent "!f"
-        Sleep 140
-        SendEvent "{Home}"
-        Sleep 30
-        SendEvent "{Down 21}"
-        Sleep 50
-        SendEvent "{Right}"
-        Sleep 100
-
-        root := UIA.GetRootElement()
-        scriptItem := ""
-        try scriptItem := root.WaitElement({Type:"MenuItem", Name:scriptBaseName, mm:"Substring"}, 900)
-        catch
-            scriptItem := ""
-
-        if IsObject(scriptItem) {
-            invokeMethod := this.TryMenuItemInvoke(scriptItem, false)
-            if invokeMethod = "" {
-                SendEvent "{Escape}"
-                result.detail := "The installed helper script menu item was exposed but could not be invoked."
-                return result
-            }
-            result.method := "helper_fast_menu_item"
-        } else {
-            SendText scriptBaseName
-            Sleep 40
-            SendEvent "{Enter}"
-            result.method := "helper_fast_keyboard_name"
-        }
-
-        context := this.WaitForContextFile(contextPath, 1800)
-        if context.HasOwnProp("Status") {
-            result.succeeded := true
-            result.detail := "The installed helper script ran through File > Scripts."
-            return result
-        }
-
-        SendEvent "{Escape}"
-        Sleep 40
-        result.detail := "The fast helper script path did not produce context in time."
-        result.succeeded := false
-        return result
-    }
-
-    ReadContextFile(contextPath) {
-        context := {}
-        if !FileExist(contextPath)
-            return context
-
-        text := ""
-        try text := FileRead(contextPath, "UTF-8")
-        catch
-            return context
-
-        for rawLine in StrSplit(text, "`n", "`r") {
-            line := Trim(rawLine, "`r`n")
-            if line = ""
-                continue
-            separatorAt := InStr(line, "=")
-            if separatorAt <= 1
-                continue
-            key := Trim(SubStr(line, 1, separatorAt - 1))
-            if SubStr(key, 1, 1) = Chr(0xFEFF)
-                key := SubStr(key, 2)
-            value := SubStr(line, separatorAt + 1)
-            if key != ""
-                context.%key% := value
-        }
-        return context
-    }
-
-    WaitForContextFile(contextPath, timeoutMs := 5000) {
-        deadline := A_TickCount + timeoutMs
-        while A_TickCount < deadline {
-            context := this.ReadContextFile(contextPath)
-            if context.HasOwnProp("Status")
-                return context
-            Sleep 40
-        }
-        return {}
-    }
-
-    RunExportSelectionFlow(scanResult, exportFolder, targetStem) {
-        openResult := this.OpenExportSelectionWindow(scanResult)
-        if !openResult.ok
-            return openResult
-        return this.RunExportSelectionFlowFromWindow(openResult.window, openResult.method, exportFolder, targetStem)
-    }
-
-    RunExportSelectionFlowFromWindow(exportWin, openMethod, exportFolder, targetStem) {
-        exportStem := this.FindHighestNumberedAssetName(exportWin)
-        if exportStem = "" {
-            return {
-                ok: false,
-                method: openMethod "_asset_not_found",
-                detail: "The Export Selection dialog did not expose any Asset N entries.",
-                note: "The current selection needs to exist as the newest export asset in Illustrator."
-            }
-        }
-
-        initialState := this.CaptureStemFileState(exportFolder, exportStem)
-
-        folderResult := this.SetExportSelectionFolder(exportWin, exportFolder)
-        if !folderResult.ok {
-            return {
-                ok: false,
-                method: openMethod "_" folderResult.method,
-                detail: folderResult.detail,
-                note: folderResult.note
-            }
-        }
-
-        formatResult := this.EnsureExportSelectionObjFormat(exportWin)
-        if !formatResult.ok {
-            return {
-                ok: false,
-                method: openMethod "_" folderResult.method "_" formatResult.method,
-                detail: formatResult.detail,
-                note: formatResult.note
-            }
-        }
-
-        exportResult := this.ClickExportAssetButton(exportWin)
-        if !exportResult.ok {
-            return {
-                ok: false,
-                method: openMethod "_" folderResult.method "_" formatResult.method "_" exportResult.method,
-                detail: exportResult.detail,
-                note: exportResult.note
-            }
-        }
-
-        writeResult := this.WaitForStemWrite(exportFolder, exportStem, initialState, 15000)
-        if !writeResult.ok {
-            return {
-                ok: false,
-                method: openMethod "_" folderResult.method "_" formatResult.method "_" exportResult.method "_" writeResult.method,
-                detail: writeResult.detail,
-                note: writeResult.note
-            }
-        }
-
-        renameResult := this.RenameStemFiles(exportFolder, exportStem, targetStem)
-        if !renameResult.ok {
-            return {
-                ok: false,
-                method: openMethod "_" folderResult.method "_" formatResult.method "_" exportResult.method "_" writeResult.method "_" renameResult.method,
-                detail: renameResult.detail,
-                note: renameResult.note
-            }
-        }
-
-        this.CloseExportSelectionWindowIfPresent()
-        return {
-            ok: true,
-            method: openMethod "_" folderResult.method "_" formatResult.method "_" exportResult.method "_" writeResult.method "_" renameResult.method,
-            detail: renameResult.detail,
-            note: "",
-            effectConfirmed: true,
-            finalPath: renameResult.finalPath
-        }
-    }
-
-    OpenExportSelectionWindow(scanResult, timeoutMs := 2500) {
-        this.CloseExportSelectionWindowIfPresent()
-
-        prep := this.PrepareIllustrator(scanResult)
-        if !prep.ok {
-            return {
-                ok: false,
-                method: "illustrator_not_ready",
-                detail: prep.detail,
-                note: "Open Illustrator and keep the selection active."
-            }
-        }
-
-        SendEvent "{Escape}"
-        Sleep 30
-        this.app.logger.Info("Opening Export Selection via File menu.")
-        menuItem := ""
-        roots := []
-        try {
-            root := UIA.ElementFromHandle("ahk_id " prep.hwnd, , false)
-            if IsObject(root)
-                roots.Push(root)
-        }
-        catch {
-        }
-        try {
-            desktop := UIA.GetRootElement()
-            if IsObject(desktop)
-                roots.Push(desktop)
-        }
-        catch {
-        }
-
-        Loop 2 {
-            SendEvent "!f"
-            Sleep 180
-            menuItem := this.FindNamedControl(roots, "Export Selection", ["MenuItem", "Text", "Custom"])
-            if IsObject(menuItem)
-                break
-            this.app.logger.Info("Export Selection menu item was not exposed on attempt " A_Index ".")
-            SendEvent "{Escape}"
-            Sleep 40
-        }
-
-        invokeMethod := ""
-        if IsObject(menuItem) {
-            try {
-                result := menuItem.Click()
-                if result
-                    invokeMethod := "uia_click"
-            } catch {
-            }
-            if invokeMethod = "" {
-                try menuItem.SetFocus()
-                catch {
-                }
-                SendEvent "{Enter}"
-                invokeMethod := "menu_enter"
-            }
-        } else {
-            this.app.logger.Info("Falling back to deterministic keyboard navigation for File > Export Selection.")
-            SendEvent "!f"
-            Sleep 120
-            SendEvent "{Home}"
-            Sleep 25
-            SendEvent "{Down 19}"
-            Sleep 30
-            SendEvent "{Enter}"
-            invokeMethod := "file_menu_home_down_19"
-        }
-
-        exportWin := this.WaitForExportSelectionWindow(timeoutMs)
-        if !IsObject(exportWin) {
-            this.app.logger.Warn("Export for Screens dialog did not appear after invoking Export Selection.")
-            return {
-                ok: false,
-                method: invokeMethod "_dialog_missing",
-                detail: "Export Selection was invoked, but the Export for Screens dialog did not appear.",
-                note: "The current selection may not be exportable yet."
-            }
-        }
-
-        this.app.logger.Info("Export Selection dialog opened. Method=" invokeMethod)
-
-        return {
-            ok: true,
-            method: invokeMethod,
-            detail: "Opened Illustrator's Export Selection dialog.",
-            note: "",
-            window: exportWin
-        }
-    }
-
-    WaitForExportSelectionWindow(timeoutMs := 5000) {
-        deadline := A_TickCount + timeoutMs
-        while A_TickCount < deadline {
-            exportWin := this.FindExportSelectionWindow()
-            if IsObject(exportWin)
-                return exportWin
-            Sleep 40
-        }
-        return ""
-    }
-
-    FindExportSelectionWindow() {
-        exportHwnd := this.FindExportSelectionWindowHwnd()
-        if exportHwnd {
-            try {
-                exportWin := UIA.ElementFromHandle("ahk_id " exportHwnd, , false)
-                if IsObject(exportWin)
-                    return exportWin
-            }
-            catch {
-            }
-        }
-
-        root := UIA.GetRootElement()
-        windows := []
-        try windows := root.FindElements({Type:"Window"})
-        catch
-            windows := []
-
-        for win in windows {
-            try name := win.Name
-            catch
-                name := ""
-            if InStr(name, "Export for Screens") {
-                if this.IsVisibleElement(win)
-                    return win
-            }
-        }
-        return ""
-    }
-
-    FindExportSelectionWindowHwnd() {
-        for hwnd in WinGetList() {
-            title := ""
-            try title := WinGetTitle("ahk_id " hwnd)
-            catch
-                title := ""
-            if !InStr(title, "Export for Screens")
-                continue
-            try {
-                if !DllCall("IsWindowVisible", "ptr", hwnd, "int")
-                    continue
-            } catch {
-            }
-            return hwnd
-        }
-        return 0
-    }
-
-    CloseExportSelectionWindowIfPresent() {
-        exportWin := this.FindExportSelectionWindow()
-        if !IsObject(exportWin)
-            return
-
-        cancelButton := this.FindNamedControl([exportWin], "Cancel", ["Button"])
-        if IsObject(cancelButton) {
-            this.TryControlClick(cancelButton)
-            Sleep 40
-            return
-        }
-
-        SendEvent "{Escape}"
-        Sleep 40
-    }
-
-    FindHighestNumberedAssetName(exportWin) {
-        if !IsObject(exportWin)
-            return ""
-
-        labels := []
-        try labels := exportWin.FindElements({Type:"Text"})
-        catch
-            labels := []
-
-        bestName := ""
-        bestNumber := -1
-        for label in labels {
-            try name := label.Name
-            catch
-                name := ""
-            if RegExMatch(name, "i)^Asset\s+(\d+)$", &match) {
-                number := Integer(match[1])
-                if number > bestNumber {
-                    bestNumber := number
-                    bestName := name
-                }
-            }
-        }
-
-        return bestName
-    }
-
-    SetExportSelectionFolder(exportWin, exportFolder) {
-        folderEdit := this.FindNamedControl([exportWin], "ExportLocationEditBox", ["Edit"])
-        if !IsObject(folderEdit) {
-            return {
-                ok: false,
-                method: "folder_edit_missing",
-                detail: "The export-folder field was not exposed in the Export Selection dialog.",
-                note: "The dialog layout may have changed."
-            }
-        }
-
-        clickMethod := this.TryControlClick(folderEdit)
-        if clickMethod = "" {
-            return {
-                ok: false,
-                method: "folder_edit_click_failed",
-                detail: "The export-folder field was found, but focus could not be moved into it.",
-                note: "Try again with Illustrator unobstructed."
-            }
-        }
-
-        Sleep 50
-        SendEvent "^a"
-        Sleep 30
-        SendText exportFolder
-        Sleep 30
-        SendEvent "{Enter}"
-        Sleep 60
-        return {
-            ok: true,
-            method: clickMethod "_folder_set",
-            detail: "Updated the export folder in the Export Selection dialog.",
-            note: ""
-        }
-    }
-
-    EnsureExportSelectionObjFormat(exportWin) {
-        combo := this.FindNamedControl([exportWin], "type of file", ["ComboBox"])
-        if !IsObject(combo) {
-            return {
-                ok: false,
-                method: "format_combo_missing",
-                detail: "The export format combo box was not exposed in the Export Selection dialog.",
-                note: "The dialog layout may have changed."
-            }
-        }
-
-        if this.ExportFormatLooksLikeObj(combo, exportWin) {
-            return {
-                ok: true,
-                method: "obj_already_selected",
-                detail: "The Export Selection dialog already showed OBJ as the file type.",
-                note: ""
-            }
-        }
-
-        clickMethod := this.TryControlClick(combo)
-        if clickMethod = "" {
-            return {
-                ok: false,
-                method: "format_combo_click_failed",
-                detail: "The export format combo box was found, but it could not be opened.",
-                note: "Try again with Illustrator unobstructed."
-            }
-        }
-
-        Sleep 80
-        ; Use deterministic keyboard navigation inside the format combo because
-        ; Illustrator exposes multiple visible OBJ texts that are not always the
-        ; actual selectable dropdown item.
-        SendEvent "{Home}"
-        Sleep 30
-        SendEvent "{Down 8}"
-        Sleep 30
-        SendEvent "{Enter}"
-        Sleep 80
-        if this.ExportFormatLooksLikeObj(combo, exportWin) {
-            return {
-                ok: true,
-                method: clickMethod "_obj_keyboard_index",
-                detail: "Set the Export Selection format to OBJ through deterministic keyboard navigation.",
-                note: ""
-            }
-        }
-
-        SendText "OBJ"
-        Sleep 30
-        SendEvent "{Enter}"
-        Sleep 80
-        if this.ExportFormatLooksLikeObj(combo, exportWin) {
-            return {
-                ok: true,
-                method: clickMethod "_obj_keyboard_text",
-                detail: "Set the Export Selection format to OBJ by typing OBJ into the format combo box.",
-                note: ""
-            }
-        }
-
-        return {
-            ok: false,
-            method: clickMethod "_obj_verify_failed",
-            detail: "The export format did not change to OBJ.",
-            note: "The action stopped before export so it would not save the wrong file type."
-        }
-    }
-
-    FindDesktopNamedElement(nameText, allowedTypes) {
-        root := UIA.GetRootElement()
-        candidates := []
-        try candidates := root.FindElements({Name:nameText, mm:"Exact"})
-        catch
-            candidates := []
-
-        for candidate in candidates {
-            if !this.MatchesType(candidate, allowedTypes)
-                continue
-            if !this.IsVisibleElement(candidate)
-                continue
-            return candidate
-        }
-        return ""
-    }
-
-    FindDesktopNamedElementBelow(nameText, allowedTypes, anchorRect) {
-        root := UIA.GetRootElement()
-        candidates := []
-        try candidates := root.FindElements({Name:nameText, mm:"Exact"})
-        catch
-            candidates := []
-
-        for candidate in candidates {
-            if !this.MatchesType(candidate, allowedTypes)
-                continue
-            if !this.IsVisibleElement(candidate)
-                continue
-            rect := this.GetElementRect(candidate)
-            if !IsObject(rect)
-                continue
-            if !IsObject(anchorRect)
-                return candidate
-            if rect.y <= anchorRect.y + anchorRect.h
-                continue
-            if rect.x + rect.w < anchorRect.x - 80 || rect.x > anchorRect.x + anchorRect.w + 140
-                continue
-            return candidate
-        }
-        return ""
-    }
-
-    ExportFormatLooksLikeObj(combo, exportWin) {
-        currentDescriptor := StrLower(this.DescriptorText(combo) " " this.ReadFieldValue(combo))
-        if InStr(currentDescriptor, "obj")
-            return true
-
-        comboRect := this.GetElementRect(combo)
-        if !IsObject(comboRect)
-            return false
-
-        texts := []
-        try texts := exportWin.FindElements({Type:"Text"})
-        catch
-            texts := []
-
-        for textNode in texts {
-            rect := this.GetElementRect(textNode)
-            if !IsObject(rect)
-                continue
-            if rect.x < comboRect.x - 4 || rect.x > comboRect.x + comboRect.w + 4
-                continue
-            if rect.y < comboRect.y - 4 || rect.y > comboRect.y + comboRect.h + 4
-                continue
-            try name := textNode.Name
-            catch
-                name := ""
-            if InStr(StrLower(name), "obj")
-                return true
-        }
-
-        return false
-    }
-
-    EnsureExportSelectionPngFormat(exportWin) {
-        combo := this.FindNamedControl([exportWin], "type of file", ["ComboBox"])
-        if !IsObject(combo) {
-            return {
-                ok: false,
-                method: "format_combo_missing",
-                detail: "The export format combo box was not exposed in the Export Selection dialog.",
-                note: "The dialog layout may have changed."
-            }
-        }
-
-        if this.ExportFormatLooksLikePng(combo, exportWin) {
-            return {
-                ok: true,
-                method: "png_already_selected",
-                detail: "The Export Selection dialog already showed PNG as the file type.",
-                note: ""
-            }
-        }
-
-        clickMethod := this.TryControlClick(combo)
-        if clickMethod = "" {
-            return {
-                ok: false,
-                method: "format_combo_click_failed",
-                detail: "The export format combo box was found, but it could not be opened.",
-                note: "Try again with Illustrator unobstructed."
-            }
-        }
-
-        Sleep 80
-        SendEvent "{Home}"
-        Sleep 30
-        SendEvent "{Enter}"
-        Sleep 80
-        if this.ExportFormatLooksLikePng(combo, exportWin) {
-            return {
-                ok: true,
-                method: clickMethod "_png_keyboard_home",
-                detail: "Set the Export Selection format to PNG through deterministic keyboard navigation.",
-                note: ""
-            }
-        }
-
-        SendText "PNG"
-        Sleep 30
-        SendEvent "{Enter}"
-        Sleep 80
-        if this.ExportFormatLooksLikePng(combo, exportWin) {
-            return {
-                ok: true,
-                method: clickMethod "_png_keyboard_text",
-                detail: "Set the Export Selection format to PNG by typing PNG into the format combo box.",
-                note: ""
-            }
-        }
-
-        return {
-            ok: false,
-            method: clickMethod "_png_verify_failed",
-            detail: "The export format did not change to PNG.",
-            note: "The action stopped before export so it would not save the wrong file type."
-        }
-    }
-
-    ExportFormatLooksLikePng(combo, exportWin) {
-        currentValue := StrLower(Trim(this.ReadFieldValue(combo)))
-        if currentValue = "png"
-            return true
-
-        currentDescriptor := StrLower(this.DescriptorText(combo))
-        if RegExMatch(currentDescriptor, "(^|[^a-z])png([^a-z0-9]|$)") && !InStr(currentDescriptor, "png 8")
-            return true
-
-        comboRect := this.GetElementRect(combo)
-        if !IsObject(comboRect)
-            return false
-
-        texts := []
-        try texts := exportWin.FindElements({Type:"Text"})
-        catch
-            texts := []
-
-        for textNode in texts {
-            rect := this.GetElementRect(textNode)
-            if !IsObject(rect)
-                continue
-            if rect.x < comboRect.x - 4 || rect.x > comboRect.x + comboRect.w + 4
-                continue
-            if rect.y < comboRect.y - 4 || rect.y > comboRect.y + comboRect.h + 4
-                continue
-            try name := Trim(textNode.Name)
-            catch
-                name := ""
-            if StrLower(name) = "png"
-                return true
-        }
-
-        return false
-    }
-
-    ClickExportAssetButton(exportWin) {
-        exportButton := this.FindNamedControl([exportWin], "Export Asset", ["Button"])
-        if !IsObject(exportButton) {
-            return {
-                ok: false,
-                method: "export_button_missing",
-                detail: "The Export Asset button was not exposed in the Export Selection dialog.",
-                note: "The dialog layout may have changed."
-            }
-        }
-
-        clickMethod := this.TryControlClick(exportButton)
-        if clickMethod = ""
-            clickMethod := this.TryPatternClick(exportButton)
-        if clickMethod = "" {
-            return {
-                ok: false,
-                method: "export_button_click_failed",
-                detail: "The Export Asset button was found, but it could not be clicked.",
-                note: "Keep Illustrator unobstructed and try again."
-            }
-        }
-
-        return {
-            ok: true,
-            method: clickMethod,
-            detail: "Clicked Export Asset.",
-            note: ""
-        }
-    }
-
-    CaptureStemFileState(exportFolder, stem) {
-        state := Map()
-        Loop Files, exportFolder "\" stem ".*", "F" {
-            stamp := ""
-            try stamp := FileGetTime(A_LoopFileFullPath, "M")
-            catch
-                stamp := ""
-            state[A_LoopFileFullPath] := stamp
-        }
-        return state
-    }
-
-    WaitForStemWrite(exportFolder, stem, initialState, timeoutMs := 7000) {
-        return this.WaitForStemWriteByExtension(exportFolder, stem, "obj", initialState, timeoutMs)
-    }
-
-    WaitForStemWriteByExtension(exportFolder, stem, extension, initialState, timeoutMs := 7000) {
-        primaryPath := exportFolder "\" stem "." extension
-        deadline := A_TickCount + timeoutMs
-        while A_TickCount < deadline {
-            if FileExist(primaryPath) {
-                currentStamp := ""
-                try currentStamp := FileGetTime(primaryPath, "M")
-                catch
-                    currentStamp := ""
-                previousStamp := initialState.Has(primaryPath) ? initialState[primaryPath] : ""
-                if previousStamp = "" || currentStamp != previousStamp {
-                    return {
-                        ok: true,
-                        method: extension "_written",
-                        detail: "Illustrator wrote the exported " StrUpper(extension) " to disk.",
-                        note: ""
-                    }
-                }
-            }
-            Sleep 50
-        }
-
-        return {
-            ok: false,
-            method: extension "_not_written",
-            detail: "The exported " StrUpper(extension) " file for the selected asset did not appear or update before timeout.",
-            note: "Check whether the current selection is already a valid export asset in Illustrator."
-        }
-    }
-
-    RenameStemFiles(exportFolder, oldStem, newStem) {
-        return this.RenameStemFilesWithPrimaryExtension(exportFolder, oldStem, newStem, "obj")
-    }
-
-    RenameStemFilesWithPrimaryExtension(exportFolder, oldStem, newStem, primaryExtension) {
-        if oldStem = "" || newStem = "" {
-            return {
-                ok: false,
-                method: "rename_inputs_missing",
-                detail: "The export stem or target stem was blank.",
-                note: ""
-            }
-        }
-
-        if oldStem = newStem {
-            return {
-                ok: true,
-                method: "rename_not_needed",
-                detail: "The exported asset name already matched the target layer name.",
-                note: "",
-                finalPath: exportFolder "\" newStem "." primaryExtension
-            }
-        }
-
-        filesToRename := []
-        Loop Files, exportFolder "\" oldStem ".*", "F" {
-            filesToRename.Push(A_LoopFileFullPath)
-        }
-
-        if filesToRename.Length = 0 {
-            existingTarget := exportFolder "\" newStem "." primaryExtension
-            if FileExist(existingTarget) {
-                return {
-                    ok: true,
-                    method: "rename_already_done",
-                    detail: "The exported files already matched the target asset name.",
-                    note: "",
-                    finalPath: existingTarget
-                }
-            }
-            return {
-                ok: false,
-                method: "exported_files_missing",
-                detail: "No exported files were found for the temporary asset name " oldStem ".",
-                note: ""
-            }
-        }
-
-        for sourcePath in filesToRename {
-            SplitPath sourcePath, , , &extension
-            targetPath := exportFolder "\" newStem "." extension
-            if FileExist(targetPath) {
-                try FileRecycle targetPath
-                catch as err {
-                    return {
-                        ok: false,
-                        method: "target_recycle_failed",
-                        detail: "Could not move the existing target file to the Recycle Bin. " err.Message,
-                        note: ""
-                    }
-                }
-            }
-        }
-
-        for sourcePath in filesToRename {
-            SplitPath sourcePath, , , &extension
-            targetPath := exportFolder "\" newStem "." extension
-            moved := false
-            lastMessage := ""
-            Loop 40 {
-                try {
-                    FileMove sourcePath, targetPath, 0
-                    moved := true
-                } catch as err {
-                    lastMessage := err.Message
-                    Sleep 75
-                }
-                if moved
-                    break
-                if !FileExist(sourcePath) && FileExist(targetPath) {
-                    moved := true
-                    break
-                }
-            }
-            if !moved {
-                return {
-                    ok: false,
-                    method: "rename_failed",
-                    detail: "Could not rename the exported file " sourcePath " to " targetPath ". " lastMessage,
-                    note: ""
-                }
-            }
-        }
-
-        return {
-            ok: true,
-            method: "rename_complete",
-            detail: "Renamed the exported asset files from " oldStem " to " newStem ".",
-            note: "",
-            finalPath: exportFolder "\" newStem "." primaryExtension
-        }
-    }
-
-    FindExportButton(panelRoot) {
-        button := this.FindNamedControl([panelRoot], "Export 3D object", ["Button", "MenuItem", "Text", "Custom"])
-        if IsObject(button)
-            return button
-        return this.FindNamedControl([panelRoot], "Export", ["Button", "MenuItem", "Text", "Custom"])
-    }
-
-    CompleteExportFlow(scanResult, exportPath, initialStamp) {
-        immediate := this.WaitForExportFile(exportPath, initialStamp, 1200)
-        if immediate.confirmed {
-            return {
-                ok: true,
-                method: immediate.method,
-                detail: immediate.detail,
-                note: "",
-                effectConfirmed: true
-            }
-        }
-
-        dialogHwnd := this.WaitForExportSaveDialog(scanResult, 5000)
-        if !dialogHwnd {
-            followUp := this.WaitForExportFile(exportPath, initialStamp, 1800)
-            if followUp.confirmed {
-                return {
-                    ok: true,
-                    method: followUp.method,
-                    detail: followUp.detail,
-                    note: "",
-                    effectConfirmed: true
-                }
-            }
-            return {
-                ok: false,
-                method: "export_ui_missing",
-                detail: "The Export 3D flow did not surface a save dialog and no OBJ file appeared.",
-                note: "Keep the 3D and Materials panel visible and make sure the selected d# layer contains a live 3D object."
-            }
-        }
-
-        submitResult := this.SubmitExportSaveDialog(dialogHwnd, exportPath)
-        if !submitResult.ok {
-            return {
-                ok: false,
-                method: submitResult.method,
-                detail: submitResult.detail,
-                note: "The save dialog appeared, but the target path could not be delivered."
-            }
-        }
-
-        overwriteResult := this.TryAcceptOverwriteConfirmation(scanResult, 2500)
-        waitResult := this.WaitForExportFile(exportPath, initialStamp, 8000)
-
-        if waitResult.confirmed {
-            return {
-                ok: true,
-                method: submitResult.method "_" waitResult.method,
-                detail: waitResult.detail,
-                note: overwriteResult.found ? overwriteResult.detail : "",
-                effectConfirmed: true
-            }
-        }
-
-        return {
-            ok: true,
-            method: submitResult.method,
-            detail: "Submitted the save dialog for " exportPath ".",
-            note: overwriteResult.found ? overwriteResult.detail : "The export was submitted, but the OBJ file write could not be confirmed before timeout.",
-            effectConfirmed: false
-        }
-    }
-
-    WaitForExportSaveDialog(scanResult, timeoutMs := 5000) {
-        deadline := A_TickCount + timeoutMs
-        while A_TickCount < deadline {
-            if hwnd := this.FindExportSaveDialogWindowHandle(scanResult)
-                return hwnd
-            Sleep 75
-        }
-        return 0
-    }
-
-    FindExportSaveDialogWindowHandle(scanResult) {
-        illustratorPid := this.GetIllustratorPid(scanResult)
-        for hwnd in WinGetList() {
-            try {
-                if !WinExist("ahk_id " hwnd)
-                    continue
-                if !DllCall("IsWindowVisible", "ptr", hwnd, "int")
-                    continue
-                if illustratorPid {
-                    pid := WinGetPID("ahk_id " hwnd)
-                    if pid != illustratorPid
-                        continue
-                }
-                title := StrLower(WinGetTitle("ahk_id " hwnd))
-                text := ""
-                try text := StrLower(WinGetText("ahk_id " hwnd))
-                className := ""
-                try className := WinGetClass("ahk_id " hwnd)
-                if className != "#32770"
-                    continue
-                if InStr(title, "save") || InStr(title, "export") || InStr(text, "file name") || InStr(text, ".obj")
-                    return hwnd
-            } catch {
-            }
-        }
-        return 0
-    }
-
-    SubmitExportSaveDialog(hwnd, exportPath) {
-        try {
-            WinActivate "ahk_id " hwnd
-            WinWaitActive "ahk_id " hwnd, , 2
-        } catch as err {
-            return {
-                ok: false,
-                method: "dialog_activate_failed",
-                detail: "Could not activate the export save dialog. " err.Message
-            }
-        }
-
-        for controlName in ["Edit1", "RichEdit20W1", "RichEdit50W1"] {
-            try {
-                ControlFocus controlName, "ahk_id " hwnd
-                Sleep 80
-                ControlSetText exportPath, controlName, "ahk_id " hwnd
-                Sleep 120
-                ControlSend "{Enter}", controlName, "ahk_id " hwnd
-                return {
-                    ok: true,
-                    method: "control_set_text",
-                    detail: "Delivered the export path through the save dialog edit control."
-                }
-            } catch {
-            }
-        }
-
-        try {
-            SendEvent "!n"
-            Sleep 120
-            SendEvent "^a"
-            Sleep 60
-            SendText exportPath
-            Sleep 120
-            SendEvent "{Enter}"
-            return {
-                ok: true,
-                method: "keyboard_alt_n",
-                detail: "Delivered the export path through the save dialog keyboard shortcut."
-            }
-        } catch as err {
-            return {
-                ok: false,
-                method: "keyboard_submit_failed",
-                detail: "Could not send the export path to the save dialog. " err.Message
-            }
-        }
-    }
-
-    TryAcceptOverwriteConfirmation(scanResult, timeoutMs := 2500) {
-        deadline := A_TickCount + timeoutMs
-        while A_TickCount < deadline {
-            if hwnd := this.FindOverwriteConfirmationWindowHandle(scanResult) {
-                try {
-                    WinActivate "ahk_id " hwnd
-                    WinWaitActive "ahk_id " hwnd, , 1
-                    Sleep 60
-                    SendEvent "!y"
-                    Sleep 80
-                    SendEvent "{Enter}"
-                    return {
-                        found: true,
-                        detail: "An overwrite confirmation appeared and was accepted automatically."
-                    }
-                } catch {
-                }
-            }
-            Sleep 75
-        }
-
-        return {
-            found: false,
-            detail: ""
-        }
-    }
-
-    FindOverwriteConfirmationWindowHandle(scanResult) {
-        illustratorPid := this.GetIllustratorPid(scanResult)
-        for hwnd in WinGetList() {
-            try {
-                if !WinExist("ahk_id " hwnd)
-                    continue
-                if !DllCall("IsWindowVisible", "ptr", hwnd, "int")
-                    continue
-                if illustratorPid {
-                    pid := WinGetPID("ahk_id " hwnd)
-                    if pid != illustratorPid
-                        continue
-                }
-                title := StrLower(WinGetTitle("ahk_id " hwnd))
-                text := ""
-                try text := StrLower(WinGetText("ahk_id " hwnd))
-                className := ""
-                try className := WinGetClass("ahk_id " hwnd)
-                if className != "#32770"
-                    continue
-                if InStr(title, "confirm save as") || InStr(text, "already exists") || InStr(text, "replace it") || InStr(text, "overwrite")
-                    return hwnd
-            } catch {
-            }
-        }
-        return 0
-    }
-
-    WaitForExportFile(exportPath, initialStamp, timeoutMs := 6000) {
-        deadline := A_TickCount + timeoutMs
-        while A_TickCount < deadline {
-            if FileExist(exportPath) {
-                if initialStamp = "" {
-                    return {
-                        confirmed: true,
-                        method: "file_created",
-                        detail: "The OBJ file appeared at " exportPath "."
-                    }
-                }
-
-                currentStamp := ""
-                try currentStamp := FileGetTime(exportPath, "M")
-                catch
-                    currentStamp := ""
-                if currentStamp != "" && currentStamp != initialStamp {
-                    return {
-                        confirmed: true,
-                        method: "file_updated",
-                        detail: "The OBJ file timestamp updated at " exportPath "."
-                    }
-                }
-            }
-            Sleep 120
-        }
-
-        return {
-            confirmed: false,
-            method: "file_not_confirmed",
-            detail: "The OBJ file was not confirmed on disk before timeout."
-        }
-    }
-
-    GetIllustratorPid(scanResult) {
-        if IsObject(scanResult) && IsObject(scanResult.activeWindow) {
-            try return WinGetPID("ahk_id " scanResult.activeWindow.hwnd)
-        }
-        try return ProcessExist("Illustrator.exe")
-        catch
-            return 0
-    }
-}
-
-class SaveSelectedObjToBlenderAction extends SaveSelectedObjToProject3DAction {
-    __New(app) {
-        this.app := app
-        this.Id := "save_selected_obj_to_blender"
-        this.Label := "blender obj"
-        this.RequiresExactLayersScan := false
-    }
-
-    Run(scanResult) {
-        exportResult := this.RunExportToProject3D(scanResult)
-        if !exportResult.deliverySucceeded || !exportResult.effectConfirmed
-            return exportResult
-
-        finalPath := exportResult.HasOwnProp("finalPath") ? exportResult.finalPath : ""
-        importResult := this.ImportObjIntoBlender(finalPath)
-        if !importResult.succeeded {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: exportResult.method "_" importResult.method,
-                detail: "Exported the OBJ to " finalPath ". Blender import failed: " importResult.detail,
-                note: importResult.note
-            }
-        }
-
-        detail := "Exported the current selection to " finalPath " and sent it to Blender."
-        if importResult.detail != ""
-            detail .= " " importResult.detail
-        note := importResult.note != "" ? importResult.note : "The OBJ was exported from the resolved asset layer and sent to Blender."
-        return {
-            attempted: true,
-            deliverySucceeded: true,
-            effectConfirmed: true,
-            method: exportResult.method "_" importResult.method,
-            detail: detail,
-            note: note,
-            finalPath: finalPath
-        }
-    }
-
-    ImportObjIntoBlender(objPath) {
-        result := {
-            attempted: false,
-            succeeded: false,
-            method: "blender_import_not_started",
-            detail: "",
-            note: ""
-        }
-
-        if objPath = "" {
-            result.detail := "The exported OBJ path was blank."
-            return result
-        }
-        if !FileExist(objPath) {
-            result.detail := "The exported OBJ file was not found."
-            return result
-        }
-
-        helperPath := A_ScriptDir "\..\Programs\Blender\FlowCellButtons\Import-FlowCellObjIntoBlender.ps1"
-        if !FileExist(helperPath) {
-            result.detail := "The Blender import helper script was not found."
-            result.note := "The helper should exist under Programs\\Blender\\FlowCellButtons."
-            return result
-        }
-
-        resultPath := A_Temp "\FlowCell_Blender_OBJ_Import_Result.txt"
-        if FileExist(resultPath) {
-            try FileDelete resultPath
-            catch {
-            }
-        }
-
-        result.attempted := true
-        command := 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' helperPath '" -ObjPath "' objPath '" -ResultPath "' resultPath '"'
-        try exitCode := RunWait(command, , "Hide")
-        catch as err {
-            result.detail := "Launching the Blender import helper failed. " err.Message
-            result.method := "blender_import_helper_launch_failed"
-            result.note := "Make sure PowerShell is available and Blender helper scripts are present."
-            return result
-        }
-
-        importContext := this.ReadContextFile(resultPath)
-        if exitCode = 0 {
-            result.succeeded := true
-            result.method := importContext.HasOwnProp("Method") && importContext.Method != ""
-                ? importContext.Method
-                : "blender_import_helper"
-            result.detail := importContext.HasOwnProp("Message") && importContext.Message != ""
-                ? importContext.Message
-                : "The OBJ was sent to Blender."
-            launchedBlender := importContext.HasOwnProp("LaunchedBlender") ? StrLower(Trim(importContext.LaunchedBlender)) : ""
-            if launchedBlender = "yes" {
-                result.note := "Blender was launched, then the OBJ was imported."
-            }
-            return result
-        }
-
-        result.method := importContext.HasOwnProp("Method") && importContext.Method != ""
-            ? importContext.Method
-            : "blender_import_helper_failed"
-        result.detail := importContext.HasOwnProp("Message") && importContext.Message != ""
-            ? importContext.Message
-            : "The Blender import helper returned a failure exit code."
-        result.note := importContext.HasOwnProp("Note") ? importContext.Note : "If Blender was already open before this update, reload the addon or restart Blender once."
-        return result
-    }
-}
-
-class SaveSelectedPngToBlenderLithoAction extends SaveSelectedObjToProject3DAction {
-    __New(app) {
-        this.app := app
-        this.Id := "save_selected_png_to_blender_litho"
-        this.Label := "blender litho"
-        this.RequiresExactLayersScan := false
-    }
-
-    Run(scanResult) {
-        exportResult := this.RunExportPngForLitho(scanResult)
-        if !exportResult.deliverySucceeded || !exportResult.effectConfirmed
-            return exportResult
-
-        pngPath := exportResult.HasOwnProp("finalPath") ? exportResult.finalPath : ""
-        dpi := exportResult.HasOwnProp("dpi") ? exportResult.dpi : 300
-        importResult := this.ImportPngAsLithophaneIntoBlender(pngPath, dpi)
-        if !importResult.succeeded {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: exportResult.method "_" importResult.method,
-                detail: "Saved the PNG to " pngPath ". Blender lithophane import failed: " importResult.detail,
-                note: importResult.note
-            }
-        }
-
-        detail := "Saved the PNG to " pngPath " and sent it to Blender Lithophane."
-        if importResult.detail != ""
-            detail .= " " importResult.detail
-        note := importResult.note != "" ? importResult.note : "The PNG was saved with a size suffix, and Blender used that size to build the lithophane."
-        return {
-            attempted: true,
-            deliverySucceeded: true,
-            effectConfirmed: true,
-            method: exportResult.method "_" importResult.method,
-            detail: detail,
-            note: note,
-            finalPath: pngPath
-        }
-    }
-
-    RunExportPngForLitho(scanResult) {
-        helperPath := A_ScriptDir "\..\Programs\Illustrator\HelperScripts\19_Prepare_Selected_Litho_PNG.jsx"
-        contextPath := A_Temp "\FlowCell_Selected_Litho_PNG_Context.txt"
-        this.PrepareLithoDefaultImagesFolderFile()
-
-        if FileExist(contextPath) {
-            try FileDelete contextPath
-            catch {
-            }
-        }
-
-        helperResult := this.app.RunIllustratorScript(helperPath, "action " this.Id)
-        if !helperResult.succeeded {
-            return {
-                attempted: helperResult.attempted,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: helperResult.method,
-                detail: helperResult.detail != "" ? helperResult.detail : "The Illustrator PNG prep script did not run.",
-                note: "The litho button needs Illustrator frontmost with a valid selection."
-            }
-        }
-
-        openResult := this.OpenExportSelectionWindow(scanResult, 14000)
-        if !openResult.ok {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: openResult.method,
-                detail: openResult.detail,
-                note: openResult.note
-            }
-        }
-
-        context := this.WaitForContextFile(contextPath, 8000)
-        if !context.HasOwnProp("Status") {
-            this.CloseExportSelectionWindowIfPresent()
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "png_context_missing",
-                detail: "The PNG prep script finished but did not write export context.",
-                note: "Make sure the selection is valid and the Illustrator file is saved in the project."
-            }
-        }
-
-        if context.Status != "Ready" {
-            this.CloseExportSelectionWindowIfPresent()
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "png_context_error",
-                detail: context.HasOwnProp("Message") ? context.Message : "The PNG prep script blocked the export.",
-                note: "The litho button saves the current selection as a PNG before sending it to Blender."
-            }
-        }
-
-        exportFolder := context.HasOwnProp("AssetFolder") ? context.AssetFolder : ""
-        targetStem := context.HasOwnProp("AssetName") ? context.AssetName : ""
-        if exportFolder = "" || targetStem = "" {
-            this.CloseExportSelectionWindowIfPresent()
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: "png_export_path_missing",
-                detail: "The PNG prep script did not resolve the target PNG name and folder.",
-                note: "Try again with the Illustrator document saved and the selection visible."
-            }
-        }
-        this.StoreLithoImagesFolder(exportFolder)
-
-        flowResult := this.RunExportSelectionPngFlowFromWindow(openResult.window, openResult.method, exportFolder, targetStem)
-        if !flowResult.ok {
-            return {
-                attempted: true,
-                deliverySucceeded: false,
-                effectConfirmed: false,
-                method: flowResult.method,
-                detail: flowResult.detail,
-                note: flowResult.note
-            }
-        }
-
-        pngPath := flowResult.finalPath
-        dpi := 300
-        if context.HasOwnProp("WidthMm") && context.HasOwnProp("HeightMm") {
-            dpi := 72
-        }
-
-        return {
-            attempted: true,
-            deliverySucceeded: true,
-            effectConfirmed: true,
-            method: flowResult.method,
-            detail: "Saved the current selection as a PNG.",
-            note: "The PNG was exported through Illustrator's Export Selection dialog.",
-            finalPath: pngPath,
-            dpi: dpi
-        }
-    }
-
-    PrepareLithoDefaultImagesFolderFile() {
-        path := this.GetLithoDefaultImagesFolderPath()
-        folder := this.ResolvePreferredLithoImagesFolder()
-        if folder = "" {
-            try FileDelete path
-            catch {
-            }
-            return
-        }
-        try FileDelete path
-        catch {
-        }
-        try FileAppend(folder, path, "UTF-8")
-        catch {
-        }
-    }
-
-    GetLithoDefaultImagesFolderPath() {
-        return A_Temp "\FlowCell_Litho_Default_Images_Folder.txt"
-    }
-
-    StoreLithoImagesFolder(folder) {
-        if folder = ""
-            return
-        path := this.GetLithoDefaultImagesFolderPath()
-        try FileDelete path
-        catch {
-        }
-        try FileAppend(folder, path, "UTF-8")
-        catch {
-        }
-    }
-
-    ResolvePreferredLithoImagesFolder() {
-        folder := this.TryResolveImagesFolderFromVisibleBlender()
-        if folder != ""
-            return folder
-        return this.ReadStoredLithoImagesFolder()
-    }
-
-    ReadStoredLithoImagesFolder() {
-        path := this.GetLithoDefaultImagesFolderPath()
-        if !FileExist(path)
-            return ""
-        try text := Trim(FileRead(path, "UTF-8"))
-        catch
-            return ""
-        return text
-    }
-
-    TryResolveImagesFolderFromVisibleBlender() {
-        for hwnd in WinGetList("ahk_exe blender.exe") {
-            try {
-                if !DllCall("IsWindowVisible", "ptr", hwnd, "int")
-                    continue
-            } catch {
-                continue
-            }
-            title := ""
-            try title := WinGetTitle("ahk_id " hwnd)
-            catch
-                title := ""
-            if !RegExMatch(title, "\[([A-Za-z]:\\[^\]]+\.blend)\]", &match)
-                continue
-            blendPath := match[1]
-            SplitPath blendPath, , &blendDir
-            srcRoot := this.FindSrcRootFromFolder(blendDir)
-            if srcRoot = ""
-                continue
-            return srcRoot "\00 assets\01 images"
-        }
-        return ""
-    }
-
-    FindSrcRootFromFolder(startFolder) {
-        current := startFolder
-        while current != "" {
-            SplitPath current, &folderName
-            if folderName = "01 src"
-                return current
-            parent := ""
-            SplitPath current, , &parent
-            if parent = "" || parent = current
-                break
-            current := parent
-        }
-
-        current := startFolder
-        while current != "" {
-            candidate := current "\01 src"
-            if DirExist(candidate)
-                return candidate
-            parent := ""
-            SplitPath current, , &parent
-            if parent = "" || parent = current
-                break
-            current := parent
-        }
-        return ""
-    }
-
-    RunExportSelectionPngFlowFromWindow(exportWin, openMethod, exportFolder, targetStem) {
-        exportStem := this.FindHighestNumberedAssetName(exportWin)
-        if exportStem = "" {
-            return {
-                ok: false,
-                method: openMethod "_asset_not_found",
-                detail: "The Export Selection dialog did not expose any Asset N entries.",
-                note: "The current selection needs to exist as the newest export asset in Illustrator."
-            }
-        }
-
-        initialState := this.CaptureStemFileState(exportFolder, exportStem)
-
-        folderResult := this.SetExportSelectionFolder(exportWin, exportFolder)
-        if !folderResult.ok {
-            return {
-                ok: false,
-                method: openMethod "_" folderResult.method,
-                detail: folderResult.detail,
-                note: folderResult.note
-            }
-        }
-
-        formatResult := this.EnsureExportSelectionPngFormat(exportWin)
-        if !formatResult.ok {
-            return {
-                ok: false,
-                method: openMethod "_" folderResult.method "_" formatResult.method,
-                detail: formatResult.detail,
-                note: formatResult.note
-            }
-        }
-
-        exportResult := this.ClickExportAssetButton(exportWin)
-        if !exportResult.ok {
-            return {
-                ok: false,
-                method: openMethod "_" folderResult.method "_" formatResult.method "_" exportResult.method,
-                detail: exportResult.detail,
-                note: exportResult.note
-            }
-        }
-
-        writeResult := this.WaitForStemWriteByExtension(exportFolder, exportStem, "png", initialState, 15000)
-        if !writeResult.ok {
-            return {
-                ok: false,
-                method: openMethod "_" folderResult.method "_" formatResult.method "_" exportResult.method "_" writeResult.method,
-                detail: writeResult.detail,
-                note: writeResult.note
-            }
-        }
-
-        renameResult := this.RenameStemFilesWithPrimaryExtension(exportFolder, exportStem, targetStem, "png")
-        if !renameResult.ok {
-            return {
-                ok: false,
-                method: openMethod "_" folderResult.method "_" formatResult.method "_" exportResult.method "_" writeResult.method "_" renameResult.method,
-                detail: renameResult.detail,
-                note: renameResult.note
-            }
-        }
-
-        this.CloseExportSelectionWindowIfPresent()
-        return {
-            ok: true,
-            method: openMethod "_" folderResult.method "_" formatResult.method "_" exportResult.method "_" writeResult.method "_" renameResult.method,
-            detail: renameResult.detail,
-            note: "",
-            finalPath: renameResult.finalPath
-        }
-    }
-
-    ImportPngAsLithophaneIntoBlender(pngPath, dpi := 300) {
-        result := {
-            attempted: false,
-            succeeded: false,
-            method: "blender_litho_not_started",
-            detail: "",
-            note: ""
-        }
-
-        if pngPath = "" {
-            result.detail := "The exported PNG path was blank."
-            return result
-        }
-        if !FileExist(pngPath) {
-            result.detail := "The exported PNG file was not found."
-            return result
-        }
-
-        helperPath := A_ScriptDir "\..\Programs\Blender\FlowCellButtons\Import-FlowCellPngAsLithophane.ps1"
-        if !FileExist(helperPath) {
-            result.detail := "The Blender lithophane import helper script was not found."
-            result.note := "The helper should exist under Programs\\Blender\\FlowCellButtons."
-            return result
-        }
-
-        resultPath := A_Temp "\FlowCell_Blender_Litho_Import_Result.txt"
-        if FileExist(resultPath) {
-            try FileDelete resultPath
-            catch {
-            }
-        }
-
-        result.attempted := true
-        command := 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' helperPath '" -PngPath "' pngPath '" -Dpi "' dpi '" -ResultPath "' resultPath '"'
-        try exitCode := RunWait(command, , "Hide")
-        catch as err {
-            result.detail := "Launching the Blender lithophane helper failed. " err.Message
-            result.method := "blender_litho_helper_launch_failed"
-            result.note := "Make sure PowerShell is available and Blender helper scripts are present."
-            return result
-        }
-
-        importContext := this.ReadContextFile(resultPath)
-        if exitCode = 0 {
-            result.succeeded := true
-            result.method := importContext.HasOwnProp("Method") && importContext.Method != ""
-                ? importContext.Method
-                : "blender_litho_helper"
-            result.detail := importContext.HasOwnProp("Message") && importContext.Message != ""
-                ? importContext.Message
-                : "The PNG was sent to Blender and turned into a lithophane."
-            launchedBlender := importContext.HasOwnProp("LaunchedBlender") ? StrLower(Trim(importContext.LaunchedBlender)) : ""
-            if launchedBlender = "yes" {
-                result.note := "Blender was launched, then the lithophane was created."
-            }
-            return result
-        }
-
-        result.method := importContext.HasOwnProp("Method") && importContext.Method != ""
-            ? importContext.Method
-            : "blender_litho_helper_failed"
-        result.detail := importContext.HasOwnProp("Message") && importContext.Message != ""
-            ? importContext.Message
-            : "The Blender lithophane helper returned a failure exit code."
-        result.note := importContext.HasOwnProp("Note") ? importContext.Note : "If Blender was already open before this update, reload the addon or restart Blender once."
-        return result
     }
 }
 
@@ -7094,8 +3680,6 @@ class ScriptShortcutManager {
         this.bindings := []
         this.nextId := 1
         this.registered := Map()
-        this.pendingAsyncScriptHotkeys := Map()
-        this.asyncScriptDebounceMs := 80
         this.candidateShortcuts := this.BuildCandidateShortcuts()
     }
 
@@ -7135,7 +3719,6 @@ class ScriptShortcutManager {
         this.nextId := 1
 
         if !FileExist(this.bindingFilePath) {
-            this.EnsureDefaultBindings()
             return
         }
 
@@ -7148,12 +3731,10 @@ class ScriptShortcutManager {
             this.logger.Error("Failed to read the FlowCell bindings file.", err)
             this.bindings := []
             this.nextId := 1
-            this.EnsureDefaultBindings()
             return
         }
 
         if idText = "" {
-            this.EnsureDefaultBindings()
             return
         }
 
@@ -7165,7 +3746,7 @@ class ScriptShortcutManager {
             section := "Binding_" idToken
             try {
                 shortcut := CanonicalizeShortcut(GetIniTextValue(iniText, section, "Shortcut"))
-                scriptPath := ResolveLegacyWindowsProgramPath(GetIniTextValue(iniText, section, "ScriptPath"))
+                scriptPath := NormalizeFlowCellProgramPath(GetIniTextValue(iniText, section, "ScriptPath"))
                 programTabId := GetIniTextValue(iniText, section, "ProgramTabId", "0")
                 this.bindings.Push({
                     id: Integer(idToken),
@@ -7179,7 +3760,6 @@ class ScriptShortcutManager {
             }
         }
 
-        this.EnsureDefaultBindings()
     }
 
     SaveToDisk() {
@@ -7212,42 +3792,6 @@ class ScriptShortcutManager {
         return JoinLines(ids, "|")
     }
 
-    EnsureDefaultBindings() {
-        this.EnsureDefaultSingleMonitorBinding()
-    }
-
-    EnsureDefaultSingleMonitorBinding() {
-        if !ShouldRestoreDefaultSingleMonitorBinding(this.bindingFilePath)
-            return
-
-        defaultBinding := GetDefaultSingleMonitorHotkeyBinding()
-        if !IsObject(defaultBinding)
-            return
-
-        defaultShortcut := NormalizeShortcut(defaultBinding.shortcut)
-        defaultPath := StrLower(ResolveLegacyWindowsProgramPath(defaultBinding.scriptPath, false))
-        for binding in this.bindings {
-            if NormalizeShortcut(binding.shortcut) = defaultShortcut
-                return
-            if StrLower(ResolveLegacyWindowsProgramPath(binding.scriptPath, false)) = defaultPath
-                return
-        }
-
-        this.bindings.Push({
-            id: this.nextId,
-            shortcut: defaultBinding.shortcut,
-            scriptPath: defaultBinding.scriptPath,
-            programTabId: defaultBinding.programTabId,
-            status: "Loaded"
-        })
-        this.nextId += 1
-        ; Persist immediately - otherwise this default only ever lives in memory and the
-        ; Binds UI (which reads bindings.ini directly) shows the shortcut as unbound even
-        ; though it is actually registered and working.
-        this.SaveToDisk()
-        this.logger.Info("Restored default single-monitor shortcut binding. Shortcut=" defaultBinding.shortcut " | Script=" defaultBinding.scriptPath)
-    }
-
     ApplyHotkeys() {
         this.UnregisterHotkeys()
         for binding in this.bindings
@@ -7257,36 +3801,15 @@ class ScriptShortcutManager {
     TryRegisterBinding(binding) {
         binding.shortcut := CanonicalizeShortcut(binding.shortcut)
         callback := ObjBindMethod(this, "OnHotkeyPressed", binding.id)
-        registrationShortcut := binding.shortcut
-        hotIfWinTitle := ""
-        binding.sendKeyAfter := ""
-        binding.sendKeyBefore := ""
-        binding.runScriptAfterSendAsync := false
-        if this.app.IsFlowCellIllustratorSelectionToolAnchorHotkey(binding.scriptPath) && NormalizeShortcut(binding.shortcut) = "~v" {
-            registrationShortcut := "$v"
-            hotIfWinTitle := "ahk_exe Illustrator.exe"
-            binding.sendKeyBefore := "v"
-            binding.runScriptAfterSendAsync := true
-        }
         try {
-            if hotIfWinTitle != ""
-                HotIfWinActive hotIfWinTitle
-            Hotkey registrationShortcut, callback, "On"
-            if hotIfWinTitle != ""
-                HotIfWinActive
+            Hotkey binding.shortcut, callback, "On"
             this.registered[binding.id] := {
-                shortcut: registrationShortcut,
-                callback: callback,
-                hotIfWinTitle: hotIfWinTitle
+                shortcut: binding.shortcut,
+                callback: callback
             }
-            this.logger.Info("Registered shortcut binding. Shortcut=" binding.shortcut " | RegisteredShortcut=" registrationShortcut " | Script=" binding.scriptPath)
+            this.logger.Info("Registered shortcut binding. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
             return "Active"
         } catch as err {
-            if hotIfWinTitle != "" {
-                try HotIfWinActive
-                catch {
-                }
-            }
             this.logger.Warn(
                 "Failed to register shortcut binding. Shortcut="
                 . binding.shortcut
@@ -7300,24 +3823,9 @@ class ScriptShortcutManager {
     }
 
     UnregisterHotkeys() {
-        for _, timer in this.pendingAsyncScriptHotkeys {
-            try SetTimer timer, 0
-            catch {
-            }
-        }
-        this.pendingAsyncScriptHotkeys := Map()
-
         for _, entry in this.registered {
-            try {
-                if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
-                    HotIfWinActive entry.hotIfWinTitle
-                Hotkey entry.shortcut, entry.callback, "Off"
-                if entry.HasOwnProp("hotIfWinTitle") && entry.hotIfWinTitle != ""
-                    HotIfWinActive
-            } catch {
-                try HotIfWinActive
-                catch {
-                }
+            try Hotkey entry.shortcut, entry.callback, "Off"
+            catch {
             }
         }
         this.registered := Map()
@@ -7327,76 +3835,12 @@ class ScriptShortcutManager {
         binding := this.GetBindingById(bindingId)
         if !IsObject(binding)
             return
-        if binding.HasOwnProp("runScriptAfterSendAsync") && binding.runScriptAfterSendAsync {
-            this.HandlePassThroughAsyncScriptHotkey(binding)
-            return
-        }
         this.app.HandleShortcutInvocation(binding)
-    }
-
-    HandlePassThroughAsyncScriptHotkey(binding) {
-        if binding.HasOwnProp("sendKeyBefore") && binding.sendKeyBefore != "" && WinActive("ahk_exe Illustrator.exe") {
-            try Send "{" binding.sendKeyBefore "}"
-            catch as sendErr
-                this.logger.Warn("Immediate hotkey key pass-through failed. Shortcut=" binding.shortcut " | Error=" sendErr.Message)
-        }
-        this.QueueAsyncScriptHotkey(binding)
-    }
-
-    QueueAsyncScriptHotkey(binding) {
-        key := binding.id ""
-        if this.pendingAsyncScriptHotkeys.Has(key) {
-            try SetTimer this.pendingAsyncScriptHotkeys[key], 0
-            catch {
-            }
-        }
-
-        timer := ObjBindMethod(this, "RunQueuedAsyncScriptHotkey", binding.id)
-        this.pendingAsyncScriptHotkeys[key] := timer
-        debouncePeriod := -1 * this.asyncScriptDebounceMs
-        SetTimer timer, debouncePeriod
-    }
-
-    RunQueuedAsyncScriptHotkey(bindingId, *) {
-        global flowCellLastActionStatusPath
-        key := bindingId ""
-        if this.pendingAsyncScriptHotkeys.Has(key)
-            this.pendingAsyncScriptHotkeys.Delete(key)
-
-        binding := this.GetBindingById(bindingId)
-        if !IsObject(binding)
-            return
-
-        this.logger.Info("Script hotkey dispatch after immediate pass-through. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
-        if this.app.IsFlowCellIllustratorSelectionToolAnchorHotkey(binding.scriptPath) {
-            result := this.app.RunDirectScriptFromSelf(
-                binding.scriptPath,
-                "illustrator_automation",
-                "hotkey-" A_TickCount
-            )
-        } else {
-            result := this.app.RunBackendScriptCommand(binding.scriptPath, binding.HasOwnProp("programTabId") ? binding.programTabId : 0, "hotkey " binding.shortcut " async", true)
-        }
-
-        if !result.succeeded {
-            lines := [
-                "Shortcut: " binding.shortcut,
-                "Script: " binding.scriptPath,
-                "Pass-through: sent before script",
-                "Accepted: " BoolToWord(result.succeeded),
-                "Method: " result.method,
-                "Details: " result.detail
-            ]
-            statusText := JoinLines(lines)
-            this.app.SetShortcutStatus(statusText)
-            WriteTextFile(flowCellLastActionStatusPath, statusText)
-        }
-        this.logger.Info("Script hotkey dispatch completed. Shortcut=" binding.shortcut " | Accepted=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
     }
 
     AddBinding(shortcut, scriptPath) {
         shortcut := CanonicalizeShortcut(Trim(shortcut))
-        scriptPath := ResolveLegacyWindowsProgramPath(Trim(scriptPath))
+        scriptPath := NormalizeFlowCellProgramPath(Trim(scriptPath))
         validation := this.ValidateBindingFields(0, shortcut, scriptPath)
         if !validation.ok
             return validation
@@ -7435,7 +3879,7 @@ class ScriptShortcutManager {
 
     UpdateBinding(bindingId, shortcut, scriptPath) {
         shortcut := CanonicalizeShortcut(Trim(shortcut))
-        scriptPath := ResolveLegacyWindowsProgramPath(Trim(scriptPath))
+        scriptPath := NormalizeFlowCellProgramPath(Trim(scriptPath))
         validation := this.ValidateBindingFields(bindingId, shortcut, scriptPath)
         if !validation.ok
             return validation

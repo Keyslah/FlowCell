@@ -2,8 +2,8 @@
 [CmdletBinding()]
 param(
   [string]$ActionId,
+  [string]$ScriptPath,
   [string]$RepoRoot,
-  [string]$ManifestPath,
   [string]$PipeName = 'FlowCell.Illustrator.Bridge.v1',
   [int]$ConnectTimeoutMs = 700,
   [int]$StartTimeoutMs = 6000,
@@ -11,7 +11,6 @@ param(
   [switch]$Wait,
   [switch]$StartOnly,
   [switch]$Ping,
-  [switch]$ListActions,
   [switch]$NoStartBridge
 )
 
@@ -31,11 +30,7 @@ function Get-FlowCellRepoRoot {
 
 $script:RepoRootPath = Get-FlowCellRepoRoot
 $script:ProgramRoot = Join-Path $script:RepoRootPath 'Programs\Illustrator'
-$script:ManifestPath = if ([string]::IsNullOrWhiteSpace($ManifestPath)) {
-  Join-Path $script:ProgramRoot 'illustrator-actions.json'
-} else {
-  [System.IO.Path]::GetFullPath($ManifestPath)
-}
+$script:LocalScriptsRoot = Join-Path $script:ProgramRoot 'Illustrator Local Scripts'
 $script:BridgeScript = Join-Path $script:ProgramRoot 'SupportScripts\Start-IllustratorFlowCellBridge.ps1'
 $script:PidPath = Join-Path $script:RepoRootPath 'flowcellbackend\local\illustrator-bridge.pid.json'
 
@@ -128,8 +123,6 @@ function Start-BridgeProcess {
     $script:BridgeScript,
     '-RepoRoot',
     $script:RepoRootPath,
-    '-ManifestPath',
-    $script:ManifestPath,
     '-PipeName',
     $PipeName
   ) | ForEach-Object { ConvertTo-ProcessArgument -Value ([string]$_) }
@@ -188,30 +181,29 @@ function Ensure-Bridge {
   throw 'Timed out waiting for the Illustrator bridge to become ready.'
 }
 
-function Import-LocalManifest {
-  if (-not [System.IO.File]::Exists($script:ManifestPath)) {
-    throw "Illustrator action manifest not found: $script:ManifestPath"
-  }
+function Test-IsUnderRoot {
+  param(
+    [Parameter(Mandatory = $true)][string]$Path,
+    [Parameter(Mandatory = $true)][string]$Root
+  )
 
-  return (Get-Content -LiteralPath $script:ManifestPath -Raw | ConvertFrom-Json)
+  $fullPath = [System.IO.Path]::GetFullPath($Path)
+  $fullRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+  return $fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
-function Assert-ManifestAction {
-  param([Parameter(Mandatory = $true)][string]$Id)
+function Assert-InstalledScriptPath {
+  param([Parameter(Mandatory = $true)][string]$Path)
 
-  $manifest = Import-LocalManifest
-  $matches = @($manifest.actions | Where-Object { $_.id -ieq $Id })
-  if ($matches.Count -ne 1) {
-    throw "Unknown Illustrator action id: $Id"
+  $candidate = [System.IO.Path]::GetFullPath($Path)
+  if (-not (Test-IsUnderRoot -Path $candidate -Root $script:LocalScriptsRoot)) {
+    throw "Refusing Illustrator script outside Button-owned Local Scripts: $Path"
   }
-}
-
-if ($ListActions) {
-  $manifest = Import-LocalManifest
-  $manifest.actions |
-    Sort-Object id |
-    ForEach-Object { "{0}`t{1}`t{2}" -f $_.id, $_.label, $_.script }
-  exit 0
+  $extension = [System.IO.Path]::GetExtension($candidate)
+  if (($extension -ine '.jsx' -and $extension -ine '.js') -or -not [System.IO.File]::Exists($candidate)) {
+    throw "Installed Illustrator script was not found or is unsupported: $candidate"
+  }
+  return $candidate
 }
 
 if ($Ping) {
@@ -233,10 +225,13 @@ if ($StartOnly) {
 }
 
 if ([string]::IsNullOrWhiteSpace($ActionId)) {
-  throw 'ActionId is required unless -StartOnly, -Ping, or -ListActions is used.'
+  throw 'ActionId is required unless -StartOnly or -Ping is used.'
 }
 
-Assert-ManifestAction -Id $ActionId
+if ([string]::IsNullOrWhiteSpace($ScriptPath)) {
+  throw 'ScriptPath is required and must identify a Button-owned Local Scripts file.'
+}
+$resolvedScriptPath = Assert-InstalledScriptPath -Path $ScriptPath
 [void](Ensure-Bridge)
 
 $request = [pscustomobject]@{
@@ -244,6 +239,10 @@ $request = [pscustomobject]@{
   requestId = [guid]::NewGuid().ToString('n')
   actionId = $ActionId
   wait = [bool]$Wait
+}
+
+if (-not [string]::IsNullOrWhiteSpace($resolvedScriptPath)) {
+  $request | Add-Member -NotePropertyName scriptPath -NotePropertyValue $resolvedScriptPath
 }
 
 if (-not [string]::IsNullOrWhiteSpace($ArgsJson)) {

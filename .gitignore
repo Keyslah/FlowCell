@@ -1,5 +1,6 @@
 # Generated release output.
 dist/
+FlowCellFrontend/tests/.compiled-button-system/
 
 flowcellbackend/local/
 FlowCell/local/

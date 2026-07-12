@@ -1,4 +1,7 @@
 interface:
   display_name: "MemTrace FlowCell Mentor"
-  short_description: "Use MemTrace first for FlowCell navigation"
-  default_prompt: "Use $memtrace-flowcell-mentor to navigate FlowCell with MemTrace before editing."
+  short_description: "Opt-in FlowCell scope analysis with MemTrace"
+  default_prompt: "Use $memtrace-flowcell-mentor for a read-only MemTrace scope analysis of this FlowCell request, then stop before editing."
+
+policy:
+  allow_implicit_invocation: false

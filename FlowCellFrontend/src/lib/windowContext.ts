@@ -1,653 +1,252 @@
-import type { CodexUsageSnapshot } from "./codexUsage";
-import {
-  normalizeScriptGroupPopoutType,
-  type ScriptGroupPopoutType
-} from "./scriptGroupPopoutSettings";
+import type { FlowCellBounds } from "../types";
 
-export type RotateToolboxWindowContext = {
-  kind: "rotate-toolbox";
+export const BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION = 1 as const;
+export const BINDS_PREFILL_EVENT = "flowcell:binds-prefill";
+
+export interface ButtonEditorWindowContext {
+  kind: "button-editor";
+  schemaVersion: typeof BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION;
+  programName?: string;
+  panelName?: string;
+  buttonId?: string;
+  surfaceId?: string;
+  draftSessionId?: string;
+}
+
+export interface ButtonPopoutWindowContext {
+  kind: "button-popout";
+  schemaVersion: typeof BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION;
+  programName: string;
+  panelName?: string;
+  popoutUnitId: string;
+  ownerButtonId?: string;
+  fanSetupId?: string;
+  initialDisplayMode: "collapsed" | "expanded";
+  draftSessionId?: string;
+  initialBounds?: FlowCellBounds;
+  restoreBounds?: FlowCellBounds;
+}
+
+export interface ButtonFanWindowContext {
+  kind: "button-fan";
+  schemaVersion: typeof BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION;
   programName: string;
   panelName: string;
-  fileName: string;
-  label?: string;
-};
+  fanSetupId: string;
+  panelOwnerButtonId: string;
+  draftSessionId?: string;
+  initialBounds?: FlowCellBounds;
+  restoreBounds?: FlowCellBounds;
+}
 
-export type FlattenRevolveToolboxWindowContext = {
-  kind: "flatten-revolve-toolbox";
-  programName: string;
-  panelName: string;
-  fileName: string;
-  label?: string;
-};
-
-export type GenericToolboxWindowContext = {
-  kind: "generic-toolbox";
-  programName: string;
-  panelName: string;
-  fileName: string;
-  label?: string;
-};
-
-export type DimensionsToolboxWindowContext = {
-  kind: "dimensions-toolbox";
-  programName: string;
-  panelName: string;
-  fileName: string;
-  label?: string;
-};
-
-export type ThemeToolboxWindowContext = {
-  kind: "theme-toolbox";
-  programName: string;
-  panelName: string;
-  fileName: string;
-  label?: string;
-};
-
-export type AlignmentToolboxWindowContext = {
-  kind: "alignment-toolbox";
-  programName: string;
-  panelName: string;
-  fileName: string;
-  label?: string;
-};
-
-export type BooleanToolboxWindowContext = {
-  kind: "boolean-toolbox";
-  programName: string;
-  panelName: string;
-  fileName: string;
-  label?: string;
-};
-
-export type RemeshToolboxWindowContext = {
-  kind: "remesh-toolbox";
-  programName: string;
-  panelName: string;
-  fileName: string;
-  label?: string;
-};
-
-export type TriPolyToolboxWindowContext = {
-  kind: "tri-poly-toolbox";
-  programName: string;
-  panelName: string;
-  fileName: string;
-  label?: string;
-};
-
-export type SmartAxisToolboxWindowContext = {
-  kind: "smart-axis-toolbox";
-  programName: string;
-  panelName: string;
-  fileName: string;
-  label?: string;
-};
-
-export type PanelFanWindowContext = {
-  kind: "panel-fan";
-  programName: string;
-  panelName: string;
-  selectedFileNames: string[];
-  label?: string;
-};
-
-export type PanelFanOptionsWindowContext = {
-  kind: "panel-fan-options";
-  programName: string;
-  panelName: string;
-};
-
-export type ButtonReorderWindowContext = {
-  kind: "button-reorder";
-  programName: string;
-  panelName: string;
-};
-
-export type BindsButtonPrefill = {
+export interface BindsButtonPrefill {
   programName: string;
   panelName: string;
   buttonId: string;
-};
+}
 
-export const BINDS_PREFILL_EVENT = "flowcell:binds-prefill";
-
-export type BindsWindowContext = {
+export interface BindsWindowContext {
   kind: "binds";
   prefill?: BindsButtonPrefill;
-};
+}
 
-export type OrganizationSetupWindowContext = {
+export interface OrganizationSetupWindowContext {
   kind: "organization-setup";
-};
+}
 
-export type BuildLayersWindowContext = {
+export interface BuildLayersWindowContext {
   kind: "build-layers";
   programName: string;
   panelName: string;
+  fileName: string;
   label?: string;
-};
+}
 
-export type WindowGridWindowContext = {
+export interface WindowGridWindowContext {
   kind: "window-grid";
-};
+}
 
-export type MotionSettingsWindowContext = {
+export interface MotionSettingsWindowContext {
   kind: "motion-settings";
-};
+}
 
-export type MacroLabWindowContext = {
+export interface MacroLabWindowContext {
   kind: "macro-lab";
   programName: string;
   panelName: string;
   macroId?: string;
   attachToPanel?: boolean;
-};
+}
 
-export type ScriptGroupPopoutScript = {
-  fileName: string;
-  label: string;
-  tooltip?: string;
-  events?: Record<string, { type?: string; action?: string; data?: unknown }>;
-};
-
-export type ScriptGroupPopoutWindowContext = {
-  kind: "script-group-popout";
-  programName: string;
-  panelName: string;
-  scripts: ScriptGroupPopoutScript[];
-  popoutType: ScriptGroupPopoutType;
-  label?: string;
-};
-
-export type CodexUsagePopoutWindowContext = {
-  kind: "codex-usage-popout";
-  programName: string;
-  panelName: string;
-  label?: string;
-  initialSnapshot?: CodexUsageSnapshot | null;
-};
-
-export type TooltipWindowContext = {
+export interface TooltipWindowContext {
   kind: "tooltip";
   text?: string;
-};
+}
 
 export type FlowCellWindowContext =
-  | {
-      kind: "main";
-    }
-  | TooltipWindowContext
-  | FlattenRevolveToolboxWindowContext
-  | GenericToolboxWindowContext
-  | DimensionsToolboxWindowContext
-  | ThemeToolboxWindowContext
-  | AlignmentToolboxWindowContext
-  | BooleanToolboxWindowContext
-  | RemeshToolboxWindowContext
-  | TriPolyToolboxWindowContext
-  | SmartAxisToolboxWindowContext
-  | RotateToolboxWindowContext
-  | PanelFanWindowContext
-  | PanelFanOptionsWindowContext
-  | ButtonReorderWindowContext
+  | { kind: "main" }
+  | ButtonEditorWindowContext
+  | ButtonPopoutWindowContext
+  | ButtonFanWindowContext
   | BindsWindowContext
   | OrganizationSetupWindowContext
   | BuildLayersWindowContext
   | WindowGridWindowContext
   | MotionSettingsWindowContext
   | MacroLabWindowContext
-  | ScriptGroupPopoutWindowContext
-  | CodexUsagePopoutWindowContext;
+  | TooltipWindowContext;
 
 const WINDOW_CONTEXT_QUERY_KEY = "flowcellWindowContext";
-const WINDOW_CONTEXT_BOOTSTRAP_RETRY_COUNT = 100;
-const WINDOW_CONTEXT_BOOTSTRAP_RETRY_DELAY_MS = 50;
 
-type TauriWindowMetadata = {
-  __TAURI_INTERNALS__?: {
-    metadata?: {
-      currentWindow?: {
-        label?: string;
-      };
+function optionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function optionalFlowCellBounds(value: unknown): FlowCellBounds | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const bounds = value as Record<string, unknown>;
+  return typeof bounds.Left === "number" &&
+    Number.isFinite(bounds.Left) &&
+    typeof bounds.Top === "number" &&
+    Number.isFinite(bounds.Top) &&
+    typeof bounds.Width === "number" &&
+    Number.isFinite(bounds.Width) &&
+    bounds.Width > 0 &&
+    typeof bounds.Height === "number" &&
+    Number.isFinite(bounds.Height) &&
+    bounds.Height > 0
+    ? {
+        Left: bounds.Left,
+        Top: bounds.Top,
+        Width: bounds.Width,
+        Height: bounds.Height
+      }
+    : undefined;
+}
+
+function parseBindsPrefill(value: unknown): BindsButtonPrefill | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  return typeof record.programName === "string" &&
+    typeof record.panelName === "string" &&
+    typeof record.buttonId === "string"
+    ? {
+        programName: record.programName,
+        panelName: record.panelName,
+        buttonId: record.buttonId
+      }
+    : undefined;
+}
+
+function parseWindowContext(value: unknown): FlowCellWindowContext {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return { kind: "main" };
+  const parsed = value as Record<string, unknown>;
+  if (
+    parsed.kind === "button-editor" &&
+    parsed.schemaVersion === BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION
+  ) {
+    return {
+      kind: "button-editor",
+      schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
+      programName: optionalString(parsed.programName),
+      panelName: optionalString(parsed.panelName),
+      buttonId: optionalString(parsed.buttonId),
+      surfaceId: optionalString(parsed.surfaceId),
+      draftSessionId: optionalString(parsed.draftSessionId)
     };
-  };
-};
-
-function normalizeCodexUsageSnapshot(value: unknown): CodexUsageSnapshot | null {
-  if (!value || typeof value !== "object") {
-    return null;
   }
-
-  const snapshot = value as Partial<CodexUsageSnapshot>;
-  return {
-    fiveHourRemainingPercent:
-      typeof snapshot.fiveHourRemainingPercent === "number" &&
-      Number.isFinite(snapshot.fiveHourRemainingPercent)
-        ? snapshot.fiveHourRemainingPercent
-        : null,
-    weeklyRemainingPercent:
-      typeof snapshot.weeklyRemainingPercent === "number" &&
-      Number.isFinite(snapshot.weeklyRemainingPercent)
-        ? snapshot.weeklyRemainingPercent
-        : null,
-    sourceTimestamp:
-      typeof snapshot.sourceTimestamp === "string" ? snapshot.sourceTimestamp : null,
-    sourcePath: typeof snapshot.sourcePath === "string" ? snapshot.sourcePath : null
-  };
-}
-
-function readCurrentTauriWindowLabel(): string {
-  if (typeof window === "undefined") {
-    return "";
-  }
-
-  const currentWindowLabel = (window as Window & TauriWindowMetadata).__TAURI_INTERNALS__?.metadata
-    ?.currentWindow?.label;
-
-  return typeof currentWindowLabel === "string" ? currentWindowLabel : "";
-}
-
-function normalizeScriptGroupPopoutScriptEvents(
-  value: unknown
-): ScriptGroupPopoutScript["events"] {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return undefined;
-  }
-
-  const normalizedEvents: NonNullable<ScriptGroupPopoutScript["events"]> = {};
-  Object.entries(value as Record<string, unknown>).forEach(([eventName, eventAction]) => {
-    const normalizedEventName = eventName.trim();
-    if (
-      !normalizedEventName ||
-      !eventAction ||
-      typeof eventAction !== "object" ||
-      Array.isArray(eventAction)
-    ) {
-      return;
-    }
-
-    const eventActionRecord = eventAction as Record<string, unknown>;
-    normalizedEvents[normalizedEventName] = {
-      type: typeof eventActionRecord.type === "string" ? eventActionRecord.type : undefined,
-      action:
-        typeof eventActionRecord.action === "string" ? eventActionRecord.action : undefined,
-      data: Object.prototype.hasOwnProperty.call(eventActionRecord, "data")
-        ? eventActionRecord.data
-        : undefined
+  if (
+    parsed.kind === "button-popout" &&
+    parsed.schemaVersion === BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION &&
+    typeof parsed.programName === "string" &&
+    typeof parsed.popoutUnitId === "string" &&
+    (parsed.initialDisplayMode === "collapsed" || parsed.initialDisplayMode === "expanded")
+  ) {
+    return {
+      kind: "button-popout",
+      schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
+      programName: parsed.programName,
+      panelName: optionalString(parsed.panelName),
+      popoutUnitId: parsed.popoutUnitId,
+      ownerButtonId: optionalString(parsed.ownerButtonId),
+      fanSetupId: optionalString(parsed.fanSetupId),
+      initialDisplayMode: parsed.initialDisplayMode,
+      draftSessionId: optionalString(parsed.draftSessionId),
+      initialBounds: optionalFlowCellBounds(parsed.initialBounds),
+      restoreBounds: optionalFlowCellBounds(parsed.restoreBounds)
     };
-  });
-
-  return Object.keys(normalizedEvents).length > 0 ? normalizedEvents : undefined;
-}
-
-export function buildWindowContextUrl(context: FlowCellWindowContext): string {
-  const encodedContext = encodeURIComponent(JSON.stringify(context));
-  return `/?${WINDOW_CONTEXT_QUERY_KEY}=${encodedContext}`;
-}
-
-export function getWindowContextFromLocation(): FlowCellWindowContext {
-  if (typeof window === "undefined") {
-    return { kind: "main" };
   }
-
-  const searchParams = new URLSearchParams(window.location.search);
-  const rawContext = searchParams.get(WINDOW_CONTEXT_QUERY_KEY);
-  if (!rawContext) {
-    return { kind: "main" };
+  if (
+    parsed.kind === "button-fan" &&
+    parsed.schemaVersion === BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION &&
+    typeof parsed.programName === "string" &&
+    typeof parsed.panelName === "string" &&
+    typeof parsed.fanSetupId === "string" &&
+    typeof parsed.panelOwnerButtonId === "string"
+  ) {
+    return {
+      kind: "button-fan",
+      schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
+      programName: parsed.programName,
+      panelName: parsed.panelName,
+      fanSetupId: parsed.fanSetupId,
+      panelOwnerButtonId: parsed.panelOwnerButtonId,
+      draftSessionId: optionalString(parsed.draftSessionId),
+      initialBounds: optionalFlowCellBounds(parsed.initialBounds),
+      restoreBounds: optionalFlowCellBounds(parsed.restoreBounds)
+    };
   }
-
-  try {
-    const parsed = JSON.parse(decodeURIComponent(rawContext)) as Partial<FlowCellWindowContext>;
-    if (
-      parsed.kind === "flatten-revolve-toolbox" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      typeof parsed.fileName === "string"
-    ) {
-      return {
-        kind: "flatten-revolve-toolbox",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        fileName: parsed.fileName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "generic-toolbox" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      typeof parsed.fileName === "string"
-    ) {
-      return {
-        kind: "generic-toolbox",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        fileName: parsed.fileName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "dimensions-toolbox" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      typeof parsed.fileName === "string"
-    ) {
-      return {
-        kind: "dimensions-toolbox",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        fileName: parsed.fileName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "theme-toolbox" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      typeof parsed.fileName === "string"
-    ) {
-      return {
-        kind: "theme-toolbox",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        fileName: parsed.fileName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "alignment-toolbox" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      typeof parsed.fileName === "string"
-    ) {
-      return {
-        kind: "alignment-toolbox",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        fileName: parsed.fileName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "boolean-toolbox" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      typeof parsed.fileName === "string"
-    ) {
-      return {
-        kind: "boolean-toolbox",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        fileName: parsed.fileName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "remesh-toolbox" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      typeof parsed.fileName === "string"
-    ) {
-      return {
-        kind: "remesh-toolbox",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        fileName: parsed.fileName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "tri-poly-toolbox" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      typeof parsed.fileName === "string"
-    ) {
-      return {
-        kind: "tri-poly-toolbox",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        fileName: parsed.fileName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "smart-axis-toolbox" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      typeof parsed.fileName === "string"
-    ) {
-      return {
-        kind: "smart-axis-toolbox",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        fileName: parsed.fileName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "rotate-toolbox" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      typeof parsed.fileName === "string"
-    ) {
-      return {
-        kind: "rotate-toolbox",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        fileName: parsed.fileName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "panel-fan" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      Array.isArray(parsed.selectedFileNames)
-    ) {
-      return {
-        kind: "panel-fan",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        selectedFileNames: parsed.selectedFileNames.filter(
-          (entry): entry is string => typeof entry === "string" && entry.trim().length > 0
-        ),
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "panel-fan-options" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string"
-    ) {
-      return {
-        kind: "panel-fan-options",
-        programName: parsed.programName,
-        panelName: parsed.panelName
-      };
-    }
-    if (
-      parsed.kind === "binds"
-    ) {
-      const prefillRaw = (parsed as { prefill?: unknown }).prefill;
-      const prefill =
-        prefillRaw &&
-        typeof prefillRaw === "object" &&
-        typeof (prefillRaw as BindsButtonPrefill).programName === "string" &&
-        typeof (prefillRaw as BindsButtonPrefill).panelName === "string" &&
-        typeof (prefillRaw as BindsButtonPrefill).buttonId === "string"
-          ? {
-              programName: (prefillRaw as BindsButtonPrefill).programName,
-              panelName: (prefillRaw as BindsButtonPrefill).panelName,
-              buttonId: (prefillRaw as BindsButtonPrefill).buttonId
-            }
-          : undefined;
-      return prefill ? { kind: "binds", prefill } : { kind: "binds" };
-    }
-    if (parsed.kind === "organization-setup") {
-      return {
-        kind: "organization-setup"
-      };
-    }
-    if (
-      parsed.kind === "build-layers" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string"
-    ) {
-      return {
-        kind: "build-layers",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (parsed.kind === "window-grid") {
-      return {
-        kind: "window-grid"
-      };
-    }
-    if (parsed.kind === "motion-settings") {
-      return {
-        kind: "motion-settings"
-      };
-    }
-    if (
-      parsed.kind === "macro-lab" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string"
-    ) {
-      return {
-        kind: "macro-lab",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        macroId: typeof parsed.macroId === "string" ? parsed.macroId : undefined,
-        attachToPanel: parsed.attachToPanel === true
-      };
-    }
-    if (
-      parsed.kind === "button-reorder" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string"
-    ) {
-      return {
-        kind: "button-reorder",
-        programName: parsed.programName,
-        panelName: parsed.panelName
-      };
-    }
-    if (
-      parsed.kind === "script-group-popout" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string" &&
-      Array.isArray(parsed.scripts)
-    ) {
-      return {
-        kind: "script-group-popout",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        scripts: parsed.scripts
-          .filter(
-            (entry): entry is ScriptGroupPopoutScript =>
-              Boolean(entry) &&
-              typeof entry === "object" &&
-              typeof entry.fileName === "string" &&
-              entry.fileName.trim().length > 0 &&
-              typeof entry.label === "string" &&
-              entry.label.trim().length > 0
-          )
-          .map((entry) => ({
-            fileName: entry.fileName.trim(),
-            label: entry.label.trim(),
-            tooltip:
-              typeof entry.tooltip === "string" && entry.tooltip.trim().length > 0
-                ? entry.tooltip.trim()
-                : undefined,
-            events: normalizeScriptGroupPopoutScriptEvents(entry.events)
-          })),
-        popoutType: normalizeScriptGroupPopoutType(parsed.popoutType),
-        label: typeof parsed.label === "string" ? parsed.label : undefined
-      };
-    }
-    if (
-      parsed.kind === "codex-usage-popout" &&
-      typeof parsed.programName === "string" &&
-      typeof parsed.panelName === "string"
-    ) {
-      return {
-        kind: "codex-usage-popout",
-        programName: parsed.programName,
-        panelName: parsed.panelName,
-        label: typeof parsed.label === "string" ? parsed.label : undefined,
-        initialSnapshot: normalizeCodexUsageSnapshot(parsed.initialSnapshot)
-      };
-    }
-    if (parsed.kind === "tooltip") {
-      return {
-        kind: "tooltip",
-        text: typeof parsed.text === "string" ? parsed.text : undefined
-      };
-    }
-  } catch {
-    // Fall through to the main window context.
+  if (parsed.kind === "binds") {
+    return { kind: "binds", prefill: parseBindsPrefill(parsed.prefill) };
   }
-
+  if (parsed.kind === "organization-setup") return { kind: "organization-setup" };
+  if (
+    parsed.kind === "build-layers" &&
+    typeof parsed.programName === "string" &&
+    typeof parsed.panelName === "string" &&
+    typeof parsed.fileName === "string"
+  ) {
+    return {
+      kind: "build-layers",
+      programName: parsed.programName,
+      panelName: parsed.panelName,
+      fileName: parsed.fileName,
+      label: optionalString(parsed.label)
+    };
+  }
+  if (parsed.kind === "window-grid") return { kind: "window-grid" };
+  if (parsed.kind === "motion-settings") return { kind: "motion-settings" };
+  if (
+    parsed.kind === "macro-lab" &&
+    typeof parsed.programName === "string" &&
+    typeof parsed.panelName === "string"
+  ) {
+    return {
+      kind: "macro-lab",
+      programName: parsed.programName,
+      panelName: parsed.panelName,
+      macroId: optionalString(parsed.macroId),
+      attachToPanel: parsed.attachToPanel === true
+    };
+  }
+  if (parsed.kind === "tooltip") {
+    return { kind: "tooltip", text: optionalString(parsed.text) };
+  }
   return { kind: "main" };
 }
 
-export function resolveWindowContextAfterBootstrap(
-  onResolved: (context: FlowCellWindowContext) => void
-): () => void {
-  if (typeof window === "undefined") {
-    return () => {};
+export function buildWindowContextUrl(context: FlowCellWindowContext): string {
+  return `/?${WINDOW_CONTEXT_QUERY_KEY}=${encodeURIComponent(JSON.stringify(context))}`;
+}
+
+export function getWindowContextFromLocation(): FlowCellWindowContext {
+  if (typeof window === "undefined") return { kind: "main" };
+  const raw = new URLSearchParams(window.location.search).get(WINDOW_CONTEXT_QUERY_KEY);
+  if (!raw) return { kind: "main" };
+  try {
+    const decoded = raw.startsWith("{") ? raw : decodeURIComponent(raw);
+    return parseWindowContext(JSON.parse(decoded));
+  } catch {
+    return { kind: "main" };
   }
-
-  let cancelled = false;
-  let attempts = 0;
-
-  const checkWindowContext = () => {
-    if (cancelled) {
-      return;
-    }
-
-    const nextContext = getWindowContextFromLocation();
-    onResolved(nextContext);
-
-    if (
-      nextContext.kind === "flatten-revolve-toolbox" ||
-      nextContext.kind === "generic-toolbox" ||
-      nextContext.kind === "dimensions-toolbox" ||
-      nextContext.kind === "theme-toolbox" ||
-      nextContext.kind === "alignment-toolbox" ||
-      nextContext.kind === "boolean-toolbox" ||
-      nextContext.kind === "remesh-toolbox" ||
-      nextContext.kind === "tri-poly-toolbox" ||
-      nextContext.kind === "smart-axis-toolbox" ||
-      nextContext.kind === "rotate-toolbox" ||
-      nextContext.kind === "panel-fan" ||
-      nextContext.kind === "panel-fan-options" ||
-      nextContext.kind === "binds" ||
-      nextContext.kind === "organization-setup" ||
-      nextContext.kind === "build-layers" ||
-      nextContext.kind === "window-grid" ||
-      nextContext.kind === "motion-settings" ||
-      nextContext.kind === "macro-lab" ||
-      nextContext.kind === "button-reorder" ||
-      nextContext.kind === "script-group-popout" ||
-      nextContext.kind === "codex-usage-popout" ||
-      nextContext.kind === "tooltip" ||
-      readCurrentTauriWindowLabel() ||
-      attempts >= WINDOW_CONTEXT_BOOTSTRAP_RETRY_COUNT
-    ) {
-      return;
-    }
-
-    attempts += 1;
-    window.setTimeout(checkWindowContext, WINDOW_CONTEXT_BOOTSTRAP_RETRY_DELAY_MS);
-  };
-
-  window.setTimeout(checkWindowContext, 0);
-
-  return () => {
-    cancelled = true;
-  };
 }

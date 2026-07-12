@@ -1,5 +1,4 @@
-// FlowCell Layers Builder button (GENERATED - do not edit by hand).
-// Regenerate with SupportScripts/New-IllustratorLayersBuilderPanel.ps1.
+// FlowCell Layers Builder catalog source.
 // Directly deletes the FlowCell-highlighted layers/sublayers (works on empty,
 // locked, or hidden layers), instead of the selection-driven original.
 #target illustrator

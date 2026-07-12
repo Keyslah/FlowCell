@@ -1,315 +1,260 @@
-# FlowCell Button, Layout, Fan, Popout, Skin, and Toolset File Map
-
-This is the navigation map for FlowCell button-related work. Use it before broad
-file reads. It lists the files that own layouts, fans, popouts, button skins, and
-toolsets.
-
-## Architecture Boundaries
-
-- State Layer owns identity, persistence, bindings, script targets, panel membership, popout state, selected tabs, and `style_group_id`.
-- Functional Host Layer owns command execution, selection, drag/reorder, context menus, popouts, validation, and dispatch.
-- Visual Skin Layer owns appearance only.
-- Visual skins must not execute actions, mutate state, own bindings, own script targets, or control behavior.
-- Imported visual code must stay render-only and sandboxed inside host surfaces.
-
-## Core Layout, Window, and State Files
-
-- `FlowCellFrontend/src/pages/main/MainPage.tsx`
-- `FlowCellFrontend/src/lib/windowing.ts`
-- `FlowCellFrontend/src/lib/layoutSnapshots.ts`
-- `FlowCellFrontend/src/lib/windowContext.ts`
-- `FlowCellFrontend/src/AppBase.tsx`
-- `FlowCellFrontend/src/types.ts`
-- `FlowCellFrontend/src/lib/state.ts`
-- `FlowCellFrontend/src/lib/tauri.ts`
-- `FlowCellFrontend/src-tauri/src/main.rs`
-- `FlowCellFrontend/src-tauri/capabilities/default.json`
-
-Key symbols and responsibilities:
-
-- `MainPage.tsx`: program rails, panel records, Pop/Fan splitting, layout capture/restore, managed-window restore switch, `isToolPopoutRecord`, `isGenericToolboxRecord`, `handleOpenToolPopout`.
-- `windowing.ts`: managed Tauri window creation, labels, placement, saved bounds, scoped topmost registration, popouts, fans, toolboxes, layout picker, settings, and utility windows.
-- `layoutSnapshots.ts`: browser-side managed-window registry and saved bounds.
-- `windowContext.ts`: window-kind context serialization and parsing.
-- `AppBase.tsx`: routes parsed window contexts to the correct React page.
-- `main.rs`: native commands, layout save/load, host bounds, scoped topmost, taskbar-preview exceptions, script execution, toolset dispatch, and child-slot validation.
-- `default.json`: Tauri capability allowlist for managed windows and native window APIs.
-
-## Layout Runtime Evidence
-
-Inspect these when layout, restore, bounds, or runtime state is involved:
-
-- `flowcellbackend/local/layouts/`
-- `flowcellbackend/local/logs/frontend-tauri.log`
-- `flowcellbackend/local/logs/frontend-launcher.log`
-- `flowcellbackend/local/logs/controller.log`
-- `flowcellbackend/local/logs/command_host.log`
-- `flowcellbackend/local/flowcell_state.json`
-- `flowcellbackend/local/panel_saves/`
-- `flowcellbackend/local/bindings.ini`
-
-## Fan Files
-
-- `FlowCellFrontend/src/pages/fan/PanelFanToolPopoutWindowPage.tsx`
-- `FlowCellFrontend/src/pages/fan/PanelFanOptionsWindowPage.tsx`
-- `FlowCellFrontend/src/components/FanOutButtonCluster.tsx`
-- `FlowCellFrontend/src/components/PanelFanOptionsWindow.tsx`
-- `FlowCellFrontend/src/lib/panelFanSettings.ts`
-- `FlowCellFrontend/src/lib/panelFanDiagnostics.ts`
-- `FlowCellFrontend/src/pages/main/mainLayout.ts`
-- `FlowCellFrontend/src/components/ShapesPanelFanCluster.tsx`
-- `FlowCellFrontend/src/lib/shapesPanelFanSkins.ts`
-- `FlowCellFrontend/src-tauri/capabilities/default.json`
-
-Key responsibilities:
-
-- `FanOutButtonCluster.tsx`: owner/child measurement, deterministic child layout, hover handling, child-only animation, measured hitboxes.
-- `PanelFanToolPopoutWindowPage.tsx`: hover-open, click-pin, native bounds sync, transparent hit-testing, drag persistence, collapsed-owner anchoring.
-- `panelFanSettings.ts`: fan direction, layout, and persistence settings.
-- `panelFanDiagnostics.ts`: narrow diagnostics for fan geometry and collapse behavior.
-- `mainLayout.ts`: main surface geometry that interacts with panel-fan placement.
-- `main.rs`: scoped topmost, owner HWND binding, host-side resize helpers, program-process alias rules, and regular fan-child execution.
-
-## Popout Files
-
-- `FlowCellFrontend/src/pages/script-group/ScriptGroupPopoutWindowPage.tsx`
-- `FlowCellFrontend/src/pages/script-group/scriptGroupPopoutWindowPage.css`
-- `FlowCellFrontend/src/lib/scriptGroupPopoutSettings.ts`
-- `FlowCellFrontend/src/lib/scriptGroupPopoutTemplates.ts`
-- `FlowCellFrontend/src/pages/toolbox/GenericToolboxWindowPage.tsx`
-- `FlowCellFrontend/src/pages/toolbox/genericToolboxWindowPage.css`
-- `FlowCellFrontend/src/lib/windowing.ts`
-- `FlowCellFrontend/src/lib/windowContext.ts`
-- `FlowCellFrontend/src/AppBase.tsx`
-- `FlowCellFrontend/src-tauri/src/main.rs`
-- `FlowCellFrontend/src-tauri/capabilities/default.json`
-
-Key responsibilities:
-
-- `ScriptGroupPopoutWindowPage.tsx`: regular script popout rendering and popout row scaling.
-- `scriptGroupPopoutSettings.ts`: script-group popout persisted settings.
-- `scriptGroupPopoutTemplates.ts`: script-group popout visual templates.
-- `GenericToolboxWindowPage.tsx`: generic toolset child buttons and `runToolsetAction`.
-- `windowing.ts`: popout and toolbox window lifecycle, labels, saved bounds, and placement.
-- `windowContext.ts` and `AppBase.tsx`: restored window context and routing.
-
-## Button Host and Skin Files
-
-- `FlowCellFrontend/src/components/ButtonHost.tsx`
-- `FlowCellFrontend/src/components/HostSkinButton.tsx`
-- `FlowCellFrontend/src/lib/skins.tsx`
-- `FlowCellFrontend/src/lib/theme.ts`
-- `FlowCellFrontend/src/lib/state.ts`
-- `FlowCellFrontend/src/features/workspace/ButtonGrid.tsx`
-- `FlowCellFrontend/src/features/workspace/WorkspaceButtonsPage.tsx`
-- `FlowCellFrontend/src/components/ButtonCard.tsx`
-- `FlowCellFrontend/src/components/OwnerFanoutOverlay.tsx`
-- `FlowCellFrontend/src/components/FanOutButtonCluster.tsx`
-- `FlowCellFrontend/src/components/ShapesPanelFanCluster.tsx`
-- `FlowCellFrontend/src/lib/shapesPanelFanSkins.ts`
-
-Key responsibilities:
-
-- `ButtonHost.tsx`: functional host wrapper for button behavior, measurement, and dispatch surface.
-- `HostSkinButton.tsx`: host-owned adapter for skin rendering.
-- `skins.tsx`: skin definitions/rendering helpers.
-- `theme.ts`: shared theme values.
-- `state.ts`: persistent button/style assignment state, including `style_group_id`.
-- `ButtonGrid.tsx`, `WorkspaceButtonsPage.tsx`, and `ButtonCard.tsx`: workspace button surfaces.
-- `OwnerFanoutOverlay.tsx`: owner-button fanout overlay surface.
-
-Do not put execution, persistence, bindings, script targets, or command dispatch
-inside visual skin code.
-
-## Toolset Shared Plumbing
-
-- `FlowCellFrontend/src/lib/programRails.ts`
-- `FlowCellFrontend/src/lib/tauri.ts`
-- `FlowCellFrontend/src/pages/main/MainPage.tsx`
-- `FlowCellFrontend/src/pages/toolbox/GenericToolboxWindowPage.tsx`
-- `FlowCellFrontend/src-tauri/src/main.rs`
-- `FlowCellFrontend/src-tauri/capabilities/default.json`
-
-Key symbols and responsibilities:
-
-- `programRails.ts`: `PanelScriptFileRecord`, `children`, `kind`, `bridgeAction`, `runToolsetAction`.
-- `MainPage.tsx`: `isToolPopoutRecord`, `isGenericToolboxRecord`, `handleOpenToolPopout`, Pop/Fan selected-record splitting.
-- `GenericToolboxWindowPage.tsx`: generic child-button UI and generic action dispatch.
-- `main.rs`: `parse_flowcell_children`, `validate_toolset_child_slot`, `run_toolset_action`, `write_illustrator_rotate_command_file`, `clear_illustrator_rotate_command_file`, `run_flowcell_controller_script`.
-- `default.json`: allowlists window APIs needed by toolset windows.
-
-Toolsets are panel records with `children`. Pop opens the toolset window first.
-Panel Fan separates toolset owners from regular script groups.
-
-## Dedicated Toolbox Windows
-
-Alignment:
-
-- `FlowCellFrontend/src/pages/alignment/AlignmentToolboxWindowPage.tsx`
-- `FlowCellFrontend/src/pages/alignment/alignmentToolboxGeometry.ts`
-- `FlowCellFrontend/src/pages/alignment/alignmentToolboxWindowPage.css`
-- `FlowCellFrontend/src/pages/main/AlignmentToolboxSurface.tsx`
-
-Boolean:
-
-- `FlowCellFrontend/src/pages/boolean/BooleanToolboxWindowPage.tsx`
-- `FlowCellFrontend/src/pages/boolean/booleanToolboxGeometry.ts`
-- `FlowCellFrontend/src/pages/boolean/booleanToolboxWindowPage.css`
-- `FlowCellFrontend/src/pages/main/BooleanToolboxSurface.tsx`
-
-Dimensions:
-
-- `FlowCellFrontend/src/pages/dimensions/DimensionsToolboxWindowPage.tsx`
-- `FlowCellFrontend/src/pages/dimensions/dimensionsToolboxGeometry.ts`
-- `FlowCellFrontend/src/pages/dimensions/dimensionsToolboxWindowPage.css`
-- `FlowCellFrontend/src/pages/main/DimensionsToolboxSurface.tsx`
-
-Flatten/Revolve:
-
-- `FlowCellFrontend/src/pages/flatten-revolve/FlattenRevolveToolboxWindowPage.tsx`
-- `FlowCellFrontend/src/pages/flatten-revolve/flattenRevolveToolboxWindowPage.css`
-
-Remesh:
-
-- `FlowCellFrontend/src/pages/remesh/RemeshToolboxWindowPage.tsx`
-- `FlowCellFrontend/src/pages/remesh/remeshToolboxGeometry.ts`
-- `FlowCellFrontend/src/pages/remesh/remeshToolboxWindowPage.css`
-- `FlowCellFrontend/src/pages/main/RemeshToolboxSurface.tsx`
-
-Rotate:
-
-- `FlowCellFrontend/src/pages/rotate/RotateToolboxWindowPage.tsx`
-- `FlowCellFrontend/src/pages/rotate/rotateToolboxGeometry.ts`
-- `FlowCellFrontend/src/pages/rotate/rotateToolboxWindowPage.css`
-- `FlowCellFrontend/src/pages/main/RotateToolboxSurface.tsx`
-
-Smart Axis:
-
-- `FlowCellFrontend/src/pages/smart-axis/SmartAxisToolboxWindowPage.tsx`
-- `FlowCellFrontend/src/pages/smart-axis/smartAxisToolboxGeometry.ts`
-- `FlowCellFrontend/src/pages/smart-axis/smartAxisToolboxWindowPage.css`
-- `FlowCellFrontend/src/pages/main/SmartAxisToolboxSurface.tsx`
-
-Theme:
-
-- `FlowCellFrontend/src/pages/theme/ThemeToolboxWindowPage.tsx`
-- `FlowCellFrontend/src/pages/theme/themeToolboxWindowPage.css`
-
-Tri Poly:
-
-- `FlowCellFrontend/src/pages/tri-poly/TriPolyToolboxWindowPage.tsx`
-- `FlowCellFrontend/src/pages/tri-poly/triPolyToolboxGeometry.ts`
-- `FlowCellFrontend/src/pages/tri-poly/triPolyToolboxWindowPage.css`
-- `FlowCellFrontend/src/pages/main/TriPolyToolboxSurface.tsx`
-
-Shared main-surface helper:
-
-- `FlowCellFrontend/src/components/ToolSurfaces.tsx`
-
-For dedicated toolbox work, check the classifier, context kind, window opener,
-page route, layout restore path, geometry file, surface file, backend command
-dispatch, and Tauri capability allowlist together.
-
-## Blender Toolset Panel Records
-
-- `Programs/Blender/Panels/toolset/alignment_tools.flowcell-panel-item.json`
-- `Programs/Blender/Panels/toolset/boolean.flowcell-panel-item.json`
-- `Programs/Blender/Panels/toolset/flatten_revolve.flowcell-panel-item.json`
-- `Programs/Blender/Panels/toolset/remesh.flowcell-panel-item.json`
-- `Programs/Blender/Panels/toolset/rotate.flowcell-panel-item.json`
-- `Programs/Blender/Panels/toolset/smart_axis.flowcell-panel-item.json`
-- `Programs/Blender/Panels/toolset/theme.flowcell-panel-item.json`
-- `Programs/Blender/Panels/toolset/tri_poly.flowcell-panel-item.json`
-- `Programs/Blender/Panels/toolset/xyz_dimensions.flowcell-panel-item.json`
-
-These panel records are the button records FlowCell imports and routes through
-the frontend and backend toolset paths.
-
-## Blender Toolset Source Scripts
-
-Authoritative Blender toolset sources:
-
-- `Programs/Blender/Blender Git Scripts/toolset/alignment tools.py`
-- `Programs/Blender/Blender Git Scripts/toolset/boolean.py`
-- `Programs/Blender/Blender Git Scripts/toolset/flatten revolve.py`
-- `Programs/Blender/Blender Git Scripts/toolset/remesh.py`
-- `Programs/Blender/Blender Git Scripts/toolset/rotate.py`
-- `Programs/Blender/Blender Git Scripts/toolset/smart axis.py`
-- `Programs/Blender/Blender Git Scripts/toolset/theme.py`
-- `Programs/Blender/Blender Git Scripts/toolset/tri poly.py`
-- `Programs/Blender/Blender Git Scripts/toolset/xyz dimensions.py`
-
-Local backup/generated copies to inspect only when runtime or sync behavior is
-involved:
-
-- `Programs/Blender/Blender Local Scripts/alignment tools.py`
-- `Programs/Blender/Blender Local Scripts/boolean.py`
-- `Programs/Blender/Blender Local Scripts/flatten revolve.py`
-- `Programs/Blender/Blender Local Scripts/remesh.py`
-- `Programs/Blender/Blender Local Scripts/rotate.py`
-- `Programs/Blender/Blender Local Scripts/smart axis.py`
-- `Programs/Blender/Blender Local Scripts/theme.py`
-- `Programs/Blender/Blender Local Scripts/tri poly.py`
-- `Programs/Blender/Blender Local Scripts/xyz dimensions.py`
-
-Blender bridge/action registry:
-
-- `Programs/Blender/Blender Addons - Copy contents Into Blender/blender_bridge_flowcell/flowcell_custom_actions.json`
-- `Programs/Blender/Blender Addons - Copy contents Into Blender/blender_bridge_flowcell/ManagedActions/flowcell_custom_boolean.py`
-- `Programs/Blender/Blender Addons - Copy contents Into Blender/blender_bridge_flowcell/ManagedActions/flowcell_custom_theme.py`
-- `Programs/Blender/Blender Addons - Copy contents Into Blender/blender_bridge_flowcell/ManagedActions/flowcell_custom_tri_poly.py`
-
-Do not treat generated or local backup copies as the owner unless the issue is
-specifically about runtime bridge state, installed add-on behavior, or sync.
-
-## Illustrator Toolset Files
-
-Panel records:
-
-- `Programs/Illustrator/Panels/Toolset/Illustrator Rotate.jsx`
-- `Programs/Illustrator/Panels/Toolset/Ill Align.jsx`
-
-Authoritative Illustrator toolset sources:
-
-- `Programs/Illustrator/Illustrator Git Scripts/Toolset/Illustrator Rotate.jsx`
-- `Programs/Illustrator/Illustrator Git Scripts/Toolset/Ill Align.jsx`
-
-Local backup/generated copies:
-
-- `Programs/Illustrator/Illustrator Local Scripts/Illustrator Rotate.jsx`
-- `Programs/Illustrator/Illustrator Local Scripts/Ill Align.jsx`
-
-Illustrator helpers:
-
-- `Programs/Illustrator/HelperScripts/FlowCell_Illustrator_SetAnchorHotkey.jsx`
-- `Programs/Illustrator/HelperScripts/FlowCell_Illustrator_Rotate.jsx`
-- `Programs/Illustrator/HelperScripts/FlowCell_Illustrator_Anchor.jsx`
-
-Runtime command payload:
-
-- `flowcellbackend/local/illustrator_rotate_command.json`
-
-Use the nonblocking Illustrator process path for freeze-prone toolset button
-actions. Do not route Illustrator Rotate, Anchor, or similar actions through
-synchronous COM unless that exact tool has been proven safe.
-
-## Adjacent Program Button Files
-
-Inspect these when a button click or fan child action reaches a program bridge:
-
-- `Programs/Blender/SupportScripts/Invoke-BlenderFlowCellAction.ps1`
-- `Programs/Blender/FlowCellButtons/`
-- `Programs/Blender/Blender Addons - Copy contents Into Blender/flowcell_actions.py`
-- `flowcellbackend/FlowCellBackend.ahk`
-- `flowcellbackend/FlowCellCommandBackend.ps1`
-- `flowcellbackend/helpers/Start-FlowCellFrontend.ps1`
+# FlowCell Button System Owner Map
+
+This is the concise navigation map for the current Button system. It describes
+the completed architecture only.
+
+## Non-Negotiable Contracts
+
+- `flowcellbackend/local/button-system/button-state.json` is the canonical
+  Button state. It owns Button records, placements, surfaces, skins, regular
+  popouts, tool-set popouts, fan setups, and editor settings.
+- A script-owning Button owns one installed package under
+  `Programs/<Program>/<Program> Local Scripts/<ownerButtonId>/` and one active
+  record under `Programs/<Program>/Panels/<Panel>/<ownerButtonId>.flowcell-source.json`.
+- Immutable installed code and assets live under the package's `source/` folder.
+  Per-Button mutable settings live under `runtime/`; Update preserves that
+  folder and Delete recycles it with the owner package.
+- `<Program> Git Scripts` is a catalog only. Installing copies from the selected
+  source into the owned Local Scripts package; later Git changes do not mutate
+  the installed Button.
+- The functional host owns behavior, state, accessibility, validation, command
+  dispatch, and lifecycle. A skin is render-only.
+- A skin must contain exactly one `[data-core]` element and exactly one
+  `{{label}}` token inside it. After the label is injected, that exact
+  `[data-core]` geometry is the Button hitbox. No rectangular compatibility
+  hitbox is placed over it.
+- Each placement defaults to matching its hitbox to the skin: the host scales
+  the complete authored skin root from the measured `[data-core]`, normalizes
+  authored core offsets to the placement origin, and reconciles the saved
+  Editor rectangle to that transformed core. Stretching is off by default, so
+  width and height stay aspect-locked unless the user explicitly enables
+  independent-axis stretching.
+- Deleting a source-owning Button removes its entire Button graph, removes its
+  owned bindings, cleans program runtime artifacts, and sends the owned Local
+  package and active record to the Recycle Bin. The Git Scripts catalog entry is
+  untouched.
+- Every real `Programs/<Program>/Panels/<Panel>/` folder has one source-free
+  `panel-owner` Button on that program's main panel-rail surface. That record is
+  the actual selectable main-page panel control, including Utility, and is
+  created, renamed, or removed with the panel/program folder lifecycle.
+- A saved panel Fan reuses the same `panel-owner` Button and adds an exact Fan
+  placement. Main and Fan occurrences may keep distinct placement geometry and
+  skin overrides. Selecting `Fan — Default grid` creates a real draft setup
+  from the panel's single-script Buttons; merely opening the Editor never
+  creates an empty fan setup.
+- Legacy program-script records and comment directives are migration input only.
+  `FlowCellFrontend/src-tauri/src/program_sources/migrate.rs` is their sole
+  reader; it wraps raw legacy sources in owned packages so label, tooltip,
+  events, execution target, and bridge data survive. Normal install, list,
+  execute, delete, state, and rendering paths do not know those formats.
+
+## Owner/File Map
+
+| Concern | Owner |
+| --- | --- |
+| Canonical TypeScript schema | `FlowCellFrontend/src/button/types.ts` |
+| Default document and validation | `FlowCellFrontend/src/button/state/buttonDefaults.ts`, `buttonStateValidation.ts` |
+| Load, install, update, uninstall, and revisioned save client | `FlowCellFrontend/src/button/state/ButtonStateRepository.ts` |
+| Draft editing and graph operations | `FlowCellFrontend/src/button/state/ButtonEditorStore.ts`, `ButtonDraftBus.ts`, `buttonDocumentOperations.ts` |
+| Canonical panel-rail owner reconciliation and folder lifecycle | `FlowCellFrontend/src/button/state/panelOwnerButtonOperations.ts` |
+| Button rendering and interaction | `FlowCellFrontend/src/button/ButtonHost.tsx`, `ButtonRenderer.tsx`, `ButtonSurface.tsx` |
+| Main-window Button integration | `FlowCellFrontend/src/pages/main/MainButtonHost.tsx`, `MainPage.tsx` |
+| Action dispatch and tool-field payloads | `FlowCellFrontend/src/button/runtime/ButtonRuntimeAdapter.ts` |
+| Skin format, parsing, validation, compilation, and rendering | `FlowCellFrontend/src/button/skins/` |
+| Exact geometry, label growth, and text fitting | `FlowCellFrontend/src/button/geometry/`, `FlowCellFrontend/src/button/text/` |
+| Buttons Editor | `FlowCellFrontend/src/button/editor/` |
+| Regular popout runtime | `FlowCellFrontend/src/button/popout/` |
+| Fan runtime | `FlowCellFrontend/src/button/fan/` |
+| Button window creation and native hit testing | `FlowCellFrontend/src/button/windows/` |
+| Window routing and layout restore | `FlowCellFrontend/src/AppBase.tsx`, `FlowCellFrontend/src/lib/windowContext.ts`, `FlowCellFrontend/src/lib/layoutSnapshots.ts` |
+| Native canonical-state transaction | `FlowCellFrontend/src-tauri/src/button_state.rs` |
+| Program package schema | `Programs/<Program>/flowcell.program.json`, `FlowCellFrontend/src-tauri/src/program_sources/manifest.rs` |
+| Source install/update | `FlowCellFrontend/src-tauri/src/program_sources/install.rs` |
+| Active record schema and atomic writes | `FlowCellFrontend/src-tauri/src/program_sources/records.rs` |
+| Active-source resolution and execution | `FlowCellFrontend/src-tauri/src/program_sources/execute.rs` |
+| Owned-source deletion and rollback | `FlowCellFrontend/src-tauri/src/program_sources/delete.rs` |
+| One-time migration | `FlowCellFrontend/src-tauri/src/program_sources/migrate.rs` |
+
+## Canonical State Boundary
+
+`button-state.json` stores presentation and interaction state. Program source
+records do not store skin, placement, popout, fan, or editor state. Conversely,
+Button state identifies an installed source through `sourceIdentity`; it does
+not make Git Scripts or a raw path executable.
+
+Native commits are revision checked and atomic. If a save removes a
+source-owning Button, the commit must include the exact owner IDs to uninstall.
+FlowCell quarantines the owned sources, removes bindings and program runtime
+artifacts, writes the new Button document, then recycles the quarantine. A
+failure rolls the transaction back.
+
+An import remains staged until the Editor saves the canonical Button document.
+Cancel, Reset, and native Editor close discard every staged Local Scripts
+package sequentially so shared bindings cannot race. If any uninstall fails,
+that owner remains tracked and the Editor stays
+open so cleanup can be retried instead of silently orphaning local files.
+
+Buttons Editor addresses one exact occurrence at a time through dependent
+Program, Panel, Button, and Placement selectors. Saved Main, Pop, and Fan
+choices resolve stable placement IDs and switch the workspace to that exact
+surface, where every sibling Button remains visible and directly selectable in
+Edit mode. Tool-set children inherit their Program/Panel identity from their
+owner for navigation only; canonical identity ownership is unchanged.
+Panel-rail Buttons are grouped with the other Buttons for their panel and can be
+selected directly in the workspace. When a panel owner has no saved Fan, the
+Placement selector offers `Fan — Default grid`; selecting it creates an
+undoable draft setup with the panel's single-script Buttons and focuses the real
+Fan owner placement. Run preview honors the setup's saved open, close, and
+pinned defaults; a default Fan begins collapsed on that owner, expands on hover,
+collapses after hover-out when unpinned, pins on click, and collapses on the next
+pinned click. Saved Fan placement keeps the owner's surface origin fixed, while
+the collapsed native frame follows the applied visual envelope and monitor DPI
+so skin overflow cannot be clipped or shift the later expanded frame. Generic
+Delete Button remains disabled for a `panel-owner`; deleting its panel or program
+owns that lifecycle.
+
+Fan Builder lists the current Program/Panel's single-script Buttons and Tool Set
+owners by canonical Button ID. Any exact nonempty subset can build a new Fan or
+update the active saved Fan. Updating retains the setup identity, surviving
+member placement and skin geometry, open/close/pinned rules, animation, and
+surviving Tool Set anchors; the panel owner is supplied automatically. On Main,
+a nonempty selection takes precedence over saved-Fan shortcuts and the control
+reads `Fan (N)`. With no selection, the existing zero/one/many saved-Fan behavior
+remains intact.
+
+The edit outline, snapping, surface bounds, and collision checks all use the
+same reconciled core rectangle. In normal Edit drag, pointer movement is
+sampled continuously, so a fast drag cannot skip a neighboring edge: the Button
+stops flush at the furthest valid position and the workspace does not insert
+collision warnings that shift the canvas mid-gesture. Reorder is a separate
+toggle mode: every Button becomes a direct drag handle, the grabbed Button
+follows the pointer at animation-frame speed, and a stable outlined insertion
+slot uses hysteresis so animated targets cannot oscillate under the cursor.
+Only neighboring Buttons receive the position transition, so they smoothly
+move out of the way into a gap-free, undoable saved order with sequential
+z-index. `Snap to top left corner` compacts the current saved order from `(0,
+0)`, wrapping by the tallest Button in each row and preserving every Button's
+width and height. Both actions fail atomically when the complete layout cannot
+fit the surface. The
+Inspector's `Font size` is a live, nullable placement override; `Minimum size
+when shrinking` remains only the text-fit floor. Inspector Label and Font size
+changes also publish into a native Pop/Fan opened through the separate `Open
+Pop` or `Open Fan` action. The Skin editor's Text Preview Bench is intentionally
+preview-only.
+
+Every regular/tool-set Pop and Fan setup has a window-fit mode: saved `surface`,
+the union of all Button hitboxes, or the current measured visual union. Selecting
+the fit immediately applies it to the draft and draws that exact labeled window
+frame over the Editor workspace, including Saved Surface. The frame mirrors
+hover, press, hold, and play expansion for changing visual overflow and the
+surface glow allowance, then collapses to the selected resting fit on
+release/leave. `Open Pop` or `Open Fan` is a separate native-window preview of
+the same live draft, and Save persists the selected fit. Cropped fits translate
+the rendered canonical surface while applying the inverse native-frame offset,
+so the Buttons keep the same desktop positions; temporary expanded geometry is
+never saved. A Pop without saved desktop bounds opens at one design pixel per
+logical desktop pixel instead of inheriting the generic bootstrap window's
+scale. Skin/core measurements inside a scaled window normalize ancestor window
+scale back to canonical design units while retaining skin-root and animated
+shadow/outline scale. Pop and Fan retain one invariant physical surface origin,
+serialize native envelope changes, cancel stale pending hover frames on leave,
+and switch crop translation only after the matching native bounds have applied.
+Restored Pop scale comes from the applied physical frame and its actual monitor
+DPI; repeated hover/leave cycles therefore cannot jitter, progressively shrink
+the frame, or make Buttons outgrow their slots. Pop/Fan applies the conservative
+active envelope before authored hover pixels paint, and native hover remains
+attached to the placement-owned host rectangle while the authored core glows,
+squishes, rotates, or moves. A top/left edge therefore cannot clip its first
+active frame or oscillate between enter and leave. Fan/tool-set expansion grows
+the native frame before expanded content renders; collapse swaps to the owner
+against the expanded envelope before shrinking the frame.
+Hold Space and drag any Button in the live window to move its resting frame. Pop
+corner resize restores resting geometry first, keeps the aspect ratio/opposite
+corner, and persists physical desktop bounds; transparent gaps remain
+pointer-inert.
+
+Panel and program renames keep stable Button, placement, skin, Pop, and Fan IDs.
+The rename migrates canonical source identities, typed execution targets, active
+and install records, owned source paths, catalog manifest identity, panel-owner
+metadata, Fan scope, Pop member identities, and default surface names. Native
+folder/record/bindings work is rolled back if its transaction fails; if the
+following canonical save fails, Main verifies whether it landed and reverses the
+native rename when it did not. Panel/program deletion removes the owned canonical
+graphs and Local Scripts packages before closing removed windows and recycling
+the remaining folder.
+
+## Host and Skin Boundary
+
+`ButtonHost.tsx` attaches pointer, keyboard, hover, hold, release, disabled,
+error, and execution behavior directly to the compiled skin's `[data-core]`.
+`ButtonSkinRenderer.tsx` injects the label, measures that core, and reports visual
+overflow separately. With hitbox-to-skin matching enabled, it transforms the
+whole authored root uniformly and normalizes the transformed core to the host
+origin; `Allow stretching` permits separate X/Y scale. The imported structure
+and visual-state source remain unchanged.
+
+The skin compiler disables pointer events everywhere, then enables them only on
+`[data-core]`. Transparent Button windows map the physical cursor into the
+webview and confirm it with the shadow root's DOM hit test, so the authored core
+shape—not its bounding rectangle—decides whether the native window accepts the
+cursor. Tool fields use their own explicit control geometry.
+
+Skins may define only structure and visual state sections:
+
+- `structure`, `keyframes`
+- `base`, `hover`, `play`, `pressed`, `held`, `release`, `disabled`, `error`
+
+Ordinary Base declarations style `[data-core]`. Nested literal visual elements
+must consume state-controlled custom properties, and their resting values must
+be initialized explicitly in Base; the editor never rewrites imported nested
+markup to simulate that contract.
+
+They may not run code, own actions, mutate Button state, install sources, create
+bindings, or define an alternate hitbox.
+
+## Source Lifecycle
+
+1. Add Script or Add Tool Set selects a source file or manifest package. When a
+   selected script is the declared entry beside `flowcell.script.json`, FlowCell
+   installs the complete package automatically. Selecting a package companion
+   directly is rejected instead of creating a broken partial install.
+2. Native install validates the program manifest and source contract.
+3. FlowCell copies the source package into the owner Button's Local Scripts
+   package and writes `flowcell.install.json` inside it.
+4. Program-specific deployment runs only when the program runner requires it.
+5. FlowCell writes the owner Button's `.flowcell-source.json` active record.
+6. The editor adds the returned owner/children/layout to canonical Button state.
+7. Runtime execution resolves the active record, verifies its Local package,
+   then dispatches through the runner declared by `flowcell.program.json`.
+
+An explicit script package may route its Button through a registered core
+action when a FlowCell utility window consumes that installed source. The core
+target receives the validated active identity; it does not bypass the owned
+Local package or create a program-specific Button in application code.
+Catalog core-action IDs are allowlisted during native install; arbitrary or
+frontend-only core actions cannot be smuggled in through a source manifest.
+
+Add creates a new owner. Update transactionally replaces that same owner's Local
+package and active record, immediately refreshes the canonical execution
+targets, and preserves Button IDs, labels, skins, placements, popout/fan
+references, and package `runtime/` state. Update rejects changes between
+single-script/tool-set roles and rejects added, removed, or renamed tool-set
+slots; use delete/re-add when the Button graph itself must change. Delete removes that owner's entire installed
+lifecycle. No filename classifier or pre-baked program action is part of this
+flow.
+
+See `docs/repository-layout.md`, `docs/flowcell-program-registry.md`,
+`docs/flowcell-toolset-manifest.md`, and `docs/blender-scripts.md` for the package
+contracts.
 
 ## Validation Map
 
-- Documentation-only edits: inspect the rendered/file content and `git diff`; no app build is required.
-- Frontend/Tauri behavior edits: run `npm run build` in `FlowCellFrontend`.
-- PowerShell edits: parse-check changed PowerShell files.
-- Blender Python edits: run `python -m py_compile` on changed Python files.
-- Runtime behavior changes: inspect fresh relevant logs under `flowcellbackend/local/logs`.
-- Blender bridge/add-on changes: state the required Blender add-on reload, Blender restart, or resync step.
-- Native window or capability changes: state whether the frontend must restart or rebuild.
+- Documentation-only changes: path existence, heading/link checks, and targeted
+  stale-term searches.
+- Frontend changes: `npm run build` in `FlowCellFrontend`.
+- Rust changes: `cargo check` and focused unit tests in
+  `FlowCellFrontend/src-tauri`.
+- Program adapter changes: parse/check the adapter and exercise the narrow
+  install, execute, update, or delete path.
+- Blender deployment changes: reload the FlowCell Blender add-on or restart
+  Blender before runtime verification.
