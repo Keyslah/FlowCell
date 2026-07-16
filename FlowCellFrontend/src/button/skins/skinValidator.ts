@@ -17,6 +17,7 @@ export interface ButtonSkinAnalysis {
   animationTokens: string[];
   keyframeNames: string[];
   coreTagName: string;
+  hasLabelToken: boolean;
 }
 
 export interface ButtonSkinValidationResult {
@@ -287,8 +288,8 @@ function validateInlineStyle(value: string, diagnostics: ButtonSkinDiagnostic[])
 
 function validateStructure(source: string, diagnostics: ButtonSkinDiagnostic[]): ButtonSkinAnalysis | null {
   const tokenCount = countOccurrences(source, BUTTON_SKIN_LABEL_TOKEN);
-  if (tokenCount !== 1) {
-    diagnostics.push({ section: "structure", message: "Structure must contain exactly one {{label}} token." });
+  if (tokenCount > 1) {
+    diagnostics.push({ section: "structure", message: "Structure may contain at most one {{label}} token." });
   }
   const stack: Array<{ name: string; core: boolean }> = [];
   const animationTokens = new Set<string>();
@@ -399,8 +400,13 @@ function validateStructure(source: string, diagnostics: ButtonSkinDiagnostic[]):
   if (tokenCount === 1 && !labelInsideCore) {
     diagnostics.push({ section: "structure", message: "The {{label}} token must be text inside the data-core element." });
   }
-  return coreCount === 1 && tokenCount === 1 && labelInsideCore
-    ? { animationTokens: [...animationTokens], keyframeNames: [], coreTagName }
+  return coreCount === 1 && tokenCount <= 1 && (tokenCount === 0 || labelInsideCore)
+    ? {
+        animationTokens: [...animationTokens],
+        keyframeNames: [],
+        coreTagName,
+        hasLabelToken: tokenCount === 1
+      }
     : null;
 }
 

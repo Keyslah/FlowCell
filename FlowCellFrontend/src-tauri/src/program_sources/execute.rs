@@ -4,7 +4,7 @@ use super::records::{
     active_record_file_name, read_active_record, validate_owner_button_id, ActiveSourceRecord,
     ACTIVE_SOURCE_RECORD_SUFFIX,
 };
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -327,6 +327,18 @@ pub(crate) fn run_active_toolset_action(
     }
 }
 
+fn declared_blender_button_event_action<'a>(
+    event: &'a Map<String, Value>,
+    event_name: &str,
+) -> Result<&'a str, String> {
+    event
+        .get("action")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|action| !action.is_empty())
+        .ok_or_else(|| format!("Button event '{}' is missing an action.", event_name))
+}
+
 pub(crate) fn run_active_button_event(
     resolution: &ActiveSourceResolution,
     event_name: &str,
@@ -362,14 +374,41 @@ pub(crate) fn run_active_button_event(
             "Button event type '{action_type}' is not supported by this runner."
         ));
     }
-    let action = resolution.record.bridge_action.as_str();
-    if action.trim().is_empty() {
-        return Err(format!(
-            "Button event '{}' is missing an action.",
-            normalized
-        ));
-    }
+    let action = declared_blender_button_event_action(event, &normalized)?;
     let data = event.get("data").cloned().unwrap_or_else(|| json!({}));
     let response = crate::run_blender_bridge_action_direct(action, data)?;
     Ok(crate::extract_blender_bridge_response_message(&response))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::declared_blender_button_event_action;
+    use serde_json::json;
+
+    #[test]
+    fn declared_button_event_uses_its_own_bridge_action() {
+        let event = json!({
+            "type": "blenderBridge",
+            "action": "cycle_collection_hover_save_visibility"
+        });
+        assert_eq!(
+            declared_blender_button_event_action(
+                event.as_object().expect("event object"),
+                "hoverEnter"
+            )
+            .expect("declared event action"),
+            "cycle_collection_hover_save_visibility"
+        );
+    }
+
+    #[test]
+    fn declared_button_event_rejects_a_missing_action() {
+        let event = json!({ "type": "blenderBridge", "action": "  " });
+        let error = declared_blender_button_event_action(
+            event.as_object().expect("event object"),
+            "pressUp",
+        )
+        .expect_err("blank action should fail");
+        assert_eq!(error, "Button event 'pressUp' is missing an action.");
+    }
 }

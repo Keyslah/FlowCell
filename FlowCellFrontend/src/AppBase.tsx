@@ -14,6 +14,7 @@ import {
   registerScopedWindowTopmost,
   refreshScopedWindowTopmost,
   setHostWindowTopmost,
+  shouldBindScopedNativeOwner,
   unregisterScopedWindowTopmost
 } from "./lib/tauri";
 import BindsWindowPage from "./pages/binds/BindsWindowPage";
@@ -73,12 +74,6 @@ function resolveScopedTopmostProgramName(
   return windowContext.programName;
 }
 
-function shouldBindScopedNativeOwner(
-  windowContext: ReturnType<typeof getWindowContextFromLocation>
-): boolean {
-  return normalizeProcessToken(resolveScopedTopmostProgramName(windowContext)).includes("illustrator");
-}
-
 function resolveTooltipElement(target: EventTarget | null): HTMLElement | null {
   if (!(target instanceof Element)) {
     return null;
@@ -95,7 +90,7 @@ function resolveTooltipElement(target: EventTarget | null): HTMLElement | null {
 export default function App() {
   const windowContext = getWindowContextFromLocation();
   const programName = resolveScopedTopmostProgramName(windowContext);
-  const bindNativeOwner = shouldBindScopedNativeOwner(windowContext);
+  const bindNativeOwner = shouldBindScopedNativeOwner(programName);
 
   useEffect(() => registerButtonCoreAction(
     FRONTEND_MACRO_CORE_ACTION_ID,

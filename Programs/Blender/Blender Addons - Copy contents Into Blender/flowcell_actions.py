@@ -1791,11 +1791,37 @@ def save_cycle_collection_hover_visibility(context: bpy.types.Context) -> int:
             }
         )
 
-    context.scene[CYCLE_COLLECTION_HOVER_VISIBILITY_PROP] = json.dumps({"objects": objects})
+    layer_collections = []
+
+    def collect_layer_collection_visibility(
+        layer_collection: bpy.types.LayerCollection,
+        parent_path: list[str],
+    ) -> None:
+        path = [*parent_path, layer_collection.collection.name]
+        layer_collections.append(
+            {
+                "path": path,
+                "exclude": bool(layer_collection.exclude),
+                "hide_viewport": bool(layer_collection.hide_viewport),
+                "collection_hide_viewport": bool(layer_collection.collection.hide_viewport),
+            }
+        )
+        for child in layer_collection.children:
+            collect_layer_collection_visibility(child, path)
+
+    collect_layer_collection_visibility(context.view_layer.layer_collection, [])
+    context.scene[CYCLE_COLLECTION_HOVER_VISIBILITY_PROP] = json.dumps(
+        {
+            "objects": objects,
+            "layer_collections": layer_collections,
+        }
+    )
     return len(objects)
 
 
-def load_cycle_collection_hover_visibility(context: bpy.types.Context) -> list[dict] | None:
+def load_cycle_collection_hover_visibility(
+    context: bpy.types.Context,
+) -> dict[str, list[dict]] | None:
     raw_value = context.scene.get(CYCLE_COLLECTION_HOVER_VISIBILITY_PROP)
     if raw_value is None:
         return None
@@ -1812,7 +1838,16 @@ def load_cycle_collection_hover_visibility(context: bpy.types.Context) -> list[d
     if not isinstance(objects, list):
         return None
 
-    return [record for record in objects if isinstance(record, dict)]
+    layer_collections = parsed.get("layer_collections", [])
+    if not isinstance(layer_collections, list):
+        layer_collections = []
+
+    return {
+        "objects": [record for record in objects if isinstance(record, dict)],
+        "layer_collections": [
+            record for record in layer_collections if isinstance(record, dict)
+        ],
+    }
 
 
 def clear_cycle_collection_hover_visibility(context: bpy.types.Context) -> None:
@@ -2580,39 +2615,94 @@ def perform_cycle_collection_hover_save_visibility(context: bpy.types.Context) -
     return f"Captured cycle collection hover visibility for {object_count} object(s)."
 
 
-def perform_cycle_collection_hover_restore_visibility(context: bpy.types.Context) -> str:
-    records = load_cycle_collection_hover_visibility(context)
+def perform_cycle_collection_hover_clear_visibility(context: bpy.types.Context) -> str:
+    had_snapshot = context.scene.get(CYCLE_COLLECTION_HOVER_VISIBILITY_PROP) is not None
     clear_cycle_collection_hover_visibility(context)
-    if records is None:
+    if had_snapshot:
+        return "Cleared the cycle collection hover visibility snapshot."
+    return "No cycle collection hover visibility snapshot was recorded."
+
+
+def perform_cycle_collection_hover_restore_visibility(context: bpy.types.Context) -> str:
+    snapshot = load_cycle_collection_hover_visibility(context)
+    if snapshot is None:
         return "No cycle collection hover visibility snapshot is recorded."
 
     scene_objects = list(context.scene.objects)
     objects_by_name = {obj.name: obj for obj in scene_objects}
-    restored = 0
-    missing = 0
+    restored_objects = 0
+    missing_objects = 0
 
-    for record in records:
+    for record in snapshot["objects"]:
         name = record.get("name")
         if not isinstance(name, str) or not name:
             continue
 
         obj = objects_by_name.get(name)
         if obj is None:
-            missing += 1
+            missing_objects += 1
             continue
 
         obj.hide_viewport = bool(record.get("hide_viewport", False))
         set_object_hidden_in_view_layer(obj, context.view_layer, bool(record.get("hidden", False)))
-        restored += 1
+        restored_objects += 1
+
+    layer_collections_by_path = {}
+
+    def index_layer_collections(
+        layer_collection: bpy.types.LayerCollection,
+        parent_path: tuple[str, ...],
+    ) -> None:
+        path = (*parent_path, layer_collection.collection.name)
+        layer_collections_by_path[path] = layer_collection
+        for child in layer_collection.children:
+            index_layer_collections(child, path)
+
+    index_layer_collections(context.view_layer.layer_collection, ())
+    restored_layer_collections = 0
+    missing_layer_collections = 0
+
+    for record in snapshot["layer_collections"]:
+        path = record.get("path")
+        if not isinstance(path, list) or not all(isinstance(name, str) for name in path):
+            continue
+
+        layer_collection = layer_collections_by_path.get(tuple(path))
+        if layer_collection is None:
+            missing_layer_collections += 1
+            continue
+
+        try:
+            layer_collection.collection.hide_viewport = bool(
+                record.get("collection_hide_viewport", False)
+            )
+        except Exception:
+            pass
+        try:
+            layer_collection.exclude = bool(record.get("exclude", False))
+        except Exception:
+            pass
+        try:
+            layer_collection.hide_viewport = bool(record.get("hide_viewport", False))
+        except Exception:
+            pass
+        restored_layer_collections += 1
 
     try:
         context.view_layer.update()
     except Exception:
         pass
 
-    if missing > 0:
-        return f"Restored cycle collection hover visibility for {restored} object(s). Missing {missing} saved object(s)."
-    return f"Restored cycle collection hover visibility for {restored} object(s)."
+    message = (
+        "Restored cycle collection visibility for "
+        f"{restored_objects} object(s) and {restored_layer_collections} collection path(s)."
+    )
+    if missing_objects > 0 or missing_layer_collections > 0:
+        message += (
+            f" Missing {missing_objects} saved object(s) and "
+            f"{missing_layer_collections} saved collection path(s)."
+        )
+    return message
 
 
 def perform_restore_visibility(context: bpy.types.Context) -> str:
@@ -4242,8 +4332,6 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
-
 
 
 

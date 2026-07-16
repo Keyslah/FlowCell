@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.save-clipboard-text",
+  "label": "Save Clipboard Text",
+  "tooltip": "Save clipboard text to this Button's own selected folder. Install again for another folder; hold Shift while running to change this one.",
+  "program": "Windows",
+  "source": "save_clipboard_text.ps1"
+}

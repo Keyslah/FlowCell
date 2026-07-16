@@ -19,10 +19,11 @@ the completed architecture only.
   the installed Button.
 - The functional host owns behavior, state, accessibility, validation, command
   dispatch, and lifecycle. A skin is render-only.
-- A skin must contain exactly one `[data-core]` element and exactly one
-  `{{label}}` token inside it. After the label is injected, that exact
-  `[data-core]` geometry is the Button hitbox. No rectangular compatibility
-  hitbox is placed over it.
+- A skin must contain exactly one measurable `[data-core]` element and may
+  contain one `{{label}}` token inside it. After optional label injection, that
+  exact `[data-core]` geometry is the Button hitbox. A textless or
+  animation-only skin receives no synthesized label, fallback face, or
+  rectangular compatibility hitbox.
 - Each placement defaults to matching its hitbox to the skin: the host scales
   the complete authored skin root from the measured `[data-core]`, normalizes
   authored core offsets to the placement origin, and reconciles the saved
@@ -131,8 +132,12 @@ collision warnings that shift the canvas mid-gesture. Reorder is a separate
 toggle mode: every Button becomes a direct drag handle, the grabbed Button
 follows the pointer at animation-frame speed, and a stable outlined insertion
 slot uses hysteresis so animated targets cannot oscillate under the cursor.
+Reorder derives the current visual wrap width and row top offsets before
+generating candidates, so every existing row maps to its visible drop target
+even when all Button widths would fit in the surface's top row; variable-width
+Buttons still rebalance across rows instead of blocking the move.
 Only neighboring Buttons receive the position transition, so they smoothly
-move out of the way into a gap-free, undoable saved order with sequential
+move out of the way into a row-aligned, undoable saved order with sequential
 z-index. `Snap to top left corner` compacts the current saved order from `(0,
 0)`, wrapping by the tallest Button in each row and preserving every Button's
 width and height. Both actions fail atomically when the complete layout cannot
@@ -140,8 +145,11 @@ fit the surface. The
 Inspector's `Font size` is a live, nullable placement override; `Minimum size
 when shrinking` remains only the text-fit floor. Inspector Label and Font size
 changes also publish into a native Pop/Fan opened through the separate `Open
-Pop` or `Open Fan` action. The Skin editor's Text Preview Bench is intentionally
-preview-only.
+Pop` or `Open Fan` action. Editing actual skin source while focused on a
+program panel immediately assigns that skin to every Button placement on that
+panel surface without reassigning placements elsewhere. Because skin records
+are shared, any placement already referencing that skin ID also renders the
+source edit. The Skin editor's Text Preview Bench is intentionally preview-only.
 
 Every regular/tool-set Pop and Fan setup has a window-fit mode: saved `surface`,
 the union of all Button hitboxes, or the current measured visual union. Selecting
@@ -189,8 +197,9 @@ the remaining folder.
 
 `ButtonHost.tsx` attaches pointer, keyboard, hover, hold, release, disabled,
 error, and execution behavior directly to the compiled skin's `[data-core]`.
-`ButtonSkinRenderer.tsx` injects the label, measures that core, and reports visual
-overflow separately. With hitbox-to-skin matching enabled, it transforms the
+`ButtonSkinRenderer.tsx` injects the label only when the skin includes
+`{{label}}`, measures the core, and reports visual overflow separately. With
+hitbox-to-skin matching enabled, it transforms the
 whole authored root uniformly and normalizes the transformed core to the host
 origin; `Allow stretching` permits separate X/Y scale. The imported structure
 and visual-state source remain unchanged.

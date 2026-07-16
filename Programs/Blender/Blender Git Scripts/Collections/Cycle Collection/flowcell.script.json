@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "blender.cycle-collection",
   "label": "Cycle Collection",
-  "tooltip": "Use the selected object's collection and show one direct object at a time while selecting it.",
+  "tooltip": "Hover to capture current visibility. Hold to show and select the next direct object; release to restore visibility.",
   "program": "Blender",
   "source": "cycle collection.py",
   "events": {
@@ -11,6 +11,14 @@
       "action": "cycle_collection_hover_save_visibility"
     },
     "hoverLeave": {
+      "type": "blenderBridge",
+      "action": "cycle_collection_hover_clear_visibility"
+    },
+    "pressDown": {
+      "type": "blenderBridge",
+      "action": "cycle_collection"
+    },
+    "pressUp": {
       "type": "blenderBridge",
       "action": "cycle_collection_hover_restore_visibility"
     }

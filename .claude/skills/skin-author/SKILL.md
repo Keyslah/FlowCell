@@ -1,6 +1,6 @@
 ---
 name: skin-author
-description: Author FlowCell Button Editor skins in the canonical sectioned paste format. Use for writing, converting, or debugging render-only Button skins, exact data-core hitboxes, state declarations, and gated keyframes.
+description: Author FlowCell Button Editor skins in the canonical sectioned paste format. Use for writing, converting, or debugging render-only Button skins, optional visible labels, exact data-core hitboxes, state declarations, and gated keyframes.
 ---
 
 ## skin-author
@@ -51,9 +51,11 @@ The complete canonical order is `structure`, `keyframes`, `base`, `hover`, `play
 
 ### Structure contract
 
-- Include `{{label}}` exactly where the Button label renders.
+- Include zero or one `{{label}}` token. Put it inside `data-core` when the skin renders visible Button text; omit it entirely for a textless or animation-only skin.
 - Include exactly one element marked `data-core`.
-- The skin after label insertion owns its core interactive geometry. The host measures that exact element and attaches pointer and keyboard behavior directly to it. Never design or request an overlay hitbox.
+- The rendered skin after optional label insertion owns its core interactive geometry. The host measures that exact element and attaches pointer and keyboard behavior directly to it. Never design or request an overlay hitbox.
+- A textless skin receives no synthesized label, fallback face, or host chrome. The saved Button label still supplies its accessible name.
+- An animation-only core may be visually unpainted, but it must have stable, nonzero resting width and height around the animated visual. Do not use `display:none`, `display:contents`, or a zero-sized core.
 - The core may use content-driven or responsive sizing. The placement remains authoritative when the editor supplies exact width and height.
 - Decorative wrappers, shadows, glows, and SVG may extend beyond the core, but they must remain pointer-inert.
 - Use real child elements instead of pseudo-elements when state or animation must target them.
@@ -86,7 +88,7 @@ The complete canonical order is `structure`, `keyframes`, `base`, `hover`, `play
 
 ### Sizing and hitbox rules
 
-- The label is inserted before the core is measured.
+- When present, the label is inserted before the core is measured. A textless skin is measured directly from its authored core.
 - The resulting `[data-core]` rectangle is the Button's actual hitbox in the editor, main surface, regular popout, tool-set popout, and fan.
 - Text fit is host-owned: Shrink, Stack Whole Words, or Shrink and Stack. Never split words in authored structure.
 - Label edits do not move or resize a placement unless the placement explicitly enables label-driven growth.
@@ -127,6 +129,27 @@ The complete canonical order is `structure`, `keyframes`, `base`, `hover`, `play
 === error ===
 --fx-edge: rgba(240,90,90,.9);
 --fx-halo: rgba(240,80,80,.3);
+```
+
+### Animation-only example
+
+This skin has no visible Button face and intentionally omits `{{label}}`. The transparent core supplies a stable hit target and the particle supplies the authored visual:
+
+```text
+=== structure ===
+<span data-core style="display:inline-grid;place-items:center;width:72px;height:72px;">
+  <span data-anim="orbit" style="width:16px;height:16px;border-radius:50%;
+    background:#7dd3fc;box-shadow:0 0 18px rgba(125,211,252,.9);"></span>
+</span>
+=== keyframes ===
+@keyframes fc-orbit {
+  from { transform:rotate(0deg) translateX(22px) rotate(0deg); }
+  to { transform:rotate(360deg) translateX(22px) rotate(-360deg); }
+}
+=== base ===
+background: transparent;
+=== play ===
+--anim-orbit: fc-orbit 700ms ease-in-out 1;
 ```
 
 ### Scope and output

@@ -34,6 +34,7 @@ import {
 import {
   buttonRectsOverlap,
   compactButtonPlacements,
+  inferButtonPlacementRowProfile,
   lockButtonRectAspect,
   normalizeButtonScreenMeasurement,
   reorderButtonPlacementIds,
@@ -97,7 +98,8 @@ import {
 } from "./.compiled-button-system/button/state/buttonDocumentScopeOperations.js";
 import {
   executeButtonRecord,
-  registerButtonCoreAction
+  registerButtonCoreAction,
+  resolveButtonPressEventPlan
 } from "./.compiled-button-system/button/runtime/ButtonRuntimeAdapter.js";
 import {
   buttonDesktopBoundsInsideCanvas,
@@ -125,6 +127,7 @@ import {
   resolveButtonEditorContextPlacementId,
   resolveButtonEditorDefaultFanMembers,
   resolveButtonEditorIdentity,
+  resolveButtonEditorPanelSkinTargetPlacementIds,
   resolveButtonEditorPanelSurfaceId,
   resolvePreferredButtonPlacementId
 } from "./.compiled-button-system/button/editor/buttonEditorSelection.js";
@@ -763,10 +766,35 @@ test("semantic skin validation enforces data-core, label ownership, and safe ani
     keyframes: "@keyframes pulse{from{opacity:.5}to{opacity:1}}",
     play: "--anim-pulse: pulse 120ms ease 1;"
   };
-  assert.equal(validateButtonSkin(valid).valid, true);
+  const validation = validateButtonSkin(valid);
+  assert.equal(validation.valid, true);
+  assert.equal(validation.analysis.hasLabelToken, true);
   assert.equal(validateButtonSkin({ ...valid, structure: "<script></script><div data-core>{{label}}</div>" }).valid, false);
   assert.equal(validateButtonSkin({ ...valid, structure: "<div>{{label}}</div>" }).valid, false);
+  assert.equal(validateButtonSkin({ ...valid, structure: "<div data-core>{{label}}{{label}}</div>" }).valid, false);
+  assert.equal(validateButtonSkin({ ...valid, structure: "<div data-core></div>{{label}}" }).valid, false);
   assert.equal(validateButtonSkin({ ...valid, play: "--anim-pulse: pulse 1s infinite;" }).valid, false);
+});
+
+test("textless animation skins compile without synthesizing a visible label", () => {
+  const skin = {
+    id: "skin-animation-only",
+    name: "Animation Only",
+    ...createEmptyButtonSkinSections(),
+    structure: "<span data-core style=\"display:inline-grid;width:72px;height:72px\"><i data-anim=\"pulse\"></i></span>",
+    keyframes: "@keyframes pulse{from{opacity:.2}to{opacity:1}}",
+    play: "--anim-pulse: pulse 120ms ease 1;",
+    metadata: {},
+    compileCache: null
+  };
+  const validation = validateButtonSkin(skin);
+  assert.equal(validation.valid, true);
+  assert.equal(validation.analysis.hasLabelToken, false);
+  const result = compileButtonSkin(skin);
+  assert.equal(result.ok, true);
+  assert.equal(result.compiled.hasLabelToken, false);
+  assert.equal(result.compiled.sanitizedMarkupTemplate.includes("{{label}}"), false);
+  assert.equal(result.compiled.sanitizedMarkupTemplate.includes("data-button-label-node"), false);
 });
 
 test("skin compilation keeps authored source separate from deterministic sanitized markup", () => {
@@ -923,6 +951,33 @@ test("Button Editor navigation resolves exact program, panel, Button, and placem
   });
   assert.deepEqual(buildButtonEditorPanelOptions(document, "Blender", []), ["Tools"]);
   assert.equal(resolveButtonEditorPanelSurfaceId(document, "Blender", "Tools"), "panel");
+  assert.deepEqual(
+    resolveButtonEditorPanelSkinTargetPlacementIds(
+      document,
+      "Blender",
+      "Tools",
+      "panel-single"
+    ),
+    ["panel-single", "panel-owner"]
+  );
+  assert.deepEqual(
+    resolveButtonEditorPanelSkinTargetPlacementIds(
+      document,
+      "Blender",
+      "Tools",
+      "pop-single"
+    ),
+    []
+  );
+  assert.deepEqual(
+    resolveButtonEditorPanelSkinTargetPlacementIds(
+      document,
+      "Blender",
+      "Tools",
+      "toolset-child"
+    ),
+    []
+  );
   assert.equal(resolvePreferredButtonPlacementId(document, single.id), "panel-single");
   assert.equal(resolvePreferredButtonPlacementId(document, single.id, "pop"), "pop-single");
   assert.deepEqual(
@@ -978,6 +1033,15 @@ test("panel-owner reconciliation creates empty panels and preserves presentation
   );
   assert.equal(document.surfaces[first.surfaceId].width, 1225);
   assert.equal(document.surfaces[first.surfaceId].height, 721);
+  assert.deepEqual(
+    resolveButtonEditorPanelSkinTargetPlacementIds(
+      document,
+      "Windows",
+      "Utility",
+      utilityPlacement.id
+    ),
+    []
+  );
   const initialPlacementOptions = buildButtonEditorPlacementOptions(document, utility.id);
   assert.deepEqual(
     initialPlacementOptions.map((option) => option.label),
@@ -2070,6 +2134,130 @@ test("reordered compaction normalizes z-index and fails atomically when it canno
   assert.match(failed.reason, /wider/);
 });
 
+test("reorder compaction preserves every existing row as a reachable drop target", () => {
+  const input = Array.from({ length: 7 }, (_, index) => ({
+    id: String.fromCharCode(97 + index),
+    rect: {
+      x: 199.23,
+      y: 125.759 + 49.727 * index,
+      width: 131.568,
+      height: 37.295
+    }
+  }));
+  const rowProfile = inferButtonPlacementRowProfile(input);
+  assert.equal(rowProfile.wrapWidth.toFixed(3), "131.568");
+  assert.deepEqual(
+    rowProfile.topOffsets.map((value) => value.toFixed(3)),
+    ["0.000", "49.727", "99.454", "149.181", "198.908", "248.635", "298.362"]
+  );
+
+  const remainingIds = input.map((item) => item.id).filter((id) => id !== "a");
+  const slots = [];
+  for (let insertionIndex = 0; insertionIndex <= remainingIds.length; insertionIndex += 1) {
+    const order = [...remainingIds];
+    order.splice(insertionIndex, 0, "a");
+    const result = compactButtonPlacements(
+      order.map((id) => input.find((item) => item.id === id)),
+      { width: 1225, height: 721 },
+      {
+        anchorX: 199.23,
+        anchorY: 125.759,
+        gap: 0,
+        rowProfile
+      }
+    );
+    assert.equal(result.success, true);
+    slots.push(result.placements.find((item) => item.id === "a").rect);
+  }
+  assert.equal(new Set(slots.map((slot) => slot.y.toFixed(3))).size, 7);
+  input.forEach((item, expectedInsertionIndex) => {
+    const pointerX = item.rect.x + item.rect.width / 2;
+    const pointerY = item.rect.y + item.rect.height / 2;
+    const closestInsertionIndex = slots
+      .map((slot, insertionIndex) => ({
+        insertionIndex,
+        distance: Math.hypot(
+          pointerX - (slot.x + slot.width / 2),
+          pointerY - (slot.y + slot.height / 2)
+        )
+      }))
+      .sort((left, right) =>
+        left.distance - right.distance ||
+        left.insertionIndex - right.insertionIndex
+      )[0].insertionIndex;
+    assert.equal(closestInsertionIndex, expectedInsertionIndex);
+  });
+});
+
+test("row inference groups mixed heights and rebalances variable-width Buttons", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 48, width: 40, height: 44 } },
+    { id: "b", rect: { x: 48, y: 56, width: 40, height: 20 } },
+    { id: "c", rect: { x: 0, y: 100, width: 40, height: 30 } },
+    { id: "d", rect: { x: 48, y: 104, width: 40, height: 10 } }
+  ];
+  const rowProfile = inferButtonPlacementRowProfile(input);
+  assert.deepEqual(rowProfile, {
+    wrapWidth: 80,
+    topOffsets: [0, 52]
+  });
+  const compacted = compactButtonPlacements(input, { width: 200, height: 100 }, {
+    gap: 0,
+    rowProfile
+  });
+  assert.equal(compacted.success, true);
+  assert.deepEqual(compacted.placements.map((item) => item.rect.y), [0, 0, 52, 52]);
+
+  const invalidProfile = compactButtonPlacements(input, { width: 200, height: 100 }, {
+    rowProfile: { wrapWidth: 0, topOffsets: [0] }
+  });
+  assert.equal(invalidProfile.success, false);
+  assert.deepEqual(invalidProfile.placements, []);
+
+  const variableWidthInput = [
+    { id: "a", rect: { x: 0, y: 0, width: 50, height: 20 } },
+    { id: "b", rect: { x: 50, y: 0, width: 30, height: 20 } },
+    { id: "c", rect: { x: 0, y: 30, width: 20, height: 20 } },
+    { id: "d", rect: { x: 20, y: 30, width: 60, height: 20 } }
+  ];
+  const variableProfile = inferButtonPlacementRowProfile(variableWidthInput);
+  const rebalanced = compactButtonPlacements(
+    ["b", "c", "a", "d"].map((id) =>
+      variableWidthInput.find((item) => item.id === id)
+    ),
+    { width: 100, height: 100 },
+    { rowProfile: variableProfile }
+  );
+  assert.equal(rebalanced.success, true);
+  assert.equal(rebalanced.placements.find((item) => item.id === "a").rect.y, 30);
+  assert.equal(rebalanced.placements.find((item) => item.id === "d").rect.y, 50);
+  assert.deepEqual(
+    validateExactButtonLayoutGeometry(rebalanced.placements, { width: 100, height: 100 }),
+    []
+  );
+
+  const underfilledRows = [
+    { id: "wide", rect: { x: 0, y: 0, width: 100, height: 20 } },
+    { id: "narrow-a", rect: { x: 0, y: 40, width: 10, height: 20 } },
+    { id: "narrow-b", rect: { x: 0, y: 80, width: 10, height: 20 } }
+  ];
+  const underfilledProfile = inferButtonPlacementRowProfile(underfilledRows);
+  assert.deepEqual(underfilledProfile, {
+    wrapWidth: 100,
+    topOffsets: [0, 40, 80]
+  });
+  const preservedUnderfilledRows = compactButtonPlacements(
+    underfilledRows,
+    { width: 200, height: 120 },
+    { rowProfile: underfilledProfile }
+  );
+  assert.equal(preservedUnderfilledRows.success, true);
+  assert.deepEqual(
+    preservedUnderfilledRows.placements.map((item) => item.rect.y),
+    [0, 40, 80]
+  );
+});
+
 test("snapping aligns edges and collision prevention rejects overlap", () => {
   const snapped = resolveButtonGeometry(
     { x: 3, y: 4, width: 40, height: 24 },
@@ -2835,6 +3023,41 @@ test("source-owning core-action Buttons uninstall their owned package", () => {
   const removed = removeOwnedButtonGraph(document, installed.id);
   assert.deepEqual(removed.uninstallOwnerButtonIds, [installed.id]);
   assert.equal(document.buttons[installed.id], undefined);
+});
+
+test("pressDown owns activation and complete hover-aware pairs support keyboard sessions", () => {
+  const regular = button("regular-press", "single-script");
+  assert.deepEqual(resolveButtonPressEventPlan(regular), {
+    dispatchPressDown: false,
+    dispatchPressUp: false,
+    runClickOnRelease: true,
+    synthesizeHoverSessionForKeyboard: false
+  });
+
+  const paired = button("paired-press", "single-script");
+  paired.executionTarget.events = {
+    hoverEnter: { type: "blenderBridge", action: "cycle_collection_hover_save_visibility" },
+    hoverLeave: { type: "blenderBridge", action: "cycle_collection_hover_clear_visibility" },
+    pressDown: { type: "blenderBridge", action: "cycle_collection" },
+    pressUp: { type: "blenderBridge", action: "cycle_collection_hover_restore_visibility" }
+  };
+  assert.deepEqual(resolveButtonPressEventPlan(paired), {
+    dispatchPressDown: true,
+    dispatchPressUp: true,
+    runClickOnRelease: false,
+    synthesizeHoverSessionForKeyboard: true
+  });
+
+  const incomplete = button("incomplete-press", "single-script");
+  incomplete.executionTarget.events = {
+    pressDown: { type: "blenderBridge", action: "cycle_collection" }
+  };
+  assert.deepEqual(resolveButtonPressEventPlan(incomplete), {
+    dispatchPressDown: true,
+    dispatchPressUp: false,
+    runClickOnRelease: false,
+    synthesizeHoverSessionForKeyboard: false
+  });
 });
 
 test("tool-set child activation uses the functional host and applies only declared response fields", async () => {

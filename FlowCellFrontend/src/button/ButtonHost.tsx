@@ -18,6 +18,7 @@ import type {
 import { ButtonSkinRenderer } from "./skins/ButtonSkinRenderer";
 import {
   executeButtonRecord,
+  resolveButtonPressEventPlan,
   type ButtonExecutionResult
 } from "./runtime/ButtonRuntimeAdapter";
 import { isButtonWindowGeometryTransitionActive } from "./windows/buttonWindowGeometryTransition";
@@ -101,6 +102,10 @@ export function ButtonHost({
   const playActiveRef = useRef(false);
   const animationCountRef = useRef(0);
   const animationStartedRef = useRef(false);
+  const pressEventPlanRef = useRef<ReturnType<typeof resolveButtonPressEventPlan> | null>(null);
+  const eventQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingHoverLeaveRef = useRef(false);
+  const syntheticHoverSessionRef = useRef(false);
   // Volatile inputs flow through refs so the pointer/keyboard listeners stay
   // attached across re-renders; detaching mid-hover fakes a hoverLeave and
   // strands the hover state.
@@ -182,6 +187,15 @@ export function ButtonHost({
   }, [mode, button, onActivate, onExecutionResult, fields, fieldValues, onFieldActivate, onFieldPatch]);
   const runEventRef = useRef(runEvent);
   runEventRef.current = runEvent;
+  const enqueueEvent = useCallback((
+    eventName: string,
+    activationEvent?: PointerEvent | KeyboardEvent
+  ) => {
+    const invoke = () => runEventRef.current(eventName, activationEvent);
+    const queued = eventQueueRef.current.then(invoke, invoke);
+    eventQueueRef.current = queued;
+    return queued;
+  }, []);
 
   useEffect(() => {
     if (!coreElement) return;
@@ -208,14 +222,31 @@ export function ButtonHost({
         onSelectRef.current?.(activationEvent);
         return;
       }
+      if (pointerActiveRef.current) return;
+      const pressEventPlan = resolveButtonPressEventPlan(buttonRef.current);
+      pressEventPlanRef.current = pressEventPlan;
       pointerActiveRef.current = true;
       setPressed(true);
       startPlay();
       clearTimer(holdTimerRef);
       holdTimerRef.current = window.setTimeout(() => setHeld(true), HOLD_MS);
+      const synthesizeHoverSession = (
+        activationEvent instanceof KeyboardEvent &&
+        !hoverActiveRef.current &&
+        pressEventPlan.synthesizeHoverSessionForKeyboard
+      );
+      syntheticHoverSessionRef.current = synthesizeHoverSession;
+      if (synthesizeHoverSession) {
+        void enqueueEvent("hoverEnter", activationEvent);
+      }
+      if (pressEventPlan.dispatchPressDown) {
+        void enqueueEvent("pressDown", activationEvent);
+      }
     };
     const finishPress = (activationEvent: PointerEvent | KeyboardEvent) => {
       if (!pointerActiveRef.current || modeRef.current === "edit") return;
+      const pressEventPlan = pressEventPlanRef.current ?? resolveButtonPressEventPlan(buttonRef.current);
+      pressEventPlanRef.current = null;
       pointerActiveRef.current = false;
       clearTimer(holdTimerRef);
       setPressed(false);
@@ -223,19 +254,48 @@ export function ButtonHost({
       setRelease(true);
       clearTimer(releaseTimerRef);
       releaseTimerRef.current = window.setTimeout(() => setRelease(false), RELEASE_MS);
-      void runEventRef.current("click", activationEvent);
+      if (pressEventPlan.runClickOnRelease) {
+        void enqueueEvent("click", activationEvent);
+      }
+      if (pressEventPlan.dispatchPressUp) {
+        void enqueueEvent("pressUp", activationEvent);
+      }
+      if (syntheticHoverSessionRef.current || pendingHoverLeaveRef.current) {
+        syntheticHoverSessionRef.current = false;
+        pendingHoverLeaveRef.current = false;
+        void enqueueEvent("hoverLeave", activationEvent);
+      }
     };
-    const cancelPress = () => {
+    const cancelPress = (activationEvent?: PointerEvent | KeyboardEvent) => {
+      const wasActive = pointerActiveRef.current;
+      const pressEventPlan = pressEventPlanRef.current;
+      pressEventPlanRef.current = null;
       pointerActiveRef.current = false;
       clearTimer(holdTimerRef);
       setPressed(false);
       setHeld(false);
+      if (wasActive && pressEventPlan?.dispatchPressUp) {
+        void enqueueEvent("pressUp", activationEvent);
+      }
+      if (syntheticHoverSessionRef.current || pendingHoverLeaveRef.current) {
+        syntheticHoverSessionRef.current = false;
+        pendingHoverLeaveRef.current = false;
+        void enqueueEvent("hoverLeave", activationEvent);
+      }
     };
     const handlePointerEnter = (event: Event) => {
       if (hoverActiveRef.current) return;
+      const resumesActiveHoverSession = (
+        pointerActiveRef.current &&
+        (pendingHoverLeaveRef.current || syntheticHoverSessionRef.current)
+      );
+      pendingHoverLeaveRef.current = false;
+      if (resumesActiveHoverSession) syntheticHoverSessionRef.current = false;
       hoverActiveRef.current = true;
       onHoverStartRef.current?.(buttonRef.current, event as PointerEvent);
-      void runEventRef.current("hoverEnter");
+      if (!resumesActiveHoverSession) {
+        void enqueueEvent("hoverEnter");
+      }
       const prepare = onPrepareVisualStateChangeRef.current;
       if (!prepare) {
         setHovered(true);
@@ -271,7 +331,12 @@ export function ButtonHost({
         });
       }
       onHoverEndRef.current?.(buttonRef.current, event as PointerEvent);
-      void runEventRef.current("hoverLeave");
+      const shouldDeferHoverLeave = (
+        pointerActiveRef.current &&
+        Boolean(pressEventPlanRef.current?.dispatchPressUp)
+      );
+      if (shouldDeferHoverLeave) pendingHoverLeaveRef.current = true;
+      else void enqueueEvent("hoverLeave");
     };
     const handlePointerDown = (event: Event) => {
       const pointerEvent = event as PointerEvent;
@@ -288,7 +353,7 @@ export function ButtonHost({
       finishPress(event as PointerEvent);
     };
     const handlePointerCancel = (event: Event) => {
-      cancelPress();
+      cancelPress(event as PointerEvent);
       if (hoverActiveRef.current) {
         hoverActiveRef.current = false;
         hoverTransitionRef.current += 1;
@@ -300,7 +365,7 @@ export function ButtonHost({
             console.error(`Button '${buttonRef.current.label}' could not restore its idle window.`, prepareError);
           });
         }
-        void runEventRef.current("hoverLeave");
+        void enqueueEvent("hoverLeave");
       }
       onHoverCancelRef.current?.(buttonRef.current, event as PointerEvent);
     };
@@ -328,6 +393,9 @@ export function ButtonHost({
         finishPress(keyboardEvent);
       }
     };
+    const handleBlur = () => {
+      cancelPress();
+    };
     interactionElement.addEventListener("pointerenter", handlePointerEnter);
     interactionElement.addEventListener("pointerleave", handlePointerLeave);
     interactionElement.addEventListener("pointerdown", handlePointerDown);
@@ -337,6 +405,7 @@ export function ButtonHost({
     interactionElement.addEventListener("contextmenu", handleContextMenu);
     interactionElement.addEventListener("keydown", handleKeyDown);
     interactionElement.addEventListener("keyup", handleKeyUp);
+    interactionElement.addEventListener("blur", handleBlur);
     return () => {
       interactionElement.removeEventListener("pointerenter", handlePointerEnter);
       interactionElement.removeEventListener("pointerleave", handlePointerLeave);
@@ -347,15 +416,16 @@ export function ButtonHost({
       interactionElement.removeEventListener("contextmenu", handleContextMenu);
       interactionElement.removeEventListener("keydown", handleKeyDown);
       interactionElement.removeEventListener("keyup", handleKeyUp);
+      interactionElement.removeEventListener("blur", handleBlur);
       cancelPress();
       hoverTransitionRef.current += 1;
       if (hoverActiveRef.current) {
         hoverActiveRef.current = false;
         setHovered(false);
-        void runEventRef.current("hoverLeave");
+        void enqueueEvent("hoverLeave");
       }
     };
-  }, [coreElement, startPlay]);
+  }, [coreElement, enqueueEvent, startPlay]);
 
   useEffect(() => {
     if (!shadowRoot) return;

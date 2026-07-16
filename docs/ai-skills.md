@@ -36,7 +36,7 @@ Use this document as the repository-local routing guide for FlowCell work. Inspe
 - Each real program panel owns one source-free `panel-owner` Button on the program's main panel-rail surface. The actual main rail renders that Button, and saved fans reuse it with exact Fan placements; never fabricate an empty fan setup for editor navigation.
 - The functional host owns execution, pointer/keyboard routing, hit testing, text fit, drag/resize, collision prevention, native windows, and persistence participation.
 - A skin owns render-only markup, SVG, declarations, typography, effects, states, transitions, and keyframes.
-- A skin has exactly one `[data-core]`. That authored element's measured geometry is the actual interactive hitbox. Never add a host overlay hitbox.
+- A skin has exactly one measurable `[data-core]` and zero or one `{{label}}` token. That authored core's geometry is the actual interactive hitbox; textless skins receive no host overlay, label, or fallback chrome.
 - Transparent or decorative overflow is pointer-inert.
 - Do not add filename classifiers, per-tool React pages, per-tool Rust constants, or alternate Button state.
 - Do not special-case program scripts in the main page. Program-specific meaning belongs in manifests, source packages, or the relevant runner/bridge.
@@ -160,8 +160,8 @@ Runtime values win. Core does not interpret Blender axes, angles, solvers, color
 
 1. The host provides the current label and state.
 2. `ButtonSkinRenderer` compiles and mounts the authored skin in its isolated render root.
-3. The skin must contain exactly one `[data-core]` with `{{label}}` at the intended text location.
-4. The host measures that exact core after label insertion and text-fit resolution.
+3. The skin must contain exactly one measurable `[data-core]` and may contain one `{{label}}` token at the intended text location.
+4. The host measures that exact core after optional label insertion and text-fit resolution.
 5. The host attaches activation, context, double-click, hover, press, and keyboard behavior directly to that core.
 6. Native transparent windows map the physical cursor to the webview and use the shadow root's DOM hit test for those exact cores; a bounding rectangle is only an early rejection check.
 
@@ -177,7 +177,7 @@ The source of truth for section names is `FlowCellFrontend/src/button/skins/butt
 
 ```text
 === structure ===
-<render-only HTML with exactly one data-core and one {{label}} token>
+<render-only HTML with exactly one data-core and zero or one {{label}} token>
 === keyframes ===
 <@keyframes blocks only>
 === base ===
@@ -202,8 +202,9 @@ The source of truth for section names is `FlowCellFrontend/src/button/skins/butt
 
 ### Structure rules
 
-- Include `{{label}}` exactly where Button text belongs.
+- Include `{{label}}` once inside `data-core` when visible Button text belongs there; omit it for a textless or animation-only skin.
 - Include exactly one `data-core`. Its measured post-label geometry is the real Button hitbox.
+- For an animation-only skin, keep `data-core` nonzero and measurable but visually unpainted if desired. FlowCell adds no label or fallback Button face; the saved Button label remains the accessible name.
 - Keep decorative wrappers outside the core and pointer-inert.
 - No scripts, event-handler attributes, network access, navigation, backend calls, or state mutation.
 - No React skin registry in version one.

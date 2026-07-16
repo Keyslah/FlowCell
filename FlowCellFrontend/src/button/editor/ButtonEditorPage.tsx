@@ -108,6 +108,7 @@ import {
   resolveButtonEditorContextPlacementId,
   resolveButtonEditorDefaultFanMembers,
   resolveButtonEditorIdentity,
+  resolveButtonEditorPanelSkinTargetPlacementIds,
   resolveButtonEditorPanelSurfaceId,
   resolveButtonEditorSurfaceIdentity,
   resolvePreferredButtonPlacementId
@@ -1725,7 +1726,17 @@ function ButtonEditorContent({
         />
         <ButtonSkinEditor
           skin={selectedSkin}
-          onSkinChange={(skin, label, coalesceKey) => store.transact((draft) => { draft.skins[skin.id] = skin; }, { label, coalesceKey })}
+          onSkinChange={(skin, label, coalesceKey) => store.transact((draft) => {
+            draft.skins[skin.id] = skin;
+            resolveButtonEditorPanelSkinTargetPlacementIds(
+              draft,
+              programName,
+              panelName,
+              selectedPlacement?.id ?? ""
+            ).forEach((placementId) => {
+              draft.placements[placementId].skinOverrideId = skin.id;
+            });
+          }, { label, coalesceKey })}
           onCreateSkin={() => {
             const id = createStableButtonId("skin");
             const base = cloneButtonDocument(store.draft.skins[store.draft.settings.defaultSkinId]);

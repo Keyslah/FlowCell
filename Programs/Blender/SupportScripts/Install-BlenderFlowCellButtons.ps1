@@ -54,7 +54,7 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
     throw "Blender config not found: $ConfigPath"
 }
 
-$config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+$config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $bridgeLayout = Get-FlowCellBlenderBridgeLayout -Config $config -BridgeFolder $BridgeFolder
 $BridgeFolder = [string]$bridgeLayout.BridgeFolder
 Ensure-FlowCellBlenderBridgeRuntime -Layout $bridgeLayout
@@ -70,7 +70,7 @@ $addonBridgePath = [string]$bridgeLayout.AddonBridgePath
 $registry = [pscustomobject]@{ actions = @() }
 if (Test-Path -LiteralPath $customRegistryPath -PathType Leaf) {
     try {
-        $registry = Get-Content -LiteralPath $customRegistryPath -Raw | ConvertFrom-Json
+        $registry = Get-Content -LiteralPath $customRegistryPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($null -eq $registry.actions) { $registry | Add-Member -MemberType NoteProperty -Name actions -Value @() -Force }
     }
     catch {
@@ -148,7 +148,7 @@ function Get-PythonFunctionMetadata([string]$Path, [string]$PreferredFunctionNam
         return [pscustomobject]@{ FunctionName = ''; StartLine = 1; SourceText = '' }
     }
 
-    $lines = @(Get-Content -LiteralPath $Path)
+    $lines = @(Get-Content -LiteralPath $Path -Encoding UTF8)
     $functionName = ''
     $startLine = 1
 
@@ -208,7 +208,7 @@ function Get-PythonTopLevelFunctionNames([string]$Path) {
     }
 
     $names = New-Object System.Collections.Generic.List[string]
-    foreach ($line in @(Get-Content -LiteralPath $Path)) {
+    foreach ($line in @(Get-Content -LiteralPath $Path -Encoding UTF8)) {
         if ([string]$line -match '^(?<indent>[ \t]*)def\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(' -and [string]$matches['indent'] -eq '') {
             [void]$names.Add([string]$matches['name'])
         }
@@ -353,7 +353,7 @@ function Get-FlowCellPythonBootstrapHint([string]$Path, [string[]]$AvailableFunc
 
 function Get-TopDescription([string]$Path) {
     if ([string]::IsNullOrWhiteSpace($Path) -or -not (Test-Path -LiteralPath $Path -PathType Leaf)) { return '' }
-    $lines = @(Get-Content -LiteralPath $Path -TotalCount 32)
+    $lines = @(Get-Content -LiteralPath $Path -TotalCount 32 -Encoding UTF8)
     foreach ($line in $lines) {
         if ([string]$line -match '^\s*#\s*Description\s*:\s*(.+)$') { return [string]$matches[1].Trim() }
         if (-not [string]::IsNullOrWhiteSpace([string]$line) -and [string]$line -notmatch '^\s*#') { break }
@@ -366,7 +366,7 @@ function Set-TopDescription([string]$Path, [string]$NextDescription) {
 
     $normalizedDescription = if ($null -ne $NextDescription) { [string]$NextDescription.Trim() } else { '' }
     $lines = [System.Collections.Generic.List[string]]::new()
-    foreach ($line in @(Get-Content -LiteralPath $Path)) {
+    foreach ($line in @(Get-Content -LiteralPath $Path -Encoding UTF8)) {
         [void]$lines.Add([string]$line)
     }
 
@@ -565,12 +565,12 @@ foreach ($selectedPathRaw in @($SelectedPaths)) {
 
 Write-FlowCellTextFile -Path $customRegistryPath -Value ($registry | ConvertTo-Json -Depth 8) -Encoding UTF8
 
-if (Test-Path -LiteralPath $customActionSyncPath -PathType Leaf) {
+if (-not $SkipSync -and (Test-Path -LiteralPath $customActionSyncPath -PathType Leaf)) {
     & $customActionSyncPath -ConfigPath $ConfigPath -BridgeFolder $BridgeFolder | Out-Null
     $regeneratedFlowcellActions = $true
     if (Test-Path -LiteralPath $customRegistryPath -PathType Leaf) {
         try {
-            $registry = Get-Content -LiteralPath $customRegistryPath -Raw | ConvertFrom-Json
+            $registry = Get-Content -LiteralPath $customRegistryPath -Raw -Encoding UTF8 | ConvertFrom-Json
             if ($null -eq $registry.actions) {
                 $registry | Add-Member -MemberType NoteProperty -Name actions -Value @() -Force
             }
@@ -584,7 +584,7 @@ if (Test-Path -LiteralPath $customActionSyncPath -PathType Leaf) {
 $reloadRequired = $false
 $reloadReason = ''
 $firstInstalled = @($installResults | Where-Object { [bool]$_.Installed } | Select-Object -First 1)
-if (@($firstInstalled).Count -gt 0) {
+if (-not $SkipSync -and @($firstInstalled).Count -gt 0) {
     $dispatcherPath = Join-Path $supportRoot 'Invoke-BlenderFlowCellAction.ps1'
     if (Test-Path -LiteralPath $dispatcherPath -PathType Leaf) {
         $response = & $dispatcherPath -Action ([string]$firstInstalled[0].Action) -Label ([string]$firstInstalled[0].Action) -PassThruResponse 2>$null
@@ -623,7 +623,12 @@ if ($installedCount -le 0) {
     }
 }
 else {
-    $phaseMessage = 'Installed {0} Blender {1} on {2}. Registered the {3} sandbox action and regenerated {4},' -f $installedCount, $buttonWord, $PanelName, [string]$bridgeLayout.BridgeFolderName, [string]$bridgeLayout.AddonActionsFileName
+    $phaseMessage = if ($SkipSync) {
+        'Installed {0} Blender {1} on {2}. Registered the {3} sandbox action without synchronizing or invoking it,' -f $installedCount, $buttonWord, $PanelName, [string]$bridgeLayout.BridgeFolderName
+    }
+    else {
+        'Installed {0} Blender {1} on {2}. Registered the {3} sandbox action and regenerated {4},' -f $installedCount, $buttonWord, $PanelName, [string]$bridgeLayout.BridgeFolderName, [string]$bridgeLayout.AddonActionsFileName
+    }
     switch ([string]$callableCheckStatus) {
         'callable' {
             $statusMessage = $phaseMessage + ' and verified the action is callable.'

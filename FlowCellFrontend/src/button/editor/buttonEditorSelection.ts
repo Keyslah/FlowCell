@@ -448,3 +448,37 @@ export function resolveButtonEditorPanelSurfaceId(
   if (panelSurfaceId) return panelSurfaceId;
   return resolvePanelOwnerMainPlacement(document, programName, panelName)?.surfaceId ?? null;
 }
+
+export function resolveButtonEditorPanelSkinTargetPlacementIds(
+  document: ButtonStateDocument,
+  programName: string,
+  panelName: string,
+  focusedPlacementId: string
+): string[] {
+  const panelSurfaceId = resolveButtonEditorPanelSurfaceId(
+    document,
+    programName,
+    panelName
+  );
+  const focusedPlacement = document.placements[focusedPlacementId];
+  const surface = panelSurfaceId ? document.surfaces[panelSurfaceId] : null;
+  if (
+    !surface ||
+    surface.kind !== "panel" ||
+    focusedPlacement?.surfaceId !== surface.id
+  ) {
+    return [];
+  }
+
+  return surface.placementIds.filter((placementId) => {
+    const placement = document.placements[placementId];
+    const identity = placement
+      ? resolveButtonEditorIdentity(document, placement.buttonId)
+      : null;
+    return Boolean(
+      identity &&
+      namesMatch(identity.programName, programName) &&
+      namesMatch(identity.panelName, panelName)
+    );
+  });
+}

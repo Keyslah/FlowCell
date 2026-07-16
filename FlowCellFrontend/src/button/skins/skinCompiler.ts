@@ -28,6 +28,7 @@ export interface CompiledButtonSkin {
   sanitizedMarkupTemplate: string;
   scopedCss: string;
   animationTokens: string[];
+  hasLabelToken: boolean;
 }
 
 export type ButtonSkinCompileResult =
@@ -175,7 +176,8 @@ export function compileButtonSkin(skin: ButtonSkin): ButtonSkinCompileResult {
       sourceFingerprint,
       sanitizedMarkupTemplate,
       scopedCss: css.join("\n"),
-      animationTokens: validation.analysis.animationTokens
+      animationTokens: validation.analysis.animationTokens,
+      hasLabelToken: validation.analysis.hasLabelToken
     }
   };
 }

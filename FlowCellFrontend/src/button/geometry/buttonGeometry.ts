@@ -53,10 +53,16 @@ export interface CompactButtonPlacementResult {
   reason: string | null;
 }
 
+export interface ButtonPlacementRowProfile {
+  wrapWidth: number;
+  topOffsets: readonly number[];
+}
+
 export interface CompactButtonPlacementOptions {
   anchorX?: number;
   anchorY?: number;
   gap?: number;
+  rowProfile?: ButtonPlacementRowProfile;
 }
 
 export interface ButtonLayoutGeometryIssue {
@@ -135,6 +141,59 @@ export function reorderButtonPlacementIds(
   const remainingTargetIndex = next.indexOf(targetPlacementId);
   next.splice(position === "after" ? remainingTargetIndex + 1 : remainingTargetIndex, 0, movingPlacementId);
   return next;
+}
+
+/**
+ * Recovers the current visual row profile without relying on surface width.
+ * Positive vertical overlap keeps unequal-height Buttons in the same row;
+ * touching or separated rectangles start another row.
+ */
+export function inferButtonPlacementRowProfile(
+  placements: readonly NamedButtonRect[]
+): ButtonPlacementRowProfile {
+  const ordered = [...placements].sort((left, right) =>
+    left.rect.y - right.rect.y ||
+    left.rect.x - right.rect.x ||
+    left.id.localeCompare(right.id)
+  );
+  const rows: Array<{ top: number; bottom: number; width: number }> = [];
+
+  for (const placement of ordered) {
+    const top = placement.rect.y;
+    const bottom = placement.rect.y + placement.rect.height;
+    const width = placement.rect.width;
+    if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= top) {
+      rows.push({ top, bottom, width });
+      continue;
+    }
+
+    let bestRowIndex = -1;
+    let bestOverlap = 0;
+    rows.forEach((row, rowIndex) => {
+      const overlap = Math.min(bottom, row.bottom) - Math.max(top, row.top);
+      if (overlap > bestOverlap + EPSILON) {
+        bestOverlap = overlap;
+        bestRowIndex = rowIndex;
+      }
+    });
+
+    if (bestRowIndex < 0) {
+      rows.push({ top, bottom, width });
+      continue;
+    }
+    const row = rows[bestRowIndex];
+    row.top = Math.min(row.top, top);
+    row.bottom = Math.max(row.bottom, bottom);
+    row.width += width;
+  }
+
+  const orderedRows = rows
+    .sort((left, right) => left.top - right.top || left.bottom - right.bottom);
+  const originTop = orderedRows[0]?.top ?? 0;
+  return {
+    wrapWidth: Math.max(0, ...orderedRows.map((row) => row.width)),
+    topOffsets: orderedRows.map((row) => row.top - originTop)
+  };
 }
 
 function chooseClosestDelta(candidates: readonly number[], tolerance: number): number {
@@ -618,10 +677,13 @@ export function resolveButtonGeometry(
 }
 
 /**
- * Packs the supplied placement order into gap-free rows. Dimensions and input
- * objects remain untouched; z-index is normalized to the saved visual order.
- * The requested anchor is kept when the packed footprint fits there and is
- * clamped toward the surface origin when it does not.
+ * Packs the supplied placement order into rows. Dimensions and input objects
+ * remain untouched; z-index is normalized to the saved visual order. A supplied
+ * row profile preserves the current visual wrap width and top offsets while
+ * allowing variable-width Buttons to rebalance across rows; otherwise rows wrap
+ * only at the surface width. Buttons close horizontal gaps inside each row. The
+ * requested anchor is kept when the packed footprint fits there and is clamped
+ * toward the surface origin when it does not.
  */
 export function compactButtonPlacements(
   placements: readonly NamedButtonRect[],
@@ -646,10 +708,38 @@ export function compactButtonPlacements(
   }
 
   const gap = Number.isFinite(options.gap) ? Math.max(0, options.gap ?? 0) : 0;
+  const rowTopOffsets = options.rowProfile
+    ? [...options.rowProfile.topOffsets]
+    : null;
+  const profiledWrapWidth = options.rowProfile?.wrapWidth;
+  if (
+    options.rowProfile &&
+    rowTopOffsets &&
+    (
+      !Number.isFinite(profiledWrapWidth) ||
+      (placements.length > 0 && (profiledWrapWidth ?? 0) <= 0) ||
+      (placements.length > 0 && rowTopOffsets.length === 0) ||
+      rowTopOffsets.some((offset) => !Number.isFinite(offset) || offset < 0) ||
+      rowTopOffsets.some((offset, index) => index > 0 && offset < rowTopOffsets[index - 1]) ||
+      (rowTopOffsets.length > 0 && Math.abs(rowTopOffsets[0]) > EPSILON)
+    )
+  ) {
+    return {
+      success: false,
+      placements: [],
+      requiredWidth: 0,
+      requiredHeight: 0,
+      reason: "The Button row profile must contain a positive wrap width and ordered top offsets."
+    };
+  }
+  const wrapWidth = options.rowProfile
+    ? Math.min(surfaceWidth, Math.max(0, profiledWrapWidth ?? 0))
+    : surfaceWidth;
   const packed: CompactButtonPlacement[] = [];
   let x = 0;
   let y = 0;
   let rowHeight = 0;
+  let rowIndex = 0;
   let requiredWidth = 0;
   let requiredHeight = 0;
 
@@ -679,10 +769,24 @@ export function compactButtonPlacements(
         reason: `Button placement '${item.id}' is wider than the selected surface.`
       };
     }
-    if (x > EPSILON && x + width > surfaceWidth + EPSILON) {
+    const mustReserveRemainingRows = Boolean(
+      rowTopOffsets &&
+      x > EPSILON &&
+      rowIndex < rowTopOffsets.length - 1 &&
+      placements.length - index === rowTopOffsets.length - rowIndex - 1
+    );
+    if (
+      x > EPSILON &&
+      (x + width > wrapWidth + EPSILON || mustReserveRemainingRows)
+    ) {
+      const nextRowIndex = rowIndex + 1;
       x = 0;
-      y += rowHeight + gap;
+      y = Math.max(
+        y + rowHeight + gap,
+        rowTopOffsets?.[nextRowIndex] ?? 0
+      );
       rowHeight = 0;
+      rowIndex = nextRowIndex;
     }
     if (y + height > surfaceHeight + EPSILON) {
       return {

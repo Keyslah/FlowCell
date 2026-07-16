@@ -57,7 +57,7 @@ export interface ButtonSkinRendererProps {
 interface MountedSkin {
   container: HTMLElement;
   core: HTMLElement | SVGElement;
-  labelNode: HTMLElement | SVGElement;
+  labelNode: HTMLElement | SVGElement | null;
 }
 
 type ButtonHostRenderScale = ButtonSkinScale;
@@ -167,7 +167,9 @@ function mountCompiledSkin(
   shadow.append(style, container);
   const core = container.querySelector<HTMLElement | SVGElement>("[data-core]");
   if (!core) throw new Error("Compiled Button skin is missing data-core.");
-  const labelNode = injectLabel(container, label);
+  const labelNode = compiled.hasLabelToken
+    ? injectLabel(container, label)
+    : null;
   return { container, core, labelNode };
 }
 
@@ -550,7 +552,9 @@ function measureNaturalSkin(
   document.body.append(host);
   try {
     const mounted = mountCompiledSkin(shadow, compiled, label);
-    applyLabelLines(mounted.labelNode, [label], textSizeOverride);
+    if (mounted.labelNode) {
+      applyLabelLines(mounted.labelNode, [label], textSizeOverride);
+    }
     return readMeasurement(mounted.container, mounted.core);
   } finally {
     host.remove();
@@ -566,16 +570,18 @@ function applyTextFit(
   textSizeOverride?: number,
   previewStackWords?: boolean
 ): boolean {
+  const labelNode = mounted.labelNode;
+  if (!labelNode) return false;
   if (!constrained) {
     applyLabelLines(
-      mounted.labelNode,
+      labelNode,
       previewStackWords ? label.trim().split(/\s+/).filter(Boolean) : [label],
       textSizeOverride
     );
     return false;
   }
-  applyLabelLines(mounted.labelNode, [label], textSizeOverride);
-  const computed = getComputedStyle(mounted.labelNode);
+  applyLabelLines(labelNode, [label], textSizeOverride);
+  const computed = getComputedStyle(labelNode);
   const naturalFontSize = textSizeOverride ?? (Number.parseFloat(computed.fontSize) || 13);
   const core = mounted.core as HTMLElement;
   const plan = computeButtonTextFitPlan({
@@ -586,14 +592,14 @@ function applyTextFit(
     naturalFontSize,
     minimumFontSize,
     measure: (fontSize, lines) => {
-      applyLabelLines(mounted.labelNode, lines, fontSize);
+      applyLabelLines(labelNode, lines, fontSize);
       return {
         width: Math.max(core.clientWidth, core.scrollWidth),
         height: Math.max(core.clientHeight, core.scrollHeight)
       };
     }
   });
-  applyLabelLines(mounted.labelNode, plan.lines, plan.fontSize);
+  applyLabelLines(labelNode, plan.lines, plan.fontSize);
   return plan.overflow;
 }
 
@@ -676,6 +682,7 @@ export function ButtonSkinRenderer({
   const compiled = compileResult.ok
     ? compileResult.compiled
     : lastValidRef.current ?? (fallback?.ok ? fallback.compiled : null);
+  const renderedLabel = compiled?.hasLabelToken ? label : "";
   const visualStateRef = useRef<ButtonVisualState>({
     hovered,
     pressed,
@@ -706,7 +713,7 @@ export function ButtonSkinRenderer({
     onShadowRootChangeRef.current?.(shadow);
     let mounted: MountedSkin;
     try {
-      mounted = mountCompiledSkin(shadow, compiled, label);
+      mounted = mountCompiledSkin(shadow, compiled, renderedLabel);
     } catch (mountError) {
       console.error("Failed to mount Button skin.", mountError);
       return;
@@ -714,7 +721,7 @@ export function ButtonSkinRenderer({
     mountedRef.current = mounted;
     const overflow = applyTextFit(
       mounted,
-      label,
+      renderedLabel,
       textFitMode,
       minimumFontSize,
       constrained,
@@ -759,7 +766,7 @@ export function ButtonSkinRenderer({
     observer?.observe(mounted.core);
     observer?.observe(mounted.container);
     const natural = onNaturalMeasurementRef.current
-      ? measureNaturalSkin(compiled, label, textSizeOverride)
+      ? measureNaturalSkin(compiled, renderedLabel, textSizeOverride)
       : null;
     if (natural) onNaturalMeasurementRef.current?.(natural);
     return () => {
@@ -772,7 +779,7 @@ export function ButtonSkinRenderer({
     // The mount deps are the compiled skin's stable identity (skin id + source
     // fingerprint), not object identities: a re-cloned document or a re-created
     // callback must never rebuild the shadow DOM.
-  }, [compiled?.skinId, compiled?.sourceFingerprint, label, textFitMode, minimumFontSize, constrained, textSizeOverride, previewStackWords]);
+  }, [compiled?.skinId, compiled?.sourceFingerprint, renderedLabel, textFitMode, minimumFontSize, constrained, textSizeOverride, previewStackWords]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -790,7 +797,7 @@ export function ButtonSkinRenderer({
     setBooleanAttribute(host, "data-button-match-hitbox-to-skin", matchHitboxToSkin);
     const overflow = applyTextFit(
       mounted,
-      label,
+      renderedLabel,
       textFitMode,
       minimumFontSize,
       constrained,
@@ -815,7 +822,7 @@ export function ButtonSkinRenderer({
     setBooleanAttribute(host, "data-button-text-overflow", overflow);
     onTextOverflowChangeRef.current?.(overflow);
     onMeasurementRef.current?.(readMeasurement(mounted.container, mounted.core, renderScale));
-  }, [width, height, label, textFitMode, minimumFontSize, constrained, matchHitboxToSkin, allowStretching, textSizeOverride, previewStackWords]);
+  }, [width, height, renderedLabel, textFitMode, minimumFontSize, constrained, matchHitboxToSkin, allowStretching, textSizeOverride, previewStackWords]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;

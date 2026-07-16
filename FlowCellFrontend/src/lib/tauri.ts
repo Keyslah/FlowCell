@@ -6,6 +6,14 @@ export interface ForegroundProcessInfo {
   processPath: string;
 }
 
+export function shouldBindScopedNativeOwner(programName: string): boolean {
+  const trimmed = programName.trim().replace(/^"+|"+$/g, "");
+  const processToken = (trimmed.split(/[\\/]/).pop() ?? trimmed)
+    .replace(/\.exe$/i, "")
+    .toLowerCase();
+  return processToken.includes("illustrator");
+}
+
 export function getForegroundProcessInfo(): Promise<ForegroundProcessInfo> {
   return invoke("get_foreground_process_info");
 }

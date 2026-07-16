@@ -25,7 +25,7 @@ if (-not (Test-Path -LiteralPath $ConfigPath -PathType Leaf)) {
     throw "Blender config not found: $ConfigPath"
 }
 
-$config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+$config = Get-Content -LiteralPath $ConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $bridgeLayout = Get-FlowCellBlenderBridgeLayout -Config $config -BridgeFolder $BridgeFolder
 $BridgeFolder = [string]$bridgeLayout.BridgeFolder
 Ensure-FlowCellBlenderBridgeRuntime -Layout $bridgeLayout
@@ -38,7 +38,7 @@ if (-not (Test-Path -LiteralPath $addonActionsPath -PathType Leaf)) {
 $registry = [pscustomobject]@{ actions = @() }
 if (Test-Path -LiteralPath $customRegistryPath -PathType Leaf) {
     try {
-        $registry = Get-Content -LiteralPath $customRegistryPath -Raw | ConvertFrom-Json
+        $registry = Get-Content -LiteralPath $customRegistryPath -Raw -Encoding UTF8 | ConvertFrom-Json
         if ($null -eq $registry.actions) {
             $registry | Add-Member -MemberType NoteProperty -Name actions -Value @() -Force
         }
@@ -96,7 +96,7 @@ function Get-PythonFunctionMetadata([string]$Path, [string]$PreferredFunctionNam
         return [pscustomobject]@{ FunctionName = ''; StartLine = 1; SourceText = '' }
     }
 
-    $lines = @(Get-Content -LiteralPath $Path)
+    $lines = @(Get-Content -LiteralPath $Path -Encoding UTF8)
     $functionName = ''
     $startLine = 1
 
@@ -164,7 +164,7 @@ function Get-PythonTopLevelFunctionNames([string]$Path) {
     }
 
     $names = New-Object System.Collections.Generic.List[string]
-    foreach ($line in @(Get-Content -LiteralPath $Path)) {
+    foreach ($line in @(Get-Content -LiteralPath $Path -Encoding UTF8)) {
         if ([string]$line -match '^(?<indent>[ \t]*)def\s+(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(' -and [string]$matches['indent'] -eq '') {
             [void]$names.Add([string]$matches['name'])
         }
@@ -256,7 +256,7 @@ function Write-Utf8NoBomFile([string]$Path, [string]$Content) {
 }
 
 function Set-GeneratedCustomSection([string]$Path, [string]$SectionText) {
-    $raw = Get-Content -LiteralPath $Path -Raw
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
     $pattern = '(?s)\r?\n?# FLOWCELL CUSTOM ACTIONS START - AUTO-GENERATED.*?# FLOWCELL CUSTOM ACTIONS END - AUTO-GENERATED\r?\n?'
     $sectionRegex = New-Object System.Text.RegularExpressions.Regex($pattern)
 

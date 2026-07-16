@@ -261,6 +261,47 @@ fn is_cursor_over_taskbar_or_preview_surface() -> bool {
     }
 }
 
+#[cfg(any(windows, test))]
+fn resolve_scoped_owner_hwnds(
+    bind_owner: bool,
+    cursor_over_taskbar_or_preview: bool,
+    matches_target_process: bool,
+    foreground_hwnd: isize,
+    window_hwnd: isize,
+    last_owner_hwnd: Option<isize>,
+) -> (Option<isize>, Option<isize>) {
+    if !bind_owner {
+        return (None, None);
+    }
+
+    let remembered_owner_hwnd =
+        if matches_target_process && foreground_hwnd != 0 && foreground_hwnd != window_hwnd {
+            Some(foreground_hwnd)
+        } else {
+            last_owner_hwnd
+        };
+    let native_owner_hwnd = if cursor_over_taskbar_or_preview {
+        None
+    } else {
+        remembered_owner_hwnd
+    };
+
+    (native_owner_hwnd, remembered_owner_hwnd)
+}
+
+#[cfg(any(windows, test))]
+fn should_reapply_scoped_window_state(
+    owner_changed: bool,
+    last_applied: Option<bool>,
+    should_stay_on_top: bool,
+    last_target_match: Option<bool>,
+    matches_target: bool,
+) -> bool {
+    owner_changed
+        || last_applied != Some(should_stay_on_top)
+        || last_target_match != Some(matches_target)
+}
+
 #[cfg(windows)]
 fn apply_scoped_window_state<R: tauri::Runtime>(
     window: &WebviewWindow<R>,
@@ -287,17 +328,18 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         .unwrap_or(false);
     let matches_target = matches_target_process || matches_own_window || matches_scoped_sibling;
     let cursor_over_taskbar_or_preview = is_cursor_over_taskbar_or_preview_surface();
-    let target_owner_hwnd = if entry.bind_owner {
-        if cursor_over_taskbar_or_preview {
-            None
-        } else if matches_target_process && foreground.hwnd != 0 && foreground.hwnd != window_hwnd {
-            Some(foreground.hwnd)
-        } else {
-            entry.last_owner_hwnd
-        }
-    } else {
-        None
-    };
+    // Taskbar previews need the native owner detached temporarily, but that
+    // preview-only state must not erase the real program owner. Remember a
+    // matching target even when it is first observed under the taskbar so a
+    // fast click back to another app can restore the owner immediately.
+    let (native_owner_hwnd, remembered_owner_hwnd) = resolve_scoped_owner_hwnds(
+        entry.bind_owner,
+        cursor_over_taskbar_or_preview,
+        matches_target_process,
+        foreground.hwnd,
+        window_hwnd,
+        entry.last_owner_hwnd,
+    );
 
     let current_owner_hwnd = {
         let owner_hwnd = unsafe { GetWindowLongPtrW(window_hwnd as _, GWLP_HWNDPARENT) };
@@ -307,9 +349,9 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
             Some(owner_hwnd)
         }
     };
-    let owner_changed = target_owner_hwnd != current_owner_hwnd;
+    let owner_changed = native_owner_hwnd != current_owner_hwnd;
     if owner_changed {
-        set_native_window_owner(window, target_owner_hwnd)?;
+        set_native_window_owner(window, native_owner_hwnd)?;
     }
 
     let should_stay_on_top = matches_target && !cursor_over_taskbar_or_preview;
@@ -322,14 +364,21 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
     // SetWindowPos(TOPMOST); running it every poll churns the z-order NOTOPMOST
     // -> TOPMOST continuously and visibly flickers the taskbar while a target
     // (e.g. Blender) is foreground. An already-topmost window stays above the
-    // non-topmost target, so steady-state re-asserts are unnecessary; genuine
-    // changes (target gains/loses foreground, cursor crosses the taskbar, owner
-    // change) still re-apply.
-    if owner_changed || entry.last_applied != Some(should_stay_on_top) {
+    // non-topmost target, so steady-state re-asserts are unnecessary. Re-apply
+    // on target-scope transitions too: taskbar suppression can keep both the
+    // previous and next topmost values false even though Windows just raised a
+    // previewed unowned Pop/Fan above an unrelated foreground app.
+    if should_reapply_scoped_window_state(
+        owner_changed,
+        entry.last_applied,
+        should_stay_on_top,
+        entry.last_target_match,
+        matches_target,
+    ) {
         set_window_topmost_impl(window, should_stay_on_top, should_promote)?;
     }
 
-    Ok((should_stay_on_top, matches_target, target_owner_hwnd))
+    Ok((should_stay_on_top, matches_target, remembered_owner_hwnd))
 }
 
 #[cfg(windows)]
@@ -792,4 +841,54 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
 
         thread::sleep(Duration::from_millis(SCOPED_TOPMOST_POLL_MS));
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve_scoped_owner_hwnds, should_reapply_scoped_window_state};
+
+    #[test]
+    fn taskbar_preview_detaches_without_forgetting_the_program_owner() {
+        assert_eq!(
+            resolve_scoped_owner_hwnds(true, true, false, 300, 100, Some(200)),
+            (None, Some(200))
+        );
+    }
+
+    #[test]
+    fn taskbar_activation_remembers_an_owner_for_fast_return_to_another_app() {
+        let (_, remembered_owner_hwnd) =
+            resolve_scoped_owner_hwnds(true, true, true, 200, 100, None);
+
+        assert_eq!(remembered_owner_hwnd, Some(200));
+        assert_eq!(
+            resolve_scoped_owner_hwnds(true, false, false, 300, 100, remembered_owner_hwnd),
+            (Some(200), Some(200))
+        );
+    }
+
+    #[test]
+    fn taskbar_target_transitions_reapply_without_steady_state_z_order_churn() {
+        assert!(should_reapply_scoped_window_state(
+            false,
+            Some(false),
+            false,
+            Some(false),
+            true
+        ));
+        assert!(should_reapply_scoped_window_state(
+            false,
+            Some(false),
+            false,
+            Some(true),
+            false
+        ));
+        assert!(!should_reapply_scoped_window_state(
+            false,
+            Some(false),
+            false,
+            Some(false),
+            false
+        ));
+    }
 }

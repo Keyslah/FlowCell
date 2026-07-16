@@ -19,6 +19,7 @@ import {
   registerScopedWindowTopmost,
   refreshScopedWindowTopmost,
   setHostWindowTopmost,
+  shouldBindScopedNativeOwner,
   unregisterScopedWindowTopmost
 } from "../../lib/tauri";
 import {
@@ -317,7 +318,11 @@ async function applyProgramScopedTopmost(
   windowLabel: string,
   programName: string
 ): Promise<void> {
-  await registerScopedWindowTopmost(windowLabel, programName, false);
+  await registerScopedWindowTopmost(
+    windowLabel,
+    programName,
+    shouldBindScopedNativeOwner(programName)
+  );
   await refreshScopedWindowTopmost(windowLabel).catch(async () => {
     await setHostWindowTopmost(windowLabel, false).catch(() => {});
   });

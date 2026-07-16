@@ -35,6 +35,27 @@ export interface ButtonExecutionContext {
   ) => void;
 }
 
+export interface ButtonPressEventPlan {
+  dispatchPressDown: boolean;
+  dispatchPressUp: boolean;
+  runClickOnRelease: boolean;
+  synthesizeHoverSessionForKeyboard: boolean;
+}
+
+export function resolveButtonPressEventPlan(button: ButtonRecord): ButtonPressEventPlan {
+  const events = button.executionTarget?.events;
+  const dispatchPressDown = Boolean(events?.pressDown);
+  const dispatchPressUp = Boolean(events?.pressUp);
+  return {
+    dispatchPressDown,
+    dispatchPressUp,
+    runClickOnRelease: !dispatchPressDown,
+    synthesizeHoverSessionForKeyboard: Boolean(
+      dispatchPressDown && dispatchPressUp && events?.hoverEnter && events?.hoverLeave
+    )
+  };
+}
+
 function responseFieldPatch(
   response: unknown,
   fields: readonly ButtonToolField[],

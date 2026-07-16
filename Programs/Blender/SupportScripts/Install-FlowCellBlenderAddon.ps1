@@ -79,11 +79,22 @@ function Copy-DirectoryContents {
     )
 
     New-Item -ItemType Directory -Path $DestinationRoot -Force | Out-Null
+    $isBridgeRuntimeRoot = (
+        (Split-Path -Leaf $SourceRoot) -ieq 'blender_bridge_flowcell' -and
+        (Split-Path -Leaf $DestinationRoot) -ieq 'blender_bridge_flowcell'
+    )
     Get-ChildItem -LiteralPath $SourceRoot -Force | ForEach-Object {
         $destination = Join-Path $DestinationRoot $_.Name
-        if ($_.PSIsContainer) {
+        $isInstalledOwnerState = @('flowcell_custom_actions.json', 'ManagedActions') -contains $_.Name
+        $preserveInstalledOwnerState = $isBridgeRuntimeRoot -and $isInstalledOwnerState -and (Test-Path -LiteralPath $destination)
+        if ($preserveInstalledOwnerState) {
+            # Registry entries and ManagedActions belong to installed Buttons.
+            # Repairing the base add-on must not replace them with bundle templates.
+        }
+        elseif ($_.PSIsContainer) {
             Copy-DirectoryContents -SourceRoot $_.FullName -DestinationRoot $destination
-        } else {
+        }
+        else {
             Copy-Item -LiteralPath $_.FullName -Destination $destination -Force
         }
     }

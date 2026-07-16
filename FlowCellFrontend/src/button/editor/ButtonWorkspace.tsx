@@ -26,6 +26,7 @@ import {
 import { ButtonEditOverlay } from "./ButtonEditOverlay";
 import {
   compactButtonPlacements,
+  inferButtonPlacementRowProfile,
   type CompactButtonPlacement
 } from "../geometry/buttonGeometry";
 import { ButtonReorderOverlay } from "./ButtonReorderOverlay";
@@ -267,6 +268,7 @@ export function ButtonWorkspace({
     const remainingPlacementIds = orderedPlacementIds.filter(
       (placementId) => placementId !== movingPlacementId
     );
+    const rowProfile = inferButtonPlacementRowProfile(sourceItems);
     const movingCenterX = movingRect.x + movingRect.width / 2;
     const movingCenterY = movingRect.y + movingRect.height / 2;
     const candidates: ButtonReorderCandidate[] = [];
@@ -281,7 +283,7 @@ export function ButtonWorkspace({
           rect: document.placements[placementId]
         })),
         surface,
-        { anchorX, anchorY, gap: 0 }
+        { anchorX, anchorY, gap: 0, rowProfile }
       );
       if (!compacted.success) {
         reason = compacted.reason;
