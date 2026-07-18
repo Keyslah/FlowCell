@@ -23,6 +23,10 @@ import {
   type ButtonSkinScale
 } from "../geometry/buttonGeometry";
 import type { ButtonSkinDiagnostic } from "./skinValidator";
+import {
+  BUTTON_VISUAL_SETTLE_FRAMES,
+  resolveButtonVisualSamplingDecision
+} from "./buttonVisualSampling";
 
 type StyleWithVars = CSSProperties & Record<`--${string}`, string | number>;
 
@@ -501,6 +505,26 @@ function readMeasurement(
   });
 }
 
+function inspectRunningSkinAnimations(container: HTMLElement): {
+  available: boolean;
+  running: boolean;
+} {
+  if (typeof container.getAnimations !== "function") {
+    return { available: false, running: false };
+  }
+  try {
+    const animations = container.getAnimations({ subtree: true });
+    return {
+      available: true,
+      running: animations.some(
+        (animation) => animation.pending || animation.playState === "running"
+      )
+    };
+  } catch {
+    return { available: false, running: false };
+  }
+}
+
 function applySkinRootScale(
   mounted: MountedSkin,
   width: number | undefined,
@@ -683,6 +707,8 @@ export function ButtonSkinRenderer({
     ? compileResult.compiled
     : lastValidRef.current ?? (fallback?.ok ? fallback.compiled : null);
   const renderedLabel = compiled?.hasLabelToken ? label : "";
+  const hasMeasurementConsumer = Boolean(onMeasurement || onVisualMeasurement);
+  const hasVisualMeasurementConsumer = Boolean(onVisualMeasurement);
   const visualStateRef = useRef<ButtonVisualState>({
     hovered,
     pressed,
@@ -756,13 +782,17 @@ export function ButtonSkinRenderer({
         sizing.allowStretching,
         renderScale
       );
-      const measurement = readMeasurement(mounted.container, mounted.core, renderScale);
-      onMeasurementRef.current?.(measurement);
-      onVisualMeasurementRef.current?.({ ...measurement, state: visualStateRef.current });
+      if (hasMeasurementConsumer) {
+        const measurement = readMeasurement(mounted.container, mounted.core, renderScale);
+        onMeasurementRef.current?.(measurement);
+        onVisualMeasurementRef.current?.({ ...measurement, state: visualStateRef.current });
+      }
     };
     updateMeasurement();
     const frame = requestAnimationFrame(updateMeasurement);
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(updateMeasurement);
+    const observer = typeof ResizeObserver === "undefined"
+      ? null
+      : new ResizeObserver(updateMeasurement);
     observer?.observe(mounted.core);
     observer?.observe(mounted.container);
     const natural = onNaturalMeasurementRef.current
@@ -779,7 +809,7 @@ export function ButtonSkinRenderer({
     // The mount deps are the compiled skin's stable identity (skin id + source
     // fingerprint), not object identities: a re-cloned document or a re-created
     // callback must never rebuild the shadow DOM.
-  }, [compiled?.skinId, compiled?.sourceFingerprint, renderedLabel, textFitMode, minimumFontSize, constrained, textSizeOverride, previewStackWords]);
+  }, [compiled?.skinId, compiled?.sourceFingerprint, renderedLabel, textFitMode, minimumFontSize, constrained, textSizeOverride, previewStackWords, hasMeasurementConsumer]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -836,19 +866,30 @@ export function ButtonSkinRenderer({
     setBooleanAttribute(host, "data-button-release", release);
     setBooleanAttribute(host, "data-button-disabled", disabled);
     setBooleanAttribute(host, "data-button-error", error);
+    if (!hasVisualMeasurementConsumer) return;
     let frame: number | null = null;
+    let settleFramesRemaining = BUTTON_VISUAL_SETTLE_FRAMES;
     const sample = () => {
       const current = mountedRef.current;
-      if (!current) return;
+      const onVisualMeasurement = onVisualMeasurementRef.current;
+      if (!current || !onVisualMeasurement) return;
       const sizing = sizingRef.current;
       const measurement = readMeasurement(
         current.container,
         current.core,
         resolveHostRenderScale(host, sizing.width, sizing.height)
       );
-      onVisualMeasurementRef.current?.({ ...measurement, state: visualStateRef.current });
       const state = visualStateRef.current;
-      if (state.hovered || state.pressed || state.held || state.play) {
+      onVisualMeasurement({ ...measurement, state });
+      const animationState = inspectRunningSkinAnimations(current.container);
+      const decision = resolveButtonVisualSamplingDecision({
+        state,
+        animationInspectionAvailable: animationState.available,
+        hasRunningAnimations: animationState.running,
+        settleFramesRemaining
+      });
+      settleFramesRemaining = decision.settleFramesRemaining;
+      if (decision.continueSampling) {
         frame = requestAnimationFrame(sample);
       }
     };
@@ -856,7 +897,18 @@ export function ButtonSkinRenderer({
     return () => {
       if (frame !== null) cancelAnimationFrame(frame);
     };
-  }, [constrained, matchHitboxToSkin, hovered, pressed, held, play, release, disabled, error]);
+  }, [
+    constrained,
+    matchHitboxToSkin,
+    hovered,
+    pressed,
+    held,
+    play,
+    release,
+    disabled,
+    error,
+    hasVisualMeasurementConsumer
+  ]);
 
   const style: StyleWithVars = {
     display: "inline-block",

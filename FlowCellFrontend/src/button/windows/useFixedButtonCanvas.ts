@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { resolveButtonWebviewPixelRatio } from "./buttonWindowGeometry";
 
 export interface FixedButtonCanvasMetrics {
   left: number;
@@ -16,7 +17,10 @@ const FALLBACK_METRICS: FixedButtonCanvasMetrics = {
 };
 
 function normalizedScaleFactor(value: number): number {
-  return Number.isFinite(value) && value > 0 ? value : 1;
+  return resolveButtonWebviewPixelRatio(
+    value,
+    typeof window === "undefined" ? undefined : window.devicePixelRatio
+  );
 }
 
 export function useFixedButtonCanvasMetrics(): FixedButtonCanvasMetrics {
@@ -47,6 +51,18 @@ export function useFixedButtonCanvasMetrics(): FixedButtonCanvasMetrics {
           : next;
       });
     };
+
+    const handleViewportResize = () => {
+      if (cancelled) return;
+      setMetrics((current) => {
+        if (!current.ready) return current;
+        const scaleFactor = normalizedScaleFactor(current.scaleFactor);
+        return scaleFactor === current.scaleFactor
+          ? current
+          : { ...current, scaleFactor };
+      });
+    };
+    window.addEventListener("resize", handleViewportResize);
 
     const initialPositionRevision = positionEventRevision;
     const initialScaleRevision = scaleEventRevision;
@@ -95,6 +111,7 @@ export function useFixedButtonCanvasMetrics(): FixedButtonCanvasMetrics {
       cancelled = true;
       unlistenMoved?.();
       unlistenScaleChanged?.();
+      window.removeEventListener("resize", handleViewportResize);
     };
   }, []);
 

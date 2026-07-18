@@ -2,7 +2,8 @@
 param(
   [string]$BuiltExe,
   [string]$AutoHotkeyExe,
-  [string]$AutoHotkeyLicenseFile
+  [string]$AutoHotkeyLicenseFile,
+  [string]$OutputDirectory
 )
 
 Set-StrictMode -Version Latest
@@ -11,13 +12,25 @@ Add-Type -AssemblyName Microsoft.VisualBasic
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$DistRoot = Join-Path $RepoRoot 'dist'
+$DistRoot = if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
+  Join-Path $RepoRoot 'dist'
+} elseif ([System.IO.Path]::IsPathRooted($OutputDirectory)) {
+  [System.IO.Path]::GetFullPath($OutputDirectory)
+} else {
+  [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $OutputDirectory))
+}
 $ProgramsRoot = Join-Path $RepoRoot 'Programs'
 $StagingRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("FlowCell-package-" + [guid]::NewGuid().ToString('N'))
 
 function Stop-Package([string]$Message) {
   throw "[FlowCell package] $Message"
 }
+
+$programPackageSafetyScript = Join-Path $PSScriptRoot 'program-package-safety.ps1'
+if (-not (Test-Path -LiteralPath $programPackageSafetyScript -PathType Leaf)) {
+  Stop-Package "Required release helper missing: $programPackageSafetyScript"
+}
+. $programPackageSafetyScript
 
 function Resolve-BuiltExe([string]$RequestedPath) {
   if ($RequestedPath) {
@@ -149,14 +162,23 @@ function Move-ExistingZipToRecycleBin([string]$Path) {
   }
 }
 
-function New-ZipFromDirectory([string]$SourceRoot, [string]$ZipPath) {
-  Move-ExistingZipToRecycleBin $ZipPath
-  [System.IO.Compression.ZipFile]::CreateFromDirectory(
-    $SourceRoot,
-    $ZipPath,
-    [System.IO.Compression.CompressionLevel]::Optimal,
-    $false
-  )
+function New-TemporaryZipPath([string]$AssetName) {
+  return (Join-Path $DistRoot (".$AssetName-" + [guid]::NewGuid().ToString('N') + '.tmp.zip'))
+}
+
+function Publish-ZipAtomically([string]$TemporaryZipPath, [string]$ZipPath) {
+  if (-not (Test-Path -LiteralPath $TemporaryZipPath -PathType Leaf)) {
+    Stop-Package "Validated ZIP is missing before publish: $TemporaryZipPath"
+  }
+
+  if (-not (Test-Path -LiteralPath $ZipPath -PathType Leaf)) {
+    [System.IO.File]::Move($TemporaryZipPath, $ZipPath)
+    return
+  }
+
+  $backupPath = Join-Path (Split-Path -Parent $ZipPath) ("." + [System.IO.Path]::GetFileName($ZipPath) + "." + [guid]::NewGuid().ToString('N') + '.backup.zip')
+  [System.IO.File]::Replace($TemporaryZipPath, $ZipPath, $backupPath, $true)
+  Move-ExistingZipToRecycleBin $backupPath
 }
 
 function Ensure-ZipDirectoryEntry([string]$ZipPath, [string]$EntryName) {
@@ -177,11 +199,25 @@ function Ensure-ZipDirectoryEntry([string]$ZipPath, [string]$EntryName) {
 function New-FlowCellCorePackage([string]$BuiltExePath, [string]$AhkPath, [string]$AhkLicensePath) {
   $packageRoot = Join-Path $StagingRoot 'Core'
   $zipPath = Join-Path $DistRoot 'FlowCell-Core.zip'
+  $temporaryZipPath = New-TemporaryZipPath 'FlowCell-Core'
 
   Copy-PortableCore $packageRoot $BuiltExePath $AhkPath $AhkLicensePath
-  New-ZipFromDirectory $packageRoot $zipPath
-  Ensure-ZipDirectoryEntry $zipPath 'Programs/'
-  Write-Host "Created: $zipPath"
+  try {
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+      $packageRoot,
+      $temporaryZipPath,
+      [System.IO.Compression.CompressionLevel]::Optimal,
+      $false
+    )
+    Ensure-ZipDirectoryEntry $temporaryZipPath 'Programs/'
+    Assert-CoreZipInvariant $temporaryZipPath
+    Publish-ZipAtomically $temporaryZipPath $zipPath
+    Write-Host "Created: $zipPath"
+  } finally {
+    if (Test-Path -LiteralPath $temporaryZipPath -PathType Leaf) {
+      Remove-Item -LiteralPath $temporaryZipPath -Force
+    }
+  }
 }
 
 function New-FlowCellProgramPackage([System.IO.DirectoryInfo]$ProgramDirectory) {
@@ -190,12 +226,52 @@ function New-FlowCellProgramPackage([System.IO.DirectoryInfo]$ProgramDirectory) 
   $programsPackageRoot = Join-Path $packageRoot 'Programs'
   $destination = Join-Path $programsPackageRoot $ProgramDirectory.Name
   $zipPath = Join-Path $DistRoot "FlowCell-$assetName.zip"
+  $temporaryZipPath = New-TemporaryZipPath "FlowCell-$assetName"
+  $contract = Get-ProgramPackageContract $ProgramDirectory
+  $trackedFiles = @(Get-TrackedProgramFiles $ProgramDirectory)
+  Assert-ProgramManifestReferencesTracked $ProgramDirectory $contract.Manifest $trackedFiles
 
   New-Item -ItemType Directory -Path $programsPackageRoot -Force | Out-Null
-  Copy-Folder $ProgramDirectory.FullName $destination
+  Copy-TrackedProgramFolder $ProgramDirectory $destination $trackedFiles
+  Assert-ProgramStagingInvariant $packageRoot $ProgramDirectory.Name $contract.MutableFolders
 
-  New-ZipFromDirectory $packageRoot $zipPath
-  Write-Host "Created: $zipPath"
+  try {
+    [System.IO.Compression.ZipFile]::CreateFromDirectory(
+      $packageRoot,
+      $temporaryZipPath,
+      [System.IO.Compression.CompressionLevel]::Optimal,
+      $false
+    )
+    Assert-ProgramZipInvariant $temporaryZipPath $ProgramDirectory.Name $contract.MutableFolders
+    Publish-ZipAtomically $temporaryZipPath $zipPath
+    Write-Host "Created: $zipPath"
+  } finally {
+    if (Test-Path -LiteralPath $temporaryZipPath -PathType Leaf) {
+      Remove-Item -LiteralPath $temporaryZipPath -Force
+    }
+  }
+}
+
+function Assert-CoreZipInvariant([string]$ZipPath) {
+  $archive = [System.IO.Compression.ZipFile]::OpenRead($ZipPath)
+  try {
+    $entryNames = @($archive.Entries | ForEach-Object { $_.FullName.Replace('\', '/') })
+    if (-not ($entryNames -contains 'FlowCell.exe')) {
+      Stop-Package 'Core ZIP is missing FlowCell.exe.'
+    }
+    if (-not ($entryNames -contains 'Programs/')) {
+      Stop-Package 'Core ZIP is missing its empty Programs directory.'
+    }
+    $programPayload = @($entryNames | Where-Object {
+      $_.StartsWith('Programs/', [System.StringComparison]::OrdinalIgnoreCase) -and
+      -not $_.Equals('Programs/', [System.StringComparison]::OrdinalIgnoreCase)
+    })
+    if ($programPayload.Count -gt 0) {
+      Stop-Package "Core ZIP unexpectedly contains program payload: $($programPayload[0])"
+    }
+  } finally {
+    $archive.Dispose()
+  }
 }
 
 if (-not (Test-Path -LiteralPath $ProgramsRoot -PathType Container)) {
@@ -218,7 +294,7 @@ try {
   }
 
   Write-Host ''
-  Write-Host 'FlowCell release assets are ready in dist:'
+  Write-Host "FlowCell release assets are ready in ${DistRoot}:"
   Write-Host '  FlowCell-Core.zip'
   foreach ($programDir in $programDirs) {
     $assetName = Convert-ToAssetName $programDir.Name

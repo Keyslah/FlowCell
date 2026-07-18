@@ -16,8 +16,7 @@ import {
   writeRegisteredLayoutWindowSnapshotBounds
 } from "../../lib/layoutSnapshots";
 import {
-  isNativePrimaryMouseButtonDown,
-  useNativeSpaceDragActive,
+  isNativePrimaryMouseButtonDown
 } from "../../lib/nativeKeyState";
 import {
   publishButtonCommit,
@@ -48,10 +47,12 @@ import {
   buttonWindowRectsEqual,
   resolveAspectLockedWindowBounds,
   resolveButtonFrameForScaleFactor,
+  resolveButtonWebviewPixelRatio,
   resolveButtonWindowEnvelope,
   resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin,
   resolvePopoutBoundsAfterDrag,
   resolveUniformSurfaceScale,
+  shouldBypassButtonWindowGeometryTransition,
   translateButtonDesktopBounds,
   type ButtonWindowResizeCorner
 } from "../windows/buttonWindowGeometry";
@@ -63,6 +64,11 @@ import {
   waitForAppliedButtonWindowRender,
   waitForButtonWindowHitTestTurn
 } from "../windows/buttonWindowGeometryTransition";
+import {
+  activateToolSetChildHotkey,
+  listenForToolSetChildHotkeys,
+  type ToolSetChildHotkeyHostState
+} from "../runtime/toolSetChildHotkeyBridge";
 import ButtonPopoutRenderer from "./ButtonPopoutRenderer";
 
 function isUsableDesktopBounds(bounds: ButtonDesktopBounds | null | undefined): bounds is ButtonDesktopBounds {
@@ -123,6 +129,7 @@ export interface ButtonPopoutWindowPageProps {
 
 export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps) {
   const rootRef = useRef<HTMLElement | null>(null);
+  const contentFrameRef = useRef<HTMLDivElement | null>(null);
   const collapsedOriginRef = useRef<{ x: number; y: number } | null>(null);
   const expandedBoundsRef = useRef<ButtonDesktopBounds | null>(null);
   const initializedUnitIdRef = useRef<string | null>(null);
@@ -145,6 +152,13 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   const pendingEnvelopeRef = useRef<ButtonRect | null>(null);
   const envelopeFlushPromiseRef = useRef<Promise<void> | null>(null);
   const nativeGeometryTransitionRef = useRef<Promise<void>>(Promise.resolve());
+  const nativeGeometryTransitionPendingRef = useRef(0);
+  const toolSetChildHotkeyStateRef = useRef<ToolSetChildHotkeyHostState>({
+    document: null,
+    unit: null,
+    renderedDisplayMode: "collapsed",
+    root: null
+  });
   const [activeContext, setActiveContext] = useState(context);
   const [displayMode, setDisplayMode] = useState(context.initialDisplayMode);
   const [renderedToolSetMode, setRenderedToolSetMode] = useState<"collapsed" | "expanded">("collapsed");
@@ -157,11 +171,11 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   const [geometryRefreshToken, setGeometryRefreshToken] = useState(0);
   const [geometryInitialized, setGeometryInitialized] = useState(false);
   const [spaceKeyActive, setSpaceKeyActive] = useState(false);
+  const [nativeSpaceKeyActive, setNativeSpaceKeyActive] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [resizing, setResizing] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const canvasMetrics = useFixedButtonCanvasMetrics();
-  const nativeSpaceKeyActive = useNativeSpaceDragActive();
   const spaceDragActive = spaceKeyActive || nativeSpaceKeyActive;
   const applyCanvasForFrame = useCallback(async (
     bounds: ButtonDesktopBounds,
@@ -181,16 +195,39 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   ): Promise<AppliedButtonCanvas> => {
     const current = appliedCanvasRef.current;
     if (current && buttonDesktopBoundsInsideCanvas(bounds, current.bounds)) {
-      return current;
+      const synchronized = canvasMetrics.ready &&
+        Math.abs(current.scaleFactor - canvasMetrics.scaleFactor) > 0.001
+          ? { ...current, scaleFactor: canvasMetrics.scaleFactor }
+          : current;
+      appliedCanvasRef.current = synchronized;
+      return synchronized;
     }
     return applyCanvasForFrame(bounds, 192);
-  }, [applyCanvasForFrame]);
+  }, [applyCanvasForFrame, canvasMetrics.ready, canvasMetrics.scaleFactor]);
+  useEffect(() => {
+    const current = appliedCanvasRef.current;
+    if (
+      !current ||
+      !canvasMetrics.ready ||
+      Math.abs(current.scaleFactor - canvasMetrics.scaleFactor) <= 0.001
+    ) return;
+    appliedCanvasRef.current = {
+      ...current,
+      scaleFactor: canvasMetrics.scaleFactor
+    };
+  }, [canvasMetrics.ready, canvasMetrics.scaleFactor]);
   const { document, loading, error } = useButtonWindowDocument(
     activeContext.draftSessionId
   );
   const unit = document?.popoutUnits[activeContext.popoutUnitId] ?? null;
   const expandedSurface = unit && document ? document.surfaces[unit.surfaceId] : null;
   const renderedDisplayMode = unit?.kind === "regular" ? "expanded" : renderedToolSetMode;
+  toolSetChildHotkeyStateRef.current = {
+    document,
+    unit,
+    renderedDisplayMode,
+    root: null
+  };
   const expandedGeometryPlacements = useMemo<ButtonPlacement[]>(() => {
     if (!unit || !document) return [];
     return (expandedSurface?.placementIds ?? [])
@@ -307,9 +344,10 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     const currentWindow = getCurrentWindow();
     const rawScaleFactor = appliedCanvasRef.current?.scaleFactor ??
       await currentWindow.scaleFactor().catch(() => 1);
-    const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
-      ? rawScaleFactor
-      : 1;
+    const scaleFactor = resolveButtonWebviewPixelRatio(
+      rawScaleFactor,
+      window.devicePixelRatio
+    );
     const anchorBounds =
       expandedBoundsRef.current ??
       restingEnvelopeFrameRef.current?.bounds ??
@@ -365,6 +403,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   }, [activeContext.initialBounds, ensureCanvasContainsFrame]);
 
   const scheduleNativeGeometryTransition = useCallback((work: () => Promise<void>) => {
+    nativeGeometryTransitionPendingRef.current += 1;
     const transition = nativeGeometryTransitionRef.current
       .catch(() => {})
       .then(async () => {
@@ -377,8 +416,14 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
           await waitForButtonWindowHitTestTurn();
         }
       });
-    nativeGeometryTransitionRef.current = transition;
-    return transition;
+    const trackedTransition = transition.finally(() => {
+      nativeGeometryTransitionPendingRef.current = Math.max(
+        0,
+        nativeGeometryTransitionPendingRef.current - 1
+      );
+    });
+    nativeGeometryTransitionRef.current = trackedTransition;
+    return trackedTransition;
   }, []);
 
   const applyEnvelopeNow = useCallback(async (nextEnvelope: ButtonRect) => {
@@ -393,8 +438,16 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     await commitAppliedEnvelope(nextEnvelope, contentScaleRef.current ?? 1);
   }, [commitAppliedEnvelope]);
 
-  const applyEnvelope = useCallback((nextEnvelope: ButtonRect) =>
-    scheduleNativeGeometryTransition(() => applyEnvelopeNow(nextEnvelope)), [
+  const applyEnvelope = useCallback((nextEnvelope: ButtonRect) => {
+    if (shouldBypassButtonWindowGeometryTransition(
+      appliedEnvelopeRef.current,
+      nextEnvelope,
+      nativeGeometryTransitionPendingRef.current
+    )) {
+      return applyEnvelopeNow(nextEnvelope);
+    }
+    return scheduleNativeGeometryTransition(() => applyEnvelopeNow(nextEnvelope));
+  }, [
     applyEnvelopeNow,
     scheduleNativeGeometryTransition
   ]);
@@ -496,6 +549,31 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     activeContext.popoutUnitId,
     activeContext.popoutUnitId
   ]);
+
+  useEffect(() => {
+    let disposed = false;
+    const unlistenPromise = listenForToolSetChildHotkeys((payload) => {
+      if (disposed) return;
+      const result = activateToolSetChildHotkey(payload, {
+        ...toolSetChildHotkeyStateRef.current,
+        root: rootRef.current
+      });
+      setRuntimeError(result.accepted ? null : result.message);
+    }).catch((listenError) => {
+      if (!disposed) {
+        setRuntimeError(
+          `Could not listen for tool-set child hotkeys: ${
+            listenError instanceof Error ? listenError.message : String(listenError)
+          }`
+        );
+      }
+      return null;
+    });
+    return () => {
+      disposed = true;
+      void unlistenPromise.then((unlisten) => unlisten?.()).catch(() => {});
+    };
+  }, []);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -706,7 +784,10 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         return collapsedOriginRef.current;
       }
       const currentWindow = getCurrentWindow();
-      const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+      const scaleFactor = resolveButtonWebviewPixelRatio(
+        await currentWindow.scaleFactor().catch(() => 1),
+        window.devicePixelRatio
+      );
       const frame = appliedFrameBoundsRef.current ?? expandedBoundsRef.current;
       const envelope = appliedEnvelopeRef.current ?? windowEnvelope.resting;
       const physicalPerDesignPixel = (contentScaleRef.current ?? 1) * scaleFactor;
@@ -1025,8 +1106,11 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
 
   useNativeButtonHitboxes({
     rootRef,
+    broadPhaseRef: contentFrameRef,
+    broadPhasePadding: 16,
     enabled: geometryInitialized && !dragging && !resizing,
-    onHoverChange: handleNativeHoverChange
+    onHoverChange: handleNativeHoverChange,
+    onNativeSpaceChange: setNativeSpaceKeyActive
   });
 
   const handleOwnerActivate = useCallback(() => {
@@ -1054,9 +1138,10 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     }
     const currentWindow = getCurrentWindow();
     const rawScaleFactor = await currentWindow.scaleFactor().catch(() => 1);
-    const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
-      ? rawScaleFactor
-      : 1;
+    const scaleFactor = resolveButtonWebviewPixelRatio(
+      rawScaleFactor,
+      window.devicePixelRatio
+    );
     const liveBounds = appliedFrameBoundsRef.current;
     if (!liveBounds) {
       return;
@@ -1164,9 +1249,10 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         const nextBounds = pendingResizeBoundsRef.current;
         pendingResizeBoundsRef.current = null;
         const rawScaleFactor = await getCurrentWindow().scaleFactor().catch(() => 1);
-        const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
-          ? rawScaleFactor
-          : 1;
+        const scaleFactor = resolveButtonWebviewPixelRatio(
+          rawScaleFactor,
+          window.devicePixelRatio
+        );
         const nextScale = resolveUniformSurfaceScale({
           viewportWidth: nextBounds.width / scaleFactor,
           viewportHeight: nextBounds.height / scaleFactor,
@@ -1280,9 +1366,10 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
           if (!initialBounds) {
             throw new Error("Could not read the Button Pop window bounds for resizing.");
           }
-          const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
-            ? rawScaleFactor
-            : 1;
+          const scaleFactor = resolveButtonWebviewPixelRatio(
+            rawScaleFactor,
+            window.devicePixelRatio
+          );
           resizeSessionRef.current = {
             corner,
             pointerId,
@@ -1532,6 +1619,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       {runtimeError ? <div className="button-window-error">{runtimeError}</div> : null}
       {document && unit && contentFrameRect ? (
         <div
+          ref={contentFrameRef}
           className="button-popout-window__content-frame"
           style={{
             left: contentFrameRect.left,

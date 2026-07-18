@@ -181,21 +181,38 @@ function Ensure-Bridge {
   throw 'Timed out waiting for the Illustrator bridge to become ready.'
 }
 
+function ConvertTo-ComparablePath {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  $fullPath = [System.IO.Path]::GetFullPath($Path)
+  if ($fullPath.StartsWith('\\?\UNC\', [System.StringComparison]::OrdinalIgnoreCase)) {
+    return '\\' + $fullPath.Substring(8)
+  }
+  if (
+    $fullPath.StartsWith('\\?\', [System.StringComparison]::OrdinalIgnoreCase) -and
+    $fullPath.Length -ge 6 -and
+    $fullPath[5] -eq ':'
+  ) {
+    return $fullPath.Substring(4)
+  }
+  return $fullPath
+}
+
 function Test-IsUnderRoot {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
     [Parameter(Mandatory = $true)][string]$Root
   )
 
-  $fullPath = [System.IO.Path]::GetFullPath($Path)
-  $fullRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+  $fullPath = ConvertTo-ComparablePath -Path $Path
+  $fullRoot = (ConvertTo-ComparablePath -Path $Root).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
   return $fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Assert-InstalledScriptPath {
   param([Parameter(Mandatory = $true)][string]$Path)
 
-  $candidate = [System.IO.Path]::GetFullPath($Path)
+  $candidate = ConvertTo-ComparablePath -Path $Path
   if (-not (Test-IsUnderRoot -Path $candidate -Root $script:LocalScriptsRoot)) {
     throw "Refusing Illustrator script outside Button-owned Local Scripts: $Path"
   }

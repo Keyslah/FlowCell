@@ -360,6 +360,22 @@
   gap: 5px;
 }
 
+.button-inspector__animation-actions {
+  display: grid;
+  gap: 5px;
+}
+
+.button-inspector__animation-actions button {
+  width: 100%;
+}
+
+.button-inspector__hint {
+  margin: 6px 0 0;
+  color: rgba(224, 233, 219, 0.64);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .button-editor-check,
 .button-editor-mode {
   display: flex !important;

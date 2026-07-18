@@ -7,24 +7,76 @@ pub(crate) struct ForegroundProcessInfo {
     pub(crate) process_path: String,
 }
 
+#[derive(Serialize, Clone, Copy, Default, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct NativeInputSnapshot {
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) space_down: bool,
+    pub(crate) primary_button_down: bool,
+}
+
+#[cfg(windows)]
+const NATIVE_INPUT_SNAPSHOT_EVENT: &str = "flowcell-native-input-snapshot";
+
+#[cfg(windows)]
+const SCOPED_WINDOW_INPUT_STATE_EVENT: &str = "flowcell-scoped-window-input-state";
+
+#[cfg(windows)]
+const NATIVE_INPUT_POLL_MS: u64 = 16;
+
 #[derive(Clone, Default)]
 pub(crate) struct ScopedTopmostRegistry {
     entries: Arc<Mutex<HashMap<String, ScopedTopmostEntry>>>,
+    #[cfg(windows)]
+    last_external_foreground: Arc<Mutex<Option<ForegroundWindowState>>>,
+    #[cfg(windows)]
+    apply_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Clone)]
 struct ScopedTopmostEntry {
     process_names: Vec<String>,
     bind_owner: bool,
-    last_applied: Option<bool>,
-    last_target_match: Option<bool>,
+    selective_input: bool,
+    last_placement: Option<ScopedWindowPlacement>,
+    last_observed_foreground_hwnd: Option<isize>,
+    last_input_active: Option<bool>,
+    last_preview_suppressed: Option<bool>,
+    cursor_input_applied: bool,
     last_owner_hwnd: Option<isize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ScopedWindowPlacement {
+    Topmost,
+    Normal,
+    Behind(isize),
+    Bottom,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ScopedWindowStateUpdate {
+    placement: ScopedWindowPlacement,
+    observed_foreground_hwnd: isize,
+    input_active: bool,
+    preview_suppressed: bool,
+    cursor_input_applied: bool,
+    remembered_owner_hwnd: Option<isize>,
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ScopedWindowInputState {
+    label: String,
+    active: bool,
 }
 
 #[cfg(windows)]
 #[derive(Clone, Default)]
 struct ForegroundWindowState {
     hwnd: isize,
+    process_id: u32,
     process_info: ForegroundProcessInfo,
 }
 
@@ -54,8 +106,55 @@ pub(crate) fn normalize_configured_process_names(process_names: &[String]) -> Ve
     resolved
 }
 
-fn resolve_program_process_names(program_name: &str) -> Result<Vec<String>, String> {
-    let manifest = program_sources::manifest::load_program_manifest(program_name)?;
+#[cfg(windows)]
+fn read_native_input_snapshot() -> Result<NativeInputSnapshot, String> {
+    let mut cursor = POINT { x: 0, y: 0 };
+    if unsafe { GetCursorPos(&mut cursor) } == 0 {
+        return Err("Could not read the native cursor position.".to_string());
+    }
+    let swapped = unsafe { GetSystemMetrics(SM_SWAPBUTTON) } != 0;
+    let primary_button = if swapped { VK_RBUTTON } else { VK_LBUTTON };
+    Ok(NativeInputSnapshot {
+        x: cursor.x,
+        y: cursor.y,
+        space_down: (unsafe { GetAsyncKeyState(VK_SPACE as i32) } as u16 & 0x8000) != 0,
+        primary_button_down: (unsafe { GetAsyncKeyState(primary_button as i32) } as u16 & 0x8000)
+            != 0,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn get_native_input_snapshot() -> Result<NativeInputSnapshot, String> {
+    #[cfg(windows)]
+    {
+        return read_native_input_snapshot();
+    }
+
+    #[cfg(not(windows))]
+    {
+        Err("Native input snapshots are available only on Windows.".to_string())
+    }
+}
+
+#[cfg(windows)]
+pub(crate) fn start_native_input_worker(app: AppHandle) {
+    thread::spawn(move || {
+        let mut previous_snapshot = None;
+        loop {
+            if let Ok(snapshot) = read_native_input_snapshot() {
+                if previous_snapshot != Some(snapshot) {
+                    let _ = app.emit(NATIVE_INPUT_SNAPSHOT_EVENT, snapshot);
+                    previous_snapshot = Some(snapshot);
+                }
+            }
+            thread::sleep(Duration::from_millis(NATIVE_INPUT_POLL_MS));
+        }
+    });
+}
+
+fn resolve_program_window_scope(program_name: &str) -> Result<(Vec<String>, bool), String> {
+    let program_name = crate::require_registered_program_name(program_name)?;
+    let manifest = program_sources::manifest::load_program_manifest(&program_name)?;
     let process_names = normalize_configured_process_names(&manifest.process_names);
     if process_names.is_empty() {
         return Err(format!(
@@ -63,7 +162,7 @@ fn resolve_program_process_names(program_name: &str) -> Result<Vec<String>, Stri
             manifest.label
         ));
     }
-    Ok(process_names)
+    Ok((process_names, manifest.bind_scoped_native_owner))
 }
 
 fn matches_process_token(process_names: &[String], candidate: &str) -> bool {
@@ -72,20 +171,24 @@ fn matches_process_token(process_names: &[String], candidate: &str) -> bool {
         return false;
     }
 
-    process_names.iter().any(|process_name| {
-        process_name == &normalized_candidate
-            || process_name.contains(&normalized_candidate)
-            || normalized_candidate.contains(process_name)
-    })
+    process_names
+        .iter()
+        .any(|process_name| process_name == &normalized_candidate)
 }
 
 #[cfg(windows)]
 fn process_groups_overlap(left: &[String], right: &[String]) -> bool {
-    left.iter().any(|left_name| {
-        right.iter().any(|right_name| {
-            normalize_process_token(left_name) == normalize_process_token(right_name)
-        })
-    })
+    left.iter()
+        .any(|left_name| right.iter().any(|right_name| left_name == right_name))
+}
+
+#[cfg(any(windows, test))]
+fn matches_foreground_process(
+    process_names: &[String],
+    process_info: &ForegroundProcessInfo,
+) -> bool {
+    matches_process_token(process_names, &process_info.process_name)
+        || matches_process_token(process_names, &process_info.process_path)
 }
 
 #[cfg(windows)]
@@ -241,6 +344,38 @@ fn is_taskbar_or_preview_window(window_handle: isize) -> bool {
 }
 
 #[cfg(windows)]
+fn is_shell_surface_window(window_handle: isize) -> bool {
+    if is_taskbar_or_preview_window(window_handle) {
+        return true;
+    }
+
+    matches!(
+        get_window_class_name(window_handle)
+            .trim()
+            .to_ascii_lowercase()
+            .as_str(),
+        "progman" | "workerw" | "shelldll_defview"
+    )
+}
+
+#[cfg(windows)]
+fn is_valid_external_foreground(foreground: &ForegroundWindowState) -> bool {
+    foreground.hwnd != 0
+        && foreground.process_id != 0
+        && foreground.process_id != std::process::id()
+        && !is_shell_surface_window(foreground.hwnd)
+        && unsafe { IsWindow(foreground.hwnd as _) } != 0
+        && unsafe { IsWindowVisible(foreground.hwnd as _) } != 0
+        && unsafe { IsIconic(foreground.hwnd as _) } == 0
+}
+
+#[cfg(windows)]
+fn is_valid_cached_external(foreground: &ForegroundWindowState) -> bool {
+    is_valid_external_foreground(foreground)
+        && get_window_process_id_by_handle(foreground.hwnd) == foreground.process_id
+}
+
+#[cfg(windows)]
 fn is_cursor_over_taskbar_or_preview_surface() -> bool {
     unsafe {
         let mut cursor = POINT { x: 0, y: 0 };
@@ -261,12 +396,97 @@ fn is_cursor_over_taskbar_or_preview_surface() -> bool {
     }
 }
 
+#[cfg(windows)]
+fn resolve_last_external_foreground(
+    registry: &ScopedTopmostRegistry,
+    foreground: &ForegroundWindowState,
+) -> Option<ForegroundWindowState> {
+    let mut last_external = registry.last_external_foreground.lock().ok()?;
+    if is_valid_external_foreground(foreground) {
+        *last_external = Some(foreground.clone());
+    } else if last_external
+        .as_ref()
+        .is_some_and(|cached| !is_valid_cached_external(cached))
+    {
+        *last_external = None;
+    }
+    last_external.clone()
+}
+
+#[cfg(windows)]
+fn clear_last_external_foreground(registry: &ScopedTopmostRegistry) -> Result<(), String> {
+    let mut last_external = registry
+        .last_external_foreground
+        .lock()
+        .map_err(|_| String::from("Scoped topmost external-foreground lock failed."))?;
+    *last_external = None;
+    Ok(())
+}
+
+#[cfg(any(windows, test))]
+fn resolve_behind_anchor(
+    external_foreground_hwnd: Option<isize>,
+    window_hwnd: isize,
+    last_external_hwnd: Option<isize>,
+) -> Option<isize> {
+    [external_foreground_hwnd, last_external_hwnd]
+        .into_iter()
+        .flatten()
+        .find(|candidate| *candidate != 0 && *candidate != window_hwnd)
+}
+
+#[cfg(any(windows, test))]
+fn resolve_scoped_window_placement(
+    matches_target_process: bool,
+    foreground_is_scoped_window: bool,
+    foreground_scoped_group_matches: bool,
+    last_external_matches_target: bool,
+    cursor_over_taskbar_or_preview: bool,
+    foreground_hwnd: isize,
+    window_hwnd: isize,
+    external_foreground_hwnd: Option<isize>,
+    last_external_hwnd: Option<isize>,
+) -> (ScopedWindowPlacement, bool) {
+    let behind_anchor =
+        resolve_behind_anchor(external_foreground_hwnd, window_hwnd, last_external_hwnd);
+
+    if cursor_over_taskbar_or_preview {
+        return (
+            behind_anchor
+                .map(ScopedWindowPlacement::Behind)
+                .unwrap_or(ScopedWindowPlacement::Bottom),
+            false,
+        );
+    }
+
+    if matches_target_process {
+        return (ScopedWindowPlacement::Topmost, true);
+    }
+
+    // A FlowCell button may become the foreground window while it is being
+    // clicked. That is a continuation of the last proven owning application,
+    // never a new topmost match. Keep the matching group in the normal band so
+    // it remains usable over its owner without floating above other programs.
+    if foreground_is_scoped_window && last_external_matches_target {
+        if foreground_scoped_group_matches && foreground_hwnd != window_hwnd {
+            return (ScopedWindowPlacement::Behind(foreground_hwnd), true);
+        }
+        return (ScopedWindowPlacement::Normal, true);
+    }
+
+    (
+        behind_anchor
+            .map(ScopedWindowPlacement::Behind)
+            .unwrap_or(ScopedWindowPlacement::Bottom),
+        false,
+    )
+}
+
 #[cfg(any(windows, test))]
 fn resolve_scoped_owner_hwnds(
     bind_owner: bool,
     cursor_over_taskbar_or_preview: bool,
-    matches_target_process: bool,
-    foreground_hwnd: isize,
+    owner_candidate_hwnd: Option<isize>,
     window_hwnd: isize,
     last_owner_hwnd: Option<isize>,
 ) -> (Option<isize>, Option<isize>) {
@@ -274,12 +494,9 @@ fn resolve_scoped_owner_hwnds(
         return (None, None);
     }
 
-    let remembered_owner_hwnd =
-        if matches_target_process && foreground_hwnd != 0 && foreground_hwnd != window_hwnd {
-            Some(foreground_hwnd)
-        } else {
-            last_owner_hwnd
-        };
+    let remembered_owner_hwnd = owner_candidate_hwnd
+        .filter(|owner_hwnd| *owner_hwnd != 0 && *owner_hwnd != window_hwnd)
+        .or(last_owner_hwnd);
     let native_owner_hwnd = if cursor_over_taskbar_or_preview {
         None
     } else {
@@ -292,14 +509,21 @@ fn resolve_scoped_owner_hwnds(
 #[cfg(any(windows, test))]
 fn should_reapply_scoped_window_state(
     owner_changed: bool,
-    last_applied: Option<bool>,
-    should_stay_on_top: bool,
-    last_target_match: Option<bool>,
-    matches_target: bool,
+    last_placement: Option<ScopedWindowPlacement>,
+    placement: ScopedWindowPlacement,
+    last_observed_foreground_hwnd: Option<isize>,
+    observed_foreground_hwnd: isize,
+    last_input_active: Option<bool>,
+    input_active: bool,
+    last_preview_suppressed: Option<bool>,
+    preview_suppressed: bool,
 ) -> bool {
     owner_changed
-        || last_applied != Some(should_stay_on_top)
-        || last_target_match != Some(matches_target)
+        || last_placement != Some(placement)
+        || last_observed_foreground_hwnd != Some(observed_foreground_hwnd)
+        || last_input_active != Some(input_active)
+        || last_preview_suppressed != Some(preview_suppressed)
+        || preview_suppressed
 }
 
 #[cfg(windows)]
@@ -308,26 +532,45 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
     entry: &ScopedTopmostEntry,
     foreground: &ForegroundWindowState,
     foreground_scoped_process_names: Option<&[String]>,
-) -> Result<(bool, bool, Option<isize>), String> {
+    last_external_foreground: Option<&ForegroundWindowState>,
+    cursor_over_taskbar_or_preview: bool,
+) -> Result<ScopedWindowStateUpdate, String> {
     let window_hwnd = window
         .hwnd()
         .map_err(|error| format!("Failed to resolve window handle: {error}"))?
         .0 as isize;
-    let foreground_name =
-        normalize_process_token(if foreground.process_info.process_name.is_empty() {
-            foreground.process_info.process_path.as_str()
-        } else {
-            foreground.process_info.process_name.as_str()
-        });
-    let foreground_path_token = normalize_process_token(&foreground.process_info.process_path);
-    let matches_target_process = matches_process_token(&entry.process_names, &foreground_name)
-        || matches_process_token(&entry.process_names, &foreground_path_token);
-    let matches_own_window = foreground.hwnd != 0 && foreground.hwnd == window_hwnd;
-    let matches_scoped_sibling = foreground_scoped_process_names
+    let foreground_is_valid_external = is_valid_external_foreground(foreground);
+    let matches_target_process = foreground_is_valid_external
+        && matches_foreground_process(&entry.process_names, &foreground.process_info);
+    let foreground_is_scoped_window = foreground_scoped_process_names.is_some();
+    let foreground_scoped_group_matches = foreground_scoped_process_names
         .map(|process_names| process_groups_overlap(&entry.process_names, process_names))
         .unwrap_or(false);
-    let matches_target = matches_target_process || matches_own_window || matches_scoped_sibling;
-    let cursor_over_taskbar_or_preview = is_cursor_over_taskbar_or_preview_surface();
+    let last_external_matches_target = last_external_foreground
+        .map(|last_external| {
+            matches_foreground_process(&entry.process_names, &last_external.process_info)
+        })
+        .unwrap_or(false);
+    let last_external_hwnd = last_external_foreground.map(|last_external| last_external.hwnd);
+    let (placement, input_active) = resolve_scoped_window_placement(
+        matches_target_process,
+        foreground_is_scoped_window,
+        foreground_scoped_group_matches,
+        last_external_matches_target,
+        cursor_over_taskbar_or_preview,
+        foreground.hwnd,
+        window_hwnd,
+        foreground_is_valid_external.then_some(foreground.hwnd),
+        last_external_hwnd,
+    );
+    let valid_scoped_continuation = foreground_is_scoped_window && last_external_matches_target;
+    let owner_candidate_hwnd = if matches_target_process {
+        Some(foreground.hwnd)
+    } else if valid_scoped_continuation {
+        last_external_hwnd
+    } else {
+        None
+    };
     // Taskbar previews need the native owner detached temporarily, but that
     // preview-only state must not erase the real program owner. Remember a
     // matching target even when it is first observed under the taskbar so a
@@ -335,8 +578,7 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
     let (native_owner_hwnd, remembered_owner_hwnd) = resolve_scoped_owner_hwnds(
         entry.bind_owner,
         cursor_over_taskbar_or_preview,
-        matches_target_process,
-        foreground.hwnd,
+        owner_candidate_hwnd,
         window_hwnd,
         entry.last_owner_hwnd,
     );
@@ -350,35 +592,132 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         }
     };
     let owner_changed = native_owner_hwnd != current_owner_hwnd;
+    let should_reapply = should_reapply_scoped_window_state(
+        owner_changed,
+        entry.last_placement,
+        placement,
+        entry.last_observed_foreground_hwnd,
+        foreground.hwnd,
+        entry.last_input_active,
+        input_active,
+        entry.last_preview_suppressed,
+        cursor_over_taskbar_or_preview,
+    );
+
+    // Inactive scoped windows always fail closed. Full interactive tool pages
+    // also restore normal input here; transparent Pop/Fan hosts leave active
+    // hit testing to the selective frontend controller.
+    let cursor_input_applied = if !input_active || !entry.selective_input {
+        window.set_ignore_cursor_events(!input_active).is_ok()
+    } else {
+        true
+    };
+
     if owner_changed {
         set_native_window_owner(window, native_owner_hwnd)?;
     }
 
-    let should_stay_on_top = matches_target && !cursor_over_taskbar_or_preview;
-    let should_promote = should_stay_on_top
-        && matches_target_process
-        && foreground.hwnd != 0
-        && foreground.hwnd != window_hwnd;
-    // Only re-issue the native topmost/show calls when the resolved state
-    // actually changes. set_window_topmost_impl clears always-on-top then sets
-    // SetWindowPos(TOPMOST); running it every poll churns the z-order NOTOPMOST
-    // -> TOPMOST continuously and visibly flickers the taskbar while a target
-    // (e.g. Blender) is foreground. An already-topmost window stays above the
-    // non-topmost target, so steady-state re-asserts are unnecessary. Re-apply
-    // on target-scope transitions too: taskbar suppression can keep both the
-    // previous and next topmost values false even though Windows just raised a
-    // previewed unowned Pop/Fan above an unrelated foreground app.
-    if should_reapply_scoped_window_state(
-        owner_changed,
-        entry.last_applied,
-        should_stay_on_top,
-        entry.last_target_match,
-        matches_target,
-    ) {
-        set_window_topmost_impl(window, should_stay_on_top, should_promote)?;
+    // Only an exact external process match is ever allowed to select TOPMOST.
+    // Inactive windows are placed behind the real foreground HWND instead of
+    // merely using HWND_NOTOPMOST, which would put them at the top of the normal
+    // band and could still cover the newly selected application.
+    if should_reapply {
+        set_scoped_native_window_placement(window, placement, matches_target_process)?;
     }
 
-    Ok((should_stay_on_top, matches_target, remembered_owner_hwnd))
+    Ok(ScopedWindowStateUpdate {
+        placement,
+        observed_foreground_hwnd: foreground.hwnd,
+        input_active,
+        preview_suppressed: cursor_over_taskbar_or_preview,
+        cursor_input_applied,
+        remembered_owner_hwnd,
+    })
+}
+
+#[cfg(windows)]
+fn is_native_window_topmost(window_hwnd: isize) -> bool {
+    window_hwnd != 0
+        && (unsafe { GetWindowLongPtrW(window_hwnd as _, GWL_EXSTYLE) } as u32 & WS_EX_TOPMOST) != 0
+}
+
+#[cfg(windows)]
+fn set_scoped_native_window_placement<R: tauri::Runtime>(
+    window: &WebviewWindow<R>,
+    placement: ScopedWindowPlacement,
+    promote: bool,
+) -> Result<(), String> {
+    window
+        .set_always_on_top(false)
+        .map_err(|error| error.to_string())?;
+    let hwnd = window
+        .hwnd()
+        .map_err(|error| format!("Failed to resolve window handle: {error}"))?;
+    let mut resolved_placement = match placement {
+        ScopedWindowPlacement::Behind(anchor)
+            if anchor == 0
+                || anchor == hwnd.0 as isize
+                || unsafe { IsWindow(anchor as _) } == 0 =>
+        {
+            ScopedWindowPlacement::Bottom
+        }
+        other => other,
+    };
+    if let ScopedWindowPlacement::Behind(anchor) = resolved_placement {
+        if get_window_process_id_by_handle(anchor) == std::process::id()
+            && is_native_window_topmost(anchor)
+        {
+            unsafe {
+                SetWindowPos(
+                    Win32Hwnd(anchor as *mut c_void),
+                    Some(HWND_NOTOPMOST),
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+                )
+                .map_err(|error| error.to_string())?;
+            }
+        }
+        if is_native_window_topmost(anchor) {
+            resolved_placement = ScopedWindowPlacement::Bottom;
+        }
+    }
+    let insert_after = match resolved_placement {
+        ScopedWindowPlacement::Topmost => HWND_TOPMOST,
+        ScopedWindowPlacement::Normal => HWND_NOTOPMOST,
+        ScopedWindowPlacement::Behind(anchor) => Win32Hwnd(anchor as *mut c_void),
+        ScopedWindowPlacement::Bottom => HWND_BOTTOM,
+    };
+
+    unsafe {
+        let is_minimized = IsIconic(hwnd.0 as _) != 0;
+        let should_show_window = matches!(resolved_placement, ScopedWindowPlacement::Topmost)
+            && promote
+            && !is_minimized;
+
+        if should_show_window {
+            let _ = ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE);
+        }
+
+        SetWindowPos(
+            hwnd,
+            Some(insert_after),
+            0,
+            0,
+            0,
+            0,
+            if should_show_window {
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW
+            } else {
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    }
+
+    Ok(())
 }
 
 #[cfg(windows)]
@@ -480,6 +819,7 @@ fn get_foreground_window_state_impl() -> ForegroundWindowState {
 
         ForegroundWindowState {
             hwnd: foreground_window as isize,
+            process_id,
             process_info: ForegroundProcessInfo {
                 process_name,
                 process_path,
@@ -638,17 +978,23 @@ pub(crate) fn set_host_window_topmost(
 pub(crate) fn register_scoped_window_topmost(
     label: String,
     program_name: String,
-    bind_owner: Option<bool>,
+    _bind_owner: Option<bool>,
+    selective_input: Option<bool>,
     registry: State<ScopedTopmostRegistry>,
 ) -> Result<Vec<String>, String> {
-    let process_names_result = resolve_program_process_names(&program_name);
+    let window_scope_result = resolve_program_window_scope(&program_name);
+    #[cfg(windows)]
+    let _apply_guard = registry
+        .apply_lock
+        .lock()
+        .map_err(|_| String::from("Scoped topmost apply lock failed."))?;
     let mut entries = registry
         .entries
         .lock()
         .map_err(|_| String::from("Scoped topmost registry lock failed."))?;
 
-    let process_names = match process_names_result {
-        Ok(process_names) => process_names,
+    let (process_names, bind_owner) = match window_scope_result {
+        Ok(window_scope) => window_scope,
         Err(error) => {
             entries.remove(&label);
             return Err(error);
@@ -665,9 +1011,13 @@ pub(crate) fn register_scoped_window_topmost(
         label,
         ScopedTopmostEntry {
             process_names,
-            bind_owner: bind_owner.unwrap_or(true),
-            last_applied: None,
-            last_target_match: None,
+            bind_owner,
+            selective_input: selective_input.unwrap_or(false),
+            last_placement: None,
+            last_observed_foreground_hwnd: None,
+            last_input_active: None,
+            last_preview_suppressed: None,
+            cursor_input_applied: false,
             last_owner_hwnd: None,
         },
     );
@@ -680,12 +1030,45 @@ pub(crate) fn unregister_scoped_window_topmost(
     label: String,
     registry: State<ScopedTopmostRegistry>,
 ) -> Result<(), String> {
+    #[cfg(windows)]
+    let _apply_guard = registry
+        .apply_lock
+        .lock()
+        .map_err(|_| String::from("Scoped topmost apply lock failed."))?;
     let mut entries = registry
         .entries
         .lock()
         .map_err(|_| String::from("Scoped topmost registry lock failed."))?;
     entries.remove(&label);
+    let registry_is_empty = entries.is_empty();
+    drop(entries);
+    #[cfg(windows)]
+    if registry_is_empty {
+        clear_last_external_foreground(&registry)?;
+    }
+    #[cfg(not(windows))]
+    let _ = registry_is_empty;
     Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn get_scoped_window_input_state(
+    label: String,
+    registry: State<ScopedTopmostRegistry>,
+) -> Result<bool, String> {
+    #[cfg(windows)]
+    let _apply_guard = registry
+        .apply_lock
+        .lock()
+        .map_err(|_| String::from("Scoped topmost apply lock failed."))?;
+    let entries = registry
+        .entries
+        .lock()
+        .map_err(|_| String::from("Scoped topmost registry lock failed."))?;
+    Ok(entries
+        .get(&label)
+        .and_then(|entry| entry.last_input_active)
+        .unwrap_or(false))
 }
 
 #[tauri::command]
@@ -696,6 +1079,10 @@ pub(crate) fn refresh_scoped_window_topmost(
 ) -> Result<(), String> {
     #[cfg(windows)]
     {
+        let _apply_guard = registry
+            .apply_lock
+            .lock()
+            .map_err(|_| String::from("Scoped topmost apply lock failed."))?;
         let entries_snapshot = {
             let entries = registry
                 .entries
@@ -712,24 +1099,41 @@ pub(crate) fn refresh_scoped_window_topmost(
             .get_webview_window(&label)
             .ok_or_else(|| format!("Window '{}' was not found.", label))?;
         let foreground = get_foreground_window_state_impl();
+        let cursor_over_taskbar_or_preview = is_cursor_over_taskbar_or_preview_surface();
+        let last_external_foreground = resolve_last_external_foreground(&registry, &foreground);
         let foreground_scoped_process_names =
             resolve_foreground_scoped_process_names(&app, &entries_snapshot, &foreground);
-        let (should_stay_on_top, matches_target, last_owner_hwnd) = apply_scoped_window_state(
+        let update = apply_scoped_window_state(
             &window,
             &entry,
             &foreground,
             foreground_scoped_process_names.as_deref(),
+            last_external_foreground.as_ref(),
+            cursor_over_taskbar_or_preview,
         )?;
 
-        let mut entries = registry
-            .entries
-            .lock()
-            .map_err(|_| String::from("Scoped topmost registry lock failed."))?;
-        if let Some(entry) = entries.get_mut(&label) {
-            entry.last_applied = Some(should_stay_on_top);
-            entry.last_target_match = Some(matches_target);
-            entry.last_owner_hwnd = last_owner_hwnd;
+        {
+            let mut entries = registry
+                .entries
+                .lock()
+                .map_err(|_| String::from("Scoped topmost registry lock failed."))?;
+            if let Some(entry) = entries.get_mut(&label) {
+                entry.last_placement = Some(update.placement);
+                entry.last_observed_foreground_hwnd = Some(update.observed_foreground_hwnd);
+                entry.last_input_active = Some(update.input_active);
+                entry.last_preview_suppressed = Some(update.preview_suppressed);
+                entry.cursor_input_applied = update.cursor_input_applied;
+                entry.last_owner_hwnd = update.remembered_owner_hwnd;
+            }
         }
+        app.emit(
+            SCOPED_WINDOW_INPUT_STATE_EVENT,
+            ScopedWindowInputState {
+                label,
+                active: update.input_active,
+            },
+        )
+        .map_err(|error| error.to_string())?;
     }
 
     #[cfg(not(windows))]
@@ -774,24 +1178,37 @@ pub(crate) fn get_foreground_process_info() -> Result<ForegroundProcessInfo, Str
 #[cfg(windows)]
 pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmostRegistry) {
     thread::spawn(move || loop {
+        let apply_guard = match registry.apply_lock.lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                thread::sleep(Duration::from_millis(SCOPED_TOPMOST_POLL_MS));
+                continue;
+            }
+        };
         let snapshot = match registry.entries.lock() {
             Ok(entries) => entries.clone(),
             Err(_) => {
+                drop(apply_guard);
                 thread::sleep(Duration::from_millis(SCOPED_TOPMOST_POLL_MS));
                 continue;
             }
         };
 
         if snapshot.is_empty() {
+            let _ = clear_last_external_foreground(&registry);
+            drop(apply_guard);
             thread::sleep(Duration::from_millis(SCOPED_TOPMOST_POLL_MS));
             continue;
         }
 
         let foreground = get_foreground_window_state_impl();
+        let cursor_over_taskbar_or_preview = is_cursor_over_taskbar_or_preview_surface();
+        let last_external_foreground = resolve_last_external_foreground(&registry, &foreground);
         let foreground_scoped_process_names =
             resolve_foreground_scoped_process_names(&app, &snapshot, &foreground);
         let mut missing_labels = Vec::new();
         let mut applied_updates = Vec::new();
+        let mut input_state_updates = Vec::new();
 
         for (label, entry) in &snapshot {
             let Some(window) = app.get_webview_window(&label) else {
@@ -799,58 +1216,141 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
                 continue;
             };
 
-            if let Ok((should_stay_on_top, matches_target, last_owner_hwnd)) =
-                apply_scoped_window_state(
-                    &window,
-                    &entry,
-                    &foreground,
-                    foreground_scoped_process_names.as_deref(),
-                )
-            {
-                if entry.last_applied == Some(should_stay_on_top)
-                    && entry.last_target_match == Some(matches_target)
-                    && entry.last_owner_hwnd == last_owner_hwnd
-                    && !matches_target
-                {
-                    continue;
+            if let Ok(update) = apply_scoped_window_state(
+                &window,
+                entry,
+                &foreground,
+                foreground_scoped_process_names.as_deref(),
+                last_external_foreground.as_ref(),
+                cursor_over_taskbar_or_preview,
+            ) {
+                if entry.last_input_active != Some(update.input_active) {
+                    input_state_updates.push((label.clone(), update.input_active));
                 }
-
-                applied_updates.push((
-                    label.clone(),
-                    should_stay_on_top,
-                    matches_target,
-                    last_owner_hwnd,
-                ));
+                if entry.last_placement != Some(update.placement)
+                    || entry.last_observed_foreground_hwnd != Some(update.observed_foreground_hwnd)
+                    || entry.last_input_active != Some(update.input_active)
+                    || entry.last_preview_suppressed != Some(update.preview_suppressed)
+                    || entry.cursor_input_applied != update.cursor_input_applied
+                    || entry.last_owner_hwnd != update.remembered_owner_hwnd
+                {
+                    applied_updates.push((label.clone(), update));
+                }
             }
         }
 
+        let mut registry_became_empty = false;
         if !missing_labels.is_empty() || !applied_updates.is_empty() {
             if let Ok(mut entries) = registry.entries.lock() {
                 for label in missing_labels {
                     entries.remove(&label);
                 }
-                for (label, last_applied, last_target_match, last_owner_hwnd) in applied_updates {
+                for (label, update) in applied_updates {
                     if let Some(entry) = entries.get_mut(&label) {
-                        entry.last_applied = Some(last_applied);
-                        entry.last_target_match = Some(last_target_match);
-                        entry.last_owner_hwnd = last_owner_hwnd;
+                        entry.last_placement = Some(update.placement);
+                        entry.last_observed_foreground_hwnd = Some(update.observed_foreground_hwnd);
+                        entry.last_input_active = Some(update.input_active);
+                        entry.last_preview_suppressed = Some(update.preview_suppressed);
+                        entry.cursor_input_applied = update.cursor_input_applied;
+                        entry.last_owner_hwnd = update.remembered_owner_hwnd;
                     }
                 }
+                registry_became_empty = entries.is_empty();
             }
         }
+        if registry_became_empty {
+            let _ = clear_last_external_foreground(&registry);
+        }
 
+        for (label, active) in input_state_updates {
+            let _ = app.emit(
+                SCOPED_WINDOW_INPUT_STATE_EVENT,
+                ScopedWindowInputState { label, active },
+            );
+        }
+
+        drop(apply_guard);
         thread::sleep(Duration::from_millis(SCOPED_TOPMOST_POLL_MS));
     });
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_scoped_owner_hwnds, should_reapply_scoped_window_state};
+    #[cfg(windows)]
+    use super::{
+        clear_last_external_foreground, ForegroundProcessInfo, ForegroundWindowState,
+        ScopedTopmostRegistry,
+    };
+    use super::{
+        matches_process_token, resolve_scoped_owner_hwnds, resolve_scoped_window_placement,
+        should_reapply_scoped_window_state, NativeInputSnapshot, ScopedWindowPlacement,
+    };
+
+    #[test]
+    fn scoped_process_matching_is_exact_after_executable_normalization() {
+        let configured = vec!["blender".to_string(), "app".to_string()];
+        assert!(matches_process_token(
+            &configured,
+            r"C:\Program Files\Blender\blender.exe"
+        ));
+        assert!(!matches_process_token(&configured, "blender-launcher.exe"));
+        assert!(!matches_process_token(&configured, "WhatsApp.exe"));
+        assert!(!matches_process_token(
+            &configured,
+            "ApplicationFrameHost.exe"
+        ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn empty_registry_clears_stale_external_authorization() {
+        let registry = ScopedTopmostRegistry::default();
+        *registry
+            .last_external_foreground
+            .lock()
+            .expect("external foreground lock") = Some(ForegroundWindowState {
+            hwnd: 200,
+            process_id: 42,
+            process_info: ForegroundProcessInfo {
+                process_name: "blender.exe".to_string(),
+                process_path: r"C:\Blender\blender.exe".to_string(),
+            },
+        });
+
+        clear_last_external_foreground(&registry).expect("clear should succeed");
+
+        assert!(registry
+            .last_external_foreground
+            .lock()
+            .expect("external foreground lock")
+            .is_none());
+    }
+
+    #[test]
+    fn native_input_snapshot_uses_frontend_camel_case_fields() {
+        let value = serde_json::to_value(NativeInputSnapshot {
+            x: -1920,
+            y: 24,
+            space_down: true,
+            primary_button_down: false,
+        })
+        .expect("native input snapshot should serialize");
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "x": -1920,
+                "y": 24,
+                "spaceDown": true,
+                "primaryButtonDown": false
+            })
+        );
+    }
 
     #[test]
     fn taskbar_preview_detaches_without_forgetting_the_program_owner() {
         assert_eq!(
-            resolve_scoped_owner_hwnds(true, true, false, 300, 100, Some(200)),
+            resolve_scoped_owner_hwnds(true, true, None, 100, Some(200)),
             (None, Some(200))
         );
     }
@@ -858,37 +1358,174 @@ mod tests {
     #[test]
     fn taskbar_activation_remembers_an_owner_for_fast_return_to_another_app() {
         let (_, remembered_owner_hwnd) =
-            resolve_scoped_owner_hwnds(true, true, true, 200, 100, None);
+            resolve_scoped_owner_hwnds(true, true, Some(200), 100, None);
 
         assert_eq!(remembered_owner_hwnd, Some(200));
         assert_eq!(
-            resolve_scoped_owner_hwnds(true, false, false, 300, 100, remembered_owner_hwnd),
+            resolve_scoped_owner_hwnds(true, false, None, 100, remembered_owner_hwnd),
             (Some(200), Some(200))
         );
     }
 
     #[test]
-    fn taskbar_target_transitions_reapply_without_steady_state_z_order_churn() {
+    fn only_the_actual_owning_process_resolves_to_topmost() {
+        assert_eq!(
+            resolve_scoped_window_placement(
+                true,
+                false,
+                false,
+                true,
+                false,
+                200,
+                100,
+                Some(200),
+                Some(200),
+            ),
+            (ScopedWindowPlacement::Topmost, true)
+        );
+        assert_eq!(
+            resolve_scoped_window_placement(
+                false,
+                false,
+                false,
+                false,
+                false,
+                300,
+                100,
+                Some(300),
+                Some(200),
+            ),
+            (ScopedWindowPlacement::Behind(300), false)
+        );
+    }
+
+    #[test]
+    fn scoped_button_focus_is_normal_band_continuation_not_topmost() {
+        assert_eq!(
+            resolve_scoped_window_placement(
+                false,
+                true,
+                true,
+                true,
+                false,
+                100,
+                100,
+                None,
+                Some(200),
+            ),
+            (ScopedWindowPlacement::Normal, true)
+        );
+        assert_eq!(
+            resolve_scoped_window_placement(
+                false,
+                true,
+                true,
+                false,
+                false,
+                100,
+                100,
+                None,
+                Some(300),
+            ),
+            (ScopedWindowPlacement::Behind(300), false)
+        );
+    }
+
+    #[test]
+    fn wrong_scoped_group_anchors_behind_the_real_external_program() {
+        assert_eq!(
+            resolve_scoped_window_placement(
+                false,
+                true,
+                true,
+                false,
+                false,
+                100,
+                101,
+                None,
+                Some(200),
+            ),
+            (ScopedWindowPlacement::Behind(200), false)
+        );
+        assert_eq!(
+            resolve_scoped_window_placement(
+                false,
+                true,
+                false,
+                true,
+                false,
+                100,
+                110,
+                None,
+                Some(200),
+            ),
+            (ScopedWindowPlacement::Normal, true)
+        );
+    }
+
+    #[test]
+    fn taskbar_preview_always_demotes_and_disables_input() {
+        assert_eq!(
+            resolve_scoped_window_placement(
+                true,
+                false,
+                false,
+                true,
+                true,
+                200,
+                100,
+                Some(200),
+                Some(200),
+            ),
+            (ScopedWindowPlacement::Behind(200), false)
+        );
+    }
+
+    #[test]
+    fn foreground_handle_changes_reapply_without_steady_state_churn() {
         assert!(should_reapply_scoped_window_state(
             false,
+            Some(ScopedWindowPlacement::Behind(200)),
+            ScopedWindowPlacement::Behind(300),
+            Some(200),
+            300,
             Some(false),
             false,
             Some(false),
-            true
+            false,
         ));
         assert!(should_reapply_scoped_window_state(
             false,
+            Some(ScopedWindowPlacement::Topmost),
+            ScopedWindowPlacement::Topmost,
+            Some(200),
+            201,
+            Some(true),
+            true,
             Some(false),
             false,
-            Some(true),
-            false
         ));
         assert!(!should_reapply_scoped_window_state(
             false,
+            Some(ScopedWindowPlacement::Behind(300)),
+            ScopedWindowPlacement::Behind(300),
+            Some(300),
+            300,
             Some(false),
             false,
             Some(false),
-            false
+            false,
+        ));
+        assert!(should_reapply_scoped_window_state(
+            false,
+            Some(ScopedWindowPlacement::Behind(300)),
+            ScopedWindowPlacement::Behind(300),
+            Some(300),
+            300,
+            Some(false),
+            false,
+            Some(true),
+            true,
         ));
     }
 }

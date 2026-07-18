@@ -2,6 +2,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { loadBindsWorkspace, saveBindShortcut } from "../../lib/binds";
+import { deriveBindsPanelButtonScope } from "../../lib/bindsButtonScope";
 import { formatShortcutForDisplay, parseShortcutInput } from "../../lib/bindings";
 import {
   MACRO_PANEL_CHANGED_EVENT,
@@ -257,6 +258,10 @@ export default function BindsWindowPage({
     () => findButton(selectedPanel, selection.buttonId),
     [selectedPanel, selection.buttonId]
   );
+  const panelButtonScope = useMemo(
+    () => deriveBindsPanelButtonScope(selectedPanel?.buttons ?? [], selection.buttonId),
+    [selectedPanel, selection.buttonId]
+  );
   const selectedMacro = useMemo(
     () => findMacro(workspace, selectedMacroId),
     [selectedMacroId, workspace]
@@ -478,10 +483,13 @@ export default function BindsWindowPage({
       }
 
       const target = selectedButton.executionTarget?.trim() || selectedButton.target;
+      const isToolSetChild = selectedButton.kind.trim().toLowerCase() === "tool-set-child";
       const result = await saveBindShortcut({
         programName: selectedProgram.name,
         programTabId: selectedProgram.programTabId,
         target,
+        targetKind: isToolSetChild ? "tool-set-child" : "script",
+        ownerButtonId: isToolSetChild ? selectedButton.ownerButtonId : undefined,
         bindingId: selectedButton.bindingId ?? 0,
         shortcut: validation.shortcut
       });
@@ -603,12 +611,12 @@ export default function BindsWindowPage({
                   <span className="binds-window__field-label">Button</span>
             <select
               className="binds-window__select"
-              value={selection.buttonId}
+              value={panelButtonScope.toolbarButtonId}
               onChange={(event) => handleButtonChange(event.target.value)}
-              disabled={!selectedPanel || selectedPanel.buttons.length === 0}
+              disabled={!selectedPanel || panelButtonScope.toolbarButtons.length === 0}
             >
               <option value="">{selectedPanel ? "Pick a button" : "Pick a panel first"}</option>
-              {selectedPanel?.buttons.map((button) => (
+              {panelButtonScope.toolbarButtons.map((button) => (
                 <option key={button.id} value={button.id}>
                   {button.label}
                 </option>
@@ -814,14 +822,14 @@ export default function BindsWindowPage({
                 </div>
               </header>
 
-              {selectedPanel && selectedPanel.buttons.length > 0 ? (
+              {selectedPanel && panelButtonScope.currentPanelButtons.length > 0 ? (
                 <div className="binds-window__table" role="table" aria-label="Current panel binds">
                   <div className="binds-window__table-header" role="row">
                     <span role="columnheader">Button</span>
                     <span role="columnheader">Shortcut</span>
                   </div>
                   <div className="binds-window__table-body">
-                    {selectedPanel.buttons.map((button) => (
+                    {panelButtonScope.currentPanelButtons.map((button) => (
                       <button
                         key={button.id}
                         type="button"

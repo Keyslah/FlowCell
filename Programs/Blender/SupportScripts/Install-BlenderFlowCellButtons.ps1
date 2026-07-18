@@ -583,29 +583,11 @@ if (-not $SkipSync -and (Test-Path -LiteralPath $customActionSyncPath -PathType 
 
 $reloadRequired = $false
 $reloadReason = ''
-$firstInstalled = @($installResults | Where-Object { [bool]$_.Installed } | Select-Object -First 1)
-if (-not $SkipSync -and @($firstInstalled).Count -gt 0) {
-    $dispatcherPath = Join-Path $supportRoot 'Invoke-BlenderFlowCellAction.ps1'
-    if (Test-Path -LiteralPath $dispatcherPath -PathType Leaf) {
-        $response = & $dispatcherPath -Action ([string]$firstInstalled[0].Action) -Label ([string]$firstInstalled[0].Action) -PassThruResponse 2>$null
-        if ($LASTEXITCODE -ne 0) {
-            $reloadRequired = $true
-            $reloadReason = ('Blender must reload the addon or restart to use newly registered action ''{0}''.' -f [string]$firstInstalled[0].Action)
-            $callableCheckStatus = 'reload_required'
-        }
-        else {
-            $responseStatus = [string](Get-FlowCellObjectPropertyValue -InputObject $response -Name 'status')
-            if ($response -and -not [string]::IsNullOrWhiteSpace($responseStatus) -and $responseStatus -ne 'ok') {
-                $reloadRequired = $true
-                $responseMessage = [string](Get-FlowCellObjectPropertyValue -InputObject $response -Name 'message')
-                $reloadReason = ('Blender addon reported ''{0}'' for action ''{1}'' from {2}. Reload or restart Blender.' -f $responseMessage, [string]$firstInstalled[0].Action, [string]$bridgeLayout.BridgeFolderName)
-                $callableCheckStatus = 'reload_required'
-            }
-            else {
-                $callableCheckStatus = 'callable'
-            }
-        }
-    }
+if (-not $SkipSync -and @($installResults | Where-Object { [bool]$_.Installed }).Count -gt 0) {
+    # Registration must not execute an arbitrary program action. The registry and
+    # generated wrapper are validated above; execution belongs to an explicit
+    # user action with its declared payload.
+    $callableCheckStatus = 'registered'
 }
 
 $installedCount = @($installResults | Where-Object { [bool]$_.Installed }).Count
@@ -630,11 +612,8 @@ else {
         'Installed {0} Blender {1} on {2}. Registered the {3} sandbox action and regenerated {4},' -f $installedCount, $buttonWord, $PanelName, [string]$bridgeLayout.BridgeFolderName, [string]$bridgeLayout.AddonActionsFileName
     }
     switch ([string]$callableCheckStatus) {
-        'callable' {
-            $statusMessage = $phaseMessage + ' and verified the action is callable.'
-        }
-        'reload_required' {
-            $statusMessage = $phaseMessage + ' and determined Blender must reload the addon or restart before the action is callable.'
+        'registered' {
+            $statusMessage = $phaseMessage + ' and validated registration without executing a program action.'
         }
         default {
             $statusMessage = $phaseMessage + ' and skipped the callable check.'

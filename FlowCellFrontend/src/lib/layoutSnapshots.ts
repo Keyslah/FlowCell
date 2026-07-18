@@ -1,4 +1,5 @@
-import type { FlowCellBounds, LayoutSnapshotWindowKind } from "../types";
+import type { FlowCellBounds, LayoutSnapshotWindowKind } from "../types.js";
+import { isUsableButtonWindowBounds } from "../button/windows/buttonWindowGeometry.js";
 
 const MANAGED_LAYOUT_WINDOWS_STORAGE_KEY = "flowcell.button-layout-windows.v2";
 const LAST_LAYOUT_DIRECTORY_STORAGE_KEY = "flowcell.last-layout-directory.v1";
@@ -16,15 +17,7 @@ export interface RegisteredLayoutWindow {
 }
 
 function normalizeBounds(bounds: FlowCellBounds | null | undefined): FlowCellBounds | undefined {
-  if (
-    !bounds ||
-    !Number.isFinite(bounds.Left) ||
-    !Number.isFinite(bounds.Top) ||
-    !Number.isFinite(bounds.Width) ||
-    !Number.isFinite(bounds.Height) ||
-    bounds.Width <= 0 ||
-    bounds.Height <= 0
-  ) {
+  if (!isUsableButtonWindowBounds(bounds)) {
     return undefined;
   }
 
@@ -56,11 +49,19 @@ function readRegisteredLayoutWindowMap(): Record<string, RegisteredLayoutWindow>
       return {};
     }
     return Object.fromEntries(
-      Object.entries(parsed).filter(([, entry]) =>
-        entry?.kind === "button-editor" ||
-        entry?.kind === "button-popout" ||
-        entry?.kind === "button-fan"
-      )
+      Object.entries(parsed)
+        .filter(([, entry]) =>
+          entry?.kind === "button-editor" ||
+          entry?.kind === "button-popout" ||
+          entry?.kind === "button-fan"
+        )
+        .map(([windowLabel, entry]) => [
+          windowLabel,
+          {
+            ...entry,
+            snapshotBounds: normalizeBounds(entry.snapshotBounds)
+          }
+        ])
     );
   } catch {
     return {};

@@ -13,6 +13,7 @@ import type {
   JsonObject,
   JsonValue
 } from "../types.js";
+import { notifyButtonActivationEffect } from "./buttonActivationEffects.js";
 
 export interface ButtonExecutionResult {
   executed: boolean;
@@ -25,6 +26,7 @@ export interface ButtonExecutionResult {
 export interface ButtonExecutionContext {
   fields?: readonly ButtonToolField[];
   fieldValues?: Readonly<Record<string, JsonValue>>;
+  payloadOverride?: Readonly<JsonObject>;
   onFieldActivate?: (
     field: ButtonToolField,
     currentValue: JsonValue
@@ -214,7 +216,10 @@ export async function executeButtonTarget(
   if (eventName && eventName !== "click" && !target.events?.[eventName]) {
     return { executed: false, fieldValues, fieldPatch: {} };
   }
-  const payload = mapButtonFieldsToPayload(context.fields ?? [], fieldValues);
+  const payload = mergePayload(
+    mapButtonFieldsToPayload(context.fields ?? [], fieldValues),
+    context.payloadOverride ?? {}
+  );
   const response = await dispatchTarget(target, eventName, fieldValues, payload);
   return { executed: true, response, fieldValues, fieldPatch: {} };
 }
@@ -273,11 +278,18 @@ export async function executeButtonRecord(
   const templatePayload = behavior?.payloadTemplate
     ? resolveButtonPayloadTemplate(behavior.payloadTemplate, nextFieldValues)
     : {};
+  if (
+    !eventName ||
+    eventName === "click" ||
+    eventName === "pressDown"
+  ) {
+    notifyButtonActivationEffect(button);
+  }
   const response = await dispatchTarget(
     button.executionTarget,
     eventName,
     nextFieldValues,
-    mergePayload(mappedPayload, templatePayload)
+    mergePayload(mergePayload(mappedPayload, templatePayload), context.payloadOverride ?? {})
   );
   const responsePatch = responseFieldPatch(response, context.fields ?? []);
   const finalValues = { ...nextFieldValues, ...responsePatch };

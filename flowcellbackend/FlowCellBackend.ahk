@@ -224,13 +224,50 @@ GetIniTextValue(iniText, sectionName, keyName, defaultValue := "") {
     return defaultValue
 }
 
+IsFlowCellProgramRegistered(programLabel) {
+    global flowCellBindingsPath
+    if !FileExist(flowCellBindingsPath)
+        return false
+
+    try iniText := ReadUtf8TextFileWithoutBom(flowCellBindingsPath)
+    catch
+        return false
+
+    targetLabel := StrLower(Trim(programLabel ""))
+    currentProgramSection := false
+    normalizedText := StrReplace(iniText, "`r", "")
+    for rawLine in StrSplit(normalizedText, "`n") {
+        line := Trim(rawLine)
+        if line = "" || SubStr(line, 1, 1) = ";" || SubStr(line, 1, 1) = "#"
+            continue
+
+        lineLength := StrLen(line)
+        if lineLength >= 2 && SubStr(line, 1, 1) = "[" && SubStr(line, lineLength, 1) = "]" {
+            sectionName := Trim(SubStr(line, 2, lineLength - 2))
+            currentProgramSection := InStr(StrLower(sectionName), "programtab_") = 1
+            continue
+        }
+
+        if !currentProgramSection
+            continue
+
+        separatorIndex := InStr(line, "=")
+        if separatorIndex <= 1
+            continue
+        key := StrLower(Trim(SubStr(line, 1, separatorIndex - 1)))
+        if key = "label" && StrLower(Trim(SubStr(line, separatorIndex + 1))) = targetLabel
+            return true
+    }
+    return false
+}
+
 class FlowCellApp {
     __New(logger, showUi := true) {
         global flowCellScanStatePath, flowCellBindingsPath, flowCellRecordedActionsDir
         this.projectRoot := A_ScriptDir
         this.logger := logger
         this.isVisualHost := !!showUi
-        this.scanner := IllustratorScanner(this.logger, flowCellScanStatePath)
+        this.scanner := ""
         this.shortcutManager := ScriptShortcutManager(this, flowCellBindingsPath, this.logger)
         this.actionHotkeyManager := ActionHotkeyManager(this, flowCellBindingsPath, this.logger, this.shortcutManager.candidateShortcuts)
         this.recordedActionStore := RecordedMacroStore(flowCellRecordedActionsDir, this.logger)
@@ -288,19 +325,24 @@ class FlowCellApp {
         rightX := 604
         rightW := 620
 
-        this.scanButton := window.AddButton("x12 y12 w150 h30", "Scan Illustrator UI")
-        this.scanButton.OnEvent("Click", (*) => this.RunScan(false))
-        this.TrackScrollableControl(this.scanButton)
+        illustratorRegistered := IsFlowCellProgramRegistered("Illustrator")
+        if illustratorRegistered {
+            this.scanButton := window.AddButton("x12 y12 w150 h30", "Scan Illustrator UI")
+            this.scanButton.OnEvent("Click", (*) => this.RunScan(false))
+            this.TrackScrollableControl(this.scanButton)
 
-        this.rescanButton := window.AddButton("x172 y12 w100 h30", "Re-scan")
-        this.rescanButton.OnEvent("Click", (*) => this.RunScan(true))
-        this.TrackScrollableControl(this.rescanButton)
+            this.rescanButton := window.AddButton("x172 y12 w100 h30", "Re-scan")
+            this.rescanButton.OnEvent("Click", (*) => this.RunScan(true))
+            this.TrackScrollableControl(this.rescanButton)
+        }
 
-        this.logButton := window.AddButton("x282 y12 w100 h30", "Open Log")
+        logButtonX := illustratorRegistered ? 282 : 12
+        reloadButtonX := illustratorRegistered ? 392 : 122
+        this.logButton := window.AddButton("x" logButtonX " y12 w100 h30", "Open Log")
         this.logButton.OnEvent("Click", (*) => this.OpenLog())
         this.TrackScrollableControl(this.logButton)
 
-        this.reloadButton := window.AddButton("x392 y12 w100 h30", "Reload App")
+        this.reloadButton := window.AddButton("x" reloadButtonX " y12 w100 h30", "Reload App")
         this.reloadButton.OnEvent("Click", (*) => Reload())
         this.TrackScrollableControl(this.reloadButton)
 
@@ -617,9 +659,10 @@ class FlowCellApp {
         )
         this.logger.Info(actionWord " requested by user.")
         try {
-            this.scanResult := this.scanner.Scan()
+            scanner := this.GetIllustratorScanner()
+            this.scanResult := scanner.Scan()
             this.UpdateActionButtons(this.scanResult.readyForActions)
-            this.SetActionStatus(this.scanner.BuildStatusText(this.scanResult), true)
+            this.SetActionStatus(scanner.BuildStatusText(this.scanResult), true)
             this.logger.Info(actionWord " completed. ReadyForActions=" BoolToWord(this.scanResult.readyForActions))
         } catch as err {
             this.scanResult := ""
@@ -681,9 +724,10 @@ class FlowCellApp {
             , true
         )
         try {
-            this.scanResult := this.scanner.Scan()
+            scanner := this.GetIllustratorScanner()
+            this.scanResult := scanner.Scan()
             this.UpdateActionButtons(this.scanResult.readyForActions)
-            this.SetActionStatus(this.scanner.BuildStatusText(this.scanResult), true)
+            this.SetActionStatus(scanner.BuildStatusText(this.scanResult), true)
             if this.scanResult.readyForActions
                 return true
 
@@ -1062,6 +1106,11 @@ class FlowCellApp {
             if normalized != "" && normalized != excludeNorm
                 used[normalized] := true
         }
+        for binding in this.shortcutManager.buttonBindings {
+            normalized := NormalizeShortcut(binding.shortcut)
+            if normalized != "" && normalized != excludeNorm
+                used[normalized] := true
+        }
         for binding in this.actionHotkeyManager.GetBindingRecords() {
             normalized := NormalizeShortcut(binding.shortcut)
             if normalized != "" && normalized != excludeNorm
@@ -1243,6 +1292,13 @@ class FlowCellApp {
         } catch {
             return ""
         }
+    }
+
+    GetIllustratorScanner() {
+        global flowCellScanStatePath
+        if !IsObject(this.scanner)
+            this.scanner := IllustratorScanner(this.logger, flowCellScanStatePath)
+        return this.scanner
     }
 
     StartTempShotsScreenSnip() {
@@ -1595,6 +1651,8 @@ class FlowCellApp {
     }
 
     StartIllustratorAutomationPrewarm() {
+        if !IsFlowCellProgramRegistered("Illustrator")
+            return
         if this.illustratorAutomationPrewarmTimer = ""
             this.illustratorAutomationPrewarmTimer := ObjBindMethod(this, "RunIllustratorAutomationPrewarm")
         SetTimer this.illustratorAutomationPrewarmTimer, -250
@@ -1621,6 +1679,11 @@ class FlowCellApp {
     }
 
     RunIllustratorAutomationPrewarm(*) {
+        if !IsFlowCellProgramRegistered("Illustrator") {
+            this.illustratorAutomationWarmed := false
+            this.illustratorAutomationPrewarmPid := 0
+            return
+        }
         if this.illustratorAutomationPrewarmInProgress {
             this.ScheduleIllustratorAutomationPrewarm(1000)
             return
@@ -3678,6 +3741,7 @@ class ScriptShortcutManager {
         this.bindingFilePath := bindingFilePath
         this.logger := logger
         this.bindings := []
+        this.buttonBindings := []
         this.nextId := 1
         this.registered := Map()
         this.candidateShortcuts := this.BuildCandidateShortcuts()
@@ -3716,6 +3780,7 @@ class ScriptShortcutManager {
 
     LoadFromDisk() {
         this.bindings := []
+        this.buttonBindings := []
         this.nextId := 1
 
         if !FileExist(this.bindingFilePath) {
@@ -3730,6 +3795,7 @@ class ScriptShortcutManager {
         } catch as err {
             this.logger.Error("Failed to read the FlowCell bindings file.", err)
             this.bindings := []
+            this.buttonBindings := []
             this.nextId := 1
             return
         }
@@ -3746,8 +3812,31 @@ class ScriptShortcutManager {
             section := "Binding_" idToken
             try {
                 shortcut := CanonicalizeShortcut(GetIniTextValue(iniText, section, "Shortcut"))
-                scriptPath := NormalizeFlowCellProgramPath(GetIniTextValue(iniText, section, "ScriptPath"))
                 programTabId := GetIniTextValue(iniText, section, "ProgramTabId", "0")
+                targetKind := StrLower(Trim(GetIniTextValue(iniText, section, "TargetKind", "script")))
+                if targetKind = "tool-set-child" || targetKind = "tool-set-owner" {
+                    buttonId := Trim(GetIniTextValue(iniText, section, "ButtonId"))
+                    ownerButtonId := Trim(GetIniTextValue(iniText, section, "OwnerButtonId"))
+                    if shortcut = "" || buttonId = "" || ownerButtonId = "" {
+                        this.logger.Warn("Ignored malformed " targetKind " binding section " section ".")
+                        continue
+                    }
+                    this.buttonBindings.Push({
+                        id: Integer(idToken),
+                        shortcut: shortcut,
+                        targetKind: targetKind,
+                        buttonId: buttonId,
+                        ownerButtonId: ownerButtonId,
+                        programTabId: Integer(programTabId),
+                        status: "Owned by running FlowCell"
+                    })
+                    continue
+                }
+                if targetKind != "" && targetKind != "script" {
+                    this.logger.Warn("Ignored unsupported binding target kind in section " section ": " targetKind)
+                    continue
+                }
+                scriptPath := NormalizeFlowCellProgramPath(GetIniTextValue(iniText, section, "ScriptPath"))
                 this.bindings.Push({
                     id: Integer(idToken),
                     shortcut: shortcut,
@@ -3777,6 +3866,16 @@ class ScriptShortcutManager {
                 IniWrite binding.programTabId, this.bindingFilePath, section, "ProgramTabId"
         }
 
+        for binding in this.buttonBindings {
+            section := "Binding_" binding.id
+            IniWrite binding.shortcut, this.bindingFilePath, section, "Shortcut"
+            IniWrite binding.targetKind, this.bindingFilePath, section, "TargetKind"
+            IniWrite binding.buttonId, this.bindingFilePath, section, "ButtonId"
+            IniWrite binding.ownerButtonId, this.bindingFilePath, section, "OwnerButtonId"
+            if binding.HasOwnProp("programTabId") && binding.programTabId
+                IniWrite binding.programTabId, this.bindingFilePath, section, "ProgramTabId"
+        }
+
         ; IniWrite creates new files as UTF-16 (BOM FF FE). The Tauri/Rust side reads this
         ; file with a strict UTF-8 reader, so re-save as UTF-8 or the frontend bindings
         ; parser fails outright. FileRead auto-detects the source BOM/encoding.
@@ -3788,6 +3887,8 @@ class ScriptShortcutManager {
     BuildIdList() {
         ids := []
         for binding in this.bindings
+            ids.Push(binding.id)
+        for binding in this.buttonBindings
             ids.Push(binding.id)
         return JoinLines(ids, "|")
     }
@@ -3964,6 +4065,15 @@ class ScriptShortcutManager {
                 return {
                     ok: false,
                     message: "That shortcut is already bound to:`r`n" binding.scriptPath
+                }
+            }
+        }
+
+        for binding in this.buttonBindings {
+            if NormalizeShortcut(binding.shortcut) = NormalizeShortcut(shortcut) {
+                return {
+                    ok: false,
+                    message: "That shortcut is already bound to a FlowCell Button:`r`n" binding.buttonId
                 }
             }
         }
@@ -4221,6 +4331,15 @@ class ActionHotkeyManager {
                 return {
                     ok: false,
                     message: "That shortcut is already bound to a script:`r`n" binding.scriptPath
+                }
+            }
+        }
+
+        for binding in this.app.shortcutManager.buttonBindings {
+            if NormalizeShortcut(binding.shortcut) = NormalizeShortcut(shortcut) {
+                return {
+                    ok: false,
+                    message: "That shortcut is already bound to a FlowCell Button:`r`n" binding.buttonId
                 }
             }
         }
@@ -5039,7 +5158,8 @@ if runScriptPath != "" {
 }
 
 app.StartDirectScriptReceiver()
-app.StartIllustratorAutomationPrewarm()
+if IsFlowCellProgramRegistered("Illustrator")
+    app.StartIllustratorAutomationPrewarm()
 
 if HasCliFlag("--headless") {
     logger.Info("Macro backend started in headless mode.")

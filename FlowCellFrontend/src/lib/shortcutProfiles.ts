@@ -3,13 +3,13 @@ import {
   formatShortcutForDisplay,
   normalizeShortcut,
   parseShortcutInput
-} from "./bindings";
+} from "./bindings.js";
 import type {
   BindableButtonRecord,
   BindsWorkspaceData,
   ShortcutProfileDocument,
   ShortcutProfileEntry
-} from "../types";
+} from "../types.js";
 
 export const UNBOUND_SHORTCUT_LABEL = "Unbound";
 
@@ -32,17 +32,6 @@ type ShortcutRestriction = {
   source: string;
 };
 
-const PROGRAM_PROFILE_ID_MAP: Array<{
-  match: string;
-  profileId: string;
-  label: string;
-}> = [
-  { match: "windows", profileId: "windows", label: "Windows" },
-  { match: "photoshop", profileId: "adobe.photoshop.windows", label: "Photoshop" },
-  { match: "illustrator", profileId: "adobe.illustrator.windows", label: "Illustrator" },
-  { match: "blender", profileId: "blender.windows", label: "Blender" }
-];
-
 function pushUniqueShortcut(values: string[], value: string) {
   const canonical = canonicalizeShortcut(value);
   if (!canonical) {
@@ -63,18 +52,17 @@ function buildBindingOwnerKey(programTabId: number, target: string): string {
   return `${programTabId}:${normalizeBindingTarget(target)}`;
 }
 
-function resolveProgramProfileMatch(programName: string | undefined) {
-  const normalizedProgramName = (programName ?? "").trim().toLowerCase();
-  for (const entry of PROGRAM_PROFILE_ID_MAP) {
-    if (normalizedProgramName.includes(entry.match)) {
-      return entry;
-    }
-  }
-
+function resolveProgramProfileMatch(
+  workspace: BindsWorkspaceData,
+  programName: string | undefined
+) {
+  const program = workspace.programs.find((entry) =>
+    entry.name.localeCompare(programName ?? "", undefined, { sensitivity: "accent" }) === 0
+  );
+  const profileId = program?.shortcutProfileId?.trim();
   return {
-    match: "flowcell",
-    profileId: "flowcell",
-    label: "FlowCell"
+    profileId: profileId || "flowcell",
+    label: program?.name.trim() || "FlowCell"
   };
 }
 
@@ -133,9 +121,10 @@ export function buildShortcutCandidatePool(): string[] {
 
 function resolveShortcutProfiles(
   documents: ShortcutProfileDocument[],
+  workspace: BindsWorkspaceData,
   programName: string
 ): ResolvedShortcutProfiles {
-  const profileMatch = resolveProgramProfileMatch(programName);
+  const profileMatch = resolveProgramProfileMatch(workspace, programName);
   const sortedDocuments = sortShortcutProfileDocuments(documents);
   const windowsDocuments = sortedDocuments.filter((document) => document.profileId === "windows");
   const programDocuments =
@@ -300,7 +289,7 @@ export function computeAvailableShortcutChoices(args: {
   programTabId: number;
   selectedButton?: BindableButtonRecord | null;
 }): string[] {
-  const profiles = resolveShortcutProfiles(args.workspace.shortcutProfiles, args.programName);
+  const profiles = resolveShortcutProfiles(args.workspace.shortcutProfiles, args.workspace, args.programName);
   const usedShortcutOwners = buildUsedShortcutOwnerMap({
     workspace: args.workspace,
     selectedButton: args.selectedButton,
@@ -381,7 +370,7 @@ export function validateShortcutInput(args: {
   const selectedCurrentShortcut = canonicalizeShortcut(args.selectedButton?.shortcut ?? "");
   const selectedCurrentShortcutNormalized = normalizeShortcut(selectedCurrentShortcut);
   const shortcutNormalized = normalizeShortcut(shortcut);
-  const profiles = resolveShortcutProfiles(args.workspace.shortcutProfiles, args.programName);
+  const profiles = resolveShortcutProfiles(args.workspace.shortcutProfiles, args.workspace, args.programName);
   const restriction = resolveShortcutRestriction(shortcut, profiles);
   const warning = restriction
     ? `Warning: ${formatShortcutForDisplay(shortcut)} is also used by ${restriction.label}${

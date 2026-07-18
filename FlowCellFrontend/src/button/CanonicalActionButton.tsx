@@ -34,6 +34,7 @@ export function CanonicalActionButton({
     defaultSkinId: DEFAULT_BUTTON_SKIN.id,
     defaultTextFitMode: "shrink-and-stack",
     disabled,
+    activationAnimation: null,
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: {}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.codex-micro.stop-current-task",
+  "label": "Stop Current Task",
+  "tooltip": "Invoke the current Codex task's visible Stop control.",
+  "program": "Windows",
+  "source": "stop_current_task.ps1"
+}

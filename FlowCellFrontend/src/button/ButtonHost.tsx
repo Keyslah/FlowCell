@@ -21,6 +21,7 @@ import {
   resolveButtonPressEventPlan,
   type ButtonExecutionResult
 } from "./runtime/ButtonRuntimeAdapter";
+import { notifyButtonActivationEffect } from "./runtime/buttonActivationEffects";
 import { isButtonWindowGeometryTransitionActive } from "./windows/buttonWindowGeometryTransition";
 
 export interface ButtonHostProps {
@@ -161,6 +162,14 @@ export function ButtonHost({
     if (mode === "edit" || button.disabled) return;
     try {
       if (eventName === "click" && onActivate && activationEvent) {
+        if (
+          button.role === "panel-owner" ||
+          button.role === "tool-set-owner" ||
+          !button.executionTarget ||
+          button.toolSetBehavior?.execute === false
+        ) {
+          notifyButtonActivationEffect(button);
+        }
         await onActivate(button, activationEvent);
         onExecutionResult?.({ executed: false, fieldValues: fieldValues ?? {}, fieldPatch: {} });
         return;

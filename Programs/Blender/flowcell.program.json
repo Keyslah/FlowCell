@@ -5,6 +5,8 @@
   "programType": "bridge",
   "defaultPanels": ["Collections", "Files", "Utility"],
   "processNames": ["blender", "blender-launcher"],
+  "bindScopedNativeOwner": false,
+  "shortcutProfileId": "blender.windows",
   "gitScriptsFolder": "Blender Git Scripts",
   "panelsFolder": "Panels",
   "localScriptsFolder": "Blender Local Scripts",
@@ -12,6 +14,18 @@
   "allowedScriptExtensions": ["py"],
   "allowedManifestFileNames": ["flowcell.script.json", "flowcell.toolset.json"],
   "supportsToolsetManifests": true,
+  "bundledSources": [
+    {
+      "id": "blender.theme-workbench",
+      "version": "2.0.4",
+      "panelName": "toolset",
+      "sourcePath": "Blender Git Scripts/Toolsets/theme",
+      "importKind": "tool-set",
+      "installOnAdd": true,
+      "legacyMatchLabel": "theme",
+      "legacyMatchKind": "tool-set"
+    }
+  ],
   "runner": {
     "kind": "blender-bridge",
     "programKey": "blender_bridge",

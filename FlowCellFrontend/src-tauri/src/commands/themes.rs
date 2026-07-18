@@ -511,6 +511,11 @@ pub(crate) fn sample_photo_theme_colors(
 }
 
 #[tauri::command]
+pub(crate) fn sample_image_palette(image_path: String) -> Result<SampledPhotoThemeColors, String> {
+    sample_photo_theme_colors(image_path)
+}
+
+#[tauri::command]
 pub(crate) fn save_blender_theme_file(
     suggested_name: String,
     path: Option<String>,

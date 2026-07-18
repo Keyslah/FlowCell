@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.codex-micro.voice-prompt",
+  "label": "Voice Prompt",
+  "tooltip": "Start Codex's built-in Dictate control for the current composer.",
+  "program": "Windows",
+  "source": "voice_prompt.ps1"
+}

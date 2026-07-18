@@ -42,6 +42,13 @@ export interface ButtonDesktopBounds {
   height: number;
 }
 
+export type ButtonActivationAnimationPresetId = "plus-rise";
+
+export interface ButtonActivationAnimation {
+  presetId: ButtonActivationAnimationPresetId;
+  desktopBounds: ButtonDesktopBounds;
+}
+
 export interface ButtonCoreMeasurement {
   width: number;
   height: number;
@@ -139,6 +146,7 @@ export interface ButtonRecord {
   defaultSkinId: ButtonSkinId;
   defaultTextFitMode: ButtonTextFitMode;
   disabled: boolean;
+  activationAnimation: ButtonActivationAnimation | null;
   toolSetParentId: ButtonId | null;
   toolSetBehavior: ButtonToolSetChildBehavior | null;
   metadata: JsonObject;
@@ -205,6 +213,14 @@ export interface ButtonSkin {
 
 export type ButtonPopoutOpenRule = "toggle" | "click" | "hover" | "manual";
 export type ButtonPopoutCloseRule = "toggle" | "escape" | "hover-out" | "manual";
+
+export interface ButtonToolPagePresentation {
+  kind: "tool-page";
+  schemaVersion: 1;
+  renderer: string;
+  title?: string;
+  config: JsonObject;
+}
 
 export interface ButtonToolFieldOption {
   id: string;
@@ -305,6 +321,7 @@ export interface ToolSetButtonPopoutUnit extends ButtonPopoutUnitBase {
   childButtonIds: ButtonId[];
   childPlacementIds: ButtonPlacementId[];
   fields: ButtonToolField[];
+  presentation?: ButtonToolPagePresentation | null;
 }
 
 export type ButtonPopoutUnit = RegularButtonPopoutUnit | ToolSetButtonPopoutUnit;

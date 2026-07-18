@@ -19,7 +19,6 @@ import {
   registerScopedWindowTopmost,
   refreshScopedWindowTopmost,
   setHostWindowTopmost,
-  shouldBindScopedNativeOwner,
   unregisterScopedWindowTopmost
 } from "../../lib/tauri";
 import {
@@ -29,7 +28,12 @@ import {
   type ButtonFanWindowContext,
   type ButtonPopoutWindowContext
 } from "../../lib/windowContext";
-import { resolveFixedButtonCanvasBounds } from "./buttonWindowGeometry";
+import {
+  isUsableButtonWindowBounds,
+  resolveButtonWebviewPixelRatio,
+  resolveFixedButtonCanvasBounds,
+  resolveTargetButtonWebviewPixelRatio
+} from "./buttonWindowGeometry";
 
 export const BUTTON_EDITOR_WINDOW_LABEL = "flowcell-button-editor";
 export const BUTTON_WINDOW_CONTEXT_UPDATE_EVENT = "flowcell:button-window-context";
@@ -67,15 +71,21 @@ export interface AppliedButtonCanvas {
 const pendingButtonWindowOpens = new Map<string, Promise<void>>();
 
 function isUsableBounds(bounds: FlowCellBounds | null | undefined): bounds is FlowCellBounds {
-  return Boolean(
-    bounds &&
-      Number.isFinite(bounds.Left) &&
-      Number.isFinite(bounds.Top) &&
-      Number.isFinite(bounds.Width) &&
-      Number.isFinite(bounds.Height) &&
-      bounds.Width > 0 &&
-      bounds.Height > 0
-  );
+  return isUsableButtonWindowBounds(bounds);
+}
+
+async function readWindowBounds(target: TauriWindow): Promise<FlowCellBounds | null> {
+  const [position, size] = await Promise.all([
+    target.outerPosition().catch(() => null),
+    target.innerSize().catch(() => null)
+  ]);
+  if (!position || !size) return null;
+  return {
+    Left: position.x,
+    Top: position.y,
+    Width: size.width,
+    Height: size.height
+  };
 }
 
 function hashStableId(value: string): string {
@@ -215,8 +225,12 @@ async function resolveButtonCanvasPlacement(
 ): Promise<{ placement: WindowPlacement; scaleFactor: number }> {
   const centerX = contentBounds.Left + contentBounds.Width / 2;
   const centerY = contentBounds.Top + contentBounds.Height / 2;
-  const monitor = await monitorFromPoint(centerX, centerY)
-    .catch(() => null) ?? await currentMonitor().catch(() => null);
+  const [monitor, currentNativeScaleFactor] = await Promise.all([
+    monitorFromPoint(centerX, centerY)
+      .catch(() => null)
+      .then((resolved) => resolved ?? currentMonitor().catch(() => null)),
+    getCurrentWindow().scaleFactor().catch(() => 1)
+  ]);
 
   if (!monitor) {
     return {
@@ -227,7 +241,10 @@ async function resolveButtonCanvasPlacement(
         y: contentBounds.Top,
         unit: "physical"
       },
-      scaleFactor: 1
+      scaleFactor: resolveButtonWebviewPixelRatio(
+        currentNativeScaleFactor,
+        window.devicePixelRatio
+      )
     };
   }
 
@@ -245,7 +262,11 @@ async function resolveButtonCanvasPlacement(
       y: canvasBounds.Top,
       unit: "physical"
     },
-    scaleFactor: monitor.scaleFactor
+    scaleFactor: resolveTargetButtonWebviewPixelRatio(
+      currentNativeScaleFactor,
+      window.devicePixelRatio,
+      monitor.scaleFactor
+    )
   };
 }
 
@@ -321,7 +342,7 @@ async function applyProgramScopedTopmost(
   await registerScopedWindowTopmost(
     windowLabel,
     programName,
-    shouldBindScopedNativeOwner(programName)
+    true
   );
   await refreshScopedWindowTopmost(windowLabel).catch(async () => {
     await setHostWindowTopmost(windowLabel, false).catch(() => {});
@@ -496,7 +517,11 @@ export async function openButtonEditorWindow(args: {
     }
 
     await applyButtonWindowChrome(target, false);
-    if (args.bounds || !(await target.isVisible().catch(() => false))) {
+    const [visible, currentBounds] = await Promise.all([
+      target.isVisible().catch(() => false),
+      existed ? readWindowBounds(target) : Promise.resolve(null)
+    ]);
+    if (args.bounds || !visible || (existed && !isUsableBounds(currentBounds))) {
       await applyWindowPlacement(target, placement);
     }
     registerLayoutWindow({

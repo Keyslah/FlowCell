@@ -1,4 +1,5 @@
 import type { FlowCellBounds } from "../types";
+import type { ButtonActivationAnimationPresetId } from "../button/types";
 
 export const BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION = 1 as const;
 export const BINDS_PREFILL_EVENT = "flowcell:binds-prefill";
@@ -39,6 +40,15 @@ export interface ButtonFanWindowContext {
   restoreBounds?: FlowCellBounds;
 }
 
+export interface ButtonAnimationWindowContext {
+  kind: "button-animation";
+  schemaVersion: typeof BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION;
+  mode: "edit" | "play";
+  requestId: string;
+  buttonId: string;
+  presetId: ButtonActivationAnimationPresetId;
+}
+
 export interface BindsButtonPrefill {
   programName: string;
   panelName: string;
@@ -60,6 +70,23 @@ export interface BuildLayersWindowContext {
   panelName: string;
   fileName: string;
   label?: string;
+}
+
+export type ToolPageRenderer = "tree-inspector";
+
+export interface ToolPageWindowContext {
+  kind: "tool-page";
+  contributionId: string;
+  renderer: ToolPageRenderer;
+  capability: string;
+  programName: string;
+  panelName: string;
+  fileName: string;
+  ownerButtonId?: string;
+  title: string;
+  resourceLabel?: string;
+  emptyMessage?: string;
+  refreshEvent?: string;
 }
 
 export interface WindowGridWindowContext {
@@ -88,9 +115,11 @@ export type FlowCellWindowContext =
   | ButtonEditorWindowContext
   | ButtonPopoutWindowContext
   | ButtonFanWindowContext
+  | ButtonAnimationWindowContext
   | BindsWindowContext
   | OrganizationSetupWindowContext
   | BuildLayersWindowContext
+  | ToolPageWindowContext
   | WindowGridWindowContext
   | MotionSettingsWindowContext
   | MacroLabWindowContext
@@ -196,10 +225,54 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
       restoreBounds: optionalFlowCellBounds(parsed.restoreBounds)
     };
   }
+  if (
+    parsed.kind === "button-animation" &&
+    parsed.schemaVersion === BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION &&
+    (parsed.mode === "edit" || parsed.mode === "play") &&
+    typeof parsed.requestId === "string" &&
+    parsed.requestId.trim() &&
+    typeof parsed.buttonId === "string" &&
+    parsed.buttonId.trim() &&
+    parsed.presetId === "plus-rise"
+  ) {
+    return {
+      kind: "button-animation",
+      schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
+      mode: parsed.mode,
+      requestId: parsed.requestId,
+      buttonId: parsed.buttonId,
+      presetId: parsed.presetId
+    };
+  }
   if (parsed.kind === "binds") {
     return { kind: "binds", prefill: parseBindsPrefill(parsed.prefill) };
   }
   if (parsed.kind === "organization-setup") return { kind: "organization-setup" };
+  if (
+    parsed.kind === "tool-page" &&
+    parsed.renderer === "tree-inspector" &&
+    typeof parsed.contributionId === "string" &&
+    typeof parsed.capability === "string" &&
+    typeof parsed.programName === "string" &&
+    typeof parsed.panelName === "string" &&
+    typeof parsed.fileName === "string" &&
+    typeof parsed.title === "string"
+  ) {
+    return {
+      kind: "tool-page",
+      contributionId: parsed.contributionId,
+      renderer: "tree-inspector",
+      capability: parsed.capability,
+      programName: parsed.programName,
+      panelName: parsed.panelName,
+      fileName: parsed.fileName,
+      ownerButtonId: optionalString(parsed.ownerButtonId),
+      title: parsed.title,
+      resourceLabel: optionalString(parsed.resourceLabel),
+      emptyMessage: optionalString(parsed.emptyMessage),
+      refreshEvent: optionalString(parsed.refreshEvent)
+    };
+  }
   if (
     parsed.kind === "build-layers" &&
     typeof parsed.programName === "string" &&

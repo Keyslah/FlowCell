@@ -1,5 +1,7 @@
 [CmdletBinding()]
-param()
+param(
+    [switch]$DefinitionsOnly
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -19,6 +21,60 @@ function Write-PreflightLog {
         Add-Content -LiteralPath $LogPath -Value "[$timestamp] $Message" -Encoding UTF8
     } catch {
     }
+}
+
+function Resolve-ManifestRelativePath {
+    param(
+        [string]$Root,
+        [AllowEmptyString()][string]$Value,
+        [string]$Field,
+        [switch]$AllowEmpty
+    )
+
+    $trimmed = ([string]$Value).Trim()
+    if ([string]::IsNullOrWhiteSpace($trimmed)) {
+        if ($AllowEmpty) {
+            return ''
+        }
+        throw "Program manifest field '$Field' cannot be empty."
+    }
+    if ([System.IO.Path]::IsPathRooted($trimmed)) {
+        throw "Program manifest field '$Field' must be relative to its program package."
+    }
+
+    $parts = @($trimmed -split '[\\/]' | Where-Object { $_ -ne '' -and $_ -ne '.' })
+    if ($parts.Count -eq 0 -or @($parts | Where-Object { $_ -eq '..' }).Count -gt 0) {
+        throw "Program manifest field '$Field' must not contain parent traversal."
+    }
+    $normalized = [string]$parts[0]
+    for ($index = 1; $index -lt $parts.Count; $index++) {
+        $normalized = Join-Path $normalized ([string]$parts[$index])
+    }
+
+    $rootFull = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/')
+    $candidate = [System.IO.Path]::GetFullPath((Join-Path $rootFull $normalized))
+    $rootPrefix = $rootFull + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $candidate.Equals($rootFull, [System.StringComparison]::OrdinalIgnoreCase) -and
+        -not $candidate.StartsWith($rootPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Program manifest field '$Field' resolves outside '$rootFull'."
+    }
+
+    $resolvedRoot = (Resolve-Path -LiteralPath $rootFull -ErrorAction Stop).Path.TrimEnd('\', '/')
+    $existingBoundary = $candidate
+    while (-not (Test-Path -LiteralPath $existingBoundary)) {
+        $parent = Split-Path -Parent $existingBoundary
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $existingBoundary) {
+            throw "Program manifest field '$Field' has no resolvable package ancestor."
+        }
+        $existingBoundary = $parent
+    }
+    $resolvedBoundary = (Resolve-Path -LiteralPath $existingBoundary -ErrorAction Stop).Path.TrimEnd('\', '/')
+    $resolvedPrefix = $resolvedRoot + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $resolvedBoundary.Equals($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase) -and
+        -not $resolvedBoundary.StartsWith($resolvedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Program manifest field '$Field' resolves outside '$resolvedRoot'."
+    }
+    return $candidate
 }
 
 function Read-PreflightIni {
@@ -83,8 +139,56 @@ function Write-PreflightIni {
         $blocks.Add(($lines -join "`r`n")) | Out-Null
     }
 
-    New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
-    Set-Content -LiteralPath $Path -Value (($blocks -join "`r`n`r`n") + "`r`n") -Encoding UTF8
+    $parent = Split-Path -Parent $Path
+    New-Item -ItemType Directory -Path $parent -Force | Out-Null
+    $content = (($blocks -join "`r`n`r`n") + "`r`n")
+    $leaf = Split-Path -Leaf $Path
+    $token = [guid]::NewGuid().ToString('N')
+    $staged = Join-Path $parent ('.{0}.{1}.writing' -f $leaf, $token)
+    $bytes = (New-Object System.Text.UTF8Encoding($false)).GetBytes($content)
+    $stream = [System.IO.File]::Open($staged, [System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, [System.IO.FileShare]::None)
+    try {
+        $stream.Write($bytes, 0, $bytes.Length)
+        $stream.Flush($true)
+    }
+    finally {
+        $stream.Dispose()
+    }
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        $backup = Join-Path $parent ('.{0}.{1}.backup' -f $leaf, $token)
+        [System.IO.File]::Replace($staged, $Path, $backup, $true)
+    }
+    else {
+        [System.IO.File]::Move($staged, $Path)
+    }
+}
+
+function Restore-PendingBindingsAtomicWrite {
+    param([string]$Path)
+
+    if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        return
+    }
+    $parent = Split-Path -Parent $Path
+    if (-not (Test-Path -LiteralPath $parent -PathType Container)) {
+        return
+    }
+    $leaf = Split-Path -Leaf $Path
+    $artifacts = @(Get-ChildItem -LiteralPath $parent -File -ErrorAction SilentlyContinue)
+    $candidate = $artifacts |
+        Where-Object { $_.Name -eq ".$leaf.backup" -or ($_.Name.StartsWith(".$leaf.") -and $_.Name.EndsWith('.backup')) } |
+        Sort-Object LastWriteTimeUtc -Descending |
+        Select-Object -First 1
+    if (-not $candidate) {
+        $candidate = $artifacts |
+            Where-Object { $_.Name.StartsWith(".$leaf.") -and $_.Name.EndsWith('.writing') } |
+            Sort-Object LastWriteTimeUtc -Descending |
+            Select-Object -First 1
+    }
+    if ($candidate) {
+        [System.IO.File]::Move($candidate.FullName, $Path)
+        Write-PreflightLog "Recovered bindings from interrupted atomic write: $($candidate.Name)"
+    }
 }
 
 function Get-ProgramTabIdsFromDocument {
@@ -192,6 +296,15 @@ function Set-ManifestProgramRegistration {
 
 function Ensure-ManifestProgramStructure {
     New-Item -ItemType Directory -Path $ProgramsRoot -Force | Out-Null
+    $programRenameRoot = Join-Path $LocalRoot 'program-rename-transactions'
+    $pendingProgramRename = @(
+        Get-ChildItem -LiteralPath $programRenameRoot -Directory -ErrorAction SilentlyContinue
+    ).Count -gt 0
+    if ($pendingProgramRename) {
+        Write-PreflightLog 'Pending program rename transaction found; deferred all bindings inspection and mutation until native recovery.'
+        return
+    }
+    Restore-PendingBindingsAtomicWrite -Path $BindingsPath
     $document = Read-PreflightIni -Path $BindingsPath
     if (-not $document.Contains('Meta')) {
         $document['Meta'] = [ordered]@{}
@@ -200,8 +313,13 @@ function Ensure-ManifestProgramStructure {
     $usedIds = @(Get-ProgramTabIdsFromDocument -Document $document)
     foreach ($programDirectory in @(Get-ChildItem -LiteralPath $ProgramsRoot -Directory -ErrorAction Stop | Sort-Object Name)) {
         $manifestPath = Join-Path $programDirectory.FullName 'flowcell.program.json'
-        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        $existingSection = Get-ProgramTabSectionNameByLabel -Document $document -Label $programDirectory.Name
+        if ([string]::IsNullOrWhiteSpace($existingSection)) {
+            Write-PreflightLog "Program package is available but not added: $($programDirectory.Name)"
             continue
+        }
+        if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+            throw "Registered program package is missing its manifest: $manifestPath"
         }
         try {
             $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
@@ -216,8 +334,38 @@ function Ensure-ManifestProgramStructure {
             throw "Program manifest label '$($manifest.label)' does not match folder '$($programDirectory.Name)'."
         }
 
-        $localScripts = Join-Path $programDirectory.FullName ([string]$manifest.localScriptsFolder)
-        $panels = Join-Path $programDirectory.FullName ([string]$manifest.panelsFolder)
+        $gitScripts = Resolve-ManifestRelativePath -Root $programDirectory.FullName -Value ([string]$manifest.gitScriptsFolder) -Field 'gitScriptsFolder'
+        $localScripts = Resolve-ManifestRelativePath -Root $programDirectory.FullName -Value ([string]$manifest.localScriptsFolder) -Field 'localScriptsFolder'
+        $panels = Resolve-ManifestRelativePath -Root $programDirectory.FullName -Value ([string]$manifest.panelsFolder) -Field 'panelsFolder'
+        $supportScripts = Resolve-ManifestRelativePath -Root $programDirectory.FullName -Value ([string]$manifest.supportScriptsFolder) -Field 'supportScriptsFolder'
+        foreach ($requiredFolder in @(
+            @{ Path = $gitScripts; Field = 'gitScriptsFolder' },
+            @{ Path = $supportScripts; Field = 'supportScriptsFolder' }
+        )) {
+            if (-not (Test-Path -LiteralPath $requiredFolder.Path -PathType Container)) {
+                throw "Registered program manifest field '$($requiredFolder.Field)' must name an existing directory: $($requiredFolder.Path)"
+            }
+        }
+        $installScript = Resolve-ManifestRelativePath -Root $supportScripts -Value ([string]$manifest.runner.installScript) -Field 'runner.installScript' -AllowEmpty
+        $deleteScript = Resolve-ManifestRelativePath -Root $supportScripts -Value ([string]$manifest.runner.deleteScript) -Field 'runner.deleteScript' -AllowEmpty
+        $capabilityScriptValue = if ($manifest.runner.PSObject.Properties['capabilityScript']) { [string]$manifest.runner.capabilityScript } else { '' }
+        $capabilityScript = Resolve-ManifestRelativePath -Root $supportScripts -Value $capabilityScriptValue -Field 'runner.capabilityScript' -AllowEmpty
+        foreach ($requiredScript in @(
+            @{ Path = $installScript; Field = 'runner.installScript' },
+            @{ Path = $deleteScript; Field = 'runner.deleteScript' },
+            @{ Path = $capabilityScript; Field = 'runner.capabilityScript' }
+        )) {
+            if (-not [string]::IsNullOrWhiteSpace([string]$requiredScript.Path) -and
+                -not (Test-Path -LiteralPath $requiredScript.Path -PathType Leaf)) {
+                throw "Registered program manifest field '$($requiredScript.Field)' must name an existing file: $($requiredScript.Path)"
+            }
+        }
+
+        $runnerKind = [string]$manifest.runner.kind
+        if ($runnerKind -eq 'blender-bridge' -and ([string]::IsNullOrWhiteSpace($installScript) -or [string]::IsNullOrWhiteSpace($deleteScript))) {
+            throw "Blender program manifest requires runner.installScript and runner.deleteScript: $manifestPath"
+        }
+
         foreach ($requiredPath in @($localScripts, $panels)) {
             if (-not (Test-Path -LiteralPath $requiredPath -PathType Container)) {
                 New-Item -ItemType Directory -Path $requiredPath -Force | Out-Null
@@ -225,7 +373,6 @@ function Ensure-ManifestProgramStructure {
             }
         }
 
-        $existingSection = Get-ProgramTabSectionNameByLabel -Document $document -Label ([string]$manifest.label)
         $preferredId = 1
         if (-not [string]::IsNullOrWhiteSpace($existingSection) -and $existingSection -match '^ProgramTab_(\d+)$') {
             $preferredId = [int]$matches[1]
@@ -235,7 +382,6 @@ function Ensure-ManifestProgramStructure {
         }
         $usedIds += $preferredId
 
-        $runnerKind = [string]$manifest.runner.kind
         $runMethod = switch ($runnerKind) {
             'windows-script' { 'windows_generic' }
             'illustrator-direct' { 'illustrator_direct' }
@@ -278,6 +424,10 @@ function Ensure-ManifestProgramStructure {
         $document['Meta']['SelectedProgramTabId'] = [string]($programIds | Select-Object -First 1)
     }
     Write-PreflightIni -Path $BindingsPath -Document $document
+}
+
+if ($DefinitionsOnly) {
+    return
 }
 
 try {

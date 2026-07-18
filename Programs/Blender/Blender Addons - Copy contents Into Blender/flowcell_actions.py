@@ -98,7 +98,17 @@ PENDING_UNDO_BRIDGE_ACTION = ""
 PENDING_UNDO_BRIDGE_DATA = {}
 PENDING_UNDO_BRIDGE_RESULT = None
 PENDING_UNDO_BRIDGE_ERROR = ""
-READ_ONLY_BRIDGE_COMMANDS = {"status", "state", "get_state", "read_state", "query"}
+READ_ONLY_BRIDGE_COMMANDS = {
+    "status",
+    "state",
+    "get_state",
+    "read_state",
+    "query",
+    "read_project_startup_state",
+    "read_startup_state",
+    "read_place_picture_runtime_state",
+    "absorb_theme",
+}
 VERSION_PREFIX_RE = re.compile(r"^\([sta]\d+\)", re.IGNORECASE)
 TARGET_NAME_PROP = "lls_target_name"
 CYCLE_INDEX_PROP = "lls_cycle_index"
@@ -3661,7 +3671,18 @@ def execute_custom_action(normalized_action: str, data: dict) -> dict[str, objec
         if not script_path.exists():
             raise ValueError(f"Custom action script not found: {script_path}")
 
-        namespace = runpy.run_path(str(script_path), run_name=f"flowcell_custom_{normalized_action}")
+        source_python_path = str(entry.get("sourcePythonPath", "") or "").strip()
+        source_root = ""
+        if source_python_path:
+            try:
+                source_root = str(Path(source_python_path).expanduser().resolve().parent)
+            except Exception:
+                source_root = ""
+        namespace = runpy.run_path(
+            str(script_path),
+            init_globals={"FLOWCELL_SOURCE_ROOT": source_root},
+            run_name=f"flowcell_custom_{normalized_action}",
+        )
         function_name = str(entry.get("functionName", "")).strip()
 
         callback = None
@@ -4175,6 +4196,22 @@ def _has_flowcell_project_theme_restore_view3d() -> bool:
     return False
 
 
+def _has_flowcell_project_theme_restore_capability(flowcell_live_bridge=None) -> bool:
+    try:
+        bridge = flowcell_live_bridge or _load_flowcell_live_bridge_module()
+        get_capability_actions = getattr(
+            bridge,
+            "get_custom_action_names_for_capability",
+            None,
+        )
+        return bool(
+            callable(get_capability_actions)
+            and get_capability_actions(PROJECT_THEME_RESTORE_CAPABILITY)
+        )
+    except Exception:
+        return False
+
+
 def _restore_flowcell_project_theme_after_load():
     namespace = bpy.app.driver_namespace
     attempts = int(namespace.get(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, 0) or 0)
@@ -4232,6 +4269,8 @@ def _restore_flowcell_project_theme_after_load():
 
 
 def _schedule_flowcell_project_theme_restore(first_interval: float = 0.35) -> None:
+    if not _has_flowcell_project_theme_restore_capability():
+        return
     namespace = bpy.app.driver_namespace
     namespace[PROJECT_THEME_RESTORE_ATTEMPTS_KEY] = 0
     if not bpy.app.timers.is_registered(_restore_flowcell_project_theme_after_load):
@@ -4244,10 +4283,16 @@ def _schedule_flowcell_project_theme_restore(first_interval: float = 0.35) -> No
 
 @persistent
 def _restore_flowcell_project_theme_on_load(_dummy=None):
+    if not _has_flowcell_project_theme_restore_capability():
+        _remove_flowcell_project_theme_restore_handler()
+        return
     _schedule_flowcell_project_theme_restore(first_interval=0.35)
 
 
 def _ensure_flowcell_project_theme_restore_handler_registered() -> None:
+    if not _has_flowcell_project_theme_restore_capability():
+        _remove_flowcell_project_theme_restore_handler()
+        return
     namespace = bpy.app.driver_namespace
     existing = namespace.get(PROJECT_THEME_RESTORE_HANDLER_KEY)
     if existing in bpy.app.handlers.load_post:
@@ -4309,8 +4354,11 @@ def register():
 
     get_bridge_directory()
     disable_outliner_alpha_sort()
-    _ensure_flowcell_project_theme_restore_handler_registered()
-    _schedule_flowcell_project_theme_restore(first_interval=1.25)
+    if _has_flowcell_project_theme_restore_capability(flowcell_live_bridge):
+        _ensure_flowcell_project_theme_restore_handler_registered()
+        _schedule_flowcell_project_theme_restore(first_interval=1.25)
+    else:
+        _remove_flowcell_project_theme_restore_handler()
 
     if not bpy.app.timers.is_registered(poll_bridge_requests):
         bpy.app.timers.register(poll_bridge_requests, first_interval=POLL_INTERVAL_SECONDS, persistent=True)
@@ -4332,10 +4380,6 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
-
-
-
 
 
 

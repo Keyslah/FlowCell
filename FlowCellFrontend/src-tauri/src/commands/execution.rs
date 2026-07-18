@@ -933,10 +933,27 @@ pub(crate) fn spawn_via_cmd_start(script_path: &Path) -> Result<(), String> {
         .map_err(|error| format!("Failed to start {}: {error}", script_path.display()))
 }
 
+fn windows_child_process_path(path: &Path) -> PathBuf {
+    let value = path.to_string_lossy();
+    if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = value.strip_prefix(r"\\?\") {
+        return PathBuf::from(rest);
+    }
+    path.to_path_buf()
+}
+
 pub(crate) fn run_windows_panel_script_file_with_window_mode(
     script_path: &Path,
     hide_window: bool,
 ) -> Result<(), String> {
+    // Installed sources are canonicalized and ownership-checked before this
+    // runner receives them. Windows PowerShell 5.1 cannot provider-resolve the
+    // resulting verbatim path through $PSScriptRoot, so child processes receive
+    // the equivalent ordinary DOS/UNC spelling.
+    let launch_path = windows_child_process_path(script_path);
+    let script_path = launch_path.as_path();
     let script_directory = script_path.parent().unwrap_or_else(|| Path::new("."));
     let extension = script_path
         .extension()
@@ -1145,4 +1162,36 @@ pub(crate) fn run_toolset_action(
         "Button source '{}' is not installed in the active Button system. Complete migration before running tool-set command '{}'.",
         file_name.trim(), normalized_command
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::windows_child_process_path;
+    use std::path::{Path, PathBuf};
+
+    #[test]
+    fn windows_child_process_paths_remove_verbatim_drive_prefixes() {
+        assert_eq!(
+            windows_child_process_path(Path::new(
+                r"\\?\D:\FlowCell\Programs\Windows\Local\owner\source\action.ps1"
+            )),
+            PathBuf::from(r"D:\FlowCell\Programs\Windows\Local\owner\source\action.ps1")
+        );
+    }
+
+    #[test]
+    fn windows_child_process_paths_convert_verbatim_unc_prefixes() {
+        assert_eq!(
+            windows_child_process_path(Path::new(
+                r"\\?\UNC\server\share\FlowCell\owner\source\action.ps1"
+            )),
+            PathBuf::from(r"\\server\share\FlowCell\owner\source\action.ps1")
+        );
+    }
+
+    #[test]
+    fn windows_child_process_paths_preserve_ordinary_paths() {
+        let path = Path::new(r"D:\FlowCell\Programs\Windows\action.ps1");
+        assert_eq!(windows_child_process_path(path), path);
+    }
 }

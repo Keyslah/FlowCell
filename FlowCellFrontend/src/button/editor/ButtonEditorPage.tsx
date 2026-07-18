@@ -22,6 +22,11 @@ import {
 } from "../../lib/tauri";
 import { openMotionSettingsWindow } from "../../lib/coreWindows";
 import {
+  hideButtonActivationAnimationEditorWindow,
+  openButtonActivationAnimationEditor,
+  saveButtonActivationAnimationEditorBounds
+} from "../animations/buttonAnimationWindows";
+import {
   buildButtonFanWindowLabel,
   buildButtonPopoutWindowLabel,
   closeButtonFanWindow,
@@ -31,6 +36,7 @@ import {
   openButtonPopoutWindow
 } from "../windows/buttonWindows";
 import type {
+  ButtonActivationAnimationPresetId,
   ButtonCoreMeasurement,
   ButtonDesktopBounds,
   ButtonPlacement,
@@ -213,6 +219,7 @@ function createButtonRecord(args: {
   executionTarget?: ButtonRecord["executionTarget"];
   parentId?: string;
   behavior?: ButtonRecord["toolSetBehavior"];
+  metadata?: ButtonRecord["metadata"];
 }): ButtonRecord {
   return {
     id: args.id,
@@ -224,9 +231,10 @@ function createButtonRecord(args: {
     defaultSkinId: DEFAULT_BUTTON_SKIN_ID,
     defaultTextFitMode: "shrink",
     disabled: false,
+    activationAnimation: null,
     toolSetParentId: args.parentId ?? null,
     toolSetBehavior: args.behavior ?? null,
-    metadata: {}
+    metadata: args.metadata ?? {}
   };
 }
 
@@ -379,7 +387,8 @@ function addInstalledToolSet(
       tooltip: child.tooltip,
       executionTarget: child.executionTarget,
       parentId: result.ownerButtonId,
-      behavior: layout?.childBehaviors?.[child.slot] ?? null
+      behavior: layout?.childBehaviors?.[child.slot] ?? null,
+      metadata: { toolSetSlot: child.slot }
     });
     const exact = childRects[child.slot];
     addPlacement(document, childId, surface.id, exact);
@@ -402,7 +411,8 @@ function addInstalledToolSet(
     windowFitMode: "surface",
     ownerButtonId: result.ownerButtonId,
     childButtonIds,
-    fields: cloneButtonDocument(layout?.fields ?? [])
+    fields: cloneButtonDocument(layout?.fields ?? []),
+    presentation: cloneButtonDocument(layout?.presentation ?? null)
   };
   return { ownerPlacement, popoutSurfaceId: surface.id };
 }
@@ -503,6 +513,7 @@ function ButtonEditorContent({
   const [panelName, setPanelName] = useState(initialSelection.panelName);
   const [busy, setBusyState] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [activeAnimationEditorButtonId, setActiveAnimationEditorButtonId] = useState<string | null>(null);
   const setBusy = useCallback((next: boolean) => {
     busyRef.current = next;
     setBusyState(next);
@@ -681,6 +692,17 @@ function ButtonEditorContent({
     });
     return () => { disposed = true; unlisten?.(); };
   }, []);
+  useEffect(() => {
+    if (!activeAnimationEditorButtonId) return;
+    if (
+      selectedButton?.id === activeAnimationEditorButtonId &&
+      selectedButton.activationAnimation
+    ) {
+      return;
+    }
+    setActiveAnimationEditorButtonId(null);
+    void hideButtonActivationAnimationEditorWindow();
+  }, [activeAnimationEditorButtonId, selectedButton?.id, selectedButton?.activationAnimation]);
   useEffect(() => {
     let disposed = false;
     let unlisten: (() => void) | undefined;
@@ -1084,6 +1106,8 @@ function ButtonEditorContent({
 
       pendingUninstallsRef.current.clear();
       await publishButtonDraftCancel(sessionIdRef.current);
+      await hideButtonActivationAnimationEditorWindow().catch(() => {});
+      setActiveAnimationEditorButtonId(null);
       if (reload) {
         const bootstrap = await loadButtonEditorBootstrap();
         const loaded = bootstrap.document;
@@ -1451,6 +1475,68 @@ function ButtonEditorContent({
     }
   };
 
+  const configureButtonAnimation = async (
+    button: ButtonRecord,
+    presetId: ButtonActivationAnimationPresetId,
+    bounds = button.activationAnimation?.presetId === presetId
+      ? button.activationAnimation.desktopBounds
+      : null
+  ) => {
+    try {
+      setMessage(null);
+      const resolvedBounds = await openButtonActivationAnimationEditor({
+        buttonId: button.id,
+        presetId,
+        bounds
+      });
+      const current = store.current().buttons[button.id];
+      if (!current) return;
+      if (
+        current.activationAnimation?.presetId === presetId &&
+        desktopBoundsEqual(current.activationAnimation.desktopBounds, resolvedBounds)
+      ) {
+        setActiveAnimationEditorButtonId(button.id);
+        return;
+      }
+      store.transact((draft) => {
+        const target = draft.buttons[button.id];
+        if (!target) return;
+        target.activationAnimation = {
+          presetId,
+          desktopBounds: resolvedBounds
+        };
+      }, { label: "Assign Button animation" });
+      setActiveAnimationEditorButtonId(button.id);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const saveButtonAnimationBounds = async (button: ButtonRecord) => {
+    const animation = button.activationAnimation;
+    if (!animation) return;
+    try {
+      const bounds = await saveButtonActivationAnimationEditorBounds();
+      store.transact((draft) => {
+        const target = draft.buttons[button.id];
+        if (!target?.activationAnimation) return;
+        target.activationAnimation.desktopBounds = bounds;
+      }, {
+        label: "Position Button animation",
+        coalesceKey: `button-animation-bounds:${button.id}`
+      });
+      setActiveAnimationEditorButtonId(null);
+      setMessage("Animation position and size updated. Click the main Save button to commit the Button draft.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const closeButtonAnimationEditor = async () => {
+    await hideButtonActivationAnimationEditorWindow().catch(() => {});
+    setActiveAnimationEditorButtonId(null);
+  };
+
   const activateOwnerButton = async (_placementId: string, button: ButtonRecord) => {
     try {
       if (button.role === "tool-set-owner") {
@@ -1646,6 +1732,8 @@ function ButtonEditorContent({
               setMessage("Panel Buttons are owned by their registered panel and cannot be deleted here.");
               return;
             }
+            void hideButtonActivationAnimationEditorWindow();
+            setActiveAnimationEditorButtonId(null);
             store.transact((draft) => {
               const result = removeOwnedButtonGraph(draft, selectedButton.id);
               result.uninstallOwnerButtonIds.forEach((id) => pendingUninstallsRef.current.add(id));
@@ -1722,6 +1810,34 @@ function ButtonEditorContent({
               );
             }
             store.transact((draft) => { Object.assign(draft.placements[selectedPlacement.id], patch); }, { label: "Edit placement", coalesceKey });
+          }}
+          onActivationAnimationChange={(presetId) => {
+            if (!selectedButton) return;
+            if (!presetId) {
+              store.transact((draft) => {
+                draft.buttons[selectedButton.id].activationAnimation = null;
+              }, { label: "Remove Button animation" });
+              void hideButtonActivationAnimationEditorWindow();
+              setActiveAnimationEditorButtonId(null);
+              return;
+            }
+            void configureButtonAnimation(selectedButton, presetId);
+          }}
+          onConfigureActivationAnimation={() => {
+            if (!selectedButton?.activationAnimation) return;
+            void configureButtonAnimation(
+              selectedButton,
+              selectedButton.activationAnimation.presetId,
+              selectedButton.activationAnimation.desktopBounds
+            );
+          }}
+          activationAnimationEditorOpen={activeAnimationEditorButtonId === selectedButton?.id}
+          onSaveActivationAnimationBounds={() => {
+            if (!selectedButton) return;
+            void saveButtonAnimationBounds(selectedButton);
+          }}
+          onCloseActivationAnimationEditor={() => {
+            void closeButtonAnimationEditor();
           }}
         />
         <ButtonSkinEditor

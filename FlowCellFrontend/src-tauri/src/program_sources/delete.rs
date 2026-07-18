@@ -1,12 +1,26 @@
 use super::manifest::load_program_manifest;
 use super::records::{
     active_record_file_name, read_active_record, validate_owner_button_id, ActiveSourceRecord,
-    LocalInstallRecord, INSTALL_RECORD_FILE_NAME,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const SOURCE_QUARANTINE_JOURNAL_FILE_NAME: &str = "source-quarantine.json";
+const SOURCE_QUARANTINE_JOURNAL_SCHEMA_VERSION: u32 = 1;
+const UNINSTALL_TRANSACTION_JOURNAL_FILE_NAME: &str = "uninstall-transaction.json";
+const UNINSTALL_TRANSACTION_SCHEMA_VERSION: u32 = 1;
+static SOURCE_QUARANTINE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+pub(crate) fn source_quarantine_guard() -> Result<MutexGuard<'static, ()>, String> {
+    SOURCE_QUARANTINE_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .map_err(|_| "Button source quarantine lock is poisoned.".to_string())
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +39,8 @@ pub(crate) struct UninstallButtonSourceResponse {
     pub removed_binding_count: usize,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub(crate) struct QuarantinedOwnedSource {
     pub record: ActiveSourceRecord,
     pub original_record_path: PathBuf,
@@ -36,17 +52,347 @@ pub(crate) struct QuarantinedOwnedSource {
     pub removed_binding_count: usize,
 }
 
-fn path_key(path: &Path) -> String {
-    path.to_string_lossy()
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OwnedSourceQuarantineJournal {
+    schema_version: u32,
+    source: QuarantinedOwnedSource,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum UninstallTransactionPhase {
+    Prepared,
+    Committed,
+    RolledBack,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct UninstallTransactionJournal {
+    schema_version: u32,
+    phase: UninstallTransactionPhase,
+    owner_button_id: String,
+}
+
+fn path_text_key(value: &str) -> String {
+    let normalized = value
         .replace('/', "\\")
         .trim_end_matches('\\')
-        .to_ascii_lowercase()
+        .to_ascii_lowercase();
+    if let Some(rest) = normalized.strip_prefix("\\\\?\\unc\\") {
+        return format!("\\\\{rest}");
+    }
+    if let Some(rest) = normalized.strip_prefix("\\\\?\\") {
+        return rest.to_string();
+    }
+    if let Some(rest) = normalized.strip_prefix("\\??\\") {
+        return rest.to_string();
+    }
+    normalized
+}
+
+fn path_key(path: &Path) -> String {
+    path_text_key(&path.to_string_lossy())
 }
 
 fn path_is_under(path: &str, root: &Path) -> bool {
-    let path = path.replace('/', "\\").to_ascii_lowercase();
+    let path = path_text_key(path);
     let root = path_key(root);
     path == root || path.starts_with(&(root + "\\"))
+}
+
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    path_key(left) == path_key(right)
+}
+
+fn source_quarantine_journal_path(owner_root: &Path) -> PathBuf {
+    owner_root.join(SOURCE_QUARANTINE_JOURNAL_FILE_NAME)
+}
+
+fn parse_source_quarantine_journal(path: &Path) -> Result<OwnedSourceQuarantineJournal, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    let journal = serde_json::from_str::<OwnedSourceQuarantineJournal>(&raw).map_err(|error| {
+        format!(
+            "Button source quarantine journal {} is invalid: {error}",
+            path.display()
+        )
+    })?;
+    if journal.schema_version != SOURCE_QUARANTINE_JOURNAL_SCHEMA_VERSION {
+        return Err(format!(
+            "Button source quarantine journal {} has unsupported schemaVersion {}.",
+            path.display(),
+            journal.schema_version
+        ));
+    }
+    Ok(journal)
+}
+
+fn validate_persisted_quarantine(
+    owner_root: &Path,
+    source: &QuarantinedOwnedSource,
+) -> Result<(), String> {
+    let owner_button_id = validate_owner_button_id(&source.record.owner_button_id)?;
+    if !source
+        .record
+        .install_id
+        .eq_ignore_ascii_case(&owner_button_id)
+    {
+        return Err(
+            "Persisted Button source quarantine has mismatched owner identity.".to_string(),
+        );
+    }
+    let expected_owner_root = owner_root
+        .parent()
+        .ok_or_else(|| "Button source quarantine owner has no transaction root.".to_string())?
+        .join(&owner_button_id);
+    if !paths_equal(owner_root, &expected_owner_root) {
+        return Err(format!(
+            "Persisted Button source quarantine owner path does not match '{}'.",
+            owner_button_id
+        ));
+    }
+
+    let manifest = load_program_manifest(&source.record.program_name)?;
+    if !source
+        .record
+        .program_id
+        .eq_ignore_ascii_case(&manifest.program_id)
+        || !source
+            .record
+            .program_name
+            .eq_ignore_ascii_case(&manifest.label)
+        || source.record.runner != manifest.runner.kind
+    {
+        return Err(
+            "Persisted Button source quarantine does not match its program manifest.".to_string(),
+        );
+    }
+    let expected_record =
+        crate::resolve_panel_directory(&source.record.program_name, &source.record.panel_name)?
+            .join(active_record_file_name(&owner_button_id));
+    let expected_package = crate::resolve_program_directory(&source.record.program_name)?
+        .join(&manifest.local_scripts_folder)
+        .join(&owner_button_id);
+    let expected_bindings = crate::resolve_bindings_file_path()?;
+    let expected_quarantine_record = owner_root.join(
+        expected_record
+            .file_name()
+            .ok_or_else(|| "Expected active record has no file name.".to_string())?,
+    );
+    let expected_quarantine_package = owner_root.join("local-package");
+    for (actual, expected, description) in [
+        (
+            &source.original_record_path,
+            &expected_record,
+            "original active record",
+        ),
+        (
+            &source.original_package_path,
+            &expected_package,
+            "original Local package",
+        ),
+        (
+            &source.quarantine_record_path,
+            &expected_quarantine_record,
+            "quarantined active record",
+        ),
+        (
+            &source.quarantine_package_path,
+            &expected_quarantine_package,
+            "quarantined Local package",
+        ),
+        (&source.bindings_path, &expected_bindings, "bindings file"),
+    ] {
+        if !paths_equal(actual, expected) {
+            return Err(format!(
+                "Persisted Button source quarantine {description} path is outside its manifest-defined location."
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn write_source_quarantine_journal(source: &QuarantinedOwnedSource) -> Result<(), String> {
+    let owner_root = source
+        .quarantine_record_path
+        .parent()
+        .ok_or_else(|| "Quarantined Button source has no owner directory.".to_string())?;
+    validate_persisted_quarantine(owner_root, source)?;
+    let journal = OwnedSourceQuarantineJournal {
+        schema_version: SOURCE_QUARANTINE_JOURNAL_SCHEMA_VERSION,
+        source: source.clone(),
+    };
+    let raw = serde_json::to_string_pretty(&journal)
+        .map_err(|error| format!("Failed to serialize Button source quarantine: {error}"))?;
+    super::transaction::write_json_file(
+        &source_quarantine_journal_path(owner_root),
+        raw.as_bytes(),
+        super::transaction::AtomicWriteMode::Create,
+    )
+}
+
+fn read_source_quarantine_journal(
+    owner_root: &Path,
+) -> Result<Option<QuarantinedOwnedSource>, String> {
+    if !owner_root.is_dir() {
+        return Ok(None);
+    }
+    let path = source_quarantine_journal_path(owner_root);
+    super::transaction::recover_json_file(&path, |candidate| {
+        let journal = parse_source_quarantine_journal(candidate)?;
+        validate_persisted_quarantine(owner_root, &journal.source)
+    })?;
+    if !path.is_file() {
+        let has_artifacts = fs::read_dir(owner_root)
+            .map_err(|error| format!("Failed to inspect {}: {error}", owner_root.display()))?
+            .next()
+            .transpose()
+            .map_err(|error| format!("Failed to inspect {}: {error}", owner_root.display()))?
+            .is_some();
+        return if has_artifacts {
+            Err(format!(
+                "Button source quarantine {} has artifacts but no recoverable journal.",
+                owner_root.display()
+            ))
+        } else {
+            Ok(None)
+        };
+    }
+    let journal = parse_source_quarantine_journal(&path)?;
+    validate_persisted_quarantine(owner_root, &journal.source)?;
+    Ok(Some(journal.source))
+}
+
+fn uninstall_transaction_journal_path(transaction_root: &Path) -> PathBuf {
+    transaction_root.join(UNINSTALL_TRANSACTION_JOURNAL_FILE_NAME)
+}
+
+fn validate_uninstall_transaction_journal(
+    journal: &UninstallTransactionJournal,
+) -> Result<(), String> {
+    if journal.schema_version != UNINSTALL_TRANSACTION_SCHEMA_VERSION {
+        return Err(format!(
+            "Button uninstall transaction has unsupported schemaVersion {}.",
+            journal.schema_version
+        ));
+    }
+    validate_owner_button_id(&journal.owner_button_id)?;
+    Ok(())
+}
+
+fn parse_uninstall_transaction_journal(path: &Path) -> Result<UninstallTransactionJournal, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    let journal = serde_json::from_str::<UninstallTransactionJournal>(&raw).map_err(|error| {
+        format!(
+            "Button uninstall transaction journal {} is invalid: {error}",
+            path.display()
+        )
+    })?;
+    validate_uninstall_transaction_journal(&journal)?;
+    Ok(journal)
+}
+
+fn write_uninstall_transaction_journal(
+    transaction_root: &Path,
+    journal: &UninstallTransactionJournal,
+    mode: super::transaction::AtomicWriteMode,
+) -> Result<(), String> {
+    validate_uninstall_transaction_journal(journal)?;
+    let raw = serde_json::to_string_pretty(journal)
+        .map_err(|error| format!("Failed to serialize Button uninstall transaction: {error}"))?;
+    super::transaction::write_json_file(
+        &uninstall_transaction_journal_path(transaction_root),
+        raw.as_bytes(),
+        mode,
+    )
+}
+
+fn read_uninstall_transaction_journal(
+    transaction_root: &Path,
+) -> Result<Option<UninstallTransactionJournal>, String> {
+    let path = uninstall_transaction_journal_path(transaction_root);
+    super::transaction::recover_json_file(&path, |candidate| {
+        parse_uninstall_transaction_journal(candidate).map(|_| ())
+    })?;
+    if path.is_file() {
+        parse_uninstall_transaction_journal(&path).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+fn directory_is_empty(path: &Path) -> Result<bool, String> {
+    Ok(fs::read_dir(path)
+        .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?
+        .next()
+        .transpose()
+        .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?
+        .is_none())
+}
+
+fn finalize_standalone_transaction_roots(paths: &[PathBuf]) {
+    let existing = paths
+        .iter()
+        .filter(|path| path.is_dir())
+        .cloned()
+        .collect::<Vec<_>>();
+    if !existing.is_empty() {
+        let _ = crate::recycle_directory_paths(&existing);
+    }
+}
+
+pub(crate) fn recover_standalone_source_transactions_locked() -> Result<Vec<PathBuf>, String> {
+    let quarantine_root = crate::resolve_flowcell_local_root()?
+        .join("button-system")
+        .join("quarantine");
+    if !quarantine_root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut roots = Vec::new();
+    for entry in fs::read_dir(&quarantine_root)
+        .map_err(|error| format!("Failed to inspect {}: {error}", quarantine_root.display()))?
+    {
+        let entry = entry
+            .map_err(|error| format!("Failed to inspect {}: {error}", quarantine_root.display()))?;
+        if entry.path().is_dir()
+            && entry
+                .file_name()
+                .to_string_lossy()
+                .to_ascii_lowercase()
+                .starts_with("uninstall-")
+        {
+            roots.push(entry.path());
+        }
+    }
+    roots.sort_by_key(|path| path.to_string_lossy().to_ascii_lowercase());
+
+    let mut finalize = Vec::new();
+    for root in roots {
+        let Some(mut journal) = read_uninstall_transaction_journal(&root)? else {
+            if directory_is_empty(&root)? {
+                finalize.push(root);
+                continue;
+            }
+            return Err(format!(
+                "Button uninstall transaction {} has quarantined data but no recoverable journal.",
+                root.display()
+            ));
+        };
+        if journal.phase == UninstallTransactionPhase::Prepared {
+            rollback_quarantined_transaction(&root, &[journal.owner_button_id.clone()])?;
+            journal.phase = UninstallTransactionPhase::RolledBack;
+            write_uninstall_transaction_journal(
+                &root,
+                &journal,
+                super::transaction::AtomicWriteMode::Replace,
+            )?;
+        }
+        finalize.push(root);
+    }
+    Ok(finalize)
 }
 
 fn canonical_existing(path: &Path, description: &str) -> Result<PathBuf, String> {
@@ -62,7 +408,7 @@ fn validate_owned_source_location(
     record_path: &Path,
     record: &ActiveSourceRecord,
     owner_button_id: &str,
-) -> Result<PathBuf, String> {
+) -> Result<super::execute::ResolvedOwnedSourcePaths, String> {
     let manifest = load_program_manifest(&record.program_name)?;
     if !record.owner_button_id.eq_ignore_ascii_case(owner_button_id)
         || !record.install_id.eq_ignore_ascii_case(owner_button_id)
@@ -87,65 +433,7 @@ fn validate_owned_source_location(
         ));
     }
 
-    let program_root = crate::resolve_program_directory(&record.program_name)?;
-    let expected_package = program_root
-        .join(&manifest.local_scripts_folder)
-        .join(owner_button_id);
-    let recorded_package = PathBuf::from(&record.local_package_path);
-    let expected_package_canonical = canonical_existing(&expected_package, "owned Local package")?;
-    let recorded_package_canonical =
-        canonical_existing(&recorded_package, "recorded Local package")?;
-    if recorded_package_canonical != expected_package_canonical {
-        return Err(format!(
-            "Button '{}' Local package must be exactly {}.",
-            owner_button_id,
-            expected_package.display()
-        ));
-    }
-
-    let source_path = PathBuf::from(&record.source_path);
-    let source_canonical = canonical_existing(&source_path, "installed Button source")?;
-    let expected_source_root = canonical_existing(
-        &expected_package.join("source"),
-        "owned Local package source root",
-    )?;
-    if !source_canonical.is_file() || !source_canonical.starts_with(&expected_source_root) {
-        return Err(format!(
-            "Button '{}' installed source is outside its owned Local package source root.",
-            owner_button_id
-        ));
-    }
-
-    let install_path = expected_package.join(INSTALL_RECORD_FILE_NAME);
-    let install_raw = fs::read_to_string(&install_path)
-        .map_err(|error| format!("Failed to read {}: {error}", install_path.display()))?;
-    let install = serde_json::from_str::<LocalInstallRecord>(&install_raw).map_err(|error| {
-        format!(
-            "Installed package record {} is invalid: {error}",
-            install_path.display()
-        )
-    })?;
-    let installed_source = expected_package.join(&install.source_relative_path);
-    if install.schema_version != 1
-        || !install
-            .owner_button_id
-            .eq_ignore_ascii_case(owner_button_id)
-        || !install.install_id.eq_ignore_ascii_case(owner_button_id)
-        || !install
-            .program_id
-            .eq_ignore_ascii_case(&manifest.program_id)
-        || !install
-            .program_name
-            .eq_ignore_ascii_case(&record.program_name)
-        || !install.panel_name.eq_ignore_ascii_case(&record.panel_name)
-        || canonical_existing(&installed_source, "package source")? != source_canonical
-    {
-        return Err(format!(
-            "Installed package record '{}' does not match its active Button owner.",
-            install_path.display()
-        ));
-    }
-    Ok(recorded_package)
+    super::execute::resolve_owned_source_paths(&manifest, record)
 }
 
 fn locate_owned_source(
@@ -186,6 +474,7 @@ fn locate_owned_source(
             if !panel_entry.path().is_dir() {
                 continue;
             }
+            super::records::recover_active_records_in_directory(&panel_entry.path())?;
             let panel_name = panel_entry.file_name().to_string_lossy().to_string();
             if expected_panel
                 .map(|value| !value.eq_ignore_ascii_case(&panel_name))
@@ -228,18 +517,45 @@ fn locate_owned_source(
     }
 }
 
-fn remove_owned_bindings(
-    record: &ActiveSourceRecord,
-) -> Result<(PathBuf, Option<String>, usize), String> {
+fn read_bindings_backup(path: &Path) -> Result<Option<String>, String> {
+    if !path.is_file() {
+        return Ok(None);
+    }
+    fs::read_to_string(path)
+        .map(Some)
+        .map_err(|error| format!("Failed to back up {}: {error}", path.display()))
+}
+
+fn binding_section_belongs_to_owner(
+    section: &HashMap<String, String>,
+    package_root: &Path,
+    owner_button_id: &str,
+) -> bool {
+    let owns_script_path = section
+        .get("ScriptPath")
+        .map(|path| path_is_under(path, package_root))
+        .unwrap_or(false);
+    let owns_tool_set_button = section
+        .get("TargetKind")
+        .map(|kind| {
+            let kind = kind.trim();
+            kind.eq_ignore_ascii_case("tool-set-child")
+                || kind.eq_ignore_ascii_case("tool-set-owner")
+        })
+        .unwrap_or(false)
+        && section
+            .get("OwnerButtonId")
+            .map(|candidate| {
+                candidate
+                    .trim()
+                    .eq_ignore_ascii_case(owner_button_id.trim())
+            })
+            .unwrap_or(false);
+    owns_script_path || owns_tool_set_button
+}
+
+fn remove_owned_bindings(record: &ActiveSourceRecord) -> Result<(PathBuf, usize), String> {
     let bindings_path = crate::resolve_bindings_file_path()?;
-    let backup =
-        if bindings_path.is_file() {
-            Some(fs::read_to_string(&bindings_path).map_err(|error| {
-                format!("Failed to back up {}: {error}", bindings_path.display())
-            })?)
-        } else {
-            None
-        };
     let (_bindings, mut document, _) = crate::read_bindings_file_state()?;
     let package_root = PathBuf::from(&record.local_package_path);
     let binding_sections = document
@@ -251,8 +567,9 @@ fn remove_owned_bindings(
     for section_name in binding_sections {
         let owned = document
             .get(&section_name)
-            .and_then(|section| section.get("ScriptPath"))
-            .map(|path| path_is_under(path, &package_root))
+            .map(|section| {
+                binding_section_belongs_to_owner(section, &package_root, &record.owner_button_id)
+            })
             .unwrap_or(false);
         if owned {
             document.remove(&section_name);
@@ -295,7 +612,7 @@ fn remove_owned_bindings(
     if removed > 0 {
         crate::restart_flowcell_headless_backend()?;
     }
-    Ok((bindings_path, backup, removed))
+    Ok((bindings_path, removed))
 }
 
 pub(crate) fn cleanup_blender_owner(
@@ -308,9 +625,14 @@ pub(crate) fn cleanup_blender_owner(
         return Ok(());
     }
     let manifest = load_program_manifest(program_name)?;
-    let helper = crate::resolve_program_directory(program_name)?
-        .join(&manifest.support_scripts_folder)
-        .join(&manifest.runner.delete_script);
+    let program_root = crate::resolve_program_directory(program_name)?;
+    let helper = super::manifest::resolve_runner_script_path(
+        &program_root,
+        &manifest,
+        &manifest.runner.delete_script,
+        "runner.deleteScript",
+    )?
+    .ok_or_else(|| "Blender program manifest is missing runner.deleteScript.".to_string())?;
     if !helper.is_file() {
         return Err(format!(
             "Blender delete adapter was not found at {}.",
@@ -360,8 +682,11 @@ pub(crate) fn quarantine_owned_source(
     transaction_root: &Path,
 ) -> Result<QuarantinedOwnedSource, String> {
     let owner_button_id = validate_owner_button_id(owner_button_id)?;
-    let (record_path, record) = locate_owned_source(&owner_button_id, None, None, None)?;
-    let package_path = validate_owned_source_location(&record_path, &record, &owner_button_id)?;
+    let (record_path, mut record) = locate_owned_source(&owner_button_id, None, None, None)?;
+    let resolved = validate_owned_source_location(&record_path, &record, &owner_button_id)?;
+    let package_path = resolved.package_path;
+    record.local_package_path = package_path.to_string_lossy().to_string();
+    record.source_path = resolved.source_path.to_string_lossy().to_string();
     let owner_root = transaction_root.join(&owner_button_id);
     fs::create_dir_all(&owner_root)
         .map_err(|error| format!("Failed to create {}: {error}", owner_root.display()))?;
@@ -371,34 +696,9 @@ pub(crate) fn quarantine_owned_source(
             .ok_or_else(|| "Active record has no file name.".to_string())?,
     );
     let quarantined_package = owner_root.join("local-package");
-    fs::rename(&record_path, &quarantined_record)
-        .map_err(|error| format!("Failed to quarantine {}: {error}", record_path.display()))?;
-    if let Err(error) = fs::rename(&package_path, &quarantined_package) {
-        let _ = fs::rename(&quarantined_record, &record_path);
-        return Err(format!(
-            "Failed to quarantine {}: {error}",
-            package_path.display()
-        ));
-    }
-    let (bindings_path, bindings_backup, removed_binding_count) =
-        match remove_owned_bindings(&record) {
-            Ok(value) => value,
-            Err(error) => {
-                let _ = fs::rename(&quarantined_package, &package_path);
-                let _ = fs::rename(&quarantined_record, &record_path);
-                return Err(error);
-            }
-        };
-    if let Err(error) = cleanup_blender_runtime(&record) {
-        if let Some(backup) = bindings_backup.as_ref() {
-            let _ = fs::write(&bindings_path, backup);
-            let _ = crate::restart_flowcell_headless_backend();
-        }
-        let _ = fs::rename(&quarantined_package, &package_path);
-        let _ = fs::rename(&quarantined_record, &record_path);
-        return Err(error);
-    }
-    Ok(QuarantinedOwnedSource {
+    let bindings_path = crate::resolve_bindings_file_path()?;
+    let bindings_backup = read_bindings_backup(&bindings_path)?;
+    let mut source = QuarantinedOwnedSource {
         record,
         original_record_path: record_path,
         original_package_path: package_path,
@@ -406,33 +706,122 @@ pub(crate) fn quarantine_owned_source(
         quarantine_package_path: quarantined_package,
         bindings_path,
         bindings_backup,
-        removed_binding_count,
-    })
+        removed_binding_count: 0,
+    };
+
+    // This immutable journal is the write-ahead boundary. Nothing owned by the
+    // Button moves, and no external runtime state changes, until recovery has a
+    // complete description of how to put it back.
+    write_source_quarantine_journal(&source)?;
+
+    let apply_result = (|| {
+        move_into_quarantine(
+            &source.original_record_path,
+            &source.quarantine_record_path,
+            "active source record",
+        )?;
+        move_into_quarantine(
+            &source.original_package_path,
+            &source.quarantine_package_path,
+            "Local source package",
+        )?;
+        let current_bindings = read_bindings_backup(&source.bindings_path)?;
+        if current_bindings != source.bindings_backup {
+            return Err(format!(
+                "FlowCell bindings changed while Button '{}' was being quarantined.",
+                source.record.owner_button_id
+            ));
+        }
+        let (bindings_path, removed_binding_count) = remove_owned_bindings(&source.record)?;
+        if !paths_equal(&bindings_path, &source.bindings_path) {
+            return Err("FlowCell bindings path changed during Button quarantine.".to_string());
+        }
+        source.removed_binding_count = removed_binding_count;
+        cleanup_blender_runtime(&source.record)
+    })();
+
+    if let Err(error) = apply_result {
+        let rollback_error = rollback_quarantined_source(&source).err();
+        return Err(match rollback_error {
+            Some(rollback_error) => {
+                format!("{error} Rollback also failed: {rollback_error}")
+            }
+            None => error,
+        });
+    }
+    Ok(source)
 }
 
-pub(crate) fn rollback_quarantined_source(source: &QuarantinedOwnedSource) -> Result<(), String> {
-    if source.quarantine_package_path.is_dir() {
-        fs::rename(
-            &source.quarantine_package_path,
-            &source.original_package_path,
-        )
-        .map_err(|error| {
+fn move_into_quarantine(
+    original: &Path,
+    quarantined: &Path,
+    description: &str,
+) -> Result<(), String> {
+    match (original.exists(), quarantined.exists()) {
+        (true, false) => fs::rename(original, quarantined).map_err(|error| {
             format!(
-                "Failed to restore {}: {error}",
-                source.original_package_path.display()
+                "Failed to quarantine {description} {}: {error}",
+                original.display()
             )
-        })?;
+        }),
+        (false, true) => Ok(()),
+        (true, true) => Err(format!(
+            "Button source quarantine found both original and quarantined {description} copies."
+        )),
+        (false, false) => Err(format!(
+            "Button source quarantine could not find {description} {}.",
+            original.display()
+        )),
     }
-    if source.quarantine_record_path.is_file() {
-        fs::rename(&source.quarantine_record_path, &source.original_record_path).map_err(
-            |error| {
-                format!(
-                    "Failed to restore {}: {error}",
-                    source.original_record_path.display()
-                )
-            },
-        )?;
+}
+
+fn restore_quarantined_path(
+    original: &Path,
+    quarantined: &Path,
+    is_expected_kind: impl Fn(&Path) -> bool,
+    description: &str,
+) -> Result<(), String> {
+    let original_exists = is_expected_kind(original);
+    let quarantined_exists = is_expected_kind(quarantined);
+    match (original_exists, quarantined_exists) {
+        (true, false) => Ok(()),
+        (false, true) => fs::rename(quarantined, original).map_err(|error| {
+            format!(
+                "Failed to restore {description} {}: {error}",
+                original.display()
+            )
+        }),
+        (true, true) => Err(format!(
+            "Button source recovery found both original and quarantined {description} copies."
+        )),
+        (false, false) => Err(format!(
+            "Button source recovery found neither original nor quarantined {description} {}.",
+            original.display()
+        )),
     }
+}
+
+fn rollback_quarantined_source_with<F, R>(
+    source: &QuarantinedOwnedSource,
+    mut restore_runtime: F,
+    mut reload_bindings: R,
+) -> Result<(), String>
+where
+    F: FnMut(&ActiveSourceRecord) -> Result<(), String>,
+    R: FnMut(),
+{
+    restore_quarantined_path(
+        &source.original_package_path,
+        &source.quarantine_package_path,
+        Path::is_dir,
+        "Local source package",
+    )?;
+    restore_quarantined_path(
+        &source.original_record_path,
+        &source.quarantine_record_path,
+        Path::is_file,
+        "active source record",
+    )?;
     if let Some(backup) = source.bindings_backup.as_ref() {
         fs::write(&source.bindings_path, backup).map_err(|error| {
             format!(
@@ -440,42 +829,100 @@ pub(crate) fn rollback_quarantined_source(source: &QuarantinedOwnedSource) -> Re
                 source.bindings_path.display()
             )
         })?;
-        let _ = crate::restart_flowcell_headless_backend();
+        reload_bindings();
+    } else if source.bindings_path.is_file() {
+        let owner_root = source
+            .quarantine_record_path
+            .parent()
+            .ok_or_else(|| "Quarantined Button source has no owner directory.".to_string())?;
+        let rollback_copy = owner_root.join("bindings-created-during-quarantine.ini");
+        if !rollback_copy.exists() {
+            fs::rename(&source.bindings_path, &rollback_copy).map_err(|error| {
+                format!(
+                    "Failed to quarantine bindings created during rollback at {}: {error}",
+                    source.bindings_path.display()
+                )
+            })?;
+        }
+        reload_bindings();
     }
-    if source.record.runner == "blender-bridge" {
-        let manifest = load_program_manifest(&source.record.program_name)?;
-        let installed_source = PathBuf::from(&source.record.source_path);
-        super::install::deploy_blender_source(
-            &manifest,
-            &source.record.owner_button_id,
-            &source.record.panel_name,
-            &installed_source,
-            source.record.bridge_data.as_ref(),
-        )?;
-    }
-    Ok(())
+    restore_runtime(&source.record)
 }
 
-pub(crate) fn recycle_quarantined_source(
-    source: &QuarantinedOwnedSource,
-) -> Result<Vec<String>, String> {
-    let owner_root = source
-        .quarantine_record_path
-        .parent()
-        .ok_or_else(|| "Quarantined Button source has no owner directory.".to_string())?;
-    let paths = vec![
-        source.original_record_path.display().to_string(),
-        source.original_package_path.display().to_string(),
-    ];
-    crate::recycle_directory_path(owner_root)?;
-    Ok(paths)
+pub(crate) fn rollback_quarantined_source(source: &QuarantinedOwnedSource) -> Result<(), String> {
+    rollback_quarantined_source_with(
+        source,
+        |record| {
+            if record.runner != "blender-bridge" {
+                return Ok(());
+            }
+            let manifest = load_program_manifest(&record.program_name)?;
+            let installed_source = PathBuf::from(&record.source_path);
+            super::install::deploy_blender_source(
+                &manifest,
+                &record.owner_button_id,
+                &record.panel_name,
+                &installed_source,
+                record.bridge_data.as_ref(),
+            )?;
+            Ok(())
+        },
+        || {
+            let _ = crate::restart_flowcell_headless_backend();
+        },
+    )
+}
+
+pub(crate) fn rollback_quarantined_transaction(
+    transaction_root: &Path,
+    owner_button_ids: &[String],
+) -> Result<(), String> {
+    let mut errors = Vec::new();
+    for owner_button_id in owner_button_ids.iter().rev() {
+        let owner = match validate_owner_button_id(owner_button_id) {
+            Ok(owner) => owner,
+            Err(error) => {
+                errors.push(error);
+                continue;
+            }
+        };
+        let owner_root = transaction_root.join(owner);
+        match read_source_quarantine_journal(&owner_root) {
+            Ok(Some(source)) => {
+                if let Err(error) = rollback_quarantined_source(&source) {
+                    errors.push(format!(
+                        "Button source '{}' restore failed: {error}",
+                        source.record.owner_button_id
+                    ));
+                }
+            }
+            Ok(None) => {}
+            Err(error) => errors.push(error),
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join(" | "))
+    }
 }
 
 #[tauri::command]
 pub(crate) fn uninstall_button_source(
+    app: tauri::AppHandle,
     request: UninstallButtonSourceRequest,
 ) -> Result<UninstallButtonSourceResponse, String> {
+    crate::require_registered_program_name(&request.program_name)?;
+    let guard = source_quarantine_guard()?;
+    let mut cleanup = recover_standalone_source_transactions_locked()?;
     let owner_button_id = validate_owner_button_id(&request.owner_button_id)?;
+    if crate::button_state::canonical_state_references_source_owner_while_source_locked(
+        &owner_button_id,
+    )? {
+        return Err(format!(
+            "Button source '{owner_button_id}' is still referenced by canonical Button state; remove it through a Button state commit."
+        ));
+    }
     let (record_path, _) = locate_owned_source(
         &owner_button_id,
         Some(request.program_name.trim()),
@@ -485,29 +932,325 @@ pub(crate) fn uninstall_button_source(
     let local_root = crate::resolve_flowcell_local_root()?
         .join("button-system")
         .join("quarantine");
-    let transaction_root = local_root.join(transaction_token());
-    let source = quarantine_owned_source(&owner_button_id, &transaction_root)?;
-    if source.original_record_path != record_path {
-        let _ = rollback_quarantined_source(&source);
-        return Err("Owned source identity changed during uninstall.".to_string());
-    }
-    match recycle_quarantined_source(&source) {
-        Ok(recycled_paths) => {
-            if transaction_root.is_dir() {
-                let _ = fs::remove_dir(&transaction_root);
-            }
-            Ok(UninstallButtonSourceResponse {
-                owner_button_id,
-                recycled_paths,
-                removed_binding_count: source.removed_binding_count,
-            })
-        }
+    let transaction_root = local_root.join(format!("uninstall-{}", transaction_token()));
+    let mut journal = UninstallTransactionJournal {
+        schema_version: UNINSTALL_TRANSACTION_SCHEMA_VERSION,
+        phase: UninstallTransactionPhase::Prepared,
+        owner_button_id: owner_button_id.clone(),
+    };
+    write_uninstall_transaction_journal(
+        &transaction_root,
+        &journal,
+        super::transaction::AtomicWriteMode::Create,
+    )?;
+    let source = match quarantine_owned_source(&owner_button_id, &transaction_root) {
+        Ok(source) => source,
         Err(error) => {
-            let rollback = rollback_quarantined_source(&source);
-            Err(match rollback {
-                Ok(()) => error,
-                Err(rollback_error) => format!("{error} Rollback also failed: {rollback_error}"),
-            })
+            let rollback_error =
+                rollback_quarantined_transaction(&transaction_root, &[owner_button_id.clone()])
+                    .err();
+            if rollback_error.is_none() {
+                journal.phase = UninstallTransactionPhase::RolledBack;
+                if write_uninstall_transaction_journal(
+                    &transaction_root,
+                    &journal,
+                    super::transaction::AtomicWriteMode::Replace,
+                )
+                .is_ok()
+                {
+                    cleanup.push(transaction_root.clone());
+                }
+            }
+            drop(guard);
+            finalize_standalone_transaction_roots(&cleanup);
+            return Err(match rollback_error {
+                Some(rollback_error) => {
+                    format!("{error} Rollback also failed: {rollback_error}")
+                }
+                None => error,
+            });
+        }
+    };
+    if source.original_record_path != record_path {
+        let rollback =
+            rollback_quarantined_transaction(&transaction_root, &[owner_button_id.clone()]);
+        if rollback.is_ok() {
+            journal.phase = UninstallTransactionPhase::RolledBack;
+            if write_uninstall_transaction_journal(
+                &transaction_root,
+                &journal,
+                super::transaction::AtomicWriteMode::Replace,
+            )
+            .is_ok()
+            {
+                cleanup.push(transaction_root.clone());
+            }
+        }
+        drop(guard);
+        finalize_standalone_transaction_roots(&cleanup);
+        return Err(match rollback {
+            Ok(()) => "Owned source identity changed during uninstall.".to_string(),
+            Err(error) => format!(
+                "Owned source identity changed during uninstall. Rollback also failed: {error}"
+            ),
+        });
+    }
+
+    journal.phase = UninstallTransactionPhase::Committed;
+    write_uninstall_transaction_journal(
+        &transaction_root,
+        &journal,
+        super::transaction::AtomicWriteMode::Replace,
+    )?;
+    cleanup.push(transaction_root);
+    let response = UninstallButtonSourceResponse {
+        owner_button_id,
+        recycled_paths: vec![
+            source.original_record_path.display().to_string(),
+            source.original_package_path.display().to_string(),
+        ],
+        removed_binding_count: source.removed_binding_count,
+    };
+    drop(guard);
+    finalize_standalone_transaction_roots(&cleanup);
+    if response.removed_binding_count > 0 {
+        if let Err(error) = crate::synchronize_tool_set_child_hotkeys(&app) {
+            let message = format!(
+                "Tool-set child hotkeys could not be synchronized after uninstalling '{}': {error}",
+                response.owner_button_id
+            );
+            eprintln!("{message}");
+            crate::append_flowcell_local_log("child_hotkeys.log", &message);
         }
     }
+    Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        binding_section_belongs_to_owner, rollback_quarantined_source_with, ActiveSourceRecord,
+        QuarantinedOwnedSource,
+    };
+    use std::collections::HashMap;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TestRoot(PathBuf);
+
+    impl TestRoot {
+        fn new(label: &str) -> Self {
+            let token = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "flowcell-source-quarantine-{label}-{}-{token}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("create source quarantine test root");
+            Self(path)
+        }
+
+        fn join(&self, value: &str) -> PathBuf {
+            self.0.join(value)
+        }
+    }
+
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn owner_binding_cleanup_matches_typed_buttons_by_owner_id() {
+        let package_root = Path::new(r"D:\FlowCell\owner-package");
+        let mut section = HashMap::from([
+            ("TargetKind".to_string(), "tool-set-child".to_string()),
+            ("ButtonId".to_string(), "child-negative".to_string()),
+            ("OwnerButtonId".to_string(), "owner-rotate".to_string()),
+        ]);
+        assert!(binding_section_belongs_to_owner(
+            &section,
+            package_root,
+            "owner-rotate"
+        ));
+        assert!(!binding_section_belongs_to_owner(
+            &section,
+            package_root,
+            "different-owner"
+        ));
+
+        section.insert("TargetKind".to_string(), "tool-set-owner".to_string());
+        section.insert("ButtonId".to_string(), "owner-rotate".to_string());
+        assert!(binding_section_belongs_to_owner(
+            &section,
+            package_root,
+            "owner-rotate"
+        ));
+        assert!(!binding_section_belongs_to_owner(
+            &section,
+            package_root,
+            "different-owner"
+        ));
+
+        section.insert("TargetKind".to_string(), "script".to_string());
+        assert!(!binding_section_belongs_to_owner(
+            &section,
+            package_root,
+            "owner-rotate"
+        ));
+    }
+
+    fn test_source(root: &TestRoot, bindings_backup: Option<String>) -> QuarantinedOwnedSource {
+        let owner_root = root.join("transaction/owner-one");
+        fs::create_dir_all(&owner_root).expect("create owner quarantine directory");
+        QuarantinedOwnedSource {
+            record: ActiveSourceRecord {
+                schema_version: 1,
+                owner_button_id: "owner-one".to_string(),
+                install_id: "owner-one".to_string(),
+                program_id: "program.test".to_string(),
+                program_name: "Program".to_string(),
+                panel_name: "Panel".to_string(),
+                label: "Source".to_string(),
+                tooltip: String::new(),
+                kind: "script".to_string(),
+                local_package_path: root.join("local-package").display().to_string(),
+                source_path: root
+                    .join("local-package/source/action.py")
+                    .display()
+                    .to_string(),
+                runner: "blender-bridge".to_string(),
+                runner_data: None,
+                execution_target: None,
+                bridge_action: "flowcell_test".to_string(),
+                bridge_data: None,
+                events: None,
+                children: Vec::new(),
+                layout: None,
+                source_display_path: "action.py".to_string(),
+                bundled_source_id: None,
+                bundled_source_version: None,
+            },
+            original_record_path: root.join("owner.flowcell-source.json"),
+            original_package_path: root.join("local-package"),
+            quarantine_record_path: owner_root.join("owner.flowcell-source.json"),
+            quarantine_package_path: owner_root.join("local-package"),
+            bindings_path: root.join("bindings.ini"),
+            bindings_backup,
+            removed_binding_count: 1,
+        }
+    }
+
+    fn create_original_source(source: &QuarantinedOwnedSource) {
+        fs::write(&source.original_record_path, "record").expect("write active record");
+        fs::create_dir_all(source.original_package_path.join("source"))
+            .expect("create Local package");
+        fs::write(
+            source.original_package_path.join("source/action.py"),
+            "action",
+        )
+        .expect("write installed action");
+        if let Some(backup) = source.bindings_backup.as_ref() {
+            fs::write(&source.bindings_path, backup).expect("write original bindings");
+        }
+    }
+
+    fn assert_source_restored(source: &QuarantinedOwnedSource) {
+        assert!(source.original_record_path.is_file());
+        assert!(source.original_package_path.is_dir());
+        assert!(!source.quarantine_record_path.exists());
+        assert!(!source.quarantine_package_path.exists());
+    }
+
+    #[test]
+    fn rollback_is_idempotent_across_quarantine_fault_cuts() {
+        let first_root = TestRoot::new("after-record-move");
+        let first = test_source(&first_root, Some("old-bindings".to_string()));
+        create_original_source(&first);
+        fs::rename(&first.original_record_path, &first.quarantine_record_path)
+            .expect("quarantine active record");
+        let mut runtime_restores = 0;
+        rollback_quarantined_source_with(
+            &first,
+            |_| {
+                runtime_restores += 1;
+                Ok(())
+            },
+            || {},
+        )
+        .expect("recover after record move");
+        assert_source_restored(&first);
+        assert_eq!(
+            fs::read_to_string(&first.bindings_path).expect("read restored bindings"),
+            "old-bindings"
+        );
+        assert_eq!(runtime_restores, 1);
+
+        // Re-running recovery after the same journal survived is harmless.
+        rollback_quarantined_source_with(&first, |_| Ok(()), || {})
+            .expect("repeat completed rollback");
+        assert_source_restored(&first);
+
+        let second_root = TestRoot::new("after-runtime-cleanup");
+        let second = test_source(&second_root, Some("original-bindings".to_string()));
+        create_original_source(&second);
+        fs::rename(&second.original_record_path, &second.quarantine_record_path)
+            .expect("quarantine second active record");
+        fs::rename(
+            &second.original_package_path,
+            &second.quarantine_package_path,
+        )
+        .expect("quarantine second Local package");
+        fs::write(&second.bindings_path, "bindings-after-delete").expect("write modified bindings");
+        let mut blender_redeploys = 0;
+        rollback_quarantined_source_with(
+            &second,
+            |record| {
+                assert_eq!(record.runner, "blender-bridge");
+                blender_redeploys += 1;
+                Ok(())
+            },
+            || {},
+        )
+        .expect("recover after all external resources changed");
+        assert_source_restored(&second);
+        assert_eq!(
+            fs::read_to_string(&second.bindings_path).expect("read second restored bindings"),
+            "original-bindings"
+        );
+        assert_eq!(blender_redeploys, 1);
+
+        let no_bindings_root = TestRoot::new("bindings-created");
+        let no_bindings = test_source(&no_bindings_root, None);
+        create_original_source(&no_bindings);
+        fs::write(&no_bindings.bindings_path, "created-during-quarantine")
+            .expect("write newly created bindings");
+        rollback_quarantined_source_with(&no_bindings, |_| Ok(()), || {})
+            .expect("recover originally absent bindings");
+        assert!(!no_bindings.bindings_path.exists());
+        assert!(Path::new(&no_bindings.quarantine_record_path)
+            .parent()
+            .expect("owner quarantine parent")
+            .join("bindings-created-during-quarantine.ini")
+            .is_file());
+    }
+}
+#[test]
+fn windows_verbatim_paths_match_ordinary_owned_paths() {
+    assert!(paths_equal(
+        Path::new(r"\\?\D:\FlowCell\Programs\Illustrator\Local\owner"),
+        Path::new(r"D:\FlowCell\Programs\Illustrator\Local\owner")
+    ));
+    assert!(path_is_under(
+        r"D:\FlowCell\Programs\Illustrator\Local\owner\source\action.jsx",
+        Path::new(r"\\?\D:\FlowCell\Programs\Illustrator\Local\owner")
+    ));
+    assert!(paths_equal(
+        Path::new(r"\\?\UNC\server\share\FlowCell\owner"),
+        Path::new(r"\\server\share\FlowCell\owner")
+    ));
 }

@@ -272,6 +272,7 @@ export function attachCanonicalOrganizationProfileButton(
       defaultSkinId: document.settings.defaultSkinId,
       defaultTextFitMode: "shrink",
       disabled: false,
+      activationAnimation: null,
       metadata: {}
     }),
     id: installed.ownerButtonId,

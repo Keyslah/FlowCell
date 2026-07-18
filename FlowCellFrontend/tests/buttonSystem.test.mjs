@@ -32,6 +32,10 @@ import {
   compileButtonSkin
 } from "./.compiled-button-system/button/skins/skinCompiler.js";
 import {
+  BUTTON_VISUAL_SETTLE_FRAMES,
+  resolveButtonVisualSamplingDecision
+} from "./.compiled-button-system/button/skins/buttonVisualSampling.js";
+import {
   buttonRectsOverlap,
   compactButtonPlacements,
   inferButtonPlacementRowProfile,
@@ -78,6 +82,14 @@ import {
   applyInstalledSourceUpdate
 } from "./.compiled-button-system/button/state/sourceUpdateOperations.js";
 import {
+  removedToolPageWindowIdentities,
+  scopedToolPageWindowIdentities
+} from "./.compiled-button-system/button/state/toolPageLifecycle.js";
+import {
+  buttonStateDocumentsEqual,
+  reconcileBundledProgramSources
+} from "./.compiled-button-system/button/state/ButtonStateRepository.js";
+import {
   findPanelOwnerButton,
   initialPanelOwnerButtonId,
   initialPanelOwnerMainPlacementId,
@@ -102,12 +114,19 @@ import {
   resolveButtonPressEventPlan
 } from "./.compiled-button-system/button/runtime/ButtonRuntimeAdapter.js";
 import {
+  mappedToolPackageFields
+} from "./.compiled-button-system/button/runtime/toolPackageMapping.js";
+import {
   buttonDesktopBoundsInsideCanvas,
   buttonDesktopBoundsToCanvasRect,
   buttonDesktopBoundsFromFlowCellBounds,
+  buttonWindowRectContainsPoint,
+  isUsableButtonWindowBounds,
   physicalSurfaceSize,
   resolveAspectLockedWindowBounds,
   resolveButtonFrameForScaleFactor,
+  resolveButtonWebviewPixelRatio,
+  resolveButtonWindowClientPoint,
   resolveButtonWindowEnvelope,
   resolveExpandedPopoutBounds,
   resolveFixedButtonCanvasBounds,
@@ -117,8 +136,19 @@ import {
   resolvePhysicalButtonWindowEnvelopeBounds,
   resolvePopoutBoundsAfterDrag,
   resolveUniformSurfaceScale,
+  resolveTargetButtonWebviewPixelRatio,
+  shouldBypassButtonWindowGeometryTransition,
   translateButtonDesktopBounds
 } from "./.compiled-button-system/button/windows/buttonWindowGeometry.js";
+import {
+  createNativeCursorIgnoreController,
+  isNativeQueryRevisionCurrent,
+  shouldIgnoreButtonWindowCursor
+} from "./.compiled-button-system/button/windows/nativeCursorIgnoreController.js";
+import {
+  readRegisteredLayoutWindow,
+  registerLayoutWindow
+} from "./.compiled-button-system/lib/layoutSnapshots.js";
 import {
   buildButtonEditorButtonOptions,
   buildButtonEditorFanCandidates,
@@ -160,6 +190,7 @@ function button(id, role, identity = null) {
     defaultSkinId: "skin-default-neutral",
     defaultTextFitMode: "shrink",
     disabled: false,
+    activationAnimation: null,
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: {}
@@ -576,6 +607,250 @@ test("fixed Button canvas maps physical desktop frames into local CSS pixels", (
     width: 500,
     height: 250
   });
+});
+
+test("fixed Button canvas broad phase rejects unrelated transparent space", () => {
+  const frame = { x: 240, y: 120, width: 320, height: 180 };
+  assert.equal(buttonWindowRectContainsPoint(frame, { x: 400, y: 200 }), true);
+  assert.equal(buttonWindowRectContainsPoint(frame, { x: 224, y: 104 }, 16), true);
+  assert.equal(buttonWindowRectContainsPoint(frame, { x: 223.9, y: 104 }, 16), false);
+  assert.equal(buttonWindowRectContainsPoint(frame, { x: 1, y: 1 }, 16), false);
+  assert.equal(buttonWindowRectContainsPoint(null, { x: 400, y: 200 }), false);
+});
+
+test("Button Editor bounds reject Windows minimized sentinels and discard stale snapshots", () => {
+  const normalBounds = { Left: -1920, Top: 80, Width: 1240, Height: 860 };
+  const minimizedBounds = { Left: -32000, Top: -32000, Width: 160, Height: 28 };
+  assert.equal(isUsableButtonWindowBounds(normalBounds), true);
+  assert.equal(isUsableButtonWindowBounds(minimizedBounds), false);
+
+  const values = new Map();
+  const originalWindow = globalThis.window;
+  globalThis.window = {
+    localStorage: {
+      getItem: (key) => values.get(key) ?? null,
+      setItem: (key, value) => values.set(key, String(value)),
+      removeItem: (key) => values.delete(key)
+    }
+  };
+  try {
+    values.set("flowcell.button-layout-windows.v2", JSON.stringify({
+      "flowcell-button-editor": {
+        windowLabel: "flowcell-button-editor",
+        kind: "button-editor",
+        snapshotBounds: minimizedBounds
+      }
+    }));
+    assert.equal(
+      readRegisteredLayoutWindow("flowcell-button-editor")?.snapshotBounds,
+      undefined
+    );
+
+    registerLayoutWindow({
+      windowLabel: "flowcell-button-editor",
+      kind: "button-editor"
+    });
+    const persisted = JSON.parse(values.get("flowcell.button-layout-windows.v2"));
+    assert.equal(persisted["flowcell-button-editor"].snapshotBounds, undefined);
+  } finally {
+    if (originalWindow === undefined) {
+      delete globalThis.window;
+    } else {
+      globalThis.window = originalWindow;
+    }
+  }
+});
+
+test("fixed Button cursor and frame mapping honor the WebView pixel ratio", () => {
+  assert.equal(resolveButtonWebviewPixelRatio(1, 1.05), 1.05);
+  assert.equal(resolveButtonWebviewPixelRatio(1.25, undefined), 1.25);
+  assert.equal(resolveButtonWebviewPixelRatio(1.25, 0), 1.25);
+  assert.ok(
+    Math.abs(resolveTargetButtonWebviewPixelRatio(1, 1.05, 1.5) - 1.575) < 0.0001
+  );
+
+  const clientPoint = resolveButtonWindowClientPoint(
+    { x: 325, y: 1009 },
+    { x: 0, y: 0 },
+    1,
+    1.05
+  );
+  assert.ok(Math.abs(clientPoint.x - 309.5238) < 0.0001);
+  assert.ok(Math.abs(clientPoint.y - 960.9524) < 0.0001);
+  assert.equal(
+    buttonWindowRectContainsPoint(
+      { x: 262.99, y: 938.97, width: 160, height: 43.99 },
+      clientPoint
+    ),
+    true
+  );
+  assert.equal(
+    buttonWindowRectContainsPoint(
+      { x: 262.99, y: 990.98, width: 160, height: 43.99 },
+      clientPoint
+    ),
+    false
+  );
+
+  const canvasRect = buttonDesktopBoundsToCanvasRect(
+    { left: 255, top: 879, width: 680, height: 268 },
+    { left: 0, top: 0, scaleFactor: 1.05 }
+  );
+  assert.ok(canvasRect);
+  assert.ok(Math.abs(canvasRect.left * 1.05 - 255) < 0.0001);
+  assert.ok(Math.abs(canvasRect.top * 1.05 - 879) < 0.0001);
+  assert.ok(Math.abs(canvasRect.width * 1.05 - 680) < 0.0001);
+  assert.ok(Math.abs(canvasRect.height * 1.05 - 268) < 0.0001);
+});
+
+test("native Button cursor gating fails closed outside the owning program", () => {
+  assert.equal(shouldIgnoreButtonWindowCursor(false, true), true);
+  assert.equal(shouldIgnoreButtonWindowCursor(false, false), true);
+  assert.equal(shouldIgnoreButtonWindowCursor(true, false), true);
+  assert.equal(shouldIgnoreButtonWindowCursor(true, true), false);
+  assert.equal(isNativeQueryRevisionCurrent(4, 4), true);
+  assert.equal(isNativeQueryRevisionCurrent(4, 5), false);
+});
+
+test("native Button cursor-ignore failures retry and converge to the latest state", async () => {
+  const retryCalls = [];
+  let firstAttempt = true;
+  const retryController = createNativeCursorIgnoreController(async (ignored) => {
+    retryCalls.push(ignored);
+    if (firstAttempt) {
+      firstAttempt = false;
+      throw new Error("transient native failure");
+    }
+  }, { retryDelaysMs: [0] });
+  retryController.request(true);
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(retryCalls, [true, true]);
+  retryController.shutdown();
+
+  const latestCalls = [];
+  let releaseFirst;
+  const firstApply = new Promise((resolve) => {
+    releaseFirst = resolve;
+  });
+  const latestController = createNativeCursorIgnoreController(async (ignored) => {
+    latestCalls.push(ignored);
+    if (latestCalls.length === 1) await firstApply;
+  }, { retryDelaysMs: [0] });
+  latestController.request(false);
+  await Promise.resolve();
+  latestController.request(true);
+  releaseFirst();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(latestCalls, [false, true]);
+  latestController.shutdown();
+});
+
+test("native Button cursor controller invalidates external HWND changes and shuts down ignored", async () => {
+  const invalidationCalls = [];
+  const invalidationController = createNativeCursorIgnoreController(async (ignored) => {
+    invalidationCalls.push(ignored);
+  }, { retryDelaysMs: [0] });
+  invalidationController.request(false);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  invalidationController.invalidate();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(invalidationCalls, [false, false]);
+  invalidationController.reset(true);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.deepEqual(invalidationCalls, [false, false, true]);
+  invalidationController.shutdown();
+
+  const shutdownCalls = [];
+  let releaseActiveApply;
+  const activeApply = new Promise((resolve) => {
+    releaseActiveApply = resolve;
+  });
+  const shutdownController = createNativeCursorIgnoreController(async (ignored) => {
+    shutdownCalls.push(ignored);
+    if (shutdownCalls.length === 1) await activeApply;
+  }, { retryDelaysMs: [0] });
+  shutdownController.request(false);
+  await Promise.resolve();
+  shutdownController.shutdown();
+  releaseActiveApply();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.deepEqual(shutdownCalls, [false, true]);
+});
+
+test("equal Button envelopes bypass only when no geometry transition is pending", () => {
+  const current = { x: -4, y: -3, width: 180, height: 52 };
+  assert.equal(
+    shouldBypassButtonWindowGeometryTransition(current, { ...current }, 0),
+    true
+  );
+  assert.equal(
+    shouldBypassButtonWindowGeometryTransition(current, { ...current }, 1),
+    false
+  );
+  assert.equal(
+    shouldBypassButtonWindowGeometryTransition(current, { ...current, width: 181 }, 0),
+    false
+  );
+});
+
+test("finite Button visual sampling stops after animations and settle frames", () => {
+  const activeState = {
+    hovered: true,
+    pressed: false,
+    held: false,
+    play: false,
+    release: false,
+    error: false
+  };
+  const running = resolveButtonVisualSamplingDecision({
+    state: activeState,
+    animationInspectionAvailable: true,
+    hasRunningAnimations: true,
+    settleFramesRemaining: 0
+  });
+  assert.deepEqual(running, {
+    continueSampling: true,
+    settleFramesRemaining: BUTTON_VISUAL_SETTLE_FRAMES
+  });
+  const settling = resolveButtonVisualSamplingDecision({
+    state: activeState,
+    animationInspectionAvailable: true,
+    hasRunningAnimations: false,
+    settleFramesRemaining: running.settleFramesRemaining
+  });
+  assert.deepEqual(settling, {
+    continueSampling: true,
+    settleFramesRemaining: BUTTON_VISUAL_SETTLE_FRAMES - 1
+  });
+  const finalSettle = resolveButtonVisualSamplingDecision({
+    state: activeState,
+    animationInspectionAvailable: true,
+    hasRunningAnimations: false,
+    settleFramesRemaining: settling.settleFramesRemaining
+  });
+  assert.equal(finalSettle.continueSampling, true);
+  const stopped = resolveButtonVisualSamplingDecision({
+    state: activeState,
+    animationInspectionAvailable: true,
+    hasRunningAnimations: false,
+    settleFramesRemaining: finalSettle.settleFramesRemaining
+  });
+  assert.deepEqual(stopped, { continueSampling: false, settleFramesRemaining: 0 });
+
+  const fallback = resolveButtonVisualSamplingDecision({
+    state: activeState,
+    animationInspectionAvailable: false,
+    hasRunningAnimations: false,
+    settleFramesRemaining: 0
+  });
+  assert.equal(fallback.continueSampling, true);
+  const idle = resolveButtonVisualSamplingDecision({
+    state: { ...activeState, hovered: false },
+    animationInspectionAvailable: true,
+    hasRunningAnimations: true,
+    settleFramesRemaining: BUTTON_VISUAL_SETTLE_FRAMES
+  });
+  assert.deepEqual(idle, { continueSampling: false, settleFramesRemaining: 0 });
 });
 
 test("fixed Button frame rescaling preserves the opposite resize corner", () => {
@@ -1383,6 +1658,34 @@ test("panel-owner reconcile and removal leave no stale owner graphs", () => {
   assert.equal(validation.valid, true, validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
 });
 
+test("panel-owner discovery reconciliation never removes owners from a stale folder snapshot", () => {
+  const document = createButtonStateDocument();
+  const entries = [
+    { panelName: "Files", rect: { x: 199, y: 126, width: 132, height: 37 } },
+    { panelName: "Utility", rect: { x: 199, y: 176, width: 132, height: 37 } }
+  ];
+  reconcileProgramPanelOwners(document, {
+    programName: "Windows",
+    panels: entries,
+    surfaceBounds: { width: 1225, height: 721 }
+  });
+  const utilityOwner = findPanelOwnerButton(document, "Windows", "Utility");
+  assert.ok(utilityOwner);
+
+  const staleDiscovery = reconcileProgramPanelOwners(document, {
+    programName: "Windows",
+    panels: [entries[0]],
+    surfaceBounds: { width: 1225, height: 721 },
+    removeStaleOwners: false
+  });
+
+  assert.deepEqual(staleDiscovery.removedOwnerButtonIds, []);
+  assert.deepEqual(staleDiscovery.uninstallOwnerButtonIds, []);
+  assert.equal(findPanelOwnerButton(document, "Windows", "Utility")?.id, utilityOwner.id);
+  const validation = validateButtonStateDocument(document);
+  assert.equal(validation.valid, true, validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
+});
+
 test("panel scope rename rewrites every owned target while preserving IDs and presentation", () => {
   const { document, ids } = buildButtonDocumentScopeFixture();
   assertValidScopeFixture(document);
@@ -1482,6 +1785,30 @@ test("program scope rename rewrites every panel graph including empty registered
   assert.deepEqual(document.buttons[ids.siblingProgram], illustratorButton);
   assert.deepEqual(document.buttons[ids.illustratorPanelOwner], illustratorOwner);
   assert.deepEqual(renamePreservationSnapshot(document), preserved);
+  assertValidScopeFixture(document);
+});
+
+test("case-only program scope rename is an exact-case idempotent mutation", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+
+  const first = renameProgramButtonDocumentScope(document, {
+    currentProgramName: "Blender",
+    nextProgramName: "blender"
+  });
+  assert.equal(first.changed, true);
+  [...ids.scopeSourceOwners, ids.siblingPanel].forEach((buttonId) => {
+    assert.equal(document.buttons[buttonId].sourceIdentity.displayProgramName, "blender");
+  });
+  assert.equal(document.buttons[ids.toolsPanelOwner].metadata.programName, "blender");
+  assert.equal(document.surfaces[ids.toolsPanelSurface].name, "blender / Tools");
+
+  const persisted = structuredClone(document);
+  const second = renameProgramButtonDocumentScope(document, {
+    currentProgramName: "Blender",
+    nextProgramName: "blender"
+  });
+  assert.equal(second.changed, false);
+  assert.deepEqual(document, persisted);
   assertValidScopeFixture(document);
 });
 
@@ -2044,6 +2371,332 @@ test("source updates preserve Button identities and presentation while refreshin
       }
     }]
   }), /cannot add, remove, or rename/);
+});
+
+test("tool-page lifecycle closes only removed page identities", () => {
+  const previous = createButtonStateDocument();
+  previous.buttons.layers = {
+    ...button("layers", "single-script", source("Illustrator", "Layers Builder", "layers.flowcell-source.json")),
+    executionTarget: {
+      kind: "core-action",
+      actionId: "open-tool-page",
+      payload: {
+        contributionId: "illustrator.layer-tree",
+        ownerButtonId: "layers",
+        programName: "Illustrator",
+        panelName: "Layers Builder"
+      }
+    }
+  };
+  previous.buttons.shared = {
+    ...button("shared", "single-script", source("Windows", "Utilities", "shared.flowcell-source.json")),
+    executionTarget: {
+      kind: "core-action",
+      actionId: "open-tool-page",
+      payload: { contributionId: "shared.page" }
+    }
+  };
+
+  const next = structuredClone(previous);
+  delete next.buttons.layers;
+  next.buttons.sharedReplacement = {
+    ...next.buttons.shared,
+    id: "sharedReplacement"
+  };
+  delete next.buttons.shared;
+
+  assert.deepEqual(removedToolPageWindowIdentities(previous, next), [{
+    contributionId: "illustrator.layer-tree",
+    ownerButtonId: "layers"
+  }]);
+});
+
+test("tool-page lifecycle finds page identities in a renamed program or panel scope", () => {
+  const document = createButtonStateDocument();
+  document.buttons.layers = {
+    ...button("layers", "single-script", source("Illustrator", "Layers Builder", "layers.flowcell-source.json")),
+    executionTarget: {
+      kind: "core-action",
+      actionId: "open-tool-page",
+      payload: {
+        contributionId: "illustrator.layer-tree",
+        ownerButtonId: "layers"
+      }
+    }
+  };
+  document.buttons.other = {
+    ...button("other", "single-script", source("Illustrator", "Other", "other.flowcell-source.json")),
+    executionTarget: {
+      kind: "core-action",
+      actionId: "open-tool-page",
+      payload: { contributionId: "other.page", ownerButtonId: "other" }
+    }
+  };
+
+  assert.deepEqual(scopedToolPageWindowIdentities(document, "illustrator", "layers builder"), [{
+    contributionId: "illustrator.layer-tree",
+    ownerButtonId: "layers"
+  }]);
+  assert.equal(scopedToolPageWindowIdentities(document, "Illustrator").length, 2);
+});
+
+test("tool-page lifecycle closes an existing owner window when its page contract changes", () => {
+  const previous = createButtonStateDocument();
+  previous.buttons.page = {
+    ...button("page", "single-script", source("Example", "Tools", "page.flowcell-source.json")),
+    executionTarget: {
+      kind: "core-action",
+      actionId: "open-tool-page",
+      payload: {
+        contributionId: "example.page",
+        ownerButtonId: "page",
+        renderer: "tree-inspector",
+        capability: "old-capability",
+        programName: "Example",
+        panelName: "Tools",
+        fileName: "page.flowcell-source.json",
+        title: "Example"
+      }
+    }
+  };
+  const next = structuredClone(previous);
+  next.buttons.page.executionTarget.payload.capability = "new-capability";
+
+  assert.deepEqual(removedToolPageWindowIdentities(previous, next), [{
+    contributionId: "example.page",
+    ownerButtonId: "page"
+  }]);
+});
+
+test("source updates recover legacy deterministic tool-set slots before applying core actions", () => {
+  const document = createButtonStateDocument();
+  const ownerId = "legacy-theme-owner";
+  const ownerIdentity = source("Blender", "toolset", "legacy-theme-owner.flowcell-source.json");
+  const stableSegment = (value) => Array.from(value.trim().toLocaleLowerCase())
+    .map((character) => character.codePointAt(0)?.toString(16) ?? "0")
+    .join("-") || "item";
+  const slots = ["browse_theme", "apply_theme"];
+  const childIds = slots.map((slot, index) =>
+    `button-child-${ownerId}-${stableSegment(slot)}-${index}`
+  );
+
+  document.buttons[ownerId] = button(ownerId, "tool-set-owner", ownerIdentity);
+  childIds.forEach((childId, index) => {
+    document.buttons[childId] = {
+      ...button(childId, "tool-set-child"),
+      toolSetParentId: ownerId,
+      executionTarget: {
+        kind: "core-action",
+        actionId: index === 0 ? "sample-blender-theme-image" : "open-window-grid"
+      }
+    };
+  });
+  document.popoutUnits.theme = {
+    id: "theme",
+    name: "Theme",
+    kind: "tool-set",
+    surfaceId: "surface-theme",
+    canonicalBounds: { x: 0, y: 0, width: 300, height: 200 },
+    desktopBounds: null,
+    childPlacementIds: [],
+    openRule: "toggle",
+    closeRule: "toggle",
+    transparency: 1,
+    pinnedDefault: false,
+    ownerButtonId: ownerId,
+    childButtonIds: childIds,
+    fields: []
+  };
+  const update = {
+    ownerButtonId: ownerId,
+    sourceIdentity: ownerIdentity,
+    executionTarget: null,
+    label: "Theme",
+    tooltip: "",
+    children: slots.map((slot) => ({
+      slot,
+      label: slot,
+      executionTarget: {
+        kind: "core-action",
+        actionId: "open-window-grid",
+        payload: { slot }
+      }
+    })),
+    layout: {
+      childBehaviors: {
+        browse_theme: { execute: false },
+        apply_theme: { execute: true }
+      }
+    }
+  };
+
+  applyInstalledSourceUpdate(document, update);
+  assert.equal(document.buttons[childIds[0]].metadata.toolSetSlot, "browse_theme");
+  assert.equal(document.buttons[childIds[1]].metadata.toolSetSlot, "apply_theme");
+  assert.equal(document.buttons[childIds[0]].executionTarget.payload.slot, "browse_theme");
+
+  assert.doesNotThrow(() => applyInstalledSourceUpdate(document, update));
+});
+
+test("opt-in source updates append child slots without replacing existing Button identities", () => {
+  const document = createButtonStateDocument();
+  const ownerId = "theme-owner";
+  const ownerIdentity = source("Blender", "toolset", "theme.flowcell-source.json");
+  document.buttons[ownerId] = button(ownerId, "tool-set-owner", ownerIdentity);
+  document.buttons.existing = {
+    ...button("existing", "tool-set-child"),
+    toolSetParentId: ownerId,
+    metadata: { toolSetSlot: "existing" },
+    executionTarget: { kind: "core-action", actionId: "open-window-grid" }
+  };
+  document.surfaces["surface-theme"] = {
+    id: "surface-theme",
+    name: "Theme",
+    kind: "tool-set-popout",
+    width: 240,
+    height: 120,
+    placementIds: ["placement-existing"],
+    visualOverflowAllowance: 24
+  };
+  document.placements["placement-existing"] = {
+    id: "placement-existing",
+    buttonId: "existing",
+    surfaceId: "surface-theme",
+    x: 7,
+    y: 9,
+    width: 111,
+    height: 37,
+    zIndex: 0,
+    skinOverrideId: null,
+    textFitMode: "shrink",
+    minimumFontSize: 8,
+    textSizeOverride: null,
+    allowLabelResize: false,
+    matchHitboxToSkin: true,
+    allowStretching: false,
+    resizeAnchor: "top-left"
+  };
+  document.popoutUnits.theme = {
+    id: "theme",
+    name: "Theme",
+    kind: "tool-set",
+    surfaceId: "surface-theme",
+    canonicalBounds: { x: 0, y: 0, width: 240, height: 120 },
+    desktopBounds: null,
+    childPlacementIds: ["placement-existing"],
+    openRule: "toggle",
+    closeRule: "toggle",
+    transparency: 1,
+    pinnedDefault: false,
+    ownerButtonId: ownerId,
+    childButtonIds: ["existing"],
+    fields: []
+  };
+
+  applyInstalledSourceUpdate(document, {
+    ownerButtonId: ownerId,
+    sourceIdentity: ownerIdentity,
+    executionTarget: null,
+    label: "Theme",
+    tooltip: "",
+    children: [
+      {
+        slot: "existing",
+        label: "Existing changed by manifest",
+        executionTarget: { kind: "core-action", actionId: "open-window-grid", payload: { version: 2 } }
+      },
+      {
+        slot: "save_package",
+        label: "Save package",
+        executionTarget: { kind: "core-action", actionId: "save-tool-package" }
+      }
+    ],
+    layout: { updatePolicy: { appendMissingChildSlots: true } }
+  });
+
+  const appendedId = document.popoutUnits.theme.childButtonIds[1];
+  assert.equal(document.popoutUnits.theme.childButtonIds[0], "existing");
+  assert.equal(document.buttons.existing.label, "existing");
+  assert.equal(document.placements["placement-existing"].x, 7);
+  assert.equal(document.buttons[appendedId].metadata.toolSetSlot, "save_package");
+  assert.equal(document.buttons[appendedId].executionTarget.actionId, "save-tool-package");
+  assert.equal(document.popoutUnits.theme.childPlacementIds[1], `placement-${appendedId}`);
+});
+
+test("bundled source reconciliation repairs current owners and materializes missing required owners", () => {
+  const document = createButtonStateDocument();
+  document.buttons.existing = button(
+    "existing",
+    "single-script",
+    source("Illustrator", "Layers Builder", "archive.flowcell-source.json")
+  );
+  document.buttons.existing.label = "My Archive";
+
+  const reconciled = reconcileBundledProgramSources(document, [
+    {
+      ownerButtonId: "existing",
+      sourceIdentity: {
+        programName: "Illustrator",
+        panelName: "Layers Builder",
+        fileName: "archive.flowcell-source.json"
+      },
+      owner: {
+        label: "archive",
+        tooltip: "",
+        executionTarget: {
+          kind: "program-action",
+          programName: "Illustrator",
+          actionId: "run-installed-source",
+          payload: { ownerButtonId: "existing", version: 2 }
+        }
+      },
+      children: []
+    },
+    {
+      ownerButtonId: "bundled-illustrator-layer-tree",
+      sourceIdentity: {
+        programName: "Illustrator",
+        panelName: "Layers Builder",
+        fileName: "layer-tree.flowcell-source.json"
+      },
+      owner: {
+        label: "Layer Tree",
+        tooltip: "Open the live layer tree.",
+        executionTarget: {
+          kind: "core-action",
+          actionId: "open-tool-page",
+          payload: { renderer: "tree-inspector" }
+        }
+      },
+      children: []
+    }
+  ]);
+
+  assert.equal(reconciled.buttons.existing.label, "My Archive");
+  assert.equal(reconciled.buttons.existing.executionTarget.payload.version, 2);
+  assert.equal(reconciled.buttons["bundled-illustrator-layer-tree"].label, "Layer Tree");
+  assert.equal(
+    reconciled.buttons["bundled-illustrator-layer-tree"].executionTarget.actionId,
+    "open-tool-page"
+  );
+  assert.ok(reconciled.placements["placement-bundled-illustrator-layer-tree"]);
+});
+
+test("Button document equality ignores JSON object insertion order but detects value changes", () => {
+  const document = createButtonStateDocument();
+  document.buttons.one = button(
+    "one",
+    "single-script",
+    source("Windows", "Files", "one.flowcell-source.json")
+  );
+  const reordered = structuredClone(document);
+  reordered.buttons.one.sourceIdentity = Object.fromEntries(
+    Object.entries(reordered.buttons.one.sourceIdentity).reverse()
+  );
+
+  assert.equal(buttonStateDocumentsEqual(document, reordered), true);
+  reordered.buttons.one.label = "Changed";
+  assert.equal(buttonStateDocumentsEqual(document, reordered), false);
 });
 
 test("tool-set imports reject exact child placements outside their surface or overlapping", () => {
@@ -3102,6 +3755,82 @@ test("tool-set child activation uses the functional host and applies only declar
   } finally {
     unregister();
   }
+});
+
+test("per-click payload overrides win over mapped and manifest payload values", async () => {
+  let receivedPayload;
+  const unregister = registerButtonCoreAction("test-payload-override", async (target) => {
+    receivedPayload = target.payload;
+    return {};
+  });
+  try {
+    const child = {
+      ...button("apply-role", "tool-set-child"),
+      executionTarget: {
+        kind: "core-action",
+        actionId: "test-payload-override",
+        payload: { bucket: "manifest", bucket_hex: "#111111" }
+      },
+      toolSetParentId: "owner",
+      toolSetBehavior: {
+        execute: true,
+        payloadTemplate: { bucket_hex: { $field: "color" } }
+      }
+    };
+    await executeButtonRecord(child, "click", {
+      fields: [{
+        id: "color", kind: "color", label: "Color", payloadKey: "bucket_hex",
+        defaultValue: "#000000", x: 0, y: 0, width: 100, height: 20, zIndex: 0
+      }],
+      fieldValues: { color: "#222222" },
+      payloadOverride: { bucket: "tabs", bucket_hex: "#ABCDEF" }
+    });
+    assert.deepEqual(receivedPayload, { bucket: "tabs", bucket_hex: "#ABCDEF" });
+  } finally {
+    unregister();
+  }
+});
+
+test("legacy tool-package fields map declaratively and coerce unit-bearing numbers", () => {
+  const patch = mappedToolPackageFields({
+    format: "flowcell-blender-theme-pack-v1",
+    values: {
+      ThemeTabsHex: "#ABCDEF",
+      GridSpacing: "1 m",
+      GridDistance: "5 m",
+      GridFarSpacing: "1 m"
+    },
+    assets: {
+      bucketsImage: "C:/packages/Legacy/buckets.png",
+      backgroundImage: "C:/packages/Legacy/background.png"
+    }
+  }, {
+    legacyFormats: ["flowcell-blender-theme-pack-v1"],
+    fieldMap: {
+      ThemeTabsHex: "tabs_hex",
+      GridSpacing: "grid_spacing_m",
+      GridDistance: "grid_distance_m",
+      GridFarSpacing: "grid_far_spacing_m"
+    },
+    assetMap: {
+      bucketsImage: "theme_image_path",
+      backgroundImage: "static_background_path"
+    },
+    fieldTransforms: {
+      GridSpacing: "parse-number",
+      GridDistance: "parse-number",
+      GridFarSpacing: "parse-number"
+    }
+  });
+
+  assert.deepEqual(patch, {
+    tabs_hex: "#ABCDEF",
+    grid_spacing_m: 1,
+    grid_distance_m: 5,
+    grid_far_spacing_m: 1,
+    theme_image_path: "C:/packages/Legacy/buckets.png",
+    static_background_path: "C:/packages/Legacy/background.png"
+  });
 });
 
 test("cancelling a tool-field activation does not execute the child", async () => {

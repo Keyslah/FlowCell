@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.codex-micro.refresh-thread-status",
+  "label": "Refresh Thread Status",
+  "tooltip": "Read and return the current verified Codex state, or Unknown when it cannot be proven.",
+  "program": "Windows",
+  "source": "refresh_thread_status.ps1"
+}

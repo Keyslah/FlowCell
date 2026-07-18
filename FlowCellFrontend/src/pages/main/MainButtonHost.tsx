@@ -108,6 +108,7 @@ export function MainControlHost({
     defaultSkinId: DEFAULT_BUTTON_SKIN.id,
     defaultTextFitMode: "shrink-and-stack",
     disabled: Boolean(control.disabled),
+    activationAnimation: null,
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: { actionId: control.actionId }

@@ -6,7 +6,8 @@ canonical Button popout.
 
 ## Install Or Open
 
-To install it:
+Adding the Blender program installs Theme as a declared starter in the
+`toolset` panel. To install it again after an intentional deletion:
 
 1. Open the Buttons Editor and choose Add Tool Set.
 2. Select
@@ -27,9 +28,12 @@ Scripts package is only the catalog source.
    declared color fields.
 3. Choose `Dark Theme` or `Light Theme`, then tune the color fields.
 4. Press `Apply` to send the current theme mode and colors to Blender.
-5. Use `Save Buckets` or `Load Buckets` to save and restore the current declared
-   tool-set fields as JSON.
-6. Use the Place Picture and HDRI controls independently as needed.
+5. Use `Save Package` to copy the theme/Place Picture images and staged fields
+   into one portable package. `Open Package`, `Previous`, and `Next` restore a
+   package, apply its theme, and rerun Place Picture.
+6. Use `Save Buckets` or `Load Buckets` when only a JSON field snapshot is
+   needed.
+7. Use the Place Picture and HDRI controls independently as needed.
 
 ## Theme Controls
 
@@ -38,11 +42,19 @@ Scripts package is only the catalog source.
 | Theme image field | Holds the image used for color sampling. |
 | `Browse` | Chooses an image, samples it, and stages the resulting colors. |
 | `Absorb Theme` | Reads Blender's current theme into the declared color fields. |
-| `Save Buckets` | Saves the current declared tool-set field values to JSON. |
-| `Load Buckets` | Loads valid declared field values from JSON. |
+| `Save Buckets` | Saves the Theme/Place Picture snapshot fields to JSON; HDRI and world controls are excluded. |
+| `Load Buckets` | Loads only current snapshot fields, or maps a declared legacy `flowcell-blender-theme-v1` snapshot. |
+| `Save Package` | Saves only the Theme/Place Picture snapshot fields plus copied image assets under `flowcellbackend/local/blender_themes`; HDRI and world controls are excluded. Choose a new package name in that library because existing packages are never overwritten. |
+| `Open Package` | Opens a current package or a legacy `flowcell-blender-theme-pack-v1` package, then applies it. |
+| `Previous` / `Next` | Cycles the saved package library and immediately applies each selection. |
 | `Dark Theme` | Selects dark visual mode without applying to Blender. |
 | `Light Theme` | Selects light visual mode without applying to Blender. |
 | `Apply` | Applies the current theme mode and color fields to Blender. |
+
+Each color role also has its own `Apply` control. The manifest routes all of
+them through the installed `apply_theme_bucket` child and supplies the selected
+bucket/value as a per-click payload; the shared renderer contains no Blender
+bucket names.
 
 The color fields map to these Blender surface groups:
 
@@ -66,6 +78,12 @@ The color fields map to these Blender surface groups:
 Blender exposes many related theme paths rather than one field per visible
 surface, so the installed Theme source maps each group across the appropriate
 Blender theme properties.
+
+On the first updated owner load, FlowCell imports the old Theme Toolbox darkness
+profile JSON and the proven pre-refactor local-storage keys into the new
+owner-scoped state. The old file and keys are not modified or deleted. Migration
+maps role/field names from manifest data and records completion so profiles are
+not duplicated on later opens.
 
 ## Place Picture
 
@@ -99,9 +117,13 @@ The initial manifest values are X `90`, Y `0`, Z `30`, and strength `0.25`.
 
 ## Updating Or Deleting
 
-Catalog edits do not silently affect an installed Theme Button. Use Update in
-the Buttons Editor for the same owner, then reload the FlowCell Blender add-on
-or restart Blender before testing the changed deployment.
+Ordinary catalog edits do not silently affect an installed Theme Button. A
+release-owned Theme update must also bump the matching
+`bundledSources[].version` in `Programs/Blender/flowcell.program.json`; normal
+registered-program synchronization then updates the existing owner in place.
+For an ad hoc local change, use Update in the Buttons Editor for the same owner.
+After either path, reload the FlowCell Blender add-on or restart Blender before
+testing the changed deployment.
 
 Deleting the Theme owner removes its children, popout, placements, active
 record, owned Local Scripts package, bindings, and generated bridge artifacts.

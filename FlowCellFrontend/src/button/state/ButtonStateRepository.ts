@@ -7,6 +7,7 @@ import type {
   ButtonStateDocument,
   ButtonSurface,
   ButtonToolField,
+  ButtonToolPagePresentation,
   ButtonToolSetChildBehavior,
   ButtonRect
 } from "../types.js";
@@ -22,6 +23,7 @@ import {
   validateButtonStateDocument
 } from "./buttonStateValidation.js";
 import { createButtonSourceIdentity } from "./sourceIdentity.js";
+import { applyInstalledSourceUpdate } from "./sourceUpdateOperations.js";
 
 export interface InstalledButtonChildResult {
   slot: string;
@@ -36,6 +38,10 @@ export interface InstalledButtonLayout {
   placements?: Record<string, ButtonRect>;
   fields?: ButtonToolField[];
   childBehaviors?: Record<string, ButtonToolSetChildBehavior>;
+  presentation?: ButtonToolPagePresentation;
+  updatePolicy?: {
+    appendMissingChildSlots?: boolean;
+  };
 }
 
 export interface InstallButtonSourceResult {
@@ -59,6 +65,23 @@ export interface InstallButtonSourceRequest {
 interface LegacyButtonBootstrapResult {
   migrationToken: string;
   installs: Record<string, unknown>[];
+}
+
+interface BundledProgramSourceSyncEntry {
+  programName: string;
+  bundledSourceId: string;
+  status: "current" | "updated" | "installed" | "not-installed" | "failed";
+  message: string;
+  descriptor?: Record<string, unknown>;
+}
+
+interface BundledProgramSourceSyncResponse {
+  sources: BundledProgramSourceSyncEntry[];
+}
+
+export interface SynchronizeBundledButtonSourcesOptions {
+  includeStarters?: boolean;
+  programName?: string;
 }
 
 function isTauriWindowHost(): boolean {
@@ -96,33 +119,127 @@ function parseLoadedDocument(value: unknown): ButtonStateDocument {
   return stripPlaceholderFanAnchors(cloneButtonDocument(result.document));
 }
 
-async function loadButtonStateDocumentInner(): Promise<ButtonStateDocument> {
+export function buttonStateDocumentsEqual(
+  left: ButtonStateDocument,
+  right: ButtonStateDocument
+): boolean {
+  const valuesEqual = (leftValue: unknown, rightValue: unknown): boolean => {
+    if (leftValue === rightValue) return true;
+    if (
+      !leftValue ||
+      !rightValue ||
+      typeof leftValue !== "object" ||
+      typeof rightValue !== "object"
+    ) {
+      return false;
+    }
+    if (Array.isArray(leftValue) || Array.isArray(rightValue)) {
+      return Boolean(
+        Array.isArray(leftValue) &&
+        Array.isArray(rightValue) &&
+        leftValue.length === rightValue.length &&
+        leftValue.every((value, index) => valuesEqual(value, rightValue[index]))
+      );
+    }
+    const leftRecord = leftValue as Record<string, unknown>;
+    const rightRecord = rightValue as Record<string, unknown>;
+    const leftKeys = Object.keys(leftRecord);
+    const rightKeys = Object.keys(rightRecord);
+    return Boolean(
+      leftKeys.length === rightKeys.length &&
+      leftKeys.every(
+        (key) => Object.hasOwn(rightRecord, key) && valuesEqual(leftRecord[key], rightRecord[key])
+      )
+    );
+  };
+  return valuesEqual(left, right);
+}
+
+interface ButtonStateSnapshotLoad {
+  generation: number;
+  promise: Promise<ButtonStateDocument>;
+}
+
+export interface ButtonStateBootstrapResult {
+  document: ButtonStateDocument;
+  changed: boolean;
+}
+
+let buttonStateSnapshotGeneration = 0;
+let buttonStateSnapshotLoadInFlight: ButtonStateSnapshotLoad | null = null;
+let buttonStateBootstrapPromise: Promise<ButtonStateBootstrapResult> | null = null;
+
+async function loadButtonStateSnapshotInner(): Promise<ButtonStateDocument> {
   if (!isTauriWindowHost()) return createButtonStateDocument();
+  const response = await invoke<unknown>("load_button_state");
+  return parseLoadedDocument(response);
+}
+
+/**
+ * Reads the recovered canonical document without running source migration or
+ * bundled-program synchronization. All secondary windows use this path so a
+ * render-time state read cannot mutate global Button state.
+ */
+export async function loadButtonStateDocument(): Promise<ButtonStateDocument> {
+  const generation = buttonStateSnapshotGeneration;
+  if (
+    !buttonStateSnapshotLoadInFlight ||
+    buttonStateSnapshotLoadInFlight.generation !== generation
+  ) {
+    buttonStateSnapshotLoadInFlight = {
+      generation,
+      promise: loadButtonStateSnapshotInner()
+    };
+  }
+  const pendingLoad = buttonStateSnapshotLoadInFlight;
+  try {
+    return cloneButtonDocument(await pendingLoad.promise);
+  } finally {
+    if (buttonStateSnapshotLoadInFlight === pendingLoad) {
+      buttonStateSnapshotLoadInFlight = null;
+    }
+  }
+}
+
+async function bootstrapButtonStateDocumentInner(): Promise<ButtonStateBootstrapResult> {
+  if (!isTauriWindowHost()) {
+    return { document: createButtonStateDocument(), changed: false };
+  }
   const bootstrap = await invoke<LegacyButtonBootstrapResult | null>(
     "prepare_legacy_button_bootstrap"
   );
   let response = await invoke<unknown>("load_button_state");
   let document = parseLoadedDocument(response);
-  if (!bootstrap) return document;
+  const initialRevision = document.revision;
+  const finishBootstrap = async (
+    candidate: ButtonStateDocument
+  ): Promise<ButtonStateBootstrapResult> => {
+    const synchronized = await synchronizeBundledButtonSources(candidate);
+    return {
+      document: synchronized,
+      changed: synchronized.revision !== initialRevision
+    };
+  };
+  if (!bootstrap) return finishBootstrap(document);
 
   const installs = bootstrap.installs.map(normalizeLegacyInstallResult);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     if (installs.every((install) => migrationInstallIsRepresented(document, install))) {
-      return document;
+      return finishBootstrap(document);
     }
     const migrated = mergeLegacyInstallsIntoDocument(document, installs);
     try {
-      return await saveButtonStateDocument(
+      return finishBootstrap(await saveButtonStateDocument(
         migrated,
         document.revision,
         [],
         bootstrap.migrationToken
-      );
+      ));
     } catch (error) {
       response = await invoke<unknown>("load_button_state");
       const latest = parseLoadedDocument(response);
       if (installs.every((install) => migrationInstallIsRepresented(latest, install))) {
-        return latest;
+        return finishBootstrap(latest);
       }
       if (attempt === 0 && latest.revision !== document.revision) {
         document = latest;
@@ -131,30 +248,42 @@ async function loadButtonStateDocumentInner(): Promise<ButtonStateDocument> {
       throw error;
     }
   }
-  return document;
+  return finishBootstrap(document);
 }
 
-export async function loadButtonStateDocument(): Promise<ButtonStateDocument> {
-  try {
-    const document = await loadButtonStateDocumentInner();
-    if (isTauriWindowHost()) {
-      await invoke("set_button_bootstrap_failure", { message: null }).catch(() => {});
-    }
-    return document;
-  } catch (error) {
-    if (isTauriWindowHost()) {
-      const message = error instanceof Error ? error.message : String(error);
-      await invoke("set_button_bootstrap_failure", { message }).catch(() => {});
-    }
-    throw error;
+/** Runs legacy migration and bundled-source synchronization once from Main. */
+export async function bootstrapButtonStateDocument(): Promise<ButtonStateBootstrapResult> {
+  if (!buttonStateBootstrapPromise) {
+    buttonStateBootstrapPromise = (async () => {
+      try {
+        const result = await bootstrapButtonStateDocumentInner();
+        if (isTauriWindowHost()) {
+          await invoke("set_button_bootstrap_failure", { message: null }).catch(() => {});
+        }
+        return result;
+      } catch (error) {
+        buttonStateBootstrapPromise = null;
+        if (isTauriWindowHost()) {
+          const message = error instanceof Error ? error.message : String(error);
+          await invoke("set_button_bootstrap_failure", { message }).catch(() => {});
+        }
+        throw error;
+      }
+    })();
   }
+  const result = await buttonStateBootstrapPromise;
+  return {
+    document: cloneButtonDocument(result.document),
+    changed: result.changed
+  };
 }
 
 export async function saveButtonStateDocument(
   document: ButtonStateDocument,
   expectedRevision: number,
   uninstallOwnerButtonIds: readonly string[] = [],
-  migrationToken?: string
+  migrationToken?: string,
+  programRenameToken?: string
 ): Promise<ButtonStateDocument> {
   const next = cloneButtonDocument(document);
   next.revision = expectedRevision + 1;
@@ -163,14 +292,23 @@ export async function saveButtonStateDocument(
     throw new Error(validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
   }
   if (!isTauriWindowHost()) return next;
-  const response = await invoke<unknown>("commit_button_state", {
-    request: {
-      document: next,
-      expectedRevision,
-      uninstallOwnerButtonIds: [...uninstallOwnerButtonIds],
-      migrationToken
-    }
-  });
+  buttonStateSnapshotGeneration += 1;
+  let response: unknown;
+  try {
+    response = await invoke<unknown>("commit_button_state", {
+      request: {
+        document: next,
+        expectedRevision,
+        uninstallOwnerButtonIds: [...uninstallOwnerButtonIds],
+        migrationToken,
+        programRenameToken
+      }
+    });
+  } finally {
+    // A native commit can report a post-commit cleanup error after canonical
+    // state was already persisted, so every attempt invalidates snapshot reads.
+    buttonStateSnapshotGeneration += 1;
+  }
   if (response === null || response === undefined) return next;
   if (typeof response === "number") return { ...next, revision: response };
   return parseLoadedDocument(response);
@@ -271,6 +409,7 @@ function createMigratedButtonRecord(args: {
   executionTarget?: ButtonExecutionTarget | null;
   parentId?: string;
   behavior?: ButtonToolSetChildBehavior | null;
+  metadata?: ButtonRecord["metadata"];
 }): ButtonRecord {
   return {
     id: args.id,
@@ -282,9 +421,10 @@ function createMigratedButtonRecord(args: {
     defaultSkinId: args.document.settings.defaultSkinId,
     defaultTextFitMode: "shrink",
     disabled: false,
+    activationAnimation: null,
     toolSetParentId: args.parentId ?? null,
     toolSetBehavior: args.behavior ?? null,
-    metadata: {}
+    metadata: args.metadata ?? {}
   };
 }
 
@@ -445,7 +585,8 @@ function addMigratedToolSet(
       tooltip: child.tooltip,
       executionTarget: child.executionTarget,
       parentId: install.ownerButtonId,
-      behavior: layout?.childBehaviors?.[child.slot] ?? null
+      behavior: layout?.childBehaviors?.[child.slot] ?? null,
+      metadata: { toolSetSlot: child.slot }
     });
     addMigratedPlacement(
       document,
@@ -473,7 +614,8 @@ function addMigratedToolSet(
     windowFitMode: "surface",
     ownerButtonId: install.ownerButtonId,
     childButtonIds,
-    fields: cloneButtonDocument(layout?.fields ?? [])
+    fields: cloneButtonDocument(layout?.fields ?? []),
+    presentation: cloneButtonDocument(layout?.presentation ?? null)
   };
 }
 
@@ -498,6 +640,80 @@ export function mergeLegacyInstallsIntoDocument(
     throw new Error("Canonical Button state is missing its main surface.");
   }
   return document;
+}
+
+export function reconcileBundledProgramSources(
+  base: ButtonStateDocument,
+  descriptors: readonly Record<string, unknown>[]
+): ButtonStateDocument {
+  let document = cloneButtonDocument(base);
+  const missing: InstallButtonSourceResult[] = [];
+  const seenOwners = new Set<string>();
+  for (const descriptor of descriptors) {
+    const installed = normalizeLegacyInstallResult(descriptor);
+    if (!installed.ownerButtonId || seenOwners.has(installed.ownerButtonId)) {
+      throw new Error(
+        installed.ownerButtonId
+          ? `Bundled source synchronization returned owner '${installed.ownerButtonId}' more than once.`
+          : "Bundled source synchronization returned a descriptor without an owner Button ID."
+      );
+    }
+    seenOwners.add(installed.ownerButtonId);
+    if (document.buttons[installed.ownerButtonId]) {
+      applyInstalledSourceUpdate(document, installed);
+    } else {
+      missing.push(installed);
+    }
+  }
+  if (missing.length > 0) {
+    document = mergeLegacyInstallsIntoDocument(document, missing);
+  }
+  return document;
+}
+
+export async function synchronizeBundledButtonSources(
+  base: ButtonStateDocument,
+  options: SynchronizeBundledButtonSourcesOptions = {}
+): Promise<ButtonStateDocument> {
+  if (!isTauriWindowHost()) return base;
+  const programName = options.programName?.trim();
+  const response = await invoke<BundledProgramSourceSyncResponse>(
+    "synchronize_bundled_program_sources",
+    {
+      includeStarters: options.includeStarters ?? false,
+      ...(programName ? { programName } : {})
+    }
+  );
+  for (const source of response.sources) {
+    if (source.status !== "failed") continue;
+    console.error(
+      `Bundled Button source '${source.programName}/${source.bundledSourceId}' failed to synchronize.`,
+      source.message
+    );
+  }
+  const descriptors = response.sources.flatMap((source) =>
+    source.status !== "failed" && source.descriptor ? [source.descriptor] : []
+  );
+  if (descriptors.length === 0) return base;
+
+  let current = base;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const next = reconcileBundledProgramSources(current, descriptors);
+    if (buttonStateDocumentsEqual(next, current)) return current;
+    try {
+      return await saveButtonStateDocument(next, current.revision);
+    } catch (error) {
+      const latest = parseLoadedDocument(await invoke<unknown>("load_button_state"));
+      const verified = reconcileBundledProgramSources(latest, descriptors);
+      if (buttonStateDocumentsEqual(verified, latest)) return latest;
+      if (attempt === 0 && latest.revision !== current.revision) {
+        current = latest;
+        continue;
+      }
+      throw error;
+    }
+  }
+  return current;
 }
 
 export async function installButtonSource(

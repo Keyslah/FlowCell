@@ -6,19 +6,25 @@ import { unregisterLayoutWindow } from "./lib/layoutSnapshots";
 import ButtonEditorPage from "./button/editor/ButtonEditorPage";
 import ButtonFanWindowPage from "./button/fan/ButtonFanWindowPage";
 import ButtonPopoutWindowPage from "./button/popout/ButtonPopoutWindowPage";
+import ButtonAnimationWindowPage from "./button/animations/ButtonAnimationWindowPage";
 import { registerButtonCoreAction } from "./button/runtime/ButtonRuntimeAdapter";
+import { registerButtonActivationEffectHandler } from "./button/runtime/buttonActivationEffects";
+import {
+  coordinateButtonActivationAnimationRequest,
+  listenForButtonActivationAnimationRequests,
+  requestButtonActivationAnimation
+} from "./button/animations/buttonAnimationWindows";
 import { registerBuiltinButtonCoreActions } from "./button/runtime/registerBuiltinCoreActions";
+import { registerInstalledCompatibilityActions } from "./button/runtime/registerInstalledCompatibilityActions";
 import { FRONTEND_MACRO_CORE_ACTION_ID } from "./button/state/frontendMacroButtonOperations";
 import {
-  getForegroundProcessInfo,
   registerScopedWindowTopmost,
   refreshScopedWindowTopmost,
   setHostWindowTopmost,
-  shouldBindScopedNativeOwner,
   unregisterScopedWindowTopmost
 } from "./lib/tauri";
 import BindsWindowPage from "./pages/binds/BindsWindowPage";
-import BuildLayersWindowPage from "./pages/build-layers/BuildLayersWindowPage";
+import TreeInspectorWindowPage from "./pages/build-layers/TreeInspectorWindowPage";
 import WindowGridWindowPage from "./pages/window-grid/WindowGridWindowPage";
 import MotionSettingsWindowPage from "./pages/motion-settings/MotionSettingsWindowPage";
 import MacroLabWindowPage from "./pages/macro-lab/MacroLabWindowPage";
@@ -27,40 +33,13 @@ import OrganizationSetupWindowPage from "./pages/organization-setup/Organization
 import TooltipWindowPage from "./pages/tooltip/TooltipWindowPage";
 import { runFrontendMacro } from "./lib/macros";
 
-function normalizeProcessToken(value: string | undefined): string {
-  const trimmed = (value ?? "").trim().replace(/^"+|"+$/g, "");
-  if (!trimmed) {
-    return "";
-  }
-
-  const fileName = trimmed.split(/[\\/]/).pop() ?? trimmed;
-  return fileName.replace(/\.exe$/i, "").toLowerCase();
-}
-
-function normalizeProcessPath(value: string | undefined): string {
-  return (value ?? "").trim().replace(/\//g, "\\").toLowerCase();
-}
-
-function matchesProcessToken(processNames: string[], candidate: string): boolean {
-  const normalizedCandidate = normalizeProcessToken(candidate);
-  if (!normalizedCandidate) {
-    return false;
-  }
-
-  return processNames.some(
-    (processName) =>
-      processName === normalizedCandidate ||
-      processName.includes(normalizedCandidate) ||
-      normalizedCandidate.includes(processName)
-  );
-}
-
 function resolveScopedTopmostProgramName(
   windowContext: ReturnType<typeof getWindowContextFromLocation>
 ): string {
   if (
     windowContext.kind === "main" ||
     windowContext.kind === "button-editor" ||
+    windowContext.kind === "button-animation" ||
     windowContext.kind === "tooltip" ||
     windowContext.kind === "binds" ||
     windowContext.kind === "organization-setup" ||
@@ -90,7 +69,6 @@ function resolveTooltipElement(target: EventTarget | null): HTMLElement | null {
 export default function App() {
   const windowContext = getWindowContextFromLocation();
   const programName = resolveScopedTopmostProgramName(windowContext);
-  const bindNativeOwner = shouldBindScopedNativeOwner(programName);
 
   useEffect(() => registerButtonCoreAction(
     FRONTEND_MACRO_CORE_ACTION_ID,
@@ -104,6 +82,26 @@ export default function App() {
   ), []);
 
   useEffect(() => registerBuiltinButtonCoreActions(), []);
+
+  useEffect(() => registerInstalledCompatibilityActions(), []);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    void listenForButtonActivationAnimationRequests(
+      coordinateButtonActivationAnimationRequest
+    ).then((next) => {
+      if (disposed) next(); else unlisten = next;
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => registerButtonActivationEffectHandler(
+    requestButtonActivationAnimation
+  ), []);
 
   useEffect(() => {
     if (
@@ -125,7 +123,11 @@ export default function App() {
     const tauriInternals = (
       window as Window & { __TAURI_INTERNALS__?: { metadata?: unknown } }
     ).__TAURI_INTERNALS__;
-    if (windowContext.kind === "tooltip" || !tauriInternals?.metadata) {
+    if (
+      windowContext.kind === "tooltip" ||
+      windowContext.kind === "button-animation" ||
+      !tauriInternals?.metadata
+    ) {
       return;
     }
 
@@ -193,12 +195,18 @@ export default function App() {
     const tauriInternals = (
       window as Window & { __TAURI_INTERNALS__?: { metadata?: unknown } }
     ).__TAURI_INTERNALS__;
-    if (windowContext.kind === "tooltip" || !tauriInternals?.metadata) {
+    if (
+      windowContext.kind === "tooltip" ||
+      windowContext.kind === "button-animation" ||
+      !tauriInternals?.metadata
+    ) {
       return;
     }
 
     const currentWindow = getCurrentWindow();
     const currentWindowLabel = currentWindow.label;
+    const selectiveInput =
+      windowContext.kind === "button-popout" || windowContext.kind === "button-fan";
     let disposed = false;
 
     const applyTopmost = async (
@@ -237,26 +245,18 @@ export default function App() {
 
     const registerScopedTopmost = async () => {
       try {
-        const processNames = await registerScopedWindowTopmost(
+        await registerScopedWindowTopmost(
           currentWindowLabel,
           programName,
-          bindNativeOwner
-        ).catch(() => []);
-        const foreground = await getForegroundProcessInfo();
+          selectiveInput
+        );
         if (disposed) {
           return;
         }
-
-        const foregroundName = normalizeProcessToken(
-          foreground.processName || foreground.processPath
-        );
-        const foregroundPath = normalizeProcessPath(foreground.processPath);
-        const matchesTarget =
-          matchesProcessToken(processNames, foregroundName) ||
-          matchesProcessToken(processNames, foregroundPath);
-        const shouldStayOnTop = matchesTarget;
-        await applyTopmost(shouldStayOnTop, { promote: matchesTarget });
+        await refreshScopedWindowTopmost(currentWindowLabel);
       } catch {
+        await currentWindow.setIgnoreCursorEvents(true).catch(() => {});
+        await applyTopmost(false);
       }
     };
 
@@ -270,20 +270,15 @@ export default function App() {
       window.setTimeout(refreshScopedTopmost, 240)
     ];
 
-    window.addEventListener("focus", refreshScopedTopmost);
-    window.addEventListener("pointerdown", refreshScopedTopmost, { capture: true });
-
     return () => {
       disposed = true;
       refreshTimers.forEach((timer) => {
         window.clearTimeout(timer);
       });
-      window.removeEventListener("focus", refreshScopedTopmost);
-      window.removeEventListener("pointerdown", refreshScopedTopmost, { capture: true });
       void unregisterScopedWindowTopmost(currentWindowLabel).catch(() => {});
       void applyTopmost(false);
     };
-  }, [bindNativeOwner, programName]);
+  }, [programName, windowContext.kind]);
 
   if (windowContext.kind === "button-editor") {
     return <ButtonEditorPage context={windowContext} />;
@@ -294,6 +289,9 @@ export default function App() {
   if (windowContext.kind === "button-fan") {
     return <ButtonFanWindowPage context={windowContext} />;
   }
+  if (windowContext.kind === "button-animation") {
+    return <ButtonAnimationWindowPage context={windowContext} />;
+  }
 
   if (windowContext.kind === "binds") {
     return <BindsWindowPage context={windowContext} />;
@@ -301,8 +299,8 @@ export default function App() {
   if (windowContext.kind === "organization-setup") {
     return <OrganizationSetupWindowPage />;
   }
-  if (windowContext.kind === "build-layers") {
-    return <BuildLayersWindowPage context={windowContext} />;
+  if (windowContext.kind === "build-layers" || windowContext.kind === "tool-page") {
+    return <TreeInspectorWindowPage context={windowContext} />;
   }
   if (windowContext.kind === "window-grid") {
     return <WindowGridWindowPage />;

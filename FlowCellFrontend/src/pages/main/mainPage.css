@@ -184,6 +184,12 @@
   pointer-events: none;
 }
 
+.main-page .button-system-host--selected {
+  border-radius: 6px;
+  outline: 2px solid var(--fc-selected-highlight, rgba(151, 255, 99, 0.98));
+  outline-offset: 3px;
+}
+
 .button-host:focus-visible {
   outline: 2px solid rgba(35, 31, 32, 0.72);
   outline-offset: 2px;

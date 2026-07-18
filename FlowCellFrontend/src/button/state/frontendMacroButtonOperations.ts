@@ -237,6 +237,7 @@ export function attachCanonicalFrontendMacroButton(
       defaultSkinId: document.settings.defaultSkinId,
       defaultTextFitMode: "shrink",
       disabled: false,
+      activationAnimation: null,
       toolSetParentId: null,
       toolSetBehavior: null,
       metadata: { sourceKind: "frontend-macro", macroId }

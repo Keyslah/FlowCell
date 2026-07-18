@@ -16,6 +16,7 @@ import {
 } from "./sourceIdentity.js";
 import { BUTTON_SKIN_SECTION_ORDER } from "../skins/buttonSkinFormat.js";
 import { validateButtonSkin } from "../skins/skinValidator.js";
+import { isButtonActivationAnimationPresetId } from "../animations/buttonActivationAnimations.js";
 
 export interface ButtonStateValidationIssue {
   path: string;
@@ -166,6 +167,25 @@ function validateButtonRecord(
   if (typeof value.defaultSkinId !== "string" || typeof value.disabled !== "boolean") {
     addIssue(issues, path, "Button skin and disabled state are invalid.");
   }
+  if (!Object.hasOwn(value, "activationAnimation") || value.activationAnimation === undefined) {
+    addIssue(issues, `${path}.activationAnimation`, "Button activation animation must be present and may be null.");
+  } else if (value.activationAnimation !== null) {
+    const animationPath = `${path}.activationAnimation`;
+    if (!isObject(value.activationAnimation)) {
+      addIssue(issues, animationPath, "Button activation animation must be an object or null.");
+    } else {
+      if (!isButtonActivationAnimationPresetId(value.activationAnimation.presetId)) {
+        addIssue(issues, `${animationPath}.presetId`, "Button activation animation preset is invalid.");
+      }
+      if (!isUsableDesktopBounds(value.activationAnimation.desktopBounds)) {
+        addIssue(
+          issues,
+          `${animationPath}.desktopBounds`,
+          "Button activation animation requires finite positive physical desktop bounds."
+        );
+      }
+    }
+  }
   if (!BUTTON_TEXT_FIT_MODES.has(String(value.defaultTextFitMode))) {
     addIssue(issues, `${path}.defaultTextFitMode`, "Default text-fit mode is invalid.");
   }
@@ -253,6 +273,18 @@ function validateTopLevel(value: unknown, issues: ButtonStateValidationIssue[]):
 export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
   if (!isObject(value) || !isObject(value.placements)) return value;
   let changed = false;
+  const buttons: Record<string, unknown> = isObject(value.buttons)
+    ? { ...value.buttons }
+    : {};
+  for (const [id, candidate] of Object.entries(buttons)) {
+    if (!isObject(candidate)) continue;
+    const button: Record<string, unknown> = { ...candidate };
+    if (!Object.hasOwn(button, "activationAnimation")) {
+      button.activationAnimation = null;
+      changed = true;
+    }
+    buttons[id] = button;
+  }
   const placements: Record<string, unknown> = { ...value.placements };
   for (const [id, candidate] of Object.entries(placements)) {
     if (!isObject(candidate)) continue;
@@ -307,7 +339,7 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
       fanSetups[id] = setup;
     }
   }
-  return changed ? { ...value, placements, popoutUnits, fanSetups } : value;
+  return changed ? { ...value, buttons, placements, popoutUnits, fanSetups } : value;
 }
 
 export function validateButtonStateDocument(value: unknown): ButtonStateValidationResult {
@@ -468,7 +500,7 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     ];
     const allowedKeys = new Set(unit.kind === "regular"
       ? [...commonKeys, "memberPlacementIds", "memberSourceIdentities", "selectionKey"]
-      : [...commonKeys, "ownerButtonId", "childButtonIds", "childPlacementIds", "fields"]);
+      : [...commonKeys, "ownerButtonId", "childButtonIds", "childPlacementIds", "fields", "presentation"]);
     Object.keys(rawUnit).forEach((property) => {
       if (!allowedKeys.has(property)) addIssue(issues, `${path}.${property}`, `Property '${property}' is not part of the ${unit.kind} popout contract.`);
     });
@@ -520,6 +552,35 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
         }
       }
     } else {
+      if (unit.presentation !== undefined && unit.presentation !== null) {
+        const presentationPath = `${path}.presentation`;
+        if (!isObject(unit.presentation)) {
+          addIssue(issues, presentationPath, "Tool-page presentation must be an object or null.");
+        } else {
+          const presentation = unit.presentation as unknown as Record<string, unknown>;
+          const presentationKeys = new Set(["kind", "schemaVersion", "renderer", "title", "config"]);
+          Object.keys(presentation).forEach((property) => {
+            if (!presentationKeys.has(property)) {
+              addIssue(issues, `${presentationPath}.${property}`, `Property '${property}' is not part of the tool-page presentation contract.`);
+            }
+          });
+          if (presentation.kind !== "tool-page") {
+            addIssue(issues, `${presentationPath}.kind`, "Tool-page presentation kind must be 'tool-page'.");
+          }
+          if (presentation.schemaVersion !== 1) {
+            addIssue(issues, `${presentationPath}.schemaVersion`, "Tool-page presentation schema version must be 1.");
+          }
+          if (typeof presentation.renderer !== "string" || !presentation.renderer.trim()) {
+            addIssue(issues, `${presentationPath}.renderer`, "Tool-page presentation renderer must be nonempty.");
+          }
+          if (presentation.title !== undefined && typeof presentation.title !== "string") {
+            addIssue(issues, `${presentationPath}.title`, "Tool-page presentation title must be a string when present.");
+          }
+          if (!isObject(presentation.config)) {
+            addIssue(issues, `${presentationPath}.config`, "Tool-page presentation config must be an object.");
+          }
+        }
+      }
       const fields = Array.isArray(unit.fields) ? unit.fields : [];
       if (!Array.isArray(unit.fields)) addIssue(issues, `${path}.fields`, "Tool-set fields must be an array.");
       const fieldIds = new Set<string>();

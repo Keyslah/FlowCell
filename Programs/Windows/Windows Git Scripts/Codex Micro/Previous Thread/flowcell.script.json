@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.codex-micro.previous-thread",
+  "label": "Previous Thread",
+  "tooltip": "Invoke Codex's verified Previous Task command.",
+  "program": "Windows",
+  "source": "previous_thread.ps1"
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.codex-micro.reasoning-level-down",
+  "label": "Reasoning Level Down",
+  "tooltip": "Move the current Codex composer to the previous verified reasoning level.",
+  "program": "Windows",
+  "source": "reasoning_level_down.ps1"
+}

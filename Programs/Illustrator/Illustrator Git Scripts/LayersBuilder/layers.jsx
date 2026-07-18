@@ -103,44 +103,97 @@
         return candidate;
     }
 
-    function unlockAndShow(layer) {
-        // Highlighting locked/hidden rows is allowed; operations temporarily clear
-        // those flags on the target (and its ancestors) so the edit can proceed.
-        if (layer.locked) {
-            layer.locked = false;
+    function rememberLayerState(layer, bucket) {
+        for (var i = 0; i < bucket.length; i += 1) {
+            if (bucket[i].layer === layer) {
+                return;
+            }
         }
-        if (!layer.visible) {
-            layer.visible = true;
+        var depth = 0;
+        var current = layer;
+        while (current && current.parent && current.parent.typename === 'Layer') {
+            depth += 1;
+            current = current.parent;
         }
+        bucket.push({
+            layer: layer,
+            locked: layer.locked ? true : false,
+            visible: layer.visible ? true : false,
+            depth: depth
+        });
     }
 
-    function openAncestors(layer) {
+    function openAncestors(layer, states) {
         var current = layer;
         while (current && current.typename === 'Layer') {
+            rememberLayerState(current, states);
             try { current.locked = false; } catch (e1) {}
             try { current.visible = true; } catch (e2) {}
             current = (current.parent && current.parent.typename === 'Layer') ? current.parent : null;
         }
     }
 
-    function openSubtree(layer) {
+    function openSubtree(layer, states) {
+        rememberLayerState(layer, states);
         try { layer.locked = false; } catch (e1) {}
         try { layer.visible = true; } catch (e2) {}
         for (var i = 0; i < layer.layers.length; i += 1) {
-            openSubtree(layer.layers[i]);
+            openSubtree(layer.layers[i], states);
         }
     }
 
-    function collectPageItems(layer, bucket) {
+    function collectPageItems(layer, bucket, states) {
         var i;
         for (i = 0; i < layer.pageItems.length; i += 1) {
             var item = layer.pageItems[i];
+            var remembered = false;
+            for (var s = 0; s < states.length; s += 1) {
+                if (states[s].item === item) {
+                    remembered = true;
+                    break;
+                }
+            }
+            if (!remembered) {
+                states.push({
+                    item: item,
+                    locked: item.locked ? true : false,
+                    hidden: item.hidden ? true : false
+                });
+            }
             try { if (item.locked) { item.locked = false; } } catch (e1) {}
             try { if (item.hidden) { item.hidden = false; } } catch (e2) {}
             bucket.push(item);
         }
         for (i = 0; i < layer.layers.length; i += 1) {
-            collectPageItems(layer.layers[i], bucket);
+            collectPageItems(layer.layers[i], bucket, states);
+        }
+    }
+
+    function restorePageItemStates(states) {
+        for (var i = states.length - 1; i >= 0; i -= 1) {
+            try { states[i].item.hidden = states[i].hidden; } catch (e1) {}
+            try { states[i].item.locked = states[i].locked; } catch (e2) {}
+        }
+    }
+
+    function restoreLayerStates(states) {
+        for (var i = 0; i < states.length; i += 1) {
+            try {
+                states[i].layer.locked = false;
+                states[i].layer.visible = true;
+                var depth = 0;
+                var current = states[i].layer;
+                while (current && current.parent && current.parent.typename === 'Layer') {
+                    depth += 1;
+                    current = current.parent;
+                }
+                states[i].depth = depth;
+            } catch (openError) {}
+        }
+        states.sort(function (left, right) { return right.depth - left.depth; });
+        for (var j = 0; j < states.length; j += 1) {
+            try { states[j].layer.visible = states[j].visible; } catch (e1) {}
+            try { states[j].layer.locked = states[j].locked; } catch (e2) {}
         }
     }
 
@@ -188,88 +241,155 @@
         return [String(value)];
     }
 
+    function resolvedLayerTargets(value) {
+        var keys = asKeyList(value);
+        var unique = {};
+        var targets = [];
+        for (var i = 0; i < keys.length; i += 1) {
+            var layer = resolveLayerByKey(keys[i]);
+            if (!layer) {
+                throw new Error('Layer was not found: ' + keys[i]);
+            }
+            var canonicalKey = keyForLayer(layer);
+            if (canonicalKey === null) {
+                throw new Error('Layer key could not be resolved: ' + keys[i]);
+            }
+            if (!unique[canonicalKey]) {
+                unique[canonicalKey] = true;
+                targets.push({ key: canonicalKey, layer: layer });
+            }
+        }
+        return targets;
+    }
+
+    function normalizedLayerTargets(value) {
+        var targets = resolvedLayerTargets(value);
+        targets.sort(function (left, right) {
+            var leftDepth = left.key.split('.').length;
+            var rightDepth = right.key.split('.').length;
+            if (leftDepth !== rightDepth) {
+                return leftDepth - rightDepth;
+            }
+            return left.key < right.key ? -1 : (left.key > right.key ? 1 : 0);
+        });
+        var normalized = [];
+        for (var t = 0; t < targets.length; t += 1) {
+            var nested = false;
+            for (var p = 0; p < normalized.length; p += 1) {
+                if (targets[t].key.indexOf(normalized[p].key + '.') === 0) {
+                    nested = true;
+                    break;
+                }
+            }
+            if (!nested) {
+                normalized.push(targets[t]);
+            }
+        }
+        return normalized;
+    }
+
+    function layerOrAncestorIsClosed(layer) {
+        var current = layer;
+        while (current && current.typename === 'Layer') {
+            if (current.locked || !current.visible) {
+                return true;
+            }
+            current = (current.parent && current.parent.typename === 'Layer') ? current.parent : null;
+        }
+        return false;
+    }
+
     try {
         if (op === 'scan') {
             // No mutation; fall through to return the tree.
         } else if (op === 'create') {
             var parentLayer = resolveLayerByKey(args.parentKey);
+            if (args.parentKey && !parentLayer) {
+                return fail('Parent layer was not found.');
+            }
             var requestedName = args.name ? String(args.name) : 'Layer';
             var hostLayers;
+            var createStates = [];
             if (parentLayer) {
-                unlockAndShow(parentLayer);
+                openAncestors(parentLayer, createStates);
                 hostLayers = parentLayer.layers;
             } else {
                 hostLayers = doc.layers;
             }
-            var created = hostLayers.add();
-            created.name = uniqueChildName(hostLayers, requestedName);
-            created.visible = true;
-            created.locked = false;
-            doc.activeLayer = created;
+            var createdName = uniqueChildName(hostLayers, requestedName);
+            try {
+                var created = hostLayers.add();
+                created.name = createdName;
+                created.visible = true;
+                created.locked = false;
+                doc.activeLayer = created;
+            } finally {
+                restoreLayerStates(createStates);
+            }
         } else if (op === 'rename') {
             var renameTarget = resolveLayerByKey(args.key);
             if (!renameTarget) {
                 return fail('Layer to rename was not found.');
             }
-            var wasLocked = renameTarget.locked;
-            if (wasLocked) {
-                renameTarget.locked = false;
+            var renameStates = [];
+            openAncestors(renameTarget, renameStates);
+            try {
+                renameTarget.name = args.name ? String(args.name) : renameTarget.name;
+            } finally {
+                restoreLayerStates(renameStates);
             }
-            renameTarget.name = args.name ? String(args.name) : renameTarget.name;
-            renameTarget.locked = wasLocked;
         } else if (op === 'delete') {
-            var deleteKeys = asKeyList(args.keys);
             var force = args.force ? true : false;
-            var doomed = [];
-            for (var d = 0; d < deleteKeys.length; d += 1) {
-                var doomedLayer = resolveLayerByKey(deleteKeys[d]);
-                if (doomedLayer) {
-                    doomed.push(doomedLayer);
+            var doomed = normalizedLayerTargets(args.keys);
+            var topLevelCount = 0;
+            for (var d = 0; d < doomed.length; d += 1) {
+                if (doomed[d].key.indexOf('.') < 0) {
+                    topLevelCount += 1;
+                }
+                if (!force && layerOrAncestorIsClosed(doomed[d].layer)) {
+                    return fail('Layer is locked or hidden. Use force delete.');
                 }
             }
-            // Resolve to references first, then remove, so index shifts do not matter.
-            for (var r = 0; r < doomed.length; r += 1) {
-                if (force) {
-                    unlockAndShow(doomed[r]);
-                }
-                try {
-                    doomed[r].remove();
-                } catch (removeError) {
-                    if (!force) {
-                        return fail('Layer is locked or hidden. Use force delete.');
+            if (topLevelCount >= doc.layers.length) {
+                return fail('Illustrator requires at least one top-level layer.');
+            }
+            var deleteStates = [];
+            try {
+                for (var r = 0; r < doomed.length; r += 1) {
+                    if (force) {
+                        openAncestors(doomed[r].layer, deleteStates);
                     }
-                    throw removeError;
+                    doomed[r].layer.remove();
                 }
+            } finally {
+                restoreLayerStates(deleteStates);
             }
         } else if (op === 'duplicate') {
-            var dupKeys = asKeyList(args.keys);
-            var dupTargets = [];
-            for (var u = 0; u < dupKeys.length; u += 1) {
-                var dupLayer = resolveLayerByKey(dupKeys[u]);
-                if (dupLayer) {
-                    dupTargets.push(dupLayer);
+            var dupTargets = normalizedLayerTargets(args.keys);
+            var duplicateStates = [];
+            try {
+                for (var u = 0; u < dupTargets.length; u += 1) {
+                    var duplicateLocked = dupTargets[u].layer.locked ? true : false;
+                    var duplicateVisible = dupTargets[u].layer.visible ? true : false;
+                    openAncestors(dupTargets[u].layer, duplicateStates);
+                    var duplicatedLayer = dupTargets[u].layer.duplicate();
+                    try { duplicatedLayer.visible = duplicateVisible; } catch (duplicateVisibleError) {}
+                    try { duplicatedLayer.locked = duplicateLocked; } catch (duplicateLockedError) {}
                 }
-            }
-            for (var t = 0; t < dupTargets.length; t += 1) {
-                dupTargets[t].duplicate();
+            } finally {
+                restoreLayerStates(duplicateStates);
             }
         } else if (op === 'setlock') {
-            var lockKeys = asKeyList(args.keys);
+            var lockTargets = resolvedLayerTargets(args.keys);
             var lockValue = args.locked ? true : false;
-            for (var l = 0; l < lockKeys.length; l += 1) {
-                var lockLayer = resolveLayerByKey(lockKeys[l]);
-                if (lockLayer) {
-                    lockLayer.locked = lockValue;
-                }
+            for (var l = 0; l < lockTargets.length; l += 1) {
+                lockTargets[l].layer.locked = lockValue;
             }
         } else if (op === 'setvis') {
-            var visKeys = asKeyList(args.keys);
+            var visTargets = resolvedLayerTargets(args.keys);
             var visValue = args.visible ? true : false;
-            for (var v = 0; v < visKeys.length; v += 1) {
-                var visLayer = resolveLayerByKey(visKeys[v]);
-                if (visLayer) {
-                    visLayer.visible = visValue;
-                }
+            for (var v = 0; v < visTargets.length; v += 1) {
+                visTargets[v].layer.visible = visValue;
             }
         } else if (op === 'select') {
             // Illustrator-style "target" click: select all artwork on the layer
@@ -279,28 +399,53 @@
             if (!selectLayer) {
                 return fail('Layer to select was not found.');
             }
-            openAncestors(selectLayer);
-            openSubtree(selectLayer);
+            var selectLayerStates = [];
+            var selectItemStates = [];
             var selectItems = [];
-            collectPageItems(selectLayer, selectItems);
-            try { doc.selection = null; } catch (clearSel) {}
-            if (selectItems.length > 0) {
-                try { doc.selection = selectItems; } catch (setSel) {}
+            try {
+                openAncestors(selectLayer, selectLayerStates);
+                openSubtree(selectLayer, selectLayerStates);
+                collectPageItems(selectLayer, selectItems, selectItemStates);
+                try { doc.selection = null; } catch (clearSel) {}
+                if (selectItems.length > 0) {
+                    try { doc.selection = selectItems; } catch (setSel) {}
+                }
+                try { doc.activeLayer = selectLayer; } catch (setActive) {}
+            } finally {
+                restorePageItemStates(selectItemStates);
+                restoreLayerStates(selectLayerStates);
             }
-            try { doc.activeLayer = selectLayer; } catch (setActive) {}
         } else if (op === 'move') {
             var moveLayer = resolveLayerByKey(args.key);
             if (!moveLayer) {
                 return fail('Layer to move was not found.');
             }
-            var moveTarget = resolveLayerByKey(args.targetKey);
-            unlockAndShow(moveLayer);
-            if (moveTarget) {
-                unlockAndShow(moveTarget);
-                moveLayer.move(moveTarget, ElementPlacement.PLACEATBEGINNING);
-            } else {
-                // No target -> promote to a top-level layer.
-                moveLayer.move(doc, ElementPlacement.PLACEATBEGINNING);
+            var requestedTargetKey = args.targetKey ? String(args.targetKey) : '';
+            var moveTarget = resolveLayerByKey(requestedTargetKey);
+            if (requestedTargetKey && !moveTarget) {
+                return fail('Move target layer was not found.');
+            }
+            var canonicalMoveKey = keyForLayer(moveLayer);
+            var canonicalTargetKey = moveTarget ? keyForLayer(moveTarget) : null;
+            if (
+                canonicalMoveKey !== null && canonicalTargetKey !== null &&
+                (canonicalTargetKey === canonicalMoveKey ||
+                    canonicalTargetKey.indexOf(canonicalMoveKey + '.') === 0)
+            ) {
+                return fail('A layer cannot be moved into itself or one of its descendants.');
+            }
+            var moveStates = [];
+            try {
+                openAncestors(moveLayer, moveStates);
+                if (moveTarget) {
+                    openAncestors(moveTarget, moveStates);
+                    moveLayer.move(moveTarget, ElementPlacement.PLACEATBEGINNING);
+                } else {
+                    // No target -> promote to a top-level layer.
+                    moveLayer.move(doc, ElementPlacement.PLACEATBEGINNING);
+                }
+            } finally {
+                restoreLayerStates(moveStates);
             }
         } else {
             return fail('Unknown layers op: ' + op);

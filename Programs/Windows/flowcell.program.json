@@ -5,6 +5,8 @@
   "programType": "local-script",
   "defaultPanels": ["Files", "Utility"],
   "processNames": ["explorer", "dopus", "dopusrt"],
+  "bindScopedNativeOwner": false,
+  "shortcutProfileId": "windows",
   "exePath": "explorer.exe",
   "gitScriptsFolder": "Windows Git Scripts",
   "panelsFolder": "Panels",

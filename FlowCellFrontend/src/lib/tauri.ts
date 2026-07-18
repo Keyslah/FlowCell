@@ -1,17 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+
+export const SCOPED_WINDOW_INPUT_STATE_EVENT = "flowcell-scoped-window-input-state";
 
 export interface ForegroundProcessInfo {
   processName: string;
   processPath: string;
-}
-
-export function shouldBindScopedNativeOwner(programName: string): boolean {
-  const trimmed = programName.trim().replace(/^"+|"+$/g, "");
-  const processToken = (trimmed.split(/[\\/]/).pop() ?? trimmed)
-    .replace(/\.exe$/i, "")
-    .toLowerCase();
-  return processToken.includes("illustrator");
 }
 
 export function getForegroundProcessInfo(): Promise<ForegroundProcessInfo> {
@@ -29,9 +24,13 @@ export function setHostWindowTopmost(
 export function registerScopedWindowTopmost(
   label: string,
   programName: string,
-  bindOwner?: boolean
+  selectiveInput = false
 ): Promise<string[]> {
-  return invoke("register_scoped_window_topmost", { label, programName, bindOwner });
+  return invoke("register_scoped_window_topmost", {
+    label,
+    programName,
+    selectiveInput
+  });
 }
 
 export function refreshScopedWindowTopmost(label: string): Promise<void> {
@@ -40,6 +39,24 @@ export function refreshScopedWindowTopmost(label: string): Promise<void> {
 
 export function unregisterScopedWindowTopmost(label: string): Promise<void> {
   return invoke("unregister_scoped_window_topmost", { label });
+}
+
+export function getScopedWindowInputState(label: string): Promise<boolean> {
+  return invoke("get_scoped_window_input_state", { label });
+}
+
+export function listenScopedWindowInputState(
+  label: string,
+  onActiveChange: (active: boolean) => void
+): Promise<UnlistenFn> {
+  return listen<{ label: string; active: boolean }>(
+    SCOPED_WINDOW_INPUT_STATE_EVENT,
+    ({ payload }) => {
+      if (payload?.label === label && typeof payload.active === "boolean") {
+        onActiveChange(payload.active);
+      }
+    }
+  );
 }
 
 export function showOpenFileDialog(args: {

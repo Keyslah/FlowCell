@@ -210,6 +210,7 @@ export function ensureFanSetup(args: {
       defaultSkinId: args.document.settings.defaultSkinId,
       defaultTextFitMode: "shrink-and-stack",
       disabled: false,
+      activationAnimation: null,
       toolSetParentId: null,
       toolSetBehavior: null,
       metadata: { programName: args.programName, panelName: args.panelName }

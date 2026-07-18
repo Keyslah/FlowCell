@@ -15,7 +15,7 @@ https://github.com/Keyslah/FlowCell/releases/latest
 
 FlowCell has a React, TypeScript, and Vite frontend in [FlowCellFrontend](FlowCellFrontend/) running inside Tauri. 
 
-The backend lives mainly in [FlowCell](FlowCell/): the PowerShell command host, AutoHotkey hotkey, launch helpers, logs, layouts, and local runtime state. Program scripts live under [Programs](Programs/), where each program keeps shared Git scripts, private local backups, and panel copies for the buttons you actually run.
+The backend lives mainly in [flowcellbackend](flowcellbackend/): the PowerShell command host, AutoHotkey hotkey, launch helpers, logs, layouts, and local runtime state. Shared program payloads live under [Programs](Programs/). Private local script backups and installed panel records are mutable local state and are excluded from release packages.
 
 Requires [AutoHotkey V2](https://www.autohotkey.com/download/ahk-v2.exe). AutoHotkey is inside the generated release.
 

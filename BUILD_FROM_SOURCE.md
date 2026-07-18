@@ -70,11 +70,12 @@ The generated release assets are:
 dist/FlowCell-Core.zip
 dist/FlowCell-Blender.zip
 dist/FlowCell-Illustrator.zip
-dist/FlowCell-Photoshop.zip
 dist/FlowCell-Windows.zip
 ```
 
-Program ZIPs are generated from the direct folders currently under `Programs/`, so the exact list follows the repo's program folders. `FlowCell-Core.zip` contains the full app with an empty `Programs` folder. Each program ZIP contains only `Programs\<ProgramName>` and is meant to be extracted into the Core root.
+Program ZIPs are generated from the direct folders currently under `Programs/`, so the exact list follows the repo's program folders. Only Git-tracked files are eligible for a program ZIP. Ignored or untracked install state, including `Panels` and `* Local Scripts`, is excluded, and the packager rejects an archive if mutable program state is present. Every runner script and bundled source referenced by a program manifest must also resolve to tracked content inside that program package. Each archive is built and validated at a temporary path before it atomically replaces the prior release asset. `FlowCell-Core.zip` contains the full app with an empty `Programs` folder. Each program ZIP contains only `Programs\<ProgramName>` and is meant to be extracted into the Core root.
+
+For an isolated validation run that does not replace files in `dist/`, pass `-OutputDirectory` with a temporary or alternate output folder.
 
 Upload the ZIP files from `dist/` to GitHub Releases as release assets. Do not commit `dist/` into the repo.
 
@@ -83,4 +84,3 @@ Upload the ZIP files from `dist/` to GitHub Releases as release assets. Do not c
 ```text
 run.cmd
 = source/developer path
-

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.codex-micro.reasoning-level-up",
+  "label": "Reasoning Level Up",
+  "tooltip": "Move the current Codex composer to the next verified reasoning level.",
+  "program": "Windows",
+  "source": "reasoning_level_up.ps1"
+}

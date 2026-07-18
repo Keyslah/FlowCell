@@ -272,6 +272,7 @@ function ensurePanelOwnerButton(
     defaultSkinId: document.settings.defaultSkinId,
     defaultTextFitMode: "shrink-and-stack",
     disabled: false,
+    activationAnimation: null,
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: { programName, panelName }
@@ -399,6 +400,7 @@ export function reconcileProgramPanelOwners(
     programName: string;
     panels: readonly PanelOwnerRailEntry[];
     surfaceBounds?: { width: number; height: number };
+    removeStaleOwners?: boolean;
   }
 ): ReconcileProgramPanelOwnersResult {
   const programName = requireName(args.programName, "Program name");
@@ -414,10 +416,12 @@ export function reconcileProgramPanelOwners(
     seenPanels.add(key);
   }
   const desiredPanelNames = new Set(panels.map((entry) => normalizeName(entry.panelName)));
-  const staleOwners = matchingPanelOwners(document, programName).filter((owner) => {
-    const identity = panelOwnerIdentity(owner);
-    return Boolean(identity && !desiredPanelNames.has(normalizeName(identity.panelName)));
-  });
+  const staleOwners = args.removeStaleOwners === false
+    ? []
+    : matchingPanelOwners(document, programName).filter((owner) => {
+        const identity = panelOwnerIdentity(owner);
+        return Boolean(identity && !desiredPanelNames.has(normalizeName(identity.panelName)));
+      });
   const staleRemoval = removeOwnerButtons(document, staleOwners);
   if (panels.length === 0) {
     return {
@@ -490,7 +494,7 @@ function updateDefaultPanelPresentationForRename(
   nextPanelName: string
 ): boolean {
   let changed = false;
-  if (namesMatch(button.label, currentPanelName)) {
+  if (namesMatch(button.label, currentPanelName) && button.label !== nextPanelName) {
     button.label = nextPanelName;
     changed = true;
   }
@@ -498,8 +502,12 @@ function updateDefaultPanelPresentationForRename(
     `${currentProgramName} ${currentPanelName} panel`,
     `${currentProgramName} ${currentPanelName} fan`
   ];
-  if (defaultTooltips.some((tooltip) => namesMatch(button.tooltip, tooltip))) {
-    button.tooltip = `${nextProgramName} ${nextPanelName} panel`;
+  const nextTooltip = `${nextProgramName} ${nextPanelName} panel`;
+  if (
+    defaultTooltips.some((tooltip) => namesMatch(button.tooltip, tooltip)) &&
+    button.tooltip !== nextTooltip
+  ) {
+    button.tooltip = nextTooltip;
     changed = true;
   }
   return changed;
@@ -590,8 +598,13 @@ export function renameProgramPanelOwnerIdentities(
   }
   for (const surfaceId of mainSurfaceIds) {
     const surface = document.surfaces[surfaceId];
-    if (surface && namesMatch(surface.name, defaultSurfaceName(currentProgramName))) {
-      surface.name = defaultSurfaceName(nextProgramName);
+    const nextSurfaceName = defaultSurfaceName(nextProgramName);
+    if (
+      surface &&
+      namesMatch(surface.name, defaultSurfaceName(currentProgramName)) &&
+      surface.name !== nextSurfaceName
+    ) {
+      surface.name = nextSurfaceName;
       changed = true;
     }
   }

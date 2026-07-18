@@ -3,12 +3,38 @@ use super::records::{
     active_record_file_name, read_active_record, ActiveSourceRecord, LocalInstallRecord,
     ACTIVE_SOURCE_RECORD_SUFFIX, INSTALL_RECORD_FILE_NAME,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
+
+const JSON_RENAME_TRANSACTION_PREFIX: &str = ".flowcell-source-rename-";
+const JSON_RENAME_JOURNAL_FILE_NAME: &str = "rename-transaction.json";
+const JSON_RENAME_JOURNAL_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum JsonRenameTransactionPhase {
+    Prepared,
+    Committed,
+    RolledBack,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonRenameJournalEntry {
+    target_relative_path: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct JsonRenameTransactionJournal {
+    schema_version: u32,
+    phase: JsonRenameTransactionPhase,
+    entries: Vec<JsonRenameJournalEntry>,
+}
 
 struct OwnedRecordUpdate {
     active_path: PathBuf,
@@ -72,6 +98,32 @@ fn normalized_path_text(value: &str) -> String {
 
 fn path_text_matches(value: &str, expected: &Path) -> bool {
     normalized_path_text(value) == normalized_path_text(&expected.to_string_lossy())
+}
+
+fn owned_path_text_matches(
+    value: &str,
+    program_root: &Path,
+    expected: &Path,
+    previous_expected: &Path,
+) -> bool {
+    let path = Path::new(value.trim());
+    if path.is_absolute() {
+        path_text_matches(value, expected) || path_text_matches(value, previous_expected)
+    } else {
+        path_text_matches(&program_root.join(path).to_string_lossy(), expected)
+    }
+}
+
+fn relative_owned_path(program_root: &Path, path: &Path) -> Result<String, String> {
+    path.strip_prefix(program_root)
+        .map(|relative| relative.to_string_lossy().to_string())
+        .map_err(|_| {
+            format!(
+                "Owned source path {} is outside program root {}.",
+                path.display(),
+                program_root.display()
+            )
+        })
 }
 
 fn safe_relative_source_path(value: &str) -> bool {
@@ -181,6 +233,7 @@ fn rewrite_layout_service_targets(
 }
 
 fn active_record_paths(panel_root: &Path) -> Result<Vec<PathBuf>, String> {
+    super::records::recover_active_records_in_directory(panel_root)?;
     let mut paths = Vec::new();
     for entry in fs::read_dir(panel_root)
         .map_err(|error| format!("Failed to read {}: {error}", panel_root.display()))?
@@ -260,15 +313,16 @@ fn prepare_panel_updates(
             ));
         }
         let install_path = package_root.join(INSTALL_RECORD_FILE_NAME);
-        let install_raw = fs::read_to_string(&install_path)
-            .map_err(|error| format!("Failed to read {}: {error}", install_path.display()))?;
-        let mut install_record =
-            serde_json::from_str::<LocalInstallRecord>(&install_raw).map_err(|error| {
+        let mut install_record = super::transaction::read_json_file(&install_path, |path| {
+            let raw = fs::read_to_string(path)
+                .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+            serde_json::from_str::<LocalInstallRecord>(&raw).map_err(|error| {
                 format!(
                     "Installed package record {} is invalid: {error}",
-                    install_path.display()
+                    path.display()
                 )
-            })?;
+            })
+        })?;
         if install_record.schema_version != 1
             || !install_record
                 .owner_button_id
@@ -304,11 +358,17 @@ fn prepare_panel_updates(
             })
             .unwrap_or_else(|| package_root.clone());
         let previous_source_path = previous_package_root.join(&install_record.source_relative_path);
-        if (!path_text_matches(&active_record.local_package_path, &package_root)
-            && !path_text_matches(&active_record.local_package_path, &previous_package_root))
-            || (!path_text_matches(&active_record.source_path, &source_path)
-                && !path_text_matches(&active_record.source_path, &previous_source_path))
-        {
+        if !owned_path_text_matches(
+            &active_record.local_package_path,
+            program_root,
+            &package_root,
+            &previous_package_root,
+        ) || !owned_path_text_matches(
+            &active_record.source_path,
+            program_root,
+            &source_path,
+            &previous_source_path,
+        ) {
             return Err(format!(
                 "Active source record {} points outside its owned Local Scripts package.",
                 active_path.display()
@@ -317,8 +377,8 @@ fn prepare_panel_updates(
 
         active_record.program_name = next_program.to_string();
         active_record.panel_name = next_panel.to_string();
-        active_record.local_package_path = package_root.to_string_lossy().to_string();
-        active_record.source_path = source_path.to_string_lossy().to_string();
+        active_record.local_package_path = relative_owned_path(program_root, &package_root)?;
+        active_record.source_path = relative_owned_path(program_root, &source_path)?;
         if let (Some(previous), Some(next)) = (previous_root, next_root) {
             active_record.source_display_path =
                 replace_program_root_prefix(&active_record.source_display_path, previous, next);
@@ -375,32 +435,263 @@ fn owned_replacements(updates: Vec<OwnedRecordUpdate>) -> Result<Vec<JsonReplace
     Ok(replacements)
 }
 
-fn rollback_json_batch(
-    replacements: &[JsonReplacement],
-    backups: &[PathBuf],
-    transaction_root: &Path,
-    committed: usize,
-) -> Vec<String> {
-    let mut errors = Vec::new();
-    for index in (0..committed).rev() {
-        let discard = transaction_root.join(format!("discard-{index}.json"));
-        if replacements[index].path.is_file() {
-            if let Err(error) = fs::rename(&replacements[index].path, &discard) {
-                errors.push(format!(
-                    "Failed to move new {} aside: {error}",
-                    replacements[index].path.display()
-                ));
-                continue;
-            }
+fn json_rename_journal_path(transaction_root: &Path) -> PathBuf {
+    transaction_root.join(JSON_RENAME_JOURNAL_FILE_NAME)
+}
+
+fn json_rename_stage_path(transaction_root: &Path, index: usize) -> PathBuf {
+    transaction_root.join(format!("new-{index}.json"))
+}
+
+fn json_rename_backup_path(transaction_root: &Path, index: usize) -> PathBuf {
+    transaction_root.join(format!("old-{index}.json"))
+}
+
+fn json_rename_discard_path(transaction_root: &Path, index: usize) -> PathBuf {
+    transaction_root.join(format!("discard-{index}.json"))
+}
+
+fn existing_ancestor(path: &Path) -> Result<PathBuf, String> {
+    let mut candidate = path;
+    loop {
+        if candidate.exists() {
+            return candidate.canonicalize().map_err(|error| {
+                format!(
+                    "Failed to resolve rename path {}: {error}",
+                    candidate.display()
+                )
+            });
         }
-        if let Err(error) = fs::rename(&backups[index], &replacements[index].path) {
-            errors.push(format!(
-                "Failed to restore {}: {error}",
-                replacements[index].path.display()
+        candidate = candidate
+            .parent()
+            .ok_or_else(|| format!("Rename path {} has no existing ancestor.", path.display()))?;
+    }
+}
+
+fn resolve_json_rename_target(program_root: &Path, relative_path: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(relative_path.trim());
+    if relative.as_os_str().is_empty() || !safe_relative_source_path(relative_path.trim()) {
+        return Err("Rename transaction target must be a relative package path.".to_string());
+    }
+    let canonical_root = program_root.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve program root {}: {error}",
+            program_root.display()
+        )
+    })?;
+    let target = program_root.join(relative);
+    let boundary = existing_ancestor(&target)?;
+    if !boundary.starts_with(&canonical_root) {
+        return Err(format!(
+            "Rename transaction target {} resolves outside {}.",
+            target.display(),
+            program_root.display()
+        ));
+    }
+    Ok(target)
+}
+
+fn validate_json_rename_journal(
+    program_root: &Path,
+    journal: &JsonRenameTransactionJournal,
+) -> Result<Vec<PathBuf>, String> {
+    if journal.schema_version != JSON_RENAME_JOURNAL_SCHEMA_VERSION {
+        return Err(format!(
+            "Rename transaction has unsupported schemaVersion {}.",
+            journal.schema_version
+        ));
+    }
+    if journal.entries.is_empty() || journal.entries.len() > 10_000 {
+        return Err("Rename transaction must contain 1 to 10000 targets.".to_string());
+    }
+    let mut seen = HashSet::new();
+    let mut targets = Vec::with_capacity(journal.entries.len());
+    for entry in &journal.entries {
+        let target = resolve_json_rename_target(program_root, &entry.target_relative_path)?;
+        let key = normalized_path_text(&target.to_string_lossy());
+        if !seen.insert(key) {
+            return Err(format!(
+                "Rename transaction duplicates target {}.",
+                target.display()
+            ));
+        }
+        targets.push(target);
+    }
+    Ok(targets)
+}
+
+fn parse_json_rename_journal(
+    program_root: &Path,
+    path: &Path,
+) -> Result<JsonRenameTransactionJournal, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    let journal = serde_json::from_str::<JsonRenameTransactionJournal>(&raw).map_err(|error| {
+        format!(
+            "Rename transaction journal {} is invalid: {error}",
+            path.display()
+        )
+    })?;
+    validate_json_rename_journal(program_root, &journal)?;
+    Ok(journal)
+}
+
+fn write_json_rename_journal(
+    program_root: &Path,
+    transaction_root: &Path,
+    journal: &JsonRenameTransactionJournal,
+    mode: super::transaction::AtomicWriteMode,
+) -> Result<(), String> {
+    validate_json_rename_journal(program_root, journal)?;
+    let raw = serde_json::to_string_pretty(journal)
+        .map_err(|error| format!("Failed to serialize rename transaction: {error}"))?;
+    super::transaction::write_json_file(
+        &json_rename_journal_path(transaction_root),
+        raw.as_bytes(),
+        mode,
+    )
+}
+
+fn read_json_rename_journal(
+    program_root: &Path,
+    transaction_root: &Path,
+) -> Result<Option<JsonRenameTransactionJournal>, String> {
+    let path = json_rename_journal_path(transaction_root);
+    super::transaction::recover_json_file(&path, |candidate| {
+        parse_json_rename_journal(program_root, candidate).map(|_| ())
+    })?;
+    if path.is_file() {
+        parse_json_rename_journal(program_root, &path).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+fn rollback_prepared_json_rename(
+    program_root: &Path,
+    transaction_root: &Path,
+    journal: &mut JsonRenameTransactionJournal,
+) -> Result<(), String> {
+    let targets = validate_json_rename_journal(program_root, journal)?;
+    for index in (0..targets.len()).rev() {
+        let target = &targets[index];
+        let backup = json_rename_backup_path(transaction_root, index);
+        let discard = json_rename_discard_path(transaction_root, index);
+        if backup.is_file() {
+            if target.is_file() {
+                if discard.exists() {
+                    return Err(format!(
+                        "Rename recovery found both target and discard copies for {}.",
+                        target.display()
+                    ));
+                }
+                fs::rename(target, &discard).map_err(|error| {
+                    format!(
+                        "Failed to preserve uncommitted rename value {}: {error}",
+                        target.display()
+                    )
+                })?;
+            } else if target.exists() {
+                return Err(format!(
+                    "Rename recovery target is not a file: {}.",
+                    target.display()
+                ));
+            }
+            fs::rename(&backup, target).map_err(|error| {
+                format!(
+                    "Failed to restore rename target {} from {}: {error}",
+                    target.display(),
+                    backup.display()
+                )
+            })?;
+        } else if !target.is_file() {
+            return Err(format!(
+                "Rename recovery found neither the original nor its backup for {}.",
+                target.display()
             ));
         }
     }
-    errors
+    journal.phase = JsonRenameTransactionPhase::RolledBack;
+    write_json_rename_journal(
+        program_root,
+        transaction_root,
+        journal,
+        super::transaction::AtomicWriteMode::Replace,
+    )
+}
+
+fn recover_json_rename_transaction(
+    program_root: &Path,
+    transaction_root: &Path,
+) -> Result<(), String> {
+    let Some(mut journal) = read_json_rename_journal(program_root, transaction_root)? else {
+        let empty = fs::read_dir(transaction_root)
+            .map_err(|error| format!("Failed to inspect {}: {error}", transaction_root.display()))?
+            .next()
+            .transpose()
+            .map_err(|error| format!("Failed to inspect {}: {error}", transaction_root.display()))?
+            .is_none();
+        return if empty {
+            Ok(())
+        } else {
+            Err(format!(
+                "Rename transaction {} has artifacts but no recoverable journal.",
+                transaction_root.display()
+            ))
+        };
+    };
+    if journal.phase == JsonRenameTransactionPhase::Prepared {
+        rollback_prepared_json_rename(program_root, transaction_root, &mut journal)?;
+    }
+    Ok(())
+}
+
+fn finalize_json_rename_transaction(transaction_root: &Path) {
+    if transaction_root.is_dir() {
+        let _ = crate::recycle_directory_path(transaction_root);
+    }
+}
+
+pub(crate) fn recover_rename_transactions_in_program(program_root: &Path) -> Result<(), String> {
+    if !program_root.is_dir() {
+        return Ok(());
+    }
+    let mut roots = fs::read_dir(program_root)
+        .map_err(|error| format!("Failed to inspect {}: {error}", program_root.display()))?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry.path().is_dir()
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .starts_with(JSON_RENAME_TRANSACTION_PREFIX)
+        })
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    roots.sort();
+    for root in roots {
+        recover_json_rename_transaction(program_root, &root)?;
+        finalize_json_rename_transaction(&root);
+    }
+    Ok(())
+}
+
+pub(crate) fn recover_rename_transactions_on_startup() -> Result<(), String> {
+    let programs_root = crate::resolve_programs_root()?;
+    for entry in fs::read_dir(&programs_root)
+        .map_err(|error| format!("Failed to inspect {}: {error}", programs_root.display()))?
+    {
+        let entry = entry
+            .map_err(|error| format!("Failed to inspect {}: {error}", programs_root.display()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect {}: {error}", entry.path().display()))?;
+        if file_type.is_dir() && !file_type.is_symlink() {
+            recover_rename_transactions_in_program(&entry.path())?;
+        }
+    }
+    Ok(())
 }
 
 fn apply_json_batch(program_root: &Path, replacements: Vec<JsonReplacement>) -> Result<(), String> {
@@ -431,113 +722,130 @@ fn apply_json_batch_inner(
             ));
         }
     }
+    recover_rename_transactions_in_program(program_root)?;
     let token = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let transaction_root = program_root.join(format!(".flowcell-source-rename-{token}"));
+    let transaction_root = program_root.join(format!("{JSON_RENAME_TRANSACTION_PREFIX}{token}"));
     fs::create_dir(&transaction_root).map_err(|error| {
         format!(
             "Failed to create rename transaction {}: {error}",
             transaction_root.display()
         )
     })?;
-    let stages = replacements
-        .iter()
-        .enumerate()
-        .map(|(index, _)| transaction_root.join(format!("new-{index}.json")))
-        .collect::<Vec<_>>();
-    let backups = replacements
-        .iter()
-        .enumerate()
-        .map(|(index, _)| transaction_root.join(format!("old-{index}.json")))
-        .collect::<Vec<_>>();
+    let mut journal = JsonRenameTransactionJournal {
+        schema_version: JSON_RENAME_JOURNAL_SCHEMA_VERSION,
+        phase: JsonRenameTransactionPhase::Prepared,
+        entries: replacements
+            .iter()
+            .map(|replacement| {
+                relative_owned_path(program_root, &replacement.path).map(|target_relative_path| {
+                    JsonRenameJournalEntry {
+                        target_relative_path,
+                    }
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    };
+    write_json_rename_journal(
+        program_root,
+        &transaction_root,
+        &journal,
+        super::transaction::AtomicWriteMode::Create,
+    )?;
     for (index, replacement) in replacements.iter().enumerate() {
-        if let Err(error) = fs::write(&stages[index], &replacement.raw) {
-            let _ = fs::remove_dir_all(&transaction_root);
-            return Err(format!(
-                "Failed to stage replacement for {}: {error}",
-                replacement.path.display()
-            ));
+        let stage = json_rename_stage_path(&transaction_root, index);
+        if let Err(error) = super::transaction::write_json_file(
+            &stage,
+            replacement.raw.as_bytes(),
+            super::transaction::AtomicWriteMode::Create,
+        ) {
+            let recovery = recover_json_rename_transaction(program_root, &transaction_root);
+            if recovery.is_ok() {
+                finalize_json_rename_transaction(&transaction_root);
+            }
+            return Err(match recovery {
+                Ok(()) => format!(
+                    "Failed to stage replacement for {}: {error}",
+                    replacement.path.display()
+                ),
+                Err(recovery_error) => format!(
+                    "Failed to stage replacement for {}: {error} Recovery failed: {recovery_error}",
+                    replacement.path.display()
+                ),
+            });
         }
     }
 
-    let mut committed = 0usize;
     for index in 0..replacements.len() {
         if forced_failure_index == Some(index) {
-            let rollback_errors =
-                rollback_json_batch(&replacements, &backups, &transaction_root, committed);
-            let _ = fs::remove_dir_all(&transaction_root);
-            return Err(if rollback_errors.is_empty() {
-                format!("Forced rename transaction failure at replacement {index}.")
-            } else {
-                format!(
-                    "Forced rename transaction failure at replacement {index}. Rollback failed: {}",
-                    rollback_errors.join(" | ")
-                )
+            let recovery = recover_json_rename_transaction(program_root, &transaction_root);
+            if recovery.is_ok() {
+                finalize_json_rename_transaction(&transaction_root);
+            }
+            return Err(match recovery {
+                Ok(()) => format!("Forced rename transaction failure at replacement {index}."),
+                Err(recovery_error) => format!(
+                    "Forced rename transaction failure at replacement {index}. Recovery failed: {recovery_error}"
+                ),
             });
         }
-        if let Err(error) = fs::rename(&replacements[index].path, &backups[index]) {
-            let rollback_errors =
-                rollback_json_batch(&replacements, &backups, &transaction_root, committed);
-            let _ = fs::remove_dir_all(&transaction_root);
-            return Err(if rollback_errors.is_empty() {
-                format!(
+        let backup = json_rename_backup_path(&transaction_root, index);
+        if let Err(error) = fs::rename(&replacements[index].path, &backup) {
+            let recovery = recover_json_rename_transaction(program_root, &transaction_root);
+            if recovery.is_ok() {
+                finalize_json_rename_transaction(&transaction_root);
+            }
+            return Err(match recovery {
+                Ok(()) => format!(
                     "Failed to prepare {} for rename migration: {error}",
                     replacements[index].path.display()
-                )
-            } else {
-                format!(
-                    "Failed to prepare {} for rename migration: {error} Rollback failed: {}",
-                    replacements[index].path.display(),
-                    rollback_errors.join(" | ")
-                )
+                ),
+                Err(recovery_error) => format!(
+                    "Failed to prepare {} for rename migration: {error} Recovery failed: {recovery_error}",
+                    replacements[index].path.display()
+                ),
             });
         }
-        if let Err(error) = fs::rename(&stages[index], &replacements[index].path) {
-            let mut rollback_errors = Vec::new();
-            if let Err(restore_error) = fs::rename(&backups[index], &replacements[index].path) {
-                rollback_errors.push(format!(
-                    "Failed to restore {}: {restore_error}",
-                    replacements[index].path.display()
-                ));
+        let stage = json_rename_stage_path(&transaction_root, index);
+        if let Err(error) = fs::rename(&stage, &replacements[index].path) {
+            let recovery = recover_json_rename_transaction(program_root, &transaction_root);
+            if recovery.is_ok() {
+                finalize_json_rename_transaction(&transaction_root);
             }
-            rollback_errors.extend(rollback_json_batch(
-                &replacements,
-                &backups,
-                &transaction_root,
-                committed,
-            ));
-            let _ = fs::remove_dir_all(&transaction_root);
-            return Err(if rollback_errors.is_empty() {
-                format!(
+            return Err(match recovery {
+                Ok(()) => format!(
                     "Failed to commit rename migration for {}: {error}",
                     replacements[index].path.display()
-                )
-            } else {
-                format!(
-                    "Failed to commit rename migration for {}: {error} Rollback failed: {}",
-                    replacements[index].path.display(),
-                    rollback_errors.join(" | ")
-                )
+                ),
+                Err(recovery_error) => format!(
+                    "Failed to commit rename migration for {}: {error} Recovery failed: {recovery_error}",
+                    replacements[index].path.display()
+                ),
             });
         }
-        committed += 1;
     }
 
-    if let Err(error) = crate::recycle_directory_path(&transaction_root) {
-        let rollback_errors =
-            rollback_json_batch(&replacements, &backups, &transaction_root, committed);
-        let _ = fs::remove_dir_all(&transaction_root);
-        return Err(if rollback_errors.is_empty() {
-            format!("Could not recycle previous rename metadata: {error}")
-        } else {
-            format!(
-                "Could not recycle previous rename metadata: {error} Rollback failed: {}",
-                rollback_errors.join(" | ")
-            )
+    journal.phase = JsonRenameTransactionPhase::Committed;
+    if let Err(error) = write_json_rename_journal(
+        program_root,
+        &transaction_root,
+        &journal,
+        super::transaction::AtomicWriteMode::Replace,
+    ) {
+        let recovery = recover_json_rename_transaction(program_root, &transaction_root);
+        if recovery.is_ok() {
+            finalize_json_rename_transaction(&transaction_root);
+        }
+        return Err(match recovery {
+            Ok(()) => format!("Could not commit rename transaction journal: {error}"),
+            Err(recovery_error) => format!(
+                "Could not commit rename transaction journal: {error} Recovery failed: {recovery_error}"
+            ),
         });
     }
+    finalize_json_rename_transaction(&transaction_root);
     Ok(())
 }
 
@@ -722,13 +1030,14 @@ pub(crate) fn migrate_program_folder_identity(
             manifest_path.display()
         )
     })?;
-    let manifest =
+    let mut manifest =
         serde_json::from_value::<ProgramManifest>(manifest_value.clone()).map_err(|error| {
             format!(
                 "Program manifest {} is invalid: {error}",
                 manifest_path.display()
             )
         })?;
+    super::manifest::validate_manifest(&mut manifest, previous_program_name, program_root)?;
     let programs_root = program_root
         .parent()
         .ok_or_else(|| format!("Program folder has no parent: {}", program_root.display()))?;
@@ -782,11 +1091,14 @@ pub(crate) fn migrate_program_folder_identity(
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_json_batch_inner, migrate_program_folder_identity, rewrite_execution_target,
-        JsonReplacement,
+        apply_json_batch_inner, json_rename_backup_path, json_rename_stage_path,
+        migrate_program_folder_identity, recover_json_rename_transaction, rewrite_execution_target,
+        write_json_rename_journal, JsonRenameJournalEntry, JsonRenameTransactionJournal,
+        JsonRenameTransactionPhase, JsonReplacement, JSON_RENAME_JOURNAL_SCHEMA_VERSION,
     };
     use serde_json::{json, Value};
     use std::fs;
+    use std::path::Path;
 
     #[test]
     fn typed_execution_targets_rewrite_without_touching_unrelated_payload_values() {
@@ -981,9 +1293,19 @@ mod tests {
         assert_eq!(active["panelName"], "Utility");
         assert_eq!(
             active["localPackagePath"],
-            package_root.to_string_lossy().as_ref()
+            Path::new("Windows Local Scripts")
+                .join(owner_button_id)
+                .to_string_lossy()
+                .as_ref()
         );
-        assert_eq!(active["sourcePath"], source_path.to_string_lossy().as_ref());
+        assert_eq!(
+            active["sourcePath"],
+            Path::new("Windows Local Scripts")
+                .join(owner_button_id)
+                .join("source/run.ps1")
+                .to_string_lossy()
+                .as_ref()
+        );
         assert_eq!(active["executionTarget"]["programName"], "Desktop");
         assert_eq!(
             active["layout"]["fields"][0]["serviceTarget"]["payload"]["programName"],
@@ -1033,6 +1355,113 @@ mod tests {
                 .expect("parse second"),
             json!({"value":"old-second"})
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn prepared_batch_recovers_after_a_process_cut_between_targets() {
+        let root = std::env::temp_dir().join(format!(
+            "flowcell-rename-cut-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create cut root");
+        let first = root.join("first.json");
+        let second = root.join("second.json");
+        fs::write(&first, r#"{"value":"old-first"}"#).expect("write first");
+        fs::write(&second, r#"{"value":"old-second"}"#).expect("write second");
+        let transaction_root = root.join(".flowcell-source-rename-test-cut");
+        fs::create_dir_all(&transaction_root).expect("create transaction root");
+        let journal = JsonRenameTransactionJournal {
+            schema_version: JSON_RENAME_JOURNAL_SCHEMA_VERSION,
+            phase: JsonRenameTransactionPhase::Prepared,
+            entries: vec![
+                JsonRenameJournalEntry {
+                    target_relative_path: "first.json".to_string(),
+                },
+                JsonRenameJournalEntry {
+                    target_relative_path: "second.json".to_string(),
+                },
+            ],
+        };
+        write_json_rename_journal(
+            &root,
+            &transaction_root,
+            &journal,
+            super::super::transaction::AtomicWriteMode::Create,
+        )
+        .expect("write transaction journal");
+        fs::write(
+            json_rename_stage_path(&transaction_root, 0),
+            r#"{"value":"new-first"}"#,
+        )
+        .expect("write first stage");
+        fs::write(
+            json_rename_stage_path(&transaction_root, 1),
+            r#"{"value":"new-second"}"#,
+        )
+        .expect("write second stage");
+        fs::rename(&first, json_rename_backup_path(&transaction_root, 0))
+            .expect("move first backup");
+        fs::rename(json_rename_stage_path(&transaction_root, 0), &first)
+            .expect("commit first only");
+
+        recover_json_rename_transaction(&root, &transaction_root)
+            .expect("recover interrupted batch");
+
+        assert_eq!(
+            serde_json::from_str::<Value>(&fs::read_to_string(&first).expect("read first"))
+                .expect("parse first"),
+            json!({"value":"old-first"})
+        );
+        assert_eq!(
+            serde_json::from_str::<Value>(&fs::read_to_string(&second).expect("read second"))
+                .expect("parse second"),
+            json!({"value":"old-second"})
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn failed_batch_recovery_keeps_the_only_backup() {
+        let root = std::env::temp_dir().join(format!(
+            "flowcell-rename-retain-backup-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).expect("create backup root");
+        let target = root.join("target.json");
+        fs::write(&target, r#"{"value":"old"}"#).expect("write old target");
+        let transaction_root = root.join(".flowcell-source-rename-test-backup");
+        fs::create_dir_all(&transaction_root).expect("create transaction root");
+        let journal = JsonRenameTransactionJournal {
+            schema_version: JSON_RENAME_JOURNAL_SCHEMA_VERSION,
+            phase: JsonRenameTransactionPhase::Prepared,
+            entries: vec![JsonRenameJournalEntry {
+                target_relative_path: "target.json".to_string(),
+            }],
+        };
+        write_json_rename_journal(
+            &root,
+            &transaction_root,
+            &journal,
+            super::super::transaction::AtomicWriteMode::Create,
+        )
+        .expect("write transaction journal");
+        let backup = json_rename_backup_path(&transaction_root, 0);
+        fs::rename(&target, &backup).expect("move old target to backup");
+        fs::create_dir(&target).expect("create blocking target directory");
+
+        assert!(recover_json_rename_transaction(&root, &transaction_root).is_err());
+        assert!(
+            backup.is_file(),
+            "failed recovery must retain the old value"
+        );
+        assert!(transaction_root.is_dir());
         let _ = fs::remove_dir_all(root);
     }
 }

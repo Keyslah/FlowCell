@@ -5,7 +5,7 @@ import {
   computeAvailableShortcutChoices,
   UNBOUND_SHORTCUT_LABEL,
   validateShortcutInput
-} from "./.compiled-shortcut-profiles/lib/shortcutProfiles.js";
+} from "./.compiled-button-system/lib/shortcutProfiles.js";
 
 function createWorkspace(shortcutProfiles) {
   return {
@@ -13,6 +13,7 @@ function createWorkspace(shortcutProfiles) {
       {
         name: "Photoshop",
         programTabId: 4,
+        shortcutProfileId: "adobe.photoshop.windows",
         panels: [
           {
             name: "Files",
@@ -186,6 +187,51 @@ test("manual shortcut validation rejects duplicate FlowCell binds and allows saf
     shortcut: "^!K",
     warning: undefined
   });
+});
+
+test("tool-set child bindings use their canonical Button ID for ownership and duplicate labels", () => {
+  const workspace = createWorkspace(shortcutProfiles);
+  const child = {
+    id: "child-rotate-negative",
+    label: "Rotate › Negative",
+    kind: "tool-set-child",
+    target: "child-rotate-negative",
+    ownerButtonId: "owner-rotate",
+    shortcut: "^!N",
+    bindingId: 23
+  };
+  workspace.programs[0].panels[0].buttons.push(child);
+  workspace.bindings.scriptBindings.push({
+    id: 23,
+    bindingId: 23,
+    kind: "tool-set-child",
+    programTabId: 4,
+    shortcut: "^!N",
+    target: "child-rotate-negative",
+    ownerButtonId: "owner-rotate"
+  });
+
+  assert.deepEqual(
+    validateShortcutInput({
+      rawValue: "Ctrl + Alt + N",
+      workspace,
+      programName: "Photoshop",
+      programTabId: 4,
+      selectedButton: child
+    }),
+    { ok: true, shortcut: "^!N", warning: undefined }
+  );
+
+  assert.deepEqual(
+    validateShortcutInput({
+      rawValue: "Ctrl + Alt + N",
+      workspace,
+      programName: "Photoshop",
+      programTabId: 4,
+      selectedButton: workspace.programs[0].panels[0].buttons[0]
+    }),
+    { ok: false, message: "Shortcut is already bound to Rotate › Negative." }
+  );
 });
 
 test("shortcut picker options always keep Unbound first", () => {

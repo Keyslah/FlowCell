@@ -14,6 +14,7 @@ export interface FlowCellScriptBinding {
   programTabId?: number;
   shortcut: string;
   target: string;
+  ownerButtonId?: string;
 }
 
 export interface FlowCellBindingsState {
@@ -30,6 +31,7 @@ export interface BindableButtonRecord {
   executionTarget?: string;
   bindingId?: number;
   shortcut?: string;
+  ownerButtonId?: string;
 }
 
 export interface BindablePanelRecord {
@@ -40,6 +42,7 @@ export interface BindablePanelRecord {
 export interface BindableProgramRecord {
   name: string;
   programTabId: number;
+  shortcutProfileId?: string;
   panels: BindablePanelRecord[];
 }
 

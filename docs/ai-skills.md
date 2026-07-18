@@ -27,7 +27,8 @@ Use this document as the repository-local routing guide for FlowCell work. Inspe
   `runtime/`, which Update preserves and Delete recycles with the owner.
 - `Programs/<Program>/Panels/<Panel>/<ownerButtonId>.flowcell-source.json` is the active routing record.
 - `Programs/<Program>/flowcell.program.json` declares program folders, allowed source types, and runner behavior.
-- `flowcellbackend/FlowCellBackend.ahk` owns hotkey reception and direct backend automation.
+- `flowcellbackend/FlowCellBackend.ahk` owns existing path-based script hotkeys and direct backend automation; those `ScriptPath` bindings remain available with the frontend closed.
+- The running Tauri process owns only `tool-set-child` hotkeys. Their numbered binding records carry canonical child/owner Button IDs, and the active expanded owner popout activates the mounted child host so live tool fields and the normal Button lifecycle remain authoritative.
 - `flowcellbackend/FlowCellCommandBackend.ps1` executes hotkey script/macro requests; Blender script bindings resolve only through active `.flowcell-source.json` records.
 
 ### Non-negotiable contracts
@@ -38,7 +39,7 @@ Use this document as the repository-local routing guide for FlowCell work. Inspe
 - A skin owns render-only markup, SVG, declarations, typography, effects, states, transitions, and keyframes.
 - A skin has exactly one measurable `[data-core]` and zero or one `{{label}}` token. That authored core's geometry is the actual interactive hitbox; textless skins receive no host overlay, label, or fallback chrome.
 - Transparent or decorative overflow is pointer-inert.
-- Do not add filename classifiers, per-tool React pages, per-tool Rust constants, or alternate Button state.
+- Do not add filename classifiers, program-name switches, one-off Button runtimes, or alternate Button state. Reusable tool-page renderers and capability services must be selected by validated installed manifest data.
 - Do not special-case program scripts in the main page. Program-specific meaning belongs in manifests, source packages, or the relevant runner/bridge.
 - Deleting a Button must atomically remove its state graph, active record, owned Local Scripts package, owned bridge artifacts, and owned bindings. All filesystem deletion goes through the Recycle Bin.
 - Panel/program rename must migrate both native source ownership and canonical Button scope while preserving stable presentation IDs. Native folder, record, and bindings changes roll back together; if canonical persistence fails afterward, reverse the native rename unless current state proves the new scope already landed.
@@ -71,23 +72,23 @@ Use this document as the repository-local routing guide for FlowCell work. Inspe
 - `button-popout`: regular and tool-set popout units. A tool-set owner reuses one stable window for collapsed and expanded states.
 - `button-fan`: one regular fan window per stable panel-owner Button.
 
-Core utility windows such as Binds, Macro Lab, Organization Setup, Window Grid, Motion Settings, and Build Layers remain managed core windows, not Button renderers.
+Core utility windows such as Binds, Macro Lab, Organization Setup, Window Grid, and Motion Settings remain managed core windows. Program tool pages open through installed owner Buttons and reusable manifest-selected renderers.
 
 ### Layout contracts
 
 - Placement geometry uses canonical surface design units.
 - Saved Button Editor bounds and Pop/Fan semantic content frames use physical desktop pixels; the oversized Pop/Fan host canvas is runtime-only.
-- Restore physical semantic bounds verbatim. Pop/Fan must derive local CSS coordinates from the fixed canvas origin and DPI rather than reading the host HWND as saved content geometry.
+- Restore physical semantic bounds verbatim. Pop/Fan must derive local CSS coordinates from the fixed canvas origin and effective WebView pixel ratio rather than reading the host HWND as saved content geometry.
 - Stable native labels derive from stable IDs, never editable labels.
 - A panel Fan and the Main-page panel rail share one stable `panel-owner` Button identity, but each occurrence is resolved through its own placement ID and may have its own geometry and skin override.
 - Exact saved geometry wins; do not rerun starter layout during restoration.
 - Reorder and `Snap to top left corner` are explicit undoable Editor actions that rewrite exact placement geometry and z-order; restore continues to use the saved result without reflowing it.
 - On a Pop or Fan surface, the selected `windowFitMode` is the Editor's immediate labeled semantic frame for Saved Surface, all Button hitboxes, or current Button visuals. The frame mirrors transient active overflow; opening the real native draft remains a separate `Open Pop` or `Open Fan` action, and Save persists only the resting fit.
-- Native Pop/Fan windows are fixed, non-resizable transparent canvases covering the active monitor work area and any outlying semantic content. Set cursor-ignore before show. Global physical-cursor polling may enable the HWND only over placement-owned Button hosts, tool fields, and Pop resize handles; gaps and effect cleanup must return it to ignored. The hit-test hook reads live DOM geometry each frame and must not restart merely because an envelope or content frame moved.
-- Render the visible frame absolutely inside that canvas. Fit changes, hover overflow, Fan expansion, and tool-set collapse/expansion change only semantic frame/envelope state. Grow or rehome the native canvas only when content escapes it, and use a capacity margin while dragging/resizing so monitor-edge motion stays visible. New unsized Pops start at 1:1 logical scale; restored scale comes from the destination canvas DPI. Preserve one invariant physical surface origin, normalize ancestor content scale to design units, and retain skin-root/animated overflow scale. Persist Pop/Fan semantic physical bounds and layout snapshots, never the monitor-sized host or transient envelope.
+- Native Pop/Fan windows are fixed, non-resizable transparent canvases covering the active monitor work area and any outlying semantic content. Set cursor-ignore before show. One shared native worker emits changed physical cursor/modifier snapshots; physical bounds and cursor points must be converted to WebView CSS coordinates with the live `devicePixelRatio` (native monitor DPI is only the fallback because WebView zoom can differ). Each window reacts to those changes and local geometry/DOM invalidation, enabling its HWND only when the native owning-program entitlement is active and the pointer is over a placement-owned Button host, tool field, or Pop resize handle. Gaps, inactive program scope, taskbar previews, listener/query failures, and effect cleanup must return it to ignored. Subscribe before querying initial native state, retry transient listener/query and cursor-style failures, and fail closed while state is unavailable. The hit-test hook rejects points outside the semantic frame before exact testing, may cache interactive membership, and must read exact viewport rectangles live because ancestor frame movement can change position without resizing a host. It must not resume per-window continuous polling merely because an envelope or content frame moved.
+- Render the visible frame absolutely inside that canvas. Fit changes, hover overflow, Fan expansion, and tool-set collapse/expansion change only semantic frame/envelope state. Grow or rehome the native canvas only when content escapes it, and use a capacity margin while dragging/resizing so monitor-edge motion stays visible. New unsized Pops start at one design pixel per WebView CSS pixel; restored physical bounds use the destination WebView's effective pixel ratio. Preserve one invariant physical surface origin, normalize ancestor content scale to design units, and retain skin-root/animated overflow scale. Persist Pop/Fan semantic physical bounds and layout snapshots, never the monitor-sized host or transient envelope.
 - Layout snapshots are strict version 8 `FlowCellWindowLayout` documents and persist only `button-editor`, `button-popout`, and `button-fan` Button window kinds; unknown fields and old window kinds are rejected.
 - Only measured visible `[data-core]` regions are native hit-test regions. Gaps stay pointer-inert.
-- Program-scoped topmost must not cover Windows taskbar previews.
+- Program-scoped topmost is an exact native process rule: only the owning manifest's actual foreground executable may select `TOPMOST`. FlowCell self/sibling focus is at most a normal-band continuation of the last proven owning app; taskbar previews and unrelated apps must place the scoped window behind the actual foreground HWND, not merely call `HWND_NOTOPMOST`.
 
 ### Primary files
 
@@ -112,6 +113,7 @@ A catalog package is a folder containing `flowcell.toolset.json`, its declared s
 - program, label, tooltip, and source
 - child `slot`, label, tooltip, and optional payload
 - optional bridge data, fields, layout, and events
+- optional validated page presentation metadata for a reusable renderer
 - generic runner metadata where required
 
 Core treats each child slot as command identity and merges payload in this order:
@@ -128,6 +130,7 @@ Runtime values win. Core does not interpret Blender axes, angles, solvers, color
 - Each child has role `tool-set-child`, its own label, skin, text policy, placement, and `tool-set-action` target.
 - Tool-set children render only on their tool-set popout surface.
 - The shared Button popout renderer is the only tool-set visual renderer.
+- A validated `layout.presentation` may select a reusable view inside that same canonical popout; it may not bypass `ButtonHost` execution or own separate state.
 - One stable native window per owner toggles between the exact owner footprint and exact saved expanded bounds.
 - Regular popouts and regular fan windows never contain tool-set children.
 - A fan setup stores tool-set owners as separate collapsed windows at exact physical anchors.
@@ -148,7 +151,7 @@ Runtime values win. Core does not interpret Blender axes, angles, solvers, color
 
 - The catalog package is `Programs/Blender/Blender Git Scripts/Toolsets/theme/`.
 - Import creates a Button-owned package under `Blender Local Scripts/<ownerButtonId>/`; later catalog edits do not silently change that installed Button.
-- Theme child commands and fields are manifest data. Do not add a dedicated frontend Theme page or filename classifier.
+- Theme child commands, fields, and presentation mapping are manifest data. The reusable `ThemeWorkbench` renderer is selected only by `layout.presentation.renderer`; never select it by Blender name, label, or filename.
 - Blender-side meaning remains in the installed Python source and Blender bridge.
 - Validate Python syntax and manifest JSON, then reload the live FlowCell Blender add-on after deployment changes.
 
@@ -163,7 +166,7 @@ Runtime values win. Core does not interpret Blender axes, angles, solvers, color
 3. The skin must contain exactly one measurable `[data-core]` and may contain one `{{label}}` token at the intended text location.
 4. The host measures that exact core after optional label insertion and text-fit resolution.
 5. The host attaches activation, context, double-click, hover, press, and keyboard behavior directly to that core.
-6. Native transparent windows map the physical cursor to the webview and use the shadow root's DOM hit test for those exact cores; a bounding rectangle is only an early rejection check.
+6. Native transparent windows map the physical cursor to the webview through the live `devicePixelRatio` and use the shadow root's DOM hit test for those exact cores; a bounding rectangle is only an early rejection check.
 
 The host never imposes another shape over the skin. Shadows, glows, wrappers, and decorative SVG may overflow but never become clickable.
 

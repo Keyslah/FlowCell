@@ -1,8 +1,9 @@
 use crate::*;
 
-fn resolve_illustrator_bridge_invoke_script() -> Result<PathBuf, String> {
-    let script_path = resolve_program_directory("Illustrator")?
-        .join("SupportScripts")
+fn resolve_illustrator_bridge_invoke_script(program_name: &str) -> Result<PathBuf, String> {
+    let manifest = program_sources::manifest::load_program_manifest(program_name)?;
+    let script_path = resolve_program_directory(program_name)?
+        .join(&manifest.support_scripts_folder)
         .join("Invoke-IllustratorFlowCellAction.ps1");
     if !script_path.is_file() {
         return Err(format!(
@@ -58,7 +59,7 @@ fn run_illustrator_layers_action_blocking(
         &file_name,
         LAYER_TREE_CAPABILITY,
     )?;
-    let invoke_script = resolve_illustrator_bridge_invoke_script()?;
+    let invoke_script = resolve_illustrator_bridge_invoke_script(&program_name)?;
     let action_id = format!("flowcell_button_{}", resolution.record.owner_button_id);
     let command = format!(
         "& '{}' -ActionId '{}' -ScriptPath '{}' -ArgsJson '{}' -ConnectTimeoutMs 2000 -StartTimeoutMs 25000 -Wait",
@@ -111,6 +112,7 @@ pub(crate) async fn run_illustrator_layers_action(
 
 #[tauri::command]
 pub(crate) fn set_illustrator_layers_highlight(keys: Vec<String>) -> Result<(), String> {
+    require_registered_program_name("Illustrator")?;
     let body = serde_json::to_string(&json!({ "keys": keys }))
         .map_err(|error| format!("Failed to serialize highlight set: {error}"))?;
     let local_root = resolve_flowcell_local_root()?;

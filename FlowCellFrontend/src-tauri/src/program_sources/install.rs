@@ -1,8 +1,10 @@
-use super::manifest::{extension_is_allowed, load_program_manifest, ProgramManifest};
+use super::manifest::{
+    extension_is_allowed, load_program_manifest, normalize_import_kind, ProgramManifest,
+};
 use super::records::{
     active_record_file_name, atomic_replace_json, atomic_write_json, empty_object,
-    read_active_record, validate_owner_button_id, ActiveSourceChild, ActiveSourceRecord,
-    LocalInstallRecord, INSTALL_RECORD_FILE_NAME,
+    read_active_record, recover_active_record, validate_owner_button_id, ActiveSourceChild,
+    ActiveSourceRecord, LocalInstallRecord, INSTALL_RECORD_FILE_NAME,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -13,6 +15,38 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 const TOOLSET_MANIFEST_FILE_NAME: &str = "flowcell.toolset.json";
 const SCRIPT_MANIFEST_FILE_NAME: &str = "flowcell.script.json";
+const INSTALL_TRANSACTION_PREFIX: &str = ".flowcell-install-transaction-";
+const INSTALL_TRANSACTION_JOURNAL_FILE_NAME: &str = "journal.json";
+const INSTALL_TRANSACTION_NEW_PACKAGE: &str = "new-package";
+const INSTALL_TRANSACTION_OLD_PACKAGE: &str = "old-package";
+const INSTALL_TRANSACTION_DISCARD_PACKAGE: &str = "discard-package";
+const INSTALL_TRANSACTION_DISCARD_ACTIVE: &str = "discard-active.json";
+const INSTALL_TRANSACTION_SCHEMA_VERSION: u32 = 1;
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+enum InstallTransactionPhase {
+    Prepared,
+    CommitPending,
+    Committed,
+    RolledBack,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct InstallTransactionJournal {
+    schema_version: u32,
+    phase: InstallTransactionPhase,
+    replace_existing: bool,
+    owner_button_id: String,
+    program_id: String,
+    program_name: String,
+    panel_name: String,
+    previous_record: Option<ActiveSourceRecord>,
+    previous_install: Option<LocalInstallRecord>,
+    next_record: ActiveSourceRecord,
+    next_install: LocalInstallRecord,
+}
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -23,6 +57,10 @@ pub(crate) struct InstallButtonSourceRequest {
     pub source_path: String,
     #[serde(default)]
     pub import_kind: String,
+    #[serde(default)]
+    pub bundled_source_id: Option<String>,
+    #[serde(default)]
+    pub bundled_source_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -130,12 +168,48 @@ fn default_toolset_kind() -> String {
 }
 
 const CATALOG_CORE_ACTION_IDS: &[&str] = &[
+    "open-tool-page",
+    "sample-image-palette",
+    "save-tool-fields",
+    "load-tool-fields",
+    "load-legacy-tool-state",
+    "save-tool-package",
+    "open-tool-package",
+    "cycle-tool-package",
+    // Compatibility for installed records created before tool pages became a
+    // generic contribution. New packages should use open-tool-page.
     "open-illustrator-layer-tree",
     "open-window-grid",
     "sample-blender-theme-image",
     "save-blender-theme-fields",
     "load-blender-theme-fields",
 ];
+
+fn validate_legacy_field_transforms(
+    action_id: &str,
+    payload: &serde_json::Map<String, Value>,
+) -> Result<(), String> {
+    let Some(transforms) = payload.get("legacyFieldTransforms") else {
+        return Ok(());
+    };
+    let transforms = transforms
+        .as_object()
+        .ok_or_else(|| format!("{action_id} payload legacyFieldTransforms must be an object."))?;
+    let field_map = payload
+        .get("legacyFieldMap")
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            format!("{action_id} payload legacyFieldTransforms requires legacyFieldMap.")
+        })?;
+    for (stored_field_id, transform) in transforms {
+        if !field_map.contains_key(stored_field_id) || transform.as_str() != Some("parse-number") {
+            return Err(format!(
+                "{action_id} payload legacyFieldTransforms must map legacyFieldMap keys to 'parse-number'."
+            ));
+        }
+    }
+    Ok(())
+}
 
 fn validate_core_execution_target(subject: &str, target: &Value) -> Result<(), String> {
     let object = target
@@ -172,6 +246,128 @@ fn validate_core_execution_target(subject: &str, target: &Value) -> Result<(), S
         return Err(format!(
             "executionTarget events for {subject} must be a JSON object."
         ));
+    }
+    if action_id.eq_ignore_ascii_case("open-tool-page") {
+        let payload = object
+            .get("payload")
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                "open-tool-page requires a payload object with contributionId, renderer, and capability."
+                    .to_string()
+            })?;
+        for field in ["contributionId", "renderer", "capability"] {
+            if !payload
+                .get(field)
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                return Err(format!(
+                    "open-tool-page payload requires a non-empty {field}."
+                ));
+            }
+        }
+    }
+    if ["save-tool-fields", "load-tool-fields"]
+        .iter()
+        .any(|registered| action_id.eq_ignore_ascii_case(registered))
+    {
+        let payload = object
+            .get("payload")
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("{action_id} requires a field-file contract payload."))?;
+        if !payload
+            .get("formatId")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
+        {
+            return Err(format!(
+                "{action_id} payload requires a non-empty formatId."
+            ));
+        }
+        if !payload.get("valueFields").is_some_and(|value| {
+            value.as_array().is_some_and(|values| {
+                !values.is_empty()
+                    && values
+                        .iter()
+                        .all(|value| value.as_str().is_some_and(|field| !field.trim().is_empty()))
+            })
+        }) {
+            return Err(format!(
+                "{action_id} payload requires non-empty string valueFields."
+            ));
+        }
+        validate_legacy_field_transforms(action_id, payload)?;
+    }
+    if action_id.eq_ignore_ascii_case("load-legacy-tool-state") {
+        let payload = object
+            .get("payload")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "load-legacy-tool-state requires a payload object.".to_string())?;
+        for field in ["capability", "stateFileName", "expectedFormat"] {
+            if !payload
+                .get(field)
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                return Err(format!(
+                    "load-legacy-tool-state payload requires a non-empty {field}."
+                ));
+            }
+        }
+    }
+    if [
+        "save-tool-package",
+        "open-tool-package",
+        "cycle-tool-package",
+    ]
+    .iter()
+    .any(|registered| action_id.eq_ignore_ascii_case(registered))
+    {
+        let payload = object
+            .get("payload")
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("{action_id} requires a package contract payload."))?;
+        for field in ["capability", "storageFolder", "formatId", "manifestSuffix"] {
+            if !payload
+                .get(field)
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                return Err(format!("{action_id} payload requires a non-empty {field}."));
+            }
+        }
+        let value_fields = payload
+            .get("valueFields")
+            .and_then(Value::as_array)
+            .filter(|values| {
+                !values.is_empty()
+                    && values
+                        .iter()
+                        .all(|value| value.as_str().is_some_and(|field| !field.trim().is_empty()))
+            });
+        if value_fields.is_none() {
+            return Err(format!(
+                "{action_id} payload requires non-empty string valueFields."
+            ));
+        }
+        if !payload.get("assetFields").is_some_and(|value| {
+            value.as_array().is_some_and(|values| {
+                values
+                    .iter()
+                    .all(|value| value.as_str().is_some_and(|field| !field.trim().is_empty()))
+            })
+        }) {
+            return Err(format!("{action_id} payload requires string assetFields."));
+        }
+        validate_legacy_field_transforms(action_id, payload)?;
+        if action_id.eq_ignore_ascii_case("cycle-tool-package")
+            && !payload
+                .get("direction")
+                .and_then(Value::as_i64)
+                .is_some_and(|direction| matches!(direction, -1 | 1))
+        {
+            return Err("cycle-tool-package payload direction must be -1 or 1.".to_string());
+        }
     }
     Ok(())
 }
@@ -217,7 +413,18 @@ fn validate_update_shape(
         .collect::<Vec<_>>();
     previous_slots.sort();
     next_slots.sort();
-    if previous_slots != next_slots {
+    let append_missing_slots = prepared
+        .layout
+        .as_ref()
+        .and_then(|layout| layout.get("updatePolicy"))
+        .and_then(|policy| policy.get("appendMissingChildSlots"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let append_is_safe = append_missing_slots
+        && previous_slots
+            .iter()
+            .all(|slot| next_slots.binary_search(slot).is_ok());
+    if previous_slots != next_slots && !append_is_safe {
         return Err(format!(
             "Update cannot add, remove, or rename tool-set child slots. Installed: [{}]. Selected: [{}]. Delete and re-add the tool set to change its Button graph.",
             previous_slots.join(", "),
@@ -227,12 +434,25 @@ fn validate_update_shape(
     Ok(())
 }
 
-fn normalize_import_kind(value: &str) -> Result<&'static str, String> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "" | "script" | "single-script" => Ok("script"),
-        "tool-set" | "toolset" => Ok("tool-set"),
-        _ => Err("importKind must be 'script' or 'tool-set'.".to_string()),
+fn execution_target_with_source_identity(
+    mut target: Value,
+    record: &ActiveSourceRecord,
+    file_name: &str,
+) -> Value {
+    let Some(target_object) = target.as_object_mut() else {
+        return target;
+    };
+    if target_object.get("kind").and_then(Value::as_str) != Some("core-action") {
+        return target;
     }
+    let payload = target_object.entry("payload").or_insert_with(|| json!({}));
+    if let Some(payload_object) = payload.as_object_mut() {
+        payload_object.insert("programName".to_string(), json!(record.program_name));
+        payload_object.insert("panelName".to_string(), json!(record.panel_name));
+        payload_object.insert("fileName".to_string(), json!(file_name));
+        payload_object.insert("ownerButtonId".to_string(), json!(record.owner_button_id));
+    }
+    target
 }
 
 fn ensure_relative_source_path(value: &str) -> Result<PathBuf, String> {
@@ -592,6 +812,729 @@ fn timestamp() -> String {
     format!("{}.{:09}Z", now.as_secs(), now.subsec_nanos())
 }
 
+fn install_transaction_journal_path(transaction_root: &Path) -> PathBuf {
+    transaction_root.join(INSTALL_TRANSACTION_JOURNAL_FILE_NAME)
+}
+
+fn install_transaction_new_package(transaction_root: &Path) -> PathBuf {
+    transaction_root.join(INSTALL_TRANSACTION_NEW_PACKAGE)
+}
+
+fn install_transaction_old_package(transaction_root: &Path) -> PathBuf {
+    transaction_root.join(INSTALL_TRANSACTION_OLD_PACKAGE)
+}
+
+fn install_transaction_discard_package(transaction_root: &Path) -> PathBuf {
+    transaction_root.join(INSTALL_TRANSACTION_DISCARD_PACKAGE)
+}
+
+fn install_transaction_discard_active(transaction_root: &Path) -> PathBuf {
+    transaction_root.join(INSTALL_TRANSACTION_DISCARD_ACTIVE)
+}
+
+fn serialized_values_match<T: Serialize>(left: &T, right: &T) -> bool {
+    match (serde_json::to_value(left), serde_json::to_value(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn active_record_matches_next(
+    candidate: &ActiveSourceRecord,
+    expected: &ActiveSourceRecord,
+) -> bool {
+    let mut candidate = candidate.clone();
+    candidate.bridge_action = expected.bridge_action.clone();
+    serialized_values_match(&candidate, expected)
+}
+
+fn read_local_install_record(package_root: &Path) -> Result<LocalInstallRecord, String> {
+    let path = package_root.join(INSTALL_RECORD_FILE_NAME);
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    let record = serde_json::from_str::<LocalInstallRecord>(&raw)
+        .map_err(|error| format!("Install record {} is invalid: {error}", path.display()))?;
+    if record.schema_version != 1 {
+        return Err(format!(
+            "Install record {} has unsupported schemaVersion {}.",
+            path.display(),
+            record.schema_version
+        ));
+    }
+    validate_owner_button_id(&record.owner_button_id)?;
+    Ok(record)
+}
+
+fn package_matches_install_record(
+    package_root: &Path,
+    expected: &LocalInstallRecord,
+) -> Result<bool, String> {
+    if !package_root.exists() {
+        return Ok(false);
+    }
+    if !package_root.is_dir() {
+        return Err(format!(
+            "Install package path is not a directory: {}.",
+            package_root.display()
+        ));
+    }
+    Ok(serialized_values_match(
+        &read_local_install_record(package_root)?,
+        expected,
+    ))
+}
+
+fn normalized_relative_path(path: &str) -> String {
+    path.replace('/', "\\").to_ascii_lowercase()
+}
+
+fn validate_install_transaction_journal(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+    journal: &InstallTransactionJournal,
+) -> Result<(), String> {
+    if journal.schema_version != INSTALL_TRANSACTION_SCHEMA_VERSION {
+        return Err(format!(
+            "Install transaction has unsupported schemaVersion {}.",
+            journal.schema_version
+        ));
+    }
+    let owner = validate_owner_button_id(&journal.owner_button_id)?;
+    let panel = crate::validate_folder_name(&journal.panel_name, "Panel")?;
+    if !journal
+        .program_id
+        .eq_ignore_ascii_case(&manifest.program_id)
+        || !journal.program_name.eq_ignore_ascii_case(&manifest.label)
+    {
+        return Err("Install transaction does not belong to this Program manifest.".to_string());
+    }
+    if journal.replace_existing
+        != (journal.previous_record.is_some() && journal.previous_install.is_some())
+    {
+        return Err(
+            "Install transaction previous-state metadata is incomplete or unexpected.".to_string(),
+        );
+    }
+    for (record_owner, record_program_id, record_program, record_panel, subject) in [
+        (
+            journal.next_record.owner_button_id.as_str(),
+            journal.next_record.program_id.as_str(),
+            journal.next_record.program_name.as_str(),
+            journal.next_record.panel_name.as_str(),
+            "next active record",
+        ),
+        (
+            journal.next_install.owner_button_id.as_str(),
+            journal.next_install.program_id.as_str(),
+            journal.next_install.program_name.as_str(),
+            journal.next_install.panel_name.as_str(),
+            "next install record",
+        ),
+    ] {
+        if record_owner != owner
+            || !record_program_id.eq_ignore_ascii_case(&manifest.program_id)
+            || !record_program.eq_ignore_ascii_case(&manifest.label)
+            || !record_panel.eq_ignore_ascii_case(&panel)
+        {
+            return Err(format!(
+                "Install transaction {subject} has mismatched identity."
+            ));
+        }
+    }
+    if let (Some(previous_record), Some(previous_install)) = (
+        journal.previous_record.as_ref(),
+        journal.previous_install.as_ref(),
+    ) {
+        if previous_record.owner_button_id != owner
+            || previous_install.owner_button_id != owner
+            || !previous_record
+                .program_id
+                .eq_ignore_ascii_case(&manifest.program_id)
+            || !previous_install
+                .program_id
+                .eq_ignore_ascii_case(&manifest.program_id)
+            || !previous_record
+                .program_name
+                .eq_ignore_ascii_case(&manifest.label)
+            || !previous_install
+                .program_name
+                .eq_ignore_ascii_case(&manifest.label)
+            || !previous_record.panel_name.eq_ignore_ascii_case(&panel)
+            || !previous_install.panel_name.eq_ignore_ascii_case(&panel)
+        {
+            return Err("Install transaction previous state has mismatched identity.".to_string());
+        }
+    }
+    let source_relative = ensure_relative_source_path(&journal.next_install.source_relative_path)?;
+    let local_root = program_root.join(&manifest.local_scripts_folder);
+    let final_package = local_root.join(&owner);
+    let expected_package = path_relative_to_program(program_root, &final_package)?;
+    let expected_source =
+        path_relative_to_program(program_root, &final_package.join(source_relative))?;
+    if normalized_relative_path(&journal.next_record.local_package_path)
+        != normalized_relative_path(&expected_package)
+        || normalized_relative_path(&journal.next_record.source_path)
+            != normalized_relative_path(&expected_source)
+    {
+        return Err(
+            "Install transaction active record points outside its owned Local Scripts package."
+                .to_string(),
+        );
+    }
+    if let (Some(previous_record), Some(previous_install)) = (
+        journal.previous_record.as_ref(),
+        journal.previous_install.as_ref(),
+    ) {
+        let previous_source_relative =
+            ensure_relative_source_path(&previous_install.source_relative_path)?;
+        let expected_previous_source =
+            path_relative_to_program(program_root, &final_package.join(previous_source_relative))?;
+        if normalized_relative_path(&previous_record.local_package_path)
+            != normalized_relative_path(&expected_package)
+            || normalized_relative_path(&previous_record.source_path)
+                != normalized_relative_path(&expected_previous_source)
+        {
+            return Err(
+                "Install transaction previous record points outside its owned Local Scripts package."
+                    .to_string(),
+            );
+        }
+    }
+    Ok(())
+}
+
+fn parse_install_transaction_journal(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+    path: &Path,
+) -> Result<InstallTransactionJournal, String> {
+    let raw = fs::read_to_string(path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    let journal = serde_json::from_str::<InstallTransactionJournal>(&raw).map_err(|error| {
+        format!(
+            "Install transaction journal {} is invalid: {error}",
+            path.display()
+        )
+    })?;
+    validate_install_transaction_journal(manifest, program_root, &journal)?;
+    Ok(journal)
+}
+
+fn write_install_transaction_journal(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+    transaction_root: &Path,
+    journal: &InstallTransactionJournal,
+    mode: super::transaction::AtomicWriteMode,
+) -> Result<(), String> {
+    validate_install_transaction_journal(manifest, program_root, journal)?;
+    let raw = serde_json::to_string_pretty(journal)
+        .map_err(|error| format!("Failed to serialize install transaction: {error}"))?;
+    super::transaction::write_json_file(
+        &install_transaction_journal_path(transaction_root),
+        raw.as_bytes(),
+        mode,
+    )
+}
+
+fn read_install_transaction_journal(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+    transaction_root: &Path,
+) -> Result<Option<InstallTransactionJournal>, String> {
+    let path = install_transaction_journal_path(transaction_root);
+    super::transaction::recover_json_file(&path, |candidate| {
+        parse_install_transaction_journal(manifest, program_root, candidate).map(|_| ())
+    })?;
+    if path.is_file() {
+        parse_install_transaction_journal(manifest, program_root, &path).map(Some)
+    } else {
+        Ok(None)
+    }
+}
+
+fn replace_or_create_active_record(
+    active_path: &Path,
+    record: &ActiveSourceRecord,
+) -> Result<(), String> {
+    if active_path.is_file() {
+        atomic_replace_json(active_path, record)
+    } else if active_path.exists() {
+        Err(format!(
+            "Active source path is not a file: {}.",
+            active_path.display()
+        ))
+    } else {
+        atomic_write_json(active_path, record)
+    }
+}
+
+fn rollback_prepared_install_transaction(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+    transaction_root: &Path,
+    journal: &mut InstallTransactionJournal,
+) -> Result<(), String> {
+    validate_install_transaction_journal(manifest, program_root, journal)?;
+    let local_root = program_root.join(&manifest.local_scripts_folder);
+    let final_package = local_root.join(&journal.owner_button_id);
+    let old_package = install_transaction_old_package(transaction_root);
+    let discard_package = install_transaction_discard_package(transaction_root);
+    let panel_root = program_root
+        .join(&manifest.panels_folder)
+        .join(&journal.panel_name);
+    let active_path = panel_root.join(active_record_file_name(&journal.owner_button_id));
+
+    if journal.replace_existing {
+        let previous_install = journal.previous_install.as_ref().ok_or_else(|| {
+            "Install rollback is missing its previous package record.".to_string()
+        })?;
+        if old_package.is_dir() {
+            if !package_matches_install_record(&old_package, previous_install)? {
+                return Err(format!(
+                    "Install rollback backup {} does not match the journaled previous package.",
+                    old_package.display()
+                ));
+            }
+            if final_package.exists() {
+                if !package_matches_install_record(&final_package, &journal.next_install)? {
+                    return Err(format!(
+                        "Install rollback found an unexpected package at {}.",
+                        final_package.display()
+                    ));
+                }
+                if discard_package.exists() {
+                    return Err(format!(
+                        "Install rollback found both current and discarded packages for '{}'.",
+                        journal.owner_button_id
+                    ));
+                }
+                fs::rename(&final_package, &discard_package).map_err(|error| {
+                    format!(
+                        "Failed to preserve uncommitted package {}: {error}",
+                        final_package.display()
+                    )
+                })?;
+            }
+            fs::rename(&old_package, &final_package).map_err(|error| {
+                format!(
+                    "Failed to restore previous package {}: {error}",
+                    final_package.display()
+                )
+            })?;
+        } else if !package_matches_install_record(&final_package, previous_install)? {
+            return Err(format!(
+                "Install rollback cannot find the previous package for '{}'; transaction backups were retained.",
+                journal.owner_button_id
+            ));
+        }
+    } else if final_package.exists() {
+        if !package_matches_install_record(&final_package, &journal.next_install)? {
+            return Err(format!(
+                "Install rollback found an unexpected package at {}.",
+                final_package.display()
+            ));
+        }
+        if discard_package.exists() {
+            return Err(format!(
+                "Install rollback found both current and discarded packages for '{}'.",
+                journal.owner_button_id
+            ));
+        }
+        fs::rename(&final_package, &discard_package).map_err(|error| {
+            format!(
+                "Failed to preserve uncommitted package {}: {error}",
+                final_package.display()
+            )
+        })?;
+    }
+
+    fs::create_dir_all(&panel_root)
+        .map_err(|error| format!("Failed to create {}: {error}", panel_root.display()))?;
+    recover_active_record(&active_path)?;
+    if let Some(previous) = journal.previous_record.as_ref() {
+        if active_path.is_file() {
+            let current = read_active_record(&active_path)?;
+            if !serialized_values_match(&current, previous)
+                && !active_record_matches_next(&current, &journal.next_record)
+            {
+                return Err(format!(
+                    "Install rollback found a divergent active record at {}.",
+                    active_path.display()
+                ));
+            }
+        }
+        if !active_path.is_file()
+            || !serialized_values_match(&read_active_record(&active_path)?, previous)
+        {
+            replace_or_create_active_record(&active_path, previous)?;
+        }
+    } else if active_path.is_file() {
+        let current = read_active_record(&active_path)?;
+        if !active_record_matches_next(&current, &journal.next_record) {
+            return Err(format!(
+                "Install rollback found a divergent active record at {}.",
+                active_path.display()
+            ));
+        }
+        let discard_active = install_transaction_discard_active(transaction_root);
+        if discard_active.exists() {
+            return Err(format!(
+                "Install rollback found both current and discarded active records for '{}'.",
+                journal.owner_button_id
+            ));
+        }
+        fs::rename(&active_path, &discard_active).map_err(|error| {
+            format!(
+                "Failed to preserve uncommitted active record {}: {error}",
+                active_path.display()
+            )
+        })?;
+    } else if active_path.exists() {
+        return Err(format!(
+            "Active source path is not a file: {}.",
+            active_path.display()
+        ));
+    }
+
+    rollback_blender_deployment(
+        manifest,
+        &journal.owner_button_id,
+        &journal.next_record.label,
+        journal.previous_record.as_ref(),
+    )?;
+    journal.phase = InstallTransactionPhase::RolledBack;
+    write_install_transaction_journal(
+        manifest,
+        program_root,
+        transaction_root,
+        journal,
+        super::transaction::AtomicWriteMode::Replace,
+    )
+}
+
+fn complete_pending_install_transaction(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+    transaction_root: &Path,
+    journal: &mut InstallTransactionJournal,
+) -> Result<(), String> {
+    validate_install_transaction_journal(manifest, program_root, journal)?;
+    let local_root = program_root.join(&manifest.local_scripts_folder);
+    let final_package = local_root.join(&journal.owner_button_id);
+    if !package_matches_install_record(&final_package, &journal.next_install)? {
+        return Err(format!(
+            "Committed install package for '{}' is missing or does not match its transaction journal.",
+            journal.owner_button_id
+        ));
+    }
+    let committed_source = final_package.join(&journal.next_install.source_relative_path);
+    if !committed_source.is_file() {
+        return Err(format!(
+            "Committed install source was not found at {}.",
+            committed_source.display()
+        ));
+    }
+    if manifest.runner.kind == "blender-bridge" {
+        let action = deploy_blender_source(
+            manifest,
+            &journal.owner_button_id,
+            &journal.panel_name,
+            &committed_source,
+            journal.next_record.bridge_data.as_ref(),
+        )?;
+        if action != journal.next_record.bridge_action {
+            journal.next_record.bridge_action = action;
+            write_install_transaction_journal(
+                manifest,
+                program_root,
+                transaction_root,
+                journal,
+                super::transaction::AtomicWriteMode::Replace,
+            )?;
+        }
+    }
+
+    let panel_root = program_root
+        .join(&manifest.panels_folder)
+        .join(&journal.panel_name);
+    fs::create_dir_all(&panel_root)
+        .map_err(|error| format!("Failed to create {}: {error}", panel_root.display()))?;
+    let active_path = panel_root.join(active_record_file_name(&journal.owner_button_id));
+    recover_active_record(&active_path)?;
+    if active_path.is_file() {
+        let current = read_active_record(&active_path)?;
+        let is_previous = journal
+            .previous_record
+            .as_ref()
+            .is_some_and(|previous| serialized_values_match(&current, previous));
+        if !is_previous && !active_record_matches_next(&current, &journal.next_record) {
+            return Err(format!(
+                "Install commit found a divergent active record at {}.",
+                active_path.display()
+            ));
+        }
+    } else if active_path.exists() {
+        return Err(format!(
+            "Active source path is not a file: {}.",
+            active_path.display()
+        ));
+    }
+    if !active_path.is_file()
+        || !serialized_values_match(&read_active_record(&active_path)?, &journal.next_record)
+    {
+        replace_or_create_active_record(&active_path, &journal.next_record)?;
+    }
+    journal.phase = InstallTransactionPhase::Committed;
+    write_install_transaction_journal(
+        manifest,
+        program_root,
+        transaction_root,
+        journal,
+        super::transaction::AtomicWriteMode::Replace,
+    )
+}
+
+fn recover_install_transaction(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+    transaction_root: &Path,
+) -> Result<(), String> {
+    let Some(mut journal) =
+        read_install_transaction_journal(manifest, program_root, transaction_root)?
+    else {
+        if install_transaction_old_package(transaction_root).exists()
+            || install_transaction_discard_package(transaction_root).exists()
+            || install_transaction_discard_active(transaction_root).exists()
+        {
+            return Err(format!(
+                "Install transaction {} has mutation artifacts but no recoverable journal.",
+                transaction_root.display()
+            ));
+        }
+        return Ok(());
+    };
+    match journal.phase {
+        InstallTransactionPhase::Prepared => rollback_prepared_install_transaction(
+            manifest,
+            program_root,
+            transaction_root,
+            &mut journal,
+        ),
+        InstallTransactionPhase::CommitPending => complete_pending_install_transaction(
+            manifest,
+            program_root,
+            transaction_root,
+            &mut journal,
+        ),
+        InstallTransactionPhase::Committed | InstallTransactionPhase::RolledBack => Ok(()),
+    }
+}
+
+fn rollback_install_after_error(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+    transaction_root: &Path,
+    error: String,
+) -> String {
+    match recover_install_transaction(manifest, program_root, transaction_root) {
+        Ok(()) => {
+            finalize_install_transaction(transaction_root);
+            error
+        }
+        Err(recovery_error) => format!(
+            "{error} Install rollback also failed; transaction backups were retained at {}: {recovery_error}",
+            transaction_root.display()
+        ),
+    }
+}
+
+fn finalize_install_transaction(transaction_root: &Path) {
+    if !transaction_root.is_dir() {
+        return;
+    }
+    if let Err(error) = crate::recycle_directory_path(transaction_root) {
+        crate::append_flowcell_local_log(
+            "program-source-cleanup.log",
+            &format!(
+                "Install transaction cleanup is pending at {}: {error}",
+                transaction_root.display()
+            ),
+        );
+    }
+}
+
+fn recover_install_transactions_in_program(
+    manifest: &ProgramManifest,
+    program_root: &Path,
+) -> Result<(), String> {
+    let local_root = program_root.join(&manifest.local_scripts_folder);
+    if !local_root.is_dir() {
+        return Ok(());
+    }
+    let mut transactions = fs::read_dir(&local_root)
+        .map_err(|error| format!("Failed to inspect {}: {error}", local_root.display()))?
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_type()
+                .map(|kind| kind.is_dir() && !kind.is_symlink())
+                .unwrap_or(false)
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .to_ascii_lowercase()
+                    .starts_with(INSTALL_TRANSACTION_PREFIX)
+        })
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    transactions.sort();
+    for transaction_root in transactions {
+        recover_install_transaction(manifest, program_root, &transaction_root)?;
+        finalize_install_transaction(&transaction_root);
+    }
+    Ok(())
+}
+
+pub(crate) fn recover_install_transactions_on_startup() -> Result<(), String> {
+    let _source_guard = super::source_quarantine_guard()?;
+    let programs_root = crate::resolve_programs_root()?;
+    for entry in fs::read_dir(&programs_root)
+        .map_err(|error| format!("Failed to inspect {}: {error}", programs_root.display()))?
+    {
+        let entry = entry
+            .map_err(|error| format!("Failed to inspect {}: {error}", programs_root.display()))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect {}: {error}", entry.path().display()))?;
+        if !file_type.is_dir() || file_type.is_symlink() {
+            continue;
+        }
+        let program_name = entry.file_name().to_string_lossy().to_string();
+        let Ok(manifest) = load_program_manifest(&program_name) else {
+            continue;
+        };
+        recover_install_transactions_in_program(&manifest, &entry.path())?;
+    }
+    Ok(())
+}
+
+fn update_residue_name(kind: &str, owner_button_id: &str) -> String {
+    format!(
+        ".{kind}-{owner_button_id}-{}",
+        timestamp().replace(['.', ':'], "-")
+    )
+}
+
+fn update_residue_paths(
+    local_root: &Path,
+    owner_button_id: &str,
+) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
+    let replacing_exact = format!(".replacing-{owner_button_id}").to_ascii_lowercase();
+    let replacing_prefix = format!(".replacing-{owner_button_id}-").to_ascii_lowercase();
+    let cleanup_prefix = format!(".cleanup-pending-{owner_button_id}-").to_ascii_lowercase();
+    let mut replacing = Vec::new();
+    let mut cleanup_pending = Vec::new();
+    for entry in fs::read_dir(local_root)
+        .map_err(|error| format!("Failed to inspect {}: {error}", local_root.display()))?
+    {
+        let entry = entry
+            .map_err(|error| format!("Failed to inspect {}: {error}", local_root.display()))?;
+        if !entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect {}: {error}", entry.path().display()))?
+            .is_dir()
+        {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_ascii_lowercase();
+        if name == replacing_exact || name.starts_with(&replacing_prefix) {
+            replacing.push(entry.path());
+        } else if name.starts_with(&cleanup_prefix) {
+            cleanup_pending.push(entry.path());
+        }
+    }
+    replacing.sort();
+    cleanup_pending.sort();
+    Ok((replacing, cleanup_pending))
+}
+
+fn mark_update_cleanup_pending(
+    previous_package: &Path,
+    local_root: &Path,
+    owner_button_id: &str,
+) -> Result<PathBuf, String> {
+    let cleanup_path = local_root.join(update_residue_name("cleanup-pending", owner_button_id));
+    fs::rename(previous_package, &cleanup_path).map_err(|error| {
+        format!(
+            "Failed to record committed update cleanup at {}: {error}",
+            cleanup_path.display()
+        )
+    })?;
+    Ok(cleanup_path)
+}
+
+fn recover_update_residues_with<F>(
+    local_root: &Path,
+    final_package: &Path,
+    owner_button_id: &str,
+    mut recycle: F,
+) -> Result<(), String>
+where
+    F: FnMut(&Path) -> Result<(), String>,
+{
+    let (replacing, cleanup_pending) = update_residue_paths(local_root, owner_button_id)?;
+    for path in cleanup_pending {
+        let _ = recycle(&path);
+    }
+    if final_package.is_dir() {
+        for path in replacing {
+            if recycle(&path).is_err() {
+                let _ = mark_update_cleanup_pending(&path, local_root, owner_button_id);
+            }
+        }
+        return Ok(());
+    }
+    match replacing.len() {
+        0 => Ok(()),
+        1 => fs::rename(&replacing[0], final_package).map_err(|error| {
+            format!(
+                "Failed to recover interrupted Button update from {}: {error}",
+                replacing[0].display()
+            )
+        }),
+        _ => Err(format!(
+            "Button '{owner_button_id}' has multiple interrupted update packages in {}; refusing ambiguous recovery.",
+            local_root.display()
+        )),
+    }
+}
+
+fn recover_update_residues(
+    local_root: &Path,
+    final_package: &Path,
+    owner_button_id: &str,
+) -> Result<(), String> {
+    recover_update_residues_with(
+        local_root,
+        final_package,
+        owner_button_id,
+        crate::recycle_directory_path,
+    )
+}
+
+fn path_relative_to_program(program_root: &Path, path: &Path) -> Result<String, String> {
+    path.strip_prefix(program_root)
+        .map(|relative| relative.to_string_lossy().to_string())
+        .map_err(|_| {
+            format!(
+                "Owned source path {} is outside program root {}.",
+                path.display(),
+                program_root.display()
+            )
+        })
+}
+
 fn owned_bridge_action(owner_button_id: &str) -> String {
     format!("flowcell_button_{}", owner_button_id.to_ascii_lowercase())
 }
@@ -633,9 +1576,13 @@ pub(crate) fn deploy_blender_source(
     bridge_data: Option<&Value>,
 ) -> Result<String, String> {
     let program_root = crate::resolve_program_directory(&manifest.label)?;
-    let script_path = program_root
-        .join(&manifest.support_scripts_folder)
-        .join(&manifest.runner.install_script);
+    let script_path = super::manifest::resolve_runner_script_path(
+        &program_root,
+        manifest,
+        &manifest.runner.install_script,
+        "runner.installScript",
+    )?
+    .ok_or_else(|| "Blender program manifest is missing runner.installScript.".to_string())?;
     if !script_path.is_file() {
         return Err(format!(
             "Blender install adapter was not found at {}.",
@@ -690,11 +1637,13 @@ fn rollback_blender_deployment(
         return Ok(());
     }
     if let Some(previous) = previous_record {
+        let previous_source =
+            super::execute::resolve_owned_source_paths(manifest, previous)?.source_path;
         return deploy_blender_source(
             manifest,
             owner_button_id,
             &previous.panel_name,
-            Path::new(&previous.source_path),
+            &previous_source,
             previous.bridge_data.as_ref(),
         )
         .map(|_| ());
@@ -726,17 +1675,12 @@ pub(crate) fn build_response(
     let is_toolset = !record.children.is_empty();
     let owner_execution_target = if is_toolset {
         None
-    } else if let Some(mut target) = record.execution_target.clone() {
-        if let Some(target_object) = target.as_object_mut() {
-            let payload = target_object.entry("payload").or_insert_with(|| json!({}));
-            if let Some(payload_object) = payload.as_object_mut() {
-                payload_object.insert("programName".to_string(), json!(record.program_name));
-                payload_object.insert("panelName".to_string(), json!(record.panel_name));
-                payload_object.insert("fileName".to_string(), json!(source_identity.file_name));
-                payload_object.insert("ownerButtonId".to_string(), json!(record.owner_button_id));
-            }
-        }
-        Some(target)
+    } else if let Some(target) = record.execution_target.clone() {
+        Some(execution_target_with_source_identity(
+            target,
+            record,
+            &source_identity.file_name,
+        ))
     } else {
         Some(panel_target)
     };
@@ -758,16 +1702,26 @@ pub(crate) fn build_response(
             slot: child.slot.clone(),
             label: child.label.clone(),
             tooltip: child.tooltip.clone(),
-            execution_target: child.execution_target.clone().unwrap_or_else(|| {
-                json!({
+            execution_target: child
+                .execution_target
+                .clone()
+                .map(|target| {
+                    execution_target_with_source_identity(
+                        target,
+                        record,
+                        &source_identity.file_name,
+                    )
+                })
+                .unwrap_or_else(|| {
+                    json!({
                     "kind": "tool-set-action",
                     "programName": record.program_name,
                     "panelName": record.panel_name,
                     "ownerFileName": source_identity.file_name,
                     "command": child.slot,
                     "payload": child.payload
-                })
-            }),
+                    })
+                }),
         })
         .collect();
     InstallButtonSourceResponse {
@@ -788,6 +1742,7 @@ pub(crate) fn install_from_path(
     let program_name = request.program_name.trim();
     let panel_name = crate::validate_folder_name(&request.panel_name, "Panel")?;
     let manifest = load_program_manifest(program_name)?;
+    let program_root = crate::resolve_program_directory(program_name)?;
     let source_display_path = PathBuf::from(request.source_path.trim());
     let source_path = source_display_path.canonicalize().map_err(|error| {
         format!(
@@ -796,8 +1751,63 @@ pub(crate) fn install_from_path(
         )
     })?;
     let import_kind = normalize_import_kind(&request.import_kind)?;
+    let bundled_identity = match (
+        request.bundled_source_id.as_deref(),
+        request.bundled_source_version.as_deref(),
+    ) {
+        (None, None) => None,
+        (Some(id), Some(version)) => {
+            let declared = manifest
+                .bundled_sources
+                .iter()
+                .find(|source| source.id.eq_ignore_ascii_case(id.trim()))
+                .ok_or_else(|| {
+                    format!(
+                        "Program '{}' does not declare bundled source '{}'.",
+                        manifest.label,
+                        id.trim()
+                    )
+                })?;
+            if declared.version != version.trim()
+                || !declared.panel_name.eq_ignore_ascii_case(&panel_name)
+                || declared.import_kind != import_kind
+            {
+                return Err(format!(
+                    "Bundled source '{}@{}' does not match its declared version, panel, or import kind.",
+                    id.trim(),
+                    version.trim()
+                ));
+            }
+            let declared_path = super::manifest::resolve_relative_manifest_path(
+                &program_root,
+                &declared.source_path,
+                "bundledSources.sourcePath",
+                false,
+            )?
+            .ok_or_else(|| "bundledSources.sourcePath cannot be empty.".to_string())?
+            .canonicalize()
+            .map_err(|error| {
+                format!(
+                    "Bundled source '{}' could not be resolved: {error}",
+                    declared.id
+                )
+            })?;
+            if declared_path != source_path {
+                return Err(format!(
+                    "Bundled source '{}' must install from its manifest-owned source path.",
+                    declared.id
+                ));
+            }
+            Some((declared.id.clone(), declared.version.clone()))
+        }
+        _ => {
+            return Err(
+                "bundledSourceId and bundledSourceVersion must be supplied together.".to_string(),
+            )
+        }
+    };
     let prepared = prepare_source(&manifest, &source_path, import_kind)?;
-    let program_root = crate::resolve_program_directory(program_name)?;
+    let _source_guard = super::source_quarantine_guard()?;
     let local_root = program_root.join(&manifest.local_scripts_folder);
     let panel_root = program_root.join(&manifest.panels_folder).join(&panel_name);
     fs::create_dir_all(&local_root)
@@ -807,6 +1817,9 @@ pub(crate) fn install_from_path(
     let final_package = local_root.join(&owner_button_id);
     let active_file_name = active_record_file_name(&owner_button_id);
     let active_path = panel_root.join(&active_file_name);
+    recover_install_transactions_in_program(&manifest, &program_root)?;
+    recover_update_residues(&local_root, &final_package, &owner_button_id)?;
+    recover_active_record(&active_path)?;
     if !replace_existing && (final_package.exists() || active_path.exists()) {
         return Err(format!(
             "Button '{}' already owns an installed source. Add creates a fresh Button; use Update to replace this one.",
@@ -824,27 +1837,60 @@ pub(crate) fn install_from_path(
     } else {
         None
     };
+    let previous_install = if replace_existing {
+        Some(read_local_install_record(&final_package)?)
+    } else {
+        None
+    };
     if let Some(previous) = previous_record.as_ref() {
+        if !previous.program_name.eq_ignore_ascii_case(&manifest.label)
+            || !previous
+                .program_id
+                .eq_ignore_ascii_case(&manifest.program_id)
+            || !previous.panel_name.eq_ignore_ascii_case(&panel_name)
+            || previous.install_id != owner_button_id
+        {
+            return Err(format!(
+                "Button '{}' active source record does not belong to {}/{}.",
+                owner_button_id, manifest.label, panel_name
+            ));
+        }
+        super::execute::resolve_owned_source_paths(&manifest, previous)?;
+        match (
+            previous.bundled_source_id.as_deref(),
+            bundled_identity.as_ref(),
+        ) {
+            (Some(previous_id), Some((next_id, _)))
+                if previous_id.eq_ignore_ascii_case(next_id) => {}
+            (Some(previous_id), _) => {
+                return Err(format!(
+                    "Button '{}' is managed by bundled source '{}'; synchronize that source instead of manually updating it.",
+                    owner_button_id, previous_id
+                ));
+            }
+            (None, _) => {}
+        }
         validate_update_shape(previous, &prepared)?;
     }
-    let staging = local_root.join(format!(
-        ".installing-{owner_button_id}-{}",
+    let transaction_root = local_root.join(format!(
+        "{INSTALL_TRANSACTION_PREFIX}{owner_button_id}-{}",
         timestamp().replace(['.', ':'], "-")
     ));
-    if staging.exists() {
-        return Err(format!(
-            "Install staging path already exists: {}",
-            staging.display()
-        ));
-    }
-    let staged_source_root = staging.join("source");
+    fs::create_dir(&transaction_root).map_err(|error| {
+        format!(
+            "Failed to create install transaction {}: {error}",
+            transaction_root.display()
+        )
+    })?;
+    let staged_package = install_transaction_new_package(&transaction_root);
+    let staged_source_root = staged_package.join("source");
     if let Err(error) = copy_package_source(&prepared.package_source_root, &staged_source_root) {
-        let _ = fs::remove_dir_all(&staging);
+        finalize_install_transaction(&transaction_root);
         return Err(error);
     }
     let installed_source = staged_source_root.join(&prepared.source_relative_to_package);
     if !installed_source.is_file() {
-        let _ = fs::remove_dir_all(&staging);
+        finalize_install_transaction(&transaction_root);
         return Err(format!(
             "Installed source was not staged at {}.",
             installed_source.display()
@@ -863,136 +1909,189 @@ pub(crate) fn install_from_path(
         ),
         source_display_path: source_path.to_string_lossy().to_string(),
         installed_at: timestamp(),
+        bundled_source_id: bundled_identity.as_ref().map(|(id, _)| id.clone()),
+        bundled_source_version: bundled_identity
+            .as_ref()
+            .map(|(_, version)| version.clone()),
     };
-    if let Err(error) = atomic_write_json(&staging.join(INSTALL_RECORD_FILE_NAME), &install_record)
-    {
-        let _ = fs::remove_dir_all(&staging);
+    if let Err(error) = atomic_write_json(
+        &staged_package.join(INSTALL_RECORD_FILE_NAME),
+        &install_record,
+    ) {
+        finalize_install_transaction(&transaction_root);
         return Err(error);
     }
     if replace_existing {
-        if let Err(error) = preserve_runtime_directory(&final_package, &staging) {
-            let _ = fs::remove_dir_all(&staging);
+        if let Err(error) = preserve_runtime_directory(&final_package, &staged_package) {
+            finalize_install_transaction(&transaction_root);
             return Err(error);
         }
-    }
-
-    let previous_package = local_root.join(format!(".replacing-{owner_button_id}"));
-    if replace_existing {
-        if previous_package.exists() {
-            let _ = fs::remove_dir_all(&staging);
-            return Err(format!(
-                "A previous Button update is pending at {}.",
-                previous_package.display()
-            ));
-        }
-        fs::rename(&final_package, &previous_package).map_err(|error| {
-            let _ = fs::remove_dir_all(&staging);
-            format!("Failed to stage existing install for update: {error}")
-        })?;
-    }
-    if let Err(error) = fs::rename(&staging, &final_package) {
-        if replace_existing {
-            let _ = fs::rename(&previous_package, &final_package);
-        }
-        let _ = fs::remove_dir_all(&staging);
-        return Err(format!("Failed to commit Local Scripts package: {error}"));
     }
     let committed_source = final_package
         .join("source")
         .join(&prepared.source_relative_to_package);
-    let bridge_action = if manifest.runner.kind == "blender-bridge" {
-        match deploy_blender_source(
-            &manifest,
-            &owner_button_id,
-            &panel_name,
-            &committed_source,
-            prepared.bridge_data.as_ref(),
-        ) {
-            Ok(action) => action,
-            Err(error) => {
-                let _ = crate::recycle_directory_path(&final_package);
-                if replace_existing {
-                    let _ = fs::rename(&previous_package, &final_package);
-                }
-                let rollback = rollback_blender_deployment(
-                    &manifest,
-                    &owner_button_id,
-                    &prepared.label,
-                    previous_record.as_ref(),
-                );
-                return Err(match rollback {
-                    Ok(()) => error,
-                    Err(rollback_error) => {
-                        format!("{error} Blender rollback also failed: {rollback_error}")
-                    }
-                });
-            }
-        }
-    } else {
-        String::new()
-    };
-    let record = ActiveSourceRecord {
+    let mut record = ActiveSourceRecord {
         schema_version: 1,
         owner_button_id: owner_button_id.clone(),
         install_id: owner_button_id.clone(),
         program_id: manifest.program_id.clone(),
         program_name: manifest.label.clone(),
-        panel_name,
+        panel_name: panel_name.clone(),
         label: prepared.label,
         tooltip: prepared.tooltip,
         kind: prepared.kind,
-        local_package_path: final_package.to_string_lossy().to_string(),
-        source_path: committed_source.to_string_lossy().to_string(),
+        local_package_path: path_relative_to_program(&program_root, &final_package)?,
+        source_path: path_relative_to_program(&program_root, &committed_source)?,
         runner: manifest.runner.kind.clone(),
         runner_data: prepared.runner_data,
         execution_target: prepared.execution_target,
-        bridge_action,
+        bridge_action: if manifest.runner.kind == "blender-bridge" {
+            owned_bridge_action(&owner_button_id)
+        } else {
+            String::new()
+        },
         bridge_data: prepared.bridge_data,
         events: prepared.events,
         children: prepared.children,
         layout: prepared.layout,
         source_display_path: source_path.to_string_lossy().to_string(),
+        bundled_source_id: bundled_identity.as_ref().map(|(id, _)| id.clone()),
+        bundled_source_version: bundled_identity.map(|(_, version)| version),
     };
-    let record_write_result = if replace_existing {
-        atomic_replace_json(&active_path, &record)
-    } else {
-        atomic_write_json(&active_path, &record)
+    let mut journal = InstallTransactionJournal {
+        schema_version: INSTALL_TRANSACTION_SCHEMA_VERSION,
+        phase: InstallTransactionPhase::Prepared,
+        replace_existing,
+        owner_button_id: owner_button_id.clone(),
+        program_id: manifest.program_id.clone(),
+        program_name: manifest.label.clone(),
+        panel_name: panel_name.clone(),
+        previous_record: previous_record.clone(),
+        previous_install,
+        next_record: record.clone(),
+        next_install: install_record,
     };
-    if let Err(error) = record_write_result {
-        let _ = crate::recycle_directory_path(&final_package);
-        if replace_existing {
-            let _ = fs::rename(&previous_package, &final_package);
+    if let Err(error) = write_install_transaction_journal(
+        &manifest,
+        &program_root,
+        &transaction_root,
+        &journal,
+        super::transaction::AtomicWriteMode::Create,
+    ) {
+        finalize_install_transaction(&transaction_root);
+        return Err(error);
+    }
+
+    let previous_package = install_transaction_old_package(&transaction_root);
+    if replace_existing {
+        if let Err(error) = fs::rename(&final_package, &previous_package) {
+            return Err(rollback_install_after_error(
+                &manifest,
+                &program_root,
+                &transaction_root,
+                format!("Failed to stage existing install for update: {error}"),
+            ));
         }
-        let rollback = rollback_blender_deployment(
+    }
+    if let Err(error) = fs::rename(&staged_package, &final_package) {
+        return Err(rollback_install_after_error(
+            &manifest,
+            &program_root,
+            &transaction_root,
+            format!("Failed to commit Local Scripts package: {error}"),
+        ));
+    }
+
+    if manifest.runner.kind == "blender-bridge" {
+        match deploy_blender_source(
             &manifest,
             &owner_button_id,
-            &record.label,
-            previous_record.as_ref(),
-        );
-        return Err(match rollback {
-            Ok(()) => error,
-            Err(rollback_error) => {
-                format!("{error} Blender rollback also failed: {rollback_error}")
+            &panel_name,
+            &committed_source,
+            record.bridge_data.as_ref(),
+        ) {
+            Ok(action) => {
+                record.bridge_action = action;
+                journal.next_record = record.clone();
+                if let Err(error) = write_install_transaction_journal(
+                    &manifest,
+                    &program_root,
+                    &transaction_root,
+                    &journal,
+                    super::transaction::AtomicWriteMode::Replace,
+                ) {
+                    return Err(rollback_install_after_error(
+                        &manifest,
+                        &program_root,
+                        &transaction_root,
+                        error,
+                    ));
+                }
             }
-        });
+            Err(error) => {
+                return Err(rollback_install_after_error(
+                    &manifest,
+                    &program_root,
+                    &transaction_root,
+                    error,
+                ));
+            }
+        }
     }
-    if replace_existing && previous_package.is_dir() {
-        crate::recycle_directory_path(&previous_package)?;
+
+    journal.phase = InstallTransactionPhase::CommitPending;
+    if let Err(error) = write_install_transaction_journal(
+        &manifest,
+        &program_root,
+        &transaction_root,
+        &journal,
+        super::transaction::AtomicWriteMode::Replace,
+    ) {
+        return Err(rollback_install_after_error(
+            &manifest,
+            &program_root,
+            &transaction_root,
+            error,
+        ));
     }
+
+    let commit_result = replace_or_create_active_record(&active_path, &record).and_then(|_| {
+        journal.phase = InstallTransactionPhase::Committed;
+        write_install_transaction_journal(
+            &manifest,
+            &program_root,
+            &transaction_root,
+            &journal,
+            super::transaction::AtomicWriteMode::Replace,
+        )
+    });
+    if let Err(error) = commit_result {
+        if let Err(recovery_error) =
+            recover_install_transaction(&manifest, &program_root, &transaction_root)
+        {
+            return Err(format!(
+                "{error} Install commit recovery also failed; transaction backups were retained at {}: {recovery_error}",
+                transaction_root.display()
+            ));
+        }
+    }
+    finalize_install_transaction(&transaction_root);
     Ok(build_response(&record, active_file_name))
 }
 
 #[tauri::command]
 pub(crate) fn install_button_source(
-    request: InstallButtonSourceRequest,
+    mut request: InstallButtonSourceRequest,
 ) -> Result<InstallButtonSourceResponse, String> {
+    request.program_name = crate::require_registered_program_name(&request.program_name)?;
     install_from_path(request, false)
 }
 
 #[tauri::command]
 pub(crate) fn update_button_source(
-    request: InstallButtonSourceRequest,
+    mut request: InstallButtonSourceRequest,
 ) -> Result<InstallButtonSourceResponse, String> {
+    request.program_name = crate::require_registered_program_name(&request.program_name)?;
     install_from_path(request, true)
 }
 
@@ -1043,16 +2142,31 @@ pub(crate) fn merge_toolset_payload(
 #[cfg(test)]
 mod tests {
     use super::{
-        blender_install_arguments, build_response, merge_toolset_payload, prepare_source,
-        preserve_runtime_directory, validate_core_execution_target, validate_update_shape,
-        PreparedSource, ScriptManifest, ToolsetManifest, SCRIPT_MANIFEST_FILE_NAME,
-        TOOLSET_MANIFEST_FILE_NAME,
+        blender_install_arguments, build_response, install_transaction_old_package,
+        merge_toolset_payload, path_relative_to_program, prepare_source,
+        preserve_runtime_directory, read_install_transaction_journal, recover_install_transaction,
+        recover_update_residues_with, update_residue_name, validate_core_execution_target,
+        validate_update_shape, write_install_transaction_journal, InstallTransactionJournal,
+        InstallTransactionPhase, PreparedSource, ScriptManifest, ToolsetManifest,
+        INSTALL_TRANSACTION_SCHEMA_VERSION, SCRIPT_MANIFEST_FILE_NAME, TOOLSET_MANIFEST_FILE_NAME,
     };
     use crate::program_sources::manifest::{ProgramManifest, ProgramRunnerManifest};
-    use crate::program_sources::records::{ActiveSourceChild, ActiveSourceRecord};
+    use crate::program_sources::records::{
+        active_record_file_name, atomic_write_json, read_active_record, ActiveSourceChild,
+        ActiveSourceRecord, LocalInstallRecord, INSTALL_RECORD_FILE_NAME,
+    };
+    use crate::program_sources::transaction::AtomicWriteMode;
     use serde_json::json;
     use std::fs;
     use std::path::{Path, PathBuf};
+
+    fn temporary_test_root(name: &str) -> PathBuf {
+        let token = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        std::env::temp_dir().join(format!("flowcell-{name}-{}-{token}", std::process::id()))
+    }
 
     fn collect_shipped_source_manifests(folder: &Path, output: &mut Vec<PathBuf>) {
         for entry in fs::read_dir(folder).expect("read source manifest folder") {
@@ -1105,6 +2219,8 @@ mod tests {
             }],
             layout: None,
             source_display_path: String::new(),
+            bundled_source_id: None,
+            bundled_source_version: None,
         }
     }
 
@@ -1114,7 +2230,11 @@ mod tests {
             program_id: "windows".into(),
             label: "Windows".into(),
             program_type: "local-script".into(),
+            default_panels: vec!["Files".into(), "Utility".into()],
             process_names: vec!["explorer".into()],
+            exe_path: "explorer.exe".into(),
+            bind_scoped_native_owner: false,
+            shortcut_profile_id: "windows".into(),
             git_scripts_folder: "Windows Git Scripts".into(),
             panels_folder: "Panels".into(),
             local_scripts_folder: "Windows Local Scripts".into(),
@@ -1122,15 +2242,246 @@ mod tests {
             allowed_script_extensions: vec!["ps1".into(), "vbs".into()],
             allowed_manifest_file_names: vec![SCRIPT_MANIFEST_FILE_NAME.into()],
             supports_toolset_manifests: false,
+            bundled_sources: Vec::new(),
             runner: ProgramRunnerManifest {
                 kind: "windows-script".into(),
                 program_key: "windows_generic".into(),
                 install_script: String::new(),
                 delete_script: String::new(),
+                capability_script: String::new(),
             },
             addon_reload_notes: String::new(),
             app_restart_notes: String::new(),
         }
+    }
+
+    fn transaction_state(
+        root: &Path,
+        label: &str,
+        installed_at: &str,
+    ) -> (ActiveSourceRecord, LocalInstallRecord) {
+        let manifest = windows_manifest();
+        let package = root.join(&manifest.local_scripts_folder).join("button_1");
+        let source = package.join("source").join("entry.ps1");
+        (
+            ActiveSourceRecord {
+                schema_version: 1,
+                owner_button_id: "button_1".into(),
+                install_id: "button_1".into(),
+                program_id: manifest.program_id.clone(),
+                program_name: manifest.label.clone(),
+                panel_name: "Tools".into(),
+                label: label.into(),
+                tooltip: String::new(),
+                kind: "script".into(),
+                local_package_path: path_relative_to_program(root, &package)
+                    .expect("package relative path"),
+                source_path: path_relative_to_program(root, &source).expect("source relative path"),
+                runner: manifest.runner.kind,
+                runner_data: None,
+                execution_target: None,
+                bridge_action: String::new(),
+                bridge_data: None,
+                events: None,
+                children: Vec::new(),
+                layout: None,
+                source_display_path: format!("C:\\source\\{label}.ps1"),
+                bundled_source_id: None,
+                bundled_source_version: None,
+            },
+            LocalInstallRecord {
+                schema_version: 1,
+                owner_button_id: "button_1".into(),
+                install_id: "button_1".into(),
+                program_id: manifest.program_id,
+                program_name: manifest.label,
+                panel_name: "Tools".into(),
+                source_relative_path: "source\\entry.ps1".into(),
+                source_display_path: format!("C:\\source\\{label}.ps1"),
+                installed_at: installed_at.into(),
+                bundled_source_id: None,
+                bundled_source_version: None,
+            },
+        )
+    }
+
+    fn write_package(path: &Path, install: &LocalInstallRecord, contents: &str) {
+        fs::create_dir_all(path.join("source")).expect("create package source");
+        fs::write(path.join("source/entry.ps1"), contents).expect("write package source");
+        atomic_write_json(&path.join(INSTALL_RECORD_FILE_NAME), install)
+            .expect("write package record");
+    }
+
+    fn update_transaction_journal(
+        previous_record: ActiveSourceRecord,
+        previous_install: LocalInstallRecord,
+        next_record: ActiveSourceRecord,
+        next_install: LocalInstallRecord,
+        phase: InstallTransactionPhase,
+    ) -> InstallTransactionJournal {
+        InstallTransactionJournal {
+            schema_version: INSTALL_TRANSACTION_SCHEMA_VERSION,
+            phase,
+            replace_existing: true,
+            owner_button_id: "button_1".into(),
+            program_id: "windows".into(),
+            program_name: "Windows".into(),
+            panel_name: "Tools".into(),
+            previous_record: Some(previous_record),
+            previous_install: Some(previous_install),
+            next_record,
+            next_install,
+        }
+    }
+
+    #[test]
+    fn prepared_update_recovers_after_process_cut_between_package_and_active_record() {
+        let root = temporary_test_root("install-prepared-recovery");
+        let manifest = windows_manifest();
+        let local_root = root.join(&manifest.local_scripts_folder);
+        let panel_root = root.join(&manifest.panels_folder).join("Tools");
+        let final_package = local_root.join("button_1");
+        let transaction_root = local_root.join(".flowcell-install-transaction-test");
+        let old_package = install_transaction_old_package(&transaction_root);
+        let active_path = panel_root.join(active_record_file_name("button_1"));
+        let (previous_record, previous_install) = transaction_state(&root, "Old", "old");
+        let (next_record, next_install) = transaction_state(&root, "New", "new");
+        fs::create_dir_all(&transaction_root).expect("create transaction");
+        fs::create_dir_all(&panel_root).expect("create panel");
+        write_package(&old_package, &previous_install, "old");
+        write_package(&final_package, &next_install, "new");
+        atomic_write_json(&active_path, &previous_record).expect("write previous active");
+        let journal = update_transaction_journal(
+            previous_record.clone(),
+            previous_install,
+            next_record,
+            next_install,
+            InstallTransactionPhase::Prepared,
+        );
+        write_install_transaction_journal(
+            &manifest,
+            &root,
+            &transaction_root,
+            &journal,
+            AtomicWriteMode::Create,
+        )
+        .expect("write transaction journal");
+
+        recover_install_transaction(&manifest, &root, &transaction_root)
+            .expect("recover prepared transaction");
+
+        assert_eq!(
+            fs::read_to_string(final_package.join("source/entry.ps1"))
+                .expect("read restored source"),
+            "old"
+        );
+        assert_eq!(
+            read_active_record(&active_path)
+                .expect("read restored active")
+                .label,
+            previous_record.label
+        );
+        assert_eq!(
+            read_install_transaction_journal(&manifest, &root, &transaction_root)
+                .expect("read journal")
+                .expect("journal exists")
+                .phase,
+            InstallTransactionPhase::RolledBack
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn commit_pending_update_completes_after_process_cut_before_active_record() {
+        let root = temporary_test_root("install-commit-recovery");
+        let manifest = windows_manifest();
+        let local_root = root.join(&manifest.local_scripts_folder);
+        let panel_root = root.join(&manifest.panels_folder).join("Tools");
+        let final_package = local_root.join("button_1");
+        let transaction_root = local_root.join(".flowcell-install-transaction-test");
+        let old_package = install_transaction_old_package(&transaction_root);
+        let active_path = panel_root.join(active_record_file_name("button_1"));
+        let (previous_record, previous_install) = transaction_state(&root, "Old", "old");
+        let (next_record, next_install) = transaction_state(&root, "New", "new");
+        fs::create_dir_all(&transaction_root).expect("create transaction");
+        fs::create_dir_all(&panel_root).expect("create panel");
+        write_package(&old_package, &previous_install, "old");
+        write_package(&final_package, &next_install, "new");
+        atomic_write_json(&active_path, &previous_record).expect("write previous active");
+        let journal = update_transaction_journal(
+            previous_record,
+            previous_install,
+            next_record.clone(),
+            next_install,
+            InstallTransactionPhase::CommitPending,
+        );
+        write_install_transaction_journal(
+            &manifest,
+            &root,
+            &transaction_root,
+            &journal,
+            AtomicWriteMode::Create,
+        )
+        .expect("write transaction journal");
+
+        recover_install_transaction(&manifest, &root, &transaction_root)
+            .expect("complete pending transaction");
+
+        assert_eq!(
+            read_active_record(&active_path)
+                .expect("read committed active")
+                .label,
+            next_record.label
+        );
+        assert_eq!(
+            read_install_transaction_journal(&manifest, &root, &transaction_root)
+                .expect("read journal")
+                .expect("journal exists")
+                .phase,
+            InstallTransactionPhase::Committed
+        );
+        assert!(old_package.is_dir(), "backup remains until cleanup");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn failed_install_rollback_retains_transaction_artifacts() {
+        let root = temporary_test_root("install-failed-rollback");
+        let manifest = windows_manifest();
+        let local_root = root.join(&manifest.local_scripts_folder);
+        let panel_root = root.join(&manifest.panels_folder).join("Tools");
+        let final_package = local_root.join("button_1");
+        let transaction_root = local_root.join(".flowcell-install-transaction-test");
+        let active_path = panel_root.join(active_record_file_name("button_1"));
+        let (previous_record, previous_install) = transaction_state(&root, "Old", "old");
+        let (next_record, next_install) = transaction_state(&root, "New", "new");
+        fs::create_dir_all(&transaction_root).expect("create transaction");
+        fs::create_dir_all(&panel_root).expect("create panel");
+        write_package(&final_package, &next_install, "new");
+        atomic_write_json(&active_path, &previous_record).expect("write previous active");
+        let journal = update_transaction_journal(
+            previous_record,
+            previous_install,
+            next_record,
+            next_install,
+            InstallTransactionPhase::Prepared,
+        );
+        write_install_transaction_journal(
+            &manifest,
+            &root,
+            &transaction_root,
+            &journal,
+            AtomicWriteMode::Create,
+        )
+        .expect("write transaction journal");
+
+        let error = recover_install_transaction(&manifest, &root, &transaction_root)
+            .expect_err("missing previous package must fail closed");
+
+        assert!(error.contains("cannot find the previous package"));
+        assert!(transaction_root.is_dir());
+        assert!(final_package.is_dir());
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1218,6 +2569,16 @@ mod tests {
             runner_data: None,
         };
         assert!(validate_update_shape(&previous, &prepared).is_ok());
+        let mut appended = prepared.children[0].clone();
+        appended.slot = "appended".into();
+        prepared.children.push(appended);
+        assert!(validate_update_shape(&previous, &prepared).is_err());
+        prepared.layout = Some(json!({
+            "updatePolicy": { "appendMissingChildSlots": true }
+        }));
+        assert!(validate_update_shape(&previous, &prepared).is_ok());
+        prepared.children.pop();
+        prepared.layout = None;
         prepared.children[0].slot = "other".into();
         assert!(validate_update_shape(&previous, &prepared).is_err());
         prepared.children.clear();
@@ -1285,7 +2646,86 @@ mod tests {
     }
 
     #[test]
+    fn toolset_child_core_action_receives_installed_owner_identity() {
+        let mut source = record();
+        source.program_name = "Blender".into();
+        source.panel_name = "toolset".into();
+        source.children[0].execution_target = Some(json!({
+            "kind": "core-action",
+            "actionId": "save-tool-package",
+            "payload": {
+                "capability": "package-library",
+                "storageFolder": "packages",
+                "formatId": "theme",
+                "manifestSuffix": ".package.json",
+                "valueFields": ["color"],
+                "assetFields": []
+            }
+        }));
+        let response = build_response(&source, "theme.flowcell-source.json".into());
+        let target = &response.children[0].execution_target;
+        assert_eq!(target["payload"]["programName"], "Blender");
+        assert_eq!(target["payload"]["panelName"], "toolset");
+        assert_eq!(target["payload"]["fileName"], "theme.flowcell-source.json");
+        assert_eq!(target["payload"]["ownerButtonId"], source.owner_button_id);
+        assert_eq!(target["payload"]["formatId"], "theme");
+    }
+
+    #[test]
     fn catalog_manifests_cannot_name_arbitrary_core_actions() {
+        assert!(validate_core_execution_target(
+            "script package",
+            &json!({
+                "kind": "core-action",
+                "actionId": "open-tool-page",
+                "payload": {
+                    "contributionId": "illustrator.layer-tree",
+                    "renderer": "tree-inspector",
+                    "capability": "illustrator-layer-tree"
+                }
+            })
+        )
+        .is_ok());
+        assert!(validate_core_execution_target(
+            "tool-set child",
+            &json!({
+                "kind": "core-action",
+                "actionId": "save-tool-package",
+                "payload": {
+                    "capability": "package-library",
+                    "storageFolder": "packages",
+                    "formatId": "sample",
+                    "manifestSuffix": ".package.json",
+                    "valueFields": ["color"],
+                    "assetFields": []
+                }
+            })
+        )
+        .is_ok());
+        assert!(validate_core_execution_target(
+            "tool-set child",
+            &json!({
+                "kind": "core-action",
+                "actionId": "save-tool-package",
+                "payload": {
+                    "capability": "package-library",
+                    "storageFolder": "packages",
+                    "formatId": "sample",
+                    "manifestSuffix": ".package.json",
+                    "assetFields": []
+                }
+            })
+        )
+        .is_err());
+        assert!(validate_core_execution_target(
+            "script package",
+            &json!({
+                "kind": "core-action",
+                "actionId": "open-tool-page",
+                "payload": { "renderer": "tree-inspector" }
+            })
+        )
+        .is_err());
         assert!(validate_core_execution_target(
             "script package",
             &json!({
@@ -1310,6 +2750,60 @@ mod tests {
             })
         )
         .is_err());
+    }
+
+    #[test]
+    fn committed_update_cleanup_failure_is_recorded_without_blocking_recovery() {
+        let root = temporary_test_root("update-cleanup");
+        let final_package = root.join("owner_1");
+        let replacing = root.join(update_residue_name("replacing", "owner_1"));
+        fs::create_dir_all(&final_package).expect("create final package");
+        fs::create_dir_all(&replacing).expect("create previous package");
+
+        recover_update_residues_with(&root, &final_package, "owner_1", |_| {
+            Err("recycle unavailable".to_string())
+        })
+        .expect("committed update remains successful");
+
+        let names = fs::read_dir(&root)
+            .expect("read update root")
+            .map(|entry| {
+                entry
+                    .expect("read residue")
+                    .file_name()
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .collect::<Vec<_>>();
+        assert!(names
+            .iter()
+            .any(|name| name.starts_with(".cleanup-pending-owner_1-")));
+
+        let next_replacing = root.join(update_residue_name("replacing", "owner_1"));
+        fs::create_dir_all(&next_replacing).expect("create next previous package");
+        recover_update_residues_with(&root, &final_package, "owner_1", |_| {
+            Err("recycle still unavailable".to_string())
+        })
+        .expect("pending cleanup does not block a later update");
+        assert!(final_package.is_dir());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn interrupted_update_restores_the_only_replacing_package() {
+        let root = temporary_test_root("update-restore");
+        let final_package = root.join("owner_1");
+        let replacing = root.join(update_residue_name("replacing", "owner_1"));
+        fs::create_dir_all(&replacing).expect("create interrupted package");
+        fs::write(replacing.join("sentinel"), "old").expect("write sentinel");
+
+        recover_update_residues_with(&root, &final_package, "owner_1", |_| Ok(()))
+            .expect("restore interrupted package");
+        assert_eq!(
+            fs::read_to_string(final_package.join("sentinel")).expect("read restored sentinel"),
+            "old"
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

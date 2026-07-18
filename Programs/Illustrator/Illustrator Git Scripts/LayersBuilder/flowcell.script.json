@@ -10,6 +10,19 @@
   },
   "executionTarget": {
     "kind": "core-action",
-    "actionId": "open-illustrator-layer-tree"
+    "actionId": "open-tool-page",
+    "payload": {
+      "contributionId": "illustrator.layer-tree",
+      "renderer": "tree-inspector",
+      "capability": "illustrator-layer-tree",
+      "title": "Layer Tree",
+      "resourceLabel": "Layer",
+      "emptyMessage": "No layers found. Open a document and Refresh.",
+      "refreshEvent": "flowcell://program-data-invalidated"
+    }
+  },
+  "execution": {
+    "capabilityStateFile": "flowcell-illustrator-layers-highlight.json",
+    "mirrorCapabilityStateToTemp": true
   }
 }

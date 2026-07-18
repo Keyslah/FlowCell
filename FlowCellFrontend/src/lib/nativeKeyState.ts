@@ -1,5 +1,42 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useEffect, useState } from "react";
+
+export const NATIVE_INPUT_SNAPSHOT_EVENT = "flowcell-native-input-snapshot";
+
+export interface NativeInputSnapshot {
+  x: number;
+  y: number;
+  spaceDown: boolean;
+  primaryButtonDown: boolean;
+}
+
+function normalizeNativeInputSnapshot(value: NativeInputSnapshot): NativeInputSnapshot | null {
+  return Number.isFinite(value.x) &&
+    Number.isFinite(value.y) &&
+    typeof value.spaceDown === "boolean" &&
+    typeof value.primaryButtonDown === "boolean"
+    ? value
+    : null;
+}
+
+export async function getNativeInputSnapshot(): Promise<NativeInputSnapshot | null> {
+  try {
+    const snapshot = await invoke<NativeInputSnapshot>("get_native_input_snapshot");
+    return normalizeNativeInputSnapshot(snapshot);
+  } catch {
+    return null;
+  }
+}
+
+export function listenNativeInputSnapshots(
+  onSnapshot: (snapshot: NativeInputSnapshot) => void
+): Promise<UnlistenFn> {
+  return listen<NativeInputSnapshot>(NATIVE_INPUT_SNAPSHOT_EVENT, ({ payload }) => {
+    const snapshot = normalizeNativeInputSnapshot(payload);
+    if (snapshot) onSnapshot(snapshot);
+  });
+}
 
 export async function isNativeSpaceKeyDown(): Promise<boolean> {
   try {

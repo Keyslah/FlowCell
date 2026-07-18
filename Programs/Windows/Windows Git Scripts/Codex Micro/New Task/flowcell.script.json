@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.codex-micro.new-task",
+  "label": "New Task",
+  "tooltip": "Open a new Codex task through the installed app's accessibility control.",
+  "program": "Windows",
+  "source": "new_task.ps1"
+}

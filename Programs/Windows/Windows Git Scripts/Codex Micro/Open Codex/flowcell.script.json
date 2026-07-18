@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.codex-micro.open-codex",
+  "label": "Open Codex",
+  "tooltip": "Open or restore the currently running Codex desktop package.",
+  "program": "Windows",
+  "source": "open_codex.ps1"
+}

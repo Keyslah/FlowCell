@@ -1,9 +1,24 @@
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { LayoutSnapshot } from "../types.js";
 import { showOpenFileDialog } from "./tauri.js";
 
-export const ILLUSTRATOR_LAYERS_CHANGED_EVENT = "flowcell://illustrator-layers-changed";
+export const PROGRAM_DATA_INVALIDATED_EVENT = "flowcell://program-data-invalidated";
+
+export interface ProgramDataInvalidationEvent {
+  programName: string;
+  panelName: string;
+  fileName: string;
+}
+
+async function emitProgramDataInvalidated(
+  programName: string,
+  panelName: string,
+  fileName: string
+): Promise<void> {
+  await emit(PROGRAM_DATA_INVALIDATED_EVENT, { programName, panelName, fileName }).catch(() => {});
+}
 
 export interface PanelScriptChildRecord {
   slot: string;
@@ -208,23 +223,39 @@ export async function createProgramFolder(
 export async function renameProgramFolder(
   currentName: string,
   name: string
-): Promise<string> {
+): Promise<{ programName: string; renameToken: string }> {
   if (!isTauriWindowHost()) {
     throw new Error("Program folders can only be renamed from the desktop host.");
   }
 
-  return invokeProgramRailCommand<string>("rename_program_folder", {
+  return invokeProgramRailCommand<{ programName: string; renameToken: string }>("rename_program_folder", {
     currentName,
     name
   });
 }
 
-export async function deleteProgramFolder(name: string): Promise<void> {
+export async function beginProgramUnregistration(name: string): Promise<string> {
   if (!isTauriWindowHost()) {
-    throw new Error("Program folders can only be deleted from the desktop host.");
+    throw new Error("Programs can only be removed from the desktop host.");
   }
 
-  await invokeProgramRailCommand<void>("delete_program_folder", { name });
+  return invokeProgramRailCommand<string>("begin_program_unregistration", { name });
+}
+
+export async function rollbackProgramUnregistration(rollbackToken: string): Promise<void> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Program removal can only be rolled back from the desktop host.");
+  }
+
+  await invokeProgramRailCommand<void>("rollback_program_unregistration", { rollbackToken });
+}
+
+export async function finalizeProgramUnregistration(rollbackToken: string): Promise<void> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Program removal can only be finalized from the desktop host.");
+  }
+
+  await invokeProgramRailCommand<void>("finalize_program_unregistration", { rollbackToken });
 }
 
 export async function createPanelFolder(programName: string, name: string): Promise<string> {
@@ -291,6 +322,7 @@ export async function runPanelScript(
     panelName,
     fileName
   });
+  await emitProgramDataInvalidated(programName, panelName, fileName);
 
   const slicerRequest = slicerLaunchRequest(response);
   if (slicerRequest) return handleSlicerLaunchRequest(slicerRequest);
@@ -314,6 +346,27 @@ export async function runPanelButtonEvent(
     fileName,
     eventName
   });
+}
+
+export async function rollbackProgramRename(renameToken: string): Promise<void> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Program folders can only be renamed from the desktop host.");
+  }
+  await invokeProgramRailCommand<void>("rollback_program_rename", { renameToken });
+}
+
+export async function finalizeProgramRename(renameToken: string): Promise<void> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Program folders can only be renamed from the desktop host.");
+  }
+  await invokeProgramRailCommand<void>("finalize_program_rename", { renameToken });
+}
+
+export async function recoverProgramRename(renameToken: string): Promise<void> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Program folders can only be renamed from the desktop host.");
+  }
+  await invokeProgramRailCommand<void>("recover_program_rename", { renameToken });
 }
 
 export async function showSaveLayoutDialog(
@@ -374,5 +427,7 @@ export async function runToolsetAction(args: {
     throw new Error("Toolset actions can only be run from the desktop host.");
   }
 
-  return invokeProgramRailCommand<ToolsetActionResponse>("run_toolset_action", args);
+  const response = await invokeProgramRailCommand<ToolsetActionResponse>("run_toolset_action", args);
+  await emitProgramDataInvalidated(args.programName, args.panelName, args.fileName);
+  return response;
 }

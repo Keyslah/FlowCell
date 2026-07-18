@@ -10,8 +10,7 @@ import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { ButtonFanWindowContext } from "../../lib/windowContext";
 import { writeRegisteredLayoutWindowSnapshotBounds } from "../../lib/layoutSnapshots";
 import {
-  isNativePrimaryMouseButtonDown,
-  useNativeSpaceDragActive,
+  isNativePrimaryMouseButtonDown
 } from "../../lib/nativeKeyState";
 import {
   publishButtonCommit,
@@ -40,8 +39,10 @@ import {
   buttonDesktopBoundsFromFlowCellBounds,
   buttonVisualStateNeedsWindowExpansion,
   buttonWindowRectsEqual,
+  resolveButtonWebviewPixelRatio,
   resolveButtonWindowEnvelope,
   resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin,
+  shouldBypassButtonWindowGeometryTransition,
   translateButtonDesktopBounds
 } from "../windows/buttonWindowGeometry";
 import { useButtonWindowDocument } from "../windows/useButtonWindowDocument";
@@ -104,6 +105,7 @@ export interface ButtonFanWindowPageProps {
 
 export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   const rootRef = useRef<HTMLElement | null>(null);
+  const contentFrameRef = useRef<HTMLDivElement | null>(null);
   const initializedSetupKeyRef = useRef<string | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const collapsedBoundsRef = useRef<ButtonDesktopBounds | null>(null);
@@ -118,6 +120,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   const pendingEnvelopeRef = useRef<ButtonRect | null>(null);
   const envelopeFlushPromiseRef = useRef<Promise<void> | null>(null);
   const nativeGeometryTransitionRef = useRef<Promise<void>>(Promise.resolve());
+  const nativeGeometryTransitionPendingRef = useRef(0);
   const appliedExpandedRef = useRef<boolean | null>(null);
   const [activeContext, setActiveContext] = useState(context);
   const [expanded, setExpanded] = useState(false);
@@ -132,10 +135,10 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   const [geometryInitialized, setGeometryInitialized] = useState(false);
   const [geometryRefreshToken, setGeometryRefreshToken] = useState(0);
   const [spaceKeyActive, setSpaceKeyActive] = useState(false);
+  const [nativeSpaceKeyActive, setNativeSpaceKeyActive] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
   const canvasMetrics = useFixedButtonCanvasMetrics();
-  const nativeSpaceKeyActive = useNativeSpaceDragActive();
   const spaceDragActive = spaceKeyActive || nativeSpaceKeyActive;
   const applyCanvasForFrame = useCallback(async (
     bounds: ButtonDesktopBounds,
@@ -155,10 +158,27 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   ): Promise<AppliedButtonCanvas> => {
     const current = appliedCanvasRef.current;
     if (current && buttonDesktopBoundsInsideCanvas(bounds, current.bounds)) {
-      return current;
+      const synchronized = canvasMetrics.ready &&
+        Math.abs(current.scaleFactor - canvasMetrics.scaleFactor) > 0.001
+          ? { ...current, scaleFactor: canvasMetrics.scaleFactor }
+          : current;
+      appliedCanvasRef.current = synchronized;
+      return synchronized;
     }
     return applyCanvasForFrame(bounds, 192);
-  }, [applyCanvasForFrame]);
+  }, [applyCanvasForFrame, canvasMetrics.ready, canvasMetrics.scaleFactor]);
+  useEffect(() => {
+    const current = appliedCanvasRef.current;
+    if (
+      !current ||
+      !canvasMetrics.ready ||
+      Math.abs(current.scaleFactor - canvasMetrics.scaleFactor) <= 0.001
+    ) return;
+    appliedCanvasRef.current = {
+      ...current,
+      scaleFactor: canvasMetrics.scaleFactor
+    };
+  }, [canvasMetrics.ready, canvasMetrics.scaleFactor]);
   const { document, loading, error } = useButtonWindowDocument(
     activeContext.draftSessionId
   );
@@ -249,9 +269,10 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     const currentWindow = getCurrentWindow();
     const rawScaleFactor = appliedCanvasRef.current?.scaleFactor ??
       await currentWindow.scaleFactor().catch(() => 1);
-    const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
-      ? rawScaleFactor
-      : 1;
+    const scaleFactor = resolveButtonWebviewPixelRatio(
+      rawScaleFactor,
+      window.devicePixelRatio
+    );
     if (reanchorSurface || !surfaceOriginRef.current) {
       const anchor = collapsedBoundsRef.current ?? appliedFrameBoundsRef.current ?? {
         left: activeContext.initialBounds?.Left ?? canvasMetrics.left,
@@ -293,6 +314,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   ]);
 
   const scheduleNativeGeometryTransition = useCallback((work: () => Promise<void>) => {
+    nativeGeometryTransitionPendingRef.current += 1;
     const transition = nativeGeometryTransitionRef.current
       .catch(() => {})
       .then(async () => {
@@ -305,8 +327,14 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
           await waitForButtonWindowHitTestTurn();
         }
       });
-    nativeGeometryTransitionRef.current = transition;
-    return transition;
+    const trackedTransition = transition.finally(() => {
+      nativeGeometryTransitionPendingRef.current = Math.max(
+        0,
+        nativeGeometryTransitionPendingRef.current - 1
+      );
+    });
+    nativeGeometryTransitionRef.current = trackedTransition;
+    return trackedTransition;
   }, []);
 
   const applyEnvelopeNow = useCallback(async (nextEnvelope: ButtonRect) => {
@@ -321,8 +349,16 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     await commitAppliedEnvelope(nextEnvelope);
   }, [commitAppliedEnvelope]);
 
-  const applyEnvelope = useCallback((nextEnvelope: ButtonRect) =>
-    scheduleNativeGeometryTransition(() => applyEnvelopeNow(nextEnvelope)), [
+  const applyEnvelope = useCallback((nextEnvelope: ButtonRect) => {
+    if (shouldBypassButtonWindowGeometryTransition(
+      appliedEnvelopeRef.current,
+      nextEnvelope,
+      nativeGeometryTransitionPendingRef.current
+    )) {
+      return applyEnvelopeNow(nextEnvelope);
+    }
+    return scheduleNativeGeometryTransition(() => applyEnvelopeNow(nextEnvelope));
+  }, [
     applyEnvelopeNow,
     scheduleNativeGeometryTransition
   ]);
@@ -560,7 +596,10 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     const bounds = collapsedBoundsRef.current;
     if (isUsableDesktopBounds(bounds)) {
       const target = setup?.collapsedBoundsEnvelope ?? storedCollapsedEnvelope.resting;
-      const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+      const scaleFactor = resolveButtonWebviewPixelRatio(
+        await currentWindow.scaleFactor().catch(() => 1),
+        window.devicePixelRatio
+      );
       surfaceOriginRef.current = {
         x: bounds.left - target.x * scaleFactor,
         y: bounds.top - target.y * scaleFactor
@@ -569,9 +608,10 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       return;
     }
     const rawScaleFactor = await currentWindow.scaleFactor().catch(() => 1);
-    const scaleFactor = Number.isFinite(rawScaleFactor) && rawScaleFactor > 0
-      ? rawScaleFactor
-      : 1;
+    const scaleFactor = resolveButtonWebviewPixelRatio(
+      rawScaleFactor,
+      window.devicePixelRatio
+    );
     const target = collapsedEnvelope.resting;
     const anchor = buttonDesktopBoundsFromFlowCellBounds(activeContext.initialBounds) ?? {
       left: canvasMetrics.left,
@@ -603,7 +643,10 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       return;
     }
     const currentWindow = getCurrentWindow();
-    const initialScaleFactor = await currentWindow.scaleFactor().catch(() => 1);
+    const initialScaleFactor = resolveButtonWebviewPixelRatio(
+      await currentWindow.scaleFactor().catch(() => 1),
+      window.devicePixelRatio
+    );
     if (!collapsedBoundsRef.current) {
       const initialAnchor = buttonDesktopBoundsFromFlowCellBounds(activeContext.initialBounds);
       collapsedBoundsRef.current = {
@@ -827,8 +870,11 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
 
   useNativeButtonHitboxes({
     rootRef,
+    broadPhaseRef: contentFrameRef,
+    broadPhasePadding: 16,
     enabled: geometryInitialized && !dragging,
-    onHoverChange: handleNativeHoverChange
+    onHoverChange: handleNativeHoverChange,
+    onNativeSpaceChange: setNativeSpaceKeyActive
   });
 
   const handleOwnerActivate = useCallback(() => {
@@ -1035,6 +1081,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       {runtimeError ? <div className="button-window-error">{runtimeError}</div> : null}
       {document && setup && contentFrameRect ? (
         <div
+          ref={contentFrameRef}
           className="button-fan-window__content-frame"
           style={{
             left: contentFrameRect.left,

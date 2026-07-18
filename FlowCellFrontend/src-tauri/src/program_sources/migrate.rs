@@ -1,6 +1,6 @@
 use super::install::{install_from_path, InstallButtonSourceRequest, InstallButtonSourceResponse};
 use super::manifest::{extension_is_allowed, load_program_manifest, ProgramManifest};
-use super::records::{atomic_write_json, ACTIVE_SOURCE_RECORD_SUFFIX};
+use super::records::{atomic_write_json, recover_active_record, ACTIVE_SOURCE_RECORD_SUFFIX};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
@@ -579,6 +579,47 @@ fn unique_flat_local_source_for_panel_record(
     }
 }
 
+fn catalog_source_for_panel_record(
+    program_root: &Path,
+    panel_name: &str,
+    recorded_source: &Path,
+    manifest: &ProgramManifest,
+) -> Result<Option<PathBuf>, String> {
+    let Some(file_name) = recorded_source.file_name() else {
+        return Ok(None);
+    };
+    let panel_name = crate::validate_folder_name(panel_name, "Panel")?;
+    let catalog_root = super::manifest::resolve_manifest_folder(
+        program_root,
+        &manifest.git_scripts_folder,
+        "gitScriptsFolder",
+    )?;
+    if recorded_source.is_file()
+        && path_is_within(recorded_source, &catalog_root)
+        && extension_is_allowed(manifest, recorded_source)
+    {
+        return Ok(Some(recorded_source.to_path_buf()));
+    }
+    let candidate = catalog_root.join(panel_name).join(file_name);
+    Ok((candidate.is_file() && extension_is_allowed(manifest, &candidate)).then_some(candidate))
+}
+
+fn choose_legacy_panel_source(
+    catalog_source: Option<PathBuf>,
+    local_source: Option<PathBuf>,
+    bridge_action: &str,
+    recorded_source: &Path,
+) -> Option<PathBuf> {
+    catalog_source
+        .or(local_source)
+        .or_else(|| live_blender_source_for_action(bridge_action))
+        .or_else(|| {
+            recorded_source
+                .is_file()
+                .then(|| recorded_source.to_path_buf())
+        })
+}
+
 fn prepare_legacy_request(
     request: &LegacySourceMigrationRequest,
 ) -> Result<
@@ -618,9 +659,15 @@ fn prepare_legacy_request(
         let record = read_legacy_panel_item(&legacy_path)?;
         let metadata = legacy_button_metadata(&record, &legacy_path)?;
         let manifest_rules = load_program_manifest(&request.program_name)?;
-        let local_root = crate::resolve_program_directory(&request.program_name)?
-            .join(&manifest_rules.local_scripts_folder);
+        let program_root = crate::resolve_program_directory(&request.program_name)?;
+        let local_root = program_root.join(&manifest_rules.local_scripts_folder);
         let recorded_source = PathBuf::from(record.source_path.trim());
+        let catalog_source = catalog_source_for_panel_record(
+            &program_root,
+            &request.panel_name,
+            &recorded_source,
+            &manifest_rules,
+        )?;
         // Old panel metadata could point at another Button's source after a
         // filename collision. The panel record's own deterministic filename is
         // stronger identity evidence, but only when it has one unambiguous flat
@@ -662,18 +709,18 @@ fn prepare_legacy_request(
                 Some(metadata),
             ));
         }
-        let source = local_source
-            .or_else(|| live_blender_source_for_action(&record.bridge_action))
-            .or_else(|| {
-                let value = PathBuf::from(record.source_path.trim());
-                value.is_file().then_some(value)
-            })
-            .ok_or_else(|| {
-                format!(
-                    "No installed source could be proved for '{}'.",
-                    record.label
-                )
-            })?;
+        let source = choose_legacy_panel_source(
+            catalog_source,
+            local_source,
+            &record.bridge_action,
+            &recorded_source,
+        )
+        .ok_or_else(|| {
+            format!(
+                "No installed source could be proved for '{}'.",
+                record.label
+            )
+        })?;
         if let Some(manifest) = find_script_manifest_for_action(
             &request.program_name,
             &record.bridge_action,
@@ -724,7 +771,7 @@ fn prepare_legacy_request(
         ));
     }
     Ok((
-        legacy_local_copy.unwrap_or(legacy_path),
+        legacy_path,
         "script".to_string(),
         String::new(),
         legacy_owned_paths,
@@ -1304,6 +1351,7 @@ fn resume_migration(mut journal: MigrationJournal) -> Result<MigrationJournal, S
         let active_path =
             crate::resolve_panel_directory(&request.program_name, &request.panel_name)?
                 .join(&active_file_name);
+        recover_active_record(&active_path)?;
         let response = if active_path.is_file() {
             let resolution = super::execute::resolve_active_source_record(
                 &request.program_name,
@@ -1356,6 +1404,8 @@ fn resume_migration(mut journal: MigrationJournal) -> Result<MigrationJournal, S
                     panel_name: request.panel_name.clone(),
                     source_path: install_source.to_string_lossy().to_string(),
                     import_kind,
+                    bundled_source_id: None,
+                    bundled_source_version: None,
                 },
                 false,
             );
@@ -1710,6 +1760,7 @@ pub(crate) fn finalize_migration_token(token: &str) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::{
+        catalog_source_for_panel_record, choose_legacy_panel_source,
         discover_legacy_button_sources, empty_migration_work_directories, legacy_button_metadata,
         path_is_within, prepare_legacy_request, prepare_raw_legacy_script_package,
         read_legacy_panel_item, stable_migration_owner_id,
@@ -1718,6 +1769,7 @@ mod tests {
     use crate::program_sources::manifest::{ProgramManifest, ProgramRunnerManifest};
     use serde_json::Value;
     use std::fs;
+    use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
@@ -1766,7 +1818,11 @@ mod tests {
             program_id: "blender".to_string(),
             label: "Blender".to_string(),
             program_type: "bridge".to_string(),
+            default_panels: vec!["Files".to_string()],
             process_names: vec!["blender".to_string()],
+            exe_path: String::new(),
+            bind_scoped_native_owner: false,
+            shortcut_profile_id: "blender.windows".to_string(),
             git_scripts_folder: "Blender Git Scripts".to_string(),
             panels_folder: "Panels".to_string(),
             local_scripts_folder: "Blender Local Scripts".to_string(),
@@ -1774,11 +1830,13 @@ mod tests {
             allowed_script_extensions: vec!["py".to_string()],
             allowed_manifest_file_names: Vec::new(),
             supports_toolset_manifests: true,
+            bundled_sources: Vec::new(),
             runner: ProgramRunnerManifest {
                 kind: "blender-bridge".to_string(),
                 program_key: String::new(),
                 install_script: String::new(),
                 delete_script: String::new(),
+                capability_script: String::new(),
             },
             addon_reload_notes: String::new(),
             app_restart_notes: String::new(),
@@ -1794,6 +1852,68 @@ mod tests {
             unique_flat_local_source_for_panel_record(&root, &panel_record, &manifest).is_err()
         );
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn panel_catalog_source_precedes_same_named_flat_local_copy() {
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("flowcell-catalog-precedence-{token}"));
+        let catalog_root = root.join("Illustrator Git Scripts").join("Layers Builder");
+        let local_root = root.join("Illustrator Local Scripts");
+        fs::create_dir_all(&catalog_root).expect("create catalog panel");
+        fs::create_dir_all(&local_root).expect("create flat local root");
+        let catalog_source = catalog_root.join("make layers.jsx");
+        let local_source = local_root.join("make layers.jsx");
+        fs::write(&catalog_source, "// FlowCell-highlighted layers\n")
+            .expect("write catalog source");
+        fs::write(&local_source, "// stale flat copy\n").expect("write local source");
+        let manifest = ProgramManifest {
+            schema_version: 1,
+            program_id: "illustrator".to_string(),
+            label: "Illustrator".to_string(),
+            program_type: "direct-script".to_string(),
+            default_panels: vec!["Layers Builder".to_string()],
+            process_names: vec!["illustrator".to_string()],
+            exe_path: String::new(),
+            bind_scoped_native_owner: true,
+            shortcut_profile_id: "adobe.illustrator.windows".to_string(),
+            git_scripts_folder: "Illustrator Git Scripts".to_string(),
+            panels_folder: "Panels".to_string(),
+            local_scripts_folder: "Illustrator Local Scripts".to_string(),
+            support_scripts_folder: "SupportScripts".to_string(),
+            allowed_script_extensions: vec!["jsx".to_string()],
+            allowed_manifest_file_names: vec!["flowcell.script.json".to_string()],
+            supports_toolset_manifests: true,
+            bundled_sources: Vec::new(),
+            runner: ProgramRunnerManifest {
+                kind: "illustrator-direct".to_string(),
+                program_key: "illustrator_automation".to_string(),
+                install_script: String::new(),
+                delete_script: String::new(),
+                capability_script: String::new(),
+            },
+            addon_reload_notes: String::new(),
+            app_restart_notes: String::new(),
+        };
+
+        let resolved_catalog =
+            catalog_source_for_panel_record(&root, "Layers Builder", &local_source, &manifest)
+                .expect("resolve catalog source");
+        let selected = choose_legacy_panel_source(
+            resolved_catalog,
+            Some(local_source),
+            "",
+            Path::new("missing.jsx"),
+        )
+        .expect("select legacy source");
+        assert_eq!(selected, catalog_source);
+        assert!(fs::read_to_string(selected)
+            .expect("read selected source")
+            .contains("FlowCell-highlighted"));
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

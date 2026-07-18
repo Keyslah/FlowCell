@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.codex-micro.next-thread",
+  "label": "Next Thread",
+  "tooltip": "Invoke Codex's verified Next Task command.",
+  "program": "Windows",
+  "source": "next_thread.ps1"
+}

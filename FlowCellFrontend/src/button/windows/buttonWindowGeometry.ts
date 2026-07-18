@@ -19,6 +19,26 @@ export interface ButtonWindowPoint {
   y: number;
 }
 
+const WINDOWS_MINIMIZED_SENTINEL_COORDINATE = -30_000;
+
+export function isUsableButtonWindowBounds(
+  bounds: FlowCellBounds | null | undefined
+): bounds is FlowCellBounds {
+  return Boolean(
+    bounds &&
+      Number.isFinite(bounds.Left) &&
+      Number.isFinite(bounds.Top) &&
+      Number.isFinite(bounds.Width) &&
+      Number.isFinite(bounds.Height) &&
+      bounds.Width > 0 &&
+      bounds.Height > 0 &&
+      !(
+        bounds.Left <= WINDOWS_MINIMIZED_SENTINEL_COORDINATE &&
+        bounds.Top <= WINDOWS_MINIMIZED_SENTINEL_COORDINATE
+      )
+  );
+}
+
 export interface ButtonCanvasMetrics {
   left: number;
   top: number;
@@ -26,6 +46,43 @@ export interface ButtonCanvasMetrics {
 }
 
 const EMPTY_RECT: ButtonRect = { x: 0, y: 0, width: 1, height: 1 };
+
+export function resolveButtonWebviewPixelRatio(
+  nativeScaleFactor: number | undefined,
+  devicePixelRatio: number | null | undefined
+): number {
+  const nativeScale = positiveOr(nativeScaleFactor, 1);
+  return typeof devicePixelRatio === "number"
+    ? positiveOr(devicePixelRatio, nativeScale)
+    : nativeScale;
+}
+
+export function resolveTargetButtonWebviewPixelRatio(
+  currentNativeScaleFactor: number | undefined,
+  currentDevicePixelRatio: number | null | undefined,
+  targetNativeScaleFactor: number | undefined
+): number {
+  const currentNativeScale = positiveOr(currentNativeScaleFactor, 1);
+  const currentWebviewRatio = resolveButtonWebviewPixelRatio(
+    currentNativeScale,
+    currentDevicePixelRatio
+  );
+  const webviewScaleMultiplier = currentWebviewRatio / currentNativeScale;
+  return positiveOr(targetNativeScaleFactor, currentNativeScale) * webviewScaleMultiplier;
+}
+
+export function resolveButtonWindowClientPoint(
+  pointer: ButtonWindowPoint,
+  windowPosition: ButtonWindowPoint,
+  nativeScaleFactor: number | undefined,
+  devicePixelRatio: number | null | undefined
+): ButtonWindowPoint {
+  const pixelRatio = resolveButtonWebviewPixelRatio(nativeScaleFactor, devicePixelRatio);
+  return {
+    x: (pointer.x - windowPosition.x) / pixelRatio,
+    y: (pointer.y - windowPosition.y) / pixelRatio
+  };
+}
 
 export function buttonDesktopBoundsToCanvasRect(
   bounds: ButtonDesktopBounds | null | undefined,
@@ -126,6 +183,29 @@ export function buttonWindowRectsEqual(
       Math.abs(left.width - right.width) <= tolerance &&
       Math.abs(left.height - right.height) <= tolerance
   );
+}
+
+export function buttonWindowRectContainsPoint(
+  rect: ButtonRect | null | undefined,
+  point: ButtonWindowPoint,
+  padding = 0
+): boolean {
+  if (!isUsableRect(rect)) return false;
+  const safePadding = Number.isFinite(padding) ? Math.max(0, padding) : 0;
+  return (
+    point.x >= rect.x - safePadding &&
+    point.x <= rect.x + rect.width + safePadding &&
+    point.y >= rect.y - safePadding &&
+    point.y <= rect.y + rect.height + safePadding
+  );
+}
+
+export function shouldBypassButtonWindowGeometryTransition(
+  currentEnvelope: ButtonRect | null | undefined,
+  nextEnvelope: ButtonRect,
+  pendingTransitionCount: number
+): boolean {
+  return pendingTransitionCount === 0 && buttonWindowRectsEqual(currentEnvelope, nextEnvelope);
 }
 
 export function measuredButtonVisualRect(

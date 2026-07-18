@@ -11,7 +11,8 @@ import {
   BINDS_PREFILL_EVENT,
   buildWindowContextUrl,
   type BindsButtonPrefill,
-  type FlowCellWindowContext
+  type FlowCellWindowContext,
+  type ToolPageWindowContext
 } from "./windowContext";
 import {
   registerScopedWindowTopmost,
@@ -92,9 +93,11 @@ async function showAndFocus(target: TauriWindow): Promise<void> {
 }
 
 async function openCoreWindow(options: CoreWindowOptions): Promise<void> {
-  const pending = pendingOpens.get(options.label);
-  if (pending) return pending;
+  const previous = pendingOpens.get(options.label);
   const open = (async () => {
+    if (previous) {
+      await previous.catch(() => {});
+    }
     const placement = await centeredPlacement(options.width, options.height);
     let existing = await WebviewWindow.getByLabel(options.label);
     if (existing && options.recreate) {
@@ -128,7 +131,7 @@ async function openCoreWindow(options: CoreWindowOptions): Promise<void> {
     await waitForCreated(target);
     await applyPlacement(target, placement);
     if (options.programName) {
-      await registerScopedWindowTopmost(options.label, options.programName, false).catch(() => {});
+      await registerScopedWindowTopmost(options.label, options.programName).catch(() => {});
       await refreshScopedWindowTopmost(options.label).catch(() => {});
     }
     await showAndFocus(target);
@@ -141,7 +144,6 @@ async function openCoreWindow(options: CoreWindowOptions): Promise<void> {
 
 export async function openBindsWindow(prefill?: BindsButtonPrefill): Promise<void> {
   const label = "flowcell-binds";
-  const existing = await WebviewWindow.getByLabel(label);
   await openCoreWindow({
     label,
     context: prefill ? { kind: "binds", prefill } : { kind: "binds" },
@@ -150,7 +152,7 @@ export async function openBindsWindow(prefill?: BindsButtonPrefill): Promise<voi
     height: 860,
     decorations: true
   });
-  if (existing && prefill) await emit(BINDS_PREFILL_EVENT, prefill).catch(() => {});
+  if (prefill) await emit(BINDS_PREFILL_EVENT, prefill).catch(() => {});
 }
 
 export async function openMacroLabWindow(args: {
@@ -192,16 +194,52 @@ export async function openBuildLayersWindow(args: {
   fileName: string;
   label?: string;
 }): Promise<void> {
+  await openToolPageWindow({
+    contributionId: "illustrator.layer-tree",
+    renderer: "tree-inspector",
+    capability: "illustrator-layer-tree",
+    programName: args.programName,
+    panelName: args.panelName,
+    fileName: args.fileName,
+    title: args.label?.trim() || "Layer Tree",
+    resourceLabel: "Layer",
+    emptyMessage: "No layers found. Open a document and Refresh."
+  });
+}
+
+function toolPageWindowLabel(context: { contributionId: string; ownerButtonId?: string }): string {
+  const identity = context.ownerButtonId?.trim() || context.contributionId.trim();
+  const safeIdentity = identity
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 72) || "page";
+  return `flowcell-tool-page-${safeIdentity}`;
+}
+
+export async function openToolPageWindow(
+  args: Omit<ToolPageWindowContext, "kind">
+): Promise<void> {
   await openCoreWindow({
-    label: "flowcell-build-layers",
-    context: { kind: "build-layers", ...args },
-    title: "FlowCell - Layers Builder",
+    label: toolPageWindowLabel(args),
+    context: { kind: "tool-page", ...args },
+    title: `FlowCell - ${args.title}`,
     width: 360,
     height: 640,
     minimumWidth: 240,
     minimumHeight: 300,
     programName: args.programName
   });
+}
+
+export async function closeToolPageWindow(args: {
+  contributionId: string;
+  ownerButtonId?: string;
+}): Promise<void> {
+  const label = toolPageWindowLabel(args);
+  await pendingOpens.get(label)?.catch(() => {});
+  const existing = await WebviewWindow.getByLabel(label);
+  if (existing) await existing.close();
 }
 
 export const openWindowGridWindow = () => openCoreWindow({

@@ -108,6 +108,18 @@ function renamedIdentity(
   );
 }
 
+function identitiesMatchExactly(
+  left: ButtonSourceIdentity,
+  right: ButtonSourceIdentity
+): boolean {
+  return left.displayProgramName === right.displayProgramName &&
+    left.displayPanelName === right.displayPanelName &&
+    left.displayFileName === right.displayFileName &&
+    left.normalizedProgramName === right.normalizedProgramName &&
+    left.normalizedPanelName === right.normalizedPanelName &&
+    left.normalizedFileName === right.normalizedFileName;
+}
+
 function updateExecutionTarget(
   target: ButtonExecutionTarget | null | undefined,
   rename: RenamedScope
@@ -122,6 +134,10 @@ function updateExecutionTarget(
     ) {
       return false;
     }
+    const changed = target.programName !== rename.nextProgramName || (
+      nextPanelName !== undefined && target.panelName !== nextPanelName
+    );
+    if (!changed) return false;
     target.programName = rename.nextProgramName;
     if (nextPanelName !== undefined) target.panelName = nextPanelName;
     return true;
@@ -139,6 +155,10 @@ function updateExecutionTarget(
   ) {
     return false;
   }
+  const changed = payloadProgramName !== rename.nextProgramName || (
+    nextPanelName !== undefined && payloadPanelName !== nextPanelName
+  );
+  if (!changed) return false;
   target.payload = {
     ...target.payload,
     programName: rename.nextProgramName,
@@ -169,7 +189,8 @@ function updateKnownIdentityMetadata(
   let changed = false;
   if (
     typeof button.metadata.programName === "string" &&
-    namesMatch(button.metadata.programName, rename.currentProgramName)
+    namesMatch(button.metadata.programName, rename.currentProgramName) &&
+    button.metadata.programName !== rename.nextProgramName
   ) {
     button.metadata = { ...button.metadata, programName: rename.nextProgramName };
     changed = true;
@@ -178,7 +199,8 @@ function updateKnownIdentityMetadata(
     rename.currentPanelName !== undefined &&
     rename.nextPanelName !== undefined &&
     typeof button.metadata.panelName === "string" &&
-    namesMatch(button.metadata.panelName, rename.currentPanelName)
+    namesMatch(button.metadata.panelName, rename.currentPanelName) &&
+    button.metadata.panelName !== rename.nextPanelName
   ) {
     button.metadata = { ...button.metadata, panelName: rename.nextPanelName };
     changed = true;
@@ -224,13 +246,15 @@ function updateDefaultSurfaceNames(
         namesMatch(
           surface.name,
           `${rename.currentProgramName} / ${currentPanelName}`
-        )
+        ) &&
+        surface.name !== `${rename.nextProgramName} / ${nextPanelName}`
       ) {
         surface.name = `${rename.nextProgramName} / ${nextPanelName}`;
         changed = true;
       } else if (
         surface.kind === "fan" &&
-        namesMatch(surface.name, `${currentPanelName} Fan`)
+        namesMatch(surface.name, `${currentPanelName} Fan`) &&
+        surface.name !== `${nextPanelName} Fan`
       ) {
         surface.name = `${nextPanelName} Fan`;
         changed = true;
@@ -253,9 +277,14 @@ function updateFanSetupScope(
     ) {
       continue;
     }
-    setup.programName = rename.nextProgramName;
-    if (rename.nextPanelName !== undefined) setup.panelName = rename.nextPanelName;
-    changed = true;
+    const setupChanged = setup.programName !== rename.nextProgramName || (
+      rename.nextPanelName !== undefined && setup.panelName !== rename.nextPanelName
+    );
+    if (setupChanged) {
+      setup.programName = rename.nextProgramName;
+      if (rename.nextPanelName !== undefined) setup.panelName = rename.nextPanelName;
+      changed = true;
+    }
   }
   return changed;
 }
@@ -284,8 +313,11 @@ function renameSourceScope(
       nextPanelName
     };
     renamedPanels.set(normalizeName(identity.displayPanelName), pair);
-    owner.sourceIdentity = renamedIdentity(identity, pair);
-    changed = true;
+    const nextIdentity = renamedIdentity(identity, pair);
+    if (!identitiesMatchExactly(identity, nextIdentity)) {
+      owner.sourceIdentity = nextIdentity;
+      changed = true;
+    }
   }
   for (const buttonId of graphIds) {
     const button = document.buttons[buttonId];

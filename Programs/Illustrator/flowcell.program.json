@@ -3,8 +3,10 @@
   "programId": "illustrator",
   "label": "Illustrator",
   "programType": "direct-script",
-  "defaultPanels": ["Layers", "Files", "Utility"],
+  "defaultPanels": ["Layers", "Layers Builder", "Files", "Utility"],
   "processNames": ["illustrator"],
+  "bindScopedNativeOwner": true,
+  "shortcutProfileId": "adobe.illustrator.windows",
   "gitScriptsFolder": "Illustrator Git Scripts",
   "panelsFolder": "Panels",
   "localScriptsFolder": "Illustrator Local Scripts",
@@ -12,11 +14,224 @@
   "allowedScriptExtensions": ["jsx", "js"],
   "allowedManifestFileNames": ["flowcell.script.json", "flowcell.toolset.json"],
   "supportsToolsetManifests": true,
+  "bundledSources": [
+    {
+      "id": "illustrator.layers-builder.3d-test",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/3D test.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "3D test",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.3d",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/3D.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "3D",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.add-to-live",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/Add to Live.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "Add to Live",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.archive",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/archive.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "archive",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.b-lock",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/b lock.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "b lock",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.b-vis",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/b vis.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "b vis",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.back",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/back.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "back",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.copy-live",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/copy live.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "copy live",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.delete-sublayer",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/delete sublayer.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "delete sublayer",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.empty-sublayers",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/empty sublayers.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "empty sublayers",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.empty-trash",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/empty trash.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "empty trash",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.flatten-top-sub",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/flatten top sub.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "flatten top sub",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.make-layers",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/make layers.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "make layers",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.new-sub",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/new sub.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "new sub",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.restore",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/restore.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "restore",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.set-lock",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/set lock.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "set lock",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.set-vis",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/set vis.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "set vis",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.snapshot",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/snapshot.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "snapshot",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.sort",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/Sort.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "Sort",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layers-builder.trash",
+      "version": "2.0.0",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/Layers Builder/trash.jsx",
+      "importKind": "script",
+      "installOnAdd": true,
+      "legacyMatchLabel": "trash",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.layer-tree",
+      "version": "2.0.2",
+      "panelName": "Layers Builder",
+      "sourcePath": "Illustrator Git Scripts/LayersBuilder",
+      "importKind": "script",
+      "installIfMissing": true,
+      "legacyMatchLabel": "Layer Tree",
+      "legacyMatchKind": "script"
+    }
+  ],
   "runner": {
     "kind": "illustrator-direct",
     "programKey": "illustrator_automation",
     "installScript": "",
-    "deleteScript": ""
+    "deleteScript": "",
+    "capabilityScript": "Invoke-IllustratorFlowCellAction.ps1"
   },
   "addonReloadNotes": "",
   "appRestartNotes": "Restart FlowCell after changing this program manifest."

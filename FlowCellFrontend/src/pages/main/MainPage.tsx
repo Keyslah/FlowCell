@@ -20,16 +20,21 @@ import { CanonicalActionButton } from "../../button/CanonicalActionButton";
 import { ExactPageFrame } from "../../components/ExactPageFrame";
 import { RailSurface } from "../../components/RailSurface";
 import {
+  beginProgramUnregistration,
   createPanelFolder,
   createProgramFolder,
   deletePanelFolder,
-  deleteProgramFolder,
+  finalizeProgramUnregistration,
+  finalizeProgramRename,
   loadLayoutSnapshot,
   listPanelFolders,
   listPanelScriptFiles,
   listProgramFolders,
   renamePanelFolder,
   renameProgramFolder,
+  recoverProgramRename,
+  rollbackProgramRename,
+  rollbackProgramUnregistration,
   saveLayoutSnapshot,
   showOpenLayoutDialog,
   showSaveLayoutDialog,
@@ -48,6 +53,7 @@ import {
   type StartupSettings
 } from "../../lib/startupSettings";
 import {
+  closeToolPageWindow,
   openBindsWindow,
   openMacroLabWindow,
   reloadCurrentHostWindow
@@ -59,10 +65,17 @@ import {
   openButtonFanWindow,
   openButtonPopoutWindow
 } from "../../button/windows/buttonWindows";
+import { isUsableButtonWindowBounds } from "../../button/windows/buttonWindowGeometry";
 import {
+  bootstrapButtonStateDocument,
   loadButtonStateDocument,
-  saveButtonStateDocument
+  saveButtonStateDocument,
+  synchronizeBundledButtonSources
 } from "../../button/state/ButtonStateRepository";
+import {
+  removedToolPageWindowIdentities,
+  scopedToolPageWindowIdentities
+} from "../../button/state/toolPageLifecycle";
 import {
   publishButtonCommit,
   subscribeButtonCommits
@@ -136,7 +149,8 @@ type MacroPanelChangedPayload = {
 const BUTTON_CONTEXT_MENU_WIDTH = 168;
 const BUTTON_CONTEXT_MENU_HEIGHT = 156;
 const BUTTON_CONTEXT_MENU_MARGIN = 8;
-const PANEL_SCRIPT_DOUBLE_CLICK_MS = 220;
+const PANEL_SCRIPT_REACTIVATION_GUARD_MS = 350;
+const BUTTON_STATE_MUTATION_ATTEMPTS = 3;
 // Version 7 marks bounds stored in physical desktop pixels, captured exactly
 // as the window sits on its monitor and restored verbatim (position first,
 // then size — see applyWindowBounds / windowing's applyWindowPlacement).
@@ -152,23 +166,29 @@ type ButtonStateMutationResult = boolean | {
 };
 
 async function commitButtonStateMutationWithRetry(
-  mutate: (document: ButtonStateDocument) => ButtonStateMutationResult
+  mutate: (document: ButtonStateDocument) => ButtonStateMutationResult,
+  programRenameToken?: string
 ): Promise<ButtonStateDocument> {
   let current = await loadButtonStateDocument();
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < BUTTON_STATE_MUTATION_ATTEMPTS; attempt += 1) {
     const draft = cloneButtonDocument(current);
     const result = mutate(draft);
     const changed = typeof result === "boolean" ? result : result.changed;
     const uninstallOwnerButtonIds = typeof result === "boolean"
       ? []
       : result.uninstallOwnerButtonIds ?? [];
-    if (!changed) return current;
+    if (!changed) {
+      if (programRenameToken) await finalizeProgramRename(programRenameToken);
+      return current;
+    }
     let saved: ButtonStateDocument;
     try {
       saved = await saveButtonStateDocument(
         draft,
         current.revision,
-        uninstallOwnerButtonIds
+        uninstallOwnerButtonIds,
+        undefined,
+        programRenameToken
       );
     } catch (error) {
       const latest = await loadButtonStateDocument();
@@ -178,9 +198,13 @@ async function commitButtonStateMutationWithRetry(
         ? !verificationResult
         : !verificationResult.changed;
       if (mutationAlreadyApplied) {
+        if (programRenameToken) await recoverProgramRename(programRenameToken);
         return latest;
       }
-      if (attempt === 0 && latest.revision !== current.revision) {
+      if (
+        attempt < BUTTON_STATE_MUTATION_ATTEMPTS - 1 &&
+        latest.revision !== current.revision
+      ) {
         current = latest;
         continue;
       }
@@ -221,6 +245,7 @@ async function closeRemovedButtonWindows(
     .filter((setup) => !next.fanSetups[setup.id])
     .map((setup) => setup.panelOwnerButtonId);
   operations.push(...[...new Set(removedFanOwnerIds)].map(closeButtonFanWindow));
+  operations.push(...removedToolPageWindowIdentities(previous, next).map(closeToolPageWindow));
   await Promise.allSettled(operations);
 }
 
@@ -266,6 +291,34 @@ function canonicalButtonMatchesRenameScope(
   );
 }
 
+function folderNamesMatchExactly(left: string, right: string): boolean {
+  return left.normalize("NFC").trim() === right.normalize("NFC").trim();
+}
+
+function canonicalButtonMatchesRenameScopeExactly(
+  button: CanonicalButtonRecord,
+  scope: CanonicalRenameScope
+): boolean {
+  if (
+    button.role !== "tool-set-child" &&
+    button.sourceIdentity &&
+    folderNamesMatchExactly(button.sourceIdentity.displayProgramName, scope.programName) &&
+    (scope.panelName === undefined ||
+      folderNamesMatchExactly(button.sourceIdentity.displayPanelName, scope.panelName))
+  ) {
+    return true;
+  }
+  return Boolean(
+    button.role === "panel-owner" &&
+    typeof button.metadata.programName === "string" &&
+    folderNamesMatchExactly(button.metadata.programName, scope.programName) &&
+    (scope.panelName === undefined || (
+      typeof button.metadata.panelName === "string" &&
+      folderNamesMatchExactly(button.metadata.panelName, scope.panelName)
+    ))
+  );
+}
+
 function collectCanonicalRenameButtonIds(
   document: ButtonStateDocument,
   scope: CanonicalRenameScope
@@ -282,12 +335,23 @@ function canonicalRenameWasPersisted(
   previousScope: CanonicalRenameScope,
   nextScope: CanonicalRenameScope
 ): boolean {
+  const caseOnlyProgramRename =
+    areFolderNamesEqual(previousScope.programName, nextScope.programName) &&
+    !folderNamesMatchExactly(previousScope.programName, nextScope.programName);
+  const caseOnlyPanelRename =
+    previousScope.panelName !== undefined &&
+    nextScope.panelName !== undefined &&
+    areFolderNamesEqual(previousScope.panelName, nextScope.panelName) &&
+    !folderNamesMatchExactly(previousScope.panelName, nextScope.panelName);
+  const matchesSide = caseOnlyProgramRename || caseOnlyPanelRename
+    ? canonicalButtonMatchesRenameScopeExactly
+    : canonicalButtonMatchesRenameScope;
   const trackedButtonsMigratedOrRemoved = buttonIds.every((buttonId) => {
     const button = document.buttons[buttonId];
-    return !button || canonicalButtonMatchesRenameScope(button, nextScope);
+    return !button || matchesSide(button, nextScope);
   });
   const previousScopeRemains = Object.values(document.buttons).some((button) =>
-    canonicalButtonMatchesRenameScope(button, previousScope)
+    matchesSide(button, previousScope)
   );
   return trackedButtonsMigratedOrRemoved && !previousScopeRemains;
 }
@@ -299,6 +363,7 @@ async function recoverCanonicalRenameOrRollback(
     previousScope: CanonicalRenameScope;
     nextScope: CanonicalRenameScope;
     rollback: () => Promise<unknown>;
+    recoverCommitted?: () => Promise<unknown>;
     label: string;
   }
 ): Promise<ButtonStateDocument> {
@@ -316,6 +381,7 @@ async function recoverCanonicalRenameOrRollback(
     args.previousScope,
     args.nextScope
   )) {
+    if (args.recoverCommitted) await args.recoverCommitted();
     return latest;
   }
   try {
@@ -357,6 +423,7 @@ async function closeRenamedButtonWindows(
     )
     .map((setup) => setup.panelOwnerButtonId);
   operations.push(...[...new Set(fanOwnerIds)].map(closeButtonFanWindow));
+  operations.push(...scopedToolPageWindowIdentities(document, programName, panelName).map(closeToolPageWindow));
   await Promise.allSettled(operations);
 }
 
@@ -473,6 +540,42 @@ function canonicalProgramPanelKey(programName: string, panelName: string): strin
     .join("\u001f");
 }
 
+function canonicalPanelSourceInventorySignature(
+  document: ButtonStateDocument,
+  programName: string,
+  panelName: string
+): string {
+  const childIdsByOwner = new Map<string, string[]>();
+  for (const button of Object.values(document.buttons)) {
+    if (!button.toolSetParentId) continue;
+    const childIds = childIdsByOwner.get(button.toolSetParentId) ?? [];
+    childIds.push(button.id);
+    childIdsByOwner.set(button.toolSetParentId, childIds);
+  }
+
+  return JSON.stringify(
+    Object.values(document.buttons)
+      .flatMap((button) => {
+        const identity = button.sourceIdentity;
+        if (
+          button.role === "tool-set-child" ||
+          !identity ||
+          !areFolderNamesEqual(identity.displayProgramName, programName) ||
+          !areFolderNamesEqual(identity.displayPanelName, panelName)
+        ) {
+          return [];
+        }
+        return [{
+          id: button.id,
+          role: button.role,
+          fileName: identity.displayFileName,
+          childIds: [...(childIdsByOwner.get(button.id) ?? [])].sort()
+        }];
+      })
+      .sort((left, right) => left.id.localeCompare(right.id))
+  );
+}
+
 function isPanelScriptButtonAction(actionId: string): boolean {
   return actionId === "run-panel-script" || actionId === "run-panel-macro";
 }
@@ -533,15 +636,7 @@ function getParentDirectory(path: string): string | null {
 }
 
 function isValidFlowCellBounds(bounds: FlowCellBounds | null | undefined): bounds is FlowCellBounds {
-  return Boolean(
-    bounds &&
-      Number.isFinite(bounds.Left) &&
-      Number.isFinite(bounds.Top) &&
-      Number.isFinite(bounds.Width) &&
-      Number.isFinite(bounds.Height) &&
-      bounds.Width > 0 &&
-      bounds.Height > 0
-  );
+  return isUsableButtonWindowBounds(bounds);
 }
 
 type WindowBoundsTarget = Pick<TauriWindow, "outerPosition" | "innerSize">;
@@ -556,12 +651,13 @@ async function captureWindowBounds(target: WindowBoundsTarget): Promise<FlowCell
     return null;
   }
 
-  return {
+  const bounds = {
     Left: Number(position.x.toFixed(3)),
     Top: Number(position.y.toFixed(3)),
     Width: Number(size.width.toFixed(3)),
     Height: Number(size.height.toFixed(3))
   };
+  return isValidFlowCellBounds(bounds) ? bounds : null;
 }
 
 type WindowPlacementTarget = Pick<TauriWindow, "setPosition" | "setSize">;
@@ -581,9 +677,15 @@ async function applyWindowBounds(
 export default function MainPage() {
   const topLeftActionGroupRef = useRef<HTMLDivElement | null>(null);
   const layoutActionPendingRef = useRef(false);
-  const pendingPanelScriptActionTimersRef = useRef<Record<string, number>>({});
+  const lastPanelScriptActivationAtRef = useRef<Record<string, number>>({});
   const preferredPanelSelectionRef = useRef<string | null>(null);
-  const preferredSelectedPanelScriptFileNamesRef = useRef<string[] | null>(null);
+  const preferredSelectedPanelScriptFileNamesRef = useRef<{
+    programName: string;
+    panelName: string;
+    fileNames: string[];
+  } | null>(null);
+  const panelFolderLoadRequestRef = useRef(0);
+  const panelScriptLoadRequestRef = useRef(0);
   const [contextMenu, setContextMenu] = useState<ButtonContextMenuState | null>(null);
   const [fanSetupMenu, setFanSetupMenu] = useState<FanSetupMenuState | null>(null);
   const [programNames, setProgramNames] = useState<string[]>([]);
@@ -603,34 +705,143 @@ export default function MainPage() {
   );
   const [hoveredRailId, setHoveredRailId] = useState<string | null>(null);
   const [buttonDocument, setButtonDocument] = useState<ButtonStateDocument | null>(null);
-  const commitButtonDocumentMutation = useCallback(async (
-    mutate: (document: ButtonStateDocument) => ButtonStateMutationResult
+  const buttonDocumentRef = useRef<ButtonStateDocument | null>(null);
+  const previousButtonDocumentRef = useRef<ButtonStateDocument | null>(null);
+  const selectedProgramNameRef = useRef<string | null>(selectedProgramName);
+  const selectedPanelNameRef = useRef<string | null>(selectedPanelName);
+  selectedProgramNameRef.current = selectedProgramName;
+  selectedPanelNameRef.current = selectedPanelName;
+  const applyPanelScriptRecords = useCallback((
+    programName: string,
+    panelName: string,
+    records: PanelScriptFileRecord[]
   ) => {
-    const saved = await commitButtonStateMutationWithRetry(mutate);
-    setButtonDocument(saved);
-    return saved;
+    setPanelScripts(records);
+    const preferredSelection = preferredSelectedPanelScriptFileNamesRef.current;
+    if (
+      !preferredSelection ||
+      !areFolderNamesEqual(preferredSelection.programName, programName) ||
+      !areFolderNamesEqual(preferredSelection.panelName, panelName)
+    ) {
+      return;
+    }
+    preferredSelectedPanelScriptFileNamesRef.current = null;
+    const selectableFileNames = new Set(records.map((record) => record.fileName));
+    setSelectedPanelScriptFileNames(
+      preferredSelection.fileNames.filter((fileName) => selectableFileNames.has(fileName))
+    );
   }, []);
+  const acceptButtonDocument = useCallback((document: ButtonStateDocument) => {
+    const current = buttonDocumentRef.current;
+    if (current && document.revision <= current.revision) return false;
+    buttonDocumentRef.current = document;
+    setButtonDocument(document);
+    return true;
+  }, []);
+  const commitButtonDocumentMutation = useCallback(async (
+    mutate: (document: ButtonStateDocument) => ButtonStateMutationResult,
+    programRenameToken?: string
+  ) => {
+    const saved = await commitButtonStateMutationWithRetry(mutate, programRenameToken);
+    acceptButtonDocument(saved);
+    return saved;
+  }, [acceptButtonDocument]);
+
+  useEffect(() => {
+    const previous = previousButtonDocumentRef.current;
+    previousButtonDocumentRef.current = buttonDocument;
+    if (!previous || !buttonDocument) return;
+    void Promise.allSettled(
+      removedToolPageWindowIdentities(previous, buttonDocument).map(closeToolPageWindow)
+    );
+  }, [buttonDocument]);
 
   useEffect(() => {
     let disposed = false;
-    void loadButtonStateDocument()
-      .then((document) => {
-        if (!disposed) setButtonDocument(document);
-      })
-      .catch((error) => console.error("Failed to load canonical Button state.", error));
-    const unlistenPromise = subscribeButtonCommits(async (document) => {
-      if (disposed) return;
-      setButtonDocument(document);
-      if (selectedProgramName && selectedPanelName) {
-        const records = await listPanelButtonRecords(selectedProgramName, selectedPanelName);
-        if (!disposed) setPanelScripts(records);
+    let unlisten: (() => void) | null = null;
+
+    const refreshPanelSourceRecords = (programName: string, panelName: string) => {
+      const requestId = panelScriptLoadRequestRef.current + 1;
+      panelScriptLoadRequestRef.current = requestId;
+      void listPanelButtonRecords(programName, panelName)
+        .then((records) => {
+          if (
+            disposed ||
+            panelScriptLoadRequestRef.current !== requestId ||
+            !areFolderNamesEqual(selectedProgramNameRef.current, programName) ||
+            !areFolderNamesEqual(selectedPanelNameRef.current, panelName)
+          ) {
+            return;
+          }
+          applyPanelScriptRecords(programName, panelName, records);
+        })
+        .catch((error) => {
+          console.error(
+            `Failed to refresh panel scripts for ${programName}/${panelName}.`,
+            error
+          );
+        });
+    };
+
+    void (async () => {
+      try {
+        unlisten = await subscribeButtonCommits((document) => {
+          if (disposed) return;
+          const previous = buttonDocumentRef.current;
+          const programName = selectedProgramNameRef.current;
+          const panelName = selectedPanelNameRef.current;
+          const sourceInventoryChanged = Boolean(
+            programName &&
+            panelName &&
+            (
+              !previous ||
+              canonicalPanelSourceInventorySignature(previous, programName, panelName) !==
+                canonicalPanelSourceInventorySignature(document, programName, panelName)
+            )
+          );
+          if (
+            !acceptButtonDocument(document) ||
+            !sourceInventoryChanged ||
+            !programName ||
+            !panelName
+          ) {
+            return;
+          }
+
+          refreshPanelSourceRecords(programName, panelName);
+        });
+        if (disposed) {
+          unlisten();
+          unlisten = null;
+          return;
+        }
+
+        const { document, changed } = await bootstrapButtonStateDocument();
+        if (disposed) return;
+        const accepted = acceptButtonDocument(document);
+        const programName = selectedProgramNameRef.current;
+        const panelName = selectedPanelNameRef.current;
+        if (programName && panelName) {
+          refreshPanelSourceRecords(programName, panelName);
+        }
+        if (accepted && changed) {
+          await publishButtonCommit(document).catch((error) => {
+            console.error("Failed to publish bootstrapped Button state.", error);
+          });
+        }
+      } catch (error) {
+        if (!disposed) {
+          console.error("Failed to bootstrap canonical Button state.", error);
+        }
       }
-    });
+    })();
+
     return () => {
       disposed = true;
-      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+      unlisten?.();
+      unlisten = null;
     };
-  }, [selectedPanelName, selectedProgramName]);
+  }, [acceptButtonDocument, applyPanelScriptRecords]);
 
   // Motion settings are edited in their own window and applied live here.
   useEffect(() => subscribeMotionSettings(setMotionSettings), []);
@@ -718,16 +929,6 @@ export default function MainPage() {
     };
   }, []);
 
-  useEffect(
-    () => () => {
-      Object.values(pendingPanelScriptActionTimersRef.current).forEach((timerId) => {
-        window.clearTimeout(timerId);
-      });
-      pendingPanelScriptActionTimersRef.current = {};
-    },
-    []
-  );
-
   useEffect(() => {
     let cancelled = false;
 
@@ -757,6 +958,7 @@ export default function MainPage() {
 
   useEffect(() => {
     if (!selectedProgramName) {
+      panelFolderLoadRequestRef.current += 1;
       setPanelNames([]);
       preferredPanelSelectionRef.current = null;
       setSelectedPanelName(null);
@@ -764,6 +966,8 @@ export default function MainPage() {
     }
 
     let cancelled = false;
+    const requestId = panelFolderLoadRequestRef.current + 1;
+    panelFolderLoadRequestRef.current = requestId;
     const preferredPanelName = preferredPanelSelectionRef.current;
     setPanelNames([]);
     if (!preferredPanelName) {
@@ -773,25 +977,12 @@ export default function MainPage() {
     void (async () => {
       try {
         const nextPanelNames = await listPanelFolders(selectedProgramName);
-        if (cancelled) {
+        if (cancelled || panelFolderLoadRequestRef.current !== requestId) {
           return;
         }
 
-        let removedOwnerButtonIds: string[] = [];
-        await commitButtonDocumentMutation((document) => {
-          const result = reconcileProgramPanelOwners(document, {
-            programName: selectedProgramName,
-            panels: buildPanelRailOwnerEntries(nextPanelNames),
-            surfaceBounds: panelRailOwnerSurfaceBounds
-          });
-          removedOwnerButtonIds = result.removedOwnerButtonIds;
-          return result.changed;
-        });
-        await closePanelOwnerFanWindows(removedOwnerButtonIds);
-        if (cancelled) {
-          return;
-        }
-
+        // Panel folders are the navigation source of truth. Ordinary program
+        // navigation must not wait on or mutate canonical Button-owner state.
         setPanelNames(nextPanelNames);
         setSelectedPanelName((current) => {
           const resolved = resolveFolderSelection(
@@ -804,16 +995,16 @@ export default function MainPage() {
           return resolved;
         });
       } catch (error) {
-        if (cancelled) {
+        if (cancelled || panelFolderLoadRequestRef.current !== requestId) {
           return;
         }
 
         console.error(
-          `Failed to load panel folders or reconcile panel Buttons for ${selectedProgramName}.`,
+          `Failed to load panel folders for ${selectedProgramName}.`,
           error
         );
         window.alert(
-          `Panel folders or their canonical Buttons failed to load.\n\n${formatErrorMessage(error)}`
+          `Panel folders failed to load.\n\n${formatErrorMessage(error)}`
         );
       }
     })();
@@ -821,41 +1012,30 @@ export default function MainPage() {
     return () => {
       cancelled = true;
     };
-  }, [commitButtonDocumentMutation, selectedProgramName]);
+  }, [selectedProgramName]);
 
   useEffect(() => {
     if (!selectedProgramName || !selectedPanelName) {
+      panelScriptLoadRequestRef.current += 1;
       preferredSelectedPanelScriptFileNamesRef.current = null;
       setPanelScripts([]);
       return;
     }
 
     let cancelled = false;
+    const requestId = panelScriptLoadRequestRef.current + 1;
+    panelScriptLoadRequestRef.current = requestId;
 
     void (async () => {
       try {
         const nextPanelScripts = await listPanelButtonRecords(selectedProgramName, selectedPanelName);
-        if (cancelled) {
+        if (cancelled || panelScriptLoadRequestRef.current !== requestId) {
           return;
         }
 
-        setPanelScripts(nextPanelScripts);
-        setSelectedPanelScriptFileNames((current) => {
-          const preferredSelection = preferredSelectedPanelScriptFileNamesRef.current;
-          if (!preferredSelection) {
-            return current;
-          }
-
-          preferredSelectedPanelScriptFileNamesRef.current = null;
-          const nextSelectableFileNames = new Set(
-            nextPanelScripts.map((record) => record.fileName)
-          );
-          return preferredSelection.filter((fileName) =>
-            nextSelectableFileNames.has(fileName)
-          );
-        });
+        applyPanelScriptRecords(selectedProgramName, selectedPanelName, nextPanelScripts);
       } catch (error) {
-        if (cancelled) {
+        if (cancelled || panelScriptLoadRequestRef.current !== requestId) {
           return;
         }
 
@@ -870,7 +1050,7 @@ export default function MainPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedPanelName, selectedProgramName]);
+  }, [applyPanelScriptRecords, selectedPanelName, selectedProgramName]);
 
   useEffect(() => {
     if (!selectedProgramName || !selectedPanelName) {
@@ -887,13 +1067,22 @@ export default function MainPage() {
           return;
         }
 
+        const requestId = panelScriptLoadRequestRef.current + 1;
+        panelScriptLoadRequestRef.current = requestId;
         void (async () => {
           try {
             const nextPanelScripts = await listPanelButtonRecords(
               selectedProgramName,
               selectedPanelName
             );
-            setPanelScripts(nextPanelScripts);
+            if (
+              panelScriptLoadRequestRef.current !== requestId ||
+              !areFolderNamesEqual(selectedProgramNameRef.current, selectedProgramName) ||
+              !areFolderNamesEqual(selectedPanelNameRef.current, selectedPanelName)
+            ) {
+              return;
+            }
+            applyPanelScriptRecords(selectedProgramName, selectedPanelName, nextPanelScripts);
           } catch (error) {
             console.error(
               `Failed to refresh macro panel scripts for ${selectedProgramName}/${selectedPanelName}.`,
@@ -907,7 +1096,7 @@ export default function MainPage() {
     return () => {
       void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
     };
-  }, [selectedPanelName, selectedProgramName]);
+  }, [applyPanelScriptRecords, selectedPanelName, selectedProgramName]);
 
   const programRailButtons = useMemo(
     () => buildProgramRailButtons(programNames, selectedProgramName),
@@ -1368,10 +1557,6 @@ export default function MainPage() {
       return;
     }
 
-    if (isPanelScriptButton && button.scriptFileName) {
-      clearPendingPanelScriptAction(button.scriptFileName);
-    }
-
     const nextPosition = clampContextMenuPosition(event.clientX, event.clientY);
     setContextMenu({
       buttonId: button.id,
@@ -1386,16 +1571,6 @@ export default function MainPage() {
         ? current.filter((candidate) => candidate !== fileName)
         : [...current, fileName]
     );
-  };
-
-  const clearPendingPanelScriptAction = (fileName: string) => {
-    const timerId = pendingPanelScriptActionTimersRef.current[fileName];
-    if (timerId === undefined) {
-      return;
-    }
-
-    window.clearTimeout(timerId);
-    delete pendingPanelScriptActionTimersRef.current[fileName];
   };
 
   const handleRunPanelMacro = async (macroId: string) => {
@@ -1477,6 +1652,8 @@ export default function MainPage() {
   };
 
   const restoreLayoutSnapshotState = async (snapshot: LayoutSnapshot) => {
+    preferredPanelSelectionRef.current = null;
+    preferredSelectedPanelScriptFileNamesRef.current = null;
     await closeManagedLayoutWindows();
 
     if (isValidFlowCellBounds(snapshot.MainWindowBounds)) {
@@ -1484,51 +1661,52 @@ export default function MainPage() {
     }
 
     const nextProgramNames = await listProgramFolders();
-    setProgramNames(nextProgramNames);
-
-    preferredPanelSelectionRef.current = snapshot.SelectedPanelName ?? null;
-    preferredSelectedPanelScriptFileNamesRef.current =
-      snapshot.SelectedFileNames && snapshot.SelectedFileNames.length > 0
-        ? [...snapshot.SelectedFileNames]
-        : null;
-
+    const previousProgramName = selectedProgramNameRef.current;
     const nextProgramName = resolveFolderSelection(
       nextProgramNames,
       snapshot.SelectedProgramName
     );
-    setSelectedProgramName(nextProgramName);
-    let nextPanelName: string | null = null;
-    let nextPanelScripts: PanelScriptFileRecord[] = [];
+    const nextPanelNames = nextProgramName
+      ? await listPanelFolders(nextProgramName)
+      : [];
+    const nextPanelName = nextProgramName
+      ? resolveFolderSelection(nextPanelNames, snapshot.SelectedPanelName)
+      : null;
 
-    if (!nextProgramName) {
-      setPanelNames([]);
-      setSelectedPanelName(null);
+    preferredPanelSelectionRef.current =
+      nextProgramName && !areFolderNamesEqual(previousProgramName, nextProgramName)
+        ? nextPanelName
+        : null;
+    preferredSelectedPanelScriptFileNamesRef.current =
+      nextProgramName && nextPanelName
+        ? {
+            programName: nextProgramName,
+            panelName: nextPanelName,
+            fileNames: [...(snapshot.SelectedFileNames ?? [])]
+          }
+        : null;
+
+    selectedProgramNameRef.current = nextProgramName;
+    selectedPanelNameRef.current = nextPanelName;
+    setProgramNames(nextProgramNames);
+    setSelectedProgramName(nextProgramName);
+    setPanelNames(nextPanelNames);
+    setSelectedPanelName(nextPanelName);
+
+    if (!nextProgramName || !nextPanelName) {
       setPanelScripts([]);
       setSelectedPanelScriptFileNames([]);
     } else {
-      const nextPanelNames = await listPanelFolders(nextProgramName);
-      setPanelNames(nextPanelNames);
-
-      nextPanelName = resolveFolderSelection(
-        nextPanelNames,
-        snapshot.SelectedPanelName
-      );
-      setSelectedPanelName(nextPanelName);
-
-      if (!nextPanelName) {
-        setPanelScripts([]);
-        setSelectedPanelScriptFileNames([]);
-      } else {
-        nextPanelScripts = await listPanelButtonRecords(nextProgramName, nextPanelName);
-        setPanelScripts(nextPanelScripts);
-        const nextSelectableFileNames = new Set(
-          nextPanelScripts.map((record) => record.fileName)
-        );
-        setSelectedPanelScriptFileNames(
-          (snapshot.SelectedFileNames ?? []).filter((fileName) =>
-            nextSelectableFileNames.has(fileName)
-          )
-        );
+      setPanelScripts([]);
+      const requestId = panelScriptLoadRequestRef.current + 1;
+      panelScriptLoadRequestRef.current = requestId;
+      const nextPanelScripts = await listPanelButtonRecords(nextProgramName, nextPanelName);
+      if (
+        panelScriptLoadRequestRef.current === requestId &&
+        areFolderNamesEqual(selectedProgramNameRef.current, nextProgramName) &&
+        areFolderNamesEqual(selectedPanelNameRef.current, nextPanelName)
+      ) {
+        applyPanelScriptRecords(nextProgramName, nextPanelName, nextPanelScripts);
       }
     }
 
@@ -1677,7 +1855,7 @@ export default function MainPage() {
       throw new Error("Select a program and panel before opening a tool set.");
     }
     const document = buttonDocument ?? await loadButtonStateDocument();
-    if (!buttonDocument) setButtonDocument(document);
+    if (!buttonDocument) acceptButtonDocument(document);
     const owner = canonicalButtonsBySource.get(
       canonicalButtonSourceKey(selectedProgramName, selectedPanelName, record.fileName)
     ) ?? Object.values(document.buttons).find((button) => {
@@ -1739,7 +1917,7 @@ export default function MainPage() {
     );
     if (!canonical) {
       const document = buttonDocument ?? await loadButtonStateDocument();
-      if (!buttonDocument) setButtonDocument(document);
+      if (!buttonDocument) acceptButtonDocument(document);
       canonical = Object.values(document.buttons).find((button) => {
         const identity = button.sourceIdentity;
         return Boolean(
@@ -1756,14 +1934,6 @@ export default function MainPage() {
       throw new Error(`Installed source '${fileName}' has no canonical Button record.`);
     }
     await executeButtonRecord(canonical, "click");
-  };
-
-  const queuePanelScriptSelectionToggle = (fileName: string) => {
-    clearPendingPanelScriptAction(fileName);
-    pendingPanelScriptActionTimersRef.current[fileName] = window.setTimeout(() => {
-      delete pendingPanelScriptActionTimersRef.current[fileName];
-      togglePanelScriptSelection(fileName);
-    }, PANEL_SCRIPT_DOUBLE_CLICK_MS);
   };
 
   const deletePanelScriptFileNames = async (fileNames: string[]) => {
@@ -1818,9 +1988,18 @@ export default function MainPage() {
         currentDocument.revision,
         [...uninstallOwnerIds]
       );
-      setButtonDocument(saved);
+      acceptButtonDocument(saved);
       await publishButtonCommit(saved);
+      const requestId = panelScriptLoadRequestRef.current + 1;
+      panelScriptLoadRequestRef.current = requestId;
       const nextPanelScripts = await listPanelButtonRecords(selectedProgramName, selectedPanelName);
+      if (
+        panelScriptLoadRequestRef.current !== requestId ||
+        !areFolderNamesEqual(selectedProgramNameRef.current, selectedProgramName) ||
+        !areFolderNamesEqual(selectedPanelNameRef.current, selectedPanelName)
+      ) {
+        return true;
+      }
       const deletedFileNameSet = new Set(normalizedFileNames);
       setPanelScripts(nextPanelScripts);
       setSelectedPanelScriptFileNames((current) =>
@@ -1947,7 +2126,7 @@ export default function MainPage() {
       return;
     }
 
-    if (areFolderNamesEqual(currentName, trimmedName)) {
+    if (currentName === trimmedName) {
       return;
     }
 
@@ -1956,23 +2135,26 @@ export default function MainPage() {
       const affectedButtonIds = collectCanonicalRenameButtonIds(currentDocument, {
         programName: currentName
       });
-      const renamedProgramName = await renameProgramFolder(currentName, trimmedName);
+      const rename = await renameProgramFolder(currentName, trimmedName);
+      const renamedProgramName = rename.programName;
       try {
         await commitButtonDocumentMutation((document) =>
           renameProgramButtonDocumentScope(document, {
             currentProgramName: currentName,
             nextProgramName: renamedProgramName
-          }).changed
+          }).changed,
+          rename.renameToken
         );
       } catch (error) {
         const recoveredDocument = await recoverCanonicalRenameOrRollback(error, {
           affectedButtonIds,
           previousScope: { programName: currentName },
           nextScope: { programName: renamedProgramName },
-          rollback: () => renameProgramFolder(renamedProgramName, currentName),
+          rollback: () => rollbackProgramRename(rename.renameToken),
+          recoverCommitted: () => recoverProgramRename(rename.renameToken),
           label: "program folder"
         });
-        setButtonDocument(recoveredDocument);
+        acceptButtonDocument(recoveredDocument);
       }
       await closeRenamedButtonWindows(currentDocument, currentName);
       const nextProgramNames = await listProgramFolders();
@@ -2005,7 +2187,7 @@ export default function MainPage() {
 
     if (
       !window.confirm(
-        `Delete program ${currentName}? Its folder, panels, and buttons will be moved to the Recycle Bin.`
+        `Remove ${currentName} from FlowCell? Its installed Buttons and bindings will be removed, but the available program package will be kept so it can be added again.`
       )
     ) {
       return;
@@ -2013,11 +2195,38 @@ export default function MainPage() {
 
     try {
       const currentDocument = await loadButtonStateDocument();
-      const savedDocument = await commitButtonDocumentMutation((document) =>
-        removeProgramButtonDocumentScope(document, { programName: currentName })
-      );
-      await closeRemovedButtonWindows(currentDocument, savedDocument);
-      await deleteProgramFolder(currentName);
+      const rollbackToken = await beginProgramUnregistration(currentName);
+      let savedDocument: ButtonStateDocument;
+      try {
+        savedDocument = await commitButtonDocumentMutation((document) =>
+          removeProgramButtonDocumentScope(document, { programName: currentName })
+        );
+      } catch (canonicalError) {
+        try {
+          await rollbackProgramUnregistration(rollbackToken);
+        } catch (rollbackError) {
+          console.error(
+            `Program registration rollback failed for ${currentName}; token ${rollbackToken} remains pending.`,
+            rollbackError
+          );
+          throw new Error(
+            `Canonical Button cleanup failed, and FlowCell could not restore the program registration. ` +
+            `The rollback remains pending under token '${rollbackToken}'. ` +
+            `Original error: ${formatErrorMessage(canonicalError)} ` +
+            `Rollback error: ${formatErrorMessage(rollbackError)}`
+          );
+        }
+        throw canonicalError;
+      }
+      await finalizeProgramUnregistration(rollbackToken);
+      try {
+        await closeRemovedButtonWindows(currentDocument, savedDocument);
+      } catch (windowError) {
+        console.error(
+          `Program ${currentName} was removed, but one or more obsolete Button windows could not be closed.`,
+          windowError
+        );
+      }
       const nextProgramNames = await listProgramFolders();
       const selectedProgramWasDeleted = areFolderNamesEqual(selectedProgramName, currentName);
       const nextSelectedProgramName = resolveFolderSelection(
@@ -2110,7 +2319,7 @@ export default function MainPage() {
           ),
           label: "panel folder"
         });
-        setButtonDocument(recoveredDocument);
+        acceptButtonDocument(recoveredDocument);
       }
       await closeRenamedButtonWindows(
         currentDocument,
@@ -2373,7 +2582,7 @@ export default function MainPage() {
         ? currentDocument
         : await saveButtonStateDocument(draft, currentDocument.revision);
       if (document !== currentDocument) {
-        setButtonDocument(document);
+        acceptButtonDocument(document);
         await publishButtonCommit(document);
       }
       const storedUnit = document.popoutUnits[unit.id];
@@ -2426,7 +2635,7 @@ export default function MainPage() {
         ? currentDocument
         : await saveButtonStateDocument(draft, currentDocument.revision);
       if (document !== currentDocument) {
-        setButtonDocument(document);
+        acceptButtonDocument(document);
         await publishButtonCommit(document);
       }
       const storedSetup = document.fanSetups[setup.id];
@@ -2502,7 +2711,7 @@ export default function MainPage() {
         ? currentDocument
         : await saveButtonStateDocument(draft, currentDocument.revision);
       if (document !== currentDocument) {
-        setButtonDocument(document);
+        acceptButtonDocument(document);
         await publishButtonCommit(document);
       }
       await handleOpenSavedFanSetup(setup.id, document);
@@ -2653,6 +2862,29 @@ export default function MainPage() {
 
       try {
         const createdProgram = await createProgramFolder(trimmedName, programLocation);
+        const beforeSync = buttonDocument ?? await loadButtonStateDocument();
+        const synchronized = await synchronizeBundledButtonSources(beforeSync, {
+          includeStarters: true,
+          programName: createdProgram.programName
+        });
+        acceptButtonDocument(synchronized);
+        if (synchronized.revision !== beforeSync.revision) {
+          await publishButtonCommit(synchronized).catch((error) => {
+            console.error(
+              "Bundled program Buttons were saved, but their cross-window commit event failed.",
+              error
+            );
+          });
+        }
+        const createdPanelNames = await listPanelFolders(createdProgram.programName);
+        await commitButtonDocumentMutation((document) =>
+          reconcileProgramPanelOwners(document, {
+            programName: createdProgram.programName,
+            panels: buildPanelRailOwnerEntries(createdPanelNames),
+            surfaceBounds: panelRailOwnerSurfaceBounds,
+            removeStaleOwners: false
+          })
+        );
         const refreshedProgramNames = await listProgramFolders();
         setProgramNames(refreshedProgramNames);
         setSelectedProgramName(
@@ -2662,8 +2894,10 @@ export default function MainPage() {
           window.alert(createdProgram.statusMessage);
         }
       } catch (error) {
-        console.error("Failed to create program folder.", error);
-        window.alert(`Program folder could not be created.\n\n${formatErrorMessage(error)}`);
+        console.error("Failed to add the program or synchronize its bundled Buttons.", error);
+        window.alert(
+          `Program setup or bundled Button synchronization failed.\n\n${formatErrorMessage(error)}`
+        );
       }
 
       return;
@@ -2690,17 +2924,37 @@ export default function MainPage() {
       }
 
       try {
-        const createdPanelName = await createPanelFolder(selectedProgramName, trimmedName);
-        const nextPanelNames = await listPanelFolders(selectedProgramName);
+        const requestId = panelFolderLoadRequestRef.current + 1;
+        panelFolderLoadRequestRef.current = requestId;
+        let createdPanelName: string;
+        let nextPanelNames: string[];
+        try {
+          createdPanelName = await createPanelFolder(selectedProgramName, trimmedName);
+          nextPanelNames = await listPanelFolders(selectedProgramName);
+        } catch (createError) {
+          nextPanelNames = await listPanelFolders(selectedProgramName);
+          const existingPanelName = nextPanelNames.find((panelName) =>
+            areFolderNamesEqual(panelName, trimmedName)
+          );
+          if (!existingPanelName) {
+            throw createError;
+          }
+          createdPanelName = existingPanelName;
+        }
+
+        if (panelFolderLoadRequestRef.current !== requestId) {
+          return;
+        }
+        setPanelNames(nextPanelNames);
+        setSelectedPanelName(resolveFolderSelection(nextPanelNames, createdPanelName));
         await commitButtonDocumentMutation((document) =>
           reconcileProgramPanelOwners(document, {
             programName: selectedProgramName,
             panels: buildPanelRailOwnerEntries(nextPanelNames),
-            surfaceBounds: panelRailOwnerSurfaceBounds
-          }).changed
+            surfaceBounds: panelRailOwnerSurfaceBounds,
+            removeStaleOwners: false
+          })
         );
-        setPanelNames(nextPanelNames);
-        setSelectedPanelName(resolveFolderSelection(nextPanelNames, createdPanelName));
       } catch (error) {
         console.error("Failed to create the panel folder or its canonical Button.", error);
         window.alert(`Panel creation or canonical Button setup failed.\n\n${formatErrorMessage(error)}`);
@@ -2842,27 +3096,31 @@ export default function MainPage() {
 
     if (isPanelScriptButtonAction(button.actionId) && button.scriptFileName) {
       if (event.ctrlKey || event.metaKey || event.shiftKey) {
-        clearPendingPanelScriptAction(button.scriptFileName);
         togglePanelScriptSelection(button.scriptFileName);
         return;
       }
 
-      queuePanelScriptSelectionToggle(button.scriptFileName);
-    }
-  };
-
-  const handleButtonDoubleActivate = async (
-    button: ButtonRecord,
-    _event: MouseEvent
-  ) => {
-    if (!isPanelScriptButtonAction(button.actionId) || !button.scriptFileName) {
+      const activationTimeStamp = event.timeStamp;
+      const lastActivationAt = lastPanelScriptActivationAtRef.current[button.id];
+      if (
+        lastActivationAt !== undefined &&
+        activationTimeStamp >= lastActivationAt &&
+        activationTimeStamp - lastActivationAt < PANEL_SCRIPT_REACTIVATION_GUARD_MS
+      ) {
+        return;
+      }
+      lastPanelScriptActivationAtRef.current[button.id] = activationTimeStamp;
+      const matchedRecord =
+        resolvedPanelScriptsByFileName.get(button.scriptFileName) ?? null;
+      try {
+        await handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord);
+      } catch (error) {
+        console.error(`Button '${button.label}' could not run.`, error);
+        window.alert(`Button '${button.label}' could not run.\n\n${formatErrorMessage(error)}`);
+        throw error;
+      }
       return;
     }
-
-    clearPendingPanelScriptAction(button.scriptFileName);
-    const matchedRecord =
-      resolvedPanelScriptsByFileName.get(button.scriptFileName) ?? null;
-    void handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord);
   };
 
   const canonicalPresentationForMainButton = (button: ButtonRecord) => {
@@ -2929,7 +3187,6 @@ export default function MainPage() {
                   absolute={false}
                   targetHeightOverride={topLeftActionHeight}
                   onActivate={handleButtonActivate}
-                  onDoubleActivate={handleButtonDoubleActivate}
                   onRequestContextMenu={handleButtonContextMenu}
                 />
               ))}
@@ -2950,7 +3207,6 @@ export default function MainPage() {
                   control={button}
                   absolute={false}
                   onActivate={handleButtonActivate}
-                  onDoubleActivate={handleButtonDoubleActivate}
                   onRequestContextMenu={handleButtonContextMenu}
                 />
               ))}
@@ -2958,15 +3214,13 @@ export default function MainPage() {
           ) : null}
           {independentlyPositionedButtons.map((button) => {
             const canonicalPresentation = canonicalPresentationForMainButton(button);
-            const requiresCanonicalPresentation = Boolean(button.scriptFileName) ||
-              button.actionId === "select-panel-folder";
+            const requiresCanonicalPresentation = Boolean(button.scriptFileName);
             return canonicalPresentation ? (
               <MainButtonHost
                 key={button.id}
                 button={button}
                 canonicalPresentation={canonicalPresentation}
                 onActivate={handleButtonActivate}
-                onDoubleActivate={handleButtonDoubleActivate}
                 onRequestContextMenu={handleButtonContextMenu}
               />
             ) : requiresCanonicalPresentation ? null : (
@@ -2974,7 +3228,6 @@ export default function MainPage() {
                 key={button.id}
                 control={button}
                 onActivate={handleButtonActivate}
-                onDoubleActivate={handleButtonDoubleActivate}
                 onRequestContextMenu={handleButtonContextMenu}
               />
             );

@@ -214,7 +214,10 @@ def _ctx(context=None):
 
 
 def _repo_root() -> Path:
-    return _flowcell_script_root()
+    source_root = str(globals().get("FLOWCELL_SOURCE_ROOT", "") or "").strip()
+    if source_root:
+        return Path(source_root).expanduser().resolve()
+    return Path(__file__).resolve().parent
 
 
 def _result(message: str, **payload):
@@ -3821,23 +3824,25 @@ def _absorb_current_theme(context):
 
     return _result(
         "Blender theme sampled from current settings.",
-        tabs_hex=tabs_hex,
-        tabs_text_hex=tabs_text_hex,
-        headers_hex=headers_hex,
-        header_text_hex=header_text_hex,
-        text_hex=text_hex,
-        control_text_hex=control_text_hex,
-        accent_text_hex=accent_text_hex,
-        editor_background_hex=editor_background_hex,
-        scene_hex=scene_hex,
-        controls_hex=controls_hex,
-        borders_hex=borders_hex,
-        darks_hex=darks_hex,
-        misc_hex=misc_hex,
-        highlights_hex=highlights_hex,
-        viewport_background_hex=viewport_background_hex,
-        viewport_gradient_enabled=viewport_gradient_enabled,
-        viewport_gradient_hex=viewport_gradient_hex,
+        fieldPatch={
+            "tabs_hex": tabs_hex,
+            "tabs_text_hex": tabs_text_hex,
+            "headers_hex": headers_hex,
+            "header_text_hex": header_text_hex,
+            "text_hex": text_hex,
+            "control_text_hex": control_text_hex,
+            "accent_text_hex": accent_text_hex,
+            "editor_background_hex": editor_background_hex,
+            "scene_hex": scene_hex,
+            "controls_hex": controls_hex,
+            "borders_hex": borders_hex,
+            "darks_hex": darks_hex,
+            "misc_hex": misc_hex,
+            "highlights_hex": highlights_hex,
+            "viewport_background_hex": viewport_background_hex,
+            "viewport_gradient_enabled": viewport_gradient_enabled,
+            "viewport_gradient_hex": viewport_gradient_hex,
+        },
     )
 
 
@@ -4053,7 +4058,9 @@ def _restore_project_startup_state(context):
 
 def run_flowcell_action(context=None, data=None):
     payload = data or {}
-    command = _read_string(payload, "command", "apply_all").lower()
+    command = _read_string(payload, "command", "status").lower()
+    if command == "status":
+        return _result("Blender Theme action is ready.")
     if command == "read_project_startup_state":
         return _read_project_startup_state(context)
     if command == "restore_project_startup_state":

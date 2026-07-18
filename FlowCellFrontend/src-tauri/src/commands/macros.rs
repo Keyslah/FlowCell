@@ -1165,12 +1165,22 @@ pub(crate) fn save_macro_shortcut(
     let (bindings, mut document, bindings_path) = read_bindings_file_state()?;
     let normalized_shortcut = request.shortcut.trim().to_ascii_lowercase();
     if !normalized_shortcut.is_empty() {
-        if bindings.script_bindings.iter().any(|binding| {
-            binding
-                .shortcut
-                .trim()
-                .eq_ignore_ascii_case(&normalized_shortcut)
-        }) {
+        let keyboard_shortcut_conflict_key =
+            super::button_hotkeys::keyboard_shortcut_conflict_key(request.shortcut.trim());
+        let conflicts_with_requested_shortcut = |shortcut: &str| {
+            shortcut.trim().eq_ignore_ascii_case(&normalized_shortcut)
+                || keyboard_shortcut_conflict_key
+                    .zip(super::button_hotkeys::keyboard_shortcut_conflict_key(
+                        shortcut,
+                    ))
+                    .map(|(requested, existing)| requested == existing)
+                    .unwrap_or(false)
+        };
+        if bindings
+            .script_bindings
+            .iter()
+            .any(|binding| conflicts_with_requested_shortcut(&binding.shortcut))
+        {
             return Err("That shortcut is already in use.".to_string());
         }
         if bindings
@@ -1178,7 +1188,7 @@ pub(crate) fn save_macro_shortcut(
             .iter()
             .any(|(existing_action_id, shortcut)| {
                 !existing_action_id.eq_ignore_ascii_case(&action_id)
-                    && shortcut.trim().eq_ignore_ascii_case(&normalized_shortcut)
+                    && conflicts_with_requested_shortcut(shortcut)
             })
         {
             return Err("That shortcut is already in use.".to_string());
