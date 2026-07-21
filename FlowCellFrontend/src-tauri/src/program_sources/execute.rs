@@ -11,6 +11,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+const MAX_WINDOWS_CAPABILITY_STDOUT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_WINDOWS_CAPABILITY_STDERR_BYTES: usize = 256 * 1024;
+
 #[derive(Clone, Debug)]
 pub(crate) struct ActiveSourceResolution {
     pub file_name: String,
@@ -301,7 +304,7 @@ fn record_declares_capability(record: &ActiveSourceRecord, capability: &str) -> 
     if normalized.is_empty() {
         return false;
     }
-    record
+    let bridge_declares = record
         .bridge_data
         .as_ref()
         .and_then(Value::as_object)
@@ -313,6 +316,12 @@ fn record_declares_capability(record: &ActiveSourceRecord, capability: &str) -> 
                     .as_str()
                     .is_some_and(|value| value.trim().eq_ignore_ascii_case(normalized))
             })
+        });
+    bridge_declares
+        || record.page.as_ref().is_some_and(|page| {
+            page.capabilities
+                .iter()
+                .any(|value| value.trim().eq_ignore_ascii_case(normalized))
         })
 }
 
@@ -373,6 +382,59 @@ fn encode_powershell_command(command: &str) -> String {
     base64_encode_standard(&bytes)
 }
 
+fn windows_script_capability_command(
+    source_path: &Path,
+    capability: &str,
+    args_json: &str,
+) -> Result<String, String> {
+    if !source_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("ps1"))
+    {
+        return Err(
+            "Windows request/response capabilities require an installed .ps1 source.".to_string(),
+        );
+    }
+    Ok(format!(
+        "& '{}' -FlowCellCapability '{}' -ArgsJson '{}'",
+        crate::escape_powershell_single_quoted(&source_path.to_string_lossy()),
+        crate::escape_powershell_single_quoted(capability),
+        crate::escape_powershell_single_quoted(args_json)
+    ))
+}
+
+fn run_windows_script_capability(
+    source_path: &Path,
+    capability: &str,
+    args_json: &str,
+) -> Result<String, String> {
+    let command = windows_script_capability_command(source_path, capability, args_json)?;
+    let output = crate::spawn_powershell_output_bounded(
+        &[
+            "-EncodedCommand".to_string(),
+            encode_powershell_command(&command),
+        ],
+        MAX_WINDOWS_CAPABILITY_STDOUT_BYTES,
+        MAX_WINDOWS_CAPABILITY_STDERR_BYTES,
+    )
+    .map_err(|error| format!("Program capability '{capability}' output failed: {error}"))?;
+    if !output.status.success() {
+        return Err(crate::format_process_failure(
+            &output,
+            &format!("Program capability '{capability}' failed."),
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if stdout.is_empty() {
+        Err(format!(
+            "Program capability '{capability}' returned no response."
+        ))
+    } else {
+        Ok(stdout)
+    }
+}
+
 pub(crate) fn run_program_capability_action_blocking(
     program_name: String,
     panel_name: String,
@@ -386,6 +448,11 @@ pub(crate) fn run_program_capability_action_blocking(
         resolve_capability_source(&program_name, &panel_name, &file_name, &capability)?;
     let manifest = load_program_manifest(&resolution.record.program_name)?;
     match resolution.record.runner.as_str() {
+        "windows-script" => run_windows_script_capability(
+            Path::new(&resolution.record.source_path),
+            &capability,
+            &args_json,
+        ),
         "illustrator-direct" => {
             let program_root = crate::resolve_program_directory(&resolution.record.program_name)?;
             let adapter = super::manifest::resolve_runner_script_path(
@@ -747,7 +814,10 @@ pub(crate) fn run_active_button_event(
 
 #[cfg(test)]
 mod tests {
-    use super::{declared_blender_button_event_action, path_components_end_with};
+    use super::{
+        declared_blender_button_event_action, path_components_end_with,
+        windows_script_capability_command,
+    };
     use serde_json::json;
     use std::path::Path;
 
@@ -790,5 +860,33 @@ mod tests {
         )
         .expect_err("blank action should fail");
         assert_eq!(error, "Button event 'pressUp' is missing an action.");
+    }
+
+    #[test]
+    fn windows_capabilities_use_only_the_installed_powershell_source_and_typed_arguments() {
+        let command = windows_script_capability_command(
+            Path::new(r"D:\FlowCell\Windows Local Scripts\owner\source\handler.ps1"),
+            "windows.example",
+            r#"{"value":"Aaron's file"}"#,
+        )
+        .expect("PowerShell capability command");
+        assert_eq!(
+            command,
+            r#"& 'D:\FlowCell\Windows Local Scripts\owner\source\handler.ps1' -FlowCellCapability 'windows.example' -ArgsJson '{"value":"Aaron''s file"}'"#
+        );
+    }
+
+    #[test]
+    fn windows_capabilities_reject_non_powershell_sources() {
+        let error = windows_script_capability_command(
+            Path::new(r"D:\FlowCell\Windows Local Scripts\owner\source\handler.cmd"),
+            "windows.example",
+            "{}",
+        )
+        .expect_err("non-PowerShell capability source should fail");
+        assert_eq!(
+            error,
+            "Windows request/response capabilities require an installed .ps1 source."
+        );
     }
 }

@@ -28,7 +28,7 @@ interface InteractiveInventory {
 
 interface InteractiveHitbox {
   element: Element;
-  isButtonHost: boolean;
+  buttonHost: HTMLElement | null;
 }
 
 const INTERACTIVE_INVENTORY_SAFETY_REFRESH_MS = 1_000;
@@ -37,7 +37,10 @@ const activeCursorIgnoreControllers = new Map<string, NativeCursorIgnoreControll
 function findInteractiveInventory(root: HTMLElement): InteractiveInventory {
   const buttonHitboxes = Array.from(
     root.querySelectorAll<HTMLElement>("[data-button-skin-host]")
-  ).filter((host) => host.shadowRoot?.querySelector("[data-core]"));
+  ).flatMap((host): InteractiveHitbox[] => {
+    const core = host.shadowRoot?.querySelector<HTMLElement | SVGElement>("[data-core]");
+    return core ? [{ element: core, buttonHost: host }] : [];
+  });
   const fields = Array.from(
     root.querySelectorAll<HTMLElement>("[data-button-tool-field-id]")
   ).flatMap((field) => {
@@ -52,33 +55,36 @@ function findInteractiveInventory(root: HTMLElement): InteractiveInventory {
   const resizeHandles = Array.from(
     root.querySelectorAll<HTMLElement>("[data-button-window-resize-handle]")
   );
-  const hitboxes = [...buttonHitboxes, ...fields, ...resizeHandles]
-    .flatMap((element): InteractiveHitbox[] => {
+  const hitboxCandidates: InteractiveHitbox[] = [
+    ...buttonHitboxes,
+    ...fields.map((element) => ({ element, buttonHost: null })),
+    ...resizeHandles.map((element) => ({ element, buttonHost: null }))
+  ];
+  const hitboxes = hitboxCandidates
+    .flatMap((hitbox): InteractiveHitbox[] => {
+      const { element } = hitbox;
       if (!element.isConnected) return [];
       const style = window.getComputedStyle(element);
       if (style.display === "none" || style.visibility === "hidden") return [];
       const rect = element.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) return [];
-      return [{
-        element,
-        isButtonHost: element.hasAttribute("data-button-skin-host")
-      }];
+      return [hitbox];
     });
   return {
     hitboxes,
-    buttonHosts: hitboxes.filter((hitbox) => hitbox.isButtonHost)
+    buttonHosts: hitboxes.filter((hitbox) => hitbox.buttonHost !== null)
   };
 }
 
 function pointHitsInteractiveElement(
-  element: Element,
+  hitbox: InteractiveHitbox,
   clientX: number,
   clientY: number
 ): boolean {
   // Viewport positions can change when an ancestor semantic frame moves even
   // though neither this element nor its size changed. Keep membership cached,
   // but read the exact rect live so synthetic hover matches WebView click hit testing.
-  const rect = element.getBoundingClientRect();
+  const rect = hitbox.element.getBoundingClientRect();
   if (!buttonWindowRectContainsPoint(
     { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
     { x: clientX, y: clientY }
@@ -86,13 +92,13 @@ function pointHitsInteractiveElement(
     return false;
   }
 
-  // The skin host is the placement-owned hitbox. Its authored core may squash,
-  // rotate, or move during hover, but that visual animation must not move the
-  // pointer target out from under a stationary cursor.
-  if (element.hasAttribute("data-button-skin-host")) {
+  // Button membership is cached through the light-DOM host, but the authored
+  // core's live rectangle is the exact hitbox after placement and state transforms.
+  if (hitbox.buttonHost) {
     return true;
   }
 
+  const { element } = hitbox;
   const root = element.getRootNode();
   const hit = root instanceof ShadowRoot
     ? root.elementFromPoint(clientX, clientY)
@@ -168,6 +174,9 @@ export function useNativeButtonHitboxes(args: {
 
     const refreshInventory = (root: HTMLElement): InteractiveInventory => {
       const now = Date.now();
+      if (inventory.hitboxes.some(({ element }) => !element.isConnected)) {
+        inventoryDirty = true;
+      }
       if (
         inventoryDirty ||
         now - inventoryRefreshedAt >= INTERACTIVE_INVENTORY_SAFETY_REFRESH_MS
@@ -198,16 +207,16 @@ export function useNativeButtonHitboxes(args: {
       allowEnter: boolean
     ) => {
       for (const hitbox of buttonHosts) {
-        const host = hitbox.element as HTMLElement;
-        if (!host.isConnected) continue;
+        const host = hitbox.buttonHost;
+        if (!host?.isConnected || !hitbox.element.isConnected) continue;
         const coreHovered = host.getAttribute("data-button-hover") === "true";
         const hostHovered = allowEnter && pointHitsInteractiveElement(
-          host,
+          hitbox,
           clientX,
           clientY
         );
         if (hostHovered && !coreHovered) {
-          host.dispatchEvent(new PointerEvent("pointerenter", {
+          hitbox.element.dispatchEvent(new PointerEvent("pointerenter", {
             clientX,
             clientY,
             bubbles: false
@@ -215,9 +224,9 @@ export function useNativeButtonHitboxes(args: {
         } else if (
           !hostHovered &&
           coreHovered &&
-          host.getAttribute("data-button-pressed") !== "true"
+          host.getAttribute("data-button-pointer-pressed") !== "true"
         ) {
-          host.dispatchEvent(new PointerEvent("pointerleave", {
+          hitbox.element.dispatchEvent(new PointerEvent("pointerleave", {
             clientX,
             clientY,
             bubbles: false
@@ -313,13 +322,13 @@ export function useNativeButtonHitboxes(args: {
         await setIgnored(true);
         return;
       }
-      const hovered = connectedHitboxes.some(({ element }) =>
-        pointHitsInteractiveElement(element, clientX, clientY)
+      const hovered = connectedHitboxes.some((hitbox) =>
+        pointHitsInteractiveElement(hitbox, clientX, clientY)
       );
 
       // While the window ignores cursor events the webview receives no pointer
-      // events. Drive hover from the placement-owned host rectangle so a core
-      // that squashes or rotates cannot enter a leave/re-enter feedback loop.
+      // events. Drive hover from each authored core's live rectangle so native
+      // gating and the browser's core-only pointer target stay aligned.
       dispatchSyntheticButtonHover(currentInventory.buttonHosts, clientX, clientY, true);
 
       if (currentHoverState !== hovered) {

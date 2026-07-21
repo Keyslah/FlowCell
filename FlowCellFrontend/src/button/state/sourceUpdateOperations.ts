@@ -173,5 +173,4 @@ export function applyInstalledSourceUpdate(
     };
   }
   unit.fields = cloneButtonDocument(installed.layout?.fields ?? []);
-  unit.presentation = cloneButtonDocument(installed.layout?.presentation ?? null);
 }

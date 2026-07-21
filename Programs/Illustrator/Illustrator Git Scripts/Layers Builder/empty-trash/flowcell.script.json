@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.empty-trash",
+  "label": "empty trash",
+  "tooltip": "Confirm, then delete everything inside the document Trash root; no Layer Tree highlight required.",
+  "program": "Illustrator",
+  "source": "empty trash.jsx"
+}

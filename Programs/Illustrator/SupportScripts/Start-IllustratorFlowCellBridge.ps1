@@ -124,6 +124,22 @@ function Get-IllustratorApplication {
   return $script:IllustratorApp
 }
 
+function Test-IsStaleIllustratorComError {
+  param([Parameter(Mandatory = $true)][System.Exception]$Exception)
+
+  $current = $Exception
+  while ($null -ne $current) {
+    if (
+      $current.HResult -eq -2147023174 -or
+      $current.Message -match '(?i)0x800706BA|RPC server is unavailable'
+    ) {
+      return $true
+    }
+    $current = $current.InnerException
+  }
+  return $false
+}
+
 function Invoke-IllustratorAction {
   param(
     [Parameter(Mandatory = $true)][string]$ActionId,
@@ -142,26 +158,39 @@ function Invoke-IllustratorAction {
     scriptPath = $resolvedScriptPath
     description = 'Button-owned installed Illustrator script'
   }
-  $app = Get-IllustratorApplication
   $timer = [System.Diagnostics.Stopwatch]::StartNew()
   Write-BridgeLog "Running Illustrator action '$($action.id)' from $($action.scriptPath)"
 
   $hasArguments = $null -ne $Arguments
-  if ($hasArguments) {
-    $scriptBody = Get-Content -LiteralPath $action.scriptPath -Raw
-    $prefix = @(
-      "var FLOWCELL_ACTION_ID = $(ConvertTo-JsStringLiteral -Value $action.id);"
-      "var FLOWCELL_ARGS = $(ConvertTo-JsLiteral -Value $Arguments);"
-    ) -join "`r`n"
-    $result = $app.DoJavaScript($prefix + "`r`n" + $scriptBody)
-  } else {
+  $result = $null
+  for ($attempt = 0; $attempt -lt 2; $attempt += 1) {
+    $app = Get-IllustratorApplication
     try {
-      $result = $app.DoJavaScriptFile($action.scriptPath)
+      if ($hasArguments) {
+        $scriptBody = Get-Content -LiteralPath $action.scriptPath -Raw
+        $prefix = @(
+          "var FLOWCELL_ACTION_ID = $(ConvertTo-JsStringLiteral -Value $action.id);"
+          "var FLOWCELL_ARGS = $(ConvertTo-JsLiteral -Value $Arguments);"
+        ) -join "`r`n"
+        $result = $app.DoJavaScript($prefix + "`r`n" + $scriptBody)
+      } else {
+        try {
+          $result = $app.DoJavaScriptFile($action.scriptPath)
+        } catch {
+          if (Test-IsStaleIllustratorComError -Exception $_.Exception) { throw }
+          Write-BridgeLog "DoJavaScriptFile failed for '$($action.id)', retrying from script text: $($_.Exception.Message)" 'WARN'
+          $scriptBody = Get-Content -LiteralPath $action.scriptPath -Raw
+          $prefix = "var FLOWCELL_ACTION_ID = $(ConvertTo-JsStringLiteral -Value $action.id);"
+          $result = $app.DoJavaScript($prefix + "`r`n" + $scriptBody)
+        }
+      }
+      break
     } catch {
-      Write-BridgeLog "DoJavaScriptFile failed for '$($action.id)', retrying from script text: $($_.Exception.Message)" 'WARN'
-      $scriptBody = Get-Content -LiteralPath $action.scriptPath -Raw
-      $prefix = "var FLOWCELL_ACTION_ID = $(ConvertTo-JsStringLiteral -Value $action.id);"
-      $result = $app.DoJavaScript($prefix + "`r`n" + $scriptBody)
+      if ($attempt -ne 0 -or -not (Test-IsStaleIllustratorComError -Exception $_.Exception)) {
+        throw
+      }
+      Write-BridgeLog "Illustrator COM disconnected during '$($action.id)'; reacquiring the active application and retrying once." 'WARN'
+      $script:IllustratorApp = $null
     }
   }
 

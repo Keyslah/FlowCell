@@ -1,0 +1,26 @@
+=== structure ===
+<div data-core style="-webkit-appearance:none;appearance:none;display:inline-block;position:relative;border-width:0;padding:0 8px 12px;min-width:10em;box-sizing:border-box;background:transparent;font:13px/17px 'Segoe UI',system-ui,sans-serif;cursor:pointer;"><div style="display:flex;align-items:center;justify-content:center;position:relative;z-index:0;padding:8px 16px;transform:translateY(var(--fc-source-3d-top-y,0));text-align:center;color:#fff;text-shadow:0 -1px rgba(0,0,0,.25);transition-property:transform;transition-duration:.2s;-webkit-user-select:none;user-select:none;pointer-events:none;">{{label}}<span style="position:absolute;z-index:-1;border-radius:var(--fc-source-3d-face-radius,4px);padding:0 var(--fc-source-3d-face-pad-x,0);width:100%;height:100%;box-sizing:content-box;background-image:radial-gradient(#3dcd9e,#369d8d);text-align:center;color:#fff;box-shadow:inset 0 0 0px 1px rgba(255,255,255,.2),0 1px 2px 1px rgba(255,255,255,.2);transition-property:border-radius,padding,width,transform;transition-duration:.2s;pointer-events:none;"></span></div><div style="position:absolute;z-index:-1;bottom:4px;left:4px;border-radius:var(--fc-source-3d-bottom-radius,8px / 16px 16px 8px 8px);padding-top:var(--fc-source-3d-bottom-padding-top,6px);width:calc(100% - 8px);height:calc(100% - 10px);box-sizing:content-box;background-color:#38a19d;background-image:radial-gradient(4px 8px at 4px calc(100% - 8px),rgba(255,255,255,.25),transparent),radial-gradient(4px 8px at calc(100% - 4px) calc(100% - 8px),rgba(255,255,255,.25),transparent),radial-gradient(16px at -4px 0,white,transparent),radial-gradient(16px at calc(100% + 4px) 0,white,transparent);box-shadow:0px 2px 3px 0px rgba(0,0,0,.5),inset 0 -1px 3px 3px rgba(0,0,0,.4);transition-property:border-radius,padding-top;transition-duration:.2s;pointer-events:none;"></div><div style="position:absolute;z-index:-2;top:4px;left:0;border-radius:12px;width:100%;height:calc(100% - 4px);background-color:rgba(0,0,0,.15);box-shadow:0 1px 1px 0 black,inset 0 2px 2px rgba(0,0,0,.25);pointer-events:none;"></div></div>
+=== keyframes ===
+=== base ===
+--fc-source-3d-top-y:0;
+--fc-source-3d-face-radius:4px;
+--fc-source-3d-face-pad-x:0;
+--fc-source-3d-bottom-radius:8px / 16px 16px 8px 8px;
+--fc-source-3d-bottom-padding-top:6px;
+=== hover ===
+=== play ===
+=== pressed ===
+--fc-source-3d-top-y:6px;
+--fc-source-3d-face-radius:6px;
+--fc-source-3d-face-pad-x:2px;
+--fc-source-3d-bottom-radius:10px 10px 8px 8px / 8px;
+--fc-source-3d-bottom-padding-top:0;
+=== held ===
+--fc-source-3d-top-y:6px;
+--fc-source-3d-face-radius:6px;
+--fc-source-3d-face-pad-x:2px;
+--fc-source-3d-bottom-radius:10px 10px 8px 8px / 8px;
+--fc-source-3d-bottom-padding-top:0;
+=== release ===
+=== disabled ===
+=== error ===

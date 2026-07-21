@@ -1,22 +1,24 @@
-# Blender Theme Tool Set
+# Blender Theme Page Button
 
-Blender Theme is an installable FlowCell tool set for Blender UI colors, Place
-Picture viewport overlays, and HDRI world settings. It runs in the shared
-canonical Button popout.
+Blender Theme is an ordinary Blender-owned, page-enabled FlowCell Button package
+for Blender UI colors, Place Picture viewport overlays, and HDRI world settings.
+Its page, actions, schemas, assets, Blender helpers, and lifecycle hooks live in
+the package rather than FlowCell Core.
 
 ## Install Or Open
 
 Adding the Blender program installs Theme as a declared starter in the
 `toolset` panel. To install it again after an intentional deletion:
 
-1. Open the Buttons Editor and choose Add Tool Set.
+1. Open the Buttons Editor and choose Add Button.
 2. Select
-   `Programs/Blender/Blender Git Scripts/Toolsets/theme/flowcell.toolset.json`.
+   `Programs/Blender/Blender Git Scripts/Toolsets/theme/flowcell.script.json`.
 3. Choose the Blender panel for the owner Button and save Button state.
 4. Reload the FlowCell Blender add-on or restart Blender after deployment.
 
 To use an installed copy, select its Blender panel and activate the `theme`
-owner Button. FlowCell opens that owner's shared tool-set popout. The installed
+owner Button. FlowCell opens that owner's package page in the generic isolated
+page host. The installed
 copy under `Blender Local Scripts/<ownerButtonId>/source/` is what runs; the Git
 Scripts package is only the catalog source.
 
@@ -52,9 +54,8 @@ Scripts package is only the catalog source.
 | `Apply` | Applies the current theme mode and color fields to Blender. |
 
 Each color role also has its own `Apply` control. The manifest routes all of
-them through the installed `apply_theme_bucket` child and supplies the selected
-bucket/value as a per-click payload; the shared renderer contains no Blender
-bucket names.
+them through the installed package action and supplies the selected bucket/value
+as a per-click payload; the generic page host contains no Blender bucket names.
 
 The color fields map to these Blender surface groups:
 
@@ -79,11 +80,9 @@ Blender exposes many related theme paths rather than one field per visible
 surface, so the installed Theme source maps each group across the appropriate
 Blender theme properties.
 
-On the first updated owner load, FlowCell imports the old Theme Toolbox darkness
-profile JSON and the proven pre-refactor local-storage keys into the new
-owner-scoped state. The old file and keys are not modified or deleted. Migration
-maps role/field names from manifest data and records completion so profiles are
-not duplicated on later opens.
+Page field values and darkness profiles are stored in the installed Button's
+owner-scoped state. One Theme Button cannot read or overwrite another owner's
+state.
 
 ## Place Picture
 
@@ -125,6 +124,10 @@ For an ad hoc local change, use Update in the Buttons Editor for the same owner.
 After either path, reload the FlowCell Blender add-on or restart Blender before
 testing the changed deployment.
 
-Deleting the Theme owner removes its children, popout, placements, active
-record, owned Local Scripts package, bindings, and generated bridge artifacts.
-The Git Scripts catalog package remains available for a future install.
+Deleting the Theme owner closes its page and removes its canonical graph, active
+record, owned Local Scripts package, bindings, generated bridge artifacts,
+registered Blender lifecycle hooks, overlays, timers, and Button-owned startup
+state. The Git Scripts catalog package remains available for a future install.
+Saved packages under `flowcellbackend/local/blender_themes/` are explicit shared
+Blender program data, not owner runtime state, so they remain available after a
+launcher is deleted and reinstalled.

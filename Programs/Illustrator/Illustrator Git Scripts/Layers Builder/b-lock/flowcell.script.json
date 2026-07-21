@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.b-lock",
+  "label": "b lock",
+  "tooltip": "Save the active document's complete layer lock baseline; no Layer Tree highlight required.",
+  "program": "Illustrator",
+  "source": "b lock.jsx"
+}

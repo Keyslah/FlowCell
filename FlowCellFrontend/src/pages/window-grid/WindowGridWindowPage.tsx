@@ -23,13 +23,7 @@ type KnownWindow = {
 const KNOWN_WINDOWS: Record<string, KnownWindow> = {
   main: { program: "FlowCell", panel: "", title: "Main", closeable: false },
   "flowcell-binds": { program: "FlowCell", panel: "", title: "Binds" },
-  "organization-setup": { program: "FlowCell", panel: "", title: "Setup Organization" },
-  "flowcell-macro-lab": { program: "FlowCell", panel: "", title: "Macro Lab" },
-  "flowcell-build-layers": {
-    program: "Illustrator",
-    panel: "Layers Builder",
-    title: "Layers Builder"
-  }
+  "flowcell-macro-lab": { program: "FlowCell", panel: "", title: "Macro Lab" }
 };
 
 type WindowEntry = {

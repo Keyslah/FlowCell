@@ -22,7 +22,7 @@ The automation contract was verified against `OpenAI.CodexBeta 26.707.3351.0` (d
 
 ## Restart and install behavior
 
-Neither Codex nor FlowCell needs to restart or rescan for this catalog-only change. Assign an action later through the existing Add Script system by selecting that package's manifest or declared entry. An already installed copy does not auto-sync with future catalog edits; use FlowCell's existing update/re-add flow for that Button.
+Neither Codex nor FlowCell needs to restart or rescan for this catalog-only change. Assign an action later through Add Button by selecting that package's manifest or declared entry. An already installed copy does not auto-sync with future catalog edits; use FlowCell's existing update/re-add flow for that Button.
 
 ## Direct verification
 

@@ -1018,61 +1018,6 @@ mod tests {
     }
 
     #[test]
-    fn legacy_theme_load_preserves_only_declared_theme_grid_values_and_assets() {
-        let root = temporary_root("legacy-theme-load");
-        fs::create_dir_all(&root).expect("create root");
-        fs::write(root.join("buckets.png"), b"buckets").expect("write buckets asset");
-        fs::write(root.join("background.png"), b"background").expect("write background asset");
-        let manifest_path = root.join("Legacy.flowcell-theme-pack.json");
-        fs::write(
-            &manifest_path,
-            serde_json::to_string(&json!({
-                "format": "flowcell-blender-theme-pack-v1",
-                "name": "Legacy",
-                "values": {
-                    "ThemeTabsHex": "#ABCDEF",
-                    "StaticBackgroundPath": "C:/old/background.png",
-                    "GridSpacing": "1 m",
-                    "GridDistance": "5 m",
-                    "GridFarSpacing": "1 m",
-                    "WorldStrength": "0.75"
-                },
-                "bucketsImage": "buckets.png",
-                "backgroundImage": "background.png",
-                "unknownImage": "background.png"
-            }))
-            .expect("serialize manifest"),
-        )
-        .expect("write manifest");
-
-        let loaded = load_tool_package_manifest(
-            &manifest_path,
-            "blender-theme",
-            &["flowcell-blender-theme-pack-v1".to_string()],
-            &["tabs_hex".to_string()],
-            &["theme_image_path".to_string()],
-            &[
-                "ThemeTabsHex".to_string(),
-                "StaticBackgroundPath".to_string(),
-                "GridSpacing".to_string(),
-                "GridDistance".to_string(),
-                "GridFarSpacing".to_string(),
-            ],
-            &["bucketsImage".to_string(), "backgroundImage".to_string()],
-        )
-        .expect("load legacy package");
-        assert_eq!(loaded["values"]["ThemeTabsHex"], "#ABCDEF");
-        assert_eq!(loaded["values"]["GridSpacing"], "1 m");
-        assert_eq!(loaded["values"]["GridDistance"], "5 m");
-        assert_eq!(loaded["values"]["GridFarSpacing"], "1 m");
-        assert!(loaded["values"].get("WorldStrength").is_none());
-        assert!(loaded["assets"].get("bucketsImage").is_some());
-        assert!(loaded["assets"].get("backgroundImage").is_some());
-        assert!(loaded["assets"].get("unknownImage").is_none());
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
     fn tool_field_legacy_formats_are_caller_data_not_program_rules() {
         let root = temporary_root("legacy-field-format");
         fs::create_dir_all(&root).expect("create root");

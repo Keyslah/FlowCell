@@ -10,10 +10,10 @@ static BUTTON_STATE_COMMIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 const SOURCE_TRANSACTION_JOURNAL_FILE_NAME: &str = "button-source-transaction.json";
 const SOURCE_TRANSACTION_SCHEMA_VERSION: u32 = 1;
 
-fn synchronize_child_hotkeys_after_commit(app: &tauri::AppHandle) {
-    if let Err(error) = crate::synchronize_tool_set_child_hotkeys(app) {
+fn synchronize_tool_set_hotkeys_after_commit(app: &tauri::AppHandle) {
+    if let Err(error) = crate::synchronize_tool_set_hotkeys(app) {
         let message = format!(
-            "Tool-set child hotkeys could not be synchronized after Button state commit: {error}"
+            "Tool Set hotkeys could not be synchronized after Button state commit: {error}"
         );
         eprintln!("{message}");
         crate::append_flowcell_local_log("child_hotkeys.log", &message);
@@ -547,6 +547,7 @@ pub(crate) fn load_button_state() -> Result<Option<Value>, String> {
         .lock()
         .map_err(|_| "Button state commit lock is poisoned.".to_string())?;
     let source_guard = crate::program_sources::source_quarantine_guard()?;
+    let bindings_guard = crate::commands::bindings::bindings_state_guard()?;
     let path = button_state_path()?;
     let cleanup = recover_source_transactions_locked(&path)?;
     let result = if path.is_file() {
@@ -554,6 +555,7 @@ pub(crate) fn load_button_state() -> Result<Option<Value>, String> {
     } else {
         Ok(None)
     };
+    drop(bindings_guard);
     drop(source_guard);
     drop(guard);
     finalize_source_transaction_roots(&cleanup);
@@ -566,8 +568,10 @@ pub(crate) fn recover_button_source_transactions_on_startup() -> Result<(), Stri
         .lock()
         .map_err(|_| "Button state commit lock is poisoned.".to_string())?;
     let source_guard = crate::program_sources::source_quarantine_guard()?;
+    let bindings_guard = crate::commands::bindings::bindings_state_guard()?;
     let path = button_state_path()?;
     let cleanup = recover_source_transactions_locked(&path)?;
+    drop(bindings_guard);
     drop(source_guard);
     drop(guard);
     finalize_source_transaction_roots(&cleanup);
@@ -613,6 +617,10 @@ pub(crate) fn commit_button_state(
         .lock()
         .map_err(|_| "Button state commit lock is poisoned.".to_string())?;
     let source_guard = crate::program_sources::source_quarantine_guard()?;
+    // Source removal and rollback rewrite bindings.ini. Hold the same mutation
+    // lane as Binds saves for the entire canonical-state transaction so neither
+    // side can overwrite the other's document snapshot.
+    let bindings_guard = crate::commands::bindings::bindings_state_guard()?;
     validate_button_state(&request.document)?;
     let next_revision = document_revision(&request.document)?;
     let required_revision = request
@@ -673,6 +681,13 @@ pub(crate) fn commit_button_state(
         .transpose()?
         .unwrap_or_default();
     let next_source_owners = document_source_owners(&request.document, true)?;
+    // Validate pending Add Button/generated installs while the canonical state
+    // and source lanes are both locked. The short-lived intents are removed
+    // only after this canonical document can no longer be rolled back.
+    let pending_install_finalizations =
+        crate::program_sources::pending_install::prepare_pending_canonical_finalizations(
+            &request.document,
+        )?;
 
     let mut owner_ids = Vec::new();
     for value in request.uninstall_owner_button_ids {
@@ -762,6 +777,7 @@ pub(crate) fn commit_button_state(
             let result = Err(compound_rollback_error(error, rollback_errors));
             drop(source_guard);
             drop(guard);
+            drop(bindings_guard);
             finalize_source_transaction_roots(&cleanup);
             return result;
         }
@@ -777,7 +793,7 @@ pub(crate) fn commit_button_state(
         .map(str::trim)
         .filter(|value| !value.is_empty())
     {
-        if let Err(error) = crate::program_sources::finalize_migration_token(token) {
+        if let Err(error) = crate::program_sources::finalize_migration_token_locked(token) {
             if let Some((transaction_root, journal)) = transaction.as_ref() {
                 let mut journal = journal.clone();
                 let (rollback_errors, can_finalize) =
@@ -824,6 +840,21 @@ pub(crate) fn commit_button_state(
         }
     }
 
+    for error in
+        crate::program_sources::pending_install::finalize_prepared_pending_canonical_installs(
+            &pending_install_finalizations,
+        )
+    {
+        // Canonical state is already committed. Keep the validated intent for
+        // deterministic startup finalization instead of reporting this durable
+        // commit as failed to the frontend.
+        let message = format!(
+            "Canonical Button state was saved, but pending-install cleanup was deferred: {error}"
+        );
+        eprintln!("{message}");
+        crate::append_flowcell_local_log("button_state.log", &message);
+    }
+
     if let Some((transaction_root, mut journal)) = transaction {
         journal.phase = SourceTransactionPhase::StateCommitted;
         if let Err(error) =
@@ -834,8 +865,9 @@ pub(crate) fn commit_button_state(
             let _ = error;
             drop(source_guard);
             drop(guard);
+            drop(bindings_guard);
             finalize_source_transaction_roots(&cleanup);
-            synchronize_child_hotkeys_after_commit(&app);
+            synchronize_tool_set_hotkeys_after_commit(&app);
             return match program_rename_post_commit_error {
                 Some(program_error) => Err(program_error),
                 None => Ok(()),
@@ -845,8 +877,9 @@ pub(crate) fn commit_button_state(
     }
     drop(source_guard);
     drop(guard);
+    drop(bindings_guard);
     finalize_source_transaction_roots(&cleanup);
-    synchronize_child_hotkeys_after_commit(&app);
+    synchronize_tool_set_hotkeys_after_commit(&app);
     match program_rename_post_commit_error {
         Some(error) => Err(error),
         None => Ok(()),

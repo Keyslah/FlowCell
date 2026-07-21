@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skin Author"
+  short_description: "Create valid FlowCell Button Editor skins"
+  default_prompt: "Use $skin-author to convert this visual button into a validated FlowCell Skin Editor paste block."

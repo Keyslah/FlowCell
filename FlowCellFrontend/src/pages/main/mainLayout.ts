@@ -453,8 +453,8 @@ export function buildButtonsSurfaceButtons(
       width: buttonsSurfaceGeometry.width,
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
-      label: "Add Script",
-      tooltip: "Add one or more script buttons to the selected panel.",
+      label: "Add Button",
+      tooltip: "Add script, tool-set, or page Button content to the selected panel.",
       actionId: "add-panel-script",
       allowRename: false
     },

@@ -17,6 +17,7 @@ BRIDGE_FOLDER_NAME = "blender_bridge_flowcell"
 REQUEST_FILE_NAME = "request.json"
 RESPONSE_FILE_NAME = "response.json"
 CUSTOM_ACTIONS_FILE_NAME = "flowcell_custom_actions.json"
+CUSTOM_ACTION_LIFECYCLE_REMOVAL_FOLDER_NAME = "lifecycle-removals"
 POLL_INTERVAL_SECONDS = 0.03
 LAST_REQUEST_ID = None
 LAST_BRIDGE_MESSAGE = ""
@@ -24,13 +25,9 @@ LAST_BRIDGE_DISPLAY = ""
 LIVE_TOOL_TIMER_MIN_INTERVAL_SECONDS = 0.01
 LIVE_TOOL_DEFAULT_INTERVAL_SECONDS = 0.10
 LIVE_TOOL_REGISTRY: dict[str, dict[str, object]] = {}
+CUSTOM_ACTION_LIFECYCLE_REGISTRY: dict[str, dict[str, object]] = {}
+CUSTOM_ACTION_LIFECYCLE_RETRY_AFTER: dict[str, float] = {}
 RUNTIME_STATUS_FILE_NAME = "flowcell_bridge_runtime_status.json"
-PROJECT_THEME_POLL_RESTORE_DONE_KEY = "flowcell_project_theme_poll_restore_done"
-PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY = "flowcell_project_theme_poll_restore_attempts"
-PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY = "flowcell_project_theme_poll_restore_next_time"
-PROJECT_THEME_POLL_RESTORE_MAX_ATTEMPTS = 240
-PROJECT_THEME_STARTUP_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
-PROJECT_THEME_RESTORE_CAPABILITY = "restore-project-theme-state"
 SMART_AXIS_LOCK_TOOL_ID = "smart_axis_lock"
 SMART_AXIS_SUPPORTED_TYPES = {"MESH", "CURVE", "SURFACE", "FONT", "META"}
 SMART_AXIS_AXES = "XYZ"
@@ -973,28 +970,6 @@ def load_custom_actions_registry() -> list[dict[str, object]]:
     return [entry for entry in actions_payload if isinstance(entry, dict)]
 
 
-def get_custom_action_names_for_capability(capability: str) -> list[str]:
-    normalized_capability = str(capability or "").strip().lower()
-    if not normalized_capability:
-        return []
-
-    matches: list[str] = []
-    for entry in load_custom_actions_registry():
-        bridge_data = entry.get("bridgeData", {})
-        if not isinstance(bridge_data, dict):
-            continue
-        capabilities = bridge_data.get("capabilities", [])
-        if not isinstance(capabilities, list) or not any(
-            str(value or "").strip().lower() == normalized_capability
-            for value in capabilities
-        ):
-            continue
-        action_name = str(entry.get("action", "")).strip().lower()
-        if action_name and action_name not in matches:
-            matches.append(action_name)
-    return matches
-
-
 def resolve_custom_action_script_path(python_path: str) -> Path:
     raw_path = str(python_path or "").strip()
     script_path = Path(raw_path).expanduser()
@@ -1012,6 +987,200 @@ def resolve_custom_action_script_path(python_path: str) -> Path:
         if candidate.exists():
             return candidate
     return candidates[0]
+
+
+def _custom_action_lifecycle_enabled(entry: dict[str, object]) -> bool:
+    bridge_data = entry.get("bridgeData", {})
+    if not isinstance(bridge_data, dict):
+        return False
+    lifecycle = bridge_data.get("lifecycle", False)
+    if lifecycle is True:
+        return True
+    return isinstance(lifecycle, dict) and lifecycle.get("enabled") is True
+
+
+def _custom_action_lifecycle_removal_token(entry: dict[str, object]) -> str:
+    bridge_data = entry.get("bridgeData", {})
+    if not isinstance(bridge_data, dict):
+        return ""
+    lifecycle = bridge_data.get("lifecycle", {})
+    if not isinstance(lifecycle, dict):
+        return ""
+    token = str(lifecycle.get("removalRequested", "") or "").strip()
+    if not token or len(token) > 128:
+        return ""
+    if any(not (character.isalnum() or character in {"-", "_"}) for character in token):
+        return ""
+    return token
+
+
+def _custom_action_lifecycle_key(entry: dict[str, object]) -> str:
+    owner_button_id = str(entry.get("ownerButtonId", "") or "").strip()
+    action_name = str(entry.get("action", "") or "").strip().lower()
+    return f"{owner_button_id}:{action_name}" if owner_button_id else action_name
+
+
+def _custom_action_lifecycle_signature(
+    entry: dict[str, object],
+    script_path: Path,
+) -> tuple[str, str, int, int]:
+    try:
+        file_stat = script_path.stat()
+        modified_ns = int(file_stat.st_mtime_ns)
+        file_size = int(file_stat.st_size)
+    except OSError:
+        modified_ns = 0
+        file_size = 0
+    return (
+        str(script_path.resolve()),
+        str(entry.get("functionName", "") or "").strip(),
+        modified_ns,
+        file_size,
+    )
+
+
+def _unregister_custom_action_lifecycle(key: str, reason: str) -> bool:
+    lifecycle = CUSTOM_ACTION_LIFECYCLE_REGISTRY.get(key)
+    if not isinstance(lifecycle, dict):
+        CUSTOM_ACTION_LIFECYCLE_RETRY_AFTER.pop(key, None)
+        return True
+    callback = lifecycle.get("unregister")
+    if not callable(callback):
+        CUSTOM_ACTION_LIFECYCLE_REGISTRY.pop(key, None)
+        CUSTOM_ACTION_LIFECYCLE_RETRY_AFTER.pop(key, None)
+        return True
+    try:
+        try:
+            callback_parameters = inspect.signature(callback).parameters.values()
+            accepts_reason = any(
+                parameter.name == "reason"
+                or parameter.kind == inspect.Parameter.VAR_KEYWORD
+                for parameter in callback_parameters
+            )
+        except (TypeError, ValueError):
+            accepts_reason = False
+        if accepts_reason:
+            callback(reason=reason)
+        else:
+            callback()
+        CUSTOM_ACTION_LIFECYCLE_REGISTRY.pop(key, None)
+        CUSTOM_ACTION_LIFECYCLE_RETRY_AFTER.pop(key, None)
+        return True
+    except Exception as exc:
+        _write_runtime_status(
+            "custom_action_lifecycle_unregister_error",
+            lifecycle_key=key,
+            error=str(exc),
+        )
+        register_callback = lifecycle.get("register")
+        if callable(register_callback):
+            try:
+                register_callback()
+            except Exception:
+                pass
+        return False
+
+
+def _write_custom_action_lifecycle_removal_ack(token: str, key: str) -> None:
+    removal_root = (
+        get_custom_actions_registry_path().parent
+        / CUSTOM_ACTION_LIFECYCLE_REMOVAL_FOLDER_NAME
+    )
+    removal_root.mkdir(parents=True, exist_ok=True)
+    ack_path = removal_root / f"{token}.json"
+    if ack_path.is_file():
+        return
+    ack_path.write_text(
+        json.dumps({"token": token, "lifecycleKey": key, "removed": True}, indent=2),
+        encoding="utf-8",
+    )
+
+
+def sync_custom_action_lifecycles() -> dict[str, int]:
+    desired: dict[str, tuple[dict[str, object], Path, tuple[str, str, int, int]]] = {}
+    removal_requests: dict[str, str] = {}
+    for entry in load_custom_actions_registry():
+        if not _custom_action_lifecycle_enabled(entry):
+            continue
+        key = _custom_action_lifecycle_key(entry)
+        removal_token = _custom_action_lifecycle_removal_token(entry)
+        if key and removal_token:
+            removal_requests[key] = removal_token
+            continue
+        python_path = str(entry.get("pythonPath", "") or "").strip()
+        if not key or not python_path:
+            continue
+        script_path = resolve_custom_action_script_path(python_path)
+        desired[key] = (entry, script_path, _custom_action_lifecycle_signature(entry, script_path))
+
+    removed_count = 0
+    for key in list(CUSTOM_ACTION_LIFECYCLE_REGISTRY):
+        desired_entry = desired.get(key)
+        current_signature = CUSTOM_ACTION_LIFECYCLE_REGISTRY[key].get("signature")
+        if desired_entry is not None and current_signature == desired_entry[2]:
+            continue
+        reason = "updated" if desired_entry is not None else "removed"
+        if _unregister_custom_action_lifecycle(key, reason):
+            removed_count += 1
+
+    for key, token in removal_requests.items():
+        if key not in CUSTOM_ACTION_LIFECYCLE_REGISTRY:
+            _write_custom_action_lifecycle_removal_ack(token, key)
+
+    registered_count = 0
+    now = time.monotonic()
+    for key, (_entry, script_path, signature) in desired.items():
+        if key in CUSTOM_ACTION_LIFECYCLE_REGISTRY:
+            continue
+        if now < CUSTOM_ACTION_LIFECYCLE_RETRY_AFTER.get(key, 0.0):
+            continue
+        try:
+            if not script_path.is_file():
+                raise ValueError(f"Custom action lifecycle script not found: {script_path}")
+            namespace = runpy.run_path(
+                str(script_path),
+                run_name=f"flowcell_lifecycle_{key.replace(':', '_')}",
+            )
+            register_callback = namespace.get("register_flowcell_action_lifecycle")
+            unregister_callback = namespace.get("unregister_flowcell_action_lifecycle")
+            if not callable(register_callback) or not callable(unregister_callback):
+                raise ValueError(
+                    "Lifecycle-enabled custom actions must expose callable "
+                    "register_flowcell_action_lifecycle and "
+                    "unregister_flowcell_action_lifecycle functions."
+                )
+            register_callback()
+            CUSTOM_ACTION_LIFECYCLE_REGISTRY[key] = {
+                "signature": signature,
+                "register": register_callback,
+                "unregister": unregister_callback,
+            }
+            CUSTOM_ACTION_LIFECYCLE_RETRY_AFTER.pop(key, None)
+            registered_count += 1
+        except Exception as exc:
+            CUSTOM_ACTION_LIFECYCLE_RETRY_AFTER[key] = now + 1.0
+            _write_runtime_status(
+                "custom_action_lifecycle_register_error",
+                lifecycle_key=key,
+                error=str(exc),
+            )
+
+    desired_keys = set(desired)
+    for key in list(CUSTOM_ACTION_LIFECYCLE_RETRY_AFTER):
+        if key not in desired_keys:
+            CUSTOM_ACTION_LIFECYCLE_RETRY_AFTER.pop(key, None)
+
+    return {
+        "registered": registered_count,
+        "removed": removed_count,
+        "active": len(CUSTOM_ACTION_LIFECYCLE_REGISTRY),
+    }
+
+
+def cleanup_custom_action_lifecycles(reason: str = "bridge-shutdown") -> None:
+    for key in list(CUSTOM_ACTION_LIFECYCLE_REGISTRY):
+        _unregister_custom_action_lifecycle(key, reason)
+    CUSTOM_ACTION_LIFECYCLE_RETRY_AFTER.clear()
 
 
 def _call_custom_action_callable(
@@ -1102,24 +1271,6 @@ def execute_custom_action(normalized_action: str, data: dict) -> dict[str, objec
     return None
 
 
-def execute_custom_action_for_capability(
-    capability: str,
-    data: dict,
-) -> dict[str, object] | None:
-    last_error: Exception | None = None
-    for action_name in get_custom_action_names_for_capability(capability):
-        try:
-            result = execute_custom_action(action_name, data)
-        except Exception as exc:
-            last_error = exc
-            continue
-        if result is not None:
-            return result
-    if last_error is not None:
-        raise last_error
-    return None
-
-
 def get_request_path() -> Path:
     return get_bridge_directory() / REQUEST_FILE_NAME
 
@@ -1133,92 +1284,10 @@ def write_bridge_response(payload: dict) -> None:
     response_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _has_view3d_area() -> bool:
-    window_manager = getattr(bpy.context, "window_manager", None)
-    if window_manager is None:
-        return False
-    for window in getattr(window_manager, "windows", []) or []:
-        screen = getattr(window, "screen", None)
-        if screen is None:
-            continue
-        for area in getattr(screen, "areas", []) or []:
-            if getattr(area, "type", "") == "VIEW_3D":
-                return True
-    return False
-
-
-def _startup_place_picture_state_enabled() -> bool:
-    config_root = bpy.utils.user_resource("CONFIG", path="", create=True)
-    if not config_root:
-        return False
-    state_path = Path(config_root) / PROJECT_THEME_STARTUP_STATE_FILE_NAME
-    if not state_path.is_file():
-        return False
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8-sig"))
-    except Exception:
-        return False
-    if not isinstance(state, dict):
-        return False
-    place_picture = state.get("place_picture", {})
-    if not isinstance(place_picture, dict) or not bool(place_picture.get("enabled")):
-        return False
-    return bool(str(place_picture.get("path") or place_picture.get("relative_path") or "").strip())
-
-
-def _maybe_restore_startup_place_picture() -> None:
-    namespace = bpy.app.driver_namespace
-    if bool(namespace.get(PROJECT_THEME_POLL_RESTORE_DONE_KEY)):
-        return
-
-    now = time.monotonic()
-    next_time = float(namespace.get(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, 0.0) or 0.0)
-    if now < next_time:
-        return
-
-    attempts = int(namespace.get(PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY, 0) or 0)
-    if attempts >= PROJECT_THEME_POLL_RESTORE_MAX_ATTEMPTS:
-        namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
-        namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
-        _write_runtime_status("startup_place_picture_restore_retry_limit")
-        return
-
-    namespace[PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY] = attempts + 1
-    namespace[PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY] = now + 0.5
-
-    if not _startup_place_picture_state_enabled() or not _has_view3d_area():
-        return
-
-    try:
-        runtime_state = execute_custom_action_for_capability(
-            PROJECT_THEME_RESTORE_CAPABILITY,
-            {"command": "read_place_picture_runtime_state"},
-        )
-        if isinstance(runtime_state, dict) and bool(runtime_state.get("place_picture_runtime_enabled")):
-            namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
-            namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
-            _write_runtime_status("startup_place_picture_already_restored")
-            return
-
-        result = execute_custom_action_for_capability(
-            PROJECT_THEME_RESTORE_CAPABILITY,
-            {"command": "restore_project_startup_state"},
-        )
-        if isinstance(result, dict) and bool(result.get("restored_place_picture")):
-            namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
-            namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
-            _write_runtime_status(
-                "startup_place_picture_restored",
-                message=str(result.get("message", "") or ""),
-            )
-    except Exception as exc:
-        _write_runtime_status("startup_place_picture_restore_error", error=str(exc))
-
-
 def poll_bridge_requests() -> float:
     global LAST_REQUEST_ID
 
-    _maybe_restore_startup_place_picture()
+    sync_custom_action_lifecycles()
 
     request_path = get_request_path()
     if not request_path.exists():

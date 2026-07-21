@@ -2,8 +2,9 @@ use super::install::{
     build_response, install_from_path, InstallButtonSourceRequest, InstallButtonSourceResponse,
 };
 use super::manifest::{
-    load_program_manifest, resolve_manifest_folder, resolve_relative_manifest_path,
-    BundledSourceManifest, ProgramManifest,
+    load_enabled_program_contributions, load_program_manifest, resolve_manifest_folder,
+    resolve_relative_manifest_path, write_enabled_program_contributions, BundledSourceManifest,
+    EnabledProgramContribution, EnabledProgramContributions, ProgramManifest,
 };
 use super::records::{
     active_record_file_name, read_active_record, recover_active_records_in_directory,
@@ -118,6 +119,7 @@ struct ProgramInventory {
     manifest: ProgramManifest,
     program_root: PathBuf,
     records: Vec<ActiveRecordEntry>,
+    enabled_sources: BTreeMap<String, EnabledProgramContribution>,
 }
 
 fn fnv1a_64(value: &[u8]) -> u64 {
@@ -147,7 +149,7 @@ fn owner_segment(value: &str) -> String {
     result
 }
 
-fn deterministic_bundled_owner_id(program_id: &str, bundled_source_id: &str) -> String {
+pub(crate) fn deterministic_bundled_owner_id(program_id: &str, bundled_source_id: &str) -> String {
     let canonical_identity = format!(
         "{}\0{}",
         program_id.trim().to_ascii_lowercase(),
@@ -167,8 +169,8 @@ fn deterministic_bundled_owner_id(program_id: &str, bundled_source_id: &str) -> 
     )
 }
 
-fn should_install_missing(source: &BundledSourceManifest, include_starters: bool) -> bool {
-    source.install_if_missing || (include_starters && source.install_on_add)
+fn should_install_missing(source: &BundledSourceManifest) -> bool {
+    source.install_if_missing
 }
 
 fn select_existing_record(
@@ -389,9 +391,38 @@ fn load_active_records(
     Ok(records)
 }
 
+fn initialize_enabled_state_from_active(
+    manifest: &ProgramManifest,
+    records: &[ActiveRecordEntry],
+) -> Result<EnabledProgramContributions, String> {
+    let views = records
+        .iter()
+        .map(RecordMatchView::from)
+        .collect::<Vec<_>>();
+    let mut enabled_sources = Vec::new();
+    for source in &manifest.bundled_sources {
+        let existing = select_existing_record(source, &views)?;
+        let index = match existing {
+            ExistingMatch::Current(index) | ExistingMatch::Update(index) => index,
+            ExistingMatch::Missing => continue,
+        };
+        enabled_sources.push(EnabledProgramContribution {
+            source_id: source.id.clone(),
+            panel_name: records[index].record.panel_name.clone(),
+            version: source.version.clone(),
+        });
+    }
+    Ok(EnabledProgramContributions {
+        schema_version: 1,
+        program_id: manifest.program_id.clone(),
+        program_name: manifest.label.clone(),
+        enabled_sources,
+    })
+}
+
 fn plan_registered_program_sources(
     registered_programs: &[String],
-    include_starters: bool,
+    _include_starters: bool,
 ) -> Result<Vec<BundledSourcePlan>, String> {
     let mut plans = Vec::new();
     let mut claimed_owners = BTreeMap::<String, String>::new();
@@ -401,6 +432,19 @@ fn plan_registered_program_sources(
         let manifest = load_program_manifest(program_name)?;
         let program_root = crate::resolve_program_directory(program_name)?;
         let records = load_active_records(&program_root, &manifest)?;
+        let enabled_state = match load_enabled_program_contributions(&manifest)? {
+            Some(state) => state,
+            None => {
+                let state = initialize_enabled_state_from_active(&manifest, &records)?;
+                write_enabled_program_contributions(&manifest, state.clone())?;
+                state
+            }
+        };
+        let enabled_sources = enabled_state
+            .enabled_sources
+            .into_iter()
+            .map(|source| (source.source_id.to_ascii_lowercase(), source))
+            .collect::<BTreeMap<_, _>>();
         for entry in &records {
             let owner = entry.record.owner_button_id.to_ascii_lowercase();
             if let Some((previous_program, previous_label)) =
@@ -421,6 +465,7 @@ fn plan_registered_program_sources(
             manifest,
             program_root,
             records,
+            enabled_sources,
         });
     }
     for inventory in inventories {
@@ -429,17 +474,23 @@ fn plan_registered_program_sources(
             manifest,
             program_root,
             records,
+            enabled_sources,
         } = inventory;
         let views = records
             .iter()
             .map(RecordMatchView::from)
             .collect::<Vec<_>>();
         for source in &manifest.bundled_sources {
-            let source_path = resolve_bundled_source_path(&program_root, source)?;
-            let action = match select_existing_record(source, &views)? {
+            let Some(enabled) = enabled_sources.get(&source.id.to_ascii_lowercase()) else {
+                continue;
+            };
+            let mut source = source.clone();
+            source.panel_name = enabled.panel_name.clone();
+            let source_path = resolve_bundled_source_path(&program_root, &source)?;
+            let action = match select_existing_record(&source, &views)? {
                 ExistingMatch::Current(index) => PlannedAction::Current(records[index].clone()),
                 ExistingMatch::Update(index) => PlannedAction::Update(records[index].clone()),
-                ExistingMatch::Missing if should_install_missing(source, include_starters) => {
+                ExistingMatch::Missing if should_install_missing(&source) => {
                     PlannedAction::Install(deterministic_bundled_owner_id(
                         &manifest.program_id,
                         &source.id,
@@ -481,7 +532,7 @@ fn plan_registered_program_sources(
             plans.push(BundledSourcePlan {
                 program_name: program_name.clone(),
                 manifest: manifest.clone(),
-                source: source.clone(),
+                source,
                 source_path,
                 action,
             });
@@ -649,26 +700,31 @@ pub(crate) fn synchronize_bundled_program_sources(
 #[cfg(test)]
 mod tests {
     use super::{
-        deterministic_bundled_owner_id, resolve_bundled_source_path, select_existing_record,
-        should_install_missing, synchronize_registered_program_sources, ExistingMatch,
-        RecordMatchView,
+        deterministic_bundled_owner_id, initialize_enabled_state_from_active,
+        resolve_bundled_source_path, select_existing_record, should_install_missing,
+        synchronize_registered_program_sources, ActiveRecordEntry, ExistingMatch, RecordMatchView,
     };
-    use crate::program_sources::manifest::BundledSourceManifest;
-    use crate::program_sources::records::validate_owner_button_id;
+    use crate::program_sources::manifest::{BundledSourceManifest, ProgramManifest};
+    use crate::program_sources::records::{validate_owner_button_id, ActiveSourceRecord};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn bundled_source() -> BundledSourceManifest {
         BundledSourceManifest {
-            id: "illustrator.layers-tree".to_string(),
+            id: "example.page".to_string(),
             version: "2.0.0".to_string(),
-            panel_name: "Layers Builder".to_string(),
-            source_path: "Illustrator Git Scripts/LayersBuilder".to_string(),
+            panel_name: "Tools".to_string(),
+            source_path: "Example Git Scripts/Page".to_string(),
             import_kind: "script".to_string(),
             install_if_missing: true,
             install_on_add: false,
-            legacy_match_label: Some("Layers".to_string()),
+            display_label: String::new(),
+            source_kind: String::new(),
+            required: false,
+            dependencies: Vec::new(),
+            install_effects: Vec::new(),
+            legacy_match_label: Some("Page".to_string()),
             legacy_match_kind: Some("script".to_string()),
         }
     }
@@ -676,11 +732,11 @@ mod tests {
     fn record(owner: &str, version: Option<&str>) -> RecordMatchView {
         RecordMatchView {
             owner_button_id: owner.to_string(),
-            panel_name: "Layers Builder".to_string(),
-            label: "Layers".to_string(),
+            panel_name: "Tools".to_string(),
+            label: "Page".to_string(),
             kind: "script".to_string(),
-            source_display_leaf: "LayersBuilder".to_string(),
-            bundled_source_id: version.map(|_| "illustrator.layers-tree".to_string()),
+            source_display_leaf: "Page".to_string(),
+            bundled_source_id: version.map(|_| "example.page".to_string()),
             bundled_source_version: version.map(str::to_string),
         }
     }
@@ -695,14 +751,11 @@ mod tests {
 
     #[test]
     fn deterministic_owner_ids_are_stable_and_valid() {
-        let first = deterministic_bundled_owner_id("illustrator", "illustrator.layers-tree");
-        let same = deterministic_bundled_owner_id("Illustrator", "ILLUSTRATOR.LAYERS-TREE");
-        let other = deterministic_bundled_owner_id("illustrator", "illustrator.other");
+        let first = deterministic_bundled_owner_id("example", "example.page");
+        let same = deterministic_bundled_owner_id("Example", "EXAMPLE.PAGE");
+        let other = deterministic_bundled_owner_id("example", "example.other");
         assert_eq!(first, same);
-        assert_eq!(
-            first,
-            "bundled-illustrator-illustrator-layers-tree-2dd32ecfe030922c"
-        );
+        assert!(first.starts_with("bundled-example-example-page-"));
         assert_ne!(first, other);
         assert_eq!(validate_owner_button_id(&first).unwrap(), first);
     }
@@ -755,15 +808,82 @@ mod tests {
     }
 
     #[test]
-    fn starter_defaults_install_only_during_add_program_sync() {
+    fn starter_defaults_never_trigger_startup_repair() {
         let mut source = bundled_source();
         source.install_if_missing = false;
         source.install_on_add = true;
-        assert!(!should_install_missing(&source, false));
-        assert!(should_install_missing(&source, true));
+        assert!(!should_install_missing(&source));
 
         source.install_on_add = false;
         source.install_if_missing = true;
-        assert!(should_install_missing(&source, false));
+        assert!(should_install_missing(&source));
+    }
+
+    #[test]
+    fn first_enabled_state_infers_only_an_existing_active_bundled_owner() {
+        let manifest = serde_json::from_value::<ProgramManifest>(serde_json::json!({
+            "schemaVersion": 1,
+            "programId": "example",
+            "label": "Example",
+            "programType": "native",
+            "defaultPanels": ["Tools"],
+            "processNames": ["example.exe"],
+            "gitScriptsFolder": "Example Git Scripts",
+            "panelsFolder": "Panels",
+            "localScriptsFolder": "Example Local Scripts",
+            "supportScriptsFolder": "Support",
+            "bundledSources": [{
+                "id": "example.page",
+                "version": "2.0.0",
+                "panelName": "Tools",
+                "sourcePath": "Example Git Scripts/Page",
+                "importKind": "script",
+                "installIfMissing": true
+            }],
+            "runner": { "kind": "file" }
+        }))
+        .expect("manifest schema");
+        let empty = initialize_enabled_state_from_active(&manifest, &[]).expect("empty inference");
+        assert!(empty.enabled_sources.is_empty());
+
+        let source = manifest
+            .bundled_sources
+            .iter()
+            .find(|source| source.id == "example.page")
+            .expect("page declaration");
+        let owner = deterministic_bundled_owner_id(&manifest.program_id, &source.id);
+        let records = vec![ActiveRecordEntry {
+            file_name: format!("{owner}.flowcell-source.json"),
+            record: ActiveSourceRecord {
+                schema_version: 1,
+                owner_button_id: owner.clone(),
+                install_id: owner,
+                program_id: manifest.program_id.clone(),
+                program_name: manifest.label.clone(),
+                panel_name: source.panel_name.clone(),
+                label: "Example Page".to_string(),
+                tooltip: String::new(),
+                kind: "script".to_string(),
+                local_package_path: String::new(),
+                source_path: String::new(),
+                runner: manifest.runner.kind.clone(),
+                runner_data: None,
+                execution_target: None,
+                bridge_action: String::new(),
+                bridge_data: None,
+                events: None,
+                children: Vec::new(),
+                layout: None,
+                page: None,
+                source_display_path: source.source_path.clone(),
+                bundled_source_id: Some(source.id.clone()),
+                bundled_source_version: Some("2.0.0".to_string()),
+            },
+        }];
+        let inferred =
+            initialize_enabled_state_from_active(&manifest, &records).expect("active inference");
+        assert_eq!(inferred.enabled_sources.len(), 1);
+        assert_eq!(inferred.enabled_sources[0].source_id, source.id);
+        assert_eq!(inferred.enabled_sources[0].version, source.version);
     }
 }

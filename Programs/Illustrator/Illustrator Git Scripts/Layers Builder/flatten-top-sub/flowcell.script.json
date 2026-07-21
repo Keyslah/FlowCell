@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.flatten-top-sub",
+  "label": "flatten top sub",
+  "tooltip": "Flatten artwork from highlighted layers into the topmost highlighted real sublayer.",
+  "program": "Illustrator",
+  "source": "flatten top sub.jsx"
+}

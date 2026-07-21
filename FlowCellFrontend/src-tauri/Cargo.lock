@@ -1053,11 +1053,13 @@ dependencies = [
  "rfd",
  "serde",
  "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-global-shortcut",
  "windows",
  "windows-sys 0.59.0",
+ "wry",
 ]
 
 [[package]]

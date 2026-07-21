@@ -17,6 +17,8 @@ export interface ButtonInspectorProps {
   skins: readonly ButtonSkin[];
   onButtonChange: (patch: Partial<ButtonRecord>, coalesceKey?: string) => void;
   onPlacementChange: (patch: Partial<ButtonPlacement>, coalesceKey?: string) => void;
+  allSurfaceButtonsSameSize: boolean;
+  onAllSurfaceButtonsSameSizeChange: (enabled: boolean) => void;
   onActivationAnimationChange: (
     presetId: ButtonActivationAnimationPresetId | null
   ) => void;
@@ -66,6 +68,8 @@ export function ButtonInspector({
   skins,
   onButtonChange,
   onPlacementChange,
+  allSurfaceButtonsSameSize,
+  onAllSurfaceButtonsSameSizeChange,
   onActivationAnimationChange,
   onConfigureActivationAnimation,
   activationAnimationEditorOpen,
@@ -103,7 +107,8 @@ export function ButtonInspector({
           <NumberField label="Width" minimum={1} value={placement.width} onChange={changeWidth} />
           <NumberField label="Height" minimum={1} value={placement.height} onChange={changeHeight} />
         </div>
-        <label className="button-editor-check"><input type="checkbox" checked={placement.matchHitboxToSkin} onChange={(event) => onPlacementChange({ matchHitboxToSkin: event.currentTarget.checked })} /><span>Match hitbox to skin</span></label>
+        <label className="button-editor-check"><input type="checkbox" checked={allSurfaceButtonsSameSize} onChange={(event) => onAllSurfaceButtonsSameSizeChange(event.currentTarget.checked)} /><span>Use this size for every Button on this surface</span></label>
+        <label className="button-editor-check"><input type="checkbox" checked={placement.matchHitboxToSkin} disabled={allSurfaceButtonsSameSize} onChange={(event) => onPlacementChange({ matchHitboxToSkin: event.currentTarget.checked })} /><span>Match hitbox to skin</span></label>
         <label className="button-editor-check"><input type="checkbox" checked={placement.allowStretching} onChange={(event) => onPlacementChange({ allowStretching: event.currentTarget.checked })} /><span>Allow stretching</span></label>
       </section>
       <section>
@@ -189,7 +194,7 @@ export function ButtonInspector({
           />
         </label>
         <NumberField label="Minimum size when shrinking" minimum={1} value={placement.minimumFontSize} onChange={(minimumFontSize) => onPlacementChange({ minimumFontSize })} />
-        <label className="button-editor-check"><input type="checkbox" checked={placement.allowLabelResize} onChange={(event) => onPlacementChange({ allowLabelResize: event.currentTarget.checked })} /><span>Allow label changes to resize this placement</span></label>
+        <label className="button-editor-check"><input type="checkbox" checked={placement.allowLabelResize} disabled={allSurfaceButtonsSameSize} onChange={(event) => onPlacementChange({ allowLabelResize: event.currentTarget.checked })} /><span>Allow label changes to resize this placement</span></label>
       </section>
     </aside>
   );

@@ -1,3 +1,7 @@
+use super::installed_page::{
+    reject_package_source_reparse_point, reject_selected_source_reparse_point,
+    validate_and_normalize_page_manifest, InstalledPageManifest,
+};
 use super::manifest::{
     extension_is_allowed, load_program_manifest, normalize_import_kind, ProgramManifest,
 };
@@ -148,6 +152,8 @@ struct ScriptManifest {
     execution: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     execution_target: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    page: Option<InstalledPageManifest>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -167,49 +173,7 @@ fn default_toolset_kind() -> String {
     "toolset".to_string()
 }
 
-const CATALOG_CORE_ACTION_IDS: &[&str] = &[
-    "open-tool-page",
-    "sample-image-palette",
-    "save-tool-fields",
-    "load-tool-fields",
-    "load-legacy-tool-state",
-    "save-tool-package",
-    "open-tool-package",
-    "cycle-tool-package",
-    // Compatibility for installed records created before tool pages became a
-    // generic contribution. New packages should use open-tool-page.
-    "open-illustrator-layer-tree",
-    "open-window-grid",
-    "sample-blender-theme-image",
-    "save-blender-theme-fields",
-    "load-blender-theme-fields",
-];
-
-fn validate_legacy_field_transforms(
-    action_id: &str,
-    payload: &serde_json::Map<String, Value>,
-) -> Result<(), String> {
-    let Some(transforms) = payload.get("legacyFieldTransforms") else {
-        return Ok(());
-    };
-    let transforms = transforms
-        .as_object()
-        .ok_or_else(|| format!("{action_id} payload legacyFieldTransforms must be an object."))?;
-    let field_map = payload
-        .get("legacyFieldMap")
-        .and_then(Value::as_object)
-        .ok_or_else(|| {
-            format!("{action_id} payload legacyFieldTransforms requires legacyFieldMap.")
-        })?;
-    for (stored_field_id, transform) in transforms {
-        if !field_map.contains_key(stored_field_id) || transform.as_str() != Some("parse-number") {
-            return Err(format!(
-                "{action_id} payload legacyFieldTransforms must map legacyFieldMap keys to 'parse-number'."
-            ));
-        }
-    }
-    Ok(())
-}
+const CATALOG_CORE_ACTION_IDS: &[&str] = &["open-installed-page", "open-window-grid"];
 
 fn validate_core_execution_target(subject: &str, target: &Value) -> Result<(), String> {
     let object = target
@@ -234,6 +198,12 @@ fn validate_core_execution_target(subject: &str, target: &Value) -> Result<(), S
             "executionTarget for {subject} names unregistered catalog core action '{action_id}'."
         ));
     }
+    if action_id.eq_ignore_ascii_case("open-installed-page") {
+        return Err(
+            "open-installed-page is reserved for a validated flowcell.script.json page declaration."
+                .to_string(),
+        );
+    }
     if object
         .get("payload")
         .is_some_and(|value| !value.is_object())
@@ -246,128 +216,6 @@ fn validate_core_execution_target(subject: &str, target: &Value) -> Result<(), S
         return Err(format!(
             "executionTarget events for {subject} must be a JSON object."
         ));
-    }
-    if action_id.eq_ignore_ascii_case("open-tool-page") {
-        let payload = object
-            .get("payload")
-            .and_then(Value::as_object)
-            .ok_or_else(|| {
-                "open-tool-page requires a payload object with contributionId, renderer, and capability."
-                    .to_string()
-            })?;
-        for field in ["contributionId", "renderer", "capability"] {
-            if !payload
-                .get(field)
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.trim().is_empty())
-            {
-                return Err(format!(
-                    "open-tool-page payload requires a non-empty {field}."
-                ));
-            }
-        }
-    }
-    if ["save-tool-fields", "load-tool-fields"]
-        .iter()
-        .any(|registered| action_id.eq_ignore_ascii_case(registered))
-    {
-        let payload = object
-            .get("payload")
-            .and_then(Value::as_object)
-            .ok_or_else(|| format!("{action_id} requires a field-file contract payload."))?;
-        if !payload
-            .get("formatId")
-            .and_then(Value::as_str)
-            .is_some_and(|value| !value.trim().is_empty())
-        {
-            return Err(format!(
-                "{action_id} payload requires a non-empty formatId."
-            ));
-        }
-        if !payload.get("valueFields").is_some_and(|value| {
-            value.as_array().is_some_and(|values| {
-                !values.is_empty()
-                    && values
-                        .iter()
-                        .all(|value| value.as_str().is_some_and(|field| !field.trim().is_empty()))
-            })
-        }) {
-            return Err(format!(
-                "{action_id} payload requires non-empty string valueFields."
-            ));
-        }
-        validate_legacy_field_transforms(action_id, payload)?;
-    }
-    if action_id.eq_ignore_ascii_case("load-legacy-tool-state") {
-        let payload = object
-            .get("payload")
-            .and_then(Value::as_object)
-            .ok_or_else(|| "load-legacy-tool-state requires a payload object.".to_string())?;
-        for field in ["capability", "stateFileName", "expectedFormat"] {
-            if !payload
-                .get(field)
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.trim().is_empty())
-            {
-                return Err(format!(
-                    "load-legacy-tool-state payload requires a non-empty {field}."
-                ));
-            }
-        }
-    }
-    if [
-        "save-tool-package",
-        "open-tool-package",
-        "cycle-tool-package",
-    ]
-    .iter()
-    .any(|registered| action_id.eq_ignore_ascii_case(registered))
-    {
-        let payload = object
-            .get("payload")
-            .and_then(Value::as_object)
-            .ok_or_else(|| format!("{action_id} requires a package contract payload."))?;
-        for field in ["capability", "storageFolder", "formatId", "manifestSuffix"] {
-            if !payload
-                .get(field)
-                .and_then(Value::as_str)
-                .is_some_and(|value| !value.trim().is_empty())
-            {
-                return Err(format!("{action_id} payload requires a non-empty {field}."));
-            }
-        }
-        let value_fields = payload
-            .get("valueFields")
-            .and_then(Value::as_array)
-            .filter(|values| {
-                !values.is_empty()
-                    && values
-                        .iter()
-                        .all(|value| value.as_str().is_some_and(|field| !field.trim().is_empty()))
-            });
-        if value_fields.is_none() {
-            return Err(format!(
-                "{action_id} payload requires non-empty string valueFields."
-            ));
-        }
-        if !payload.get("assetFields").is_some_and(|value| {
-            value.as_array().is_some_and(|values| {
-                values
-                    .iter()
-                    .all(|value| value.as_str().is_some_and(|field| !field.trim().is_empty()))
-            })
-        }) {
-            return Err(format!("{action_id} payload requires string assetFields."));
-        }
-        validate_legacy_field_transforms(action_id, payload)?;
-        if action_id.eq_ignore_ascii_case("cycle-tool-package")
-            && !payload
-                .get("direction")
-                .and_then(Value::as_i64)
-                .is_some_and(|direction| matches!(direction, -1 | 1))
-        {
-            return Err("cycle-tool-package payload direction must be -1 or 1.".to_string());
-        }
     }
     Ok(())
 }
@@ -383,7 +231,58 @@ struct PreparedSource {
     events: Option<BTreeMap<String, Value>>,
     children: Vec<ActiveSourceChild>,
     layout: Option<Value>,
+    page: Option<InstalledPageManifest>,
     runner_data: Option<Value>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PreflightButtonSource {
+    pub label: String,
+    pub tooltip: String,
+    pub import_kind: String,
+    pub source_kind: String,
+    pub child_slots: Vec<String>,
+}
+
+pub(crate) fn preflight_button_source(
+    program_name: &str,
+    source_path: &Path,
+    import_kind: &str,
+) -> Result<PreflightButtonSource, String> {
+    reject_selected_source_reparse_point(source_path)?;
+    let source_path = source_path.canonicalize().map_err(|error| {
+        format!(
+            "Selected Button source '{}' could not be resolved: {error}",
+            source_path.display()
+        )
+    })?;
+    let requested_import_kind = normalize_import_kind(import_kind)?;
+    let resolved_import_kind = if requested_import_kind == "auto" {
+        detect_import_kind(&source_path)?
+    } else {
+        requested_import_kind
+    };
+    let manifest = load_program_manifest(program_name)?;
+    let prepared = prepare_source(&manifest, &source_path, resolved_import_kind)?;
+    let source_kind = if prepared.page.is_some() {
+        "page"
+    } else if prepared.children.is_empty() {
+        "script"
+    } else {
+        "tool-set"
+    };
+    Ok(PreflightButtonSource {
+        label: prepared.label,
+        tooltip: prepared.tooltip,
+        import_kind: resolved_import_kind.to_string(),
+        source_kind: source_kind.to_string(),
+        child_slots: prepared
+            .children
+            .iter()
+            .map(|child| child.slot.clone())
+            .collect(),
+    })
 }
 
 fn validate_update_shape(
@@ -471,6 +370,94 @@ fn ensure_relative_source_path(value: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+fn recognized_root_manifest(
+    folder: &Path,
+    manifest_file_name: &str,
+) -> Result<Option<PathBuf>, String> {
+    let mut matches = Vec::new();
+    for entry in fs::read_dir(folder).map_err(|error| {
+        format!(
+            "Failed to inspect source folder {}: {error}",
+            folder.display()
+        )
+    })? {
+        let entry = entry.map_err(|error| {
+            format!(
+                "Failed to inspect source folder {}: {error}",
+                folder.display()
+            )
+        })?;
+        if entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| name.eq_ignore_ascii_case(manifest_file_name))
+        {
+            let path = entry.path();
+            reject_selected_source_reparse_point(&path)?;
+            if !entry
+                .file_type()
+                .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?
+                .is_file()
+            {
+                return Err(format!(
+                    "Recognized source manifest path is not a file: {}.",
+                    path.display()
+                ));
+            }
+            matches.push(path);
+        }
+    }
+    match matches.len() {
+        0 => Ok(None),
+        1 => Ok(matches.pop()),
+        _ => Err(format!(
+            "Source folder '{}' contains multiple case-insensitive matches for {}.",
+            folder.display(),
+            manifest_file_name
+        )),
+    }
+}
+
+fn detect_import_kind(source_path: &Path) -> Result<&'static str, String> {
+    if source_path.is_file() {
+        let file_name = source_path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default();
+        if file_name.eq_ignore_ascii_case(SCRIPT_MANIFEST_FILE_NAME) {
+            return Ok("script");
+        }
+        if file_name.eq_ignore_ascii_case(TOOLSET_MANIFEST_FILE_NAME) {
+            return Ok("tool-set");
+        }
+        return Ok("script");
+    }
+    if !source_path.is_dir() {
+        return Err(format!(
+            "Selected Button source was not found: {}.",
+            source_path.display()
+        ));
+    }
+    let script_manifest = recognized_root_manifest(source_path, SCRIPT_MANIFEST_FILE_NAME)?;
+    let toolset_manifest = recognized_root_manifest(source_path, TOOLSET_MANIFEST_FILE_NAME)?;
+    match (script_manifest, toolset_manifest) {
+        (Some(_), None) => Ok("script"),
+        (None, Some(_)) => Ok("tool-set"),
+        (Some(_), Some(_)) => Err(format!(
+            "Source folder '{}' is ambiguous because it contains both {} and {}.",
+            source_path.display(),
+            SCRIPT_MANIFEST_FILE_NAME,
+            TOOLSET_MANIFEST_FILE_NAME
+        )),
+        (None, None) => Err(format!(
+            "Source folder '{}' contains neither {} nor {} at its root.",
+            source_path.display(),
+            SCRIPT_MANIFEST_FILE_NAME,
+            TOOLSET_MANIFEST_FILE_NAME
+        )),
+    }
+}
+
 fn prepare_source(
     manifest: &ProgramManifest,
     source_path: &Path,
@@ -510,7 +497,7 @@ fn prepare_source(
                 .unwrap_or(false)
         {
             return Err(format!(
-                "'{}' belongs to a tool-set package. Use Add Tool Set and select its {}.",
+                "'{}' belongs to a tool-set package. Use Add Button and select its {}.",
                 source_path.display(),
                 TOOLSET_MANIFEST_FILE_NAME
             ));
@@ -575,9 +562,29 @@ fn prepare_source(
                     ));
                 }
             }
+            if script.page.is_some() && script.execution_target.is_some() {
+                return Err(
+                    "A page-enabled script package cannot also declare executionTarget; FlowCell supplies its generic installed-page opener."
+                        .to_string(),
+                );
+            }
             if let Some(execution_target) = script.execution_target.as_ref() {
                 validate_core_execution_target("script package", execution_target)?;
             }
+            let mut page = script.page;
+            if let Some(page_manifest) = page.as_mut() {
+                validate_and_normalize_page_manifest(page_manifest, package_root, &manifest.label)?;
+            }
+            let execution_target = page
+                .as_ref()
+                .map(|page_manifest| {
+                    json!({
+                        "kind": "core-action",
+                        "actionId": "open-installed-page",
+                        "payload": { "pageId": page_manifest.id }
+                    })
+                })
+                .or(script.execution_target);
             let _manifest_id = script.id;
             return Ok(PreparedSource {
                 package_source_root: package_root.to_path_buf(),
@@ -586,10 +593,11 @@ fn prepare_source(
                 tooltip: script.tooltip.trim().to_string(),
                 kind: "script".to_string(),
                 bridge_data: script.bridge_data,
-                execution_target: script.execution_target,
+                execution_target,
                 events: script.events,
                 children: Vec::new(),
                 layout: None,
+                page,
                 runner_data: script.execution,
             });
         }
@@ -625,6 +633,7 @@ fn prepare_source(
             events: None,
             children: Vec::new(),
             layout: None,
+            page: None,
             runner_data: None,
         });
     }
@@ -734,6 +743,7 @@ fn prepare_source(
         events: toolset.events,
         children,
         layout: toolset.layout,
+        page: None,
         runner_data: toolset.execution,
     })
 }
@@ -767,6 +777,7 @@ fn copy_package_source(source: &Path, destination: &Path) -> Result<(), String> 
     {
         let entry =
             entry.map_err(|error| format!("Failed to inspect {}: {error}", source.display()))?;
+        reject_package_source_reparse_point(&entry.path())?;
         let file_type = entry
             .file_type()
             .map_err(|error| format!("Failed to inspect {}: {error}", entry.path().display()))?;
@@ -1738,19 +1749,38 @@ pub(crate) fn install_from_path(
     request: InstallButtonSourceRequest,
     replace_existing: bool,
 ) -> Result<InstallButtonSourceResponse, String> {
+    let source_guard = super::source_quarantine_guard()?;
+    install_from_path_while_source_locked(request, replace_existing, &source_guard)
+}
+
+/// Installs while the caller holds FlowCell's source-quarantine guard.
+///
+/// This is reserved for an outer transaction, such as Add Program, that must
+/// serialize several source installs under one uninterrupted ownership lane.
+pub(crate) fn install_from_path_while_source_locked(
+    request: InstallButtonSourceRequest,
+    replace_existing: bool,
+    _source_guard: &std::sync::MutexGuard<'static, ()>,
+) -> Result<InstallButtonSourceResponse, String> {
     let owner_button_id = validate_owner_button_id(&request.owner_button_id)?;
     let program_name = request.program_name.trim();
     let panel_name = crate::validate_folder_name(&request.panel_name, "Panel")?;
     let manifest = load_program_manifest(program_name)?;
     let program_root = crate::resolve_program_directory(program_name)?;
     let source_display_path = PathBuf::from(request.source_path.trim());
+    reject_selected_source_reparse_point(&source_display_path)?;
     let source_path = source_display_path.canonicalize().map_err(|error| {
         format!(
             "Selected Button source '{}' could not be resolved: {error}",
             source_display_path.display()
         )
     })?;
-    let import_kind = normalize_import_kind(&request.import_kind)?;
+    let requested_import_kind = normalize_import_kind(&request.import_kind)?;
+    let import_kind = if requested_import_kind == "auto" {
+        detect_import_kind(&source_path)?
+    } else {
+        requested_import_kind
+    };
     let bundled_identity = match (
         request.bundled_source_id.as_deref(),
         request.bundled_source_version.as_deref(),
@@ -1768,12 +1798,25 @@ pub(crate) fn install_from_path(
                         id.trim()
                     )
                 })?;
+            let enabled_destination_matches =
+                if declared.panel_name.eq_ignore_ascii_case(&panel_name) {
+                    true
+                } else {
+                    super::manifest::load_enabled_program_contributions(&manifest)?
+                        .map(|state| {
+                            state.enabled_sources.iter().any(|source| {
+                                source.source_id.eq_ignore_ascii_case(&declared.id)
+                                    && source.panel_name.eq_ignore_ascii_case(&panel_name)
+                            })
+                        })
+                        .unwrap_or(false)
+                };
             if declared.version != version.trim()
-                || !declared.panel_name.eq_ignore_ascii_case(&panel_name)
+                || !enabled_destination_matches
                 || declared.import_kind != import_kind
             {
                 return Err(format!(
-                    "Bundled source '{}@{}' does not match its declared version, panel, or import kind.",
+                    "Bundled source '{}@{}' does not match its declared version, enabled destination panel, or import kind.",
                     id.trim(),
                     version.trim()
                 ));
@@ -1807,7 +1850,6 @@ pub(crate) fn install_from_path(
         }
     };
     let prepared = prepare_source(&manifest, &source_path, import_kind)?;
-    let _source_guard = super::source_quarantine_guard()?;
     let local_root = program_root.join(&manifest.local_scripts_folder);
     let panel_root = program_root.join(&manifest.panels_folder).join(&panel_name);
     fs::create_dir_all(&local_root)
@@ -1954,6 +1996,7 @@ pub(crate) fn install_from_path(
         events: prepared.events,
         children: prepared.children,
         layout: prepared.layout,
+        page: prepared.page,
         source_display_path: source_path.to_string_lossy().to_string(),
         bundled_source_id: bundled_identity.as_ref().map(|(id, _)| id.clone()),
         bundled_source_version: bundled_identity.map(|(_, version)| version),
@@ -2084,6 +2127,15 @@ pub(crate) fn install_button_source(
     mut request: InstallButtonSourceRequest,
 ) -> Result<InstallButtonSourceResponse, String> {
     request.program_name = crate::require_registered_program_name(&request.program_name)?;
+    request.panel_name = crate::validate_folder_name(&request.panel_name, "Panel")?;
+    request.owner_button_id = validate_owner_button_id(&request.owner_button_id)?;
+    let pending_guard = super::source_quarantine_guard()?;
+    super::pending_install::prepare_pending_canonical_install(
+        &request.program_name,
+        &request.panel_name,
+        &request.owner_button_id,
+    )?;
+    drop(pending_guard);
     install_from_path(request, false)
 }
 
@@ -2142,13 +2194,14 @@ pub(crate) fn merge_toolset_payload(
 #[cfg(test)]
 mod tests {
     use super::{
-        blender_install_arguments, build_response, install_transaction_old_package,
-        merge_toolset_payload, path_relative_to_program, prepare_source,
-        preserve_runtime_directory, read_install_transaction_journal, recover_install_transaction,
-        recover_update_residues_with, update_residue_name, validate_core_execution_target,
-        validate_update_shape, write_install_transaction_journal, InstallTransactionJournal,
-        InstallTransactionPhase, PreparedSource, ScriptManifest, ToolsetManifest,
-        INSTALL_TRANSACTION_SCHEMA_VERSION, SCRIPT_MANIFEST_FILE_NAME, TOOLSET_MANIFEST_FILE_NAME,
+        blender_install_arguments, build_response, detect_import_kind,
+        install_transaction_old_package, merge_toolset_payload, path_relative_to_program,
+        prepare_source, preserve_runtime_directory, read_install_transaction_journal,
+        recover_install_transaction, recover_update_residues_with, update_residue_name,
+        validate_core_execution_target, validate_update_shape, write_install_transaction_journal,
+        InstallTransactionJournal, InstallTransactionPhase, PreparedSource, ScriptManifest,
+        ToolsetManifest, INSTALL_TRANSACTION_SCHEMA_VERSION, SCRIPT_MANIFEST_FILE_NAME,
+        TOOLSET_MANIFEST_FILE_NAME,
     };
     use crate::program_sources::manifest::{ProgramManifest, ProgramRunnerManifest};
     use crate::program_sources::records::{
@@ -2156,7 +2209,7 @@ mod tests {
         ActiveSourceRecord, LocalInstallRecord, INSTALL_RECORD_FILE_NAME,
     };
     use crate::program_sources::transaction::AtomicWriteMode;
-    use serde_json::json;
+    use serde_json::{json, Value};
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -2191,6 +2244,113 @@ mod tests {
         }
     }
 
+    #[test]
+    fn auto_import_detection_is_exact_and_root_scoped() {
+        let root = temporary_test_root("auto-import-detection");
+        fs::create_dir_all(root.join("nested")).expect("create source folders");
+        let raw_script = root.join("standalone.ps1");
+        fs::write(&raw_script, "# standalone\n").expect("write raw script");
+        assert_eq!(
+            detect_import_kind(&raw_script).expect("detect raw script"),
+            "script"
+        );
+
+        fs::write(root.join(SCRIPT_MANIFEST_FILE_NAME), "{}").expect("write script manifest");
+        fs::write(root.join("nested").join(TOOLSET_MANIFEST_FILE_NAME), "{}")
+            .expect("write nested tool-set manifest");
+        assert_eq!(
+            detect_import_kind(&root).expect("detect root script manifest"),
+            "script"
+        );
+
+        fs::write(root.join(TOOLSET_MANIFEST_FILE_NAME), "{}")
+            .expect("write root tool-set manifest");
+        let error = detect_import_kind(&root).expect_err("dual manifests must be rejected");
+        assert!(error.contains("ambiguous"));
+
+        fs::remove_file(root.join(SCRIPT_MANIFEST_FILE_NAME)).expect("remove script manifest");
+        assert_eq!(
+            detect_import_kind(&root).expect("detect root tool-set manifest"),
+            "tool-set"
+        );
+        assert_eq!(
+            detect_import_kind(&root.join(TOOLSET_MANIFEST_FILE_NAME))
+                .expect("detect selected tool-set manifest"),
+            "tool-set"
+        );
+
+        fs::remove_file(root.join(TOOLSET_MANIFEST_FILE_NAME)).expect("remove tool-set manifest");
+        let error = detect_import_kind(&root).expect_err("manifest-free folder must be rejected");
+        assert!(error.contains("neither"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn page_enabled_script_uses_only_the_generic_installed_page_opener() {
+        let root = temporary_test_root("page-enabled-script");
+        fs::create_dir_all(root.join("page")).expect("create page package");
+        fs::write(root.join("entry.ps1"), "# entry\n").expect("write script entry");
+        fs::write(root.join("page/index.html"), "<main>Page</main>").expect("write page entry");
+        fs::write(
+            root.join(SCRIPT_MANIFEST_FILE_NAME),
+            r#"{
+                "schemaVersion": 1,
+                "id": "windows.page-test",
+                "label": "Page Test",
+                "program": "Windows",
+                "source": "entry.ps1",
+                "page": {
+                    "schemaVersion": 1,
+                    "id": "windows.page-test",
+                    "program": "Windows",
+                    "label": "Page Test",
+                    "tooltip": "",
+                    "entry": "page/index.html",
+                    "scripts": [],
+                    "styles": [],
+                    "assets": [],
+                    "window": {
+                        "title": "Page Test",
+                        "width": 480,
+                        "height": 360,
+                        "minWidth": 320,
+                        "minHeight": 240
+                    },
+                    "actions": [],
+                    "capabilities": [],
+                    "ownerStateFormat": "windows.page-test.v1",
+                    "supportedDataFormats": [],
+                    "refreshEvents": []
+                }
+            }"#,
+        )
+        .expect("write page manifest");
+
+        let prepared = prepare_source(&windows_manifest(), &root, "script")
+            .expect("prepare page-enabled script");
+        assert_eq!(
+            prepared.page.as_ref().map(|page| page.id.as_str()),
+            Some("windows.page-test")
+        );
+        assert_eq!(
+            prepared
+                .execution_target
+                .as_ref()
+                .and_then(|target| target.get("actionId"))
+                .and_then(Value::as_str),
+            Some("open-installed-page")
+        );
+        assert_eq!(
+            prepared
+                .execution_target
+                .as_ref()
+                .and_then(|target| target.pointer("/payload/pageId"))
+                .and_then(Value::as_str),
+            Some("windows.page-test")
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
     fn record() -> ActiveSourceRecord {
         ActiveSourceRecord {
             schema_version: 1,
@@ -2218,6 +2378,7 @@ mod tests {
                 execution_target: None,
             }],
             layout: None,
+            page: None,
             source_display_path: String::new(),
             bundled_source_id: None,
             bundled_source_version: None,
@@ -2231,6 +2392,7 @@ mod tests {
             label: "Windows".into(),
             program_type: "local-script".into(),
             default_panels: vec!["Files".into(), "Utility".into()],
+            panels: Vec::new(),
             process_names: vec!["explorer".into()],
             exe_path: "explorer.exe".into(),
             bind_scoped_native_owner: false,
@@ -2285,6 +2447,7 @@ mod tests {
                 events: None,
                 children: Vec::new(),
                 layout: None,
+                page: None,
                 source_display_path: format!("C:\\source\\{label}.ps1"),
                 bundled_source_id: None,
                 bundled_source_version: None,
@@ -2522,7 +2685,7 @@ mod tests {
             Ok(_) => panic!("script import must reject a tool-set entry"),
             Err(error) => error,
         };
-        assert!(error.contains("Use Add Tool Set"));
+        assert!(error.contains("Use Add Button"));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -2566,6 +2729,7 @@ mod tests {
             events: None,
             children: previous.children.clone(),
             layout: None,
+            page: None,
             runner_data: None,
         };
         assert!(validate_update_shape(&previous, &prepared).is_ok());
@@ -2603,8 +2767,8 @@ mod tests {
             Path::new("Install-BlenderFlowCellButtons.ps1"),
             "button_1",
             "Tools",
-            Path::new("theme.py"),
-            Some(&json!({"capabilities":["restore-project-theme-state"]})),
+            Path::new("tool.py"),
+            Some(&json!({"capabilities":["example-capability"]})),
         )
         .expect("arguments");
         let value_index = arguments
@@ -2614,30 +2778,27 @@ mod tests {
             + 1;
         let bridge_data: serde_json::Value =
             serde_json::from_str(&arguments[value_index]).expect("bridgeData JSON");
-        assert_eq!(
-            bridge_data["capabilities"],
-            json!(["restore-project-theme-state"])
-        );
+        assert_eq!(bridge_data["capabilities"], json!(["example-capability"]));
     }
 
     #[test]
     fn script_core_action_receives_installed_owner_identity() {
         let mut source = record();
-        source.program_id = "illustrator".into();
-        source.program_name = "Illustrator".into();
-        source.panel_name = "Layers".into();
-        source.runner = "illustrator-direct".into();
+        source.program_id = "windows".into();
+        source.program_name = "Windows".into();
+        source.panel_name = "Files".into();
+        source.runner = "file".into();
         source.kind = "script".into();
         source.children.clear();
         source.execution_target = Some(json!({
             "kind": "core-action",
-            "actionId": "open-illustrator-layer-tree"
+            "actionId": "open-window-grid"
         }));
         let response = build_response(&source, "button_1.flowcell-source.json".into());
         let target = response.owner.execution_target.expect("execution target");
         assert_eq!(target["kind"], "core-action");
-        assert_eq!(target["payload"]["programName"], "Illustrator");
-        assert_eq!(target["payload"]["panelName"], "Layers");
+        assert_eq!(target["payload"]["programName"], "Windows");
+        assert_eq!(target["payload"]["panelName"], "Files");
         assert_eq!(
             target["payload"]["fileName"],
             "button_1.flowcell-source.json"
@@ -2652,23 +2813,14 @@ mod tests {
         source.panel_name = "toolset".into();
         source.children[0].execution_target = Some(json!({
             "kind": "core-action",
-            "actionId": "save-tool-package",
-            "payload": {
-                "capability": "package-library",
-                "storageFolder": "packages",
-                "formatId": "theme",
-                "manifestSuffix": ".package.json",
-                "valueFields": ["color"],
-                "assetFields": []
-            }
+            "actionId": "open-window-grid"
         }));
-        let response = build_response(&source, "theme.flowcell-source.json".into());
+        let response = build_response(&source, "tools.flowcell-source.json".into());
         let target = &response.children[0].execution_target;
         assert_eq!(target["payload"]["programName"], "Blender");
         assert_eq!(target["payload"]["panelName"], "toolset");
-        assert_eq!(target["payload"]["fileName"], "theme.flowcell-source.json");
+        assert_eq!(target["payload"]["fileName"], "tools.flowcell-source.json");
         assert_eq!(target["payload"]["ownerButtonId"], source.owner_button_id);
-        assert_eq!(target["payload"]["formatId"], "theme");
     }
 
     #[test]
@@ -2677,71 +2829,26 @@ mod tests {
             "script package",
             &json!({
                 "kind": "core-action",
-                "actionId": "open-tool-page",
-                "payload": {
-                    "contributionId": "illustrator.layer-tree",
-                    "renderer": "tree-inspector",
-                    "capability": "illustrator-layer-tree"
-                }
-            })
-        )
-        .is_ok());
-        assert!(validate_core_execution_target(
-            "tool-set child",
-            &json!({
-                "kind": "core-action",
-                "actionId": "save-tool-package",
-                "payload": {
-                    "capability": "package-library",
-                    "storageFolder": "packages",
-                    "formatId": "sample",
-                    "manifestSuffix": ".package.json",
-                    "valueFields": ["color"],
-                    "assetFields": []
-                }
-            })
-        )
-        .is_ok());
-        assert!(validate_core_execution_target(
-            "tool-set child",
-            &json!({
-                "kind": "core-action",
-                "actionId": "save-tool-package",
-                "payload": {
-                    "capability": "package-library",
-                    "storageFolder": "packages",
-                    "formatId": "sample",
-                    "manifestSuffix": ".package.json",
-                    "assetFields": []
-                }
-            })
-        )
-        .is_err());
-        assert!(validate_core_execution_target(
-            "script package",
-            &json!({
-                "kind": "core-action",
-                "actionId": "open-tool-page",
-                "payload": { "renderer": "tree-inspector" }
-            })
-        )
-        .is_err());
-        assert!(validate_core_execution_target(
-            "script package",
-            &json!({
-                "kind": "core-action",
-                "actionId": "open-illustrator-layer-tree"
-            })
-        )
-        .is_ok());
-        assert!(validate_core_execution_target(
-            "script package",
-            &json!({
-                "kind": "core-action",
                 "actionId": "open-window-grid"
             })
         )
         .is_ok());
+        for retired_action in [
+            "open-tool-page",
+            "open-illustrator-layer-tree",
+            "sample-blender-theme-image",
+            "save-blender-theme-fields",
+            "load-blender-theme-fields",
+        ] {
+            assert!(validate_core_execution_target(
+                "script package",
+                &json!({
+                    "kind": "core-action",
+                    "actionId": retired_action
+                })
+            )
+            .is_err());
+        }
         assert!(validate_core_execution_target(
             "script package",
             &json!({

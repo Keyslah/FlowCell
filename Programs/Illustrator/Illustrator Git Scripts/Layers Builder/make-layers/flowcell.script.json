@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.make-layers",
+  "label": "make layers",
+  "tooltip": "Create and order the Live, Snapshots, 3D, Trash, and Archive root layers.",
+  "program": "Illustrator",
+  "source": "make layers.jsx"
+}

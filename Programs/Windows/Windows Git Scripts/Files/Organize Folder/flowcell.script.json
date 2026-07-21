@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "windows.organize-folder",
-  "label": "Organize Folder",
-  "tooltip": "Organize the copied project folder path with this Button package's owned organizer core.",
-  "program": "Windows",
-  "source": "organize_folder.ps1"
-}

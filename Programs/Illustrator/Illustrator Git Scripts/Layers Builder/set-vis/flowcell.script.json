@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.set-vis",
+  "label": "set vis",
+  "tooltip": "Restore the active document's complete layer visibility baseline; no Layer Tree highlight required.",
+  "program": "Illustrator",
+  "source": "set vis.jsx"
+}

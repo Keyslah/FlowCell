@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "windows.new-organization-profile-template",
-  "label": "New Organization Profile Template",
-  "tooltip": "Run the selected or configured organization profile from a complete owned Button package.",
-  "program": "Windows",
-  "source": "new_organization_profile_template.ps1"
-}

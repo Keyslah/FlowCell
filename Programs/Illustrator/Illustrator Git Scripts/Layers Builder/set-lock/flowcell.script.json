@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.set-lock",
+  "label": "set lock",
+  "tooltip": "Restore the active document's complete layer lock baseline; no Layer Tree highlight required.",
+  "program": "Illustrator",
+  "source": "set lock.jsx"
+}

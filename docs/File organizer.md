@@ -1,86 +1,91 @@
-# Organization Profiles
+# Setup Organization Page Package
 
-Organization Profiles define the dynamic Windows Files organization workflow.
+Setup Organization is an ordinary page-enabled Windows Button package at:
 
-## Profile Storage
+`Programs/Windows/Windows Git Scripts/Files/Setup Organization/`
 
-- Setup Organization saves the active project's profile to
-  `<project root>/organize-folder.profile.json`, alongside the other visible
-  `organize-folder.*` sidecars. Older
-  `.flowcell/organization-profile.json` files remain a read fallback and migrate
-  to the visible file on the next save.
-- Save Profile stores the empty folder skeleton at
-  `flowcellbackend/local/Folder Trees/<profile name>/` and stores roles,
-  file-type assignments, and other profile data separately at
-  `flowcellbackend/local/Folder Tree Profiles/<profile name>.json`.
-- Each profile stores one project root plus role rows. A role has a stable role
-  ID, allowed file types, and a destination folder relative to the project root.
+Its `flowcell.script.json` owns the page HTML/CSS/JavaScript, strict action and
+data schemas, PowerShell capability adapter, generated-Button template, and
+window/config metadata. Add Button or the Windows Add Program contribution plan
+copies that complete package into
+`Programs/Windows/Windows Local Scripts/<ownerButtonId>/source/`; the installed
+copy is the runtime source of truth. FlowCell Core supplies only the generic
+installed-page sandbox, broker, source installer, and deletion transaction.
 
-## Editing A Profile
+## Page Workflow
 
-- The Load profile rail loads a saved profile's roles without changing the
-  current project root.
-- Copy root to profile mirrors the current root's folder structure into an
-  unsaved scratch profile tree. It writes nothing until Save Profile.
-- Only one folder is selected across the Project tree and profile tree.
-  Selecting a folder in either tree shows that folder's assignments in the
-  editor.
-- Add Folder targets the active tree. In the Project tree it creates the folder
-  under the project root. In a loaded profile it creates the folder in that
-  profile's saved skeleton. In an unsaved scratch profile it changes only the
-  in-memory tree until Save Profile.
-- Save Profile and Apply to profile re-save the profile tree when one is loaded
-  or staged, so folders added there are not overwritten by the Project tree.
-  Delete folder under the Project tree and Apply profile remain project-scoped.
+The page can:
 
-## Applying And Organizing
+- choose and scan any explicit existing Windows folder root;
+- show its immediate folders and loose files;
+- create a contained descendant folder;
+- send one confirmed contained descendant folder and its contents to the
+  Windows Recycle Bin;
+- create, edit, order, save, load, and apply routing profiles;
+- choose any current Windows Panel and install a generated profile Button there.
 
-- The Project root rail chooses the target root. Apply profile to root creates
-  the loaded folder structure, writes `organize-folder.profile.json`, and runs
-  conditional program-folder rules. Existing files are never deleted or
-  overwritten.
-- Program Folders is a separate working-file rule editor. A program rule owns
-  file types such as `.blend` and creates
-  `01 src/<number> <Program>/01 live`, `02 snapshots`, `03 archive`, and
-  `04 trash` only when needed. It reuses an existing numbered folder with the
-  same program name.
-- Program-folder routing considers working files inside `01 src` and loose files
-  dropped directly at the project root. Other `01 src` siblings and every
-  program's snapshots, archive, and trash folders are skipped.
-- Distinct working-file families go to `01 live`. For a clear version family,
-  the most recently modified file stays in `01 live`; older variants are renamed
-  into `02 snapshots` as `(S01)`, `(S02)`, and so on.
-- The catalog script `new_organization.ps1` reads the active profile by default
-  and moves a file only when its extension maps to exactly one role.
-- If an extension maps to multiple roles, the organizer leaves the file in place
-  and records it as ambiguous. A role-specific installed script should pass an
-  explicit profile and role instead of guessing from the extension.
-- The legacy Organize Folder run no longer writes
-  `organize-folder.log.txt`. Its full run record and rollback data are written to
-  `organize-folder.undo.json`.
+The selected root must be an absolute real directory. Root and descendant path
+resolution rejects traversal, containment escapes, symbolic links, and reparse
+points. Folder deletion is exact, root-contained, confirmed in the page, and
+recoverable through the Recycle Bin.
 
-## Make Button
+## Profile Contract
 
-Make Button requires a saved or loaded profile. It performs the complete
-canonical Button lifecycle:
+Profiles use the closed format
+`flowcell.windows.setup-organization.profile.v1` and are stored only at:
 
-1. It creates or refreshes the tracked catalog source at
-   `Programs/Windows/Windows Git Scripts/Files/apply_profile_<slug>.ps1`.
-2. It installs a private copy under
-   `Programs/Windows/Windows Local Scripts/<ownerButtonId>/source/`.
-3. It writes the active record at
-   `Programs/Windows/Panels/Files/<ownerButtonId>.flowcell-source.json`.
-4. It creates or updates that profile's deterministic canonical Button in
-   Windows / Files.
+`flowcellbackend/local/program-data/windows/setup-organization/profiles/<profileId>.json`
 
-The installed script reads a destination folder path from the clipboard and
-applies the saved profile through
-`Programs/Windows/SupportScripts/Apply-OrganizationProfileCore.ps1`. Running
-Make Button again for the same profile updates the same owner instead of
-creating a parallel Button.
+The lowercase GUID `profileId` is stable across renames. Each ordered rule has a
+stable ID, display name, contained target folder, enabled state, optional file
+extensions, optional case-insensitive filename fragment, and `matchAll` switch.
+The first enabled matching rule wins.
 
-The Git Scripts file is catalog source only. Runtime execution resolves the
-active record and runs the owned Local Scripts copy. Deleting the Button removes
-its canonical state graph, active record, owned package, bindings, and owned
-runtime artifacts; it leaves the catalog source intact. Do not manually copy an
-organization script into `Panels` or Local Scripts.
+Applying a profile creates every enabled target folder that is missing, then
+examines only loose files immediately inside the chosen root. A file is moved to
+the first matching target. Existing destination files are never overwritten;
+collisions and reparse-point files are skipped, and unmatched files stay where
+they are. The result reports ensured folders plus moved, skipped, and unmatched
+counts.
+
+Per-page preferences such as the last root, selected profile, generated-Button
+Panel, and draft name live in that installed owner's strict
+`runtime/installed-page-state.json`. Shared profiles are program data rather
+than Button-owned runtime state, so they remain available when the Setup
+Organization Button is updated, reinstalled, or deleted.
+
+## Generated Profile Buttons
+
+Installing a profile Button requires a saved profile and an explicit destination
+Panel. The Windows-owned capability creates one short-lived stage at:
+
+`flowcellbackend/local/program-data/windows/setup-organization/staging/<token>/`
+
+The stage contains a closed `stage.json` plus
+`source/flowcell.script.json` and `source/apply_profile.ps1`. Native authorization
+re-resolves the active Setup Organization owner/action, requires the exact stage
+namespace, format, token, program, import kind, package/profile identity, and
+source path, rejects links/reparse points throughout the bounded stage tree, and
+verifies SHA-256 digests for both manifest and script. Only then does the trusted
+host install the package through the normal Add Button transaction. The stage is
+discarded after success/failure, and a durable cleanup journal removes an
+authorized stage after an interrupted process without broad directory cleanup.
+
+The generated Button reads an existing destination folder from its argument or
+the clipboard, loads its exact saved profile ID from the shared clean namespace,
+and applies the same first-match routing contract. It does not call a Core
+organizer, depend on the Setup page window, or execute a catalog/support copy.
+
+## Deletion Contract
+
+Deleting Setup Organization removes its canonical Button graph, binding, active
+record, installed page state, page window, source-owned runtime registration,
+and complete Local Scripts owner package through the standard rollback-capable
+Button deletion transaction. It leaves the tracked catalog package and the
+explicitly shared profile namespace intact.
+
+Deleting a generated profile Button independently removes that generated
+owner's canonical graph, binding, active record, runtime files, and complete
+Local Scripts package. The saved shared profile remains reusable by the Setup
+page and any other generated Button that references it. No generated catalog
+file or alternate Core execution path is created.

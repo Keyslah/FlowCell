@@ -48,9 +48,9 @@ button-state.json
         -> canonical Button UI and interaction state
 ```
 
-`<Program> Git Scripts` is the tracked, shareable catalog. Add Script and Add
-Tool Set may select from that catalog or from any other user-chosen source. The
-catalog is never the live installed source.
+`<Program> Git Scripts` is the tracked, shareable catalog. Add Button may select
+a script, tool-set, or page package from that catalog or from another
+user-chosen source. The catalog is never the live installed source.
 
 Installation copies the selected file or manifest package into
 `<Program> Local Scripts/<ownerButtonId>/source/`. That owned copy is the only

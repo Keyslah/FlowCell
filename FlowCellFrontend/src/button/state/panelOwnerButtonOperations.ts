@@ -242,7 +242,8 @@ function resolveProgramRailSurface(
     width: minimumWidth,
     height: minimumHeight,
     placementIds: [],
-    visualOverflowAllowance: 24
+    visualOverflowAllowance: 24,
+    uniformButtonSize: null
   };
   document.surfaces[surface.id] = surface;
   return { surface, changed: true };

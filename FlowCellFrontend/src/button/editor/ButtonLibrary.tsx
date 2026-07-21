@@ -8,8 +8,8 @@ export interface ButtonLibraryProps {
   selectedButtonId: string | null;
   canUpdateSource: boolean;
   busy?: boolean;
-  onImportSingle: () => void;
-  onImportToolSet: () => void;
+  onImportFile: () => void;
+  onImportFolder: () => void;
   onUpdateSource: () => void;
   onDeleteButton: () => void;
   onNewRegularPopout: () => void;
@@ -37,12 +37,11 @@ export function ButtonLibrary(props: ButtonLibraryProps) {
       >
         Delete Button
       </button>
-      <h3>Import source</h3>
+      <h3>Add Button content</h3>
       <p className="button-library__target">Target: {importTarget}</p>
       <div className="button-editor-actions">
-        <button type="button" disabled={!props.programName || !props.panelName || props.busy} onClick={props.onImportSingle}>New single-script Button…</button>
-        <button type="button" disabled={!props.programName || !props.panelName || props.busy} onClick={props.onImportSingle}>Import existing script…</button>
-        <button type="button" disabled={!props.programName || !props.panelName || props.busy} onClick={props.onImportToolSet}>Import Tool Set…</button>
+        <button type="button" disabled={!props.programName || !props.panelName || props.busy} onClick={props.onImportFile}>Choose Button file...</button>
+        <button type="button" disabled={!props.programName || !props.panelName || props.busy} onClick={props.onImportFolder}>Choose Button package folder...</button>
         <button type="button" disabled={!props.canUpdateSource || props.busy} onClick={props.onUpdateSource}>Update selected source package...</button>
       </div>
       <div className="button-editor-actions">

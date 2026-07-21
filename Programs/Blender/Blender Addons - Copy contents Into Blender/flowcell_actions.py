@@ -20,7 +20,7 @@ Flatten Revolve: Flatten the active mesh into a centered profile, hide the sourc
 
 Cursor Center Hole: With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.
 
-Save STL: Export the selected mesh objects to the active organization profile's STL destination, falling back to 01 src\00 assets\03 3d.
+Save STL: Export the selected mesh objects to 01 src\00 assets\03 3d.
 
 Save PNG: Render the active selected object from the current scene camera to 01 src\00 assets\01 images as a transparent PNG cropped exactly to the visible object bounds.
 
@@ -71,13 +71,11 @@ import re
 import inspect
 import runpy
 import tempfile
-import time
 import traceback
 from pathlib import Path
 
 import bmesh
 import bpy
-from bpy.app.handlers import persistent
 from bpy_extras.object_utils import world_to_camera_view
 from mathutils import Matrix, Vector
 
@@ -104,25 +102,12 @@ READ_ONLY_BRIDGE_COMMANDS = {
     "get_state",
     "read_state",
     "query",
-    "read_project_startup_state",
-    "read_startup_state",
-    "read_place_picture_runtime_state",
-    "absorb_theme",
 }
 VERSION_PREFIX_RE = re.compile(r"^\([sta]\d+\)", re.IGNORECASE)
 TARGET_NAME_PROP = "lls_target_name"
 CYCLE_INDEX_PROP = "lls_cycle_index"
 VISIBILITY_BASELINE_PROP = "flowcell_visibility_baseline_objects"
 CYCLE_COLLECTION_HOVER_VISIBILITY_PROP = "flowcell_cycle_collection_hover_visibility_v1"
-PROJECT_THEME_RESTORE_HANDLER_KEY = "flowcell_project_theme_restore_load_post"
-PROJECT_THEME_RESTORE_ATTEMPTS_KEY = "flowcell_project_theme_restore_attempts"
-PROJECT_THEME_RESTORE_MAX_ATTEMPTS = 240
-PROJECT_THEME_POLL_RESTORE_DONE_KEY = "flowcell_project_theme_poll_restore_done"
-PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY = "flowcell_project_theme_poll_restore_attempts"
-PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY = "flowcell_project_theme_poll_restore_next_time"
-PROJECT_THEME_POLL_RESTORE_MAX_ATTEMPTS = 240
-PROJECT_THEME_STARTUP_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
-PROJECT_THEME_RESTORE_CAPABILITY = "restore-project-theme-state"
 HIDDEN_NAME_PAD = "\u200b"
 INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*]+')
 FLOWCELL_LITHO_SIZE_SUFFIX_RE = re.compile(
@@ -317,205 +302,6 @@ def get_assets_subdirectory_from_current_file(*relative_parts: str) -> Path:
 
 def get_assets_3d_directory_from_current_file() -> Path:
     return get_assets_subdirectory_from_current_file("03 3d")
-
-
-def normalize_profile_extension(value: object) -> str:
-    extension = str(value or "").strip().lower()
-    if not extension:
-        return ""
-    return extension if extension.startswith(".") else f".{extension}"
-
-
-def normalize_profile_role_id(value: object) -> str:
-    return re.sub(r"[^a-z0-9._-]+", "_", str(value or "").strip().lower()).strip("_.-")
-
-
-def profile_list(value: object) -> list:
-    return value if isinstance(value, list) else []
-
-
-def load_organization_profile(project_root: Path) -> dict | None:
-    for profile_path in (
-        project_root / "organize-folder.profile.json",
-        project_root / ".flowcell" / "organization-profile.json",
-    ):
-        if not profile_path.is_file():
-            continue
-        with profile_path.open("r", encoding="utf-8-sig") as handle:
-            profile = json.load(handle)
-        return profile if isinstance(profile, dict) else None
-    return None
-
-
-def path_is_under_root(path: Path, root: Path) -> bool:
-    try:
-        normalized_path = os.path.normcase(os.path.abspath(str(path)))
-        normalized_root = os.path.normcase(os.path.abspath(str(root)))
-        return os.path.commonpath([normalized_path, normalized_root]) == normalized_root
-    except Exception:
-        return False
-
-
-def resolve_profile_folder(project_root: Path, folder: object) -> Path:
-    folder_text = str(folder or "").strip()
-    if not folder_text or folder_text == ".":
-        return project_root
-    folder_path = Path(folder_text)
-    if folder_path.is_absolute():
-        raise ValueError(f"Organization profile folder must be relative: {folder_text}")
-    destination = project_root / folder_text.replace("\\", "/")
-    if not path_is_under_root(destination, project_root):
-        raise ValueError(f"Organization profile folder escapes the project root: {folder_text}")
-    destination.mkdir(parents=True, exist_ok=True)
-    return destination
-
-
-def role_folder_for_profile(project_root: Path, role: dict) -> Path:
-    folder = str(role.get("folder", "") or "").strip()
-    if not folder and normalize_profile_role_id(role.get("roleId", "")) != "unknown":
-        folder = normalize_profile_role_id(role.get("roleId", ""))
-    return resolve_profile_folder(project_root, folder)
-
-
-def unnumbered_program_folder_name(name: str) -> str:
-    return re.sub(r"^\d+\s+", "", name or "").strip()
-
-
-def next_program_folder_number(src_root: Path) -> int:
-    numbers = []
-    if src_root.is_dir():
-        for child in src_root.iterdir():
-            if not child.is_dir() or child.name.casefold() == "00 assets":
-                continue
-            match = re.match(r"^(\d+)\s+", child.name)
-            if match:
-                numbers.append(int(match.group(1)))
-    return (max(numbers) + 1) if numbers else 1
-
-
-def resolve_program_root(src_root: Path, name: str) -> Path:
-    display_name = str(name or "").strip()
-    if not display_name or display_name in {".", ".."} or INVALID_FILENAME_CHARS_RE.search(display_name):
-        raise ValueError(f"Program folder name is not valid: {display_name or name}")
-    if src_root.is_dir():
-        for child in sorted((item for item in src_root.iterdir() if item.is_dir()), key=lambda item: item.name.lower()):
-            if unnumbered_program_folder_name(child.name).casefold() == display_name.casefold():
-                return child
-    return src_root / f"{next_program_folder_number(src_root):02d} {display_name}"
-
-
-def role_file_types(role: dict) -> set[str]:
-    return {
-        extension
-        for extension in (normalize_profile_extension(raw) for raw in profile_list(role.get("fileTypes", [])))
-        if extension
-    }
-
-
-def resolve_program_live_destination(profile: dict, project_root: Path, extension: str) -> Path | None:
-    roles_by_id = {
-        normalize_profile_role_id(role.get("roleId", "")): role
-        for role in profile_list(profile.get("roles", []))
-        if isinstance(role, dict)
-    }
-    matches = []
-    for program in profile_list(profile.get("programFolders", [])):
-        if not isinstance(program, dict):
-            continue
-        extensions = {
-            item
-            for item in (normalize_profile_extension(raw) for raw in profile_list(program.get("fileTypes", [])))
-            if item
-        }
-        for raw_role_id in profile_list(program.get("roles", [])):
-            role = roles_by_id.get(normalize_profile_role_id(raw_role_id))
-            if role:
-                extensions.update(role_file_types(role))
-        if extension not in extensions:
-            continue
-        display_name = str(
-            program.get("displayName")
-            or program.get("folder")
-            or program.get("programId")
-            or "Slicer"
-        ).strip()
-        if display_name:
-            matches.append(display_name)
-
-    unique_matches = sorted({match.casefold(): match for match in matches}.values(), key=str.lower)
-    if len(unique_matches) > 1:
-        raise ValueError(
-            f"STL is assigned to multiple program folders: {', '.join(unique_matches)}."
-        )
-    if not unique_matches:
-        return None
-
-    src_root = project_root / "01 src"
-    assets_root = src_root / "00 assets"
-    assets_root.mkdir(parents=True, exist_ok=True)
-    program_root = resolve_program_root(src_root, unique_matches[0])
-    live_directory = program_root / "01 live"
-    for directory in (
-        live_directory,
-        program_root / "02 snapshots",
-        program_root / "03 archive",
-        program_root / "04 trash",
-    ):
-        directory.mkdir(parents=True, exist_ok=True)
-    return live_directory
-
-
-def resolve_role_destination(profile: dict, project_root: Path, extension: str) -> Path | None:
-    roles = [role for role in profile_list(profile.get("roles", [])) if isinstance(role, dict)]
-    roles_by_id = {normalize_profile_role_id(role.get("roleId", "")): role for role in roles}
-
-    remembered_role_id = ""
-    remembered_choices = profile.get("rememberedChoices")
-    if isinstance(remembered_choices, dict):
-        remembered = remembered_choices.get(extension)
-        if isinstance(remembered, str):
-            remembered_role_id = normalize_profile_role_id(remembered)
-        elif isinstance(remembered, dict):
-            remembered_role_id = normalize_profile_role_id(remembered.get("roleId", ""))
-    if remembered_role_id and remembered_role_id in roles_by_id:
-        return role_folder_for_profile(project_root, roles_by_id[remembered_role_id])
-
-    matches = [
-        role
-        for role in roles
-        if not bool(role.get("catchAllUnmatched", False)) and extension in role_file_types(role)
-    ]
-    if len(matches) == 1:
-        return role_folder_for_profile(project_root, matches[0])
-    if len(matches) > 1:
-        role_names = ", ".join(str(role.get("displayName") or role.get("roleId") or "Role") for role in matches)
-        raise ValueError(f"STL is assigned to multiple organization roles: {role_names}.")
-
-    unknown = roles_by_id.get("unknown")
-    if unknown:
-        folder = str(unknown.get("folder", "") or "").strip()
-        if folder and folder != ".":
-            return role_folder_for_profile(project_root, unknown)
-
-    return None
-
-
-def get_stl_export_directory_from_current_profile() -> Path:
-    project_root = get_project_root_from_current_file()
-    profile = load_organization_profile(project_root)
-    if not profile:
-        return get_assets_3d_directory_from_current_file()
-
-    extension = ".stl"
-    program_destination = resolve_program_live_destination(profile, project_root, extension)
-    if program_destination:
-        return program_destination
-
-    role_destination = resolve_role_destination(profile, project_root, extension)
-    if role_destination:
-        return role_destination
-
-    return get_assets_3d_directory_from_current_file()
 
 
 def get_assets_images_directory_from_current_file() -> Path:
@@ -1521,7 +1307,7 @@ def perform_save_selected_stl_to_assets_result(
     if not selected_meshes:
         raise ValueError("Select at least one mesh object to export an STL.")
 
-    export_dir = get_stl_export_directory_from_current_profile()
+    export_dir = get_assets_3d_directory_from_current_file()
     export_scale = get_stl_export_scale_for_millimeters(context.scene)
 
     view_layer = context.view_layer
@@ -3518,9 +3304,10 @@ def _should_run_bridge_action_undoably(action: str, data: dict) -> bool:
     if not isinstance(data, dict):
         return True
 
+    read_only_commands = READ_ONLY_BRIDGE_COMMANDS | get_custom_action_read_only_commands(action)
     for key in ("command", "action", "tool_command"):
         command = str(data.get(key, "") or "").strip().lower()
-        if command in READ_ONLY_BRIDGE_COMMANDS:
+        if command in read_only_commands:
             return False
 
     return True
@@ -3587,26 +3374,25 @@ def load_custom_actions_registry() -> list[dict[str, object]]:
     return [entry for entry in actions_payload if isinstance(entry, dict)]
 
 
-def get_custom_action_names_for_capability(capability: str) -> list[str]:
-    normalized_capability = str(capability or "").strip().lower()
-    if not normalized_capability:
-        return []
-
-    matches: list[str] = []
+def get_custom_action_read_only_commands(action: str) -> set[str]:
+    normalized_action = str(action or "").strip().lower()
+    if not normalized_action:
+        return set()
     for entry in load_custom_actions_registry():
+        if str(entry.get("action", "") or "").strip().lower() != normalized_action:
+            continue
         bridge_data = entry.get("bridgeData", {})
         if not isinstance(bridge_data, dict):
-            continue
-        capabilities = bridge_data.get("capabilities", [])
-        if not isinstance(capabilities, list) or not any(
-            str(value or "").strip().lower() == normalized_capability
-            for value in capabilities
-        ):
-            continue
-        action_name = str(entry.get("action", "")).strip().lower()
-        if action_name and action_name not in matches:
-            matches.append(action_name)
-    return matches
+            return set()
+        commands = bridge_data.get("readOnlyCommands", [])
+        if not isinstance(commands, list):
+            return set()
+        return {
+            str(command or "").strip().lower()
+            for command in commands
+            if str(command or "").strip()
+        }
+    return set()
 
 
 def resolve_custom_action_script_path(python_path: str) -> Path:
@@ -3727,24 +3513,6 @@ def execute_custom_action(normalized_action: str, data: dict) -> dict[str, objec
     return None
 
 
-def execute_custom_action_for_capability(
-    capability: str,
-    data: dict,
-) -> dict[str, object] | None:
-    last_error: Exception | None = None
-    for action_name in get_custom_action_names_for_capability(capability):
-        try:
-            result = execute_custom_action(action_name, data)
-        except Exception as exc:
-            last_error = exc
-            continue
-        if result is not None:
-            return result
-    if last_error is not None:
-        raise last_error
-    return None
-
-
 def get_request_path() -> Path:
     return get_bridge_directory() / REQUEST_FILE_NAME
 
@@ -3758,78 +3526,21 @@ def write_bridge_response(payload: dict) -> None:
     response_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _startup_place_picture_state_enabled() -> bool:
-    config_root = bpy.utils.user_resource("CONFIG", path="", create=True)
-    if not config_root:
-        return False
-    state_path = Path(config_root) / PROJECT_THEME_STARTUP_STATE_FILE_NAME
-    if not state_path.is_file():
-        return False
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8-sig"))
-    except Exception:
-        return False
-    if not isinstance(state, dict):
-        return False
-    place_picture = state.get("place_picture", {})
-    if not isinstance(place_picture, dict) or not bool(place_picture.get("enabled")):
-        return False
-    return bool(str(place_picture.get("path") or place_picture.get("relative_path") or "").strip())
-
-
-def _maybe_restore_startup_place_picture_from_poll() -> None:
-    namespace = bpy.app.driver_namespace
-    if bool(namespace.get(PROJECT_THEME_POLL_RESTORE_DONE_KEY)):
-        return
-
-    now = time.monotonic()
-    next_time = float(namespace.get(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, 0.0) or 0.0)
-    if now < next_time:
-        return
-
-    attempts = int(namespace.get(PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY, 0) or 0)
-    if attempts >= PROJECT_THEME_POLL_RESTORE_MAX_ATTEMPTS:
-        namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
-        namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
-        print("FlowCell startup Place Picture restore stopped after retry limit.")
-        return
-
-    namespace[PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY] = attempts + 1
-    namespace[PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY] = now + 0.5
-
-    if not _startup_place_picture_state_enabled():
-        return
-
-    if not _has_flowcell_project_theme_restore_view3d():
-        return
-
-    try:
-        runtime_state = execute_custom_action_for_capability(
-            PROJECT_THEME_RESTORE_CAPABILITY,
-            {"command": "read_place_picture_runtime_state"},
-        )
-        if isinstance(runtime_state, dict) and bool(runtime_state.get("place_picture_runtime_enabled")):
-            namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
-            namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
-            return
-
-        result = execute_custom_action_for_capability(
-            PROJECT_THEME_RESTORE_CAPABILITY,
-            {"command": "restore_project_startup_state"},
-        )
-        if isinstance(result, dict) and bool(result.get("restored_place_picture")):
-            namespace[PROJECT_THEME_POLL_RESTORE_DONE_KEY] = True
-            namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
-            message = str(result.get("message", "") or "")
-            print(message or "FlowCell startup Place Picture restored.")
-    except Exception as exc:
-        print(f"FlowCell startup Place Picture restore retry failed: {exc}")
-
-
 def poll_bridge_requests() -> float:
     global LAST_REQUEST_ID
 
-    _maybe_restore_startup_place_picture_from_poll()
+    try:
+        import flowcell_bridge as flowcell_live_bridge
+
+        sync_lifecycles = getattr(
+            flowcell_live_bridge,
+            "sync_custom_action_lifecycles",
+            None,
+        )
+        if callable(sync_lifecycles):
+            sync_lifecycles()
+    except Exception:
+        pass
 
     request_path = get_request_path()
     if not request_path.exists():
@@ -4174,6 +3885,13 @@ def _safe_unregister_class(cls) -> None:
 def _load_flowcell_live_bridge_module():
     import flowcell_bridge as flowcell_live_bridge
 
+    cleanup_lifecycles = getattr(
+        flowcell_live_bridge,
+        "cleanup_custom_action_lifecycles",
+        None,
+    )
+    if callable(cleanup_lifecycles):
+        cleanup_lifecycles(reason="bridge-reload")
     try:
         flowcell_live_bridge = importlib.reload(flowcell_live_bridge)
     except Exception:
@@ -4181,161 +3899,8 @@ def _load_flowcell_live_bridge_module():
     return flowcell_live_bridge
 
 
-def _has_flowcell_project_theme_restore_view3d() -> bool:
-    window_manager = getattr(bpy.context, "window_manager", None)
-    if window_manager is None:
-        return False
-
-    for window in getattr(window_manager, "windows", []) or []:
-        screen = getattr(window, "screen", None)
-        if screen is None:
-            continue
-        for area in getattr(screen, "areas", []) or []:
-            if getattr(area, "type", "") == "VIEW_3D":
-                return True
-    return False
-
-
-def _has_flowcell_project_theme_restore_capability(flowcell_live_bridge=None) -> bool:
-    try:
-        bridge = flowcell_live_bridge or _load_flowcell_live_bridge_module()
-        get_capability_actions = getattr(
-            bridge,
-            "get_custom_action_names_for_capability",
-            None,
-        )
-        return bool(
-            callable(get_capability_actions)
-            and get_capability_actions(PROJECT_THEME_RESTORE_CAPABILITY)
-        )
-    except Exception:
-        return False
-
-
-def _restore_flowcell_project_theme_after_load():
-    namespace = bpy.app.driver_namespace
-    attempts = int(namespace.get(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, 0) or 0)
-    namespace[PROJECT_THEME_RESTORE_ATTEMPTS_KEY] = attempts + 1
-    if not _has_flowcell_project_theme_restore_view3d():
-        if attempts < PROJECT_THEME_RESTORE_MAX_ATTEMPTS:
-            return 0.5
-        print("FlowCell project theme restore continuing without a VIEW_3D area.")
-
-    try:
-        import flowcell_bridge as flowcell_live_bridge
-
-        execute_custom_capability = getattr(
-            flowcell_live_bridge,
-            "execute_custom_action_for_capability",
-            None,
-        )
-        if not callable(execute_custom_capability):
-            flowcell_live_bridge = importlib.reload(flowcell_live_bridge)
-            execute_custom_capability = getattr(
-                flowcell_live_bridge,
-                "execute_custom_action_for_capability",
-                None,
-            )
-        if not callable(execute_custom_capability):
-            print("FlowCell project theme restore skipped: capability executor is unavailable.")
-            return None
-
-        result = execute_custom_capability(
-            PROJECT_THEME_RESTORE_CAPABILITY,
-            {"command": "restore_project_startup_state"},
-        )
-        if result is None:
-            print("FlowCell project theme restore skipped: no registered capability owner was found.")
-        elif isinstance(result, dict):
-            message = str(result.get("message", "") or "")
-            if message:
-                print(message)
-            for warning in result.get("warnings", []) or []:
-                print(f"FlowCell project theme restore warning: {warning}")
-            has_startup_place_picture = bool(result.get("has_startup_place_picture_state"))
-            restored_place_picture = bool(result.get("restored_place_picture"))
-            if has_startup_place_picture and not restored_place_picture and attempts < PROJECT_THEME_RESTORE_MAX_ATTEMPTS:
-                return 0.5
-        else:
-            print(str(result))
-        namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
-        return None
-    except Exception as exc:
-        print(f"FlowCell project theme restore failed: {exc}")
-        if attempts < PROJECT_THEME_RESTORE_MAX_ATTEMPTS:
-            return 0.5
-    namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
-    return None
-
-
-def _schedule_flowcell_project_theme_restore(first_interval: float = 0.35) -> None:
-    if not _has_flowcell_project_theme_restore_capability():
-        return
-    namespace = bpy.app.driver_namespace
-    namespace[PROJECT_THEME_RESTORE_ATTEMPTS_KEY] = 0
-    if not bpy.app.timers.is_registered(_restore_flowcell_project_theme_after_load):
-        bpy.app.timers.register(
-            _restore_flowcell_project_theme_after_load,
-            first_interval=first_interval,
-            persistent=True,
-        )
-
-
-@persistent
-def _restore_flowcell_project_theme_on_load(_dummy=None):
-    if not _has_flowcell_project_theme_restore_capability():
-        _remove_flowcell_project_theme_restore_handler()
-        return
-    _schedule_flowcell_project_theme_restore(first_interval=0.35)
-
-
-def _ensure_flowcell_project_theme_restore_handler_registered() -> None:
-    if not _has_flowcell_project_theme_restore_capability():
-        _remove_flowcell_project_theme_restore_handler()
-        return
-    namespace = bpy.app.driver_namespace
-    existing = namespace.get(PROJECT_THEME_RESTORE_HANDLER_KEY)
-    if existing in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(existing)
-    if _restore_flowcell_project_theme_on_load in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_restore_flowcell_project_theme_on_load)
-
-    bpy.app.handlers.load_post.append(_restore_flowcell_project_theme_on_load)
-    namespace[PROJECT_THEME_RESTORE_HANDLER_KEY] = _restore_flowcell_project_theme_on_load
-
-
-def _remove_flowcell_project_theme_restore_handler() -> None:
-    namespace = bpy.app.driver_namespace
-    existing = namespace.get(PROJECT_THEME_RESTORE_HANDLER_KEY)
-    if existing in bpy.app.handlers.load_post:
-        try:
-            bpy.app.handlers.load_post.remove(existing)
-        except Exception:
-            pass
-    if _restore_flowcell_project_theme_on_load in bpy.app.handlers.load_post:
-        try:
-            bpy.app.handlers.load_post.remove(_restore_flowcell_project_theme_on_load)
-        except Exception:
-            pass
-
-    namespace.pop(PROJECT_THEME_RESTORE_HANDLER_KEY, None)
-    namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
-    namespace.pop(PROJECT_THEME_POLL_RESTORE_DONE_KEY, None)
-    namespace.pop(PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY, None)
-    namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
-    if bpy.app.timers.is_registered(_restore_flowcell_project_theme_after_load):
-        try:
-            bpy.app.timers.unregister(_restore_flowcell_project_theme_after_load)
-        except Exception:
-            pass
-
-
 def register():
     flowcell_live_bridge = _load_flowcell_live_bridge_module()
-    namespace = bpy.app.driver_namespace
-    namespace.pop(PROJECT_THEME_POLL_RESTORE_DONE_KEY, None)
-    namespace.pop(PROJECT_THEME_POLL_RESTORE_ATTEMPTS_KEY, None)
-    namespace.pop(PROJECT_THEME_POLL_RESTORE_NEXT_TIME_KEY, None)
 
     for cls in CLASSES:
         _safe_register_class(cls)
@@ -4352,13 +3917,16 @@ def register():
     if callable(ensure_builtin_live_tools_registered):
         ensure_builtin_live_tools_registered()
 
+    sync_lifecycles = getattr(
+        flowcell_live_bridge,
+        "sync_custom_action_lifecycles",
+        None,
+    )
+    if callable(sync_lifecycles):
+        sync_lifecycles()
+
     get_bridge_directory()
     disable_outliner_alpha_sort()
-    if _has_flowcell_project_theme_restore_capability(flowcell_live_bridge):
-        _ensure_flowcell_project_theme_restore_handler_registered()
-        _schedule_flowcell_project_theme_restore(first_interval=1.25)
-    else:
-        _remove_flowcell_project_theme_restore_handler()
 
     if not bpy.app.timers.is_registered(poll_bridge_requests):
         bpy.app.timers.register(poll_bridge_requests, first_interval=POLL_INTERVAL_SECONDS, persistent=True)
@@ -4370,7 +3938,13 @@ def unregister():
     cleanup_live_tools = getattr(flowcell_live_bridge, "cleanup_live_tools", None)
     if callable(cleanup_live_tools):
         cleanup_live_tools(clear_registry=True)
-    _remove_flowcell_project_theme_restore_handler()
+    cleanup_lifecycles = getattr(
+        flowcell_live_bridge,
+        "cleanup_custom_action_lifecycles",
+        None,
+    )
+    if callable(cleanup_lifecycles):
+        cleanup_lifecycles(reason="bridge-shutdown")
     if bpy.app.timers.is_registered(poll_bridge_requests):
         bpy.app.timers.unregister(poll_bridge_requests)
 
@@ -4380,15 +3954,6 @@ def unregister():
 
 if __name__ == "__main__":
     register()
-
-
-
-
-
-
-
-
-
 
 
 

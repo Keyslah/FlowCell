@@ -48,7 +48,8 @@ function buildCollapsedPanelOwnerDocument(args: {
           width: sourcePlacement.width,
           height: sourcePlacement.height,
           placementIds: [placementId],
-          visualOverflowAllowance: 0
+          visualOverflowAllowance: 0,
+          uniformButtonSize: null
         }
       }
     }

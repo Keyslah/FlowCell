@@ -64,6 +64,18 @@ fn append_rollback_error(message: &mut String, errors: &[String]) {
     message.push_str(&errors.join(" | "));
 }
 
+fn should_dispatch_shortcut_event(
+    pressed_shortcut_ids: &mut HashSet<u32>,
+    shortcut_id: u32,
+    state: ShortcutState,
+) -> bool {
+    if state == ShortcutState::Released {
+        pressed_shortcut_ids.remove(&shortcut_id);
+        return false;
+    }
+    state == ShortcutState::Pressed && pressed_shortcut_ids.insert(shortcut_id)
+}
+
 fn load_desired_tool_set_hotkeys() -> Result<HashMap<u32, RegisteredToolSetHotkey>, String> {
     let (bindings, _, _) = read_bindings_file_state()?;
     let mut desired = HashMap::new();
@@ -139,12 +151,15 @@ fn load_desired_tool_set_hotkeys() -> Result<HashMap<u32, RegisteredToolSetHotke
 }
 
 pub(crate) fn synchronize_tool_set_hotkeys(app: &AppHandle) -> Result<(), String> {
-    let desired = load_desired_tool_set_hotkeys()?;
     let registry = app.state::<ToolSetHotkeyRegistry>();
     let _synchronize_guard = registry
         .synchronize_lock
         .lock()
         .map_err(|_| registry_lock_error())?;
+    // Read the desired snapshot only after this caller owns the synchronization
+    // lane. Otherwise an older caller can wait here and apply stale bindings
+    // after a newer synchronization has already completed.
+    let desired = load_desired_tool_set_hotkeys()?;
     let previous = registry
         .state
         .lock()
@@ -238,15 +253,12 @@ pub(crate) fn handle_tool_set_hotkey(app: &AppHandle, shortcut: &Shortcut, event
     let registry = app.state::<ToolSetHotkeyRegistry>();
     let payload = match registry.state.lock() {
         Ok(mut state) => {
-            if event.state == ShortcutState::Released {
-                state.pressed_shortcut_ids.remove(&shortcut_id);
-                return;
-            }
-            if event.state != ShortcutState::Pressed {
-                return;
-            }
             if !state.by_shortcut_id.contains_key(&shortcut_id)
-                || !state.pressed_shortcut_ids.insert(shortcut_id)
+                || !should_dispatch_shortcut_event(
+                    &mut state.pressed_shortcut_ids,
+                    shortcut_id,
+                    event.state,
+                )
             {
                 return;
             }
@@ -598,9 +610,11 @@ fn unsigned_to_base36(mut value: u32) -> String {
 mod tests {
     use super::{
         ahk_shortcut_to_plugin_accelerator, build_button_popout_window_label,
-        keyboard_shortcut_conflict_key,
+        keyboard_shortcut_conflict_key, should_dispatch_shortcut_event,
     };
+    use std::collections::HashSet;
     use tauri_plugin_global_shortcut::Shortcut;
+    use tauri_plugin_global_shortcut::ShortcutState;
 
     fn assert_converts(ahk: &str, expected: &str) {
         let converted = ahk_shortcut_to_plugin_accelerator(ahk).unwrap();
@@ -643,6 +657,31 @@ mod tests {
             keyboard_shortcut_conflict_key("^!{PgDn}"),
             keyboard_shortcut_conflict_key("!^PageDown")
         );
+    }
+
+    #[test]
+    fn repeated_pressed_events_are_ignored_until_release() {
+        let mut pressed = HashSet::new();
+        assert!(should_dispatch_shortcut_event(
+            &mut pressed,
+            42,
+            ShortcutState::Pressed
+        ));
+        assert!(!should_dispatch_shortcut_event(
+            &mut pressed,
+            42,
+            ShortcutState::Pressed
+        ));
+        assert!(!should_dispatch_shortcut_event(
+            &mut pressed,
+            42,
+            ShortcutState::Released
+        ));
+        assert!(should_dispatch_shortcut_event(
+            &mut pressed,
+            42,
+            ShortcutState::Pressed
+        ));
     }
 
     #[test]

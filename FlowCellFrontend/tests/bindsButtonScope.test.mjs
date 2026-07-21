@@ -77,17 +77,28 @@ test("owner selection scopes Current Panel Binds to that owner and only its chil
     scope.currentPanelButtons.map((button) => button.id),
     ["Blender::Tools::owner-a.flowcell-source.json", "a-child-1", "a-child-2"]
   );
+  assert.deepEqual(
+    scope.toolbarButtons.map((button) => button.id),
+    [
+      "Blender::Tools::single.flowcell-source.json",
+      "Blender::Tools::owner-a.flowcell-source.json",
+      "a-child-1",
+      "a-child-2",
+      "Blender::Tools::owner-b.flowcell-source.json"
+    ]
+  );
   assert.equal(scope.toolbarButtonId, "Blender::Tools::owner-a.flowcell-source.json");
 });
 
-test("child selection preserves its owner scope and toolbar owner despite duplicate labels", () => {
+test("child selection preserves its owner scope and names the exact child in the toolbar", () => {
   const scope = deriveBindsPanelButtonScope(buttons, "a-child-2");
 
   assert.deepEqual(
     scope.currentPanelButtons.map((button) => button.id),
     ["Blender::Tools::owner-a.flowcell-source.json", "a-child-1", "a-child-2"]
   );
-  assert.equal(scope.toolbarButtonId, "Blender::Tools::owner-a.flowcell-source.json");
+  assert.equal(scope.toolbarButtonId, "a-child-2");
+  assert.equal(scope.toolbarButtons.some((button) => button.id === "a-child-2"), true);
   assert.equal(scope.currentPanelButtons.some((button) => button.id === "b-child-1"), false);
 });
 

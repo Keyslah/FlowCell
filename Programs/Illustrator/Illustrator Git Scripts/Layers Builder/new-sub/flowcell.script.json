@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.new-sub",
+  "label": "new sub",
+  "tooltip": "Create a named direct child under exactly one highlighted Layer Tree layer.",
+  "program": "Illustrator",
+  "source": "new sub.jsx"
+}

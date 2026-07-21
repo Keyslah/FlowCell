@@ -15,7 +15,6 @@ import {
   requestButtonActivationAnimation
 } from "./button/animations/buttonAnimationWindows";
 import { registerBuiltinButtonCoreActions } from "./button/runtime/registerBuiltinCoreActions";
-import { registerInstalledCompatibilityActions } from "./button/runtime/registerInstalledCompatibilityActions";
 import { FRONTEND_MACRO_CORE_ACTION_ID } from "./button/state/frontendMacroButtonOperations";
 import {
   registerScopedWindowTopmost,
@@ -24,12 +23,13 @@ import {
   unregisterScopedWindowTopmost
 } from "./lib/tauri";
 import BindsWindowPage from "./pages/binds/BindsWindowPage";
-import TreeInspectorWindowPage from "./pages/build-layers/TreeInspectorWindowPage";
 import WindowGridWindowPage from "./pages/window-grid/WindowGridWindowPage";
 import MotionSettingsWindowPage from "./pages/motion-settings/MotionSettingsWindowPage";
 import MacroLabWindowPage from "./pages/macro-lab/MacroLabWindowPage";
 import MainPage from "./pages/main/MainPage";
-import OrganizationSetupWindowPage from "./pages/organization-setup/OrganizationSetupWindowPage";
+import InstalledPageWindowPage from "./pages/installed-page/InstalledPageWindowPage";
+import AddProgramWindowPage from "./pages/program-setup/AddProgramWindowPage";
+import AddPanelWindowPage from "./pages/program-setup/AddPanelWindowPage";
 import TooltipWindowPage from "./pages/tooltip/TooltipWindowPage";
 import { runFrontendMacro } from "./lib/macros";
 
@@ -42,7 +42,8 @@ function resolveScopedTopmostProgramName(
     windowContext.kind === "button-animation" ||
     windowContext.kind === "tooltip" ||
     windowContext.kind === "binds" ||
-    windowContext.kind === "organization-setup" ||
+    windowContext.kind === "add-program" ||
+    windowContext.kind === "add-panel" ||
     windowContext.kind === "macro-lab" ||
     windowContext.kind === "window-grid" ||
     windowContext.kind === "motion-settings"
@@ -82,8 +83,6 @@ export default function App() {
   ), []);
 
   useEffect(() => registerBuiltinButtonCoreActions(), []);
-
-  useEffect(() => registerInstalledCompatibilityActions(), []);
 
   useEffect(() => {
     let disposed = false;
@@ -296,11 +295,14 @@ export default function App() {
   if (windowContext.kind === "binds") {
     return <BindsWindowPage context={windowContext} />;
   }
-  if (windowContext.kind === "organization-setup") {
-    return <OrganizationSetupWindowPage />;
+  if (windowContext.kind === "add-program") {
+    return <AddProgramWindowPage />;
   }
-  if (windowContext.kind === "build-layers" || windowContext.kind === "tool-page") {
-    return <TreeInspectorWindowPage context={windowContext} />;
+  if (windowContext.kind === "add-panel") {
+    return <AddPanelWindowPage context={windowContext} />;
+  }
+  if (windowContext.kind === "installed-page") {
+    return <InstalledPageWindowPage context={windowContext} />;
   }
   if (windowContext.kind === "window-grid") {
     return <WindowGridWindowPage />;

@@ -7,7 +7,6 @@ import type {
   ButtonStateDocument,
   ButtonSurface,
   ButtonToolField,
-  ButtonToolPagePresentation,
   ButtonToolSetChildBehavior,
   ButtonRect
 } from "../types.js";
@@ -16,7 +15,10 @@ import {
   createButtonStateDocument,
   cloneButtonDocument
 } from "./buttonDefaults.js";
-import { createStarterButtonLayout } from "../geometry/buttonGeometry.js";
+import {
+  buttonRectsOverlap,
+  createStarterButtonLayout
+} from "../geometry/buttonGeometry.js";
 import {
   normalizeLoadedButtonStateDocument,
   parseButtonStateDocumentJson,
@@ -38,7 +40,6 @@ export interface InstalledButtonLayout {
   placements?: Record<string, ButtonRect>;
   fields?: ButtonToolField[];
   childBehaviors?: Record<string, ButtonToolSetChildBehavior>;
-  presentation?: ButtonToolPagePresentation;
   updatePolicy?: {
     appendMissingChildSlots?: boolean;
   };
@@ -59,7 +60,7 @@ export interface InstallButtonSourceRequest {
   programName: string;
   panelName: string;
   sourcePath: string;
-  importKind: "script" | "tool-set";
+  importKind: "script" | "tool-set" | "auto";
 }
 
 interface LegacyButtonBootstrapResult {
@@ -442,7 +443,8 @@ function ensureMigrationPanelSurface(
     width: 960,
     height: 640,
     placementIds: [],
-    visualOverflowAllowance: 24
+    visualOverflowAllowance: 24,
+    uniformButtonSize: null
   };
   document.surfaces[id] = surface;
   return surface;
@@ -497,19 +499,36 @@ function addMigratedSingle(
     sourceIdentity: install.sourceIdentity,
     executionTarget: install.executionTarget
   });
-  const index = panelSurface.placementIds.length;
+  const rect = nextMigrationPanelRect(document, panelSurface);
   addMigratedPlacement(
     document,
     panelSurface,
     install.ownerButtonId,
     `placement-${install.ownerButtonId}`,
-    {
+    rect
+  );
+}
+
+function nextMigrationPanelRect(
+  document: ButtonStateDocument,
+  panelSurface: ButtonSurface
+): ButtonRect {
+  const occupied = panelSurface.placementIds.flatMap((placementId) => {
+    const placement = document.placements[placementId];
+    return placement ? [placement] : [];
+  });
+  for (let index = 0; index < occupied.length + 10_000; index += 1) {
+    const candidate = {
       x: 8 + (index % 5) * 168,
       y: 8 + Math.floor(index / 5) * 52,
       width: 160,
       height: 44
+    };
+    if (!occupied.some((placement) => buttonRectsOverlap(candidate, placement))) {
+      return candidate;
     }
-  );
+  }
+  throw new Error(`No free placement slot is available on '${panelSurface.name}'.`);
 }
 
 function addMigratedToolSet(
@@ -528,18 +547,13 @@ function addMigratedToolSet(
     tooltip: install.tooltip,
     sourceIdentity: install.sourceIdentity
   });
-  const ownerIndex = panelSurface.placementIds.length;
+  const ownerRect = nextMigrationPanelRect(document, panelSurface);
   addMigratedPlacement(
     document,
     panelSurface,
     install.ownerButtonId,
     `placement-${install.ownerButtonId}`,
-    {
-      x: 8 + (ownerIndex % 5) * 168,
-      y: 8 + Math.floor(ownerIndex / 5) * 52,
-      width: 160,
-      height: 44
-    }
+    ownerRect
   );
 
   const layout = install.layout;
@@ -566,7 +580,8 @@ function addMigratedToolSet(
     width: Math.max(240, layout?.width ?? 0, starter.requiredWidth, childWidth + 8, fieldWidth + 8),
     height: Math.max(120, layout?.height ?? 0, starter.requiredHeight, childHeight + 8, fieldHeight + 8),
     placementIds: [],
-    visualOverflowAllowance: 24
+    visualOverflowAllowance: 24,
+    uniformButtonSize: null
   };
   if (document.surfaces[surfaceId]) {
     throw new Error(`Migration surface '${surfaceId}' already exists.`);
@@ -614,8 +629,7 @@ function addMigratedToolSet(
     windowFitMode: "surface",
     ownerButtonId: install.ownerButtonId,
     childButtonIds,
-    fields: cloneButtonDocument(layout?.fields ?? []),
-    presentation: cloneButtonDocument(layout?.presentation ?? null)
+    fields: cloneButtonDocument(layout?.fields ?? [])
   };
 }
 

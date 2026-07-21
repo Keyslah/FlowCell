@@ -1,0 +1,598 @@
+// FlowCell Layers Builder package-owned Layer Tree selection resolver.
+// Reads only the active installed page owner's runtime state and fails closed.
+var FlowCellLayersBuilderSelection = (function () {
+    var PAGE_ID = "illustrator.layer-tree";
+    var PAGE_STATE_FORMAT = "flowcell.illustrator.layer-tree-state.v1";
+    var ACTIVE_RECORD_SUFFIX = ".flowcell-source.json";
+    var SOURCE_MANIFEST_NAME = "flowcell.script.json";
+    var PROGRAM_MANIFEST_NAME = "flowcell.program.json";
+    var OWNER_STATE_NAME = "installed-page-state.json";
+
+    function fail(message) {
+        throw new Error("FlowCell Layers Builder: " + message);
+    }
+
+    function trim(value) {
+        return String(value).replace(/^\s+|\s+$/g, "");
+    }
+
+    function isArray(value) {
+        return value instanceof Array;
+    }
+
+    function isObject(value) {
+        return value !== null && typeof value === "object" && !isArray(value);
+    }
+
+    function readText(file, label) {
+        if (!file || !file.exists) {
+            fail(label + " was not found.");
+        }
+        file.encoding = "UTF-8";
+        if (!file.open("r")) {
+            fail(label + " could not be opened.");
+        }
+        var text = "";
+        try {
+            text = file.read();
+        } finally {
+            file.close();
+        }
+        if (text.length > 0 && text.charCodeAt(0) === 0xFEFF) {
+            text = text.substring(1);
+        }
+        return text;
+    }
+
+    function parseJsonFallback(text, label) {
+        var index = 0;
+
+        function parseFailure(message) {
+            fail(label + " is invalid JSON at character " + index + ": " + message);
+        }
+
+        function skipWhitespace() {
+            while (index < text.length && /\s/.test(text.charAt(index))) {
+                index += 1;
+            }
+        }
+
+        function parseString() {
+            var result = "";
+            if (text.charAt(index) !== '"') {
+                parseFailure("expected a string");
+            }
+            index += 1;
+            while (index < text.length) {
+                var character = text.charAt(index);
+                index += 1;
+                if (character === '"') {
+                    return result;
+                }
+                if (character === "\\") {
+                    if (index >= text.length) {
+                        parseFailure("unterminated escape");
+                    }
+                    var escape = text.charAt(index);
+                    index += 1;
+                    if (escape === '"' || escape === "\\" || escape === "/") {
+                        result += escape;
+                    } else if (escape === "b") {
+                        result += "\b";
+                    } else if (escape === "f") {
+                        result += "\f";
+                    } else if (escape === "n") {
+                        result += "\n";
+                    } else if (escape === "r") {
+                        result += "\r";
+                    } else if (escape === "t") {
+                        result += "\t";
+                    } else if (escape === "u") {
+                        var hex = text.substring(index, index + 4);
+                        if (!/^[0-9a-fA-F]{4}$/.test(hex)) {
+                            parseFailure("invalid unicode escape");
+                        }
+                        result += String.fromCharCode(parseInt(hex, 16));
+                        index += 4;
+                    } else {
+                        parseFailure("invalid escape");
+                    }
+                } else {
+                    if (character.charCodeAt(0) < 0x20) {
+                        parseFailure("control character in string");
+                    }
+                    result += character;
+                }
+            }
+            parseFailure("unterminated string");
+        }
+
+        function parseNumber() {
+            var match = text.substring(index).match(/^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+\-]?[0-9]+)?/);
+            if (!match) {
+                parseFailure("invalid number");
+            }
+            index += match[0].length;
+            return Number(match[0]);
+        }
+
+        function parseArray() {
+            var result = [];
+            index += 1;
+            skipWhitespace();
+            if (text.charAt(index) === "]") {
+                index += 1;
+                return result;
+            }
+            while (index < text.length) {
+                result.push(parseValue());
+                skipWhitespace();
+                if (text.charAt(index) === "]") {
+                    index += 1;
+                    return result;
+                }
+                if (text.charAt(index) !== ",") {
+                    parseFailure("expected ',' or ']'");
+                }
+                index += 1;
+                skipWhitespace();
+            }
+            parseFailure("unterminated array");
+        }
+
+        function parseObject() {
+            var result = {};
+            index += 1;
+            skipWhitespace();
+            if (text.charAt(index) === "}") {
+                index += 1;
+                return result;
+            }
+            while (index < text.length) {
+                if (text.charAt(index) !== '"') {
+                    parseFailure("expected an object key");
+                }
+                var key = parseString();
+                if (key === "__proto__" || key === "constructor" || key === "prototype") {
+                    parseFailure("reserved object key");
+                }
+                skipWhitespace();
+                if (text.charAt(index) !== ":") {
+                    parseFailure("expected ':'");
+                }
+                index += 1;
+                result[key] = parseValue();
+                skipWhitespace();
+                if (text.charAt(index) === "}") {
+                    index += 1;
+                    return result;
+                }
+                if (text.charAt(index) !== ",") {
+                    parseFailure("expected ',' or '}'");
+                }
+                index += 1;
+                skipWhitespace();
+            }
+            parseFailure("unterminated object");
+        }
+
+        function parseValue() {
+            skipWhitespace();
+            var character = text.charAt(index);
+            if (character === '"') {
+                return parseString();
+            }
+            if (character === "{") {
+                return parseObject();
+            }
+            if (character === "[") {
+                return parseArray();
+            }
+            if (text.substr(index, 4) === "true") {
+                index += 4;
+                return true;
+            }
+            if (text.substr(index, 5) === "false") {
+                index += 5;
+                return false;
+            }
+            if (text.substr(index, 4) === "null") {
+                index += 4;
+                return null;
+            }
+            if (character === "-" || /[0-9]/.test(character)) {
+                return parseNumber();
+            }
+            parseFailure("expected a value");
+        }
+
+        var result = parseValue();
+        skipWhitespace();
+        if (index !== text.length) {
+            parseFailure("unexpected trailing content");
+        }
+        return result;
+    }
+
+    function parseJson(text, label) {
+        if (typeof JSON !== "undefined" && JSON && typeof JSON.parse === "function") {
+            try {
+                return JSON.parse(text);
+            } catch (error) {
+                fail(label + " is invalid JSON.");
+            }
+        }
+        return parseJsonFallback(text, label);
+    }
+
+    function readJson(file, label) {
+        return parseJson(readText(file, label), label);
+    }
+
+    function validateRelativePath(value, label) {
+        var candidate = trim(value);
+        if (!candidate || /^[\\\/]/.test(candidate) || /^[A-Za-z]:/.test(candidate)) {
+            fail(label + " must be a relative path.");
+        }
+        var parts = candidate.replace(/\\/g, "/").split("/");
+        for (var i = 0; i < parts.length; i += 1) {
+            if (!parts[i] || parts[i] === "." || parts[i] === "..") {
+                fail(label + " contains an unsafe path segment.");
+            }
+        }
+        return parts.join("/");
+    }
+
+    function normalizePath(value) {
+        return String(value).replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+    }
+
+    function samePath(left, right) {
+        return normalizePath(left.fsName) === normalizePath(right.fsName);
+    }
+
+    function isInsidePath(child, parent) {
+        var childPath = normalizePath(child.fsName);
+        var parentPath = normalizePath(parent.fsName);
+        return childPath.indexOf(parentPath + "\\") === 0;
+    }
+
+    function findProgramRoot() {
+        var current = File($.fileName).parent;
+        for (var depth = 0; depth < 16; depth += 1) {
+            var manifest = new File(current.fsName + "/" + PROGRAM_MANIFEST_NAME);
+            if (manifest.exists) {
+                return current;
+            }
+            var parent = current.parent;
+            if (!parent || samePath(parent, current)) {
+                break;
+            }
+            current = parent;
+        }
+        fail("the Illustrator program root could not be resolved from the installed package.");
+    }
+
+    function readProgramManifest(programRoot) {
+        var manifest = readJson(
+            new File(programRoot.fsName + "/" + PROGRAM_MANIFEST_NAME),
+            "Illustrator program manifest"
+        );
+        if (!isObject(manifest) ||
+            manifest.schemaVersion !== 1 ||
+            trim(manifest.programId).toLowerCase() !== "illustrator" ||
+            trim(manifest.label).toLowerCase() !== "illustrator") {
+            fail("the resolved program manifest is not Illustrator.");
+        }
+        validateRelativePath(manifest.panelsFolder, "panelsFolder");
+        validateRelativePath(manifest.localScriptsFolder, "localScriptsFolder");
+        return manifest;
+    }
+
+    function collectActiveRecords(folder, records, depth) {
+        if (depth > 16) {
+            fail("the Panels tree is too deep to inspect safely.");
+        }
+        var entries;
+        try {
+            entries = folder.getFiles();
+        } catch (error) {
+            fail("the Panels tree could not be inspected.");
+        }
+        for (var i = 0; i < entries.length; i += 1) {
+            var entry = entries[i];
+            if (entry instanceof Folder) {
+                collectActiveRecords(entry, records, depth + 1);
+            } else if (
+                entry instanceof File &&
+                String(entry.name).toLowerCase().slice(-ACTIVE_RECORD_SUFFIX.length) === ACTIVE_RECORD_SUFFIX
+            ) {
+                records.push(entry);
+            }
+        }
+    }
+
+    function validateOwnerId(value) {
+        var ownerId = trim(value);
+        if (!ownerId || ownerId.length > 128 || !/^[A-Za-z0-9_-]+$/.test(ownerId)) {
+            fail("the Layer Tree active record has an invalid ownerButtonId.");
+        }
+        return ownerId;
+    }
+
+    function validateStringArray(value, label, allowEmpty) {
+        if (!isArray(value)) {
+            fail(label + " must be an array.");
+        }
+        var result = [];
+        var seen = {};
+        for (var i = 0; i < value.length; i += 1) {
+            if (typeof value[i] !== "string" || trim(value[i]) !== value[i] || !value[i]) {
+                fail(label + " must contain non-empty strings.");
+            }
+            if (seen[value[i]]) {
+                fail(label + " contains duplicate values.");
+            }
+            seen[value[i]] = true;
+            result.push(value[i]);
+        }
+        if (!allowEmpty && result.length === 0) {
+            fail("select at least one layer in the installed Layer Tree page first.");
+        }
+        return result;
+    }
+
+    function validateOwnerRecord(recordFile, record, programRoot, programManifest) {
+        if (!isObject(record) ||
+            record.schemaVersion !== 1 ||
+            trim(record.programId).toLowerCase() !== "illustrator" ||
+            trim(record.programName).toLowerCase() !== "illustrator" ||
+            trim(record.kind).toLowerCase() !== "script") {
+            fail("the Layer Tree active record has an invalid generic script contract.");
+        }
+
+        var ownerId = validateOwnerId(record.ownerButtonId);
+        if (trim(record.installId) !== ownerId) {
+            fail("the Layer Tree active record has mismatched owner identifiers.");
+        }
+        if (String(recordFile.name).toLowerCase() !== (ownerId + ACTIVE_RECORD_SUFFIX).toLowerCase()) {
+            fail("the Layer Tree active record filename does not match its owner.");
+        }
+
+        var localRootRelative = validateRelativePath(
+            programManifest.localScriptsFolder,
+            "localScriptsFolder"
+        );
+        var localRoot = new Folder(programRoot.fsName + "/" + localRootRelative);
+        var packageRelative = validateRelativePath(record.localPackagePath, "localPackagePath");
+        var packageFolder = new Folder(programRoot.fsName + "/" + packageRelative);
+        var expectedPackage = new Folder(localRoot.fsName + "/" + ownerId);
+        if (!localRoot.exists ||
+            !packageFolder.exists ||
+            !samePath(packageFolder, expectedPackage) ||
+            !samePath(packageFolder.parent, localRoot)) {
+            fail("the Layer Tree owner package is outside Illustrator Local Scripts.");
+        }
+
+        var sourceRelative = validateRelativePath(record.sourcePath, "sourcePath");
+        var sourceFile = new File(programRoot.fsName + "/" + sourceRelative);
+        var sourceRoot = new Folder(packageFolder.fsName + "/source");
+        if (!sourceRoot.exists || !sourceFile.exists || !isInsidePath(sourceFile, sourceRoot)) {
+            fail("the Layer Tree source is outside its installed owner package.");
+        }
+
+        var sourceManifestFile = new File(sourceRoot.fsName + "/" + SOURCE_MANIFEST_NAME);
+        var sourceManifest = readJson(sourceManifestFile, "installed Layer Tree source manifest");
+        if (!isObject(sourceManifest) ||
+            sourceManifest.schemaVersion !== 1 ||
+            trim(sourceManifest.id) !== PAGE_ID ||
+            trim(sourceManifest.program).toLowerCase() !== "illustrator" ||
+            !isObject(sourceManifest.page) ||
+            sourceManifest.page.schemaVersion !== 1 ||
+            trim(sourceManifest.page.id) !== PAGE_ID ||
+            trim(sourceManifest.page.program).toLowerCase() !== "illustrator" ||
+            trim(sourceManifest.page.ownerStateFormat) !== PAGE_STATE_FORMAT) {
+            fail("the installed Layer Tree source manifest does not declare the expected page.");
+        }
+
+        var declaredSource = validateRelativePath(sourceManifest.source, "Layer Tree manifest source");
+        var expectedSource = new File(sourceRoot.fsName + "/" + declaredSource);
+        if (!expectedSource.exists || !samePath(sourceFile, expectedSource)) {
+            fail("the Layer Tree active record source does not match its package manifest.");
+        }
+
+        if (!isObject(record.page) ||
+            record.page.schemaVersion !== 1 ||
+            trim(record.page.id) !== PAGE_ID ||
+            trim(record.page.program).toLowerCase() !== "illustrator" ||
+            trim(record.page.ownerStateFormat) !== PAGE_STATE_FORMAT) {
+            fail("the Layer Tree active record does not embed the generic installed-page contract.");
+        }
+
+        if (!isObject(record.executionTarget) ||
+            trim(record.executionTarget.kind) !== "core-action" ||
+            trim(record.executionTarget.actionId) !== "open-installed-page" ||
+            !isObject(record.executionTarget.payload) ||
+            trim(record.executionTarget.payload.pageId) !== PAGE_ID) {
+            fail("the Layer Tree owner is not installed through the generic page opener.");
+        }
+
+        var stateFile = new File(packageFolder.fsName + "/runtime/" + OWNER_STATE_NAME);
+        var state = readJson(stateFile, "installed Layer Tree owner state");
+        if (!isObject(state) ||
+            state.schemaVersion !== 1 ||
+            trim(state.pageId) !== PAGE_ID ||
+            trim(state.format) !== PAGE_STATE_FORMAT ||
+            !isObject(state.value)) {
+            fail("the installed Layer Tree owner state has the wrong format.");
+        }
+
+        var highlightedKeys = validateStringArray(
+            state.value.highlightedKeys,
+            "Layer Tree highlightedKeys",
+            false
+        );
+        validateStringArray(state.value.expandedKeys, "Layer Tree expandedKeys", true);
+        return highlightedKeys;
+    }
+
+    function readHighlightedKeys() {
+        var programRoot = findProgramRoot();
+        var programManifest = readProgramManifest(programRoot);
+        var panelsRelative = validateRelativePath(programManifest.panelsFolder, "panelsFolder");
+        var panelsRoot = new Folder(programRoot.fsName + "/" + panelsRelative);
+        if (!panelsRoot.exists) {
+            fail("the Illustrator Panels folder was not found.");
+        }
+
+        var recordFiles = [];
+        collectActiveRecords(panelsRoot, recordFiles, 0);
+        var matches = [];
+        for (var i = 0; i < recordFiles.length; i += 1) {
+            var record;
+            try {
+                record = readJson(recordFiles[i], "active source record");
+            } catch (parseError) {
+                continue;
+            }
+            if (isObject(record) &&
+                isObject(record.page) &&
+                trim(record.page.id) === PAGE_ID) {
+                matches.push({ file: recordFiles[i], record: record });
+            }
+        }
+        if (matches.length !== 1) {
+            fail("expected exactly one active installed Layer Tree owner, but found " + matches.length + ".");
+        }
+        return validateOwnerRecord(
+            matches[0].file,
+            matches[0].record,
+            programRoot,
+            programManifest
+        );
+    }
+
+    function restore(restoreList) {
+        if (!restoreList) {
+            return;
+        }
+        for (var i = restoreList.length - 1; i >= 0; i -= 1) {
+            var entry = restoreList[i];
+            try {
+                entry.layer.locked = entry.locked;
+                entry.layer.visible = entry.visible;
+            } catch (restoreError) {}
+        }
+    }
+
+    function rememberAndOpen(layer, restoreList) {
+        var entry = {
+            layer: layer,
+            locked: layer.locked,
+            visible: layer.visible
+        };
+        restoreList.push(entry);
+        if (entry.locked) {
+            layer.locked = false;
+        }
+        if (!entry.visible) {
+            layer.visible = true;
+        }
+    }
+
+    function resolveLayerByKey(documentRef, key, restoreList, openLayers) {
+        var segments = String(key).split(".");
+        var collection = documentRef.layers;
+        var layer = null;
+        for (var i = 0; i < segments.length; i += 1) {
+            if (!/^(0|[1-9][0-9]*)$/.test(segments[i])) {
+                fail("Layer Tree key '" + key + "' is invalid.");
+            }
+            var layerIndex = parseInt(segments[i], 10);
+            if (layerIndex < 0 || layerIndex >= collection.length) {
+                fail("Layer Tree key '" + key + "' is stale for the active document.");
+            }
+            layer = collection[layerIndex];
+            if (openLayers !== false) {
+                rememberAndOpen(layer, restoreList);
+            }
+            collection = layer.layers;
+        }
+        return layer;
+    }
+
+    function resolveTargets(openLayers) {
+        if (app.documents.length === 0) {
+            fail("open an Illustrator document before running this action.");
+        }
+        var documentRef = app.activeDocument;
+        var keys = readHighlightedKeys();
+        var restoreList = [];
+        var layers = [];
+        try {
+            for (var i = 0; i < keys.length; i += 1) {
+                layers.push(resolveLayerByKey(documentRef, keys[i], restoreList, openLayers));
+            }
+        } catch (error) {
+            restore(restoreList);
+            try { app.redraw(); } catch (redrawError) {}
+            throw error;
+        }
+        return {
+            document: documentRef,
+            layers: layers,
+            restore: restoreList
+        };
+    }
+
+    function containsReference(items, candidate) {
+        for (var i = 0; i < items.length; i += 1) {
+            if (items[i] === candidate) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function collectItems(layer, items) {
+        var i;
+        for (i = 0; i < layer.pageItems.length; i += 1) {
+            var item = layer.pageItems[i];
+            try {
+                if (item.locked) { item.locked = false; }
+                if (item.hidden) { item.hidden = false; }
+            } catch (flagError) {}
+            if (!containsReference(items, item)) {
+                items.push(item);
+            }
+        }
+        for (i = 0; i < layer.layers.length; i += 1) {
+            collectItems(layer.layers[i], items);
+        }
+    }
+
+    function prepare() {
+        var targets = resolveTargets();
+        try {
+            var items = [];
+            for (var i = 0; i < targets.layers.length; i += 1) {
+                collectItems(targets.layers[i], items);
+            }
+            targets.document.selection = null;
+            if (items.length > 0) {
+                targets.document.selection = items;
+            }
+            return targets.restore;
+        } catch (error) {
+            restore(targets.restore);
+            try { app.redraw(); } catch (redrawError) {}
+            throw error;
+        }
+    }
+
+    return {
+        prepare: prepare,
+        resolveTargets: resolveTargets,
+        restore: restore
+    };
+}());

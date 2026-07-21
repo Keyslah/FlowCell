@@ -4,6 +4,12 @@
   "label": "Blender",
   "programType": "bridge",
   "defaultPanels": ["Collections", "Files", "Utility"],
+  "panels": [
+    { "id": "collections", "label": "Collections", "defaultSelected": true },
+    { "id": "files", "label": "Files", "defaultSelected": true },
+    { "id": "utility", "label": "Utility", "defaultSelected": true },
+    { "id": "toolset", "label": "toolset", "defaultSelected": false }
+  ],
   "processNames": ["blender", "blender-launcher"],
   "bindScopedNativeOwner": false,
   "shortcutProfileId": "blender.windows",
@@ -16,14 +22,19 @@
   "supportsToolsetManifests": true,
   "bundledSources": [
     {
-      "id": "blender.theme-workbench",
-      "version": "2.0.4",
+      "id": "blender.theme",
+      "version": "3.0.0",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/theme",
-      "importKind": "tool-set",
+      "importKind": "script",
+      "displayLabel": "Theme",
+      "sourceKind": "page",
+      "required": false,
+      "dependencies": [],
+      "installEffects": ["Installs the Blender Theme page Button and its package-owned actions into the selected panel."],
       "installOnAdd": true,
-      "legacyMatchLabel": "theme",
-      "legacyMatchKind": "tool-set"
+      "legacyMatchLabel": "Theme",
+      "legacyMatchKind": "script"
     }
   ],
   "runner": {

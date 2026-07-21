@@ -101,7 +101,8 @@ function ensurePanelSurface(
     width: 960,
     height: 640,
     placementIds: [],
-    visualOverflowAllowance: 24
+    visualOverflowAllowance: 24,
+    uniformButtonSize: null
   };
   document.surfaces[id] = surface;
   return { surface, changed: true };

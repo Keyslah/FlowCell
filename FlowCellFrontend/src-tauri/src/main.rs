@@ -8,15 +8,12 @@ use commands::bindings::*;
 use commands::button_hotkeys::*;
 use commands::execution::*;
 use commands::filesystem::*;
-use commands::illustrator::*;
+use commands::image_palette::*;
 use commands::layouts::*;
 use commands::macros::*;
-use commands::organization::*;
 use commands::programs::*;
 use commands::slicers::*;
-use commands::themes::*;
 use commands::tool_packages::*;
-use commands::tool_state::*;
 use commands::windows::*;
 
 use image::imageops::FilterType;
@@ -28,7 +25,7 @@ use std::env;
 #[cfg(windows)]
 use std::ffi::c_void;
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -199,26 +196,30 @@ fn main() {
             show_open_file_dialog,
             show_open_folder_dialog,
             show_save_file_dialog,
-            sample_photo_theme_colors,
             sample_image_palette,
-            save_blender_theme_file,
-            load_blender_theme_file,
             save_tool_field_file,
             load_tool_field_file,
             resolve_tool_package_root,
             save_tool_package,
             load_tool_package,
             list_tool_packages,
-            load_legacy_tool_state,
             load_slicer_executable,
             launch_slicer,
-            run_illustrator_layers_action,
-            set_illustrator_layers_highlight,
             save_layout_snapshot,
             load_layout_snapshot,
             list_program_folders,
             list_panel_folders,
-            create_program_folder,
+            list_available_program_packages,
+            preflight_add_program_plan,
+            apply_add_program_plan,
+            prepare_add_program_canonical_commit,
+            finalize_add_program_plan,
+            rollback_add_program_plan,
+            preflight_add_panel_plan,
+            apply_add_panel_plan,
+            prepare_add_panel_canonical_commit,
+            finalize_add_panel_plan,
+            rollback_add_panel_plan,
             rename_program_folder,
             rollback_program_rename,
             finalize_program_rename,
@@ -226,9 +227,10 @@ fn main() {
             begin_program_unregistration,
             rollback_program_unregistration,
             finalize_program_unregistration,
-            create_panel_folder,
             rename_panel_folder,
-            delete_panel_folder,
+            prepare_panel_deletion,
+            rollback_panel_deletion,
+            finalize_panel_deletion,
             list_panel_script_files,
             load_binds_workspace,
             save_bind_shortcut,
@@ -258,18 +260,15 @@ fn main() {
             run_toolset_action,
             program_sources::execute::run_program_capability_action,
             program_sources::execute::set_program_capability_state,
-            scan_organization_project,
-            read_organization_profile,
-            write_organization_profile,
-            list_organization_profiles,
-            read_organization_profile_named,
-            save_organization_profile_as,
-            apply_organization_profile_to_root,
-            apply_organization_profile_folders,
-            make_organization_profile_script,
-            create_organization_folder,
-            recycle_organization_folder,
-            restore_recycled_folder
+            program_sources::installed_page::resolve_installed_page,
+            program_sources::installed_page::run_installed_page_action,
+            program_sources::installed_page::complete_installed_page_core_action,
+            program_sources::installed_page::authorize_installed_page_generated_stage,
+            program_sources::installed_page::discard_installed_page_generated_stage,
+            program_sources::installed_page_webview::mount_installed_page_webview,
+            program_sources::installed_page_webview::resize_installed_page_webview,
+            program_sources::installed_page_webview::post_installed_page_webview_message,
+            program_sources::installed_page_webview::unmount_installed_page_webview
         ])
         .setup(|app| {
             program_sources::rename::recover_rename_transactions_on_startup()
@@ -284,6 +283,20 @@ fn main() {
                 .map_err(std::io::Error::other)?;
             button_state::recover_button_source_transactions_on_startup()
                 .map_err(std::io::Error::other)?;
+            program_sources::pending_install::recover_pending_canonical_installs_on_startup(
+                app.handle(),
+            )
+            .map_err(std::io::Error::other)?;
+            program_sources::installed_page::recover_generated_stage_cleanup_journals_on_startup()
+                .map_err(std::io::Error::other)?;
+            let recovered_deletions = recover_delete_lifecycle_transactions_on_startup()
+                .map_err(std::io::Error::other)?;
+            if recovered_deletions > 0 {
+                restart_flowcell_headless_backend().map_err(std::io::Error::other)?;
+            }
+            recover_add_program_transactions_on_startup(app.handle())
+                .map_err(std::io::Error::other)?;
+            recover_add_panel_transactions_on_startup().map_err(std::io::Error::other)?;
 
             if let Err(error) = synchronize_tool_set_hotkeys(app.handle()) {
                 let message =

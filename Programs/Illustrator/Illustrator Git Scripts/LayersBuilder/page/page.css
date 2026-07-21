@@ -1,0 +1,349 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, "Segoe UI", system-ui, sans-serif;
+  background: #17191d;
+  color: #edf0f5;
+  font-synthesis: none;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+button {
+  border: 1px solid #464b55;
+  border-radius: 6px;
+  background: #2a2d34;
+  color: #f4f6fa;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  border-color: #727986;
+  background: #353942;
+}
+
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid #77a7ff;
+  outline-offset: 2px;
+}
+
+button:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+.layer-tree {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  background:
+    radial-gradient(circle at 82% -8%, rgba(69, 111, 181, 0.2), transparent 32%),
+    #17191d;
+}
+
+.layer-tree__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px 10px;
+  border-bottom: 1px solid #30343b;
+}
+
+.layer-tree__eyebrow {
+  margin: 0 0 2px;
+  color: #8fa3c5;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.layer-tree__header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 650;
+  line-height: 1.1;
+}
+
+.layer-tree__selection {
+  flex: none;
+  border: 1px solid #3f4652;
+  border-radius: 999px;
+  padding: 4px 8px;
+  background: rgba(22, 24, 29, 0.72);
+  color: #bcc5d4;
+  font-size: 11px;
+}
+
+.layer-tree__toolbar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 5px;
+  padding: 8px;
+  border-bottom: 1px solid #30343b;
+  background: rgba(26, 28, 33, 0.9);
+}
+
+.layer-tree__toolbar button {
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 6px;
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-tree__danger {
+  border-color: #78474d;
+  background: #4a292e;
+  color: #ffd9dd;
+}
+
+.layer-tree__danger:hover:not(:disabled) {
+  border-color: #ad626b;
+  background: #62343b;
+}
+
+.layer-tree__primary {
+  border-color: #5179b8;
+  background: #365987;
+}
+
+.layer-tree__surface {
+  position: relative;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: #4a4f59 #202329;
+  scrollbar-width: thin;
+}
+
+.layer-tree__rows {
+  min-width: max-content;
+  padding: 5px 0 9px;
+}
+
+.layer-tree__empty {
+  padding: 28px 20px;
+  color: #a9b0bc;
+  font-size: 13px;
+  line-height: 1.45;
+  text-align: center;
+}
+
+.layer-tree__row {
+  display: grid;
+  grid-template-columns: 20px 25px 25px minmax(110px, 1fr) auto 22px;
+  align-items: center;
+  min-height: 28px;
+  padding-right: 7px;
+  border-left: 3px solid transparent;
+  color: #e8ebf1;
+  user-select: none;
+}
+
+.layer-tree__row:hover {
+  background: #242830;
+}
+
+.layer-tree__row.is-highlighted {
+  border-left-color: #77a7ff;
+  background: #2d4771;
+}
+
+.layer-tree__row.is-highlighted:hover {
+  background: #365584;
+}
+
+.layer-tree__row.is-active .layer-tree__name {
+  color: #8fc1ff;
+  font-weight: 700;
+}
+
+.layer-tree__row.is-hidden .layer-tree__name {
+  opacity: 0.48;
+  font-style: italic;
+}
+
+.layer-tree__row.is-locked .layer-tree__name::after {
+  content: " locked";
+  color: #98a1af;
+  font-size: 9px;
+  font-weight: 400;
+  text-transform: uppercase;
+}
+
+.layer-tree__row-button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: #c5ccd7;
+  line-height: 1;
+}
+
+.layer-tree__row-button:hover:not(:disabled) {
+  border-color: #59606c;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.layer-tree__twisty {
+  font-size: 13px;
+}
+
+.layer-tree__name {
+  overflow: hidden;
+  padding: 0 6px;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layer-tree__count {
+  min-width: 22px;
+  border-radius: 999px;
+  padding: 2px 6px;
+  background: #30343c;
+  color: #aeb7c5;
+  font-size: 10px;
+  text-align: center;
+}
+
+.layer-tree__target {
+  position: relative;
+}
+
+.layer-tree__target::before {
+  position: absolute;
+  inset: 6px;
+  border: 1px solid #9ca5b2;
+  border-radius: 50%;
+  content: "";
+}
+
+.layer-tree__target::after {
+  position: absolute;
+  inset: 9px;
+  border-radius: 50%;
+  background: #9ca5b2;
+  content: "";
+}
+
+.layer-tree__row.is-active .layer-tree__target::before {
+  border-color: #78adff;
+}
+
+.layer-tree__row.is-active .layer-tree__target::after {
+  background: #78adff;
+}
+
+.layer-tree__status {
+  min-height: 28px;
+  padding: 6px 10px;
+  border-top: 1px solid #30343b;
+  background: #1d2025;
+  color: #aeb6c2;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.layer-tree__status[data-kind="error"] {
+  color: #ffb7bf;
+}
+
+.layer-tree__status[data-kind="busy"] {
+  color: #a9c9ff;
+}
+
+.layer-tree__dialog[hidden] {
+  display: none;
+}
+
+.layer-tree__dialog {
+  position: fixed;
+  z-index: 20;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+  background: rgba(7, 8, 10, 0.74);
+}
+
+.layer-tree__dialog-card {
+  width: min(100%, 330px);
+  margin: 0;
+  border: 1px solid #505762;
+  border-radius: 10px;
+  padding: 15px;
+  background: #24272d;
+  box-shadow: 0 18px 45px rgba(0, 0, 0, 0.48);
+}
+
+.layer-tree__dialog-card h2 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+
+.layer-tree__dialog-card p,
+.layer-tree__dialog-card label {
+  color: #c4cad4;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.layer-tree__dialog-card label {
+  display: block;
+  margin-bottom: 5px;
+}
+
+.layer-tree__dialog-card input {
+  width: 100%;
+  border: 1px solid #555d69;
+  border-radius: 6px;
+  padding: 8px 9px;
+  background: #17191d;
+  color: #f1f3f7;
+}
+
+.layer-tree__dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 7px;
+  margin-top: 14px;
+}
+
+.layer-tree__dialog-actions button {
+  min-width: 76px;
+  min-height: 30px;
+  padding: 5px 10px;
+}
+
+@media (max-width: 330px) {
+  .layer-tree__toolbar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .layer-tree__header {
+    padding-inline: 10px;
+  }
+}

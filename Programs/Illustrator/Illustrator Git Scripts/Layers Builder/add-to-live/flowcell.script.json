@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.add-to-live",
+  "label": "Add to Live",
+  "tooltip": "Copy artwork from highlighted saved/version layers back into Live.",
+  "program": "Illustrator",
+  "source": "Add to Live.jsx"
+}

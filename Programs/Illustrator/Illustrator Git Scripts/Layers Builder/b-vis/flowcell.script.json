@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.b-vis",
+  "label": "b vis",
+  "tooltip": "Save the active document's complete layer visibility baseline; no Layer Tree highlight required.",
+  "program": "Illustrator",
+  "source": "b vis.jsx"
+}

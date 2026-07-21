@@ -33,7 +33,8 @@ function createSurface(
     width,
     height,
     placementIds: [],
-    visualOverflowAllowance: 24
+    visualOverflowAllowance: 24,
+    uniformButtonSize: null
   };
   document.surfaces[id] = surface;
   return surface;

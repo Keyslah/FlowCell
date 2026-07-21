@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.restore",
+  "label": "restore",
+  "tooltip": "Restore highlighted saved versions into Live and move current Live content to Trash.",
+  "program": "Illustrator",
+  "source": "restore.jsx"
+}

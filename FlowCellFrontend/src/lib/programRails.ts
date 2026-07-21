@@ -5,6 +5,7 @@ import type { LayoutSnapshot } from "../types.js";
 import { showOpenFileDialog } from "./tauri.js";
 
 export const PROGRAM_DATA_INVALIDATED_EVENT = "flowcell://program-data-invalidated";
+export const PROGRAM_SETUP_COMMITTED_EVENT = "flowcell://program-setup-committed";
 
 export interface ProgramDataInvalidationEvent {
   programName: string;
@@ -51,11 +52,6 @@ export interface PanelScriptFileRecord {
     width: number;
     height: number;
   };
-}
-
-export interface CreateProgramFolderResult {
-  programName: string;
-  statusMessage?: string;
 }
 
 export interface ToolsetActionResponse {
@@ -113,6 +109,102 @@ function responseMessage(response: unknown): string {
     readString(response.message) ||
     "Script completed."
   );
+}
+
+export interface ProgramSetupPanel {
+  id: string;
+  label: string;
+  defaultSelected: boolean;
+}
+
+export interface ProgramSetupSource {
+  id: string;
+  label: string;
+  tooltip: string;
+  version: string;
+  panelName: string;
+  sourceKind: string;
+  required: boolean;
+  defaultSelected: boolean;
+  dependencies: string[];
+  installEffects: string[];
+}
+
+export interface AvailableProgramPackage {
+  programId: string;
+  programName: string;
+  programType: string;
+  suggestedExecutable: string;
+  panels: ProgramSetupPanel[];
+  sources: ProgramSetupSource[];
+  supportContent: string[];
+  requiredVersions: string[];
+  installEffects: string[];
+  addonReloadNotes: string;
+  appRestartNotes: string;
+}
+
+export interface AvailableProgramPackagesResponse {
+  packages: AvailableProgramPackage[];
+  rejectedPackages: Array<{ folderName: string; error: string }>;
+}
+
+export interface AddProgramPlanRequest {
+  programName: string;
+  executablePath: string;
+  selectedPanels: string[];
+  selectedSources: Array<{ sourceId: string; destinationPanel: string }>;
+}
+
+export interface AddProgramPreflight {
+  programId: string;
+  programName: string;
+  executablePath: string;
+  panels: string[];
+  sources: ProgramSetupSource[];
+  installEffects: string[];
+}
+
+export interface AppliedProgramSetup {
+  transactionToken: string;
+  programName: string;
+  panels: string[];
+  descriptors: Record<string, unknown>[];
+  installEffects: string[];
+}
+
+export interface AddPanelPlanRequest {
+  programName: string;
+  panelName: string;
+  sourceFolder?: string | null;
+}
+
+export interface AddPanelPreflight {
+  programName: string;
+  panelName: string;
+  sourceFolder?: string | null;
+  existing: boolean;
+  copyFileCount: number;
+  copyByteCount: number;
+}
+
+export interface AppliedPanelSetup {
+  transactionToken: string;
+  programName: string;
+  panelName: string;
+  created: boolean;
+}
+
+export interface ProgramSetupCommittedEvent {
+  kind: "program" | "panel";
+  programName: string;
+  panelName?: string;
+}
+
+export async function emitProgramSetupCommitted(
+  payload: ProgramSetupCommittedEvent
+): Promise<void> {
+  await emit(PROGRAM_SETUP_COMMITTED_EVENT, payload);
 }
 
 type SlicerLauncherId = "orca" | "cura" | "slicer";
@@ -206,20 +298,6 @@ export async function listPanelFolders(programName: string): Promise<string[]> {
   return invokeProgramRailCommand<string[]>("list_panel_folders", { programName });
 }
 
-export async function createProgramFolder(
-  name: string,
-  exePath?: string
-): Promise<CreateProgramFolderResult> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Program folders can only be created from the desktop host.");
-  }
-
-  return invokeProgramRailCommand<CreateProgramFolderResult>("create_program_folder", {
-    name,
-    exePath: exePath?.trim() ? exePath.trim() : null
-  });
-}
-
 export async function renameProgramFolder(
   currentName: string,
   name: string
@@ -234,12 +312,93 @@ export async function renameProgramFolder(
   });
 }
 
-export async function beginProgramUnregistration(name: string): Promise<string> {
+export async function beginProgramUnregistration(
+  name: string,
+  expectedOwnerButtonIds: string[]
+): Promise<string> {
   if (!isTauriWindowHost()) {
     throw new Error("Programs can only be removed from the desktop host.");
   }
 
-  return invokeProgramRailCommand<string>("begin_program_unregistration", { name });
+  return invokeProgramRailCommand<string>("begin_program_unregistration", {
+    name,
+    expectedOwnerButtonIds
+  });
+}
+
+export async function listAvailableProgramPackages(): Promise<AvailableProgramPackagesResponse> {
+  if (!isTauriWindowHost()) return { packages: [], rejectedPackages: [] };
+  return invokeProgramRailCommand<AvailableProgramPackagesResponse>(
+    "list_available_program_packages"
+  );
+}
+
+export async function preflightAddProgramPlan(
+  request: AddProgramPlanRequest
+): Promise<AddProgramPreflight> {
+  return invokeProgramRailCommand<AddProgramPreflight>("preflight_add_program_plan", { request });
+}
+
+export async function applyAddProgramPlan(
+  request: AddProgramPlanRequest
+): Promise<AppliedProgramSetup> {
+  return invokeProgramRailCommand<AppliedProgramSetup>("apply_add_program_plan", { request });
+}
+
+export async function prepareAddProgramCanonicalCommit(
+  transactionToken: string,
+  expectedButtonIds: string[]
+): Promise<void> {
+  await invokeProgramRailCommand<void>("prepare_add_program_canonical_commit", {
+    transactionToken,
+    expectedButtonIds
+  });
+}
+
+export async function finalizeAddProgramPlan(transactionToken: string): Promise<void> {
+  await invokeProgramRailCommand<void>("finalize_add_program_plan", { transactionToken });
+}
+
+export async function rollbackAddProgramPlan(
+  transactionToken: string
+): Promise<"finalized" | "rolled-back"> {
+  return invokeProgramRailCommand<"finalized" | "rolled-back">("rollback_add_program_plan", {
+    transactionToken
+  });
+}
+
+export async function preflightAddPanelPlan(
+  request: AddPanelPlanRequest
+): Promise<AddPanelPreflight> {
+  return invokeProgramRailCommand<AddPanelPreflight>("preflight_add_panel_plan", { request });
+}
+
+export async function applyAddPanelPlan(
+  request: AddPanelPlanRequest
+): Promise<AppliedPanelSetup> {
+  return invokeProgramRailCommand<AppliedPanelSetup>("apply_add_panel_plan", { request });
+}
+
+export async function prepareAddPanelCanonicalCommit(
+  transactionToken: string,
+  expectedButtonId: string
+): Promise<void> {
+  await invokeProgramRailCommand<void>("prepare_add_panel_canonical_commit", {
+    transactionToken,
+    expectedButtonId
+  });
+}
+
+export async function finalizeAddPanelPlan(transactionToken: string): Promise<void> {
+  await invokeProgramRailCommand<void>("finalize_add_panel_plan", { transactionToken });
+}
+
+export async function rollbackAddPanelPlan(
+  transactionToken: string
+): Promise<"finalized" | "rolled-back"> {
+  return invokeProgramRailCommand<"finalized" | "rolled-back">("rollback_add_panel_plan", {
+    transactionToken
+  });
 }
 
 export async function rollbackProgramUnregistration(rollbackToken: string): Promise<void> {
@@ -258,14 +417,6 @@ export async function finalizeProgramUnregistration(rollbackToken: string): Prom
   await invokeProgramRailCommand<void>("finalize_program_unregistration", { rollbackToken });
 }
 
-export async function createPanelFolder(programName: string, name: string): Promise<string> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Panel folders can only be created from the desktop host.");
-  }
-
-  return invokeProgramRailCommand<string>("create_panel_folder", { programName, name });
-}
-
 export async function renamePanelFolder(
   programName: string,
   currentName: string,
@@ -282,15 +433,36 @@ export async function renamePanelFolder(
   });
 }
 
-export async function deletePanelFolder(
+export async function preparePanelDeletion(
   programName: string,
-  name: string
-): Promise<void> {
+  panelName: string,
+  expectedOwnerButtonIds: string[]
+): Promise<string> {
   if (!isTauriWindowHost()) {
     throw new Error("Panel folders can only be deleted from the desktop host.");
   }
 
-  await invokeProgramRailCommand<void>("delete_panel_folder", { programName, name });
+  return invokeProgramRailCommand<string>("prepare_panel_deletion", {
+    programName,
+    panelName,
+    expectedOwnerButtonIds
+  });
+}
+
+export async function rollbackPanelDeletion(transactionToken: string): Promise<void> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Panel folder deletion can only be rolled back from the desktop host.");
+  }
+
+  await invokeProgramRailCommand<void>("rollback_panel_deletion", { transactionToken });
+}
+
+export async function finalizePanelDeletion(transactionToken: string): Promise<void> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Panel folder deletion can only be finalized from the desktop host.");
+  }
+
+  await invokeProgramRailCommand<void>("finalize_panel_deletion", { transactionToken });
 }
 
 export async function listPanelScriptFiles(

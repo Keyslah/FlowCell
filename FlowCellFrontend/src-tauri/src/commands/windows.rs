@@ -563,7 +563,11 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         foreground_is_valid_external.then_some(foreground.hwnd),
         last_external_hwnd,
     );
-    let valid_scoped_continuation = foreground_is_scoped_window && last_external_matches_target;
+    // Opaque tool pages are ordinary interactive windows, so focusing one is
+    // enough to continue in the normal band. Transparent Pop/Fan hosts still
+    // require a proven owning-program foreground before they accept input.
+    let valid_scoped_continuation =
+        foreground_is_scoped_window && (last_external_matches_target || !entry.selective_input);
     let owner_candidate_hwnd = if matches_target_process {
         Some(foreground.hwnd)
     } else if valid_scoped_continuation {
@@ -604,11 +608,14 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         cursor_over_taskbar_or_preview,
     );
 
-    // Inactive scoped windows always fail closed. Full interactive tool pages
-    // also restore normal input here; transparent Pop/Fan hosts leave active
-    // hit testing to the selective frontend controller.
-    let cursor_input_applied = if !input_active || !entry.selective_input {
-        window.set_ignore_cursor_events(!input_active).is_ok()
+    // Full interactive tool pages always retain normal native input, including
+    // when they are behind an unrelated foreground app. Transparent Pop/Fan
+    // hosts fail closed while inactive and delegate active hit testing to their
+    // selective frontend controller.
+    let cursor_input_applied = if !entry.selective_input {
+        window.set_ignore_cursor_events(false).is_ok()
+    } else if !input_active {
+        window.set_ignore_cursor_events(true).is_ok()
     } else {
         true
     };
@@ -975,12 +982,16 @@ pub(crate) fn set_host_window_topmost(
 }
 
 #[tauri::command]
-pub(crate) fn register_scoped_window_topmost(
+// Keep every command that waits on `apply_lock` asynchronous. The scoped
+// worker holds that lock while Tauri window getters dispatch to the main
+// thread; a synchronous IPC command would otherwise block that same thread
+// while waiting for the worker, deadlocking re-entrant WebView focus events.
+pub(crate) async fn register_scoped_window_topmost(
     label: String,
     program_name: String,
     _bind_owner: Option<bool>,
     selective_input: Option<bool>,
-    registry: State<ScopedTopmostRegistry>,
+    registry: State<'_, ScopedTopmostRegistry>,
 ) -> Result<Vec<String>, String> {
     let window_scope_result = resolve_program_window_scope(&program_name);
     #[cfg(windows)]
@@ -1026,9 +1037,9 @@ pub(crate) fn register_scoped_window_topmost(
 }
 
 #[tauri::command]
-pub(crate) fn unregister_scoped_window_topmost(
+pub(crate) async fn unregister_scoped_window_topmost(
     label: String,
-    registry: State<ScopedTopmostRegistry>,
+    registry: State<'_, ScopedTopmostRegistry>,
 ) -> Result<(), String> {
     #[cfg(windows)]
     let _apply_guard = registry
@@ -1052,9 +1063,9 @@ pub(crate) fn unregister_scoped_window_topmost(
 }
 
 #[tauri::command]
-pub(crate) fn get_scoped_window_input_state(
+pub(crate) async fn get_scoped_window_input_state(
     label: String,
-    registry: State<ScopedTopmostRegistry>,
+    registry: State<'_, ScopedTopmostRegistry>,
 ) -> Result<bool, String> {
     #[cfg(windows)]
     let _apply_guard = registry
@@ -1072,10 +1083,10 @@ pub(crate) fn get_scoped_window_input_state(
 }
 
 #[tauri::command]
-pub(crate) fn refresh_scoped_window_topmost(
+pub(crate) async fn refresh_scoped_window_topmost(
     app: AppHandle,
     label: String,
-    registry: State<ScopedTopmostRegistry>,
+    registry: State<'_, ScopedTopmostRegistry>,
 ) -> Result<(), String> {
     #[cfg(windows)]
     {

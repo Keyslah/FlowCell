@@ -1,6 +1,7 @@
 use super::manifest::load_program_manifest;
 use super::records::{
-    active_record_file_name, read_active_record, validate_owner_button_id, ActiveSourceRecord,
+    active_record_file_name, read_active_record, recover_active_record, validate_owner_button_id,
+    ActiveSourceRecord,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -49,6 +50,9 @@ pub(crate) struct QuarantinedOwnedSource {
     pub quarantine_package_path: PathBuf,
     pub bindings_path: PathBuf,
     pub bindings_backup: Option<String>,
+    pub enabled_contributions_path: Option<PathBuf>,
+    pub enabled_contributions_before: Option<String>,
+    pub enabled_contributions_after: Option<String>,
     pub removed_binding_count: usize,
 }
 
@@ -209,6 +213,15 @@ fn validate_persisted_quarantine(
             return Err(format!(
                 "Persisted Button source quarantine {description} path is outside its manifest-defined location."
             ));
+        }
+    }
+    if let Some(actual) = source.enabled_contributions_path.as_ref() {
+        let expected = super::manifest::enabled_program_contributions_path(&manifest)?;
+        if !paths_equal(actual, &expected) {
+            return Err(
+                "Persisted Button source quarantine enabled-contribution path is outside its program registration state."
+                    .to_string(),
+            );
         }
     }
     Ok(())
@@ -442,6 +455,45 @@ fn locate_owned_source(
     expected_panel: Option<&str>,
     expected_file: Option<&str>,
 ) -> Result<(PathBuf, ActiveSourceRecord), String> {
+    if let (Some(program_name), Some(panel_name), Some(file_name)) =
+        (expected_program, expected_panel, expected_file)
+    {
+        let owner_button_id = validate_owner_button_id(owner_button_id)?;
+        let program_name = crate::validate_folder_name(program_name, "Program")?;
+        let panel_name = crate::validate_folder_name(panel_name, "Panel")?;
+        let expected_file_name = active_record_file_name(&owner_button_id);
+        if !file_name.trim().eq_ignore_ascii_case(&expected_file_name) {
+            return Err(format!(
+                "Button '{}' uninstall request names an unexpected active source record '{}'.",
+                owner_button_id,
+                file_name.trim()
+            ));
+        }
+        let panel_root = crate::resolve_panel_directory(&program_name, &panel_name)?;
+        let record_path = panel_root.join(&expected_file_name);
+        recover_active_record(&record_path)?;
+        if !record_path.is_file() {
+            return Err(format!(
+                "No installed source belongs to Button '{owner_button_id}' in {program_name}/{panel_name}."
+            ));
+        }
+        let record = read_active_record(&record_path)?;
+        if !record
+            .owner_button_id
+            .eq_ignore_ascii_case(&owner_button_id)
+            || !record.install_id.eq_ignore_ascii_case(&owner_button_id)
+            || !record.program_name.eq_ignore_ascii_case(&program_name)
+            || !record.panel_name.eq_ignore_ascii_case(&panel_name)
+        {
+            return Err(format!(
+                "Active source record for Button '{}' does not match the exact uninstall identity {}/{}.",
+                owner_button_id, program_name, panel_name
+            ));
+        }
+        validate_owned_source_location(&record_path, &record, &owner_button_id)?;
+        return Ok((record_path, record));
+    }
+
     let programs_root = crate::resolve_programs_root()?;
     let mut matches = Vec::new();
     for program_entry in fs::read_dir(&programs_root)
@@ -554,6 +606,8 @@ fn binding_section_belongs_to_owner(
     owns_script_path || owns_tool_set_button
 }
 
+// Callers hold the shared bindings-state guard across the complete source
+// transaction, including rollback, so this read/modify/write cannot race Binds.
 fn remove_owned_bindings(record: &ActiveSourceRecord) -> Result<(PathBuf, usize), String> {
     let bindings_path = crate::resolve_bindings_file_path()?;
     let (_bindings, mut document, _) = crate::read_bindings_file_state()?;
@@ -677,6 +731,82 @@ fn transaction_token() -> String {
     format!("{}-{}", now.as_secs(), now.subsec_nanos())
 }
 
+fn prepare_enabled_contribution_removal(
+    record: &ActiveSourceRecord,
+) -> Result<(Option<PathBuf>, Option<String>, Option<String>), String> {
+    let Some(source_id) = record
+        .bundled_source_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return Ok((None, None, None));
+    };
+    let manifest = load_program_manifest(&record.program_name)?;
+    let path = super::manifest::enabled_program_contributions_path(&manifest)?;
+    if !path.is_file() {
+        return Ok((Some(path), None, None));
+    }
+    let before = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    let mut state = serde_json::from_str::<super::manifest::EnabledProgramContributions>(&before)
+        .map_err(|error| {
+        format!(
+            "Enabled contribution state at {} is invalid: {error}",
+            path.display()
+        )
+    })?;
+    super::manifest::validate_enabled_program_contributions(&mut state, &manifest)?;
+    state
+        .enabled_sources
+        .retain(|source| !source.source_id.eq_ignore_ascii_case(source_id));
+    let after = serde_json::to_string_pretty(&state)
+        .map_err(|error| format!("Failed to serialize enabled contribution state: {error}"))?;
+    Ok((Some(path), Some(before), Some(after)))
+}
+
+fn apply_enabled_contribution_change(source: &QuarantinedOwnedSource) -> Result<(), String> {
+    let (Some(path), Some(after)) = (
+        source.enabled_contributions_path.as_ref(),
+        source.enabled_contributions_after.as_ref(),
+    ) else {
+        return Ok(());
+    };
+    super::transaction::write_json_file(
+        path,
+        after.as_bytes(),
+        super::transaction::AtomicWriteMode::Replace,
+    )
+}
+
+fn rollback_enabled_contribution_change(source: &QuarantinedOwnedSource) -> Result<(), String> {
+    let Some(path) = source.enabled_contributions_path.as_ref() else {
+        return Ok(());
+    };
+    match (
+        source.enabled_contributions_before.as_ref(),
+        source.enabled_contributions_after.as_ref(),
+    ) {
+        (Some(before), Some(after)) => {
+            let current = fs::read_to_string(path)
+                .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+            if current.trim() != after.trim() {
+                return Err(format!(
+                    "Enabled contribution state changed while Button '{}' was quarantined.",
+                    source.record.owner_button_id
+                ));
+            }
+            super::transaction::write_json_file(
+                path,
+                before.as_bytes(),
+                super::transaction::AtomicWriteMode::Replace,
+            )
+        }
+        (None, None) => Ok(()),
+        _ => Err("Button quarantine has an incomplete enabled-contribution snapshot.".to_string()),
+    }
+}
+
 pub(crate) fn quarantine_owned_source(
     owner_button_id: &str,
     transaction_root: &Path,
@@ -698,6 +828,8 @@ pub(crate) fn quarantine_owned_source(
     let quarantined_package = owner_root.join("local-package");
     let bindings_path = crate::resolve_bindings_file_path()?;
     let bindings_backup = read_bindings_backup(&bindings_path)?;
+    let (enabled_contributions_path, enabled_contributions_before, enabled_contributions_after) =
+        prepare_enabled_contribution_removal(&record)?;
     let mut source = QuarantinedOwnedSource {
         record,
         original_record_path: record_path,
@@ -706,6 +838,9 @@ pub(crate) fn quarantine_owned_source(
         quarantine_package_path: quarantined_package,
         bindings_path,
         bindings_backup,
+        enabled_contributions_path,
+        enabled_contributions_before,
+        enabled_contributions_after,
         removed_binding_count: 0,
     };
 
@@ -737,6 +872,7 @@ pub(crate) fn quarantine_owned_source(
             return Err("FlowCell bindings path changed during Button quarantine.".to_string());
         }
         source.removed_binding_count = removed_binding_count;
+        apply_enabled_contribution_change(&source)?;
         cleanup_blender_runtime(&source.record)
     })();
 
@@ -846,6 +982,7 @@ where
         }
         reload_bindings();
     }
+    rollback_enabled_contribution_change(source)?;
     restore_runtime(&source.record)
 }
 
@@ -914,6 +1051,9 @@ pub(crate) fn uninstall_button_source(
 ) -> Result<UninstallButtonSourceResponse, String> {
     crate::require_registered_program_name(&request.program_name)?;
     let guard = source_quarantine_guard()?;
+    // Keep binding removal/rollback atomic with Binds saves. This lock order is
+    // source quarantine -> bindings state everywhere source transactions run.
+    let bindings_guard = crate::commands::bindings::bindings_state_guard()?;
     let mut cleanup = recover_standalone_source_transactions_locked()?;
     let owner_button_id = validate_owner_button_id(&request.owner_button_id)?;
     if crate::button_state::canonical_state_references_source_owner_while_source_locked(
@@ -961,6 +1101,7 @@ pub(crate) fn uninstall_button_source(
                     cleanup.push(transaction_root.clone());
                 }
             }
+            drop(bindings_guard);
             drop(guard);
             finalize_standalone_transaction_roots(&cleanup);
             return Err(match rollback_error {
@@ -986,6 +1127,7 @@ pub(crate) fn uninstall_button_source(
                 cleanup.push(transaction_root.clone());
             }
         }
+        drop(bindings_guard);
         drop(guard);
         finalize_standalone_transaction_roots(&cleanup);
         return Err(match rollback {
@@ -1003,6 +1145,8 @@ pub(crate) fn uninstall_button_source(
         super::transaction::AtomicWriteMode::Replace,
     )?;
     cleanup.push(transaction_root);
+    let pending_install_cleanup_error =
+        super::pending_install::clear_pending_canonical_install(&owner_button_id).err();
     let response = UninstallButtonSourceResponse {
         owner_button_id,
         recycled_paths: vec![
@@ -1011,12 +1155,21 @@ pub(crate) fn uninstall_button_source(
         ],
         removed_binding_count: source.removed_binding_count,
     };
+    drop(bindings_guard);
     drop(guard);
     finalize_standalone_transaction_roots(&cleanup);
+    if let Some(error) = pending_install_cleanup_error {
+        let message = format!(
+            "Button '{}' source was uninstalled, but its pending canonical-install intent could not be cleared: {error}",
+            response.owner_button_id
+        );
+        eprintln!("{message}");
+        crate::append_flowcell_local_log("button_state.log", &message);
+    }
     if response.removed_binding_count > 0 {
-        if let Err(error) = crate::synchronize_tool_set_child_hotkeys(&app) {
+        if let Err(error) = crate::synchronize_tool_set_hotkeys(&app) {
             let message = format!(
-                "Tool-set child hotkeys could not be synchronized after uninstalling '{}': {error}",
+                "Tool Set hotkeys could not be synchronized after uninstalling '{}': {error}",
                 response.owner_button_id
             );
             eprintln!("{message}");
@@ -1131,6 +1284,7 @@ mod tests {
                 events: None,
                 children: Vec::new(),
                 layout: None,
+                page: None,
                 source_display_path: "action.py".to_string(),
                 bundled_source_id: None,
                 bundled_source_version: None,
@@ -1141,6 +1295,9 @@ mod tests {
             quarantine_package_path: owner_root.join("local-package"),
             bindings_path: root.join("bindings.ini"),
             bindings_backup,
+            enabled_contributions_path: None,
+            enabled_contributions_before: None,
+            enabled_contributions_after: None,
             removed_binding_count: 1,
         }
     }

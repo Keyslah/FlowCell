@@ -58,14 +58,21 @@ class FakeInteractionHost {
 }
 
 class FakeButtonHost {
-  constructor(buttonId, interactionHost) {
+  constructor(buttonId, interactionCore) {
     this.dataset = { buttonHostId: buttonId };
-    this.interactionHost = interactionHost;
+    this.interactionCore = interactionCore;
   }
 
   querySelector(selector) {
     assert.equal(selector, "[data-button-skin-host]");
-    return this.interactionHost;
+    return {
+      shadowRoot: {
+        querySelector: (coreSelector) => {
+          assert.equal(coreSelector, "[data-core]");
+          return this.interactionCore;
+        }
+      }
+    };
   }
 }
 

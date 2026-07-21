@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { showOpenFileDialog, showOpenFolderDialog } from "../../lib/tauri";
 import { ButtonSurface } from "../ButtonSurface";
 import type { ButtonExecutionResult } from "../runtime/ButtonRuntimeAdapter";
 import type {
@@ -15,10 +13,6 @@ import type {
   ToolSetButtonPopoutUnit,
   JsonValue
 } from "../types";
-import {
-  isThemeWorkbenchPresentationConfig,
-  ThemeWorkbench
-} from "../toolPages";
 import "./buttonPopout.css";
 
 const EMPTY_TOOL_FIELDS: ButtonToolField[] = [];
@@ -84,7 +78,8 @@ function buildCollapsedOwnerDocument(args: {
           width: sourcePlacement.width,
           height: sourcePlacement.height,
           placementIds: [placementId],
-          visualOverflowAllowance: 0
+          visualOverflowAllowance: 0,
+          uniformButtonSize: null
         }
       }
     }
@@ -130,14 +125,6 @@ export function ButtonPopoutRenderer({
     initialFieldValues(fields)
   );
   const [fieldError, setFieldError] = useState<string | null>(null);
-  const themePresentation = unit.kind === "tool-set" &&
-    unit.presentation?.renderer === "theme-workbench" &&
-    isThemeWorkbenchPresentationConfig(unit.presentation.config)
-    ? unit.presentation.config
-    : null;
-  const malformedThemePresentation = unit.kind === "tool-set" &&
-    unit.presentation?.renderer === "theme-workbench" &&
-    !themePresentation;
   useEffect(() => {
     const nextValues = initialFieldValues(fields);
     setFieldValues(nextValues);
@@ -164,30 +151,6 @@ export function ButtonPopoutRenderer({
     },
     [acceptFieldValues]
   );
-  const activateField = useCallback(async (
-    field: ButtonToolField,
-    _currentValue: JsonValue
-  ): Promise<JsonValue | undefined> => {
-    if (field.kind !== "path") {
-      throw new Error(`Tool field '${field.id}' does not have a native activation service.`);
-    }
-    const selectedPaths = field.pathKind === "folder"
-      ? await showOpenFolderDialog({ title: `Choose ${field.label}`, multiselect: false })
-      : await showOpenFileDialog({
-          title: `Choose ${field.label}`,
-          filter: field.filter?.trim() || "All files (*.*)|*.*",
-          multiselect: false
-        });
-    return selectedPaths[0]?.trim() || undefined;
-  }, []);
-  const resolveImageSource = useCallback((path: string) => {
-    try {
-      return convertFileSrc(path);
-    } catch {
-      return null;
-    }
-  }, []);
-
   const collapsedOwner = useMemo(
     () => unit.kind === "tool-set" ? buildCollapsedOwnerDocument({ document, unit }) : null,
     [document, unit]
@@ -255,47 +218,27 @@ export function ButtonPopoutRenderer({
           transformOrigin: "top left"
         }}
       >
-        {themePresentation && unit.kind === "tool-set" ? (
-          <ThemeWorkbench
-            document={document}
-            unit={unit}
-            presentation={themePresentation}
-            fieldValues={fieldValues}
-            onFieldPatch={(_patch, nextValues) => acceptFieldValues(nextValues)}
-            onFieldActivate={activateField}
-            onExecutionResult={(_slot, _button, result) => applyExecutionResult(result)}
-            onPlacementMeasurement={onPlacementMeasurement}
-            onPlacementVisualMeasurement={onPlacementVisualMeasurement}
-            onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
-            onPlacementVisualStateChange={onPlacementVisualStateChange}
-            resolveImageSource={resolveImageSource}
-          />
-        ) : (
-          <ButtonSurface
-            document={document}
-            surfaceId={surface.id}
-            mode="run"
-            fields={fields}
-            fieldValues={fieldValues}
-            onFieldPatch={(
-              _patch: Readonly<Record<string, JsonValue>>,
-              nextValues: Readonly<Record<string, JsonValue>>
-            ) => acceptFieldValues(nextValues)}
-            onExecutionResult={(_placementId: string, result: ButtonExecutionResult) =>
-              applyExecutionResult(result)
-            }
-            onFieldExecutionResult={(_fieldId: string, result: ButtonExecutionResult) =>
-              applyExecutionResult(result)
-            }
-            onPlacementMeasurement={onPlacementMeasurement}
-            onPlacementVisualMeasurement={onPlacementVisualMeasurement}
-            onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
-            onPlacementVisualStateChange={onPlacementVisualStateChange}
-          />
-        )}
-        {malformedThemePresentation ? (
-          <div className="button-window-error">The installed tool-page presentation is malformed.</div>
-        ) : null}
+        <ButtonSurface
+          document={document}
+          surfaceId={surface.id}
+          mode="run"
+          fields={fields}
+          fieldValues={fieldValues}
+          onFieldPatch={(
+            _patch: Readonly<Record<string, JsonValue>>,
+            nextValues: Readonly<Record<string, JsonValue>>
+          ) => acceptFieldValues(nextValues)}
+          onExecutionResult={(_placementId: string, result: ButtonExecutionResult) =>
+            applyExecutionResult(result)
+          }
+          onFieldExecutionResult={(_fieldId: string, result: ButtonExecutionResult) =>
+            applyExecutionResult(result)
+          }
+          onPlacementMeasurement={onPlacementMeasurement}
+          onPlacementVisualMeasurement={onPlacementVisualMeasurement}
+          onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
+          onPlacementVisualStateChange={onPlacementVisualStateChange}
+        />
         {fieldError ? <div className="button-window-error">{fieldError}</div> : null}
       </div>
     </div>

@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Default capability for FlowCell shell windows.",
-  "windows": ["main", "flowcell-tooltip", "flowcell-binds", "flowcell-macro-lab", "flowcell-build-layers", "flowcell-tool-page-*", "flowcell-window-grid", "flowcell-motion-settings", "flowcell-button-editor", "flowcell-button-animation", "flowcell-button-animation-editor", "organization-setup", "button-popout-*", "button-fan-*"],
+  "windows": ["main", "flowcell-tooltip", "flowcell-binds", "flowcell-macro-lab", "flowcell-installed-page-*", "flowcell-window-grid", "flowcell-motion-settings", "flowcell-button-editor", "flowcell-button-animation", "flowcell-button-animation-editor", "button-popout-*", "button-fan-*"],
   "permissions": [
     "core:default",
     "core:event:default",

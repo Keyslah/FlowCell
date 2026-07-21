@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "windows.organization-profile.project-tree",
-  "label": "project tree",
-  "tooltip": "Apply the saved 'project tree' organization profile to the clipboard folder.",
-  "program": "Windows",
-  "source": "apply_profile_project_tree.ps1"
-}

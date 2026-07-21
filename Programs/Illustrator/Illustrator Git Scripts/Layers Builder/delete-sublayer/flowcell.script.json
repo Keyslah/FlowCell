@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.delete-sublayer",
+  "label": "delete sublayer",
+  "tooltip": "Delete highlighted real sublayers while protecting system roots and Archive/Trash contents.",
+  "program": "Illustrator",
+  "source": "delete sublayer.jsx"
+}

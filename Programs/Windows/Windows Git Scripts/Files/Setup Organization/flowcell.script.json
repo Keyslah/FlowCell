@@ -1,0 +1,920 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.setup-organization",
+  "label": "Setup Organization",
+  "tooltip": "Build reusable Windows folder rules and install Buttons for saved organization profiles.",
+  "program": "Windows",
+  "source": "setup_organization.ps1",
+  "page": {
+    "schemaVersion": 1,
+    "id": "windows.setup-organization",
+    "program": "Windows",
+    "label": "Setup Organization",
+    "tooltip": "Scan any Windows folder, define reusable rules, apply saved profiles, and install profile Buttons.",
+    "entry": "page/index.html",
+    "scripts": [
+      "page/page.js"
+    ],
+    "styles": [
+      "page/page.css"
+    ],
+    "assets": [],
+    "window": {
+      "title": "Setup Organization",
+      "width": 1080,
+      "height": 760,
+      "minWidth": 760,
+      "minHeight": 560
+    },
+    "actions": [
+      {
+        "id": "select-root",
+        "handler": {
+          "kind": "core",
+          "capability": "folder.select",
+          "options": {
+            "dialogTitle": "Choose a Windows root to organize"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "selected",
+            "path"
+          ],
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "id": "scan-root",
+        "handler": {
+          "kind": "program",
+          "capability": "windows.setup-organization",
+          "payload": {
+            "operation": "scan-root"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rootPath"
+          ],
+          "properties": {
+            "rootPath": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rootPath",
+            "folders",
+            "files"
+          ],
+          "properties": {
+            "rootPath": {
+              "type": "string"
+            },
+            "folders": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "relativePath",
+                  "name"
+                ],
+                "properties": {
+                  "relativePath": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            },
+            "files": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "relativePath",
+                  "name",
+                  "extension",
+                  "size"
+                ],
+                "properties": {
+                  "relativePath": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "extension": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "list-profiles",
+        "handler": {
+          "kind": "program",
+          "capability": "windows.setup-organization",
+          "payload": {
+            "operation": "list-profiles"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profiles"
+          ],
+          "properties": {
+            "profiles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "profileId",
+                  "name",
+                  "updatedAt",
+                  "ruleCount"
+                ],
+                "properties": {
+                  "profileId": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "updatedAt": {
+                    "type": "string"
+                  },
+                  "ruleCount": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "load-profile",
+        "handler": {
+          "kind": "program",
+          "capability": "windows.setup-organization",
+          "payload": {
+            "operation": "load-profile"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profileId"
+          ],
+          "properties": {
+            "profileId": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profile"
+          ],
+          "properties": {
+            "profile": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schemaVersion",
+                "format",
+                "profileId",
+                "name",
+                "rules",
+                "createdAt",
+                "updatedAt"
+              ],
+              "properties": {
+                "schemaVersion": {
+                  "type": "integer",
+                  "enum": [
+                    1
+                  ]
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "flowcell.windows.setup-organization.profile.v1"
+                  ]
+                },
+                "profileId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "ruleId",
+                      "name",
+                      "targetFolder",
+                      "extensions",
+                      "nameContains",
+                      "matchAll",
+                      "enabled"
+                    ],
+                    "properties": {
+                      "ruleId": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "targetFolder": {
+                        "type": "string"
+                      },
+                      "extensions": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "nameContains": {
+                        "type": "string"
+                      },
+                      "matchAll": {
+                        "type": "boolean"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "save-profile",
+        "handler": {
+          "kind": "program",
+          "capability": "windows.setup-organization",
+          "payload": {
+            "operation": "save-profile"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profileId",
+            "name",
+            "rules"
+          ],
+          "properties": {
+            "profileId": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "rules": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "ruleId",
+                  "name",
+                  "targetFolder",
+                  "extensions",
+                  "nameContains",
+                  "matchAll",
+                  "enabled"
+                ],
+                "properties": {
+                  "ruleId": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "targetFolder": {
+                    "type": "string"
+                  },
+                  "extensions": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "nameContains": {
+                    "type": "string"
+                  },
+                  "matchAll": {
+                    "type": "boolean"
+                  },
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profile"
+          ],
+          "properties": {
+            "profile": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schemaVersion",
+                "format",
+                "profileId",
+                "name",
+                "rules",
+                "createdAt",
+                "updatedAt"
+              ],
+              "properties": {
+                "schemaVersion": {
+                  "type": "integer",
+                  "enum": [
+                    1
+                  ]
+                },
+                "format": {
+                  "type": "string",
+                  "enum": [
+                    "flowcell.windows.setup-organization.profile.v1"
+                  ]
+                },
+                "profileId": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "rules": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "ruleId",
+                      "name",
+                      "targetFolder",
+                      "extensions",
+                      "nameContains",
+                      "matchAll",
+                      "enabled"
+                    ],
+                    "properties": {
+                      "ruleId": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      },
+                      "targetFolder": {
+                        "type": "string"
+                      },
+                      "extensions": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "nameContains": {
+                        "type": "string"
+                      },
+                      "matchAll": {
+                        "type": "boolean"
+                      },
+                      "enabled": {
+                        "type": "boolean"
+                      }
+                    }
+                  }
+                },
+                "createdAt": {
+                  "type": "string"
+                },
+                "updatedAt": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "apply-profile",
+        "handler": {
+          "kind": "program",
+          "capability": "windows.setup-organization",
+          "payload": {
+            "operation": "apply-profile"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profileId",
+            "rootPath"
+          ],
+          "properties": {
+            "profileId": {
+              "type": "string"
+            },
+            "rootPath": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profileId",
+            "rootPath",
+            "foldersEnsured",
+            "moved",
+            "skipped",
+            "unmatched"
+          ],
+          "properties": {
+            "profileId": {
+              "type": "string"
+            },
+            "rootPath": {
+              "type": "string"
+            },
+            "foldersEnsured": {
+              "type": "integer"
+            },
+            "moved": {
+              "type": "integer"
+            },
+            "skipped": {
+              "type": "integer"
+            },
+            "unmatched": {
+              "type": "integer"
+            }
+          }
+        }
+      },
+      {
+        "id": "create-folder",
+        "handler": {
+          "kind": "program",
+          "capability": "windows.setup-organization",
+          "payload": {
+            "operation": "create-folder"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rootPath",
+            "relativePath"
+          ],
+          "properties": {
+            "rootPath": {
+              "type": "string"
+            },
+            "relativePath": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "created",
+            "path",
+            "relativePath"
+          ],
+          "properties": {
+            "created": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            },
+            "relativePath": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "id": "recycle-folder",
+        "handler": {
+          "kind": "program",
+          "capability": "windows.setup-organization",
+          "payload": {
+            "operation": "recycle-folder"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rootPath",
+            "relativePath"
+          ],
+          "properties": {
+            "rootPath": {
+              "type": "string"
+            },
+            "relativePath": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "recycled",
+            "path",
+            "relativePath"
+          ],
+          "properties": {
+            "recycled": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            },
+            "relativePath": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "id": "list-panels",
+        "handler": {
+          "kind": "program",
+          "capability": "windows.setup-organization",
+          "payload": {
+            "operation": "list-panels"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "panels",
+            "defaultPanel",
+            "currentPanel"
+          ],
+          "properties": {
+            "panels": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "defaultPanel": {
+              "type": "string"
+            },
+            "currentPanel": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "id": "recycle-legacy-sidecars",
+        "handler": {
+          "kind": "program",
+          "capability": "windows.setup-organization",
+          "payload": {
+            "operation": "recycle-legacy-sidecars"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rootPath"
+          ],
+          "properties": {
+            "rootPath": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "rootPath",
+            "recycledPaths"
+          ],
+          "properties": {
+            "rootPath": {
+              "type": "string"
+            },
+            "recycledPaths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "stage-generated-button",
+        "handler": {
+          "kind": "program",
+          "capability": "windows.setup-organization",
+          "payload": {
+            "operation": "stage-generated-button"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profileId"
+          ],
+          "properties": {
+            "profileId": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stageToken",
+            "stagedSourcePath",
+            "profileId",
+            "label"
+          ],
+          "properties": {
+            "stageToken": {
+              "type": "string"
+            },
+            "stagedSourcePath": {
+              "type": "string"
+            },
+            "profileId": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "id": "install-generated-button",
+        "handler": {
+          "kind": "core",
+          "capability": "button.install-generated",
+          "options": {
+            "programName": "Windows",
+            "importKind": "script",
+            "stageNamespace": "windows.setup-organization",
+            "stageFormat": "flowcell.windows.setup-organization.stage.v1"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "stageToken",
+            "stagedSourcePath",
+            "panelName"
+          ],
+          "properties": {
+            "stageToken": {
+              "type": "string"
+            },
+            "stagedSourcePath": {
+              "type": "string"
+            },
+            "panelName": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "installed",
+            "ownerButtonId",
+            "programName",
+            "panelName"
+          ],
+          "properties": {
+            "installed": {
+              "type": "boolean"
+            },
+            "ownerButtonId": {
+              "type": "string"
+            },
+            "programName": {
+              "type": "string",
+              "enum": [
+                "Windows"
+              ]
+            },
+            "panelName": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      {
+        "id": "read-owner-state",
+        "handler": {
+          "kind": "owner-state",
+          "operation": "read"
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "lastRootPath": {
+                  "type": "string"
+                },
+                "selectedProfileId": {
+                  "type": "string"
+                },
+                "generatedPanelName": {
+                  "type": "string"
+                },
+                "draftProfileName": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "write-owner-state",
+        "handler": {
+          "kind": "owner-state",
+          "operation": "write"
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "lastRootPath",
+                "selectedProfileId",
+                "generatedPanelName",
+                "draftProfileName"
+              ],
+              "properties": {
+                "lastRootPath": {
+                  "type": "string"
+                },
+                "selectedProfileId": {
+                  "type": "string"
+                },
+                "generatedPanelName": {
+                  "type": "string"
+                },
+                "draftProfileName": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "written"
+          ],
+          "properties": {
+            "written": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    ],
+    "capabilities": [
+      "windows.setup-organization",
+      "folder.select",
+      "button.install-generated"
+    ],
+    "ownerStateFormat": "flowcell.windows.setup-organization.owner-state.v1",
+    "sharedProgramDataNamespace": "setup-organization",
+    "supportedDataFormats": [
+      "flowcell.windows.setup-organization.profile.v1",
+      "flowcell.windows.setup-organization.stage.v1"
+    ],
+    "refreshEvents": [],
+    "config": {
+      "programName": "Windows",
+      "defaultPanel": "Files",
+      "profileFormat": "flowcell.windows.setup-organization.profile.v1",
+      "formatDefinitions": {
+        "profile": "formats/profile.v1.schema.json",
+        "stage": "formats/stage.v1.schema.json"
+      },
+      "copy": {
+        "emptyFolders": "No folders found.",
+        "emptyFiles": "No loose files at the selected root.",
+        "emptyProfiles": "No saved profiles yet.",
+        "emptyRules": "Add a rule to define where matching root files should move."
+      }
+    }
+  }
+}

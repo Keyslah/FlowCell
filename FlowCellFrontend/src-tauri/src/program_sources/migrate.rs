@@ -1600,6 +1600,11 @@ fn cleanup_unreferenced_legacy_actions(entries: &[MigrationJournalEntry]) -> Res
 }
 
 pub(crate) fn finalize_migration_token(token: &str) -> Result<usize, String> {
+    let _bindings_guard = crate::commands::bindings::bindings_state_guard()?;
+    finalize_migration_token_locked(token)
+}
+
+pub(crate) fn finalize_migration_token_locked(token: &str) -> Result<usize, String> {
     let token = token.trim();
     if token.is_empty()
         || !token
@@ -1819,6 +1824,7 @@ mod tests {
             label: "Blender".to_string(),
             program_type: "bridge".to_string(),
             default_panels: vec!["Files".to_string()],
+            panels: Vec::new(),
             process_names: vec!["blender".to_string()],
             exe_path: String::new(),
             bind_scoped_native_owner: false,
@@ -1876,6 +1882,7 @@ mod tests {
             label: "Illustrator".to_string(),
             program_type: "direct-script".to_string(),
             default_panels: vec!["Layers Builder".to_string()],
+            panels: Vec::new(),
             process_names: vec!["illustrator".to_string()],
             exe_path: String::new(),
             bind_scoped_native_owner: true,

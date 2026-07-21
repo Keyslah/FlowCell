@@ -1,0 +1,230 @@
+.program-setup {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 24px;
+  color: #edf5ff;
+  background:
+    radial-gradient(circle at 10% 0%, rgba(63, 130, 194, 0.22), transparent 36%),
+    linear-gradient(145deg, #111821, #0b1017 70%);
+  font: 14px/1.45 Inter, "Segoe UI", sans-serif;
+}
+
+.program-setup button,
+.program-setup input,
+.program-setup select {
+  font: inherit;
+}
+
+.program-setup button {
+  border: 1px solid #49637e;
+  border-radius: 8px;
+  padding: 8px 13px;
+  color: #e8f3ff;
+  background: #1b2938;
+  cursor: pointer;
+}
+
+.program-setup button:hover:not(:disabled),
+.program-setup button.is-active {
+  border-color: #70b8fa;
+  background: #21496b;
+}
+
+.program-setup button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.program-setup input,
+.program-setup select {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 6px;
+  border: 1px solid #3c5065;
+  border-radius: 7px;
+  padding: 8px 10px;
+  color: #f2f7fc;
+  background: #0f1822;
+}
+
+.program-setup input[type="checkbox"] {
+  width: auto;
+  margin: 3px 0 0;
+}
+
+.program-setup__header,
+.program-setup__footer,
+.program-setup__inline,
+.program-setup__check {
+  display: flex;
+  align-items: center;
+}
+
+.program-setup__header,
+.program-setup__footer {
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.program-setup__header h1,
+.program-setup__card h2 {
+  margin: 0;
+}
+
+.program-setup__header p {
+  margin: 3px 0 0;
+  color: #a9bdd0;
+}
+
+.program-setup__eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+  font-size: 11px;
+  color: #7fc3ff !important;
+}
+
+.program-setup__card {
+  margin-top: 18px;
+  border: 1px solid rgba(105, 143, 177, 0.38);
+  border-radius: 12px;
+  padding: 16px;
+  background: rgba(18, 29, 41, 0.86);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.16);
+}
+
+.program-setup__grid,
+.program-setup__columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.program-setup__confirm {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+}
+
+.program-setup__inline {
+  align-items: stretch;
+  gap: 8px;
+}
+
+.program-setup__inline input {
+  min-width: 0;
+}
+
+.program-setup__inline button {
+  margin-top: 6px;
+}
+
+.program-setup__modes {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.program-setup__columns .program-setup__card {
+  margin-top: 16px;
+}
+
+.program-setup__check {
+  align-items: flex-start;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.program-setup__check span,
+.program-setup__check small {
+  display: block;
+}
+
+.program-setup__check small,
+.program-setup__source p,
+.program-setup__hint {
+  color: #9eb2c5;
+}
+
+.program-setup__source {
+  margin-top: 12px;
+  border-top: 1px solid rgba(107, 139, 167, 0.25);
+  padding-top: 4px;
+}
+
+.program-setup__source-group {
+  margin-top: 12px;
+  border: 1px solid rgba(107, 139, 167, 0.25);
+  border-radius: 8px;
+  padding: 9px 11px;
+}
+
+.program-setup__source-group > summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.program-setup__source-group > summary small {
+  margin-left: 6px;
+  color: #9eb2c5;
+  font-weight: 400;
+}
+
+.program-setup__source p {
+  margin: 6px 0 8px 26px;
+}
+
+.program-setup__details p,
+.program-setup__review p {
+  margin: 7px 0;
+}
+
+.program-setup__review {
+  border-color: rgba(83, 181, 130, 0.58);
+}
+
+.program-setup__footer {
+  position: sticky;
+  bottom: 0;
+  margin: 18px -8px -8px;
+  border-top: 1px solid rgba(104, 140, 173, 0.35);
+  padding: 15px 8px 8px;
+  background: rgba(11, 16, 23, 0.94);
+}
+
+.program-setup__status {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.program-setup__primary {
+  min-width: 170px;
+  border-color: #75c1ff !important;
+  background: #17619a !important;
+}
+
+.program-setup__rejected {
+  margin-top: 18px;
+  color: #d8b7b7;
+}
+
+.program-setup__stack {
+  display: grid;
+  gap: 16px;
+}
+
+.program-setup--panel {
+  display: flex;
+  flex-direction: column;
+}
+
+.program-setup--panel .program-setup__footer {
+  margin-top: auto;
+}
+
+@media (max-width: 820px) {
+  .program-setup__grid,
+  .program-setup__columns {
+    grid-template-columns: 1fr;
+  }
+}

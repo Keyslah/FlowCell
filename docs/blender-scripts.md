@@ -115,9 +115,9 @@ My Tool Set/
 ```
 
 The manifest declares owner metadata, child slots, child payload defaults, and
-optional popout layout/fields. Add Tool Set copies the entire directory into the
-owner's Local Scripts package. See `docs/flowcell-toolset-manifest.md` for the
-complete contract.
+optional popout layout/fields. Add Button detects the tool-set manifest and
+copies the entire directory into the owner's Local Scripts package. See
+`docs/flowcell-toolset-manifest.md` for the complete contract.
 
 The Python source still has one entrypoint:
 
@@ -154,8 +154,8 @@ editable field values, field patches, toggle behavior, and payload templates.
 
 ## Install and Update Lifecycle
 
-1. Add Script or Add Tool Set accepts a bare source, package folder, or manifest
-   file.
+1. Add Button accepts a bare source, package folder, or manifest file and
+   detects whether it is a script, tool-set, or page package.
 2. FlowCell validates `flowcell.program.json`, the package manifest, the source
    path, and `run_flowcell_action`.
 3. It copies the selected package into

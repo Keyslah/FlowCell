@@ -55,13 +55,16 @@ function requestLabel(payload: ToolSetChildHotkeyPayload): string {
   return `Shortcut '${payload.shortcut}'`;
 }
 
-function findMountedButtonHost(root: ParentNode, buttonId: string): HTMLElement | null {
+function findMountedButtonCore(root: ParentNode, buttonId: string): HTMLElement | SVGElement | null {
   const candidates = root.querySelectorAll<HTMLElement>("[data-button-host-id]");
   for (let index = 0; index < candidates.length; index += 1) {
     const candidate = candidates[index];
     if (candidate.dataset.buttonHostId !== buttonId) continue;
     const interactionHost = candidate.querySelector<HTMLElement>("[data-button-skin-host]");
-    if (interactionHost) return interactionHost;
+    const interactionCore = interactionHost?.shadowRoot?.querySelector<HTMLElement | SVGElement>(
+      "[data-core]"
+    );
+    if (interactionCore) return interactionCore;
   }
   return null;
 }
@@ -106,8 +109,8 @@ export function activateToolSetChildHotkey(
   if (!state.root) {
     return reject(`${label} could not run because the active tool-set host is not mounted.`, payload);
   }
-  const interactionHost = findMountedButtonHost(state.root, button.id);
-  if (!interactionHost) {
+  const interactionCore = findMountedButtonCore(state.root, button.id);
+  if (!interactionCore) {
     return reject(`${label} could not run because '${button.label}' is not mounted in the active tool set.`, payload);
   }
 
@@ -119,8 +122,8 @@ export function activateToolSetChildHotkey(
       cancelable: true,
       repeat: false
     };
-    interactionHost.dispatchEvent(new KeyboardEvent("keydown", eventInit));
-    interactionHost.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+    interactionCore.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    interactionCore.dispatchEvent(new KeyboardEvent("keyup", eventInit));
   } catch (error) {
     return reject(
       `${label} could not activate '${button.label}': ${

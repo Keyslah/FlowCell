@@ -20,7 +20,7 @@ Reload the FlowCell add-on or restart Blender after copying the bundle or after
 FlowCell deploys changed owner-scoped bridge actions.
 
 Blender tool sources belong in the tracked `Blender Git Scripts` catalog. Add
-Script or Add Tool Set copies the selected source into
+Button detects and copies the selected source into
 `Blender Local Scripts/<ownerButtonId>/source/`; that owned copy is the runtime
 source of truth. `Panels/<Panel>/<ownerButtonId>.flowcell-source.json` is the
 active record, and canonical Button state owns presentation and deletion.

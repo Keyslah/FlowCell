@@ -94,6 +94,8 @@ export function ButtonHost({
   const [play, setPlay] = useState(false);
   const [release, setRelease] = useState(false);
   const [error, setError] = useState(false);
+  const visualPressed = pressed || selected;
+  const visualRelease = selected ? false : release;
   const pointerActiveRef = useRef(false);
   const hoverActiveRef = useRef(false);
   const holdTimerRef = useRef<number | null>(null);
@@ -131,8 +133,22 @@ export function ButtonHost({
   onHoverCancelRef.current = onHoverCancel;
   onPrepareVisualStateChangeRef.current = onPrepareVisualStateChange;
   onVisualStateChangeRef.current = onVisualStateChange;
-  const visualStateRef = useRef<ButtonVisualState>({ hovered, pressed, held, play, release, error });
-  visualStateRef.current = { hovered, pressed, held, play, release, error };
+  const visualStateRef = useRef<ButtonVisualState>({
+    hovered,
+    pressed: visualPressed,
+    held,
+    play,
+    release: visualRelease,
+    error
+  });
+  visualStateRef.current = {
+    hovered,
+    pressed: visualPressed,
+    held,
+    play,
+    release: visualRelease,
+    error
+  };
 
   const clearTimer = (timer: { current: number | null }) => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -211,20 +227,18 @@ export function ButtonHost({
     coreElement.setAttribute("role", "button");
     coreElement.setAttribute("aria-label", button.label || "FlowCell Button");
     coreElement.setAttribute("aria-disabled", button.disabled ? "true" : "false");
+    coreElement.setAttribute("aria-pressed", selected ? "true" : "false");
     if (button.tooltip) coreElement.setAttribute("title", button.tooltip);
     else coreElement.removeAttribute("title");
     coreElement.setAttribute("tabindex", mode === "run" && !button.disabled ? "0" : "-1");
     coreElement.setAttribute("data-button-id", button.id);
     coreElement.setAttribute("data-button-core-interactive", "true");
     (coreElement as HTMLElement).style.cursor = mode === "edit" ? "move" : button.disabled ? "not-allowed" : "pointer";
-  }, [coreElement, button, mode]);
+  }, [coreElement, button, mode, selected]);
 
   useEffect(() => {
     if (!coreElement) return;
-    const root = coreElement.getRootNode();
-    const interactionElement = root instanceof ShadowRoot
-      ? root.host
-      : coreElement;
+    const interactionElement = coreElement;
     const beginPress = (activationEvent: PointerEvent | KeyboardEvent) => {
       if (buttonRef.current.disabled) return;
       if (modeRef.current === "edit") {
@@ -352,7 +366,6 @@ export function ButtonHost({
       if (pointerEvent.button !== 0) return;
       event.preventDefault();
       event.stopPropagation();
-      coreElement.focus?.({ preventScroll: true });
       interactionElement.setPointerCapture?.(pointerEvent.pointerId);
       beginPress(pointerEvent);
     };
@@ -470,12 +483,19 @@ export function ButtonHost({
   }, []);
 
   useEffect(() => {
-    onVisualStateChangeRef.current?.({ hovered, pressed, held, play, release, error });
-  }, [error, held, hovered, play, pressed, release]);
+    onVisualStateChangeRef.current?.({
+      hovered,
+      pressed: visualPressed,
+      held,
+      play,
+      release: visualRelease,
+      error
+    });
+  }, [error, held, hovered, play, visualPressed, visualRelease]);
 
   return (
     <span
-      className={`button-system-host${selected ? " button-system-host--selected" : ""}`}
+      className="button-system-host"
       data-button-host-id={button.id}
       style={{ display: "inline-block", verticalAlign: "top", overflow: "visible", pointerEvents: "none" }}
     >
@@ -491,10 +511,11 @@ export function ButtonHost({
         minimumFontSize={placement.minimumFontSize}
         textSizeOverride={placement.textSizeOverride ?? undefined}
         hovered={hovered}
-        pressed={pressed}
+        pressed={visualPressed}
+        pointerPressed={pressed}
         held={held}
         play={play}
-        release={release}
+        release={visualRelease}
         disabled={button.disabled}
         error={error}
         onCoreElementChange={setCoreElement}

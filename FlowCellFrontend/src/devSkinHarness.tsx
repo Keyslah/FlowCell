@@ -38,6 +38,8 @@ function Harness() {
       <div style={{ width: 420 }} data-harness-editor>
         <ButtonSkinEditor
           skin={skin}
+          buttonLabel="Button Preview"
+          onButtonLabelChange={() => {}}
           onSkinChange={(next) => setSkin(next)}
           onCreateSkin={() => {}}
           onDuplicateSkin={() => {}}

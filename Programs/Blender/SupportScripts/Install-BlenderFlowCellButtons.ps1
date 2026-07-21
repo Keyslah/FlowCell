@@ -295,7 +295,7 @@ function Test-FlowCellPortableBlenderSource([string]$Path) {
         return [pscustomobject]@{
             IsValid = $false
             FunctionName = ''
-            Reason = 'Blender Add Script sources must expose run_flowcell_action(context=None, data=None).'
+            Reason = 'Blender Button script sources must expose run_flowcell_action(context=None, data=None).'
         }
     }
 

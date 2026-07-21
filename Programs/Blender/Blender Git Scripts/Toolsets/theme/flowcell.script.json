@@ -1,0 +1,3228 @@
+{
+  "schemaVersion": 1,
+  "id": "blender.theme",
+  "label": "Theme",
+  "tooltip": "Open the Blender-owned Theme page for UI colors, Place Picture, grid, and HDRI controls.",
+  "program": "Blender",
+  "source": "theme.py",
+  "bridgeData": {
+    "lifecycle": {
+      "enabled": true
+    },
+    "readOnlyCommands": [
+      "status",
+      "read_project_startup_state",
+      "read_place_picture_runtime_state",
+      "absorb_theme"
+    ],
+    "capabilities": [
+      "blender-theme-page",
+      "restore-project-theme-state",
+      "theme-package-library"
+    ]
+  },
+  "page": {
+    "schemaVersion": 1,
+    "id": "blender.theme",
+    "program": "Blender",
+    "label": "Theme",
+    "tooltip": "Set Blender UI colors, Place Picture and grid settings, and the HDRI environment.",
+    "entry": "page/index.html",
+    "scripts": [
+      "page/page.js"
+    ],
+    "styles": [
+      "page/page.css"
+    ],
+    "assets": [],
+    "window": {
+      "title": "Blender Theme",
+      "width": 920,
+      "height": 720,
+      "minWidth": 720,
+      "minHeight": 560
+    },
+    "actions": [
+      {
+        "id": "owner-state.read",
+        "handler": {
+          "kind": "owner-state",
+          "operation": "read"
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            }
+          },
+          "required": [
+            "state"
+          ]
+        }
+      },
+      {
+        "id": "owner-state.write",
+        "handler": {
+          "kind": "owner-state",
+          "operation": "write"
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            }
+          },
+          "required": [
+            "state"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "written": {
+              "enum": [
+                true
+              ]
+            }
+          },
+          "required": [
+            "written"
+          ]
+        }
+      },
+      {
+        "id": "theme.image.select",
+        "handler": {
+          "kind": "core",
+          "capability": "file.select",
+          "options": {
+            "dialogTitle": "Choose Blender Theme Reference Image",
+            "filter": "Images (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp",
+            "extensions": [
+              "png",
+              "jpg",
+              "jpeg",
+              "webp"
+            ],
+            "multiselect": false
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "path"
+          ]
+        }
+      },
+      {
+        "id": "theme.image.sample",
+        "handler": {
+          "kind": "core",
+          "capability": "image.sample-palette",
+          "options": {
+            "imagePathField": "theme_image_path",
+            "copyPathTo": [
+              "static_background_path"
+            ],
+            "fieldMap": {
+              "theme_palette_hexes": "paletteHexes",
+              "tabs_hex": "primaryHex",
+              "tabs_text_hex": "textHex",
+              "headers_hex": "primaryHex",
+              "header_text_hex": "textHex",
+              "text_hex": "textHex",
+              "control_text_hex": "textHex",
+              "accent_text_hex": "textHex",
+              "editor_background_hex": "secondaryHex",
+              "scene_hex": "backgroundHex",
+              "controls_hex": "controlHex",
+              "highlights_hex": "highlightHex",
+              "viewport_background_hex": "backgroundHex",
+              "viewport_gradient_hex": "secondaryHex"
+            }
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "imagePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "imagePath"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "imagePath": {
+              "type": "string"
+            },
+            "paletteHexes": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "fieldPatch": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "theme_palette_hexes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "theme_image_path": {
+                  "type": "string"
+                },
+                "visual_mode": {
+                  "type": "string",
+                  "enum": [
+                    "dark",
+                    "light"
+                  ]
+                },
+                "tabs_hex": {
+                  "type": "string"
+                },
+                "tabs_text_hex": {
+                  "type": "string"
+                },
+                "headers_hex": {
+                  "type": "string"
+                },
+                "header_text_hex": {
+                  "type": "string"
+                },
+                "text_hex": {
+                  "type": "string"
+                },
+                "control_text_hex": {
+                  "type": "string"
+                },
+                "accent_text_hex": {
+                  "type": "string"
+                },
+                "editor_background_hex": {
+                  "type": "string"
+                },
+                "scene_hex": {
+                  "type": "string"
+                },
+                "controls_hex": {
+                  "type": "string"
+                },
+                "highlights_hex": {
+                  "type": "string"
+                },
+                "viewport_background_hex": {
+                  "type": "string"
+                },
+                "viewport_gradient_enabled": {
+                  "type": "boolean"
+                },
+                "viewport_gradient_hex": {
+                  "type": "string"
+                },
+                "static_background_path": {
+                  "type": "string"
+                },
+                "grid_spacing_m": {
+                  "type": "number"
+                },
+                "grid_distance_m": {
+                  "type": "number"
+                },
+                "grid_far_spacing_m": {
+                  "type": "number"
+                }
+              }
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "imagePath",
+            "paletteHexes",
+            "fieldPatch",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "theme.fields.save",
+        "handler": {
+          "kind": "core",
+          "capability": "tool-fields.save",
+          "options": {
+            "formatId": "blender-theme",
+            "sourceNameField": "theme_image_path",
+            "defaultName": "Blender",
+            "nameSuffix": " Theme",
+            "valueFields": [
+              "theme_palette_hexes",
+              "theme_image_path",
+              "visual_mode",
+              "tabs_hex",
+              "tabs_text_hex",
+              "headers_hex",
+              "header_text_hex",
+              "text_hex",
+              "control_text_hex",
+              "accent_text_hex",
+              "editor_background_hex",
+              "scene_hex",
+              "controls_hex",
+              "highlights_hex",
+              "viewport_background_hex",
+              "viewport_gradient_enabled",
+              "viewport_gradient_hex",
+              "static_background_path",
+              "grid_spacing_m",
+              "grid_distance_m",
+              "grid_far_spacing_m"
+            ],
+            "dialogTitle": "Save Blender Theme Fields"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "values": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "theme_palette_hexes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "theme_image_path": {
+                  "type": "string"
+                },
+                "visual_mode": {
+                  "type": "string",
+                  "enum": [
+                    "dark",
+                    "light"
+                  ]
+                },
+                "tabs_hex": {
+                  "type": "string"
+                },
+                "tabs_text_hex": {
+                  "type": "string"
+                },
+                "headers_hex": {
+                  "type": "string"
+                },
+                "header_text_hex": {
+                  "type": "string"
+                },
+                "text_hex": {
+                  "type": "string"
+                },
+                "control_text_hex": {
+                  "type": "string"
+                },
+                "accent_text_hex": {
+                  "type": "string"
+                },
+                "editor_background_hex": {
+                  "type": "string"
+                },
+                "scene_hex": {
+                  "type": "string"
+                },
+                "controls_hex": {
+                  "type": "string"
+                },
+                "highlights_hex": {
+                  "type": "string"
+                },
+                "viewport_background_hex": {
+                  "type": "string"
+                },
+                "viewport_gradient_enabled": {
+                  "type": "boolean"
+                },
+                "viewport_gradient_hex": {
+                  "type": "string"
+                },
+                "static_background_path": {
+                  "type": "string"
+                },
+                "grid_spacing_m": {
+                  "type": "number"
+                },
+                "grid_distance_m": {
+                  "type": "number"
+                },
+                "grid_far_spacing_m": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "theme_palette_hexes",
+                "theme_image_path",
+                "visual_mode",
+                "tabs_hex",
+                "tabs_text_hex",
+                "headers_hex",
+                "header_text_hex",
+                "text_hex",
+                "control_text_hex",
+                "accent_text_hex",
+                "editor_background_hex",
+                "scene_hex",
+                "controls_hex",
+                "highlights_hex",
+                "viewport_background_hex",
+                "viewport_gradient_enabled",
+                "viewport_gradient_hex",
+                "static_background_path",
+                "grid_spacing_m",
+                "grid_distance_m",
+                "grid_far_spacing_m"
+              ]
+            }
+          },
+          "required": [
+            "values"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "saved": {
+              "type": "boolean"
+            },
+            "savedPath": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "saved",
+            "savedPath",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "theme.fields.load",
+        "handler": {
+          "kind": "core",
+          "capability": "tool-fields.load",
+          "options": {
+            "formatId": "blender-theme",
+            "valueFields": [
+              "theme_palette_hexes",
+              "theme_image_path",
+              "visual_mode",
+              "tabs_hex",
+              "tabs_text_hex",
+              "headers_hex",
+              "header_text_hex",
+              "text_hex",
+              "control_text_hex",
+              "accent_text_hex",
+              "editor_background_hex",
+              "scene_hex",
+              "controls_hex",
+              "highlights_hex",
+              "viewport_background_hex",
+              "viewport_gradient_enabled",
+              "viewport_gradient_hex",
+              "static_background_path",
+              "grid_spacing_m",
+              "grid_distance_m",
+              "grid_far_spacing_m"
+            ],
+            "legacyFormats": [
+              "flowcell-blender-theme-v1"
+            ],
+            "legacyFieldMap": {
+              "StaticBackgroundPath": "static_background_path",
+              "GridSpacing": "grid_spacing_m",
+              "GridDistance": "grid_distance_m",
+              "GridFarSpacing": "grid_far_spacing_m",
+              "ThemeImagePath": "theme_image_path",
+              "ThemePaletteHexes": "theme_palette_hexes",
+              "ThemeVisualMode": "visual_mode",
+              "ThemeTabsHex": "tabs_hex",
+              "ThemeTabsTextHex": "tabs_text_hex",
+              "ThemeHeadersHex": "headers_hex",
+              "ThemeHeaderTextHex": "header_text_hex",
+              "ThemeTextHex": "text_hex",
+              "ThemeControlTextHex": "control_text_hex",
+              "ThemeAccentTextHex": "accent_text_hex",
+              "ThemeEditorBackgroundHex": "editor_background_hex",
+              "ThemeSceneHex": "scene_hex",
+              "ThemeControlsHex": "controls_hex",
+              "ThemeHighlightsHex": "highlights_hex",
+              "ThemeViewportBackgroundHex": "viewport_background_hex",
+              "ThemeViewportGradientEnabled": "viewport_gradient_enabled",
+              "ThemeViewportGradientHex": "viewport_gradient_hex"
+            },
+            "legacyFieldTransforms": {
+              "GridSpacing": "parse-number",
+              "GridDistance": "parse-number",
+              "GridFarSpacing": "parse-number"
+            },
+            "dialogTitle": "Load Blender Theme Fields"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "fieldPatch": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "theme_palette_hexes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "theme_image_path": {
+                  "type": "string"
+                },
+                "visual_mode": {
+                  "type": "string",
+                  "enum": [
+                    "dark",
+                    "light"
+                  ]
+                },
+                "tabs_hex": {
+                  "type": "string"
+                },
+                "tabs_text_hex": {
+                  "type": "string"
+                },
+                "headers_hex": {
+                  "type": "string"
+                },
+                "header_text_hex": {
+                  "type": "string"
+                },
+                "text_hex": {
+                  "type": "string"
+                },
+                "control_text_hex": {
+                  "type": "string"
+                },
+                "accent_text_hex": {
+                  "type": "string"
+                },
+                "editor_background_hex": {
+                  "type": "string"
+                },
+                "scene_hex": {
+                  "type": "string"
+                },
+                "controls_hex": {
+                  "type": "string"
+                },
+                "highlights_hex": {
+                  "type": "string"
+                },
+                "viewport_background_hex": {
+                  "type": "string"
+                },
+                "viewport_gradient_enabled": {
+                  "type": "boolean"
+                },
+                "viewport_gradient_hex": {
+                  "type": "string"
+                },
+                "static_background_path": {
+                  "type": "string"
+                },
+                "grid_spacing_m": {
+                  "type": "number"
+                },
+                "grid_distance_m": {
+                  "type": "number"
+                },
+                "grid_far_spacing_m": {
+                  "type": "number"
+                }
+              }
+            },
+            "sourcePath": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "fieldPatch",
+            "sourcePath",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "theme.package.save",
+        "handler": {
+          "kind": "core",
+          "capability": "tool-package.save",
+          "options": {
+            "capability": "theme-package-library",
+            "storageFolder": "blender_themes",
+            "formatId": "blender-theme",
+            "manifestSuffix": ".flowcell-theme-pack.json",
+            "valueFields": [
+              "theme_palette_hexes",
+              "theme_image_path",
+              "visual_mode",
+              "tabs_hex",
+              "tabs_text_hex",
+              "headers_hex",
+              "header_text_hex",
+              "text_hex",
+              "control_text_hex",
+              "accent_text_hex",
+              "editor_background_hex",
+              "scene_hex",
+              "controls_hex",
+              "highlights_hex",
+              "viewport_background_hex",
+              "viewport_gradient_enabled",
+              "viewport_gradient_hex",
+              "static_background_path",
+              "grid_spacing_m",
+              "grid_distance_m",
+              "grid_far_spacing_m"
+            ],
+            "assetFields": [
+              "theme_image_path",
+              "static_background_path"
+            ],
+            "legacyFormats": [
+              "flowcell-blender-theme-pack-v1"
+            ],
+            "legacyAssetMap": {
+              "bucketsImage": "theme_image_path",
+              "backgroundImage": "static_background_path"
+            },
+            "legacyFieldMap": {
+              "StaticBackgroundPath": "static_background_path",
+              "GridSpacing": "grid_spacing_m",
+              "GridDistance": "grid_distance_m",
+              "GridFarSpacing": "grid_far_spacing_m",
+              "ThemeImagePath": "theme_image_path",
+              "ThemePaletteHexes": "theme_palette_hexes",
+              "ThemeVisualMode": "visual_mode",
+              "ThemeTabsHex": "tabs_hex",
+              "ThemeTabsTextHex": "tabs_text_hex",
+              "ThemeHeadersHex": "headers_hex",
+              "ThemeHeaderTextHex": "header_text_hex",
+              "ThemeTextHex": "text_hex",
+              "ThemeControlTextHex": "control_text_hex",
+              "ThemeAccentTextHex": "accent_text_hex",
+              "ThemeEditorBackgroundHex": "editor_background_hex",
+              "ThemeSceneHex": "scene_hex",
+              "ThemeControlsHex": "controls_hex",
+              "ThemeHighlightsHex": "highlights_hex",
+              "ThemeViewportBackgroundHex": "viewport_background_hex",
+              "ThemeViewportGradientEnabled": "viewport_gradient_enabled",
+              "ThemeViewportGradientHex": "viewport_gradient_hex"
+            },
+            "legacyFieldTransforms": {
+              "GridSpacing": "parse-number",
+              "GridDistance": "parse-number",
+              "GridFarSpacing": "parse-number"
+            },
+            "sourceNameField": "theme_image_path",
+            "defaultName": "Theme",
+            "dialogTitle": "Save Theme Package"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "values": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "theme_palette_hexes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "theme_image_path": {
+                  "type": "string"
+                },
+                "visual_mode": {
+                  "type": "string",
+                  "enum": [
+                    "dark",
+                    "light"
+                  ]
+                },
+                "tabs_hex": {
+                  "type": "string"
+                },
+                "tabs_text_hex": {
+                  "type": "string"
+                },
+                "headers_hex": {
+                  "type": "string"
+                },
+                "header_text_hex": {
+                  "type": "string"
+                },
+                "text_hex": {
+                  "type": "string"
+                },
+                "control_text_hex": {
+                  "type": "string"
+                },
+                "accent_text_hex": {
+                  "type": "string"
+                },
+                "editor_background_hex": {
+                  "type": "string"
+                },
+                "scene_hex": {
+                  "type": "string"
+                },
+                "controls_hex": {
+                  "type": "string"
+                },
+                "highlights_hex": {
+                  "type": "string"
+                },
+                "viewport_background_hex": {
+                  "type": "string"
+                },
+                "viewport_gradient_enabled": {
+                  "type": "boolean"
+                },
+                "viewport_gradient_hex": {
+                  "type": "string"
+                },
+                "static_background_path": {
+                  "type": "string"
+                },
+                "grid_spacing_m": {
+                  "type": "number"
+                },
+                "grid_distance_m": {
+                  "type": "number"
+                },
+                "grid_far_spacing_m": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "theme_palette_hexes",
+                "theme_image_path",
+                "visual_mode",
+                "tabs_hex",
+                "tabs_text_hex",
+                "headers_hex",
+                "header_text_hex",
+                "text_hex",
+                "control_text_hex",
+                "accent_text_hex",
+                "editor_background_hex",
+                "scene_hex",
+                "controls_hex",
+                "highlights_hex",
+                "viewport_background_hex",
+                "viewport_gradient_enabled",
+                "viewport_gradient_hex",
+                "static_background_path",
+                "grid_spacing_m",
+                "grid_distance_m",
+                "grid_far_spacing_m"
+              ]
+            }
+          },
+          "required": [
+            "values"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "saved": {
+              "type": "boolean"
+            },
+            "savedPath": {
+              "type": "string"
+            },
+            "packagePath": {
+              "type": "string"
+            },
+            "packageName": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "saved",
+            "savedPath",
+            "packagePath",
+            "packageName",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "theme.package.open",
+        "handler": {
+          "kind": "core",
+          "capability": "tool-package.open",
+          "options": {
+            "capability": "theme-package-library",
+            "storageFolder": "blender_themes",
+            "formatId": "blender-theme",
+            "manifestSuffix": ".flowcell-theme-pack.json",
+            "valueFields": [
+              "theme_palette_hexes",
+              "theme_image_path",
+              "visual_mode",
+              "tabs_hex",
+              "tabs_text_hex",
+              "headers_hex",
+              "header_text_hex",
+              "text_hex",
+              "control_text_hex",
+              "accent_text_hex",
+              "editor_background_hex",
+              "scene_hex",
+              "controls_hex",
+              "highlights_hex",
+              "viewport_background_hex",
+              "viewport_gradient_enabled",
+              "viewport_gradient_hex",
+              "static_background_path",
+              "grid_spacing_m",
+              "grid_distance_m",
+              "grid_far_spacing_m"
+            ],
+            "assetFields": [
+              "theme_image_path",
+              "static_background_path"
+            ],
+            "legacyFormats": [
+              "flowcell-blender-theme-pack-v1"
+            ],
+            "legacyAssetMap": {
+              "bucketsImage": "theme_image_path",
+              "backgroundImage": "static_background_path"
+            },
+            "legacyFieldMap": {
+              "StaticBackgroundPath": "static_background_path",
+              "GridSpacing": "grid_spacing_m",
+              "GridDistance": "grid_distance_m",
+              "GridFarSpacing": "grid_far_spacing_m",
+              "ThemeImagePath": "theme_image_path",
+              "ThemePaletteHexes": "theme_palette_hexes",
+              "ThemeVisualMode": "visual_mode",
+              "ThemeTabsHex": "tabs_hex",
+              "ThemeTabsTextHex": "tabs_text_hex",
+              "ThemeHeadersHex": "headers_hex",
+              "ThemeHeaderTextHex": "header_text_hex",
+              "ThemeTextHex": "text_hex",
+              "ThemeControlTextHex": "control_text_hex",
+              "ThemeAccentTextHex": "accent_text_hex",
+              "ThemeEditorBackgroundHex": "editor_background_hex",
+              "ThemeSceneHex": "scene_hex",
+              "ThemeControlsHex": "controls_hex",
+              "ThemeHighlightsHex": "highlights_hex",
+              "ThemeViewportBackgroundHex": "viewport_background_hex",
+              "ThemeViewportGradientEnabled": "viewport_gradient_enabled",
+              "ThemeViewportGradientHex": "viewport_gradient_hex"
+            },
+            "legacyFieldTransforms": {
+              "GridSpacing": "parse-number",
+              "GridDistance": "parse-number",
+              "GridFarSpacing": "parse-number"
+            },
+            "dialogTitle": "Open Theme Package"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "fieldPatch": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "theme_palette_hexes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "theme_image_path": {
+                  "type": "string"
+                },
+                "visual_mode": {
+                  "type": "string",
+                  "enum": [
+                    "dark",
+                    "light"
+                  ]
+                },
+                "tabs_hex": {
+                  "type": "string"
+                },
+                "tabs_text_hex": {
+                  "type": "string"
+                },
+                "headers_hex": {
+                  "type": "string"
+                },
+                "header_text_hex": {
+                  "type": "string"
+                },
+                "text_hex": {
+                  "type": "string"
+                },
+                "control_text_hex": {
+                  "type": "string"
+                },
+                "accent_text_hex": {
+                  "type": "string"
+                },
+                "editor_background_hex": {
+                  "type": "string"
+                },
+                "scene_hex": {
+                  "type": "string"
+                },
+                "controls_hex": {
+                  "type": "string"
+                },
+                "highlights_hex": {
+                  "type": "string"
+                },
+                "viewport_background_hex": {
+                  "type": "string"
+                },
+                "viewport_gradient_enabled": {
+                  "type": "boolean"
+                },
+                "viewport_gradient_hex": {
+                  "type": "string"
+                },
+                "static_background_path": {
+                  "type": "string"
+                },
+                "grid_spacing_m": {
+                  "type": "number"
+                },
+                "grid_distance_m": {
+                  "type": "number"
+                },
+                "grid_far_spacing_m": {
+                  "type": "number"
+                }
+              }
+            },
+            "packagePath": {
+              "type": "string"
+            },
+            "packageName": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "fieldPatch",
+            "packagePath",
+            "packageName",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "theme.package.previous",
+        "handler": {
+          "kind": "core",
+          "capability": "tool-package.cycle",
+          "options": {
+            "capability": "theme-package-library",
+            "storageFolder": "blender_themes",
+            "formatId": "blender-theme",
+            "manifestSuffix": ".flowcell-theme-pack.json",
+            "valueFields": [
+              "theme_palette_hexes",
+              "theme_image_path",
+              "visual_mode",
+              "tabs_hex",
+              "tabs_text_hex",
+              "headers_hex",
+              "header_text_hex",
+              "text_hex",
+              "control_text_hex",
+              "accent_text_hex",
+              "editor_background_hex",
+              "scene_hex",
+              "controls_hex",
+              "highlights_hex",
+              "viewport_background_hex",
+              "viewport_gradient_enabled",
+              "viewport_gradient_hex",
+              "static_background_path",
+              "grid_spacing_m",
+              "grid_distance_m",
+              "grid_far_spacing_m"
+            ],
+            "assetFields": [
+              "theme_image_path",
+              "static_background_path"
+            ],
+            "legacyFormats": [
+              "flowcell-blender-theme-pack-v1"
+            ],
+            "legacyAssetMap": {
+              "bucketsImage": "theme_image_path",
+              "backgroundImage": "static_background_path"
+            },
+            "legacyFieldMap": {
+              "StaticBackgroundPath": "static_background_path",
+              "GridSpacing": "grid_spacing_m",
+              "GridDistance": "grid_distance_m",
+              "GridFarSpacing": "grid_far_spacing_m",
+              "ThemeImagePath": "theme_image_path",
+              "ThemePaletteHexes": "theme_palette_hexes",
+              "ThemeVisualMode": "visual_mode",
+              "ThemeTabsHex": "tabs_hex",
+              "ThemeTabsTextHex": "tabs_text_hex",
+              "ThemeHeadersHex": "headers_hex",
+              "ThemeHeaderTextHex": "header_text_hex",
+              "ThemeTextHex": "text_hex",
+              "ThemeControlTextHex": "control_text_hex",
+              "ThemeAccentTextHex": "accent_text_hex",
+              "ThemeEditorBackgroundHex": "editor_background_hex",
+              "ThemeSceneHex": "scene_hex",
+              "ThemeControlsHex": "controls_hex",
+              "ThemeHighlightsHex": "highlights_hex",
+              "ThemeViewportBackgroundHex": "viewport_background_hex",
+              "ThemeViewportGradientEnabled": "viewport_gradient_enabled",
+              "ThemeViewportGradientHex": "viewport_gradient_hex"
+            },
+            "legacyFieldTransforms": {
+              "GridSpacing": "parse-number",
+              "GridDistance": "parse-number",
+              "GridFarSpacing": "parse-number"
+            },
+            "direction": -1
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "activePackagePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "activePackagePath"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "fieldPatch": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "theme_palette_hexes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "theme_image_path": {
+                  "type": "string"
+                },
+                "visual_mode": {
+                  "type": "string",
+                  "enum": [
+                    "dark",
+                    "light"
+                  ]
+                },
+                "tabs_hex": {
+                  "type": "string"
+                },
+                "tabs_text_hex": {
+                  "type": "string"
+                },
+                "headers_hex": {
+                  "type": "string"
+                },
+                "header_text_hex": {
+                  "type": "string"
+                },
+                "text_hex": {
+                  "type": "string"
+                },
+                "control_text_hex": {
+                  "type": "string"
+                },
+                "accent_text_hex": {
+                  "type": "string"
+                },
+                "editor_background_hex": {
+                  "type": "string"
+                },
+                "scene_hex": {
+                  "type": "string"
+                },
+                "controls_hex": {
+                  "type": "string"
+                },
+                "highlights_hex": {
+                  "type": "string"
+                },
+                "viewport_background_hex": {
+                  "type": "string"
+                },
+                "viewport_gradient_enabled": {
+                  "type": "boolean"
+                },
+                "viewport_gradient_hex": {
+                  "type": "string"
+                },
+                "static_background_path": {
+                  "type": "string"
+                },
+                "grid_spacing_m": {
+                  "type": "number"
+                },
+                "grid_distance_m": {
+                  "type": "number"
+                },
+                "grid_far_spacing_m": {
+                  "type": "number"
+                }
+              }
+            },
+            "packagePath": {
+              "type": "string"
+            },
+            "packageName": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "fieldPatch",
+            "packagePath",
+            "packageName",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "theme.package.next",
+        "handler": {
+          "kind": "core",
+          "capability": "tool-package.cycle",
+          "options": {
+            "capability": "theme-package-library",
+            "storageFolder": "blender_themes",
+            "formatId": "blender-theme",
+            "manifestSuffix": ".flowcell-theme-pack.json",
+            "valueFields": [
+              "theme_palette_hexes",
+              "theme_image_path",
+              "visual_mode",
+              "tabs_hex",
+              "tabs_text_hex",
+              "headers_hex",
+              "header_text_hex",
+              "text_hex",
+              "control_text_hex",
+              "accent_text_hex",
+              "editor_background_hex",
+              "scene_hex",
+              "controls_hex",
+              "highlights_hex",
+              "viewport_background_hex",
+              "viewport_gradient_enabled",
+              "viewport_gradient_hex",
+              "static_background_path",
+              "grid_spacing_m",
+              "grid_distance_m",
+              "grid_far_spacing_m"
+            ],
+            "assetFields": [
+              "theme_image_path",
+              "static_background_path"
+            ],
+            "legacyFormats": [
+              "flowcell-blender-theme-pack-v1"
+            ],
+            "legacyAssetMap": {
+              "bucketsImage": "theme_image_path",
+              "backgroundImage": "static_background_path"
+            },
+            "legacyFieldMap": {
+              "StaticBackgroundPath": "static_background_path",
+              "GridSpacing": "grid_spacing_m",
+              "GridDistance": "grid_distance_m",
+              "GridFarSpacing": "grid_far_spacing_m",
+              "ThemeImagePath": "theme_image_path",
+              "ThemePaletteHexes": "theme_palette_hexes",
+              "ThemeVisualMode": "visual_mode",
+              "ThemeTabsHex": "tabs_hex",
+              "ThemeTabsTextHex": "tabs_text_hex",
+              "ThemeHeadersHex": "headers_hex",
+              "ThemeHeaderTextHex": "header_text_hex",
+              "ThemeTextHex": "text_hex",
+              "ThemeControlTextHex": "control_text_hex",
+              "ThemeAccentTextHex": "accent_text_hex",
+              "ThemeEditorBackgroundHex": "editor_background_hex",
+              "ThemeSceneHex": "scene_hex",
+              "ThemeControlsHex": "controls_hex",
+              "ThemeHighlightsHex": "highlights_hex",
+              "ThemeViewportBackgroundHex": "viewport_background_hex",
+              "ThemeViewportGradientEnabled": "viewport_gradient_enabled",
+              "ThemeViewportGradientHex": "viewport_gradient_hex"
+            },
+            "legacyFieldTransforms": {
+              "GridSpacing": "parse-number",
+              "GridDistance": "parse-number",
+              "GridFarSpacing": "parse-number"
+            },
+            "direction": 1
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "activePackagePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "activePackagePath"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "fieldPatch": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "theme_palette_hexes": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "theme_image_path": {
+                  "type": "string"
+                },
+                "visual_mode": {
+                  "type": "string",
+                  "enum": [
+                    "dark",
+                    "light"
+                  ]
+                },
+                "tabs_hex": {
+                  "type": "string"
+                },
+                "tabs_text_hex": {
+                  "type": "string"
+                },
+                "headers_hex": {
+                  "type": "string"
+                },
+                "header_text_hex": {
+                  "type": "string"
+                },
+                "text_hex": {
+                  "type": "string"
+                },
+                "control_text_hex": {
+                  "type": "string"
+                },
+                "accent_text_hex": {
+                  "type": "string"
+                },
+                "editor_background_hex": {
+                  "type": "string"
+                },
+                "scene_hex": {
+                  "type": "string"
+                },
+                "controls_hex": {
+                  "type": "string"
+                },
+                "highlights_hex": {
+                  "type": "string"
+                },
+                "viewport_background_hex": {
+                  "type": "string"
+                },
+                "viewport_gradient_enabled": {
+                  "type": "boolean"
+                },
+                "viewport_gradient_hex": {
+                  "type": "string"
+                },
+                "static_background_path": {
+                  "type": "string"
+                },
+                "grid_spacing_m": {
+                  "type": "number"
+                },
+                "grid_distance_m": {
+                  "type": "number"
+                },
+                "grid_far_spacing_m": {
+                  "type": "number"
+                }
+              }
+            },
+            "packagePath": {
+              "type": "string"
+            },
+            "packageName": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "fieldPatch",
+            "packagePath",
+            "packageName",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "picture.file.select",
+        "handler": {
+          "kind": "core",
+          "capability": "file.select",
+          "options": {
+            "dialogTitle": "Choose Background Picture",
+            "filter": "Images (*.png;*.jpg;*.jpeg;*.webp)|*.png;*.jpg;*.jpeg;*.webp",
+            "extensions": [
+              "png",
+              "jpg",
+              "jpeg",
+              "webp"
+            ],
+            "multiselect": false
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "path"
+          ]
+        }
+      },
+      {
+        "id": "environment.file.select",
+        "handler": {
+          "kind": "core",
+          "capability": "file.select",
+          "options": {
+            "dialogTitle": "Choose HDRI",
+            "filter": "HDRI (*.hdr;*.exr)|*.hdr;*.exr",
+            "extensions": [
+              "hdr",
+              "exr"
+            ],
+            "multiselect": false
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "path"
+          ]
+        }
+      },
+      {
+        "id": "theme.status",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "status",
+            "action": "status"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "theme.absorb",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "absorb_theme",
+            "action": "absorb_theme"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "fieldPatch": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "tabs_hex": {
+                  "type": "string"
+                },
+                "tabs_text_hex": {
+                  "type": "string"
+                },
+                "headers_hex": {
+                  "type": "string"
+                },
+                "header_text_hex": {
+                  "type": "string"
+                },
+                "text_hex": {
+                  "type": "string"
+                },
+                "control_text_hex": {
+                  "type": "string"
+                },
+                "accent_text_hex": {
+                  "type": "string"
+                },
+                "editor_background_hex": {
+                  "type": "string"
+                },
+                "scene_hex": {
+                  "type": "string"
+                },
+                "controls_hex": {
+                  "type": "string"
+                },
+                "highlights_hex": {
+                  "type": "string"
+                },
+                "viewport_background_hex": {
+                  "type": "string"
+                },
+                "viewport_gradient_enabled": {
+                  "type": "boolean"
+                },
+                "viewport_gradient_hex": {
+                  "type": "string"
+                },
+                "borders_hex": {
+                  "type": "string"
+                },
+                "darks_hex": {
+                  "type": "string"
+                },
+                "misc_hex": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "tabs_hex",
+                "tabs_text_hex",
+                "headers_hex",
+                "header_text_hex",
+                "text_hex",
+                "control_text_hex",
+                "accent_text_hex",
+                "editor_background_hex",
+                "scene_hex",
+                "controls_hex",
+                "highlights_hex",
+                "viewport_background_hex",
+                "viewport_gradient_enabled",
+                "viewport_gradient_hex",
+                "borders_hex",
+                "darks_hex",
+                "misc_hex"
+              ]
+            }
+          },
+          "required": [
+            "message",
+            "fieldPatch"
+          ]
+        }
+      },
+      {
+        "id": "theme.apply",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "apply_theme_from_photo_manual_colors",
+            "action": "apply_theme_from_photo_manual_colors"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "visual_mode": {
+              "type": "string",
+              "enum": [
+                "dark",
+                "light"
+              ]
+            },
+            "tabs_hex": {
+              "type": "string"
+            },
+            "tabs_text_hex": {
+              "type": "string"
+            },
+            "headers_hex": {
+              "type": "string"
+            },
+            "header_text_hex": {
+              "type": "string"
+            },
+            "text_hex": {
+              "type": "string"
+            },
+            "control_text_hex": {
+              "type": "string"
+            },
+            "accent_text_hex": {
+              "type": "string"
+            },
+            "editor_background_hex": {
+              "type": "string"
+            },
+            "scene_hex": {
+              "type": "string"
+            },
+            "controls_hex": {
+              "type": "string"
+            },
+            "borders_hex": {
+              "type": "string"
+            },
+            "darks_hex": {
+              "type": "string"
+            },
+            "highlights_hex": {
+              "type": "string"
+            },
+            "viewport_background_hex": {
+              "type": "string"
+            },
+            "viewport_gradient_enabled": {
+              "type": "boolean"
+            },
+            "viewport_gradient_hex": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "visual_mode",
+            "tabs_hex",
+            "tabs_text_hex",
+            "headers_hex",
+            "header_text_hex",
+            "text_hex",
+            "control_text_hex",
+            "accent_text_hex",
+            "editor_background_hex",
+            "scene_hex",
+            "controls_hex",
+            "borders_hex",
+            "darks_hex",
+            "highlights_hex",
+            "viewport_background_hex",
+            "viewport_gradient_enabled",
+            "viewport_gradient_hex"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "tabs_hex": {
+              "type": "string"
+            },
+            "tabs_text_hex": {
+              "type": "string"
+            },
+            "headers_hex": {
+              "type": "string"
+            },
+            "header_text_hex": {
+              "type": "string"
+            },
+            "text_hex": {
+              "type": "string"
+            },
+            "control_text_hex": {
+              "type": "string"
+            },
+            "accent_text_hex": {
+              "type": "string"
+            },
+            "editor_background_hex": {
+              "type": "string"
+            },
+            "scene_hex": {
+              "type": "string"
+            },
+            "controls_hex": {
+              "type": "string"
+            },
+            "borders_hex": {
+              "type": "string"
+            },
+            "darks_hex": {
+              "type": "string"
+            },
+            "highlights_hex": {
+              "type": "string"
+            },
+            "viewport_background_hex": {
+              "type": "string"
+            },
+            "viewport_gradient_enabled": {
+              "type": "boolean"
+            },
+            "viewport_gradient_hex": {
+              "type": "string"
+            },
+            "text_corrected": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "message",
+            "tabs_hex",
+            "tabs_text_hex",
+            "headers_hex",
+            "header_text_hex",
+            "text_hex",
+            "control_text_hex",
+            "accent_text_hex",
+            "editor_background_hex",
+            "scene_hex",
+            "controls_hex",
+            "borders_hex",
+            "darks_hex",
+            "highlights_hex",
+            "viewport_background_hex",
+            "viewport_gradient_enabled",
+            "viewport_gradient_hex",
+            "text_corrected"
+          ]
+        }
+      },
+      {
+        "id": "theme.apply-bucket",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "apply_theme_bucket",
+            "action": "apply_theme_bucket"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "visual_mode": {
+              "type": "string",
+              "enum": [
+                "dark",
+                "light"
+              ]
+            },
+            "tabs_hex": {
+              "type": "string"
+            },
+            "tabs_text_hex": {
+              "type": "string"
+            },
+            "headers_hex": {
+              "type": "string"
+            },
+            "header_text_hex": {
+              "type": "string"
+            },
+            "text_hex": {
+              "type": "string"
+            },
+            "control_text_hex": {
+              "type": "string"
+            },
+            "accent_text_hex": {
+              "type": "string"
+            },
+            "editor_background_hex": {
+              "type": "string"
+            },
+            "scene_hex": {
+              "type": "string"
+            },
+            "controls_hex": {
+              "type": "string"
+            },
+            "borders_hex": {
+              "type": "string"
+            },
+            "darks_hex": {
+              "type": "string"
+            },
+            "highlights_hex": {
+              "type": "string"
+            },
+            "viewport_background_hex": {
+              "type": "string"
+            },
+            "viewport_gradient_enabled": {
+              "type": "boolean"
+            },
+            "viewport_gradient_hex": {
+              "type": "string"
+            },
+            "bucket": {
+              "type": "string",
+              "enum": [
+                "tabs_hex",
+                "headers_hex",
+                "editor_background_hex",
+                "scene_hex",
+                "controls_hex",
+                "tabs_text_hex",
+                "header_text_hex",
+                "text_hex",
+                "control_text_hex",
+                "accent_text_hex",
+                "highlights_hex",
+                "viewport_background_hex",
+                "viewport_gradient_hex"
+              ]
+            },
+            "bucket_hex": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "visual_mode",
+            "tabs_hex",
+            "tabs_text_hex",
+            "headers_hex",
+            "header_text_hex",
+            "text_hex",
+            "control_text_hex",
+            "accent_text_hex",
+            "editor_background_hex",
+            "scene_hex",
+            "controls_hex",
+            "borders_hex",
+            "darks_hex",
+            "highlights_hex",
+            "viewport_background_hex",
+            "viewport_gradient_enabled",
+            "viewport_gradient_hex",
+            "bucket",
+            "bucket_hex"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "bucket": {
+              "type": "string",
+              "enum": [
+                "tabs_hex",
+                "headers_hex",
+                "editor_background_hex",
+                "scene_hex",
+                "controls_hex",
+                "tabs_text_hex",
+                "header_text_hex",
+                "text_hex",
+                "control_text_hex",
+                "accent_text_hex",
+                "highlights_hex",
+                "viewport_background_hex",
+                "viewport_gradient_hex"
+              ]
+            }
+          },
+          "required": [
+            "message",
+            "bucket"
+          ]
+        }
+      },
+      {
+        "id": "picture.apply",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "place_picture",
+            "action": "place_picture"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "static_background_path": {
+              "type": "string"
+            },
+            "grid_spacing_m": {
+              "type": "number"
+            },
+            "grid_distance_m": {
+              "type": "number"
+            },
+            "grid_far_spacing_m": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "static_background_path",
+            "grid_spacing_m",
+            "grid_distance_m",
+            "grid_far_spacing_m"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "static_background_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message",
+            "static_background_path"
+          ]
+        }
+      },
+      {
+        "id": "picture.grid",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "set_grid_spacing",
+            "action": "set_grid_spacing"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "static_background_path": {
+              "type": "string"
+            },
+            "grid_spacing_m": {
+              "type": "number"
+            },
+            "grid_distance_m": {
+              "type": "number"
+            },
+            "grid_far_spacing_m": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "static_background_path",
+            "grid_spacing_m",
+            "grid_distance_m",
+            "grid_far_spacing_m"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "grid_spacing_m": {
+              "type": "number"
+            },
+            "grid_distance_m": {
+              "type": "number"
+            },
+            "grid_far_spacing_m": {
+              "type": "number"
+            },
+            "grid_enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "message",
+            "grid_spacing_m",
+            "grid_distance_m",
+            "grid_far_spacing_m",
+            "grid_enabled"
+          ]
+        }
+      },
+      {
+        "id": "picture.startup",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "set_place_picture_startup",
+            "action": "set_place_picture_startup"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "static_background_path": {
+              "type": "string"
+            },
+            "grid_spacing_m": {
+              "type": "number"
+            },
+            "grid_distance_m": {
+              "type": "number"
+            },
+            "grid_far_spacing_m": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "static_background_path",
+            "grid_spacing_m",
+            "grid_distance_m",
+            "grid_far_spacing_m"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "static_background_path": {
+              "type": "string"
+            },
+            "grid_spacing_m": {
+              "type": "number"
+            },
+            "grid_distance_m": {
+              "type": "number"
+            },
+            "grid_far_spacing_m": {
+              "type": "number"
+            },
+            "startup_state": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            },
+            "startup_state_path": {
+              "type": "string"
+            },
+            "has_startup_theme_state": {
+              "type": "boolean"
+            },
+            "has_startup_place_picture_state": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "message",
+            "static_background_path",
+            "grid_spacing_m",
+            "grid_distance_m",
+            "grid_far_spacing_m",
+            "startup_state",
+            "startup_state_path",
+            "has_startup_theme_state",
+            "has_startup_place_picture_state"
+          ]
+        }
+      },
+      {
+        "id": "picture.clear",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "clear_place_picture",
+            "action": "clear_place_picture"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "static_background_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message",
+            "static_background_path"
+          ]
+        }
+      },
+      {
+        "id": "environment.apply",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "set_hdri_path",
+            "action": "set_hdri_path"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hdri_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "hdri_path"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "hdri_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message",
+            "hdri_path"
+          ]
+        }
+      },
+      {
+        "id": "environment.clear",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "clear_world",
+            "action": "clear_world"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "environment.reset",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "reset_world",
+            "action": "reset_world"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "hdri_path": {
+              "type": "string"
+            },
+            "rotation_x_deg": {
+              "type": "number"
+            },
+            "rotation_y_deg": {
+              "type": "number"
+            },
+            "rotation_z_deg": {
+              "type": "number"
+            },
+            "world_strength": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "hdri_path",
+            "rotation_x_deg",
+            "rotation_y_deg",
+            "rotation_z_deg",
+            "world_strength"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "hdri_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message",
+            "hdri_path"
+          ]
+        }
+      },
+      {
+        "id": "environment.rotation-x",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "set_rotation_x",
+            "action": "set_rotation_x"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rotation_x_deg": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "rotation_x_deg"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "environment.rotation-y",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "set_rotation_y",
+            "action": "set_rotation_y"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rotation_y_deg": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "rotation_y_deg"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "environment.rotation-z",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "set_rotation_z",
+            "action": "set_rotation_z"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rotation_z_deg": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "rotation_z_deg"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "environment.strength",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "set_world_strength",
+            "action": "set_world_strength"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "world_strength": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "world_strength"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "runtime.read-project-state",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "read_project_startup_state",
+            "action": "read_project_startup_state"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "restore_handler_registered": {
+              "type": "boolean"
+            },
+            "project_state": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            },
+            "has_project_theme_state": {
+              "type": "boolean"
+            },
+            "has_project_place_picture_state": {
+              "type": "boolean"
+            },
+            "startup_state": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            },
+            "startup_state_path": {
+              "type": "string"
+            },
+            "has_startup_theme_state": {
+              "type": "boolean"
+            },
+            "has_startup_place_picture_state": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "message",
+            "restore_handler_registered",
+            "project_state",
+            "has_project_theme_state",
+            "has_project_place_picture_state",
+            "startup_state",
+            "startup_state_path",
+            "has_startup_theme_state",
+            "has_startup_place_picture_state"
+          ]
+        }
+      },
+      {
+        "id": "runtime.restore-project-state",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "restore_project_startup_state",
+            "action": "restore_project_startup_state"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "restore_handler_registered": {
+              "type": "boolean"
+            },
+            "project_state": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            },
+            "has_project_theme_state": {
+              "type": "boolean"
+            },
+            "has_project_place_picture_state": {
+              "type": "boolean"
+            },
+            "startup_state": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            },
+            "startup_state_path": {
+              "type": "string"
+            },
+            "has_startup_theme_state": {
+              "type": "boolean"
+            },
+            "has_startup_place_picture_state": {
+              "type": "boolean"
+            },
+            "restored_theme": {
+              "type": "boolean"
+            },
+            "restored_place_picture": {
+              "type": "boolean"
+            },
+            "warnings": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "message",
+            "restore_handler_registered",
+            "project_state",
+            "has_project_theme_state",
+            "has_project_place_picture_state",
+            "startup_state",
+            "startup_state_path",
+            "has_startup_theme_state",
+            "has_startup_place_picture_state",
+            "restored_theme",
+            "restored_place_picture",
+            "warnings"
+          ]
+        }
+      },
+      {
+        "id": "runtime.read-picture-state",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "read_place_picture_runtime_state",
+            "action": "read_place_picture_runtime_state"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "place_picture_runtime_enabled": {
+              "type": "boolean"
+            },
+            "place_picture_runtime_path": {
+              "type": "string"
+            },
+            "place_picture_runtime_image_path": {
+              "type": "string"
+            },
+            "place_picture_runtime_has_background_handler": {
+              "type": "boolean"
+            },
+            "place_picture_runtime_has_overlay_handler": {
+              "type": "boolean"
+            },
+            "place_picture_runtime_has_view3d": {
+              "type": "boolean"
+            },
+            "grid_spacing_m": {
+              "type": "number"
+            },
+            "grid_distance_m": {
+              "type": "number"
+            },
+            "grid_far_spacing_m": {
+              "type": "number"
+            },
+            "saved_overlay_path": {
+              "type": "string"
+            },
+            "startup_poll_restore_done": {
+              "type": "boolean"
+            },
+            "startup_poll_restore_attempts": {
+              "type": "integer"
+            },
+            "startup_poll_restore_next_time": {
+              "type": "number"
+            }
+          },
+          "required": [
+            "message",
+            "place_picture_runtime_enabled",
+            "place_picture_runtime_path",
+            "place_picture_runtime_image_path",
+            "place_picture_runtime_has_background_handler",
+            "place_picture_runtime_has_overlay_handler",
+            "place_picture_runtime_has_view3d",
+            "grid_spacing_m",
+            "grid_distance_m",
+            "grid_far_spacing_m",
+            "saved_overlay_path",
+            "startup_poll_restore_done",
+            "startup_poll_restore_attempts",
+            "startup_poll_restore_next_time"
+          ]
+        }
+      }
+    ],
+    "capabilities": [
+      "blender-theme-page",
+      "restore-project-theme-state",
+      "theme-package-library",
+      "file.select",
+      "image.sample-palette",
+      "tool-fields.save",
+      "tool-fields.load",
+      "tool-package.save",
+      "tool-package.open",
+      "tool-package.cycle"
+    ],
+    "ownerStateFormat": "flowcell.blender-theme-page-state.v1",
+    "sharedProgramDataNamespace": "blender-themes",
+    "supportedDataFormats": [
+      "blender-theme",
+      "flowcell-blender-theme-v1",
+      "flowcell-blender-theme-pack-v1",
+      "flowcell-blender-darkness-profiles-v1"
+    ],
+    "refreshEvents": [
+      "flowcell://program-data-invalidated"
+    ],
+    "config": {
+      "copy": {
+        "eyebrow": "Blender",
+        "title": "Theme",
+        "subtitle": "UI colors, Place Picture grid, and HDRI environment",
+        "themeSectionTitle": "Theme and palette",
+        "pictureSectionTitle": "Picture and grid",
+        "environmentSectionTitle": "HDRI environment",
+        "paletteLabel": "Sampled palette",
+        "loading": "Loading owner state…",
+        "ready": "Blender Theme is ready.",
+        "working": "Working…",
+        "complete": "Complete.",
+        "samplingPalette": "Choosing and sampling the reference image…",
+        "absorbingTheme": "Sampling the current Blender theme…",
+        "applyingTheme": "Applying the Blender theme…",
+        "applyingBucket": "Applying the selected color bucket…",
+        "savingFields": "Saving theme fields…",
+        "loadingFields": "Loading theme fields…",
+        "savingPackage": "Saving the theme package…",
+        "loadingPackage": "Loading the theme package…",
+        "selectingPicture": "Choosing a background picture…",
+        "applyingPicture": "Applying Place Picture…",
+        "applyingGrid": "Applying grid settings…",
+        "savingStartup": "Saving Place Picture startup settings…",
+        "clearingPicture": "Clearing Place Picture…",
+        "selectingEnvironment": "Choosing an HDRI…",
+        "applyingEnvironment": "Applying the HDRI…",
+        "applyingEnvironmentValue": "Applying the environment value…",
+        "clearingEnvironment": "Clearing the HDRI world…",
+        "resettingEnvironment": "Resetting the HDRI world…"
+      },
+      "actionLabels": {
+        "theme.image.select": "Browse",
+        "theme.image.sample": "Sample",
+        "theme.absorb": "Absorb",
+        "theme.refill": "Refill",
+        "theme.fields.save": "Save Fields",
+        "theme.fields.load": "Load Fields",
+        "theme.package.save": "Save Package",
+        "theme.package.open": "Open",
+        "theme.package.previous": "Previous",
+        "theme.package.next": "Next",
+        "theme.mode.dark": "Dark",
+        "theme.mode.light": "Light",
+        "theme.apply": "Apply",
+        "theme.apply-bucket": "Apply",
+        "picture.file.select": "Browse",
+        "picture.apply": "Apply Picture",
+        "picture.grid": "Apply Grid",
+        "picture.startup": "Startup",
+        "picture.clear": "Clear",
+        "environment.file.select": "Browse",
+        "environment.apply": "Apply HDRI",
+        "environment.clear": "Clear World",
+        "environment.reset": "Reset World",
+        "environment.rotation-x": "X",
+        "environment.rotation-y": "Y",
+        "environment.rotation-z": "Z",
+        "environment.strength": "WS"
+      },
+      "fields": [
+        {
+          "id": "theme_palette_hexes",
+          "kind": "palette",
+          "label": "Sampled palette",
+          "defaultValue": []
+        },
+        {
+          "id": "theme_image_path",
+          "kind": "path",
+          "label": "Theme reference image",
+          "placeholder": "Choose a photo or palette image",
+          "defaultValue": ""
+        },
+        {
+          "id": "visual_mode",
+          "kind": "select",
+          "label": "Theme mode",
+          "defaultValue": "dark",
+          "options": [
+            {
+              "label": "Dark",
+              "value": "dark"
+            },
+            {
+              "label": "Light",
+              "value": "light"
+            }
+          ]
+        },
+        {
+          "id": "tabs_hex",
+          "kind": "color",
+          "label": "Tabs",
+          "defaultValue": "#2D383A"
+        },
+        {
+          "id": "tabs_text_hex",
+          "kind": "color",
+          "label": "Tab text",
+          "defaultValue": "#FFFFFF"
+        },
+        {
+          "id": "headers_hex",
+          "kind": "color",
+          "label": "Headers",
+          "defaultValue": "#4D686B"
+        },
+        {
+          "id": "header_text_hex",
+          "kind": "color",
+          "label": "Header text",
+          "defaultValue": "#FFFFFF"
+        },
+        {
+          "id": "text_hex",
+          "kind": "color",
+          "label": "Text",
+          "defaultValue": "#FFFFFF"
+        },
+        {
+          "id": "control_text_hex",
+          "kind": "color",
+          "label": "Control text",
+          "defaultValue": "#FFFFFF"
+        },
+        {
+          "id": "accent_text_hex",
+          "kind": "color",
+          "label": "Accent text",
+          "defaultValue": "#FFFFFF"
+        },
+        {
+          "id": "editor_background_hex",
+          "kind": "color",
+          "label": "Editor",
+          "defaultValue": "#1E2728"
+        },
+        {
+          "id": "scene_hex",
+          "kind": "color",
+          "label": "Scene",
+          "defaultValue": "#2D383A"
+        },
+        {
+          "id": "controls_hex",
+          "kind": "color",
+          "label": "Controls",
+          "defaultValue": "#4D686B"
+        },
+        {
+          "id": "highlights_hex",
+          "kind": "color",
+          "label": "Highlights",
+          "defaultValue": "#7BA8B7"
+        },
+        {
+          "id": "viewport_background_hex",
+          "kind": "color",
+          "label": "Viewport",
+          "defaultValue": "#1E2728"
+        },
+        {
+          "id": "viewport_gradient_enabled",
+          "kind": "boolean",
+          "label": "Use viewport gradient",
+          "defaultValue": true
+        },
+        {
+          "id": "viewport_gradient_hex",
+          "kind": "color",
+          "label": "Gradient color",
+          "defaultValue": "#2D383A"
+        },
+        {
+          "id": "static_background_path",
+          "kind": "path",
+          "label": "Background picture",
+          "placeholder": "Choose a picture",
+          "defaultValue": ""
+        },
+        {
+          "id": "grid_spacing_m",
+          "kind": "number",
+          "label": "Near grid",
+          "defaultValue": 1,
+          "minimum": 0.0001,
+          "step": 0.01
+        },
+        {
+          "id": "grid_distance_m",
+          "kind": "number",
+          "label": "Distance",
+          "defaultValue": 5,
+          "minimum": 0.0001,
+          "step": 0.01
+        },
+        {
+          "id": "grid_far_spacing_m",
+          "kind": "number",
+          "label": "Far grid",
+          "defaultValue": 1,
+          "minimum": 0.0001,
+          "step": 0.01
+        },
+        {
+          "id": "hdri_path",
+          "kind": "path",
+          "label": "HDRI",
+          "placeholder": "Choose an HDR or EXR",
+          "defaultValue": ""
+        },
+        {
+          "id": "rotation_x_deg",
+          "kind": "number",
+          "label": "Rotate X",
+          "defaultValue": 90,
+          "step": 1
+        },
+        {
+          "id": "rotation_y_deg",
+          "kind": "number",
+          "label": "Rotate Y",
+          "defaultValue": 0,
+          "step": 1
+        },
+        {
+          "id": "rotation_z_deg",
+          "kind": "number",
+          "label": "Rotate Z",
+          "defaultValue": 30,
+          "step": 1
+        },
+        {
+          "id": "world_strength",
+          "kind": "number",
+          "label": "Strength",
+          "defaultValue": 0.25,
+          "minimum": 0,
+          "step": 0.05
+        }
+      ],
+      "palette": {
+        "fieldId": "theme_palette_hexes",
+        "imageFieldId": "theme_image_path",
+        "copyImagePathToFieldId": "static_background_path",
+        "applyPictureAfterSample": true,
+        "defaultValue": [
+          "#1E2728",
+          "#F4F4EE",
+          "#4D686B",
+          "#7BA8B7",
+          "#2D383A"
+        ]
+      },
+      "roleGroupLabels": {
+        "structure": "Structure",
+        "text": "Text",
+        "viewport": "Viewport"
+      },
+      "roles": [
+        {
+          "id": "tabs",
+          "label": "Tabs",
+          "fieldId": "tabs_hex",
+          "group": "structure",
+          "tone": {
+            "dark": 0.035,
+            "light": 0.26
+          },
+          "bucket": "tabs_hex"
+        },
+        {
+          "id": "headers",
+          "label": "Headers",
+          "fieldId": "headers_hex",
+          "group": "structure",
+          "tone": {
+            "dark": 0.08,
+            "light": 0.22
+          },
+          "bucket": "headers_hex"
+        },
+        {
+          "id": "editor",
+          "label": "Editor",
+          "fieldId": "editor_background_hex",
+          "group": "structure",
+          "tone": {
+            "dark": 0.018,
+            "light": 0.32
+          },
+          "bucket": "editor_background_hex"
+        },
+        {
+          "id": "scene",
+          "label": "Scene",
+          "fieldId": "scene_hex",
+          "group": "structure",
+          "tone": {
+            "dark": 0.04,
+            "light": 0.24
+          },
+          "bucket": "scene_hex"
+        },
+        {
+          "id": "controls",
+          "label": "Controls",
+          "fieldId": "controls_hex",
+          "group": "structure",
+          "tone": {
+            "dark": 0.09,
+            "light": 0.28
+          },
+          "bucket": "controls_hex"
+        },
+        {
+          "id": "tab_text",
+          "label": "Tab text",
+          "fieldId": "tabs_text_hex",
+          "group": "text",
+          "tone": "text",
+          "bucket": "tabs_text_hex"
+        },
+        {
+          "id": "header_text",
+          "label": "Header text",
+          "fieldId": "header_text_hex",
+          "group": "text",
+          "tone": "text",
+          "bucket": "header_text_hex"
+        },
+        {
+          "id": "text",
+          "label": "Text",
+          "fieldId": "text_hex",
+          "group": "text",
+          "tone": "text",
+          "bucket": "text_hex"
+        },
+        {
+          "id": "control_text",
+          "label": "Control text",
+          "fieldId": "control_text_hex",
+          "group": "text",
+          "tone": "text",
+          "bucket": "control_text_hex"
+        },
+        {
+          "id": "accent_text",
+          "label": "Accent text",
+          "fieldId": "accent_text_hex",
+          "group": "text",
+          "tone": "text",
+          "bucket": "accent_text_hex"
+        },
+        {
+          "id": "highlights",
+          "label": "Highlights",
+          "fieldId": "highlights_hex",
+          "group": "viewport",
+          "tone": {
+            "dark": 0.35,
+            "light": 0.44
+          },
+          "bucket": "highlights_hex"
+        },
+        {
+          "id": "viewport",
+          "label": "Viewport",
+          "fieldId": "viewport_background_hex",
+          "group": "viewport",
+          "tone": {
+            "dark": 0.018,
+            "light": 0.24
+          },
+          "bucket": "viewport_background_hex"
+        },
+        {
+          "id": "viewport_gradient",
+          "label": "Gradient",
+          "fieldId": "viewport_gradient_hex",
+          "group": "viewport",
+          "tone": {
+            "dark": 0.04,
+            "light": 0.34
+          },
+          "bucket": "viewport_gradient_hex"
+        }
+      ],
+      "gradient": {
+        "label": "Use viewport gradient",
+        "enabledFieldId": "viewport_gradient_enabled",
+        "backgroundFieldId": "viewport_background_hex",
+        "gradientFieldId": "viewport_gradient_hex"
+      },
+      "picture": {
+        "pathFieldId": "static_background_path",
+        "gridFieldIds": [
+          "grid_spacing_m",
+          "grid_distance_m",
+          "grid_far_spacing_m"
+        ]
+      },
+      "environment": {
+        "pathFieldId": "hdri_path",
+        "valueFields": [
+          {
+            "fieldId": "rotation_x_deg",
+            "payloadKey": "rotation_x_deg",
+            "actionId": "environment.rotation-x"
+          },
+          {
+            "fieldId": "rotation_y_deg",
+            "payloadKey": "rotation_y_deg",
+            "actionId": "environment.rotation-y"
+          },
+          {
+            "fieldId": "rotation_z_deg",
+            "payloadKey": "rotation_z_deg",
+            "actionId": "environment.rotation-z"
+          },
+          {
+            "fieldId": "world_strength",
+            "payloadKey": "world_strength",
+            "actionId": "environment.strength"
+          }
+        ]
+      },
+      "actions": {
+        "state": {
+          "read": "owner-state.read",
+          "write": "owner-state.write"
+        },
+        "theme": {
+          "select": "theme.image.select",
+          "sample": "theme.image.sample",
+          "absorb": "theme.absorb",
+          "saveFields": "theme.fields.save",
+          "loadFields": "theme.fields.load",
+          "savePackage": "theme.package.save",
+          "openPackage": "theme.package.open",
+          "previousPackage": "theme.package.previous",
+          "nextPackage": "theme.package.next",
+          "apply": "theme.apply",
+          "applyBucket": "theme.apply-bucket"
+        },
+        "picture": {
+          "select": "picture.file.select",
+          "apply": "picture.apply",
+          "grid": "picture.grid",
+          "startup": "picture.startup",
+          "clear": "picture.clear"
+        },
+        "environment": {
+          "select": "environment.file.select",
+          "apply": "environment.apply",
+          "clear": "environment.clear",
+          "reset": "environment.reset"
+        },
+        "runtime": {
+          "status": "theme.status",
+          "readProjectState": "runtime.read-project-state",
+          "restoreProjectState": "runtime.restore-project-state",
+          "readPictureState": "runtime.read-picture-state"
+        }
+      },
+      "localActions": {
+        "refill": "theme.refill",
+        "darkMode": "theme.mode.dark",
+        "lightMode": "theme.mode.light"
+      },
+      "payloadMaps": {
+        "theme": {
+          "visual_mode": "visual_mode",
+          "tabs_hex": "tabs_hex",
+          "tabs_text_hex": "tabs_text_hex",
+          "headers_hex": "headers_hex",
+          "header_text_hex": "header_text_hex",
+          "text_hex": "text_hex",
+          "control_text_hex": "control_text_hex",
+          "accent_text_hex": "accent_text_hex",
+          "editor_background_hex": "editor_background_hex",
+          "scene_hex": "scene_hex",
+          "controls_hex": "controls_hex",
+          "borders_hex": "editor_background_hex",
+          "darks_hex": "editor_background_hex",
+          "highlights_hex": "highlights_hex",
+          "viewport_background_hex": "viewport_background_hex",
+          "viewport_gradient_enabled": "viewport_gradient_enabled",
+          "viewport_gradient_hex": "viewport_gradient_hex"
+        },
+        "picture": {
+          "static_background_path": "static_background_path",
+          "grid_spacing_m": "grid_spacing_m",
+          "grid_distance_m": "grid_distance_m",
+          "grid_far_spacing_m": "grid_far_spacing_m"
+        },
+        "environment": {
+          "hdri_path": "hdri_path",
+          "rotation_x_deg": "rotation_x_deg",
+          "rotation_y_deg": "rotation_y_deg",
+          "rotation_z_deg": "rotation_z_deg",
+          "world_strength": "world_strength"
+        }
+      },
+      "persistence": {
+        "fieldIds": [
+          "theme_palette_hexes",
+          "theme_image_path",
+          "visual_mode",
+          "tabs_hex",
+          "tabs_text_hex",
+          "headers_hex",
+          "header_text_hex",
+          "text_hex",
+          "control_text_hex",
+          "accent_text_hex",
+          "editor_background_hex",
+          "scene_hex",
+          "controls_hex",
+          "highlights_hex",
+          "viewport_background_hex",
+          "viewport_gradient_enabled",
+          "viewport_gradient_hex",
+          "static_background_path",
+          "grid_spacing_m",
+          "grid_distance_m",
+          "grid_far_spacing_m"
+        ],
+        "packageFieldIds": [
+          "theme_palette_hexes",
+          "theme_image_path",
+          "visual_mode",
+          "tabs_hex",
+          "tabs_text_hex",
+          "headers_hex",
+          "header_text_hex",
+          "text_hex",
+          "control_text_hex",
+          "accent_text_hex",
+          "editor_background_hex",
+          "scene_hex",
+          "controls_hex",
+          "highlights_hex",
+          "viewport_background_hex",
+          "viewport_gradient_enabled",
+          "viewport_gradient_hex",
+          "static_background_path",
+          "grid_spacing_m",
+          "grid_distance_m",
+          "grid_far_spacing_m"
+        ],
+        "assetFieldIds": [
+          "theme_image_path",
+          "static_background_path"
+        ]
+      },
+      "tone": {
+        "defaultLevel": 0.3,
+        "visualModeFieldId": "visual_mode",
+        "sliderLabel": "Theme darkness",
+        "profileSelectLabel": "Darkness profile",
+        "currentProfileLabel": "Current tone",
+        "profileNamePlaceholder": "Name current darkness",
+        "profileSaveLabel": "Save profile"
+      }
+    }
+  }
+}

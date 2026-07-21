@@ -147,6 +147,80 @@ function Add-UniqueText([System.Collections.Generic.List[string]]$List, [string]
     }
 }
 
+function Test-FlowCellCustomActionLifecycleEnabled([object]$RegistryEntry) {
+    if ($null -eq $RegistryEntry) {
+        return $false
+    }
+    $bridgeDataProperty = $RegistryEntry.PSObject.Properties['bridgeData']
+    if ($null -eq $bridgeDataProperty -or $null -eq $bridgeDataProperty.Value) {
+        return $false
+    }
+    $lifecycleProperty = $bridgeDataProperty.Value.PSObject.Properties['lifecycle']
+    if ($null -eq $lifecycleProperty) {
+        return $false
+    }
+    $lifecycle = $lifecycleProperty.Value
+    if ($lifecycle -is [bool]) {
+        return [bool]$lifecycle
+    }
+    if ($null -eq $lifecycle) {
+        return $false
+    }
+    $enabledProperty = $lifecycle.PSObject.Properties['enabled']
+    return $null -ne $enabledProperty -and $enabledProperty.Value -is [bool] -and [bool]$enabledProperty.Value
+}
+
+function Request-FlowCellCustomActionLifecycleRemoval {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$RegistryEntry,
+        [Parameter(Mandatory = $true)]
+        [object]$Registry,
+        [Parameter(Mandatory = $true)]
+        [string]$RegistryPath,
+        [Parameter(Mandatory = $true)]
+        [string]$ResolvedBridgeFolder
+    )
+
+    if (-not (Test-FlowCellCustomActionLifecycleEnabled -RegistryEntry $RegistryEntry)) {
+        return
+    }
+    $bridgeData = $RegistryEntry.PSObject.Properties['bridgeData'].Value
+    $lifecycleProperty = $bridgeData.PSObject.Properties['lifecycle']
+    $originalLifecycle = $lifecycleProperty.Value
+    if ($originalLifecycle -is [bool]) {
+        $lifecycleProperty.Value = [pscustomobject]@{ enabled = $true }
+    }
+    $lifecycle = $lifecycleProperty.Value
+    $removalToken = [Guid]::NewGuid().ToString('N')
+    $lifecycle | Add-Member -MemberType NoteProperty -Name removalRequested -Value $removalToken -Force
+    Write-FlowCellTextFile -Path $RegistryPath -Value ($Registry | ConvertTo-Json -Depth 8) -Encoding UTF8
+
+    $blenderRunning = $null -ne (Get-Process blender -ErrorAction SilentlyContinue | Select-Object -First 1)
+    if (-not $blenderRunning) {
+        return ''
+    }
+
+    $acknowledgementRoot = Join-Path $ResolvedBridgeFolder 'lifecycle-removals'
+    $acknowledgementPath = Join-Path $acknowledgementRoot ('{0}.json' -f $removalToken)
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while ([DateTime]::UtcNow -lt $deadline -and -not (Test-Path -LiteralPath $acknowledgementPath -PathType Leaf)) {
+        Start-Sleep -Milliseconds 50
+    }
+    if (Test-Path -LiteralPath $acknowledgementPath -PathType Leaf) {
+        return $acknowledgementPath
+    }
+
+    if ($originalLifecycle -is [bool]) {
+        $lifecycleProperty.Value = $originalLifecycle
+    }
+    else {
+        [void]$lifecycle.PSObject.Properties.Remove('removalRequested')
+    }
+    Write-FlowCellTextFile -Path $RegistryPath -Value ($Registry | ConvertTo-Json -Depth 8) -Encoding UTF8
+    throw 'Blender did not acknowledge lifecycle cleanup; the Button registry and runtime were left installed.'
+}
+
 function delete_blender_action([string]$action_id) {
     $targetAction = ([string]$action_id).Trim()
     if ([string]::IsNullOrWhiteSpace($targetAction)) {
@@ -166,6 +240,8 @@ function delete_blender_action([string]$action_id) {
     )
     $liveActionsPath = Get-NormalizedPathKey ([string]$bridgeLayout.AddonActionsPath)
     $removedRuntimePaths = New-Object System.Collections.Generic.List[string]
+    $removedRuntimeDirectories = New-Object System.Collections.Generic.List[string]
+    $lifecycleAcknowledgementPaths = New-Object System.Collections.Generic.List[string]
     $managedCacheRoots = New-Object System.Collections.Generic.List[string]
     $prunedActionCount = 0
 
@@ -192,6 +268,12 @@ function delete_blender_action([string]$action_id) {
             if (-not [string]::IsNullOrWhiteSpace($OwnerButtonId) -and $registryOwner -cne $OwnerButtonId) {
                 throw ('Blender action {0} is not owned by Button {1}.' -f $targetAction, $OwnerButtonId)
             }
+            $lifecycleAcknowledgementPath = Request-FlowCellCustomActionLifecycleRemoval `
+                -RegistryEntry $registryEntry `
+                -Registry $registry `
+                -RegistryPath $customRegistryPath `
+                -ResolvedBridgeFolder $resolvedBridgeFolder
+            Add-UniqueText -List $lifecycleAcknowledgementPaths -Value $lifecycleAcknowledgementPath
             Add-UniqueText -List $removedActions -Value $registryAction
             foreach ($propertyName in @('pythonPath', 'sourcePythonPath')) {
                 $property = $registryEntry.PSObject.Properties[$propertyName]
@@ -203,6 +285,18 @@ function delete_blender_action([string]$action_id) {
                     (Test-FlowCellPathUnderAnyRoot -Path $resolvedPath -Roots $managedRoots)
                 ) {
                     Add-UniqueText -List $removedRuntimePaths -Value (Get-NormalizedPathKey $resolvedPath)
+                }
+            }
+            if (Test-FlowCellCustomActionLifecycleEnabled -RegistryEntry $registryEntry) {
+                $pythonPathProperty = $registryEntry.PSObject.Properties['pythonPath']
+                $rawPythonPath = if ($null -ne $pythonPathProperty) { [string]$pythonPathProperty.Value } else { '' }
+                $resolvedPythonPath = Resolve-FlowCellRegistryPath -RawPath $rawPythonPath -BridgeFolder $resolvedBridgeFolder -AddonRoot $addonRoot
+                $runtimeDirectory = if ([string]::IsNullOrWhiteSpace($resolvedPythonPath)) { '' } else { '{0}.flowcell-runtime' -f $resolvedPythonPath }
+                if (
+                    -not [string]::IsNullOrWhiteSpace($runtimeDirectory) -and
+                    (Test-FlowCellPathUnderAnyRoot -Path $runtimeDirectory -Roots $managedRoots)
+                ) {
+                    Add-UniqueText -List $removedRuntimeDirectories -Value (Get-NormalizedPathKey $runtimeDirectory)
                 }
             }
             $prunedActionCount++
@@ -218,6 +312,7 @@ function delete_blender_action([string]$action_id) {
     }
 
     $referencedRuntimePaths = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
+    $referencedRuntimeDirectories = New-Object 'System.Collections.Generic.HashSet[string]' ([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($registryEntry in @($registry.actions)) {
         foreach ($propertyName in @('pythonPath', 'sourcePythonPath')) {
             $property = $registryEntry.PSObject.Properties[$propertyName]
@@ -228,6 +323,14 @@ function delete_blender_action([string]$action_id) {
                 (Test-FlowCellPathUnderAnyRoot -Path $resolvedPath -Roots $managedRoots)
             ) {
                 [void]$referencedRuntimePaths.Add((Get-NormalizedPathKey $resolvedPath))
+            }
+        }
+        if (Test-FlowCellCustomActionLifecycleEnabled -RegistryEntry $registryEntry) {
+            $pythonPathProperty = $registryEntry.PSObject.Properties['pythonPath']
+            $rawPythonPath = if ($null -ne $pythonPathProperty) { [string]$pythonPathProperty.Value } else { '' }
+            $resolvedPythonPath = Resolve-FlowCellRegistryPath -RawPath $rawPythonPath -BridgeFolder $resolvedBridgeFolder -AddonRoot $addonRoot
+            if (-not [string]::IsNullOrWhiteSpace($resolvedPythonPath)) {
+                [void]$referencedRuntimeDirectories.Add((Get-NormalizedPathKey ('{0}.flowcell-runtime' -f $resolvedPythonPath)))
             }
         }
     }
@@ -254,6 +357,11 @@ function delete_blender_action([string]$action_id) {
     foreach ($runtimePath in @($removedRuntimePaths.ToArray() | Select-Object -Unique)) {
         Move-FlowCellFileToRecycleBin -Path $runtimePath
     }
+    foreach ($runtimeDirectory in @($removedRuntimeDirectories.ToArray() | Select-Object -Unique)) {
+        if (-not $referencedRuntimeDirectories.Contains($runtimeDirectory)) {
+            Move-FlowCellDirectoryToRecycleBin -Path $runtimeDirectory
+        }
+    }
 
     if (Test-Path -LiteralPath $customActionSyncPath -PathType Leaf) {
         & $customActionSyncPath -ConfigPath $ConfigPath -BridgeFolder $resolvedBridgeFolder | Out-Null
@@ -274,11 +382,25 @@ function delete_blender_action([string]$action_id) {
             throw ('delete_blender_action left registry references for {0}.' -f $targetAction)
         }
     }
+    foreach ($acknowledgementPath in @($lifecycleAcknowledgementPaths.ToArray() | Select-Object -Unique)) {
+        if (Test-Path -LiteralPath $acknowledgementPath -PathType Leaf) {
+            [System.IO.File]::Delete($acknowledgementPath)
+        }
+        $acknowledgementRoot = Split-Path -Parent $acknowledgementPath
+        if (
+            -not [string]::IsNullOrWhiteSpace($acknowledgementRoot) -and
+            (Test-Path -LiteralPath $acknowledgementRoot -PathType Container) -and
+            @((Get-ChildItem -LiteralPath $acknowledgementRoot -Force -ErrorAction SilentlyContinue)).Count -eq 0
+        ) {
+            [System.IO.Directory]::Delete($acknowledgementRoot)
+        }
+    }
 
     return [pscustomobject]@{
         RemovedActionCount = $prunedActionCount
         RemovedActions = @($removedActions.ToArray())
         RemovedRuntimePaths = @($removedRuntimePaths.ToArray())
+        RemovedRuntimeDirectories = @($removedRuntimeDirectories.ToArray())
         StatusMessage = ('Deleted Blender action {0}. Pruned owned custom actions: {1}.' -f $targetAction, $prunedActionCount)
     }
 }

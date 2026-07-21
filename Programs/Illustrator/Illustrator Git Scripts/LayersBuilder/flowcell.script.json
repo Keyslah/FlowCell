@@ -6,23 +6,922 @@
   "program": "Illustrator",
   "source": "layers.jsx",
   "bridgeData": {
-    "capabilities": ["illustrator-layer-tree"]
+    "capabilities": [
+      "illustrator-layer-tree"
+    ]
   },
-  "executionTarget": {
-    "kind": "core-action",
-    "actionId": "open-tool-page",
-    "payload": {
-      "contributionId": "illustrator.layer-tree",
-      "renderer": "tree-inspector",
-      "capability": "illustrator-layer-tree",
+  "page": {
+    "schemaVersion": 1,
+    "id": "illustrator.layer-tree",
+    "program": "Illustrator",
+    "label": "Layer Tree",
+    "tooltip": "Inspect and edit the active Illustrator document's layers and sublayers.",
+    "entry": "page/index.html",
+    "scripts": [
+      "page/page.js"
+    ],
+    "styles": [
+      "page/page.css"
+    ],
+    "assets": [],
+    "window": {
       "title": "Layer Tree",
+      "width": 360,
+      "height": 640,
+      "minWidth": 300,
+      "minHeight": 420
+    },
+    "actions": [
+      {
+        "id": "scan",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "scan"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "create",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "create"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name"
+          ],
+          "properties": {
+            "parentKey": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "rename",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "rename"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key",
+            "name"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "delete",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "delete"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "keys",
+            "force"
+          ],
+          "properties": {
+            "keys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "force": {
+              "type": "boolean"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "duplicate",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "duplicate"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "keys"
+          ],
+          "properties": {
+            "keys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "set-lock",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "setlock"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "keys",
+            "locked"
+          ],
+          "properties": {
+            "keys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "locked": {
+              "type": "boolean"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "set-visible",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "setvis"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "keys",
+            "visible"
+          ],
+          "properties": {
+            "keys": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "visible": {
+              "type": "boolean"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "move",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "move"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
+            },
+            "targetKey": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "select-contents",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "select"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "read-owner-state",
+        "handler": {
+          "kind": "owner-state",
+          "operation": "read"
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "highlightedKeys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expandedKeys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "write-owner-state",
+        "handler": {
+          "kind": "owner-state",
+          "operation": "write"
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ],
+          "properties": {
+            "state": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "highlightedKeys",
+                "expandedKeys"
+              ],
+              "properties": {
+                "highlightedKeys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "expandedKeys": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "written"
+          ],
+          "properties": {
+            "written": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    ],
+    "capabilities": [
+      "illustrator-layer-tree"
+    ],
+    "ownerStateFormat": "flowcell.illustrator.layer-tree-state.v1",
+    "supportedDataFormats": [
+      "illustrator.layer-tree.json"
+    ],
+    "refreshEvents": [
+      "flowcell://program-data-invalidated"
+    ],
+    "config": {
+      "programName": "Illustrator",
       "resourceLabel": "Layer",
-      "emptyMessage": "No layers found. Open a document and Refresh.",
-      "refreshEvent": "flowcell://program-data-invalidated"
+      "emptyMessage": "No layers found. Open an Illustrator document and Refresh.",
+      "refreshEvent": "flowcell://program-data-invalidated",
+      "refreshDelaysMs": [
+        350,
+        1100
+      ],
+      "strings": {
+        "ready": "Ready.",
+        "scanning": "Scanning Layer Tree...",
+        "refreshed": "Layer Tree refreshed.",
+        "createRoot": "+ Layer",
+        "createChild": "+ Child",
+        "rename": "Rename",
+        "refresh": "Refresh",
+        "duplicate": "Duplicate",
+        "delete": "Delete",
+        "forceDelete": "Force Delete",
+        "renameTitle": "Rename Layer",
+        "renameConfirm": "Rename",
+        "cancel": "Cancel",
+        "forceDeleteTitle": "Force delete selected layers?",
+        "forceDeleteBody": "This removes selected layers even when they or their ancestors are locked or hidden.",
+        "forceDeleteConfirm": "Force Delete",
+        "selectOneForChild": "Highlight exactly one layer to add a child under it.",
+        "selectOneForRename": "Highlight exactly one layer to rename it.",
+        "selectForDuplicate": "Highlight one or more layers to duplicate.",
+        "selectForDelete": "Highlight one or more layers to delete.",
+        "selectionSaveFailed": "Layer selection could not be saved.",
+        "stateReadFailed": "Saved Layer Tree state could not be restored.",
+        "bridgeUnavailable": "The installed page bridge is unavailable. Close and reopen this Button."
+      }
     }
-  },
-  "execution": {
-    "capabilityStateFile": "flowcell-illustrator-layers-highlight.json",
-    "mirrorCapabilityStateToTemp": true
   }
 }

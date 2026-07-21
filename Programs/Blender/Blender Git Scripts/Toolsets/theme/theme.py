@@ -3,9 +3,9 @@
 
 
 import colorsys
-import importlib
 import json
 import math
+import os
 import time
 from pathlib import Path
 
@@ -27,7 +27,6 @@ STATIC_BACKGROUND_FIT_MODE = "COVER"
 STATIC_BACKGROUND_USE_ALPHA = False
 STATIC_BACKGROUND_FLIP_Y = False
 VIEWPORT_OVERLAY_NAMESPACE_KEY = "flowcell_hdri_world_viewport_overlay"
-VIEWPORT_OVERLAY_LOAD_HANDLER_KEY = "flowcell_hdri_world_viewport_overlay_load_post"
 VIEWPORT_OVERLAY_PATH_KEY = "flowcell_hdri_world_static_background_path"
 PLACE_PICTURE_GENERATION_KEY = "flowcell_place_picture_fake_gizmo_generation"
 PLACE_PICTURE_GRID_SPACING_KEY = "flowcell_place_picture_grid_spacing_m"
@@ -35,7 +34,14 @@ PLACE_PICTURE_GRID_DISTANCE_KEY = "flowcell_place_picture_grid_distance_m"
 PLACE_PICTURE_GRID_FAR_SPACING_KEY = "flowcell_place_picture_grid_far_spacing_m"
 PROJECT_THEME_STATE_KEY = "flowcell_theme_project_state_v1"
 PROJECT_THEME_STATE_FORMAT = "flowcell-blender-theme-project-state-v1"
-GLOBAL_THEME_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
+OWNER_RUNTIME_THEME_STATE_FILE_NAME = "flowcell_theme_startup_state_v1.json"
+PROJECT_THEME_RESTORE_HANDLER_KEY = (
+    f"flowcell_theme_package_restore_load_post::{Path(__file__).resolve()}"
+)
+PROJECT_THEME_RESTORE_ATTEMPTS_KEY = (
+    f"flowcell_theme_package_restore_attempts::{Path(__file__).resolve()}"
+)
+PROJECT_THEME_RESTORE_MAX_ATTEMPTS = 240
 PROJECT_THEME_STATE_THEME_KEYS = (
     "visual_mode",
     "tabs_hex",
@@ -536,14 +542,14 @@ def _get_saved_overlay_path() -> str:
         if saved_path:
             return saved_path
 
-    global_place_picture_state = _read_global_theme_state().get("place_picture", {})
+    startup_place_picture_state = _read_owner_runtime_theme_state().get("place_picture", {})
     if (
-        isinstance(global_place_picture_state, dict)
-        and bool(global_place_picture_state.get("enabled"))
+        isinstance(startup_place_picture_state, dict)
+        and bool(startup_place_picture_state.get("enabled"))
     ):
         return str(
-            global_place_picture_state.get("path")
-            or global_place_picture_state.get("relative_path")
+            startup_place_picture_state.get("path")
+            or startup_place_picture_state.get("relative_path")
             or ""
         ).strip()
 
@@ -650,15 +656,13 @@ def _read_project_theme_state(context=None):
     return _normalize_project_theme_state(parsed)
 
 
-def _global_theme_state_path() -> Path:
-    config_root = bpy.utils.user_resource("CONFIG", path="", create=True)
-    if not config_root:
-        config_root = str(Path.home())
-    return Path(config_root) / GLOBAL_THEME_STATE_FILE_NAME
+def _owner_runtime_theme_state_path() -> Path:
+    runtime_root = Path(f"{Path(__file__).resolve()}.flowcell-runtime")
+    return runtime_root / OWNER_RUNTIME_THEME_STATE_FILE_NAME
 
 
-def _read_global_theme_state():
-    path = _global_theme_state_path()
+def _read_owner_runtime_theme_state():
+    path = _owner_runtime_theme_state_path()
     if not path.is_file():
         return _empty_project_theme_state()
     try:
@@ -668,11 +672,11 @@ def _read_global_theme_state():
     return _normalize_project_theme_state(parsed)
 
 
-def _global_theme_state_exists() -> bool:
-    return _global_theme_state_path().is_file()
+def _owner_runtime_theme_state_exists() -> bool:
+    return _owner_runtime_theme_state_path().is_file()
 
 
-def _write_global_theme_state(state):
+def _write_owner_runtime_theme_state(state):
     normalized = _normalize_project_theme_state(
         {
             **(state if isinstance(state, dict) else {}),
@@ -680,42 +684,15 @@ def _write_global_theme_state(state):
         }
     )
     normalized["updated_at"] = time.time()
-    path = _global_theme_state_path()
+    path = _owner_runtime_theme_state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(normalized, indent=2, sort_keys=True), encoding="utf-8")
-    _ensure_project_theme_restore_handler_registered_from_action()
     return normalized
 
 
-def _ensure_project_theme_restore_handler_registered_from_action() -> bool:
-    try:
-        import flowcell_actions
-
-        ensure_handler = getattr(
-            flowcell_actions,
-            "_ensure_flowcell_project_theme_restore_handler_registered",
-            None,
-        )
-        if not callable(ensure_handler):
-            flowcell_actions = importlib.reload(flowcell_actions)
-            ensure_handler = getattr(
-                flowcell_actions,
-                "_ensure_flowcell_project_theme_restore_handler_registered",
-                None,
-            )
-        if callable(ensure_handler):
-            ensure_handler()
-            return True
-    except Exception:
-        return False
-    return False
-
-
 def _project_theme_restore_handler_registered() -> bool:
-    for handler in getattr(bpy.app.handlers, "load_post", []) or []:
-        if getattr(handler, "__name__", "") == "_restore_flowcell_project_theme_on_load":
-            return True
-    return False
+    handler = bpy.app.driver_namespace.get(PROJECT_THEME_RESTORE_HANDLER_KEY)
+    return handler in getattr(bpy.app.handlers, "load_post", [])
 
 
 def _write_project_theme_state(context, state):
@@ -734,23 +711,20 @@ def _write_project_theme_state(context, state):
         scene.update_tag()
     except Exception:
         pass
-    _ensure_project_theme_restore_handler_registered_from_action()
     return normalized
 
 
 def _write_theme_state(context, state):
     normalized = _write_project_theme_state(context, state)
-    # Persist only the theme portion to the global startup file. The global
-    # Place Picture entry is owned by the Startup button; overwriting it here
-    # with the project's Place Picture strips the explicit_startup flag off the
-    # image the user saved for startup, so the next launch skips restoring it.
-    global_state = _read_global_theme_state()
-    if not isinstance(global_state, dict):
-        global_state = _empty_project_theme_state()
+    # Persist only the theme portion to the owner runtime file. The Place
+    # Picture entry is owned by the package's explicit Startup action.
+    startup_state = _read_owner_runtime_theme_state()
+    if not isinstance(startup_state, dict):
+        startup_state = _empty_project_theme_state()
     else:
-        global_state = dict(global_state)
-    global_state["theme"] = normalized.get("theme", {})
-    _write_global_theme_state(global_state)
+        startup_state = dict(startup_state)
+    startup_state["theme"] = normalized.get("theme", {})
+    _write_owner_runtime_theme_state(startup_state)
     return normalized
 
 
@@ -790,7 +764,7 @@ def _set_startup_place_picture_state(context, payload):
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
     spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
-    state = _read_global_theme_state()
+    state = _read_owner_runtime_theme_state()
     state["place_picture"] = {
         "enabled": True,
         "explicit_startup": True,
@@ -801,7 +775,7 @@ def _set_startup_place_picture_state(context, payload):
         "grid_distance_m": distance_m,
         "grid_far_spacing_m": far_spacing_m,
     }
-    normalized = _write_global_theme_state(state)
+    normalized = _write_owner_runtime_theme_state(state)
     return _result(
         f"Place Picture startup image saved from {resolved_path}.",
         static_background_path=resolved_path,
@@ -839,9 +813,13 @@ def _read_place_picture_runtime_state(context=None):
             )
         ),
         saved_overlay_path=_get_saved_overlay_path(),
-        startup_poll_restore_done=bool(namespace.get("flowcell_project_theme_poll_restore_done")),
-        startup_poll_restore_attempts=int(namespace.get("flowcell_project_theme_poll_restore_attempts", 0) or 0),
-        startup_poll_restore_next_time=float(namespace.get("flowcell_project_theme_poll_restore_next_time", 0.0) or 0.0),
+        startup_poll_restore_done=not bpy.app.timers.is_registered(
+            _restore_theme_package_after_load
+        ),
+        startup_poll_restore_attempts=int(
+            namespace.get(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, 0) or 0
+        ),
+        startup_poll_restore_next_time=0.0,
     )
 
 
@@ -863,21 +841,19 @@ def _is_explicit_startup_place_picture_state(place_picture_state) -> bool:
     return bool(
         isinstance(place_picture_state, dict)
         and place_picture_state.get("enabled")
-        and (
-            place_picture_state.get("explicit_startup") is True
-            or place_picture_state.get("saved_by") == "startup_button"
-        )
+        and place_picture_state.get("explicit_startup") is True
+        and place_picture_state.get("saved_by") == "startup_button"
     )
 
 
-def _startup_state_payload(global_state):
-    theme_state = global_state.get("theme", {}) if isinstance(global_state, dict) else {}
+def _startup_state_payload(startup_state):
+    theme_state = startup_state.get("theme", {}) if isinstance(startup_state, dict) else {}
     place_picture_state = (
-        global_state.get("place_picture", {}) if isinstance(global_state, dict) else {}
+        startup_state.get("place_picture", {}) if isinstance(startup_state, dict) else {}
     )
     return {
-        "startup_state": global_state,
-        "startup_state_path": str(_global_theme_state_path()),
+        "startup_state": startup_state,
+        "startup_state_path": str(_owner_runtime_theme_state_path()),
         "has_startup_theme_state": bool(
             isinstance(theme_state, dict) and theme_state.get("enabled")
         ),
@@ -2202,6 +2178,18 @@ def _register_place_picture_modal_operator():
         print(f"Could not register Place Picture fake gizmo modal operator: {exc}")
 
 
+def _unregister_place_picture_modal_operator():
+    existing = getattr(bpy.types, "VIEW3D_OT_flowcell_place_picture_fake_gizmo_modal", None)
+    if existing is None:
+        return True
+    try:
+        bpy.utils.unregister_class(existing)
+    except Exception as exc:
+        print(f"Could not unregister Place Picture fake gizmo modal operator: {exc}")
+        return False
+    return True
+
+
 def _start_place_picture_modal_operator():
     override = _find_first_3d_view_context()
     if not override:
@@ -2247,26 +2235,6 @@ def _ensure_overlay_texture(state, image):
     state["texture"] = texture
     state["texture_path"] = image_path
     return texture
-
-
-@persistent
-def _clear_viewport_overlay_on_blend_load(_dummy=None):
-    _remove_viewport_overlay_handler()
-    _disable_camera_background_images()
-    _tag_redraw_view3d()
-    if _get_saved_overlay_path():
-        bpy.app.timers.register(_restore_viewport_overlay_after_load, first_interval=0.25)
-
-
-def _ensure_overlay_load_handler_registered():
-    namespace = bpy.app.driver_namespace
-    existing = namespace.get(VIEWPORT_OVERLAY_LOAD_HANDLER_KEY)
-    if existing in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(existing)
-    if _clear_viewport_overlay_on_blend_load in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_clear_viewport_overlay_on_blend_load)
-    bpy.app.handlers.load_post.append(_clear_viewport_overlay_on_blend_load)
-    namespace[VIEWPORT_OVERLAY_LOAD_HANDLER_KEY] = _clear_viewport_overlay_on_blend_load
 
 
 def _pixel_projection(width: float, height: float):
@@ -2566,21 +2534,6 @@ def _register_viewport_overlay_from_resolved_path(
     return resolved_path
 
 
-def _restore_viewport_overlay_after_load():
-    saved_path = _get_saved_overlay_path()
-    if not saved_path:
-        return None
-    if not any(True for _ in (_iter_view3d_spaces() or [])):
-        return 0.25
-    try:
-        resolved_path = _resolve_optional_image_path(saved_path)
-    except Exception:
-        _set_saved_overlay_path("")
-        return None
-    _register_viewport_overlay_from_resolved_path(resolved_path)
-    return None
-
-
 def _apply_grid_spacing(context, payload):
     spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
     _set_runtime_grid_settings(spacing_m, distance_m, far_spacing_m)
@@ -2626,29 +2579,12 @@ def _place_picture_image(context, payload, persist_project_state=True):
     return applied_path
 
 
-def _set_static_background_image(context, payload):
-    return _place_picture_image(context, payload)
-
-
 def _clear_place_picture_overlay(context=None, persist_project_state=True):
     _remove_viewport_overlay_handler()
     _disable_camera_background_images()
     _set_saved_overlay_path("")
     if persist_project_state:
         _set_project_place_picture_state(context, "")
-    namespace = bpy.app.driver_namespace
-    existing = namespace.get(VIEWPORT_OVERLAY_LOAD_HANDLER_KEY)
-    if existing in bpy.app.handlers.load_post:
-        try:
-            bpy.app.handlers.load_post.remove(existing)
-        except Exception:
-            pass
-    if _clear_viewport_overlay_on_blend_load in bpy.app.handlers.load_post:
-        try:
-            bpy.app.handlers.load_post.remove(_clear_viewport_overlay_on_blend_load)
-        except Exception:
-            pass
-    namespace.pop(VIEWPORT_OVERLAY_LOAD_HANDLER_KEY, None)
     _tag_redraw_view3d()
 
 
@@ -3915,14 +3851,13 @@ def _apply_theme_from_photo_manual_colors(context, payload, persist_project_stat
 
 
 def _read_project_startup_state(context):
-    _ensure_project_theme_restore_handler_registered_from_action()
     state = _read_project_theme_state(context)
-    global_state = _read_global_theme_state()
+    startup_state = _read_owner_runtime_theme_state()
     return _result(
         "FlowCell project startup state read.",
         restore_handler_registered=_project_theme_restore_handler_registered(),
         **_project_state_payload(state),
-        **_startup_state_payload(global_state),
+        **_startup_state_payload(startup_state),
     )
 
 
@@ -3953,40 +3888,34 @@ def _resolve_project_place_picture_path(place_picture_state, prefer_absolute=Fal
 
 def _restore_state_for_startup(context):
     project_state = _read_project_theme_state(context)
-    global_state_exists = _global_theme_state_exists()
-    global_state = _read_global_theme_state()
+    startup_state_exists = _owner_runtime_theme_state_exists()
+    startup_state = _read_owner_runtime_theme_state()
     project_theme = project_state.get("theme", {})
     project_place_picture = project_state.get("place_picture", {})
-    global_theme = global_state.get("theme", {})
-    global_place_picture = global_state.get("place_picture", {})
+    startup_theme = startup_state.get("theme", {})
+    startup_place_picture = startup_state.get("place_picture", {})
 
-    theme_state = global_theme if global_state_exists else project_theme
-    # The global Place Picture is now written only by the Startup button (theme
-    # applies no longer overwrite it), so any enabled global entry is a startup
-    # image. Restore it whenever it is enabled — matching the poll trigger's own
-    # enabled/path gate — instead of also requiring the explicit_startup flag,
-    # which older writes could strip.
-    global_place_picture_enabled = bool(
-        isinstance(global_place_picture, dict) and global_place_picture.get("enabled")
+    theme_state = startup_theme if startup_state_exists else project_theme
+    startup_place_picture_enabled = _is_explicit_startup_place_picture_state(
+        startup_place_picture
     )
     place_picture_state = (
-        global_place_picture
-        if global_state_exists and global_place_picture_enabled
+        startup_place_picture
+        if startup_state_exists and startup_place_picture_enabled
         else project_place_picture
-        if not global_state_exists
+        if not startup_state_exists
         else {"enabled": False}
     )
-    return project_state, global_state, theme_state, place_picture_state, global_state_exists
+    return project_state, startup_state, theme_state, place_picture_state, startup_state_exists
 
 
 def _restore_project_startup_state(context):
-    _ensure_project_theme_restore_handler_registered_from_action()
     (
         state,
-        global_state,
+        startup_state,
         theme_state,
         place_picture_state,
-        global_state_exists,
+        startup_state_exists,
     ) = _restore_state_for_startup(context)
     warnings = []
     restored_theme = False
@@ -4006,7 +3935,7 @@ def _restore_project_startup_state(context):
 
     resolved_picture_path, picture_warning = _resolve_project_place_picture_path(
         place_picture_state,
-        prefer_absolute=global_state_exists,
+        prefer_absolute=startup_state_exists,
     )
     if resolved_picture_path:
         try:
@@ -4052,8 +3981,176 @@ def _restore_project_startup_state(context):
         restored_place_picture=restored_place_picture,
         warnings=warnings,
         **_project_state_payload(state),
-        **_startup_state_payload(global_state),
+        **_startup_state_payload(startup_state),
     )
+
+
+def _startup_place_picture_requested() -> bool:
+    place_picture_state = _read_owner_runtime_theme_state().get("place_picture", {})
+    return bool(
+        isinstance(place_picture_state, dict)
+        and place_picture_state.get("enabled")
+        and str(
+            place_picture_state.get("path")
+            or place_picture_state.get("relative_path")
+            or ""
+        ).strip()
+    )
+
+
+def _restore_theme_package_after_load():
+    namespace = bpy.app.driver_namespace
+    attempts = int(namespace.get(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, 0) or 0)
+    namespace[PROJECT_THEME_RESTORE_ATTEMPTS_KEY] = attempts + 1
+    if _startup_place_picture_requested() and not any(
+        True for _ in (_iter_view3d_spaces() or [])
+    ):
+        if attempts < PROJECT_THEME_RESTORE_MAX_ATTEMPTS:
+            return 0.5
+        print("Blender Theme startup restore continuing without a VIEW_3D area.")
+
+    try:
+        result = _restore_project_startup_state(bpy.context)
+        message = str(result.get("message", "") or "")
+        if message:
+            print(message)
+        for warning in result.get("warnings", []) or []:
+            print(f"Blender Theme startup restore warning: {warning}")
+        if (
+            bool(result.get("has_startup_place_picture_state"))
+            and not bool(result.get("restored_place_picture"))
+            and attempts < PROJECT_THEME_RESTORE_MAX_ATTEMPTS
+        ):
+            return 0.5
+    except Exception as exc:
+        print(f"Blender Theme startup restore failed: {exc}")
+        if attempts < PROJECT_THEME_RESTORE_MAX_ATTEMPTS:
+            return 0.5
+    namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
+    return None
+
+
+def _schedule_theme_package_restore(first_interval: float = 0.35) -> None:
+    bpy.app.driver_namespace[PROJECT_THEME_RESTORE_ATTEMPTS_KEY] = 0
+    if not bpy.app.timers.is_registered(_restore_theme_package_after_load):
+        bpy.app.timers.register(
+            _restore_theme_package_after_load,
+            first_interval=first_interval,
+            persistent=True,
+        )
+
+
+@persistent
+def _restore_theme_package_on_load(_dummy=None):
+    _remove_viewport_overlay_handler()
+    _disable_camera_background_images()
+    _schedule_theme_package_restore(first_interval=0.35)
+
+
+def _ensure_theme_package_restore_handler_registered() -> None:
+    namespace = bpy.app.driver_namespace
+    existing = namespace.get(PROJECT_THEME_RESTORE_HANDLER_KEY)
+    if existing in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(existing)
+    if _restore_theme_package_on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_restore_theme_package_on_load)
+    bpy.app.handlers.load_post.append(_restore_theme_package_on_load)
+    namespace[PROJECT_THEME_RESTORE_HANDLER_KEY] = _restore_theme_package_on_load
+
+
+def _remove_theme_package_restore_handler() -> None:
+    namespace = bpy.app.driver_namespace
+    existing = namespace.get(PROJECT_THEME_RESTORE_HANDLER_KEY)
+    if existing in bpy.app.handlers.load_post:
+        try:
+            bpy.app.handlers.load_post.remove(existing)
+        except Exception:
+            pass
+    if _restore_theme_package_on_load in bpy.app.handlers.load_post:
+        try:
+            bpy.app.handlers.load_post.remove(_restore_theme_package_on_load)
+        except Exception:
+            pass
+    namespace.pop(PROJECT_THEME_RESTORE_HANDLER_KEY, None)
+    namespace.pop(PROJECT_THEME_RESTORE_ATTEMPTS_KEY, None)
+    if bpy.app.timers.is_registered(_restore_theme_package_after_load):
+        try:
+            bpy.app.timers.unregister(_restore_theme_package_after_load)
+        except Exception:
+            pass
+    if existing in bpy.app.handlers.load_post:
+        raise RuntimeError("Blender Theme load handler remained registered during cleanup.")
+    if _restore_theme_package_on_load in bpy.app.handlers.load_post:
+        raise RuntimeError("Blender Theme package load handler remained registered during cleanup.")
+    if bpy.app.timers.is_registered(_restore_theme_package_after_load):
+        raise RuntimeError("Blender Theme restore timer remained registered during cleanup.")
+
+
+def _recycle_theme_runtime_path(path: Path) -> bool:
+    if not path.exists():
+        return True
+    if os.name != "nt":
+        print(f"Blender Theme runtime cleanup requires the Windows Recycle Bin: {path}")
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class SHFILEOPSTRUCTW(ctypes.Structure):
+            _fields_ = (
+                ("hwnd", wintypes.HWND),
+                ("wFunc", wintypes.UINT),
+                ("pFrom", wintypes.LPCWSTR),
+                ("pTo", wintypes.LPCWSTR),
+                ("fFlags", wintypes.WORD),
+                ("fAnyOperationsAborted", wintypes.BOOL),
+                ("hNameMappings", ctypes.c_void_p),
+                ("lpszProgressTitle", wintypes.LPCWSTR),
+            )
+
+        source = ctypes.create_unicode_buffer(f"{path}\0\0")
+        operation = SHFILEOPSTRUCTW()
+        operation.wFunc = 3
+        operation.pFrom = ctypes.cast(source, wintypes.LPCWSTR)
+        operation.fFlags = 0x0040 | 0x0010 | 0x0004 | 0x0400
+        result = ctypes.windll.shell32.SHFileOperationW(ctypes.byref(operation))
+        if result == 0 and not operation.fAnyOperationsAborted:
+            return True
+        print(f"Could not recycle Blender Theme runtime path {path}: result={result}")
+    except Exception as exc:
+        print(f"Could not recycle Blender Theme runtime path {path}: {exc}")
+    return False
+
+
+def register_flowcell_action_lifecycle() -> None:
+    _ensure_theme_package_restore_handler_registered()
+    _schedule_theme_package_restore(first_interval=1.25)
+
+
+def unregister_flowcell_action_lifecycle(reason: str = "bridge-shutdown") -> None:
+    cleanup_errors = []
+    try:
+        _remove_theme_package_restore_handler()
+    except Exception as exc:
+        cleanup_errors.append(str(exc))
+    _remove_viewport_overlay_handler()
+    _disable_camera_background_images()
+    _set_saved_overlay_path("")
+    if not _unregister_place_picture_modal_operator():
+        cleanup_errors.append("Place Picture modal operator remained registered.")
+    namespace = bpy.app.driver_namespace
+    namespace.pop(VIEWPORT_OVERLAY_NAMESPACE_KEY, None)
+    namespace.pop(PLACE_PICTURE_GENERATION_KEY, None)
+    namespace.pop(PLACE_PICTURE_GRID_SPACING_KEY, None)
+    namespace.pop(PLACE_PICTURE_GRID_DISTANCE_KEY, None)
+    namespace.pop(PLACE_PICTURE_GRID_FAR_SPACING_KEY, None)
+    _tag_redraw_view3d()
+    if reason == "removed" and not _recycle_theme_runtime_path(
+        _owner_runtime_theme_state_path().parent
+    ):
+        cleanup_errors.append("Button-owned Theme runtime state was not recycled.")
+    if cleanup_errors:
+        raise RuntimeError(" ".join(cleanup_errors))
 
 
 def run_flowcell_action(context=None, data=None):
@@ -4064,10 +4161,6 @@ def run_flowcell_action(context=None, data=None):
     if command == "read_project_startup_state":
         return _read_project_startup_state(context)
     if command == "restore_project_startup_state":
-        return _restore_project_startup_state(context)
-    if command == "read_startup_state":
-        return _read_project_startup_state(context)
-    if command == "restore_startup_state":
         return _restore_project_startup_state(context)
     if command == "read_place_picture_runtime_state":
         return _read_place_picture_runtime_state(context)
@@ -4089,14 +4182,6 @@ def run_flowcell_action(context=None, data=None):
         return _result("Place Picture cleared.", static_background_path="")
     if command == "set_place_picture_startup":
         return _set_startup_place_picture_state(context, payload)
-    if command == "set_static_background_image":
-        resolved_path = _set_static_background_image(context, payload)
-        if resolved_path:
-            return _result(
-                f"Place Picture installed from {resolved_path}.",
-                static_background_path=resolved_path,
-            )
-        return _result("Place Picture cleared.", static_background_path="")
     if command == "clear_place_picture":
         _clear_place_picture_overlay(context)
         return _result("Place Picture cleared.", static_background_path="")
@@ -4145,31 +4230,5 @@ def run_flowcell_action(context=None, data=None):
         strength = _read_float(payload, "world_strength", DEFAULT_WORLD_STRENGTH)
         _set_world_strength(background, strength)
         return _result(f"HDRI world strength set to {strength:.3f}.")
-
-    if command == "apply_all":
-        resolved_path = _apply_hdri_image(env, payload)
-        _set_rotation(
-            mapping,
-            0,
-            _read_float(payload, "rotation_x_deg", DEFAULT_ROTATION_X_DEGREES),
-        )
-        _set_rotation(
-            mapping,
-            1,
-            _read_float(payload, "rotation_y_deg", DEFAULT_ROTATION_Y_DEGREES),
-        )
-        _set_rotation(
-            mapping,
-            2,
-            _read_float(payload, "rotation_z_deg", DEFAULT_ROTATION_Z_DEGREES),
-        )
-        _set_world_strength(
-            background,
-            _read_float(payload, "world_strength", DEFAULT_WORLD_STRENGTH),
-        )
-        return _result(
-            "HDRI world settings applied.",
-            hdri_path=resolved_path,
-        )
 
     raise ValueError(f"Unsupported HDRI world command: {command}")

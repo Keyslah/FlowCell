@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.trash",
+  "label": "trash",
+  "tooltip": "Move highlighted eligible layers into numbered Trash entries.",
+  "program": "Illustrator",
+  "source": "trash.jsx"
+}

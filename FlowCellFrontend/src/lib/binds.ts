@@ -9,7 +9,7 @@ export async function saveBindShortcut(args: {
   programName: string;
   programTabId: number;
   target: string;
-  targetKind: "script" | "tool-set-child";
+  targetKind: "script" | "tool-set-owner" | "tool-set-child";
   ownerButtonId?: string;
   bindingId: number;
   shortcut: string;

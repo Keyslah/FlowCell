@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Layer Tree</title>
+  </head>
+  <body>
+    <main class="layer-tree" aria-labelledby="layer-tree-title">
+      <header class="layer-tree__header">
+        <div>
+          <p class="layer-tree__eyebrow">Illustrator</p>
+          <h1 id="layer-tree-title">Layer Tree</h1>
+        </div>
+        <span class="layer-tree__selection" id="selection-summary" aria-live="polite">0 selected</span>
+      </header>
+
+      <nav class="layer-tree__toolbar" aria-label="Layer actions">
+        <button type="button" data-action="create-root">+ Layer</button>
+        <button type="button" data-action="create-child">+ Child</button>
+        <button type="button" data-action="rename">Rename</button>
+        <button type="button" data-action="refresh">Refresh</button>
+        <button type="button" data-action="duplicate">Duplicate</button>
+        <button type="button" data-action="delete">Delete</button>
+        <button type="button" class="layer-tree__danger" data-action="force-delete">Force Delete</button>
+      </nav>
+
+      <section class="layer-tree__surface" aria-label="Illustrator layers">
+        <div class="layer-tree__empty" id="empty-state" hidden></div>
+        <div class="layer-tree__rows" id="tree-rows" role="tree" aria-multiselectable="true"></div>
+      </section>
+
+      <section class="layer-tree__dialog" id="rename-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-title" hidden>
+        <form class="layer-tree__dialog-card" id="rename-form">
+          <h2 id="rename-title">Rename Layer</h2>
+          <label for="rename-input">Layer name</label>
+          <input id="rename-input" name="name" type="text" autocomplete="off" required>
+          <div class="layer-tree__dialog-actions">
+            <button type="button" data-dialog-cancel>Cancel</button>
+            <button type="submit" class="layer-tree__primary" id="rename-confirm">Rename</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="layer-tree__dialog" id="force-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="force-delete-title" aria-describedby="force-delete-body" hidden>
+        <div class="layer-tree__dialog-card">
+          <h2 id="force-delete-title">Force delete selected layers?</h2>
+          <p id="force-delete-body">This removes selected layers even when they or their ancestors are locked or hidden.</p>
+          <div class="layer-tree__dialog-actions">
+            <button type="button" data-dialog-cancel>Cancel</button>
+            <button type="button" class="layer-tree__danger" id="force-delete-confirm">Force Delete</button>
+          </div>
+        </div>
+      </section>
+
+      <footer class="layer-tree__status" id="status" role="status" aria-live="polite">Ready.</footer>
+    </main>
+  </body>
+</html>

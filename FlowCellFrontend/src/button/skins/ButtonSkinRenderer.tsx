@@ -44,6 +44,7 @@ export interface ButtonSkinRendererProps {
   previewStackWords?: boolean;
   hovered?: boolean;
   pressed?: boolean;
+  pointerPressed?: boolean;
   held?: boolean;
   play?: boolean;
   release?: boolean;
@@ -645,6 +646,7 @@ export function ButtonSkinRenderer({
   previewStackWords,
   hovered = false,
   pressed = false,
+  pointerPressed = pressed,
   held = false,
   play = false,
   release = false,
@@ -731,6 +733,7 @@ export function ButtonSkinRenderer({
     setBooleanAttribute(host, "data-button-match-hitbox-to-skin", matchHitboxToSkin);
     setBooleanAttribute(host, "data-button-hover", hovered);
     setBooleanAttribute(host, "data-button-pressed", pressed);
+    setBooleanAttribute(host, "data-button-pointer-pressed", pointerPressed);
     setBooleanAttribute(host, "data-button-held", held);
     setBooleanAttribute(host, "data-button-play", play);
     setBooleanAttribute(host, "data-button-release", release);
@@ -861,6 +864,7 @@ export function ButtonSkinRenderer({
     setBooleanAttribute(host, "data-button-match-hitbox-to-skin", matchHitboxToSkin);
     setBooleanAttribute(host, "data-button-hover", hovered);
     setBooleanAttribute(host, "data-button-pressed", pressed);
+    setBooleanAttribute(host, "data-button-pointer-pressed", pointerPressed);
     setBooleanAttribute(host, "data-button-held", held);
     setBooleanAttribute(host, "data-button-play", play);
     setBooleanAttribute(host, "data-button-release", release);
@@ -902,6 +906,7 @@ export function ButtonSkinRenderer({
     matchHitboxToSkin,
     hovered,
     pressed,
+    pointerPressed,
     held,
     play,
     release,

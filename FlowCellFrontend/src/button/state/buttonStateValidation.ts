@@ -266,8 +266,8 @@ function validateTopLevel(value: unknown, issues: ButtonStateValidationIssue[]):
 }
 
 /**
- * Backfills presentation defaults introduced while schema version 1 documents
- * were already in use. Missing fields are normalized, while malformed explicit
+ * Backfills defaults introduced while schema version 1 documents were already
+ * in use. Missing fields are normalized, while malformed explicit
  * values remain untouched so strict validation still reports them.
  */
 export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
@@ -302,6 +302,18 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
       changed = true;
     }
     placements[id] = placement;
+  }
+  const surfaces: Record<string, unknown> = isObject(value.surfaces)
+    ? { ...value.surfaces }
+    : {};
+  for (const [id, candidate] of Object.entries(surfaces)) {
+    if (!isObject(candidate)) continue;
+    const surface: Record<string, unknown> = { ...candidate };
+    if (!Object.hasOwn(surface, "uniformButtonSize")) {
+      surface.uniformButtonSize = null;
+      changed = true;
+    }
+    surfaces[id] = surface;
   }
   const popoutUnits = isObject(value.popoutUnits) ? { ...value.popoutUnits } : value.popoutUnits;
   if (isObject(popoutUnits)) {
@@ -339,7 +351,7 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
       fanSetups[id] = setup;
     }
   }
-  return changed ? { ...value, buttons, placements, popoutUnits, fanSetups } : value;
+  return changed ? { ...value, buttons, placements, surfaces, popoutUnits, fanSetups } : value;
 }
 
 export function validateButtonStateDocument(value: unknown): ButtonStateValidationResult {
@@ -409,6 +421,22 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     if (!isFiniteNumber(surface.visualOverflowAllowance) || surface.visualOverflowAllowance < 0) {
       addIssue(issues, `${path}.visualOverflowAllowance`, "Surface visual-overflow allowance must be finite and nonnegative.");
     }
+    const uniformButtonSize = surface.uniformButtonSize;
+    if (
+      uniformButtonSize !== undefined &&
+      uniformButtonSize !== null &&
+      (
+        !isObject(uniformButtonSize) ||
+        !isFiniteNumber(uniformButtonSize.width) ||
+        !isFiniteNumber(uniformButtonSize.height) ||
+        uniformButtonSize.width <= 0 ||
+        uniformButtonSize.height <= 0 ||
+        uniformButtonSize.width > surface.width ||
+        uniformButtonSize.height > surface.height
+      )
+    ) {
+      addIssue(issues, `${path}.uniformButtonSize`, "Uniform Button size must be null or contain positive finite dimensions that fit the surface.");
+    }
   }
   for (const [key, placement] of Object.entries(document.placements)) {
     const path = `placements.${key}`;
@@ -471,6 +499,24 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
         addIssue(issues, `placements.${placement.id}`, "Placement is outside its exact surface bounds.");
       }
     }
+    const uniformButtonSize = surface.uniformButtonSize;
+    if (
+      isObject(uniformButtonSize) &&
+      isFiniteNumber(uniformButtonSize.width) &&
+      isFiniteNumber(uniformButtonSize.height) &&
+      placements.some((placement) =>
+        Math.abs(placement.width - uniformButtonSize.width) > 0.05 ||
+        Math.abs(placement.height - uniformButtonSize.height) > 0.05 ||
+        placement.matchHitboxToSkin !== false ||
+        placement.allowLabelResize !== false
+      )
+    ) {
+      addIssue(
+        issues,
+        `surfaces.${surfaceId}.uniformButtonSize`,
+        "Every placement on a uniformly sized surface must use its fixed dimensions."
+      );
+    }
     for (let left = 0; left < placements.length; left += 1) {
       for (let right = left + 1; right < placements.length; right += 1) {
         const leftPlacement = placements[left];
@@ -500,7 +546,7 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     ];
     const allowedKeys = new Set(unit.kind === "regular"
       ? [...commonKeys, "memberPlacementIds", "memberSourceIdentities", "selectionKey"]
-      : [...commonKeys, "ownerButtonId", "childButtonIds", "childPlacementIds", "fields", "presentation"]);
+      : [...commonKeys, "ownerButtonId", "childButtonIds", "childPlacementIds", "fields"]);
     Object.keys(rawUnit).forEach((property) => {
       if (!allowedKeys.has(property)) addIssue(issues, `${path}.${property}`, `Property '${property}' is not part of the ${unit.kind} popout contract.`);
     });
@@ -552,35 +598,6 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
         }
       }
     } else {
-      if (unit.presentation !== undefined && unit.presentation !== null) {
-        const presentationPath = `${path}.presentation`;
-        if (!isObject(unit.presentation)) {
-          addIssue(issues, presentationPath, "Tool-page presentation must be an object or null.");
-        } else {
-          const presentation = unit.presentation as unknown as Record<string, unknown>;
-          const presentationKeys = new Set(["kind", "schemaVersion", "renderer", "title", "config"]);
-          Object.keys(presentation).forEach((property) => {
-            if (!presentationKeys.has(property)) {
-              addIssue(issues, `${presentationPath}.${property}`, `Property '${property}' is not part of the tool-page presentation contract.`);
-            }
-          });
-          if (presentation.kind !== "tool-page") {
-            addIssue(issues, `${presentationPath}.kind`, "Tool-page presentation kind must be 'tool-page'.");
-          }
-          if (presentation.schemaVersion !== 1) {
-            addIssue(issues, `${presentationPath}.schemaVersion`, "Tool-page presentation schema version must be 1.");
-          }
-          if (typeof presentation.renderer !== "string" || !presentation.renderer.trim()) {
-            addIssue(issues, `${presentationPath}.renderer`, "Tool-page presentation renderer must be nonempty.");
-          }
-          if (presentation.title !== undefined && typeof presentation.title !== "string") {
-            addIssue(issues, `${presentationPath}.title`, "Tool-page presentation title must be a string when present.");
-          }
-          if (!isObject(presentation.config)) {
-            addIssue(issues, `${presentationPath}.config`, "Tool-page presentation config must be an object.");
-          }
-        }
-      }
       const fields = Array.isArray(unit.fields) ? unit.fields : [];
       if (!Array.isArray(unit.fields)) addIssue(issues, `${path}.fields`, "Tool-set fields must be an array.");
       const fieldIds = new Set<string>();

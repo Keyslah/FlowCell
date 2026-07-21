@@ -834,6 +834,31 @@ export function compactButtonPlacements(
   };
 }
 
+/**
+ * Gives every placement the requested host-owned size, then packs the result
+ * without mutating the input. The caller can apply the returned geometry in
+ * one transaction only after the complete layout is known to fit.
+ */
+export function compactUniformButtonPlacements(
+  placements: readonly NamedButtonRect[],
+  targetSize: Pick<ButtonRect, "width" | "height">,
+  surface: Pick<ButtonRect, "width" | "height">,
+  options: CompactButtonPlacementOptions = {}
+): CompactButtonPlacementResult {
+  return compactButtonPlacements(
+    placements.map((placement) => ({
+      ...placement,
+      rect: {
+        ...placement.rect,
+        width: targetSize.width,
+        height: targetSize.height
+      }
+    })),
+    surface,
+    options
+  );
+}
+
 export function createStarterButtonLayout(
   items: readonly StarterLayoutItem[],
   options: { padding: number; gap: number; maximumColumns?: number }

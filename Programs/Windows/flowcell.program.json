@@ -4,6 +4,10 @@
   "label": "Windows",
   "programType": "local-script",
   "defaultPanels": ["Files", "Utility"],
+  "panels": [
+    { "id": "files", "label": "Files", "defaultSelected": true },
+    { "id": "utility", "label": "Utility", "defaultSelected": true }
+  ],
   "processNames": ["explorer", "dopus", "dopusrt"],
   "bindScopedNativeOwner": false,
   "shortcutProfileId": "windows",
@@ -15,6 +19,23 @@
   "allowedScriptExtensions": ["ps1", "cmd", "bat", "exe", "lnk", "vbs", "ahk"],
   "allowedManifestFileNames": ["flowcell.script.json"],
   "supportsToolsetManifests": false,
+  "bundledSources": [
+    {
+      "id": "windows.setup-organization",
+      "version": "1.0.0",
+      "panelName": "Files",
+      "sourcePath": "Windows Git Scripts/Files/Setup Organization",
+      "importKind": "script",
+      "displayLabel": "Setup Organization",
+      "sourceKind": "page",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the Windows Setup Organization page Button and its package-owned actions into the selected Windows panel."
+      ],
+      "installOnAdd": true
+    }
+  ],
   "runner": {
     "kind": "windows-script",
     "programKey": "windows_generic",

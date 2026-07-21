@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.empty-sublayers",
+  "label": "empty sublayers",
+  "tooltip": "Recursively remove empty sublayers across the active document; no Layer Tree highlight required.",
+  "program": "Illustrator",
+  "source": "empty sublayers.jsx"
+}

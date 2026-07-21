@@ -28,7 +28,7 @@ Use this document as the repository-local routing guide for FlowCell work. Inspe
 - `Programs/<Program>/Panels/<Panel>/<ownerButtonId>.flowcell-source.json` is the active routing record.
 - `Programs/<Program>/flowcell.program.json` declares program folders, allowed source types, and runner behavior.
 - `flowcellbackend/FlowCellBackend.ahk` owns existing path-based script hotkeys and direct backend automation; those `ScriptPath` bindings remain available with the frontend closed.
-- The running Tauri process owns only `tool-set-child` hotkeys. Their numbered binding records carry canonical child/owner Button IDs, and the active expanded owner popout activates the mounted child host so live tool fields and the normal Button lifecycle remain authoritative.
+- The running Tauri process owns `tool-set-owner` and `tool-set-child` hotkeys. Their numbered binding records carry canonical Button/owner IDs without `ScriptPath`; owners use the same Main-page managed-popout toggle, while the active expanded owner popout activates a mounted child host so live tool fields and the normal Button lifecycle remain authoritative. Binds scopes Current Panel Binds to one selected Tool Set owner and its children.
 - `flowcellbackend/FlowCellCommandBackend.ps1` executes hotkey script/macro requests; Blender script bindings resolve only through active `.flowcell-source.json` records.
 
 ### Non-negotiable contracts
@@ -87,7 +87,7 @@ Core utility windows such as Binds, Macro Lab, Organization Setup, Window Grid, 
 - Native Pop/Fan windows are fixed, non-resizable transparent canvases covering the active monitor work area and any outlying semantic content. Set cursor-ignore before show. One shared native worker emits changed physical cursor/modifier snapshots; physical bounds and cursor points must be converted to WebView CSS coordinates with the live `devicePixelRatio` (native monitor DPI is only the fallback because WebView zoom can differ). Each window reacts to those changes and local geometry/DOM invalidation, enabling its HWND only when the native owning-program entitlement is active and the pointer is over a placement-owned Button host, tool field, or Pop resize handle. Gaps, inactive program scope, taskbar previews, listener/query failures, and effect cleanup must return it to ignored. Subscribe before querying initial native state, retry transient listener/query and cursor-style failures, and fail closed while state is unavailable. The hit-test hook rejects points outside the semantic frame before exact testing, may cache interactive membership, and must read exact viewport rectangles live because ancestor frame movement can change position without resizing a host. It must not resume per-window continuous polling merely because an envelope or content frame moved.
 - Render the visible frame absolutely inside that canvas. Fit changes, hover overflow, Fan expansion, and tool-set collapse/expansion change only semantic frame/envelope state. Grow or rehome the native canvas only when content escapes it, and use a capacity margin while dragging/resizing so monitor-edge motion stays visible. New unsized Pops start at one design pixel per WebView CSS pixel; restored physical bounds use the destination WebView's effective pixel ratio. Preserve one invariant physical surface origin, normalize ancestor content scale to design units, and retain skin-root/animated overflow scale. Persist Pop/Fan semantic physical bounds and layout snapshots, never the monitor-sized host or transient envelope.
 - Layout snapshots are strict version 8 `FlowCellWindowLayout` documents and persist only `button-editor`, `button-popout`, and `button-fan` Button window kinds; unknown fields and old window kinds are rejected.
-- Only measured visible `[data-core]` regions are native hit-test regions. Gaps stay pointer-inert.
+- Only stable placement-owned skin-host rectangles are native Button hit-test regions; their resting dimensions derive from the measured `[data-core]`. Gaps stay pointer-inert.
 - Program-scoped topmost is an exact native process rule: only the owning manifest's actual foreground executable may select `TOPMOST`. FlowCell self/sibling focus is at most a normal-band continuation of the last proven owning app; taskbar previews and unrelated apps must place the scoped window behind the actual foreground HWND, not merely call `HWND_NOTOPMOST`.
 
 ### Primary files
@@ -165,10 +165,11 @@ Runtime values win. Core does not interpret Blender axes, angles, solvers, color
 2. `ButtonSkinRenderer` compiles and mounts the authored skin in its isolated render root.
 3. The skin must contain exactly one measurable `[data-core]` and may contain one `{{label}}` token at the intended text location.
 4. The host measures that exact core after optional label insertion and text-fit resolution.
-5. The host attaches activation, context, double-click, hover, press, and keyboard behavior directly to that core.
-6. Native transparent windows map the physical cursor to the webview through the live `devicePixelRatio` and use the shadow root's DOM hit test for those exact cores; a bounding rectangle is only an early rejection check.
+5. The core supplies the measured and accessible geometry and owns the activation, context, double-click, hover, press, and keyboard listeners. The placement host remains browser-reachable only as the shadow bridge; its unused gutters perform no Button action.
+6. Native transparent windows map the physical cursor to the webview through the live `devicePixelRatio`, discover each core through its placement host, and hit-test the live core rectangle; non-Button controls use their own DOM geometry.
 
 The host never imposes another shape over the skin. Shadows, glows, wrappers, and decorative SVG may overflow but never become clickable.
+Main-page selection adds no host outline; it latches the selected Button into the skin's authored pressed state until deselection.
 
 ## skin-author
 
@@ -203,15 +204,22 @@ The source of truth for section names is `FlowCellFrontend/src/button/skins/butt
 
 `structure` is required for a complete replacement. A named-section update may contain any subset. An explicitly present empty optional section clears only that section; omitted sections remain unchanged. Header lines tolerate surrounding whitespace and letter case, and blank lines before the first header are ignored; canonical lowercase remains the authored form.
 
+New skins, conversions, and complete replacements must include every canonical header, including empty optional sections, so stale keyframes or state declarations cannot survive from the previous skin. Omit headers only for an explicitly requested partial named-section update.
+
 ### Structure rules
 
 - Include `{{label}}` once inside `data-core` when visible Button text belongs there; omit it for a textless or animation-only skin.
 - Include exactly one `data-core`. Its measured post-label geometry is the real Button hitbox.
+- Use a neutral render-only `div` or `span` core. Interactive, form, media, and navigation elements such as `button`, `a`, `input`, `select`, `textarea`, `form`, `img`, `video`, and `audio` are forbidden because the host owns Button semantics and behavior.
+- A newly authored packed core is the intended resting clickable body footprint; do not invent demo margins or hidden layout gutters. A literal conversion preserves the source interactive control's complete box model, including its own transparent padding when that padding positions a face, base, depth layer, or press travel. Remove only spacing owned by an outer demo/page wrapper.
+- Core font metrics must be deterministic across Editor/Main/Pop/Fan hosts. Do not inherit them on `data-core`; a labeled core, or a core with `em` geometry, requires an effective pixel font size and pixel line-height so host typography cannot change its measured aspect.
 - For an animation-only skin, keep `data-core` nonzero and measurable but visually unpainted if desired. FlowCell adds no label or fallback Button face; the saved Button label remains the accessible name.
-- Keep decorative wrappers outside the core and pointer-inert.
+- Keep decorative wrappers and layers pointer-inert. They may be inside or outside `data-core` when literal source stacking requires it.
 - No scripts, event-handler attributes, network access, navigation, backend calls, or state mutation.
 - No React skin registry in version one.
 - Put `data-anim="token"` on real animated elements; do not add unconditional animation in structure.
+
+When converting React, JSX, or styled-components source, treat the imported visual as literal. Strip imports/components/JavaScript and replace only the control semantics with neutral markup; preserve the source control's display, box model, radii, gradients, shadows, transitions, stacking, and existing state behavior. Replace pseudo-elements with equivalent real decorative children, map only states present in the source, leave absent canonical states empty, and replace the literal caption with `{{label}}` when text must stay editable. A color-only request changes only the named color values. Freeze inherited typography to the source host's resolved pixel font size and line height instead of choosing new metrics.
 
 ### State and keyframe rules
 
@@ -222,6 +230,8 @@ The source of truth for section names is `FlowCellFrontend/src/button/skins/butt
 - Trigger animations with `--anim-<token>` in a state section.
 - `play` is a one-shot latch; never use an infinite animation there.
 - Forbidden source includes scripts, `on*` handlers, `javascript:`, `expression(`, and fixed-position escape surfaces.
+
+Before returning a replacement, run `.claude/skills/skin-author/scripts/validate-skin.mjs` against the exact block. It must contain every canonical header, parse successfully, reject inherited/unstable core font geometry, and return zero semantic diagnostics. For original authoring, verify the intended painted footprint. For a conversion, compare source and result at rest and in every authored state, including core/child boxes, padding, radii, colors, shadows, and transitions except for explicitly requested changes. Also verify the same natural aspect ratio in Editor and a real Pop/Fan; static validation cannot infer paint coverage.
 
 ### Scope
 

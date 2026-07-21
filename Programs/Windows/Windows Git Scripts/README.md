@@ -3,7 +3,7 @@
 This folder is the tracked Windows script catalog. Its subfolders organize
 shareable sources for discovery; they are not active panels or runtime routes.
 
-Add Script or Update copies the selected source into
+Add Button or Update copies the selected source into
 `../Windows Local Scripts/<ownerButtonId>/source/`. Runtime execution resolves
 the owner's `.flowcell-source.json` record under `../Panels/<Panel>/` and runs
 only that installed copy. Later edits here do not alter an installed Button.

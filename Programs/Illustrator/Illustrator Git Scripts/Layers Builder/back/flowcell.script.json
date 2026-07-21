@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.back",
+  "label": "back",
+  "tooltip": "Replace highlighted Live targets with their newest snapshots and step backward.",
+  "program": "Illustrator",
+  "source": "back.jsx"
+}

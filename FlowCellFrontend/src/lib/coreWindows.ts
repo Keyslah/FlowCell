@@ -9,10 +9,11 @@ import {
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   BINDS_PREFILL_EVENT,
+  BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
   buildWindowContextUrl,
   type BindsButtonPrefill,
   type FlowCellWindowContext,
-  type ToolPageWindowContext
+  type InstalledPageWindowContext
 } from "./windowContext";
 import {
   registerScopedWindowTopmost,
@@ -178,68 +179,91 @@ export async function openMacroLabWindow(args: {
   });
 }
 
-export const openOrganizationSetupWindow = () => openCoreWindow({
-  label: "organization-setup",
-  context: { kind: "organization-setup" },
-  title: "FlowCell - Setup Organization",
-  width: 1240,
-  height: 880,
+export const openAddProgramWindow = () => openCoreWindow({
+  label: "flowcell-add-program",
+  context: { kind: "add-program" },
+  title: "FlowCell - Add Program",
+  width: 1120,
+  height: 820,
   minimumWidth: 820,
-  minimumHeight: 640
+  minimumHeight: 620,
+  decorations: true
 });
 
-export async function openBuildLayersWindow(args: {
-  programName: string;
-  panelName: string;
-  fileName: string;
-  label?: string;
-}): Promise<void> {
-  await openToolPageWindow({
-    contributionId: "illustrator.layer-tree",
-    renderer: "tree-inspector",
-    capability: "illustrator-layer-tree",
-    programName: args.programName,
-    panelName: args.panelName,
-    fileName: args.fileName,
-    title: args.label?.trim() || "Layer Tree",
-    resourceLabel: "Layer",
-    emptyMessage: "No layers found. Open a document and Refresh."
-  });
-}
+export const openAddPanelWindow = (programName: string) => openCoreWindow({
+  label: "flowcell-add-panel",
+  context: { kind: "add-panel", programName },
+  title: `FlowCell - Add Panel to ${programName}`,
+  width: 760,
+  height: 620,
+  minimumWidth: 620,
+  minimumHeight: 480,
+  decorations: true,
+  recreate: true
+});
 
-function toolPageWindowLabel(context: { contributionId: string; ownerButtonId?: string }): string {
-  const identity = context.ownerButtonId?.trim() || context.contributionId.trim();
-  const safeIdentity = identity
+function installedPageWindowLabel(ownerButtonId: string): string {
+  const safeOwner = ownerButtonId
+    .trim()
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
-    .slice(0, 72) || "page";
-  return `flowcell-tool-page-${safeIdentity}`;
+    .slice(0, 96) || "page";
+  return `flowcell-installed-page-${safeOwner}`;
 }
 
-export async function openToolPageWindow(
-  args: Omit<ToolPageWindowContext, "kind">
-): Promise<void> {
+export async function openInstalledPageWindow(args: {
+  ownerButtonId: string;
+  programName: string;
+  panelName: string;
+  fileName: string;
+  pageId: string;
+  title: string;
+  width: number;
+  height: number;
+  minWidth: number;
+  minHeight: number;
+}): Promise<void> {
+  const context: InstalledPageWindowContext = {
+    kind: "installed-page",
+    schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
+    ownerButtonId: args.ownerButtonId,
+    programName: args.programName,
+    panelName: args.panelName,
+    fileName: args.fileName,
+    pageId: args.pageId
+  };
   await openCoreWindow({
-    label: toolPageWindowLabel(args),
-    context: { kind: "tool-page", ...args },
+    label: installedPageWindowLabel(args.ownerButtonId),
+    context,
     title: `FlowCell - ${args.title}`,
-    width: 360,
-    height: 640,
-    minimumWidth: 240,
-    minimumHeight: 300,
+    width: args.width,
+    height: args.height,
+    minimumWidth: args.minWidth,
+    minimumHeight: args.minHeight,
+    decorations: true,
     programName: args.programName
   });
 }
 
-export async function closeToolPageWindow(args: {
-  contributionId: string;
-  ownerButtonId?: string;
-}): Promise<void> {
-  const label = toolPageWindowLabel(args);
+export async function closeInstalledPageWindow(ownerButtonId: string): Promise<void> {
+  const label = installedPageWindowLabel(ownerButtonId);
   await pendingOpens.get(label)?.catch(() => {});
   const existing = await WebviewWindow.getByLabel(label);
-  if (existing) await existing.close();
+  if (!existing) return;
+  let acknowledgeDestroyed: (() => void) | null = null;
+  const destroyed = new Promise<void>((resolve) => {
+    acknowledgeDestroyed = resolve;
+  });
+  const unlistenDestroyed = await existing.once("tauri://destroyed", () => {
+    acknowledgeDestroyed?.();
+  });
+  try {
+    await existing.close();
+    await destroyed;
+  } finally {
+    unlistenDestroyed();
+  }
 }
 
 export const openWindowGridWindow = () => openCoreWindow({

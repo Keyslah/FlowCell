@@ -1,8 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   createButtonStateDocument
 } from "./.compiled-button-system/button/state/buttonDefaults.js";
+
+const frontendRoot = join(import.meta.dirname, "..");
 import {
   normalizeLoadedButtonStateDocument,
   parseButtonStateDocumentJson,
@@ -38,6 +42,7 @@ import {
 import {
   buttonRectsOverlap,
   compactButtonPlacements,
+  compactUniformButtonPlacements,
   inferButtonPlacementRowProfile,
   lockButtonRectAspect,
   normalizeButtonScreenMeasurement,
@@ -73,18 +78,12 @@ import {
   removeCanonicalFrontendMacroButtonGraphs
 } from "./.compiled-button-system/button/state/frontendMacroButtonOperations.js";
 import {
-  attachCanonicalOrganizationProfileButton,
-  isCanonicalOrganizationProfileButton,
-  organizationProfileOwnerButtonId,
-  resolveOrganizationProfileOwnerButtonId
-} from "./.compiled-button-system/button/state/organizationProfileButtonOperations.js";
-import {
   applyInstalledSourceUpdate
 } from "./.compiled-button-system/button/state/sourceUpdateOperations.js";
 import {
-  removedToolPageWindowIdentities,
-  scopedToolPageWindowIdentities
-} from "./.compiled-button-system/button/state/toolPageLifecycle.js";
+  removedInstalledPageOwnerIds,
+  scopedInstalledPageOwnerIds
+} from "./.compiled-button-system/button/state/installedPageLifecycle.js";
 import {
   buttonStateDocumentsEqual,
   reconcileBundledProgramSources
@@ -194,21 +193,6 @@ function button(id, role, identity = null) {
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: {}
-  };
-}
-
-function organizationProfileInstall(profileName) {
-  const ownerButtonId = organizationProfileOwnerButtonId(profileName);
-  const identity = source("Windows", "Files", `${ownerButtonId}.flowcell-source.json`);
-  return {
-    ownerButtonId,
-    sourceIdentity: identity,
-    executionTarget: {
-      kind: "panel-script",
-      programName: "Windows",
-      panelName: "Files",
-      fileName: identity.displayFileName
-    }
   };
 }
 
@@ -1045,6 +1029,15 @@ test("semantic skin validation enforces data-core, label ownership, and safe ani
   assert.equal(validation.valid, true);
   assert.equal(validation.analysis.hasLabelToken, true);
   assert.equal(validateButtonSkin({ ...valid, structure: "<script></script><div data-core>{{label}}</div>" }).valid, false);
+  const interactiveRoot = validateButtonSkin({
+    ...valid,
+    structure: "<button data-core>{{label}}</button>"
+  });
+  assert.equal(interactiveRoot.valid, false);
+  assert.match(
+    interactiveRoot.diagnostics.map((diagnostic) => diagnostic.message).join("\n"),
+    /<button> is not allowed in a Button skin\./
+  );
   assert.equal(validateButtonSkin({ ...valid, structure: "<div>{{label}}</div>" }).valid, false);
   assert.equal(validateButtonSkin({ ...valid, structure: "<div data-core>{{label}}{{label}}</div>" }).valid, false);
   assert.equal(validateButtonSkin({ ...valid, structure: "<div data-core></div>{{label}}" }).valid, false);
@@ -1070,6 +1063,55 @@ test("textless animation skins compile without synthesizing a visible label", ()
   assert.equal(result.compiled.hasLabelToken, false);
   assert.equal(result.compiled.sanitizedMarkupTemplate.includes("{{label}}"), false);
   assert.equal(result.compiled.sanitizedMarkupTemplate.includes("data-button-label-node"), false);
+});
+
+test("compiled skins keep authored wrappers inert and expose the core to pointer input", () => {
+  const skin = {
+    id: "skin-core-hitbox",
+    name: "Core Hitbox",
+    ...createEmptyButtonSkinSections(),
+    structure: "<span><span data-core style=\"display:inline-block;width:10px;height:10px\"></span></span>",
+    metadata: {},
+    compileCache: null
+  };
+  const result = compileButtonSkin(skin);
+  assert.equal(result.ok, true);
+  assert.match(result.compiled.scopedCss, /:host\{[^}]*pointer-events:auto;/);
+  assert.match(result.compiled.scopedCss, /\[data-button-skin-root\]\{[^}]*pointer-events:none;/);
+  assert.match(result.compiled.scopedCss, /\[data-core\]\{pointer-events:auto!important;/);
+  assert.match(result.compiled.scopedCss, /svg\[data-core\]\{pointer-events:bounding-box!important;/);
+  assert.doesNotMatch(result.compiled.scopedCss, /\[data-core\]\{pointer-events:none!important;/);
+});
+
+test("selection uses the authored pressed state while Main and native input stay core-shaped", () => {
+  const buttonHost = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+  const skinRenderer = readFileSync(
+    join(frontendRoot, "src", "button", "skins", "ButtonSkinRenderer.tsx"),
+    "utf8"
+  );
+  const nativeHitboxes = readFileSync(
+    join(frontendRoot, "src", "button", "windows", "useNativeButtonHitboxes.ts"),
+    "utf8"
+  );
+  const mainCss = readFileSync(
+    join(frontendRoot, "src", "pages", "main", "mainPage.css"),
+    "utf8"
+  );
+
+  assert.match(buttonHost, /const visualPressed = pressed \|\| selected;/);
+  assert.match(buttonHost, /const visualRelease = selected \? false : release;/);
+  assert.match(buttonHost, /pointerPressed=\{pressed\}/);
+  assert.match(buttonHost, /const interactionElement = coreElement;/);
+  assert.doesNotMatch(buttonHost, /button-system-host--selected|coreElement\.focus/);
+  assert.match(skinRenderer, /pointerEvents: "auto"/);
+  assert.match(nativeHitboxes, /shadowRoot\?\.querySelector<HTMLElement \| SVGElement>\("\[data-core\]"\)/);
+  assert.match(nativeHitboxes, /const rect = hitbox\.element\.getBoundingClientRect\(\);/);
+  assert.match(nativeHitboxes, /hitbox\.element\.dispatchEvent\(new PointerEvent\("pointerenter"/);
+  assert.doesNotMatch(nativeHitboxes, /element\.hasAttribute\("data-button-skin-host"\)/);
+  assert.doesNotMatch(mainCss, /button-system-host--selected|fc-selected-highlight/);
 });
 
 test("skin compilation keeps authored source separate from deterministic sanitized markup", () => {
@@ -2215,6 +2257,7 @@ test("state validation reports malformed skins and all saved Button presentation
   surface.name = 42;
   surface.kind = "floating";
   surface.visualOverflowAllowance = -1;
+  surface.uniformButtonSize = { width: 0, height: "large" };
   document.skins.malformed = { id: "malformed", name: "Malformed", structure: null };
 
   let result;
@@ -2232,7 +2275,50 @@ test("state validation reports malformed skins and all saved Button presentation
   assert.equal(paths.has("surfaces.surface-button-editor-main.name"), true);
   assert.equal(paths.has("surfaces.surface-button-editor-main.kind"), true);
   assert.equal(paths.has("surfaces.surface-button-editor-main.visualOverflowAllowance"), true);
+  assert.equal(paths.has("surfaces.surface-button-editor-main.uniformButtonSize"), true);
   assert.equal(paths.has("skins.malformed"), true);
+});
+
+test("uniform surface sizing validates one fixed policy and disabling it preserves geometry", () => {
+  const document = createButtonStateDocument();
+  const records = [
+    button("uniform-a", "single-script", source("Blender", "Tools", "uniform-a.py")),
+    button("uniform-b", "single-script", source("Blender", "Tools", "uniform-b.py"))
+  ];
+  records.forEach((record) => { document.buttons[record.id] = record; });
+  const popout = ensureRegularPopout(document, records);
+  const surface = document.surfaces[popout.surfaceId];
+  surface.uniformButtonSize = { width: 160, height: 44 };
+  popout.memberPlacementIds.forEach((placementId, index) => {
+    Object.assign(document.placements[placementId], {
+      x: index * 160,
+      y: 0,
+      width: 160,
+      height: 44,
+      matchHitboxToSkin: false,
+      allowLabelResize: false
+    });
+  });
+
+  assert.equal(validateButtonStateDocument(document).valid, true);
+  const geometryBeforeDisable = popout.memberPlacementIds.map((placementId) => ({
+    ...document.placements[placementId]
+  }));
+  surface.uniformButtonSize = null;
+  assert.equal(validateButtonStateDocument(document).valid, true);
+  assert.deepEqual(
+    popout.memberPlacementIds.map((placementId) => document.placements[placementId]),
+    geometryBeforeDisable
+  );
+
+  surface.uniformButtonSize = { width: 160, height: 44 };
+  document.placements[popout.memberPlacementIds[1]].width = 140;
+  const invalid = validateButtonStateDocument(document);
+  assert.equal(invalid.valid, false);
+  assert.equal(
+    invalid.issues.some((issue) => issue.path === `surfaces.${surface.id}.uniformButtonSize`),
+    true
+  );
 });
 
 test("source updates preserve Button identities and presentation while refreshing runtime targets", () => {
@@ -2373,18 +2459,19 @@ test("source updates preserve Button identities and presentation while refreshin
   }), /cannot add, remove, or rename/);
 });
 
-test("tool-page lifecycle closes only removed page identities", () => {
+test("installed-page lifecycle closes only removed owner identities", () => {
   const previous = createButtonStateDocument();
-  previous.buttons.layers = {
-    ...button("layers", "single-script", source("Illustrator", "Layers Builder", "layers.flowcell-source.json")),
+  previous.buttons.page = {
+    ...button("page", "single-script", source("Example", "Tools", "page.flowcell-source.json")),
     executionTarget: {
       kind: "core-action",
-      actionId: "open-tool-page",
+      actionId: "open-installed-page",
       payload: {
-        contributionId: "illustrator.layer-tree",
-        ownerButtonId: "layers",
-        programName: "Illustrator",
-        panelName: "Layers Builder"
+        ownerButtonId: "page",
+        programName: "Example",
+        panelName: "Tools",
+        fileName: "page.flowcell-source.json",
+        pageId: "example.page"
       }
     }
   };
@@ -2392,90 +2479,84 @@ test("tool-page lifecycle closes only removed page identities", () => {
     ...button("shared", "single-script", source("Windows", "Utilities", "shared.flowcell-source.json")),
     executionTarget: {
       kind: "core-action",
-      actionId: "open-tool-page",
-      payload: { contributionId: "shared.page" }
+      actionId: "open-installed-page",
+      payload: {
+        ownerButtonId: "shared",
+        programName: "Windows",
+        panelName: "Utilities",
+        fileName: "shared.flowcell-source.json",
+        pageId: "shared.page"
+      }
     }
   };
 
   const next = structuredClone(previous);
-  delete next.buttons.layers;
-  next.buttons.sharedReplacement = {
-    ...next.buttons.shared,
-    id: "sharedReplacement"
-  };
-  delete next.buttons.shared;
+  delete next.buttons.page;
 
-  assert.deepEqual(removedToolPageWindowIdentities(previous, next), [{
-    contributionId: "illustrator.layer-tree",
-    ownerButtonId: "layers"
-  }]);
+  assert.deepEqual(removedInstalledPageOwnerIds(previous, next), ["page"]);
 });
 
-test("tool-page lifecycle finds page identities in a renamed program or panel scope", () => {
+test("installed-page lifecycle finds owner identities in a program or panel scope", () => {
   const document = createButtonStateDocument();
-  document.buttons.layers = {
-    ...button("layers", "single-script", source("Illustrator", "Layers Builder", "layers.flowcell-source.json")),
+  document.buttons.page = {
+    ...button("page", "single-script", source("Example", "Tools", "page.flowcell-source.json")),
     executionTarget: {
       kind: "core-action",
-      actionId: "open-tool-page",
+      actionId: "open-installed-page",
       payload: {
-        contributionId: "illustrator.layer-tree",
-        ownerButtonId: "layers"
+        ownerButtonId: "page",
+        fileName: "page.flowcell-source.json",
+        pageId: "example.page"
       }
     }
   };
   document.buttons.other = {
-    ...button("other", "single-script", source("Illustrator", "Other", "other.flowcell-source.json")),
+    ...button("other", "single-script", source("Example", "Other", "other.flowcell-source.json")),
     executionTarget: {
       kind: "core-action",
-      actionId: "open-tool-page",
-      payload: { contributionId: "other.page", ownerButtonId: "other" }
+      actionId: "open-installed-page",
+      payload: {
+        ownerButtonId: "other",
+        fileName: "other.flowcell-source.json",
+        pageId: "other.page"
+      }
     }
   };
 
-  assert.deepEqual(scopedToolPageWindowIdentities(document, "illustrator", "layers builder"), [{
-    contributionId: "illustrator.layer-tree",
-    ownerButtonId: "layers"
-  }]);
-  assert.equal(scopedToolPageWindowIdentities(document, "Illustrator").length, 2);
+  assert.deepEqual(scopedInstalledPageOwnerIds(document, "example", "tools"), ["page"]);
+  assert.equal(scopedInstalledPageOwnerIds(document, "Example").length, 2);
 });
 
-test("tool-page lifecycle closes an existing owner window when its page contract changes", () => {
+test("installed-page lifecycle closes an existing owner window when its page contract changes", () => {
   const previous = createButtonStateDocument();
   previous.buttons.page = {
     ...button("page", "single-script", source("Example", "Tools", "page.flowcell-source.json")),
     executionTarget: {
       kind: "core-action",
-      actionId: "open-tool-page",
+      actionId: "open-installed-page",
       payload: {
-        contributionId: "example.page",
         ownerButtonId: "page",
-        renderer: "tree-inspector",
-        capability: "old-capability",
         programName: "Example",
         panelName: "Tools",
         fileName: "page.flowcell-source.json",
-        title: "Example"
+        pageId: "example.page"
       }
     }
   };
   const next = structuredClone(previous);
-  next.buttons.page.executionTarget.payload.capability = "new-capability";
+  next.buttons.page.executionTarget.payload.pageId = "example.page.v2";
 
-  assert.deepEqual(removedToolPageWindowIdentities(previous, next), [{
-    contributionId: "example.page",
-    ownerButtonId: "page"
-  }]);
+  assert.deepEqual(removedInstalledPageOwnerIds(previous, next), ["page"]);
 });
 
-test("source updates recover legacy deterministic tool-set slots before applying core actions", () => {
+test("source updates recover deterministic tool-set slots before applying core actions", () => {
   const document = createButtonStateDocument();
-  const ownerId = "legacy-theme-owner";
-  const ownerIdentity = source("Blender", "toolset", "legacy-theme-owner.flowcell-source.json");
+  const ownerId = "existing-tool-owner";
+  const ownerIdentity = source("Example", "Tools", "existing-tool-owner.flowcell-source.json");
   const stableSegment = (value) => Array.from(value.trim().toLocaleLowerCase())
     .map((character) => character.codePointAt(0)?.toString(16) ?? "0")
     .join("-") || "item";
-  const slots = ["browse_theme", "apply_theme"];
+  const slots = ["browse_item", "apply_item"];
   const childIds = slots.map((slot, index) =>
     `button-child-${ownerId}-${stableSegment(slot)}-${index}`
   );
@@ -2487,15 +2568,15 @@ test("source updates recover legacy deterministic tool-set slots before applying
       toolSetParentId: ownerId,
       executionTarget: {
         kind: "core-action",
-        actionId: index === 0 ? "sample-blender-theme-image" : "open-window-grid"
+        actionId: "open-window-grid"
       }
     };
   });
-  document.popoutUnits.theme = {
-    id: "theme",
-    name: "Theme",
+  document.popoutUnits.tools = {
+    id: "tools",
+    name: "Tools",
     kind: "tool-set",
-    surfaceId: "surface-theme",
+    surfaceId: "surface-tools",
     canonicalBounds: { x: 0, y: 0, width: 300, height: 200 },
     desktopBounds: null,
     childPlacementIds: [],
@@ -2511,7 +2592,7 @@ test("source updates recover legacy deterministic tool-set slots before applying
     ownerButtonId: ownerId,
     sourceIdentity: ownerIdentity,
     executionTarget: null,
-    label: "Theme",
+    label: "Tools",
     tooltip: "",
     children: slots.map((slot) => ({
       slot,
@@ -2524,24 +2605,23 @@ test("source updates recover legacy deterministic tool-set slots before applying
     })),
     layout: {
       childBehaviors: {
-        browse_theme: { execute: false },
-        apply_theme: { execute: true }
+        browse_item: { execute: false },
+        apply_item: { execute: true }
       }
     }
   };
 
   applyInstalledSourceUpdate(document, update);
-  assert.equal(document.buttons[childIds[0]].metadata.toolSetSlot, "browse_theme");
-  assert.equal(document.buttons[childIds[1]].metadata.toolSetSlot, "apply_theme");
-  assert.equal(document.buttons[childIds[0]].executionTarget.payload.slot, "browse_theme");
+  assert.equal(document.buttons[childIds[0]].metadata.toolSetSlot, "browse_item");
+  assert.equal(document.buttons[childIds[1]].metadata.toolSetSlot, "apply_item");
 
   assert.doesNotThrow(() => applyInstalledSourceUpdate(document, update));
 });
 
 test("opt-in source updates append child slots without replacing existing Button identities", () => {
   const document = createButtonStateDocument();
-  const ownerId = "theme-owner";
-  const ownerIdentity = source("Blender", "toolset", "theme.flowcell-source.json");
+  const ownerId = "tools-owner";
+  const ownerIdentity = source("Example", "Tools", "tools.flowcell-source.json");
   document.buttons[ownerId] = button(ownerId, "tool-set-owner", ownerIdentity);
   document.buttons.existing = {
     ...button("existing", "tool-set-child"),
@@ -2549,9 +2629,9 @@ test("opt-in source updates append child slots without replacing existing Button
     metadata: { toolSetSlot: "existing" },
     executionTarget: { kind: "core-action", actionId: "open-window-grid" }
   };
-  document.surfaces["surface-theme"] = {
-    id: "surface-theme",
-    name: "Theme",
+  document.surfaces["surface-tools"] = {
+    id: "surface-tools",
+    name: "Tools",
     kind: "tool-set-popout",
     width: 240,
     height: 120,
@@ -2561,7 +2641,7 @@ test("opt-in source updates append child slots without replacing existing Button
   document.placements["placement-existing"] = {
     id: "placement-existing",
     buttonId: "existing",
-    surfaceId: "surface-theme",
+    surfaceId: "surface-tools",
     x: 7,
     y: 9,
     width: 111,
@@ -2576,11 +2656,11 @@ test("opt-in source updates append child slots without replacing existing Button
     allowStretching: false,
     resizeAnchor: "top-left"
   };
-  document.popoutUnits.theme = {
-    id: "theme",
-    name: "Theme",
+  document.popoutUnits.tools = {
+    id: "tools",
+    name: "Tools",
     kind: "tool-set",
-    surfaceId: "surface-theme",
+    surfaceId: "surface-tools",
     canonicalBounds: { x: 0, y: 0, width: 240, height: 120 },
     desktopBounds: null,
     childPlacementIds: ["placement-existing"],
@@ -2597,7 +2677,7 @@ test("opt-in source updates append child slots without replacing existing Button
     ownerButtonId: ownerId,
     sourceIdentity: ownerIdentity,
     executionTarget: null,
-    label: "Theme",
+    label: "Tools",
     tooltip: "",
     children: [
       {
@@ -2614,13 +2694,13 @@ test("opt-in source updates append child slots without replacing existing Button
     layout: { updatePolicy: { appendMissingChildSlots: true } }
   });
 
-  const appendedId = document.popoutUnits.theme.childButtonIds[1];
-  assert.equal(document.popoutUnits.theme.childButtonIds[0], "existing");
+  const appendedId = document.popoutUnits.tools.childButtonIds[1];
+  assert.equal(document.popoutUnits.tools.childButtonIds[0], "existing");
   assert.equal(document.buttons.existing.label, "existing");
   assert.equal(document.placements["placement-existing"].x, 7);
   assert.equal(document.buttons[appendedId].metadata.toolSetSlot, "save_package");
   assert.equal(document.buttons[appendedId].executionTarget.actionId, "save-tool-package");
-  assert.equal(document.popoutUnits.theme.childPlacementIds[1], `placement-${appendedId}`);
+  assert.equal(document.popoutUnits.tools.childPlacementIds[1], `placement-${appendedId}`);
 });
 
 test("bundled source reconciliation repairs current owners and materializes missing required owners", () => {
@@ -2653,19 +2733,25 @@ test("bundled source reconciliation repairs current owners and materializes miss
       children: []
     },
     {
-      ownerButtonId: "bundled-illustrator-layer-tree",
+      ownerButtonId: "bundled-example-page",
       sourceIdentity: {
-        programName: "Illustrator",
-        panelName: "Layers Builder",
-        fileName: "layer-tree.flowcell-source.json"
+        programName: "Example",
+        panelName: "Tools",
+        fileName: "page.flowcell-source.json"
       },
       owner: {
-        label: "Layer Tree",
-        tooltip: "Open the live layer tree.",
+        label: "Example Page",
+        tooltip: "Open the installed page.",
         executionTarget: {
           kind: "core-action",
-          actionId: "open-tool-page",
-          payload: { renderer: "tree-inspector" }
+          actionId: "open-installed-page",
+          payload: {
+            ownerButtonId: "bundled-example-page",
+            programName: "Example",
+            panelName: "Tools",
+            fileName: "page.flowcell-source.json",
+            pageId: "example.page"
+          }
         }
       },
       children: []
@@ -2674,12 +2760,89 @@ test("bundled source reconciliation repairs current owners and materializes miss
 
   assert.equal(reconciled.buttons.existing.label, "My Archive");
   assert.equal(reconciled.buttons.existing.executionTarget.payload.version, 2);
-  assert.equal(reconciled.buttons["bundled-illustrator-layer-tree"].label, "Layer Tree");
+  assert.equal(reconciled.buttons["bundled-example-page"].label, "Example Page");
   assert.equal(
-    reconciled.buttons["bundled-illustrator-layer-tree"].executionTarget.actionId,
-    "open-tool-page"
+    reconciled.buttons["bundled-example-page"].executionTarget.actionId,
+    "open-installed-page"
   );
-  assert.ok(reconciled.placements["placement-bundled-illustrator-layer-tree"]);
+  assert.ok(reconciled.placements["placement-bundled-example-page"]);
+});
+
+test("bundled source migration places missing owners around existing panel Buttons", () => {
+  const document = createButtonStateDocument();
+  const panelId = "surface-panel-65-78-61-6d-70-6c-65-74-6f-6f-6c-73";
+  document.buttons.blocker = button(
+    "blocker",
+    "single-script",
+    source("Example", "Tools", "blocker.flowcell-source.json")
+  );
+  document.surfaces[panelId] = {
+    id: panelId,
+    name: "Example / Tools",
+    kind: "panel",
+    width: 960,
+    height: 640,
+    placementIds: ["placement-blocker"],
+    visualOverflowAllowance: 24
+  };
+  document.placements["placement-blocker"] = {
+    id: "placement-blocker",
+    buttonId: "blocker",
+    surfaceId: panelId,
+    x: 8,
+    y: 8,
+    width: 496,
+    height: 44,
+    zIndex: 0,
+    skinOverrideId: null,
+    textFitMode: "shrink",
+    minimumFontSize: 8,
+    textSizeOverride: null,
+    allowLabelResize: false,
+    matchHitboxToSkin: true,
+    allowStretching: false,
+    resizeAnchor: "top-left"
+  };
+  const pageDescriptor = (ownerButtonId, pageId) => ({
+    ownerButtonId,
+    sourceIdentity: {
+      programName: "Example",
+      panelName: "Tools",
+      fileName: `${ownerButtonId}.flowcell-source.json`
+    },
+    owner: {
+      label: ownerButtonId,
+      tooltip: "",
+      executionTarget: {
+        kind: "core-action",
+        actionId: "open-installed-page",
+        payload: {
+          ownerButtonId,
+          programName: "Example",
+          panelName: "Tools",
+          fileName: `${ownerButtonId}.flowcell-source.json`,
+          pageId
+        }
+      }
+    },
+    children: []
+  });
+
+  const reconciled = reconcileBundledProgramSources(document, [
+    pageDescriptor("page-one", "example.one"),
+    pageDescriptor("page-two", "example.two")
+  ]);
+  const placements = [
+    reconciled.placements["placement-blocker"],
+    reconciled.placements["placement-page-one"],
+    reconciled.placements["placement-page-two"]
+  ];
+  assert.equal(placements.every(Boolean), true);
+  for (let left = 0; left < placements.length; left += 1) {
+    for (let right = left + 1; right < placements.length; right += 1) {
+      assert.equal(buttonRectsOverlap(placements[left], placements[right]), false);
+    }
+  }
 });
 
 test("Button document equality ignores JSON object insertion order but detects value changes", () => {
@@ -2755,6 +2918,42 @@ test("top-left compaction closes gaps, wraps by row height, and preserves Button
     validateExactButtonLayoutGeometry(result.placements, { width: 120, height: 100 }),
     []
   );
+});
+
+test("uniform Button compaction applies one size atomically without mutating inputs", () => {
+  const input = [
+    { id: "a", rect: { x: 4, y: 7, width: 20, height: 10 } },
+    { id: "b", rect: { x: 30, y: 7, width: 35, height: 15 } },
+    { id: "c", rect: { x: 70, y: 24, width: 25, height: 12 } }
+  ];
+  const original = structuredClone(input);
+  const result = compactUniformButtonPlacements(
+    input,
+    { width: 40, height: 20 },
+    { width: 100, height: 40 },
+    { gap: 0 }
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.placements, [
+    { id: "a", rect: { x: 0, y: 0, width: 40, height: 20 }, zIndex: 0 },
+    { id: "b", rect: { x: 40, y: 0, width: 40, height: 20 }, zIndex: 1 },
+    { id: "c", rect: { x: 0, y: 20, width: 40, height: 20 }, zIndex: 2 }
+  ]);
+  assert.deepEqual(input, original);
+  assert.deepEqual(
+    validateExactButtonLayoutGeometry(result.placements, { width: 100, height: 40 }),
+    []
+  );
+
+  const failed = compactUniformButtonPlacements(
+    input,
+    { width: 60, height: 30 },
+    { width: 100, height: 40 }
+  );
+  assert.equal(failed.success, false);
+  assert.deepEqual(failed.placements, []);
+  assert.deepEqual(input, original);
 });
 
 test("reordered compaction normalizes z-index and fails atomically when it cannot fit", () => {
@@ -3070,6 +3269,9 @@ test("schema-1 loading backfills skin sizing defaults before validation", () => 
   delete placement.matchHitboxToSkin;
   delete placement.allowStretching;
   delete placement.textSizeOverride;
+  Object.values(document.surfaces).forEach((surface) => {
+    delete surface.uniformButtonSize;
+  });
   delete popout.windowFitMode;
   delete popout.desktopBoundsFitMode;
   delete popout.desktopBoundsEnvelope;
@@ -3079,6 +3281,9 @@ test("schema-1 loading backfills skin sizing defaults before validation", () => 
   assert.equal(result.document.placements[placement.id].matchHitboxToSkin, true);
   assert.equal(result.document.placements[placement.id].allowStretching, false);
   assert.equal(result.document.placements[placement.id].textSizeOverride, null);
+  Object.values(result.document.surfaces).forEach((surface) => {
+    assert.equal(surface.uniformButtonSize, null);
+  });
   assert.equal(result.document.popoutUnits[popout.id].windowFitMode, "surface");
   assert.equal(result.document.popoutUnits[popout.id].desktopBoundsFitMode, "surface");
   assert.deepEqual(
@@ -3162,6 +3367,21 @@ test("window envelope transition moves the crop without moving Button screen geo
     width: 80,
     height: 30
   });
+});
+
+test("fixed Pop and Fan canvases keep hover geometry on the resting semantic frame", () => {
+  const pop = readFileSync(
+    join(frontendRoot, "src", "button", "popout", "ButtonPopoutWindowPage.tsx"),
+    "utf8"
+  );
+  const fan = readFileSync(
+    join(frontendRoot, "src", "button", "fan", "ButtonFanWindowPage.tsx"),
+    "utf8"
+  );
+  for (const source of [pop, fan]) {
+    assert.doesNotMatch(source, /queueEnvelope\((?:preparedEnvelope|windowEnvelope)\.current\)/);
+    assert.match(source, /queueEnvelope\((?:preparedEnvelope|windowEnvelope)\.resting\)/);
+  }
 });
 
 test("unsaved Pop starts at one-to-one scale and repeated hover envelopes do not drift", () => {
@@ -3658,17 +3878,19 @@ test("frontend macro deletion removes every canonical graph without backend unin
 test("source-owning core-action Buttons uninstall their owned package", () => {
   const document = createButtonStateDocument();
   const installed = button(
-    "illustrator-layer-tree",
+    "example-page",
     "single-script",
-    source("Illustrator", "Layers", "illustrator-layer-tree.flowcell-source.json")
+    source("Example", "Tools", "example-page.flowcell-source.json")
   );
   installed.executionTarget = {
     kind: "core-action",
-    actionId: "open-illustrator-layer-tree",
+    actionId: "open-installed-page",
     payload: {
-      programName: "Illustrator",
-      panelName: "Layers",
-      fileName: "illustrator-layer-tree.flowcell-source.json"
+      ownerButtonId: "example-page",
+      programName: "Example",
+      panelName: "Tools",
+      fileName: "example-page.flowcell-source.json",
+      pageId: "example.page"
     }
   };
   document.buttons[installed.id] = installed;
@@ -3740,16 +3962,16 @@ test("tool-set child activation uses the functional host and applies only declar
     const result = await executeButtonRecord(child, "click", {
       fields,
       fieldValues: { source_path: "", sampled_color: "#000000" },
-      onFieldActivate: async () => "C:\\images\\theme.png",
+      onFieldActivate: async () => "C:\\images\\sample.png",
       onFieldPatch: (patch) => patches.push({ ...patch })
     });
     assert.equal(result.executed, true);
-    assert.equal(receivedPath, "C:\\images\\theme.png");
-    assert.equal(result.fieldValues.source_path, "C:\\images\\theme.png");
+    assert.equal(receivedPath, "C:\\images\\sample.png");
+    assert.equal(result.fieldValues.source_path, "C:\\images\\sample.png");
     assert.equal(result.fieldValues.sampled_color, "#AABBCC");
     assert.equal("undeclared" in result.fieldValues, false);
     assert.deepEqual(patches, [
-      { source_path: "C:\\images\\theme.png" },
+      { source_path: "C:\\images\\sample.png" },
       { sampled_color: "#AABBCC" }
     ]);
   } finally {
@@ -3791,45 +4013,45 @@ test("per-click payload overrides win over mapped and manifest payload values", 
   }
 });
 
-test("legacy tool-package fields map declaratively and coerce unit-bearing numbers", () => {
+test("stored tool-package fields map declaratively and coerce unit-bearing numbers", () => {
   const patch = mappedToolPackageFields({
-    format: "flowcell-blender-theme-pack-v1",
+    format: "example-tool-package-v1",
     values: {
-      ThemeTabsHex: "#ABCDEF",
-      GridSpacing: "1 m",
-      GridDistance: "5 m",
-      GridFarSpacing: "1 m"
+      StoredColor: "#ABCDEF",
+      StoredSpacing: "1 m",
+      StoredDistance: "5 m",
+      StoredFarDistance: "1 m"
     },
     assets: {
-      bucketsImage: "C:/packages/Legacy/buckets.png",
-      backgroundImage: "C:/packages/Legacy/background.png"
+      sourceImage: "C:/packages/Example/source.png",
+      backdropImage: "C:/packages/Example/backdrop.png"
     }
   }, {
-    legacyFormats: ["flowcell-blender-theme-pack-v1"],
+    legacyFormats: ["example-tool-package-v1"],
     fieldMap: {
-      ThemeTabsHex: "tabs_hex",
-      GridSpacing: "grid_spacing_m",
-      GridDistance: "grid_distance_m",
-      GridFarSpacing: "grid_far_spacing_m"
+      StoredColor: "color_hex",
+      StoredSpacing: "spacing_m",
+      StoredDistance: "distance_m",
+      StoredFarDistance: "far_distance_m"
     },
     assetMap: {
-      bucketsImage: "theme_image_path",
-      backgroundImage: "static_background_path"
+      sourceImage: "source_image_path",
+      backdropImage: "backdrop_image_path"
     },
     fieldTransforms: {
-      GridSpacing: "parse-number",
-      GridDistance: "parse-number",
-      GridFarSpacing: "parse-number"
+      StoredSpacing: "parse-number",
+      StoredDistance: "parse-number",
+      StoredFarDistance: "parse-number"
     }
   });
 
   assert.deepEqual(patch, {
-    tabs_hex: "#ABCDEF",
-    grid_spacing_m: 1,
-    grid_distance_m: 5,
-    grid_far_spacing_m: 1,
-    theme_image_path: "C:/packages/Legacy/buckets.png",
-    static_background_path: "C:/packages/Legacy/background.png"
+    color_hex: "#ABCDEF",
+    spacing_m: 1,
+    distance_m: 5,
+    far_distance_m: 1,
+    source_image_path: "C:/packages/Example/source.png",
+    backdrop_image_path: "C:/packages/Example/backdrop.png"
   });
 });
 
@@ -3860,78 +4082,6 @@ test("cancelling a tool-field activation does not execute the child", async () =
   } finally {
     unregister();
   }
-});
-
-test("organization profiles install idempotently as owned canonical Windows / Files Buttons", () => {
-  const document = createButtonStateDocument();
-  const installed = organizationProfileInstall("Project Tree");
-  const first = attachCanonicalOrganizationProfileButton(document, "Project Tree", installed);
-  const canonical = document.buttons[first.buttonId];
-  const placement = document.placements[first.placementId];
-
-  assert.equal(first.changed, true);
-  assert.equal(first.buttonId, installed.ownerButtonId);
-  assert.equal(canonical.role, "single-script");
-  assert.equal(canonical.label, "Project Tree");
-  assert.equal(canonical.sourceIdentity.displayFileName, `${installed.ownerButtonId}.flowcell-source.json`);
-  assert.deepEqual(canonical.executionTarget, installed.executionTarget);
-  assert.deepEqual(canonical.metadata, {
-    sourceKind: "organization-profile",
-    organizationProfileName: "Project Tree"
-  });
-  assert.equal(document.surfaces[first.surfaceId].kind, "panel");
-  assert.equal(placement.surfaceId, first.surfaceId);
-  assert.equal(isCanonicalOrganizationProfileButton(canonical, "project tree"), true);
-  assert.equal(resolveOrganizationProfileOwnerButtonId(document, "PROJECT TREE"), canonical.id);
-
-  const counts = {
-    buttons: Object.keys(document.buttons).length,
-    placements: Object.keys(document.placements).length,
-    surfaces: Object.keys(document.surfaces).length
-  };
-  const second = attachCanonicalOrganizationProfileButton(document, "Project Tree", installed);
-  assert.deepEqual(second, { ...first, changed: false });
-  assert.deepEqual({
-    buttons: Object.keys(document.buttons).length,
-    placements: Object.keys(document.placements).length,
-    surfaces: Object.keys(document.surfaces).length
-  }, counts);
-  const validation = validateButtonStateDocument(document);
-  assert.equal(validation.valid, true, validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
-});
-
-test("organization profile refresh preserves Button presentation and rejects owner collisions", () => {
-  const document = createButtonStateDocument();
-  const installed = organizationProfileInstall("Default");
-  const attached = attachCanonicalOrganizationProfileButton(document, "Default", installed);
-  const originalPlacement = structuredClone(document.placements[attached.placementId]);
-  document.buttons[attached.buttonId].disabled = true;
-  document.buttons[attached.buttonId].metadata.note = "keep";
-
-  const refreshedInstall = {
-    ...installed,
-    executionTarget: {
-      ...installed.executionTarget,
-      events: { play: { action: "refresh" } }
-    }
-  };
-  const refreshed = attachCanonicalOrganizationProfileButton(
-    document,
-    "Default",
-    refreshedInstall
-  );
-  assert.equal(refreshed.changed, true);
-  assert.equal(document.buttons[attached.buttonId].disabled, true);
-  assert.equal(document.buttons[attached.buttonId].metadata.note, "keep");
-  assert.deepEqual(document.placements[attached.placementId], originalPlacement);
-  assert.deepEqual(document.buttons[attached.buttonId].executionTarget, refreshedInstall.executionTarget);
-
-  const collision = createButtonStateDocument();
-  collision.buttons[installed.ownerButtonId] = button(installed.ownerButtonId, "single-script");
-  assert.throws(
-    () => attachCanonicalOrganizationProfileButton(collision, "Default", installed),
-    /already in use/
-  );
 });
 
 test("fan validation enforces identity, exact membership, anchors, and bounds", () => {

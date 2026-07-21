@@ -76,6 +76,7 @@ export function ButtonSurfaceSelector({
   placementOptions,
   programName,
   panelName,
+  navigationLocked = false,
   buttonId,
   placementId,
   onProgramChange,
@@ -97,6 +98,7 @@ export function ButtonSurfaceSelector({
   placementOptions: readonly ButtonEditorPlacementOption[];
   programName: string;
   panelName: string;
+  navigationLocked?: boolean;
   buttonId: string;
   placementId: string;
   onProgramChange: (programName: string) => void;
@@ -137,7 +139,11 @@ export function ButtonSurfaceSelector({
       <div className="button-surface-selector__navigation">
         <label>
           <span>1 Program</span>
-          <select value={programName} onChange={(event) => onProgramChange(event.currentTarget.value)}>
+          <select
+            value={programName}
+            disabled={navigationLocked}
+            onChange={(event) => onProgramChange(event.currentTarget.value)}
+          >
             <option value="">Choose program</option>
             {programs.map((program) => <option key={program} value={program}>{program}</option>)}
           </select>
@@ -146,7 +152,7 @@ export function ButtonSurfaceSelector({
           <span>2 Panel</span>
           <select
             value={panelName}
-            disabled={!programName}
+            disabled={navigationLocked || !programName}
             onChange={(event) => onPanelChange(event.currentTarget.value)}
           >
             <option value="">Choose panel</option>

@@ -85,6 +85,7 @@ import {
 import {
   buttonRectsOverlap,
   compactButtonPlacements,
+  compactUniformButtonPlacements,
   createStarterButtonLayout,
   findFirstAvailableButtonPosition,
   isButtonRectInsideSurface,
@@ -246,18 +247,18 @@ function addPlacement(
 ): ButtonPlacement {
   const surface = document.surfaces[surfaceId];
   if (!surface) throw new Error("The selected Button surface no longer exists.");
-  const width = desired?.width ?? 160;
-  const height = desired?.height ?? 44;
+  const width = surface.uniformButtonSize?.width ?? desired?.width ?? 160;
+  const height = surface.uniformButtonSize?.height ?? desired?.height ?? 44;
   const otherRects = surface.placementIds.map((id) => document.placements[id]).filter(Boolean);
-  const available = desired?.x !== undefined && desired?.y !== undefined
+  const available = !surface.uniformButtonSize && desired?.x !== undefined && desired?.y !== undefined
     ? { x: desired.x, y: desired.y, width, height }
     : findFirstAvailableButtonPosition({
         width,
         height,
         surface,
         otherRects,
-        padding: document.settings.defaultSurfacePadding,
-        gap: document.settings.defaultGap,
+        padding: surface.uniformButtonSize ? 0 : document.settings.defaultSurfacePadding,
+        gap: surface.uniformButtonSize ? 0 : document.settings.defaultGap,
         gridSize: document.settings.gridSize
       });
   if (!available) throw new Error("The selected surface has no non-overlapping space for another Button.");
@@ -273,7 +274,7 @@ function addPlacement(
     minimumFontSize: document.settings.defaultMinimumFontSize,
     textSizeOverride: null,
     allowLabelResize: false,
-    matchHitboxToSkin: true,
+    matchHitboxToSkin: !surface.uniformButtonSize,
     allowStretching: false,
     resizeAnchor: "top-left"
   };
@@ -297,7 +298,8 @@ function createSurface(
     width,
     height,
     placementIds: [],
-    visualOverflowAllowance: 24
+    visualOverflowAllowance: 24,
+    uniformButtonSize: null
   };
   document.surfaces[id] = surface;
   return surface;
@@ -411,8 +413,7 @@ function addInstalledToolSet(
     windowFitMode: "surface",
     ownerButtonId: result.ownerButtonId,
     childButtonIds,
-    fields: cloneButtonDocument(layout?.fields ?? []),
-    presentation: cloneButtonDocument(layout?.presentation ?? null)
+    fields: cloneButtonDocument(layout?.fields ?? [])
   };
   return { ownerPlacement, popoutSurfaceId: surface.id };
 }
@@ -511,6 +512,12 @@ function ButtonEditorContent({
   );
   const [programName, setProgramName] = useState(initialSelection.programName);
   const [panelName, setPanelName] = useState(initialSelection.panelName);
+  const [lockedImportDestination, setLockedImportDestination] = useState<{
+    programName: string;
+    panelName: string;
+  } | null>(() => initialContext?.lockImportDestination && initialSelection.programName && initialSelection.panelName
+    ? { programName: initialSelection.programName, panelName: initialSelection.panelName }
+    : null);
   const [busy, setBusyState] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [activeAnimationEditorButtonId, setActiveAnimationEditorButtonId] = useState<string | null>(null);
@@ -521,9 +528,13 @@ function ButtonEditorContent({
 
   const selectedPlacement = focusedPlacementId ? store.draft.placements[focusedPlacementId] ?? null : null;
   const selectedButton = selectedPlacement ? store.draft.buttons[selectedPlacement.buttonId] ?? null : null;
-  const selectedSurfaceButtonCount = store.draft.surfaces[selectedSurfaceId]?.placementIds
-    .filter((placementId) => Boolean(store.draft.placements[placementId]))
-    .length ?? 0;
+  const selectedSurfacePlacements = store.draft.surfaces[selectedSurfaceId]?.placementIds
+    .map((placementId) => store.draft.placements[placementId])
+    .filter((placement): placement is ButtonPlacement => Boolean(placement)) ?? [];
+  const selectedSurfaceButtonCount = selectedSurfacePlacements.length;
+  const allSurfaceButtonsSameSize = Boolean(
+    store.draft.surfaces[selectedSurfaceId]?.uniformButtonSize
+  );
   const selectedSkin = selectedButton && selectedPlacement
     ? store.draft.skins[selectedPlacement.skinOverrideId ?? selectedButton.defaultSkinId] ?? null
     : null;
@@ -562,12 +573,12 @@ function ButtonEditorContent({
     const identity = resolveButtonEditorIdentity(document, placement.buttonId);
     setFocusedPlacementId(placement.id);
     setSelectedSurfaceId(placement.surfaceId);
-    if (identity) {
+    if (identity && !lockedImportDestination) {
       setProgramName(identity.programName);
       setPanelName(identity.panelName);
     }
     if (replaceSelection) setSelectedPlacementIds(new Set([placement.id]));
-  }, [store]);
+  }, [lockedImportDestination, store]);
 
   const selectButton = useCallback((buttonId: string) => {
     if (!buttonId) {
@@ -598,6 +609,11 @@ function ButtonEditorContent({
   }, [focusPlacement, store]);
 
   const applyEditorContext = useCallback((context: ButtonEditorWindowContext) => {
+    setLockedImportDestination(
+      context.lockImportDestination && context.programName && context.panelName
+        ? { programName: context.programName, panelName: context.panelName }
+        : null
+    );
     const document = store.current();
     const placementId = resolveButtonEditorContextPlacementId(document, context);
     if (placementId) {
@@ -765,32 +781,38 @@ function ButtonEditorContent({
     return () => { disposed = true; unlisten?.(); };
   }, [applyEditorContext]);
 
-  const importSource = async (kind: "script" | "tool-set", folder = false) => {
-    if (!programName || !panelName) return;
+  const importSource = async (folder = false) => {
+    const importProgramName = lockedImportDestination?.programName ?? programName;
+    const importPanelName = lockedImportDestination?.panelName ?? panelName;
+    if (!importProgramName || !importPanelName) return;
     setBusy(true);
     setMessage(null);
     let installed: InstallButtonSourceResult | null = null;
     try {
       const paths = folder
-        ? await showOpenFolderDialog({ title: "Choose FlowCell Tool-Set Package", multiselect: false })
+        ? await showOpenFolderDialog({ title: "Choose FlowCell Button Package", multiselect: false })
         : await showOpenFileDialog({
-            title: kind === "script" ? "Choose Script or Script-Package Manifest" : "Choose Tool-Set Manifest or Script",
-            filter: kind === "script"
-              ? "FlowCell scripts and packages (*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json)|*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json|All Files (*.*)|*.*"
-              : "FlowCell tool sets (*.json;*.py;*.jsx)|*.json;*.py;*.jsx|All Files (*.*)|*.*",
+            title: "Choose FlowCell Button Content",
+            filter: "FlowCell Buttons (*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json)|*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json|All Files (*.*)|*.*",
             multiselect: false
           });
       const sourcePath = paths[0];
       if (!sourcePath) return;
       const ownerButtonId = createStableButtonId("button");
-      installed = await installButtonSource({ ownerButtonId, programName, panelName, sourcePath, importKind: kind });
+      installed = await installButtonSource({
+        ownerButtonId,
+        programName: importProgramName,
+        panelName: importPanelName,
+        sourcePath,
+        importKind: "auto"
+      });
       stagedInstallsRef.current.set(ownerButtonId, installed);
       let nextSurface = "";
       let selectedPlacement = "";
       store.transact((draft) => {
-        const panelSurface = ensureProgramPanelSurface(draft, programName, panelName);
+        const panelSurface = ensureProgramPanelSurface(draft, importProgramName, importPanelName);
         nextSurface = panelSurface.id;
-        if (kind === "script") {
+        if (installed!.children.length === 0) {
           const placement = addInstalledSingle(draft, installed!, panelSurface.id);
           selectedPlacement = placement.id;
           freshPlacementsRef.current.add(placement.id);
@@ -799,7 +821,7 @@ function ButtonEditorContent({
           selectedPlacement = created.ownerPlacement.id;
           freshPlacementsRef.current.add(created.ownerPlacement.id);
         }
-      }, { label: kind === "script" ? "Import script Button" : "Import tool set" });
+      }, { label: "Add Button content" });
       setSelectedSurfaceId(nextSurface);
       setFocusedPlacementId(selectedPlacement);
       setSelectedPlacementIds(new Set([selectedPlacement]));
@@ -1163,16 +1185,14 @@ function ButtonEditorContent({
     };
   }, []);
 
-  const updatePlacementRect = (placementId: string, rect: ButtonRect) => {
-    setMessage(null);
-    store.transact((draft) => { Object.assign(draft.placements[placementId], rect); }, { label: "Move or resize Button" });
-  };
-
   const applyPlacementOrder = useCallback((
     surfaceId: string,
     orderedPlacementIds: readonly string[],
     placements: readonly CompactButtonPlacement[],
-    label = "Reorder Buttons"
+    label = "Reorder Buttons",
+    placementPatch?: Pick<ButtonPlacement, "matchHitboxToSkin" | "allowLabelResize">,
+    surfacePatch?: Partial<Pick<ButtonSurface, "uniformButtonSize">>,
+    coalesceKey?: string
   ): boolean => {
     const document = store.current();
     const surface = document.surfaces[surfaceId];
@@ -1208,16 +1228,113 @@ function ButtonEditorContent({
     }
 
     store.transact((draft) => {
-      draft.surfaces[surfaceId].placementIds = [...orderedPlacementIds];
+      Object.assign(draft.surfaces[surfaceId], surfacePatch, {
+        placementIds: [...orderedPlacementIds]
+      });
       orderedPlacements.forEach((placement) => {
         Object.assign(draft.placements[placement.id], placement.rect, {
-          zIndex: placement.zIndex
+          zIndex: placement.zIndex,
+          ...placementPatch
         });
       });
-    }, { label });
+    }, { label, coalesceKey });
     setMessage(null);
     return true;
   }, [store]);
+
+  const applyUniformSizeToSurface = useCallback((
+    surfaceId: string,
+    targetSize: Pick<ButtonRect, "width" | "height">,
+    label: string,
+    coalesceKey?: string
+  ): boolean => {
+    const document = store.current();
+    const surface = document.surfaces[surfaceId];
+    if (!surface) {
+      setMessage("The selected Button surface no longer exists.");
+      return false;
+    }
+    const orderedPlacementIds = [...surface.placementIds].sort((left, right) => {
+      const leftPlacement = document.placements[left];
+      const rightPlacement = document.placements[right];
+      return (leftPlacement?.zIndex ?? 0) - (rightPlacement?.zIndex ?? 0) ||
+        left.localeCompare(right);
+    });
+    const placements = orderedPlacementIds.flatMap((placementId) => {
+      const placement = document.placements[placementId];
+      return placement ? [{ id: placement.id, rect: placement }] : [];
+    });
+    if (placements.length === 0) {
+      setMessage("The selected surface has no Buttons to resize.");
+      return false;
+    }
+    const compacted = compactUniformButtonPlacements(
+      placements,
+      targetSize,
+      surface,
+      { gap: 0 }
+    );
+    if (!compacted.success) {
+      setMessage(compacted.reason ?? "The equal-size Buttons do not fit inside the selected surface.");
+      return false;
+    }
+    return applyPlacementOrder(
+      surface.id,
+      orderedPlacementIds,
+      compacted.placements,
+      label,
+      { matchHitboxToSkin: false, allowLabelResize: false },
+      { uniformButtonSize: { width: targetSize.width, height: targetSize.height } },
+      coalesceKey
+    );
+  }, [applyPlacementOrder, store]);
+
+  const setAllSurfaceButtonsSameSize = useCallback((enabled: boolean) => {
+    const document = store.current();
+    const placement = focusedPlacementId
+      ? document.placements[focusedPlacementId]
+      : null;
+    if (!placement) {
+      setMessage("Select a Button placement before setting the surface size.");
+      return;
+    }
+    if (enabled) {
+      applyUniformSizeToSurface(
+        placement.surfaceId,
+        { width: placement.width, height: placement.height },
+        "Set every Button on the surface to the same size"
+      );
+      return;
+    }
+    const surface = document.surfaces[placement.surfaceId];
+    if (!surface) return;
+    store.transact((draft) => {
+      draft.surfaces[surface.id].uniformButtonSize = null;
+    }, { label: "Stop linking Button sizes" });
+    setMessage(null);
+  }, [applyUniformSizeToSurface, focusedPlacementId, store]);
+
+  const updatePlacementRect = useCallback((placementId: string, rect: ButtonRect) => {
+    const document = store.current();
+    const placement = document.placements[placementId];
+    if (!placement) return;
+    const changesSize = Math.abs(placement.width - rect.width) > 0.05 ||
+      Math.abs(placement.height - rect.height) > 0.05;
+    if (document.surfaces[placement.surfaceId]?.uniformButtonSize && changesSize) {
+      applyUniformSizeToSurface(
+        placement.surfaceId,
+        { width: rect.width, height: rect.height },
+        "Resize every Button on the surface",
+        `uniform-size:${placement.surfaceId}`
+      );
+      return;
+    }
+    setMessage(null);
+    store.transact(
+      (draft) => { Object.assign(draft.placements[placementId], rect); },
+      { label: "Move or resize Button" }
+    );
+  }, [applyUniformSizeToSurface, store]);
 
   const snapSelectedSurfaceToTopLeft = useCallback(() => {
     const document = store.current();
@@ -1264,6 +1381,11 @@ function ButtonEditorContent({
     const placement = document.placements[placementId];
     const surface = placement && document.surfaces[placement.surfaceId];
     if (!placement || !surface) return;
+    if (surface.uniformButtonSize) {
+      pendingTextSizeResizeRef.current.delete(placementId);
+      pendingMatchedMeasurementsRef.current.delete(placementId);
+      return;
+    }
     const pendingTextSize = pendingTextSizeResizeRef.current.get(placementId);
     const resizesForTextSize = pendingTextSizeResizeRef.current.has(placementId) &&
       pendingTextSize === placement.textSizeOverride;
@@ -1326,7 +1448,10 @@ function ButtonEditorContent({
   const handlePlacementMeasurement = (placementId: string, measurement: ButtonCoreMeasurement) => {
     const document = store.current();
     const placement = document.placements[placementId];
-    if (!placement?.matchHitboxToSkin) return;
+    if (
+      !placement?.matchHitboxToSkin ||
+      document.surfaces[placement.surfaceId]?.uniformButtonSize
+    ) return;
     if (
       Math.abs(placement.width - measurement.width) <= 0.5 &&
       Math.abs(placement.height - measurement.height) <= 0.5
@@ -1617,6 +1742,7 @@ function ButtonEditorContent({
           placementOptions={placementOptions}
           programName={programName}
           panelName={panelName}
+          navigationLocked={Boolean(lockedImportDestination)}
           buttonId={selectedButton?.id ?? ""}
           placementId={focusedPlacementId ?? ""}
           onProgramChange={(value) => {
@@ -1715,16 +1841,16 @@ function ButtonEditorContent({
       <div className="button-editor-layout">
         <ButtonLibrary
           document={store.draft}
-          programName={programName}
-          panelName={panelName}
+          programName={lockedImportDestination?.programName ?? programName}
+          panelName={lockedImportDestination?.panelName ?? panelName}
           selectedButtonId={selectedButton?.id ?? null}
           canUpdateSource={Boolean(
             selectedButton?.sourceIdentity &&
             (selectedButton.role === "single-script" || selectedButton.role === "tool-set-owner")
           )}
           busy={busy}
-          onImportSingle={() => void importSource("script")}
-          onImportToolSet={() => void importSource("tool-set", window.confirm("Choose an entire tool-set package folder?\n\nOK = folder, Cancel = manifest/script file."))}
+          onImportFile={() => void importSource(false)}
+          onImportFolder={() => void importSource(true)}
           onUpdateSource={() => void updateSelectedSource()}
           onDeleteButton={() => {
             if (!selectedButton) return;
@@ -1785,12 +1911,27 @@ function ButtonEditorContent({
           button={selectedButton}
           placement={selectedPlacement}
           skins={Object.values(store.draft.skins)}
+          allSurfaceButtonsSameSize={allSurfaceButtonsSameSize}
+          onAllSurfaceButtonsSameSizeChange={setAllSurfaceButtonsSameSize}
           onButtonChange={(patch, coalesceKey) => {
             if (selectedButton) store.transact((draft) => { Object.assign(draft.buttons[selectedButton.id], patch); }, { label: "Edit Button", coalesceKey });
           }}
           onPlacementChange={(patch, coalesceKey) => {
             if (!selectedPlacement) return;
             const changesGeometry = ["x", "y", "width", "height"].some((key) => Object.hasOwn(patch, key));
+            const changesSize = ["width", "height"].some((key) => Object.hasOwn(patch, key));
+            if (allSurfaceButtonsSameSize && changesSize) {
+              applyUniformSizeToSurface(
+                selectedPlacement.surfaceId,
+                {
+                  width: patch.width ?? selectedPlacement.width,
+                  height: patch.height ?? selectedPlacement.height
+                },
+                "Resize every Button on the surface",
+                coalesceKey ? `uniform-size:${selectedPlacement.surfaceId}:${coalesceKey}` : undefined
+              );
+              return;
+            }
             if (changesGeometry) {
               const candidate = { ...selectedPlacement, ...patch };
               const surface = store.draft.surfaces[selectedPlacement.surfaceId];
@@ -1842,6 +1983,13 @@ function ButtonEditorContent({
         />
         <ButtonSkinEditor
           skin={selectedSkin}
+          buttonLabel={selectedButton?.label ?? "Button Preview"}
+          onButtonLabelChange={(label) => {
+            if (!selectedButton) return;
+            store.transact((draft) => {
+              draft.buttons[selectedButton.id].label = label;
+            }, { label: "Edit Button label", coalesceKey: `label:${selectedButton.id}` });
+          }}
           onSkinChange={(skin, label, coalesceKey) => store.transact((draft) => {
             draft.skins[skin.id] = skin;
             resolveButtonEditorPanelSkinTargetPlacementIds(

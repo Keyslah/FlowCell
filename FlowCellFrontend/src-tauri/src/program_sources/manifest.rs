@@ -1,10 +1,10 @@
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ProgramManifest {
     pub schema_version: u32,
     pub program_id: String,
@@ -12,6 +12,8 @@ pub(crate) struct ProgramManifest {
     pub program_type: String,
     #[serde(default)]
     pub default_panels: Vec<String>,
+    #[serde(default)]
+    pub panels: Vec<ProgramPanelManifest>,
     pub process_names: Vec<String>,
     #[serde(default)]
     pub exe_path: String,
@@ -40,6 +42,15 @@ pub(crate) struct ProgramManifest {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ProgramPanelManifest {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub default_selected: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct BundledSourceManifest {
     pub id: String,
     pub version: String,
@@ -51,6 +62,16 @@ pub(crate) struct BundledSourceManifest {
     pub install_if_missing: bool,
     #[serde(default)]
     pub install_on_add: bool,
+    #[serde(default)]
+    pub display_label: String,
+    #[serde(default)]
+    pub source_kind: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default)]
+    pub dependencies: Vec<String>,
+    #[serde(default)]
+    pub install_effects: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub legacy_match_label: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -58,7 +79,24 @@ pub(crate) struct BundledSourceManifest {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct EnabledProgramContribution {
+    pub source_id: String,
+    pub panel_name: String,
+    pub version: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct EnabledProgramContributions {
+    pub schema_version: u32,
+    pub program_id: String,
+    pub program_name: String,
+    pub enabled_sources: Vec<EnabledProgramContribution>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ProgramRunnerManifest {
     pub kind: String,
     #[serde(default)]
@@ -75,7 +113,8 @@ pub(crate) fn normalize_import_kind(value: &str) -> Result<&'static str, String>
     match value.trim().to_ascii_lowercase().as_str() {
         "" | "script" | "single-script" => Ok("script"),
         "tool-set" | "toolset" => Ok("tool-set"),
-        _ => Err("importKind must be 'script' or 'tool-set'.".to_string()),
+        "auto" => Ok("auto"),
+        _ => Err("importKind must be 'auto', 'script', or 'tool-set'.".to_string()),
     }
 }
 
@@ -243,6 +282,7 @@ pub(crate) fn validate_manifest(
     if manifest.program_id.trim().is_empty() || manifest.label.trim().is_empty() {
         return Err("Program manifest requires programId and label.".to_string());
     }
+    manifest.program_id = normalize_bundled_token(&manifest.program_id, "programId", false)?;
     if manifest.process_names.is_empty()
         || manifest
             .process_names
@@ -254,6 +294,7 @@ pub(crate) fn validate_manifest(
             manifest.label
         ));
     }
+    let mut panel_labels = BTreeSet::new();
     for panel in &manifest.default_panels {
         crate::validate_folder_name(panel, "Default panel").map_err(|error| {
             format!(
@@ -261,6 +302,40 @@ pub(crate) fn validate_manifest(
                 manifest.label
             )
         })?;
+        if !panel_labels.insert(panel.trim().to_ascii_lowercase()) {
+            return Err(format!(
+                "Program manifest for '{}' duplicates default panel '{}'.",
+                manifest.label, panel
+            ));
+        }
+    }
+    let mut panel_ids = BTreeSet::new();
+    let mut declared_panel_labels = BTreeSet::new();
+    for panel in &mut manifest.panels {
+        panel.id = normalize_bundled_token(&panel.id, "panels.id", false)?;
+        panel.label = crate::validate_folder_name(&panel.label, "Panel label")?;
+        if !panel_ids.insert(panel.id.to_ascii_lowercase()) {
+            return Err(format!(
+                "Program manifest for '{}' duplicates panels id '{}'.",
+                manifest.label, panel.id
+            ));
+        }
+        if !declared_panel_labels.insert(panel.label.to_ascii_lowercase()) {
+            return Err(format!(
+                "Program manifest for '{}' duplicates panel label '{}'.",
+                manifest.label, panel.label
+            ));
+        }
+    }
+    if !manifest.panels.is_empty() {
+        for default_panel in &manifest.default_panels {
+            if !declared_panel_labels.contains(&default_panel.to_ascii_lowercase()) {
+                return Err(format!(
+                    "Program manifest default panel '{}' is missing from panels inventory.",
+                    default_panel
+                ));
+            }
+        }
     }
     if !manifest
         .label
@@ -360,11 +435,52 @@ pub(crate) fn validate_manifest(
             false,
         )?;
         source.import_kind = normalize_import_kind(&source.import_kind)?.to_string();
-        if source.install_if_missing && source.install_on_add {
+        if source.import_kind == "auto" {
             return Err(format!(
-                "Program manifest bundled source '{}' cannot set both installIfMissing and installOnAdd.",
+                "Program manifest bundled source '{}' must explicitly declare importKind 'script' or 'tool-set'.",
                 source.id
             ));
+        }
+        source.display_label = source.display_label.trim().to_string();
+        if source.display_label.len() > 256 {
+            return Err(format!(
+                "Program manifest bundled source '{}' displayLabel is too long.",
+                source.id
+            ));
+        }
+        source.source_kind = source.source_kind.trim().to_ascii_lowercase();
+        if !source.source_kind.is_empty()
+            && !matches!(source.source_kind.as_str(), "script" | "tool-set" | "page")
+        {
+            return Err(format!(
+                "Program manifest bundled source '{}' sourceKind must be 'script', 'tool-set', or 'page'.",
+                source.id
+            ));
+        }
+        let mut dependencies = BTreeSet::new();
+        for dependency in &mut source.dependencies {
+            *dependency = validate_bundled_source_id(dependency)?;
+            if dependency.eq_ignore_ascii_case(&source.id) {
+                return Err(format!(
+                    "Program manifest bundled source '{}' cannot depend on itself.",
+                    source.id
+                ));
+            }
+            if !dependencies.insert(dependency.to_ascii_lowercase()) {
+                return Err(format!(
+                    "Program manifest bundled source '{}' duplicates dependency '{}'.",
+                    source.id, dependency
+                ));
+            }
+        }
+        for effect in &mut source.install_effects {
+            *effect = effect.trim().to_string();
+            if effect.is_empty() || effect.len() > 512 || effect.chars().any(char::is_control) {
+                return Err(format!(
+                    "Program manifest bundled source '{}' has an invalid installEffects entry.",
+                    source.id
+                ));
+            }
         }
         let declared_path = resolve_relative_manifest_path(
             program_root,
@@ -392,12 +508,77 @@ pub(crate) fn validate_manifest(
             .filter(|value| !value.is_empty())
             .map(|value| normalize_import_kind(&value).map(str::to_string))
             .transpose()?;
+        if source.legacy_match_kind.as_deref() == Some("auto") {
+            return Err(format!(
+                "Program manifest bundled source '{}' legacyMatchKind must be 'script' or 'tool-set'.",
+                source.id
+            ));
+        }
         if source.legacy_match_kind.is_some() && source.legacy_match_label.is_none() {
             return Err(format!(
                 "Program manifest bundled source '{}' requires legacyMatchLabel when legacyMatchKind is set.",
                 source.id
             ));
         }
+    }
+    let dependency_graph = manifest
+        .bundled_sources
+        .iter()
+        .map(|source| {
+            (
+                source.id.to_ascii_lowercase(),
+                source
+                    .dependencies
+                    .iter()
+                    .map(|dependency| dependency.to_ascii_lowercase())
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    for source in &manifest.bundled_sources {
+        if !manifest.panels.is_empty()
+            && !declared_panel_labels.contains(&source.panel_name.to_ascii_lowercase())
+        {
+            return Err(format!(
+                "Program manifest bundled source '{}' names panel '{}' outside the panels inventory.",
+                source.id, source.panel_name
+            ));
+        }
+        for dependency in &source.dependencies {
+            if !dependency_graph.contains_key(&dependency.to_ascii_lowercase()) {
+                return Err(format!(
+                    "Program manifest bundled source '{}' depends on unknown source '{}'.",
+                    source.id, dependency
+                ));
+            }
+        }
+    }
+    fn visit_dependency(
+        id: &str,
+        graph: &BTreeMap<String, Vec<String>>,
+        visiting: &mut BTreeSet<String>,
+        visited: &mut BTreeSet<String>,
+    ) -> Result<(), String> {
+        if visited.contains(id) {
+            return Ok(());
+        }
+        if !visiting.insert(id.to_string()) {
+            return Err(format!(
+                "Program manifest bundledSources dependency graph contains a cycle at '{id}'."
+            ));
+        }
+        if let Some(dependencies) = graph.get(id) {
+            for dependency in dependencies {
+                visit_dependency(dependency, graph, visiting, visited)?;
+            }
+        }
+        visiting.remove(id);
+        visited.insert(id.to_string());
+        Ok(())
+    }
+    let mut visited = BTreeSet::new();
+    for id in dependency_graph.keys() {
+        visit_dependency(id, &dependency_graph, &mut BTreeSet::new(), &mut visited)?;
     }
     Ok(())
 }
@@ -420,6 +601,112 @@ pub(crate) fn load_program_manifest(program_name: &str) -> Result<ProgramManifes
     })?;
     validate_manifest(&mut manifest, program_name, &program_root)?;
     Ok(manifest)
+}
+
+pub(crate) fn enabled_program_contributions_path(
+    manifest: &ProgramManifest,
+) -> Result<PathBuf, String> {
+    let program_id = normalize_bundled_token(&manifest.program_id, "programId", false)?;
+    Ok(crate::resolve_flowcell_local_root()?
+        .join("program-registration")
+        .join(format!("{program_id}.json")))
+}
+
+pub(crate) fn validate_enabled_program_contributions(
+    state: &mut EnabledProgramContributions,
+    manifest: &ProgramManifest,
+) -> Result<(), String> {
+    if state.schema_version != 1 {
+        return Err(format!(
+            "Enabled contribution state for '{}' uses unsupported schemaVersion {}.",
+            manifest.label, state.schema_version
+        ));
+    }
+    if !state.program_id.eq_ignore_ascii_case(&manifest.program_id)
+        || !state.program_name.eq_ignore_ascii_case(&manifest.label)
+    {
+        return Err(format!(
+            "Enabled contribution state does not match program '{}'.",
+            manifest.label
+        ));
+    }
+    state.program_id = manifest.program_id.clone();
+    state.program_name = manifest.label.clone();
+    let declared = manifest
+        .bundled_sources
+        .iter()
+        .map(|source| (source.id.to_ascii_lowercase(), source))
+        .collect::<BTreeMap<_, _>>();
+    let mut enabled = BTreeSet::new();
+    for contribution in &mut state.enabled_sources {
+        contribution.source_id = validate_bundled_source_id(&contribution.source_id)?;
+        contribution.panel_name =
+            crate::validate_folder_name(&contribution.panel_name, "Contribution panel")?;
+        contribution.version = validate_bundled_source_version(&contribution.version)?;
+        if !enabled.insert(contribution.source_id.to_ascii_lowercase()) {
+            return Err(format!(
+                "Enabled contribution state duplicates source '{}'.",
+                contribution.source_id
+            ));
+        }
+        if !declared.contains_key(&contribution.source_id.to_ascii_lowercase()) {
+            return Err(format!(
+                "Enabled contribution state names unknown source '{}'.",
+                contribution.source_id
+            ));
+        }
+    }
+    for contribution in &state.enabled_sources {
+        let source = declared
+            .get(&contribution.source_id.to_ascii_lowercase())
+            .expect("enabled source was checked above");
+        for dependency in &source.dependencies {
+            if !enabled.contains(&dependency.to_ascii_lowercase()) {
+                return Err(format!(
+                    "Enabled contribution '{}' is missing required dependency '{}'.",
+                    contribution.source_id, dependency
+                ));
+            }
+        }
+    }
+    state
+        .enabled_sources
+        .sort_by_cached_key(|source| source.source_id.to_ascii_lowercase());
+    Ok(())
+}
+
+pub(crate) fn load_enabled_program_contributions(
+    manifest: &ProgramManifest,
+) -> Result<Option<EnabledProgramContributions>, String> {
+    let path = enabled_program_contributions_path(manifest)?;
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    let mut state = serde_json::from_str::<EnabledProgramContributions>(&raw).map_err(|error| {
+        format!(
+            "Enabled contribution state at {} is invalid: {error}",
+            path.display()
+        )
+    })?;
+    validate_enabled_program_contributions(&mut state, manifest)?;
+    Ok(Some(state))
+}
+
+pub(crate) fn write_enabled_program_contributions(
+    manifest: &ProgramManifest,
+    mut state: EnabledProgramContributions,
+) -> Result<PathBuf, String> {
+    validate_enabled_program_contributions(&mut state, manifest)?;
+    let path = enabled_program_contributions_path(manifest)?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Enabled contribution state path has no parent.".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Failed to create {}: {error}", parent.display()))?;
+    super::records::atomic_write_json(&path, &state)?;
+    Ok(path)
 }
 
 pub(crate) fn extension_is_allowed(manifest: &ProgramManifest, path: &Path) -> bool {
@@ -475,14 +762,15 @@ mod tests {
     #[test]
     fn bundled_source_tokens_and_import_kinds_are_bounded() {
         assert_eq!(
-            validate_bundled_source_id("illustrator.layers-tree").expect("valid id"),
-            "illustrator.layers-tree"
+            validate_bundled_source_id("example.page").expect("valid id"),
+            "example.page"
         );
         assert_eq!(
             validate_bundled_source_version("2.0.1+repair").expect("valid version"),
             "2.0.1+repair"
         );
         assert_eq!(normalize_import_kind("toolset").unwrap(), "tool-set");
+        assert_eq!(normalize_import_kind("auto").unwrap(), "auto");
         assert!(validate_bundled_source_id("layers/tree").is_err());
         assert!(validate_bundled_source_version("version with spaces").is_err());
         assert!(normalize_import_kind("panel").is_err());
@@ -510,5 +798,32 @@ mod tests {
             validate_manifest(&mut manifest, &program_name, &entry.path())
                 .unwrap_or_else(|error| panic!("{}: {error}", manifest_path.display()));
         }
+    }
+
+    #[test]
+    fn program_and_runner_manifests_reject_unknown_fields() {
+        let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("Programs")
+            .join("Windows")
+            .join("flowcell.program.json");
+        let raw = fs::read_to_string(manifest_path).expect("Windows manifest");
+        let mut value = serde_json::from_str::<serde_json::Value>(&raw).expect("manifest JSON");
+        value.as_object_mut().expect("manifest object").insert(
+            "unexpectedCoreFallback".to_string(),
+            serde_json::json!(true),
+        );
+        assert!(serde_json::from_value::<ProgramManifest>(value).is_err());
+
+        let mut value = serde_json::from_str::<serde_json::Value>(&raw).expect("manifest JSON");
+        value["runner"]
+            .as_object_mut()
+            .expect("runner object")
+            .insert(
+                "featureSpecificRoute".to_string(),
+                serde_json::json!("legacy"),
+            );
+        assert!(serde_json::from_value::<ProgramManifest>(value).is_err());
     }
 }

@@ -34,6 +34,7 @@ import {
   resolveFixedButtonCanvasBounds,
   resolveTargetButtonWebviewPixelRatio
 } from "./buttonWindowGeometry";
+import { afterPendingWindowOpens } from "./pendingWindowOpen";
 
 export const BUTTON_EDITOR_WINDOW_LABEL = "flowcell-button-editor";
 export const BUTTON_WINDOW_CONTEXT_UPDATE_EVENT = "flowcell:button-window-context";
@@ -69,6 +70,7 @@ export interface AppliedButtonCanvas {
 }
 
 const pendingButtonWindowOpens = new Map<string, Promise<void>>();
+const pendingButtonWindowToggles = new Map<string, Promise<void>>();
 
 function isUsableBounds(bounds: FlowCellBounds | null | undefined): bounds is FlowCellBounds {
   return isUsableButtonWindowBounds(bounds);
@@ -371,7 +373,11 @@ async function bindDestroyedCleanup(
 }
 
 async function closeManagedButtonWindow(windowLabel: string): Promise<void> {
-  const target = await WebviewWindow.getByLabel(windowLabel);
+  const target = await afterPendingWindowOpens(
+    pendingButtonWindowOpens,
+    windowLabel,
+    () => WebviewWindow.getByLabel(windowLabel)
+  );
   unregisterLayoutWindow(windowLabel);
   await unregisterScopedWindowTopmost(windowLabel).catch(() => {});
   await setHostWindowTopmost(windowLabel, false).catch(() => {});
@@ -469,6 +475,7 @@ export async function setCurrentButtonWindowLogicalSize(
 export async function openButtonEditorWindow(args: {
   programName?: string;
   panelName?: string;
+  lockImportDestination?: boolean;
   buttonId?: string;
   surfaceId?: string;
   draftSessionId?: string;
@@ -487,6 +494,7 @@ export async function openButtonEditorWindow(args: {
       schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
       programName: args.programName,
       panelName: args.panelName,
+      lockImportDestination: args.lockImportDestination,
       buttonId: args.buttonId,
       surfaceId: args.surfaceId,
       draftSessionId: args.draftSessionId
@@ -645,6 +653,43 @@ export async function closeButtonPopoutWindow(args: {
   ownerButtonId?: string;
 }): Promise<void> {
   await closeManagedButtonWindow(buildButtonPopoutWindowLabel(args));
+}
+
+export async function toggleButtonPopoutWindow(args: {
+  programName: string;
+  panelName?: string;
+  popoutUnitId: string;
+  ownerButtonId?: string;
+  displayMode?: "collapsed" | "expanded";
+  draftSessionId?: string;
+  bounds?: FlowCellBounds | null;
+}): Promise<void> {
+  const windowLabel = buildButtonPopoutWindowLabel(args);
+  const pendingToggle = pendingButtonWindowToggles.get(windowLabel);
+  if (pendingToggle) {
+    await pendingToggle;
+    return toggleButtonPopoutWindow(args);
+  }
+
+  const togglePromise = (async () => {
+    const pendingOpen = pendingButtonWindowOpens.get(windowLabel);
+    if (pendingOpen) {
+      await pendingOpen;
+    }
+    const target = await WebviewWindow.getByLabel(windowLabel);
+    if (target && (await target.isVisible().catch(() => false))) {
+      await closeManagedButtonWindow(windowLabel);
+      return;
+    }
+    await openButtonPopoutWindow(args);
+  })().finally(() => {
+    if (pendingButtonWindowToggles.get(windowLabel) === togglePromise) {
+      pendingButtonWindowToggles.delete(windowLabel);
+    }
+  });
+
+  pendingButtonWindowToggles.set(windowLabel, togglePromise);
+  return togglePromise;
 }
 
 export async function openButtonFanWindow(args: {

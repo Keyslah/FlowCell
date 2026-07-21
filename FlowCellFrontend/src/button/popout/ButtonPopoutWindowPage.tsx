@@ -491,7 +491,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         : []
     });
     try {
-      await queueEnvelope(preparedEnvelope.current);
+      await queueEnvelope(preparedEnvelope.resting);
     } catch (geometryError) {
       setRuntimeError(
         geometryError instanceof Error ? geometryError.message : String(geometryError)
@@ -905,7 +905,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       resizing
     ) return;
     let cancelled = false;
-    void queueEnvelope(collapsedWindowEnvelope.current).catch((geometryError) => {
+    void queueEnvelope(collapsedWindowEnvelope.resting).catch((geometryError) => {
       if (cancelled) return;
       setRuntimeError(
         geometryError instanceof Error ? geometryError.message : String(geometryError)
@@ -961,7 +961,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         }
         });
       })()
-      : queueEnvelope(windowEnvelope.current);
+      : queueEnvelope(windowEnvelope.resting);
     void applyTarget
       .then(async () => {
         if (
@@ -1644,7 +1644,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
             unit={unit}
             displayMode={renderedDisplayMode}
             surfaceScale={surfaceScale}
-            surfaceEnvelope={appliedEnvelope ?? windowEnvelope.current}
+            surfaceEnvelope={appliedEnvelope ?? windowEnvelope.resting}
             onOwnerActivate={handleOwnerActivate}
             onPlacementVisualMeasurement={handlePlacementVisualMeasurement}
             onPreparePlacementVisualStateChange={preparePlacementVisualStateChange}

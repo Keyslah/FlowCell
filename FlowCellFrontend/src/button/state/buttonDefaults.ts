@@ -41,7 +41,8 @@ export function createButtonStateDocument(): ButtonStateDocument {
         width: 960,
         height: 640,
         placementIds: [],
-        visualOverflowAllowance: 24
+        visualOverflowAllowance: 24,
+        uniformButtonSize: null
       }
     },
     skins: {

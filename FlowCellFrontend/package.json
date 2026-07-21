@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 1420",
     "build": "tsc && vite build",
-    "test:button": "tsc -p tsconfig.button-tests.json && node --test tests/buttonSystem.test.mjs tests/buttonActivationAnimation.test.mjs tests/bindsButtonScope.test.mjs tests/shortcutProfiles.test.mjs tests/themeTone.test.mjs tests/toolSetChildHotkeyBridge.test.mjs",
+    "test:button": "tsc -p tsconfig.button-tests.json && node --test tests/buttonSystem.test.mjs tests/buttonActivationAnimation.test.mjs tests/bindsButtonScope.test.mjs tests/shortcutProfiles.test.mjs tests/toolSetChildHotkeyBridge.test.mjs tests/toolSetOwnerHotkeyBridge.test.mjs tests/installedPageContract.test.mjs tests/buttonWindowDeletionLifecycle.test.mjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },

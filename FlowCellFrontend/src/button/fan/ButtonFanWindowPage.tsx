@@ -411,7 +411,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       visualOverflowAllowance: surface?.visualOverflowAllowance ?? 0
     });
     try {
-      await queueEnvelope(preparedEnvelope.current);
+      await queueEnvelope(preparedEnvelope.resting);
     } catch (geometryError) {
       setRuntimeError(
         geometryError instanceof Error ? geometryError.message : String(geometryError)
@@ -764,7 +764,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
           await commitAppliedEnvelope(windowEnvelope.resting, true);
         });
       })()
-      : queueEnvelope(windowEnvelope.current);
+      : queueEnvelope(windowEnvelope.resting);
     void applyTarget
       .then(async () => {
         if (

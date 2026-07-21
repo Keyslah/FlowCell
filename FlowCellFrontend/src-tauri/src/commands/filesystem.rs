@@ -1,4 +1,5 @@
 use crate::*;
+use std::io::Read;
 
 pub(crate) fn resolve_flowcell_local_root() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root()
@@ -47,9 +48,7 @@ pub(crate) fn escape_powershell_single_quoted(value: &str) -> String {
     value.replace('\'', "''")
 }
 
-pub(crate) fn spawn_powershell_output(
-    arguments: &[String],
-) -> Result<std::process::Output, String> {
+fn build_powershell_output_command(arguments: &[String]) -> Command {
     let mut command = Command::new(resolve_powershell_path());
     command
         .arg("-NoProfile")
@@ -63,8 +62,71 @@ pub(crate) fn spawn_powershell_output(
     #[cfg(windows)]
     command.creation_flags(CREATE_NO_WINDOW);
     command
+}
+
+pub(crate) fn spawn_powershell_output(
+    arguments: &[String],
+) -> Result<std::process::Output, String> {
+    let mut command = build_powershell_output_command(arguments);
+    command
         .output()
         .map_err(|error| format!("Failed to start PowerShell: {error}"))
+}
+
+fn read_bounded_process_stream(
+    stream: impl Read,
+    maximum_bytes: usize,
+    label: &str,
+) -> Result<Vec<u8>, String> {
+    let mut bytes = Vec::with_capacity(maximum_bytes.min(64 * 1024));
+    stream
+        .take(maximum_bytes.saturating_add(1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|error| format!("Failed to read PowerShell {label}: {error}"))?;
+    if bytes.len() > maximum_bytes {
+        return Err(format!(
+            "PowerShell {label} exceeded its {maximum_bytes}-byte capture limit."
+        ));
+    }
+    Ok(bytes)
+}
+
+pub(crate) fn spawn_powershell_output_bounded(
+    arguments: &[String],
+    maximum_stdout_bytes: usize,
+    maximum_stderr_bytes: usize,
+) -> Result<std::process::Output, String> {
+    let mut command = build_powershell_output_command(arguments);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("Failed to start PowerShell: {error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture PowerShell stdout.".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "Failed to capture PowerShell stderr.".to_string())?;
+    let stdout_reader =
+        thread::spawn(move || read_bounded_process_stream(stdout, maximum_stdout_bytes, "stdout"));
+    let stderr_reader =
+        thread::spawn(move || read_bounded_process_stream(stderr, maximum_stderr_bytes, "stderr"));
+    let status = child
+        .wait()
+        .map_err(|error| format!("Failed while waiting for PowerShell: {error}"))?;
+    let stdout = stdout_reader
+        .join()
+        .map_err(|_| "PowerShell stdout reader stopped unexpectedly.".to_string())??;
+    let stderr = stderr_reader
+        .join()
+        .map_err(|_| "PowerShell stderr reader stopped unexpectedly.".to_string())??;
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
 }
 
 pub(crate) fn format_process_failure(output: &std::process::Output, fallback: &str) -> String {
@@ -79,6 +141,30 @@ pub(crate) fn format_process_failure(output: &std::process::Output, fallback: &s
     }
 
     fallback.to_string()
+}
+
+#[cfg(test)]
+mod bounded_process_output_tests {
+    use super::read_bounded_process_stream;
+    use std::io::Cursor;
+
+    #[test]
+    fn bounded_process_stream_accepts_output_at_the_limit() {
+        assert_eq!(
+            read_bounded_process_stream(Cursor::new(b"1234"), 4, "stdout").expect("bounded output"),
+            b"1234"
+        );
+    }
+
+    #[test]
+    fn bounded_process_stream_rejects_output_past_the_limit() {
+        let error = read_bounded_process_stream(Cursor::new(b"12345"), 4, "stderr")
+            .expect_err("oversized output should fail");
+        assert_eq!(
+            error,
+            "PowerShell stderr exceeded its 4-byte capture limit."
+        );
+    }
 }
 
 pub(crate) fn wait_for_child_output_with_timeout(

@@ -9,6 +9,7 @@ export interface ButtonEditorWindowContext {
   schemaVersion: typeof BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION;
   programName?: string;
   panelName?: string;
+  lockImportDestination?: boolean;
   buttonId?: string;
   surfaceId?: string;
   draftSessionId?: string;
@@ -60,33 +61,23 @@ export interface BindsWindowContext {
   prefill?: BindsButtonPrefill;
 }
 
-export interface OrganizationSetupWindowContext {
-  kind: "organization-setup";
+export interface AddProgramWindowContext {
+  kind: "add-program";
 }
 
-export interface BuildLayersWindowContext {
-  kind: "build-layers";
+export interface AddPanelWindowContext {
+  kind: "add-panel";
+  programName: string;
+}
+
+export interface InstalledPageWindowContext {
+  kind: "installed-page";
+  schemaVersion: typeof BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION;
+  ownerButtonId: string;
   programName: string;
   panelName: string;
   fileName: string;
-  label?: string;
-}
-
-export type ToolPageRenderer = "tree-inspector";
-
-export interface ToolPageWindowContext {
-  kind: "tool-page";
-  contributionId: string;
-  renderer: ToolPageRenderer;
-  capability: string;
-  programName: string;
-  panelName: string;
-  fileName: string;
-  ownerButtonId?: string;
-  title: string;
-  resourceLabel?: string;
-  emptyMessage?: string;
-  refreshEvent?: string;
+  pageId: string;
 }
 
 export interface WindowGridWindowContext {
@@ -117,9 +108,9 @@ export type FlowCellWindowContext =
   | ButtonFanWindowContext
   | ButtonAnimationWindowContext
   | BindsWindowContext
-  | OrganizationSetupWindowContext
-  | BuildLayersWindowContext
-  | ToolPageWindowContext
+  | AddProgramWindowContext
+  | AddPanelWindowContext
+  | InstalledPageWindowContext
   | WindowGridWindowContext
   | MotionSettingsWindowContext
   | MacroLabWindowContext
@@ -179,6 +170,7 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
       schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
       programName: optionalString(parsed.programName),
       panelName: optionalString(parsed.panelName),
+      lockImportDestination: parsed.lockImportDestination === true,
       buttonId: optionalString(parsed.buttonId),
       surfaceId: optionalString(parsed.surfaceId),
       draftSessionId: optionalString(parsed.draftSessionId)
@@ -247,44 +239,32 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
   if (parsed.kind === "binds") {
     return { kind: "binds", prefill: parseBindsPrefill(parsed.prefill) };
   }
-  if (parsed.kind === "organization-setup") return { kind: "organization-setup" };
-  if (
-    parsed.kind === "tool-page" &&
-    parsed.renderer === "tree-inspector" &&
-    typeof parsed.contributionId === "string" &&
-    typeof parsed.capability === "string" &&
-    typeof parsed.programName === "string" &&
-    typeof parsed.panelName === "string" &&
-    typeof parsed.fileName === "string" &&
-    typeof parsed.title === "string"
-  ) {
-    return {
-      kind: "tool-page",
-      contributionId: parsed.contributionId,
-      renderer: "tree-inspector",
-      capability: parsed.capability,
-      programName: parsed.programName,
-      panelName: parsed.panelName,
-      fileName: parsed.fileName,
-      ownerButtonId: optionalString(parsed.ownerButtonId),
-      title: parsed.title,
-      resourceLabel: optionalString(parsed.resourceLabel),
-      emptyMessage: optionalString(parsed.emptyMessage),
-      refreshEvent: optionalString(parsed.refreshEvent)
-    };
+  if (parsed.kind === "add-program") return { kind: "add-program" };
+  if (parsed.kind === "add-panel" && typeof parsed.programName === "string" && parsed.programName.trim()) {
+    return { kind: "add-panel", programName: parsed.programName };
   }
   if (
-    parsed.kind === "build-layers" &&
+    parsed.kind === "installed-page" &&
+    parsed.schemaVersion === BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION &&
+    typeof parsed.ownerButtonId === "string" &&
+    parsed.ownerButtonId.trim() &&
     typeof parsed.programName === "string" &&
+    parsed.programName.trim() &&
     typeof parsed.panelName === "string" &&
-    typeof parsed.fileName === "string"
+    parsed.panelName.trim() &&
+    typeof parsed.fileName === "string" &&
+    parsed.fileName.trim() &&
+    typeof parsed.pageId === "string" &&
+    parsed.pageId.trim()
   ) {
     return {
-      kind: "build-layers",
+      kind: "installed-page",
+      schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
+      ownerButtonId: parsed.ownerButtonId,
       programName: parsed.programName,
       panelName: parsed.panelName,
       fileName: parsed.fileName,
-      label: optionalString(parsed.label)
+      pageId: parsed.pageId
     };
   }
   if (parsed.kind === "window-grid") return { kind: "window-grid" };

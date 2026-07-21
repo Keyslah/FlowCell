@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "flowcell.windows.setup-organization.stage.v1",
+  "title": "FlowCell Generated Button Stage",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "format",
+    "namespace",
+    "stageToken",
+    "createdAt",
+    "programName",
+    "importKind",
+    "packageId",
+    "sourceManifestRelativePath",
+    "sourceManifestSha256",
+    "scriptSha256",
+    "metadata"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "format": {
+      "const": "flowcell.windows.setup-organization.stage.v1"
+    },
+    "namespace": {
+      "const": "windows.setup-organization"
+    },
+    "stageToken": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "createdAt": {
+      "type": "string"
+    },
+    "programName": {
+      "const": "Windows"
+    },
+    "importKind": {
+      "const": "script"
+    },
+    "packageId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "sourceManifestRelativePath": {
+      "const": "source/flowcell.script.json"
+    },
+    "sourceManifestSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "scriptSha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "profileId"
+      ],
+      "properties": {
+        "profileId": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

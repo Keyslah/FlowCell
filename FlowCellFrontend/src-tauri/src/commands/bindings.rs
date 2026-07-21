@@ -281,14 +281,6 @@ pub(crate) fn is_tool_set_binding(binding: &FrontendScriptBindingRecord) -> bool
         .unwrap_or(false)
 }
 
-pub(crate) fn is_tool_set_owner_binding(binding: &FrontendScriptBindingRecord) -> bool {
-    binding.kind.as_deref() == Some(TOOL_SET_OWNER_BINDING_KIND)
-}
-
-pub(crate) fn is_tool_set_child_binding(binding: &FrontendScriptBindingRecord) -> bool {
-    binding.kind.as_deref() == Some(TOOL_SET_CHILD_BINDING_KIND)
-}
-
 fn find_script_binding_for_target(
     bindings: &FrontendBindingsState,
     program_tab_id: i64,
@@ -318,9 +310,13 @@ fn find_tool_set_button_binding(
     bindings: &FrontendBindingsState,
     target_kind: &str,
     button_id: &str,
+    owner_button_id: &str,
 ) -> Option<(u64, String)> {
     bindings.script_bindings.iter().find_map(|binding| {
-        if binding.kind.as_deref() != Some(target_kind) || binding.target != button_id {
+        if binding.kind.as_deref() != Some(target_kind)
+            || binding.target != button_id
+            || binding.owner_button_id.as_deref() != Some(owner_button_id)
+        {
             return None;
         }
         Some((
@@ -436,6 +432,14 @@ fn validate_canonical_tool_set_owner(
     Ok(())
 }
 
+fn is_tool_set_source_record(kind: &str, has_children: bool) -> bool {
+    let source_kind = kind.trim();
+    has_children
+        || source_kind.eq_ignore_ascii_case("tool-set")
+        || source_kind.eq_ignore_ascii_case("toolset")
+        || source_kind.eq_ignore_ascii_case("tool_set")
+}
+
 fn list_bindable_tool_set_children(
     state: &BindableButtonStateSnapshot,
     program_name: &str,
@@ -458,8 +462,12 @@ fn list_bindable_tool_set_children(
                 "Button '{button_id}' is not a valid canonical child of '{owner_button_id}'."
             ));
         }
-        let binding =
-            find_tool_set_button_binding(bindings, TOOL_SET_CHILD_BINDING_KIND, button_id);
+        let binding = find_tool_set_button_binding(
+            bindings,
+            TOOL_SET_CHILD_BINDING_KIND,
+            button_id,
+            owner_button_id,
+        );
         buttons.push(BindableButtonRecord {
             id: button_id.clone(),
             label: format!("{} › {}", owner.label, child.label),
@@ -484,11 +492,10 @@ fn list_bindable_buttons_for_panel(
     let records = program_sources::execute::list_active_source_records(program_name, panel_name)?;
     let mut buttons = Vec::new();
     for resolution in records {
-        let is_tool_set = resolution
-            .record
-            .kind
-            .trim()
-            .eq_ignore_ascii_case("tool-set");
+        let is_tool_set = is_tool_set_source_record(
+            &resolution.record.kind,
+            !resolution.record.children.is_empty(),
+        );
         if is_tool_set {
             let state = button_state.ok_or_else(|| {
                 format!(
@@ -504,6 +511,7 @@ fn list_bindable_buttons_for_panel(
             let owner_binding = find_tool_set_button_binding(
                 bindings,
                 TOOL_SET_OWNER_BINDING_KIND,
+                &resolution.record.owner_button_id,
                 &resolution.record.owner_button_id,
             );
             buttons.push(BindableButtonRecord {
@@ -1160,6 +1168,15 @@ ProgramTabId=1
     }
 
     #[test]
+    fn installed_tool_set_kind_aliases_and_declared_children_are_bindable() {
+        for kind in ["tool-set", "toolset", "tool_set", " TOOLSET "] {
+            assert!(is_tool_set_source_record(kind, false), "{kind}");
+        }
+        assert!(is_tool_set_source_record("legacy-source", true));
+        assert!(!is_tool_set_source_record("script", false));
+    }
+
+    #[test]
     fn canonical_tool_set_inventory_uses_child_ids_and_hierarchical_labels() {
         let value = serde_json::json!({
             "buttons": {
@@ -1664,7 +1681,6 @@ pub(crate) fn save_bind_shortcut(
     if program_name.is_empty() {
         return Err("Pick a program and panel.".to_string());
     }
-    resolve_program_directory(program_name)?;
 
     let target_kind = normalize_binding_kind(request.target_kind.as_deref())?;
     let target = if is_tool_set_binding_kind(target_kind) {
@@ -1683,7 +1699,28 @@ pub(crate) fn save_bind_shortcut(
             .filter(|value| !value.is_empty())
             .ok_or_else(|| "Tool-set Button binding is missing ownerButtonId.".to_string())?;
         let owner_button_id = program_sources::validate_owner_button_id(owner_button_id)?;
-        let state_document = crate::button_state::load_button_state()?;
+        Some(owner_button_id)
+    } else {
+        None
+    };
+    if is_tool_set_binding_kind(target_kind) && !request.shortcut.trim().is_empty() {
+        super::button_hotkeys::validate_tool_set_shortcut(request.shortcut.trim())
+            .map_err(|error| format!("That Tool Set shortcut is not supported: {error}"))?;
+    }
+
+    // Recover any interrupted canonical/source transaction before entering the
+    // composite validation lane. The second read below is the authoritative
+    // one and occurs while Button state, source ownership, and bindings are all
+    // locked in their canonical order.
+    if is_tool_set_binding_kind(target_kind) {
+        let _ = crate::button_state::load_button_state()?;
+    }
+    let button_state_guard = crate::button_state::button_state_commit_guard()?;
+    let source_guard = crate::program_sources::source_quarantine_guard()?;
+    let _bindings_guard = bindings_state_guard()?;
+    resolve_program_directory(program_name)?;
+    if let Some(owner_button_id) = owner_button_id.as_deref() {
+        let state_document = crate::button_state::read_button_state_for_program_rename_locked()?;
         let state = parse_bindable_button_state(state_document.as_ref())?
             .ok_or_else(|| "Canonical Button state is unavailable.".to_string())?;
         if target_kind == TOOL_SET_OWNER_BINDING_KIND {
@@ -1692,11 +1729,10 @@ pub(crate) fn save_bind_shortcut(
                     "Tool-set owner binding must target its canonical owner Button ID.".to_string(),
                 );
             }
-            validate_canonical_tool_set_owner(&state, program_name, &owner_button_id)?;
+            validate_canonical_tool_set_owner(&state, program_name, owner_button_id)?;
         } else {
-            validate_canonical_tool_set_child(&state, program_name, &owner_button_id, &target)?;
+            validate_canonical_tool_set_child(&state, program_name, owner_button_id, &target)?;
         }
-        Some(owner_button_id)
     } else {
         let target_path = PathBuf::from(&target);
         if !target_path.is_file() {
@@ -1705,14 +1741,7 @@ pub(crate) fn save_bind_shortcut(
                 target_path.display()
             ));
         }
-        None
-    };
-    if is_tool_set_binding_kind(target_kind) && !request.shortcut.trim().is_empty() {
-        super::button_hotkeys::validate_tool_set_shortcut(request.shortcut.trim())
-            .map_err(|error| format!("That Tool Set shortcut is not supported: {error}"))?;
     }
-
-    let _bindings_guard = bindings_state_guard()?;
     let (bindings, mut document, bindings_path) = read_bindings_file_state()?;
     let previous_bindings_bytes = serialize_bindings_file_state(&document);
     let mut script_bindings = bindings.script_bindings.clone();
@@ -1874,6 +1903,9 @@ pub(crate) fn save_bind_shortcut(
         }
     }
     let (next_bindings, _, _) = read_bindings_file_state()?;
+    drop(_bindings_guard);
+    drop(source_guard);
+    drop(button_state_guard);
     let reload_result = restart_flowcell_headless_backend();
     let mut message = if normalized_shortcut.is_empty() {
         String::from("Bind cleared.")

@@ -22,37 +22,38 @@ export function deriveBindsPanelButtonScope(
   buttons: readonly BindableButtonRecord[],
   selectedButtonId: string
 ): BindsPanelButtonScope {
-  const toolbarButtons = buttons.filter((button) => !isToolSetChild(button));
+  const topLevelButtons = buttons.filter((button) => !isToolSetChild(button));
   const selectedButton = buttons.find((button) => button.id === selectedButtonId) ?? null;
   const selectedOwnerId =
     selectedButton && (isToolSetOwner(selectedButton) || isToolSetChild(selectedButton))
       ? selectedButton.ownerButtonId?.trim() ?? ""
       : "";
   const selectedOwner = selectedOwnerId
-    ? toolbarButtons.find(
+    ? topLevelButtons.find(
         (button) => isToolSetOwner(button) && button.ownerButtonId?.trim() === selectedOwnerId
       ) ?? null
     : null;
 
   if (!selectedOwner) {
     return {
-      toolbarButtons,
-      currentPanelButtons: toolbarButtons,
-      toolbarButtonId: toolbarButtons.some((button) => button.id === selectedButtonId)
+      toolbarButtons: topLevelButtons,
+      currentPanelButtons: topLevelButtons,
+      toolbarButtonId: topLevelButtons.some((button) => button.id === selectedButtonId)
         ? selectedButtonId
         : ""
     };
   }
 
+  const selectedChildren = buttons.filter(
+    (button) => isToolSetChild(button) && button.ownerButtonId?.trim() === selectedOwnerId
+  );
+  const toolbarButtons = topLevelButtons.flatMap((button) =>
+    button.id === selectedOwner.id ? [button, ...selectedChildren] : [button]
+  );
+
   return {
     toolbarButtons,
-    currentPanelButtons: [
-      selectedOwner,
-      ...buttons.filter(
-        (button) =>
-          isToolSetChild(button) && button.ownerButtonId?.trim() === selectedOwnerId
-      )
-    ],
-    toolbarButtonId: selectedOwner.id
+    currentPanelButtons: [selectedOwner, ...selectedChildren],
+    toolbarButtonId: selectedButton?.id ?? selectedOwner.id
   };
 }

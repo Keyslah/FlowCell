@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.snapshot",
+  "label": "snapshot",
+  "tooltip": "Snapshot highlighted Layer Tree layers, or the current Illustrator selection when none are highlighted.",
+  "program": "Illustrator",
+  "source": "snapshot.jsx"
+}

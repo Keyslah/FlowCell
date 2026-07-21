@@ -918,6 +918,7 @@ fn remove_frontend_macro_hotkeys(action_ids: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
+    let _bindings_guard = super::bindings::bindings_state_guard()?;
     let (_bindings, mut document, bindings_path) = read_bindings_file_state()?;
     let mut changed = false;
     let mut remove_action_hotkeys_section = false;
@@ -1162,6 +1163,7 @@ pub(crate) fn save_macro_shortcut(
     let action_id = validate_frontend_macro_id(&request.action_id)?;
     load_frontend_macro_definition(&action_id)?;
 
+    let _bindings_guard = super::bindings::bindings_state_guard()?;
     let (bindings, mut document, bindings_path) = read_bindings_file_state()?;
     let normalized_shortcut = request.shortcut.trim().to_ascii_lowercase();
     if !normalized_shortcut.is_empty() {

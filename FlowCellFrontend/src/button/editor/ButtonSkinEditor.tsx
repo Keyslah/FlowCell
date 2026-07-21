@@ -19,6 +19,8 @@ import { ButtonSkinRenderer } from "../skins/ButtonSkinRenderer";
 
 export interface ButtonSkinEditorProps {
   skin: ButtonSkin | null;
+  buttonLabel: string;
+  onButtonLabelChange: (label: string) => void;
   onSkinChange: (skin: ButtonSkin, label: string, coalesceKey?: string) => void;
   onCreateSkin: () => void;
   onDuplicateSkin: () => void;
@@ -48,6 +50,8 @@ function sectionLabel(section: ButtonSkinSectionName): string {
 
 export function ButtonSkinEditor({
   skin,
+  buttonLabel,
+  onButtonLabelChange,
   onSkinChange,
   onCreateSkin,
   onDuplicateSkin
@@ -56,7 +60,6 @@ export function ButtonSkinEditor({
   const pasteRef = useRef<HTMLTextAreaElement | null>(null);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [updatedSections, setUpdatedSections] = useState<Set<ButtonSkinSectionName>>(new Set());
-  const [benchLabel, setBenchLabel] = useState("Button Preview");
   const [benchStackWords, setBenchStackWords] = useState(false);
   const [benchTextSize, setBenchTextSize] = useState<number | null>(null);
   const [benchMinimum, setBenchMinimum] = useState(8);
@@ -168,13 +171,12 @@ export function ButtonSkinEditor({
         );
       })}
       <details className="button-skin-section">
-        <summary><span>Text Preview Bench (Preview Only)</span></summary>
+        <summary><span>Button Text</span></summary>
         <p>
-          These controls test text inside this skin preview only. They do not change the
-          selected Button, its saved label, or its placement text settings. Use the Button
-          Inspector for live and saved Label and Font size edits.
+          The Button label below is saved and updates every live placement. The remaining
+          controls preview text fitting in this Skin Editor only.
         </p>
-        <label><span>Preview-only label</span><input value={benchLabel} onChange={(event) => setBenchLabel(event.currentTarget.value)} /></label>
+        <label><span>Button label</span><input value={buttonLabel} onChange={(event) => onButtonLabelChange(event.currentTarget.value)} /></label>
         <label className="button-editor-check"><input type="checkbox" checked={benchStackWords} onChange={(event) => setBenchStackWords(event.currentTarget.checked)} /><span>Stack Words</span></label>
         <label>
           <span>Text size override</span>
@@ -193,7 +195,7 @@ export function ButtonSkinEditor({
         <div className="button-text-bench-preview">
           <ButtonSkinRenderer
             skin={skin}
-            label={benchLabel}
+            label={buttonLabel}
             constrained={false}
             textFitMode={benchStackWords ? "stack-whole-words" : "shrink"}
             minimumFontSize={benchMinimum}

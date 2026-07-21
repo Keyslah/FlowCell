@@ -1,0 +1,227 @@
+[CmdletBinding()]
+param([string]$TargetPath = '')
+
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+
+$script:ProfileId = '__FLOWCELL_PROFILE_ID__'
+$script:ProfileFormat = 'flowcell.windows.setup-organization.profile.v1'
+
+function ConvertFrom-ExtendedWindowsPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if ($Path.StartsWith('\\?\UNC\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return '\\' + $Path.Substring(8)
+    }
+    if ($Path.StartsWith('\\?\', [System.StringComparison]::OrdinalIgnoreCase)) {
+        return $Path.Substring(4)
+    }
+    return $Path
+}
+
+function Resolve-FlowCellRoot {
+    $current = ConvertFrom-ExtendedWindowsPath -Path ([System.IO.Path]::GetFullPath($PSScriptRoot))
+    while (-not [string]::IsNullOrWhiteSpace($current)) {
+        if ((Test-Path -LiteralPath (Join-Path $current 'flowcellbackend') -PathType Container) -and
+            (Test-Path -LiteralPath (Join-Path $current 'Programs\Windows') -PathType Container)) {
+            return $current
+        }
+        $parent = Split-Path -Parent $current
+        if ([string]::IsNullOrWhiteSpace($parent) -or $parent -eq $current) {
+            break
+        }
+        $current = $parent
+    }
+    throw 'Could not locate FlowCell from the installed profile Button.'
+}
+
+function Resolve-TargetRoot {
+    param([string]$RequestedPath)
+
+    $candidate = $RequestedPath.Trim().Trim('"')
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        try {
+            $candidate = ([string](Get-Clipboard -Raw -ErrorAction Stop)).Trim().Trim('"')
+        }
+        catch {
+            $candidate = ''
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($candidate)) {
+        throw 'Copy a destination folder path to the clipboard, then run this Button again.'
+    }
+    if (Test-Path -LiteralPath $candidate -PathType Leaf) {
+        $candidate = Split-Path -Parent (Get-Item -LiteralPath $candidate -Force).FullName
+    }
+    if (-not [System.IO.Path]::IsPathRooted($candidate) -or
+        -not (Test-Path -LiteralPath $candidate -PathType Container)) {
+        throw "The destination is not an existing absolute folder: $candidate"
+    }
+    $resolved = [System.IO.Path]::GetFullPath($candidate)
+    $volumeRoot = [System.IO.Path]::GetPathRoot($resolved)
+    if (-not $resolved.Equals($volumeRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+        $resolved = $resolved.TrimEnd([char[]]@('\', '/'))
+    }
+    $item = Get-Item -LiteralPath $resolved -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The destination root cannot be a symbolic link or reparse point.'
+    }
+    return $resolved
+}
+
+function Normalize-RelativeFolder {
+    param([string]$Value)
+
+    $normalized = $Value.Trim().Replace('\', '/').Trim('/')
+    if ([string]::IsNullOrWhiteSpace($normalized) -or $normalized -eq '.' -or
+        [System.IO.Path]::IsPathRooted($normalized)) {
+        throw 'A saved profile target folder is invalid.'
+    }
+    $invalid = [System.IO.Path]::GetInvalidFileNameChars()
+    $segments = @($normalized.Split('/') | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    foreach ($segment in $segments) {
+        if ($segment -eq '.' -or $segment -eq '..' -or $segment.IndexOfAny($invalid) -ge 0) {
+            throw 'A saved profile target folder contains an unsafe path component.'
+        }
+    }
+    return ($segments -join '/')
+}
+
+function Resolve-TargetFolder {
+    param(
+        [string]$RootPath,
+        [string]$RelativePath
+    )
+
+    $relative = Normalize-RelativeFolder -Value $RelativePath
+    $candidate = $RootPath
+    foreach ($segment in $relative.Split('/')) {
+        $candidate = Join-Path $candidate $segment
+        if (Test-Path -LiteralPath $candidate) {
+            $item = Get-Item -LiteralPath $candidate -Force
+            if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+                throw "A profile target cannot traverse a reparse point: $candidate"
+            }
+        }
+    }
+    $resolved = [System.IO.Path]::GetFullPath($candidate)
+    $prefix = $RootPath.TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $resolved.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw 'A saved profile target resolves outside the destination root.'
+    }
+    return $resolved
+}
+
+function Read-SavedProfile {
+    $flowCellRoot = Resolve-FlowCellRoot
+    $path = Join-Path $flowCellRoot "flowcellbackend\local\program-data\windows\setup-organization\profiles\$($script:ProfileId).json"
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        throw "Saved Setup Organization profile '$($script:ProfileId)' was not found."
+    }
+    $item = Get-Item -LiteralPath $path -Force
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+        throw 'The saved profile cannot be a symbolic link or reparse point.'
+    }
+    try {
+        $profile = Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "The saved profile is invalid JSON: $($_.Exception.Message)"
+    }
+    if ([int]$profile.schemaVersion -ne 1 -or
+        [string]$profile.format -ne $script:ProfileFormat -or
+        [string]$profile.profileId -ne $script:ProfileId -or
+        $null -eq $profile.rules -or
+        $profile.rules -is [string]) {
+        throw 'The saved profile does not match this generated Button.'
+    }
+    return $profile
+}
+
+function Test-RuleMatch {
+    param(
+        $Rule,
+        [System.IO.FileInfo]$File
+    )
+
+    if ($Rule.enabled -isnot [bool] -or -not [bool]$Rule.enabled) {
+        return $false
+    }
+    if ($Rule.matchAll -isnot [bool]) {
+        throw 'The saved profile contains an invalid matchAll value.'
+    }
+    if ([bool]$Rule.matchAll) {
+        return $true
+    }
+    if ($null -eq $Rule.extensions -or $Rule.extensions -is [string]) {
+        throw 'The saved profile contains invalid extensions.'
+    }
+    $extensions = @($Rule.extensions | ForEach-Object { ([string]$_).Trim().ToLowerInvariant() })
+    $extensionMatches = $extensions.Count -eq 0 -or $extensions -contains $File.Extension.ToLowerInvariant()
+    $fragment = ([string]$Rule.nameContains).Trim()
+    $nameMatches = [string]::IsNullOrWhiteSpace($fragment) -or
+        $File.Name.IndexOf($fragment, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+    return $extensionMatches -and $nameMatches
+}
+
+try {
+    $root = Resolve-TargetRoot -RequestedPath $TargetPath
+    $profile = Read-SavedProfile
+    $targets = @{}
+    foreach ($rule in @($profile.rules)) {
+        if ($rule.enabled -isnot [bool] -or -not [bool]$rule.enabled) {
+            continue
+        }
+        $ruleId = ([string]$rule.ruleId).Trim()
+        if ([string]::IsNullOrWhiteSpace($ruleId) -or $ruleId -notmatch '^[a-zA-Z0-9._-]+$') {
+            throw 'The saved profile contains an invalid rule identity.'
+        }
+        $target = Resolve-TargetFolder -RootPath $root -RelativePath ([string]$rule.targetFolder)
+        if (-not (Test-Path -LiteralPath $target)) {
+            [System.IO.Directory]::CreateDirectory($target) | Out-Null
+        }
+        $targets[$ruleId] = $target
+    }
+
+    $moved = 0
+    $skipped = 0
+    $unmatched = 0
+    foreach ($file in @(Get-ChildItem -LiteralPath $root -File -Force | Sort-Object -Property Name)) {
+        if (($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+            $skipped += 1
+            continue
+        }
+        $matchedRule = $null
+        foreach ($rule in @($profile.rules)) {
+            if (Test-RuleMatch -Rule $rule -File $file) {
+                $matchedRule = $rule
+                break
+            }
+        }
+        if ($null -eq $matchedRule) {
+            $unmatched += 1
+            continue
+        }
+        $destination = Join-Path $targets[[string]$matchedRule.ruleId] $file.Name
+        if (Test-Path -LiteralPath $destination) {
+            $skipped += 1
+            continue
+        }
+        Move-Item -LiteralPath $file.FullName -Destination $destination
+        $moved += 1
+    }
+
+    @(
+        "Applied profile: $($profile.name)",
+        "Target: $root",
+        "Folders ensured: $($targets.Count)",
+        "Files moved: $moved",
+        "Files skipped: $skipped",
+        "Files unmatched: $unmatched"
+    ) -join [Environment]::NewLine
+    exit 0
+}
+catch {
+    Write-Error $_.Exception.Message
+    exit 1
+}

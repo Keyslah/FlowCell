@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.sort",
+  "label": "Sort",
+  "tooltip": "Sort all non-system top-level document layers into Live, Snapshots, and Trash while preserving the five system roots; no Layer Tree highlight required.",
+  "program": "Illustrator",
+  "source": "Sort.jsx"
+}

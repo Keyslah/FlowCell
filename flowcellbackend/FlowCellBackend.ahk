@@ -224,6 +224,69 @@ GetIniTextValue(iniText, sectionName, keyName, defaultValue := "") {
     return defaultValue
 }
 
+GetPreservedBindingsIniSections(iniText) {
+    output := ""
+    keepCurrentSection := false
+    normalizedText := StrReplace(iniText, "`r", "")
+
+    for rawLine in StrSplit(normalizedText, "`n") {
+        line := Trim(rawLine)
+        lineLength := StrLen(line)
+        isSectionHeader := lineLength >= 2
+            && SubStr(line, 1, 1) = "["
+            && SubStr(line, lineLength, 1) = "]"
+        if isSectionHeader {
+            sectionName := StrLower(Trim(SubStr(line, 2, lineLength - 2)))
+            keepCurrentSection := sectionName != "meta" && InStr(sectionName, "binding_") != 1
+            if keepCurrentSection {
+                if output != ""
+                    output .= "`r`n`r`n"
+                output .= rawLine
+            }
+            continue
+        }
+
+        if keepCurrentSection
+            output .= "`r`n" rawLine
+    }
+
+    return RTrim(output, "`r`n")
+}
+
+GetPreservedBindingsMetaEntries(iniText) {
+    entries := []
+    currentSection := ""
+    normalizedText := StrReplace(iniText, "`r", "")
+
+    for rawLine in StrSplit(normalizedText, "`n") {
+        line := Trim(rawLine)
+        if line = "" || SubStr(line, 1, 1) = ";" || SubStr(line, 1, 1) = "#"
+            continue
+
+        lineLength := StrLen(line)
+        if lineLength >= 2 && SubStr(line, 1, 1) = "[" && SubStr(line, lineLength, 1) = "]" {
+            currentSection := StrLower(Trim(SubStr(line, 2, lineLength - 2)))
+            continue
+        }
+        if currentSection != "meta"
+            continue
+
+        separatorIndex := InStr(line, "=")
+        if separatorIndex <= 1
+            continue
+        key := Trim(SubStr(line, 1, separatorIndex - 1))
+        normalizedKey := StrLower(key)
+        if normalizedKey = "nextid" || normalizedKey = "ids"
+            continue
+        entries.Push({
+            key: key,
+            value: Trim(SubStr(line, separatorIndex + 1))
+        })
+    }
+
+    return entries
+}
+
 IsFlowCellProgramRegistered(programLabel) {
     global flowCellBindingsPath
     if !FileExist(flowCellBindingsPath)
@@ -3852,11 +3915,19 @@ class ScriptShortcutManager {
     }
 
     SaveToDisk() {
-        if FileExist(this.bindingFilePath)
+        preservedSections := ""
+        preservedMetaEntries := []
+        if FileExist(this.bindingFilePath) {
+            existingText := ReadUtf8TextFileWithoutBom(this.bindingFilePath)
+            preservedSections := GetPreservedBindingsIniSections(existingText)
+            preservedMetaEntries := GetPreservedBindingsMetaEntries(existingText)
             FileDelete this.bindingFilePath
+        }
 
         IniWrite this.nextId, this.bindingFilePath, "Meta", "NextId"
         IniWrite this.BuildIdList(), this.bindingFilePath, "Meta", "Ids"
+        for entry in preservedMetaEntries
+            IniWrite entry.value, this.bindingFilePath, "Meta", entry.key
 
         for binding in this.bindings {
             section := "Binding_" binding.id
@@ -3879,7 +3950,9 @@ class ScriptShortcutManager {
         ; IniWrite creates new files as UTF-16 (BOM FF FE). The Tauri/Rust side reads this
         ; file with a strict UTF-8 reader, so re-save as UTF-8 or the frontend bindings
         ; parser fails outright. FileRead auto-detects the source BOM/encoding.
-        normalizedText := FileRead(this.bindingFilePath)
+        normalizedText := RTrim(FileRead(this.bindingFilePath), "`r`n")
+        if preservedSections != ""
+            normalizedText .= "`r`n`r`n" preservedSections "`r`n"
         FileDelete this.bindingFilePath
         FileAppend normalizedText, this.bindingFilePath, "UTF-8"
     }

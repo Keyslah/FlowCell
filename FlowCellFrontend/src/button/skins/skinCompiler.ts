@@ -139,10 +139,11 @@ export function compileButtonSkin(skin: ButtonSkin): ButtonSkinCompileResult {
   }
 
   const css = [
-    ":host{display:inline-block;box-sizing:border-box;overflow:visible;line-height:normal;pointer-events:none;contain:layout style;}",
+    ":host{display:inline-block;box-sizing:border-box;overflow:visible;line-height:normal;pointer-events:auto;contain:layout style;}",
     "[data-button-skin-root]{display:inline-block;position:relative;box-sizing:border-box;overflow:visible;pointer-events:none;}",
     "[data-button-skin-root] *{pointer-events:none;}",
-    "[data-core]{pointer-events:none!important;touch-action:none;user-select:none;-webkit-user-select:none;}",
+    "[data-core]{pointer-events:auto!important;touch-action:none;user-select:none;-webkit-user-select:none;}",
+    "svg[data-core]{pointer-events:bounding-box!important;}",
     "[data-button-label-node]{font-size:var(--button-label-font-size,inherit);line-height:inherit;}",
     "[data-button-label-line]{display:block;white-space:nowrap;}",
     ":host([data-button-constrained=\"true\"]) [data-core]{box-sizing:border-box;width:var(--button-core-width);height:var(--button-core-height);}",

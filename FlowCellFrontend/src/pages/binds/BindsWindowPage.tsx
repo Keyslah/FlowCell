@@ -482,14 +482,21 @@ export default function BindsWindowPage({
         return;
       }
 
-      const target = selectedButton.executionTarget?.trim() || selectedButton.target;
-      const isToolSetChild = selectedButton.kind.trim().toLowerCase() === "tool-set-child";
+      const selectedKind = selectedButton.kind.trim().toLowerCase();
+      const targetKind =
+        selectedKind === "tool-set-owner" || selectedKind === "tool-set-child"
+          ? selectedKind
+          : "script";
+      const target =
+        targetKind === "script"
+          ? selectedButton.executionTarget?.trim() || selectedButton.target
+          : selectedButton.target;
       const result = await saveBindShortcut({
         programName: selectedProgram.name,
         programTabId: selectedProgram.programTabId,
         target,
-        targetKind: isToolSetChild ? "tool-set-child" : "script",
-        ownerButtonId: isToolSetChild ? selectedButton.ownerButtonId : undefined,
+        targetKind,
+        ownerButtonId: targetKind === "script" ? undefined : selectedButton.ownerButtonId,
         bindingId: selectedButton.bindingId ?? 0,
         shortcut: validation.shortcut
       });
