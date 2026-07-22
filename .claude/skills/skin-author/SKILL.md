@@ -1,6 +1,6 @@
 ---
 name: skin-author
-description: Author FlowCell Button Editor skins in the canonical sectioned paste format. Use for writing, converting, or debugging render-only Button skins, optional visible labels, exact data-core hitboxes, state declarations, and gated keyframes.
+description: Author FlowCell Button Editor skins in the canonical sectioned paste format. Use for writing, converting, or debugging render-only Button skins, optional visible and alternate faces, exact data-core hitboxes, state declarations, and gated keyframes.
 ---
 
 ## skin-author
@@ -65,6 +65,7 @@ For a new skin, a conversion, or a complete replacement, emit every canonical he
 - The core may use content-driven or responsive sizing. The placement remains authoritative when the editor supplies exact width and height. In Responsive mode the host forces the core to that exact box, resets authored core min/max constraints, and performs no root transform; nested faces must use flexible layout such as `inset:0`, percentages, flex, or grid if they are expected to reflow cleanly at arbitrary dimensions. Do not rewrite a literal converted skin merely to make it responsive unless the user asks for that source change.
 - Decorative wrappers, shadows, glows, and SVG may extend beyond the core, but they must remain pointer-inert.
 - Keep intentional 3D depth, bevel insets, shadows, and glows on nested visual children. For new skins, do not invent transparent core padding to simulate placement gaps. For literal conversions, preserve transparent padding already authored on the source control when it participates in that control's shape or depth.
+- When a Button state needs a complete alternate appearance, produce one paste-ready composite skin: put every alternate face inside the same stable `data-core` as pointer-inert nested visual markup, then use canonical state declarations and CSS custom properties to reveal the intended face. Never emit another functional Button, another `data-core`, another hitbox, or a runtime skin swap for an alternate state.
 - Use real child elements instead of pseudo-elements when state or animation must target them.
 - Put every state-controlled value on a nested face, icon, frame, or decorative child behind a CSS custom property with a sensible fallback.
 - Initialize every resting visual custom property explicitly in `base`. Structure fallbacks are safety defaults, not a substitute for authored Base state.
@@ -99,6 +100,23 @@ When converting a React, JSX, or styled-components example:
 - Main-page selection reuses `pressed` as a latched visual state until deselection; do not author a separate selection outline or wrapper chrome.
 - `disabled` and `error` represent host-owned functional states.
 - Forbidden values include `position: fixed`, `javascript:`, and `expression(`.
+
+The canonical Base, Hover, Play, Pressed, Held, Release, Disabled, and Error
+sections remain raw author-editable skin code. Hover is not synthesized by a
+behavior setting: author its visual declarations in `hover`, including leaving it
+empty when the source has no hover appearance.
+
+Button behavior is outside skin source. The Button record owns `momentary`,
+`toggle`, or `cycle` behavior plus stable logical states and their per-trigger
+labels. The current logical-state index exists only for the running session and
+resets when FlowCell restarts. Each placement owns the skin-dependent mapping from
+logical Button state and interaction trigger to one of the canonical visual
+sections. The Skin Editor exposes nested state, trigger, and visual-state
+dropdowns; the visual-state selector reflects the working skin and identifies empty
+sections so their declarations can be authored. Button Text exposes matching state
+and trigger dropdowns for Rest, Hover, Play, Pressed, Held, Release, Selected,
+Disabled, and Error labels. Do not encode execution, toggle state, cycle counters, label sequences, or
+persistence in skin markup or CSS.
 
 ### Keyframes and animation
 
@@ -193,7 +211,7 @@ background: transparent;
 
 ### Scope and output
 
-This format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Assigned and library skins persist in `flowcellbackend/local/button-system/button-state.json`. `Save as new skin` also opens a native picker and exports the canonical paste-ready source as `.flowcell-button-skin.txt` without assigning it.
+This format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Assigned and library skins persist in `flowcellbackend/local/button-system/button-state.json`. `Save as new skin` also opens a native picker and exports the canonical paste-ready source as `.flowcell-button-skin.txt` without assigning it. Before editing a skin, inspect whether the focused placement inherits a shared `defaultSkinId`. Default to forking and assigning a focused-placement override, and warn which placements or tool-set children would change before any explicit shared or panel-wide mutation.
 
 ### Required preflight
 

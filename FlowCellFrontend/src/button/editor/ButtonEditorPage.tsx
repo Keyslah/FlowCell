@@ -105,9 +105,11 @@ import {
 } from "./buttonSizeAssignments";
 import {
   applyButtonAnimationSavedScope,
+  applyButtonBehaviorSavedScope,
   applyButtonPlacementSavedScope,
   applyButtonSkinSavedScope,
   buildButtonAnimationScopedDocument,
+  buildButtonBehaviorScopedDocument,
   buildButtonPlacementScopedDocument,
   buildButtonSkinScopedDocument,
   buttonSkinsEqual,
@@ -280,6 +282,7 @@ function createButtonRecord(args: {
     defaultTextFitMode: "shrink",
     disabled: false,
     activationAnimation: null,
+    activationBehavior: null,
     toolSetParentId: args.parentId ?? null,
     toolSetBehavior: args.behavior ?? null,
     metadata: args.metadata ?? {}
@@ -324,6 +327,7 @@ function addPlacement(
     allowLabelResize: false,
     matchHitboxToSkin: !surface.uniformButtonSize,
     allowStretching: false,
+    visualStateMap: null,
     resizeAnchor: "top-left"
   };
   document.placements[id] = placement;
@@ -1605,6 +1609,30 @@ function ButtonEditorContent({
     ? [selectedButton.id]
     : [];
 
+  const applyButtonStateSetup = async () => {
+    const button = selectedButton;
+    if (!button) return;
+    if (!store.committed.buttons[button.id]) {
+      setMessage("Save placement first because this is a new Button.");
+      return;
+    }
+    const placementIds = Object.values(store.current().placements)
+      .filter((placement) => placement.buttonId === button.id)
+      .map((placement) => placement.id);
+    const unsavedPlacement = placementIds.find((placementId) => !store.committed.placements[placementId]);
+    if (unsavedPlacement) {
+      setMessage("Save placement first because this Button has a new placement.");
+      return;
+    }
+    const scope = { buttonId: button.id, placementIds };
+    const next = buildButtonBehaviorScopedDocument(store.committed, store.current(), scope);
+    await commitScopedDocument(
+      next,
+      (draft, saved) => applyButtonBehaviorSavedScope(draft, saved, scope),
+      `Button state setup applied to '${button.label}'.`
+    );
+  };
+
   const saveWorkingSkin = async (workingSkin: ButtonSkin) => {
     const nextDraft = cloneButtonDocument(store.current());
     nextDraft.skins[workingSkin.id] = cloneButtonDocument(workingSkin);
@@ -1937,12 +1965,48 @@ function ButtonEditorContent({
           surfaceButtonCount={selectedSurfaceButtonCount}
           allSurfaceButtonsSameSize={allSurfaceButtonsSameSize}
           buttonLabel={selectedButton?.label ?? "Button Preview"}
+          activationBehavior={selectedButton?.activationBehavior ?? null}
+          visualStateMap={selectedPlacement?.visualStateMap ?? null}
           onButtonLabelChange={(label) => {
             if (!selectedButton) return;
             store.transact((draft) => {
-              draft.buttons[selectedButton.id].label = label;
+              const target = draft.buttons[selectedButton.id];
+              target.label = label;
+              if (target.activationBehavior?.states[0]) {
+                target.activationBehavior.states[0].label = label;
+              }
             }, { label: "Edit Button label", coalesceKey: `label:${selectedButton.id}` });
           }}
+          onActivationBehaviorChange={(behavior, removedStateIds = []) => {
+            if (!selectedButton) return;
+            store.transact((draft) => {
+              const target = draft.buttons[selectedButton.id];
+              target.activationBehavior = cloneButtonDocument(behavior);
+              if (behavior.states[0]) target.label = behavior.states[0].label;
+              if (removedStateIds.length > 0) {
+                for (const placement of Object.values(draft.placements)) {
+                  if (placement.buttonId !== selectedButton.id || !placement.visualStateMap) continue;
+                  for (const stateId of removedStateIds) delete placement.visualStateMap[stateId];
+                  if (Object.keys(placement.visualStateMap).length === 0) {
+                    placement.visualStateMap = null;
+                  }
+                }
+              }
+            }, {
+              label: "Edit Button activation states",
+              coalesceKey: `activation-behavior:${selectedButton.id}`
+            });
+          }}
+          onVisualStateMapChange={(visualStateMap) => {
+            if (!selectedPlacement) return;
+            store.transact((draft) => {
+              draft.placements[selectedPlacement.id].visualStateMap = cloneButtonDocument(visualStateMap);
+            }, {
+              label: "Map Button visual state",
+              coalesceKey: `visual-state-map:${selectedPlacement.id}`
+            });
+          }}
+          onApplyButtonStateSetup={() => void applyButtonStateSetup()}
           onAssignSize={assignSizeToSelectedPlacement}
           onAssignSizeToPanel={assignSizeToPanel}
           onPlacementTextChange={(patch, coalesceKey) => {

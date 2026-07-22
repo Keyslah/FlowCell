@@ -73,6 +73,24 @@ test("Button Text exposes selected-placement horizontal alignment", () => {
   assert.match(editor, /textAlignment=\{placement\.textAlignment\}/);
 });
 
+test("Skin Editor exposes nested behavior, per-state labels, and skin-aware visual mapping", () => {
+  const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+
+  assert.match(skinEditor, /<span>Button Behavior<\/span>/);
+  assert.match(skinEditor, /<span>Activation behavior<\/span>[\s\S]{0,220}BUTTON_ACTIVATION_MODES\.map/);
+  assert.match(skinEditor, /<span>Button state<\/span>/);
+  assert.match(skinEditor, /className="button-behavior-state-grid"[\s\S]{0,760}<span>When<\/span>[\s\S]{0,760}<span>Visual state<\/span>/);
+  assert.match(skinEditor, /const availableVisualStates = BUTTON_SKIN_VISUAL_STATES;/);
+  assert.match(skinEditor, /!workingSkin\[visualState\]\.trim\(\)[\s\S]{0,300}\(empty in this skin\)/);
+  assert.match(skinEditor, /<span>Label condition<\/span>[\s\S]{0,1300}selectedState\.labelOverrides\[selectedAppearanceTrigger\]/);
+  assert.match(skinEditor, />Add state<\/[a-z]+>[\s\S]{0,240}>\s*Remove state\s*</);
+  assert.match(skinEditor, /setPreviewVisualStateOverride\(visualState\)/);
+  assert.equal(skinEditor.match(/>\s*Apply Button state setup\s*</g)?.length, 2);
+  assert.match(editor, /for \(const placement of Object\.values\(draft\.placements\)\)[\s\S]{0,220}delete placement\.visualStateMap\[stateId\]/);
+  assert.match(editor, /onApplyButtonStateSetup=\{\(\) => void applyButtonStateSetup\(\)\}/);
+});
+
 test("Save as new skin opens a native file picker and writes canonical portable source", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   assert.match(editor, /const saveWorkingSkinAsNew = async/);

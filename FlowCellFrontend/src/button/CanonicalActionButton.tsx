@@ -35,6 +35,7 @@ export function CanonicalActionButton({
     defaultTextFitMode: "shrink-and-stack",
     disabled,
     activationAnimation: null,
+    activationBehavior: null,
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: {}
@@ -56,6 +57,7 @@ export function CanonicalActionButton({
     allowLabelResize: false,
     matchHitboxToSkin: true,
     allowStretching: false,
+    visualStateMap: null,
     resizeAnchor: "top-left"
   }), [height, id, width]);
   return (

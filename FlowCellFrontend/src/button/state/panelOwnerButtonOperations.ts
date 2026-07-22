@@ -274,6 +274,7 @@ function ensurePanelOwnerButton(
     defaultTextFitMode: "shrink-and-stack",
     disabled: false,
     activationAnimation: null,
+    activationBehavior: null,
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: { programName, panelName }
@@ -338,6 +339,7 @@ function ensurePanelOwnerMainPlacement(
     allowLabelResize: false,
     matchHitboxToSkin: true,
     allowStretching: false,
+    visualStateMap: null,
     resizeAnchor: "top-left"
   };
   document.placements[id] = placement;

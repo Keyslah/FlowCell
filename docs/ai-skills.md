@@ -203,11 +203,26 @@ Proportional, or Stretch behavior in a working preview. Assign Size applies that
 preview only to the focused placement; Assign Size to Panel applies the target
 once to every Button on the edited placement's current surface, preserving each natural aspect in
 Proportional mode, and does not write the legacy linked-size format. The Button
-Text label updates the Button draft; fit mode, horizontal `Use skin`, `Left`,
+Behavior section uses an outer mode dropdown plus nested logical-state,
+interaction-trigger, and visual-state dropdowns. `momentary`, `toggle`, and `cycle`
+behavior and per-state/per-trigger labels are Button-owned. The placement owns the
+skin-dependent visual mapping, and the current activation-state index is runtime-only
+session state that resets when FlowCell restarts. The Button Text section uses matching
+state and trigger dropdowns to update the Button draft label for Rest, Hover, Play,
+Pressed, Held, Release, Selected, Disabled, or Error. Fit mode, horizontal `Use skin`, `Left`,
 `Center`, or `Right` alignment, starting text size, and minimum shrink size are
 independent focused-placement settings committed by Save placement. Alignment
 overrides the rendered text only for that placement and never rewrites skin source;
 `Use skin` removes the override and restores the authored alignment.
+The raw Base, Hover, Play, Pressed, Held, Release, Disabled, and Error source
+sections remain directly editable; the mapping dropdowns select among them and do
+not replace their code editors. The visual-state selector reflects the working skin
+and marks empty sections so their declarations can be authored. Because edited shared skin source can affect every
+inheriting placement and tool-set child, default to a forked focused-placement
+override and expose the blast radius before any explicit panel-wide or global change.
+Use `Apply Button state setup` in either Button Behavior or Button Text to commit
+the Button-owned mode/labels and its placement-owned visual maps. `Save skin`
+continues to persist visual source and is not a substitute for this state-setup action.
 
 The source of truth for section names is `FlowCellFrontend/src/button/skins/buttonSkinFormat.ts`. Produce canonical lowercase headers only:
 
@@ -247,6 +262,7 @@ New skins, conversions, and complete replacements must include every canonical h
 - Core font metrics must be deterministic across Editor/Main/Pop/Fan hosts. Do not inherit them on `data-core`; a labeled core, or a core with `em` geometry, requires an effective pixel font size and pixel line-height so host typography cannot change its measured aspect.
 - For an animation-only skin, keep `data-core` nonzero and measurable but visually unpainted if desired. FlowCell adds no label or fallback Button face; the saved Button label remains the accessible name.
 - Keep decorative wrappers and layers pointer-inert. They may be inside or outside `data-core` when literal source stacking requires it.
+- A complete alternate visual for a logical Button state is a Skin Author-produced composite paste block with pointer-inert nested faces inside that same `data-core`. Reveal faces through canonical state declarations and CSS custom properties. Never create another functional Button, another `data-core`, another hitbox, or a runtime skin swap for an alternate appearance.
 - No scripts, event-handler attributes, network access, navigation, backend calls, or state mutation.
 - No React skin registry in version one.
 - Put `data-anim="token"` on real animated elements; do not add unconditional animation in structure.
@@ -256,6 +272,8 @@ When converting React, JSX, or styled-components source, treat the imported visu
 ### State and keyframe rules
 
 - State sections contain declarations only: no selectors, braces, markup, or at-rules.
+- Base, Hover, Play, Pressed, Held, Release, Disabled, and Error remain the canonical raw authored visual sections, including an empty or authored Hover section. Button-owned momentary/toggle/cycle behavior and label sequencing map onto these sections at runtime; skin source never owns the activation index, label sequence, or execution rule.
+- Visual mapping is placement-owned because the valid appearance depends on the assigned skin. Editing a map changes no skin source, and editing shared skin source changes no Button behavior.
 - The core's inline `style` compiles into a lowest-priority `[data-core]` rule, so ordinary state declarations override inline defaults on that core. Nested visual elements remain literal and must consume state-controlled custom properties initialized explicitly in `base`.
 - Use custom properties for decoration shared across the structure.
 - `keyframes` contains only `@keyframes` or `@-webkit-keyframes` blocks.

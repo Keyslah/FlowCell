@@ -10,6 +10,11 @@ export interface ButtonSkinSaveScope {
   buttonIds?: readonly string[];
 }
 
+export interface ButtonBehaviorSaveScope {
+  buttonId: string;
+  placementIds: readonly string[];
+}
+
 function copyNewRecords<T>(
   target: Record<string, T>,
   committed: Record<string, T>,
@@ -217,6 +222,59 @@ export function applyButtonSkinSavedScope(
   for (const buttonId of scope.buttonIds ?? []) {
     const button = saved.buttons[buttonId];
     if (button && target.buttons[buttonId]) target.buttons[buttonId].label = button.label;
+  }
+}
+
+/**
+ * Button activation behavior is Button-owned, while its authored-skin visual
+ * mapping is placement-owned. Persisting them together keeps stable state IDs
+ * and placement mappings in one explicit Apply action without coupling either
+ * to Save skin or Save placement.
+ */
+export function buildButtonBehaviorScopedDocument(
+  committed: ButtonStateDocument,
+  draft: ButtonStateDocument,
+  scope: ButtonBehaviorSaveScope
+): ButtonStateDocument {
+  const committedButton = requireDraftRecord(committed.buttons, scope.buttonId, "Saved Button");
+  const draftButton = requireDraftRecord(draft.buttons, scope.buttonId, "Button");
+  const next = cloneButtonDocument(committed);
+  next.buttons[scope.buttonId] = {
+    ...structuredClone(committedButton),
+    label: draftButton.label,
+    activationBehavior: structuredClone(draftButton.activationBehavior)
+  };
+  for (const placementId of scope.placementIds) {
+    const committedPlacement = requireDraftRecord(
+      committed.placements,
+      placementId,
+      "Saved Button placement"
+    );
+    const draftPlacement = requireDraftRecord(draft.placements, placementId, "Button placement");
+    next.placements[placementId] = {
+      ...structuredClone(committedPlacement),
+      visualStateMap: structuredClone(draftPlacement.visualStateMap)
+    };
+  }
+  next.revision = committed.revision;
+  return next;
+}
+
+export function applyButtonBehaviorSavedScope(
+  target: ButtonStateDocument,
+  saved: ButtonStateDocument,
+  scope: ButtonBehaviorSaveScope
+): void {
+  const button = saved.buttons[scope.buttonId];
+  if (button && target.buttons[scope.buttonId]) {
+    target.buttons[scope.buttonId].label = button.label;
+    target.buttons[scope.buttonId].activationBehavior = structuredClone(button.activationBehavior);
+  }
+  for (const placementId of scope.placementIds) {
+    const placement = saved.placements[placementId];
+    if (placement && target.placements[placementId]) {
+      target.placements[placementId].visualStateMap = structuredClone(placement.visualStateMap);
+    }
   }
 }
 

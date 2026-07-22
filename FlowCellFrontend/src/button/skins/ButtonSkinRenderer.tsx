@@ -52,6 +52,13 @@ export interface ButtonSkinRendererProps {
   release?: boolean;
   disabled?: boolean;
   error?: boolean;
+  /**
+   * Raw physical interaction state used by native visual measurement/sampling.
+   * When omitted, the displayed visual flags above are sampled as before.
+   */
+  samplingState?: ButtonVisualState;
+  /** Restarts a short measurement pulse for a persistent mapped-state change. */
+  transitionSamplingKey?: string | number;
   onCoreElementChange?: (element: HTMLElement | SVGElement | null) => void;
   onLabelElementChange?: (element: HTMLElement | SVGElement | null) => void;
   onShadowRootChange?: (root: ShadowRoot | null) => void;
@@ -72,6 +79,7 @@ interface MountedSkin {
 type ButtonHostRenderScale = ButtonSkinScale;
 
 const IDENTITY_HOST_RENDER_SCALE: ButtonHostRenderScale = { scaleX: 1, scaleY: 1 };
+const BUTTON_PERSISTENT_VISUAL_SAMPLE_FRAMES = 12;
 
 function resolveHostRenderScale(
   host: HTMLElement,
@@ -748,6 +756,8 @@ export function ButtonSkinRenderer({
   release = false,
   disabled = false,
   error = false,
+  samplingState,
+  transitionSamplingKey,
   onCoreElementChange,
   onLabelElementChange,
   onShadowRootChange,
@@ -760,11 +770,17 @@ export function ButtonSkinRenderer({
   const hostRef = useRef<HTMLSpanElement | null>(null);
   const lastValidRef = useRef<CompiledButtonSkin | null>(null);
   const mountedRef = useRef<MountedSkin | null>(null);
-  const fittedSizeRef = useRef<{
+  const fittedTextRef = useRef<{
     width?: number;
     height?: number;
+    label: string;
+    textFitMode: ButtonTextFitMode;
+    minimumFontSize: number;
+    constrained: boolean;
     matchHitboxToSkin: boolean;
     allowStretching: boolean;
+    textSizeOverride?: number;
+    previewStackWords: boolean;
   } | null>(null);
   const sizingRef = useRef({
     width,
@@ -810,15 +826,28 @@ export function ButtonSkinRenderer({
   const renderedLabel = compiled?.hasLabelToken ? label : "";
   const hasMeasurementConsumer = Boolean(onMeasurement || onVisualMeasurement);
   const hasVisualMeasurementConsumer = Boolean(onVisualMeasurement);
+  const sampledHovered = samplingState?.hovered ?? hovered;
+  const sampledPressed = samplingState?.pressed ?? pressed;
+  const sampledHeld = samplingState?.held ?? held;
+  const sampledPlay = samplingState?.play ?? play;
+  const sampledRelease = samplingState?.release ?? release;
+  const sampledError = samplingState?.error ?? error;
   const visualStateRef = useRef<ButtonVisualState>({
-    hovered,
-    pressed,
-    held,
-    play,
-    release,
-    error
+    hovered: sampledHovered,
+    pressed: sampledPressed,
+    held: sampledHeld,
+    play: sampledPlay,
+    release: sampledRelease,
+    error: sampledError
   });
-  visualStateRef.current = { hovered, pressed, held, play, release, error };
+  visualStateRef.current = {
+    hovered: sampledHovered,
+    pressed: sampledPressed,
+    held: sampledHeld,
+    play: sampledPlay,
+    release: sampledRelease,
+    error: sampledError
+  };
 
   useLayoutEffect(() => {
     onDiagnosticsRef.current?.(compileResult.ok ? [] : compileResult.diagnostics);
@@ -865,11 +894,17 @@ export function ButtonSkinRenderer({
       allowStretching,
       resolveHostRenderScale(host, width, height)
     );
-    fittedSizeRef.current = {
+    fittedTextRef.current = {
       width,
       height,
+      label: renderedLabel,
+      textFitMode,
+      minimumFontSize,
+      constrained,
       matchHitboxToSkin,
-      allowStretching
+      allowStretching,
+      textSizeOverride,
+      previewStackWords: Boolean(previewStackWords)
     };
     setBooleanAttribute(host, "data-button-text-overflow", overflow);
     onTextOverflowChangeRef.current?.(overflow);
@@ -899,10 +934,6 @@ export function ButtonSkinRenderer({
       : new ResizeObserver(updateMeasurement);
     observer?.observe(mounted.core);
     observer?.observe(mounted.container);
-    const natural = onNaturalMeasurementRef.current
-      ? measureNaturalSkin(compiled, renderedLabel, textSizeOverride)
-      : null;
-    if (natural) onNaturalMeasurementRef.current?.(natural);
     return () => {
       cancelAnimationFrame(frame);
       observer?.disconnect();
@@ -914,7 +945,13 @@ export function ButtonSkinRenderer({
     // The mount deps are the compiled skin's stable identity (skin id + source
     // fingerprint), not object identities: a re-cloned document or a re-created
     // callback must never rebuild the shadow DOM.
-  }, [compiled?.skinId, compiled?.sourceFingerprint, renderedLabel, textFitMode, minimumFontSize, constrained, textSizeOverride, previewStackWords, hasMeasurementConsumer]);
+  }, [compiled?.skinId, compiled?.sourceFingerprint, hasMeasurementConsumer]);
+
+  useLayoutEffect(() => {
+    if (!compiled || !onNaturalMeasurementRef.current) return;
+    const natural = measureNaturalSkin(compiled, renderedLabel, textSizeOverride);
+    if (natural) onNaturalMeasurementRef.current?.(natural);
+  }, [compiled?.skinId, compiled?.sourceFingerprint, renderedLabel, textSizeOverride]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -934,13 +971,19 @@ export function ButtonSkinRenderer({
     const host = hostRef.current;
     const mounted = mountedRef.current;
     if (!host || !mounted) return;
-    const fitted = fittedSizeRef.current;
+    const fitted = fittedTextRef.current;
     if (
       fitted &&
       fitted.width === width &&
       fitted.height === height &&
+      fitted.label === renderedLabel &&
+      fitted.textFitMode === textFitMode &&
+      fitted.minimumFontSize === minimumFontSize &&
+      fitted.constrained === constrained &&
       fitted.matchHitboxToSkin === matchHitboxToSkin &&
-      fitted.allowStretching === allowStretching
+      fitted.allowStretching === allowStretching &&
+      fitted.textSizeOverride === textSizeOverride &&
+      fitted.previewStackWords === Boolean(previewStackWords)
     ) return;
     setBooleanAttribute(host, "data-button-constrained", constrained && !matchHitboxToSkin);
     setBooleanAttribute(host, "data-button-match-hitbox-to-skin", matchHitboxToSkin);
@@ -962,15 +1005,23 @@ export function ButtonSkinRenderer({
       allowStretching,
       renderScale
     );
-    fittedSizeRef.current = {
+    fittedTextRef.current = {
       width,
       height,
+      label: renderedLabel,
+      textFitMode,
+      minimumFontSize,
+      constrained,
       matchHitboxToSkin,
-      allowStretching
+      allowStretching,
+      textSizeOverride,
+      previewStackWords: Boolean(previewStackWords)
     };
     setBooleanAttribute(host, "data-button-text-overflow", overflow);
     onTextOverflowChangeRef.current?.(overflow);
-    onMeasurementRef.current?.(readMeasurement(mounted.container, mounted.core, renderScale));
+    const measurement = readMeasurement(mounted.container, mounted.core, renderScale);
+    onMeasurementRef.current?.(measurement);
+    onVisualMeasurementRef.current?.({ ...measurement, state: visualStateRef.current });
   }, [width, height, renderedLabel, textFitMode, minimumFontSize, constrained, matchHitboxToSkin, allowStretching, textSizeOverride, previewStackWords]);
 
   useLayoutEffect(() => {
@@ -989,6 +1040,9 @@ export function ButtonSkinRenderer({
     if (!hasVisualMeasurementConsumer) return;
     let frame: number | null = null;
     let settleFramesRemaining = BUTTON_VISUAL_SETTLE_FRAMES;
+    let transitionFramesRemaining = transitionSamplingKey === undefined
+      ? 0
+      : BUTTON_PERSISTENT_VISUAL_SAMPLE_FRAMES;
     const sample = () => {
       const current = mountedRef.current;
       const onVisualMeasurement = onVisualMeasurementRef.current;
@@ -1009,7 +1063,8 @@ export function ButtonSkinRenderer({
         settleFramesRemaining
       });
       settleFramesRemaining = decision.settleFramesRemaining;
-      if (decision.continueSampling) {
+      if (decision.continueSampling || transitionFramesRemaining > 0) {
+        transitionFramesRemaining = Math.max(0, transitionFramesRemaining - 1);
         frame = requestAnimationFrame(sample);
       }
     };
@@ -1028,6 +1083,13 @@ export function ButtonSkinRenderer({
     release,
     disabled,
     error,
+    sampledHovered,
+    sampledPressed,
+    sampledHeld,
+    sampledPlay,
+    sampledRelease,
+    sampledError,
+    transitionSamplingKey,
     hasVisualMeasurementConsumer
   ]);
 

@@ -545,20 +545,35 @@
 .button-skin-section > p,
 .button-skin-section > .button-skin-size-grid,
 .button-skin-section > .button-skin-size-actions,
+.button-skin-section > .button-behavior-state-grid,
+.button-skin-section > .button-state-list-actions,
+.button-skin-section > .button-skin-preview-section,
+.button-skin-section > button,
 .button-skin-section > .button-text-bench-preview {
   margin: 8px;
   width: calc(100% - 16px);
 }
 
 .button-skin-size-grid,
-.button-skin-size-actions {
+.button-skin-size-actions,
+.button-behavior-state-grid,
+.button-state-list-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
-.button-skin-size-grid label {
+.button-skin-size-grid label,
+.button-behavior-state-grid label {
   min-width: 0;
+}
+
+.button-skin-preview-state {
+  margin-top: 9px;
+}
+
+.button-skin-preview-section {
+  justify-self: start;
 }
 
 .button-skin-section small.updated { color: #8fd5a4; }

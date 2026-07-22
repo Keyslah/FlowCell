@@ -450,6 +450,7 @@ function createMigratedButtonRecord(args: {
     defaultTextFitMode: "shrink",
     disabled: false,
     activationAnimation: null,
+    activationBehavior: null,
     toolSetParentId: args.parentId ?? null,
     toolSetBehavior: args.behavior ?? null,
     metadata: args.metadata ?? {}
@@ -501,6 +502,7 @@ function addMigratedPlacement(
     allowLabelResize: false,
     matchHitboxToSkin: true,
     allowStretching: false,
+    visualStateMap: null,
     resizeAnchor: "top-left"
   };
   document.placements[id] = placement;

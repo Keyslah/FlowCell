@@ -7,9 +7,11 @@ import {
 } from "./.compiled-button-system/button/state/buttonDefaults.js";
 import {
   applyButtonAnimationSavedScope,
+  applyButtonBehaviorSavedScope,
   applyButtonPlacementSavedScope,
   applyButtonSkinSavedScope,
   buildButtonAnimationScopedDocument,
+  buildButtonBehaviorScopedDocument,
   buildButtonPlacementScopedDocument,
   buildButtonSkinScopedDocument,
   skinHasReferencesOutsidePlacements
@@ -29,6 +31,7 @@ function documentWithButton() {
     defaultTextFitMode: "shrink",
     disabled: false,
     activationAnimation: null,
+    activationBehavior: null,
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: {}
@@ -50,7 +53,8 @@ function documentWithButton() {
     allowLabelResize: true,
     matchHitboxToSkin: true,
     allowStretching: false,
-    resizeAnchor: "top-left"
+    resizeAnchor: "top-left",
+    visualStateMap: null
   };
   document.surfaces[DEFAULT_BUTTON_SURFACE_ID].placementIds = ["placement-one"];
   return document;
@@ -218,6 +222,49 @@ test("skin save commits only the skin, explicit assignment, and Button text", ()
   assert.equal(draft.placements["placement-one"].textAlignment, "right");
   assert.equal(draft.placements["placement-one"].textSizeOverride, 21);
   assert.equal(draft.placements["placement-one"].matchHitboxToSkin, false);
+});
+
+test("Button behavior save commits labels, logical states, and placement visual mapping only", () => {
+  const committed = documentWithButton();
+  const draft = structuredClone(committed);
+  draft.buttons.one.label = "Off";
+  draft.buttons.one.activationBehavior = {
+    mode: "toggle",
+    states: [
+      { id: "off", label: "Off", labelOverrides: { hover: "Turn on" } },
+      { id: "on", label: "On", labelOverrides: { hover: "Turn off" } }
+    ]
+  };
+  draft.placements["placement-one"].visualStateMap = {
+    off: { hover: "held" },
+    on: { rest: "pressed" }
+  };
+  draft.placements["placement-one"].x = 333;
+  draft.placements["placement-one"].textFitMode = "stack-whole-words";
+
+  const scope = { buttonId: "one", placementIds: ["placement-one"] };
+  const saved = buildButtonBehaviorScopedDocument(committed, draft, scope);
+  assert.equal(saved.buttons.one.label, "Off");
+  assert.deepEqual(saved.buttons.one.activationBehavior, draft.buttons.one.activationBehavior);
+  assert.deepEqual(
+    saved.placements["placement-one"].visualStateMap,
+    draft.placements["placement-one"].visualStateMap
+  );
+  assert.equal(saved.placements["placement-one"].x, 10);
+  assert.equal(saved.placements["placement-one"].textFitMode, "shrink");
+
+  draft.buttons.one.label = "Pending label";
+  draft.buttons.one.activationBehavior = null;
+  draft.placements["placement-one"].visualStateMap = null;
+  applyButtonBehaviorSavedScope(draft, saved, scope);
+  assert.equal(draft.buttons.one.label, "Off");
+  assert.deepEqual(draft.buttons.one.activationBehavior, saved.buttons.one.activationBehavior);
+  assert.deepEqual(
+    draft.placements["placement-one"].visualStateMap,
+    saved.placements["placement-one"].visualStateMap
+  );
+  assert.equal(draft.placements["placement-one"].x, 333);
+  assert.equal(draft.placements["placement-one"].textFitMode, "stack-whole-words");
 });
 
 test("animation save retains unrelated draft placement geometry", () => {

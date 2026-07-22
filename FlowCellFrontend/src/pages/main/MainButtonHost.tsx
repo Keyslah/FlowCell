@@ -110,6 +110,7 @@ export function MainControlHost({
     defaultTextFitMode: "shrink-and-stack",
     disabled: Boolean(control.disabled),
     activationAnimation: null,
+    activationBehavior: null,
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: { actionId: control.actionId }
@@ -131,6 +132,7 @@ export function MainControlHost({
     allowLabelResize: false,
     matchHitboxToSkin: true,
     allowStretching: false,
+    visualStateMap: null,
     resizeAnchor: "top-left"
   };
 

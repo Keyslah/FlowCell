@@ -53,6 +53,7 @@ function makeExecutableButton(animation = null) {
     defaultTextFitMode: "shrink",
     disabled: false,
     activationAnimation: animation,
+    activationBehavior: null,
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: {}

@@ -196,6 +196,7 @@ function button(id, role, identity = null) {
     defaultTextFitMode: "shrink",
     disabled: false,
     activationAnimation: null,
+    activationBehavior: null,
     toolSetParentId: null,
     toolSetBehavior: null,
     metadata: {}
@@ -232,7 +233,8 @@ function addScopePanelSurface(document, id, name, buttonIds) {
       allowLabelResize: false,
       matchHitboxToSkin: true,
       allowStretching: false,
-      resizeAnchor: "top-left"
+      resizeAnchor: "top-left",
+      visualStateMap: null
     };
   });
   return { surfaceId: id, placementIds };
@@ -374,7 +376,8 @@ function buildButtonDocumentScopeFixture() {
     allowLabelResize: false,
     matchHitboxToSkin: true,
     allowStretching: false,
-    resizeAnchor: "top-left"
+    resizeAnchor: "top-left",
+    visualStateMap: null
   };
   document.popoutUnits["scope-tool-unit"] = {
     id: "scope-tool-unit",
@@ -1131,7 +1134,12 @@ test("placement text alignment overrides HTML layout without remounting or erasi
   assert.match(renderer, /}, \[textAlignment, hasMeasurementConsumer\]\);/);
   assert.match(
     renderer,
-    /}, \[compiled\?\.skinId, compiled\?\.sourceFingerprint, renderedLabel, textFitMode, minimumFontSize, constrained, textSizeOverride, previewStackWords, hasMeasurementConsumer\]\);/
+    /}, \[compiled\?\.skinId, compiled\?\.sourceFingerprint, hasMeasurementConsumer\]\);/
+  );
+  assert.match(renderer, /fitted\.label === renderedLabel/);
+  assert.match(
+    renderer,
+    /}, \[width, height, renderedLabel, textFitMode, minimumFontSize, constrained, matchHitboxToSkin, allowStretching, textSizeOverride, previewStackWords\]\);/
   );
 });
 
@@ -1193,11 +1201,37 @@ test("Main Button single clicks select, double clicks execute, and Pop or Fan st
     /if \(isPanelScriptButtonAction\(button\.actionId\) && button\.scriptFileName\) \{\s*togglePanelScriptSelection\(button\.scriptFileName\);\s*return;\s*\}/
   );
   assert.match(buttonHost, /interactionElement\.addEventListener\("dblclick", handleDoubleClick\)/);
-  assert.match(buttonHost, /onDoubleActivateRef\.current\?\.\(buttonRef\.current, event as MouseEvent\)/);
+  assert.match(
+    buttonHost,
+    /const handleDoubleClick = \(event: Event\) => \{[\s\S]{0,180}await handler\(buttonRef\.current, event as MouseEvent\);[\s\S]{0,260}selectionOnlyRef\.current && stateCount > 1[\s\S]{0,160}await advanceButtonActivationState\(buttonRef\.current\.id, stateCount\)/
+  );
   assert.match(mainPage, /const handleButtonDoubleActivate = async \([\s\S]{0,500}button\.disabled[\s\S]{0,500}handlePerformPanelScriptPrimaryAction\(button\.scriptFileName, matchedRecord\)/);
   assert.match(mainPage, /const pressPlan = resolveButtonPressEventPlan\(canonical\);[\s\S]{0,900}executeLifecycleEvent\("hoverEnter"\)[\s\S]{0,900}executeLifecycleEvent\("pressDown"\)[\s\S]{0,900}executeLifecycleEvent\("click"\)[\s\S]{0,900}executeLifecycleEvent\("pressUp"\)[\s\S]{0,900}executeLifecycleEvent\("hoverLeave"\)/);
   assert.equal(mainPage.match(/onDoubleActivate=\{handleButtonDoubleActivate\}/g)?.length, 1);
   assert.doesNotMatch(mainPage, /PANEL_SCRIPT_REACTIVATION_GUARD_MS|DOUBLE_CLICK/);
+});
+
+test("Button activation state drives live labels and mapped visuals without extending native sampling", () => {
+  const buttonHost = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+  const renderer = readFileSync(
+    join(frontendRoot, "src", "button", "skins", "ButtonSkinRenderer.tsx"),
+    "utf8"
+  );
+
+  assert.match(buttonHost, /subscribeButtonActivationState\([\s\S]{0,1300}setActivationStateIndex\(index\)/);
+  assert.match(buttonHost, /resolveButtonAppearance\(\{[\s\S]{0,180}activationBehavior: button\.activationBehavior,[\s\S]{0,120}visualStateMap: placement\.visualStateMap/);
+  assert.match(buttonHost, /const renderedLabel = inlineEditField[\s\S]{0,160}: resolvedAppearance\.label;/);
+  assert.match(buttonHost, /: renderedLabel \|\| "FlowCell Button"/);
+  assert.match(buttonHost, /const transition = \+\+activationStateTransitionRef\.current[\s\S]{0,600}prepare\(preparedState\)[\s\S]{0,240}finally\(commitIndex\)/);
+  assert.match(buttonHost, /const transition = \+\+activationStateTransitionRef\.current;\s*if \(index === activationStateIndexRef\.current\) return;/);
+  assert.match(buttonHost, /hovered=\{resolvedAppearance\.flags\.hovered\}[\s\S]{0,360}error=\{resolvedAppearance\.flags\.error\}/);
+  assert.match(buttonHost, /samplingState=\{rawVisualState\}/);
+  assert.match(buttonHost, /transitionSamplingKey=\{`\$\{activationStateIndex\}:\$\{resolvedAppearance\.activeTrigger\}:\$\{resolvedAppearance\.visualState\}`\}/);
+  assert.match(renderer, /BUTTON_PERSISTENT_VISUAL_SAMPLE_FRAMES/);
+  assert.match(renderer, /decision\.continueSampling \|\| transitionFramesRemaining > 0/);
 });
 
 test("explicit Pop and Fan opens reveal after show while layout restore stays passive", () => {

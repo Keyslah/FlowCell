@@ -25,6 +25,14 @@ the completed architecture only.
   feature or alternate source lifecycle.
 - The functional host owns behavior, state, accessibility, validation, command
   dispatch, and lifecycle. A skin is render-only.
+- A Button record owns optional `momentary`, `toggle`, or `cycle` activation
+  behavior and every logical state's per-trigger labels. The current state index
+  is runtime-only session state shared by the Button's mounted occurrences and
+  resets on application restart; it is never canonical persisted state.
+- A placement owns the skin-dependent map from each logical Button state and
+  interaction trigger to a canonical skin visual state. Reusing a Button on
+  Main, Pop, or Fan therefore shares behavior and labels without forcing those
+  differently skinned occurrences to share visual mapping.
 - A skin must contain exactly one measurable `[data-core]` element and may
   contain one `{{label}}` token inside it. After optional label injection, that
   exact `[data-core]` geometry is the Button hitbox. A textless or
@@ -305,7 +313,18 @@ the source into its canonical section editors. Unparseable paste remains in the 
 for correction. Save skin updates the library entry. Save as new skin opens a
 native file picker, writes canonical paste-ready `.flowcell-button-skin.txt`
 source, and creates an unassigned library entry. Skin saves retain unrelated
-draft geometry. The Button Text label updates the Button draft directly. Fit mode,
+draft geometry. Button Behavior keeps the outer controls compact, then uses nested
+dropdowns to select `momentary`, `toggle`, or `cycle`, a logical Button state, an
+interaction trigger, and the skin visual state used by the focused placement.
+Button Text uses matching state and trigger dropdowns so its Button-owned label can
+change for each logical state and for Rest, Hover, Play, Pressed, Held, Release, Selected,
+Disabled, or Error. Cycle advances through its configured logical states; toggle
+alternates its two active states; momentary returns to its resting state. The
+session's current state index is not saved and starts at rest after an app restart.
+The raw Base, Hover, Play, Pressed, Held, Release, Disabled, and Error skin code
+sections remain author-editable; selecting Hover in a dropdown never replaces or
+hides the authored Hover section. The visual-state menu reflects the working skin
+and marks empty canonical sections so the author can select one and add its code. Fit mode,
 horizontal text alignment (`Use skin`, `Left`, `Center`, or `Right`), text size
 override, and minimum shrink size are independent focused-placement settings,
 preview against the working Button size, and are committed by Save placement
@@ -314,6 +333,18 @@ skin` removes the placement override and restores the authored alignment. There
 are no Apply Named Sections, Replace Entire Skin, or Apply Button Text buttons.
 Pasting a recognized payload automatically validates and applies its named
 sections to the isolated working copy.
+
+`Apply Button state setup` appears in both Button Behavior and Button Text. It
+commits the Button-owned mode and labels together with every placement-owned
+visual map for that Button while retaining unrelated draft geometry. Save skin
+continues to save authored visual source; it is not the persistence action for a
+state sequence or placement map.
+
+Behavior and labels belong to the Button, but a visual map belongs to the focused
+placement because its available visuals depend on that placement's assigned skin.
+Changing shared skin source can affect every inheriting placement and tool-set
+child. The safe default is to fork and assign a placement override; a panel-wide or
+global change must be explicit and show its blast radius before it is applied.
 
 Every regular/tool-set Pop and saved Fan setup retains its stored window-fit
 mode: surface, hitbox union, or measured visual union. The runtime continues to
@@ -447,6 +478,15 @@ Ordinary Base declarations style `[data-core]`. Nested literal visual elements
 must consume state-controlled custom properties, and their resting values must
 be initialized explicitly in Base; the editor never rewrites imported nested
 markup to simulate that contract.
+
+The canonical Base, Hover, Play, Pressed, Held, Release, Disabled, and Error
+sections are the raw authored visual vocabulary. Host-owned Button behavior maps
+logical states and triggers onto that vocabulary; skin code never owns a toggle,
+cycle index, label sequence, or execution rule. A complete alternate appearance
+is authored by Skin Author as one composite paste block with pointer-inert nested
+faces inside the one stable `[data-core]`, with state declarations or CSS custom
+properties selecting the visible face. It must not introduce another functional
+Button, another `[data-core]`, another pointer target, or a runtime skin swap.
 
 They may not run code, own actions, mutate Button state, install sources, create
 bindings, or define an alternate hitbox.

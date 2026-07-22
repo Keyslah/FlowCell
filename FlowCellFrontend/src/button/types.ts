@@ -70,6 +70,47 @@ export interface ButtonVisualState {
   error: boolean;
 }
 
+export type ButtonActivationMode = "momentary" | "toggle" | "cycle";
+
+export type ButtonAppearanceTrigger =
+  | "rest"
+  | "hover"
+  | "play"
+  | "pressed"
+  | "held"
+  | "release"
+  | "selected"
+  | "disabled"
+  | "error";
+
+export type ButtonAppearanceLabelTrigger = Exclude<ButtonAppearanceTrigger, "rest">;
+
+export type ButtonSkinVisualState =
+  | "base"
+  | "hover"
+  | "play"
+  | "pressed"
+  | "held"
+  | "release"
+  | "disabled"
+  | "error";
+
+export interface ButtonActivationState {
+  id: string;
+  label: string;
+  labelOverrides: Partial<Record<ButtonAppearanceLabelTrigger, string>>;
+}
+
+export interface ButtonActivationBehavior {
+  mode: ButtonActivationMode;
+  states: ButtonActivationState[];
+}
+
+export type ButtonVisualStateMap = Record<
+  string,
+  Partial<Record<ButtonAppearanceTrigger, ButtonSkinVisualState>>
+>;
+
 export interface ButtonVisualMeasurement extends ButtonCoreMeasurement {
   state: ButtonVisualState;
 }
@@ -150,6 +191,7 @@ export interface ButtonRecord {
   defaultTextFitMode: ButtonTextFitMode;
   disabled: boolean;
   activationAnimation: ButtonActivationAnimation | null;
+  activationBehavior: ButtonActivationBehavior | null;
   toolSetParentId: ButtonId | null;
   toolSetBehavior: ButtonToolSetChildBehavior | null;
   metadata: JsonObject;
@@ -169,6 +211,7 @@ export interface ButtonPlacement extends ButtonRect {
   matchHitboxToSkin: boolean;
   allowStretching: boolean;
   resizeAnchor: ButtonResizeAnchor;
+  visualStateMap: ButtonVisualStateMap | null;
 }
 
 export interface ButtonSurface {

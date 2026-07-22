@@ -26,6 +26,7 @@
     "src/button/state/sourceUpdateOperations.ts",
     "src/button/state/installedPageLifecycle.ts",
     "src/button/runtime/ButtonRuntimeAdapter.ts",
+    "src/button/runtime/buttonActivationState.ts",
     "src/button/runtime/latestDesiredRegistration.ts",
     "src/button/runtime/toolSetChildHotkeyBridge.ts",
     "src/button/runtime/toolSetOwnerHotkeyBridge.ts",

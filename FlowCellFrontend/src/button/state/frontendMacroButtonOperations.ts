@@ -191,6 +191,7 @@ function ensurePrimaryPlacement(args: {
     allowLabelResize: false,
     matchHitboxToSkin: true,
     allowStretching: false,
+    visualStateMap: null,
     resizeAnchor: "top-left"
   };
   args.document.placements[id] = placement;
@@ -240,6 +241,7 @@ export function attachCanonicalFrontendMacroButton(
       defaultTextFitMode: "shrink",
       disabled: false,
       activationAnimation: null,
+      activationBehavior: null,
       toolSetParentId: null,
       toolSetBehavior: null,
       metadata: { sourceKind: "frontend-macro", macroId }

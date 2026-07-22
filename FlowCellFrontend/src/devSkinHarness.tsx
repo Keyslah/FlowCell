@@ -45,6 +45,7 @@ const HARNESS_PLACEMENT: ButtonPlacement = {
   allowLabelResize: false,
   matchHitboxToSkin: false,
   allowStretching: false,
+  visualStateMap: null,
   resizeAnchor: "top-left"
 };
 
@@ -65,7 +66,12 @@ function Harness() {
           surfaceButtonCount={1}
           allSurfaceButtonsSameSize={false}
           buttonLabel="Button Preview"
+          activationBehavior={null}
+          visualStateMap={null}
           onButtonLabelChange={() => {}}
+          onActivationBehaviorChange={() => {}}
+          onVisualStateMapChange={() => {}}
+          onApplyButtonStateSetup={() => {}}
           onAssignSize={() => {}}
           onAssignSizeToPanel={() => {}}
           onPlacementTextChange={() => {}}

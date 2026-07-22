@@ -1,6 +1,7 @@
 import {
   BUTTON_SKIN_COMPILER_VERSION,
   BUTTON_STATE_SCHEMA_VERSION,
+  type ButtonActivationBehavior,
   type ButtonExecutionTarget,
   type ButtonPopoutUnit,
   type ButtonRect,
@@ -51,6 +52,38 @@ const BUTTON_TEXT_FIT_MODES = new Set(["shrink", "stack-whole-words", "shrink-an
 const BUTTON_TEXT_ALIGNMENTS = new Set(["skin", "left", "center", "right"]);
 const BUTTON_SURFACE_KINDS = new Set(["main", "panel", "regular-popout", "tool-set-popout", "fan"]);
 const BUTTON_WINDOW_FIT_MODES = new Set(["surface", "hitbox", "visual"]);
+const BUTTON_ACTIVATION_MODES = new Set(["momentary", "toggle", "cycle"]);
+const BUTTON_APPEARANCE_TRIGGERS = new Set([
+  "rest",
+  "hover",
+  "play",
+  "pressed",
+  "held",
+  "release",
+  "selected",
+  "disabled",
+  "error"
+]);
+const BUTTON_APPEARANCE_LABEL_TRIGGERS = new Set([
+  "hover",
+  "play",
+  "pressed",
+  "held",
+  "release",
+  "selected",
+  "disabled",
+  "error"
+]);
+const BUTTON_SKIN_VISUAL_STATES = new Set([
+  "base",
+  "hover",
+  "play",
+  "pressed",
+  "held",
+  "release",
+  "disabled",
+  "error"
+]);
 
 function isUsableDesktopBounds(value: unknown): boolean {
   return isObject(value) &&
@@ -149,6 +182,105 @@ function validateExecutionTarget(
   return false;
 }
 
+function validateButtonActivationBehavior(
+  value: unknown,
+  path: string,
+  issues: ButtonStateValidationIssue[]
+): value is ButtonActivationBehavior {
+  if (!isObject(value)) {
+    addIssue(issues, path, "Button activation behavior must be an object or null.");
+    return false;
+  }
+  if (!BUTTON_ACTIVATION_MODES.has(String(value.mode))) {
+    addIssue(issues, `${path}.mode`, "Button activation mode is invalid.");
+  }
+  if (!Array.isArray(value.states)) {
+    addIssue(issues, `${path}.states`, "Button activation states must be an array.");
+    return false;
+  }
+  if (value.states.length === 0) {
+    addIssue(issues, `${path}.states`, "Button activation behavior requires at least one state.");
+  }
+  if ((value.mode === "toggle" || value.mode === "cycle") && value.states.length < 2) {
+    addIssue(issues, `${path}.states`, `${String(value.mode)} behavior requires at least two states.`);
+  }
+
+  const stateIds: string[] = [];
+  value.states.forEach((state, index) => {
+    const statePath = `${path}.states.${index}`;
+    if (!isObject(state)) {
+      addIssue(issues, statePath, "Button activation state must be an object.");
+      return;
+    }
+    if (typeof state.id !== "string" || state.id.trim().length === 0) {
+      addIssue(issues, `${statePath}.id`, "Button activation state requires a stable nonempty ID.");
+    } else {
+      stateIds.push(state.id);
+    }
+    if (typeof state.label !== "string") {
+      addIssue(issues, `${statePath}.label`, "Button activation state label must be a string.");
+    }
+    if (!isObject(state.labelOverrides)) {
+      addIssue(issues, `${statePath}.labelOverrides`, "Button state label overrides must be an object.");
+      return;
+    }
+    for (const [trigger, label] of Object.entries(state.labelOverrides)) {
+      if (!BUTTON_APPEARANCE_LABEL_TRIGGERS.has(trigger)) {
+        addIssue(issues, `${statePath}.labelOverrides.${trigger}`, "Button state label trigger is invalid.");
+      }
+      if (typeof label !== "string") {
+        addIssue(issues, `${statePath}.labelOverrides.${trigger}`, "Button state label override must be a string.");
+      }
+    }
+  });
+  if (hasDuplicateStrings(stateIds)) {
+    addIssue(issues, `${path}.states`, "Button activation state IDs must be unique.");
+  }
+  return true;
+}
+
+function validateButtonVisualStateMap(
+  value: unknown,
+  button: unknown,
+  path: string,
+  issues: ButtonStateValidationIssue[]
+): void {
+  if (!isObject(value)) {
+    addIssue(issues, path, "Button visual-state map must be an object or null.");
+    return;
+  }
+  const behavior = isObject(button) ? button.activationBehavior : null;
+  const knownStateIds = new Set(
+    isObject(behavior) && Array.isArray(behavior.states)
+      ? behavior.states
+        .filter(isObject)
+        .map((state) => state.id)
+        .filter((id): id is string => typeof id === "string")
+      : []
+  );
+  if (!isObject(behavior)) {
+    addIssue(issues, path, "A visual-state map requires Button activation behavior.");
+  }
+  for (const [stateId, stateMap] of Object.entries(value)) {
+    const statePath = `${path}.${stateId}`;
+    if (!knownStateIds.has(stateId)) {
+      addIssue(issues, statePath, "Visual-state map references an unknown Button activation state.");
+    }
+    if (!isObject(stateMap)) {
+      addIssue(issues, statePath, "Visual-state assignments must be an object.");
+      continue;
+    }
+    for (const [trigger, visualState] of Object.entries(stateMap)) {
+      if (!BUTTON_APPEARANCE_TRIGGERS.has(trigger)) {
+        addIssue(issues, `${statePath}.${trigger}`, "Button appearance trigger is invalid.");
+      }
+      if (!BUTTON_SKIN_VISUAL_STATES.has(String(visualState))) {
+        addIssue(issues, `${statePath}.${trigger}`, "Button skin visual state is invalid.");
+      }
+    }
+  }
+}
+
 function validateButtonRecord(
   value: unknown,
   key: string,
@@ -186,6 +318,11 @@ function validateButtonRecord(
         );
       }
     }
+  }
+  if (!Object.hasOwn(value, "activationBehavior") || value.activationBehavior === undefined) {
+    addIssue(issues, `${path}.activationBehavior`, "Button activation behavior must be present and may be null.");
+  } else if (value.activationBehavior !== null) {
+    validateButtonActivationBehavior(value.activationBehavior, `${path}.activationBehavior`, issues);
   }
   if (!BUTTON_TEXT_FIT_MODES.has(String(value.defaultTextFitMode))) {
     addIssue(issues, `${path}.defaultTextFitMode`, "Default text-fit mode is invalid.");
@@ -284,6 +421,10 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
       button.activationAnimation = null;
       changed = true;
     }
+    if (!Object.hasOwn(button, "activationBehavior")) {
+      button.activationBehavior = null;
+      changed = true;
+    }
     buttons[id] = button;
   }
   const placements: Record<string, unknown> = { ...value.placements };
@@ -304,6 +445,10 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
     }
     if (!Object.hasOwn(placement, "textAlignment")) {
       placement.textAlignment = "skin";
+      changed = true;
+    }
+    if (!Object.hasOwn(placement, "visualStateMap")) {
+      placement.visualStateMap = null;
       changed = true;
     }
     placements[id] = placement;
@@ -463,6 +608,16 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     if (skinId && !document.skins[skinId]) addIssue(issues, `${path}.skinOverrideId`, "Placement references a missing skin.");
     if (placement.skinOverrideId !== null && typeof placement.skinOverrideId !== "string") {
       addIssue(issues, `${path}.skinOverrideId`, "Skin override must be a skin ID or null.");
+    }
+    if (!Object.hasOwn(placement, "visualStateMap") || placement.visualStateMap === undefined) {
+      addIssue(issues, `${path}.visualStateMap`, "Placement visual-state map must be present and may be null.");
+    } else if (placement.visualStateMap !== null) {
+      validateButtonVisualStateMap(
+        placement.visualStateMap,
+        document.buttons[placement.buttonId],
+        `${path}.visualStateMap`,
+        issues
+      );
     }
     if (!BUTTON_TEXT_FIT_MODES.has(String(placement.textFitMode))) {
       addIssue(issues, `${path}.textFitMode`, "Placement text-fit mode is invalid.");

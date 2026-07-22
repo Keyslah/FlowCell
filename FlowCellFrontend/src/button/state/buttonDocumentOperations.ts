@@ -60,6 +60,7 @@ function addPlacement(
     allowLabelResize: false,
     matchHitboxToSkin: true,
     allowStretching: false,
+    visualStateMap: null,
     resizeAnchor: "top-left"
   };
   document.placements[id] = placement;
@@ -212,6 +213,7 @@ export function ensureFanSetup(args: {
       defaultTextFitMode: "shrink-and-stack",
       disabled: false,
       activationAnimation: null,
+      activationBehavior: null,
       toolSetParentId: null,
       toolSetBehavior: null,
       metadata: { programName: args.programName, panelName: args.panelName }

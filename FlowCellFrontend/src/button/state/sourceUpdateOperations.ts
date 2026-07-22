@@ -75,6 +75,7 @@ function appendMissingToolSetChildren(
       defaultTextFitMode: "shrink",
       disabled: false,
       activationAnimation: null,
+      activationBehavior: null,
       toolSetParentId: owner.id,
       toolSetBehavior: cloneButtonDocument(installed.layout?.childBehaviors?.[child.slot] ?? null),
       metadata: { toolSetSlot: child.slot }
@@ -93,6 +94,7 @@ function appendMissingToolSetChildren(
       allowLabelResize: false,
       matchHitboxToSkin: true,
       allowStretching: false,
+      visualStateMap: null,
       resizeAnchor: "top-left"
     };
     document.placements[placementId] = placement;

@@ -17,6 +17,7 @@ import {
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { CanonicalActionButton } from "../../button/CanonicalActionButton";
+import { startButtonActivationStateCoordinator } from "../../button/runtime/ButtonActivationStateBus";
 import { ExactPageFrame } from "../../components/ExactPageFrame";
 import { RailSurface } from "../../components/RailSurface";
 import {
@@ -685,6 +686,24 @@ export default function MainPage() {
   const selectedPanelNameRef = useRef<string | null>(selectedPanelName);
   selectedProgramNameRef.current = selectedProgramName;
   selectedPanelNameRef.current = selectedPanelName;
+
+  useEffect(() => {
+    let disposed = false;
+    let stopCoordinator: (() => void) | null = null;
+    void startButtonActivationStateCoordinator()
+      .then((stop) => {
+        if (disposed) stop();
+        else stopCoordinator = stop;
+      })
+      .catch((error) => {
+        console.error("Button activation state coordinator could not start.", error);
+      });
+    return () => {
+      disposed = true;
+      stopCoordinator?.();
+    };
+  }, []);
+
   const applyPanelScriptRecords = useCallback((
     programName: string,
     panelName: string,
