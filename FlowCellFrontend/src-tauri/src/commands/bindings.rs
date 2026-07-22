@@ -3,6 +3,9 @@ use crate::*;
 const SCRIPT_BINDING_KIND: &str = "script";
 pub(crate) const TOOL_SET_OWNER_BINDING_KIND: &str = "tool-set-owner";
 pub(crate) const TOOL_SET_CHILD_BINDING_KIND: &str = "tool-set-child";
+const CORE_ACTION_KIND: &str = "core_action";
+const ILLUSTRATOR_SET_ANCHOR_ACTION_ID: &str = "illustrator_set_anchor";
+const CORE_ACTIONS_PANEL_NAME: &str = "Actions";
 
 #[derive(Serialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
@@ -118,6 +121,13 @@ pub(crate) struct SaveBindShortcutRequest {
     #[serde(default)]
     pub(crate) owner_button_id: Option<String>,
     pub(crate) binding_id: Option<u64>,
+    pub(crate) shortcut: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SaveCoreActionShortcutRequest {
+    pub(crate) action_id: String,
     pub(crate) shortcut: String,
 }
 
@@ -553,6 +563,130 @@ fn list_bindable_buttons_for_panel(
     Ok(buttons)
 }
 
+fn append_core_bind_actions_for_program(
+    program_name: &str,
+    panels: &mut Vec<BindablePanelRecord>,
+    bindings: &FrontendBindingsState,
+) {
+    let helper_is_available = resolve_program_directory(program_name)
+        .map(|directory| {
+            directory
+                .join("HelperScripts")
+                .join("FlowCell_Illustrator_SetAnchorHotkey.jsx")
+                .is_file()
+        })
+        .unwrap_or(false);
+    append_core_bind_actions_for_program_with_availability(
+        program_name,
+        helper_is_available,
+        panels,
+        bindings,
+    );
+}
+
+fn append_core_bind_actions_for_program_with_availability(
+    program_name: &str,
+    helper_is_available: bool,
+    panels: &mut Vec<BindablePanelRecord>,
+    bindings: &FrontendBindingsState,
+) {
+    if !program_name.trim().eq_ignore_ascii_case("Illustrator") || !helper_is_available {
+        return;
+    }
+
+    let button = BindableButtonRecord {
+        id: format!("{program_name}::core-action::{ILLUSTRATOR_SET_ANCHOR_ACTION_ID}"),
+        label: String::from("Set Anchor"),
+        kind: String::from(CORE_ACTION_KIND),
+        target: String::from(ILLUSTRATOR_SET_ANCHOR_ACTION_ID),
+        execution_target: None,
+        binding_id: None,
+        shortcut: bindings
+            .action_hotkeys
+            .get(ILLUSTRATOR_SET_ANCHOR_ACTION_ID)
+            .cloned(),
+        owner_button_id: None,
+    };
+
+    if let Some(panel) = panels
+        .iter_mut()
+        .find(|panel| panel.name.eq_ignore_ascii_case(CORE_ACTIONS_PANEL_NAME))
+    {
+        panel.buttons.push(button);
+        panel
+            .buttons
+            .sort_by_cached_key(|entry| entry.label.to_ascii_lowercase());
+        return;
+    }
+
+    panels.insert(
+        0,
+        BindablePanelRecord {
+            name: String::from(CORE_ACTIONS_PANEL_NAME),
+            buttons: vec![button],
+        },
+    );
+}
+
+#[cfg(test)]
+mod core_bind_action_tests {
+    use super::*;
+
+    #[test]
+    fn set_anchor_is_only_added_for_illustrator_when_its_helper_exists() {
+        let bindings = FrontendBindingsState::default();
+        let mut photoshop_panels = Vec::new();
+        append_core_bind_actions_for_program_with_availability(
+            "Photoshop",
+            true,
+            &mut photoshop_panels,
+            &bindings,
+        );
+        assert!(photoshop_panels.is_empty());
+
+        let mut missing_helper_panels = Vec::new();
+        append_core_bind_actions_for_program_with_availability(
+            "Illustrator",
+            false,
+            &mut missing_helper_panels,
+            &bindings,
+        );
+        assert!(missing_helper_panels.is_empty());
+
+        let mut illustrator_panels = Vec::new();
+        append_core_bind_actions_for_program_with_availability(
+            "Illustrator",
+            true,
+            &mut illustrator_panels,
+            &bindings,
+        );
+        assert_eq!(illustrator_panels.len(), 1);
+        assert_eq!(illustrator_panels[0].name, CORE_ACTIONS_PANEL_NAME);
+        assert_eq!(illustrator_panels[0].buttons.len(), 1);
+        assert_eq!(
+            illustrator_panels[0].buttons[0].target,
+            ILLUSTRATOR_SET_ANCHOR_ACTION_ID
+        );
+    }
+
+    #[test]
+    fn set_anchor_uses_its_saved_action_shortcut() {
+        let mut bindings = FrontendBindingsState::default();
+        bindings.action_hotkeys.insert(
+            String::from(ILLUSTRATOR_SET_ANCHOR_ACTION_ID),
+            String::from("^!a"),
+        );
+        let mut panels = Vec::new();
+        append_core_bind_actions_for_program_with_availability(
+            "Illustrator",
+            true,
+            &mut panels,
+            &bindings,
+        );
+        assert_eq!(panels[0].buttons[0].shortcut.as_deref(), Some("^!a"));
+    }
+}
+
 fn read_shortcut_profile_documents(
 ) -> Result<(Vec<ShortcutProfileDocumentRecord>, Vec<String>), String> {
     let mut documents = Vec::new();
@@ -873,6 +1007,17 @@ pub(crate) fn remove_program_registration(document: &mut IniDocument, program_na
     };
     document.remove(&format!("ProgramTab_{}", program.id));
 
+    if program.label.eq_ignore_ascii_case("Illustrator") {
+        let mut remove_action_hotkeys_section = false;
+        if let Some(section) = document.get_mut("ActionHotkeys") {
+            section.retain(|key, _| !key.eq_ignore_ascii_case(ILLUSTRATOR_SET_ANCHOR_ACTION_ID));
+            remove_action_hotkeys_section = section.is_empty();
+        }
+        if remove_action_hotkeys_section {
+            document.remove("ActionHotkeys");
+        }
+    }
+
     let binding_sections = document
         .iter()
         .filter_map(|(section_name, section)| {
@@ -974,6 +1119,34 @@ mod program_registration_tests {
                 .and_then(|section| section.get("ProgramTabIds"))
                 .map(String::as_str),
             Some("1")
+        );
+    }
+
+    #[test]
+    fn removing_illustrator_registration_removes_only_its_core_action_hotkey() {
+        let mut document = IniDocument::new();
+        upsert_program_registration(
+            &mut document,
+            "Illustrator",
+            Path::new(r"D:\FlowCell\Programs\Illustrator"),
+            r"C:\Program Files\Adobe\Adobe Illustrator 2026\Support Files\Contents\Windows\Illustrator.exe",
+        );
+        let action_hotkeys = document.entry(String::from("ActionHotkeys")).or_default();
+        action_hotkeys.insert(
+            String::from(ILLUSTRATOR_SET_ANCHOR_ACTION_ID),
+            String::from("^!a"),
+        );
+        action_hotkeys.insert(String::from("keep_me"), String::from("^!b"));
+
+        remove_program_registration(&mut document, "Illustrator");
+
+        let action_hotkeys = document
+            .get("ActionHotkeys")
+            .expect("unrelated action hotkeys should remain");
+        assert!(!action_hotkeys.contains_key(ILLUSTRATOR_SET_ANCHOR_ACTION_ID));
+        assert_eq!(
+            action_hotkeys.get("keep_me").map(String::as_str),
+            Some("^!b")
         );
     }
 
@@ -1655,6 +1828,7 @@ pub(crate) fn load_binds_workspace() -> Result<BindsWorkspaceResponse, String> {
                 )?,
             });
         }
+        append_core_bind_actions_for_program(&program_name, &mut panels, &bindings);
         programs.push(BindableProgramRecord {
             name: program_name.clone(),
             program_tab_id: resolve_program_tab_id(&program_name),
@@ -1669,6 +1843,86 @@ pub(crate) fn load_binds_workspace() -> Result<BindsWorkspaceResponse, String> {
         bindings,
         shortcut_profiles,
         warnings,
+    })
+}
+
+#[tauri::command]
+pub(crate) fn save_core_action_shortcut(
+    request: SaveCoreActionShortcutRequest,
+) -> Result<SaveBindShortcutResponse, String> {
+    let action_id = request.action_id.trim();
+    if !action_id.eq_ignore_ascii_case(ILLUSTRATOR_SET_ANCHOR_ACTION_ID) {
+        return Err("Unsupported Core bind action.".to_string());
+    }
+
+    let _bindings_guard = bindings_state_guard()?;
+    let (bindings, mut document, bindings_path) = read_bindings_file_state()?;
+    let normalized_shortcut = request.shortcut.trim().to_ascii_lowercase();
+    if !normalized_shortcut.is_empty() {
+        let keyboard_shortcut_conflict_key =
+            super::button_hotkeys::keyboard_shortcut_conflict_key(request.shortcut.trim());
+        let conflicts_with_requested_shortcut = |shortcut: &str| {
+            shortcut.trim().eq_ignore_ascii_case(&normalized_shortcut)
+                || keyboard_shortcut_conflict_key
+                    .zip(super::button_hotkeys::keyboard_shortcut_conflict_key(
+                        shortcut,
+                    ))
+                    .map(|(requested, existing)| requested == existing)
+                    .unwrap_or(false)
+        };
+        if bindings
+            .script_bindings
+            .iter()
+            .any(|binding| conflicts_with_requested_shortcut(&binding.shortcut))
+        {
+            return Err("That shortcut is already in use.".to_string());
+        }
+        if bindings
+            .action_hotkeys
+            .iter()
+            .any(|(existing_action_id, shortcut)| {
+                !existing_action_id.eq_ignore_ascii_case(action_id)
+                    && conflicts_with_requested_shortcut(shortcut)
+            })
+        {
+            return Err("That shortcut is already in use.".to_string());
+        }
+    }
+
+    if normalized_shortcut.is_empty() {
+        let mut remove_action_hotkeys_section = false;
+        if let Some(section) = document.get_mut("ActionHotkeys") {
+            section.retain(|key, _| !key.eq_ignore_ascii_case(ILLUSTRATOR_SET_ANCHOR_ACTION_ID));
+            remove_action_hotkeys_section = section.is_empty();
+        }
+        if remove_action_hotkeys_section {
+            document.remove("ActionHotkeys");
+        }
+    } else {
+        let section = document.entry(String::from("ActionHotkeys")).or_default();
+        section.retain(|key, _| !key.eq_ignore_ascii_case(ILLUSTRATOR_SET_ANCHOR_ACTION_ID));
+        section.insert(
+            String::from(ILLUSTRATOR_SET_ANCHOR_ACTION_ID),
+            request.shortcut.trim().to_string(),
+        );
+    }
+
+    write_bindings_file_state(&bindings_path, &document)?;
+    let (next_bindings, _, _) = read_bindings_file_state()?;
+    let reload_result = restart_flowcell_headless_backend();
+    let mut message = if normalized_shortcut.is_empty() {
+        String::from("Set Anchor shortcut cleared.")
+    } else {
+        String::from("Set Anchor shortcut saved.")
+    };
+    if let Err(error) = reload_result {
+        message.push_str(" Backend reload failed.");
+        eprintln!("{error}");
+    }
+
+    Ok(SaveBindShortcutResponse {
+        message,
+        bindings: next_bindings,
     })
 }
 

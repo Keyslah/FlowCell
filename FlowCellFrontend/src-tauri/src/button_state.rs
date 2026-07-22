@@ -1,4 +1,5 @@
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -9,6 +10,72 @@ use crate::program_sources::transaction::{self, AtomicWriteMode};
 static BUTTON_STATE_COMMIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 const SOURCE_TRANSACTION_JOURNAL_FILE_NAME: &str = "button-source-transaction.json";
 const SOURCE_TRANSACTION_SCHEMA_VERSION: u32 = 1;
+const BUTTON_PLACEMENT_FILE_FORMAT: &str = "flowcell-button-placement/v1";
+const BUTTON_PLACEMENT_FILE_EXTENSION: &str = ".flowcell-button-placement.json";
+const BUTTON_SKIN_FILE_EXTENSION: &str = ".flowcell-button-skin.txt";
+const BUTTON_SKIN_HEADERS: [&str; 10] = [
+    "=== structure ===",
+    "=== keyframes ===",
+    "=== base ===",
+    "=== hover ===",
+    "=== play ===",
+    "=== pressed ===",
+    "=== held ===",
+    "=== release ===",
+    "=== disabled ===",
+    "=== error ===",
+];
+
+#[derive(Clone, Copy, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+enum ButtonPlacementSurfaceKind {
+    Main,
+    Panel,
+    RegularPopout,
+    ToolSetPopout,
+    Fan,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ButtonPlacementFileSize {
+    width: f64,
+    height: f64,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ButtonPlacementFileSurface {
+    id: String,
+    name: String,
+    kind: ButtonPlacementSurfaceKind,
+    width: f64,
+    height: f64,
+    uniform_button_size: Option<ButtonPlacementFileSize>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ButtonPlacementFileEntry {
+    id: String,
+    button_id: String,
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+    z_index: u64,
+}
+
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ButtonPlacementFile {
+    format: String,
+    saved_at: String,
+    program_name: String,
+    panel_name: String,
+    surface: ButtonPlacementFileSurface,
+    placements: Vec<ButtonPlacementFileEntry>,
+}
 
 fn synchronize_tool_set_hotkeys_after_commit(app: &tauri::AppHandle) {
     if let Err(error) = crate::synchronize_tool_set_hotkeys(app) {
@@ -98,6 +165,252 @@ pub(crate) fn set_button_bootstrap_failure(message: Option<String>) -> Result<()
         crate::recycle_file_path(&path)?;
     }
     Ok(())
+}
+
+fn normalize_button_placement_file_path(path: &Path) -> PathBuf {
+    let path_text = path.to_string_lossy().to_string();
+    let lower_path = path_text.to_ascii_lowercase();
+    if lower_path.ends_with(BUTTON_PLACEMENT_FILE_EXTENSION) {
+        return PathBuf::from(path_text);
+    }
+    let base_path = if lower_path.ends_with(".json") {
+        &path_text[..path_text.len() - ".json".len()]
+    } else {
+        &path_text
+    };
+    PathBuf::from(format!("{base_path}{BUTTON_PLACEMENT_FILE_EXTENSION}"))
+}
+
+fn normalize_button_skin_file_path(path: &Path) -> PathBuf {
+    let path_text = path.to_string_lossy().to_string();
+    let lower_path = path_text.to_ascii_lowercase();
+    if lower_path.ends_with(BUTTON_SKIN_FILE_EXTENSION) {
+        return PathBuf::from(path_text);
+    }
+    let base_path = if lower_path.ends_with(".txt") {
+        &path_text[..path_text.len() - ".txt".len()]
+    } else {
+        &path_text
+    };
+    PathBuf::from(format!("{base_path}{BUTTON_SKIN_FILE_EXTENSION}"))
+}
+
+fn validate_button_skin_source(source: &str) -> Result<(), String> {
+    if source.trim().is_empty() {
+        return Err("Button skin source cannot be empty.".to_string());
+    }
+    if source.len() > 2 * 1024 * 1024 {
+        return Err("Button skin source cannot exceed 2 MiB.".to_string());
+    }
+
+    let mut positions = Vec::with_capacity(BUTTON_SKIN_HEADERS.len());
+    for header in BUTTON_SKIN_HEADERS {
+        let matches = source.match_indices(header).collect::<Vec<_>>();
+        if matches.len() != 1 {
+            return Err(format!(
+                "Button skin source must contain exactly one '{header}' header."
+            ));
+        }
+        positions.push(matches[0].0);
+    }
+    if !positions.windows(2).all(|pair| pair[0] < pair[1]) {
+        return Err("Button skin headers must use canonical order.".to_string());
+    }
+    if !source[..positions[0]].trim().is_empty() {
+        return Err("Button skin source cannot contain content before Structure.".to_string());
+    }
+    let structure_start = positions[0] + BUTTON_SKIN_HEADERS[0].len();
+    if source[structure_start..positions[1]].trim().is_empty() {
+        return Err("Button skin Structure cannot be empty.".to_string());
+    }
+    Ok(())
+}
+
+fn is_utc_iso_timestamp(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    if bytes.len() != 24
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b'T'
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+        || bytes[19] != b'.'
+        || bytes[23] != b'Z'
+    {
+        return false;
+    }
+    let digit_positions = [
+        0usize, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15, 17, 18, 20, 21, 22,
+    ];
+    if !digit_positions
+        .iter()
+        .all(|index| bytes[*index].is_ascii_digit())
+    {
+        return false;
+    }
+    let number =
+        |start: usize, end: usize| -> u32 { value[start..end].parse::<u32>().unwrap_or(u32::MAX) };
+    let year = number(0, 4);
+    let month = number(5, 7);
+    let day = number(8, 10);
+    let leap_year =
+        year.is_multiple_of(4) && (!year.is_multiple_of(100) || year.is_multiple_of(400));
+    let days_in_month = match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap_year => 29,
+        2 => 28,
+        _ => return false,
+    };
+    (1..=days_in_month).contains(&day)
+        && number(11, 13) <= 23
+        && number(14, 16) <= 59
+        && number(17, 19) <= 59
+}
+
+fn validate_button_placement_file(file: &ButtonPlacementFile) -> Result<(), String> {
+    if file.format != BUTTON_PLACEMENT_FILE_FORMAT {
+        return Err(format!(
+            "Unsupported Button placement format. Expected {BUTTON_PLACEMENT_FILE_FORMAT}."
+        ));
+    }
+    if !is_utc_iso_timestamp(file.saved_at.trim()) {
+        return Err("Button placement savedAt must be a UTC ISO timestamp.".to_string());
+    }
+    if file.program_name.trim().is_empty() {
+        return Err("Button placement programName cannot be empty.".to_string());
+    }
+    if file.panel_name.trim().is_empty() {
+        return Err("Button placement panelName cannot be empty.".to_string());
+    }
+    if file.surface.id.trim().is_empty() {
+        return Err("Button placement surface ID cannot be empty.".to_string());
+    }
+    if file.surface.name.trim().is_empty() {
+        return Err("Button placement surface name cannot be empty.".to_string());
+    }
+    if !file.surface.width.is_finite() || file.surface.width <= 0.0 {
+        return Err("Button placement surface width must be positive and finite.".to_string());
+    }
+    if !file.surface.height.is_finite() || file.surface.height <= 0.0 {
+        return Err("Button placement surface height must be positive and finite.".to_string());
+    }
+    if let Some(size) = file.surface.uniform_button_size.as_ref() {
+        if !size.width.is_finite()
+            || !size.height.is_finite()
+            || size.width <= 0.0
+            || size.height <= 0.0
+            || size.width > file.surface.width
+            || size.height > file.surface.height
+        {
+            return Err(
+                "Button placement uniformButtonSize must be positive, finite, and fit the surface."
+                    .to_string(),
+            );
+        }
+    }
+
+    let mut placement_ids = HashSet::new();
+    for (index, placement) in file.placements.iter().enumerate() {
+        if placement.id.trim().is_empty() {
+            return Err(format!(
+                "Button placement entry {index} has an empty placement ID."
+            ));
+        }
+        if !placement_ids.insert(placement.id.as_str()) {
+            return Err(format!(
+                "Button placement entry {index} repeats placement ID '{}'.",
+                placement.id
+            ));
+        }
+        if placement.button_id.trim().is_empty() {
+            return Err(format!(
+                "Button placement entry {index} has an empty Button ID."
+            ));
+        }
+        if placement.z_index != index as u64 {
+            return Err(format!(
+                "Button placement entry {index} must use zIndex {index}."
+            ));
+        }
+        if !placement.x.is_finite()
+            || !placement.y.is_finite()
+            || placement.x < 0.0
+            || placement.y < 0.0
+        {
+            return Err(format!(
+                "Button placement entry {index} coordinates must be nonnegative and finite."
+            ));
+        }
+        if !placement.width.is_finite()
+            || !placement.height.is_finite()
+            || placement.width <= 0.0
+            || placement.height <= 0.0
+        {
+            return Err(format!(
+                "Button placement entry {index} size must be positive and finite."
+            ));
+        }
+        if placement.x + placement.width > file.surface.width
+            || placement.y + placement.height > file.surface.height
+        {
+            return Err(format!(
+                "Button placement entry {index} must fit inside the selected surface."
+            ));
+        }
+        if let Some(size) = file.surface.uniform_button_size.as_ref() {
+            if (placement.width - size.width).abs() > 0.05
+                || (placement.height - size.height).abs() > 0.05
+            {
+                return Err(format!(
+                    "Button placement entry {index} does not match uniformButtonSize."
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn save_button_placement_file(
+    path: String,
+    file: ButtonPlacementFile,
+) -> Result<String, String> {
+    validate_button_placement_file(&file)?;
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Button placement save path cannot be empty.".to_string());
+    }
+    let placement_path = normalize_button_placement_file_path(Path::new(trimmed_path));
+    let serialized = serde_json::to_string_pretty(&file)
+        .map_err(|error| format!("Failed to serialize Button placement: {error}"))?;
+    transaction::write_json_file(
+        &placement_path,
+        serialized.as_bytes(),
+        AtomicWriteMode::Replace,
+    )?;
+    Ok(placement_path.display().to_string())
+}
+
+#[tauri::command]
+pub(crate) fn save_button_skin_file(path: String, source: String) -> Result<String, String> {
+    validate_button_skin_source(&source)?;
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Button skin save path cannot be empty.".to_string());
+    }
+    let skin_path = normalize_button_skin_file_path(Path::new(trimmed_path));
+    transaction::write_file_atomically(
+        &skin_path,
+        source.as_bytes(),
+        AtomicWriteMode::Replace,
+        |candidate| {
+            let persisted = fs::read_to_string(candidate)
+                .map_err(|error| format!("Failed to read {}: {error}", candidate.display()))?;
+            validate_button_skin_source(&persisted)
+        },
+    )?;
+    Ok(skin_path.display().to_string())
 }
 
 fn validate_button_state(document: &Value) -> Result<(), String> {
@@ -890,13 +1203,179 @@ pub(crate) fn commit_button_state(
 mod tests {
     use super::{
         classify_source_transaction, document_source_owners, read_button_state_document,
-        recover_button_state, resolve_program_rename_post_commit, validate_button_state,
+        recover_button_state, resolve_program_rename_post_commit, save_button_placement_file,
+        save_button_skin_file, validate_button_placement_file, validate_button_skin_source,
+        validate_button_state, ButtonPlacementFile, ButtonPlacementFileEntry,
+        ButtonPlacementFileSize, ButtonPlacementFileSurface, ButtonPlacementSurfaceKind,
         ButtonSourceTransactionJournal, SourceTransactionPhase, SourceTransactionRecovery,
+        BUTTON_PLACEMENT_FILE_EXTENSION, BUTTON_PLACEMENT_FILE_FORMAT, BUTTON_SKIN_FILE_EXTENSION,
         SOURCE_TRANSACTION_SCHEMA_VERSION,
     };
     use serde_json::json;
     use std::fs;
+    use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn button_placement_test_root(label: &str) -> PathBuf {
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "flowcell-button-placement-{label}-{}-{token}",
+            std::process::id()
+        ))
+    }
+
+    fn valid_button_placement_file() -> ButtonPlacementFile {
+        ButtonPlacementFile {
+            format: BUTTON_PLACEMENT_FILE_FORMAT.to_string(),
+            saved_at: "2026-07-21T12:34:56.000Z".to_string(),
+            program_name: "Blender".to_string(),
+            panel_name: "Tools".to_string(),
+            surface: ButtonPlacementFileSurface {
+                id: "surface-tools".to_string(),
+                name: "Tools".to_string(),
+                kind: ButtonPlacementSurfaceKind::Panel,
+                width: 400.0,
+                height: 240.0,
+                uniform_button_size: Some(ButtonPlacementFileSize {
+                    width: 100.0,
+                    height: 40.0,
+                }),
+            },
+            placements: vec![
+                ButtonPlacementFileEntry {
+                    id: "placement-one".to_string(),
+                    button_id: "button-one".to_string(),
+                    x: 0.0,
+                    y: 0.0,
+                    width: 100.0,
+                    height: 40.0,
+                    z_index: 0,
+                },
+                ButtonPlacementFileEntry {
+                    id: "placement-two".to_string(),
+                    button_id: "button-two".to_string(),
+                    x: 0.0,
+                    y: 60.0,
+                    width: 100.0,
+                    height: 40.0,
+                    z_index: 1,
+                },
+            ],
+        }
+    }
+
+    fn valid_button_skin_source() -> String {
+        [
+            "=== structure ===\n<div data-core>{{label}}</div>",
+            "=== keyframes ===",
+            "=== base ===\nfont-size: 13px;\nline-height: 17px;",
+            "=== hover ===",
+            "=== play ===",
+            "=== pressed ===",
+            "=== held ===",
+            "=== release ===",
+            "=== disabled ===",
+            "=== error ===",
+        ]
+        .join("\n")
+    }
+
+    #[test]
+    fn button_skin_writer_uses_native_save_path_and_canonical_text_extension() {
+        let root = button_placement_test_root("skin-valid");
+        fs::create_dir_all(&root).expect("create skin test root");
+        let requested_path = root.join("neon.txt");
+        let expected_path = root.join(format!("neon{BUTTON_SKIN_FILE_EXTENSION}"));
+
+        let saved_path = save_button_skin_file(
+            requested_path.display().to_string(),
+            valid_button_skin_source(),
+        )
+        .expect("save valid Button skin");
+
+        assert_eq!(PathBuf::from(saved_path), expected_path);
+        assert!(!requested_path.exists());
+        let written = fs::read_to_string(&expected_path).expect("read saved skin");
+        assert!(validate_button_skin_source(&written).is_ok());
+        fs::remove_dir_all(&root).expect("remove skin test root");
+    }
+
+    #[test]
+    fn button_skin_writer_rejects_missing_canonical_sections_before_writing() {
+        let root = button_placement_test_root("skin-invalid");
+        fs::create_dir_all(&root).expect("create invalid skin test root");
+        let target = root.join(format!("invalid{BUTTON_SKIN_FILE_EXTENSION}"));
+        let error = save_button_skin_file(
+            target.display().to_string(),
+            "=== structure ===\n<div data-core></div>".to_string(),
+        )
+        .expect_err("incomplete skin source must fail");
+
+        assert!(error.contains("keyframes"));
+        assert!(!target.exists());
+        fs::remove_dir_all(&root).expect("remove invalid skin test root");
+    }
+
+    #[test]
+    fn button_placement_writer_uses_exact_extension_and_validated_atomic_json() {
+        let root = button_placement_test_root("valid");
+        fs::create_dir_all(&root).expect("create placement test root");
+        let requested_path = root.join("named-arrangement.json");
+        let expected_path = root.join(format!(
+            "named-arrangement{BUTTON_PLACEMENT_FILE_EXTENSION}"
+        ));
+
+        let saved_path = save_button_placement_file(
+            requested_path.display().to_string(),
+            valid_button_placement_file(),
+        )
+        .expect("save valid Button placement");
+
+        assert_eq!(PathBuf::from(saved_path), expected_path);
+        assert!(!requested_path.exists());
+        let written = fs::read_to_string(&expected_path).expect("read saved placement");
+        let parsed: ButtonPlacementFile =
+            serde_json::from_str(&written).expect("parse saved placement");
+        assert!(validate_button_placement_file(&parsed).is_ok());
+        assert_eq!(parsed.placements[0].id, "placement-one");
+        assert_eq!(parsed.placements[1].z_index, 1);
+
+        fs::remove_dir_all(&root).expect("remove placement test root");
+    }
+
+    #[test]
+    fn invalid_button_placement_does_not_touch_existing_destination() {
+        let root = button_placement_test_root("invalid");
+        fs::create_dir_all(&root).expect("create placement test root");
+        let target = root.join(format!("preserve{BUTTON_PLACEMENT_FILE_EXTENSION}"));
+        fs::write(&target, b"preserve this exact content").expect("write sentinel");
+        let mut invalid = valid_button_placement_file();
+        invalid.placements[1].z_index = 9;
+
+        let error = save_button_placement_file(target.display().to_string(), invalid)
+            .expect_err("invalid placement must fail before writing");
+
+        assert!(error.contains("must use zIndex 1"));
+        assert_eq!(
+            fs::read(&target).expect("read untouched sentinel"),
+            b"preserve this exact content"
+        );
+        fs::remove_dir_all(&root).expect("remove placement test root");
+    }
+
+    #[test]
+    fn button_placement_schema_rejects_unknown_fields() {
+        let mut value = serde_json::to_value(valid_button_placement_file())
+            .expect("serialize placement fixture");
+        value
+            .as_object_mut()
+            .expect("placement fixture object")
+            .insert("skins".to_string(), json!({}));
+        assert!(serde_json::from_value::<ButtonPlacementFile>(value).is_err());
+    }
 
     #[test]
     fn button_state_requires_positive_schema_version() {

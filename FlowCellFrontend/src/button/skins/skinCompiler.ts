@@ -146,7 +146,7 @@ export function compileButtonSkin(skin: ButtonSkin): ButtonSkinCompileResult {
     "svg[data-core]{pointer-events:bounding-box!important;}",
     "[data-button-label-node]{font-size:var(--button-label-font-size,inherit);line-height:inherit;}",
     "[data-button-label-line]{display:block;white-space:nowrap;}",
-    ":host([data-button-constrained=\"true\"]) [data-core]{box-sizing:border-box;width:var(--button-core-width);height:var(--button-core-height);}",
+    ":host([data-button-constrained=\"true\"]) [data-core]{box-sizing:border-box!important;width:var(--button-core-width)!important;height:var(--button-core-height)!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;}",
     ":host([data-button-text-overflow=\"true\"]) [data-core]{outline:1px dashed rgba(255,105,105,.9);outline-offset:-1px;}"
   ];
 

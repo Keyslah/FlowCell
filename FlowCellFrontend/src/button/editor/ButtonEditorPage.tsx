@@ -18,9 +18,8 @@ import {
 } from "../../pages/main/mainLayout";
 import {
   showOpenFileDialog,
-  showOpenFolderDialog
+  showSaveFileDialog
 } from "../../lib/tauri";
-import { openMotionSettingsWindow } from "../../lib/coreWindows";
 import {
   hideButtonActivationAnimationEditorWindow,
   openButtonActivationAnimationEditor,
@@ -30,7 +29,6 @@ import {
   buildButtonFanWindowLabel,
   buildButtonPopoutWindowLabel,
   closeButtonFanWindow,
-  closeButtonPopoutWindow,
   listenForButtonWindowContextUpdates,
   openButtonFanWindow,
   openButtonPopoutWindow
@@ -44,8 +42,7 @@ import type {
   ButtonRect,
   ButtonSkin,
   ButtonStateDocument,
-  ButtonSurface,
-  ButtonTextFitMode
+  ButtonSurface
 } from "../types";
 import {
   cloneButtonDocument,
@@ -54,9 +51,10 @@ import {
 import {
   installButtonSource,
   loadButtonStateDocument,
+  saveButtonPlacementFile,
+  saveButtonSkinFile,
   saveButtonStateDocument,
   uninstallButtonSource,
-  updateButtonSource,
   type InstallButtonSourceResult
 } from "../state/ButtonStateRepository";
 import { useButtonEditorStore } from "../state/ButtonEditorStore";
@@ -70,37 +68,52 @@ import {
 } from "../state/ButtonDraftBus";
 import { validateButtonStateDocument } from "../state/buttonStateValidation";
 import {
-  ensureFanSetup,
-  removeOwnedButtonGraph,
-  resolveDiscardedStagedOwnerButtonIds,
-  resolveUninstallOwnerButtonIds,
-  updateFanSetupMembers
+  resolveDiscardedStagedOwnerButtonIds
 } from "../state/buttonDocumentOperations";
-import { deriveRegularPopoutSelectionKey } from "../state/sourceIdentity";
-import { applyInstalledSourceUpdate } from "../state/sourceUpdateOperations";
 import {
-  reconcileProgramPanelOwners,
-  resolvePanelOwnerFanPlacement
+  reconcileProgramPanelOwners
 } from "../state/panelOwnerButtonOperations";
 import {
-  buttonRectsOverlap,
+  compactButtonPlacementRows,
   compactButtonPlacements,
   compactUniformButtonPlacements,
   createStarterButtonLayout,
   findFirstAvailableButtonPosition,
-  isButtonRectInsideSurface,
   snapToGrid,
+  inferButtonPlacementRows,
   validateExactButtonLayoutGeometry,
   type CompactButtonPlacement
 } from "../geometry/buttonGeometry";
 import { resolveDeterministicLabelGrowth } from "../geometry/labelGrowth";
 import { DEFAULT_BUTTON_SKIN_ID } from "../skins/defaultButtonSkin";
-import { ButtonLibrary } from "./ButtonLibrary";
+import {
+  BUTTON_SKIN_FILE_EXTENSION,
+  serializeButtonSkinSections
+} from "../skins/buttonSkinFormat";
+import {
+  BUTTON_PLACEMENT_FILE_EXTENSION,
+  buildButtonPlacementFile
+} from "../state/buttonPlacementFile";
 import { ButtonSurfaceSelector } from "./ButtonSurfaceSelector";
 import { ButtonWorkspace } from "./ButtonWorkspace";
-import { ButtonInspector } from "./ButtonInspector";
+import { ButtonAnimationPickerPage } from "./ButtonAnimationPickerPage";
 import { ButtonSkinEditor } from "./ButtonSkinEditor";
-import { FanBuilder } from "./FanBuilder";
+import {
+  buttonPlacementSizingPatch,
+  resolveAssignedButtonDimensions,
+  type ButtonSizeAssignment
+} from "./buttonSizeAssignments";
+import {
+  applyButtonAnimationSavedScope,
+  applyButtonPlacementSavedScope,
+  applyButtonSkinSavedScope,
+  buildButtonAnimationScopedDocument,
+  buildButtonPlacementScopedDocument,
+  buildButtonSkinScopedDocument,
+  buttonSkinsEqual,
+  skinHasReferencesOutsidePlacements,
+  type ButtonSkinSaveScope
+} from "./buttonEditorSaveScopes";
 import { discardStagedButtonInstalls } from "./stagedInstallCleanup";
 import {
   shouldApplyMatchedButtonMeasurement,
@@ -108,12 +121,10 @@ import {
 } from "./buttonMeasurementReconciliation";
 import {
   buildButtonEditorButtonOptions,
-  buildButtonEditorFanCandidates,
   buildButtonEditorPanelOptions,
   buildButtonEditorPlacementOptions,
   buildButtonEditorProgramOptions,
   resolveButtonEditorContextPlacementId,
-  resolveButtonEditorDefaultFanMembers,
   resolveButtonEditorIdentity,
   resolveButtonEditorPanelSkinTargetPlacementIds,
   resolveButtonEditorPanelSurfaceId,
@@ -152,9 +163,45 @@ function buttonRectsEqual(
   );
 }
 
+function defaultButtonPlacementFileName(now = new Date()): string {
+  const timestamp = now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
+  return `button-placement-${timestamp}${BUTTON_PLACEMENT_FILE_EXTENSION}`;
+}
+
+function defaultButtonSkinFileName(name: string): string {
+  const baseName = name
+    .normalize("NFC")
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+    .replace(/[. ]+$/g, "")
+    .trim();
+  return `${baseName || "button-skin"}${BUTTON_SKIN_FILE_EXTENSION}`;
+}
+
 interface RegisteredProgramPanels {
   programName: string;
   panelNames: string[];
+}
+
+interface NaturalCoreMeasurementSnapshot {
+  measurement: ButtonCoreMeasurement;
+  sourceSkinId: string;
+  sourceLabel: string;
+  sourceTextSizeOverride: number | null;
+}
+
+function currentNaturalCoreMeasurement(
+  document: ButtonStateDocument,
+  placement: ButtonPlacement,
+  measurements: ReadonlyMap<string, NaturalCoreMeasurementSnapshot>
+): ButtonCoreMeasurement | null {
+  const button = document.buttons[placement.buttonId];
+  const source = measurements.get(placement.id);
+  if (!button || !source) return null;
+  return (
+    source.sourceSkinId === (placement.skinOverrideId ?? button.defaultSkinId) &&
+    source.sourceLabel === button.label &&
+    source.sourceTextSizeOverride === placement.textSizeOverride
+  ) ? source.measurement : null;
 }
 
 interface ButtonEditorBootstrap {
@@ -271,6 +318,7 @@ function addPlacement(
     zIndex: surface.placementIds.length,
     skinOverrideId: null,
     textFitMode: document.buttons[buttonId]?.defaultTextFitMode ?? "shrink",
+    textAlignment: "skin",
     minimumFontSize: document.settings.defaultMinimumFontSize,
     textSizeOverride: null,
     allowLabelResize: false,
@@ -488,14 +536,15 @@ function ButtonEditorContent({
   const [initialSelection] = useState(() => resolveInitialEditorSelection(initialDocument, initialContext));
   const sessionIdRef = useRef(initialContext?.draftSessionId ?? createStableButtonId("editor-session"));
   const stagedInstallsRef = useRef(new Map<string, InstallButtonSourceResult>());
-  const pendingUninstallsRef = useRef(new Set<string>());
   const freshPlacementsRef = useRef(new Set<string>());
+  const naturalCoreMeasurementsRef = useRef(new Map<string, NaturalCoreMeasurementSnapshot>());
   const pendingMatchedMeasurementsRef = useRef(new Map<string, PendingMatchedMeasurement>());
-  const pendingTextSizeResizeRef = useRef(new Map<string, number | null>());
   const matchedMeasurementFrameRef = useRef<number | null>(null);
   const closeInProgressRef = useRef(false);
   const busyRef = useRef(false);
-  const cancelRef = useRef<(reload?: boolean) => Promise<boolean>>(async () => false);
+  const cancelRef = useRef<() => Promise<boolean>>(async () => false);
+  const handledAutoImportRequestRef = useRef(0);
+  const [activePage, setActivePage] = useState<"placement" | "animation">("placement");
   const [mode, setMode] = useState<"run" | "edit">("edit");
   const [reorderMode, setReorderMode] = useState(false);
   const [selectedSurfaceId, setSelectedSurfaceId] = useState(initialSelection.surfaceId);
@@ -503,7 +552,6 @@ function ButtonEditorContent({
   const [selectedPlacementIds, setSelectedPlacementIds] = useState<Set<string>>(
     () => new Set(initialSelection.placementId ? [initialSelection.placementId] : [])
   );
-  const [fanBuilderButtonIds, setFanBuilderButtonIds] = useState<Set<string>>(new Set());
   const [programs, setPrograms] = useState<string[]>(
     () => initialRegisteredPanels.map((entry) => entry.programName)
   );
@@ -518,6 +566,9 @@ function ButtonEditorContent({
   } | null>(() => initialContext?.lockImportDestination && initialSelection.programName && initialSelection.panelName
     ? { programName: initialSelection.programName, panelName: initialSelection.panelName }
     : null);
+  const [autoImportRequest, setAutoImportRequest] = useState(
+    initialContext?.lockImportDestination && initialSelection.programName && initialSelection.panelName ? 1 : 0
+  );
   const [busy, setBusyState] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [activeAnimationEditorButtonId, setActiveAnimationEditorButtonId] = useState<string | null>(null);
@@ -554,17 +605,6 @@ function ButtonEditorContent({
     () => buildButtonEditorPlacementOptions(store.draft, selectedButton?.id ?? ""),
     [store.draft, selectedButton?.id]
   );
-  const fanCandidates = useMemo(
-    () => buildButtonEditorFanCandidates(store.draft, programName, panelName),
-    [store.draft, programName, panelName]
-  );
-  const activeFanSetup = useMemo(
-    () => Object.values(store.draft.fanSetups).find(
-      (setup) => setup.fanSurfaceId === selectedSurfaceId
-    ) ?? null,
-    [selectedSurfaceId, store.draft.fanSetups]
-  );
-  const fanCandidateIdKey = fanCandidates.map((candidate) => candidate.id).join("\u0000");
 
   const focusPlacement = useCallback((placementId: string, replaceSelection = true) => {
     const document = store.current();
@@ -594,26 +634,15 @@ function ButtonEditorContent({
     if (placementId) focusPlacement(placementId);
   }, [focusPlacement, selectedSurfaceId, store]);
 
-  const showToolSetPopoutSurface = useCallback((surfaceId: string) => {
-    const document = store.current();
-    const surface = document.surfaces[surfaceId];
-    if (!surface) return;
-    const firstChildPlacementId = surface.placementIds.find((id) => document.placements[id]);
-    if (firstChildPlacementId) {
-      focusPlacement(firstChildPlacementId);
-      return;
-    }
-    setSelectedSurfaceId(surfaceId);
-    setFocusedPlacementId(null);
-    setSelectedPlacementIds(new Set());
-  }, [focusPlacement, store]);
-
   const applyEditorContext = useCallback((context: ButtonEditorWindowContext) => {
     setLockedImportDestination(
       context.lockImportDestination && context.programName && context.panelName
         ? { programName: context.programName, panelName: context.panelName }
         : null
     );
+    if (context.lockImportDestination && context.programName && context.panelName) {
+      setAutoImportRequest((current) => current + 1);
+    }
     const document = store.current();
     const placementId = resolveButtonEditorContextPlacementId(document, context);
     if (placementId) {
@@ -672,27 +701,6 @@ function ButtonEditorContent({
       return next;
     });
   }, [focusedPlacementId, panelName, programName, selectedSurfaceId, store.draft]);
-
-  useEffect(() => {
-    setFanBuilderButtonIds(new Set(
-      activeFanSetup
-        ? [
-            ...activeFanSetup.fanMemberButtonIds,
-            ...activeFanSetup.selectedToolSetOwnerButtonIds
-          ]
-        : []
-    ));
-  }, [activeFanSetup?.id, panelName, programName]);
-
-  useEffect(() => {
-    const candidateIds = new Set(fanCandidates.map((candidate) => candidate.id));
-    setFanBuilderButtonIds((current) => {
-      const next = new Set([...current].filter((buttonId) => candidateIds.has(buttonId)));
-      return next.size === current.size && [...next].every((buttonId) => current.has(buttonId))
-        ? current
-        : next;
-    });
-  }, [fanCandidateIdKey]);
 
   useEffect(() => {
     void publishButtonDraft(sessionIdRef.current, store.draft);
@@ -781,21 +789,19 @@ function ButtonEditorContent({
     return () => { disposed = true; unlisten?.(); };
   }, [applyEditorContext]);
 
-  const importSource = async (folder = false) => {
+  const importSource = useCallback(async () => {
     const importProgramName = lockedImportDestination?.programName ?? programName;
     const importPanelName = lockedImportDestination?.panelName ?? panelName;
-    if (!importProgramName || !importPanelName) return;
+    if (!importProgramName || !importPanelName || busyRef.current) return;
     setBusy(true);
     setMessage(null);
     let installed: InstallButtonSourceResult | null = null;
     try {
-      const paths = folder
-        ? await showOpenFolderDialog({ title: "Choose FlowCell Button Package", multiselect: false })
-        : await showOpenFileDialog({
-            title: "Choose FlowCell Button Content",
-            filter: "FlowCell Buttons (*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json)|*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json|All Files (*.*)|*.*",
-            multiselect: false
-          });
+      const paths = await showOpenFileDialog({
+        title: "Choose FlowCell Button Content",
+        filter: "FlowCell Buttons (*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json)|*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json|All Files (*.*)|*.*",
+        multiselect: false
+      });
       const sourcePath = paths[0];
       if (!sourcePath) return;
       const ownerButtonId = createStableButtonId("button");
@@ -845,238 +851,68 @@ function ButtonEditorContent({
     } finally {
       setBusy(false);
     }
-  };
+  }, [lockedImportDestination, panelName, programName, setBusy, store]);
 
-  const updateSelectedSource = async () => {
-    if (
-      !selectedButton?.sourceIdentity ||
-      (selectedButton.role !== "single-script" && selectedButton.role !== "tool-set-owner")
-    ) {
-      setMessage("Select an installed single-script Button or tool-set owner first.");
-      return;
-    }
-    if (
-      store.canUndo ||
-      stagedInstallsRef.current.size > 0 ||
-      pendingUninstallsRef.current.size > 0
-    ) {
-      setMessage("Save or Cancel the current Button draft before updating an installed source package.");
-      return;
-    }
+  useEffect(() => {
+    if (autoImportRequest <= handledAutoImportRequestRef.current || busy) return;
+    handledAutoImportRequestRef.current = autoImportRequest;
+    void importSource();
+  }, [autoImportRequest, busy, importSource]);
 
-    const importKind = selectedButton.role === "tool-set-owner" ? "tool-set" : "script";
-    const chooseFolder = importKind === "tool-set" && window.confirm(
-      "Choose an entire updated tool-set package folder?\n\nOK = folder, Cancel = manifest/script file."
-    );
+  const commitScopedDocument = async (
+    next: ButtonStateDocument,
+    applySavedScope: (draft: ButtonStateDocument, saved: ButtonStateDocument) => void,
+    successMessage: string
+  ): Promise<ButtonStateDocument | null> => {
+    const validation = validateButtonStateDocument(next);
+    if (!validation.valid) {
+      setMessage(validation.issues.slice(0, 8).map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
+      return null;
+    }
     setBusy(true);
-    setMessage(null);
     try {
-      const paths = chooseFolder
-        ? await showOpenFolderDialog({ title: "Choose Updated Tool-Set Package", multiselect: false })
-        : await showOpenFileDialog({
-            title: importKind === "script"
-              ? "Choose Updated Script or Script-Package Manifest"
-              : "Choose Updated Tool-Set Manifest or Script",
-            filter: importKind === "script"
-              ? "FlowCell scripts and packages (*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json)|*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json|All Files (*.*)|*.*"
-              : "FlowCell tool sets (*.json;*.py;*.jsx)|*.json;*.py;*.jsx|All Files (*.*)|*.*",
-            multiselect: false
-          });
-      const sourcePath = paths[0];
-      if (!sourcePath) return;
-      const installed = await updateButtonSource({
-        ownerButtonId: selectedButton.id,
-        programName: selectedButton.sourceIdentity.displayProgramName,
-        panelName: selectedButton.sourceIdentity.displayPanelName,
-        sourcePath,
-        importKind
-      });
-
-      let current = store.committed;
-      let saved: ButtonStateDocument | null = null;
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        const next = cloneButtonDocument(current);
-        applyInstalledSourceUpdate(next, installed);
-        try {
-          saved = await saveButtonStateDocument(next, current.revision);
-          break;
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (attempt === 2 || !message.includes("Button state changed before Save.")) throw error;
-          current = await loadButtonStateDocument();
-        }
-      }
-      if (!saved) throw new Error("The updated source package could not be committed to Button state.");
-      store.acceptSaved(saved);
+      const saved = await saveButtonStateDocument(next, store.committed.revision);
+      store.acceptScopedSaved(saved, applySavedScope);
       await publishButtonCommit(saved);
-      setMessage("Source package updated.");
+      setMessage(successMessage);
+      return saved;
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
+      return null;
     } finally {
       setBusy(false);
     }
   };
 
-  const createRegularPopout = () => {
-    const selectedButtons = [...selectedPlacementIds]
-      .map((id) => store.draft.placements[id])
-      .map((placement) => placement && store.draft.buttons[placement.buttonId])
-      .filter((button): button is ButtonRecord => Boolean(button && button.role === "single-script" && button.sourceIdentity));
-    if (selectedButtons.length === 0) {
-      setMessage("Select one or more single-script Buttons first.");
-      return;
-    }
-    let createdSurfaceId = "";
-    let createdPlacementId = "";
-    store.transact((draft) => {
-      const items = selectedButtons.map((button) => ({ id: button.id, width: 160, height: 44 }));
-      const starter = createStarterButtonLayout(items, { padding: draft.settings.defaultSurfacePadding, gap: draft.settings.defaultGap, maximumColumns: 4 });
-      const surface = createSurface(draft, "Regular Popout", "regular-popout", starter.requiredWidth, starter.requiredHeight);
-      createdSurfaceId = surface.id;
-      selectedButtons.forEach((button, index) => {
-        const placement = addPlacement(draft, button.id, surface.id, starter.rects[button.id]);
-        if (index === 0) createdPlacementId = placement.id;
-      });
-      const identities = selectedButtons.map((button) => button.sourceIdentity!);
-      const id = createStableButtonId("popout");
-      draft.popoutUnits[id] = {
-        id,
-        name: "Regular Popout",
-        kind: "regular",
-        surfaceId: surface.id,
-        canonicalBounds: { x: 0, y: 0, width: surface.width, height: surface.height },
-        desktopBounds: null,
-        desktopBoundsFitMode: "surface",
-        desktopBoundsEnvelope: { x: 0, y: 0, width: surface.width, height: surface.height },
-        memberPlacementIds: [...surface.placementIds],
-        openRule: "toggle",
-        closeRule: "escape",
-        transparency: 1,
-        pinnedDefault: false,
-        windowFitMode: "surface",
-        memberSourceIdentities: identities,
-        selectionKey: deriveRegularPopoutSelectionKey(identities)
-      };
-    }, { label: "Create regular popout" });
-    setSelectedSurfaceId(createdSurfaceId);
-    setFocusedPlacementId(createdPlacementId || null);
-    setSelectedPlacementIds(new Set(createdPlacementId ? [createdPlacementId] : []));
-  };
-
-  const createFanSetup = () => {
-    if (!programName || !panelName) {
-      setMessage("Choose the program and panel for this fan setup.");
-      return;
-    }
-    const selectedButtonIds = fanCandidates
-      .filter((candidate) => fanBuilderButtonIds.has(candidate.id))
-      .map((candidate) => candidate.id);
-    if (selectedButtonIds.length === 0) {
-      setMessage("Select one or more script Buttons or Tool Set owners in Fan Builder first.");
-      return;
-    }
-    let fanSurfaceId = "";
-    let fanPlacementId = "";
-    store.transact((draft) => {
-      reconcileProgramPanelOwners(draft, {
-        programName,
-        panels: buildPanelRailOwnerEntries(panels),
-        surfaceBounds: panelRailOwnerSurfaceBounds
-      });
-      const setup = ensureFanSetup({
-        document: draft,
-        programName,
-        panelName,
-        buttons: selectedButtonIds.map((buttonId) => draft.buttons[buttonId]).filter(Boolean)
-      });
-      const panelOwnerPlacement = resolvePanelOwnerFanPlacement(draft, setup.id);
-      if (!panelOwnerPlacement) throw new Error(`Fan '${setup.name}' is missing its panel-owner placement.`);
-      fanSurfaceId = setup.fanSurfaceId;
-      fanPlacementId = panelOwnerPlacement.id;
-    }, { label: "Create fan setup" });
-    setMessage(null);
-    setSelectedSurfaceId(fanSurfaceId);
-    setFocusedPlacementId(fanPlacementId || null);
-    setSelectedPlacementIds(new Set(fanPlacementId ? [fanPlacementId] : []));
-  };
-
-  const updateActiveFanSetupMembers = () => {
-    if (!activeFanSetup) {
-      setMessage("Choose a saved Fan placement before updating its members.");
-      return;
-    }
-    const selectedButtonIds = fanCandidates
-      .filter((candidate) => fanBuilderButtonIds.has(candidate.id))
-      .map((candidate) => candidate.id);
-    if (selectedButtonIds.length === 0) {
-      setMessage("A Fan needs at least one script Button or Tool Set owner.");
-      return;
-    }
-    const setupId = activeFanSetup.id;
-    let panelOwnerPlacementId = "";
-    store.transact((draft) => {
-      const setup = updateFanSetupMembers({
-        document: draft,
-        setupId,
-        buttons: selectedButtonIds.map((buttonId) => draft.buttons[buttonId]).filter(Boolean)
-      });
-      const panelOwnerPlacement = resolvePanelOwnerFanPlacement(draft, setup.id);
-      if (!panelOwnerPlacement) throw new Error(`Fan '${setup.name}' is missing its panel-owner placement.`);
-      panelOwnerPlacementId = panelOwnerPlacement.id;
-    }, { label: "Update Fan members", coalesceKey: `fan-members:${setupId}` });
-    setMessage(null);
-    setFocusedPlacementId(panelOwnerPlacementId || null);
-    setSelectedPlacementIds(new Set(panelOwnerPlacementId ? [panelOwnerPlacementId] : []));
-  };
-
-  const createDefaultFanSetup = () => {
-    if (!programName || !panelName) {
-      setMessage("Choose the program and panel for this fan setup.");
-      return;
-    }
-    const members = resolveButtonEditorDefaultFanMembers(
-      store.current(),
-      programName,
-      panelName
-    );
-    if (members.length === 0) {
-      setMessage("This panel has no single-script Buttons for a default fan grid.");
-      return;
-    }
-
-    const memberIds = members.map((button) => button.id);
-    let fanSurfaceId = "";
-    let fanPlacementId = "";
-    store.transact((draft) => {
-      const setup = ensureFanSetup({
-        document: draft,
-        programName,
-        panelName,
-        buttons: memberIds.map((buttonId) => draft.buttons[buttonId]).filter(Boolean)
-      });
-      const panelOwnerPlacement = resolvePanelOwnerFanPlacement(draft, setup.id);
-      if (!panelOwnerPlacement) {
-        throw new Error(`Default fan '${setup.name}' is missing its panel-owner placement.`);
-      }
-      fanSurfaceId = setup.fanSurfaceId;
-      fanPlacementId = panelOwnerPlacement.id;
-    }, { label: "Create default fan grid" });
-    setMessage(null);
-    setSelectedSurfaceId(fanSurfaceId);
-    setFocusedPlacementId(fanPlacementId);
-    setSelectedPlacementIds(new Set([fanPlacementId]));
-  };
-
-  const save = async () => {
-    const validation = validateButtonStateDocument(store.draft);
-    if (!validation.valid) {
-      setMessage(validation.issues.slice(0, 8).map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
-      return;
-    }
+  const savePlacement = async () => {
+    if (busyRef.current) return;
     setBusy(true);
+    let writtenPath: string | null = null;
     try {
+      const placementDraft = cloneButtonDocument(store.current());
+      const editorBaseline = cloneButtonDocument(store.committed);
+      const placementFile = buildButtonPlacementFile(placementDraft, selectedSurfaceId, {
+        programName,
+        panelName
+      });
+      const initialNext = buildButtonPlacementScopedDocument(
+        editorBaseline,
+        placementDraft,
+        selectedSurfaceId
+      );
+      const validation = validateButtonStateDocument(initialNext);
+      if (!validation.valid) {
+        throw new Error(validation.issues.slice(0, 8).map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
+      }
+      const targetPath = await showSaveFileDialog({
+        title: "Save Button Placement",
+        filter: "FlowCell Button Placement (*.flowcell-button-placement.json)|*.flowcell-button-placement.json|JSON Files (*.json)|*.json",
+        defaultFileName: defaultButtonPlacementFileName()
+      });
+      if (!targetPath) return;
+
       const discardedStagedOwnerIds = resolveDiscardedStagedOwnerButtonIds(
-        store.draft,
+        placementDraft,
         [...stagedInstallsRef.current.keys()]
       );
       for (const ownerButtonId of discardedStagedOwnerIds) {
@@ -1087,26 +923,48 @@ function ButtonEditorContent({
           sourceIdentity: installed.sourceIdentity
         });
         stagedInstallsRef.current.delete(ownerButtonId);
-        pendingUninstallsRef.current.delete(ownerButtonId);
       }
-      const uninstallIds = resolveUninstallOwnerButtonIds(
-        store.draft,
-        [...pendingUninstallsRef.current]
-      );
-      const saved = await saveButtonStateDocument(store.draft, store.committed.revision, uninstallIds);
-      store.acceptSaved(saved);
+      writtenPath = await saveButtonPlacementFile(targetPath, placementFile);
+      let committedDocument = editorBaseline;
+      let saved: ButtonStateDocument | null = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const next = buildButtonPlacementScopedDocument(
+          committedDocument,
+          placementDraft,
+          selectedSurfaceId,
+          editorBaseline
+        );
+        const retryValidation = validateButtonStateDocument(next);
+        if (!retryValidation.valid) {
+          throw new Error(retryValidation.issues.slice(0, 8).map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
+        }
+        try {
+          saved = await saveButtonStateDocument(next, committedDocument.revision);
+          break;
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (attempt === 2 || !message.includes("Button state changed before Save.")) throw error;
+          committedDocument = await loadButtonStateDocument();
+        }
+      }
+      if (!saved) throw new Error("FlowCell could not commit the live Button arrangement.");
+      store.acceptScopedSaved(saved, (draft, canonical) => {
+        applyButtonPlacementSavedScope(draft, canonical, selectedSurfaceId);
+      });
       stagedInstallsRef.current.clear();
-      pendingUninstallsRef.current.clear();
       await publishButtonCommit(saved);
-      setMessage("Saved.");
+      setMessage(`Button placement saved to ${writtenPath}.`);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      const failure = error instanceof Error ? error.message : String(error);
+      setMessage(writtenPath
+        ? `The placement file was saved to ${writtenPath}, but FlowCell could not commit the live Button arrangement:\n${failure}`
+        : failure);
     } finally {
       setBusy(false);
     }
   };
 
-  const cancel = useCallback(async (reload = false): Promise<boolean> => {
+  const cancel = useCallback(async (): Promise<boolean> => {
     setBusy(true);
     setMessage(null);
     try {
@@ -1126,22 +984,10 @@ function ButtonEditorContent({
         return false;
       }
 
-      pendingUninstallsRef.current.clear();
       await publishButtonDraftCancel(sessionIdRef.current);
       await hideButtonActivationAnimationEditorWindow().catch(() => {});
       setActiveAnimationEditorButtonId(null);
-      if (reload) {
-        const bootstrap = await loadButtonEditorBootstrap();
-        const loaded = bootstrap.document;
-        store.resetFromRepository(loaded);
-        setPrograms(bootstrap.registeredPanels.map((entry) => entry.programName));
-        setPanels(registeredPanelsForProgram(bootstrap.registeredPanels, programName));
-        setSelectedSurfaceId(
-          resolveButtonEditorPanelSurfaceId(loaded, programName, panelName) ?? ""
-        );
-      } else {
-        store.cancel();
-      }
+      store.cancel();
       setFocusedPlacementId(null);
       setSelectedPlacementIds(new Set());
       return true;
@@ -1151,7 +997,7 @@ function ButtonEditorContent({
     } finally {
       setBusy(false);
     }
-  }, [panelName, programName, setBusy, store.cancel, store.resetFromRepository]);
+  }, [setBusy, store.cancel]);
   cancelRef.current = cancel;
 
   useEffect(() => {
@@ -1167,7 +1013,7 @@ function ButtonEditorContent({
       }
 
       closeInProgressRef.current = true;
-      void cancelRef.current(false).then(async (discarded) => {
+      void cancelRef.current().then(async (discarded) => {
         if (!discarded || disposed) return;
         unregisterLayoutWindow(currentWindow.label);
         await currentWindow.destroy();
@@ -1190,7 +1036,7 @@ function ButtonEditorContent({
     orderedPlacementIds: readonly string[],
     placements: readonly CompactButtonPlacement[],
     label = "Reorder Buttons",
-    placementPatch?: Pick<ButtonPlacement, "matchHitboxToSkin" | "allowLabelResize">,
+    placementPatch?: Pick<ButtonPlacement, "matchHitboxToSkin" | "allowStretching" | "allowLabelResize">,
     surfacePatch?: Partial<Pick<ButtonSurface, "uniformButtonSize">>,
     coalesceKey?: string
   ): boolean => {
@@ -1283,7 +1129,7 @@ function ButtonEditorContent({
       orderedPlacementIds,
       compacted.placements,
       label,
-      { matchHitboxToSkin: false, allowLabelResize: false },
+      { matchHitboxToSkin: false, allowStretching: false, allowLabelResize: false },
       { uniformButtonSize: { width: targetSize.width, height: targetSize.height } },
       coalesceKey
     );
@@ -1336,6 +1182,141 @@ function ButtonEditorContent({
     );
   }, [applyUniformSizeToSurface, store]);
 
+  const assignSizeToSelectedPlacement = useCallback((assignment: ButtonSizeAssignment) => {
+    if (
+      !Number.isFinite(assignment.width) ||
+      !Number.isFinite(assignment.height) ||
+      assignment.width <= 0 ||
+      assignment.height <= 0
+    ) return;
+    const document = store.current();
+    const placement = focusedPlacementId
+      ? document.placements[focusedPlacementId]
+      : null;
+    const surface = placement ? document.surfaces[placement.surfaceId] : null;
+    if (!placement || !surface) return;
+    if (surface.uniformButtonSize) {
+      setMessage("Turn off the separate Same size Buttons format before assigning an Editor size.");
+      return;
+    }
+
+    const naturalMeasurement = currentNaturalCoreMeasurement(
+      document,
+      placement,
+      naturalCoreMeasurementsRef.current
+    );
+    const assignedDimensions = resolveAssignedButtonDimensions(
+      assignment,
+      naturalMeasurement ?? placement
+    );
+    const candidate = {
+      ...placement,
+      ...assignedDimensions
+    };
+    const geometryIssues = validateExactButtonLayoutGeometry(
+      surface.placementIds.flatMap((placementId) => {
+        const item = document.placements[placementId];
+        if (!item) return [];
+        return [{ id: item.id, rect: item.id === placement.id ? candidate : item }];
+      }),
+      surface
+    );
+    if (geometryIssues.length > 0) {
+      setMessage(
+        geometryIssues[0].placementIds.length > 1
+          ? "That Button size would overlap another Button."
+          : "That Button size would leave the selected surface."
+      );
+      return;
+    }
+
+    setMessage(null);
+    store.transact((draft) => {
+      Object.assign(draft.placements[placement.id], {
+        width: candidate.width,
+        height: candidate.height,
+        ...buttonPlacementSizingPatch(assignment)
+      });
+    }, {
+      label: "Assign Button size"
+    });
+    setMessage("Size assigned to this Button. Use Save placement to commit it.");
+  }, [focusedPlacementId, store]);
+
+  const assignSizeToPanel = useCallback((assignment: ButtonSizeAssignment) => {
+    if (
+      !Number.isFinite(assignment.width) ||
+      !Number.isFinite(assignment.height) ||
+      assignment.width <= 0 ||
+      assignment.height <= 0
+    ) return;
+    const document = store.current();
+    const placement = focusedPlacementId
+      ? document.placements[focusedPlacementId]
+      : null;
+    if (!placement) {
+      setMessage("Select a Button before assigning its size to the panel.");
+      return;
+    }
+    const surface = document.surfaces[placement.surfaceId];
+    if (!surface) {
+      setMessage("The current Button placement surface no longer exists.");
+      return;
+    }
+    if (surface.uniformButtonSize) {
+      setMessage("Turn off the separate Same size Buttons format before assigning an Editor size.");
+      return;
+    }
+    const orderedPlacementIds = [...surface.placementIds].sort((left, right) => {
+      const leftPlacement = document.placements[left];
+      const rightPlacement = document.placements[right];
+      return (leftPlacement?.zIndex ?? 0) - (rightPlacement?.zIndex ?? 0) ||
+        left.localeCompare(right);
+    });
+    const placements = orderedPlacementIds.flatMap((placementId) => {
+      const item = document.placements[placementId];
+      if (!item) return [];
+      const naturalMeasurement = currentNaturalCoreMeasurement(
+        document,
+        item,
+        naturalCoreMeasurementsRef.current
+      );
+      const assignedDimensions = resolveAssignedButtonDimensions(
+        assignment,
+        naturalMeasurement ?? item
+      );
+      return [{
+        id: item.id,
+        rect: { ...item, ...assignedDimensions }
+      }];
+    });
+    if (placements.length !== orderedPlacementIds.length || placements.length === 0) {
+      setMessage("The current placement surface contains a missing Button placement.");
+      return;
+    }
+    const compacted = compactButtonPlacements(
+      placements,
+      surface,
+      { gap: 0 }
+    );
+    if (!compacted.success) {
+      setMessage(compacted.reason ?? "That Button size does not fit every Button beside it on the current surface.");
+      return;
+    }
+    const applied = applyPlacementOrder(
+      surface.id,
+      orderedPlacementIds,
+      compacted.placements,
+      "Assign Button size to current surface",
+      buttonPlacementSizingPatch(assignment)
+    );
+    if (applied) {
+      setMessage(
+        `Size assigned once to ${orderedPlacementIds.length} Button${orderedPlacementIds.length === 1 ? "" : "s"} next to the edited Button on '${surface.name}'. Use Save placement to commit it.`
+      );
+    }
+  }, [applyPlacementOrder, focusedPlacementId, store]);
+
   const snapSelectedSurfaceToTopLeft = useCallback(() => {
     const document = store.current();
     const surface = document.surfaces[selectedSurfaceId];
@@ -1363,14 +1344,21 @@ function ButtonEditorContent({
       setMessage("The selected surface contains a missing Button placement.");
       return;
     }
-    const compacted = compactButtonPlacements(items, surface, { gap: 0 });
+    const rows = inferButtonPlacementRows(items);
+    const rowOrderedPlacementIds = rows.flatMap((row) =>
+      row.placements.map((placement) => placement.id)
+    );
+    const compacted = compactButtonPlacementRows(rows, surface, {
+      gap: 0,
+      preserveRowTopOffsets: false
+    });
     if (!compacted.success) {
       setMessage(compacted.reason ?? "The Buttons do not fit inside the selected surface.");
       return;
     }
     applyPlacementOrder(
       surface.id,
-      orderedPlacementIds,
+      rowOrderedPlacementIds,
       compacted.placements,
       "Snap Buttons to top left corner"
     );
@@ -1381,25 +1369,24 @@ function ButtonEditorContent({
     const placement = document.placements[placementId];
     const surface = placement && document.surfaces[placement.surfaceId];
     if (!placement || !surface) return;
+    const button = document.buttons[placement.buttonId];
+    const sourceSkinId = placement.skinOverrideId ?? button?.defaultSkinId;
+    if (!button || !sourceSkinId) return;
+    naturalCoreMeasurementsRef.current.set(placementId, {
+      measurement,
+      sourceSkinId,
+      sourceLabel: button.label,
+      sourceTextSizeOverride: placement.textSizeOverride
+    });
     if (surface.uniformButtonSize) {
-      pendingTextSizeResizeRef.current.delete(placementId);
       pendingMatchedMeasurementsRef.current.delete(placementId);
       return;
     }
-    const pendingTextSize = pendingTextSizeResizeRef.current.get(placementId);
-    const resizesForTextSize = pendingTextSizeResizeRef.current.has(placementId) &&
-      pendingTextSize === placement.textSizeOverride;
-    pendingTextSizeResizeRef.current.delete(placementId);
-    const desiredWidth = resizesForTextSize
-      ? Math.max(1, measurement.width)
-      : Math.max(1, snapToGrid(Math.ceil(measurement.width), document.settings.gridSize));
-    const desiredHeight = resizesForTextSize
-      ? Math.max(1, measurement.height)
-      : Math.max(1, snapToGrid(Math.ceil(measurement.height), document.settings.gridSize));
+    const desiredWidth = Math.max(1, snapToGrid(Math.ceil(measurement.width), document.settings.gridSize));
+    const desiredHeight = Math.max(1, snapToGrid(Math.ceil(measurement.height), document.settings.gridSize));
     const isFresh = freshPlacementsRef.current.delete(placementId);
     if (
       !isFresh &&
-      !resizesForTextSize &&
       (!placement.allowLabelResize || (desiredWidth <= placement.width && desiredHeight <= placement.height))
     ) return;
     pendingMatchedMeasurementsRef.current.delete(placementId);
@@ -1432,16 +1419,10 @@ function ButtonEditorContent({
     }
     store.transact((draft) => {
       result.placements.forEach((item) => Object.assign(draft.placements[item.id], item));
-      if (resizesForTextSize) {
-        Object.assign(draft.placements[placementId], {
-          width: desiredWidth,
-          height: desiredHeight
-        });
-      }
       Object.assign(draft.surfaces[surface.id], result.surface);
     }, {
-      label: resizesForTextSize ? "Resize Button text" : "Grow Button label and resolve collisions",
-      coalesceKey: resizesForTextSize ? `font-size:${placementId}` : `label-growth:${placementId}`
+      label: "Grow Button label and resolve collisions",
+      coalesceKey: `label-growth:${placementId}`
     });
   };
 
@@ -1464,6 +1445,9 @@ function ButtonEditorContent({
       sourceWidth: placement.width,
       sourceHeight: placement.height,
       sourceAllowStretching: placement.allowStretching,
+      sourceTextFitMode: placement.textFitMode,
+      sourceTextAlignment: placement.textAlignment,
+      sourceMinimumFontSize: placement.minimumFontSize,
       sourceTextSizeOverride: placement.textSizeOverride,
       sourceSkinId,
       sourceLabel: button.label
@@ -1502,102 +1486,33 @@ function ButtonEditorContent({
 
   const selectedSetForSurface = new Set([...selectedPlacementIds].filter((id) => store.draft.placements[id]?.surfaceId === selectedSurfaceId));
 
-  const selectWorkspacePlacement = (placementId: string, event: PointerEvent | KeyboardEvent) => {
-    const additive = event.ctrlKey || event.metaKey || event.shiftKey;
-    if (!additive) {
-      focusPlacement(placementId);
-      return;
-    }
-    const next = new Set(selectedPlacementIds);
-    if (next.has(placementId)) {
-      next.delete(placementId);
-      setSelectedPlacementIds(next);
-      const fallback = [...next][0];
-      if (fallback) focusPlacement(fallback, false);
-      else setFocusedPlacementId(null);
-      return;
-    }
-    next.add(placementId);
-    setSelectedPlacementIds(next);
-    focusPlacement(placementId, false);
+  const selectWorkspacePlacement = (
+    placementId: string,
+    _event: PointerEvent | KeyboardEvent
+  ) => {
+    focusPlacement(placementId);
   };
 
-  const openSelectedNativeWindow = async () => {
-    const document = store.current();
-    const unit = Object.values(document.popoutUnits).find(
-      (candidate) => candidate.surfaceId === selectedSurfaceId
-    );
-    try {
-      setMessage(null);
-      if (unit) {
-        const identity = resolveButtonEditorSurfaceIdentity(document, unit.surfaceId);
-        const ownerButtonId = unit.kind === "tool-set" ? unit.ownerButtonId : undefined;
-        const ownerButton = ownerButtonId ? document.buttons[ownerButtonId] : null;
-        const liveProgramName = identity?.programName ||
-          ownerButton?.sourceIdentity?.displayProgramName || programName;
-        const livePanelName = identity?.panelName ||
-          ownerButton?.sourceIdentity?.displayPanelName || panelName;
-        if (!liveProgramName) {
-          throw new Error(`Pop '${unit.name}' has no program identity.`);
-        }
-        await closeButtonPopoutWindow({
-          popoutUnitId: unit.id,
-          ownerButtonId
-        }).catch(() => {});
-        await openButtonPopoutWindow({
-          programName: liveProgramName,
-          panelName: livePanelName || undefined,
-          popoutUnitId: unit.id,
-          ownerButtonId,
-          displayMode: "expanded",
-          draftSessionId: sessionIdRef.current,
-          bounds: unit.desktopBounds
-            ? {
-                Left: unit.desktopBounds.left,
-                Top: unit.desktopBounds.top,
-                Width: unit.desktopBounds.width,
-                Height: unit.desktopBounds.height
-              }
-            : undefined
-        });
-        await publishButtonDraftToWindow(
-          sessionIdRef.current,
-          buildButtonPopoutWindowLabel({ popoutUnitId: unit.id, ownerButtonId }),
-          document
-        );
-        return;
-      }
-
-      const setup = Object.values(document.fanSetups).find(
-        (candidate) => candidate.fanSurfaceId === selectedSurfaceId
-      );
-      if (!setup) {
-        throw new Error("Choose a Pop or saved Fan placement before opening its live window.");
-      }
-      await closeButtonFanWindow(setup.panelOwnerButtonId).catch(() => {});
-      await openButtonFanWindow({
-        programName: setup.programName,
-        panelName: setup.panelName,
-        fanSetupId: setup.id,
-        panelOwnerButtonId: setup.panelOwnerButtonId,
-        draftSessionId: sessionIdRef.current,
-        collapsedBounds: setup.collapsedPanelOwnerBounds
-          ? {
-              Left: setup.collapsedPanelOwnerBounds.left,
-              Top: setup.collapsedPanelOwnerBounds.top,
-              Width: setup.collapsedPanelOwnerBounds.width,
-              Height: setup.collapsedPanelOwnerBounds.height
-            }
-          : null
-      });
-      await publishButtonDraftToWindow(
-        sessionIdRef.current,
-        buildButtonFanWindowLabel(setup.panelOwnerButtonId),
-        document
-      );
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+  const persistButtonAnimation = async (
+    nextDraft: ButtonStateDocument,
+    buttonId: string,
+    successMessage: string
+  ): Promise<boolean> => {
+    const animation = structuredClone(nextDraft.buttons[buttonId]?.activationAnimation ?? null);
+    if (!store.committed.buttons[buttonId]) {
+      store.transact((draft) => {
+        const target = draft.buttons[buttonId];
+        if (target) target.activationAnimation = animation;
+      }, { label: "Edit Button animation" });
+      setMessage(`${successMessage} Save placement first because this is a new Button.`);
+      return false;
     }
+    const next = buildButtonAnimationScopedDocument(store.committed, nextDraft, buttonId);
+    return Boolean(await commitScopedDocument(
+      next,
+      (draft, saved) => applyButtonAnimationSavedScope(draft, saved, buttonId),
+      successMessage
+    ));
   };
 
   const configureButtonAnimation = async (
@@ -1616,21 +1531,21 @@ function ButtonEditorContent({
       });
       const current = store.current().buttons[button.id];
       if (!current) return;
-      if (
-        current.activationAnimation?.presetId === presetId &&
-        desktopBoundsEqual(current.activationAnimation.desktopBounds, resolvedBounds)
-      ) {
+      const draftAlreadyMatches = current.activationAnimation?.presetId === presetId &&
+        desktopBoundsEqual(current.activationAnimation.desktopBounds, resolvedBounds);
+      const committedAnimation = store.committed.buttons[button.id]?.activationAnimation;
+      const committedAlreadyMatches = committedAnimation?.presetId === presetId &&
+        desktopBoundsEqual(committedAnimation.desktopBounds, resolvedBounds);
+      if (draftAlreadyMatches && committedAlreadyMatches) {
         setActiveAnimationEditorButtonId(button.id);
         return;
       }
-      store.transact((draft) => {
-        const target = draft.buttons[button.id];
-        if (!target) return;
-        target.activationAnimation = {
-          presetId,
-          desktopBounds: resolvedBounds
-        };
-      }, { label: "Assign Button animation" });
+      const nextDraft = cloneButtonDocument(store.current());
+      nextDraft.buttons[button.id].activationAnimation = {
+        presetId,
+        desktopBounds: resolvedBounds
+      };
+      await persistButtonAnimation(nextDraft, button.id, "Animation applied.");
       setActiveAnimationEditorButtonId(button.id);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -1642,16 +1557,16 @@ function ButtonEditorContent({
     if (!animation) return;
     try {
       const bounds = await saveButtonActivationAnimationEditorBounds();
-      store.transact((draft) => {
-        const target = draft.buttons[button.id];
-        if (!target?.activationAnimation) return;
-        target.activationAnimation.desktopBounds = bounds;
-      }, {
-        label: "Position Button animation",
-        coalesceKey: `button-animation-bounds:${button.id}`
-      });
+      const nextDraft = cloneButtonDocument(store.current());
+      const target = nextDraft.buttons[button.id];
+      if (!target?.activationAnimation) return;
+      target.activationAnimation.desktopBounds = bounds;
+      await persistButtonAnimation(
+        nextDraft,
+        button.id,
+        "Animation position and size saved."
+      );
       setActiveAnimationEditorButtonId(null);
-      setMessage("Animation position and size updated. Click the main Save button to commit the Button draft.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
@@ -1660,6 +1575,132 @@ function ButtonEditorContent({
   const closeButtonAnimationEditor = async () => {
     await hideButtonActivationAnimationEditorWindow().catch(() => {});
     setActiveAnimationEditorButtonId(null);
+  };
+
+  const applyAnimationSelection = async (
+    presetId: ButtonActivationAnimationPresetId | null
+  ) => {
+    const button = selectedButton;
+    if (!button) return;
+    if (!presetId) {
+      const nextDraft = cloneButtonDocument(store.current());
+      const target = nextDraft.buttons[button.id];
+      if (target) target.activationAnimation = null;
+      await persistButtonAnimation(nextDraft, button.id, "No animation applied.");
+      await hideButtonActivationAnimationEditorWindow().catch(() => {});
+      setActiveAnimationEditorButtonId(null);
+      return;
+    }
+    if (
+      activeAnimationEditorButtonId === button.id &&
+      button.activationAnimation?.presetId === presetId
+    ) {
+      setMessage("This animation is already applied and its position-and-size setup is open.");
+      return;
+    }
+    await configureButtonAnimation(button, presetId);
+  };
+
+  const selectedSkinButtonIds = selectedButton && store.committed.buttons[selectedButton.id]
+    ? [selectedButton.id]
+    : [];
+
+  const saveWorkingSkin = async (workingSkin: ButtonSkin) => {
+    const nextDraft = cloneButtonDocument(store.current());
+    nextDraft.skins[workingSkin.id] = cloneButtonDocument(workingSkin);
+    const scope: ButtonSkinSaveScope = {
+      skinIds: [workingSkin.id],
+      buttonIds: selectedSkinButtonIds
+    };
+    const next = buildButtonSkinScopedDocument(store.committed, nextDraft, scope);
+    await commitScopedDocument(
+      next,
+      (draft, saved) => applyButtonSkinSavedScope(draft, saved, scope),
+      `Skin '${workingSkin.name}' saved.`
+    );
+  };
+
+  const saveWorkingSkinAsNew = async (workingSkin: ButtonSkin) => {
+    try {
+      const id = createStableButtonId("skin");
+      const duplicate: ButtonSkin = {
+        ...cloneButtonDocument(workingSkin),
+        id,
+        name: `${workingSkin.name} Copy`
+      };
+      const targetPath = await showSaveFileDialog({
+        title: "Save Button Skin As",
+        filter: "FlowCell Button Skin (*.flowcell-button-skin.txt)|*.flowcell-button-skin.txt|Text Files (*.txt)|*.txt",
+        defaultFileName: defaultButtonSkinFileName(duplicate.name)
+      });
+      if (!targetPath) return;
+
+      const writtenPath = await saveButtonSkinFile(
+        targetPath,
+        serializeButtonSkinSections(duplicate)
+      );
+      const nextDraft = cloneButtonDocument(store.current());
+      nextDraft.skins[id] = duplicate;
+      const scope: ButtonSkinSaveScope = { skinIds: [id] };
+      const next = buildButtonSkinScopedDocument(store.committed, nextDraft, scope);
+      await commitScopedDocument(
+        next,
+        (draft, saved) => applyButtonSkinSavedScope(draft, saved, scope),
+        `Skin '${duplicate.name}' saved as a new skin at ${writtenPath}.`
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const assignWorkingSkin = async (
+    workingSkin: ButtonSkin,
+    targetPlacementIds: readonly string[],
+    assignmentName: string,
+    forkName: string
+  ) => {
+    if (targetPlacementIds.length === 0) {
+      setMessage("The selected Button is not on the Main panel for this Program and Panel.");
+      return;
+    }
+    const unsavedTarget = targetPlacementIds.find((placementId) =>
+      !store.committed.placements[placementId]
+    );
+    if (unsavedTarget) {
+      setMessage("Save placement for this new Button before assigning its skin.");
+      return;
+    }
+
+    const nextDraft = cloneButtonDocument(store.current());
+    const storedSkin = nextDraft.skins[workingSkin.id];
+    const allowedPlacementIds = new Set(targetPlacementIds);
+    const mustFork = Boolean(
+      storedSkin &&
+      !buttonSkinsEqual(storedSkin, workingSkin) &&
+      skinHasReferencesOutsidePlacements(nextDraft, workingSkin.id, allowedPlacementIds)
+    );
+    const assignedSkin: ButtonSkin = mustFork
+      ? {
+          ...cloneButtonDocument(workingSkin),
+          id: createStableButtonId("skin"),
+          name: `${workingSkin.name} — ${forkName}`
+        }
+      : cloneButtonDocument(workingSkin);
+    nextDraft.skins[assignedSkin.id] = assignedSkin;
+    targetPlacementIds.forEach((placementId) => {
+      nextDraft.placements[placementId].skinOverrideId = assignedSkin.id;
+    });
+    const scope: ButtonSkinSaveScope = {
+      skinIds: [assignedSkin.id],
+      placementIds: targetPlacementIds,
+      buttonIds: selectedSkinButtonIds
+    };
+    const next = buildButtonSkinScopedDocument(store.committed, nextDraft, scope);
+    await commitScopedDocument(
+      next,
+      (draft, saved) => applyButtonSkinSavedScope(draft, saved, scope),
+      assignmentName
+    );
   };
 
   const activateOwnerButton = async (_placementId: string, button: ButtonRecord) => {
@@ -1699,7 +1740,9 @@ function ButtonEditorContent({
         const setups = Object.values(store.current().fanSetups).filter(
           (candidate) => candidate.panelOwnerButtonId === button.id
         );
-        const setup = setups.find((candidate) => candidate.fanSurfaceId === selectedSurfaceId) ?? setups[0];
+        const setup = setups.find(
+          (candidate) => candidate.fanSurfaceId === selectedSurfaceId
+        ) ?? setups[0];
         if (!setup) throw new Error(`Panel owner '${button.label}' has no canonical fan setup.`);
         await openButtonFanWindow({
           programName: setup.programName,
@@ -1731,258 +1774,168 @@ function ButtonEditorContent({
   return (
     <main className="button-editor-page">
       <ButtonEditorTitlebar />
-      <header className="button-editor-header">
-        <h1>Buttons</h1>
-        <ButtonSurfaceSelector
-          document={store.draft}
-          surfaceId={selectedSurfaceId}
-          programs={programOptions}
-          panels={panelOptions}
-          buttonOptions={buttonOptions}
-          placementOptions={placementOptions}
-          programName={programName}
-          panelName={panelName}
-          navigationLocked={Boolean(lockedImportDestination)}
-          buttonId={selectedButton?.id ?? ""}
-          placementId={focusedPlacementId ?? ""}
-          onProgramChange={(value) => {
-            setProgramName(value);
-            setPanelName("");
-            setPanels([]);
-            setSelectedSurfaceId("");
-            setFocusedPlacementId(null);
-            setSelectedPlacementIds(new Set());
-          }}
-          onPanelChange={(value) => {
-            setPanelName(value);
-            setSelectedSurfaceId(
-              resolveButtonEditorPanelSurfaceId(store.current(), programName, value) ?? ""
-            );
-            setFocusedPlacementId(null);
-            setSelectedPlacementIds(new Set());
-          }}
-          onButtonChange={selectButton}
-          onPlacementChange={(placementId) => {
-            const option = placementOptions.find((candidate) => candidate.id === placementId);
-            if (option?.action === "create-default-fan") {
-              createDefaultFanSetup();
-              return;
-            }
-            if (option?.action === "show-tool-set-popout") {
-              showToolSetPopoutSurface(option.surfaceId);
-              return;
-            }
-            if (placementId) focusPlacement(placementId);
-            else {
+      <div className="button-editor-layout">
+        <aside className="button-editor-sidebar">
+          <div className="button-editor-sidebar__heading">
+            <span>Editor</span>
+            <h1>Buttons</h1>
+          </div>
+          <ButtonSurfaceSelector
+            programs={programOptions}
+            panels={panelOptions}
+            buttonOptions={buttonOptions}
+            placementOptions={placementOptions}
+            programName={programName}
+            panelName={panelName}
+            navigationLocked={Boolean(lockedImportDestination)}
+            buttonId={selectedButton?.id ?? ""}
+            placementId={focusedPlacementId ?? ""}
+            onProgramChange={(value) => {
+              setProgramName(value);
+              setPanelName("");
+              setPanels([]);
+              setSelectedSurfaceId("");
               setFocusedPlacementId(null);
               setSelectedPlacementIds(new Set());
-            }
-          }}
-          onSurfaceSizeChange={(surfaceId, width, height) => store.transact((draft) => {
-            draft.surfaces[surfaceId].width = Math.max(1, width);
-            draft.surfaces[surfaceId].height = Math.max(1, height);
-            const unit = Object.values(draft.popoutUnits).find((candidate) => candidate.surfaceId === surfaceId);
-            if (unit) unit.canonicalBounds = { ...unit.canonicalBounds, width: Math.max(1, width), height: Math.max(1, height) };
-          }, { label: "Resize Button surface", coalesceKey: `surface:${surfaceId}` })}
-          onDesktopBoundsChange={(unitId, bounds) => store.transact((draft) => {
-            const unit = draft.popoutUnits[unitId];
-            unit.desktopBounds = bounds;
-            unit.desktopBoundsFitMode = unit.windowFitMode ?? "surface";
-          }, { label: "Place Button window", coalesceKey: `desktop:${unitId}` })}
-          onPopoutChange={(unitId, patch) => store.transact((draft) => {
-            Object.assign(draft.popoutUnits[unitId], patch);
-          }, { label: "Edit popout configuration", coalesceKey: `popout:${unitId}` })}
-          onFanSetupChange={(setupId, patch) => store.transact((draft) => {
-            const setup = draft.fanSetups[setupId];
-            Object.assign(setup, patch);
-            if (patch.collapsedPanelOwnerBounds) {
-              setup.collapsedBoundsFitMode = setup.windowFitMode ?? "surface";
-            }
-          }, { label: "Edit fan setup", coalesceKey: `fan:${setupId}` })}
-          onFanToolSetAnchorChange={(setupId, ownerButtonId, bounds) => store.transact((draft) => {
-            draft.fanSetups[setupId].toolSetOwnerAnchors[ownerButtonId] = bounds;
-          }, {
-            label: "Place fan tool-set owner",
-            coalesceKey: `fan-anchor:${setupId}:${ownerButtonId}`
-          })}
-          onOpenWindow={openSelectedNativeWindow}
-        />
-        <div className="button-editor-toolbar">
-          <label className="button-editor-mode"><span>Edit</span><input type="checkbox" checked={mode === "run"} onChange={(event) => {
-            const nextMode = event.currentTarget.checked ? "run" : "edit";
-            setMode(nextMode);
-            if (nextMode === "run") setReorderMode(false);
-          }} /><span>Run</span></label>
-          <button
-            type="button"
-            className={reorderMode ? "button-editor-toolbar__toggle is-active" : "button-editor-toolbar__toggle"}
-            aria-pressed={reorderMode}
-            disabled={mode !== "edit" || selectedSurfaceButtonCount < 2 || busy}
-            onClick={() => setReorderMode((current) => !current)}
-          >
-            Reorder
-          </button>
-          <button
-            type="button"
-            disabled={mode !== "edit" || selectedSurfaceButtonCount === 0 || busy}
-            onClick={snapSelectedSurfaceToTopLeft}
-          >
-            Snap to top left corner
-          </button>
-          <button type="button" disabled={!store.canUndo || busy} onClick={store.undo}>Undo</button>
-          <button type="button" disabled={!store.canRedo || busy} onClick={store.redo}>Redo</button>
-          <button type="button" onClick={() => void openMotionSettingsWindow()}>Motion Settings</button>
-          <button type="button" disabled={busy} onClick={() => void save()}>Save</button>
-          <button type="button" disabled={busy} onClick={() => void cancel(false)}>Cancel</button>
-          <button type="button" disabled={busy} onClick={() => void cancel(true)}>Reset</button>
-        </div>
-      </header>
-      {message && <pre className="button-editor-message">{message}</pre>}
-      <div className="button-editor-layout">
-        <ButtonLibrary
-          document={store.draft}
-          programName={lockedImportDestination?.programName ?? programName}
-          panelName={lockedImportDestination?.panelName ?? panelName}
-          selectedButtonId={selectedButton?.id ?? null}
-          canUpdateSource={Boolean(
-            selectedButton?.sourceIdentity &&
-            (selectedButton.role === "single-script" || selectedButton.role === "tool-set-owner")
-          )}
-          busy={busy}
-          onImportFile={() => void importSource(false)}
-          onImportFolder={() => void importSource(true)}
-          onUpdateSource={() => void updateSelectedSource()}
-          onDeleteButton={() => {
-            if (!selectedButton) return;
-            if (selectedButton.role === "panel-owner") {
-              setMessage("Panel Buttons are owned by their registered panel and cannot be deleted here.");
-              return;
-            }
-            void hideButtonActivationAnimationEditorWindow();
-            setActiveAnimationEditorButtonId(null);
-            store.transact((draft) => {
-              const result = removeOwnedButtonGraph(draft, selectedButton.id);
-              result.uninstallOwnerButtonIds.forEach((id) => pendingUninstallsRef.current.add(id));
-              for (const placementId of freshPlacementsRef.current) {
-                if (!draft.placements[placementId]) freshPlacementsRef.current.delete(placementId);
-              }
-            }, { label: "Delete Button" });
-            setFocusedPlacementId(null);
-            setSelectedPlacementIds(new Set());
-          }}
-          onNewRegularPopout={createRegularPopout}
-          fanBuilder={(
-            <FanBuilder
-              programName={programName}
-              panelName={panelName}
-              candidates={fanCandidates}
-              selectedButtonIds={fanBuilderButtonIds}
-              activeFanName={activeFanSetup?.name}
-              busy={busy}
-              onToggleButton={(buttonId, selected) => setFanBuilderButtonIds((current) => {
-                const next = new Set(current);
-                if (selected) next.add(buttonId);
-                else next.delete(buttonId);
-                return next;
-              })}
-              onSelectAll={() => setFanBuilderButtonIds(new Set(
-                fanCandidates.map((candidate) => candidate.id)
-              ))}
-              onClear={() => setFanBuilderButtonIds(new Set())}
-              onBuildNewFan={createFanSetup}
-              onUpdateActiveFan={activeFanSetup ? updateActiveFanSetupMembers : undefined}
-            />
-          )}
-        />
-        <ButtonWorkspace
-          document={store.draft}
-          surfaceId={selectedSurfaceId}
-          mode={mode}
-          selectedPlacementIds={selectedSetForSurface}
-          onSelectPlacement={selectWorkspacePlacement}
-          onPlacementRectChange={updatePlacementRect}
-          onPlacementMeasurement={handlePlacementMeasurement}
-          onPlacementNaturalMeasurement={handleNaturalMeasurement}
-          onOwnerActivate={activateOwnerButton}
-          reorderMode={reorderMode}
-          onPlacementOrderChange={applyPlacementOrder}
-        />
-        <ButtonInspector
-          button={selectedButton}
-          placement={selectedPlacement}
-          skins={Object.values(store.draft.skins)}
-          allSurfaceButtonsSameSize={allSurfaceButtonsSameSize}
-          onAllSurfaceButtonsSameSizeChange={setAllSurfaceButtonsSameSize}
-          onButtonChange={(patch, coalesceKey) => {
-            if (selectedButton) store.transact((draft) => { Object.assign(draft.buttons[selectedButton.id], patch); }, { label: "Edit Button", coalesceKey });
-          }}
-          onPlacementChange={(patch, coalesceKey) => {
-            if (!selectedPlacement) return;
-            const changesGeometry = ["x", "y", "width", "height"].some((key) => Object.hasOwn(patch, key));
-            const changesSize = ["width", "height"].some((key) => Object.hasOwn(patch, key));
-            if (allSurfaceButtonsSameSize && changesSize) {
-              applyUniformSizeToSurface(
-                selectedPlacement.surfaceId,
-                {
-                  width: patch.width ?? selectedPlacement.width,
-                  height: patch.height ?? selectedPlacement.height
-                },
-                "Resize every Button on the surface",
-                coalesceKey ? `uniform-size:${selectedPlacement.surfaceId}:${coalesceKey}` : undefined
+            }}
+            onPanelChange={(value) => {
+              setPanelName(value);
+              setSelectedSurfaceId(
+                resolveButtonEditorPanelSurfaceId(store.current(), programName, value) ?? ""
               );
-              return;
-            }
-            if (changesGeometry) {
-              const candidate = { ...selectedPlacement, ...patch };
-              const surface = store.draft.surfaces[selectedPlacement.surfaceId];
-              const others = surface.placementIds.filter((id) => id !== selectedPlacement.id).map((id) => store.draft.placements[id]);
-              const valid = isButtonRectInsideSurface(candidate, surface) &&
-                !others.some((other) => buttonRectsOverlap(candidate, other));
-              if (!valid) {
-                setMessage("That geometry would overlap another Button or leave the surface.");
-                return;
+              setFocusedPlacementId(null);
+              setSelectedPlacementIds(new Set());
+            }}
+            onButtonChange={selectButton}
+            onPlacementChange={(placementId) => {
+              if (placementId) focusPlacement(placementId);
+              else {
+                setFocusedPlacementId(null);
+                setSelectedPlacementIds(new Set());
               }
-            }
-            setMessage(null);
-            if (Object.hasOwn(patch, "textSizeOverride")) {
-              pendingTextSizeResizeRef.current.set(
-                selectedPlacement.id,
-                patch.textSizeOverride ?? null
+            }}
+          />
+          <div className="button-editor-sidebar__actions">
+            <button
+              type="button"
+              className="button-editor-sidebar__save"
+              disabled={busy}
+              onClick={() => void savePlacement()}
+            >
+              Save placement
+            </button>
+            <label className="button-editor-mode button-editor-sidebar__mode">
+              <span>Edit</span>
+              <input
+                type="checkbox"
+                checked={mode === "run"}
+                disabled={busy}
+                onChange={(event) => {
+                  if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
+                  const nextMode = event.currentTarget.checked ? "run" : "edit";
+                  setActivePage("placement");
+                  setMode(nextMode);
+                  if (nextMode === "run") setReorderMode(false);
+                }}
+              />
+              <span>Run</span>
+            </label>
+            <button
+              type="button"
+              className={activePage === "placement" && reorderMode ? "is-active" : undefined}
+              aria-pressed={reorderMode}
+              disabled={mode !== "edit" || selectedSurfaceButtonCount < 2 || busy}
+              onClick={() => {
+                if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
+                setActivePage("placement");
+                setReorderMode((current) => !current);
+              }}
+            >
+              Re-order
+            </button>
+            <button
+              type="button"
+              disabled={mode !== "edit" || selectedSurfaceButtonCount === 0 || busy}
+              onClick={() => {
+                if (activeAnimationEditorButtonId) void closeButtonAnimationEditor();
+                setActivePage("placement");
+                setReorderMode(false);
+                snapSelectedSurfaceToTopLeft();
+              }}
+            >
+              Snap to top left corner
+            </button>
+            <button
+              type="button"
+              className={activePage === "animation" ? "is-active" : undefined}
+              aria-pressed={activePage === "animation"}
+              disabled={!selectedButton || busy}
+              onClick={() => {
+                setActivePage("animation");
+                setReorderMode(false);
+              }}
+            >
+              Animation
+            </button>
+            <label className="button-editor-check button-editor-sidebar__same-size">
+              <input
+                type="checkbox"
+                checked={allSurfaceButtonsSameSize}
+                disabled={!selectedPlacement || busy}
+                onChange={(event) => setAllSurfaceButtonsSameSize(event.currentTarget.checked)}
+              />
+              <span>Same size Buttons</span>
+            </label>
+          </div>
+          {message && <pre className="button-editor-message">{message}</pre>}
+        </aside>
+        {activePage === "animation" ? (
+          <ButtonAnimationPickerPage
+            button={selectedButton}
+            busy={busy}
+            setupOpen={activeAnimationEditorButtonId === selectedButton?.id}
+            onClose={() => {
+              void closeButtonAnimationEditor();
+              setActivePage("placement");
+            }}
+            onApply={applyAnimationSelection}
+            onPositionAndSize={() => {
+              if (!selectedButton?.activationAnimation) return;
+              void configureButtonAnimation(
+                selectedButton,
+                selectedButton.activationAnimation.presetId,
+                selectedButton.activationAnimation.desktopBounds
               );
-            }
-            store.transact((draft) => { Object.assign(draft.placements[selectedPlacement.id], patch); }, { label: "Edit placement", coalesceKey });
-          }}
-          onActivationAnimationChange={(presetId) => {
-            if (!selectedButton) return;
-            if (!presetId) {
-              store.transact((draft) => {
-                draft.buttons[selectedButton.id].activationAnimation = null;
-              }, { label: "Remove Button animation" });
-              void hideButtonActivationAnimationEditorWindow();
-              setActiveAnimationEditorButtonId(null);
-              return;
-            }
-            void configureButtonAnimation(selectedButton, presetId);
-          }}
-          onConfigureActivationAnimation={() => {
-            if (!selectedButton?.activationAnimation) return;
-            void configureButtonAnimation(
-              selectedButton,
-              selectedButton.activationAnimation.presetId,
-              selectedButton.activationAnimation.desktopBounds
-            );
-          }}
-          activationAnimationEditorOpen={activeAnimationEditorButtonId === selectedButton?.id}
-          onSaveActivationAnimationBounds={() => {
-            if (!selectedButton) return;
-            void saveButtonAnimationBounds(selectedButton);
-          }}
-          onCloseActivationAnimationEditor={() => {
-            void closeButtonAnimationEditor();
-          }}
-        />
+            }}
+            onSavePositionAndSize={() => {
+              if (!selectedButton) return;
+              void saveButtonAnimationBounds(selectedButton);
+            }}
+            onCloseSetup={() => void closeButtonAnimationEditor()}
+          />
+        ) : (
+          <ButtonWorkspace
+            document={store.draft}
+            surfaceId={selectedSurfaceId}
+            mode={mode}
+            selectedPlacementIds={selectedSetForSurface}
+            onSelectPlacement={selectWorkspacePlacement}
+            onPlacementRectChange={updatePlacementRect}
+            onPlacementMeasurement={handlePlacementMeasurement}
+            onPlacementNaturalMeasurement={handleNaturalMeasurement}
+            onOwnerActivate={activateOwnerButton}
+            reorderMode={reorderMode}
+            onPlacementOrderChange={applyPlacementOrder}
+          />
+        )}
         <ButtonSkinEditor
           skin={selectedSkin}
+          skins={Object.values(store.draft.skins)}
+          skinContextKey={selectedPlacement?.id ?? ""}
+          busy={busy}
+          placement={selectedPlacement}
+          surfaceButtonCount={selectedSurfaceButtonCount}
+          allSurfaceButtonsSameSize={allSurfaceButtonsSameSize}
           buttonLabel={selectedButton?.label ?? "Button Preview"}
           onButtonLabelChange={(label) => {
             if (!selectedButton) return;
@@ -1990,29 +1943,45 @@ function ButtonEditorContent({
               draft.buttons[selectedButton.id].label = label;
             }, { label: "Edit Button label", coalesceKey: `label:${selectedButton.id}` });
           }}
-          onSkinChange={(skin, label, coalesceKey) => store.transact((draft) => {
-            draft.skins[skin.id] = skin;
-            resolveButtonEditorPanelSkinTargetPlacementIds(
-              draft,
+          onAssignSize={assignSizeToSelectedPlacement}
+          onAssignSizeToPanel={assignSizeToPanel}
+          onPlacementTextChange={(patch, coalesceKey) => {
+            if (!selectedPlacement) return;
+            store.transact((draft) => {
+              Object.assign(draft.placements[selectedPlacement.id], patch, {
+                allowLabelResize: false
+              });
+            }, {
+              label: "Edit Button text fitting",
+              coalesceKey
+            });
+          }}
+          onAssignSkin={(skin) => {
+            if (!selectedPlacement || !selectedButton) return;
+            void assignWorkingSkin(
+              skin,
+              [selectedPlacement.id],
+              `Skin assigned only to '${selectedButton.label}'.`,
+              selectedButton.label || "Button"
+            );
+          }}
+          onAssignSkinToPanel={(skin) => {
+            if (!selectedPlacement) return;
+            const placementIds = resolveButtonEditorPanelSkinTargetPlacementIds(
+              store.current(),
               programName,
               panelName,
-              selectedPlacement?.id ?? ""
-            ).forEach((placementId) => {
-              draft.placements[placementId].skinOverrideId = skin.id;
-            });
-          }, { label, coalesceKey })}
-          onCreateSkin={() => {
-            const id = createStableButtonId("skin");
-            const base = cloneButtonDocument(store.draft.skins[store.draft.settings.defaultSkinId]);
-            const skin: ButtonSkin = { ...base, id, name: `New Skin ${Object.keys(store.draft.skins).length + 1}`, compileCache: null, metadata: {} };
-            store.transact((draft) => { draft.skins[id] = skin; if (selectedPlacement) draft.placements[selectedPlacement.id].skinOverrideId = id; }, { label: "Create skin" });
+              selectedPlacement.id
+            );
+            void assignWorkingSkin(
+              skin,
+              placementIds,
+              `Skin assigned to ${placementIds.length} Button${placementIds.length === 1 ? "" : "s"} on '${panelName}'.`,
+              panelName || "Panel"
+            );
           }}
-          onDuplicateSkin={() => {
-            if (!selectedSkin || !selectedPlacement) return;
-            const id = createStableButtonId("skin");
-            const duplicate = { ...cloneButtonDocument(selectedSkin), id, name: `${selectedSkin.name} Copy` };
-            store.transact((draft) => { draft.skins[id] = duplicate; draft.placements[selectedPlacement.id].skinOverrideId = id; }, { label: "Duplicate skin" });
-          }}
+          onSaveSkin={(skin) => void saveWorkingSkin(skin)}
+          onSaveAsNewSkin={(skin) => void saveWorkingSkinAsNew(skin)}
         />
       </div>
     </main>

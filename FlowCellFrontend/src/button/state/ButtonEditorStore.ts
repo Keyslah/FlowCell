@@ -35,6 +35,10 @@ export interface ButtonEditorStore {
   undo: () => void;
   redo: () => void;
   acceptSaved: (document: ButtonStateDocument) => void;
+  acceptScopedSaved: (
+    document: ButtonStateDocument,
+    applySavedScope: (draft: ButtonStateDocument, saved: ButtonStateDocument) => void
+  ) => void;
   cancel: () => void;
   resetFromRepository: (document: ButtonStateDocument) => void;
 }
@@ -135,6 +139,33 @@ export function useButtonEditorStore(initialDocument: ButtonStateDocument): Butt
     });
   }, []);
 
+  const acceptScopedSaved = useCallback<ButtonEditorStore["acceptScopedSaved"]>((
+    document,
+    applySavedScope
+  ) => {
+    setState((current) => {
+      const saved = cloneButtonDocument(document);
+      const rebase = (source: ButtonStateDocument): ButtonStateDocument => {
+        const next = cloneButtonDocument(source);
+        applySavedScope(next, saved);
+        next.revision = saved.revision;
+        return next;
+      };
+      return {
+        committed: saved,
+        draft: rebase(current.draft),
+        past: current.past.map((entry) => ({
+          ...entry,
+          document: rebase(entry.document)
+        })),
+        future: current.future.map((entry) => ({
+          ...entry,
+          document: rebase(entry.document)
+        }))
+      };
+    });
+  }, []);
+
   const cancel = useCallback(() => {
     setState((current) => ({
       ...current,
@@ -163,7 +194,8 @@ export function useButtonEditorStore(initialDocument: ButtonStateDocument): Butt
     undo,
     redo,
     acceptSaved,
+    acceptScopedSaved,
     cancel,
     resetFromRepository
-  }), [state, transact, undo, redo, acceptSaved, cancel, resetFromRepository]);
+  }), [state, transact, undo, redo, acceptSaved, acceptScopedSaved, cancel, resetFromRepository]);
 }

@@ -23,8 +23,7 @@ import {
 } from "./.compiled-button-system/button/state/sourceIdentity.js";
 import {
   applyNamedButtonSkinSections,
-  parseButtonSkinPaste,
-  replaceEntireButtonSkin
+  parseButtonSkinPaste
 } from "./.compiled-button-system/button/skins/skinPasteParser.js";
 import {
   createEmptyButtonSkinSections
@@ -41,8 +40,12 @@ import {
 } from "./.compiled-button-system/button/skins/buttonVisualSampling.js";
 import {
   buttonRectsOverlap,
+  buildButtonReorderRowCandidates,
+  chooseButtonReorderRowCandidate,
+  compactButtonPlacementRows,
   compactButtonPlacements,
   compactUniformButtonPlacements,
+  inferButtonPlacementRows,
   inferButtonPlacementRowProfile,
   lockButtonRectAspect,
   normalizeButtonScreenMeasurement,
@@ -68,8 +71,7 @@ import {
   ensureRegularPopout,
   removeOwnedButtonGraph,
   resolveDiscardedStagedOwnerButtonIds,
-  resolveUninstallOwnerButtonIds,
-  updateFanSetupMembers
+  resolveUninstallOwnerButtonIds
 } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
 import {
   FRONTEND_MACRO_CORE_ACTION_ID,
@@ -109,6 +111,7 @@ import {
 } from "./.compiled-button-system/button/state/buttonDocumentScopeOperations.js";
 import {
   executeButtonRecord,
+  isToolSetChildStateSelected,
   registerButtonCoreAction,
   resolveButtonPressEventPlan
 } from "./.compiled-button-system/button/runtime/ButtonRuntimeAdapter.js";
@@ -150,11 +153,9 @@ import {
 } from "./.compiled-button-system/lib/layoutSnapshots.js";
 import {
   buildButtonEditorButtonOptions,
-  buildButtonEditorFanCandidates,
   buildButtonEditorPanelOptions,
   buildButtonEditorPlacementOptions,
   resolveButtonEditorContextPlacementId,
-  resolveButtonEditorDefaultFanMembers,
   resolveButtonEditorIdentity,
   resolveButtonEditorPanelSkinTargetPlacementIds,
   resolveButtonEditorPanelSurfaceId,
@@ -168,6 +169,11 @@ import {
 import {
   shouldApplyMatchedButtonMeasurement
 } from "./.compiled-button-system/button/editor/buttonMeasurementReconciliation.js";
+import {
+  buttonPlacementSizingMode,
+  buttonPlacementSizingPatch,
+  resolveAssignedButtonDimensions
+} from "./.compiled-button-system/button/editor/buttonSizeAssignments.js";
 import {
   discardStagedButtonInstalls
 } from "./.compiled-button-system/button/editor/stagedInstallCleanup.js";
@@ -220,6 +226,7 @@ function addScopePanelSurface(document, id, name, buttonIds) {
       zIndex: index,
       skinOverrideId: null,
       textFitMode: document.buttons[buttonId].defaultTextFitMode,
+      textAlignment: "skin",
       minimumFontSize: document.settings.defaultMinimumFontSize,
       textSizeOverride: null,
       allowLabelResize: false,
@@ -361,6 +368,7 @@ function buildButtonDocumentScopeFixture() {
     zIndex: 0,
     skinOverrideId: null,
     textFitMode: "shrink",
+    textAlignment: "skin",
     minimumFontSize: 8,
     textSizeOverride: null,
     allowLabelResize: false,
@@ -978,7 +986,7 @@ test("full and partial skin paste operations preserve omitted source literally",
   const full = parseButtonSkinPaste(`=== structure ===\n<div data-core>{{label}}</div>\n=== base ===\n--ink: #fff;\n=== hover ===\n--ink: #0ff;`);
   assert.equal(full.ok, true);
   const initial = createEmptyButtonSkinSections();
-  const created = replaceEntireButtonSkin(full);
+  const created = applyNamedButtonSkinSections(initial, full);
   assert.equal(created.structure, "<div data-core>{{label}}</div>");
   assert.equal(created.base, "--ink: #fff;");
 
@@ -1080,7 +1088,51 @@ test("compiled skins keep authored wrappers inert and expose the core to pointer
   assert.match(result.compiled.scopedCss, /\[data-button-skin-root\]\{[^}]*pointer-events:none;/);
   assert.match(result.compiled.scopedCss, /\[data-core\]\{pointer-events:auto!important;/);
   assert.match(result.compiled.scopedCss, /svg\[data-core\]\{pointer-events:bounding-box!important;/);
+  assert.match(
+    result.compiled.scopedCss,
+    /:host\(\[data-button-constrained="true"\]\) \[data-core\]\{[^}]*width:var\(--button-core-width\)!important;[^}]*height:var\(--button-core-height\)!important;[^}]*min-width:0!important;[^}]*max-width:none!important;/
+  );
   assert.doesNotMatch(result.compiled.scopedCss, /\[data-core\]\{pointer-events:none!important;/);
+});
+
+test("Responsive sizing aligns an offset core to the placement origin without scaling it", () => {
+  const renderer = readFileSync(
+    join(frontendRoot, "src", "button", "skins", "ButtonSkinRenderer.tsx"),
+    "utf8"
+  );
+  const responsiveBranch = renderer.match(
+    /if \(!matchHitboxToSkin\) \{[\s\S]{0,220}?return;\s*\}/
+  );
+  assert.ok(responsiveBranch, "Responsive root-normalization branch must exist");
+  assert.match(responsiveBranch[0], /translate\(\$\{-coreOffsetX\}px, \$\{-coreOffsetY\}px\)/);
+  assert.doesNotMatch(responsiveBranch[0], /scale\(/);
+});
+
+test("placement text alignment overrides HTML layout without remounting or erasing skin styles", () => {
+  const renderer = readFileSync(
+    join(frontendRoot, "src", "button", "skins", "ButtonSkinRenderer.tsx"),
+    "utf8"
+  );
+  const buttonHost = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+
+  assert.match(buttonHost, /textAlignment=\{placement\.textAlignment\}/);
+  assert.match(renderer, /textAlignmentRestores:\s*Array<\(\) => void>/);
+  assert.match(renderer, /textAlignmentRestores\.splice\(0\)\.reverse\(\)/);
+  assert.match(renderer, /if \(alignment === "skin"\) return;/);
+  assert.match(renderer, /element\.style\.setProperty\(property, value, "important"\)/);
+  assert.match(renderer, /overrideStyle\(element, "text-align", alignment\)/);
+  assert.match(renderer, /overrideStyle\(element, "justify-content", alignment\)/);
+  assert.match(renderer, /overrideStyle\(element, "align-items", value\)/);
+  assert.match(renderer, /overrideStyle\(element, "justify-items", alignment\)/);
+  assert.match(renderer, /labelIsOnlyInFlowChild/);
+  assert.match(renderer, /}, \[textAlignment, hasMeasurementConsumer\]\);/);
+  assert.match(
+    renderer,
+    /}, \[compiled\?\.skinId, compiled\?\.sourceFingerprint, renderedLabel, textFitMode, minimumFontSize, constrained, textSizeOverride, previewStackWords, hasMeasurementConsumer\]\);/
+  );
 });
 
 test("selection uses the authored pressed state while Main and native input stay core-shaped", () => {
@@ -1112,6 +1164,62 @@ test("selection uses the authored pressed state while Main and native input stay
   assert.match(nativeHitboxes, /hitbox\.element\.dispatchEvent\(new PointerEvent\("pointerenter"/);
   assert.doesNotMatch(nativeHitboxes, /element\.hasAttribute\("data-button-skin-host"\)/);
   assert.doesNotMatch(mainCss, /button-system-host--selected|fc-selected-highlight/);
+});
+
+test("Main Button single clicks select, double clicks execute, and Pop or Fan stays executable", () => {
+  const buttonHost = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+  const mainButtonHost = readFileSync(
+    join(frontendRoot, "src", "pages", "main", "MainButtonHost.tsx"),
+    "utf8"
+  );
+  const runtimeButtonRenderer = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonRenderer.tsx"),
+    "utf8"
+  );
+  const mainPage = readFileSync(
+    join(frontendRoot, "src", "pages", "main", "MainPage.tsx"),
+    "utf8"
+  );
+
+  assert.match(mainButtonHost, /selectionOnly=\{Boolean\(button\.scriptFileName\)\}/);
+  assert.doesNotMatch(runtimeButtonRenderer, /selectionOnly=/);
+  assert.match(buttonHost, /if \(selectionOnly\) \{[\s\S]{0,260}eventName === "click"[\s\S]{0,180}onActivate\(button, activationEvent\)/);
+  assert.match(buttonHost, /selectionOnlyRef\.current\s*\?[\s\S]{0,260}dispatchPressDown: false,[\s\S]{0,180}runClickOnRelease: true/);
+  assert.match(
+    mainPage,
+    /if \(isPanelScriptButtonAction\(button\.actionId\) && button\.scriptFileName\) \{\s*togglePanelScriptSelection\(button\.scriptFileName\);\s*return;\s*\}/
+  );
+  assert.match(buttonHost, /interactionElement\.addEventListener\("dblclick", handleDoubleClick\)/);
+  assert.match(buttonHost, /onDoubleActivateRef\.current\?\.\(buttonRef\.current, event as MouseEvent\)/);
+  assert.match(mainPage, /const handleButtonDoubleActivate = async \([\s\S]{0,500}button\.disabled[\s\S]{0,500}handlePerformPanelScriptPrimaryAction\(button\.scriptFileName, matchedRecord\)/);
+  assert.match(mainPage, /const pressPlan = resolveButtonPressEventPlan\(canonical\);[\s\S]{0,900}executeLifecycleEvent\("hoverEnter"\)[\s\S]{0,900}executeLifecycleEvent\("pressDown"\)[\s\S]{0,900}executeLifecycleEvent\("click"\)[\s\S]{0,900}executeLifecycleEvent\("pressUp"\)[\s\S]{0,900}executeLifecycleEvent\("hoverLeave"\)/);
+  assert.equal(mainPage.match(/onDoubleActivate=\{handleButtonDoubleActivate\}/g)?.length, 1);
+  assert.doesNotMatch(mainPage, /PANEL_SCRIPT_REACTIVATION_GUARD_MS|DOUBLE_CLICK/);
+});
+
+test("explicit Pop and Fan opens reveal after show while layout restore stays passive", () => {
+  const windows = readFileSync(
+    join(frontendRoot, "src", "button", "windows", "buttonWindows.ts"),
+    "utf8"
+  );
+  const mainPage = readFileSync(
+    join(frontendRoot, "src", "pages", "main", "MainPage.tsx"),
+    "utf8"
+  );
+  const nativeWindows = readFileSync(
+    join(frontendRoot, "src-tauri", "src", "commands", "windows.rs"),
+    "utf8"
+  );
+
+  assert.equal((windows.match(/await refreshScopedWindowTopmost\(windowLabel, args\.reveal !== false, true\);/g) ?? []).length, 2);
+  assert.match(windows, /await showWindow\(target, false\);\s*shown = true;\s*await refreshScopedWindowTopmost/);
+  assert.equal((mainPage.match(/reveal: false/g) ?? []).length, 2);
+  assert.match(nativeWindows, /if explicit_open_reveal \{[\s\S]{0,420}return \(ScopedWindowPlacement::Normal, true\);/);
+  assert.match(nativeWindows, /entry\.initial_reveal = true;/);
+  assert.match(nativeWindows, /if force\.unwrap_or\(false\) \{[\s\S]{0,260}entry\.last_placement = None;/);
 });
 
 test("skin compilation keeps authored source separate from deterministic sanitized markup", () => {
@@ -1223,25 +1331,25 @@ test("Button Editor navigation resolves exact program, panel, Button, and placem
     "pop-single": {
       id: "pop-single", buttonId: single.id, surfaceId: "pop", x: 8, y: 8,
       width: 160, height: 44, zIndex: 0, skinOverrideId: null,
-      textFitMode: "shrink", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
+      textFitMode: "shrink", textAlignment: "skin", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
       resizeAnchor: "top-left"
     },
     "panel-single": {
       id: "panel-single", buttonId: single.id, surfaceId: "panel", x: 8, y: 8,
       width: 160, height: 44, zIndex: 0, skinOverrideId: null,
-      textFitMode: "shrink", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
+      textFitMode: "shrink", textAlignment: "skin", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
       resizeAnchor: "top-left"
     },
     "panel-owner": {
       id: "panel-owner", buttonId: owner.id, surfaceId: "panel", x: 176, y: 8,
       width: 160, height: 44, zIndex: 1, skinOverrideId: null,
-      textFitMode: "shrink", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
+      textFitMode: "shrink", textAlignment: "skin", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
       resizeAnchor: "top-left"
     },
     "toolset-child": {
       id: "toolset-child", buttonId: child.id, surfaceId: "toolset", x: 8, y: 8,
       width: 80, height: 44, zIndex: 0, skinOverrideId: null,
-      textFitMode: "shrink", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
+      textFitMode: "shrink", textAlignment: "skin", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
       resizeAnchor: "top-left"
     }
   };
@@ -1304,21 +1412,11 @@ test("Button Editor navigation resolves exact program, panel, Button, and placem
   const ownerPlacementOptions = buildButtonEditorPlacementOptions(document, owner.id);
   assert.deepEqual(
     ownerPlacementOptions.map((option) => option.label),
-    ["Main page", "Pop — Rotate"]
+    ["Main page"]
   );
-  assert.equal(ownerPlacementOptions[1].action, "show-tool-set-popout");
-  assert.equal(ownerPlacementOptions[1].surfaceId, "toolset");
   assert.deepEqual(
     buildButtonEditorPlacementOptions(document, child.id).map((option) => option.label),
     ["Pop — Rotate"]
-  );
-  const fanCandidates = buildButtonEditorFanCandidates(document, "Blender", "Tools");
-  assert.deepEqual(
-    fanCandidates.map(({ id, role }) => ({ id, role })),
-    [
-      { id: single.id, role: "single-script" },
-      { id: owner.id, role: "tool-set-owner" }
-    ]
   );
   const options = buildButtonEditorButtonOptions(document, "Blender", "Tools");
   assert.equal(options.some((option) => option.id === child.id && option.label === "X — Rotate"), true);
@@ -1362,9 +1460,8 @@ test("panel-owner reconciliation creates empty panels and preserves presentation
   const initialPlacementOptions = buildButtonEditorPlacementOptions(document, utility.id);
   assert.deepEqual(
     initialPlacementOptions.map((option) => option.label),
-    ["Main page", "Fan — Default grid"]
+    ["Main page"]
   );
-  assert.equal(initialPlacementOptions[1].action, "create-default-fan");
 
   utility.label = "Windows Tools";
   utility.tooltip = "Custom panel tooltip";
@@ -1419,34 +1516,6 @@ test("adding an alphabetically earlier panel keeps existing rail geometry collis
   assert.equal(validation.valid, true, validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
 });
 
-test("Button Editor default Fan grid uses every scoped single-script Button", () => {
-  const document = createButtonStateDocument();
-  reconcileProgramPanelOwners(document, {
-    programName: "Windows",
-    panels: [{ panelName: "Utility", rect: { x: 20, y: 20, width: 132, height: 37 } }],
-    surfaceBounds: { width: 640, height: 480 }
-  });
-  const first = button("first", "single-script", source("Windows", "Utility", "first.flowcell-source.json"));
-  first.executionTarget = { kind: "panel-script", programName: "Windows", panelName: "Utility", fileName: "first.flowcell-source.json" };
-  const second = button("second", "single-script", source("Windows", "Utility", "second.flowcell-source.json"));
-  second.executionTarget = { kind: "panel-script", programName: "Windows", panelName: "Utility", fileName: "second.flowcell-source.json" };
-  const otherPanel = button("other", "single-script", source("Windows", "Files", "other.flowcell-source.json"));
-  const toolSetOwner = button("tools", "tool-set-owner", source("Windows", "Utility", "tools.flowcell-toolset.json"));
-  Object.assign(document.buttons, { first, second, otherPanel, toolSetOwner });
-
-  const members = resolveButtonEditorDefaultFanMembers(document, "Windows", "Utility");
-  assert.deepEqual(members.map((member) => member.id), ["first", "second"]);
-  const setup = ensureFanSetup({
-    document,
-    programName: "Windows",
-    panelName: "Utility",
-    buttons: members
-  });
-  assert.deepEqual(setup.fanMemberButtonIds, ["first", "second"]);
-  assert.equal(setup.fanMemberPlacementIds.length, 2);
-  assert.equal(document.surfaces[setup.fanSurfaceId].placementIds.length, 3);
-});
-
 test("one panel owner has exact Main and Fan placements", () => {
   const document = createButtonStateDocument();
   reconcileProgramPanelOwners(document, {
@@ -1471,11 +1540,6 @@ test("one panel owner has exact Main and Fan placements", () => {
   assert.ok(fanPlacement);
   assert.notEqual(mainPlacement.id, fanPlacement.id);
   assert.equal(fanPlacement.surfaceId, setup.fanSurfaceId);
-  assert.deepEqual(
-    resolveButtonEditorDefaultFanMembers(document, " windows ", "UTILITY")
-      .map((button) => button.id),
-    [script.id]
-  );
   assert.equal(
     resolveButtonEditorContextPlacementId(document, { surfaceId: setup.fanSurfaceId }),
     fanPlacement.id
@@ -1989,21 +2053,21 @@ test("Button Editor navigation disambiguates final Button and placement label co
       id: "placement-beta-sharedtail", buttonId: firstButton.id,
       surfaceId: "surface-beta-sharedtail", x: 8, y: 8,
       width: 160, height: 44, zIndex: 0, skinOverrideId: null,
-      textFitMode: "shrink", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
+      textFitMode: "shrink", textAlignment: "skin", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
       resizeAnchor: "top-left"
     },
     "placement-alpha-sharedtail": {
       id: "placement-alpha-sharedtail", buttonId: firstButton.id,
       surfaceId: "surface-alpha-sharedtail", x: 8, y: 8,
       width: 160, height: 44, zIndex: 0, skinOverrideId: null,
-      textFitMode: "shrink", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
+      textFitMode: "shrink", textAlignment: "skin", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
       resizeAnchor: "top-left"
     },
     "placement-second-button": {
       id: "placement-second-button", buttonId: secondButton.id,
       surfaceId: "surface-alpha-sharedtail", x: 8, y: 60,
       width: 160, height: 44, zIndex: 1, skinOverrideId: null,
-      textFitMode: "shrink", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
+      textFitMode: "shrink", textAlignment: "skin", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
       resizeAnchor: "top-left"
     }
   };
@@ -2152,6 +2216,54 @@ test("skin sizing is uniform by default and stretches only when allowed", () => 
   );
 });
 
+test("explicit Button size assignments preserve each sizing rule deterministically", () => {
+  assert.equal(buttonPlacementSizingMode({ matchHitboxToSkin: false, allowStretching: false }), "responsive");
+  assert.equal(buttonPlacementSizingMode({ matchHitboxToSkin: true, allowStretching: false }), "proportional");
+  assert.equal(buttonPlacementSizingMode({ matchHitboxToSkin: true, allowStretching: true }), "stretch");
+
+  assert.deepEqual(
+    resolveAssignedButtonDimensions(
+      { width: 200, height: 50, sizingMode: "responsive" },
+      { width: 100, height: 50 }
+    ),
+    { width: 200, height: 50 }
+  );
+  assert.deepEqual(
+    resolveAssignedButtonDimensions(
+      { width: 200, height: 50, sizingMode: "stretch" },
+      { width: 100, height: 50 }
+    ),
+    { width: 200, height: 50 }
+  );
+  assert.deepEqual(
+    resolveAssignedButtonDimensions(
+      { width: 200, height: 50, sizingMode: "proportional" },
+      { width: 100, height: 50 }
+    ),
+    { width: 100, height: 50 }
+  );
+  assert.deepEqual(
+    resolveAssignedButtonDimensions(
+      { width: 200, height: 100, sizingMode: "proportional" },
+      { width: 100, height: 50 }
+    ),
+    { width: 200, height: 100 }
+  );
+
+  assert.deepEqual(
+    buttonPlacementSizingPatch({ width: 200, height: 50, sizingMode: "responsive" }),
+    { matchHitboxToSkin: false, allowStretching: false, allowLabelResize: false }
+  );
+  assert.deepEqual(
+    buttonPlacementSizingPatch({ width: 200, height: 50, sizingMode: "proportional" }),
+    { matchHitboxToSkin: true, allowStretching: false, allowLabelResize: false }
+  );
+  assert.deepEqual(
+    buttonPlacementSizingPatch({ width: 200, height: 50, sizingMode: "stretch" }),
+    { matchHitboxToSkin: true, allowStretching: true, allowLabelResize: false }
+  );
+});
+
 test("scaled skin measurement removes ancestor scale but retains painted skin scale", () => {
   const ancestorScale = 0.7069;
   const internalSkinScale = 1.4;
@@ -2245,6 +2357,7 @@ test("state validation reports malformed skins and all saved Button presentation
     zIndex: 0,
     skinOverrideId: null,
     textFitMode: "wrap",
+    textAlignment: "diagonal",
     minimumFontSize: 0,
     textSizeOverride: "large",
     allowLabelResize: "yes",
@@ -2266,6 +2379,7 @@ test("state validation reports malformed skins and all saved Button presentation
   const paths = new Set(result.issues.map((issue) => issue.path));
   assert.equal(paths.has("buttons.one.defaultTextFitMode"), true);
   assert.equal(paths.has("placements.one.textFitMode"), true);
+  assert.equal(paths.has("placements.one.textAlignment"), true);
   assert.equal(paths.has("placements.one.minimumFontSize"), true);
   assert.equal(paths.has("placements.one.textSizeOverride"), true);
   assert.equal(paths.has("placements.one.allowLabelResize"), true);
@@ -2649,6 +2763,7 @@ test("opt-in source updates append child slots without replacing existing Button
     zIndex: 0,
     skinOverrideId: null,
     textFitMode: "shrink",
+    textAlignment: "skin",
     minimumFontSize: 8,
     textSizeOverride: null,
     allowLabelResize: false,
@@ -2796,6 +2911,7 @@ test("bundled source migration places missing owners around existing panel Butto
     zIndex: 0,
     skinOverrideId: null,
     textFitMode: "shrink",
+    textAlignment: "skin",
     minimumFontSize: 8,
     textSizeOverride: null,
     allowLabelResize: false,
@@ -3110,6 +3226,159 @@ test("row inference groups mixed heights and rebalances variable-width Buttons",
   );
 });
 
+test("explicit-row snap left-packs and moves rows up without changing row membership", () => {
+  const input = [
+    { id: "a", rect: { x: 40, y: 10, width: 50, height: 20 } },
+    { id: "b", rect: { x: 120, y: 10, width: 30, height: 30 } },
+    { id: "c", rect: { x: 30, y: 60, width: 40, height: 10 } },
+    { id: "d", rect: { x: 100, y: 60, width: 60, height: 25 } },
+    { id: "e", rect: { x: 190, y: 60, width: 20, height: 15 } },
+    { id: "f", rect: { x: 80, y: 100, width: 70, height: 12 } }
+  ];
+  const original = structuredClone(input);
+  const rows = inferButtonPlacementRows(input);
+  assert.deepEqual(rows.map((row) => row.placements.map((placement) => placement.id)), [
+    ["a", "b"],
+    ["c", "d", "e"],
+    ["f"]
+  ]);
+  const result = compactButtonPlacementRows(rows, { width: 240, height: 120 }, {
+    gap: 0,
+    preserveRowTopOffsets: false
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.requiredWidth, 120);
+  assert.equal(result.requiredHeight, 67);
+  assert.deepEqual(result.placements, [
+    { id: "a", rect: { x: 0, y: 0, width: 50, height: 20 }, zIndex: 0 },
+    { id: "b", rect: { x: 50, y: 0, width: 30, height: 30 }, zIndex: 1 },
+    { id: "c", rect: { x: 0, y: 30, width: 40, height: 10 }, zIndex: 2 },
+    { id: "d", rect: { x: 40, y: 30, width: 60, height: 25 }, zIndex: 3 },
+    { id: "e", rect: { x: 100, y: 30, width: 20, height: 15 }, zIndex: 4 },
+    { id: "f", rect: { x: 0, y: 55, width: 70, height: 12 }, zIndex: 5 }
+  ]);
+  assert.deepEqual(input, original);
+  assert.deepEqual(
+    validateExactButtonLayoutGeometry(result.placements, { width: 240, height: 120 }),
+    []
+  );
+});
+
+test("row-aware reorder exposes every row slot and an explicit new-row target", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 0, width: 30, height: 10 } },
+    { id: "b", rect: { x: 30, y: 0, width: 40, height: 20 } },
+    { id: "c", rect: { x: 0, y: 20, width: 20, height: 15 } },
+    { id: "d", rect: { x: 20, y: 20, width: 50, height: 12 } },
+    { id: "e", rect: { x: 0, y: 35, width: 35, height: 18 } }
+  ];
+  const result = buildButtonReorderRowCandidates({
+    placements: input,
+    movingPlacementId: "a",
+    movingRect: input[0].rect,
+    surface: { width: 240, height: 100 },
+    gap: 0
+  });
+  assert.equal(result.reason, null);
+  const existing = result.candidates.filter((candidate) => candidate.kind === "existing-row");
+  assert.deepEqual(
+    existing.map((candidate) => [candidate.rowIndex, candidate.columnIndex]),
+    [[0, 0], [0, 1], [1, 0], [1, 1], [1, 2], [2, 0], [2, 1]]
+  );
+  assert.equal(new Set(existing.map((candidate) => candidate.key)).size, 7);
+
+  const newBottomRow = result.candidates.find((candidate) =>
+    candidate.kind === "new-row" && candidate.rowIndex === 3
+  );
+  assert.ok(newBottomRow);
+  assert.deepEqual(newBottomRow.orderedPlacementIds, ["b", "c", "d", "e", "a"]);
+  assert.deepEqual(newBottomRow.placements, [
+    { id: "b", rect: { x: 0, y: 0, width: 40, height: 20 }, zIndex: 0 },
+    { id: "c", rect: { x: 0, y: 20, width: 20, height: 15 }, zIndex: 1 },
+    { id: "d", rect: { x: 20, y: 20, width: 50, height: 12 }, zIndex: 2 },
+    { id: "e", rect: { x: 0, y: 35, width: 35, height: 18 }, zIndex: 3 },
+    { id: "a", rect: { x: 0, y: 53, width: 30, height: 10 }, zIndex: 4 }
+  ]);
+  assert.deepEqual(
+    validateExactButtonLayoutGeometry(newBottomRow.placements, { width: 240, height: 100 }),
+    []
+  );
+});
+
+test("row-aware reorder chooser reaches every thin existing row despite hysteresis", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 0, width: 20, height: 8 } },
+    { id: "b", rect: { x: 20, y: 0, width: 20, height: 8 } },
+    { id: "c", rect: { x: 0, y: 8, width: 20, height: 8 } },
+    { id: "d", rect: { x: 0, y: 16, width: 20, height: 8 } }
+  ];
+  let currentKey = null;
+  const reachedRows = new Set();
+  for (let y = -12; y <= 40; y += 0.25) {
+    const result = buildButtonReorderRowCandidates({
+      placements: input,
+      movingPlacementId: "a",
+      movingRect: { x: 0, y, width: 20, height: 8 },
+      surface: { width: 100, height: 60 },
+      gap: 0
+    });
+    const chosen = chooseButtonReorderRowCandidate(result.candidates, currentKey, 12);
+    assert.ok(chosen);
+    currentKey = chosen.key;
+    if (chosen.kind === "existing-row") reachedRows.add(chosen.rowIndex);
+  }
+  assert.deepEqual([...reachedRows], [0, 1, 2]);
+});
+
+test("row-aware reorder chooser reaches every existing row and new-row boundary", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 0, width: 30, height: 10 } },
+    { id: "b", rect: { x: 30, y: 0, width: 40, height: 20 } },
+    { id: "c", rect: { x: 0, y: 20, width: 20, height: 15 } },
+    { id: "d", rect: { x: 20, y: 20, width: 50, height: 12 } },
+    { id: "e", rect: { x: 0, y: 35, width: 35, height: 18 } }
+  ];
+  let currentKey = null;
+  const reachedLanes = [];
+  for (let y = -20; y <= 90; y += 0.25) {
+    const result = buildButtonReorderRowCandidates({
+      placements: input,
+      movingPlacementId: "a",
+      movingRect: { x: 0, y, width: 30, height: 10 },
+      surface: { width: 240, height: 100 },
+      gap: 0
+    });
+    const chosen = chooseButtonReorderRowCandidate(result.candidates, currentKey, 12);
+    assert.ok(chosen);
+    currentKey = chosen.key;
+    const lane = `${chosen.kind}:${chosen.rowIndex}`;
+    if (reachedLanes.at(-1) !== lane) reachedLanes.push(lane);
+  }
+  assert.deepEqual(reachedLanes, [
+    "new-row:0",
+    "existing-row:0",
+    "new-row:1",
+    "existing-row:1",
+    "new-row:2",
+    "existing-row:2",
+    "new-row:3"
+  ]);
+});
+
+test("explicit rows fail atomically instead of rebalancing an over-wide row", () => {
+  const rows = [{
+    placements: [
+      { id: "a", rect: { x: 0, y: 0, width: 70, height: 20 } },
+      { id: "b", rect: { x: 70, y: 0, width: 50, height: 20 } }
+    ],
+    topOffset: 0
+  }];
+  const result = compactButtonPlacementRows(rows, { width: 100, height: 100 });
+  assert.equal(result.success, false);
+  assert.deepEqual(result.placements, []);
+  assert.match(result.reason, /row 1 is wider/i);
+});
+
 test("snapping aligns edges and collision prevention rejects overlap", () => {
   const snapped = resolveButtonGeometry(
     { x: 3, y: 4, width: 40, height: 24 },
@@ -3268,6 +3537,7 @@ test("schema-1 loading backfills skin sizing defaults before validation", () => 
   const placement = document.placements[popout.memberPlacementIds[0]];
   delete placement.matchHitboxToSkin;
   delete placement.allowStretching;
+  delete placement.textAlignment;
   delete placement.textSizeOverride;
   Object.values(document.surfaces).forEach((surface) => {
     delete surface.uniformButtonSize;
@@ -3280,6 +3550,7 @@ test("schema-1 loading backfills skin sizing defaults before validation", () => 
   assert.equal(result.valid, true);
   assert.equal(result.document.placements[placement.id].matchHitboxToSkin, true);
   assert.equal(result.document.placements[placement.id].allowStretching, false);
+  assert.equal(result.document.placements[placement.id].textAlignment, "skin");
   assert.equal(result.document.placements[placement.id].textSizeOverride, null);
   Object.values(result.document.surfaces).forEach((surface) => {
     assert.equal(surface.uniformButtonSize, null);
@@ -3537,6 +3808,9 @@ test("matched-core reconciliation discards stale geometry and presentation measu
     sourceWidth: placement.width,
     sourceHeight: placement.height,
     sourceAllowStretching: placement.allowStretching,
+    sourceTextFitMode: placement.textFitMode,
+    sourceTextAlignment: placement.textAlignment,
+    sourceMinimumFontSize: placement.minimumFontSize,
     sourceTextSizeOverride: placement.textSizeOverride,
     sourceSkinId: record.defaultSkinId,
     sourceLabel: record.label
@@ -3555,6 +3829,21 @@ test("matched-core reconciliation discards stale geometry and presentation measu
   ), false);
   assert.equal(shouldApplyMatchedButtonMeasurement(
     { ...placement, textSizeOverride: 18 },
+    record,
+    sourceSnapshot
+  ), false);
+  assert.equal(shouldApplyMatchedButtonMeasurement(
+    { ...placement, textFitMode: "shrink-and-stack" },
+    record,
+    sourceSnapshot
+  ), false);
+  assert.equal(shouldApplyMatchedButtonMeasurement(
+    { ...placement, textAlignment: "center" },
+    record,
+    sourceSnapshot
+  ), false);
+  assert.equal(shouldApplyMatchedButtonMeasurement(
+    { ...placement, minimumFontSize: placement.minimumFontSize + 1 },
     record,
     sourceSnapshot
   ), false);
@@ -3663,118 +3952,6 @@ test("shared document operations normalize duplicate selections deterministicall
   assert.equal(second.id, first.id);
   assert.deepEqual(first.fanMemberButtonIds, ["one"]);
   assert.deepEqual(first.selectedToolSetOwnerButtonIds, ["owner"]);
-});
-
-test("Fan setup membership edits preserve the setup and retained presentation", () => {
-  const document = createButtonStateDocument();
-  const retained = button("retained", "single-script", source("Blender", "Tools", "retained.py"));
-  const removed = button("removed", "single-script", source("Blender", "Tools", "removed.py"));
-  const added = button("added", "single-script", source("Blender", "Tools", "added.py"));
-  const retainedOwner = button("retained-owner", "tool-set-owner", source("Blender", "Tools", "retained.flowcell.toolset.json"));
-  const removedOwner = button("removed-owner", "tool-set-owner", source("Blender", "Tools", "removed.flowcell.toolset.json"));
-  const addedOwner = button("added-owner", "tool-set-owner", source("Blender", "Tools", "added.flowcell.toolset.json"));
-  Object.assign(document.buttons, {
-    retained,
-    removed,
-    added,
-    [retainedOwner.id]: retainedOwner,
-    [removedOwner.id]: removedOwner,
-    [addedOwner.id]: addedOwner
-  });
-
-  const setup = ensureFanSetup({
-    document,
-    programName: "Blender",
-    panelName: "Tools",
-    buttons: [retained, removed, retainedOwner, removedOwner]
-  });
-  const surface = document.surfaces[setup.fanSurfaceId];
-  surface.name = "Custom Tools Fan Surface";
-  surface.width = 720;
-  surface.height = 240;
-  setup.openRule = "click";
-  setup.closeRule = "manual";
-  setup.pinnedDefault = true;
-  setup.animation = { durationMs: 375, easing: "linear", staggerMs: 17 };
-  setup.collapsedPanelOwnerBounds = { left: 1400, top: 220, width: 132, height: 56 };
-  setup.toolSetOwnerAnchors[retainedOwner.id] = { left: 1800, top: 300, width: 240, height: 80 };
-
-  const panelOwnerPlacement = surface.placementIds
-    .map((placementId) => document.placements[placementId])
-    .find((placement) => placement.buttonId === setup.panelOwnerButtonId);
-  const retainedPlacement = setup.fanMemberPlacementIds
-    .map((placementId) => document.placements[placementId])
-    .find((placement) => placement.buttonId === retained.id);
-  const removedPlacement = setup.fanMemberPlacementIds
-    .map((placementId) => document.placements[placementId])
-    .find((placement) => placement.buttonId === removed.id);
-  assert.ok(panelOwnerPlacement);
-  assert.ok(retainedPlacement);
-  assert.ok(removedPlacement);
-  retainedPlacement.x = 412;
-  retainedPlacement.y = 136;
-  retainedPlacement.width = 212;
-  retainedPlacement.height = 58;
-  retainedPlacement.skinOverrideId = document.settings.defaultSkinId;
-  retainedPlacement.textSizeOverride = 21;
-  const preservedOwnerPlacement = structuredClone(panelOwnerPlacement);
-  const preservedMemberPlacement = structuredClone(retainedPlacement);
-  const preservedConfiguration = {
-    id: setup.id,
-    name: setup.name,
-    programName: setup.programName,
-    panelName: setup.panelName,
-    panelOwnerButtonId: setup.panelOwnerButtonId,
-    fanSurfaceId: setup.fanSurfaceId,
-    openRule: setup.openRule,
-    closeRule: setup.closeRule,
-    pinnedDefault: setup.pinnedDefault,
-    animation: structuredClone(setup.animation),
-    collapsedPanelOwnerBounds: structuredClone(setup.collapsedPanelOwnerBounds)
-  };
-
-  const updated = updateFanSetupMembers({
-    document,
-    setupId: setup.id,
-    buttons: [retained, added, addedOwner, retainedOwner]
-  });
-
-  assert.deepEqual({
-    id: updated.id,
-    name: updated.name,
-    programName: updated.programName,
-    panelName: updated.panelName,
-    panelOwnerButtonId: updated.panelOwnerButtonId,
-    fanSurfaceId: updated.fanSurfaceId,
-    openRule: updated.openRule,
-    closeRule: updated.closeRule,
-    pinnedDefault: updated.pinnedDefault,
-    animation: updated.animation,
-    collapsedPanelOwnerBounds: updated.collapsedPanelOwnerBounds
-  }, preservedConfiguration);
-  assert.deepEqual(document.placements[panelOwnerPlacement.id], preservedOwnerPlacement);
-  assert.deepEqual(document.placements[retainedPlacement.id], preservedMemberPlacement);
-  assert.equal(document.placements[removedPlacement.id], undefined);
-  assert.deepEqual(updated.fanMemberButtonIds, [retained.id, added.id]);
-  assert.equal(updated.fanMemberPlacementIds[0], retainedPlacement.id);
-  assert.equal(document.placements[updated.fanMemberPlacementIds[1]].buttonId, added.id);
-  assert.deepEqual(updated.selectedToolSetOwnerButtonIds, [addedOwner.id, retainedOwner.id]);
-  assert.deepEqual(
-    updated.toolSetOwnerAnchors[retainedOwner.id],
-    { left: 1800, top: 300, width: 240, height: 80 }
-  );
-  assert.equal(updated.toolSetOwnerAnchors[removedOwner.id], undefined);
-  assert.ok(updated.toolSetOwnerAnchors[addedOwner.id]);
-  assert.ok(
-    updated.toolSetOwnerAnchors[addedOwner.id].left >=
-      updated.toolSetOwnerAnchors[retainedOwner.id].left +
-      updated.toolSetOwnerAnchors[retainedOwner.id].width + 20
-  );
-  assert.equal(surface.name, "Custom Tools Fan Surface");
-  assert.equal(surface.width, 720);
-  assert.equal(surface.height, 240);
-  const validation = validateButtonStateDocument(document);
-  assert.equal(validation.valid, true, validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
 });
 
 test("new Fan subsets receive unique names in the same panel", () => {
@@ -3977,6 +4154,340 @@ test("tool-set child activation uses the functional host and applies only declar
   } finally {
     unregister();
   }
+});
+
+test("Illustrator Ill Align supports none or one selected mode independently on each axis", async () => {
+  const manifestPath = join(
+    frontendRoot,
+    "..",
+    "Programs",
+    "Illustrator",
+    "Illustrator Git Scripts",
+    "Toolsets",
+    "ill-align",
+    "flowcell.toolset.json"
+  );
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  assert.equal(manifest.execution.programKey, "illustrator_process");
+  const fields = manifest.layout.fields;
+  const initialValues = Object.fromEntries(fields.map((field) => [field.id, field.defaultValue]));
+  const childFor = (slot) => {
+    const childManifest = manifest.children.find((candidate) => candidate.slot === slot);
+    return {
+      ...button(slot, "tool-set-child"),
+      executionTarget: {
+        kind: "core-action",
+        actionId: "test-ill-align",
+        payload: childManifest.payload
+      },
+      toolSetParentId: "ill-align-owner",
+      toolSetBehavior: manifest.layout.childBehaviors[slot]
+    };
+  };
+  const xOrigin = childFor("x_geo");
+  const xSurface = childFor("x_surface");
+  const xMax = childFor("x_max");
+  const yOrigin = childFor("y_geo");
+  const ySurface = childFor("y_surface");
+  assert.equal(initialValues.x_surface_active, false);
+  assert.equal(initialValues.x_origin_active, false);
+  assert.equal(initialValues.y_surface_active, false);
+  assert.equal(initialValues.y_origin_active, false);
+  assert.equal(isToolSetChildStateSelected(xOrigin, initialValues), false);
+  assert.equal(isToolSetChildStateSelected(xSurface, initialValues), false);
+  assert.equal(isToolSetChildStateSelected(yOrigin, initialValues), false);
+  assert.equal(isToolSetChildStateSelected(ySurface, initialValues), false);
+
+  let dispatchCount = 0;
+  let receivedPayload;
+  const unregister = registerButtonCoreAction("test-ill-align", async (target) => {
+    dispatchCount += 1;
+    receivedPayload = target.payload;
+    return {};
+  });
+  try {
+    const surfaceOn = await executeButtonRecord(xSurface, "click", {
+      fields,
+      fieldValues: initialValues
+    });
+    assert.equal(surfaceOn.executed, false);
+    assert.equal(dispatchCount, 0);
+    assert.equal(surfaceOn.fieldValues.x_surface_active, true);
+    assert.equal(surfaceOn.fieldValues.x_origin_active, false);
+    assert.equal(surfaceOn.fieldValues.y_surface_active, false);
+    assert.equal(surfaceOn.fieldValues.y_origin_active, false);
+    assert.equal(isToolSetChildStateSelected(xSurface, surfaceOn.fieldValues), true);
+    assert.equal(isToolSetChildStateSelected(xOrigin, surfaceOn.fieldValues), false);
+
+    const surfaceOff = await executeButtonRecord(xSurface, "click", {
+      fields,
+      fieldValues: surfaceOn.fieldValues
+    });
+    assert.equal(surfaceOff.fieldValues.x_surface_active, false);
+    assert.equal(surfaceOff.fieldValues.x_origin_active, false);
+    assert.equal(isToolSetChildStateSelected(xSurface, surfaceOff.fieldValues), false);
+    assert.equal(isToolSetChildStateSelected(xOrigin, surfaceOff.fieldValues), false);
+
+    await executeButtonRecord(xMax, "click", {
+      fields,
+      fieldValues: surfaceOff.fieldValues
+    });
+    assert.equal(dispatchCount, 1);
+    assert.deepEqual(receivedPayload.modifier, { surface: false, origin: false });
+    assert.equal(receivedPayload.mode, "MAX");
+
+    const originOn = await executeButtonRecord(xOrigin, "click", {
+      fields,
+      fieldValues: surfaceOff.fieldValues
+    });
+    assert.equal(originOn.fieldValues.x_surface_active, false);
+    assert.equal(originOn.fieldValues.x_origin_active, true);
+    assert.equal(isToolSetChildStateSelected(xOrigin, originOn.fieldValues), true);
+    assert.equal(isToolSetChildStateSelected(xSurface, originOn.fieldValues), false);
+
+    const ySurfaceOn = await executeButtonRecord(ySurface, "click", {
+      fields,
+      fieldValues: originOn.fieldValues
+    });
+    assert.equal(ySurfaceOn.fieldValues.x_origin_active, true);
+    assert.equal(ySurfaceOn.fieldValues.y_surface_active, true);
+    assert.equal(ySurfaceOn.fieldValues.y_origin_active, false);
+    assert.equal(isToolSetChildStateSelected(ySurface, ySurfaceOn.fieldValues), true);
+    assert.equal(isToolSetChildStateSelected(yOrigin, ySurfaceOn.fieldValues), false);
+
+    const surfaceSwitch = await executeButtonRecord(xSurface, "click", {
+      fields,
+      fieldValues: ySurfaceOn.fieldValues
+    });
+    assert.equal(surfaceSwitch.fieldValues.x_surface_active, true);
+    assert.equal(surfaceSwitch.fieldValues.x_origin_active, false);
+    assert.equal(surfaceSwitch.fieldValues.y_surface_active, true);
+    await executeButtonRecord(xMax, "click", {
+      fields,
+      fieldValues: surfaceSwitch.fieldValues
+    });
+    assert.equal(dispatchCount, 2);
+    assert.deepEqual(receivedPayload.modifier, { surface: true, origin: false });
+
+    const originSwitch = await executeButtonRecord(xOrigin, "click", {
+      fields,
+      fieldValues: surfaceSwitch.fieldValues
+    });
+    assert.equal(originSwitch.fieldValues.x_surface_active, false);
+    assert.equal(originSwitch.fieldValues.x_origin_active, true);
+    await executeButtonRecord(xMax, "click", {
+      fields,
+      fieldValues: originSwitch.fieldValues
+    });
+    assert.equal(dispatchCount, 3);
+    assert.deepEqual(receivedPayload.modifier, { surface: false, origin: true });
+
+    const originOff = await executeButtonRecord(xOrigin, "click", {
+      fields,
+      fieldValues: originSwitch.fieldValues
+    });
+    assert.equal(originOff.fieldValues.x_surface_active, false);
+    assert.equal(originOff.fieldValues.x_origin_active, false);
+    assert.equal(originOff.fieldValues.y_surface_active, true);
+    assert.equal(isToolSetChildStateSelected(xOrigin, originOff.fieldValues), false);
+    assert.equal(isToolSetChildStateSelected(xSurface, originOff.fieldValues), false);
+  } finally {
+    unregister();
+  }
+});
+
+test("Illustrator Rotate keeps instant presets beside one inline-value Button", async () => {
+  const manifestPath = join(
+    frontendRoot,
+    "..",
+    "Programs",
+    "Illustrator",
+    "Illustrator Git Scripts",
+    "Toolsets",
+    "rotate",
+    "flowcell.toolset.json"
+  );
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  assert.equal(manifest.execution.programKey, "illustrator_process");
+  assert.deepEqual(
+    manifest.children.map((child) => child.slot),
+    [
+      "center_world",
+      "center_cursor",
+      "preset_30",
+      "preset_45",
+      "preset_90",
+      "mode_transform",
+      "mode_distribute",
+      "apply_negative",
+      "apply_positive",
+      "value_input"
+    ]
+  );
+  assert.equal(manifest.layout.fields.every((field) => field.hidden === true), true);
+  assert.deepEqual(manifest.layout.childBehaviors.value_input, {
+    inlineEditField: "value",
+    execute: false
+  });
+
+  const fields = manifest.layout.fields;
+  const initialValues = Object.fromEntries(fields.map((field) => [field.id, field.defaultValue]));
+  const childFor = (slot) => {
+    const childManifest = manifest.children.find((candidate) => candidate.slot === slot);
+    return {
+      ...button(slot, "tool-set-child"),
+      executionTarget: {
+        kind: "core-action",
+        actionId: "test-illustrator-rotate",
+        payload: childManifest.payload ?? {}
+      },
+      toolSetParentId: "illustrator-rotate-owner",
+      toolSetBehavior: manifest.layout.childBehaviors[slot]
+    };
+  };
+  const transform = childFor("mode_transform");
+  const distribute = childFor("mode_distribute");
+  assert.equal(initialValues.operation_mode, "TRANSFORM");
+  assert.equal(initialValues.value, 90);
+  assert.equal(isToolSetChildStateSelected(transform, initialValues), true);
+
+  const distributeResult = await executeButtonRecord(distribute, "click", {
+    fields,
+    fieldValues: initialValues
+  });
+  assert.equal(distributeResult.executed, false);
+  assert.equal(distributeResult.fieldValues.operation_mode, "DISTRIBUTE");
+  assert.equal(distributeResult.fieldValues.value, 3);
+  assert.equal(isToolSetChildStateSelected(distribute, distributeResult.fieldValues), true);
+  assert.equal(isToolSetChildStateSelected(transform, distributeResult.fieldValues), false);
+
+  const editedValues = { ...distributeResult.fieldValues, value: 11 };
+  assert.equal(isToolSetChildStateSelected(distribute, editedValues), true);
+  const transformResult = await executeButtonRecord(transform, "click", {
+    fields,
+    fieldValues: editedValues
+  });
+  assert.equal(transformResult.fieldValues.operation_mode, "TRANSFORM");
+  assert.equal(transformResult.fieldValues.value, 90);
+  assert.equal(isToolSetChildStateSelected(transform, transformResult.fieldValues), true);
+
+  let receivedPayload;
+  const unregister = registerButtonCoreAction("test-illustrator-rotate", async (target) => {
+    receivedPayload = target.payload;
+    return {};
+  });
+  try {
+    const presetResult = await executeButtonRecord(childFor("preset_45"), "click", {
+      fields,
+      fieldValues: distributeResult.fieldValues
+    });
+    assert.equal(presetResult.executed, true);
+    assert.equal(presetResult.fieldValues.operation_mode, "TRANSFORM");
+    assert.equal(presetResult.fieldValues.value, 45);
+    assert.equal(receivedPayload.command, "apply");
+    assert.equal(receivedPayload.angle_deg, 45);
+    assert.equal(receivedPayload.operation_mode, "TRANSFORM");
+    assert.equal(receivedPayload.value, 45);
+
+    await executeButtonRecord(childFor("apply_positive"), "click", {
+      fields,
+      fieldValues: editedValues
+    });
+    assert.equal(receivedPayload.operation_mode, "DISTRIBUTE");
+    assert.equal(receivedPayload.value, 11);
+    assert.equal("angle_deg" in receivedPayload, false);
+    assert.equal("distribute_count" in receivedPayload, false);
+  } finally {
+    unregister();
+  }
+
+  const helperSource = readFileSync(
+    join(frontendRoot, "..", "Programs", "Illustrator", "HelperScripts", "FlowCell_Illustrator_Rotate.jsx"),
+    "utf8"
+  );
+  assert.match(helperSource, /mode === "WORLD" \|\| mode === "ARTBOARD"/);
+  assert.match(helperSource, /mode === "CURSOR" \|\| mode === "ANCHOR"/);
+  assert.match(helperSource, /operationMode === "DISTRIBUTE" \? 3 : 90/);
+  assert.match(helperSource, /command === "preset_30"/);
+  assert.match(helperSource, /command === "preset_45"/);
+  assert.match(helperSource, /command === "preset_90"/);
+  assert.match(helperSource, /operationMode = presetAngle === null/);
+
+  const buttonHostSource = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+  assert.match(buttonHostSource, /const inlineEditorElement = inlineEditorElementRef\.current/);
+  assert.match(buttonHostSource, /await requestInlineEditorFocus\(\)/);
+  assert.match(buttonHostSource, /focusAndSelectInlineEditor\(inlineEditorElement\)/);
+  assert.match(buttonHostSource, /onFieldPatchRef\.current\?\.\(/);
+
+  const popoutPageSource = readFileSync(
+    join(frontendRoot, "src", "button", "popout", "ButtonPopoutWindowPage.tsx"),
+    "utf8"
+  );
+  assert.match(popoutPageSource, /const requestInlineEditorFocus = useCallback/);
+  assert.match(popoutPageSource, /\(\) => getCurrentWindow\(\)\.setFocus\(\)/);
+  assert.match(popoutPageSource, /onRequestInlineEditorFocus=\{requestInlineEditorFocus\}/);
+});
+
+test("Illustrator Ill Align normalizes none, origin, and surface modes with exact geometry", () => {
+  const helperPath = join(
+    frontendRoot,
+    "..",
+    "Programs",
+    "Illustrator",
+    "HelperScripts",
+    "FlowCell_Illustrator_Anchor.jsx"
+  );
+  const source = readFileSync(helperPath, "utf8");
+  const modifierStart = source.indexOf("function enabledMode(");
+  const modifierEnd = source.indexOf("function combinedBounds(", modifierStart);
+  assert.ok(modifierStart >= 0 && modifierEnd > modifierStart, "Illustrator modifier normalizer should be extractable");
+  const alignmentModifier = Function(`${source.slice(modifierStart, modifierEnd)}; return alignmentModifier;`)();
+  const deltaStart = source.indexOf("function delta(");
+  const deltaEnd = source.indexOf("function alignAxis(", deltaStart);
+  assert.ok(deltaStart >= 0 && deltaEnd > deltaStart, "Illustrator delta function should be extractable");
+  const delta = Function(`${source.slice(deltaStart, deltaEnd)}; return delta;`)();
+  const selected = {
+    left: 10,
+    right: 30,
+    centerX: 20,
+    bottom: 40,
+    top: 80,
+    centerY: 60
+  };
+  const anchor = {
+    left: 100,
+    right: 200,
+    centerX: 150,
+    bottom: 300,
+    top: 500,
+    centerY: 400
+  };
+
+  assert.equal(alignmentModifier({ surface: false, origin: false }), "");
+  assert.equal(alignmentModifier({ surface: true, origin: false }), "SURFACE");
+  assert.equal(alignmentModifier({ surface: false, origin: true }), "GEOCENTER");
+  assert.equal(alignmentModifier("SURFACE"), "SURFACE");
+  assert.deepEqual(delta("X", "MIN", "", selected, anchor), { dx: 90, dy: 0 });
+  assert.deepEqual(delta("X", "CENTER", "", selected, anchor), { dx: 130, dy: 0 });
+  assert.deepEqual(delta("X", "MAX", "", selected, anchor), { dx: 170, dy: 0 });
+  assert.deepEqual(delta("X", "MIN", "GEOCENTER", selected, anchor), { dx: 80, dy: 0 });
+  assert.deepEqual(delta("X", "CENTER", "GEOCENTER", selected, anchor), { dx: 130, dy: 0 });
+  assert.deepEqual(delta("X", "MAX", "GEOCENTER", selected, anchor), { dx: 180, dy: 0 });
+  assert.deepEqual(delta("X", "MIN", "SURFACE", selected, anchor), { dx: 70, dy: 0 });
+  assert.deepEqual(delta("X", "CENTER", "SURFACE", selected, anchor), { dx: 130, dy: 0 });
+  assert.deepEqual(delta("X", "MAX", "SURFACE", selected, anchor), { dx: 190, dy: 0 });
+  assert.deepEqual(delta("Y", "MIN", "", selected, anchor), { dx: 0, dy: 260 });
+  assert.deepEqual(delta("Y", "CENTER", "", selected, anchor), { dx: 0, dy: 340 });
+  assert.deepEqual(delta("Y", "MAX", "", selected, anchor), { dx: 0, dy: 420 });
+  assert.deepEqual(delta("Y", "MIN", "GEOCENTER", selected, anchor), { dx: 0, dy: 240 });
+  assert.deepEqual(delta("Y", "CENTER", "GEOCENTER", selected, anchor), { dx: 0, dy: 340 });
+  assert.deepEqual(delta("Y", "MAX", "GEOCENTER", selected, anchor), { dx: 0, dy: 440 });
+  assert.deepEqual(delta("Y", "MIN", "SURFACE", selected, anchor), { dx: 0, dy: 220 });
+  assert.deepEqual(delta("Y", "CENTER", "SURFACE", selected, anchor), { dx: 0, dy: 340 });
+  assert.deepEqual(delta("Y", "MAX", "SURFACE", selected, anchor), { dx: 0, dy: 460 });
 });
 
 test("per-click payload overrides win over mapped and manifest payload values", async () => {
@@ -4195,6 +4706,7 @@ test("shared owner-graph removal cleans children, surfaces, popouts, fans, ancho
     zIndex: 0,
     skinOverrideId: null,
     textFitMode: "shrink",
+    textAlignment: "skin",
     minimumFontSize: 8,
     textSizeOverride: null,
     allowLabelResize: false,

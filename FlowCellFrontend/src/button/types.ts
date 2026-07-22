@@ -19,6 +19,7 @@ export type ButtonRole =
   | "panel-owner";
 
 export type ButtonTextFitMode = "shrink" | "stack-whole-words" | "shrink-and-stack";
+export type ButtonTextAlignment = "skin" | "left" | "center" | "right";
 export type ButtonResizeAnchor = "top-left";
 export type ButtonWindowFitMode = "surface" | "hitbox" | "visual";
 export type ButtonSurfaceKind =
@@ -131,7 +132,9 @@ export type ButtonPayloadTemplate = Record<string, ButtonPayloadTemplateValue>;
 export interface ButtonToolSetChildBehavior {
   toggleFields?: string[];
   fieldPatch?: Record<string, JsonValue>;
+  activationPatch?: Record<string, JsonValue>;
   activateField?: string;
+  inlineEditField?: string;
   execute?: boolean;
   payloadTemplate?: ButtonPayloadTemplate;
 }
@@ -159,6 +162,7 @@ export interface ButtonPlacement extends ButtonRect {
   zIndex: number;
   skinOverrideId: ButtonSkinId | null;
   textFitMode: ButtonTextFitMode;
+  textAlignment: ButtonTextAlignment;
   minimumFontSize: number;
   textSizeOverride: number | null;
   allowLabelResize: boolean;

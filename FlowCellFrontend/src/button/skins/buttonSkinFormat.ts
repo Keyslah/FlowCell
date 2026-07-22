@@ -27,6 +27,7 @@ export const BUTTON_SKIN_STATE_SECTIONS = [
 export type ButtonSkinStateSectionName = (typeof BUTTON_SKIN_STATE_SECTIONS)[number];
 
 export const BUTTON_SKIN_LABEL_TOKEN = "{{label}}";
+export const BUTTON_SKIN_FILE_EXTENSION = ".flowcell-button-skin.txt" as const;
 
 export const BUTTON_SKIN_HEADERS = Object.fromEntries(
   BUTTON_SKIN_SECTION_ORDER.map((section) => [section, `=== ${section} ===`])

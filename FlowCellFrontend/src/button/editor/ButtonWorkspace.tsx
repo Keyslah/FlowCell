@@ -25,8 +25,8 @@ import {
 } from "../windows/buttonWindowGeometry";
 import { ButtonEditOverlay } from "./ButtonEditOverlay";
 import {
-  compactButtonPlacements,
-  inferButtonPlacementRowProfile,
+  buildButtonReorderRowCandidates,
+  chooseButtonReorderRowCandidate,
   type CompactButtonPlacement
 } from "../geometry/buttonGeometry";
 import { ButtonReorderOverlay } from "./ButtonReorderOverlay";
@@ -46,18 +46,10 @@ const WINDOW_FIT_PREVIEW_LABELS: Record<ButtonWindowFitMode, string> = {
 
 interface ButtonReorderPreview {
   movingPlacementId: string;
-  insertionIndex: number;
+  candidateKey: string;
   orderedPlacementIds: string[];
   placements: CompactButtonPlacement[];
   movingRect: ButtonRect;
-}
-
-interface ButtonReorderCandidate {
-  insertionIndex: number;
-  orderedPlacementIds: string[];
-  placements: CompactButtonPlacement[];
-  slot: ButtonRect;
-  distance: number;
 }
 
 function measurementsEqual(
@@ -246,7 +238,7 @@ export function ButtonWorkspace({
   const buildReorderCandidates = useCallback((
     movingPlacementId: string,
     movingRect: ButtonRect
-  ): { candidates: ButtonReorderCandidate[]; reason: string | null } => {
+  ) => {
     if (!surface) return { candidates: [], reason: "Select a Button surface first." };
     const movingPlacement = document.placements[movingPlacementId];
     if (!movingPlacement || !orderedPlacementIds.includes(movingPlacementId)) {
@@ -259,50 +251,13 @@ export function ButtonWorkspace({
     if (sourceItems.length !== orderedPlacementIds.length) {
       return { candidates: [], reason: "A Button placement disappeared while reordering." };
     }
-    const anchorX = sourceItems.length > 0
-      ? Math.min(...sourceItems.map((item) => item.rect.x))
-      : 0;
-    const anchorY = sourceItems.length > 0
-      ? Math.min(...sourceItems.map((item) => item.rect.y))
-      : 0;
-    const remainingPlacementIds = orderedPlacementIds.filter(
-      (placementId) => placementId !== movingPlacementId
-    );
-    const rowProfile = inferButtonPlacementRowProfile(sourceItems);
-    const movingCenterX = movingRect.x + movingRect.width / 2;
-    const movingCenterY = movingRect.y + movingRect.height / 2;
-    const candidates: ButtonReorderCandidate[] = [];
-    let reason: string | null = null;
-
-    for (let insertionIndex = 0; insertionIndex <= remainingPlacementIds.length; insertionIndex += 1) {
-      const nextOrder = [...remainingPlacementIds];
-      nextOrder.splice(insertionIndex, 0, movingPlacementId);
-      const compacted = compactButtonPlacements(
-        nextOrder.map((placementId) => ({
-          id: placementId,
-          rect: document.placements[placementId]
-        })),
-        surface,
-        { anchorX, anchorY, gap: 0, rowProfile }
-      );
-      if (!compacted.success) {
-        reason = compacted.reason;
-        continue;
-      }
-      const slot = compacted.placements.find((placement) => placement.id === movingPlacementId)?.rect;
-      if (!slot) continue;
-      candidates.push({
-        insertionIndex,
-        orderedPlacementIds: nextOrder,
-        placements: compacted.placements,
-        slot,
-        distance: Math.hypot(
-          movingCenterX - (slot.x + slot.width / 2),
-          movingCenterY - (slot.y + slot.height / 2)
-        )
-      });
-    }
-    return { candidates, reason: candidates.length > 0 ? null : reason };
+    return buildButtonReorderRowCandidates({
+      placements: sourceItems,
+      movingPlacementId,
+      movingRect,
+      surface,
+      gap: 0
+    });
   }, [document.placements, orderedPlacementIds, surface]);
 
   const previewPlacementOrder = useCallback((
@@ -312,6 +267,12 @@ export function ButtonWorkspace({
     if (!surface) return;
     const placement = document.placements[movingPlacementId];
     if (!placement) return;
+    const pointerMovingRect = {
+      x: pointerRect.x,
+      y: pointerRect.y,
+      width: placement.width,
+      height: placement.height
+    };
     const movingRect = {
       x: Math.min(
         Math.max(0, pointerRect.x),
@@ -324,24 +285,21 @@ export function ButtonWorkspace({
       width: placement.width,
       height: placement.height
     };
-    const result = buildReorderCandidates(movingPlacementId, movingRect);
+    const result = buildReorderCandidates(movingPlacementId, pointerMovingRect);
     if (result.candidates.length === 0) {
       setReorderBlockedReason(result.reason ?? "The Buttons do not fit inside the selected surface.");
       return;
     }
-    const best = [...result.candidates].sort((left, right) =>
-      left.distance - right.distance || left.insertionIndex - right.insertionIndex
-    )[0];
     const current = reorderPreviewRef.current;
-    const sticky = current?.movingPlacementId === movingPlacementId
-      ? result.candidates.find((candidate) => candidate.insertionIndex === current.insertionIndex)
-      : null;
-    const chosen = sticky && sticky.distance <= best.distance + REORDER_SLOT_HYSTERESIS_PX
-      ? sticky
-      : best;
+    const chosen = chooseButtonReorderRowCandidate(
+      result.candidates,
+      current?.movingPlacementId === movingPlacementId ? current.candidateKey : null,
+      REORDER_SLOT_HYSTERESIS_PX
+    );
+    if (!chosen) return;
     const nextPreview: ButtonReorderPreview = {
       movingPlacementId,
-      insertionIndex: chosen.insertionIndex,
+      candidateKey: chosen.key,
       orderedPlacementIds: chosen.orderedPlacementIds,
       placements: chosen.placements,
       movingRect
@@ -523,7 +481,7 @@ export function ButtonWorkspace({
             <div
               className={`button-reorder-mode-hint${reorderBlockedReason ? " is-blocked" : ""}`}
             >
-              {reorderBlockedReason ?? "Reorder: drag a Button and the others will move out of the way"}
+              {reorderBlockedReason ?? "Reorder: drop into any row, or below/between rows to make a new row"}
             </div>
           ) : null}
           {reorderDropSlot ? (

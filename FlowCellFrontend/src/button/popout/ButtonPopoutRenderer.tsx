@@ -93,6 +93,7 @@ export interface ButtonPopoutRendererProps {
   surfaceScale?: number;
   surfaceEnvelope?: ButtonRect;
   onOwnerActivate?: (button: ButtonRecord) => void | Promise<void>;
+  onRequestInlineEditorFocus?: () => void | Promise<void>;
   onPlacementMeasurement?: (
     placementId: string,
     measurement: ButtonCoreMeasurement
@@ -115,6 +116,7 @@ export function ButtonPopoutRenderer({
   surfaceScale = 1,
   surfaceEnvelope,
   onOwnerActivate,
+  onRequestInlineEditorFocus,
   onPlacementMeasurement,
   onPlacementVisualMeasurement,
   onPreparePlacementVisualStateChange,
@@ -181,6 +183,7 @@ export function ButtonPopoutRenderer({
             document={collapsedOwner.document}
             surfaceId={collapsedOwner.surfaceId}
             mode="run"
+            onRequestInlineEditorFocus={onRequestInlineEditorFocus}
             onPlacementMeasurement={onPlacementMeasurement}
             onPlacementVisualMeasurement={onPlacementVisualMeasurement}
             onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
@@ -224,6 +227,7 @@ export function ButtonPopoutRenderer({
           mode="run"
           fields={fields}
           fieldValues={fieldValues}
+          onRequestInlineEditorFocus={onRequestInlineEditorFocus}
           onFieldPatch={(
             _patch: Readonly<Record<string, JsonValue>>,
             nextValues: Readonly<Record<string, JsonValue>>

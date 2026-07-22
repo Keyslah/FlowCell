@@ -7,6 +7,7 @@ import {
 import type {
   ButtonCoreMeasurement,
   ButtonSkin,
+  ButtonTextAlignment,
   ButtonTextFitMode,
   ButtonVisualMeasurement,
   ButtonVisualState
@@ -39,6 +40,7 @@ export interface ButtonSkinRendererProps {
   matchHitboxToSkin?: boolean;
   allowStretching?: boolean;
   textFitMode: ButtonTextFitMode;
+  textAlignment?: ButtonTextAlignment;
   minimumFontSize: number;
   textSizeOverride?: number;
   previewStackWords?: boolean;
@@ -51,6 +53,7 @@ export interface ButtonSkinRendererProps {
   disabled?: boolean;
   error?: boolean;
   onCoreElementChange?: (element: HTMLElement | SVGElement | null) => void;
+  onLabelElementChange?: (element: HTMLElement | SVGElement | null) => void;
   onShadowRootChange?: (root: ShadowRoot | null) => void;
   onMeasurement?: (measurement: ButtonCoreMeasurement) => void;
   onVisualMeasurement?: (measurement: ButtonVisualMeasurement) => void;
@@ -63,6 +66,7 @@ interface MountedSkin {
   container: HTMLElement;
   core: HTMLElement | SVGElement;
   labelNode: HTMLElement | SVGElement | null;
+  textAlignmentRestores: Array<() => void>;
 }
 
 type ButtonHostRenderScale = ButtonSkinScale;
@@ -175,7 +179,7 @@ function mountCompiledSkin(
   const labelNode = compiled.hasLabelToken
     ? injectLabel(container, label)
     : null;
-  return { container, core, labelNode };
+  return { container, core, labelNode, textAlignmentRestores: [] };
 }
 
 type VisualRect = { left: number; top: number; right: number; bottom: number };
@@ -537,7 +541,6 @@ function applySkinRootScale(
   mounted.container.style.removeProperty("transform");
   mounted.container.style.removeProperty("transform-origin");
   if (
-    !matchHitboxToSkin ||
     typeof width !== "number" ||
     typeof height !== "number"
   ) {
@@ -545,6 +548,13 @@ function applySkinRootScale(
   }
   const naturalContainerRect = mounted.container.getBoundingClientRect();
   const naturalCoreRect = mounted.core.getBoundingClientRect();
+  const coreOffsetX = (naturalCoreRect.left - naturalContainerRect.left) / renderScale.scaleX;
+  const coreOffsetY = (naturalCoreRect.top - naturalContainerRect.top) / renderScale.scaleY;
+  mounted.container.style.transformOrigin = "top left";
+  if (!matchHitboxToSkin) {
+    mounted.container.style.transform = `translate(${-coreOffsetX}px, ${-coreOffsetY}px)`;
+    return;
+  }
   const scale = resolveButtonSkinScale(
     {
       width: naturalCoreRect.width / renderScale.scaleX,
@@ -553,9 +563,6 @@ function applySkinRootScale(
     { width, height },
     allowStretching
   );
-  const coreOffsetX = (naturalCoreRect.left - naturalContainerRect.left) / renderScale.scaleX;
-  const coreOffsetY = (naturalCoreRect.top - naturalContainerRect.top) / renderScale.scaleY;
-  mounted.container.style.transformOrigin = "top left";
   mounted.container.style.transform = `scale(${scale.scaleX}, ${scale.scaleY}) translate(${-coreOffsetX}px, ${-coreOffsetY}px)`;
 }
 
@@ -628,6 +635,94 @@ function applyTextFit(
   return plan.overflow;
 }
 
+function applyTextAlignment(
+  mounted: MountedSkin,
+  alignment: ButtonTextAlignment
+): void {
+  for (const restore of mounted.textAlignmentRestores.splice(0).reverse()) {
+    restore();
+  }
+  if (alignment === "skin") return;
+
+  const overriddenProperties = new WeakMap<Element, Set<string>>();
+  const overrideStyle = (
+    element: HTMLElement | SVGElement,
+    property: string,
+    value: string
+  ) => {
+    let properties = overriddenProperties.get(element);
+    if (!properties) {
+      properties = new Set<string>();
+      overriddenProperties.set(element, properties);
+    }
+    if (properties.has(property)) return;
+    properties.add(property);
+    const originalValue = element.style.getPropertyValue(property);
+    const originalPriority = element.style.getPropertyPriority(property);
+    mounted.textAlignmentRestores.push(() => {
+      if (originalValue) {
+        element.style.setProperty(property, originalValue, originalPriority);
+      } else {
+        element.style.removeProperty(property);
+      }
+    });
+    element.style.setProperty(property, value, "important");
+  };
+
+  const labelNode = mounted.labelNode;
+  if (labelNode && isSvgElement(labelNode)) {
+    const textNode = labelNode.closest("text") ?? labelNode;
+    overrideStyle(
+      textNode as SVGElement,
+      "text-anchor",
+      alignment === "center" ? "middle" : alignment === "left" ? "start" : "end"
+    );
+    return;
+  }
+
+  const alignmentPath = new Set<HTMLElement>();
+  if (labelNode instanceof HTMLElement) {
+    let element: HTMLElement | null = labelNode;
+    while (element) {
+      alignmentPath.add(element);
+      if (element === mounted.core) break;
+      element = element.parentElement;
+    }
+  }
+  if (mounted.core instanceof HTMLElement) alignmentPath.add(mounted.core);
+
+  let labelBranch: HTMLElement | null = null;
+  for (const element of alignmentPath) {
+    overrideStyle(element, "text-align", alignment);
+    const computed = getComputedStyle(element);
+    const labelIsOnlyInFlowChild = labelBranch !== null && Array.from(element.childNodes).every((child) => {
+      if (child === labelBranch) return true;
+      if (child.nodeType === Node.TEXT_NODE) return !(child.textContent ?? "").trim();
+      if (child.nodeType !== Node.ELEMENT_NODE) return true;
+      const childStyle = getComputedStyle(child as Element);
+      return childStyle.display === "none" || childStyle.position === "absolute" || childStyle.position === "fixed";
+    });
+    if (labelIsOnlyInFlowChild && computed.writingMode === "horizontal-tb") {
+      if (computed.display === "flex" || computed.display === "inline-flex") {
+        if (computed.flexDirection === "row" || computed.flexDirection === "row-reverse") {
+          overrideStyle(element, "justify-content", alignment);
+        } else {
+          const rightToLeft = computed.direction === "rtl";
+          const value = alignment === "center"
+            ? "center"
+            : alignment === "left" !== rightToLeft
+              ? "flex-start"
+              : "flex-end";
+          overrideStyle(element, "align-items", value);
+        }
+      } else if (computed.display === "grid" || computed.display === "inline-grid") {
+        overrideStyle(element, "justify-items", alignment);
+      }
+    }
+    labelBranch = element;
+  }
+}
+
 function setBooleanAttribute(host: HTMLElement, name: string, value: boolean): void {
   host.setAttribute(name, value ? "true" : "false");
 }
@@ -641,6 +736,7 @@ export function ButtonSkinRenderer({
   matchHitboxToSkin = true,
   allowStretching = false,
   textFitMode,
+  textAlignment = "skin",
   minimumFontSize,
   textSizeOverride,
   previewStackWords,
@@ -653,6 +749,7 @@ export function ButtonSkinRenderer({
   disabled = false,
   error = false,
   onCoreElementChange,
+  onLabelElementChange,
   onShadowRootChange,
   onMeasurement,
   onVisualMeasurement,
@@ -686,6 +783,7 @@ export function ButtonSkinRenderer({
   // Callbacks flow through refs so parent re-renders (new inline arrow identities)
   // never remount the skin shadow DOM — a remount restarts every CSS animation.
   const onCoreElementChangeRef = useRef(onCoreElementChange);
+  const onLabelElementChangeRef = useRef(onLabelElementChange);
   const onShadowRootChangeRef = useRef(onShadowRootChange);
   const onMeasurementRef = useRef(onMeasurement);
   const onVisualMeasurementRef = useRef(onVisualMeasurement);
@@ -693,6 +791,7 @@ export function ButtonSkinRenderer({
   const onTextOverflowChangeRef = useRef(onTextOverflowChange);
   const onDiagnosticsRef = useRef(onDiagnostics);
   onCoreElementChangeRef.current = onCoreElementChange;
+  onLabelElementChangeRef.current = onLabelElementChange;
   onShadowRootChangeRef.current = onShadowRootChange;
   onMeasurementRef.current = onMeasurement;
   onVisualMeasurementRef.current = onVisualMeasurement;
@@ -757,6 +856,7 @@ export function ButtonSkinRenderer({
       textSizeOverride,
       previewStackWords
     );
+    applyTextAlignment(mounted, textAlignment);
     applySkinRootScale(
       mounted,
       width,
@@ -774,6 +874,7 @@ export function ButtonSkinRenderer({
     setBooleanAttribute(host, "data-button-text-overflow", overflow);
     onTextOverflowChangeRef.current?.(overflow);
     onCoreElementChangeRef.current?.(mounted.core);
+    onLabelElementChangeRef.current?.(mounted.labelNode);
     const updateMeasurement = () => {
       const sizing = sizingRef.current;
       const renderScale = resolveHostRenderScale(host, sizing.width, sizing.height);
@@ -807,12 +908,27 @@ export function ButtonSkinRenderer({
       observer?.disconnect();
       mountedRef.current = null;
       onCoreElementChangeRef.current?.(null);
+      onLabelElementChangeRef.current?.(null);
       onShadowRootChangeRef.current?.(null);
     };
     // The mount deps are the compiled skin's stable identity (skin id + source
     // fingerprint), not object identities: a re-cloned document or a re-created
     // callback must never rebuild the shadow DOM.
   }, [compiled?.skinId, compiled?.sourceFingerprint, renderedLabel, textFitMode, minimumFontSize, constrained, textSizeOverride, previewStackWords, hasMeasurementConsumer]);
+
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    const mounted = mountedRef.current;
+    if (!host || !mounted) return;
+    applyTextAlignment(mounted, textAlignment);
+    if (hasMeasurementConsumer) {
+      const sizing = sizingRef.current;
+      const renderScale = resolveHostRenderScale(host, sizing.width, sizing.height);
+      const measurement = readMeasurement(mounted.container, mounted.core, renderScale);
+      onMeasurementRef.current?.(measurement);
+      onVisualMeasurementRef.current?.({ ...measurement, state: visualStateRef.current });
+    }
+  }, [textAlignment, hasMeasurementConsumer]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;

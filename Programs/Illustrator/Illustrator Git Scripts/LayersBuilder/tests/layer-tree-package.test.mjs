@@ -177,6 +177,7 @@ test("sandbox page calls only declared FlowCell actions and contains no privileg
     "duplicate",
     "set-lock",
     "set-visible",
+    "move",
     "select-contents",
     "read-owner-state",
     "write-owner-state"
@@ -207,6 +208,34 @@ test("sandbox page calls only declared FlowCell actions and contains no privileg
   ]) {
     assert.doesNotMatch(pageScript, forbidden);
   }
+});
+
+test("child creation names first and rows move through drag and drop", async () => {
+  const pageScript = await readText("page/page.js");
+  const refreshHandler = pageScript.slice(
+    pageScript.indexOf("function registerRefreshEvent"),
+    pageScript.indexOf("function bindToolbar")
+  );
+
+  assert.match(pageScript, /openCreateChildDialog\(parentKey\)/);
+  assert.match(pageScript, /nameDialogAction\s*=\s*"create-child"/);
+  assert.match(
+    pageScript,
+    /runAction\("create",\s*\{\s*parentKey:\s*key,\s*name:\s*name\s*\}/
+  );
+  assert.match(pageScript, /row\.draggable\s*=\s*!state\.busy/);
+  assert.match(pageScript, /addEventListener\("dragstart"/);
+  assert.match(pageScript, /addEventListener\("dragover"/);
+  assert.match(pageScript, /addEventListener\("drop"/);
+  assert.match(
+    pageScript,
+    /runAction\("move",\s*\{\s*key:\s*sourceKey,\s*targetKey:\s*node\.key\s*\}/
+  );
+  assert.doesNotMatch(
+    refreshHandler,
+    /state\.highlightedKeys\s*=\s*new Set\(\)/,
+    "program invalidation must not erase the target before async New Sub reads owner state"
+  );
 });
 
 test("package HTML exposes the complete current Tree Inspector control surface", async () => {

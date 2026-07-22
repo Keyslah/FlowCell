@@ -78,7 +78,7 @@ export function ButtonEditOverlay({
       keepInsideSurface: true
     };
     const locksAspect = interaction.kind === "resize" &&
-      (!placement.allowStretching || event.shiftKey);
+      ((placement.matchHitboxToSkin && !placement.allowStretching) || event.shiftKey);
     const resolution = locksAspect
       ? resolveAspectLockedButtonGeometryAlongPath(
           interaction.start,

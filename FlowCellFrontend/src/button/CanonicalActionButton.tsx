@@ -50,6 +50,7 @@ export function CanonicalActionButton({
     zIndex: 0,
     skinOverrideId: null,
     textFitMode: "shrink-and-stack",
+    textAlignment: "skin",
     minimumFontSize: 8,
     textSizeOverride: null,
     allowLabelResize: false,

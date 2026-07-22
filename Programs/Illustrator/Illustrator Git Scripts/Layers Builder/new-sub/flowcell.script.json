@@ -4,5 +4,8 @@
   "label": "new sub",
   "tooltip": "Create a named direct child under exactly one highlighted Layer Tree layer.",
   "program": "Illustrator",
-  "source": "new sub.jsx"
+  "source": "new sub.jsx",
+  "execution": {
+    "waitForCompletion": true
+  }
 }

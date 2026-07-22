@@ -28,14 +28,20 @@ Use this document as the repository-local routing guide for FlowCell work. Inspe
 - `Programs/<Program>/Panels/<Panel>/<ownerButtonId>.flowcell-source.json` is the active routing record.
 - `Programs/<Program>/flowcell.program.json` declares program folders, allowed source types, and runner behavior.
 - `flowcellbackend/FlowCellBackend.ahk` owns existing path-based script hotkeys and direct backend automation; those `ScriptPath` bindings remain available with the frontend closed.
-- The running Tauri process owns `tool-set-owner` and `tool-set-child` hotkeys. Their numbered binding records carry canonical Button/owner IDs without `ScriptPath`; owners use the same Main-page managed-popout toggle, while the active expanded owner popout activates a mounted child host so live tool fields and the normal Button lifecycle remain authoritative. Binds scopes Current Panel Binds to one selected Tool Set owner and its children.
+- The bind-only Illustrator `Actions / Set Anchor` entry is the explicit Core-action exception: it stores its shortcut under `ActionHotkeys`, is active only for foreground Illustrator, registers pass-through so the native Illustrator command still receives the keystroke, and runs the shipped Illustrator helper through immediate foreground automation so the keypress selection is captured before the action returns.
+- The running Tauri process owns `tool-set-owner` and `tool-set-child` hotkeys. Their numbered binding records carry canonical Button/owner IDs without `ScriptPath`; an owner hotkey invokes the canonical managed-popout toggle directly while Main's ordinary owner click remains selection-only (Main double-click invokes the same primary toggle), and the active expanded owner popout activates a mounted child host so live tool fields and the normal Button lifecycle remain authoritative. Binds scopes Current Panel Binds to one selected Tool Set owner and its children.
 - `flowcellbackend/FlowCellCommandBackend.ps1` executes hotkey script/macro requests; Blender script bindings resolve only through active `.flowcell-source.json` records.
 
 ### Non-negotiable contracts
 
 - State owns identity, execution targets, labels, skins, placements, surfaces, popout units, fan setups, and settings.
+- The polished Button Editor has exactly three panes: left navigation and placement controls, center Button workspace, and right Skin Editor. It exposes no source/action library pane.
+- Program, Panel, Button, and Placement navigation resolves only existing Main, Pop, or saved Fan placements. The Editor never offers a synthetic default-Fan placement or creates or changes Fan membership. Main's selected/generic Fan commands and the complete saved Fan runtime remain supported.
+- `Save placement` opens a native save dialog and writes a named `.flowcell-button-placement.json` containing only the selected surface's ordered placement geometry. The portable file excludes sizing/text policy, but the canonical scoped commit includes placement-owned sizing behavior, text fitting, and alignment with the arrangement. It is not Save Layout and must not capture skins, actions, animations, Pop/Fan state, settings, or managed-window layout.
+- `Animation` opens a dedicated page with its own top-right X. Preserve its complete contract: `No animation` plus every registered preset, Apply-to-clear or Apply-to-assign, position-and-size setup, saved physical bounds, explicit setup close, and runtime playback through the retained Edit/Run workspace switch. Animation Apply and bounds saves are scoped independently from placement saves.
 - Each real program panel owns one source-free `panel-owner` Button on the program's main panel-rail surface. The actual main rail renders that Button, and saved fans reuse it with exact Fan placements; never fabricate an empty fan setup for editor navigation.
 - The functional host owns execution, pointer/keyboard routing, hit testing, text fit, drag/resize, collision prevention, native windows, and persistence participation.
+- Button size is a placement-owned host policy. Responsive constrains the core to exact independent dimensions, translation-normalizes its authored resting offset, and does not scale the root; Proportional uniformly scales from each measured natural core ratio and aspect-locks it; Stretch explicitly permits independent X/Y root scaling. The Skin Editor previews width, height, and behavior before `Assign Size` applies the target to the focused placement or `Assign Size to Panel` applies it once to every Button beside that placement on its current Main, Pop, Fan, or other Button surface. Responsive and Stretch use the exact target; Proportional preserves each Button's measured natural aspect when available and otherwise its current aspect. Assigned sizing disables label-driven geometry growth. Those actions never enable the separate legacy uniform-size format or rewrite skin source.
 - A skin owns render-only markup, SVG, declarations, typography, effects, states, transitions, and keyframes.
 - A skin has exactly one measurable `[data-core]` and zero or one `{{label}}` token. That authored core's geometry is the actual interactive hitbox; textless skins receive no host overlay, label, or fallback chrome.
 - Transparent or decorative overflow is pointer-inert.
@@ -82,13 +88,13 @@ Core utility windows such as Binds, Macro Lab, Organization Setup, Window Grid, 
 - Stable native labels derive from stable IDs, never editable labels.
 - A panel Fan and the Main-page panel rail share one stable `panel-owner` Button identity, but each occurrence is resolved through its own placement ID and may have its own geometry and skin override.
 - Exact saved geometry wins; do not rerun starter layout during restoration.
-- Reorder and `Snap to top left corner` are explicit undoable Editor actions that rewrite exact placement geometry and z-order; restore continues to use the saved result without reflowing it.
-- On a Pop or Fan surface, the selected `windowFitMode` is the Editor's immediate labeled semantic frame for Saved Surface, all Button hitboxes, or current Button visuals. The frame mirrors transient active overflow; opening the real native draft remains a separate `Open Pop` or `Open Fan` action, and Save persists only the resting fit.
-- Native Pop/Fan windows are fixed, non-resizable transparent canvases covering the active monitor work area and any outlying semantic content. Set cursor-ignore before show. One shared native worker emits changed physical cursor/modifier snapshots; physical bounds and cursor points must be converted to WebView CSS coordinates with the live `devicePixelRatio` (native monitor DPI is only the fallback because WebView zoom can differ). Each window reacts to those changes and local geometry/DOM invalidation, enabling its HWND only when the native owning-program entitlement is active and the pointer is over a placement-owned Button host, tool field, or Pop resize handle. Gaps, inactive program scope, taskbar previews, listener/query failures, and effect cleanup must return it to ignored. Subscribe before querying initial native state, retry transient listener/query and cursor-style failures, and fail closed while state is unavailable. The hit-test hook rejects points outside the semantic frame before exact testing, may cache interactive membership, and must read exact viewport rectangles live because ancestor frame movement can change position without resizing a host. It must not resume per-window continuous polling merely because an envelope or content frame moved.
+- Reorder and `Snap to top left corner` are explicit undoable Editor actions that rewrite exact placement geometry and z-order. Rows are first-class during these actions: Snap left-packs each exact existing row and stacks the same rows upward without changing membership; Reorder exposes every slot in every row plus explicit new-row boundaries and never rebalances untouched Buttons between rows. `Save placement` writes and commits that arrangement; restore continues to use it without reflowing, and Save Layout remains a separate application-wide operation.
+- Stored Pop/Fan `windowFitMode` values remain runtime-owned semantic frame choices for the saved surface, all Button hitboxes, or current Button visuals. The streamlined Editor does not expose separate fit or native-preview actions; Save placement leaves the existing runtime values intact.
+- Native Pop/Fan windows are fixed, non-resizable transparent canvases covering the active monitor work area and any outlying semantic content. Set cursor-ignore before show. An explicit open must request its scoped normal-band reveal after show; passive layout restore must not. One shared native worker emits changed physical cursor/modifier snapshots; physical bounds and cursor points must be converted to WebView CSS coordinates with the live `devicePixelRatio` (native monitor DPI is only the fallback because WebView zoom can differ). Each window reacts to those changes and local geometry/DOM invalidation, enabling its HWND only when the native explicit-open or owning-program entitlement is active and the pointer is over a placement-owned Button host, tool field, or Pop resize handle. Gaps, inactive program scope, taskbar previews, listener/query failures, and effect cleanup must return it to ignored. Subscribe before querying initial native state, retry transient listener/query and cursor-style failures, and fail closed while state is unavailable. The hit-test hook rejects points outside the semantic frame before exact testing, may cache interactive membership, and must read exact viewport rectangles live because ancestor frame movement can change position without resizing a host. It must not resume per-window continuous polling merely because an envelope or content frame moved.
 - Render the visible frame absolutely inside that canvas. Fit changes, hover overflow, Fan expansion, and tool-set collapse/expansion change only semantic frame/envelope state. Grow or rehome the native canvas only when content escapes it, and use a capacity margin while dragging/resizing so monitor-edge motion stays visible. New unsized Pops start at one design pixel per WebView CSS pixel; restored physical bounds use the destination WebView's effective pixel ratio. Preserve one invariant physical surface origin, normalize ancestor content scale to design units, and retain skin-root/animated overflow scale. Persist Pop/Fan semantic physical bounds and layout snapshots, never the monitor-sized host or transient envelope.
 - Layout snapshots are strict version 8 `FlowCellWindowLayout` documents and persist only `button-editor`, `button-popout`, and `button-fan` Button window kinds; unknown fields and old window kinds are rejected.
 - Only stable placement-owned skin-host rectangles are native Button hit-test regions; their resting dimensions derive from the measured `[data-core]`. Gaps stay pointer-inert.
-- Program-scoped topmost is an exact native process rule: only the owning manifest's actual foreground executable may select `TOPMOST`. FlowCell self/sibling focus is at most a normal-band continuation of the last proven owning app; taskbar previews and unrelated apps must place the scoped window behind the actual foreground HWND, not merely call `HWND_NOTOPMOST`.
+- Program-scoped topmost is an exact native process rule: only the owning manifest's actual foreground executable may select `TOPMOST`. An explicit Pop/Fan open may receive a post-show, input-active reveal at the front of the normal band, never `TOPMOST`; preserve that transient grant when the mounted page re-registers its label, but keep it tied only to the opening FlowCell HWND and then the revealed HWND so any other focus ends it. FlowCell self/sibling focus is otherwise at most a normal-band continuation of the last proven owning app; taskbar previews and unrelated apps clear the grant and place the scoped window behind the actual foreground HWND, not merely call `HWND_NOTOPMOST`.
 
 ### Primary files
 
@@ -131,6 +137,8 @@ Runtime values win. Core does not interpret Blender axes, angles, solvers, color
 - Tool-set children render only on their tool-set popout surface.
 - The shared Button popout renderer is the only tool-set visual renderer.
 - A validated `layout.presentation` may select a reusable view inside that same canonical popout; it may not bypass `ButtonHost` execution or own separate state.
+- In Run mode, Tool Set children with `fieldPatch` and/or `toggleFields` derive their authored pressed visual from live field values: all patched values must match and all toggled fields must be true. Different fixed values for one field create ordinary radio choices. For an optional radio where every choice may be released, give each choice a Boolean toggle and patch its peers to `false`; do not add a program-specific selection store or renderer.
+- A child with `inlineEditField` edits one hidden number/text field inside that real Button's existing HTML `{{label}}` node. Primary pointer-down anywhere in its `[data-core]` explicitly focuses the native popout, then focuses/selects that editor, not just clicks directly on the label glyphs. Keep it `execute: false` with no field service; its placement, literal skin, `[data-core]` hitbox, movement, resizing, and authored states remain canonical. Use `activationPatch` on mode Buttons when activation should reset the editable value without making that default part of selected-state matching.
 - One stable native window per owner toggles between the exact owner footprint and exact saved expanded bounds.
 - Regular popouts and regular fan windows never contain tool-set children.
 - A fan setup stores tool-set owners as separate collapsed windows at exact physical anchors.
@@ -169,13 +177,37 @@ Runtime values win. Core does not interpret Blender axes, angles, solvers, color
 6. Native transparent windows map the physical cursor to the webview through the live `devicePixelRatio`, discover each core through its placement host, and hit-test the live core rectangle; non-Button controls use their own DOM geometry.
 
 The host never imposes another shape over the skin. Shadows, glows, wrappers, and decorative SVG may overflow but never become clickable.
-Main-page selection adds no host outline; it latches the selected Button into the skin's authored pressed state until deselection.
+Main-page script, macro, and Tool Set owner hosts separate gestures: an ordinary click toggles the exact multi-selection, dispatches no authored runtime event or activation effect, and latches the selected Button into the skin's authored pressed state until deselection; a double-click dispatches that Button's primary action directly on Main. Explicit Pop/Fan controls open the current selection, and their mounted runtime hosts retain ordinary single-click execution.
 
 ## skin-author
 
 **Use when:** authoring, converting, or debugging a skin pasted into FlowCell Buttons Editor.
 
 ### FlowCell Button Editor Skin Author
+
+The Skin Editor toolbar is ordered `Assign Skin`, `Assign Skin to Panel`, `Load
+skin`, `Save skin`, and `Save as new skin`. Source and paste edits remain in an
+isolated working copy. Load never assigns. Assign Skin writes only the focused
+placement override and forks edited shared source, including the document-wide
+default skin, before saving; Assign Skin to
+Panel is the only panel-wide action and is limited to the exact Main panel surface.
+Recognized paste source updates an always-visible working preview through both
+native paste and normal WebView input paths, distributes into the canonical
+section editors, and clears the transient paste field; unparseable input remains for
+correction. Save updates the library entry,
+while Save as new opens a native picker, writes canonical paste-ready
+`.flowcell-button-skin.txt` source, and creates an unassigned entry.
+There are no Apply Named Sections, Replace Entire Skin, or Apply Button Text
+buttons. The Button Size section keeps width, height, and Responsive,
+Proportional, or Stretch behavior in a working preview. Assign Size applies that
+preview only to the focused placement; Assign Size to Panel applies the target
+once to every Button on the edited placement's current surface, preserving each natural aspect in
+Proportional mode, and does not write the legacy linked-size format. The Button
+Text label updates the Button draft; fit mode, horizontal `Use skin`, `Left`,
+`Center`, or `Right` alignment, starting text size, and minimum shrink size are
+independent focused-placement settings committed by Save placement. Alignment
+overrides the rendered text only for that placement and never rewrites skin source;
+`Use skin` removes the override and restores the authored alignment.
 
 The source of truth for section names is `FlowCellFrontend/src/button/skins/buttonSkinFormat.ts`. Produce canonical lowercase headers only:
 

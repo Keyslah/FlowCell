@@ -28,6 +28,8 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+#[cfg(windows)]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -56,7 +58,6 @@ use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, BOOL, ERROR_ALREADY_EXISTS, HANDLE, HWND, LPARAM, POINT,
 };
 #[cfg(windows)]
-use windows_sys::Win32::System::DataExchange::COPYDATASTRUCT;
 #[cfg(windows)]
 use windows_sys::Win32::System::Threading::{
     CreateMutexW, OpenProcess, QueryFullProcessImageNameW, ReleaseMutex,
@@ -70,10 +71,9 @@ use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     EnumWindows, FindWindowW, GetAncestor, GetClassNameW, GetCursorPos, GetForegroundWindow,
     GetSystemMetrics, GetWindow, GetWindowLongPtrW, GetWindowThreadProcessId, IsIconic, IsWindow,
-    IsWindowVisible, SendMessageTimeoutW, SetForegroundWindow as SetForegroundWindowSys,
-    SetWindowLongPtrW, ShowWindowAsync as ShowWindowAsyncSys, WindowFromPoint, GA_ROOT,
-    GWLP_HWNDPARENT, GWL_EXSTYLE, GW_HWNDNEXT, SMTO_ABORTIFHUNG, SM_SWAPBUTTON,
-    SW_RESTORE as SW_RESTORE_SYS, WM_COPYDATA, WS_EX_TOPMOST,
+    IsWindowVisible, SetForegroundWindow as SetForegroundWindowSys, SetWindowLongPtrW,
+    ShowWindowAsync as ShowWindowAsyncSys, WindowFromPoint, GA_ROOT, GWLP_HWNDPARENT, GWL_EXSTYLE,
+    GW_HWNDNEXT, SM_SWAPBUTTON, SW_RESTORE as SW_RESTORE_SYS, WS_EX_TOPMOST,
 };
 
 #[cfg(windows)]
@@ -84,27 +84,6 @@ const DEFAULT_BLENDER_BRIDGE_TIMEOUT_SECONDS: u64 = 20;
 const BLENDER_BRIDGE_RESPONSE_POLL_MS: u64 = 4;
 const BLENDER_BRIDGE_NOT_RUNNING_MESSAGE: &str = "Open Blender first, then run the button again.";
 const FLOWCELL_CONTROLLER_SCRIPT_TIMEOUT_SECONDS: u64 = 25;
-#[cfg(windows)]
-const FLOWCELL_DIRECT_SCRIPT_RECEIVER_TITLE: &str = "FlowCellBackendDirectScriptReceiver";
-#[cfg(windows)]
-const FLOWCELL_DIRECT_SCRIPT_RECEIVER_CLASS: &str = "AutoHotkeyGUI";
-#[cfg(windows)]
-const FLOWCELL_DIRECT_SCRIPT_COPYDATA_ID: usize = 0x4643_5344;
-#[cfg(windows)]
-const FLOWCELL_DIRECT_SCRIPT_ACCEPTED: usize = 1;
-#[cfg(windows)]
-const FLOWCELL_DIRECT_SCRIPT_BUSY: usize = 2;
-#[cfg(windows)]
-const FLOWCELL_DIRECT_SCRIPT_BAD_PAYLOAD: usize = 3;
-#[cfg(windows)]
-const FLOWCELL_DIRECT_SCRIPT_BAD_SCRIPT: usize = 4;
-#[cfg(windows)]
-const FLOWCELL_DIRECT_SCRIPT_SEND_TIMEOUT_MS: u32 = 160;
-#[cfg(windows)]
-const FLOWCELL_DIRECT_SCRIPT_STARTUP_WAIT_MS: u64 = 3500;
-#[cfg(windows)]
-const FLOWCELL_DIRECT_SCRIPT_RECEIVER_POLL_MS: u64 = 40;
-
 #[cfg(windows)]
 const FLOWCELL_SINGLE_INSTANCE_MUTEX: &str = "Local\\com.flowcell.frontend.single-instance-v1";
 
@@ -234,6 +213,7 @@ fn main() {
             list_panel_script_files,
             load_binds_workspace,
             save_bind_shortcut,
+            save_core_action_shortcut,
             get_cursor_position,
             is_space_key_down,
             is_primary_mouse_button_down,
@@ -250,8 +230,9 @@ fn main() {
             button_state::load_button_state,
             button_state::commit_button_state,
             button_state::set_button_bootstrap_failure,
+            button_state::save_button_placement_file,
+            button_state::save_button_skin_file,
             program_sources::install::install_button_source,
-            program_sources::install::update_button_source,
             program_sources::synchronize::synchronize_bundled_program_sources,
             program_sources::delete::uninstall_button_source,
             program_sources::migrate::prepare_legacy_button_bootstrap,
@@ -312,6 +293,7 @@ fn main() {
 
             #[cfg(windows)]
             {
+                start_illustrator_bridge_prewarm_worker();
                 let registry = app.state::<ScopedTopmostRegistry>().inner().clone();
                 start_scoped_topmost_worker(app.handle().clone(), registry);
                 start_native_input_worker(app.handle().clone());

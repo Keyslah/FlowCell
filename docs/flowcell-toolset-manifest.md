@@ -233,6 +233,22 @@ Button state; they are mapped into a nested payload through `payloadKey`.
 
 - `toggleFields` flips named Boolean toggle fields before execution.
 - `fieldPatch` assigns literal values to named fields.
+- `activationPatch` assigns literal values when the child is activated without
+  making those values part of that child's latched selected-state test. This
+  lets a mode Button select itself through `fieldPatch` while also resetting a
+  shared value to that mode's default.
+- `inlineEditField` turns the child itself into the editor for one hidden
+  `number` or `text` field. The value replaces the skin's existing HTML
+  `{{label}}` node in Run mode; the child remains a normal movable/resizable
+  Button placement with its authored skin, `[data-core]` hitbox, and visual
+  states. Pointer-down anywhere on that core explicitly focuses the native
+  popout and then focuses/selects the editor, so its usable input target is the
+  whole Button rather than only the rendered glyphs.
+  Inline-edit children must declare `execute: false`, cannot use a field
+  `serviceTarget`, and do not render separate field chrome.
+- Combining a choice's own Boolean `toggleFields` entry with `fieldPatch` values
+  that clear its peer toggles creates an exclusive group that may also have no
+  active choice: clicking the active choice toggles it off.
 - `execute: false` makes the child state-only. Execution is enabled by default
   when the child has an execution target.
 - `payloadTemplate` overlays the ordinary field payload. A single-key
@@ -240,8 +256,9 @@ Button state; they are mapped into a nested payload through `payloadKey`.
   be nested inside objects or arrays.
 
 Validation requires every referenced field to exist, every `toggleFields` entry
-to name a Boolean toggle, and every child behavior key to identify an installed
-child slot.
+to name a Boolean toggle, every inline-edited field to satisfy the state-only
+contract above, and every child behavior key to identify an installed child
+slot.
 
 ## Runner-Specific Execution
 

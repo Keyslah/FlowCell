@@ -97,7 +97,10 @@ import {
   renamePanelButtonDocumentScope,
   renameProgramButtonDocumentScope
 } from "../../button/state/buttonDocumentScopeOperations";
-import { executeButtonRecord } from "../../button/runtime/ButtonRuntimeAdapter";
+import {
+  executeButtonRecord,
+  resolveButtonPressEventPlan
+} from "../../button/runtime/ButtonRuntimeAdapter";
 import {
   ownerButtonIdFromHotkeyPayload,
   resolveToolSetOwnerActivationTarget,
@@ -153,7 +156,6 @@ type MacroPanelChangedPayload = {
 const BUTTON_CONTEXT_MENU_WIDTH = 168;
 const BUTTON_CONTEXT_MENU_HEIGHT = 156;
 const BUTTON_CONTEXT_MENU_MARGIN = 8;
-const PANEL_SCRIPT_REACTIVATION_GUARD_MS = 350;
 const BUTTON_STATE_MUTATION_ATTEMPTS = 3;
 // Version 7 marks bounds stored in physical desktop pixels, captured exactly
 // as the window sits on its monitor and restored verbatim (position first,
@@ -650,7 +652,6 @@ async function applyWindowBounds(
 export default function MainPage() {
   const topLeftActionGroupRef = useRef<HTMLDivElement | null>(null);
   const layoutActionPendingRef = useRef(false);
-  const lastPanelScriptActivationAtRef = useRef<Record<string, number>>({});
   const preferredPanelSelectionRef = useRef<string | null>(null);
   const preferredSelectedPanelScriptFileNamesRef = useRef<{
     programName: string;
@@ -1731,7 +1732,8 @@ export default function MainPage() {
               popoutUnitId: windowEntry.ButtonPopoutUnitId,
               ownerButtonId: windowEntry.ButtonOwnerId,
               displayMode: windowEntry.ButtonDisplayMode,
-              bounds: windowEntry.Bounds
+              bounds: windowEntry.Bounds,
+              reveal: false
             });
           }
           break;
@@ -1747,7 +1749,8 @@ export default function MainPage() {
               panelName: windowEntry.PanelName,
               fanSetupId: windowEntry.ButtonFanSetupId,
               panelOwnerButtonId: windowEntry.ButtonOwnerId,
-              collapsedBounds: windowEntry.Bounds
+              collapsedBounds: windowEntry.Bounds,
+              reveal: false
             });
           }
           break;
@@ -1960,7 +1963,33 @@ export default function MainPage() {
     if (!canonical) {
       throw new Error(`Installed source '${fileName}' has no canonical Button record.`);
     }
-    await executeButtonRecord(canonical, "click");
+    const pressPlan = resolveButtonPressEventPlan(canonical);
+    let firstExecutionError: unknown;
+    const executeLifecycleEvent = async (eventName: string) => {
+      try {
+        await executeButtonRecord(canonical, eventName);
+      } catch (error) {
+        firstExecutionError ??= error;
+      }
+    };
+    if (pressPlan.synthesizeHoverSessionForKeyboard) {
+      await executeLifecycleEvent("hoverEnter");
+    }
+    if (pressPlan.dispatchPressDown) {
+      await executeLifecycleEvent("pressDown");
+    }
+    if (pressPlan.runClickOnRelease) {
+      await executeLifecycleEvent("click");
+    }
+    if (pressPlan.dispatchPressUp) {
+      await executeLifecycleEvent("pressUp");
+    }
+    if (pressPlan.synthesizeHoverSessionForKeyboard) {
+      await executeLifecycleEvent("hoverLeave");
+    }
+    if (firstExecutionError !== undefined) {
+      throw firstExecutionError;
+    }
   };
 
   const deletePanelScriptFileNames = async (fileNames: string[]) => {
@@ -3047,31 +3076,33 @@ export default function MainPage() {
     }
 
     if (isPanelScriptButtonAction(button.actionId) && button.scriptFileName) {
-      if (event.ctrlKey || event.metaKey || event.shiftKey) {
-        togglePanelScriptSelection(button.scriptFileName);
-        return;
-      }
-
-      const activationTimeStamp = event.timeStamp;
-      const lastActivationAt = lastPanelScriptActivationAtRef.current[button.id];
-      if (
-        lastActivationAt !== undefined &&
-        activationTimeStamp >= lastActivationAt &&
-        activationTimeStamp - lastActivationAt < PANEL_SCRIPT_REACTIVATION_GUARD_MS
-      ) {
-        return;
-      }
-      lastPanelScriptActivationAtRef.current[button.id] = activationTimeStamp;
-      const matchedRecord =
-        resolvedPanelScriptsByFileName.get(button.scriptFileName) ?? null;
-      try {
-        await handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord);
-      } catch (error) {
-        console.error(`Button '${button.label}' could not run.`, error);
-        window.alert(`Button '${button.label}' could not run.\n\n${formatErrorMessage(error)}`);
-        throw error;
-      }
+      togglePanelScriptSelection(button.scriptFileName);
       return;
+    }
+  };
+
+  const handleButtonDoubleActivate = async (
+    button: ButtonRecord,
+    event: MouseEvent
+  ) => {
+    if (
+      button.disabled ||
+      !isPanelScriptButtonAction(button.actionId) ||
+      !button.scriptFileName
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    const matchedRecord =
+      resolvedPanelScriptsByFileName.get(button.scriptFileName) ?? null;
+    try {
+      await handlePerformPanelScriptPrimaryAction(button.scriptFileName, matchedRecord);
+    } catch (error) {
+      console.error(`Button '${button.label}' could not run.`, error);
+      window.alert(`Button '${button.label}' could not run.\n\n${formatErrorMessage(error)}`);
+      throw error;
     }
   };
 
@@ -3173,6 +3204,7 @@ export default function MainPage() {
                 button={button}
                 canonicalPresentation={canonicalPresentation}
                 onActivate={handleButtonActivate}
+                onDoubleActivate={handleButtonDoubleActivate}
                 onRequestContextMenu={handleButtonContextMenu}
               />
             ) : requiresCanonicalPresentation ? null : (

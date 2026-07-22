@@ -53,7 +53,10 @@
     hasSavedExpandedState: false,
     stateWarning: "",
     stateWriteChain: Promise.resolve(),
-    refreshTimers: []
+    refreshTimers: [],
+    draggedKey: "",
+    nameDialogAction: "rename",
+    nameDialogKey: ""
   };
 
   function configureCopy() {
@@ -278,6 +281,23 @@
     return button;
   }
 
+  function canDropLayer(sourceKey, targetKey) {
+    return Boolean(
+      sourceKey &&
+      targetKey &&
+      sourceKey !== targetKey &&
+      targetKey.indexOf(sourceKey + ".") !== 0
+    );
+  }
+
+  function clearDragState() {
+    state.draggedKey = "";
+    document.querySelectorAll(".layer-tree__row.is-dragging, .layer-tree__row.is-drop-target")
+      .forEach(function (row) {
+        row.classList.remove("is-dragging", "is-drop-target");
+      });
+  }
+
   function render() {
     var rows = visibleRows();
     elements.rows.replaceChildren();
@@ -297,11 +317,13 @@
         node.hidden ? "is-hidden" : ""
       ].filter(Boolean).join(" ");
       row.dataset.key = node.key;
+      row.draggable = !state.busy;
       row.setAttribute("role", "treeitem");
       row.setAttribute("aria-level", String(node.depth + 1));
       row.setAttribute("aria-selected", state.highlightedKeys.has(node.key) ? "true" : "false");
       if (hasChildren) row.setAttribute("aria-expanded", expanded ? "true" : "false");
       row.style.paddingLeft = String(4 + node.depth * 16) + "px";
+      row.title = "Drag " + node.name + " onto another layer to move it inside.";
 
       row.appendChild(makeRowButton(
         "layer-tree__twisty",
@@ -367,6 +389,45 @@
       row.addEventListener("click", function (event) {
         selectRow(node.key, event);
       });
+      row.addEventListener("dragstart", function (event) {
+        var startedOnButton = event.target && typeof event.target.closest === "function" &&
+          event.target.closest("button");
+        if (state.busy || startedOnButton || !event.dataTransfer) {
+          event.preventDefault();
+          return;
+        }
+        state.draggedKey = node.key;
+        event.dataTransfer.effectAllowed = "move";
+        event.dataTransfer.setData("text/plain", node.key);
+        row.classList.add("is-dragging");
+      });
+      row.addEventListener("dragover", function (event) {
+        if (!canDropLayer(state.draggedKey, node.key)) {
+          row.classList.remove("is-drop-target");
+          return;
+        }
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+        row.classList.add("is-drop-target");
+      });
+      row.addEventListener("dragleave", function (event) {
+        if (!event.relatedTarget || !row.contains(event.relatedTarget)) {
+          row.classList.remove("is-drop-target");
+        }
+      });
+      row.addEventListener("drop", function (event) {
+        var sourceKey = state.draggedKey;
+        event.preventDefault();
+        event.stopPropagation();
+        clearDragState();
+        if (!canDropLayer(sourceKey, node.key)) return;
+        state.expandedKeys.add(node.key);
+        void runAction("move", { key: sourceKey, targetKey: node.key }, {
+          selectionPolicy: "clear",
+          successMessage: "Layer moved into " + node.name + "."
+        }).catch(function () {});
+      });
+      row.addEventListener("dragend", clearDragState);
       elements.rows.appendChild(row);
     });
   }
@@ -473,6 +534,8 @@
   function closeDialogs() {
     elements.renameDialog.hidden = true;
     elements.forceDialog.hidden = true;
+    state.nameDialogAction = "rename";
+    state.nameDialogKey = "";
   }
 
   function openRenameDialog() {
@@ -483,7 +546,22 @@
     if (!key) return;
     var node = findNode(key);
     if (!node) return;
+    state.nameDialogAction = "rename";
+    state.nameDialogKey = key;
+    elements.renameTitle.textContent = copy("renameTitle", "Rename " + resourceLabel);
+    elements.renameConfirm.textContent = copy("renameConfirm", "Rename");
     elements.renameInput.value = node.name;
+    elements.renameDialog.hidden = false;
+    elements.renameInput.focus();
+    elements.renameInput.select();
+  }
+
+  function openCreateChildDialog(parentKey) {
+    state.nameDialogAction = "create-child";
+    state.nameDialogKey = parentKey;
+    elements.renameTitle.textContent = copy("createChildTitle", "Create New Sublayer");
+    elements.renameConfirm.textContent = copy("createConfirm", "Create");
+    elements.renameInput.value = copy("createChildDefaultName", "Sublayer");
     elements.renameDialog.hidden = false;
     elements.renameInput.focus();
     elements.renameInput.select();
@@ -557,10 +635,6 @@
       if (eventProgram && configuredProgram && eventProgram.toLowerCase() !== configuredProgram.toLowerCase()) {
         return;
       }
-      state.highlightedKeys = new Set();
-      state.anchorKey = null;
-      render();
-      void persistOwnerState().catch(function () {});
       clearRefreshTimers();
       var delays = Array.isArray(config.refreshDelaysMs)
         ? config.refreshDelaysMs.filter(function (value) {
@@ -588,10 +662,7 @@
         "Highlight exactly one " + resourceLabel.toLowerCase() + " to add a child under it."
       );
       if (!parentKey) return;
-      void runAction("create", { parentKey: parentKey, name: resourceLabel }, {
-        selectionPolicy: "clear",
-        successMessage: "Child " + resourceLabel.toLowerCase() + " created."
-      }).catch(function () {});
+      openCreateChildDialog(parentKey);
     });
     document.querySelector('[data-action="rename"]').addEventListener("click", openRenameDialog);
     document.querySelector('[data-action="refresh"]').addEventListener("click", function () {
@@ -628,13 +699,19 @@
     });
     elements.renameForm.addEventListener("submit", function (event) {
       event.preventDefault();
-      var key = requireOneSelection(
-        "selectOneForRename",
-        "Highlight exactly one " + resourceLabel.toLowerCase() + " to rename it."
-      );
       var name = elements.renameInput.value.trim();
+      var action = state.nameDialogAction;
+      var key = state.nameDialogKey;
       if (!key || !name) return;
       closeDialogs();
+      if (action === "create-child") {
+        state.expandedKeys.add(key);
+        void runAction("create", { parentKey: key, name: name }, {
+          selectionPolicy: "clear",
+          successMessage: "Sublayer created."
+        }).catch(function () {});
+        return;
+      }
       void runAction("rename", { key: key, name: name }, {
         successMessage: "Layer renamed."
       }).catch(function () {});

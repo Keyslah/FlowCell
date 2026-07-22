@@ -63,6 +63,7 @@ export function MainButtonHost({
         placement={placement}
         skin={skin}
         selected={Boolean(button.isSelected)}
+        selectionOnly={Boolean(button.scriptFileName)}
         onActivate={onActivate ? (_canonical, event) => onActivate(button, event) : undefined}
         onDoubleActivate={onDoubleActivate ? (_canonical, event) => onDoubleActivate(button, event) : undefined}
         onRequestContextMenu={onRequestContextMenu ? (_canonical, event) => onRequestContextMenu(button, event) : undefined}
@@ -124,6 +125,7 @@ export function MainControlHost({
     zIndex: 0,
     skinOverrideId: null,
     textFitMode: "shrink-and-stack",
+    textAlignment: "skin",
     minimumFontSize: 8,
     textSizeOverride: null,
     allowLabelResize: false,

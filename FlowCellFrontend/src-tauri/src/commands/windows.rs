@@ -39,6 +39,7 @@ struct ScopedTopmostEntry {
     process_names: Vec<String>,
     bind_owner: bool,
     selective_input: bool,
+    initial_reveal: bool,
     last_placement: Option<ScopedWindowPlacement>,
     last_observed_foreground_hwnd: Option<isize>,
     last_input_active: Option<bool>,
@@ -60,6 +61,7 @@ struct ScopedWindowStateUpdate {
     placement: ScopedWindowPlacement,
     observed_foreground_hwnd: isize,
     input_active: bool,
+    initial_reveal_active: bool,
     preview_suppressed: bool,
     cursor_input_applied: bool,
     remembered_owner_hwnd: Option<isize>,
@@ -441,6 +443,7 @@ fn resolve_scoped_window_placement(
     foreground_is_scoped_window: bool,
     foreground_scoped_group_matches: bool,
     last_external_matches_target: bool,
+    explicit_open_reveal: bool,
     cursor_over_taskbar_or_preview: bool,
     foreground_hwnd: isize,
     window_hwnd: isize,
@@ -463,6 +466,20 @@ fn resolve_scoped_window_placement(
         return (ScopedWindowPlacement::Topmost, true);
     }
 
+    // A Pop/Fan explicitly opened from FlowCell must be visible and usable
+    // immediately, even though Main is not itself a program-scoped window.
+    // Keep that reveal in the normal band; only the exact owning application
+    // is ever allowed to promote the window to TOPMOST.
+    if explicit_open_reveal {
+        if foreground_is_scoped_window && foreground_hwnd != window_hwnd {
+            return (
+                ScopedWindowPlacement::Behind(foreground_hwnd),
+                foreground_scoped_group_matches,
+            );
+        }
+        return (ScopedWindowPlacement::Normal, true);
+    }
+
     // A FlowCell button may become the foreground window while it is being
     // clicked. That is a continuation of the last proven owning application,
     // never a new topmost match. Keep the matching group in the normal band so
@@ -480,6 +497,23 @@ fn resolve_scoped_window_placement(
             .unwrap_or(ScopedWindowPlacement::Bottom),
         false,
     )
+}
+
+#[cfg(any(windows, test))]
+fn continues_explicit_open_reveal(
+    initial_reveal: bool,
+    foreground_is_flowcell_window: bool,
+    foreground_hwnd: isize,
+    window_hwnd: isize,
+    last_observed_foreground_hwnd: Option<isize>,
+) -> bool {
+    initial_reveal
+        && foreground_is_flowcell_window
+        && foreground_hwnd != 0
+        && (foreground_hwnd == window_hwnd
+            || last_observed_foreground_hwnd
+                .map(|last_hwnd| last_hwnd == foreground_hwnd)
+                .unwrap_or(true))
 }
 
 #[cfg(any(windows, test))]
@@ -540,6 +574,15 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         .map_err(|error| format!("Failed to resolve window handle: {error}"))?
         .0 as isize;
     let foreground_is_valid_external = is_valid_external_foreground(foreground);
+    let foreground_is_flowcell_window =
+        foreground.hwnd != 0 && foreground.process_id == std::process::id();
+    let explicit_open_reveal = continues_explicit_open_reveal(
+        entry.initial_reveal,
+        foreground_is_flowcell_window,
+        foreground.hwnd,
+        window_hwnd,
+        entry.last_observed_foreground_hwnd,
+    );
     let matches_target_process = foreground_is_valid_external
         && matches_foreground_process(&entry.process_names, &foreground.process_info);
     let foreground_is_scoped_window = foreground_scoped_process_names.is_some();
@@ -557,6 +600,7 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         foreground_is_scoped_window,
         foreground_scoped_group_matches,
         last_external_matches_target,
+        explicit_open_reveal,
         cursor_over_taskbar_or_preview,
         foreground.hwnd,
         window_hwnd,
@@ -564,8 +608,9 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         last_external_hwnd,
     );
     // Opaque tool pages are ordinary interactive windows, so focusing one is
-    // enough to continue in the normal band. Transparent Pop/Fan hosts still
-    // require a proven owning-program foreground before they accept input.
+    // enough to continue in the normal band. Transparent Pop/Fan hosts use the
+    // explicit reveal or a proven owning-program foreground for input; only
+    // the proven owner may become their native owner.
     let valid_scoped_continuation =
         foreground_is_scoped_window && (last_external_matches_target || !entry.selective_input);
     let owner_candidate_hwnd = if matches_target_process {
@@ -610,8 +655,8 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
 
     // Full interactive tool pages always retain normal native input, including
     // when they are behind an unrelated foreground app. Transparent Pop/Fan
-    // hosts fail closed while inactive and delegate active hit testing to their
-    // selective frontend controller.
+    // hosts fail closed outside an explicit reveal or owning-program session
+    // and delegate active hit testing to their selective frontend controller.
     let cursor_input_applied = if !entry.selective_input {
         window.set_ignore_cursor_events(false).is_ok()
     } else if !input_active {
@@ -636,6 +681,10 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         placement,
         observed_foreground_hwnd: foreground.hwnd,
         input_active,
+        initial_reveal_active: explicit_open_reveal
+            && !foreground_is_valid_external
+            && (!foreground_is_scoped_window || foreground_scoped_group_matches)
+            && !cursor_over_taskbar_or_preview,
         preview_suppressed: cursor_over_taskbar_or_preview,
         cursor_input_applied,
         remembered_owner_hwnd,
@@ -1018,18 +1067,39 @@ pub(crate) async fn register_scoped_window_topmost(
     }
 
     let response = process_names.clone();
+    let selective_input = selective_input.unwrap_or(false);
+    let previous_entry = entries.get(&label).cloned().filter(|entry| {
+        entry.process_names == process_names
+            && entry.bind_owner == bind_owner
+            && entry.selective_input == selective_input
+    });
     entries.insert(
         label,
         ScopedTopmostEntry {
             process_names,
             bind_owner,
-            selective_input: selective_input.unwrap_or(false),
-            last_placement: None,
-            last_observed_foreground_hwnd: None,
-            last_input_active: None,
-            last_preview_suppressed: None,
-            cursor_input_applied: false,
-            last_owner_hwnd: None,
+            selective_input,
+            initial_reveal: previous_entry
+                .as_ref()
+                .is_some_and(|entry| entry.initial_reveal),
+            last_placement: previous_entry
+                .as_ref()
+                .and_then(|entry| entry.last_placement),
+            last_observed_foreground_hwnd: previous_entry
+                .as_ref()
+                .and_then(|entry| entry.last_observed_foreground_hwnd),
+            last_input_active: previous_entry
+                .as_ref()
+                .and_then(|entry| entry.last_input_active),
+            last_preview_suppressed: previous_entry
+                .as_ref()
+                .and_then(|entry| entry.last_preview_suppressed),
+            cursor_input_applied: previous_entry
+                .as_ref()
+                .is_some_and(|entry| entry.cursor_input_applied),
+            last_owner_hwnd: previous_entry
+                .as_ref()
+                .and_then(|entry| entry.last_owner_hwnd),
         },
     );
 
@@ -1086,6 +1156,8 @@ pub(crate) async fn get_scoped_window_input_state(
 pub(crate) async fn refresh_scoped_window_topmost(
     app: AppHandle,
     label: String,
+    reveal: Option<bool>,
+    force: Option<bool>,
     registry: State<'_, ScopedTopmostRegistry>,
 ) -> Result<(), String> {
     #[cfg(windows)]
@@ -1094,11 +1166,26 @@ pub(crate) async fn refresh_scoped_window_topmost(
             .apply_lock
             .lock()
             .map_err(|_| String::from("Scoped topmost apply lock failed."))?;
+        let foreground = get_foreground_window_state_impl();
         let entries_snapshot = {
-            let entries = registry
+            let mut entries = registry
                 .entries
                 .lock()
                 .map_err(|_| String::from("Scoped topmost registry lock failed."))?;
+            if let Some(entry) = entries.get_mut(&label) {
+                if reveal.unwrap_or(false)
+                    && foreground.hwnd != 0
+                    && foreground.process_id == std::process::id()
+                {
+                    entry.initial_reveal = true;
+                }
+                if force.unwrap_or(false) {
+                    // Presentation happens after show. Force the resolved
+                    // placement to be applied again even if the hidden
+                    // pre-show refresh cached the same state.
+                    entry.last_placement = None;
+                }
+            }
             entries.clone()
         };
         let entry = entries_snapshot.get(&label).cloned();
@@ -1109,7 +1196,6 @@ pub(crate) async fn refresh_scoped_window_topmost(
         let window = app
             .get_webview_window(&label)
             .ok_or_else(|| format!("Window '{}' was not found.", label))?;
-        let foreground = get_foreground_window_state_impl();
         let cursor_over_taskbar_or_preview = is_cursor_over_taskbar_or_preview_surface();
         let last_external_foreground = resolve_last_external_foreground(&registry, &foreground);
         let foreground_scoped_process_names =
@@ -1132,6 +1218,7 @@ pub(crate) async fn refresh_scoped_window_topmost(
                 entry.last_placement = Some(update.placement);
                 entry.last_observed_foreground_hwnd = Some(update.observed_foreground_hwnd);
                 entry.last_input_active = Some(update.input_active);
+                entry.initial_reveal = update.initial_reveal_active;
                 entry.last_preview_suppressed = Some(update.preview_suppressed);
                 entry.cursor_input_applied = update.cursor_input_applied;
                 entry.last_owner_hwnd = update.remembered_owner_hwnd;
@@ -1261,6 +1348,7 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
                         entry.last_placement = Some(update.placement);
                         entry.last_observed_foreground_hwnd = Some(update.observed_foreground_hwnd);
                         entry.last_input_active = Some(update.input_active);
+                        entry.initial_reveal = update.initial_reveal_active;
                         entry.last_preview_suppressed = Some(update.preview_suppressed);
                         entry.cursor_input_applied = update.cursor_input_applied;
                         entry.last_owner_hwnd = update.remembered_owner_hwnd;
@@ -1293,8 +1381,9 @@ mod tests {
         ScopedTopmostRegistry,
     };
     use super::{
-        matches_process_token, resolve_scoped_owner_hwnds, resolve_scoped_window_placement,
-        should_reapply_scoped_window_state, NativeInputSnapshot, ScopedWindowPlacement,
+        continues_explicit_open_reveal, matches_process_token, resolve_scoped_owner_hwnds,
+        resolve_scoped_window_placement, should_reapply_scoped_window_state, NativeInputSnapshot,
+        ScopedWindowPlacement,
     };
 
     #[test]
@@ -1387,6 +1476,7 @@ mod tests {
                 false,
                 true,
                 false,
+                false,
                 200,
                 100,
                 Some(200),
@@ -1396,6 +1486,7 @@ mod tests {
         );
         assert_eq!(
             resolve_scoped_window_placement(
+                false,
                 false,
                 false,
                 false,
@@ -1419,6 +1510,7 @@ mod tests {
                 true,
                 true,
                 false,
+                false,
                 100,
                 100,
                 None,
@@ -1431,6 +1523,7 @@ mod tests {
                 false,
                 true,
                 true,
+                false,
                 false,
                 false,
                 100,
@@ -1451,6 +1544,7 @@ mod tests {
                 true,
                 false,
                 false,
+                false,
                 100,
                 101,
                 None,
@@ -1464,6 +1558,7 @@ mod tests {
                 true,
                 false,
                 true,
+                false,
                 false,
                 100,
                 110,
@@ -1482,6 +1577,7 @@ mod tests {
                 false,
                 false,
                 true,
+                false,
                 true,
                 200,
                 100,
@@ -1489,6 +1585,91 @@ mod tests {
                 Some(200),
             ),
             (ScopedWindowPlacement::Behind(200), false)
+        );
+    }
+
+    #[test]
+    fn explicit_open_from_flowcell_reveals_in_the_normal_band_only() {
+        assert!(continues_explicit_open_reveal(
+            true,
+            true,
+            100,
+            110,
+            Some(100),
+        ));
+        assert!(continues_explicit_open_reveal(
+            true,
+            true,
+            110,
+            110,
+            Some(100),
+        ));
+        assert!(!continues_explicit_open_reveal(
+            true,
+            true,
+            120,
+            110,
+            Some(110),
+        ));
+        assert_eq!(
+            resolve_scoped_window_placement(
+                false,
+                false,
+                false,
+                false,
+                true,
+                false,
+                100,
+                110,
+                None,
+                Some(200),
+            ),
+            (ScopedWindowPlacement::Normal, true)
+        );
+        assert_eq!(
+            resolve_scoped_window_placement(
+                false,
+                false,
+                false,
+                false,
+                true,
+                true,
+                100,
+                110,
+                None,
+                Some(200),
+            ),
+            (ScopedWindowPlacement::Behind(200), false)
+        );
+        assert_eq!(
+            resolve_scoped_window_placement(
+                false,
+                true,
+                true,
+                false,
+                true,
+                false,
+                120,
+                110,
+                None,
+                Some(200),
+            ),
+            (ScopedWindowPlacement::Behind(120), true)
+        );
+        assert_eq!(
+            resolve_scoped_window_placement(
+                false,
+                true,
+                false,
+                false,
+                true,
+                false,
+                120,
+                110,
+                None,
+                Some(200),
+            ),
+            (ScopedWindowPlacement::Behind(120), false)
         );
     }
 

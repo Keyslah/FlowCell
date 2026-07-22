@@ -565,6 +565,7 @@ export async function openButtonPopoutWindow(args: {
   displayMode?: "collapsed" | "expanded";
   draftSessionId?: string;
   bounds?: FlowCellBounds | null;
+  reveal?: boolean;
 }): Promise<void> {
   const windowLabel = buildButtonPopoutWindowLabel(args);
   const pendingOpen = pendingButtonWindowOpens.get(windowLabel);
@@ -629,6 +630,7 @@ export async function openButtonPopoutWindow(args: {
       await applyWindowPlacement(target, placement);
       await showWindow(target, false);
       shown = true;
+      await refreshScopedWindowTopmost(windowLabel, args.reveal !== false, true);
       if (existed) {
         await emitContextUpdate(windowLabel, context);
       }
@@ -663,6 +665,7 @@ export async function toggleButtonPopoutWindow(args: {
   displayMode?: "collapsed" | "expanded";
   draftSessionId?: string;
   bounds?: FlowCellBounds | null;
+  reveal?: boolean;
 }): Promise<void> {
   const windowLabel = buildButtonPopoutWindowLabel(args);
   const pendingToggle = pendingButtonWindowToggles.get(windowLabel);
@@ -699,6 +702,7 @@ export async function openButtonFanWindow(args: {
   panelOwnerButtonId: string;
   draftSessionId?: string;
   collapsedBounds?: FlowCellBounds | null;
+  reveal?: boolean;
 }): Promise<void> {
   const windowLabel = buildButtonFanWindowLabel(args.panelOwnerButtonId);
   const pendingOpen = pendingButtonWindowOpens.get(windowLabel);
@@ -761,6 +765,7 @@ export async function openButtonFanWindow(args: {
       await applyWindowPlacement(target, placement);
       await showWindow(target, false);
       shown = true;
+      await refreshScopedWindowTopmost(windowLabel, args.reveal !== false, true);
       if (existed) {
         await emitContextUpdate(windowLabel, context);
       }

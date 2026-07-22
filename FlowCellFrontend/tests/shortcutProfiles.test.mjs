@@ -234,6 +234,44 @@ test("tool-set child bindings use their canonical Button ID for ownership and du
   );
 });
 
+test("Set Anchor can keep its own action shortcut and labels conflicts for other targets", () => {
+  const workspace = createWorkspace(shortcutProfiles);
+  workspace.programs[0].name = "Illustrator";
+  workspace.programs[0].programTabId = 1;
+  workspace.programs[0].shortcutProfileId = "adobe.illustrator.windows";
+  const setAnchor = {
+    id: "Illustrator::core-action::illustrator_set_anchor",
+    label: "Set Anchor",
+    kind: "core_action",
+    target: "illustrator_set_anchor",
+    shortcut: "^!A"
+  };
+  workspace.programs[0].panels[0].buttons.push(setAnchor);
+  workspace.bindings.actionHotkeys.illustrator_set_anchor = "^!A";
+
+  assert.deepEqual(
+    validateShortcutInput({
+      rawValue: "Ctrl + Alt + A",
+      workspace,
+      programName: "Illustrator",
+      programTabId: 1,
+      selectedButton: setAnchor
+    }),
+    { ok: true, shortcut: "^!A", warning: undefined }
+  );
+
+  assert.deepEqual(
+    validateShortcutInput({
+      rawValue: "Ctrl + Alt + A",
+      workspace,
+      programName: "Illustrator",
+      programTabId: 1,
+      selectedButton: workspace.programs[0].panels[0].buttons[0]
+    }),
+    { ok: false, message: "Shortcut is already bound to Set Anchor." }
+  );
+});
+
 test("shortcut picker options always keep Unbound first", () => {
   const options = buildShortcutPickerOptions(["^!K", "^+1"]);
   assert.equal(options[0], UNBOUND_SHORTCUT_LABEL);

@@ -44,6 +44,26 @@ export interface ButtonPressEventPlan {
   synthesizeHoverSessionForKeyboard: boolean;
 }
 
+function jsonSelectionValueMatches(current: JsonValue | undefined, expected: JsonValue): boolean {
+  if (Object.is(current, expected)) return true;
+  if (current === undefined) return false;
+  return JSON.stringify(current) === JSON.stringify(expected);
+}
+
+export function isToolSetChildStateSelected(
+  button: ButtonRecord | undefined,
+  fieldValues: Readonly<Record<string, JsonValue>>
+): boolean {
+  if (!button || button.role !== "tool-set-child" || !button.toolSetBehavior) return false;
+  const fieldPatch = Object.entries(button.toolSetBehavior.fieldPatch ?? {});
+  const toggleFields = button.toolSetBehavior.toggleFields ?? [];
+  if (fieldPatch.length === 0 && toggleFields.length === 0) return false;
+  return (
+    fieldPatch.every(([fieldId, value]) => jsonSelectionValueMatches(fieldValues[fieldId], value)) &&
+    toggleFields.every((fieldId) => fieldValues[fieldId] === true)
+  );
+}
+
 export function resolveButtonPressEventPlan(button: ButtonRecord): ButtonPressEventPlan {
   const events = button.executionTarget?.events;
   const dispatchPressDown = Boolean(events?.pressDown);
@@ -268,7 +288,12 @@ export async function executeButtonRecord(
     }
     togglePatch[fieldId] = !currentValue;
   }
-  const fieldPatch = { ...togglePatch, ...(behavior?.fieldPatch ?? {}), ...activatedPatch };
+  const fieldPatch = {
+    ...togglePatch,
+    ...(behavior?.fieldPatch ?? {}),
+    ...(behavior?.activationPatch ?? {}),
+    ...activatedPatch
+  };
   const nextFieldValues = { ...(context.fieldValues ?? {}), ...fieldPatch };
   if (Object.keys(fieldPatch).length > 0) context.onFieldPatch?.(fieldPatch, nextFieldValues);
   if (behavior?.execute === false || !button.executionTarget) {

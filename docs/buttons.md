@@ -43,12 +43,13 @@ the completed architecture only.
   the PNG statically at 100%, locks app-managed edge and corner resizing to the
   source's 283:295 ratio, and saves whole physical pixels. Playback derives a
   larger cursor-ignored transparent canvas without changing the saved rectangle.
-- Each placement defaults to matching its hitbox to the skin: the host scales
-  the complete authored skin root from the measured `[data-core]`, normalizes
-  authored core offsets to the placement origin, and reconciles the saved
-  Editor rectangle to that transformed core. Stretching is off by default, so
-  width and height stay aspect-locked unless the user explicitly enables
-  independent-axis stretching.
+- Each placement stores one of three host-owned sizing behaviors. Responsive
+  gives `[data-core]` the exact independent placement width and height and does
+  not scale the authored root; a translation-only normalization aligns any
+  authored resting core offset to the placement origin. Proportional uniformly
+  scales the complete authored root from its measured natural ratio and
+  aspect-locks resizing. Stretch explicitly scales X and Y independently and can
+  distort the visual. All three leave skin source literal.
 - Deleting a source-owning Button removes its entire Button graph, removes its
   owned bindings, cleans program runtime artifacts, and sends the owned Local
   package, `runtime/` state, active record, and managed page window to the
@@ -60,9 +61,10 @@ the completed architecture only.
   created, renamed, or removed with the panel/program folder lifecycle.
 - A saved panel Fan reuses the same `panel-owner` Button and adds an exact Fan
   placement. Main and Fan occurrences may keep distinct placement geometry and
-  skin overrides. Selecting `Fan — Default grid` creates a real draft setup
-  from the panel's single-script Buttons; merely opening the Editor never
-  creates an empty fan setup.
+  skin overrides. The Editor lists only real saved Fan placements; it has no
+  Fan construction or membership controls and never fabricates a default Fan.
+  Main's existing selected/generic Fan commands and the complete saved Fan
+  runtime remain authoritative.
 - Legacy program-script records and comment directives are migration input only.
   `FlowCellFrontend/src-tauri/src/program_sources/migrate.rs` is their sole
   reader; it wraps raw legacy sources in owned packages so label, tooltip,
@@ -144,9 +146,10 @@ A tool-set owner bind uses the same numbered namespace but stores
 `TargetKind=tool-set-owner`, its canonical owner as both `ButtonId` and
 `OwnerButtonId`, and optional `ProgramTabId`. It never stores `ScriptPath`.
 While FlowCell is running, a press is delivered to the Main frontend and uses
-the same canonical owner activation as clicking the owner on Main: the first
-press opens its managed popout and the next closes it. OS key repeat is ignored
-until release so one physical press produces one toggle.
+the canonical managed owner toggle directly: the first press opens its popout
+and the next closes it. Main's ordinary owner click remains selection-only and
+does not share this hotkey behavior. OS key repeat is ignored until release so
+one physical press produces one toggle.
 
 A tool-set child bind stores
 `TargetKind=tool-set-child`, the canonical `ButtonId`, `OwnerButtonId`, and
@@ -166,6 +169,16 @@ Save and clear synchronize the running registry immediately; if native
 registration fails, the INI change is rolled back instead of leaving the UI and
 runtime on different bindings.
 
+Illustrator has one bind-only Core action at `Illustrator / Actions / Set
+Anchor`. It is not a canonical Button or tool-set child. Its shortcut lives in
+`ActionHotkeys`, is registered by the resident backend only while Illustrator is
+foreground, and runs the shipped Set Anchor helper through immediate foreground
+Illustrator automation. The helper stores the selected visible-bounds box and
+center for the alignment and rotate tools. Its registration is pass-through, so
+the same keystroke still reaches Illustrator and retains its native command; the
+capture completes before the action returns so a subsequent selection cannot be
+mistaken for the anchor.
+
 In Binds, the Button selector starts with top-level single-script and Tool Set
 owners. Selecting an owner inserts only that owner's canonical children into
 the selector and scopes Current Panel Binds to the same owner/child group;
@@ -176,53 +189,66 @@ Owner deletion removes its typed owner and child records by `OwnerButtonId`. Nor
 retain canonical child IDs by slot, while delete/re-add creates a new graph and
 does not silently reattach old bindings.
 
-Buttons Editor addresses one exact occurrence at a time through dependent
-Program, Panel, Button, and Placement selectors. Saved Main, Pop, and Fan
-choices resolve stable placement IDs and switch the workspace to that exact
-surface, where every sibling Button remains visible and directly selectable in
-Edit mode. Tool-set children inherit their Program/Panel identity from their
-owner for navigation only; canonical identity ownership is unchanged.
+Buttons Editor is a polished three-pane workspace. The left pane owns dependent
+Program, Panel, Button, and Placement selectors plus placement controls; the
+center pane shows the complete editable Button surface; the right pane owns the
+Skin Editor. Saved Main, Pop, and Fan choices resolve stable placement IDs and
+switch the workspace to that exact existing surface, where every sibling Button
+remains visible and directly selectable in Edit mode. Tool-set children inherit
+their Program/Panel identity from their owner for navigation only; canonical
+identity ownership is unchanged. Source/package actions are not exposed as an
+Editor pane. `Save placement` opens a native file-save dialog so the arrangement
+can be named. It writes a strict `.flowcell-button-placement.json` file containing
+only the selected surface frame, optional uniform size, and every sibling
+placement's ordered ID, Button ID, rectangle, and z-index. Skins, labels,
+sizing/text policy, actions, animations, Pop/Fan state, settings, and
+managed-window layout are excluded from that portable file. The same action
+commits the live arrangement plus placement-owned sizing and text policy to
+canonical Button state; it is not Save Layout. The left rail retains the existing
+Edit/Run switch for workspace execution and activation preview.
 
 A Button that executes an action or toggles a structural owner may own one
-optional activation animation assignment. The
-Inspector's `On run` dropdown offers `None` or a registered preset; assigning a
-preset opens a dedicated transparent setup presenter. Its temporary resize hit
-regions are invisible, so the plus remains the only rendered
-content even while positioning. The Inspector's `Save position and size`
-control writes the window's physical desktop bounds into the Editor draft, and
-normalizes them to whole native pixels before calling Tauri window placement.
-This keeps centered half-pixel defaults and older fractional bounds valid. The
-main Editor `Save` commits that draft to canonical Button state. Runtime
-playback is cursor-ignored and renders only the transparent PNG sprite. It runs
-for one second, rising continuously while it fades and grows in, then shrinks
-and fades out without reversing its upward motion. It triggers
-only on the Button's primary activation event, not on selection or paired
-release/hover events. The
-setup and runtime presenters are transient and are not restored as open global layout windows;
-its saved bounds travel with the shared Button record across Main, Pop, and Fan
+optional activation animation assignment. The left-pane `Animation` control
+opens a dedicated Animation page. That page preserves the complete feature: its
+selector offers `No animation` and every registered preset, Apply clears or assigns the
+selection, and an assigned preset retains Position and size setup, Save position
+and size, and Close setup controls. A top-right X returns to placement editing and
+closes an open setup presenter without clearing the saved assignment. Animation
+Apply and bounds saves commit only the Button's animation field, retaining any
+unsaved arrangement. The transparent setup presenter keeps its
+temporary resize hit regions invisible, so the sprite remains the only rendered
+content while positioning. Saving bounds writes whole physical desktop pixels
+to the Button record before applying native placement, preserving centered
+half-pixel defaults and older fractional bounds. Runtime playback remains
+cursor-ignored and renders only the transparent sprite. `Plus Rise` rises
+continuously while it fades and grows in, then shrinks and fades out without
+reversing its upward motion. Playback triggers only on the Button's primary
+activation event, not on selection or paired release/hover events. Setup and
+runtime presenters are transient and are not restored as global layout windows;
+saved bounds travel with the shared Button record across Main, Pop, and Fan
 placements.
 Panel-rail Buttons are grouped with the other Buttons for their panel and can be
-selected directly in the workspace. When a panel owner has no saved Fan, the
-Placement selector offers `Fan — Default grid`; selecting it creates an
-undoable draft setup with the panel's single-script Buttons and focuses the real
-Fan owner placement. Run preview honors the setup's saved open, close, and
-pinned defaults; a default Fan begins collapsed on that owner, expands on hover,
-collapses after hover-out when unpinned, pins on click, and collapses on the next
-pinned click. Saved Fan placement keeps the owner's surface origin fixed, while
-the collapsed semantic frame follows the applied visual envelope and effective WebView pixel ratio
-inside the fixed native canvas, so skin overflow cannot be clipped or shift the
-later expanded frame. Generic
-Delete Button remains disabled for a `panel-owner`; deleting its panel or program
-owns that lifecycle.
+selected directly in the workspace. The Placement selector exposes a Fan only
+when that saved Fan placement already exists; there is no synthetic default-Fan
+choice and no editor-side Fan creation or membership editor. Existing saved Fan
+Run preview still honors its saved open, close, and pinned defaults: it begins
+collapsed on the real panel owner, expands on hover, collapses after hover-out
+when unpinned, pins on click, and collapses on the next pinned click. The saved
+Fan placement keeps the owner's surface origin fixed, while the collapsed
+semantic frame follows the applied visual envelope and effective WebView pixel
+ratio inside the fixed native canvas, so skin overflow cannot be clipped or
+shift the later expanded frame. Panel/program lifecycle still owns removal of a
+`panel-owner` and its dependent saved Fans.
 
-Fan Builder lists the current Program/Panel's single-script Buttons and Tool Set
-owners by canonical Button ID. Any exact nonempty subset can build a new Fan or
-update the active saved Fan. Updating retains the setup identity, surviving
-member placement and skin geometry, open/close/pinned rules, animation, and
-surviving Tool Set anchors; the panel owner is supplied automatically. On Main,
-a nonempty selection takes precedence over saved-Fan shortcuts and the control
-reads `Fan (N)`. With no selection, the existing zero/one/many saved-Fan behavior
-remains intact.
+The Button Editor neither creates Fans nor changes saved Fan membership. Main
+retains its existing selected/generic Fan commands and saved-Fan runtime. On Main,
+one ordinary click toggles the exact script, macro, or Tool Set owner selection;
+it never executes the Button or opens the Tool Set. Double-clicking runs that
+Button's primary action directly on Main, including opening or toggling a Tool
+Set owner. A nonempty selection takes precedence over saved-Fan shortcuts and
+the control reads `Fan (N)`. `Pop` opens that exact selection. Once popped out,
+an ordinary click runs the Button. With no selection, the existing zero/one/many
+saved-Fan behavior remains intact.
 
 The edit outline, snapping, surface bounds, and collision checks all use the
 same reconciled core rectangle. In normal Edit drag, pointer movement is
@@ -231,40 +257,68 @@ stops flush at the furthest valid position and the workspace does not insert
 collision warnings that shift the canvas mid-gesture. Reorder is a separate
 toggle mode: every Button becomes a direct drag handle, the grabbed Button
 follows the pointer at animation-frame speed, and a stable outlined insertion
-slot uses hysteresis so animated targets cannot oscillate under the cursor.
-Reorder derives the current visual wrap width and row top offsets before
-generating candidates, so every existing row maps to its visible drop target
-even when all Button widths would fit in the surface's top row; variable-width
-Buttons still rebalance across rows instead of blocking the move.
+slot uses lane-scoped, slot-bounded hysteresis so animated targets cannot
+oscillate under the cursor without making thin rows or row boundaries unreachable.
+Reorder infers exact visual row membership before generating candidates. Every
+slot in every existing row is distinct, including end-of-row versus start of the
+next row, and explicit row-boundary candidates allow the dragged Button to create
+a new row. Buttons that are not being dragged never rebalance into another row;
+an over-wide requested row fails atomically.
 Only neighboring Buttons receive the position transition, so they smoothly
 move out of the way into a row-aligned, undoable saved order with sequential
-z-index. `Snap to top left corner` compacts the current saved order from `(0,
-0)`, wrapping by the tallest Button in each row and preserving every Button's
-width and height. Both actions fail atomically when the complete layout cannot
-fit the surface. The
-Inspector's `Font size` is a live, nullable placement override; `Minimum size
-when shrinking` remains only the text-fit floor. Inspector Label and Font size
-changes also publish into a native Pop/Fan opened through the separate `Open
-Pop` or `Open Fan` action. Editing actual skin source while focused on a
-program panel immediately assigns that skin to every Button placement on that
-panel surface without reassigning placements elsewhere. Because skin records
-are shared, any placement already referencing that skin ID also renders the
-source edit. The Inspector's `Use this size for every Button on this surface`
-checkbox applies the focused placement's width and height to every placement,
-switches them to fixed host sizing, disables label-driven growth, and compacts
-the complete surface with zero gap in one undoable transaction. The linked size
-is saved on the surface, so later numeric or canvas resizing updates every member
-atomically and delayed skin/text measurements cannot split the sizes. Unchecking
-stops linking future size edits but deliberately keeps the current fixed geometry;
-Undo restores the pre-enable layout. The Skin Editor's `Button Text` label field
-edits the real saved Button label and updates the live draft; only its stack,
-font-size, minimum-size, and measurement controls remain preview-only.
+z-index. `Snap to top left corner` left-packs the Buttons in each existing row and
+then stacks those same rows upward from `(0, 0)`. It does not change row count,
+membership, order within a row, width, or height. Both actions fail atomically
+when the complete layout cannot fit the surface. The right pane's Button Size
+section uses a working preview: width, height, and Responsive, Proportional, or
+Stretch behavior do not change a placement until an explicit size assignment.
+Responsive constrains the core to the exact independent width and height without
+root scaling; Proportional uniformly transforms the root and keeps the current
+ratio; Stretch transforms X and Y independently. `Assign Size` applies that
+working size and rule only to the focused placement. `Assign Size to Panel`
+applies that target box once to every Button next to the edited placement on its
+current Main, Pop, Fan, or other Button surface, and compacts that same surface
+atomically when it fits. Responsive and Stretch use
+the exact target dimensions; Proportional keeps each Button's measured natural
+aspect when available and otherwise its current aspect inside the target. Both size actions disable later label-driven geometry
+growth so text edits cannot silently change the assigned box. They do not set or
+update the separate legacy uniform-size field. Existing saved text-size and minimum-shrink values
+remain honored by the host. Skin source and paste edits stay in an isolated
+working copy until an explicit Save or Assign action. The
+left rail's `Same size Buttons` checkbox applies the focused placement's width
+and height to every placement, switches them to fixed host sizing, disables
+label-driven growth, and compacts the complete surface with zero gap in one
+undoable transaction. The linked size is saved on the surface, so later canvas
+resizing updates every member atomically and delayed skin/text measurements
+cannot split the sizes. Unchecking stops linking future size edits but
+deliberately keeps the current fixed geometry. The Skin Editor toolbar is ordered
+`Assign Skin`, `Assign Skin to Panel`, `Load skin`, `Save skin`, and `Save as new
+skin`. Load changes only the working copy. Assign Skin writes only the focused
+placement override and forks an edited shared skin, including the document-wide
+default skin, first; it never changes the
+Button's default skin or sibling placements. Assign Skin to Panel is the explicit
+panel-wide action and targets only that exact Main panel surface, excluding Pop,
+Fan, and tool-set Pop occurrences. A recognized paste updates an always-visible
+working preview even when WebView exposes the paste only through the textarea's
+normal input event, then clears the transient Paste Skin field after distributing
+the source into its canonical section editors. Unparseable paste remains in the field
+for correction. Save skin updates the library entry. Save as new skin opens a
+native file picker, writes canonical paste-ready `.flowcell-button-skin.txt`
+source, and creates an unassigned library entry. Skin saves retain unrelated
+draft geometry. The Button Text label updates the Button draft directly. Fit mode,
+horizontal text alignment (`Use skin`, `Left`, `Center`, or `Right`), text size
+override, and minimum shrink size are independent focused-placement settings,
+preview against the working Button size, and are committed by Save placement
+without changing the skin, sibling placements, or panel size assignment. `Use
+skin` removes the placement override and restores the authored alignment. There
+are no Apply Named Sections, Replace Entire Skin, or Apply Button Text buttons.
+Pasting a recognized payload automatically validates and applies its named
+sections to the isolated working copy.
 
-Every regular/tool-set Pop and Fan setup has a window-fit mode: saved `surface`,
-the union of all Button hitboxes, or the current measured visual union. Selecting
-the fit immediately applies it to the draft and draws that exact labeled frame
-over the Editor workspace. `Open Pop` and `Open Fan` remain separate native
-previews of the same live draft, and Save persists the resting fit.
+Every regular/tool-set Pop and saved Fan setup retains its stored window-fit
+mode: surface, hitbox union, or measured visual union. The runtime continues to
+honor those persisted values; the streamlined Editor adds no separate native
+preview or fit controls.
 
 The native Pop/Fan window is now a non-resizable transparent canvas covering the
 active monitor work area, enlarged only when the visible content would escape it.
@@ -275,10 +329,13 @@ window never blocks Blender, Illustrator, or the desktop underneath it.
 
 That geometry gate is subordinate to the native program-scope gate. Only the
 exact foreground executable declared by the owning program manifest may make a
-Pop/Fan topmost. Clicking one of its FlowCell controls continues in the normal
-window band only while the last proven external foreground belongs to that same
-program. A taskbar preview or any unrelated program explicitly places the window
-behind the real foreground HWND and forces the whole host back to click-through.
+Pop/Fan topmost. An explicit open from FlowCell is reapplied after the window is
+shown at the front of the normal band with input entitlement. That grant follows
+the opening FlowCell window and then the revealed Pop/Fan itself; focusing
+anything else ends it. Layout restore is passive and does not claim the reveal.
+A taskbar preview or any unrelated program explicitly places the window behind
+the real foreground HWND and forces the whole host back to click-through.
+Activating Illustrator instead uses its exact owner-bound topmost state.
 Scope/listener and cursor-style failures retry automatically and remain
 click-through until native state is proven active.
 
@@ -327,11 +384,12 @@ listeners. The shadow host remains browser-reachable so its core can receive
 events, but unused host gutters perform no activation and add no functional
 hitbox.
 `ButtonSkinRenderer.tsx` injects the label only when the skin includes
-`{{label}}`, measures the core, and reports visual overflow separately. With
-hitbox-to-skin matching enabled, it transforms the
-whole authored root uniformly and normalizes the transformed core to the host
-origin; `Allow stretching` permits separate X/Y scale. The imported structure
-and visual-state source remain unchanged.
+`{{label}}`, measures the core, and reports visual overflow separately. Responsive
+sizing constrains the core to the exact host width and height and skips root
+scaling while translating any authored resting core offset back to the host
+origin. Proportional sizing transforms the whole authored root uniformly and
+normalizes the transformed core to the host origin; Stretch permits separate X/Y
+scale. The imported structure and visual-state source remain unchanged.
 
 The skin compiler keeps wrappers, decorative children, shadow, glow, and visual
 overflow pointer-inert while enabling only `[data-core]`. Transparent Button
@@ -343,7 +401,32 @@ explicit control geometry.
 
 Main-page selection adds no border, outline, or overlay. A selected Button
 stays in that skin's existing pressed state until deselected; transient pointer
-press state remains separate so native hover-out behavior still completes.
+press state remains separate so native hover-out behavior still completes. Main
+uses a selection-only host path, so authored hover, press, click, and activation
+effects cannot consume the ordinary selection gesture. The core's separate
+double-click listener deliberately dispatches the Button's primary action, while
+Pop/Fan hosts retain ordinary single-click execution.
+
+On a Run-mode Tool Set surface, a child derives the skin's latched `pressed`
+state from its live declared behavior: every `fieldPatch` value must match the
+current field value and every `toggleFields` field must be `true`. This
+field-driven state is separate from Main selection and transient pointer press.
+Children that patch different values into the same field therefore form a
+generic radio group; an `execute: false` child updates state without dispatching
+a program action. An optional radio group can instead use one Boolean toggle per
+choice while patching its peers to `false`: clicking an inactive choice selects
+it exclusively, and clicking the active choice releases it so none are selected.
+An `inlineEditField` child is still one canonical Button placement: the host
+injects its hidden number/text value into the skin's existing HTML label node,
+leaves the imported skin source unchanged, and uses the same `[data-core]` for
+measurement, hit testing, pressed animation, Editor movement, and resizing.
+In Run mode, primary pointer-down anywhere inside that core explicitly focuses
+the native popout window, then focuses and selects the inline editor; the user
+does not have to hit the label glyphs themselves or reactivate the window. The
+host keeps that editor binding stable through pressed/release rerenders so the
+same focused node receives the replacement value.
+`activationPatch` may reset that shared value when a separate mode Button is
+pressed without coupling the mode's selected visual to the editable value.
 
 Skins may define only structure and visual state sections:
 
@@ -373,28 +456,39 @@ skins. A sprite preset never changes the authored skin source or core hitbox.
 
 ## Source Lifecycle
 
-1. Add Button starts from the selected Program and Panel, opens the Editor in Add
-   mode, and locks that destination. The library offers only `Choose Button
-   file...` and `Choose Button package folder...`.
-2. Native auto-detection treats a raw file as a script, the exact root
+The Button Editor exposes no manual import, update, delete, popout-creation, or
+Fan-building actions. Main's existing Add Button flow opens the Editor locked to
+the chosen Program and Panel and automatically prompts once for source content.
+Source packages use the same canonical transaction whenever that handoff or
+another authorized installation or synchronization workflow invokes it:
+
+1. Native auto-detection treats a raw file as a script, the exact root
    `flowcell.script.json` as a script package, and the exact root
    `flowcell.toolset.json` as a Tool Set package. A folder containing both root
    manifests is ambiguous, and a folder containing neither is invalid. Nested
    manifests do not classify the selected folder.
-3. When a selected script is the declared entry beside
+2. When a selected script is the declared entry beside
    `flowcell.script.json`, FlowCell installs the complete package automatically.
    Selecting a package companion directly is rejected instead of creating a
    broken partial install.
-4. Native install validates the program manifest and source contract.
-5. FlowCell copies the source package into the owner Button's Local Scripts
+3. Native install validates the program manifest and source contract.
+4. FlowCell copies the source package into the owner Button's Local Scripts
    package and writes `flowcell.install.json` inside it.
-6. Program-specific deployment runs only when the program runner requires it.
-7. FlowCell writes the owner Button's `.flowcell-source.json` active record and
+5. Program-specific deployment runs only when the program runner requires it.
+6. FlowCell writes the owner Button's `.flowcell-source.json` active record and
    records the pending canonical intent.
-8. The Editor adds the returned owner/children/layout to canonical Button state;
-   the successful commit clears the pending intent.
-9. Runtime execution resolves the active record, verifies its Local package,
+7. The invoking canonical workflow adds the returned owner, children, and layout
+   to Button state; the successful commit clears the pending intent.
+8. Runtime execution resolves the active record, verifies its Local package,
    then dispatches through the runner declared by `flowcell.program.json`.
+
+The Illustrator runner keeps one package-owned bridge alive and dispatches
+validated Local Scripts paths directly over its named pipe. Ordinary Button and
+Tool Set actions are acknowledged before execution so long-running scripts or
+dialogs do not block the invoking window. Request/response capabilities stay
+serialized and wait for their result, allowing an invalidation-triggered page
+refresh to observe the completed Illustrator action. The hot path does not
+launch AutoHotkey or a new PowerShell process for each click.
 
 `flowcell.program.json` may also declare versioned `bundledSources`. Add Program
 persists the exact selected contribution IDs, versions, and destination Panels

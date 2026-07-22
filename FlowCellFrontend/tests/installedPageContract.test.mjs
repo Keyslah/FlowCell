@@ -19,6 +19,14 @@ test("Main exposes one Add Button action and keeps the serialized action ID", ()
   }
 });
 
+test("managed Add Program and Add Panel windows receive the default Tauri capability", () => {
+  const capability = JSON.parse(
+    read(frontendRoot, "src-tauri", "capabilities", "default.json")
+  );
+  assert.ok(capability.windows.includes("flowcell-add-program"));
+  assert.ok(capability.windows.includes("flowcell-add-panel"));
+});
+
 test("Add Button fixes its destination and delegates exact content detection to native auto import", () => {
   const main = read(frontendRoot, "src", "pages", "main", "MainPage.tsx");
   const editor = read(frontendRoot, "src", "button", "editor", "ButtonEditorPage.tsx");
@@ -26,6 +34,15 @@ test("Add Button fixes its destination and delegates exact content detection to 
   assert.match(editor, /importKind:\s*"auto"/);
   assert.match(editor, /lockedImportDestination\?\.programName\s*\?\?\s*programName/);
   assert.match(editor, /installed!\.children\.length\s*===\s*0/);
+  assert.match(
+    editor,
+    /initialContext\?\.lockImportDestination[\s\S]{0,180}\?\s*1\s*:\s*0/
+  );
+  assert.match(editor, /setAutoImportRequest\(\(current\)\s*=>\s*current\s*\+\s*1\)/);
+  assert.match(
+    editor,
+    /handledAutoImportRequestRef\.current\s*=\s*autoImportRequest;\s*void importSource\(\);/
+  );
 });
 
 test("installed pages use a raw WRY boundary without Tauri initialization scripts", () => {
@@ -122,6 +139,58 @@ test("Illustrator page bridge reacquires stale COM once without replaying script
   assert.match(bridge, /for \(\$attempt = 0; \$attempt -lt 2; \$attempt \+= 1\)/);
   assert.match(bridge, /\$script:IllustratorApp = \$null/);
   assert.match(bridge, /-not \(Test-IsStaleIllustratorComError -Exception \$_\.Exception\)/);
+});
+
+test("all Tauri-owned Illustrator actions share the native persistent bridge", () => {
+  const execution = read(
+    frontendRoot,
+    "src-tauri",
+    "src",
+    "commands",
+    "execution.rs"
+  );
+  const bridge = read(
+    repoRoot,
+    "Programs",
+    "Illustrator",
+    "SupportScripts",
+    "Start-IllustratorFlowCellBridge.ps1"
+  );
+  const programExecution = read(
+    frontendRoot,
+    "src-tauri",
+    "src",
+    "program_sources",
+    "execute.rs"
+  );
+  assert.ok(execution.includes(String.raw`\\.\pipe\FlowCell.Illustrator.Bridge.v2`));
+  assert.match(execution, /ILLUSTRATOR_BRIDGE_PROTOCOL_VERSION: u64 = 2/);
+  assert.match(execution, /Illustrator bridge protocol mismatch/);
+  assert.match(execution, /run_illustrator_bridge_action_direct/);
+  assert.match(execution, /"-NoPrewarm"/);
+  assert.match(execution, /start_illustrator_bridge_prewarm_worker/);
+  assert.match(execution, /find_running_illustrator_process_id/);
+  assert.match(execution, /ILLUSTRATOR_BRIDGE_PREWARM_IN_PROGRESS/);
+  assert.match(execution, /IllustratorBridgeSendFailure::Busy/);
+  assert.match(execution, /process_id_is_alive\(warmed_bridge_process_id\)/);
+  assert.doesNotMatch(execution, /illustrator_bridge_pid_is_alive/);
+  assert.match(execution, /"command": "prewarm"/);
+  assert.match(bridge, /FlowCell\.Illustrator\.Bridge\.v2/);
+  assert.match(bridge, /BridgeProtocolVersion = 2/);
+  assert.match(bridge, /protocolVersion/);
+  assert.match(bridge, /Get-IllustratorApplication -ExistingOnly/);
+  assert.match(bridge, /if \(\$ExistingOnly\) \{\s*throw\s*\}/);
+  assert.match(bridge, /Another Illustrator bridge process already owns pipe/);
+  assert.match(bridge, /Global\\FlowCell\.Illustrator\.Bridge\.Process/);
+  assert.doesNotMatch(execution, /run_illustrator_backend_script_direct|FLOWCELL_DIRECT_SCRIPT/);
+  assert.match(execution, /pub\(crate\) async fn run_panel_script_response\(/);
+  assert.match(execution, /Panel script task failed/);
+  assert.match(programExecution, /execution\.get\("waitForCompletion"\)/);
+  assert.equal(
+    programExecution.match(/run_illustrator_bridge_action_direct/g)?.length,
+    3,
+    "single scripts, tool sets, and page capabilities must use the same bridge"
+  );
 });
 
 test("scoped-window IPC cannot block the main thread during installed-page WebView focus", () => {

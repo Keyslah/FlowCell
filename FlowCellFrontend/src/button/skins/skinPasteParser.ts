@@ -1,6 +1,5 @@
 import type { ButtonSkinSectionName } from "../types.js";
 import {
-  createEmptyButtonSkinSections,
   isButtonSkinSectionName,
   type ButtonSkinSectionSource
 } from "./buttonSkinFormat.js";
@@ -137,14 +136,3 @@ export function applyNamedButtonSkinSections(
   }
   return next;
 }
-
-export function replaceEntireButtonSkin(
-  parsed: ParsedButtonSkinPaste
-): ButtonSkinSectionSource {
-  const structure = parsed.sections.structure;
-  if (typeof structure !== "string" || structure.trim().length === 0) {
-    throw new Error("Replace Entire Skin requires a nonempty structure section.");
-  }
-  return applyNamedButtonSkinSections(createEmptyButtonSkinSections(), parsed);
-}
-

@@ -18,6 +18,7 @@ import type {
 import { ButtonRenderer } from "./ButtonRenderer";
 import {
   executeButtonToolField,
+  isToolSetChildStateSelected,
   type ButtonExecutionResult
 } from "./runtime/ButtonRuntimeAdapter";
 import {
@@ -36,6 +37,7 @@ export interface ButtonSurfaceProps {
     patch: Readonly<Record<string, JsonValue>>,
     nextValues: Readonly<Record<string, JsonValue>>
   ) => void;
+  onRequestInlineEditorFocus?: () => void | Promise<void>;
   onSelectPlacement?: (placementId: string, event: PointerEvent | KeyboardEvent) => void;
   onActivate?: (placementId: string, button: ButtonRecord, event: PointerEvent | KeyboardEvent) => void | Promise<void>;
   onOwnerActivate?: (placementId: string, button: ButtonRecord, event: PointerEvent | KeyboardEvent) => void | Promise<void>;
@@ -170,6 +172,7 @@ export function ButtonSurface({
   fields = EMPTY_TOOL_FIELDS,
   fieldValues,
   onFieldPatch,
+  onRequestInlineEditorFocus,
   onSelectPlacement,
   onActivate,
   onOwnerActivate,
@@ -314,33 +317,41 @@ export function ButtonSurface({
           })}
         </label>
       ))}
-      {orderedPlacementIds.map((placementId) => (
-        <ButtonRenderer
-          key={placementId}
-          document={document}
-          placementId={placementId}
-          mode={mode}
-          selected={selectedPlacementIds?.has(placementId)}
-          fields={fields}
-          fieldValues={values}
-          onFieldActivate={activateField}
-          onFieldPatch={applyFieldPatch}
-          onSelect={onSelectPlacement}
-          onActivate={onActivate}
-          onOwnerActivate={onOwnerActivate}
-          onDoubleActivate={onDoubleActivate}
-          onRequestContextMenu={onRequestContextMenu}
-          onHoverStart={onHoverStart}
-          onHoverEnd={onHoverEnd}
-          onHoverCancel={onHoverCancel}
-          onExecutionResult={onExecutionResult}
-          onMeasurement={onPlacementMeasurement}
-          onVisualMeasurement={onPlacementVisualMeasurement}
-          onPrepareVisualStateChange={onPreparePlacementVisualStateChange}
-          onVisualStateChange={onPlacementVisualStateChange}
-          onNaturalMeasurement={onPlacementNaturalMeasurement}
-        />
-      ))}
+      {orderedPlacementIds.map((placementId) => {
+        const placement = document.placements[placementId];
+        const button = placement ? document.buttons[placement.buttonId] : undefined;
+        const selected = selectedPlacementIds?.has(placementId) || (
+          mode === "run" && isToolSetChildStateSelected(button, values)
+        );
+        return (
+          <ButtonRenderer
+            key={placementId}
+            document={document}
+            placementId={placementId}
+            mode={mode}
+            selected={selected}
+            fields={fields}
+            fieldValues={values}
+            onFieldActivate={activateField}
+            onFieldPatch={applyFieldPatch}
+            onRequestInlineEditorFocus={onRequestInlineEditorFocus}
+            onSelect={onSelectPlacement}
+            onActivate={onActivate}
+            onOwnerActivate={onOwnerActivate}
+            onDoubleActivate={onDoubleActivate}
+            onRequestContextMenu={onRequestContextMenu}
+            onHoverStart={onHoverStart}
+            onHoverEnd={onHoverEnd}
+            onHoverCancel={onHoverCancel}
+            onExecutionResult={onExecutionResult}
+            onMeasurement={onPlacementMeasurement}
+            onVisualMeasurement={onPlacementVisualMeasurement}
+            onPrepareVisualStateChange={onPreparePlacementVisualStateChange}
+            onVisualStateChange={onPlacementVisualStateChange}
+            onNaturalMeasurement={onPlacementNaturalMeasurement}
+          />
+        );
+      })}
     </div>
   );
 }

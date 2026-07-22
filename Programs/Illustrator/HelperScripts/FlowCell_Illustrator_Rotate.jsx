@@ -297,10 +297,10 @@
         if (mode === "ORIGIN") {
             return { kind: "each" };
         }
-        if (mode === "WORLD") {
+        if (mode === "WORLD" || mode === "ARTBOARD") {
             return activeArtboardCenter(doc);
         }
-        if (mode === "CURSOR") {
+        if (mode === "CURSOR" || mode === "ANCHOR") {
             if (!anchorBounds) {
                 throw new Error("Set Illustrator Anchor before using Anchor pivot.");
             }
@@ -409,11 +409,19 @@
         if (command === "status") {
             return status("Illustrator Rotate is waiting for a FlowCell rotate command.");
         }
-        if (command.indexOf("preset_") === 0 || command.indexOf("center_") === 0 ||
-                command.indexOf("mode_") === 0) {
+        var presetAngle = null;
+        if (command === "preset_30") {
+            presetAngle = 30;
+        } else if (command === "preset_45") {
+            presetAngle = 45;
+        } else if (command === "preset_90") {
+            presetAngle = 90;
+        }
+        if (command.indexOf("center_") === 0 || command.indexOf("mode_") === 0) {
             return status("Stage rotate values in the FlowCell popout, then press Negative or Positive.");
         }
-        if (command !== "apply_negative" && command !== "apply_positive" && command !== "apply") {
+        if (presetAngle === null && command !== "apply_negative" &&
+                command !== "apply_positive" && command !== "apply") {
             throw new Error("Unsupported Illustrator rotate command: " + command);
         }
 
@@ -427,13 +435,23 @@
         }
 
         var payload = commandRecord.payload || {};
-        var operationMode = String(payloadValue(payload, "operationMode", "operation_mode", "TRANSFORM")).toUpperCase();
+        var operationMode = presetAngle === null
+            ? String(payloadValue(payload, "operationMode", "operation_mode", "TRANSFORM")).toUpperCase()
+            : "TRANSFORM";
         var centerMode = String(payloadValue(payload, "centerMode", "center_mode", "GEOMETRY")).toUpperCase();
-        var angleBase = Math.abs(finiteNumber(payloadValue(payload, "angleDeg", "angle_deg", 30), 30));
-        var distributeCount = finiteNumber(payloadValue(payload, "distributeCount", "distribute_count", 3), 3);
+        var defaultValue = operationMode === "DISTRIBUTE" ? 3 : 90;
+        var sharedValue = finiteNumber(payloadValue(payload, "value", "value", defaultValue), defaultValue);
+        var angleBase = presetAngle === null
+            ? Math.abs(finiteNumber(payloadValue(payload, "angleDeg", "angle_deg", sharedValue), sharedValue))
+            : presetAngle;
+        var distributeCount = finiteNumber(payloadValue(payload, "distributeCount", "distribute_count", sharedValue), sharedValue);
+        // The retired Rotate toolbox dispatched its instant presets through
+        // apply_positive. Preserve that exact Illustrator sign so their visible
+        // direction stays unchanged.
         var directionSign = command === "apply_negative" ? -1 : 1;
-        var anchorBounds = centerMode === "CURSOR" ? resolveAnchorBounds() : null;
-        if (centerMode === "CURSOR") {
+        var usesAnchor = centerMode === "CURSOR" || centerMode === "ANCHOR";
+        var anchorBounds = usesAnchor ? resolveAnchorBounds() : null;
+        if (usesAnchor) {
             if (!anchorBounds) {
                 throw new Error("Set Illustrator Anchor before using Anchor pivot.");
             }

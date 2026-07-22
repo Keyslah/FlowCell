@@ -26,6 +26,16 @@ pub(crate) struct ResolvedOwnedSourcePaths {
     pub source_path: PathBuf,
 }
 
+fn illustrator_wait_for_completion(record: &ActiveSourceRecord) -> bool {
+    record
+        .runner_data
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|execution| execution.get("waitForCompletion"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
 fn path_components_end_with(path: &Path, suffix: &Path) -> bool {
     let path = path
         .components()
@@ -446,7 +456,6 @@ pub(crate) fn run_program_capability_action_blocking(
         .map_err(|error| format!("Capability request is invalid JSON: {error}"))?;
     let resolution =
         resolve_capability_source(&program_name, &panel_name, &file_name, &capability)?;
-    let manifest = load_program_manifest(&resolution.record.program_name)?;
     match resolution.record.runner.as_str() {
         "windows-script" => run_windows_script_capability(
             Path::new(&resolution.record.source_path),
@@ -454,54 +463,19 @@ pub(crate) fn run_program_capability_action_blocking(
             &args_json,
         ),
         "illustrator-direct" => {
-            let program_root = crate::resolve_program_directory(&resolution.record.program_name)?;
-            let adapter = super::manifest::resolve_runner_script_path(
-                &program_root,
-                &manifest,
-                &manifest.runner.capability_script,
-                "runner.capabilityScript",
-            )?
-            .ok_or_else(|| {
-                format!(
-                    "Program '{}' does not declare runner.capabilityScript.",
-                    resolution.record.program_name
-                )
-            })?;
-            if !adapter.is_file() {
-                return Err(format!(
-                    "Program capability adapter was not found at {}.",
-                    adapter.display()
-                ));
-            }
             let action_id = format!(
                 "flowcell_button_{}",
                 resolution.record.owner_button_id.to_ascii_lowercase()
             );
-            let command = format!(
-                "& '{}' -ActionId '{}' -ScriptPath '{}' -ArgsJson '{}' -ConnectTimeoutMs 2000 -StartTimeoutMs 25000 -Wait",
-                crate::escape_powershell_single_quoted(&adapter.to_string_lossy()),
-                crate::escape_powershell_single_quoted(&action_id),
-                crate::escape_powershell_single_quoted(&resolution.record.source_path),
-                crate::escape_powershell_single_quoted(&args_json)
-            );
-            let output = crate::spawn_powershell_output(&[
-                "-EncodedCommand".to_string(),
-                encode_powershell_command(&command),
-            ])?;
-            if !output.status.success() {
-                return Err(crate::format_process_failure(
-                    &output,
-                    &format!("Program capability '{capability}' failed."),
-                ));
-            }
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if stdout.is_empty() {
-                Err(format!(
-                    "Program capability '{capability}' returned no response."
-                ))
-            } else {
-                Ok(stdout)
-            }
+            let response = crate::run_illustrator_bridge_action_direct(
+                Path::new(&resolution.record.source_path),
+                &action_id,
+                Some(args),
+                true,
+            )?;
+            serde_json::to_string(&response).map_err(|error| {
+                format!("Failed to encode program capability '{capability}' response: {error}")
+            })
         }
         "blender-bridge" => {
             if resolution.record.bridge_action.trim().is_empty() {
@@ -639,11 +613,23 @@ pub(crate) fn run_active_source(resolution: &ActiveSourceResolution) -> Result<V
                     "Illustrator program manifest is missing runner.programKey.".to_string()
                 );
             }
-            crate::run_illustrator_backend_script_direct(
+            let action_id = format!(
+                "flowcell_button_{}",
+                record.owner_button_id.to_ascii_lowercase()
+            );
+            let wait_for_completion = illustrator_wait_for_completion(record);
+            crate::run_illustrator_bridge_action_direct(
                 &source_path,
-                manifest.runner.program_key.trim(),
-            )
-            .map(|message| json!({ "message": message }))
+                &action_id,
+                None,
+                wait_for_completion,
+            )?;
+            let message = if wait_for_completion {
+                format!("Completed {}.", record.label)
+            } else {
+                format!("Started {}.", record.label)
+            };
+            Ok(json!({ "message": message }))
         }
         "photoshop-direct" => {
             if manifest.runner.program_key.trim().is_empty() {
@@ -749,8 +735,12 @@ pub(crate) fn run_active_toolset_action(
             });
             super::records::atomic_replace_json(&command_path, &envelope)?;
             let source_path = PathBuf::from(&record.source_path);
-            let message = crate::run_illustrator_backend_script_direct(&source_path, program_key)?;
-            Ok(json!({ "message": message }))
+            let action_id = format!(
+                "flowcell_button_{}",
+                record.owner_button_id.to_ascii_lowercase()
+            );
+            crate::run_illustrator_bridge_action_direct(&source_path, &action_id, None, false)?;
+            Ok(json!({ "message": format!("Started {}.", record.label) }))
         }
         _ => Err(format!(
             "Tool-set execution is not supported by runner '{}'.",
@@ -815,11 +805,56 @@ pub(crate) fn run_active_button_event(
 #[cfg(test)]
 mod tests {
     use super::{
-        declared_blender_button_event_action, path_components_end_with,
-        windows_script_capability_command,
+        declared_blender_button_event_action, illustrator_wait_for_completion,
+        path_components_end_with, windows_script_capability_command,
     };
+    use crate::program_sources::records::ActiveSourceRecord;
     use serde_json::json;
+    use std::collections::BTreeMap;
     use std::path::Path;
+
+    fn illustrator_record(runner_data: Option<serde_json::Value>) -> ActiveSourceRecord {
+        ActiveSourceRecord {
+            schema_version: 1,
+            owner_button_id: "owner".to_string(),
+            install_id: "install".to_string(),
+            program_id: "illustrator".to_string(),
+            program_name: "Illustrator".to_string(),
+            panel_name: "Layers Builder".to_string(),
+            label: "new sub".to_string(),
+            tooltip: String::new(),
+            kind: "script".to_string(),
+            local_package_path: "package".to_string(),
+            source_path: "source.jsx".to_string(),
+            runner: "illustrator-direct".to_string(),
+            runner_data,
+            execution_target: None,
+            bridge_action: String::new(),
+            bridge_data: None,
+            events: None::<BTreeMap<String, serde_json::Value>>,
+            children: Vec::new(),
+            layout: None,
+            page: None,
+            source_display_path: String::new(),
+            bundled_source_id: None,
+            bundled_source_version: None,
+        }
+    }
+
+    #[test]
+    fn illustrator_completion_wait_is_explicit_and_opt_in() {
+        assert!(illustrator_wait_for_completion(&illustrator_record(Some(
+            json!({
+                "waitForCompletion": true
+            })
+        ))));
+        assert!(!illustrator_wait_for_completion(&illustrator_record(Some(
+            json!({
+                "waitForCompletion": false
+            })
+        ))));
+        assert!(!illustrator_wait_for_completion(&illustrator_record(None)));
+    }
 
     #[test]
     fn relocated_legacy_absolute_paths_must_keep_the_manifest_owned_suffix() {

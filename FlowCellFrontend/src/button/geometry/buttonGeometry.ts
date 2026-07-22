@@ -58,6 +58,36 @@ export interface ButtonPlacementRowProfile {
   topOffsets: readonly number[];
 }
 
+export interface ButtonPlacementRow {
+  placements: readonly NamedButtonRect[];
+  topOffset: number | null;
+}
+
+export interface CompactButtonPlacementRowsOptions {
+  anchorX?: number;
+  anchorY?: number;
+  gap?: number;
+  preserveRowTopOffsets?: boolean;
+}
+
+export type ButtonReorderRowCandidateKind = "existing-row" | "new-row";
+
+export interface ButtonReorderRowCandidate {
+  key: string;
+  kind: ButtonReorderRowCandidateKind;
+  rowIndex: number;
+  columnIndex: number;
+  orderedPlacementIds: string[];
+  placements: CompactButtonPlacement[];
+  slot: ButtonRect;
+  distance: number;
+}
+
+export interface ButtonReorderRowCandidateResult {
+  candidates: ButtonReorderRowCandidate[];
+  reason: string | null;
+}
+
 export interface CompactButtonPlacementOptions {
   anchorX?: number;
   anchorY?: number;
@@ -148,22 +178,21 @@ export function reorderButtonPlacementIds(
  * Positive vertical overlap keeps unequal-height Buttons in the same row;
  * touching or separated rectangles start another row.
  */
-export function inferButtonPlacementRowProfile(
+export function inferButtonPlacementRows(
   placements: readonly NamedButtonRect[]
-): ButtonPlacementRowProfile {
+): ButtonPlacementRow[] {
   const ordered = [...placements].sort((left, right) =>
     left.rect.y - right.rect.y ||
     left.rect.x - right.rect.x ||
     left.id.localeCompare(right.id)
   );
-  const rows: Array<{ top: number; bottom: number; width: number }> = [];
+  const rows: Array<{ top: number; bottom: number; placements: NamedButtonRect[] }> = [];
 
   for (const placement of ordered) {
     const top = placement.rect.y;
     const bottom = placement.rect.y + placement.rect.height;
-    const width = placement.rect.width;
     if (!Number.isFinite(top) || !Number.isFinite(bottom) || bottom <= top) {
-      rows.push({ top, bottom, width });
+      rows.push({ top, bottom, placements: [placement] });
       continue;
     }
 
@@ -178,21 +207,38 @@ export function inferButtonPlacementRowProfile(
     });
 
     if (bestRowIndex < 0) {
-      rows.push({ top, bottom, width });
+      rows.push({ top, bottom, placements: [placement] });
       continue;
     }
     const row = rows[bestRowIndex];
     row.top = Math.min(row.top, top);
     row.bottom = Math.max(row.bottom, bottom);
-    row.width += width;
+    row.placements.push(placement);
   }
 
   const orderedRows = rows
     .sort((left, right) => left.top - right.top || left.bottom - right.bottom);
   const originTop = orderedRows[0]?.top ?? 0;
+  return orderedRows.map((row) => ({
+    placements: [...row.placements].sort((left, right) =>
+      left.rect.x - right.rect.x ||
+      left.rect.y - right.rect.y ||
+      left.id.localeCompare(right.id)
+    ),
+    topOffset: row.top - originTop
+  }));
+}
+
+export function inferButtonPlacementRowProfile(
+  placements: readonly NamedButtonRect[]
+): ButtonPlacementRowProfile {
+  const rows = inferButtonPlacementRows(placements);
   return {
-    wrapWidth: Math.max(0, ...orderedRows.map((row) => row.width)),
-    topOffsets: orderedRows.map((row) => row.top - originTop)
+    wrapWidth: Math.max(
+      0,
+      ...rows.map((row) => row.placements.reduce((width, placement) => width + placement.rect.width, 0))
+    ),
+    topOffsets: rows.map((row) => row.topOffset ?? 0)
   };
 }
 
@@ -831,6 +877,304 @@ export function compactButtonPlacements(
     requiredWidth,
     requiredHeight,
     reason: null
+  };
+}
+
+/**
+ * Packs an explicit row plan without ever moving a Button to another row.
+ * This is the row-preserving contract used by Editor Snap and Re-order.
+ */
+export function compactButtonPlacementRows(
+  rows: readonly ButtonPlacementRow[],
+  surface: Pick<ButtonRect, "width" | "height">,
+  options: CompactButtonPlacementRowsOptions = {}
+): CompactButtonPlacementResult {
+  if (
+    !Number.isFinite(surface.width) ||
+    !Number.isFinite(surface.height) ||
+    surface.width <= 0 ||
+    surface.height <= 0
+  ) {
+    return {
+      success: false,
+      placements: [],
+      requiredWidth: 0,
+      requiredHeight: 0,
+      reason: "The Button surface must have positive finite dimensions."
+    };
+  }
+
+  const gap = Number.isFinite(options.gap) ? Math.max(0, options.gap ?? 0) : 0;
+  const preserveOffsets = options.preserveRowTopOffsets ?? true;
+  const seen = new Set<string>();
+  const packed: CompactButtonPlacement[] = [];
+  let previousBottom = 0;
+  let requiredWidth = 0;
+  let requiredHeight = 0;
+  let zIndex = 0;
+
+  for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+    const row = rows[rowIndex];
+    if (row.placements.length === 0) {
+      return {
+        success: false,
+        placements: [],
+        requiredWidth,
+        requiredHeight,
+        reason: "A Button row cannot be empty."
+      };
+    }
+    if (
+      row.topOffset !== null &&
+      (!Number.isFinite(row.topOffset) || row.topOffset < 0)
+    ) {
+      return {
+        success: false,
+        placements: [],
+        requiredWidth,
+        requiredHeight,
+        reason: "Button row offsets must be finite and non-negative."
+      };
+    }
+
+    let rowWidth = 0;
+    let rowHeight = 0;
+    for (const placement of row.placements) {
+      if (seen.has(placement.id)) {
+        return {
+          success: false,
+          placements: [],
+          requiredWidth,
+          requiredHeight,
+          reason: `Button placement '${placement.id}' appears in more than one row.`
+        };
+      }
+      seen.add(placement.id);
+      const { width, height } = placement.rect;
+      if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+        return {
+          success: false,
+          placements: [],
+          requiredWidth,
+          requiredHeight,
+          reason: `Button placement '${placement.id}' must have positive finite dimensions.`
+        };
+      }
+      rowWidth += (rowWidth > 0 ? gap : 0) + width;
+      rowHeight = Math.max(rowHeight, height);
+    }
+    if (rowWidth > surface.width + EPSILON) {
+      return {
+        success: false,
+        placements: [],
+        requiredWidth: rowWidth,
+        requiredHeight,
+        reason: `Button row ${rowIndex + 1} is wider than the selected surface.`
+      };
+    }
+
+    const minimumTop = rowIndex === 0 ? 0 : previousBottom + gap;
+    const preferredTop = preserveOffsets && row.topOffset !== null
+      ? row.topOffset
+      : minimumTop;
+    const y = Math.max(minimumTop, preferredTop);
+    if (y + rowHeight > surface.height + EPSILON) {
+      return {
+        success: false,
+        placements: [],
+        requiredWidth: Math.max(requiredWidth, rowWidth),
+        requiredHeight: y + rowHeight,
+        reason: "The selected surface is not tall enough to preserve every Button row."
+      };
+    }
+
+    let x = 0;
+    for (const placement of row.placements) {
+      packed.push({
+        id: placement.id,
+        rect: {
+          x,
+          y,
+          width: placement.rect.width,
+          height: placement.rect.height
+        },
+        zIndex
+      });
+      x += placement.rect.width + gap;
+      zIndex += 1;
+    }
+    previousBottom = y + rowHeight;
+    requiredWidth = Math.max(requiredWidth, rowWidth);
+    requiredHeight = Math.max(requiredHeight, previousBottom);
+  }
+
+  const requestedAnchorX = Number.isFinite(options.anchorX)
+    ? Math.max(0, options.anchorX ?? 0)
+    : 0;
+  const requestedAnchorY = Number.isFinite(options.anchorY)
+    ? Math.max(0, options.anchorY ?? 0)
+    : 0;
+  const anchorX = Math.min(requestedAnchorX, Math.max(0, surface.width - requiredWidth));
+  const anchorY = Math.min(requestedAnchorY, Math.max(0, surface.height - requiredHeight));
+
+  return {
+    success: true,
+    placements: packed.map((placement) => ({
+      ...placement,
+      rect: {
+        ...placement.rect,
+        x: placement.rect.x + anchorX,
+        y: placement.rect.y + anchorY
+      }
+    })),
+    requiredWidth,
+    requiredHeight,
+    reason: null
+  };
+}
+
+function rowHeight(row: ButtonPlacementRow): number {
+  return Math.max(0, ...row.placements.map((placement) => placement.rect.height));
+}
+
+export function chooseButtonReorderRowCandidate(
+  candidates: readonly ButtonReorderRowCandidate[],
+  currentKey: string | null,
+  hysteresisPx: number
+): ButtonReorderRowCandidate | null {
+  const best = [...candidates].sort((left, right) =>
+    left.distance - right.distance ||
+    (left.kind === "existing-row" ? 0 : 1) - (right.kind === "existing-row" ? 0 : 1) ||
+    left.rowIndex - right.rowIndex ||
+    left.columnIndex - right.columnIndex
+  )[0] ?? null;
+  if (!best || !currentKey || best.key === currentKey) return best;
+
+  const sticky = candidates.find((candidate) => candidate.key === currentKey);
+  if (!sticky || sticky.kind !== best.kind || sticky.rowIndex !== best.rowIndex) {
+    return best;
+  }
+
+  const stickyCenterX = sticky.slot.x + sticky.slot.width / 2;
+  const bestCenterX = best.slot.x + best.slot.width / 2;
+  const targetSpacing = Math.abs(stickyCenterX - bestCenterX);
+  const effectiveHysteresis = Math.min(
+    Math.max(0, hysteresisPx),
+    targetSpacing / 4
+  );
+  return sticky.distance <= best.distance + effectiveHysteresis ? sticky : best;
+}
+
+/**
+ * Enumerates every insertion slot in every existing row plus an explicit
+ * singleton row at each row boundary. Candidate identity stays row-aware so a
+ * row end can never collapse into the next row's first slot.
+ */
+export function buildButtonReorderRowCandidates(args: {
+  placements: readonly NamedButtonRect[];
+  movingPlacementId: string;
+  movingRect: ButtonRect;
+  surface: Pick<ButtonRect, "width" | "height">;
+  gap?: number;
+}): ButtonReorderRowCandidateResult {
+  const movingPlacement = args.placements.find((placement) => placement.id === args.movingPlacementId);
+  if (!movingPlacement) {
+    return { candidates: [], reason: "The dragged Button placement no longer exists." };
+  }
+  const inferredRows = inferButtonPlacementRows(args.placements);
+  const remainingRows = inferredRows
+    .map((row) => ({
+      ...row,
+      placements: row.placements.filter((placement) => placement.id !== args.movingPlacementId)
+    }))
+    .filter((row) => row.placements.length > 0);
+  const firstOffset = remainingRows[0]?.topOffset ?? 0;
+  const baseRows: ButtonPlacementRow[] = remainingRows.map((row) => ({
+    placements: row.placements,
+    topOffset: row.topOffset === null ? null : Math.max(0, row.topOffset - firstOffset)
+  }));
+  const anchorX = Math.min(...args.placements.map((placement) => placement.rect.x));
+  const anchorY = Math.min(...args.placements.map((placement) => placement.rect.y));
+  const movingCenterX = args.movingRect.x + args.movingRect.width / 2;
+  const movingCenterY = args.movingRect.y + args.movingRect.height / 2;
+  const gap = Number.isFinite(args.gap) ? Math.max(0, args.gap ?? 0) : 0;
+  const candidates: ButtonReorderRowCandidate[] = [];
+  let reason: string | null = null;
+
+  const appendCandidate = (
+    rows: ButtonPlacementRow[],
+    kind: ButtonReorderRowCandidateKind,
+    targetRowIndex: number,
+    columnIndex: number,
+    targetY: number
+  ) => {
+    const compacted = compactButtonPlacementRows(rows, args.surface, {
+      anchorX,
+      anchorY,
+      gap,
+      preserveRowTopOffsets: true
+    });
+    if (!compacted.success) {
+      reason = compacted.reason;
+      return;
+    }
+    const slot = compacted.placements.find((placement) => placement.id === args.movingPlacementId)?.rect;
+    if (!slot) return;
+    candidates.push({
+      key: `${kind}:${targetRowIndex}:${columnIndex}`,
+      kind,
+      rowIndex: targetRowIndex,
+      columnIndex,
+      orderedPlacementIds: rows.flatMap((row) => row.placements.map((placement) => placement.id)),
+      placements: compacted.placements,
+      slot,
+      distance: Math.hypot(
+        movingCenterX - (slot.x + slot.width / 2),
+        movingCenterY - targetY
+      )
+    });
+  };
+
+  for (let rowIndex = 0; rowIndex < baseRows.length; rowIndex += 1) {
+    const row = baseRows[rowIndex];
+    const targetY = anchorY + (row.topOffset ?? 0) + rowHeight(row) / 2;
+    for (let columnIndex = 0; columnIndex <= row.placements.length; columnIndex += 1) {
+      const rows = baseRows.map((candidate) => ({
+        placements: [...candidate.placements],
+        topOffset: candidate.topOffset
+      }));
+      rows[rowIndex].placements.splice(columnIndex, 0, movingPlacement);
+      appendCandidate(rows, "existing-row", rowIndex, columnIndex, targetY);
+    }
+  }
+
+  for (let boundaryIndex = 0; boundaryIndex <= baseRows.length; boundaryIndex += 1) {
+    const previous = baseRows[boundaryIndex - 1];
+    const next = baseRows[boundaryIndex];
+    const previousBottom = previous
+      ? (previous.topOffset ?? 0) + rowHeight(previous)
+      : 0;
+    const nextTop = next?.topOffset ?? previousBottom;
+    const preferredTop = next ? nextTop : previousBottom + (previous ? gap : 0);
+    const targetY = anchorY + (previous && next
+      ? (previousBottom + nextTop) / 2
+      : previous
+        ? previousBottom + args.movingRect.height / 2
+        : Math.max(0, nextTop - args.movingRect.height / 2));
+    const rows = baseRows.map((row) => ({
+      placements: [...row.placements],
+      topOffset: row.topOffset
+    }));
+    rows.splice(boundaryIndex, 0, {
+      placements: [movingPlacement],
+      topOffset: preferredTop
+    });
+    appendCandidate(rows, "new-row", boundaryIndex, 0, targetY);
+  }
+
+  return {
+    candidates,
+    reason: candidates.length > 0 ? null : reason
   };
 }
 

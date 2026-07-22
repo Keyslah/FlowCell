@@ -16,17 +16,10 @@ export interface ButtonEditorButtonOption {
   group: string;
 }
 
-export interface ButtonEditorFanCandidate {
-  id: string;
-  label: string;
-  role: "single-script" | "tool-set-owner";
-}
-
 export interface ButtonEditorPlacementOption {
   id: string;
   label: string;
   surfaceId: string;
-  action?: "create-default-fan" | "show-tool-set-popout";
 }
 
 function normalized(value: string): string {
@@ -245,25 +238,6 @@ export function buildButtonEditorButtonOptions(
   return disambiguateFinalOptionLabels(options);
 }
 
-export function buildButtonEditorFanCandidates(
-  document: ButtonStateDocument,
-  programName: string,
-  panelName: string
-): ButtonEditorFanCandidate[] {
-  return buildButtonEditorButtonOptions(document, programName, panelName)
-    .flatMap((option) => {
-      const role = document.buttons[option.id]?.role;
-      return role === "single-script" || role === "tool-set-owner"
-        ? [{ id: option.id, label: option.label, role }]
-        : [];
-    })
-    .sort((left, right) =>
-      (left.role === "single-script" ? 0 : 1) - (right.role === "single-script" ? 0 : 1) ||
-      left.label.localeCompare(right.label, "en", { sensitivity: "base" }) ||
-      left.id.localeCompare(right.id)
-    );
-}
-
 function surfacePlacementRank(surface: ButtonSurface): number {
   if (surface.kind === "panel" || surface.kind === "main") return 0;
   if (surface.kind === "fan") return 1;
@@ -332,58 +306,12 @@ export function buildButtonEditorPlacementOptions(
       surfaceId: placement.surfaceId
     };
   });
-  const button = document.buttons[buttonId];
-  const hasFanPlacement = placements.some(
-    (placement) => document.surfaces[placement.surfaceId]?.kind === "fan"
-  );
-  if (button?.role === "panel-owner" && !hasFanPlacement) {
-    options.push({
-      id: `button-editor-action:create-default-fan:${button.id}`,
-      label: "Fan — Default grid",
-      surfaceId: "",
-      action: "create-default-fan"
-    });
-  }
-  if (button?.role === "tool-set-owner") {
-    const toolSetUnit = Object.values(document.popoutUnits).find(
-      (candidate) => candidate.kind === "tool-set" && candidate.ownerButtonId === button.id
-    );
-    const toolSetSurface = toolSetUnit ? document.surfaces[toolSetUnit.surfaceId] : undefined;
-    if (toolSetUnit && toolSetSurface) {
-      options.push({
-        id: `button-editor-action:show-tool-set-popout:${button.id}`,
-        label: `Pop — ${toolSetUnit.name || toolSetSurface.name}`,
-        surfaceId: toolSetSurface.id,
-        action: "show-tool-set-popout"
-      });
-    }
-  }
   options.sort((left, right) => {
-    const leftRank = left.action === "create-default-fan"
-      ? 1
-      : surfacePlacementRank(document.surfaces[left.surfaceId]);
-    const rightRank = right.action === "create-default-fan"
-      ? 1
-      : surfacePlacementRank(document.surfaces[right.surfaceId]);
+    const leftRank = surfacePlacementRank(document.surfaces[left.surfaceId]);
+    const rightRank = surfacePlacementRank(document.surfaces[right.surfaceId]);
     return leftRank - rightRank;
   });
   return disambiguateFinalOptionLabels(options);
-}
-
-export function resolveButtonEditorDefaultFanMembers(
-  document: ButtonStateDocument,
-  programName: string,
-  panelName: string
-) {
-  return Object.values(document.buttons).filter((button) => {
-    if (button.role !== "single-script") return false;
-    const identity = resolveButtonEditorIdentity(document, button.id);
-    return Boolean(
-      identity &&
-      namesMatch(identity.programName, programName) &&
-      namesMatch(identity.panelName, panelName)
-    );
-  });
 }
 
 export function resolvePreferredButtonPlacementId(

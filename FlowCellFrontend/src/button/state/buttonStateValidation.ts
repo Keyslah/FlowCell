@@ -48,6 +48,7 @@ function haveSameStringMembers(left: readonly string[], right: readonly string[]
 }
 
 const BUTTON_TEXT_FIT_MODES = new Set(["shrink", "stack-whole-words", "shrink-and-stack"]);
+const BUTTON_TEXT_ALIGNMENTS = new Set(["skin", "left", "center", "right"]);
 const BUTTON_SURFACE_KINDS = new Set(["main", "panel", "regular-popout", "tool-set-popout", "fan"]);
 const BUTTON_WINDOW_FIT_MODES = new Set(["surface", "hitbox", "visual"]);
 
@@ -301,6 +302,10 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
       placement.textSizeOverride = null;
       changed = true;
     }
+    if (!Object.hasOwn(placement, "textAlignment")) {
+      placement.textAlignment = "skin";
+      changed = true;
+    }
     placements[id] = placement;
   }
   const surfaces: Record<string, unknown> = isObject(value.surfaces)
@@ -461,6 +466,9 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     }
     if (!BUTTON_TEXT_FIT_MODES.has(String(placement.textFitMode))) {
       addIssue(issues, `${path}.textFitMode`, "Placement text-fit mode is invalid.");
+    }
+    if (!BUTTON_TEXT_ALIGNMENTS.has(String(placement.textAlignment))) {
+      addIssue(issues, `${path}.textAlignment`, "Placement text alignment is invalid.");
     }
     if (!isFiniteNumber(placement.minimumFontSize) || placement.minimumFontSize <= 0) {
       addIssue(issues, `${path}.minimumFontSize`, "Minimum font size must be finite and positive.");
@@ -644,6 +652,9 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
         for (const fieldId of Object.keys(behavior?.fieldPatch ?? {})) {
           if (!fieldIds.has(fieldId)) addIssue(issues, `buttons.${childId}.toolSetBehavior.fieldPatch`, `Patched field '${fieldId}' does not exist.`);
         }
+        for (const fieldId of Object.keys(behavior?.activationPatch ?? {})) {
+          if (!fieldIds.has(fieldId)) addIssue(issues, `buttons.${childId}.toolSetBehavior.activationPatch`, `Activation-patched field '${fieldId}' does not exist.`);
+        }
         if (behavior?.activateField) {
           const field = fields.find((candidate) => candidate.id === behavior.activateField);
           if (!field || field.kind !== "path") {
@@ -651,6 +662,30 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
               issues,
               `buttons.${childId}.toolSetBehavior.activateField`,
               `Activated field '${behavior.activateField}' is missing or is not a path field.`
+            );
+          }
+        }
+        if (behavior?.inlineEditField) {
+          const field = fields.find((candidate) => candidate.id === behavior.inlineEditField);
+          if (!field || (field.kind !== "number" && field.kind !== "text")) {
+            addIssue(
+              issues,
+              `buttons.${childId}.toolSetBehavior.inlineEditField`,
+              `Inline-edited field '${behavior.inlineEditField}' is missing or is not a number/text field.`
+            );
+          }
+          if (field?.serviceTarget) {
+            addIssue(
+              issues,
+              `buttons.${childId}.toolSetBehavior.inlineEditField`,
+              "Inline-edited fields cannot dispatch a field service."
+            );
+          }
+          if (behavior.execute !== false) {
+            addIssue(
+              issues,
+              `buttons.${childId}.toolSetBehavior.execute`,
+              "Inline-edit Buttons must be state-only controls."
             );
           }
         }

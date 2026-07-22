@@ -33,8 +33,12 @@ export function registerScopedWindowTopmost(
   });
 }
 
-export function refreshScopedWindowTopmost(label: string): Promise<void> {
-  return invoke("refresh_scoped_window_topmost", { label });
+export function refreshScopedWindowTopmost(
+  label: string,
+  reveal = false,
+  force = false
+): Promise<void> {
+  return invoke("refresh_scoped_window_topmost", { label, reveal, force });
 }
 
 export function unregisterScopedWindowTopmost(label: string): Promise<void> {

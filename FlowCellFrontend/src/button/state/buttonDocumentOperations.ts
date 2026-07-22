@@ -7,8 +7,7 @@ import type {
   ButtonSurface
 } from "../types.js";
 import {
-  createStarterButtonLayout,
-  findFirstAvailableButtonPosition
+  createStarterButtonLayout
 } from "../geometry/buttonGeometry.js";
 import { cloneButtonDocument, createStableButtonId } from "./buttonDefaults.js";
 import { deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
@@ -55,6 +54,7 @@ function addPlacement(
     zIndex: document.surfaces[surfaceId].placementIds.length,
     skinOverrideId: null,
     textFitMode: document.buttons[buttonId].defaultTextFitMode,
+    textAlignment: "skin",
     minimumFontSize: document.settings.defaultMinimumFontSize,
     textSizeOverride: null,
     allowLabelResize: false,
@@ -282,126 +282,6 @@ function removePlacement(document: ButtonStateDocument, placementId: string): vo
     surface.placementIds = surface.placementIds.filter((id) => id !== placementId);
   }
   delete document.placements[placementId];
-}
-
-function nextFanMemberRect(
-  document: ButtonStateDocument,
-  surface: ButtonSurface
-): { x: number; y: number; width: number; height: number } {
-  const width = 160;
-  const height = 44;
-  const padding = document.settings.defaultSurfacePadding;
-  const gap = document.settings.defaultGap;
-  surface.width = Math.max(surface.width, width + padding * 2);
-  for (let attempt = 0; attempt < 10_000; attempt += 1) {
-    const otherRects = surface.placementIds
-      .map((placementId) => document.placements[placementId])
-      .filter((placement): placement is ButtonPlacement => Boolean(placement));
-    const rect = findFirstAvailableButtonPosition({
-      width,
-      height,
-      surface,
-      otherRects,
-      padding,
-      gap,
-      gridSize: document.settings.gridSize
-    });
-    if (rect) return rect;
-    surface.height += height + gap;
-  }
-  throw new Error(`Fan surface '${surface.name}' has no room for another Button.`);
-}
-
-function nextToolSetOwnerAnchor(
-  anchors: Readonly<Record<string, { left: number; top: number; width: number; height: number }>>
-): { left: number; top: number; width: number; height: number } {
-  const right = Math.max(
-    0,
-    ...Object.values(anchors).map((anchor) => anchor.left + anchor.width)
-  );
-  return {
-    left: right > 0 ? right + 20 : 0,
-    top: 0,
-    width: 160,
-    height: 44
-  };
-}
-
-export function updateFanSetupMembers(args: {
-  document: ButtonStateDocument;
-  setupId: string;
-  buttons: readonly ButtonRecord[];
-}): ButtonFanSetup {
-  const setup = args.document.fanSetups[args.setupId];
-  if (!setup) throw new Error(`Fan setup '${args.setupId}' was not found.`);
-  const surface = args.document.surfaces[setup.fanSurfaceId];
-  if (!surface || surface.kind !== "fan") {
-    throw new Error(`Fan setup '${setup.name}' has no canonical Fan surface.`);
-  }
-  const panelOwnerPlacement = surface.placementIds
-    .map((placementId) => args.document.placements[placementId])
-    .find((placement) => placement?.buttonId === setup.panelOwnerButtonId);
-  if (!panelOwnerPlacement) {
-    throw new Error(`Fan setup '${setup.name}' has no panel-owner placement.`);
-  }
-
-  const uniqueButtons = [...new Map(
-    args.buttons.map((button) => [button.id.trim(), button] as const)
-  ).values()];
-  const members = uniqueButtons.filter((button) => button.role === "single-script");
-  const owners = uniqueButtons.filter((button) => button.role === "tool-set-owner");
-  if (members.length + owners.length !== uniqueButtons.length) {
-    throw new Error("A fan can contain only single-script Buttons and Tool Set owners.");
-  }
-  if (members.length === 0 && owners.length === 0) {
-    throw new Error("A fan needs at least one script Button or Tool Set owner.");
-  }
-
-  const desiredMemberIds = new Set(members.map((button) => button.id));
-  const retainedPlacementsByButtonId = new Map<string, ButtonPlacement>();
-  for (const placementId of setup.fanMemberPlacementIds) {
-    const placement = args.document.placements[placementId];
-    if (!placement || placement.surfaceId !== surface.id) {
-      throw new Error(`Fan setup '${setup.name}' has an invalid member placement '${placementId}'.`);
-    }
-    if (
-      desiredMemberIds.has(placement.buttonId) &&
-      !retainedPlacementsByButtonId.has(placement.buttonId)
-    ) {
-      retainedPlacementsByButtonId.set(placement.buttonId, placement);
-    } else {
-      removePlacement(args.document, placementId);
-    }
-  }
-
-  const nextMemberPlacements = members.map((button) => {
-    const retained = retainedPlacementsByButtonId.get(button.id);
-    if (retained) return retained;
-    return addPlacement(
-      args.document,
-      button.id,
-      surface.id,
-      nextFanMemberRect(args.document, surface)
-    );
-  });
-
-  const nextAnchors: ButtonFanSetup["toolSetOwnerAnchors"] = Object.fromEntries(
-    owners.flatMap((owner) => {
-      const retained = setup.toolSetOwnerAnchors[owner.id];
-      return retained ? [[owner.id, retained] as const] : [];
-    })
-  );
-  for (const owner of owners) {
-    if (!nextAnchors[owner.id]) {
-      nextAnchors[owner.id] = nextToolSetOwnerAnchor(nextAnchors);
-    }
-  }
-
-  setup.fanMemberButtonIds = members.map((button) => button.id);
-  setup.fanMemberPlacementIds = nextMemberPlacements.map((placement) => placement.id);
-  setup.selectedToolSetOwnerButtonIds = owners.map((button) => button.id);
-  setup.toolSetOwnerAnchors = nextAnchors;
-  return setup;
 }
 
 function removeSurface(document: ButtonStateDocument, surfaceId: string): void {

@@ -128,6 +128,10 @@ export interface ButtonPopoutWindowPageProps {
 }
 
 export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps) {
+  const requestInlineEditorFocus = useCallback(
+    () => getCurrentWindow().setFocus(),
+    []
+  );
   const rootRef = useRef<HTMLElement | null>(null);
   const contentFrameRef = useRef<HTMLDivElement | null>(null);
   const collapsedOriginRef = useRef<{ x: number; y: number } | null>(null);
@@ -1646,6 +1650,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
             surfaceScale={surfaceScale}
             surfaceEnvelope={appliedEnvelope ?? windowEnvelope.resting}
             onOwnerActivate={handleOwnerActivate}
+            onRequestInlineEditorFocus={requestInlineEditorFocus}
             onPlacementVisualMeasurement={handlePlacementVisualMeasurement}
             onPreparePlacementVisualStateChange={preparePlacementVisualStateChange}
             onPlacementVisualStateChange={handlePlacementVisualStateChange}

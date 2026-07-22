@@ -203,7 +203,7 @@
     },
     {
       "id": "illustrator.layers-builder.new-sub",
-      "version": "3.1.1",
+      "version": "3.1.2",
       "panelName": "Layers Builder",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/new-sub",
       "importKind": "script",
@@ -308,7 +308,7 @@
     },
     {
       "id": "illustrator.layer-tree",
-      "version": "3.0.0",
+      "version": "3.0.1",
       "panelName": "Layers Builder",
       "sourcePath": "Illustrator Git Scripts/LayersBuilder",
       "importKind": "script",

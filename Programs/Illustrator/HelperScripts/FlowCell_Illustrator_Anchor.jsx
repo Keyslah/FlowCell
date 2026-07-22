@@ -138,6 +138,15 @@
         return out;
     }
     function groupMode(data) { var v = data && data.group; return v === true || String(v).toLowerCase() === "true"; }
+    function enabledMode(value) { return value === true || String(value).toLowerCase() === "true"; }
+    function alignmentModifier(value) {
+        if (value && typeof value === "object") {
+            if (enabledMode(value.surface)) { return "SURFACE"; }
+            if (enabledMode(value.origin)) { return "GEOCENTER"; }
+            return "";
+        }
+        return String(value || "").toUpperCase();
+    }
     function combinedBounds(items) {
         if (items.length === 0) { return null; }
         var b = boundsOf(items[0]);
@@ -152,19 +161,27 @@
     function moveAll(items, dx, dy) { for (var i = 0; i < items.length; i += 1) { moveBy(items[i], dx, dy); } return items.length; }
     function delta(axis, mode, mod, b, a) {
         if (axis === "X") {
+            if (mode === "CENTER") { return { dx: a.centerX - b.centerX, dy: 0 }; }
             if (mod === "SURFACE") {
                 if (mode === "MIN") { return { dx: a.left - b.right, dy: 0 }; }
                 if (mode === "MAX") { return { dx: a.right - b.left, dy: 0 }; }
-                return b.centerX <= a.centerX ? { dx: a.left - b.right, dy: 0 } : { dx: a.right - b.left, dy: 0 };
+            }
+            if (mod === "GEOCENTER" || mod === "ORIGIN") {
+                if (mode === "MIN") { return { dx: a.left - b.centerX, dy: 0 }; }
+                if (mode === "MAX") { return { dx: a.right - b.centerX, dy: 0 }; }
             }
             if (mode === "MIN") { return { dx: a.left - b.left, dy: 0 }; }
             if (mode === "MAX") { return { dx: a.right - b.right, dy: 0 }; }
             return { dx: a.centerX - b.centerX, dy: 0 };
         }
+        if (mode === "CENTER") { return { dx: 0, dy: a.centerY - b.centerY }; }
         if (mod === "SURFACE") {
             if (mode === "MIN") { return { dx: 0, dy: a.bottom - b.top }; }
             if (mode === "MAX") { return { dx: 0, dy: a.top - b.bottom }; }
-            return b.centerY <= a.centerY ? { dx: 0, dy: a.bottom - b.top } : { dx: 0, dy: a.top - b.bottom };
+        }
+        if (mod === "GEOCENTER" || mod === "ORIGIN") {
+            if (mode === "MIN") { return { dx: 0, dy: a.bottom - b.centerY }; }
+            if (mode === "MAX") { return { dx: 0, dy: a.top - b.centerY }; }
         }
         if (mode === "MIN") { return { dx: 0, dy: a.bottom - b.bottom }; }
         if (mode === "MAX") { return { dx: 0, dy: a.top - b.top }; }
@@ -179,7 +196,7 @@
         if (items.length === 0) { return status("no selection"); }
         var axis = String(commandData.axis || "X").toUpperCase();
         var mode = String(commandData.mode || "CENTER").toUpperCase();
-        var mod = String(commandData.modifier || "").toUpperCase();
+        var mod = alignmentModifier(commandData.modifier);
         if (groupMode(commandData)) {
             var g = combinedBounds(items);
             var gd = delta(axis, mode, mod, g, anchor);

@@ -2139,14 +2139,6 @@ pub(crate) fn install_button_source(
     install_from_path(request, false)
 }
 
-#[tauri::command]
-pub(crate) fn update_button_source(
-    mut request: InstallButtonSourceRequest,
-) -> Result<InstallButtonSourceResponse, String> {
-    request.program_name = crate::require_registered_program_name(&request.program_name)?;
-    install_from_path(request, true)
-}
-
 pub(crate) fn merge_toolset_payload(
     record: &ActiveSourceRecord,
     slot: &str,

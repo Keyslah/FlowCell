@@ -4,7 +4,7 @@ import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ButtonSkinEditor } from "./button/editor/ButtonSkinEditor";
 import { ButtonSkinRenderer } from "./button/skins/ButtonSkinRenderer";
-import type { ButtonSkin } from "./button/types";
+import type { ButtonPlacement, ButtonSkin } from "./button/types";
 import "./app.css";
 import "./button/editor/buttonEditor.css";
 
@@ -28,6 +28,26 @@ const USER_SKIN: ButtonSkin = {
   }
 } as unknown as ButtonSkin;
 
+const HARNESS_PLACEMENT: ButtonPlacement = {
+  id: "dev-harness-placement",
+  buttonId: "dev-harness-button",
+  surfaceId: "dev-harness-surface",
+  x: 0,
+  y: 0,
+  width: 140,
+  height: 56,
+  zIndex: 0,
+  skinOverrideId: USER_SKIN.id,
+  textFitMode: "shrink-and-stack",
+  textAlignment: "skin",
+  minimumFontSize: 8,
+  textSizeOverride: null,
+  allowLabelResize: false,
+  matchHitboxToSkin: false,
+  allowStretching: false,
+  resizeAnchor: "top-left"
+};
+
 function Harness() {
   const [skin, setSkin] = useState<ButtonSkin>(() => structuredClone(USER_SKIN));
   const [hovered, setHovered] = useState(false);
@@ -38,11 +58,21 @@ function Harness() {
       <div style={{ width: 420 }} data-harness-editor>
         <ButtonSkinEditor
           skin={skin}
+          skins={[skin]}
+          skinContextKey="dev-harness"
+          busy={false}
+          placement={HARNESS_PLACEMENT}
+          surfaceButtonCount={1}
+          allSurfaceButtonsSameSize={false}
           buttonLabel="Button Preview"
           onButtonLabelChange={() => {}}
-          onSkinChange={(next) => setSkin(next)}
-          onCreateSkin={() => {}}
-          onDuplicateSkin={() => {}}
+          onAssignSize={() => {}}
+          onAssignSizeToPanel={() => {}}
+          onPlacementTextChange={() => {}}
+          onAssignSkin={(next) => setSkin(next)}
+          onAssignSkinToPanel={(next) => setSkin(next)}
+          onSaveSkin={(next) => setSkin(next)}
+          onSaveAsNewSkin={() => {}}
         />
       </div>
       <div>

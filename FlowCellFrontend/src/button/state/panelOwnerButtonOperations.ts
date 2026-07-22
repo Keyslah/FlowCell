@@ -332,6 +332,7 @@ function ensurePanelOwnerMainPlacement(
     zIndex: surface.placementIds.length,
     skinOverrideId: null,
     textFitMode: owner.defaultTextFitMode,
+    textAlignment: "skin",
     minimumFontSize: document.settings.defaultMinimumFontSize,
     textSizeOverride: null,
     allowLabelResize: false,

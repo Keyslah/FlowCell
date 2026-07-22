@@ -10,10 +10,12 @@ the package rather than FlowCell Core.
 Adding the Blender program installs Theme as a declared starter in the
 `toolset` panel. To install it again after an intentional deletion:
 
-1. Open the Buttons Editor and choose Add Button.
+1. On Main, open Blender's `toolset` panel and choose Add Button. The locked
+   Buttons Editor opens its native content picker automatically.
 2. Select
    `Programs/Blender/Blender Git Scripts/Toolsets/theme/flowcell.script.json`.
-3. Choose the Blender panel for the owner Button and save Button state.
+3. Use Save placement after the Button is added, then name its Button-placement
+   file in the native save dialog.
 4. Reload the FlowCell Blender add-on or restart Blender after deployment.
 
 To use an installed copy, select its Blender panel and activate the `theme`
@@ -120,7 +122,8 @@ Ordinary catalog edits do not silently affect an installed Theme Button. A
 release-owned Theme update must also bump the matching
 `bundledSources[].version` in `Programs/Blender/flowcell.program.json`; normal
 registered-program synchronization then updates the existing owner in place.
-For an ad hoc local change, use Update in the Buttons Editor for the same owner.
+Ad hoc local edits are not updated from the Buttons Editor; intentionally replace
+the owner through the normal source lifecycle instead.
 After either path, reload the FlowCell Blender add-on or restart Blender before
 testing the changed deployment.
 

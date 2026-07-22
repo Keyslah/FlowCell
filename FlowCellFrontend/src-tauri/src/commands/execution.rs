@@ -2,6 +2,27 @@ use crate::*;
 
 pub(crate) static BLENDER_BRIDGE_REQUEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+#[cfg(windows)]
+const ILLUSTRATOR_BRIDGE_PIPE_PATH: &str = r"\\.\pipe\FlowCell.Illustrator.Bridge.v2";
+#[cfg(windows)]
+const ILLUSTRATOR_BRIDGE_PROTOCOL_VERSION: u64 = 2;
+#[cfg(windows)]
+const ILLUSTRATOR_BRIDGE_STARTUP_WAIT_MS: u64 = 4_000;
+#[cfg(windows)]
+const ILLUSTRATOR_BRIDGE_ACTION_WAIT_MS: u64 = 25_000;
+#[cfg(windows)]
+const ILLUSTRATOR_BRIDGE_POLL_MS: u64 = 40;
+#[cfg(windows)]
+const ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+#[cfg(windows)]
+static ILLUSTRATOR_BRIDGE_START_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+#[cfg(windows)]
+static ILLUSTRATOR_BRIDGE_PREWARM_IN_PROGRESS: AtomicBool = AtomicBool::new(false);
+#[cfg(windows)]
+const ILLUSTRATOR_PROCESS_POLL_MS: u64 = 1_000;
+#[cfg(windows)]
+const WINDOWS_ERROR_PIPE_BUSY: i32 = 231;
+
 #[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PanelScriptChildRecord {
@@ -447,147 +468,530 @@ pub(crate) fn build_flowcell_controller_script_command(
 }
 
 #[cfg(windows)]
-pub(crate) fn wide_null(value: &str) -> Vec<u16> {
-    value.encode_utf16().chain(std::iter::once(0)).collect()
+enum IllustratorBridgeSendFailure {
+    Busy(String),
+    Unavailable(String),
+    Failed(String),
 }
 
 #[cfg(windows)]
-pub(crate) fn find_flowcell_direct_script_receiver() -> HWND {
-    let class_name = wide_null(FLOWCELL_DIRECT_SCRIPT_RECEIVER_CLASS);
-    let title = wide_null(FLOWCELL_DIRECT_SCRIPT_RECEIVER_TITLE);
-    unsafe { FindWindowW(class_name.as_ptr(), title.as_ptr()) }
-}
-
-#[cfg(windows)]
-pub(crate) fn wait_for_flowcell_direct_script_receiver(timeout: Duration) -> HWND {
-    let start = Instant::now();
-    loop {
-        let hwnd = find_flowcell_direct_script_receiver();
-        if !hwnd.is_null() {
-            return hwnd;
-        }
-        if start.elapsed() >= timeout {
-            return std::ptr::null_mut();
-        }
-        thread::sleep(Duration::from_millis(
-            FLOWCELL_DIRECT_SCRIPT_RECEIVER_POLL_MS,
+fn parse_illustrator_bridge_response(raw: &str, request: &Value) -> Result<Value, String> {
+    let request_id = request
+        .get("requestId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Illustrator bridge request is missing requestId.".to_string())?;
+    let response = serde_json::from_str::<Value>(raw.trim())
+        .map_err(|error| format!("Illustrator bridge returned invalid JSON: {error}"))?;
+    let protocol_version = response
+        .get("protocolVersion")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    if protocol_version != ILLUSTRATOR_BRIDGE_PROTOCOL_VERSION {
+        return Err(format!(
+            "Illustrator bridge protocol mismatch: expected {ILLUSTRATOR_BRIDGE_PROTOCOL_VERSION}, received {protocol_version}."
         ));
     }
-}
-
-#[cfg(windows)]
-pub(crate) fn send_flowcell_direct_script_copydata(
-    hwnd: HWND,
-    payload: &str,
-) -> Result<usize, String> {
-    let mut payload_wide: Vec<u16> = payload.encode_utf16().collect();
-    let byte_count = payload_wide
-        .len()
-        .checked_mul(std::mem::size_of::<u16>())
-        .and_then(|value| u32::try_from(value).ok())
-        .ok_or_else(|| "FlowCell direct script request was too large.".to_string())?;
-
-    let mut copy_data = COPYDATASTRUCT {
-        dwData: FLOWCELL_DIRECT_SCRIPT_COPYDATA_ID,
-        cbData: byte_count,
-        lpData: payload_wide.as_mut_ptr() as *mut c_void,
-    };
-    let mut response: usize = 0;
-    let send_result = unsafe {
-        SendMessageTimeoutW(
-            hwnd,
-            WM_COPYDATA,
-            0,
-            &mut copy_data as *mut COPYDATASTRUCT as isize,
-            SMTO_ABORTIFHUNG,
-            FLOWCELL_DIRECT_SCRIPT_SEND_TIMEOUT_MS,
-            &mut response as *mut usize,
-        )
-    };
-
-    if send_result == 0 {
-        return Err(
-            "FlowCell backend is busy or did not answer. Nothing was queued; wait for the current Illustrator action to finish and click again."
-                .to_string(),
-        );
+    if !response.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+        return Err(response
+            .get("error")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or("Illustrator bridge rejected the action.")
+            .to_string());
     }
-
+    let response_id = response
+        .get("requestId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    if response_id != request_id {
+        return Err(format!(
+            "Illustrator bridge response did not match request '{request_id}'."
+        ));
+    }
+    let is_async_run = request
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == "run")
+        && !request
+            .get("wait")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    if is_async_run
+        && !response
+            .get("accepted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Err("Illustrator bridge did not acknowledge the action as accepted.".to_string());
+    }
     Ok(response)
 }
 
-pub(crate) fn run_illustrator_backend_script_direct(
+#[cfg(windows)]
+fn try_send_illustrator_bridge_request(
+    request: &Value,
+) -> Result<Value, IllustratorBridgeSendFailure> {
+    let _request_id = request
+        .get("requestId")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            IllustratorBridgeSendFailure::Failed(
+                "Illustrator bridge request is missing requestId.".to_string(),
+            )
+        })?;
+    let mut pipe = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(ILLUSTRATOR_BRIDGE_PIPE_PATH)
+        .map_err(|error| {
+            let message = format!("Illustrator bridge pipe is unavailable: {error}");
+            if error.raw_os_error() == Some(WINDOWS_ERROR_PIPE_BUSY) {
+                IllustratorBridgeSendFailure::Busy(message)
+            } else {
+                IllustratorBridgeSendFailure::Unavailable(message)
+            }
+        })?;
+    let mut request_line = serde_json::to_string(request).map_err(|error| {
+        IllustratorBridgeSendFailure::Failed(format!(
+            "Failed to encode Illustrator bridge request: {error}"
+        ))
+    })?;
+    request_line.push('\n');
+    pipe.write_all(request_line.as_bytes()).map_err(|error| {
+        IllustratorBridgeSendFailure::Failed(format!(
+            "Failed to write Illustrator bridge request: {error}"
+        ))
+    })?;
+    pipe.flush().map_err(|error| {
+        IllustratorBridgeSendFailure::Failed(format!(
+            "Failed to flush Illustrator bridge request: {error}"
+        ))
+    })?;
+
+    let mut response = String::new();
+    let mut limited_reader = std::io::Read::take(
+        std::io::BufReader::new(pipe),
+        (ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES + 1) as u64,
+    );
+    std::io::Read::read_to_string(&mut limited_reader, &mut response).map_err(|error| {
+        IllustratorBridgeSendFailure::Failed(format!(
+            "Failed to read Illustrator bridge response: {error}"
+        ))
+    })?;
+    if response.len() > ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES {
+        return Err(IllustratorBridgeSendFailure::Failed(format!(
+            "Illustrator bridge response exceeded {ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES} bytes."
+        )));
+    }
+    parse_illustrator_bridge_response(&response, request)
+        .map_err(IllustratorBridgeSendFailure::Failed)
+}
+
+#[cfg(windows)]
+fn process_id_is_alive(process_id: u32) -> bool {
+    if process_id == 0 {
+        return false;
+    }
+    let process_handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, process_id) };
+    if process_handle.is_null() {
+        return false;
+    }
+    unsafe {
+        let _ = CloseHandle(process_handle);
+    }
+    true
+}
+
+#[cfg(windows)]
+struct IllustratorProcessWindowSearch {
+    process_id: u32,
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn enum_illustrator_process_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    if hwnd.is_null() || (IsWindowVisible(hwnd) == 0 && IsIconic(hwnd) == 0) {
+        return 1;
+    }
+
+    let mut process_id = 0u32;
+    GetWindowThreadProcessId(hwnd, &mut process_id);
+    let Some(process_path) = query_process_path_by_id(process_id) else {
+        return 1;
+    };
+    let process_name = Path::new(&process_path)
+        .file_name()
+        .map(|value| value.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if process_name != "illustrator.exe" && process_name != "illustrator" {
+        return 1;
+    }
+
+    let search = &mut *(lparam as *mut IllustratorProcessWindowSearch);
+    search.process_id = process_id;
+    0
+}
+
+#[cfg(windows)]
+fn find_running_illustrator_process_id() -> Option<u32> {
+    let mut search = IllustratorProcessWindowSearch { process_id: 0 };
+    unsafe {
+        EnumWindows(
+            Some(enum_illustrator_process_window),
+            &mut search as *mut IllustratorProcessWindowSearch as LPARAM,
+        );
+    }
+    (search.process_id != 0).then_some(search.process_id)
+}
+
+#[cfg(windows)]
+fn spawn_illustrator_bridge_process() -> Result<(), String> {
+    let repo_root = resolve_repo_root()
+        .ok_or_else(|| "FlowCell repo root could not be resolved for Illustrator.".to_string())?;
+    let bridge_script = repo_root
+        .join("Programs")
+        .join("Illustrator")
+        .join("SupportScripts")
+        .join("Start-IllustratorFlowCellBridge.ps1");
+    if !bridge_script.is_file() {
+        return Err(format!(
+            "Illustrator bridge script was not found at {}.",
+            bridge_script.display()
+        ));
+    }
+    let launch_script = windows_child_process_path(&bridge_script);
+    let launch_root = windows_child_process_path(&repo_root);
+    let mut command = Command::new(resolve_powershell_path());
+    command
+        .arg("-NoLogo")
+        .arg("-NoProfile")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-Sta")
+        .arg("-File")
+        .arg(&launch_script)
+        .arg("-RepoRoot")
+        .arg(&launch_root)
+        .arg("-NoPrewarm")
+        .current_dir(launch_script.parent().unwrap_or_else(|| Path::new(".")))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW);
+    command
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("Failed to start Illustrator bridge: {error}"))
+}
+
+#[cfg(windows)]
+fn wait_for_illustrator_bridge_request(
+    request: &Value,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let started = Instant::now();
+    loop {
+        let unavailable = match try_send_illustrator_bridge_request(request) {
+            Ok(response) => return Ok(response),
+            Err(IllustratorBridgeSendFailure::Failed(error)) => return Err(error),
+            Err(IllustratorBridgeSendFailure::Busy(error))
+            | Err(IllustratorBridgeSendFailure::Unavailable(error)) => error,
+        };
+        if started.elapsed() >= timeout {
+            return Err(format!(
+                "Illustrator bridge did not become ready. {unavailable}"
+            ));
+        }
+        thread::sleep(Duration::from_millis(ILLUSTRATOR_BRIDGE_POLL_MS));
+    }
+}
+
+#[cfg(windows)]
+fn illustrator_bridge_ping_request() -> Value {
+    json!({
+        "command": "ping",
+        "requestId": format!("illustrator-bridge-ping-{}", current_precise_timestamp_token())
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn ensure_illustrator_bridge_started() -> Result<(), String> {
+    match try_send_illustrator_bridge_request(&illustrator_bridge_ping_request()) {
+        Ok(_) => return Ok(()),
+        Err(IllustratorBridgeSendFailure::Failed(error)) => return Err(error),
+        Err(IllustratorBridgeSendFailure::Busy(_)) => return Ok(()),
+        Err(IllustratorBridgeSendFailure::Unavailable(_)) => {}
+    }
+    let start_lock = ILLUSTRATOR_BRIDGE_START_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = start_lock
+        .lock()
+        .map_err(|_| "Illustrator bridge start lock is unavailable.".to_string())?;
+    match try_send_illustrator_bridge_request(&illustrator_bridge_ping_request()) {
+        Ok(_) => return Ok(()),
+        Err(IllustratorBridgeSendFailure::Failed(error)) => return Err(error),
+        Err(IllustratorBridgeSendFailure::Busy(_)) => return Ok(()),
+        Err(IllustratorBridgeSendFailure::Unavailable(_)) => {}
+    }
+    spawn_illustrator_bridge_process()?;
+    wait_for_illustrator_bridge_request(
+        &illustrator_bridge_ping_request(),
+        Duration::from_millis(ILLUSTRATOR_BRIDGE_STARTUP_WAIT_MS),
+    )?;
+    append_flowcell_local_log(
+        "command_host.log",
+        "Started persistent Illustrator bridge for native Button dispatch.",
+    );
+    Ok(())
+}
+
+#[cfg(windows)]
+struct IllustratorBridgePrewarmGuard;
+
+#[cfg(windows)]
+impl Drop for IllustratorBridgePrewarmGuard {
+    fn drop(&mut self) {
+        ILLUSTRATOR_BRIDGE_PREWARM_IN_PROGRESS.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(windows)]
+fn prewarm_illustrator_bridge(illustrator_process_id: u32) -> Result<u32, String> {
+    ILLUSTRATOR_BRIDGE_PREWARM_IN_PROGRESS.store(true, Ordering::Release);
+    let _prewarm_guard = IllustratorBridgePrewarmGuard;
+    ensure_illustrator_bridge_started()?;
+
+    let request = json!({
+        "command": "prewarm",
+        "requestId": format!("illustrator-bridge-prewarm-{}", current_precise_timestamp_token()),
+        "illustratorProcessId": illustrator_process_id
+    });
+    let response = match try_send_illustrator_bridge_request(&request) {
+        Ok(response) => response,
+        Err(IllustratorBridgeSendFailure::Failed(error)) => return Err(error),
+        Err(IllustratorBridgeSendFailure::Busy(_))
+        | Err(IllustratorBridgeSendFailure::Unavailable(_)) => wait_for_illustrator_bridge_request(
+            &request,
+            Duration::from_millis(ILLUSTRATOR_BRIDGE_ACTION_WAIT_MS),
+        )?,
+    };
+    let bridge_process_id = response
+        .get("pid")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or_else(|| "Illustrator bridge prewarm returned no live bridge PID.".to_string())?;
+    append_flowcell_local_log(
+        "command_host.log",
+        &format!(
+            "Illustrator COM prewarmed in the persistent bridge. IllustratorPid={illustrator_process_id}; BridgePid={bridge_process_id}"
+        ),
+    );
+    Ok(bridge_process_id)
+}
+
+#[cfg(windows)]
+pub(crate) fn start_illustrator_bridge_prewarm_worker() {
+    thread::spawn(|| {
+        let mut warmed_process_pair: Option<(u32, u32)> = None;
+        let mut last_error = String::new();
+        loop {
+            if require_registered_program_name("Illustrator").is_err() {
+                warmed_process_pair = None;
+                thread::sleep(Duration::from_millis(ILLUSTRATOR_PROCESS_POLL_MS));
+                continue;
+            }
+
+            let Some(illustrator_process_id) = find_running_illustrator_process_id() else {
+                warmed_process_pair = None;
+                last_error.clear();
+                thread::sleep(Duration::from_millis(ILLUSTRATOR_PROCESS_POLL_MS));
+                continue;
+            };
+            if let Some((warmed_illustrator_process_id, warmed_bridge_process_id)) =
+                warmed_process_pair
+            {
+                if warmed_illustrator_process_id == illustrator_process_id
+                    && process_id_is_alive(warmed_bridge_process_id)
+                {
+                    thread::sleep(Duration::from_millis(ILLUSTRATOR_PROCESS_POLL_MS));
+                    continue;
+                }
+            }
+
+            match prewarm_illustrator_bridge(illustrator_process_id) {
+                Ok(warmed_bridge_process_id) => {
+                    warmed_process_pair = Some((illustrator_process_id, warmed_bridge_process_id));
+                    last_error.clear();
+                }
+                Err(error) => {
+                    warmed_process_pair = None;
+                    if error != last_error {
+                        append_flowcell_local_log(
+                            "command_host.log",
+                            &format!(
+                                "Illustrator COM could not be prewarmed in the background: {error}"
+                            ),
+                        );
+                        last_error = error;
+                    }
+                }
+            }
+            thread::sleep(Duration::from_millis(ILLUSTRATOR_PROCESS_POLL_MS));
+        }
+    });
+}
+
+pub(crate) fn run_illustrator_bridge_action_direct(
     script_path: &Path,
-    program_key: &str,
-) -> Result<String, String> {
+    action_id: &str,
+    args: Option<Value>,
+    wait: bool,
+) -> Result<Value, String> {
     if !script_path.is_file() {
         return Err(format!(
             "Script file was not found at {}.",
             script_path.display()
         ));
     }
+    if action_id.trim().is_empty() {
+        return Err("Illustrator bridge actionId cannot be empty.".to_string());
+    }
 
     #[cfg(windows)]
     {
         let dispatch_started = Instant::now();
-        let mut hwnd = find_flowcell_direct_script_receiver();
-        if hwnd.is_null() {
-            restart_flowcell_headless_backend()?;
-            hwnd = wait_for_flowcell_direct_script_receiver(Duration::from_millis(
-                FLOWCELL_DIRECT_SCRIPT_STARTUP_WAIT_MS,
-            ));
-        }
-        if hwnd.is_null() {
-            return Err(
-                "FlowCell backend receiver is not available. Restart FlowCell so the hidden backend can load the direct script receiver."
-                    .to_string(),
-            );
+        let request_id = format!("illustrator-bridge-{}", current_precise_timestamp_token());
+        let mut request = json!({
+            "command": "run",
+            "requestId": request_id,
+            "actionId": action_id.trim(),
+            "scriptPath": windows_child_process_path(script_path).display().to_string(),
+            "wait": wait
+        });
+        if let Some(args) = args {
+            request
+                .as_object_mut()
+                .expect("Illustrator bridge request is an object")
+                .insert("args".to_string(), args);
         }
 
-        let script_name = script_path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or("script");
-        let payload = serde_json::to_string(&json!({
-            "command": "run_script_now",
-            "scriptPath": script_path.display().to_string(),
-            "programKey": program_key,
-            "requestId": format!("illustrator-script-{}", current_precise_timestamp_token())
-        }))
-        .map_err(|error| format!("Failed to serialize FlowCell direct script request: {error}"))?;
-
-        let response = send_flowcell_direct_script_copydata(hwnd, &payload)?;
-        match response {
-            FLOWCELL_DIRECT_SCRIPT_ACCEPTED => {
-                append_flowcell_local_log(
-                    "command_host.log",
-                    &format!(
-                        "Illustrator script accepted by live backend in {} ms. ProgramKey={program_key}; Script={}",
-                        dispatch_started.elapsed().as_millis(),
-                        script_path.display()
-                    ),
+        let response = match try_send_illustrator_bridge_request(&request) {
+            Ok(response) => response,
+            Err(IllustratorBridgeSendFailure::Failed(error)) => return Err(error),
+            Err(IllustratorBridgeSendFailure::Busy(_)) => {
+                if wait || ILLUSTRATOR_BRIDGE_PREWARM_IN_PROGRESS.load(Ordering::Acquire) {
+                    return wait_for_illustrator_bridge_request(
+                        &request,
+                        Duration::from_millis(ILLUSTRATOR_BRIDGE_ACTION_WAIT_MS),
+                    );
+                }
+                return Err(
+                    "Illustrator bridge is already running an action. Nothing was queued; wait for it to finish and click again."
+                        .to_string(),
                 );
-                Ok(format!("Started {script_name}."))
             }
-            FLOWCELL_DIRECT_SCRIPT_BUSY => Err(
-                "FlowCell backend is already running an Illustrator script. Nothing was queued; wait for it to finish and click again."
-                    .to_string(),
-            ),
-            FLOWCELL_DIRECT_SCRIPT_BAD_PAYLOAD => {
-                Err("FlowCell backend could not read the direct script request.".to_string())
+            Err(IllustratorBridgeSendFailure::Unavailable(unavailable)) => {
+                let start_lock = ILLUSTRATOR_BRIDGE_START_LOCK.get_or_init(|| Mutex::new(()));
+                let _guard = start_lock
+                    .lock()
+                    .map_err(|_| "Illustrator bridge start lock is unavailable.".to_string())?;
+                match try_send_illustrator_bridge_request(&request) {
+                    Ok(response) => response,
+                    Err(IllustratorBridgeSendFailure::Failed(error)) => return Err(error),
+                    Err(IllustratorBridgeSendFailure::Busy(_)) => {
+                        if wait || ILLUSTRATOR_BRIDGE_PREWARM_IN_PROGRESS.load(Ordering::Acquire) {
+                            drop(_guard);
+                            return wait_for_illustrator_bridge_request(
+                                &request,
+                                Duration::from_millis(ILLUSTRATOR_BRIDGE_ACTION_WAIT_MS),
+                            );
+                        }
+                        return Err(
+                            "Illustrator bridge is already running an action. Nothing was queued; wait for it to finish and click again."
+                                .to_string(),
+                        );
+                    }
+                    Err(IllustratorBridgeSendFailure::Unavailable(_)) => {
+                        spawn_illustrator_bridge_process()?;
+                        wait_for_illustrator_bridge_request(
+                            &request,
+                            Duration::from_millis(ILLUSTRATOR_BRIDGE_STARTUP_WAIT_MS),
+                        )
+                        .map_err(|error| format!("{error} Initial connection: {unavailable}"))?
+                    }
+                }
             }
-            FLOWCELL_DIRECT_SCRIPT_BAD_SCRIPT => Err(format!(
-                "FlowCell backend rejected the script path for {}.",
+        };
+        append_flowcell_local_log(
+            "command_host.log",
+            &format!(
+                "Illustrator action accepted by persistent bridge in {} ms. ActionId={}; Wait={wait}; Script={}",
+                dispatch_started.elapsed().as_millis(),
+                action_id.trim(),
                 script_path.display()
-            )),
-            other => Err(format!(
-                "FlowCell backend returned an unexpected direct script response: {other}."
-            )),
-        }
+            ),
+        );
+        Ok(response)
     }
 
     #[cfg(not(windows))]
     {
-        run_flowcell_controller_script(script_path, program_key)
+        let _ = (script_path, action_id, args, wait);
+        Err("Illustrator bridge execution is available only on Windows.".to_string())
+    }
+}
+
+#[cfg(test)]
+fn illustrator_bridge_test_response(request_id: &str) -> String {
+    json!({
+        "ok": true,
+        "accepted": true,
+        "requestId": request_id,
+        "actionId": "flowcell_button_test"
+    })
+    .to_string()
+}
+
+#[cfg(all(test, windows))]
+mod illustrator_bridge_tests {
+    use super::{illustrator_bridge_test_response, parse_illustrator_bridge_response};
+    use serde_json::json;
+
+    fn async_request(request_id: &str) -> serde_json::Value {
+        json!({
+            "command": "run",
+            "requestId": request_id,
+            "wait": false
+        })
+    }
+
+    #[test]
+    fn bridge_response_requires_exact_request_identity() {
+        let response = illustrator_bridge_test_response("request-a");
+        assert!(parse_illustrator_bridge_response(&response, &async_request("request-a")).is_ok());
+        assert!(parse_illustrator_bridge_response(&response, &async_request("request-b")).is_err());
+    }
+
+    #[test]
+    fn bridge_response_surfaces_bridge_errors() {
+        let response = r#"{"ok":false,"error":"Illustrator failed."}"#;
+        assert_eq!(
+            parse_illustrator_bridge_response(response, &async_request("request-a")).unwrap_err(),
+            "Illustrator failed."
+        );
+    }
+
+    #[test]
+    fn asynchronous_bridge_response_requires_acceptance() {
+        let response = r#"{"ok":true,"requestId":"request-a"}"#;
+        assert_eq!(
+            parse_illustrator_bridge_response(response, &async_request("request-a")).unwrap_err(),
+            "Illustrator bridge did not acknowledge the action as accepted."
+        );
+        let waited_request = json!({
+            "command": "run",
+            "requestId": "request-a",
+            "wait": true
+        });
+        assert!(parse_illustrator_bridge_response(response, &waited_request).is_ok());
     }
 }
 
@@ -1104,13 +1508,17 @@ pub(crate) fn run_panel_script_response_impl(
 }
 
 #[tauri::command]
-pub(crate) fn run_panel_script_response(
+pub(crate) async fn run_panel_script_response(
     app: AppHandle,
     program_name: String,
     panel_name: String,
     file_name: String,
 ) -> Result<Value, String> {
-    run_panel_script_response_impl(&app, program_name, panel_name, file_name)
+    tauri::async_runtime::spawn_blocking(move || {
+        run_panel_script_response_impl(&app, program_name, panel_name, file_name)
+    })
+    .await
+    .map_err(|error| format!("Panel script task failed: {error}"))?
 }
 
 #[tauri::command]

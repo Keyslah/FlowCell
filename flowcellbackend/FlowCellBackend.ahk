@@ -28,6 +28,14 @@ logger := ControllerLogger(flowCellLogsDir)
 if HasCliFlag("--self-test") {
     try {
         logger.Info("Self-test started.")
+        if ResolveActionHotkeyRegistrationShortcut({ PassThroughHotkey: true }, "V") != "~V"
+            throw Error("Pass-through action hotkeys must preserve the native application shortcut.")
+        if ResolveActionHotkeyRegistrationShortcut({}, "V") != "V"
+            throw Error("Ordinary action hotkeys must retain their existing suppression behavior.")
+        if ResolveActionHotkeyRegistrationShortcut({}, "^!M") != "^!M"
+            throw Error("Ordinary modified action hotkeys must remain unchanged.")
+        if ResolveActionHotkeyRegistrationShortcut({ PassThroughHotkey: true }, "~V") != "~V"
+            throw Error("Pass-through action hotkeys must not duplicate the no-suppress prefix.")
         UIA.GetRootElement()
         logger.Info("Self-test completed.")
         ExitApp(0)
@@ -181,6 +189,10 @@ NormalizeFlowCellProgramPath(path) {
 
 GetFlowCellIllustratorPrewarmScriptPath() {
     return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_Prewarm.jsx"
+}
+
+GetFlowCellIllustratorAnchorScriptPath() {
+    return GetFlowCellWorkspaceRoot() "\Programs\Illustrator\HelperScripts\FlowCell_Illustrator_SetAnchorHotkey.jsx"
 }
 
 ReadUtf8TextFileWithoutBom(path) {
@@ -342,6 +354,8 @@ class FlowCellApp {
         this.illustratorAutomationLastDirectActionTick := 0
         this.illustratorAutomationPrewarmTimer := ""
         this.actions := []
+        if IsFlowCellProgramRegistered("Illustrator") && FileExist(GetFlowCellIllustratorAnchorScriptPath())
+            this.actions.Push(SetIllustratorAnchorAction(this))
         for recordedAction in this.recordedActionStore.LoadActions(this)
             this.actions.Push(recordedAction)
         this.scanResult := ""
@@ -2008,7 +2022,7 @@ class FlowCellApp {
         }
     }
 
-    RunIllustratorScript(scriptPath, source, programConfig := 0, allowProcessFallback := true) {
+    RunIllustratorScript(scriptPath, source, programConfig := 0, allowProcessFallback := true, skipWindowActivation := false) {
         result := {
             attempted: false,
             succeeded: false,
@@ -2086,8 +2100,9 @@ class FlowCellApp {
             }
         }
         foregroundAutomationOnly := !allowProcessFallback && StrLower(Trim(source)) != "illustrator automation prewarm"
+        shouldActivateWindow := (allowProcessFallback || foregroundAutomationOnly) && !skipWindowActivation
         try {
-            if allowProcessFallback || foregroundAutomationOnly {
+            if shouldActivateWindow {
                 try {
                     WinActivate "ahk_id " stableHwnd
                     WinWaitActive "ahk_id " stableHwnd, , 2
@@ -2101,7 +2116,7 @@ class FlowCellApp {
                 }
             }
 
-            app := this.GetIllustratorApplication(250, allowProcessFallback || foregroundAutomationOnly)
+            app := this.GetIllustratorApplication(250, shouldActivateWindow)
             returnValue := app.DoJavaScriptFile(scriptPath)
             this.IllustratorComRetryAfterTick := 0
             result.succeeded := true
@@ -4208,6 +4223,40 @@ class ScriptShortcutManager {
     }
 }
 
+class SetIllustratorAnchorAction {
+    __New(app) {
+        this.app := app
+        this.Id := "illustrator_set_anchor"
+        this.Label := "Set Anchor"
+        this.RequiresExactLayersScan := false
+        this.RunFromHotkeyDirect := true
+        this.HotIfWinTitle := "ahk_exe Illustrator.exe"
+        this.PassThroughHotkey := true
+    }
+
+    Run(scanResult) {
+        helperPath := GetFlowCellIllustratorAnchorScriptPath()
+        helperResult := this.app.RunIllustratorScript(
+            helperPath,
+            "set anchor hotkey",
+            0,
+            false,
+            true
+        )
+        anchorSet := helperResult.succeeded && InStr(helperResult.detail, "Status: anchor set")
+        return {
+            attempted: helperResult.attempted,
+            deliverySucceeded: helperResult.succeeded,
+            effectConfirmed: anchorSet,
+            method: helperResult.method,
+            detail: helperResult.detail,
+            note: anchorSet
+                ? "Anchor bounds were captured from the keypress selection."
+                : "Select one or more unlocked Illustrator objects, then run Set Anchor again."
+        }
+    }
+}
+
 class ActionHotkeyManager {
     __New(app, bindingFilePath, logger, candidateShortcuts) {
         this.app := app
@@ -4241,21 +4290,22 @@ class ActionHotkeyManager {
     TryRegisterHotkey(actionId, shortcut) {
         callback := ObjBindMethod(this, "OnHotkeyPressed", actionId)
         action := this.app.GetActionById(actionId)
+        registrationShortcut := ResolveActionHotkeyRegistrationShortcut(action, shortcut)
         hotIfWinTitle := IsObject(action) && action.HasOwnProp("HotIfWinTitle")
             ? Trim(action.HotIfWinTitle)
             : ""
         try {
             if hotIfWinTitle != ""
                 HotIfWinActive hotIfWinTitle
-            Hotkey shortcut, callback, "On"
+            Hotkey registrationShortcut, callback, "On"
             if hotIfWinTitle != ""
                 HotIfWinActive
             this.registered[actionId] := {
-                shortcut: shortcut,
+                shortcut: registrationShortcut,
                 callback: callback,
                 hotIfWinTitle: hotIfWinTitle
             }
-            this.logger.Info("Registered action hotkey. Action=" actionId " | Shortcut=" shortcut " | Scope=" hotIfWinTitle)
+            this.logger.Info("Registered action hotkey. Action=" actionId " | Shortcut=" shortcut " | RegisteredShortcut=" registrationShortcut " | Scope=" hotIfWinTitle)
             return "Active"
         } catch as err {
             if hotIfWinTitle != "" {
@@ -5117,6 +5167,18 @@ EnsureFlowCellDir(path) {
 
 BoolToWord(value) {
     return value ? "yes" : "no"
+}
+
+ResolveActionHotkeyRegistrationShortcut(action, shortcut) {
+    registrationShortcut := CanonicalizeShortcut(shortcut)
+    if registrationShortcut = ""
+        return ""
+    passThrough := IsObject(action)
+        && action.HasOwnProp("PassThroughHotkey")
+        && action.PassThroughHotkey
+    if passThrough && SubStr(registrationShortcut, 1, 1) != "~"
+        return "~" registrationShortcut
+    return registrationShortcut
 }
 
 SafeDisplay(value) {

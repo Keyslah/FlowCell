@@ -26,6 +26,10 @@ import {
 } from "./buttonStateValidation.js";
 import { createButtonSourceIdentity } from "./sourceIdentity.js";
 import { applyInstalledSourceUpdate } from "./sourceUpdateOperations.js";
+import {
+  validateButtonPlacementFile,
+  type ButtonPlacementFile
+} from "./buttonPlacementFile.js";
 
 export interface InstalledButtonChildResult {
   slot: string;
@@ -315,6 +319,29 @@ export async function saveButtonStateDocument(
   return parseLoadedDocument(response);
 }
 
+export async function saveButtonPlacementFile(
+  path: string,
+  file: ButtonPlacementFile
+): Promise<string> {
+  const validation = validateButtonPlacementFile(file);
+  if (!validation.valid) {
+    throw new Error(validation.issues.join("\n"));
+  }
+  if (!isTauriWindowHost()) {
+    throw new Error("Button placement files can only be saved from the FlowCell desktop host.");
+  }
+  return invoke<string>("save_button_placement_file", { path, file });
+}
+
+export async function saveButtonSkinFile(path: string, source: string): Promise<string> {
+  if (!path.trim()) throw new Error("Button skin save path cannot be empty.");
+  if (!source.trim()) throw new Error("Button skin source cannot be empty.");
+  if (!isTauriWindowHost()) {
+    throw new Error("Button skin files can only be saved from the FlowCell desktop host.");
+  }
+  return invoke<string>("save_button_skin_file", { path, source });
+}
+
 function normalizeInstallResult(
   request: InstallButtonSourceRequest,
   response: Record<string, unknown>
@@ -468,6 +495,7 @@ function addMigratedPlacement(
     zIndex: surface.placementIds.length,
     skinOverrideId: null,
     textFitMode: document.buttons[buttonId]?.defaultTextFitMode ?? "shrink",
+    textAlignment: "skin",
     minimumFontSize: document.settings.defaultMinimumFontSize,
     textSizeOverride: null,
     allowLabelResize: false,
@@ -737,18 +765,6 @@ export async function installButtonSource(
     throw new Error("Button sources can only be installed from the FlowCell desktop host.");
   }
   const response = await invoke<Record<string, unknown>>("install_button_source", { request: { ...request } });
-  return normalizeInstallResult(request, response);
-}
-
-export async function updateButtonSource(
-  request: InstallButtonSourceRequest
-): Promise<InstallButtonSourceResult> {
-  if (!isTauriWindowHost()) {
-    throw new Error("Button sources can only be updated from the FlowCell desktop host.");
-  }
-  const response = await invoke<Record<string, unknown>>("update_button_source", {
-    request: { ...request }
-  });
   return normalizeInstallResult(request, response);
 }
 

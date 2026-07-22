@@ -15,6 +15,7 @@
   "include": [
     "src/button/types.ts",
     "src/button/state/buttonDefaults.ts",
+    "src/button/state/buttonPlacementFile.ts",
     "src/button/state/ButtonStateRepository.ts",
     "src/button/state/buttonStateValidation.ts",
     "src/button/state/buttonDocumentOperations.ts",
@@ -32,6 +33,8 @@
     "src/button/geometry/buttonGeometry.ts",
     "src/button/geometry/labelGrowth.ts",
     "src/button/editor/buttonEditorSelection.ts",
+    "src/button/editor/buttonEditorSaveScopes.ts",
+    "src/button/editor/buttonSizeAssignments.ts",
     "src/button/editor/buttonFanDisclosure.ts",
     "src/button/editor/buttonMeasurementReconciliation.ts",
     "src/button/editor/stagedInstallCleanup.ts",

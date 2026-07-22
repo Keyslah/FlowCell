@@ -2,7 +2,7 @@
 [CmdletBinding()]
 param(
   [string]$RepoRoot,
-  [string]$PipeName = 'FlowCell.Illustrator.Bridge.v1',
+  [string]$PipeName = 'FlowCell.Illustrator.Bridge.v2',
   [string]$PidPath,
   [string]$LogPath,
   [switch]$NoPrewarm
@@ -36,6 +36,7 @@ $script:LogPath = if ([string]::IsNullOrWhiteSpace($LogPath)) {
   [System.IO.Path]::GetFullPath($LogPath)
 }
 $script:IllustratorApp = $null
+$script:BridgeProtocolVersion = 2
 
 function Write-BridgeLog {
   param(
@@ -54,6 +55,7 @@ function Write-BridgeLog {
 
 function ConvertTo-ResponseLine {
   param([Parameter(Mandatory = $true)]$Value)
+  $Value | Add-Member -NotePropertyName protocolVersion -NotePropertyValue $script:BridgeProtocolVersion -Force
   return ($Value | ConvertTo-Json -Compress -Depth 20)
 }
 
@@ -98,6 +100,8 @@ function Resolve-InstalledScriptPath {
 }
 
 function Get-IllustratorApplication {
+  param([switch]$ExistingOnly)
+
   if ($null -ne $script:IllustratorApp) {
     try {
       [void]$script:IllustratorApp.Version
@@ -111,6 +115,9 @@ function Get-IllustratorApplication {
   try {
     $script:IllustratorApp = [Runtime.InteropServices.Marshal]::GetActiveObject('Illustrator.Application')
   } catch {
+    if ($ExistingOnly) {
+      throw
+    }
     $script:IllustratorApp = New-Object -ComObject Illustrator.Application
   }
 
@@ -233,6 +240,18 @@ function Handle-Request {
         apartment = [System.Threading.Thread]::CurrentThread.GetApartmentState().ToString()
       }
     }
+    'prewarm' {
+      $timer = [System.Diagnostics.Stopwatch]::StartNew()
+      [void](Get-IllustratorApplication -ExistingOnly)
+      $timer.Stop()
+      Write-BridgeLog "Illustrator COM prewarm completed in $($timer.ElapsedMilliseconds) ms"
+      return [pscustomobject]@{
+        ok = $true
+        requestId = $requestId
+        pid = $PID
+        elapsedMs = $timer.ElapsedMilliseconds
+      }
+    }
     'run' {
       $actionId = [string]$Request.actionId
       if ([string]::IsNullOrWhiteSpace($actionId)) {
@@ -270,18 +289,21 @@ if ([System.Threading.Thread]::CurrentThread.GetApartmentState() -ne [System.Thr
   throw 'Start-IllustratorFlowCellBridge.ps1 must run in an STA PowerShell host. Use powershell.exe -Sta.'
 }
 
-Write-PidFile
-Write-BridgeLog "Illustrator bridge started on pipe '$PipeName' with PID $PID"
-
-if (-not $NoPrewarm) {
-  try {
-    [void](Get-IllustratorApplication)
-    Write-BridgeLog 'Illustrator COM prewarm completed'
-  } catch {
-    Write-BridgeLog "Illustrator COM prewarm deferred: $($_.Exception.Message)" 'WARN'
-  }
+$mutexToken = $PipeName -replace '[^A-Za-z0-9_.-]', '_'
+$bridgeProcessMutex = [System.Threading.Mutex]::new($false, "Global\FlowCell.Illustrator.Bridge.Process.$mutexToken")
+$ownsBridgeProcessMutex = $false
+try {
+  $ownsBridgeProcessMutex = $bridgeProcessMutex.WaitOne(0)
+} catch [System.Threading.AbandonedMutexException] {
+  $ownsBridgeProcessMutex = $true
+}
+if (-not $ownsBridgeProcessMutex) {
+  Write-BridgeLog "Another Illustrator bridge process already owns pipe '$PipeName'; exiting duplicate PID $PID." 'WARN'
+  $bridgeProcessMutex.Dispose()
+  exit 0
 }
 
+$initialized = $false
 while ($true) {
   $server = $null
   $reader = $null
@@ -296,6 +318,19 @@ while ($true) {
       [System.IO.Pipes.PipeTransmissionMode]::Byte,
       [System.IO.Pipes.PipeOptions]::None
     )
+    if (-not $initialized) {
+      Write-PidFile
+      Write-BridgeLog "Illustrator bridge started on pipe '$PipeName' with PID $PID"
+      if (-not $NoPrewarm) {
+        try {
+          [void](Get-IllustratorApplication)
+          Write-BridgeLog 'Illustrator COM prewarm completed'
+        } catch {
+          Write-BridgeLog "Illustrator COM prewarm deferred: $($_.Exception.Message)" 'WARN'
+        }
+      }
+      $initialized = $true
+    }
     $server.WaitForConnection()
 
     $reader = [System.IO.StreamReader]::new($server)
@@ -319,6 +354,10 @@ while ($true) {
     }
   } catch {
     $message = $_.Exception.Message
+    if ($message -match '(?i)all pipe instances are busy') {
+      Write-BridgeLog "Another Illustrator bridge process already owns pipe '$PipeName'; exiting duplicate PID $PID." 'WARN'
+      break
+    }
     Write-BridgeLog $message 'ERROR'
     if ($null -ne $writer) {
       $writer.WriteLine((ConvertTo-ResponseLine -Value ([pscustomobject]@{
@@ -342,3 +381,8 @@ while ($true) {
     }
   }
 }
+
+if ($ownsBridgeProcessMutex) {
+  $bridgeProcessMutex.ReleaseMutex()
+}
+$bridgeProcessMutex.Dispose()

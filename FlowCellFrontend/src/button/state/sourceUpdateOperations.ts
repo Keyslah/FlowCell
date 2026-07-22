@@ -87,6 +87,7 @@ function appendMissingToolSetChildren(
       zIndex: surface.placementIds.length,
       skinOverrideId: null,
       textFitMode: "shrink",
+      textAlignment: "skin",
       minimumFontSize: document.settings.defaultMinimumFontSize,
       textSizeOverride: null,
       allowLabelResize: false,

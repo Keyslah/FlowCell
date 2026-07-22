@@ -4,24 +4,26 @@ This note describes FlowCell's Illustrator `Ill Align` toolset. The tool moves s
 
 ## How It Works
 
-Install the Illustrator payload, then assign `Illustrator > Actions > Set Anchor` any available shortcut in Binds. Select one or more Illustrator page items and use that shortcut to store the current selection as the anchor. The helper stores only the selection's current visible-bounds box and center point in `flowcellbackend/local/illustrator_anchor_bounds.json`.
+Install the Illustrator payload, then assign `Illustrator > Actions > Set Anchor` any available shortcut in Binds. While Illustrator is foreground, select one or more Illustrator page items and use that shortcut to store the current selection as the anchor. Set Anchor uses a pass-through hotkey, so assigning an existing Illustrator key such as `V` does not suppress that key's native Illustrator command. Its foreground automation call completes the bounds capture before the hotkey action returns, preventing a later selection from replacing the intended anchor during a delayed process launch. The helper stores only the selection's current visible-bounds box and center point in `flowcellbackend/local/illustrator_anchor_bounds.json`.
 
 After the anchor is set, select the object or objects you want to move and press an align button. Anchor-based moves use the stored bounds and center as a fixed target and include every selected page item, including the object that originally captured the anchor. The `Art` button targets the active artboard directly.
+
+The X and Y rows each have three independent states: neither mode (the default), `Origin`, or `Surface`. With neither mode pressed, Min and Max align matching visible edges. Clicking Surface or Origin selects only that mode on that axis and releases its partner; clicking the already-selected mode releases it so both buttons are up again. Changing X never changes Y. Mode clicks perform no movement. Min and Max use the active state, while Center always aligns centers and does not change it.
 
 ## Button Reference
 
 | Button | Description |
 | --- | --- |
-| `X Min` | Moves each selected object so its left visible edge matches the anchor's left visible edge. |
-| `X Center` | Moves each selected object horizontally so its visible center matches the anchor's horizontal center. |
-| `X Max` | Moves each selected object so its right visible edge matches the anchor's right visible edge. |
-| `X Surface` | Toggles surface mode for the X row. With surface mode active, `X Min` places the selected object's right edge against the anchor's left edge, `X Max` places the selected object's left edge against the anchor's right edge, and `X Center` chooses the nearest outside side based on which side of the anchor the object is on. |
-| `X Origin` | Toggles origin mode for the X row. In the Illustrator variant this uses the same horizontal center move as normal X center alignment. |
-| `Y Min` | Moves each selected object so its bottom visible edge matches the anchor's bottom visible edge. |
-| `Y Center` | Moves each selected object vertically so its visible center matches the anchor's vertical center. |
-| `Y Max` | Moves each selected object so its top visible edge matches the anchor's top visible edge. |
-| `Y Surface` | Toggles surface mode for the Y row. With surface mode active, `Y Min` places the selected object's top edge against the anchor's bottom edge, `Y Max` places the selected object's bottom edge against the anchor's top edge, and `Y Center` chooses the nearest outside side based on whether the object is below or above the anchor. |
-| `Y Origin` | Toggles origin mode for the Y row. In the Illustrator variant this uses the same vertical center move as normal Y center alignment. |
+| `X Min` | With neither mode selected, matches the selected object's left edge to the anchor's left edge. In Origin mode, moves the selected object's horizontal center to the anchor's left edge. In Surface mode, places the selected object's right edge against the anchor's left edge. |
+| `X Center` | Moves the selected object horizontally so its visible center matches the anchor's horizontal center, regardless of mode. |
+| `X Max` | With neither mode selected, matches the selected object's right edge to the anchor's right edge. In Origin mode, moves the selected object's horizontal center to the anchor's right edge. In Surface mode, places the selected object's left edge against the anchor's right edge. |
+| `X Surface` | Toggles Surface mode for X without moving anything. Selecting it releases X Origin; clicking it again releases Surface. |
+| `X Origin` | Toggles Origin mode for X without moving anything. Selecting it releases X Surface; clicking it again releases Origin. |
+| `Y Min` | With neither mode selected, matches the selected object's bottom edge to the anchor's bottom edge. In Origin mode, moves the selected object's vertical center to the anchor's bottom edge. In Surface mode, places the selected object's top edge against the anchor's bottom edge. |
+| `Y Center` | Moves the selected object vertically so its visible center matches the anchor's vertical center, regardless of mode. |
+| `Y Max` | With neither mode selected, matches the selected object's top edge to the anchor's top edge. In Origin mode, moves the selected object's vertical center to the anchor's top edge. In Surface mode, places the selected object's bottom edge against the anchor's top edge. |
+| `Y Surface` | Toggles Surface mode for Y without moving anything. Selecting it releases Y Origin; clicking it again releases Surface. |
+| `Y Origin` | Toggles Origin mode for Y without moving anything. Selecting it releases Y Surface; clicking it again releases Origin. |
 | `Art` | Centers every selected page item on the active Illustrator artboard instead of the stored anchor. |
 | `Anchor` | Centers every selected page item on the stored FlowCell anchor in both X and Y. |
 | `Group` | Toggles virtual group movement. When active, FlowCell calculates one combined visible-bounds box and moves the participating items by the same delta, preserving their spacing. |

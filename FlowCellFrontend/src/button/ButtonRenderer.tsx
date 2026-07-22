@@ -26,6 +26,7 @@ export interface ButtonRendererProps {
     field: ButtonToolField,
     currentValue: JsonValue
   ) => Promise<JsonValue | undefined>;
+  onRequestInlineEditorFocus?: () => void | Promise<void>;
   onSelect?: (placementId: string, event: PointerEvent | KeyboardEvent) => void;
   onActivate?: (placementId: string, button: ButtonRecord, event: PointerEvent | KeyboardEvent) => void | Promise<void>;
   onOwnerActivate?: (placementId: string, button: ButtonRecord, event: PointerEvent | KeyboardEvent) => void | Promise<void>;
@@ -54,6 +55,7 @@ export function ButtonRenderer({
   fieldValues,
   onFieldPatch,
   onFieldActivate,
+  onRequestInlineEditorFocus,
   onSelect,
   onActivate,
   onOwnerActivate,
@@ -104,6 +106,7 @@ export function ButtonRenderer({
         fieldValues={fieldValues}
         onFieldActivate={onFieldActivate}
         onFieldPatch={onFieldPatch}
+        onRequestInlineEditorFocus={onRequestInlineEditorFocus}
         onSelect={(event) => onSelect?.(placement.id, event)}
         onActivate={activationHandler ? (_button, event) => activationHandler(placement.id, button, event) : undefined}
         onDoubleActivate={onDoubleActivate ? (_button, event) => onDoubleActivate(placement.id, button, event) : undefined}

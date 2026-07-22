@@ -30,6 +30,7 @@ export interface ButtonHostProps {
   skin: ButtonSkin;
   mode?: ButtonEditorMode;
   selected?: boolean;
+  selectionOnly?: boolean;
   constrained?: boolean;
   fields?: readonly ButtonToolField[];
   fieldValues?: Readonly<Record<string, JsonValue>>;
@@ -41,6 +42,7 @@ export interface ButtonHostProps {
     field: ButtonToolField,
     currentValue: JsonValue
   ) => Promise<JsonValue | undefined>;
+  onRequestInlineEditorFocus?: () => void | Promise<void>;
   onSelect?: (event: PointerEvent | KeyboardEvent) => void;
   onActivate?: (button: ButtonRecord, event: PointerEvent | KeyboardEvent) => void | Promise<void>;
   onDoubleActivate?: (button: ButtonRecord, event: MouseEvent) => void | Promise<void>;
@@ -61,17 +63,39 @@ const RELEASE_MS = 140;
 const ERROR_MS = 1800;
 const PLAY_SAFETY_MS = 15_000;
 
+function eventTargetsInlineEditor(event: Event): boolean {
+  return event.composedPath().some(
+    (target) => target instanceof Element && target.hasAttribute("data-button-inline-editor")
+  );
+}
+
+function selectInlineEditorContents(element: HTMLElement): void {
+  const selection = window.getSelection();
+  if (!selection) return;
+  const range = document.createRange();
+  range.selectNodeContents(element);
+  selection.removeAllRanges();
+  selection.addRange(range);
+}
+
+function focusAndSelectInlineEditor(element: HTMLElement): void {
+  element.focus({ preventScroll: true });
+  selectInlineEditorContents(element);
+}
+
 export function ButtonHost({
   button,
   placement,
   skin,
   mode = "run",
   selected = false,
+  selectionOnly = false,
   constrained = true,
   fields,
   fieldValues,
   onFieldPatch,
   onFieldActivate,
+  onRequestInlineEditorFocus,
   onSelect,
   onActivate,
   onDoubleActivate,
@@ -87,6 +111,7 @@ export function ButtonHost({
   onNaturalMeasurement
 }: ButtonHostProps) {
   const [coreElement, setCoreElement] = useState<HTMLElement | SVGElement | null>(null);
+  const [labelElement, setLabelElement] = useState<HTMLElement | SVGElement | null>(null);
   const [shadowRoot, setShadowRoot] = useState<ShadowRoot | null>(null);
   const [hovered, setHovered] = useState(false);
   const [pressed, setPressed] = useState(false);
@@ -109,14 +134,18 @@ export function ButtonHost({
   const eventQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingHoverLeaveRef = useRef(false);
   const syntheticHoverSessionRef = useRef(false);
+  const inlineEditorElementRef = useRef<HTMLElement | null>(null);
   // Volatile inputs flow through refs so the pointer/keyboard listeners stay
   // attached across re-renders; detaching mid-hover fakes a hoverLeave and
   // strands the hover state.
   const modeRef = useRef(mode);
+  const selectionOnlyRef = useRef(selectionOnly);
   const buttonRef = useRef(button);
   const onSelectRef = useRef(onSelect);
   const onDoubleActivateRef = useRef(onDoubleActivate);
   const onRequestContextMenuRef = useRef(onRequestContextMenu);
+  const onRequestInlineEditorFocusRef = useRef(onRequestInlineEditorFocus);
+  const onFieldPatchRef = useRef(onFieldPatch);
   const onHoverStartRef = useRef(onHoverStart);
   const onHoverEndRef = useRef(onHoverEnd);
   const onHoverCancelRef = useRef(onHoverCancel);
@@ -128,6 +157,8 @@ export function ButtonHost({
   onSelectRef.current = onSelect;
   onDoubleActivateRef.current = onDoubleActivate;
   onRequestContextMenuRef.current = onRequestContextMenu;
+  onRequestInlineEditorFocusRef.current = onRequestInlineEditorFocus;
+  onFieldPatchRef.current = onFieldPatch;
   onHoverStartRef.current = onHoverStart;
   onHoverEndRef.current = onHoverEnd;
   onHoverCancelRef.current = onHoverCancel;
@@ -149,6 +180,14 @@ export function ButtonHost({
     release: visualRelease,
     error
   };
+  const inlineEditFieldId = button.toolSetBehavior?.inlineEditField;
+  const inlineEditField = fields?.find((field) => (
+    field.id === inlineEditFieldId && (field.kind === "number" || field.kind === "text")
+  ));
+  const inlineEditValue = inlineEditField
+    ? fieldValues?.[inlineEditField.id] ?? inlineEditField.defaultValue
+    : undefined;
+  const renderedLabel = inlineEditField ? String(inlineEditValue ?? "") : button.label;
 
   const clearTimer = (timer: { current: number | null }) => {
     if (timer.current !== null) window.clearTimeout(timer.current);
@@ -174,9 +213,126 @@ export function ButtonHost({
     }));
   }, []);
 
+  selectionOnlyRef.current = selectionOnly;
+
+  useEffect(() => {
+    const element = labelElement;
+    const field = inlineEditField;
+    if (!element || !field || mode !== "run" || button.disabled) return;
+    if (!(element instanceof HTMLElement)) {
+      console.error(`Button '${button.label}' cannot inline-edit an SVG label node.`);
+      return;
+    }
+    inlineEditorElementRef.current = element;
+    const currentValue = inlineEditValue ?? field.defaultValue;
+    const managedAttributes = [
+      "aria-label",
+      "aria-valuemax",
+      "aria-valuemin",
+      "aria-valuenow",
+      "contenteditable",
+      "data-button-inline-editor",
+      "inputmode",
+      "role",
+      "spellcheck",
+      "tabindex"
+    ];
+    const previousAttributes = new Map(
+      managedAttributes.map((attribute) => [attribute, element.getAttribute(attribute)])
+    );
+    const managedStyles = ["cursor", "outline", "pointer-events", "user-select"];
+    const previousStyles = new Map(
+      managedStyles.map((property) => [property, element.style.getPropertyValue(property)])
+    );
+    element.setAttribute("data-button-inline-editor", "true");
+    element.setAttribute("contenteditable", "true");
+    element.setAttribute("role", field.kind === "number" ? "spinbutton" : "textbox");
+    element.setAttribute("aria-label", field.label || "Value");
+    element.setAttribute("tabindex", "0");
+    element.setAttribute("spellcheck", "false");
+    if (field.kind === "number") {
+      element.setAttribute("inputmode", "decimal");
+      if (field.minimum !== undefined) element.setAttribute("aria-valuemin", String(field.minimum));
+      if (field.maximum !== undefined) element.setAttribute("aria-valuemax", String(field.maximum));
+      element.setAttribute("aria-valuenow", String(currentValue));
+    }
+    Object.assign(element.style, {
+      cursor: "text",
+      outline: "none",
+      pointerEvents: "auto",
+      userSelect: "text"
+    });
+
+    const restore = () => {
+      element.textContent = String(currentValue ?? "");
+    };
+    const commit = () => {
+      const raw = element.textContent?.trim() ?? "";
+      const nextValue = field.kind === "number" ? Number(raw) : raw;
+      if (field.kind === "number" && (!raw || !Number.isFinite(nextValue))) {
+        restore();
+        return;
+      }
+      onFieldPatchRef.current?.(
+        { [field.id]: nextValue },
+        { ...(fieldValues ?? {}), [field.id]: nextValue }
+      );
+    };
+    const handleFocus = () => {
+      selectInlineEditorContents(element);
+    };
+    let skipNextBlurCommit = false;
+    const handleKeyDown = (event: Event) => {
+      const keyboardEvent = event as KeyboardEvent;
+      keyboardEvent.stopPropagation();
+      if (keyboardEvent.key === "Enter") {
+        keyboardEvent.preventDefault();
+        element.blur();
+      } else if (keyboardEvent.key === "Escape") {
+        keyboardEvent.preventDefault();
+        skipNextBlurCommit = true;
+        restore();
+        element.blur();
+      }
+    };
+    const handleBlur = () => {
+      if (skipNextBlurCommit) {
+        skipNextBlurCommit = false;
+        return;
+      }
+      commit();
+    };
+    element.addEventListener("focus", handleFocus);
+    element.addEventListener("keydown", handleKeyDown);
+    element.addEventListener("blur", handleBlur);
+    return () => {
+      if (inlineEditorElementRef.current === element) {
+        inlineEditorElementRef.current = null;
+      }
+      element.removeEventListener("focus", handleFocus);
+      element.removeEventListener("keydown", handleKeyDown);
+      element.removeEventListener("blur", handleBlur);
+      for (const [attribute, previousValue] of previousAttributes) {
+        if (previousValue === null) element.removeAttribute(attribute);
+        else element.setAttribute(attribute, previousValue);
+      }
+      for (const [property, previousValue] of previousStyles) {
+        if (!previousValue) element.style.removeProperty(property);
+        else element.style.setProperty(property, previousValue);
+      }
+    };
+  }, [button.disabled, fieldValues, inlineEditField, inlineEditValue, labelElement, mode]);
+
   const runEvent = useCallback(async (eventName: string, activationEvent?: PointerEvent | KeyboardEvent) => {
     if (mode === "edit" || button.disabled) return;
     try {
+      if (selectionOnly) {
+        if (eventName === "click" && onActivate && activationEvent) {
+          await onActivate(button, activationEvent);
+          onExecutionResult?.({ executed: false, fieldValues: fieldValues ?? {}, fieldPatch: {} });
+        }
+        return;
+      }
       if (eventName === "click" && onActivate && activationEvent) {
         if (
           button.role === "panel-owner" ||
@@ -209,7 +365,7 @@ export function ButtonHost({
         fieldPatch: {}
       });
     }
-  }, [mode, button, onActivate, onExecutionResult, fields, fieldValues, onFieldActivate, onFieldPatch]);
+  }, [mode, button, selectionOnly, onActivate, onExecutionResult, fields, fieldValues, onFieldActivate, onFieldPatch]);
   const runEventRef = useRef(runEvent);
   runEventRef.current = runEvent;
   const enqueueEvent = useCallback((
@@ -224,17 +380,26 @@ export function ButtonHost({
 
   useEffect(() => {
     if (!coreElement) return;
-    coreElement.setAttribute("role", "button");
-    coreElement.setAttribute("aria-label", button.label || "FlowCell Button");
+    coreElement.setAttribute("role", inlineEditField ? "group" : "button");
+    coreElement.setAttribute(
+      "aria-label",
+      inlineEditField ? `${inlineEditField.label || "Value"}: ${renderedLabel}` : button.label || "FlowCell Button"
+    );
     coreElement.setAttribute("aria-disabled", button.disabled ? "true" : "false");
     coreElement.setAttribute("aria-pressed", selected ? "true" : "false");
     if (button.tooltip) coreElement.setAttribute("title", button.tooltip);
     else coreElement.removeAttribute("title");
-    coreElement.setAttribute("tabindex", mode === "run" && !button.disabled ? "0" : "-1");
+    coreElement.setAttribute("tabindex", mode === "run" && !button.disabled && !inlineEditField ? "0" : "-1");
     coreElement.setAttribute("data-button-id", button.id);
     coreElement.setAttribute("data-button-core-interactive", "true");
-    (coreElement as HTMLElement).style.cursor = mode === "edit" ? "move" : button.disabled ? "not-allowed" : "pointer";
-  }, [coreElement, button, mode, selected]);
+    (coreElement as HTMLElement).style.cursor = mode === "edit"
+      ? "move"
+      : button.disabled
+        ? "not-allowed"
+        : inlineEditField
+          ? "text"
+          : "pointer";
+  }, [coreElement, button, inlineEditField, mode, renderedLabel, selected]);
 
   useEffect(() => {
     if (!coreElement) return;
@@ -246,11 +411,18 @@ export function ButtonHost({
         return;
       }
       if (pointerActiveRef.current) return;
-      const pressEventPlan = resolveButtonPressEventPlan(buttonRef.current);
+      const pressEventPlan = selectionOnlyRef.current
+        ? {
+            dispatchPressDown: false,
+            dispatchPressUp: false,
+            runClickOnRelease: true,
+            synthesizeHoverSessionForKeyboard: false
+          }
+        : resolveButtonPressEventPlan(buttonRef.current);
       pressEventPlanRef.current = pressEventPlan;
       pointerActiveRef.current = true;
       setPressed(true);
-      startPlay();
+      if (!selectionOnlyRef.current) startPlay();
       clearTimer(holdTimerRef);
       holdTimerRef.current = window.setTimeout(() => setHeld(true), HOLD_MS);
       const synthesizeHoverSession = (
@@ -364,13 +536,41 @@ export function ButtonHost({
     const handlePointerDown = (event: Event) => {
       const pointerEvent = event as PointerEvent;
       if (pointerEvent.button !== 0) return;
-      event.preventDefault();
+      const inlineEditor = eventTargetsInlineEditor(event);
+      const inlineEditorElement = inlineEditorElementRef.current;
+      if (!inlineEditor) {
+        event.preventDefault();
+      }
+      if (inlineEditorElement && modeRef.current === "run" && !buttonRef.current.disabled) {
+        const focusEditor = () => {
+          if (
+            inlineEditorElementRef.current !== inlineEditorElement ||
+            !inlineEditorElement.isConnected
+          ) return;
+          focusAndSelectInlineEditor(inlineEditorElement);
+        };
+        focusEditor();
+        const requestInlineEditorFocus = onRequestInlineEditorFocusRef.current;
+        if (requestInlineEditorFocus) {
+          void (async () => {
+            try {
+              await requestInlineEditorFocus();
+              focusEditor();
+            } catch (focusError) {
+              console.error(
+                `Button '${buttonRef.current.label}' could not focus its inline editor window.`,
+                focusError
+              );
+            }
+          })();
+        }
+      }
       event.stopPropagation();
-      interactionElement.setPointerCapture?.(pointerEvent.pointerId);
+      if (!inlineEditor) interactionElement.setPointerCapture?.(pointerEvent.pointerId);
       beginPress(pointerEvent);
     };
     const handlePointerUp = (event: Event) => {
-      event.preventDefault();
+      if (!eventTargetsInlineEditor(event)) event.preventDefault();
       event.stopPropagation();
       finishPress(event as PointerEvent);
     };
@@ -402,6 +602,7 @@ export function ButtonHost({
       handler(buttonRef.current, event as MouseEvent);
     };
     const handleKeyDown = (event: Event) => {
+      if (eventTargetsInlineEditor(event)) return;
       const keyboardEvent = event as KeyboardEvent;
       if ((keyboardEvent.key === "Enter" || keyboardEvent.key === " ") && !keyboardEvent.repeat) {
         keyboardEvent.preventDefault();
@@ -409,6 +610,7 @@ export function ButtonHost({
       }
     };
     const handleKeyUp = (event: Event) => {
+      if (eventTargetsInlineEditor(event)) return;
       const keyboardEvent = event as KeyboardEvent;
       if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
         keyboardEvent.preventDefault();
@@ -501,13 +703,14 @@ export function ButtonHost({
     >
       <ButtonSkinRenderer
         skin={skin}
-        label={button.label}
+        label={renderedLabel}
         width={placement.width}
         height={placement.height}
         constrained={constrained}
         matchHitboxToSkin={placement.matchHitboxToSkin}
         allowStretching={placement.allowStretching}
         textFitMode={placement.textFitMode}
+        textAlignment={placement.textAlignment}
         minimumFontSize={placement.minimumFontSize}
         textSizeOverride={placement.textSizeOverride ?? undefined}
         hovered={hovered}
@@ -519,6 +722,7 @@ export function ButtonHost({
         disabled={button.disabled}
         error={error}
         onCoreElementChange={setCoreElement}
+        onLabelElementChange={setLabelElement}
         onShadowRootChange={setShadowRoot}
         onMeasurement={onMeasurement}
         onVisualMeasurement={onVisualMeasurement}
