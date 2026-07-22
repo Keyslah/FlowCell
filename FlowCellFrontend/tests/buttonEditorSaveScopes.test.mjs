@@ -10,10 +10,12 @@ import {
   applyButtonBehaviorSavedScope,
   applyButtonPlacementSavedScope,
   applyButtonSkinSavedScope,
+  applyButtonTextSavedScope,
   buildButtonAnimationScopedDocument,
   buildButtonBehaviorScopedDocument,
   buildButtonPlacementScopedDocument,
   buildButtonSkinScopedDocument,
+  buildButtonTextScopedDocument,
   skinHasReferencesOutsidePlacements
 } from "./.compiled-button-system/button/editor/buttonEditorSaveScopes.js";
 
@@ -50,6 +52,8 @@ function documentWithButton() {
     textAlignment: "skin",
     minimumFontSize: 8,
     textSizeOverride: null,
+    textOffsetX: 0,
+    textOffsetY: 0,
     allowLabelResize: true,
     matchHitboxToSkin: true,
     allowStretching: false,
@@ -78,6 +82,8 @@ test("placement save commits arrangement without consuming pending skin or anima
     textAlignment: "center",
     minimumFontSize: 11,
     textSizeOverride: 18,
+    textOffsetX: -4,
+    textOffsetY: 7,
     allowLabelResize: false,
     matchHitboxToSkin: false,
     allowStretching: false,
@@ -103,6 +109,8 @@ test("placement save commits arrangement without consuming pending skin or anima
       textAlignment: saved.placements["placement-one"].textAlignment,
       minimumFontSize: saved.placements["placement-one"].minimumFontSize,
       textSizeOverride: saved.placements["placement-one"].textSizeOverride,
+      textOffsetX: saved.placements["placement-one"].textOffsetX,
+      textOffsetY: saved.placements["placement-one"].textOffsetY,
       allowLabelResize: saved.placements["placement-one"].allowLabelResize,
       matchHitboxToSkin: saved.placements["placement-one"].matchHitboxToSkin,
       allowStretching: saved.placements["placement-one"].allowStretching
@@ -116,6 +124,8 @@ test("placement save commits arrangement without consuming pending skin or anima
       textAlignment: "center",
       minimumFontSize: 11,
       textSizeOverride: 18,
+      textOffsetX: -4,
+      textOffsetY: 7,
       allowLabelResize: false,
       matchHitboxToSkin: false,
       allowStretching: false
@@ -130,6 +140,8 @@ test("placement save commits arrangement without consuming pending skin or anima
     textAlignment: "skin",
     minimumFontSize: 7,
     textSizeOverride: null,
+    textOffsetX: 0,
+    textOffsetY: 0,
     allowLabelResize: true,
     matchHitboxToSkin: true,
     allowStretching: true
@@ -141,6 +153,8 @@ test("placement save commits arrangement without consuming pending skin or anima
   assert.equal(draft.placements["placement-one"].textAlignment, "center");
   assert.equal(draft.placements["placement-one"].minimumFontSize, 11);
   assert.equal(draft.placements["placement-one"].textSizeOverride, 18);
+  assert.equal(draft.placements["placement-one"].textOffsetX, -4);
+  assert.equal(draft.placements["placement-one"].textOffsetY, 7);
   assert.equal(draft.placements["placement-one"].allowLabelResize, false);
   assert.equal(draft.placements["placement-one"].matchHitboxToSkin, false);
   assert.equal(draft.placements["placement-one"].allowStretching, false);
@@ -181,7 +195,7 @@ test("placement conflict rebase preserves concurrent deletions and adds only edi
   assert.equal(rebased.revision, 4);
 });
 
-test("skin save commits only the skin, explicit assignment, and Button text", () => {
+test("skin save commits only the skin and explicit assignment", () => {
   const committed = documentWithButton();
   committed.skins["skin-custom"] = {
     ...structuredClone(committed.skins[committed.settings.defaultSkinId]),
@@ -200,8 +214,7 @@ test("skin save commits only the skin, explicit assignment, and Button text", ()
   draft.buttons.one.label = "Renamed";
   const scope = {
     skinIds: ["skin-custom"],
-    placementIds: ["placement-one"],
-    buttonIds: ["one"]
+    placementIds: ["placement-one"]
   };
 
   const saved = buildButtonSkinScopedDocument(committed, draft, scope);
@@ -213,7 +226,7 @@ test("skin save commits only the skin, explicit assignment, and Button text", ()
   assert.equal(saved.placements["placement-one"].textAlignment, "skin");
   assert.equal(saved.placements["placement-one"].textSizeOverride, null);
   assert.equal(saved.placements["placement-one"].matchHitboxToSkin, true);
-  assert.equal(saved.buttons.one.label, "Renamed");
+  assert.equal(saved.buttons.one.label, "One");
 
   applyButtonSkinSavedScope(draft, saved, scope);
   assert.equal(draft.placements["placement-one"].x, 333);
@@ -222,9 +235,10 @@ test("skin save commits only the skin, explicit assignment, and Button text", ()
   assert.equal(draft.placements["placement-one"].textAlignment, "right");
   assert.equal(draft.placements["placement-one"].textSizeOverride, 21);
   assert.equal(draft.placements["placement-one"].matchHitboxToSkin, false);
+  assert.equal(draft.buttons.one.label, "Renamed");
 });
 
-test("Button behavior save commits labels, logical states, and placement visual mapping only", () => {
+test("Button behavior save commits state structure and visual mapping without pending Button Text", () => {
   const committed = documentWithButton();
   const draft = structuredClone(committed);
   draft.buttons.one.label = "Off";
@@ -241,30 +255,114 @@ test("Button behavior save commits labels, logical states, and placement visual 
   };
   draft.placements["placement-one"].x = 333;
   draft.placements["placement-one"].textFitMode = "stack-whole-words";
+  draft.placements["placement-one"].textAlignment = "right";
+  draft.placements["placement-one"].minimumFontSize = 11;
+  draft.placements["placement-one"].textSizeOverride = 18;
+  draft.placements["placement-one"].textOffsetX = -6;
+  draft.placements["placement-one"].textOffsetY = 9;
+  draft.placements["placement-one"].allowLabelResize = false;
 
   const scope = { buttonId: "one", placementIds: ["placement-one"] };
   const saved = buildButtonBehaviorScopedDocument(committed, draft, scope);
-  assert.equal(saved.buttons.one.label, "Off");
-  assert.deepEqual(saved.buttons.one.activationBehavior, draft.buttons.one.activationBehavior);
+  assert.equal(saved.buttons.one.label, "One");
+  assert.equal(saved.buttons.one.activationBehavior.mode, "toggle");
+  assert.deepEqual(saved.buttons.one.activationBehavior.states, [
+    { id: "off", label: "One", labelOverrides: {} },
+    { id: "on", label: "One", labelOverrides: {} }
+  ]);
   assert.deepEqual(
     saved.placements["placement-one"].visualStateMap,
     draft.placements["placement-one"].visualStateMap
   );
   assert.equal(saved.placements["placement-one"].x, 10);
   assert.equal(saved.placements["placement-one"].textFitMode, "shrink");
+  assert.equal(saved.placements["placement-one"].textAlignment, "skin");
+  assert.equal(saved.placements["placement-one"].textOffsetX, 0);
+  assert.equal(saved.placements["placement-one"].textOffsetY, 0);
 
   draft.buttons.one.label = "Pending label";
-  draft.buttons.one.activationBehavior = null;
+  draft.buttons.one.activationBehavior.mode = "cycle";
+  draft.buttons.one.activationBehavior.states[0].label = "Pending off";
+  draft.buttons.one.activationBehavior.states[0].labelOverrides = { hover: "Pending hover" };
   draft.placements["placement-one"].visualStateMap = null;
   applyButtonBehaviorSavedScope(draft, saved, scope);
-  assert.equal(draft.buttons.one.label, "Off");
-  assert.deepEqual(draft.buttons.one.activationBehavior, saved.buttons.one.activationBehavior);
+  assert.equal(draft.buttons.one.label, "Pending label");
+  assert.equal(draft.buttons.one.activationBehavior.mode, "toggle");
+  assert.equal(draft.buttons.one.activationBehavior.states[0].label, "Pending off");
+  assert.deepEqual(
+    draft.buttons.one.activationBehavior.states[0].labelOverrides,
+    { hover: "Pending hover" }
+  );
   assert.deepEqual(
     draft.placements["placement-one"].visualStateMap,
     saved.placements["placement-one"].visualStateMap
   );
   assert.equal(draft.placements["placement-one"].x, 333);
   assert.equal(draft.placements["placement-one"].textFitMode, "stack-whole-words");
+  assert.equal(draft.placements["placement-one"].textOffsetX, -6);
+  assert.equal(draft.placements["placement-one"].textOffsetY, 9);
+});
+
+test("Button Text Apply All saves only labels and the focused placement text preview", () => {
+  const committed = documentWithButton();
+  committed.buttons.one.activationBehavior = {
+    mode: "toggle",
+    states: [
+      { id: "off", label: "Off", labelOverrides: {} },
+      { id: "on", label: "On", labelOverrides: {} }
+    ]
+  };
+  const draft = structuredClone(committed);
+  draft.buttons.one.label = "Ready";
+  draft.buttons.one.activationBehavior.mode = "cycle";
+  draft.buttons.one.activationBehavior.states[0].label = "Ready";
+  draft.buttons.one.activationBehavior.states[0].labelOverrides = { hover: "Start" };
+  draft.buttons.one.activationBehavior.states.push({
+    id: "pending-new-state",
+    label: "New state",
+    labelOverrides: {}
+  });
+  Object.assign(draft.placements["placement-one"], {
+    x: 333,
+    textFitMode: "shrink-and-stack",
+    textAlignment: "right",
+    minimumFontSize: 11,
+    textSizeOverride: 18,
+    textOffsetX: -6,
+    textOffsetY: 9,
+    allowLabelResize: false,
+    visualStateMap: { off: { hover: "held" } }
+  });
+  const scope = { buttonId: "one", placementId: "placement-one" };
+
+  const saved = buildButtonTextScopedDocument(committed, draft, scope);
+  assert.equal(saved.buttons.one.label, "Ready");
+  assert.equal(saved.buttons.one.activationBehavior.mode, "toggle");
+  assert.deepEqual(saved.buttons.one.activationBehavior.states.map((state) => state.id), ["off", "on"]);
+  assert.equal(saved.buttons.one.activationBehavior.states[0].label, "Ready");
+  assert.deepEqual(saved.buttons.one.activationBehavior.states[0].labelOverrides, { hover: "Start" });
+  assert.equal(saved.placements["placement-one"].x, 10);
+  assert.equal(saved.placements["placement-one"].textFitMode, "shrink-and-stack");
+  assert.equal(saved.placements["placement-one"].textAlignment, "right");
+  assert.equal(saved.placements["placement-one"].minimumFontSize, 11);
+  assert.equal(saved.placements["placement-one"].textSizeOverride, 18);
+  assert.equal(saved.placements["placement-one"].textOffsetX, -6);
+  assert.equal(saved.placements["placement-one"].textOffsetY, 9);
+  assert.equal(saved.placements["placement-one"].allowLabelResize, true);
+  assert.equal(saved.placements["placement-one"].visualStateMap, null);
+
+  draft.buttons.one.label = "Pending";
+  draft.buttons.one.activationBehavior.states[0].label = "Pending";
+  draft.placements["placement-one"].textOffsetX = 25;
+  applyButtonTextSavedScope(draft, saved, scope);
+  assert.equal(draft.buttons.one.label, "Ready");
+  assert.equal(draft.buttons.one.activationBehavior.mode, "cycle");
+  assert.equal(draft.buttons.one.activationBehavior.states.length, 3);
+  assert.equal(draft.buttons.one.activationBehavior.states[0].label, "Ready");
+  assert.equal(draft.placements["placement-one"].x, 333);
+  assert.equal(draft.placements["placement-one"].textOffsetX, -6);
+  assert.equal(draft.placements["placement-one"].allowLabelResize, false);
+  assert.deepEqual(draft.placements["placement-one"].visualStateMap, { off: { hover: "held" } });
 });
 
 test("animation save retains unrelated draft placement geometry", () => {

@@ -196,9 +196,10 @@ native paste and normal WebView input paths, distributes into the canonical
 section editors, and clears the transient paste field; unparseable input remains for
 correction. Save updates the library entry,
 while Save as new opens a native picker, writes canonical paste-ready
-`.flowcell-button-skin.txt` source, and creates an unassigned entry.
-There are no Apply Named Sections, Replace Entire Skin, or Apply Button Text
-buttons. The Button Size section keeps width, height, and Responsive,
+`.flowcell-button-skin.txt` source, and creates an unassigned entry named exactly
+from the chosen filename stem. There are no Apply Named Sections or Replace
+Entire Skin buttons. Static explanations belong in concise hover tooltips instead
+of permanent paragraphs. The Button Size section keeps width, height, and Responsive,
 Proportional, or Stretch behavior in a working preview. Assign Size applies that
 preview only to the focused placement; Assign Size to Panel applies the target
 once to every Button on the edited placement's current surface, preserving each natural aspect in
@@ -207,11 +208,16 @@ Behavior section uses an outer mode dropdown plus nested logical-state,
 interaction-trigger, and visual-state dropdowns. `momentary`, `toggle`, and `cycle`
 behavior and per-state/per-trigger labels are Button-owned. The placement owns the
 skin-dependent visual mapping, and the current activation-state index is runtime-only
-session state that resets when FlowCell restarts. The Button Text section uses matching
+session state that resets when FlowCell restarts. `Add state` remains visible for every
+mode, and `Apply Button state setup` belongs only to Button Behavior. The Button Text section uses matching
 state and trigger dropdowns to update the Button draft label for Rest, Hover, Play,
 Pressed, Held, Release, Selected, Disabled, or Error. Fit mode, horizontal `Use skin`, `Left`,
-`Center`, or `Right` alignment, starting text size, and minimum shrink size are
-independent focused-placement settings committed by Save placement. Alignment
+`Center`, or `Right` alignment, starting text size, minimum shrink size, and manual
+pixel X/Y movement are independent focused-placement settings. They update the Button
+Text preview immediately. Its single bottom `Apply All` commits only the labels and
+those focused-placement text settings, never behavior, visual mapping, skin source,
+Button Size, or placement geometry. Save placement also retains that placement-owned
+text policy. Alignment
 overrides the rendered text only for that placement and never rewrites skin source;
 `Use skin` removes the override and restores the authored alignment.
 The raw Base, Hover, Play, Pressed, Held, Release, Disabled, and Error source
@@ -220,8 +226,8 @@ not replace their code editors. The visual-state selector reflects the working s
 and marks empty sections so their declarations can be authored. Because edited shared skin source can affect every
 inheriting placement and tool-set child, default to a forked focused-placement
 override and expose the blast radius before any explicit panel-wide or global change.
-Use `Apply Button state setup` in either Button Behavior or Button Text to commit
-the Button-owned mode/labels and its placement-owned visual maps. `Save skin`
+Use Button Behavior's `Apply Button state setup` to commit the Button-owned mode and
+logical states with its placement-owned visual maps. `Save skin`
 continues to persist visual source and is not a substitute for this state-setup action.
 
 The source of truth for section names is `FlowCellFrontend/src/button/skins/buttonSkinFormat.ts`. Produce canonical lowercase headers only:

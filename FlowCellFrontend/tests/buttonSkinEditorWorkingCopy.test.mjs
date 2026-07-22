@@ -90,5 +90,27 @@ test("Button text fitting remains placement-owned and independent from the worki
   assert.match(source, /Center/);
   assert.match(source, /value=\{placement\.textSizeOverride \?\? ""\}/);
   assert.match(source, /value=\{placement\.minimumFontSize\}/);
+  assert.match(source, /value=\{placement\.textOffsetX\}/);
+  assert.match(source, /value=\{placement\.textOffsetY\}/);
+  assert.match(source, /\{ textOffsetX: value \}/);
+  assert.match(source, /\{ textOffsetY: value \}/);
+  assert.match(source, /textOffsetX=\{placement\.textOffsetX\}/);
+  assert.match(source, /textOffsetY=\{placement\.textOffsetY\}/);
   assert.match(source, /onPlacementTextChange/);
+});
+
+test("Button Text preview stays live and ends with its own scoped Apply All", () => {
+  const textSection = source.match(
+    /<summary title="Edit labels per state and condition[\s\S]*?<\/details>/
+  );
+  assert.ok(textSection, "Button Text section must exist");
+  assert.match(textSection[0], /label=\{previewAppearance\.label\}/);
+  assert.match(textSection[0], /textOffsetX=\{placement\.textOffsetX\}/);
+  assert.match(textSection[0], /textOffsetY=\{placement\.textOffsetY\}/);
+  assert.match(textSection[0], /onClick=\{onApplyAllButtonText\}[\s\S]{0,120}>\s*Apply All\s*</);
+  assert.ok(
+    textSection[0].lastIndexOf("Apply All") > textSection[0].lastIndexOf("button-text-bench-preview"),
+    "Apply All must remain below the live Button Text preview"
+  );
+  assert.doesNotMatch(textSection[0], /onApplyButtonStateSetup/);
 });

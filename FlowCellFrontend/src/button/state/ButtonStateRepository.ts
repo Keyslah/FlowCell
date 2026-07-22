@@ -497,6 +497,8 @@ function addMigratedPlacement(
     skinOverrideId: null,
     textFitMode: document.buttons[buttonId]?.defaultTextFitMode ?? "shrink",
     textAlignment: "skin",
+    textOffsetX: 0,
+    textOffsetY: 0,
     minimumFontSize: document.settings.defaultMinimumFontSize,
     textSizeOverride: null,
     allowLabelResize: false,

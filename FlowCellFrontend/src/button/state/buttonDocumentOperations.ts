@@ -55,6 +55,8 @@ function addPlacement(
     skinOverrideId: null,
     textFitMode: document.buttons[buttonId].defaultTextFitMode,
     textAlignment: "skin",
+    textOffsetX: 0,
+    textOffsetY: 0,
     minimumFontSize: document.settings.defaultMinimumFontSize,
     textSizeOverride: null,
     allowLabelResize: false,

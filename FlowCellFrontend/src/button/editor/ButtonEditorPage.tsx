@@ -88,6 +88,7 @@ import { resolveDeterministicLabelGrowth } from "../geometry/labelGrowth";
 import { DEFAULT_BUTTON_SKIN_ID } from "../skins/defaultButtonSkin";
 import {
   BUTTON_SKIN_FILE_EXTENSION,
+  buttonSkinNameFromPath,
   serializeButtonSkinSections
 } from "../skins/buttonSkinFormat";
 import {
@@ -108,10 +109,12 @@ import {
   applyButtonBehaviorSavedScope,
   applyButtonPlacementSavedScope,
   applyButtonSkinSavedScope,
+  applyButtonTextSavedScope,
   buildButtonAnimationScopedDocument,
   buildButtonBehaviorScopedDocument,
   buildButtonPlacementScopedDocument,
   buildButtonSkinScopedDocument,
+  buildButtonTextScopedDocument,
   buttonSkinsEqual,
   skinHasReferencesOutsidePlacements,
   type ButtonSkinSaveScope
@@ -324,6 +327,8 @@ function addPlacement(
     textAlignment: "skin",
     minimumFontSize: document.settings.defaultMinimumFontSize,
     textSizeOverride: null,
+    textOffsetX: 0,
+    textOffsetY: 0,
     allowLabelResize: false,
     matchHitboxToSkin: !surface.uniformButtonSize,
     allowStretching: false,
@@ -1605,10 +1610,6 @@ function ButtonEditorContent({
     await configureButtonAnimation(button, presetId);
   };
 
-  const selectedSkinButtonIds = selectedButton && store.committed.buttons[selectedButton.id]
-    ? [selectedButton.id]
-    : [];
-
   const applyButtonStateSetup = async () => {
     const button = selectedButton;
     if (!button) return;
@@ -1633,12 +1634,28 @@ function ButtonEditorContent({
     );
   };
 
+  const applyAllButtonText = async () => {
+    const button = selectedButton;
+    const placement = selectedPlacement;
+    if (!button || !placement) return;
+    if (!store.committed.buttons[button.id] || !store.committed.placements[placement.id]) {
+      setMessage("Save placement first because this is a new Button placement.");
+      return;
+    }
+    const scope = { buttonId: button.id, placementId: placement.id };
+    const next = buildButtonTextScopedDocument(store.committed, store.current(), scope);
+    await commitScopedDocument(
+      next,
+      (draft, saved) => applyButtonTextSavedScope(draft, saved, scope),
+      `Button Text applied to '${button.label}'.`
+    );
+  };
+
   const saveWorkingSkin = async (workingSkin: ButtonSkin) => {
     const nextDraft = cloneButtonDocument(store.current());
     nextDraft.skins[workingSkin.id] = cloneButtonDocument(workingSkin);
     const scope: ButtonSkinSaveScope = {
-      skinIds: [workingSkin.id],
-      buttonIds: selectedSkinButtonIds
+      skinIds: [workingSkin.id]
     };
     const next = buildButtonSkinScopedDocument(store.committed, nextDraft, scope);
     await commitScopedDocument(
@@ -1651,22 +1668,22 @@ function ButtonEditorContent({
   const saveWorkingSkinAsNew = async (workingSkin: ButtonSkin) => {
     try {
       const id = createStableButtonId("skin");
-      const duplicate: ButtonSkin = {
-        ...cloneButtonDocument(workingSkin),
-        id,
-        name: `${workingSkin.name} Copy`
-      };
       const targetPath = await showSaveFileDialog({
         title: "Save Button Skin As",
         filter: "FlowCell Button Skin (*.flowcell-button-skin.txt)|*.flowcell-button-skin.txt|Text Files (*.txt)|*.txt",
-        defaultFileName: defaultButtonSkinFileName(duplicate.name)
+        defaultFileName: defaultButtonSkinFileName(workingSkin.name)
       });
       if (!targetPath) return;
 
       const writtenPath = await saveButtonSkinFile(
         targetPath,
-        serializeButtonSkinSections(duplicate)
+        serializeButtonSkinSections(workingSkin)
       );
+      const duplicate: ButtonSkin = {
+        ...cloneButtonDocument(workingSkin),
+        id,
+        name: buttonSkinNameFromPath(writtenPath)
+      };
       const nextDraft = cloneButtonDocument(store.current());
       nextDraft.skins[id] = duplicate;
       const scope: ButtonSkinSaveScope = { skinIds: [id] };
@@ -1720,8 +1737,7 @@ function ButtonEditorContent({
     });
     const scope: ButtonSkinSaveScope = {
       skinIds: [assignedSkin.id],
-      placementIds: targetPlacementIds,
-      buttonIds: selectedSkinButtonIds
+      placementIds: targetPlacementIds
     };
     const next = buildButtonSkinScopedDocument(store.committed, nextDraft, scope);
     await commitScopedDocument(
@@ -2007,14 +2023,13 @@ function ButtonEditorContent({
             });
           }}
           onApplyButtonStateSetup={() => void applyButtonStateSetup()}
+          onApplyAllButtonText={() => void applyAllButtonText()}
           onAssignSize={assignSizeToSelectedPlacement}
           onAssignSizeToPanel={assignSizeToPanel}
           onPlacementTextChange={(patch, coalesceKey) => {
             if (!selectedPlacement) return;
             store.transact((draft) => {
-              Object.assign(draft.placements[selectedPlacement.id], patch, {
-                allowLabelResize: false
-              });
+              Object.assign(draft.placements[selectedPlacement.id], patch);
             }, {
               label: "Edit Button text fitting",
               coalesceKey

@@ -186,6 +186,8 @@ function ensurePrimaryPlacement(args: {
     skinOverrideId: null,
     textFitMode: args.button.defaultTextFitMode,
     textAlignment: "skin",
+    textOffsetX: 0,
+    textOffsetY: 0,
     minimumFontSize: args.document.settings.defaultMinimumFontSize,
     textSizeOverride: null,
     allowLabelResize: false,

@@ -547,6 +547,8 @@
 .button-skin-section > .button-skin-size-actions,
 .button-skin-section > .button-behavior-state-grid,
 .button-skin-section > .button-state-list-actions,
+.button-skin-section > .button-text-offset-grid,
+.button-skin-section > .button-text-bench-stats,
 .button-skin-section > .button-skin-preview-section,
 .button-skin-section > button,
 .button-skin-section > .button-text-bench-preview {
@@ -557,14 +559,16 @@
 .button-skin-size-grid,
 .button-skin-size-actions,
 .button-behavior-state-grid,
-.button-state-list-actions {
+.button-state-list-actions,
+.button-text-offset-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
 .button-skin-size-grid label,
-.button-behavior-state-grid label {
+.button-behavior-state-grid label,
+.button-text-offset-grid label {
   min-width: 0;
 }
 
@@ -587,6 +591,19 @@
   overflow: visible;
   border: 1px dashed #4d5662;
   background: #14181d;
+}
+
+.button-text-bench-stats {
+  display: grid;
+  gap: 3px;
+  color: #aeb9c6;
+  font-size: 11px;
+}
+
+.button-text-apply-all {
+  border-color: #5c8db5 !important;
+  background: #315b7b !important;
+  font-weight: 600;
 }
 
 .button-skin-working-preview {

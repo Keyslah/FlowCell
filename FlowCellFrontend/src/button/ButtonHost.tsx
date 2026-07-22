@@ -852,6 +852,8 @@ export function ButtonHost({
         allowStretching={placement.allowStretching}
         textFitMode={placement.textFitMode}
         textAlignment={placement.textAlignment}
+        textOffsetX={placement.textOffsetX}
+        textOffsetY={placement.textOffsetY}
         minimumFontSize={placement.minimumFontSize}
         textSizeOverride={placement.textSizeOverride ?? undefined}
         hovered={resolvedAppearance.flags.hovered}

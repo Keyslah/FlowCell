@@ -127,6 +127,8 @@ export function MainControlHost({
     skinOverrideId: null,
     textFitMode: "shrink-and-stack",
     textAlignment: "skin",
+    textOffsetX: 0,
+    textOffsetY: 0,
     minimumFontSize: 8,
     textSizeOverride: null,
     allowLabelResize: false,

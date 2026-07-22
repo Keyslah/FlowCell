@@ -71,6 +71,10 @@ test("Button Text exposes selected-placement horizontal alignment", () => {
   assert.match(editor, /value:\s*"center",\s*label:\s*"Center"/);
   assert.match(editor, /onPlacementTextChange\(\s*\{ textAlignment:/);
   assert.match(editor, /textAlignment=\{placement\.textAlignment\}/);
+  assert.match(editor, /Move text X[\s\S]{0,700}\{ textOffsetX: value \}/);
+  assert.match(editor, /Move text Y[\s\S]{0,700}\{ textOffsetY: value \}/);
+  assert.equal((editor.match(/textOffsetX=\{placement\.textOffsetX\}/g) ?? []).length, 2);
+  assert.equal((editor.match(/textOffsetY=\{placement\.textOffsetY\}/g) ?? []).length, 2);
 });
 
 test("Skin Editor exposes nested behavior, per-state labels, and skin-aware visual mapping", () => {
@@ -80,23 +84,48 @@ test("Skin Editor exposes nested behavior, per-state labels, and skin-aware visu
   assert.match(skinEditor, /<span>Button Behavior<\/span>/);
   assert.match(skinEditor, /<span>Activation behavior<\/span>[\s\S]{0,220}BUTTON_ACTIVATION_MODES\.map/);
   assert.match(skinEditor, /<span>Button state<\/span>/);
-  assert.match(skinEditor, /className="button-behavior-state-grid"[\s\S]{0,760}<span>When<\/span>[\s\S]{0,760}<span>Visual state<\/span>/);
+  assert.match(skinEditor, /className="button-behavior-state-grid"[\s\S]{0,1500}<span>When<\/span>[\s\S]{0,1500}<span>Visual state<\/span>/);
   assert.match(skinEditor, /const availableVisualStates = BUTTON_SKIN_VISUAL_STATES;/);
   assert.match(skinEditor, /!workingSkin\[visualState\]\.trim\(\)[\s\S]{0,300}\(empty in this skin\)/);
   assert.match(skinEditor, /<span>Label condition<\/span>[\s\S]{0,1300}selectedState\.labelOverrides\[selectedAppearanceTrigger\]/);
-  assert.match(skinEditor, />Add state<\/[a-z]+>[\s\S]{0,240}>\s*Remove state\s*</);
+  assert.match(skinEditor, />\s*Add state\s*<\/[a-z]+>[\s\S]{0,420}>\s*Remove state\s*</);
+  assert.doesNotMatch(skinEditor, /shownBehavior\.mode === "cycle" \? \([\s\S]{0,400}>Add state</);
   assert.match(skinEditor, /setPreviewVisualStateOverride\(visualState\)/);
-  assert.equal(skinEditor.match(/>\s*Apply Button state setup\s*</g)?.length, 2);
+  assert.equal(skinEditor.match(/>\s*Apply Button state setup\s*</g)?.length, 1);
+  assert.equal(skinEditor.match(/>\s*Apply All\s*</g)?.length, 1);
+  assert.match(skinEditor, /className="button-text-apply-all"[\s\S]{0,260}onClick=\{onApplyAllButtonText\}[\s\S]{0,120}>\s*Apply All\s*</);
+  assert.match(skinEditor, /Apply only the Button behavior, logical states, and visual-state mapping/);
+  assert.match(skinEditor, /Apply only the labels and selected placement's text fit, alignment, size, and position/);
   assert.match(editor, /for \(const placement of Object\.values\(draft\.placements\)\)[\s\S]{0,220}delete placement\.visualStateMap\[stateId\]/);
   assert.match(editor, /onApplyButtonStateSetup=\{\(\) => void applyButtonStateSetup\(\)\}/);
+  assert.match(editor, /onApplyAllButtonText=\{\(\) => void applyAllButtonText\(\)\}/);
+});
+
+test("Skin Editor replaces explanatory section paragraphs with hover tooltips", () => {
+  const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
+  for (const removedExplanation of [
+    "Responsive forces an exact core box",
+    "Behavior and labels belong to this Button",
+    "Choose a visual state that this skin actually provides",
+    "The base Button label updates every live placement",
+    "Leave the condition label empty to fall back",
+    "Proportional and Stretch transform the complete skin"
+  ]) {
+    assert.doesNotMatch(skinEditor, new RegExp(removedExplanation));
+  }
+  assert.match(skinEditor, /<summary title="Set the selected Button's preview size/);
+  assert.match(skinEditor, /<summary title="Choose how presses advance logical states/);
+  assert.match(skinEditor, /<summary title="Edit labels per state and condition/);
+  assert.match(skinEditor, /title=\{`Raw \$\{sectionLabel\(section\)\} skin code\.`\}/);
 });
 
 test("Save as new skin opens a native file picker and writes canonical portable source", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   assert.match(editor, /const saveWorkingSkinAsNew = async/);
   assert.match(editor, /showSaveFileDialog\(\{[\s\S]{0,260}Save Button Skin As/);
-  assert.match(editor, /defaultFileName:\s*defaultButtonSkinFileName\(duplicate\.name\)/);
-  assert.match(editor, /saveButtonSkinFile\([\s\S]{0,160}serializeButtonSkinSections\(duplicate\)/);
+  assert.match(editor, /defaultFileName:\s*defaultButtonSkinFileName\(workingSkin\.name\)/);
+  assert.match(editor, /saveButtonSkinFile\([\s\S]{0,160}serializeButtonSkinSections\(workingSkin\)/);
+  assert.match(editor, /name:\s*buttonSkinNameFromPath\(writtenPath\)/);
 });
 
 test("Size assignment is explicit, supports current Button or Panel scope, and stays separate from legacy uniform sizing", () => {

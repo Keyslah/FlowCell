@@ -205,6 +205,8 @@ export interface ButtonPlacement extends ButtonRect {
   skinOverrideId: ButtonSkinId | null;
   textFitMode: ButtonTextFitMode;
   textAlignment: ButtonTextAlignment;
+  textOffsetX: number;
+  textOffsetY: number;
   minimumFontSize: number;
   textSizeOverride: number | null;
   allowLabelResize: boolean;

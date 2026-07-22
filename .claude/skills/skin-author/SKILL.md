@@ -115,7 +115,11 @@ sections. The Skin Editor exposes nested state, trigger, and visual-state
 dropdowns; the visual-state selector reflects the working skin and identifies empty
 sections so their declarations can be authored. Button Text exposes matching state
 and trigger dropdowns for Rest, Hover, Play, Pressed, Held, Release, Selected,
-Disabled, and Error labels. Do not encode execution, toggle state, cycle counters, label sequences, or
+Disabled, and Error labels. Its placement-owned X/Y controls move the host-injected
+label without changing skin source, transforms, core geometry, or hit testing. The
+Button Text preview updates immediately, and its bottom `Apply All` applies only
+labels and focused-placement text settings. Button Behavior retains its separate
+state/mapping apply action. Do not encode execution, toggle state, cycle counters, label sequences, or
 persistence in skin markup or CSS.
 
 ### Keyframes and animation
@@ -211,7 +215,7 @@ background: transparent;
 
 ### Scope and output
 
-This format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Assigned and library skins persist in `flowcellbackend/local/button-system/button-state.json`. `Save as new skin` also opens a native picker and exports the canonical paste-ready source as `.flowcell-button-skin.txt` without assigning it. Before editing a skin, inspect whether the focused placement inherits a shared `defaultSkinId`. Default to forking and assigning a focused-placement override, and warn which placements or tool-set children would change before any explicit shared or panel-wide mutation.
+This format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Assigned and library skins persist in `flowcellbackend/local/button-system/button-state.json`. `Save as new skin` also opens a native picker, exports the canonical paste-ready source as `.flowcell-button-skin.txt` without assigning it, and uses the chosen filename stem exactly as the new library name. Before editing a skin, inspect whether the focused placement inherits a shared `defaultSkinId`. Default to forking and assigning a focused-placement override, and warn which placements or tool-set children would change before any explicit shared or panel-wide mutation.
 
 ### Required preflight
 

@@ -40,6 +40,8 @@ const HARNESS_PLACEMENT: ButtonPlacement = {
   skinOverrideId: USER_SKIN.id,
   textFitMode: "shrink-and-stack",
   textAlignment: "skin",
+  textOffsetX: 0,
+  textOffsetY: 0,
   minimumFontSize: 8,
   textSizeOverride: null,
   allowLabelResize: false,
@@ -72,6 +74,7 @@ function Harness() {
           onActivationBehaviorChange={() => {}}
           onVisualStateMapChange={() => {}}
           onApplyButtonStateSetup={() => {}}
+          onApplyAllButtonText={() => {}}
           onAssignSize={() => {}}
           onAssignSizeToPanel={() => {}}
           onPlacementTextChange={() => {}}

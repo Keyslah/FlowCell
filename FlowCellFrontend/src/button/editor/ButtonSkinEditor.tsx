@@ -58,10 +58,19 @@ export interface ButtonSkinEditorProps {
   ) => void;
   onVisualStateMapChange: (visualStateMap: ButtonVisualStateMap) => void;
   onApplyButtonStateSetup: () => void;
+  onApplyAllButtonText: () => void;
   onAssignSize: (assignment: ButtonSizeAssignment) => void;
   onAssignSizeToPanel: (assignment: ButtonSizeAssignment) => void;
   onPlacementTextChange: (
-    patch: Partial<Pick<ButtonPlacement, "textFitMode" | "textAlignment" | "minimumFontSize" | "textSizeOverride">>,
+    patch: Partial<Pick<
+      ButtonPlacement,
+      | "textFitMode"
+      | "textAlignment"
+      | "minimumFontSize"
+      | "textSizeOverride"
+      | "textOffsetX"
+      | "textOffsetY"
+    >>,
     coalesceKey?: string
   ) => void;
   onAssignSkin: (skin: ButtonSkin) => void;
@@ -210,6 +219,7 @@ export function ButtonSkinEditor({
   onActivationBehaviorChange,
   onVisualStateMapChange,
   onApplyButtonStateSetup,
+  onApplyAllButtonText,
   onAssignSize,
   onAssignSizeToPanel,
   onPlacementTextChange,
@@ -437,6 +447,7 @@ export function ButtonSkinEditor({
       <div className="button-skin-editor__toolbar">
         <button
           type="button"
+          title="Assign the working skin to only the selected Button placement."
           disabled={skinActionsDisabled}
           onClick={() => onAssignSkin(cloneButtonDocument(workingSkin))}
         >
@@ -444,12 +455,13 @@ export function ButtonSkinEditor({
         </button>
         <button
           type="button"
+          title="Assign the working skin to every Button on this panel surface."
           disabled={skinActionsDisabled}
           onClick={() => onAssignSkinToPanel(cloneButtonDocument(workingSkin))}
         >
           Assign Skin to Panel
         </button>
-        <label>
+        <label title="Choose a saved skin to edit in this working copy.">
           <span>Load skin</span>
           <select
             value={workingSkin.id}
@@ -463,6 +475,7 @@ export function ButtonSkinEditor({
         </label>
         <button
           type="button"
+          title="Save changes to this skin."
           disabled={skinActionsDisabled}
           onClick={() => onSaveSkin(cloneButtonDocument(workingSkin))}
         >
@@ -470,6 +483,7 @@ export function ButtonSkinEditor({
         </button>
         <button
           type="button"
+          title="Save this working skin under the name chosen in the file dialog."
           disabled={skinActionsDisabled}
           onClick={() => onSaveAsNewSkin(cloneButtonDocument(workingSkin))}
         >
@@ -477,19 +491,13 @@ export function ButtonSkinEditor({
         </button>
       </div>
       <details className="button-skin-section button-skin-size-section" open>
-        <summary>
+        <summary title="Set the selected Button's preview size and choose how its skin fits that box.">
           <span>Button Size</span>
           <small>
             {allSurfaceButtonsSameSize ? "Legacy size link active" : "Working preview"}
           </small>
         </summary>
-        <p>
-          Responsive forces an exact core box without stretching the visual; how well
-          the inner artwork reflows depends on the skin. Proportional scales the whole
-          skin uniformly. Stretch scales each axis separately and can distort text,
-          corners, and effects.
-        </p>
-        <label>
+        <label title="Responsive uses an exact box, Proportional scales uniformly, and Stretch scales each axis separately.">
           <span>Sizing behavior</span>
           <select
             value={sizingMode}
@@ -519,7 +527,7 @@ export function ButtonSkinEditor({
           </select>
         </label>
         <div className="button-skin-size-grid">
-          <label>
+          <label title="Set the working preview width in pixels.">
             <span>Width</span>
             <input
               type="number"
@@ -533,7 +541,7 @@ export function ButtonSkinEditor({
               }}
             />
           </label>
-          <label>
+          <label title="Set the working preview height in pixels.">
             <span>Height</span>
             <input
               type="number"
@@ -551,6 +559,9 @@ export function ButtonSkinEditor({
         <div className="button-skin-size-actions">
           <button
             type="button"
+            title={allSurfaceButtonsSameSize
+              ? "Turn off Same size Buttons before assigning an individual size."
+              : "Apply this size and sizing behavior to only the selected Button."}
             disabled={sizeActionsDisabled}
             onClick={() => onAssignSize(activeSize)}
           >
@@ -558,32 +569,22 @@ export function ButtonSkinEditor({
           </button>
           <button
             type="button"
+            title={allSurfaceButtonsSameSize
+              ? "Turn off Same size Buttons before assigning panel sizes."
+              : "Apply this target box and sizing behavior to every Button on this panel surface."}
             disabled={sizeActionsDisabled || surfaceButtonCount === 0}
             onClick={() => onAssignSizeToPanel(activeSize)}
           >
             Assign Size to Panel
           </button>
         </div>
-        <p>
-          {allSurfaceButtonsSameSize
-            ? "The separate Same size Buttons format is active. Turn it off before using either Assign Size action."
-            : "Assign Size changes only this Button. Assign Size to Panel applies the target box and sizing behavior once to every Button next to it on the current placement surface, whether that is Main, Pop, Fan, or another Button surface. Proportional preserves each Button's own aspect inside that box. Assigned sizes turn off automatic label-driven resizing. Neither action enables Same size Buttons or changes the shared skin source."}
-        </p>
-        <p>
-          This preview uses the current working skin. If that skin has unsaved or
-          unassigned edits, assign the skin separately before judging the live Button.
-        </p>
       </details>
       <details className="button-skin-section button-behavior-section">
-        <summary>
+        <summary title="Choose how presses advance logical states and map each condition to a skin visual.">
           <span>Button Behavior</span>
           <small>{ACTIVATION_MODE_LABELS[shownBehavior.mode]}</small>
         </summary>
-        <p>
-          Behavior and labels belong to this Button. The visual mapping belongs only
-          to this placement because another placement can use a different skin.
-        </p>
-        <label>
+        <label title="Momentary returns after release, Toggle alternates states, and Cycle advances through every state.">
           <span>Activation behavior</span>
           <select
             value={shownBehavior.mode}
@@ -595,7 +596,7 @@ export function ButtonSkinEditor({
             ))}
           </select>
         </label>
-        <label>
+        <label title="Choose the logical state whose behavior and visual mapping you want to edit.">
           <span>Button state</span>
           <select
             value={selectedState?.id ?? ""}
@@ -612,8 +613,26 @@ export function ButtonSkinEditor({
             ))}
           </select>
         </label>
+        <div className="button-state-list-actions">
+          <button
+            type="button"
+            title="Add a logical state and switch this Button to Cycle behavior."
+            disabled={busy}
+            onClick={addCycleState}
+          >
+            Add state
+          </button>
+          <button
+            type="button"
+            title="Remove the selected Cycle state. A Cycle Button keeps at least two states."
+            disabled={busy || shownBehavior.mode !== "cycle" || shownBehavior.states.length <= 2 || !selectedState}
+            onClick={removeSelectedCycleState}
+          >
+            Remove state
+          </button>
+        </div>
         <div className="button-behavior-state-grid">
-          <label>
+          <label title="Choose the interaction condition to configure for this logical state.">
             <span>When</span>
             <select
               value={selectedAppearanceTrigger}
@@ -630,7 +649,7 @@ export function ButtonSkinEditor({
               ))}
             </select>
           </label>
-          <label>
+          <label title="Choose which visual section from the working skin appears for this condition.">
             <span>Visual state</span>
             <select
               value={selectedVisualState}
@@ -648,15 +667,16 @@ export function ButtonSkinEditor({
             </select>
           </label>
         </div>
-        <p>
-          Choose a visual state that this skin actually provides, then edit its raw
-          section below. Base deliberately suppresses a state visual, such as Hover.
-        </p>
-        <button type="button" disabled={busy} onClick={onApplyButtonStateSetup}>
+        <button
+          type="button"
+          title="Apply only the Button behavior, logical states, and visual-state mapping."
+          disabled={busy}
+          onClick={onApplyButtonStateSetup}
+        >
           Apply Button state setup
         </button>
       </details>
-      <label className="button-skin-paste">
+      <label className="button-skin-paste" title="Paste named skin sections here. Recognized sections apply automatically.">
         <span>Paste Skin</span>
         <textarea
           value={paste}
@@ -682,7 +702,7 @@ export function ButtonSkinEditor({
         />
       </label>
       {pasteError && <p className="button-editor-error">{pasteError}</p>}
-      <label className="button-skin-preview-state">
+      <label className="button-skin-preview-state" title="Preview a Button interaction condition without changing its saved state.">
         <span>Preview condition</span>
         <select
           value={previewAppearanceTrigger}
@@ -696,7 +716,11 @@ export function ButtonSkinEditor({
           ))}
         </select>
       </label>
-      <div className="button-skin-working-preview" aria-label="Working skin preview">
+      <div
+        className="button-skin-working-preview"
+        aria-label="Working skin preview"
+        title="Live preview of the current working skin, state, label, size, and text controls."
+      >
         <ButtonSkinRenderer
           skin={workingSkin}
           label={previewAppearance.label}
@@ -709,6 +733,8 @@ export function ButtonSkinEditor({
           textAlignment={placement.textAlignment}
           minimumFontSize={placement.minimumFontSize}
           textSizeOverride={placement.textSizeOverride ?? undefined}
+          textOffsetX={placement.textOffsetX}
+          textOffsetY={placement.textOffsetY}
           hovered={previewVisualFlags.hovered}
           pressed={previewVisualFlags.pressed}
           held={previewVisualFlags.held}
@@ -729,8 +755,12 @@ export function ButtonSkinEditor({
               : "";
         return (
           <details key={section} className="button-skin-section">
-            <summary><span>{sectionLabel(section)}</span><small className={status.toLowerCase()}>{status}</small></summary>
+            <summary title={`Edit the ${sectionLabel(section)} skin section.`}>
+              <span>{sectionLabel(section)}</span>
+              <small className={status.toLowerCase()}>{status}</small>
+            </summary>
             <textarea
+              title={`Raw ${sectionLabel(section)} skin code.`}
               value={workingSkin[section]}
               rows={section === "structure" || section === "keyframes" ? 10 : 5}
               onChange={(event) => {
@@ -741,16 +771,11 @@ export function ButtonSkinEditor({
                 setWorkingSkin(next);
               }}
             />
-            {section === "base" ? (
-              <p>
-                Ordinary declarations style the core. To style a nested face, icon, or frame,
-                set the custom properties that its Structure markup consumes.
-              </p>
-            ) : null}
             {BUTTON_SKIN_STATE_SECTIONS.includes(section as typeof BUTTON_SKIN_STATE_SECTIONS[number]) ? (
               <button
                 type="button"
                 className="button-skin-preview-section"
+                title={`Show the ${sectionLabel(section)} visual in both previews.`}
                 onClick={() => {
                   const visualState = section as ButtonSkinVisualState;
                   setPreviewVisualStateOverride(visualState);
@@ -767,15 +792,15 @@ export function ButtonSkinEditor({
         );
       })}
       <details className="button-skin-section">
-        <summary><span>Button Text</span></summary>
-        <p>
-          The base Button label updates every live placement. Each logical state can
-          replace it, and each Hover, Pressed, Held, or other condition can optionally
-          override that state's label. Text size and fitting remain placement-owned.
-        </p>
-        <label><span>Button label</span><input value={buttonLabel} disabled={busy} onChange={(event) => onButtonLabelChange(event.currentTarget.value)} /></label>
+        <summary title="Edit labels per state and condition, then position and fit the selected placement's text.">
+          <span>Button Text</span>
+        </summary>
+        <label title="Set the Button's default label.">
+          <span>Button label</span>
+          <input value={buttonLabel} disabled={busy} onChange={(event) => onButtonLabelChange(event.currentTarget.value)} />
+        </label>
         <div className="button-behavior-state-grid">
-          <label>
+          <label title="Choose the logical state whose label you want to edit.">
             <span>Button state</span>
             <select
               value={selectedState?.id ?? ""}
@@ -790,7 +815,7 @@ export function ButtonSkinEditor({
               ))}
             </select>
           </label>
-          <label>
+          <label title="Choose when this state-specific label appears.">
             <span>Label condition</span>
             <select
               value={selectedAppearanceTrigger}
@@ -808,7 +833,9 @@ export function ButtonSkinEditor({
             </select>
           </label>
         </div>
-        <label>
+        <label title={selectedAppearanceTrigger === "rest"
+          ? "Set this logical state's normal label."
+          : "Set an optional label for this condition. Leave it blank to use the state's normal label."}>
           <span>{selectedAppearanceTrigger === "rest" ? "State label" : "Condition label"}</span>
           <input
             value={selectedState
@@ -821,25 +848,7 @@ export function ButtonSkinEditor({
             onChange={(event) => updateSelectedStateLabel(selectedAppearanceTrigger, event.currentTarget.value)}
           />
         </label>
-        {selectedAppearanceTrigger !== "rest" ? (
-          <p>Leave the condition label empty to fall back to this state's normal label.</p>
-        ) : null}
-        {shownBehavior.mode === "cycle" ? (
-          <div className="button-state-list-actions">
-            <button type="button" disabled={busy} onClick={addCycleState}>Add state</button>
-            <button
-              type="button"
-              disabled={busy || shownBehavior.states.length <= 2 || !selectedState}
-              onClick={removeSelectedCycleState}
-            >
-              Remove state
-            </button>
-          </div>
-        ) : null}
-        <button type="button" disabled={busy} onClick={onApplyButtonStateSetup}>
-          Apply Button state setup
-        </button>
-        <label>
+        <label title="Choose how the label is reduced or wrapped when it exceeds the Button box.">
           <span>Fit mode</span>
           <select
             value={placement.textFitMode}
@@ -854,7 +863,7 @@ export function ButtonSkinEditor({
             ))}
           </select>
         </label>
-        <label>
+        <label title="Choose horizontal label alignment inside the skin's label area.">
           <span>Text alignment</span>
           <select
             value={placement.textAlignment}
@@ -869,7 +878,7 @@ export function ButtonSkinEditor({
             ))}
           </select>
         </label>
-        <label>
+        <label title="Override the skin's starting label size for this placement, or leave it empty to use the skin default.">
           <span>Starting text size</span>
           <input
             type="number"
@@ -888,7 +897,7 @@ export function ButtonSkinEditor({
             }}
           />
         </label>
-        <label>
+        <label title="Set the smallest font size the fitting logic may use.">
           <span>Minimum size when shrinking</span>
           <input
             type="number"
@@ -905,13 +914,46 @@ export function ButtonSkinEditor({
             }}
           />
         </label>
-        {sizingMode !== "responsive" ? (
-          <p>
-            Proportional and Stretch transform the complete skin, including its text.
-            Choose Responsive when the final text size must stay independent.
-          </p>
-        ) : null}
-        <div className="button-text-bench-preview">
+        <div className="button-text-offset-grid">
+          <label title="Move the rendered label left or right in pixels without changing the skin source.">
+            <span>Move text X</span>
+            <input
+              type="number"
+              step={1}
+              value={placement.textOffsetX}
+              disabled={busy}
+              onChange={(event) => {
+                const value = event.currentTarget.valueAsNumber;
+                if (!Number.isFinite(value)) return;
+                onPlacementTextChange(
+                  { textOffsetX: value },
+                  `text-offset-x:${placement.id}`
+                );
+              }}
+            />
+          </label>
+          <label title="Move the rendered label up or down in pixels without changing the skin source.">
+            <span>Move text Y</span>
+            <input
+              type="number"
+              step={1}
+              value={placement.textOffsetY}
+              disabled={busy}
+              onChange={(event) => {
+                const value = event.currentTarget.valueAsNumber;
+                if (!Number.isFinite(value)) return;
+                onPlacementTextChange(
+                  { textOffsetY: value },
+                  `text-offset-y:${placement.id}`
+                );
+              }}
+            />
+          </label>
+        </div>
+        <div
+          className="button-text-bench-preview"
+          title="Live preview of every Button Text change, including the selected state and condition."
+        >
           <ButtonSkinRenderer
             skin={workingSkin}
             label={previewAppearance.label}
@@ -924,6 +966,8 @@ export function ButtonSkinEditor({
             textAlignment={placement.textAlignment}
             minimumFontSize={placement.minimumFontSize}
             textSizeOverride={placement.textSizeOverride ?? undefined}
+            textOffsetX={placement.textOffsetX}
+            textOffsetY={placement.textOffsetY}
             hovered={previewVisualFlags.hovered}
             pressed={previewVisualFlags.pressed}
             held={previewVisualFlags.held}
@@ -936,9 +980,26 @@ export function ButtonSkinEditor({
             onTextOverflowChange={setBenchTextOverflow}
           />
         </div>
-        <p>Core: {benchMeasurement ? `${benchMeasurement.width.toFixed(1)} x ${benchMeasurement.height.toFixed(1)}` : "measuring"}</p>
+        <div className="button-text-bench-stats" aria-live="polite">
+          <output title="Measured skin core size.">
+            Core: {benchMeasurement ? `${benchMeasurement.width.toFixed(1)} x ${benchMeasurement.height.toFixed(1)}` : "measuring"}
+          </output>
+          {benchMeasurement ? (
+            <output title="Visual overflow beyond the core box: top, right, bottom, and left.">
+              Overflow: T {benchMeasurement.visualOverflow.top.toFixed(1)}, R {benchMeasurement.visualOverflow.right.toFixed(1)}, B {benchMeasurement.visualOverflow.bottom.toFixed(1)}, L {benchMeasurement.visualOverflow.left.toFixed(1)}
+            </output>
+          ) : null}
+        </div>
         {benchTextOverflow ? <p className="button-editor-error">The current text does not fit inside this Button size.</p> : null}
-        {benchMeasurement && <p>Overflow: T {benchMeasurement.visualOverflow.top.toFixed(1)}, R {benchMeasurement.visualOverflow.right.toFixed(1)}, B {benchMeasurement.visualOverflow.bottom.toFixed(1)}, L {benchMeasurement.visualOverflow.left.toFixed(1)}</p>}
+        <button
+          type="button"
+          className="button-text-apply-all"
+          title="Apply only the labels and selected placement's text fit, alignment, size, and position."
+          disabled={busy}
+          onClick={onApplyAllButtonText}
+        >
+          Apply All
+        </button>
       </details>
     </aside>
   );

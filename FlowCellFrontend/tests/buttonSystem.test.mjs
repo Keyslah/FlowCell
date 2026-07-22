@@ -26,6 +26,7 @@ import {
   parseButtonSkinPaste
 } from "./.compiled-button-system/button/skins/skinPasteParser.js";
 import {
+  buttonSkinNameFromPath,
   createEmptyButtonSkinSections
 } from "./.compiled-button-system/button/skins/buttonSkinFormat.js";
 import {
@@ -228,6 +229,8 @@ function addScopePanelSurface(document, id, name, buttonIds) {
       skinOverrideId: null,
       textFitMode: document.buttons[buttonId].defaultTextFitMode,
       textAlignment: "skin",
+      textOffsetX: 0,
+      textOffsetY: 0,
       minimumFontSize: document.settings.defaultMinimumFontSize,
       textSizeOverride: null,
       allowLabelResize: false,
@@ -371,6 +374,8 @@ function buildButtonDocumentScopeFixture() {
     skinOverrideId: null,
     textFitMode: "shrink",
     textAlignment: "skin",
+    textOffsetX: 0,
+    textOffsetY: 0,
     minimumFontSize: 8,
     textSizeOverride: null,
     allowLabelResize: false,
@@ -1006,6 +1011,18 @@ test("full and partial skin paste operations preserve omitted source literally",
   assert.equal(initial.structure, "");
 });
 
+test("saved Button skin names come exactly from the chosen filename", () => {
+  assert.equal(
+    buttonSkinNameFromPath("C:\\Users\\Aaron\\Skins\\Smart Access Live.flowcell-button-skin.txt"),
+    "Smart Access Live"
+  );
+  assert.equal(
+    buttonSkinNameFromPath("D:/skins/KNIGHT.FLOWCELL-BUTTON-SKIN.TXT"),
+    "KNIGHT"
+  );
+  assert.equal(buttonSkinNameFromPath("D:/skins/My.skin.v2"), "My.skin.v2");
+});
+
 test("skin paste rejects duplicate, unknown, malformed, and prefixed headers atomically", () => {
   for (const candidate of [
     "=== hover ===\na: b;\n=== hover ===\nc: d;",
@@ -1122,6 +1139,8 @@ test("placement text alignment overrides HTML layout without remounting or erasi
   );
 
   assert.match(buttonHost, /textAlignment=\{placement\.textAlignment\}/);
+  assert.match(buttonHost, /textOffsetX=\{placement\.textOffsetX\}/);
+  assert.match(buttonHost, /textOffsetY=\{placement\.textOffsetY\}/);
   assert.match(renderer, /textAlignmentRestores:\s*Array<\(\) => void>/);
   assert.match(renderer, /textAlignmentRestores\.splice\(0\)\.reverse\(\)/);
   assert.match(renderer, /if \(alignment === "skin"\) return;/);
@@ -1135,6 +1154,12 @@ test("placement text alignment overrides HTML layout without remounting or erasi
   assert.match(
     renderer,
     /}, \[compiled\?\.skinId, compiled\?\.sourceFingerprint, hasMeasurementConsumer\]\);/
+  );
+  assert.match(renderer, /function applyTextOffset\([\s\S]*?labelNode\.style\.setProperty\("translate", `\$\{offsetX\}px \$\{offsetY\}px`, "important"\);/);
+  assert.match(renderer, /}, \[textOffsetX, textOffsetY, hasMeasurementConsumer\]\);/);
+  assert.doesNotMatch(
+    renderer,
+    /}, \[compiled\?\.skinId, compiled\?\.sourceFingerprint, hasMeasurementConsumer,?\s*textOffset/
   );
   assert.match(renderer, /fitted\.label === renderedLabel/);
   assert.match(
@@ -2392,6 +2417,8 @@ test("state validation reports malformed skins and all saved Button presentation
     skinOverrideId: null,
     textFitMode: "wrap",
     textAlignment: "diagonal",
+    textOffsetX: Number.POSITIVE_INFINITY,
+    textOffsetY: "down",
     minimumFontSize: 0,
     textSizeOverride: "large",
     allowLabelResize: "yes",
@@ -2414,6 +2441,8 @@ test("state validation reports malformed skins and all saved Button presentation
   assert.equal(paths.has("buttons.one.defaultTextFitMode"), true);
   assert.equal(paths.has("placements.one.textFitMode"), true);
   assert.equal(paths.has("placements.one.textAlignment"), true);
+  assert.equal(paths.has("placements.one.textOffsetX"), true);
+  assert.equal(paths.has("placements.one.textOffsetY"), true);
   assert.equal(paths.has("placements.one.minimumFontSize"), true);
   assert.equal(paths.has("placements.one.textSizeOverride"), true);
   assert.equal(paths.has("placements.one.allowLabelResize"), true);
@@ -3572,6 +3601,8 @@ test("schema-1 loading backfills skin sizing defaults before validation", () => 
   delete placement.matchHitboxToSkin;
   delete placement.allowStretching;
   delete placement.textAlignment;
+  delete placement.textOffsetX;
+  delete placement.textOffsetY;
   delete placement.textSizeOverride;
   Object.values(document.surfaces).forEach((surface) => {
     delete surface.uniformButtonSize;
@@ -3585,6 +3616,8 @@ test("schema-1 loading backfills skin sizing defaults before validation", () => 
   assert.equal(result.document.placements[placement.id].matchHitboxToSkin, true);
   assert.equal(result.document.placements[placement.id].allowStretching, false);
   assert.equal(result.document.placements[placement.id].textAlignment, "skin");
+  assert.equal(result.document.placements[placement.id].textOffsetX, 0);
+  assert.equal(result.document.placements[placement.id].textOffsetY, 0);
   assert.equal(result.document.placements[placement.id].textSizeOverride, null);
   Object.values(result.document.surfaces).forEach((surface) => {
     assert.equal(surface.uniformButtonSize, null);

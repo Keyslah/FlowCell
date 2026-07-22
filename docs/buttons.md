@@ -312,7 +312,8 @@ normal input event, then clears the transient Paste Skin field after distributin
 the source into its canonical section editors. Unparseable paste remains in the field
 for correction. Save skin updates the library entry. Save as new skin opens a
 native file picker, writes canonical paste-ready `.flowcell-button-skin.txt`
-source, and creates an unassigned library entry. Skin saves retain unrelated
+source, and creates an unassigned library entry named exactly from the chosen
+filename stem. Skin saves retain unrelated
 draft geometry. Button Behavior keeps the outer controls compact, then uses nested
 dropdowns to select `momentary`, `toggle`, or `cycle`, a logical Button state, an
 interaction trigger, and the skin visual state used by the focused placement.
@@ -324,19 +325,23 @@ session's current state index is not saved and starts at rest after an app resta
 The raw Base, Hover, Play, Pressed, Held, Release, Disabled, and Error skin code
 sections remain author-editable; selecting Hover in a dropdown never replaces or
 hides the authored Hover section. The visual-state menu reflects the working skin
-and marks empty canonical sections so the author can select one and add its code. Fit mode,
-horizontal text alignment (`Use skin`, `Left`, `Center`, or `Right`), text size
-override, and minimum shrink size are independent focused-placement settings,
-preview against the working Button size, and are committed by Save placement
-without changing the skin, sibling placements, or panel size assignment. `Use
-skin` removes the placement override and restores the authored alignment. There
-are no Apply Named Sections, Replace Entire Skin, or Apply Button Text buttons.
+and marks empty canonical sections so the author can select one and add its code.
+`Add state` is always visible, and Button Behavior has its own `Apply Button state
+setup`. Fit mode, horizontal text alignment (`Use skin`, `Left`, `Center`, or
+`Right`), text size override, minimum shrink size, and pixel X/Y text position
+are independent focused-placement settings. Every edit immediately updates the
+Button Text preview without rewriting the authored skin. The single `Apply All`
+at the bottom of Button Text commits only the labels and those focused-placement
+text settings; it does not apply Button Behavior, visual maps, skin code, Button
+Size, or placement geometry. Save placement also retains the placement-owned text
+policy. `Use skin` removes the alignment override and restores the authored
+alignment. There are no Apply Named Sections or Replace Entire Skin buttons.
 Pasting a recognized payload automatically validates and applies its named
 sections to the isolated working copy.
 
-`Apply Button state setup` appears in both Button Behavior and Button Text. It
-commits the Button-owned mode and labels together with every placement-owned
-visual map for that Button while retaining unrelated draft geometry. Save skin
+`Apply Button state setup` appears only in Button Behavior. It commits the
+Button-owned mode and logical states together with every placement-owned visual
+map for that Button while retaining unrelated draft geometry. Save skin
 continues to save authored visual source; it is not the persistence action for a
 state sequence or placement map.
 

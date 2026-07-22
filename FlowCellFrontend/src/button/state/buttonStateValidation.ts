@@ -447,6 +447,14 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
       placement.textAlignment = "skin";
       changed = true;
     }
+    if (!Object.hasOwn(placement, "textOffsetX")) {
+      placement.textOffsetX = 0;
+      changed = true;
+    }
+    if (!Object.hasOwn(placement, "textOffsetY")) {
+      placement.textOffsetY = 0;
+      changed = true;
+    }
     if (!Object.hasOwn(placement, "visualStateMap")) {
       placement.visualStateMap = null;
       changed = true;
@@ -624,6 +632,12 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     }
     if (!BUTTON_TEXT_ALIGNMENTS.has(String(placement.textAlignment))) {
       addIssue(issues, `${path}.textAlignment`, "Placement text alignment is invalid.");
+    }
+    if (!isFiniteNumber(placement.textOffsetX)) {
+      addIssue(issues, `${path}.textOffsetX`, "Horizontal text offset must be finite.");
+    }
+    if (!isFiniteNumber(placement.textOffsetY)) {
+      addIssue(issues, `${path}.textOffsetY`, "Vertical text offset must be finite.");
     }
     if (!isFiniteNumber(placement.minimumFontSize) || placement.minimumFontSize <= 0) {
       addIssue(issues, `${path}.minimumFontSize`, "Minimum font size must be finite and positive.");

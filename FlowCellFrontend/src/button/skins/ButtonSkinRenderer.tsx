@@ -41,6 +41,8 @@ export interface ButtonSkinRendererProps {
   allowStretching?: boolean;
   textFitMode: ButtonTextFitMode;
   textAlignment?: ButtonTextAlignment;
+  textOffsetX?: number;
+  textOffsetY?: number;
   minimumFontSize: number;
   textSizeOverride?: number;
   previewStackWords?: boolean;
@@ -731,6 +733,22 @@ function applyTextAlignment(
   }
 }
 
+function applyTextOffset(
+  mounted: MountedSkin,
+  offsetX: number,
+  offsetY: number
+): void {
+  const labelNode = mounted.labelNode;
+  if (!labelNode) return;
+  if (offsetX === 0 && offsetY === 0) {
+    labelNode.style.removeProperty("translate");
+    return;
+  }
+  // The host-injected label node is the placement seam. Individual `translate`
+  // composes with an authored `transform` without rewriting or remounting the skin.
+  labelNode.style.setProperty("translate", `${offsetX}px ${offsetY}px`, "important");
+}
+
 function setBooleanAttribute(host: HTMLElement, name: string, value: boolean): void {
   host.setAttribute(name, value ? "true" : "false");
 }
@@ -745,6 +763,8 @@ export function ButtonSkinRenderer({
   allowStretching = false,
   textFitMode,
   textAlignment = "skin",
+  textOffsetX = 0,
+  textOffsetY = 0,
   minimumFontSize,
   textSizeOverride,
   previewStackWords,
@@ -886,6 +906,7 @@ export function ButtonSkinRenderer({
       previewStackWords
     );
     applyTextAlignment(mounted, textAlignment);
+    applyTextOffset(mounted, textOffsetX, textOffsetY);
     applySkinRootScale(
       mounted,
       width,
@@ -966,6 +987,20 @@ export function ButtonSkinRenderer({
       onVisualMeasurementRef.current?.({ ...measurement, state: visualStateRef.current });
     }
   }, [textAlignment, hasMeasurementConsumer]);
+
+  useLayoutEffect(() => {
+    const host = hostRef.current;
+    const mounted = mountedRef.current;
+    if (!host || !mounted) return;
+    applyTextOffset(mounted, textOffsetX, textOffsetY);
+    if (hasMeasurementConsumer) {
+      const sizing = sizingRef.current;
+      const renderScale = resolveHostRenderScale(host, sizing.width, sizing.height);
+      const measurement = readMeasurement(mounted.container, mounted.core, renderScale);
+      onMeasurementRef.current?.(measurement);
+      onVisualMeasurementRef.current?.({ ...measurement, state: visualStateRef.current });
+    }
+  }, [textOffsetX, textOffsetY, hasMeasurementConsumer]);
 
   useLayoutEffect(() => {
     const host = hostRef.current;

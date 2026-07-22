@@ -1,4 +1,5 @@
 import type {
+  ButtonRecord,
   ButtonSkin,
   ButtonStateDocument
 } from "../types.js";
@@ -7,12 +8,16 @@ import { cloneButtonDocument } from "../state/buttonDefaults.js";
 export interface ButtonSkinSaveScope {
   skinIds: readonly string[];
   placementIds?: readonly string[];
-  buttonIds?: readonly string[];
 }
 
 export interface ButtonBehaviorSaveScope {
   buttonId: string;
   placementIds: readonly string[];
+}
+
+export interface ButtonTextSaveScope {
+  buttonId: string;
+  placementId: string;
 }
 
 function copyNewRecords<T>(
@@ -97,6 +102,8 @@ export function buildButtonPlacementScopedDocument(
           textAlignment: draftPlacement.textAlignment,
           minimumFontSize: draftPlacement.minimumFontSize,
           textSizeOverride: draftPlacement.textSizeOverride,
+          textOffsetX: draftPlacement.textOffsetX,
+          textOffsetY: draftPlacement.textOffsetY,
           allowLabelResize: draftPlacement.allowLabelResize,
           matchHitboxToSkin: draftPlacement.matchHitboxToSkin,
           allowStretching: draftPlacement.allowStretching
@@ -163,6 +170,8 @@ export function applyButtonPlacementSavedScope(
           textAlignment: savedPlacement.textAlignment,
           minimumFontSize: savedPlacement.minimumFontSize,
           textSizeOverride: savedPlacement.textSizeOverride,
+          textOffsetX: savedPlacement.textOffsetX,
+          textOffsetY: savedPlacement.textOffsetY,
           allowLabelResize: savedPlacement.allowLabelResize,
           matchHitboxToSkin: savedPlacement.matchHitboxToSkin,
           allowStretching: savedPlacement.allowStretching
@@ -192,14 +201,6 @@ export function buildButtonSkinScopedDocument(
       skinOverrideId: draftPlacement.skinOverrideId
     };
   }
-  for (const buttonId of scope.buttonIds ?? []) {
-    const committedButton = requireDraftRecord(committed.buttons, buttonId, "Saved Button");
-    const draftButton = requireDraftRecord(draft.buttons, buttonId, "Button");
-    next.buttons[buttonId] = {
-      ...structuredClone(committedButton),
-      label: draftButton.label
-    };
-  }
   next.revision = committed.revision;
   return next;
 }
@@ -219,10 +220,28 @@ export function applyButtonSkinSavedScope(
       target.placements[placementId].skinOverrideId = placement.skinOverrideId;
     }
   }
-  for (const buttonId of scope.buttonIds ?? []) {
-    const button = saved.buttons[buttonId];
-    if (button && target.buttons[buttonId]) target.buttons[buttonId].label = button.label;
-  }
+}
+
+function buildButtonBehaviorWithoutPendingText(
+  committedButton: ButtonRecord,
+  draftButton: ButtonRecord
+): ButtonRecord["activationBehavior"] {
+  const draftBehavior = draftButton.activationBehavior;
+  if (!draftBehavior) return null;
+  const committedStatesById = new Map(
+    (committedButton.activationBehavior?.states ?? []).map((state) => [state.id, state])
+  );
+  return {
+    mode: draftBehavior.mode,
+    states: draftBehavior.states.map((state) => {
+      const committedState = committedStatesById.get(state.id);
+      return {
+        ...structuredClone(state),
+        label: committedState?.label ?? committedButton.label,
+        labelOverrides: structuredClone(committedState?.labelOverrides ?? {})
+      };
+    })
+  };
 }
 
 /**
@@ -241,8 +260,7 @@ export function buildButtonBehaviorScopedDocument(
   const next = cloneButtonDocument(committed);
   next.buttons[scope.buttonId] = {
     ...structuredClone(committedButton),
-    label: draftButton.label,
-    activationBehavior: structuredClone(draftButton.activationBehavior)
+    activationBehavior: buildButtonBehaviorWithoutPendingText(committedButton, draftButton)
   };
   for (const placementId of scope.placementIds) {
     const committedPlacement = requireDraftRecord(
@@ -266,15 +284,119 @@ export function applyButtonBehaviorSavedScope(
   scope: ButtonBehaviorSaveScope
 ): void {
   const button = saved.buttons[scope.buttonId];
-  if (button && target.buttons[scope.buttonId]) {
-    target.buttons[scope.buttonId].label = button.label;
-    target.buttons[scope.buttonId].activationBehavior = structuredClone(button.activationBehavior);
+  const targetButton = target.buttons[scope.buttonId];
+  if (button && targetButton) {
+    const pendingStatesById = new Map(
+      (targetButton.activationBehavior?.states ?? []).map((state) => [state.id, state])
+    );
+    targetButton.activationBehavior = button.activationBehavior
+      ? {
+          ...structuredClone(button.activationBehavior),
+          states: button.activationBehavior.states.map((state) => {
+            const pendingState = pendingStatesById.get(state.id);
+            return pendingState
+              ? {
+                  ...structuredClone(state),
+                  label: pendingState.label,
+                  labelOverrides: structuredClone(pendingState.labelOverrides)
+                }
+              : structuredClone(state);
+          })
+        }
+      : null;
   }
   for (const placementId of scope.placementIds) {
     const placement = saved.placements[placementId];
     if (placement && target.placements[placementId]) {
       target.placements[placementId].visualStateMap = structuredClone(placement.visualStateMap);
     }
+  }
+}
+
+/**
+ * Button Text owns only rendered labels and the focused placement's host text
+ * policy. It deliberately preserves activation mode/state structure, visual
+ * mappings, skin source, and placement geometry.
+ */
+export function buildButtonTextScopedDocument(
+  committed: ButtonStateDocument,
+  draft: ButtonStateDocument,
+  scope: ButtonTextSaveScope
+): ButtonStateDocument {
+  const committedButton = requireDraftRecord(committed.buttons, scope.buttonId, "Saved Button");
+  const draftButton = requireDraftRecord(draft.buttons, scope.buttonId, "Button");
+  const committedPlacement = requireDraftRecord(
+    committed.placements,
+    scope.placementId,
+    "Saved Button placement"
+  );
+  const draftPlacement = requireDraftRecord(draft.placements, scope.placementId, "Button placement");
+  const next = cloneButtonDocument(committed);
+
+  const draftStatesById = new Map(
+    (draftButton.activationBehavior?.states ?? []).map((state) => [state.id, state])
+  );
+  next.buttons[scope.buttonId] = {
+    ...structuredClone(committedButton),
+    label: draftButton.label,
+    activationBehavior: committedButton.activationBehavior
+      ? {
+          ...structuredClone(committedButton.activationBehavior),
+          states: committedButton.activationBehavior.states.map((state) => {
+            const draftState = draftStatesById.get(state.id);
+            return draftState
+              ? {
+                  ...structuredClone(state),
+                  label: draftState.label,
+                  labelOverrides: structuredClone(draftState.labelOverrides)
+                }
+              : structuredClone(state);
+          })
+        }
+      : null
+  };
+  next.placements[scope.placementId] = {
+    ...structuredClone(committedPlacement),
+    textFitMode: draftPlacement.textFitMode,
+    textAlignment: draftPlacement.textAlignment,
+    minimumFontSize: draftPlacement.minimumFontSize,
+    textSizeOverride: draftPlacement.textSizeOverride,
+    textOffsetX: draftPlacement.textOffsetX,
+    textOffsetY: draftPlacement.textOffsetY
+  };
+  next.revision = committed.revision;
+  return next;
+}
+
+export function applyButtonTextSavedScope(
+  target: ButtonStateDocument,
+  saved: ButtonStateDocument,
+  scope: ButtonTextSaveScope
+): void {
+  const savedButton = saved.buttons[scope.buttonId];
+  const targetButton = target.buttons[scope.buttonId];
+  if (savedButton && targetButton) {
+    targetButton.label = savedButton.label;
+    const savedStatesById = new Map(
+      (savedButton.activationBehavior?.states ?? []).map((state) => [state.id, state])
+    );
+    for (const targetState of targetButton.activationBehavior?.states ?? []) {
+      const savedState = savedStatesById.get(targetState.id);
+      if (!savedState) continue;
+      targetState.label = savedState.label;
+      targetState.labelOverrides = structuredClone(savedState.labelOverrides);
+    }
+  }
+
+  const savedPlacement = saved.placements[scope.placementId];
+  const targetPlacement = target.placements[scope.placementId];
+  if (savedPlacement && targetPlacement) {
+    targetPlacement.textFitMode = savedPlacement.textFitMode;
+    targetPlacement.textAlignment = savedPlacement.textAlignment;
+    targetPlacement.minimumFontSize = savedPlacement.minimumFontSize;
+    targetPlacement.textSizeOverride = savedPlacement.textSizeOverride;
+    targetPlacement.textOffsetX = savedPlacement.textOffsetX;
+    targetPlacement.textOffsetY = savedPlacement.textOffsetY;
   }
 }
 
