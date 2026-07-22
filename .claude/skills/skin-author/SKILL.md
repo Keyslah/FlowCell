@@ -49,6 +49,7 @@ For a new skin, a conversion, or a complete replacement, emit every canonical he
 - Header lines tolerate surrounding whitespace, indentation, and letter case; blank lines before the first header are ignored. Canonical lowercase remains the authored form.
 - Unknown or duplicate section headers, and real content before the first header, make the paste invalid and change nothing.
 - Correctly parsed source remains literal and editable even when semantic compilation fails. The last valid render remains visible until the error is fixed.
+- Recognized paste source is applied through both the native paste event and the textarea's normal WebView input path, distributed into its canonical section editors, and shown in an always-visible preview before assignment. The transient paste field clears after successful distribution; unparseable input remains available for correction.
 - The core element's inline `style` is compiled into a lowest-priority `[data-core]` rule, so ordinary state-section declarations (for example `font-size` in `base`) override inline defaults on that core. This does not override inline declarations on nested elements.
 
 ### Structure contract
@@ -117,7 +118,7 @@ When converting a React, JSX, or styled-components example:
 - `Assign Size` applies the working target and behavior only to the focused placement. `Assign Size to Panel` applies that target once to every Button beside the edited placement on its current Main, Pop, Fan, or other Button surface and atomically repacks that same surface when it fits. Responsive and Stretch use the exact target dimensions; Proportional preserves each target Button's measured natural aspect when available and otherwise its current aspect. Both actions disable label-driven geometry growth, neither enables the separate legacy `Same size Buttons` surface format, and neither mutates skin source. The preview uses the isolated working skin, so a changed skin must still be assigned separately.
 - Audit a newly authored packed core edge to edge: two copies placed at `x = 0` and `x = core width`, or `y = 0` and `y = core height`, must not reveal an unintended transparent strip. For a literal conversion, compare against the source instead: authored control padding is retained even when it creates transparent space.
 - Compare the measured core aspect ratio in the Editor and a real Pop/Fan. It must remain the same before host scaling; a mismatch means inherited typography or other host-context units still own skin geometry.
-- Text fit is host-owned and placement-specific: Shrink, Stack Whole Words, or Shrink and Stack, plus an optional starting text size and minimum shrink size. Shrink modes may render below the starting size. These controls remain independent from size assignment. Never split words in authored structure.
+- Text fit is host-owned and placement-specific: Shrink, Stack Whole Words, or Shrink and Stack, plus an optional starting text size and minimum shrink size. Horizontal alignment is likewise placement-specific: Use skin, Left, Center, or Right. Alignment changes only the rendered text for that placement and never rewrites skin source; Use skin removes the override and restores the authored alignment. Shrink modes may render below the starting size. These controls remain independent from size assignment. Never split words in authored structure.
 - Label edits do not move or resize a placement unless the placement explicitly enables label-driven growth.
 - Visual overflow can overlap; interactive cores cannot.
 
@@ -192,7 +193,7 @@ background: transparent;
 
 ### Scope and output
 
-This format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Skins persist only in `flowcellbackend/local/button-system/button-state.json`.
+This format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Assigned and library skins persist in `flowcellbackend/local/button-system/button-state.json`. `Save as new skin` also opens a native picker and exports the canonical paste-ready source as `.flowcell-button-skin.txt` without assigning it.
 
 ### Required preflight
 
