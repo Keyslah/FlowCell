@@ -29,7 +29,7 @@ const source = sourcePathArgument
   : readFileSync(0, "utf8");
 
 const compiledRoot = join(frontendRoot, "tests", ".compiled-button-system", "button", "skins");
-const [{ BUTTON_SKIN_SECTION_ORDER }, { parseButtonSkinPaste, replaceEntireButtonSkin }, { validateButtonSkin }, { parseCssDeclarations }] = await Promise.all([
+const [{ BUTTON_SKIN_SECTION_ORDER, createEmptyButtonSkinSections }, { applyNamedButtonSkinSections, parseButtonSkinPaste }, { validateButtonSkin }, { parseCssDeclarations }] = await Promise.all([
   import(pathToFileURL(join(compiledRoot, "buttonSkinFormat.js")).href),
   import(pathToFileURL(join(compiledRoot, "skinPasteParser.js")).href),
   import(pathToFileURL(join(compiledRoot, "skinValidator.js")).href),
@@ -52,7 +52,11 @@ if (missingSections.length > 0) {
 
 let skin;
 try {
-  skin = replaceEntireButtonSkin(parsed);
+  const structure = parsed.sections.structure;
+  if (typeof structure !== "string" || structure.trim().length === 0) {
+    throw new Error("Replacement skin requires a nonempty structure section.");
+  }
+  skin = applyNamedButtonSkinSections(createEmptyButtonSkinSections(), parsed);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);
