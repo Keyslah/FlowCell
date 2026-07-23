@@ -40,6 +40,17 @@ import {
   resolveButtonVisualSamplingDecision
 } from "./.compiled-button-system/button/skins/buttonVisualSampling.js";
 import {
+  buttonVisualMotionBlocksStateChange,
+  commitPreparedButtonVisual,
+  createButtonVisualLatch,
+  finishButtonVisualMotion,
+  requestButtonVisual,
+  settleButtonVisualMotionProbe
+} from "./.compiled-button-system/button/runtime/buttonVisualLatch.js";
+import {
+  applyButtonLabelTextOffset
+} from "./.compiled-button-system/button/skins/buttonTextOffset.js";
+import {
   buttonRectsOverlap,
   buildButtonReorderRowCandidates,
   chooseButtonReorderRowCandidate,
@@ -163,6 +174,9 @@ import {
   resolvePreferredButtonPlacementId
 } from "./.compiled-button-system/button/editor/buttonEditorSelection.js";
 import {
+  buttonActivationCycleStructureMatches
+} from "./.compiled-button-system/button/editor/buttonActivationStateStructure.js";
+import {
   BUTTON_FAN_EDITOR_HOVER_CLOSE_DELAY_MS,
   createInitialButtonFanDisclosureState,
   reduceButtonFanDisclosure
@@ -236,7 +250,9 @@ function addScopePanelSurface(document, id, name, buttonIds) {
       allowLabelResize: false,
       matchHitboxToSkin: true,
       allowStretching: false,
+      highlightOnHover: false,
       resizeAnchor: "top-left",
+      activationCycle: null,
       visualStateMap: null
     };
   });
@@ -381,7 +397,9 @@ function buildButtonDocumentScopeFixture() {
     allowLabelResize: false,
     matchHitboxToSkin: true,
     allowStretching: false,
+    highlightOnHover: false,
     resizeAnchor: "top-left",
+    activationCycle: null,
     visualStateMap: null
   };
   document.popoutUnits["scope-tool-unit"] = {
@@ -514,6 +532,52 @@ function assertValidScopeFixture(document) {
     validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n")
   );
 }
+
+function placementActivationCycle(stateIds) {
+  return {
+    states: stateIds.map((id, index) => ({
+      id,
+      label: id,
+      advanceTrigger: index % 2 === 0 ? "press" : "release",
+      visualState: index === 0 ? "base" : "pressed"
+    }))
+  };
+}
+
+test("Button activation-cycle structure matching handles null and configured transitions", () => {
+  const configured = placementActivationCycle(["state-1", "state-2"]);
+  assert.equal(buttonActivationCycleStructureMatches(null, null), true);
+  assert.equal(buttonActivationCycleStructureMatches(null, configured), false);
+  assert.equal(buttonActivationCycleStructureMatches(configured, null), false);
+});
+
+test("Button activation-cycle structure matching rejects state ID reorder, add, and removal", () => {
+  const cycle = placementActivationCycle(["one", "two", "three"]);
+  assert.equal(
+    buttonActivationCycleStructureMatches(cycle, placementActivationCycle(["two", "one", "three"])),
+    false
+  );
+  assert.equal(
+    buttonActivationCycleStructureMatches(cycle, placementActivationCycle(["one", "two", "three", "four"])),
+    false
+  );
+  assert.equal(
+    buttonActivationCycleStructureMatches(cycle, placementActivationCycle(["one", "two"])),
+    false
+  );
+});
+
+test("Button activation-cycle structure matching ignores label, trigger, and visual edits", () => {
+  const committed = placementActivationCycle(["state-1", "state-2"]);
+  const draft = structuredClone(committed);
+  draft.states[0].label = "Ready";
+  draft.states[0].advanceTrigger = "hover";
+  draft.states[0].visualState = "held";
+  draft.states[1].label = "Armed";
+  draft.states[1].advanceTrigger = "press";
+  draft.states[1].visualState = "hover";
+  assert.equal(buttonActivationCycleStructureMatches(committed, draft), true);
+});
 
 test("Button window geometry keeps restored and expanded bounds in physical pixels", () => {
   assert.deepEqual(
@@ -706,8 +770,11 @@ test("fixed Button cursor and frame mapping honor the WebView pixel ratio", () =
 test("native Button cursor gating fails closed outside the owning program", () => {
   assert.equal(shouldIgnoreButtonWindowCursor(false, true), true);
   assert.equal(shouldIgnoreButtonWindowCursor(false, false), true);
+  assert.equal(shouldIgnoreButtonWindowCursor(false, true, true), true);
+  assert.equal(shouldIgnoreButtonWindowCursor(false, false, true), true);
   assert.equal(shouldIgnoreButtonWindowCursor(true, false), true);
   assert.equal(shouldIgnoreButtonWindowCursor(true, true), false);
+  assert.equal(shouldIgnoreButtonWindowCursor(true, false, true), false);
   assert.equal(isNativeQueryRevisionCurrent(4, 4), true);
   assert.equal(isNativeQueryRevisionCurrent(4, 5), false);
 });
@@ -851,6 +918,191 @@ test("finite Button visual sampling stops after animations and settle frames", (
     settleFramesRemaining: BUTTON_VISUAL_SETTLE_FRAMES
   });
   assert.deepEqual(idle, { continueSampling: false, settleFramesRemaining: 0 });
+});
+
+test("Button visual latch holds Live through press and release until its finite hover transition finishes", () => {
+  const intent = (key, visualState, activationStateIndex) => ({
+    key,
+    value: { label: "Live", visualState, activationStateIndex }
+  });
+  const offBase = intent("live:off:base", "base", 0);
+  const offHover = intent("live:off:hover", "hover", 0);
+  const pressed = intent("live:off:pressed", "pressed", 0);
+  const released = intent("live:off:release", "release", 0);
+  const onHover = intent("live:on:hover", "hover", 1);
+
+  let state = createButtonVisualLatch(offBase);
+  const initialPresentationId = state.presentation.id;
+  state = requestButtonVisual(state, offHover);
+  assert.equal(state.presentation.intent.key, offBase.key);
+  state = settleButtonVisualMotionProbe(state, initialPresentationId, "none");
+  const hoverPresentationId = state.presentation.id;
+  state = commitPreparedButtonVisual(state, hoverPresentationId);
+
+  // An input arriving before the browser exposes the transition must not replace
+  // the presentation that is still being probed.
+  state = requestButtonVisual(state, pressed);
+  assert.equal(state.presentation.id, hoverPresentationId);
+  assert.equal(state.presentation.intent.key, offHover.key);
+  state = settleButtonVisualMotionProbe(state, hoverPresentationId, "finite");
+
+  state = requestButtonVisual(state, released);
+  state = requestButtonVisual(state, onHover);
+  assert.equal(state.presentation.id, hoverPresentationId);
+  assert.equal(state.presentation.intent.key, offHover.key);
+  assert.equal(state.desired.key, onHover.key);
+
+  state = finishButtonVisualMotion(state, hoverPresentationId);
+  assert.notEqual(state.presentation.id, hoverPresentationId);
+  assert.equal(state.presentation.intent.key, onHover.key);
+  assert.equal(state.motion?.phase, "preparing");
+  state = commitPreparedButtonVisual(state, state.presentation.id);
+  state = settleButtonVisualMotionProbe(state, state.presentation.id, "none");
+  assert.equal(state.motion, null);
+});
+
+test("Button visual preparation drops stale unpainted candidates before native prep resolves", () => {
+  const intent = (key) => ({ key, value: key });
+  let state = createButtonVisualLatch(intent("base"));
+  state = settleButtonVisualMotionProbe(state, state.presentation.id, "none");
+
+  state = requestButtonVisual(state, intent("hover"));
+  const staleHoverId = state.presentation.id;
+  assert.equal(state.motion?.phase, "preparing");
+
+  state = requestButtonVisual(state, intent("pressed"));
+  const stalePressedId = state.presentation.id;
+  assert.notEqual(stalePressedId, staleHoverId);
+  assert.equal(commitPreparedButtonVisual(state, staleHoverId), state);
+
+  state = requestButtonVisual(state, intent("release"));
+  const releaseId = state.presentation.id;
+  assert.notEqual(releaseId, stalePressedId);
+  assert.equal(commitPreparedButtonVisual(state, stalePressedId), state);
+
+  state = commitPreparedButtonVisual(state, releaseId);
+  assert.equal(state.presentation.intent.key, "release");
+  assert.equal(state.motion?.phase, "probing");
+});
+
+test("authored Pressed motion commits before a Smart Axis result can replace it", () => {
+  const intent = (key, options = {}) => ({
+    key,
+    value: key,
+    ...options
+  });
+  const base = intent("smart-axis:x");
+  const pressed = intent("smart-axis:x:pressed", { commitBeforeSupersede: true });
+  const released = intent("smart-axis:x:release");
+  const armed = intent("smart-axis:x-minus");
+
+  let state = createButtonVisualLatch(base);
+  state = settleButtonVisualMotionProbe(state, state.presentation.id, "none");
+  state = requestButtonVisual(state, pressed);
+  const pressedPresentationId = state.presentation.id;
+  assert.equal(state.motion?.phase, "preparing");
+
+  // Pointer-up and the successful Blender response can both arrive while the
+  // native Pop/Fan envelope is still preparing the Pressed presentation.
+  state = requestButtonVisual(state, released);
+  state = requestButtonVisual(state, armed);
+  assert.equal(state.presentation.id, pressedPresentationId);
+  assert.equal(state.presentation.intent.key, pressed.key);
+  assert.equal(state.desired.key, armed.key);
+
+  state = commitPreparedButtonVisual(state, pressedPresentationId);
+  state = settleButtonVisualMotionProbe(state, pressedPresentationId, "finite");
+  assert.equal(state.presentation.intent.key, pressed.key);
+  assert.equal(state.desired.key, armed.key);
+
+  state = finishButtonVisualMotion(state, pressedPresentationId);
+  assert.notEqual(state.presentation.id, pressedPresentationId);
+  assert.equal(state.presentation.intent.key, armed.key);
+  assert.equal(state.motion?.phase, "preparing");
+});
+
+test("Button visual latch never blocks on infinite-only motion and ignores stale completion", () => {
+  const base = { key: "base", value: "base" };
+  const hover = { key: "hover", value: "hover" };
+  let state = createButtonVisualLatch(base);
+  state = settleButtonVisualMotionProbe(state, state.presentation.id, "none");
+  state = requestButtonVisual(state, hover);
+  const hoverPresentationId = state.presentation.id;
+  state = commitPreparedButtonVisual(state, hoverPresentationId);
+  state = settleButtonVisualMotionProbe(state, hoverPresentationId, "infinite");
+  assert.equal(state.motion, null);
+
+  state = requestButtonVisual(state, base);
+  const basePresentationId = state.presentation.id;
+  assert.notEqual(basePresentationId, hoverPresentationId);
+  assert.equal(state.presentation.intent.key, base.key);
+  const afterStaleFinish = finishButtonVisualMotion(state, hoverPresentationId);
+  assert.equal(afterStaleFinish.presentation.id, basePresentationId);
+
+  assert.equal(buttonVisualMotionBlocksStateChange({
+    pending: false,
+    playState: "running",
+    endTime: 1000
+  }), true);
+  assert.equal(buttonVisualMotionBlocksStateChange({
+    pending: false,
+    playState: "running",
+    endTime: Number.POSITIVE_INFINITY
+  }), false);
+  assert.equal(buttonVisualMotionBlocksStateChange({
+    pending: false,
+    playState: "finished",
+    endTime: 1000
+  }), false);
+});
+
+test("backend execution starts while a finite Button visual presentation remains latched", async () => {
+  let releaseResponse;
+  const response = new Promise((resolve) => {
+    releaseResponse = resolve;
+  });
+  let calls = 0;
+  const unregister = registerButtonCoreAction("test-visual-latch-backend", async () => {
+    calls += 1;
+    return response;
+  });
+  try {
+    const base = { key: "live:base", value: "base" };
+    const hover = { key: "live:hover", value: "hover" };
+    let state = createButtonVisualLatch(base);
+    state = settleButtonVisualMotionProbe(state, state.presentation.id, "none");
+    state = requestButtonVisual(state, hover);
+    const presentationId = state.presentation.id;
+    state = commitPreparedButtonVisual(state, presentationId);
+    state = settleButtonVisualMotionProbe(state, presentationId, "finite");
+
+    const execution = executeButtonRecord({
+      id: "live-button",
+      role: "single-script",
+      sourceIdentity: null,
+      label: "Live",
+      tooltip: "",
+      executionTarget: { kind: "core-action", actionId: "test-visual-latch-backend" },
+      defaultSkinId: "skin-default-neutral",
+      defaultTextFitMode: "shrink",
+      disabled: false,
+      activationAnimation: null,
+      activationBehavior: null,
+      toolSetParentId: null,
+      toolSetBehavior: null,
+      metadata: {}
+    }, "click");
+
+    assert.equal(calls, 1);
+    assert.equal(state.presentation.id, presentationId);
+    assert.equal(state.motion?.phase, "finite");
+    releaseResponse({ live: true });
+    const result = await execution;
+    assert.equal(result.executed, true);
+    assert.deepEqual(result.response, { live: true });
+  } finally {
+    unregister();
+  }
 });
 
 test("fixed Button frame rescaling preserves the opposite resize corner", () => {
@@ -1155,7 +1407,8 @@ test("placement text alignment overrides HTML layout without remounting or erasi
     renderer,
     /}, \[compiled\?\.skinId, compiled\?\.sourceFingerprint, hasMeasurementConsumer\]\);/
   );
-  assert.match(renderer, /function applyTextOffset\([\s\S]*?labelNode\.style\.setProperty\("translate", `\$\{offsetX\}px \$\{offsetY\}px`, "important"\);/);
+  assert.match(renderer, /function applyTextOffset\([\s\S]*?applyButtonLabelTextOffset\(labelNode, offsetX, offsetY\);/);
+  assert.match(renderer, /reapplyCurrentTextOffset\(\);[\s\S]*?requestAnimationFrame\(sample\)/);
   assert.match(renderer, /}, \[textOffsetX, textOffsetY, hasMeasurementConsumer\]\);/);
   assert.doesNotMatch(
     renderer,
@@ -1166,6 +1419,194 @@ test("placement text alignment overrides HTML layout without remounting or erasi
     renderer,
     /}, \[width, height, renderedLabel, textFitMode, minimumFontSize, constrained, matchHitboxToSkin, allowStretching, textSizeOverride, previewStackWords\]\);/
   );
+});
+
+function fakeStyle(initial = {}) {
+  const declarations = new Map(
+    Object.entries(initial).map(([property, declaration]) => [
+      property,
+      typeof declaration === "string"
+        ? { value: declaration, priority: "" }
+        : { value: declaration.value, priority: declaration.priority ?? "" }
+    ])
+  );
+  return {
+    getPropertyValue(property) {
+      return declarations.get(property)?.value ?? "";
+    },
+    getPropertyPriority(property) {
+      return declarations.get(property)?.priority ?? "";
+    },
+    setProperty(property, value, priority = "") {
+      declarations.set(property, { value, priority });
+    },
+    removeProperty(property) {
+      const previous = declarations.get(property)?.value ?? "";
+      declarations.delete(property);
+      return previous;
+    }
+  };
+}
+
+function fakeLabelElement({
+  namespaceURI,
+  display,
+  position = "static",
+  translate = "none",
+  parentDisplay,
+  initialStyle,
+  children = [],
+  screenMatrix
+}) {
+  const ownerDocument = {
+    defaultView: {
+      getComputedStyle(element) {
+        return {
+          display: element.__display,
+          position: element.__position,
+          translate: element.__translate
+        };
+      }
+    }
+  };
+  const parentElement = parentDisplay === undefined
+    ? null
+    : { __display: parentDisplay, ownerDocument };
+  return {
+    namespaceURI,
+    __display: display,
+    __position: position,
+    __translate: translate,
+    ownerDocument,
+    parentElement,
+    children,
+    style: fakeStyle(initialStyle),
+    getScreenCTM: screenMatrix ? () => screenMatrix : undefined
+  };
+}
+
+function fakeSvgLine(initialAttributes = {}) {
+  const attributes = new Map(Object.entries(initialAttributes));
+  return {
+    namespaceURI: "http://www.w3.org/2000/svg",
+    getAttribute(name) {
+      return attributes.get(name) ?? null;
+    },
+    setAttribute(name, value) {
+      attributes.set(name, String(value));
+    },
+    removeAttribute(name) {
+      attributes.delete(name);
+    }
+  };
+}
+
+test("text offsets move nested plain-inline HTML labels and restore their prior styles", () => {
+  const label = fakeLabelElement({
+    namespaceURI: "http://www.w3.org/1999/xhtml",
+    display: "inline",
+    parentDisplay: "inline",
+    initialStyle: {
+      position: { value: "static", priority: "" },
+      left: { value: "auto", priority: "" },
+      top: { value: "auto", priority: "" }
+    }
+  });
+
+  applyButtonLabelTextOffset(label, -14, 12);
+  assert.equal(label.style.getPropertyValue("position"), "relative");
+  assert.equal(label.style.getPropertyValue("left"), "-14px");
+  assert.equal(label.style.getPropertyValue("top"), "12px");
+  assert.equal(label.style.getPropertyPriority("left"), "important");
+  assert.equal(label.style.getPropertyValue("translate"), "");
+
+  applyButtonLabelTextOffset(label, 0, 0);
+  assert.equal(label.style.getPropertyValue("position"), "static");
+  assert.equal(label.style.getPropertyValue("left"), "auto");
+  assert.equal(label.style.getPropertyValue("top"), "auto");
+});
+
+test("text offsets use one HTML path and host-owned SVG line positions", () => {
+  for (const parentDisplay of ["inline", "block", "flex", "grid"]) {
+    const htmlLabel = fakeLabelElement({
+      namespaceURI: "http://www.w3.org/1999/xhtml",
+      display: "inline",
+      parentDisplay,
+      initialStyle: { transform: "rotate(5deg)" }
+    });
+    applyButtonLabelTextOffset(htmlLabel, 7, -3);
+    assert.equal(htmlLabel.style.getPropertyValue("position"), "relative", parentDisplay);
+    assert.equal(htmlLabel.style.getPropertyValue("left"), "7px", parentDisplay);
+    assert.equal(htmlLabel.style.getPropertyValue("top"), "-3px", parentDisplay);
+    assert.equal(htmlLabel.style.getPropertyValue("translate"), "", parentDisplay);
+    assert.equal(htmlLabel.style.getPropertyValue("transform"), "rotate(5deg)", parentDisplay);
+
+    applyButtonLabelTextOffset(htmlLabel, 0, 0);
+    assert.equal(htmlLabel.style.getPropertyValue("position"), "", parentDisplay);
+    assert.equal(htmlLabel.style.getPropertyValue("left"), "", parentDisplay);
+    assert.equal(htmlLabel.style.getPropertyValue("top"), "", parentDisplay);
+    assert.equal(htmlLabel.style.getPropertyValue("transform"), "rotate(5deg)", parentDisplay);
+  }
+
+  const positionedLabel = fakeLabelElement({
+    namespaceURI: "http://www.w3.org/1999/xhtml",
+    display: "block",
+    position: "absolute",
+    translate: "5px 6px",
+    parentDisplay: "block",
+    initialStyle: { position: "absolute", transform: "rotate(5deg)" }
+  });
+  applyButtonLabelTextOffset(positionedLabel, 7, -3);
+  assert.equal(positionedLabel.style.getPropertyValue("position"), "absolute");
+  assert.equal(positionedLabel.style.getPropertyValue("translate"), "calc(5px + 7px) calc(6px + -3px)");
+  assert.equal(positionedLabel.style.getPropertyValue("transform"), "rotate(5deg)");
+  applyButtonLabelTextOffset(positionedLabel, 0, 0);
+  assert.equal(positionedLabel.style.getPropertyValue("position"), "absolute");
+  assert.equal(positionedLabel.style.getPropertyValue("translate"), "");
+
+  const firstLine = fakeSvgLine({
+    "data-button-label-line": "true",
+    dy: "0"
+  });
+  const secondLine = fakeSvgLine({
+    "data-button-label-line": "true",
+    dy: "1.1em"
+  });
+  const svgLabel = fakeLabelElement({
+    namespaceURI: "http://www.w3.org/2000/svg",
+    display: "inline",
+    parentDisplay: "inline",
+    initialStyle: { transform: "scale(2)" },
+    children: [firstLine, secondLine]
+  });
+  applyButtonLabelTextOffset(svgLabel, 4, 9);
+  assert.equal(firstLine.getAttribute("dx"), "4");
+  assert.equal(firstLine.getAttribute("dy"), "9");
+  assert.equal(secondLine.getAttribute("dx"), "4");
+  assert.equal(secondLine.getAttribute("dy"), "1.1em");
+  assert.equal(svgLabel.style.getPropertyValue("transform"), "scale(2)");
+
+  applyButtonLabelTextOffset(svgLabel, 0, 0);
+  assert.equal(firstLine.getAttribute("dx"), null);
+  assert.equal(firstLine.getAttribute("dy"), "0");
+  assert.equal(secondLine.getAttribute("dx"), null);
+  assert.equal(secondLine.getAttribute("dy"), "1.1em");
+  assert.equal(svgLabel.style.getPropertyValue("transform"), "scale(2)");
+
+  const scaledSvgLine = fakeSvgLine({
+    "data-button-label-line": "true",
+    dy: "0"
+  });
+  const scaledSvgLabel = fakeLabelElement({
+    namespaceURI: "http://www.w3.org/2000/svg",
+    display: "inline",
+    parentDisplay: "inline",
+    children: [scaledSvgLine],
+    screenMatrix: { a: 2, b: 0, c: 0, d: 4 }
+  });
+  applyButtonLabelTextOffset(scaledSvgLabel, 8, 12);
+  assert.equal(scaledSvgLine.getAttribute("dx"), "4");
+  assert.equal(scaledSvgLine.getAttribute("dy"), "3");
 });
 
 test("selection uses the authored pressed state while Main and native input stay core-shaped", () => {
@@ -1199,6 +1640,74 @@ test("selection uses the authored pressed state while Main and native input stay
   assert.doesNotMatch(mainCss, /button-system-host--selected|fc-selected-highlight/);
 });
 
+test("placement hover highlight follows the visual latch while native hover stays immediate", () => {
+  const buttonHost = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+  const skinRenderer = readFileSync(
+    join(frontendRoot, "src", "button", "skins", "ButtonSkinRenderer.tsx"),
+    "utf8"
+  );
+  const nativeHitboxes = readFileSync(
+    join(frontendRoot, "src", "button", "windows", "useNativeButtonHitboxes.ts"),
+    "utf8"
+  );
+
+  assert.match(buttonHost, /highlightOnHover=\{placement\.highlightOnHover\}/);
+  assert.match(buttonHost, /rawHovered=\{hovered\}/);
+  assert.doesNotMatch(buttonHost, /rawHovered=\{resolvedAppearance\.flags\.hovered\}/);
+  assert.match(skinRenderer, /hoverHighlighted: highlightOnHover && rawHovered/);
+  assert.match(skinRenderer, /filter: renderedVisual\.hoverHighlighted \? "brightness\(1\.15\)" : undefined/);
+  assert.match(skinRenderer, /setBooleanAttribute\(host, "data-button-pointer-hover", rawHovered\)/);
+  assert.match(skinRenderer, /return <span ref=\{hostRef\} data-button-skin-host="true" style=\{style\} \/>/);
+  const pointerDownBlock = buttonHost.match(
+    /const handlePointerDown = \(event: Event\) => \{[\s\S]*?\n    \};/
+  )?.[0];
+  assert.ok(pointerDownBlock);
+  assert.ok(
+    pointerDownBlock.indexOf("beginPress(pointerEvent)") <
+      pointerDownBlock.indexOf("setPointerCapture")
+  );
+  assert.match(pointerDownBlock, /try \{[\s\S]*setPointerCapture[\s\S]*\} catch \{/);
+  assert.match(nativeHitboxes, /shadowRoot\?\.querySelector<HTMLElement \| SVGElement>\("\[data-core\]"\)/);
+  assert.match(nativeHitboxes, /host\.getAttribute\("data-button-pointer-hover"\) === "true"/);
+  assert.match(nativeHitboxes, /data-button-skin-host.*data-button-pointer-pressed/);
+  assert.match(
+    nativeHitboxes,
+    /shouldIgnoreButtonWindowCursor\(scopeActive,\s*(?:false|hovered),\s*pointerPressActive\)/
+  );
+  assert.doesNotMatch(nativeHitboxes, /host\.getAttribute\("data-button-hover"\) === "true"/);
+});
+
+test("Play tracking arms only after the latched Play presentation is applied", () => {
+  const buttonHost = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+  const startPlayBlock = buttonHost.match(
+    /const startPlay = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[\]\);/
+  )?.[0];
+  assert.ok(startPlayBlock);
+  assert.match(
+    startPlayBlock,
+    /!playVisualAvailableRef\.current \|\|[\s\S]{0,120}playRequestedRef\.current \|\|[\s\S]{0,120}appliedVisualStateRef\.current\.play/
+  );
+  assert.match(startPlayBlock, /playRequestedRef\.current = true;[\s\S]*?setPlay\(true\);/);
+  assert.doesNotMatch(startPlayBlock, /playActiveRef\.current = true|PLAY_SAFETY_MS/);
+
+  assert.match(
+    buttonHost,
+    /const handleAppliedVisualState = useCallback[\s\S]{0,500}if \(!state\.play\)[\s\S]{0,500}playActiveRef\.current = true;[\s\S]{0,300}window\.setTimeout\(finishPlay, PLAY_SAFETY_MS\)/
+  );
+  assert.equal(
+    buttonHost.match(/!appliedVisualStateRef\.current\.play/g)?.length,
+    2
+  );
+  assert.match(buttonHost, /playRequestedRef\.current = false;[\s\S]{0,120}playActiveRef\.current = false;/);
+  assert.match(buttonHost, /void enqueueEvent\("click", activationEvent\);/);
+});
+
 test("Main Button single clicks select, double clicks execute, and Pop or Fan stays executable", () => {
   const buttonHost = readFileSync(
     join(frontendRoot, "src", "button", "ButtonHost.tsx"),
@@ -1228,8 +1737,10 @@ test("Main Button single clicks select, double clicks execute, and Pop or Fan st
   assert.match(buttonHost, /interactionElement\.addEventListener\("dblclick", handleDoubleClick\)/);
   assert.match(
     buttonHost,
-    /const handleDoubleClick = \(event: Event\) => \{[\s\S]{0,180}await handler\(buttonRef\.current, event as MouseEvent\);[\s\S]{0,260}selectionOnlyRef\.current && stateCount > 1[\s\S]{0,160}await advanceButtonActivationState\(buttonRef\.current\.id, stateCount\)/
+    /const handleDoubleClick = \(event: Event\) => \{[\s\S]{0,180}await handler\(buttonRef\.current, event as MouseEvent\);[\s\S]{0,320}const placementCycle = placementRef\.current\.activationCycle;[\s\S]{0,260}placementCycle && placementCycle\.states\.length >= 2[\s\S]{0,260}requestActivationTriggerRef\.current\("press", interactionId, true\);[\s\S]{0,120}requestActivationTriggerRef\.current\("release", interactionId, true\);[\s\S]{0,180}await advanceButtonActivationState\(buttonRef\.current\.id, stateCount\)/
   );
+  assert.match(buttonHost, /selectionOnlyRef\.current && trigger !== "hover" && !allowSelectionOnlyTrigger/);
+  assert.match(buttonHost, /if \(selectionOnlyRef\.current\) \{\s*pressActivationInteractionIdRef\.current = null;\s*\} else \{/);
   assert.match(mainPage, /const handleButtonDoubleActivate = async \([\s\S]{0,500}button\.disabled[\s\S]{0,500}handlePerformPanelScriptPrimaryAction\(button\.scriptFileName, matchedRecord\)/);
   assert.match(mainPage, /const pressPlan = resolveButtonPressEventPlan\(canonical\);[\s\S]{0,900}executeLifecycleEvent\("hoverEnter"\)[\s\S]{0,900}executeLifecycleEvent\("pressDown"\)[\s\S]{0,900}executeLifecycleEvent\("click"\)[\s\S]{0,900}executeLifecycleEvent\("pressUp"\)[\s\S]{0,900}executeLifecycleEvent\("hoverLeave"\)/);
   assert.equal(mainPage.match(/onDoubleActivate=\{handleButtonDoubleActivate\}/g)?.length, 1);
@@ -1245,18 +1756,75 @@ test("Button activation state drives live labels and mapped visuals without exte
     join(frontendRoot, "src", "button", "skins", "ButtonSkinRenderer.tsx"),
     "utf8"
   );
+  const activationStateBus = readFileSync(
+    join(frontendRoot, "src", "button", "runtime", "ButtonActivationStateBus.ts"),
+    "utf8"
+  );
 
   assert.match(buttonHost, /subscribeButtonActivationState\([\s\S]{0,1300}setActivationStateIndex\(index\)/);
-  assert.match(buttonHost, /resolveButtonAppearance\(\{[\s\S]{0,180}activationBehavior: button\.activationBehavior,[\s\S]{0,120}visualStateMap: placement\.visualStateMap/);
+  assert.match(buttonHost, /const activationStateKey = activationCycle \? placement\.id : button\.id;/);
+  assert.match(buttonHost, /const authoredVisualStates = useMemo\(\(\) => new Set<ButtonSkinVisualState>/);
+  assert.match(buttonHost, /resolveButtonAppearance\(\{[\s\S]{0,180}activationBehavior: button\.activationBehavior,[\s\S]{0,100}activationCycle,[\s\S]{0,160}visualStateMap: placement\.visualStateMap/);
+  assert.match(buttonHost, /visualStateMap: placement\.visualStateMap,\s*authoredVisualStates,/);
+  assert.match(buttonHost, /playVisualAvailableRef\.current = !activationCycle \|\| authoredVisualStates\.has\("play"\)/);
+  assert.match(buttonHost, /requestActivationTriggerRef\.current\("press", interactionId\)/);
+  assert.match(buttonHost, /requestActivationTriggerRef\.current\("release", activationInteractionId\)/);
+  assert.match(buttonHost, /if \(!resumesActiveHoverSession\) \{[\s\S]{0,180}requestActivationTriggerRef\.current\([\s\S]{0,80}"hover"/);
+  assert.match(activationStateBus, /interactionWasConsumed\(consumedInteractionIds, request\.activationKey, request\.interactionId\)/);
+  assert.match(activationStateBus, /rememberConsumedInteraction\(consumedInteractionIds, request\.activationKey, request\.interactionId\)/);
+  assert.match(activationStateBus, /MAX_CONSUMED_INTERACTION_IDS_PER_KEY/);
+  assert.match(activationStateBus, /request\.advanceTriggers\[current\] !== request\.trigger/);
   assert.match(buttonHost, /const renderedLabel = inlineEditField[\s\S]{0,160}: resolvedAppearance\.label;/);
   assert.match(buttonHost, /: renderedLabel \|\| "FlowCell Button"/);
-  assert.match(buttonHost, /const transition = \+\+activationStateTransitionRef\.current[\s\S]{0,600}prepare\(preparedState\)[\s\S]{0,240}finally\(commitIndex\)/);
-  assert.match(buttonHost, /const transition = \+\+activationStateTransitionRef\.current;\s*if \(index === activationStateIndexRef\.current\) return;/);
+  assert.match(buttonHost, /if \(index === activationStateIndexRef\.current\) return;\s*activationStateIndexRef\.current = index;\s*setActivationStateIndex\(index\);/);
+  assert.doesNotMatch(buttonHost, /activationStateTransitionRef|resolvePreparedVisualStateRef/);
   assert.match(buttonHost, /hovered=\{resolvedAppearance\.flags\.hovered\}[\s\S]{0,360}error=\{resolvedAppearance\.flags\.error\}/);
   assert.match(buttonHost, /samplingState=\{rawVisualState\}/);
   assert.match(buttonHost, /transitionSamplingKey=\{`\$\{activationStateIndex\}:\$\{resolvedAppearance\.activeTrigger\}:\$\{resolvedAppearance\.visualState\}`\}/);
+  assert.match(buttonHost, /onPrepareVisualStateChange=\{onPrepareVisualStateChange\}/);
+  assert.match(renderer, /await onPrepareVisualStateChangeRef\.current\?\.\([\s\S]{0,1400}setAppliedVisualPresentation\(presentation\)/);
+  assert.match(renderer, /visualLatchStateRef\.current = committed;[\s\S]{0,420}flushSync\(\(\) => \{[\s\S]{0,180}setAppliedVisualPresentation\(presentation\)/);
+  assert.match(renderer, /requestButtonVisual\(current, desired\)[\s\S]{0,120}resetButtonVisualLatch\(current, desired\)/);
+  assert.match(
+    renderer,
+    /commitBeforeSupersede: snapshot\.pressed \|\| snapshot\.play \|\| snapshot\.release/
+  );
+  assert.match(renderer, /return animation\.finished/);
+  assert.match(renderer, /Promise\.allSettled\(completions\)/);
+  assert.doesNotMatch(renderer, /setTimeout\(finish,\s*250\)/);
   assert.match(renderer, /BUTTON_PERSISTENT_VISUAL_SAMPLE_FRAMES/);
-  assert.match(renderer, /decision\.continueSampling \|\| transitionFramesRemaining > 0/);
+  assert.match(
+    renderer,
+    /continueMeasurementSampling \|\| transitionFramesRemaining > 0 \|\| offsetFramesRemaining > 0/
+  );
+});
+
+test("action-backed placement cycles open neutral and reconcile from action responses", () => {
+  const buttonHost = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+  const buttonSurface = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonSurface.tsx"),
+    "utf8"
+  );
+  const popoutRenderer = readFileSync(
+    join(frontendRoot, "src", "button", "popout", "ButtonPopoutRenderer.tsx"),
+    "utf8"
+  );
+  assert.match(buttonHost, /buttonPlacementActivationCycleUsesResultMatches\(cycle\)/);
+  assert.match(buttonSurface, /resetResultMappedActivationStateOnMount/);
+  assert.match(
+    buttonSurface,
+    /buttonPlacementActivationCycleUsesResultMatches\(cycle\)[\s\S]{0,140}setButtonActivationState\(placementId, cycle!\.states\.length, 0\)/
+  );
+  assert.doesNotMatch(buttonSurface, /queryToolsetStateOnMount|queryToolsetState\(/);
+  assert.match(buttonSurface, /resolveButtonActivationResultAssignments\([\s\S]{0,220}setButtonActivationState\(/);
+  assert.match(buttonSurface, /onExecutionResult\?\.\(placementId, result\)/);
+  assert.match(
+    popoutRenderer,
+    /resetResultMappedActivationStateOnMount=\{unit\.kind === "tool-set"\}/
+  );
 });
 
 test("explicit Pop and Fan opens reveal after show while layout restore stays passive", () => {
@@ -1272,10 +1840,27 @@ test("explicit Pop and Fan opens reveal after show while layout restore stays pa
     join(frontendRoot, "src-tauri", "src", "commands", "windows.rs"),
     "utf8"
   );
+  const popoutPage = readFileSync(
+    join(frontendRoot, "src", "button", "popout", "ButtonPopoutWindowPage.tsx"),
+    "utf8"
+  );
+  const fanPage = readFileSync(
+    join(frontendRoot, "src", "button", "fan", "ButtonFanWindowPage.tsx"),
+    "utf8"
+  );
 
   assert.equal((windows.match(/await refreshScopedWindowTopmost\(windowLabel, args\.reveal !== false, true\);/g) ?? []).length, 2);
+  assert.equal((windows.match(/applyButtonWindowChrome\(target, true, !existed\)/g) ?? []).length, 2);
   assert.match(windows, /await showWindow\(target, false\);\s*shown = true;\s*await refreshScopedWindowTopmost/);
   assert.equal((mainPage.match(/reveal: false/g) ?? []).length, 2);
+  assert.match(
+    popoutPage,
+    /await ensureCanvasContainsFrame\(visibleBounds\);\s*setGeometryInitialized\(true\);/
+  );
+  assert.match(
+    fanPage,
+    /await ensureCanvasContainsFrame\(collapsedBounds\);\s*setGeometryInitialized\(true\);/
+  );
   assert.match(nativeWindows, /if explicit_open_reveal \{[\s\S]{0,420}return \(ScopedWindowPlacement::Normal, true\);/);
   assert.match(nativeWindows, /entry\.initial_reveal = true;/);
   assert.match(nativeWindows, /if force\.unwrap_or\(false\) \{[\s\S]{0,260}entry\.last_placement = None;/);
@@ -2424,6 +3009,7 @@ test("state validation reports malformed skins and all saved Button presentation
     allowLabelResize: "yes",
     matchHitboxToSkin: "yes",
     allowStretching: "yes",
+    highlightOnHover: "yes",
     resizeAnchor: "center"
   };
   const surface = document.surfaces["surface-button-editor-main"];
@@ -2448,6 +3034,7 @@ test("state validation reports malformed skins and all saved Button presentation
   assert.equal(paths.has("placements.one.allowLabelResize"), true);
   assert.equal(paths.has("placements.one.matchHitboxToSkin"), true);
   assert.equal(paths.has("placements.one.allowStretching"), true);
+  assert.equal(paths.has("placements.one.highlightOnHover"), true);
   assert.equal(paths.has("placements.one.resizeAnchor"), true);
   assert.equal(paths.has("surfaces.surface-button-editor-main.name"), true);
   assert.equal(paths.has("surfaces.surface-button-editor-main.kind"), true);
@@ -3135,6 +3722,30 @@ test("uniform Button compaction applies one size atomically without mutating inp
   assert.deepEqual(input, original);
 });
 
+test("uniform Button compaction preserves existing row membership", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 0, width: 20, height: 10 } },
+    { id: "b", rect: { x: 20, y: 0, width: 20, height: 10 } },
+    { id: "c", rect: { x: 0, y: 30, width: 20, height: 10 } },
+    { id: "d", rect: { x: 20, y: 30, width: 20, height: 10 } }
+  ];
+
+  const result = compactUniformButtonPlacements(
+    input,
+    { width: 30, height: 15 },
+    { width: 120, height: 60 },
+    { gap: 0 }
+  );
+
+  assert.equal(result.success, true);
+  assert.deepEqual(result.placements, [
+    { id: "a", rect: { x: 0, y: 0, width: 30, height: 15 }, zIndex: 0 },
+    { id: "b", rect: { x: 30, y: 0, width: 30, height: 15 }, zIndex: 1 },
+    { id: "c", rect: { x: 0, y: 30, width: 30, height: 15 }, zIndex: 2 },
+    { id: "d", rect: { x: 30, y: 30, width: 30, height: 15 }, zIndex: 3 }
+  ]);
+});
+
 test("reordered compaction normalizes z-index and fails atomically when it cannot fit", () => {
   const placements = {
     a: { id: "a", rect: { x: 0, y: 0, width: 50, height: 20 } },
@@ -3600,6 +4211,7 @@ test("schema-1 loading backfills skin sizing defaults before validation", () => 
   const placement = document.placements[popout.memberPlacementIds[0]];
   delete placement.matchHitboxToSkin;
   delete placement.allowStretching;
+  delete placement.highlightOnHover;
   delete placement.textAlignment;
   delete placement.textOffsetX;
   delete placement.textOffsetY;
@@ -3615,6 +4227,7 @@ test("schema-1 loading backfills skin sizing defaults before validation", () => 
   assert.equal(result.valid, true);
   assert.equal(result.document.placements[placement.id].matchHitboxToSkin, true);
   assert.equal(result.document.placements[placement.id].allowStretching, false);
+  assert.equal(result.document.placements[placement.id].highlightOnHover, false);
   assert.equal(result.document.placements[placement.id].textAlignment, "skin");
   assert.equal(result.document.placements[placement.id].textOffsetX, 0);
   assert.equal(result.document.placements[placement.id].textOffsetY, 0);
@@ -3720,6 +4333,20 @@ test("fixed Pop and Fan canvases keep hover geometry on the resting semantic fra
     assert.doesNotMatch(source, /queueEnvelope\((?:preparedEnvelope|windowEnvelope)\.current\)/);
     assert.match(source, /queueEnvelope\((?:preparedEnvelope|windowEnvelope)\.resting\)/);
   }
+});
+
+test("Space-drag keeps an expanded tool set visible and persists its current mode", () => {
+  const pop = readFileSync(
+    join(frontendRoot, "src", "button", "popout", "ButtonPopoutWindowPage.tsx"),
+    "utf8"
+  );
+  const dragStart = pop.indexOf("const handlePointerDownCapture");
+  const dragEnd = pop.indexOf("const handlePlacementVisualMeasurement", dragStart);
+  assert.ok(dragStart >= 0 && dragEnd > dragStart, "Pop Space-drag handler should be extractable");
+  const dragHandler = pop.slice(dragStart, dragEnd);
+  assert.doesNotMatch(dragHandler, /setDisplayMode\("collapsed"\)/);
+  assert.doesNotMatch(dragHandler, /setRenderedToolSetMode\("collapsed"\)/);
+  assert.match(dragHandler, /await persistPopoutBounds\(displayMode\)/);
 });
 
 test("unsaved Pop starts at one-to-one scale and repeated hover envelopes do not drift", () => {

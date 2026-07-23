@@ -309,7 +309,8 @@ async function waitForWindowCreated(target: WebviewWindow): Promise<void> {
 
 async function applyButtonWindowChrome(
   target: TauriWindow,
-  transparent: boolean
+  transparent: boolean,
+  initializeCursorIgnore = transparent
 ): Promise<void> {
   await target.setDecorations(false);
   await target.setShadow(false);
@@ -323,7 +324,9 @@ async function applyButtonWindowChrome(
       setBackgroundColor?: (color: [number, number, number, number]) => Promise<void>;
     };
     await backgroundTarget.setBackgroundColor?.([0, 0, 0, 0]);
-    await target.setIgnoreCursorEvents(true);
+    if (initializeCursorIgnore) {
+      await target.setIgnoreCursorEvents(true);
+    }
   }
 }
 
@@ -625,7 +628,7 @@ export async function openButtonPopoutWindow(args: {
         await bindDestroyedCleanup(target, windowLabel);
       }
 
-      await applyButtonWindowChrome(target, true);
+      await applyButtonWindowChrome(target, true, !existed);
       await applyProgramScopedTopmost(windowLabel, args.programName);
       await applyWindowPlacement(target, placement);
       await showWindow(target, false);
@@ -760,7 +763,7 @@ export async function openButtonFanWindow(args: {
         await bindDestroyedCleanup(target, windowLabel);
       }
 
-      await applyButtonWindowChrome(target, true);
+      await applyButtonWindowChrome(target, true, !existed);
       await applyProgramScopedTopmost(windowLabel, args.programName);
       await applyWindowPlacement(target, placement);
       await showWindow(target, false);

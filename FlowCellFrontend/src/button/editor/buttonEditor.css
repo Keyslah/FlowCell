@@ -194,7 +194,7 @@
   box-shadow: inset 3px 0 #8dc7f2;
 }
 
-.button-editor-sidebar__actions > .button-editor-sidebar__save {
+.button-editor-sidebar__actions > .button-editor-sidebar__placement-file {
   border-color: #587260;
   color: #f0fff4;
   background: #304a39;
@@ -536,6 +536,34 @@
   background: #262b32;
 }
 
+.button-behavior-section > summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  list-style: none;
+}
+
+.button-behavior-section > summary::-webkit-details-marker {
+  display: none;
+}
+
+.button-behavior-section > summary::marker {
+  content: "";
+}
+
+.button-section-chevron {
+  color: #dce8f5;
+  font-size: 18px;
+  line-height: 1;
+  transform-origin: center;
+  transition: transform 120ms ease;
+}
+
+.button-behavior-section[open] > summary .button-section-chevron {
+  transform: rotate(90deg);
+}
+
 .button-skin-section[open] > summary {
   border-bottom: 1px solid #343b45;
 }
@@ -545,8 +573,12 @@
 .button-skin-section > p,
 .button-skin-section > .button-skin-size-grid,
 .button-skin-section > .button-skin-size-actions,
+.button-skin-section > .button-cycle-count-row,
+.button-skin-section > .button-cycle-toggle-note,
+.button-skin-section > .button-cycle-state-list,
 .button-skin-section > .button-behavior-state-grid,
-.button-skin-section > .button-state-list-actions,
+.button-skin-section > .button-behavior-preview-caption,
+.button-skin-section > .button-behavior-preview,
 .button-skin-section > .button-text-offset-grid,
 .button-skin-section > .button-text-bench-stats,
 .button-skin-section > .button-skin-preview-section,
@@ -559,11 +591,84 @@
 .button-skin-size-grid,
 .button-skin-size-actions,
 .button-behavior-state-grid,
-.button-state-list-actions,
 .button-text-offset-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.button-cycle-count-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: end;
+  gap: 12px;
+}
+
+.button-cycle-count-row > strong {
+  align-self: center;
+}
+
+.button-cycle-count-row label,
+.button-cycle-state-row label {
+  margin: 0;
+}
+
+.button-hover-highlight-toggle {
+  display: flex !important;
+  align-items: center;
+  gap: 7px !important;
+}
+
+.button-hover-highlight-toggle input {
+  width: auto;
+  margin: 0;
+}
+
+.button-cycle-toggle-note,
+.button-behavior-preview-caption {
+  display: block;
+  color: #aeb9c6;
+  font-size: 11px;
+}
+
+.button-cycle-state-list {
+  display: grid;
+  gap: 6px;
+}
+
+.button-cycle-state-row {
+  display: grid;
+  grid-template-columns: minmax(72px, auto) minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+  padding: 7px;
+  border: 1px solid #343f4b;
+  border-radius: 5px;
+  background: #20262d;
+}
+
+.button-cycle-state-name {
+  display: grid;
+  align-self: center;
+  gap: 2px;
+}
+
+.button-cycle-state-name small {
+  color: #8fb7db;
+}
+
+.button-cycle-state-name .button-cycle-state-sync {
+  color: #8fd5a4;
+  cursor: help;
+}
+
+.button-behavior-preview {
+  min-height: 100px;
+  display: grid;
+  place-items: center;
+  overflow: visible;
+  border: 1px dashed #4d5662;
+  background: #14181d;
 }
 
 .button-skin-size-grid label,

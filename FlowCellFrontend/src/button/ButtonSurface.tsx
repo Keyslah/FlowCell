@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties
 } from "react";
@@ -21,10 +22,49 @@ import {
   isToolSetChildStateSelected,
   type ButtonExecutionResult
 } from "./runtime/ButtonRuntimeAdapter";
+import { setButtonActivationState } from "./runtime/ButtonActivationStateBus";
+import {
+  buttonPlacementActivationCycleUsesResultMatches,
+  resolveButtonActivationResultAssignments
+} from "./runtime/buttonActivationResultSync";
 import {
   showOpenFileDialog,
   showOpenFolderDialog
 } from "../lib/tauri";
+
+interface ToolsetStateIdentity {
+  programName: string;
+  panelName: string;
+  fileName: string;
+}
+
+function toolsetStateIdentityForButton(button: ButtonRecord | undefined): ToolsetStateIdentity | null {
+  const target = button?.executionTarget;
+  if (!target || target.kind !== "tool-set-action") return null;
+  return {
+    programName: target.programName,
+    panelName: target.panelName,
+    fileName: target.ownerFileName
+  };
+}
+
+function toolsetStateIdentitiesMatch(
+  left: ToolsetStateIdentity | null,
+  right: ToolsetStateIdentity
+): boolean {
+  return Boolean(
+    left &&
+    left.programName === right.programName &&
+    left.panelName === right.panelName &&
+    left.fileName === right.fileName
+  );
+}
+
+function responseReportsExecutionFailure(response: unknown): boolean {
+  if (!response || typeof response !== "object" || Array.isArray(response)) return false;
+  const status = (response as Record<string, unknown>).status;
+  return typeof status === "string" && ["cancelled", "failed", "error"].includes(status.toLowerCase());
+}
 
 export interface ButtonSurfaceProps {
   document: ButtonStateDocument;
@@ -59,6 +99,7 @@ export interface ButtonSurfaceProps {
   ) => void | Promise<void>;
   onPlacementVisualStateChange?: (placementId: string, state: ButtonVisualState) => void;
   onPlacementNaturalMeasurement?: (placementId: string, measurement: ButtonCoreMeasurement) => void;
+  resetResultMappedActivationStateOnMount?: boolean;
   className?: string;
   style?: CSSProperties;
 }
@@ -188,6 +229,7 @@ export function ButtonSurface({
   onPreparePlacementVisualStateChange,
   onPlacementVisualStateChange,
   onPlacementNaturalMeasurement,
+  resetResultMappedActivationStateOnMount = false,
   className,
   style
 }: ButtonSurfaceProps) {
@@ -216,6 +258,91 @@ export function ButtonSurface({
       return (leftPlacement?.zIndex ?? 0) - (rightPlacement?.zIndex ?? 0) || left.localeCompare(right);
     });
   }, [surface, document.placements]);
+
+  const documentRef = useRef(document);
+  const activationResultApplyQueueRef = useRef<Promise<void>>(Promise.resolve());
+  documentRef.current = document;
+
+  const enqueueActivationResult = useCallback((args: {
+    response: unknown;
+    identity: ToolsetStateIdentity | null;
+    fallbackPlacementId?: string;
+  }): Promise<void> => {
+    const apply = async () => {
+      const currentDocument = documentRef.current;
+      const currentSurface = currentDocument.surfaces[surfaceId];
+      if (!currentSurface) return;
+      const placementIds = args.identity
+        ? currentSurface.placementIds.filter((placementId) => {
+            const placement = currentDocument.placements[placementId];
+            return toolsetStateIdentitiesMatch(
+              toolsetStateIdentityForButton(
+                placement ? currentDocument.buttons[placement.buttonId] : undefined
+              ),
+              args.identity!
+            );
+          })
+        : args.fallbackPlacementId
+          ? [args.fallbackPlacementId]
+          : currentSurface.placementIds;
+      const assignments = resolveButtonActivationResultAssignments(
+        currentDocument,
+        placementIds,
+        args.response
+      );
+      await Promise.all(assignments.map((assignment) => (
+        setButtonActivationState(
+          assignment.activationKey,
+          assignment.stateCount,
+          assignment.index
+        )
+      )));
+    };
+    const queued = activationResultApplyQueueRef.current.then(apply, apply);
+    activationResultApplyQueueRef.current = queued.then(() => undefined, () => undefined);
+    return queued;
+  }, [surfaceId]);
+
+  useEffect(() => {
+    if (mode !== "run" || !resetResultMappedActivationStateOnMount) return;
+    const currentDocument = documentRef.current;
+    const currentSurface = currentDocument.surfaces[surfaceId];
+    if (!currentSurface) return;
+    const resets = currentSurface.placementIds.flatMap((placementId) => {
+      const cycle = currentDocument.placements[placementId]?.activationCycle;
+      return buttonPlacementActivationCycleUsesResultMatches(cycle)
+        ? [setButtonActivationState(placementId, cycle!.states.length, 0)]
+        : [];
+    });
+    void Promise.all(resets).catch((error) => {
+      console.error("FlowCell could not reset the toolset Button state.", error);
+    });
+  }, [mode, resetResultMappedActivationStateOnMount, surfaceId]);
+
+  const handlePlacementExecutionResult = useCallback((
+    placementId: string,
+    result: ButtonExecutionResult
+  ) => {
+    if (
+      result.executed &&
+      result.response !== undefined &&
+      !responseReportsExecutionFailure(result.response)
+    ) {
+      const currentDocument = documentRef.current;
+      const placement = currentDocument.placements[placementId];
+      const identity = toolsetStateIdentityForButton(
+        placement ? currentDocument.buttons[placement.buttonId] : undefined
+      );
+      void enqueueActivationResult({
+        response: result.response,
+        identity,
+        fallbackPlacementId: placementId
+      }).catch((error) => {
+        console.error("FlowCell could not apply the Button action state.", error);
+      });
+    }
+    onExecutionResult?.(placementId, result);
+  }, [enqueueActivationResult, onExecutionResult]);
 
   if (!surface) return null;
 
@@ -320,7 +447,7 @@ export function ButtonSurface({
       {orderedPlacementIds.map((placementId) => {
         const placement = document.placements[placementId];
         const button = placement ? document.buttons[placement.buttonId] : undefined;
-        const selected = selectedPlacementIds?.has(placementId) || (
+        const selected = (mode === "edit" && selectedPlacementIds?.has(placementId)) || (
           mode === "run" && isToolSetChildStateSelected(button, values)
         );
         return (
@@ -343,7 +470,7 @@ export function ButtonSurface({
             onHoverStart={onHoverStart}
             onHoverEnd={onHoverEnd}
             onHoverCancel={onHoverCancel}
-            onExecutionResult={onExecutionResult}
+            onExecutionResult={handlePlacementExecutionResult}
             onMeasurement={onPlacementMeasurement}
             onVisualMeasurement={onPlacementVisualMeasurement}
             onPrepareVisualStateChange={onPreparePlacementVisualStateChange}

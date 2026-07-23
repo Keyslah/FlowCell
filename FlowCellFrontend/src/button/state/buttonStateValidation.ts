@@ -1,8 +1,10 @@
 import {
+  BUTTON_PLACEMENT_CYCLE_MAX_STATES,
   BUTTON_SKIN_COMPILER_VERSION,
   BUTTON_STATE_SCHEMA_VERSION,
   type ButtonActivationBehavior,
   type ButtonExecutionTarget,
+  type ButtonPlacementActivationCycle,
   type ButtonPopoutUnit,
   type ButtonRect,
   type ButtonRecord,
@@ -53,6 +55,7 @@ const BUTTON_TEXT_ALIGNMENTS = new Set(["skin", "left", "center", "right"]);
 const BUTTON_SURFACE_KINDS = new Set(["main", "panel", "regular-popout", "tool-set-popout", "fan"]);
 const BUTTON_WINDOW_FIT_MODES = new Set(["surface", "hitbox", "visual"]);
 const BUTTON_ACTIVATION_MODES = new Set(["momentary", "toggle", "cycle"]);
+const BUTTON_ACTIVATION_ADVANCE_TRIGGERS = new Set(["press", "hover", "release"]);
 const BUTTON_APPEARANCE_TRIGGERS = new Set([
   "rest",
   "hover",
@@ -281,6 +284,87 @@ function validateButtonVisualStateMap(
   }
 }
 
+function validateButtonPlacementActivationCycle(
+  value: unknown,
+  path: string,
+  issues: ButtonStateValidationIssue[]
+): value is ButtonPlacementActivationCycle {
+  if (!isObject(value)) {
+    addIssue(issues, path, "Placement activation cycle must be an object or null.");
+    return false;
+  }
+  if (!Array.isArray(value.states)) {
+    addIssue(issues, `${path}.states`, "Placement activation-cycle states must be an array.");
+    return false;
+  }
+  if (value.states.length < 2) {
+    addIssue(issues, `${path}.states`, "Placement activation cycle requires at least two states.");
+  }
+  if (value.states.length > BUTTON_PLACEMENT_CYCLE_MAX_STATES) {
+    addIssue(
+      issues,
+      `${path}.states`,
+      `Placement activation cycle cannot exceed ${BUTTON_PLACEMENT_CYCLE_MAX_STATES} states.`
+    );
+  }
+
+  const stateIds: string[] = [];
+  value.states.forEach((state, index) => {
+    const statePath = `${path}.states.${index}`;
+    if (!isObject(state)) {
+      addIssue(issues, statePath, "Placement activation-cycle state must be an object.");
+      return;
+    }
+    if (typeof state.id !== "string" || state.id.trim().length === 0) {
+      addIssue(issues, `${statePath}.id`, "Placement activation-cycle state requires a stable nonempty ID.");
+    } else {
+      stateIds.push(state.id);
+    }
+    if (typeof state.label !== "string") {
+      addIssue(issues, `${statePath}.label`, "Placement activation-cycle state label must be a string.");
+    }
+    if (
+      typeof state.advanceTrigger !== "string" ||
+      !BUTTON_ACTIVATION_ADVANCE_TRIGGERS.has(state.advanceTrigger)
+    ) {
+      addIssue(
+        issues,
+        `${statePath}.advanceTrigger`,
+        "Placement activation-cycle trigger must be press, hover, or release."
+      );
+    }
+    if (
+      typeof state.visualState !== "string" ||
+      !BUTTON_SKIN_VISUAL_STATES.has(state.visualState)
+    ) {
+      addIssue(issues, `${statePath}.visualState`, "Placement activation-cycle visual state is invalid.");
+    }
+    if (state.resultMatches !== undefined) {
+      if (!Array.isArray(state.resultMatches)) {
+        addIssue(
+          issues,
+          `${statePath}.resultMatches`,
+          "Placement activation-cycle result matches must be an array of JSON objects."
+        );
+      } else {
+        state.resultMatches.forEach((match, matchIndex) => {
+          if (!isObject(match)) {
+            addIssue(
+              issues,
+              `${statePath}.resultMatches.${matchIndex}`,
+              "Placement activation-cycle result match must be a JSON object."
+            );
+          }
+        });
+      }
+    }
+  });
+  if (hasDuplicateStrings(stateIds)) {
+    addIssue(issues, `${path}.states`, "Placement activation-cycle state IDs must be unique.");
+  }
+  return true;
+}
+
 function validateButtonRecord(
   value: unknown,
   key: string,
@@ -439,6 +523,10 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
       placement.allowStretching = false;
       changed = true;
     }
+    if (!Object.hasOwn(placement, "highlightOnHover")) {
+      placement.highlightOnHover = false;
+      changed = true;
+    }
     if (!Object.hasOwn(placement, "textSizeOverride")) {
       placement.textSizeOverride = null;
       changed = true;
@@ -457,6 +545,10 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
     }
     if (!Object.hasOwn(placement, "visualStateMap")) {
       placement.visualStateMap = null;
+      changed = true;
+    }
+    if (!Object.hasOwn(placement, "activationCycle")) {
+      placement.activationCycle = null;
       changed = true;
     }
     placements[id] = placement;
@@ -627,6 +719,15 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
         issues
       );
     }
+    if (!Object.hasOwn(placement, "activationCycle") || placement.activationCycle === undefined) {
+      addIssue(issues, `${path}.activationCycle`, "Placement activation cycle must be present and may be null.");
+    } else if (placement.activationCycle !== null) {
+      validateButtonPlacementActivationCycle(
+        placement.activationCycle,
+        `${path}.activationCycle`,
+        issues
+      );
+    }
     if (!BUTTON_TEXT_FIT_MODES.has(String(placement.textFitMode))) {
       addIssue(issues, `${path}.textFitMode`, "Placement text-fit mode is invalid.");
     }
@@ -656,6 +757,9 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     }
     if (typeof placement.allowStretching !== "boolean") {
       addIssue(issues, `${path}.allowStretching`, "Stretching permission must be boolean.");
+    }
+    if (typeof placement.highlightOnHover !== "boolean") {
+      addIssue(issues, `${path}.highlightOnHover`, "Hover highlighting must be boolean.");
     }
     if (placement.resizeAnchor !== "top-left") {
       addIssue(issues, `${path}.resizeAnchor`, "Placement resize anchor is invalid.");

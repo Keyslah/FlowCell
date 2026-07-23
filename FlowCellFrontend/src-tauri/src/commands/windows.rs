@@ -500,6 +500,24 @@ fn resolve_scoped_window_placement(
 }
 
 #[cfg(any(windows, test))]
+fn resolve_selective_window_interactivity(
+    placement: ScopedWindowPlacement,
+    input_active: bool,
+    selective_input: bool,
+    cursor_over_taskbar_or_preview: bool,
+) -> (ScopedWindowPlacement, bool) {
+    if !selective_input || cursor_over_taskbar_or_preview || input_active {
+        return (placement, input_active);
+    }
+
+    // A visible transparent Pop/Fan must never become a click-through copy of
+    // its controls merely because its owning program is closed or inactive.
+    // Keep it in the normal band and let the frontend's exact geometry decide
+    // which authored controls receive input. TOPMOST remains owner-scoped.
+    (ScopedWindowPlacement::Normal, true)
+}
+
+#[cfg(any(windows, test))]
 fn continues_explicit_open_reveal(
     initial_reveal: bool,
     foreground_is_flowcell_window: bool,
@@ -595,7 +613,7 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         })
         .unwrap_or(false);
     let last_external_hwnd = last_external_foreground.map(|last_external| last_external.hwnd);
-    let (placement, input_active) = resolve_scoped_window_placement(
+    let (scoped_placement, scoped_input_active) = resolve_scoped_window_placement(
         matches_target_process,
         foreground_is_scoped_window,
         foreground_scoped_group_matches,
@@ -607,10 +625,15 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         foreground_is_valid_external.then_some(foreground.hwnd),
         last_external_hwnd,
     );
-    // Opaque tool pages are ordinary interactive windows, so focusing one is
-    // enough to continue in the normal band. Transparent Pop/Fan hosts use the
-    // explicit reveal or a proven owning-program foreground for input; only
-    // the proven owner may become their native owner.
+    let (placement, input_active) = resolve_selective_window_interactivity(
+        scoped_placement,
+        scoped_input_active,
+        entry.selective_input,
+        cursor_over_taskbar_or_preview,
+    );
+    // Opaque tool pages are ordinary interactive windows. Transparent Pop/Fan
+    // hosts also retain geometry-selective input when their program is absent,
+    // but only the proven owner may become their native owner.
     let valid_scoped_continuation =
         foreground_is_scoped_window && (last_external_matches_target || !entry.selective_input);
     let owner_candidate_hwnd = if matches_target_process {
@@ -653,10 +676,9 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         cursor_over_taskbar_or_preview,
     );
 
-    // Full interactive tool pages always retain normal native input, including
-    // when they are behind an unrelated foreground app. Transparent Pop/Fan
-    // hosts fail closed outside an explicit reveal or owning-program session
-    // and delegate active hit testing to their selective frontend controller.
+    // Full interactive tool pages always retain normal native input. Transparent
+    // Pop/Fan hosts delegate exact hit testing to their selective frontend
+    // controller, including while the owning program is closed or inactive.
     let cursor_input_applied = if !entry.selective_input {
         window.set_ignore_cursor_events(false).is_ok()
     } else if !input_active {
@@ -1382,8 +1404,8 @@ mod tests {
     };
     use super::{
         continues_explicit_open_reveal, matches_process_token, resolve_scoped_owner_hwnds,
-        resolve_scoped_window_placement, should_reapply_scoped_window_state, NativeInputSnapshot,
-        ScopedWindowPlacement,
+        resolve_scoped_window_placement, resolve_selective_window_interactivity,
+        should_reapply_scoped_window_state, NativeInputSnapshot, ScopedWindowPlacement,
     };
 
     #[test]
@@ -1585,6 +1607,28 @@ mod tests {
                 Some(200),
             ),
             (ScopedWindowPlacement::Behind(200), false)
+        );
+    }
+
+    #[test]
+    fn transparent_controls_remain_interactive_without_the_owner_program() {
+        assert_eq!(
+            resolve_selective_window_interactivity(
+                ScopedWindowPlacement::Behind(300),
+                false,
+                true,
+                false,
+            ),
+            (ScopedWindowPlacement::Normal, true)
+        );
+        assert_eq!(
+            resolve_selective_window_interactivity(
+                ScopedWindowPlacement::Behind(300),
+                false,
+                true,
+                true,
+            ),
+            (ScopedWindowPlacement::Behind(300), false)
         );
     }
 

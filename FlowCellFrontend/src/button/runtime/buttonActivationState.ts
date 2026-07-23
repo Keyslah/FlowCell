@@ -3,11 +3,21 @@ import type {
   ButtonActivationMode,
   ButtonActivationState,
   ButtonAppearanceTrigger,
+  ButtonCycleAdvanceTrigger,
+  ButtonPlacementActivationCycle,
+  ButtonPlacementCycleState,
   ButtonSkinVisualState,
-  ButtonVisualStateMap
+  ButtonVisualStateMap,
+  JsonValue
 } from "../types.js";
 
 export const BUTTON_ACTIVATION_MODES = ["momentary", "toggle", "cycle"] as const;
+
+export const BUTTON_CYCLE_ADVANCE_TRIGGERS = [
+  "press",
+  "hover",
+  "release"
+] as const satisfies readonly ButtonCycleAdvanceTrigger[];
 
 export const BUTTON_APPEARANCE_TRIGGERS = [
   "rest",
@@ -68,13 +78,15 @@ export interface ButtonResolvedVisualFlags {
 export interface ResolveButtonAppearanceOptions {
   buttonLabel: string;
   activationBehavior: ButtonActivationBehavior | null;
+  activationCycle?: ButtonPlacementActivationCycle | null;
   activeStateIndex: number;
   visualStateMap: ButtonVisualStateMap | null;
+  authoredVisualStates?: ReadonlySet<ButtonSkinVisualState>;
   appearance: ButtonAppearanceInput;
 }
 
 export interface ButtonResolvedAppearance {
-  activationState: ButtonActivationState | null;
+  activationState: ButtonActivationState | ButtonPlacementCycleState | null;
   activationStateIndex: number;
   activeTrigger: ButtonAppearanceTrigger;
   visualState: ButtonSkinVisualState;
@@ -120,6 +132,75 @@ export function getButtonActivationStateCount(
   if (!behavior || behavior.states.length === 0 || behavior.mode === "momentary") return 1;
   if (behavior.mode === "toggle") return Math.min(2, behavior.states.length);
   return behavior.states.length;
+}
+
+export function getButtonPlacementActivationStateCount(
+  cycle: ButtonPlacementActivationCycle | null | undefined
+): number {
+  return cycle && cycle.states.length >= 2 ? cycle.states.length : 1;
+}
+
+export function clampButtonPlacementActivationStateIndex(
+  cycle: ButtonPlacementActivationCycle | null | undefined,
+  index: number
+): number {
+  const stateCount = getButtonPlacementActivationStateCount(cycle);
+  if (!Number.isFinite(index)) return 0;
+  return Math.min(stateCount - 1, Math.max(0, Math.trunc(index)));
+}
+
+export function getActiveButtonPlacementActivationState(
+  cycle: ButtonPlacementActivationCycle | null | undefined,
+  index: number
+): ButtonPlacementCycleState | null {
+  if (!cycle || cycle.states.length < 2) return null;
+  return cycle.states[clampButtonPlacementActivationStateIndex(cycle, index)] ?? cycle.states[0] ?? null;
+}
+
+export function buttonPlacementActivationCycleAdvancesOn(
+  cycle: ButtonPlacementActivationCycle | null | undefined,
+  index: number,
+  trigger: ButtonCycleAdvanceTrigger
+): boolean {
+  return getActiveButtonPlacementActivationState(cycle, index)?.advanceTrigger === trigger;
+}
+
+function buttonActivationResultValueMatches(expected: JsonValue, actual: unknown): boolean {
+  if (Array.isArray(expected)) {
+    return Array.isArray(actual) &&
+      expected.length === actual.length &&
+      expected.every((value, index) => buttonActivationResultValueMatches(value, actual[index]));
+  }
+  if (expected && typeof expected === "object") {
+    if (!actual || typeof actual !== "object" || Array.isArray(actual)) return false;
+    const actualRecord = actual as Record<string, unknown>;
+    return Object.entries(expected).every(([key, value]) => (
+      Object.hasOwn(actualRecord, key) && buttonActivationResultValueMatches(value, actualRecord[key])
+    ));
+  }
+  return Object.is(expected, actual);
+}
+
+/**
+ * Resolves an authoritative placement-cycle index from an action response.
+ * Match objects are placement-owned partial JSON patterns; nested objects are
+ * matched by declared keys while arrays remain ordered and exact.
+ */
+export function resolveButtonPlacementActivationStateIndexFromResponse(
+  cycle: ButtonPlacementActivationCycle | null | undefined,
+  response: unknown
+): number | null {
+  if (!cycle || cycle.states.length < 2) return null;
+  let matchedIndex: number | null = null;
+  for (const [index, state] of cycle.states.entries()) {
+    const stateMatches = (state.resultMatches ?? []).some(
+      (match) => buttonActivationResultValueMatches(match, response)
+    );
+    if (!stateMatches) continue;
+    if (matchedIndex !== null) return null;
+    matchedIndex = index;
+  }
+  return matchedIndex;
 }
 
 export function clampButtonActivationStateIndex(
@@ -168,6 +249,23 @@ export function resolveButtonAppearanceTrigger(
   return "rest";
 }
 
+function resolvePlacementCycleAppearanceTrigger(
+  appearance: ButtonAppearanceInput,
+  authoredVisualStates?: ReadonlySet<ButtonSkinVisualState>
+): ButtonAppearanceTrigger {
+  if (appearance.error) return "error";
+  if (appearance.disabled) return "disabled";
+  const isAuthored = (visualState: ButtonSkinVisualState) => (
+    !authoredVisualStates || authoredVisualStates.has(visualState)
+  );
+  if (appearance.held && isAuthored("held")) return "held";
+  if (appearance.pressed && isAuthored("pressed")) return "pressed";
+  if (appearance.release && isAuthored("release")) return "release";
+  if (appearance.play && isAuthored("play")) return "play";
+  if (appearance.hovered && isAuthored("hover")) return "hover";
+  return "rest";
+}
+
 function flagsForSingleVisualState(visualState: ButtonSkinVisualState): ButtonResolvedVisualFlags {
   return {
     hovered: visualState === "hover",
@@ -195,6 +293,32 @@ function legacyComposedFlags(appearance: ButtonAppearanceInput): ButtonResolvedV
 export function resolveButtonAppearance(
   options: ResolveButtonAppearanceOptions
 ): ButtonResolvedAppearance {
+  const placementCycleState = getActiveButtonPlacementActivationState(
+    options.activationCycle,
+    options.activeStateIndex
+  );
+  if (placementCycleState) {
+    const activationStateIndex = clampButtonPlacementActivationStateIndex(
+      options.activationCycle,
+      options.activeStateIndex
+    );
+    const activeTrigger = resolvePlacementCycleAppearanceTrigger(
+      options.appearance,
+      options.authoredVisualStates
+    );
+    const visualState = activeTrigger === "rest"
+      ? placementCycleState.visualState
+      : buttonAppearanceTriggerToVisualState(activeTrigger);
+    return {
+      activationState: placementCycleState,
+      activationStateIndex,
+      activeTrigger,
+      visualState,
+      label: placementCycleState.label,
+      flags: flagsForSingleVisualState(visualState)
+    };
+  }
+
   const activationStateIndex = clampButtonActivationStateIndex(
     options.activationBehavior,
     options.activeStateIndex

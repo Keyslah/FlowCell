@@ -603,3 +603,15 @@ export async function runToolsetAction(args: {
   await emitProgramDataInvalidated(args.programName, args.panelName, args.fileName);
   return response;
 }
+
+export async function queryToolsetState(args: {
+  programName: string;
+  panelName: string;
+  fileName: string;
+}): Promise<ToolsetActionResponse | null> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Toolset state can only be queried from the desktop host.");
+  }
+
+  return invokeProgramRailCommand<ToolsetActionResponse | null>("query_toolset_state", args);
+}

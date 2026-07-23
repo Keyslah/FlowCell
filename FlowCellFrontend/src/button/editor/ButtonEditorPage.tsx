@@ -49,7 +49,9 @@ import {
   createStableButtonId
 } from "../state/buttonDefaults";
 import {
+  getButtonEditorDirectory,
   installButtonSource,
+  loadButtonPlacementFile,
   loadButtonStateDocument,
   saveButtonPlacementFile,
   saveButtonSkinFile,
@@ -93,12 +95,14 @@ import {
 } from "../skins/buttonSkinFormat";
 import {
   BUTTON_PLACEMENT_FILE_EXTENSION,
+  applyButtonPlacementFile,
   buildButtonPlacementFile
 } from "../state/buttonPlacementFile";
 import { ButtonSurfaceSelector } from "./ButtonSurfaceSelector";
 import { ButtonWorkspace } from "./ButtonWorkspace";
 import { ButtonAnimationPickerPage } from "./ButtonAnimationPickerPage";
 import { ButtonSkinEditor } from "./ButtonSkinEditor";
+import { buttonActivationCycleStructureMatches } from "./buttonActivationStateStructure";
 import {
   buttonPlacementSizingPatch,
   resolveAssignedButtonDimensions,
@@ -106,12 +110,10 @@ import {
 } from "./buttonSizeAssignments";
 import {
   applyButtonAnimationSavedScope,
-  applyButtonBehaviorSavedScope,
   applyButtonPlacementSavedScope,
   applyButtonSkinSavedScope,
   applyButtonTextSavedScope,
   buildButtonAnimationScopedDocument,
-  buildButtonBehaviorScopedDocument,
   buildButtonPlacementScopedDocument,
   buildButtonSkinScopedDocument,
   buildButtonTextScopedDocument,
@@ -332,7 +334,9 @@ function addPlacement(
     allowLabelResize: false,
     matchHitboxToSkin: !surface.uniformButtonSize,
     allowStretching: false,
+    highlightOnHover: false,
     visualStateMap: null,
+    activationCycle: null,
     resizeAnchor: "top-left"
   };
   document.placements[id] = placement;
@@ -588,6 +592,13 @@ function ButtonEditorContent({
 
   const selectedPlacement = focusedPlacementId ? store.draft.placements[focusedPlacementId] ?? null : null;
   const selectedButton = selectedPlacement ? store.draft.buttons[selectedPlacement.buttonId] ?? null : null;
+  const selectedCommittedPlacement = selectedPlacement
+    ? store.committed.placements[selectedPlacement.id] ?? null
+    : null;
+  const selectedStateStructureApplied = buttonActivationCycleStructureMatches(
+    selectedCommittedPlacement?.activationCycle ?? null,
+    selectedPlacement?.activationCycle ?? null
+  );
   const selectedSurfacePlacements = store.draft.surfaces[selectedSurfaceId]?.placementIds
     .map((placementId) => store.draft.placements[placementId])
     .filter((placement): placement is ButtonPlacement => Boolean(placement)) ?? [];
@@ -913,10 +924,12 @@ function ButtonEditorContent({
       if (!validation.valid) {
         throw new Error(validation.issues.slice(0, 8).map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
       }
+      const buttonEditorDirectory = await getButtonEditorDirectory();
       const targetPath = await showSaveFileDialog({
         title: "Save Button Placement",
         filter: "FlowCell Button Placement (*.flowcell-button-placement.json)|*.flowcell-button-placement.json|JSON Files (*.json)|*.json",
-        defaultFileName: defaultButtonPlacementFileName()
+        defaultFileName: defaultButtonPlacementFileName(),
+        initialDirectory: buttonEditorDirectory
       });
       if (!targetPath) return;
 
@@ -968,6 +981,40 @@ function ButtonEditorContent({
       setMessage(writtenPath
         ? `The placement file was saved to ${writtenPath}, but FlowCell could not commit the live Button arrangement:\n${failure}`
         : failure);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadPlacement = async () => {
+    if (busyRef.current) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const buttonEditorDirectory = await getButtonEditorDirectory();
+      const paths = await showOpenFileDialog({
+        title: "Load Button Placement",
+        filter: "FlowCell Button Placement (*.flowcell-button-placement.json)|*.flowcell-button-placement.json|JSON Files (*.json)|*.json",
+        initialDirectory: buttonEditorDirectory,
+        multiselect: false
+      });
+      const selectedPath = paths[0]?.trim();
+      if (!selectedPath) return;
+
+      const placementFile = await loadButtonPlacementFile(selectedPath);
+      const loadedDocument = applyButtonPlacementFile(
+        store.current(),
+        selectedSurfaceId,
+        placementFile
+      );
+      store.transact(() => loadedDocument, { label: "Load Button placement" });
+      setActivePage("placement");
+      setReorderMode(false);
+      setMessage(
+        `Button placement loaded from ${selectedPath}. Use Save placement to commit it.`
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -1610,44 +1657,37 @@ function ButtonEditorContent({
     await configureButtonAnimation(button, presetId);
   };
 
-  const applyButtonStateSetup = async () => {
-    const button = selectedButton;
-    if (!button) return;
-    if (!store.committed.buttons[button.id]) {
-      setMessage("Save placement first because this is a new Button.");
-      return;
-    }
-    const placementIds = Object.values(store.current().placements)
-      .filter((placement) => placement.buttonId === button.id)
-      .map((placement) => placement.id);
-    const unsavedPlacement = placementIds.find((placementId) => !store.committed.placements[placementId]);
-    if (unsavedPlacement) {
-      setMessage("Save placement first because this Button has a new placement.");
-      return;
-    }
-    const scope = { buttonId: button.id, placementIds };
-    const next = buildButtonBehaviorScopedDocument(store.committed, store.current(), scope);
-    await commitScopedDocument(
-      next,
-      (draft, saved) => applyButtonBehaviorSavedScope(draft, saved, scope),
-      `Button state setup applied to '${button.label}'.`
-    );
-  };
-
   const applyAllButtonText = async () => {
-    const button = selectedButton;
-    const placement = selectedPlacement;
-    if (!button || !placement) return;
-    if (!store.committed.buttons[button.id] || !store.committed.placements[placement.id]) {
-      setMessage("Save placement first because this is a new Button placement.");
+    const draft = store.current();
+    const committed = store.committed;
+    const draftPlacements = Object.values(draft.placements);
+    if (draftPlacements.some((placement) =>
+      !committed.placements[placement.id] ||
+      !committed.buttons[placement.buttonId]
+    )) {
+      setMessage("Save placement first because the editor contains a new Button placement.");
       return;
     }
-    const scope = { buttonId: button.id, placementId: placement.id };
-    const next = buildButtonTextScopedDocument(store.committed, store.current(), scope);
+    if (draftPlacements.some((placement) =>
+      !buttonActivationCycleStructureMatches(
+        committed.placements[placement.id]?.activationCycle ?? null,
+        placement.activationCycle
+      )
+    )) {
+      setMessage("Save placement first because one or more cycle state structures changed.");
+      return;
+    }
+    const scope = {
+      entries: draftPlacements.map((placement) => ({
+        buttonId: placement.buttonId,
+        placementId: placement.id
+      }))
+    };
+    const next = buildButtonTextScopedDocument(committed, draft, scope);
     await commitScopedDocument(
       next,
       (draft, saved) => applyButtonTextSavedScope(draft, saved, scope),
-      `Button Text applied to '${button.label}'.`
+      `Button Text applied to ${scope.entries.length} placement${scope.entries.length === 1 ? "" : "s"}.`
     );
   };
 
@@ -1862,11 +1902,19 @@ function ButtonEditorContent({
           <div className="button-editor-sidebar__actions">
             <button
               type="button"
-              className="button-editor-sidebar__save"
+              className="button-editor-sidebar__placement-file"
               disabled={busy}
               onClick={() => void savePlacement()}
             >
               Save placement
+            </button>
+            <button
+              type="button"
+              className="button-editor-sidebar__placement-file"
+              disabled={busy}
+              onClick={() => void loadPlacement()}
+            >
+              Load placement
             </button>
             <label className="button-editor-mode button-editor-sidebar__mode">
               <span>Edit</span>
@@ -1981,48 +2029,33 @@ function ButtonEditorContent({
           surfaceButtonCount={selectedSurfaceButtonCount}
           allSurfaceButtonsSameSize={allSurfaceButtonsSameSize}
           buttonLabel={selectedButton?.label ?? "Button Preview"}
-          activationBehavior={selectedButton?.activationBehavior ?? null}
-          visualStateMap={selectedPlacement?.visualStateMap ?? null}
+          activationCycle={selectedPlacement?.activationCycle ?? null}
+          stateStructureApplied={selectedStateStructureApplied}
           onButtonLabelChange={(label) => {
             if (!selectedButton) return;
             store.transact((draft) => {
               const target = draft.buttons[selectedButton.id];
               target.label = label;
-              if (target.activationBehavior?.states[0]) {
-                target.activationBehavior.states[0].label = label;
-              }
             }, { label: "Edit Button label", coalesceKey: `label:${selectedButton.id}` });
           }}
-          onActivationBehaviorChange={(behavior, removedStateIds = []) => {
-            if (!selectedButton) return;
-            store.transact((draft) => {
-              const target = draft.buttons[selectedButton.id];
-              target.activationBehavior = cloneButtonDocument(behavior);
-              if (behavior.states[0]) target.label = behavior.states[0].label;
-              if (removedStateIds.length > 0) {
-                for (const placement of Object.values(draft.placements)) {
-                  if (placement.buttonId !== selectedButton.id || !placement.visualStateMap) continue;
-                  for (const stateId of removedStateIds) delete placement.visualStateMap[stateId];
-                  if (Object.keys(placement.visualStateMap).length === 0) {
-                    placement.visualStateMap = null;
-                  }
-                }
-              }
-            }, {
-              label: "Edit Button activation states",
-              coalesceKey: `activation-behavior:${selectedButton.id}`
-            });
-          }}
-          onVisualStateMapChange={(visualStateMap) => {
+          onActivationCycleChange={(activationCycle) => {
             if (!selectedPlacement) return;
             store.transact((draft) => {
-              draft.placements[selectedPlacement.id].visualStateMap = cloneButtonDocument(visualStateMap);
+              draft.placements[selectedPlacement.id].activationCycle = cloneButtonDocument(activationCycle);
             }, {
-              label: "Map Button visual state",
-              coalesceKey: `visual-state-map:${selectedPlacement.id}`
+              label: "Edit Button placement cycle",
+              coalesceKey: `activation-cycle:${selectedPlacement.id}`
             });
           }}
-          onApplyButtonStateSetup={() => void applyButtonStateSetup()}
+          onHighlightOnHoverChange={(highlightOnHover) => {
+            if (!selectedPlacement) return;
+            store.transact((draft) => {
+              draft.placements[selectedPlacement.id].highlightOnHover = highlightOnHover;
+            }, {
+              label: "Edit Button hover highlight",
+              coalesceKey: `highlight-on-hover:${selectedPlacement.id}`
+            });
+          }}
           onApplyAllButtonText={() => void applyAllButtonText()}
           onAssignSize={assignSizeToSelectedPlacement}
           onAssignSizeToPanel={assignSizeToPanel}

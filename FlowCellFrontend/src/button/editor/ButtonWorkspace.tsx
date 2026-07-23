@@ -477,11 +477,9 @@ export function ButtonWorkspace({
               </span>
             </div>
           ) : null}
-          {mode === "edit" && reorderMode ? (
-            <div
-              className={`button-reorder-mode-hint${reorderBlockedReason ? " is-blocked" : ""}`}
-            >
-              {reorderBlockedReason ?? "Reorder: drop into any row, or below/between rows to make a new row"}
+          {mode === "edit" && reorderMode && reorderBlockedReason ? (
+            <div className="button-reorder-mode-hint is-blocked">
+              {reorderBlockedReason}
             </div>
           ) : null}
           {reorderDropSlot ? (

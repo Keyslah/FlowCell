@@ -96,6 +96,8 @@ function appendMissingToolSetChildren(
       allowLabelResize: false,
       matchHitboxToSkin: true,
       allowStretching: false,
+      highlightOnHover: false,
+      activationCycle: null,
       visualStateMap: null,
       resizeAnchor: "top-left"
     };

@@ -164,6 +164,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     root: null
   });
   const [activeContext, setActiveContext] = useState(context);
+  const [openRevision, setOpenRevision] = useState(0);
   const [displayMode, setDisplayMode] = useState(context.initialDisplayMode);
   const [renderedToolSetMode, setRenderedToolSetMode] = useState<"collapsed" | "expanded">("collapsed");
   const [pinned, setPinned] = useState(false);
@@ -540,6 +541,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         if (currentOwner === nextOwner) {
           initializedUnitIdRef.current = null;
           setGeometryInitialized(false);
+          setOpenRevision((current) => current + 1);
           setActiveContext(nextContext);
           setDisplayMode(nextContext.initialDisplayMode);
         }
@@ -752,8 +754,8 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         Width: visibleBounds.width,
         Height: visibleBounds.height
       });
-      setGeometryInitialized(true);
       await ensureCanvasContainsFrame(visibleBounds);
+      setGeometryInitialized(true);
     });
     void initialization.catch((initializationError) => {
       setRuntimeError(
@@ -1470,28 +1472,6 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         if (unit.kind === "regular" || displayMode === "collapsed") {
           await queueEnvelope(windowEnvelope.resting);
         }
-        if (unit.kind === "tool-set" && displayMode === "expanded") {
-          setPinned(false);
-          setDisplayMode("collapsed");
-          const ownerPlacement = document
-            ? Object.values(document.placements).find(
-                (placement) => placement.buttonId === unit.ownerButtonId
-              )
-            : null;
-          const immediateCollapsedEnvelope: ButtonRect = {
-            x: 0,
-            y: 0,
-            width: ownerPlacement?.width ?? 1,
-            height: ownerPlacement?.height ?? 1
-          };
-          pendingEnvelopeRef.current = null;
-          await scheduleNativeGeometryTransition(async () => {
-            setRenderedToolSetMode("collapsed");
-            await waitForAppliedButtonWindowRender();
-            await applyCollapsedGeometry(immediateCollapsedEnvelope);
-          });
-        }
-
         const initialPointer = await cursorPosition();
         const initialVisibleBounds = appliedFrameBoundsRef.current;
         const initialExpandedBounds = expandedBoundsRef.current;
@@ -1554,9 +1534,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
             scaleFactor: appliedCanvas.scaleFactor
           });
         }
-        await persistPopoutBounds(
-          unit.kind === "tool-set" ? "collapsed" : displayMode
-        );
+        await persistPopoutBounds(displayMode);
       } catch (dragError) {
         setRuntimeError(dragError instanceof Error ? dragError.message : String(dragError));
       } finally {
@@ -1644,6 +1622,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
               ))
             : null}
           <ButtonPopoutRenderer
+            key={`${unit.id}:${openRevision}`}
             document={document}
             unit={unit}
             displayMode={renderedDisplayMode}

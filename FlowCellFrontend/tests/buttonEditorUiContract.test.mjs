@@ -45,6 +45,8 @@ test("Save placement opens a named arrangement-file dialog and uses scoped persi
   const editor = readEditorFile("ButtonEditorPage.tsx");
   assert.match(editor, /showSaveFileDialog\(\{[\s\S]{0,260}Save Button Placement/);
   assert.match(editor, /defaultFileName:\s*defaultButtonPlacementFileName\(\)/);
+  assert.match(editor, /const buttonEditorDirectory = await getButtonEditorDirectory\(\)/);
+  assert.match(editor, /Save Button Placement[\s\S]{0,420}initialDirectory:\s*buttonEditorDirectory/);
   assert.match(editor, /const savePlacement = async \(\) => \{\s*if \(busyRef\.current\) return;\s*setBusy\(true\);/);
   assert.match(editor, /const placementDraft = cloneButtonDocument\(store\.current\(\)\)/);
   assert.match(editor, /const editorBaseline = cloneButtonDocument\(store\.committed\)/);
@@ -53,7 +55,28 @@ test("Save placement opens a named arrangement-file dialog and uses scoped persi
   assert.match(editor, /for \(let attempt = 0; attempt < 3; attempt \+= 1\)/);
   assert.match(editor, /committedDocument = await loadButtonStateDocument\(\)/);
   assert.match(editor, /saveButtonPlacementFile\(targetPath, placementFile\)/);
+  assert.doesNotMatch(editor, /(?:read|write)LastLayoutDirectory/);
   assert.match(editor, /onClick=\{\(\) => void savePlacement\(\)\}[\s\S]{0,80}Save placement/);
+});
+
+test("Load placement sits below Save and stages a validated file from the Button editor folder", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  assert.match(
+    editor,
+    /const loadPlacement = async \(\) => \{\s*if \(busyRef\.current\) return;\s*setBusy\(true\);/
+  );
+  assert.match(editor, /showOpenFileDialog\(\{[\s\S]{0,180}title: "Load Button Placement"/);
+  assert.match(editor, /Load Button Placement[\s\S]{0,420}initialDirectory:\s*buttonEditorDirectory/);
+  assert.match(editor, /Load Button Placement[\s\S]{0,480}multiselect:\s*false/);
+  assert.match(editor, /const placementFile = await loadButtonPlacementFile\(selectedPath\)/);
+  assert.match(editor, /applyButtonPlacementFile\(\s*store\.current\(\),\s*selectedSurfaceId,\s*placementFile\s*\)/);
+  assert.match(editor, /store\.transact\(\(\) => loadedDocument, \{ label: "Load Button placement" \}\)/);
+  assert.doesNotMatch(editor, /getParentDirectory/);
+  assert.match(editor, /Use Save placement to commit it\./);
+  assert.match(
+    editor,
+    /onClick=\{\(\) => void savePlacement\(\)\}[\s\S]{0,180}Save placement[\s\S]{0,260}onClick=\{\(\) => void loadPlacement\(\)\}[\s\S]{0,80}Load placement/
+  );
 });
 
 test("Skin assignment is explicit and selected-only unless Panel assignment is chosen", () => {
@@ -73,32 +96,88 @@ test("Button Text exposes selected-placement horizontal alignment", () => {
   assert.match(editor, /textAlignment=\{placement\.textAlignment\}/);
   assert.match(editor, /Move text X[\s\S]{0,700}\{ textOffsetX: value \}/);
   assert.match(editor, /Move text Y[\s\S]{0,700}\{ textOffsetY: value \}/);
-  assert.equal((editor.match(/textOffsetX=\{placement\.textOffsetX\}/g) ?? []).length, 2);
-  assert.equal((editor.match(/textOffsetY=\{placement\.textOffsetY\}/g) ?? []).length, 2);
+  assert.equal((editor.match(/textOffsetX=\{placement\.textOffsetX\}/g) ?? []).length, 3);
+  assert.equal((editor.match(/textOffsetY=\{placement\.textOffsetY\}/g) ?? []).length, 3);
 });
 
-test("Skin Editor exposes nested behavior, per-state labels, and skin-aware visual mapping", () => {
+test("Skin Editor exposes one placement-owned cycle with triggers, visuals, and a live preview", () => {
   const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
   const editor = readEditorFile("ButtonEditorPage.tsx");
+  const css = readEditorFile("buttonEditor.css");
 
-  assert.match(skinEditor, /<span>Button Behavior<\/span>/);
-  assert.match(skinEditor, /<span>Activation behavior<\/span>[\s\S]{0,220}BUTTON_ACTIVATION_MODES\.map/);
-  assert.match(skinEditor, /<span>Button state<\/span>/);
-  assert.match(skinEditor, /className="button-behavior-state-grid"[\s\S]{0,1500}<span>When<\/span>[\s\S]{0,1500}<span>Visual state<\/span>/);
-  assert.match(skinEditor, /const availableVisualStates = BUTTON_SKIN_VISUAL_STATES;/);
-  assert.match(skinEditor, /!workingSkin\[visualState\]\.trim\(\)[\s\S]{0,300}\(empty in this skin\)/);
-  assert.match(skinEditor, /<span>Label condition<\/span>[\s\S]{0,1300}selectedState\.labelOverrides\[selectedAppearanceTrigger\]/);
-  assert.match(skinEditor, />\s*Add state\s*<\/[a-z]+>[\s\S]{0,420}>\s*Remove state\s*</);
-  assert.doesNotMatch(skinEditor, /shownBehavior\.mode === "cycle" \? \([\s\S]{0,400}>Add state</);
-  assert.match(skinEditor, /setPreviewVisualStateOverride\(visualState\)/);
-  assert.equal(skinEditor.match(/>\s*Apply Button state setup\s*</g)?.length, 1);
+  assert.match(skinEditor, /<span>Button States &amp; Behavior<\/span>/);
+  assert.match(skinEditor, /className="button-section-chevron" aria-hidden="true"/);
+  assert.match(css, /\.button-behavior-section\[open\] > summary \.button-section-chevron[\s\S]{0,100}rotate\(90deg\)/);
+  assert.match(skinEditor, /<strong>Cycle<\/strong>[\s\S]{0,500}<span>Number of states<\/span>[\s\S]{0,250}min=\{2\}/);
+  assert.match(skinEditor, /value=\{cycleStateCountInput\}[\s\S]{0,620}resizeActivationCycle\(parsed\)[\s\S]{0,220}commitCycleStateCount/);
+  assert.match(skinEditor, /2 states = On \/ Off toggle/);
+  assert.match(skinEditor, /checked=\{placement\.highlightOnHover\}[\s\S]{0,180}onHighlightOnHoverChange\(event\.currentTarget\.checked\)[\s\S]{0,120}<span>Highlight on hover<\/span>/);
+  assert.match(skinEditor, /configuredStates\.map\(\(state, index\) => \{[\s\S]{0,1200}<span>Advance on<\/span>[\s\S]{0,500}ADVANCE_TRIGGERS\.map/);
+  assert.match(skinEditor, /className="button-cycle-state-sync"[\s\S]{0,180}Action: \{resultMatchSummary\.label\}/);
+  assert.match(skinEditor, /press: "Press"[\s\S]{0,100}hover: "Hover"[\s\S]{0,100}release: "Release"/);
+  assert.doesNotMatch(skinEditor, /Activation behavior|BUTTON_ACTIVATION_MODES|>\s*Add state\s*<|>\s*Remove state\s*<|<span>When<\/span>/);
+  assert.match(skinEditor, /className="button-behavior-state-grid"[\s\S]{0,1400}<span>State<\/span>[\s\S]{0,1400}<span>Visual state<\/span>/);
+  assert.match(skinEditor, /BUTTON_SKIN_VISUAL_STATES\.filter\([\s\S]{0,380}workingSkin\[visualState\]\.trim\(\)[\s\S]{0,600}\(unavailable in this skin\)/);
+  assert.match(skinEditor, /className="button-behavior-preview"[\s\S]{0,900}<ButtonSkinRenderer[\s\S]{0,1200}hovered=\{selectedVisualFlags\.hovered\}/);
+  assert.match(skinEditor, /activationCycle \? \([\s\S]{0,700}<span>State<\/span>[\s\S]{0,1000}<span>State label<\/span>/);
+  assert.doesNotMatch(skinEditor, /Label condition|Condition label|labelOverrides/);
   assert.equal(skinEditor.match(/>\s*Apply All\s*</g)?.length, 1);
-  assert.match(skinEditor, /className="button-text-apply-all"[\s\S]{0,260}onClick=\{onApplyAllButtonText\}[\s\S]{0,120}>\s*Apply All\s*</);
-  assert.match(skinEditor, /Apply only the Button behavior, logical states, and visual-state mapping/);
-  assert.match(skinEditor, /Apply only the labels and selected placement's text fit, alignment, size, and position/);
-  assert.match(editor, /for \(const placement of Object\.values\(draft\.placements\)\)[\s\S]{0,220}delete placement\.visualStateMap\[stateId\]/);
-  assert.match(editor, /onApplyButtonStateSetup=\{\(\) => void applyButtonStateSetup\(\)\}/);
+  assert.match(skinEditor, /className="button-text-apply-all"[\s\S]{0,560}onClick=\{onApplyAllButtonText\}[\s\S]{0,120}>\s*Apply All\s*</);
+  assert.match(skinEditor, /Apply every pending Button Text change across the editor/);
+  assert.match(editor, /activationCycle=\{selectedPlacement\?\.activationCycle \?\? null\}/);
+  assert.match(editor, /onActivationCycleChange=\{\(activationCycle\) => \{[\s\S]{0,260}draft\.placements\[selectedPlacement\.id\]\.activationCycle/);
+  assert.match(editor, /onHighlightOnHoverChange=\{\(highlightOnHover\) => \{[\s\S]{0,240}draft\.placements\[selectedPlacement\.id\]\.highlightOnHover = highlightOnHover/);
+  assert.match(skinEditor, /className="button-behavior-preview"[\s\S]{0,300}onPointerEnter=\{\(\) => setBehaviorPreviewHovered\(true\)\}[\s\S]{0,1500}rawHovered=\{behaviorPreviewHovered\}/);
   assert.match(editor, /onApplyAllButtonText=\{\(\) => void applyAllButtonText\(\)\}/);
+});
+
+test("Button Text uses real cycle states and falls back to the base label when no cycle exists", () => {
+  const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
+  const textSection = skinEditor.match(
+    /<summary title="Edit and preview Button Text only[\s\S]*?<\/details>/
+  );
+  assert.ok(textSection, "Button Text section must exist");
+
+  assert.match(skinEditor, /const configuredStates = activationCycle\?\.states \?\? \[\];/);
+  assert.match(skinEditor, /const next = cloneButtonDocument\(activationCycle \?\? \{ states: \[\] \}\)/);
+  assert.match(skinEditor, /onBlur=\{\(\) => commitCycleStateCount\(cycleStateCountInput\)\}/);
+  assert.match(textSection[0], /activationCycle \? \(/);
+  assert.match(textSection[0], /configuredStates\.map/);
+  assert.match(textSection[0], /<span>State label<\/span>/);
+  assert.match(textSection[0], /\) : \([\s\S]{0,240}<span>Button label<\/span>/);
+  assert.doesNotMatch(textSection[0], /materializeActivationBehavior|preview-only|Label condition/);
+});
+
+test("Button Text previews draft cycle labels but waits for Save placement before Apply All", () => {
+  const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const stateStructure = readEditorFile("buttonActivationStateStructure.ts");
+  const textSection = skinEditor.match(
+    /<summary title="Edit and preview Button Text only[\s\S]*?<\/details>/
+  );
+  assert.ok(textSection, "Button Text section must exist");
+
+  assert.match(
+    stateStructure,
+    /function buttonActivationCycleStructureMatches\([\s\S]{0,500}committed\.states\.length !== draft\.states\.length[\s\S]{0,260}state\.id === committed\.states\[index\]\?\.id/
+  );
+  assert.match(editor, /import \{ buttonActivationCycleStructureMatches \} from "\.\/buttonActivationStateStructure";/);
+  assert.match(editor, /const selectedStateStructureApplied = buttonActivationCycleStructureMatches\(/);
+  assert.match(editor, /stateStructureApplied=\{selectedStateStructureApplied\}/);
+  assert.match(
+    editor,
+    /const applyAllButtonText = async \(\) => \{[\s\S]{0,1200}draftPlacements\.map\(\(placement\) => \(\{[\s\S]{0,180}buttonId: placement\.buttonId,[\s\S]{0,100}placementId: placement\.id/
+  );
+
+  assert.match(skinEditor, /stateStructureApplied: boolean;/);
+  assert.match(skinEditor, /const stateTextBlocked = !stateStructureApplied;/);
+  assert.match(textSection[0], /Save placement first because the cycle state structure changed/);
+  assert.match(textSection[0], /value=\{selectedState\?\.label \?\? ""\}[\s\S]{0,180}disabled=\{busy \|\| !selectedState\}/);
+  assert.match(
+    textSection[0],
+    /className="button-text-apply-all"[\s\S]{0,480}disabled=\{busy \|\| stateTextBlocked\}/
+  );
+  assert.match(textSection[0], /<span>Button label<\/span>\s*<input value=\{buttonLabel\} disabled=\{busy\}/);
 });
 
 test("Skin Editor replaces explanatory section paragraphs with hover tooltips", () => {
@@ -114,8 +193,8 @@ test("Skin Editor replaces explanatory section paragraphs with hover tooltips", 
     assert.doesNotMatch(skinEditor, new RegExp(removedExplanation));
   }
   assert.match(skinEditor, /<summary title="Set the selected Button's preview size/);
-  assert.match(skinEditor, /<summary title="Choose how presses advance logical states/);
-  assert.match(skinEditor, /<summary title="Edit labels per state and condition/);
+  assert.match(skinEditor, /<summary title="Set how this placement advances through states/);
+  assert.match(skinEditor, /<summary title="Edit and preview Button Text only/);
   assert.match(skinEditor, /title=\{`Raw \$\{sectionLabel\(section\)\} skin code\.`\}/);
 });
 

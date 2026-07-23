@@ -13,9 +13,10 @@ const DEFAULT_RETRY_DELAYS_MS = [50, 100, 250, 500, 1_000] as const;
 
 export function shouldIgnoreButtonWindowCursor(
   scopeActive: boolean,
-  hovered: boolean
+  hovered: boolean,
+  pointerPressActive = false
 ): boolean {
-  return !scopeActive || !hovered;
+  return !scopeActive || (!hovered && !pointerPressActive);
 }
 
 export function isNativeQueryRevisionCurrent(

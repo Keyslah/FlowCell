@@ -7,8 +7,9 @@ use super::manifest::{
 };
 use super::records::{
     active_record_file_name, atomic_replace_json, atomic_write_json, empty_object,
-    read_active_record, recover_active_record, validate_owner_button_id, ActiveSourceChild,
-    ActiveSourceRecord, LocalInstallRecord, INSTALL_RECORD_FILE_NAME,
+    read_active_record, recover_active_record, validate_owner_button_id,
+    validate_toolset_state_query, ActiveSourceChild, ActiveSourceRecord, LocalInstallRecord,
+    ToolsetStateQuery, INSTALL_RECORD_FILE_NAME,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -123,6 +124,8 @@ struct ToolsetManifest {
     source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     bridge_data: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    state_query: Option<ToolsetStateQuery>,
     children: Vec<ToolsetChildManifest>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     layout: Option<Value>,
@@ -227,6 +230,7 @@ struct PreparedSource {
     tooltip: String,
     kind: String,
     bridge_data: Option<Value>,
+    state_query: Option<ToolsetStateQuery>,
     execution_target: Option<Value>,
     events: Option<BTreeMap<String, Value>>,
     children: Vec<ActiveSourceChild>,
@@ -593,6 +597,7 @@ fn prepare_source(
                 tooltip: script.tooltip.trim().to_string(),
                 kind: "script".to_string(),
                 bridge_data: script.bridge_data,
+                state_query: None,
                 execution_target,
                 events: script.events,
                 children: Vec::new(),
@@ -629,6 +634,7 @@ fn prepare_source(
             tooltip: crate::read_top_description(source_path).unwrap_or_default(),
             kind: "script".to_string(),
             bridge_data: None,
+            state_query: None,
             execution_target: None,
             events: None,
             children: Vec::new(),
@@ -727,6 +733,11 @@ fn prepare_source(
             execution_target: child.execution_target,
         });
     }
+    let state_query = toolset
+        .state_query
+        .as_ref()
+        .map(|query| validate_toolset_state_query(query, &children))
+        .transpose()?;
     let _manifest_version = toolset.version;
     Ok(PreparedSource {
         package_source_root: package_root.to_path_buf(),
@@ -739,6 +750,7 @@ fn prepare_source(
             toolset.kind.trim().to_string()
         },
         bridge_data: toolset.bridge_data,
+        state_query,
         execution_target: None,
         events: toolset.events,
         children,
@@ -1993,6 +2005,7 @@ pub(crate) fn install_from_path_while_source_locked(
             String::new()
         },
         bridge_data: prepared.bridge_data,
+        state_query: prepared.state_query,
         events: prepared.events,
         children: prepared.children,
         layout: prepared.layout,
@@ -2361,6 +2374,7 @@ mod tests {
             execution_target: None,
             bridge_action: "flowcell_button_button_1".into(),
             bridge_data: Some(json!({"axis":"X","shared":1})),
+            state_query: None,
             events: None,
             children: vec![ActiveSourceChild {
                 slot: "go".into(),
@@ -2436,6 +2450,7 @@ mod tests {
                 execution_target: None,
                 bridge_action: String::new(),
                 bridge_data: None,
+                state_query: None,
                 events: None,
                 children: Vec::new(),
                 layout: None,
@@ -2717,6 +2732,7 @@ mod tests {
             tooltip: String::new(),
             kind: "toolset".into(),
             bridge_data: None,
+            state_query: None,
             execution_target: None,
             events: None,
             children: previous.children.clone(),

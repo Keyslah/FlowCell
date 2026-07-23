@@ -1572,6 +1572,26 @@ pub(crate) fn run_toolset_action(
     ))
 }
 
+#[tauri::command]
+pub(crate) fn query_toolset_state(
+    program_name: String,
+    panel_name: String,
+    file_name: String,
+) -> Result<Option<Value>, String> {
+    if let Some(resolution) = program_sources::execute::resolve_active_source_record(
+        &program_name,
+        &panel_name,
+        &file_name,
+    )? {
+        return program_sources::execute::run_active_toolset_state_query(&resolution);
+    }
+
+    Err(format!(
+        "Button source '{}' is not installed in the active Button system. Complete migration before querying tool-set state.",
+        file_name.trim()
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::windows_child_process_path;

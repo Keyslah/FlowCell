@@ -1,7 +1,7 @@
 # FlowCell Tool-Set Manifest
 
 `flowcell.toolset.json` describes one installable owner Button, its child
-Buttons, and optional popout layout/fields. It is catalog/import metadata. Add
+Buttons, optional popout layout/fields, and an optional read-only state query. It is catalog/import metadata. Add
 Button auto-detects the root `flowcell.toolset.json`, copies the entire package
 into the owner's Local Scripts directory, and normal runtime then uses the owned
 copy and `.flowcell-source.json`.
@@ -69,6 +69,8 @@ Optional fields:
 - `bridgeData`: base JSON-object payload for every child;
 - `events`: owner event metadata;
 - `execution`: runner-specific settings, such as an Illustrator command file;
+- `stateQuery`: one package-owned read-only status request through a declared
+  child slot;
 - `layout`: initial tool-set surface geometry, fields, child behavior, and
   append-only child update policy.
 
@@ -100,6 +102,36 @@ the active expanded tool-set host supplies current fields and runs a bound child
 through the same ButtonHost path as an onscreen activation. A package must not
 declare or serialize user shortcuts, live field values, or prebuilt hotkey
 payloads.
+
+## State Query Contract
+
+A Tool Set whose external program keeps authoritative state may declare one
+read-only query:
+
+```json
+{
+  "stateQuery": {
+    "slot": "cycle_x",
+    "payload": {
+      "action": "status",
+      "command": "status"
+    }
+  }
+}
+```
+
+`slot` must name one declared child. The payload must contain exactly `action`
+and `command`, and both values must be `status`; arbitrary query payloads are
+rejected during install and revalidated before every dispatch. The query uses
+the installed owner's normal runner, bridge lock, child validation, and payload
+merge path. An undeclared query is a no-op.
+
+Opening or expanding a Button surface does not invoke this query. Placement
+cycles with placement-owned `resultMatches` start at State 1 for each newly
+opened expanded surface, and successful child responses map those
+non-executable partial-JSON objects to exact cycle states. The query never lives
+in a placement file, and neither the query nor the matches belong to skin
+source.
 
 ## Layout Contract
 

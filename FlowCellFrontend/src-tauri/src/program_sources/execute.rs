@@ -2,8 +2,8 @@ use super::install::merge_toolset_payload;
 use super::manifest::load_program_manifest;
 use super::records::{
     active_record_file_name, read_active_record, recover_active_record,
-    recover_active_records_in_directory, validate_owner_button_id, ActiveSourceRecord,
-    LocalInstallRecord, ACTIVE_SOURCE_RECORD_SUFFIX, INSTALL_RECORD_FILE_NAME,
+    recover_active_records_in_directory, validate_owner_button_id, validate_toolset_state_query,
+    ActiveSourceRecord, LocalInstallRecord, ACTIVE_SOURCE_RECORD_SUFFIX, INSTALL_RECORD_FILE_NAME,
 };
 use super::transaction::{write_json_file, AtomicWriteMode};
 use serde_json::{json, Map, Value};
@@ -749,6 +749,16 @@ pub(crate) fn run_active_toolset_action(
     }
 }
 
+pub(crate) fn run_active_toolset_state_query(
+    resolution: &ActiveSourceResolution,
+) -> Result<Option<Value>, String> {
+    let Some(declared_query) = resolution.record.state_query.as_ref() else {
+        return Ok(None);
+    };
+    let query = validate_toolset_state_query(declared_query, &resolution.record.children)?;
+    run_active_toolset_action(resolution, &query.slot, Some(query.payload)).map(Some)
+}
+
 fn declared_blender_button_event_action<'a>(
     event: &'a Map<String, Value>,
     event_name: &str,
@@ -806,9 +816,12 @@ pub(crate) fn run_active_button_event(
 mod tests {
     use super::{
         declared_blender_button_event_action, illustrator_wait_for_completion,
-        path_components_end_with, windows_script_capability_command,
+        path_components_end_with, run_active_toolset_state_query,
+        windows_script_capability_command, ActiveSourceResolution,
     };
-    use crate::program_sources::records::ActiveSourceRecord;
+    use crate::program_sources::records::{
+        ActiveSourceChild, ActiveSourceRecord, ToolsetStateQuery,
+    };
     use serde_json::json;
     use std::collections::BTreeMap;
     use std::path::Path;
@@ -831,6 +844,7 @@ mod tests {
             execution_target: None,
             bridge_action: String::new(),
             bridge_data: None,
+            state_query: None,
             events: None::<BTreeMap<String, serde_json::Value>>,
             children: Vec::new(),
             layout: None,
@@ -854,6 +868,41 @@ mod tests {
             })
         ))));
         assert!(!illustrator_wait_for_completion(&illustrator_record(None)));
+    }
+
+    #[test]
+    fn undeclared_toolset_state_query_is_a_noop() {
+        let resolution = ActiveSourceResolution {
+            file_name: "owner.flowcell-source.json".to_string(),
+            record: illustrator_record(None),
+        };
+        assert_eq!(
+            run_active_toolset_state_query(&resolution).expect("undeclared query"),
+            None
+        );
+    }
+
+    #[test]
+    fn toolset_state_query_is_revalidated_before_dispatch() {
+        let mut record = illustrator_record(None);
+        record.kind = "toolset".to_string();
+        record.children = vec![ActiveSourceChild {
+            slot: "cycle_x".to_string(),
+            label: "X".to_string(),
+            tooltip: String::new(),
+            payload: None,
+            execution_target: None,
+        }];
+        record.state_query = Some(ToolsetStateQuery {
+            slot: "cycle_x".to_string(),
+            payload: json!({ "action": "cycle_x", "command": "cycle_x" }),
+        });
+        let error = run_active_toolset_state_query(&ActiveSourceResolution {
+            file_name: "owner.flowcell-source.json".to_string(),
+            record,
+        })
+        .expect_err("mutating state query should fail before dispatch");
+        assert!(error.contains("read-only 'status' command"));
     }
 
     #[test]

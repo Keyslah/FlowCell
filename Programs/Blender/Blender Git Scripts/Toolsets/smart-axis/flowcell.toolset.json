@@ -10,6 +10,13 @@
     "bridgeData":  {
 
                    },
+    "stateQuery":  {
+                       "slot":  "cycle_x",
+                       "payload":  {
+                                       "action":  "status",
+                                       "command":  "status"
+                                   }
+                   },
     "children":  [
                      {
                          "slot":  "baseline",

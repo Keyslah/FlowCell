@@ -871,6 +871,7 @@ mod tests {
                 execution_target: None,
                 bridge_action: String::new(),
                 bridge_data: None,
+                state_query: None,
                 events: None,
                 children: Vec::new(),
                 layout: None,

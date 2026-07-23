@@ -101,13 +101,15 @@ test("Button text fitting remains placement-owned and independent from the worki
 
 test("Button Text preview stays live and ends with its own scoped Apply All", () => {
   const textSection = source.match(
-    /<summary title="Edit labels per state and condition[\s\S]*?<\/details>/
+    /<summary title="Edit and preview Button Text only[\s\S]*?<\/details>/
   );
   assert.ok(textSection, "Button Text section must exist");
-  assert.match(textSection[0], /label=\{previewAppearance\.label\}/);
+  assert.match(textSection[0], /label=\{previewLabel\}/);
+  assert.match(textSection[0], /hovered=\{selectedVisualFlags\.hovered\}/);
   assert.match(textSection[0], /textOffsetX=\{placement\.textOffsetX\}/);
   assert.match(textSection[0], /textOffsetY=\{placement\.textOffsetY\}/);
   assert.match(textSection[0], /onClick=\{onApplyAllButtonText\}[\s\S]{0,120}>\s*Apply All\s*</);
+  assert.match(textSection[0], /disabled=\{busy \|\| stateTextBlocked\}/);
   assert.ok(
     textSection[0].lastIndexOf("Apply All") > textSection[0].lastIndexOf("button-text-bench-preview"),
     "Apply All must remain below the live Button Text preview"

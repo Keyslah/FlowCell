@@ -333,6 +333,26 @@ export async function saveButtonPlacementFile(
   return invoke<string>("save_button_placement_file", { path, file });
 }
 
+export async function getButtonEditorDirectory(): Promise<string> {
+  if (!isTauriWindowHost()) {
+    throw new Error("The Button editor directory is only available from the FlowCell desktop host.");
+  }
+  return invoke<string>("get_button_editor_directory");
+}
+
+export async function loadButtonPlacementFile(path: string): Promise<ButtonPlacementFile> {
+  if (!path.trim()) throw new Error("Button placement load path cannot be empty.");
+  if (!isTauriWindowHost()) {
+    throw new Error("Button placement files can only be loaded from the FlowCell desktop host.");
+  }
+  const file = await invoke<unknown>("load_button_placement_file", { path });
+  const validation = validateButtonPlacementFile(file);
+  if (!validation.valid) {
+    throw new Error(validation.issues.join("\n"));
+  }
+  return file as ButtonPlacementFile;
+}
+
 export async function saveButtonSkinFile(path: string, source: string): Promise<string> {
   if (!path.trim()) throw new Error("Button skin save path cannot be empty.");
   if (!source.trim()) throw new Error("Button skin source cannot be empty.");
@@ -504,6 +524,8 @@ function addMigratedPlacement(
     allowLabelResize: false,
     matchHitboxToSkin: true,
     allowStretching: false,
+    highlightOnHover: false,
+    activationCycle: null,
     visualStateMap: null,
     resizeAnchor: "top-left"
   };

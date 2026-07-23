@@ -209,7 +209,7 @@ export function useNativeButtonHitboxes(args: {
       for (const hitbox of buttonHosts) {
         const host = hitbox.buttonHost;
         if (!host?.isConnected || !hitbox.element.isConnected) continue;
-        const coreHovered = host.getAttribute("data-button-hover") === "true";
+        const coreHovered = host.getAttribute("data-button-pointer-hover") === "true";
         const hostHovered = allowEnter && pointHitsInteractiveElement(
           hitbox,
           clientX,
@@ -251,6 +251,9 @@ export function useNativeButtonHitboxes(args: {
         await setIgnored(true);
         return;
       }
+      const pointerPressActive = root.querySelector<HTMLElement>(
+        '[data-button-skin-host][data-button-pointer-pressed="true"]'
+      ) !== null;
 
       if (!windowPosition || scaleFactor === null) {
         return;
@@ -306,7 +309,9 @@ export function useNativeButtonHitboxes(args: {
             currentHoverState = false;
             onHoverChangeRef.current?.(false);
           }
-          await setIgnored(true);
+          await setIgnored(
+            shouldIgnoreButtonWindowCursor(scopeActive, false, pointerPressActive)
+          );
           return;
         }
       }
@@ -319,7 +324,9 @@ export function useNativeButtonHitboxes(args: {
           currentHoverState = false;
           onHoverChangeRef.current?.(false);
         }
-        await setIgnored(true);
+        await setIgnored(
+          shouldIgnoreButtonWindowCursor(scopeActive, false, pointerPressActive)
+        );
         return;
       }
       const hovered = connectedHitboxes.some((hitbox) =>
@@ -335,7 +342,9 @@ export function useNativeButtonHitboxes(args: {
         currentHoverState = hovered;
         onHoverChangeRef.current?.(hovered);
       }
-      await setIgnored(shouldIgnoreButtonWindowCursor(scopeActive, hovered));
+      await setIgnored(
+        shouldIgnoreButtonWindowCursor(scopeActive, hovered, pointerPressActive)
+      );
     };
 
     requestSnapshotPoll = (snapshot) => {
@@ -374,7 +383,13 @@ export function useNativeButtonHitboxes(args: {
       if (root) {
         mutationObserver.observe(root, {
           attributes: true,
-          attributeFilter: ["class", "disabled", "hidden", "style"],
+          attributeFilter: [
+            "class",
+            "disabled",
+            "hidden",
+            "style",
+            "data-button-pointer-pressed"
+          ],
           childList: true,
           subtree: true
         });

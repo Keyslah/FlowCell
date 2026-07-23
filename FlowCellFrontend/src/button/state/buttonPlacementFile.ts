@@ -1,9 +1,15 @@
-import type {
-  ButtonStateDocument,
-  ButtonSurfaceKind
+import {
+  BUTTON_PLACEMENT_CYCLE_MAX_STATES,
+  type ButtonPlacementActivationCycle,
+  type ButtonStateDocument,
+  type ButtonSurfaceKind
 } from "../types.js";
+import { cloneButtonDocument } from "./buttonDefaults.js";
+import { validateButtonStateDocument } from "./buttonStateValidation.js";
 
-export const BUTTON_PLACEMENT_FILE_FORMAT = "flowcell-button-placement/v1" as const;
+export const BUTTON_PLACEMENT_FILE_FORMAT_V1 = "flowcell-button-placement/v1" as const;
+export const BUTTON_PLACEMENT_FILE_FORMAT_V2 = "flowcell-button-placement/v2" as const;
+export const BUTTON_PLACEMENT_FILE_FORMAT = BUTTON_PLACEMENT_FILE_FORMAT_V2;
 export const BUTTON_PLACEMENT_FILE_EXTENSION = ".flowcell-button-placement.json" as const;
 
 const BUTTON_SURFACE_KINDS = new Set<ButtonSurfaceKind>([
@@ -12,6 +18,17 @@ const BUTTON_SURFACE_KINDS = new Set<ButtonSurfaceKind>([
   "regular-popout",
   "tool-set-popout",
   "fan"
+]);
+const BUTTON_CYCLE_ADVANCE_TRIGGERS = new Set(["press", "hover", "release"]);
+const BUTTON_SKIN_VISUAL_STATES = new Set([
+  "base",
+  "hover",
+  "play",
+  "pressed",
+  "held",
+  "release",
+  "disabled",
+  "error"
 ]);
 
 export interface ButtonPlacementFileSize {
@@ -28,7 +45,7 @@ export interface ButtonPlacementFileSurface {
   uniformButtonSize: ButtonPlacementFileSize | null;
 }
 
-export interface ButtonPlacementFileEntry {
+export interface ButtonPlacementFileEntryV1 {
   id: string;
   buttonId: string;
   x: number;
@@ -38,14 +55,29 @@ export interface ButtonPlacementFileEntry {
   zIndex: number;
 }
 
-export interface ButtonPlacementFile {
-  format: typeof BUTTON_PLACEMENT_FILE_FORMAT;
+export interface ButtonPlacementFileEntry extends ButtonPlacementFileEntryV1 {
+  activationCycle: ButtonPlacementActivationCycle | null;
+  highlightOnHover: boolean;
+}
+
+interface ButtonPlacementFileBase {
   savedAt: string;
   programName: string;
   panelName: string;
   surface: ButtonPlacementFileSurface;
+}
+
+export interface ButtonPlacementFileV1 extends ButtonPlacementFileBase {
+  format: typeof BUTTON_PLACEMENT_FILE_FORMAT_V1;
+  placements: ButtonPlacementFileEntryV1[];
+}
+
+export interface ButtonPlacementFileV2 extends ButtonPlacementFileBase {
+  format: typeof BUTTON_PLACEMENT_FILE_FORMAT_V2;
   placements: ButtonPlacementFileEntry[];
 }
+
+export type ButtonPlacementFile = ButtonPlacementFileV1 | ButtonPlacementFileV2;
 
 export interface ButtonPlacementFileBuildContext {
   programName: string;
@@ -70,9 +102,10 @@ function hasExactKeys(
   value: Record<string, unknown>,
   keys: readonly string[],
   path: string,
-  issues: string[]
+  issues: string[],
+  optionalKeys: readonly string[] = []
 ): void {
-  const expected = new Set(keys);
+  const expected = new Set([...keys, ...optionalKeys]);
   for (const key of Object.keys(value)) {
     if (!expected.has(key)) issues.push(`${path}.${key}: Unknown field.`);
   }
@@ -96,6 +129,80 @@ function isUtcIsoTimestamp(value: unknown): value is string {
   return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
 }
 
+function validatePlacementActivationCycle(
+  value: unknown,
+  path: string,
+  issues: string[]
+): void {
+  if (value === null) return;
+  if (!isObject(value)) {
+    issues.push(`${path}: Expected null or an activation-cycle object.`);
+    return;
+  }
+  hasExactKeys(value, ["states"], path, issues);
+  if (!Array.isArray(value.states)) {
+    issues.push(`${path}.states: Expected an ordered state array.`);
+    return;
+  }
+  if (value.states.length < 2) {
+    issues.push(`${path}.states: Expected at least two states.`);
+  }
+  if (value.states.length > BUTTON_PLACEMENT_CYCLE_MAX_STATES) {
+    issues.push(
+      `${path}.states: Expected no more than ${BUTTON_PLACEMENT_CYCLE_MAX_STATES} states.`
+    );
+  }
+
+  const stateIds = new Set<string>();
+  value.states.forEach((state, index) => {
+    const statePath = `${path}.states.${index}`;
+    if (!isObject(state)) {
+      issues.push(`${statePath}: Expected an activation-cycle state object.`);
+      return;
+    }
+    hasExactKeys(
+      state,
+      ["id", "label", "advanceTrigger", "visualState"],
+      statePath,
+      issues,
+      ["resultMatches"]
+    );
+    if (!nonemptyString(state.id)) {
+      issues.push(`${statePath}.id: Expected a stable nonempty state ID.`);
+    } else if (stateIds.has(state.id)) {
+      issues.push(`${statePath}.id: Duplicate activation-cycle state ID '${state.id}'.`);
+    } else {
+      stateIds.add(state.id);
+    }
+    if (typeof state.label !== "string") {
+      issues.push(`${statePath}.label: Expected a string label.`);
+    }
+    if (
+      typeof state.advanceTrigger !== "string" ||
+      !BUTTON_CYCLE_ADVANCE_TRIGGERS.has(state.advanceTrigger)
+    ) {
+      issues.push(`${statePath}.advanceTrigger: Expected press, hover, or release.`);
+    }
+    if (
+      typeof state.visualState !== "string" ||
+      !BUTTON_SKIN_VISUAL_STATES.has(state.visualState)
+    ) {
+      issues.push(`${statePath}.visualState: Unsupported Button skin visual state.`);
+    }
+    if (state.resultMatches !== undefined) {
+      if (!Array.isArray(state.resultMatches)) {
+        issues.push(`${statePath}.resultMatches: Expected an array of JSON objects.`);
+      } else {
+        state.resultMatches.forEach((match, matchIndex) => {
+          if (!isObject(match)) {
+            issues.push(`${statePath}.resultMatches.${matchIndex}: Expected a JSON object.`);
+          }
+        });
+      }
+    }
+  });
+}
+
 export function validateButtonPlacementFile(value: unknown): ButtonPlacementFileValidationResult {
   const issues: string[] = [];
   if (!isObject(value)) {
@@ -108,8 +215,12 @@ export function validateButtonPlacementFile(value: unknown): ButtonPlacementFile
     "placement",
     issues
   );
-  if (value.format !== BUTTON_PLACEMENT_FILE_FORMAT) {
-    issues.push(`placement.format: Expected '${BUTTON_PLACEMENT_FILE_FORMAT}'.`);
+  const isV1 = value.format === BUTTON_PLACEMENT_FILE_FORMAT_V1;
+  const isV2 = value.format === BUTTON_PLACEMENT_FILE_FORMAT_V2;
+  if (!isV1 && !isV2) {
+    issues.push(
+      `placement.format: Expected '${BUTTON_PLACEMENT_FILE_FORMAT_V1}' or '${BUTTON_PLACEMENT_FILE_FORMAT_V2}'.`
+    );
   }
   if (!isUtcIsoTimestamp(value.savedAt)) {
     issues.push("placement.savedAt: Expected a UTC ISO timestamp.");
@@ -198,7 +309,9 @@ export function validateButtonPlacementFile(value: unknown): ButtonPlacementFile
       }
       hasExactKeys(
         entry,
-        ["id", "buttonId", "x", "y", "width", "height", "zIndex"],
+        isV1
+          ? ["id", "buttonId", "x", "y", "width", "height", "zIndex"]
+          : ["id", "buttonId", "x", "y", "width", "height", "zIndex", "activationCycle", "highlightOnHover"],
         path,
         issues
       );
@@ -226,6 +339,12 @@ export function validateButtonPlacementFile(value: unknown): ButtonPlacementFile
       }
       if (!Number.isSafeInteger(entry.zIndex) || entry.zIndex !== index) {
         issues.push(`${path}.zIndex: Expected the ordered index ${index}.`);
+      }
+      if (!isV1) {
+        validatePlacementActivationCycle(entry.activationCycle, `${path}.activationCycle`, issues);
+        if (typeof entry.highlightOnHover !== "boolean") {
+          issues.push(`${path}.highlightOnHover: Expected a boolean.`);
+        }
       }
       if (
         surfaceWidth !== null &&
@@ -264,7 +383,7 @@ export function buildButtonPlacementFile(
   document: ButtonStateDocument,
   surfaceId: string,
   context: ButtonPlacementFileBuildContext
-): ButtonPlacementFile {
+): ButtonPlacementFileV2 {
   const surface = document.surfaces[surfaceId];
   if (!surface) throw new Error(`Button surface '${surfaceId}' does not exist.`);
 
@@ -291,11 +410,15 @@ export function buildButtonPlacementFile(
       y: placement.y,
       width: placement.width,
       height: placement.height,
-      zIndex: index
+      zIndex: index,
+      activationCycle: placement.activationCycle
+        ? structuredClone(placement.activationCycle)
+        : null,
+      highlightOnHover: placement.highlightOnHover
     };
   });
 
-  const file: ButtonPlacementFile = {
+  const file: ButtonPlacementFileV2 = {
     format: BUTTON_PLACEMENT_FILE_FORMAT,
     savedAt: context.savedAt ?? new Date().toISOString(),
     programName: context.programName.trim(),
@@ -318,4 +441,107 @@ export function buildButtonPlacementFile(
   const validation = validateButtonPlacementFile(file);
   if (!validation.valid) throw new Error(validation.issues.join("\n"));
   return file;
+}
+
+export function applyButtonPlacementFile(
+  document: ButtonStateDocument,
+  selectedSurfaceId: string,
+  value: unknown
+): ButtonStateDocument {
+  const validation = validateButtonPlacementFile(value);
+  if (!validation.valid) throw new Error(validation.issues.join("\n"));
+  const file = value as ButtonPlacementFile;
+  const selectedSurface = document.surfaces[selectedSurfaceId];
+  if (!selectedSurface) {
+    throw new Error("Select an existing Button surface before loading a placement.");
+  }
+  if (file.surface.id !== selectedSurfaceId) {
+    throw new Error(
+      `This placement file belongs to '${file.surface.name}' (${file.surface.id}), ` +
+      `not the selected surface '${selectedSurface.name}' (${selectedSurface.id}).`
+    );
+  }
+  if (file.surface.kind !== selectedSurface.kind) {
+    throw new Error(
+      `This placement file targets a '${file.surface.kind}' surface, ` +
+      `but the selected surface is '${selectedSurface.kind}'.`
+    );
+  }
+
+  const savedPlacementIds = file.placements.map((placement) => placement.id);
+  const savedPlacementIdSet = new Set(savedPlacementIds);
+  const selectedPlacementIdSet = new Set(selectedSurface.placementIds);
+  const missingPlacementIds = savedPlacementIds.filter(
+    (placementId) => !selectedPlacementIdSet.has(placementId)
+  );
+  const extraPlacementIds = selectedSurface.placementIds.filter(
+    (placementId) => !savedPlacementIdSet.has(placementId)
+  );
+  if (missingPlacementIds.length > 0 || extraPlacementIds.length > 0) {
+    const details = [
+      missingPlacementIds.length > 0
+        ? `missing ${missingPlacementIds.slice(0, 4).join(", ")}`
+        : "",
+      extraPlacementIds.length > 0
+        ? `additional ${extraPlacementIds.slice(0, 4).join(", ")}`
+        : ""
+    ].filter(Boolean).join("; ");
+    throw new Error(
+      `The selected surface no longer has the same Button placements as this file (${details}).`
+    );
+  }
+
+  for (const entry of file.placements) {
+    const placement = document.placements[entry.id];
+    if (!placement || placement.surfaceId !== selectedSurfaceId) {
+      throw new Error(
+        `Button placement '${entry.id}' is missing from the selected surface.`
+      );
+    }
+    if (placement.buttonId !== entry.buttonId) {
+      throw new Error(
+        `Button placement '${entry.id}' now points to a different Button.`
+      );
+    }
+  }
+
+  const next = cloneButtonDocument(document);
+  const nextSurface = next.surfaces[selectedSurfaceId];
+  nextSurface.width = file.surface.width;
+  nextSurface.height = file.surface.height;
+  nextSurface.uniformButtonSize = file.surface.uniformButtonSize
+    ? { ...file.surface.uniformButtonSize }
+    : null;
+  nextSurface.placementIds = [...savedPlacementIds];
+
+  for (const entry of file.placements) {
+    const placement = next.placements[entry.id];
+    placement.x = entry.x;
+    placement.y = entry.y;
+    placement.width = entry.width;
+    placement.height = entry.height;
+    placement.zIndex = entry.zIndex;
+    if (file.surface.uniformButtonSize) {
+      placement.matchHitboxToSkin = false;
+      placement.allowLabelResize = false;
+    }
+    if (file.format === BUTTON_PLACEMENT_FILE_FORMAT_V2) {
+      const v2Entry = entry as ButtonPlacementFileEntry;
+      placement.highlightOnHover = v2Entry.highlightOnHover;
+      placement.activationCycle = v2Entry.activationCycle
+        ? structuredClone(v2Entry.activationCycle)
+        : null;
+    }
+  }
+
+  const documentValidation = validateButtonStateDocument(next);
+  if (!documentValidation.valid) {
+    throw new Error(
+      documentValidation.issues
+        .slice(0, 8)
+        .map((issue) => `${issue.path}: ${issue.message}`)
+        .join("\n")
+    );
+  }
+  return next;
 }

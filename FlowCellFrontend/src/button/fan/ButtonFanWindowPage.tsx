@@ -569,8 +569,8 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       appliedFrameBoundsRef.current = collapsedBounds;
       setAppliedEnvelope(collapsedEnvelope);
       setAppliedFrameBounds(collapsedBounds);
-      setGeometryInitialized(true);
       await ensureCanvasContainsFrame(collapsedBounds);
+      setGeometryInitialized(true);
     })().catch((geometryError) => {
       if (initializedSetupKeyRef.current === initializationKey) {
         setRuntimeError(

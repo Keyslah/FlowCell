@@ -2,14 +2,23 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   advanceButtonActivationStateIndex,
+  buttonPlacementActivationCycleAdvancesOn,
   clampButtonActivationStateIndex,
-  createDefaultButtonActivationBehavior,
-  getButtonActivationStateCount,
-  resolveButtonAppearance
+    clampButtonPlacementActivationStateIndex,
+    createDefaultButtonActivationBehavior,
+    getButtonActivationStateCount,
+    getButtonPlacementActivationStateCount,
+    resolveButtonPlacementActivationStateIndexFromResponse,
+    resolveButtonAppearance
 } from "./.compiled-button-system/button/runtime/buttonActivationState.js";
 import {
   createButtonStateDocument
 } from "./.compiled-button-system/button/state/buttonDefaults.js";
+import {
+    resolveTriggeredIndex,
+    setButtonActivationState,
+    subscribeButtonActivationState
+} from "./.compiled-button-system/button/runtime/ButtonActivationStateBus.js";
 import {
   normalizeLoadedButtonStateDocument,
   validateButtonStateDocument
@@ -45,6 +54,16 @@ function makeCycleBehavior() {
         label: "Auto",
         labelOverrides: {}
       }
+    ]
+  };
+}
+
+function makePlacementCycle() {
+  return {
+    states: [
+      { id: "resting", label: "Off", advanceTrigger: "release", visualState: "base" },
+      { id: "armed", label: "Armed", advanceTrigger: "press", visualState: "held" },
+      { id: "ready", label: "Ready", advanceTrigger: "hover", visualState: "release" }
     ]
   };
 }
@@ -87,7 +106,9 @@ function makeStateDocument() {
     allowLabelResize: false,
     matchHitboxToSkin: true,
     allowStretching: false,
+    highlightOnHover: false,
     resizeAnchor: "top-left",
+    activationCycle: null,
     visualStateMap: {
       off: { hover: "held" },
       on: { error: "hover" }
@@ -95,6 +116,12 @@ function makeStateDocument() {
   };
   surface.placementIds.push("placement");
   return document;
+}
+
+function applyActivationTrigger(indexes, consumedInteractionIds, request) {
+  const next = resolveTriggeredIndex(request, indexes, consumedInteractionIds);
+  if (next !== null) indexes.set(request.activationKey, next);
+  return next;
 }
 
 test("activation helpers clamp and advance momentary, toggle, and cycle states", () => {
@@ -113,6 +140,365 @@ test("activation helpers clamp and advance momentary, toggle, and cycle states",
   assert.equal(advanceButtonActivationStateIndex(toggle, 0), 1);
   assert.equal(advanceButtonActivationStateIndex(toggle, 1), 0);
   assert.equal(advanceButtonActivationStateIndex(cycle, 2), 0);
+});
+
+test("placement cycle helpers use state count, stable order, and each state's trigger", () => {
+  const cycle = makePlacementCycle();
+
+  assert.equal(getButtonPlacementActivationStateCount(null), 1);
+  assert.equal(getButtonPlacementActivationStateCount({ states: [cycle.states[0]] }), 1);
+  assert.equal(getButtonPlacementActivationStateCount(cycle), 3);
+  assert.equal(clampButtonPlacementActivationStateIndex(cycle, -2), 0);
+  assert.equal(clampButtonPlacementActivationStateIndex(cycle, 99), 2);
+  assert.equal(buttonPlacementActivationCycleAdvancesOn(cycle, 0, "release"), true);
+  assert.equal(buttonPlacementActivationCycleAdvancesOn(cycle, 0, "press"), false);
+  assert.equal(buttonPlacementActivationCycleAdvancesOn(cycle, 1, "press"), true);
+  assert.equal(buttonPlacementActivationCycleAdvancesOn(cycle, 2, "hover"), true);
+});
+
+test("placement cycle result matches resolve authoritative nested action responses", () => {
+  const cycle = makePlacementCycle();
+  cycle.states[0].resultMatches = [
+    { axis: "X", mode: "NONE" },
+    { modes: { X: "NONE" } }
+  ];
+  cycle.states[1].resultMatches = [
+    { axis: "X", mode: "MIN" },
+    { modes: { X: "MIN" } }
+  ];
+  cycle.states[2].resultMatches = [
+    { axis: "X", mode: "MAX", flags: ["locked", { side: "maximum" }] }
+  ];
+
+  assert.equal(
+    resolveButtonPlacementActivationStateIndexFromResponse(
+      cycle,
+      { status: "ok", axis: "X", mode: "MIN", selected: 3 }
+    ),
+    1
+  );
+  assert.equal(
+    resolveButtonPlacementActivationStateIndexFromResponse(
+      cycle,
+      { status: "ok", modes: { X: "NONE", Y: "MAX", Z: "MIN" } }
+    ),
+    0
+  );
+  assert.equal(
+    resolveButtonPlacementActivationStateIndexFromResponse(
+      cycle,
+      { axis: "X", mode: "MAX", flags: ["locked", { side: "maximum", extra: true }] }
+    ),
+    2
+  );
+  assert.equal(
+    resolveButtonPlacementActivationStateIndexFromResponse(cycle, { axis: "Y", mode: "MIN" }),
+    null
+  );
+  const ambiguous = structuredClone(cycle);
+  ambiguous.states[0].resultMatches.push({ status: "ok" });
+  assert.equal(
+    resolveButtonPlacementActivationStateIndexFromResponse(
+      ambiguous,
+      { status: "ok", axis: "X", mode: "MIN" }
+    ),
+    null
+  );
+  assert.equal(resolveButtonPlacementActivationStateIndexFromResponse(null, {}), null);
+});
+
+test("absolute activation-state setter publishes a clamped placement index in local hosts", async () => {
+  const activationKey = `placement-set-test-${Date.now()}`;
+  const observed = [];
+  const unsubscribe = await subscribeButtonActivationState(
+    activationKey,
+    3,
+    (index) => observed.push(index)
+  );
+  try {
+    await setButtonActivationState(activationKey, 3, 2);
+    assert.equal(observed.at(-1), 2);
+    await setButtonActivationState(activationKey, 3, 99);
+    assert.equal(observed.at(-1), 2);
+    await setButtonActivationState(activationKey, 3, -4);
+    assert.equal(observed.at(-1), 0);
+  } finally {
+    unsubscribe();
+  }
+});
+
+test("absolute activation-state setter updates its host when Tauri accepts an event without a coordinator", async () => {
+  const activationKey = `placement-set-transport-test-${Date.now()}`;
+  const observed = [];
+  const unsubscribe = await subscribeButtonActivationState(
+    activationKey,
+    3,
+    (index) => observed.push(index)
+  );
+  const previousInternals = globalThis.__TAURI_INTERNALS__;
+  globalThis.__TAURI_INTERNALS__ = {
+    invoke: async () => null
+  };
+  try {
+    await setButtonActivationState(activationKey, 3, 1);
+    assert.equal(observed.at(-1), 1);
+  } finally {
+    if (previousInternals === undefined) delete globalThis.__TAURI_INTERNALS__;
+    else globalThis.__TAURI_INTERNALS__ = previousInternals;
+    unsubscribe();
+  }
+});
+
+test("one press/release gesture stays consumed when another interaction advances in between", () => {
+  const indexes = new Map();
+  const consumedInteractionIds = new Map();
+  const advanceTriggers = ["press", "press", "release"];
+  const request = (trigger, interactionId) => ({
+    activationKey: "placement-a",
+    stateCount: advanceTriggers.length,
+    advanceTriggers,
+    trigger,
+    interactionId
+  });
+
+  assert.equal(applyActivationTrigger(indexes, consumedInteractionIds, request("press", "gesture-a")), 1);
+  assert.equal(applyActivationTrigger(indexes, consumedInteractionIds, request("press", "gesture-b")), 2);
+  assert.equal(applyActivationTrigger(indexes, consumedInteractionIds, request("release", "gesture-a")), null);
+  assert.equal(indexes.get("placement-a"), 2);
+});
+
+test("release-only cycles ignore press and then consume the matching release once", () => {
+  const indexes = new Map();
+  const consumedInteractionIds = new Map();
+  const advanceTriggers = ["release", "press"];
+  const request = (trigger) => ({
+    activationKey: "placement-a",
+    stateCount: advanceTriggers.length,
+    advanceTriggers,
+    trigger,
+    interactionId: "gesture-a"
+  });
+
+  assert.equal(applyActivationTrigger(indexes, consumedInteractionIds, request("press")), null);
+  assert.equal(applyActivationTrigger(indexes, consumedInteractionIds, request("release")), 1);
+  assert.equal(applyActivationTrigger(indexes, consumedInteractionIds, request("release")), null);
+});
+
+test("consumed interaction histories are bounded and scoped by activation key", () => {
+  const indexes = new Map();
+  const consumedInteractionIds = new Map();
+  const advanceTriggers = ["press", "press"];
+  for (const activationKey of ["placement-a", "placement-b"]) {
+    assert.notEqual(applyActivationTrigger(indexes, consumedInteractionIds, {
+      activationKey,
+      stateCount: advanceTriggers.length,
+      advanceTriggers,
+      trigger: "press",
+      interactionId: "shared-gesture-id"
+    }), null);
+  }
+  for (let index = 0; index < 300; index += 1) {
+    const next = applyActivationTrigger(indexes, consumedInteractionIds, {
+      activationKey: "placement-a",
+      stateCount: advanceTriggers.length,
+      advanceTriggers,
+      trigger: "press",
+      interactionId: `gesture-${index}`
+    });
+    assert.notEqual(next, null);
+  }
+
+  assert.equal(consumedInteractionIds.get("placement-b").ids.has("shared-gesture-id"), true);
+  assert.ok(consumedInteractionIds.get("placement-a").ids.size <= 256);
+  assert.ok(consumedInteractionIds.get("placement-a").order.length <= 256);
+});
+
+test("configured placement cycle uses hover as a transient over a base-latched visual", () => {
+  const cycle = makePlacementCycle();
+  const resolve = (patch) => resolveButtonAppearance({
+    buttonLabel: "Fallback",
+    activationBehavior: null,
+    activationCycle: cycle,
+    activeStateIndex: 0,
+    visualStateMap: null,
+    appearance: { ...RESTING_APPEARANCE, ...patch }
+  });
+
+  const resting = resolve({});
+  assert.equal(resting.visualState, "base");
+  const hovered = resolve({ hovered: true });
+  assert.equal(hovered.activeTrigger, "hover");
+  assert.equal(hovered.visualState, "hover");
+  assert.deepEqual(hovered.flags, {
+    hovered: true,
+    pressed: false,
+    held: false,
+    play: false,
+    release: false,
+    disabled: false,
+    error: false
+  });
+  assert.equal(resolve({}).visualState, "base");
+});
+
+test("configured placement cycle settles transient input back to a hover-latched visual", () => {
+  const cycle = makePlacementCycle();
+  cycle.states[0] = { ...cycle.states[0], visualState: "hover" };
+  const resolve = (patch) => resolveButtonAppearance({
+    buttonLabel: "Fallback",
+    activationBehavior: null,
+    activationCycle: cycle,
+    activeStateIndex: 0,
+    visualStateMap: null,
+    appearance: { ...RESTING_APPEARANCE, ...patch }
+  });
+
+  assert.equal(resolve({}).visualState, "hover");
+  assert.equal(resolve({ pressed: true }).visualState, "pressed");
+  const settled = resolve({});
+  assert.equal(settled.activeTrigger, "rest");
+  assert.equal(settled.visualState, "hover");
+  assert.deepEqual(settled.flags, {
+    hovered: true,
+    pressed: false,
+    held: false,
+    play: false,
+    release: false,
+    disabled: false,
+    error: false
+  });
+});
+
+test("configured placement cycle gives pressed and release precedence over hover", () => {
+  const cycle = makePlacementCycle();
+  const resolve = (patch) => resolveButtonAppearance({
+    buttonLabel: "Fallback",
+    activationBehavior: null,
+    activationCycle: cycle,
+    activeStateIndex: 0,
+    visualStateMap: null,
+    appearance: { ...RESTING_APPEARANCE, ...patch }
+  });
+
+  const pressed = resolve({ hovered: true, pressed: true, release: true });
+  assert.equal(pressed.activeTrigger, "pressed");
+  assert.equal(pressed.visualState, "pressed");
+  assert.deepEqual(pressed.flags, {
+    hovered: false,
+    pressed: true,
+    held: false,
+    play: false,
+    release: false,
+    disabled: false,
+    error: false
+  });
+  const released = resolve({ hovered: true, release: true });
+  assert.equal(released.activeTrigger, "release");
+  assert.equal(released.visualState, "release");
+});
+
+test("configured placement cycle skips empty transient sections and keeps the authored hover target static", () => {
+  const cycle = {
+    states: [
+      { id: "off", label: "Live", advanceTrigger: "press", visualState: "base" },
+      { id: "on", label: "Live", advanceTrigger: "press", visualState: "hover" }
+    ]
+  };
+  const authoredVisualStates = new Set(["base", "hover"]);
+  const resolve = (activeStateIndex, patch) => resolveButtonAppearance({
+    buttonLabel: "Live",
+    activationBehavior: null,
+    activationCycle: cycle,
+    activeStateIndex,
+    visualStateMap: null,
+    authoredVisualStates,
+    appearance: { ...RESTING_APPEARANCE, ...patch }
+  });
+
+  const settledHoverSequence = [
+    resolve(0, { hovered: true }),
+    resolve(0, { hovered: true, pressed: true }),
+    resolve(1, { hovered: true, pressed: true, held: true }),
+    resolve(1, { hovered: true, play: true, release: true }),
+    resolve(1, { hovered: true, play: true }),
+    resolve(1, { hovered: true })
+  ];
+  for (const appearance of settledHoverSequence) {
+    assert.equal(appearance.visualState, "hover");
+    assert.deepEqual(appearance.flags, {
+      hovered: true,
+      pressed: false,
+      held: false,
+      play: false,
+      release: false,
+      disabled: false,
+      error: false
+    });
+  }
+  assert.deepEqual(
+    settledHoverSequence.map(({ activeTrigger }) => activeTrigger),
+    ["hover", "hover", "hover", "hover", "hover", "hover"]
+  );
+
+  const keyboardPressOnLatchedHover = resolve(1, { pressed: true });
+  assert.equal(keyboardPressOnLatchedHover.activeTrigger, "rest");
+  assert.equal(keyboardPressOnLatchedHover.visualState, "hover");
+
+  const authoredPressed = resolveButtonAppearance({
+    buttonLabel: "Live",
+    activationBehavior: null,
+    activationCycle: cycle,
+    activeStateIndex: 1,
+    visualStateMap: null,
+    authoredVisualStates: new Set(["base", "hover", "pressed"]),
+    appearance: { ...RESTING_APPEARANCE, hovered: true, pressed: true }
+  });
+  assert.equal(authoredPressed.activeTrigger, "pressed");
+  assert.equal(authoredPressed.visualState, "pressed");
+  assert.deepEqual(authoredPressed.flags, {
+    hovered: false,
+    pressed: true,
+    held: false,
+    play: false,
+    release: false,
+    disabled: false,
+    error: false
+  });
+});
+
+test("configured placement cycle ignores editor selection without hiding real hover", () => {
+  const cycle = makePlacementCycle();
+  const appearanceFor = (patch) => resolveButtonAppearance({
+    buttonLabel: "Fallback",
+    activationBehavior: null,
+    activationCycle: cycle,
+    activeStateIndex: 1,
+    visualStateMap: null,
+    appearance: { ...RESTING_APPEARANCE, ...patch }
+  });
+
+  const selected = appearanceFor({ selected: true });
+  assert.equal(selected.activeTrigger, "rest");
+  assert.equal(selected.visualState, "held");
+  const selectedHover = appearanceFor({ selected: true, hovered: true });
+  assert.equal(selectedHover.activeTrigger, "hover");
+  assert.equal(selectedHover.visualState, "hover");
+});
+
+test("configured placement cycle keeps error and disabled above transient visuals", () => {
+  const cycle = makePlacementCycle();
+  const appearanceFor = (patch) => resolveButtonAppearance({
+    buttonLabel: "Fallback",
+    activationBehavior: null,
+    activationCycle: cycle,
+    activeStateIndex: 2,
+    visualStateMap: null,
+    appearance: { ...RESTING_APPEARANCE, ...patch }
+  });
+
+  assert.equal(appearanceFor({ disabled: true, pressed: true }).visualState, "disabled");
+  assert.equal(appearanceFor({ error: true, disabled: true, held: true }).visualState, "error");
+  assert.equal(appearanceFor({ error: true }).label, "Ready");
 });
 
 test("null visual mapping preserves legacy composed flags while labels follow trigger priority", () => {

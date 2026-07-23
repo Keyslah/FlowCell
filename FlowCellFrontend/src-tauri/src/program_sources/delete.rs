@@ -1281,6 +1281,7 @@ mod tests {
                 execution_target: None,
                 bridge_action: "flowcell_test".to_string(),
                 bridge_data: None,
+                state_query: None,
                 events: None,
                 children: Vec::new(),
                 layout: None,

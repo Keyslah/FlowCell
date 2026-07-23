@@ -225,6 +225,7 @@ export function ButtonPopoutRenderer({
           document={document}
           surfaceId={surface.id}
           mode="run"
+          resetResultMappedActivationStateOnMount={unit.kind === "tool-set"}
           fields={fields}
           fieldValues={fieldValues}
           onRequestInlineEditorFocus={onRequestInlineEditorFocus}

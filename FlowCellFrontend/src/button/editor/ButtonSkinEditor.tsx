@@ -1,17 +1,17 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   BUTTON_SKIN_COMPILER_VERSION,
-  type ButtonActivationBehavior,
-  type ButtonActivationMode,
+  type ButtonCycleAdvanceTrigger,
   type ButtonAppearanceTrigger,
   type ButtonCoreMeasurement,
   type ButtonPlacement,
+  type ButtonPlacementActivationCycle,
+  BUTTON_PLACEMENT_CYCLE_MAX_STATES,
   type ButtonSkin,
   type ButtonSkinSectionName,
   type ButtonSkinVisualState,
   type ButtonTextAlignment,
-  type ButtonTextFitMode,
-  type ButtonVisualStateMap
+  type ButtonTextFitMode
 } from "../types";
 import {
   BUTTON_SKIN_SECTION_ORDER,
@@ -26,13 +26,9 @@ import { compileButtonSkin, diagnosticsBySkinSection } from "../skins/skinCompil
 import { ButtonSkinRenderer } from "../skins/ButtonSkinRenderer";
 import { cloneButtonDocument, createStableButtonId } from "../state/buttonDefaults";
 import {
-  BUTTON_ACTIVATION_MODES,
   BUTTON_APPEARANCE_TRIGGERS,
   BUTTON_SKIN_VISUAL_STATES,
-  buttonAppearanceTriggerToVisualState,
-  createDefaultButtonActivationBehavior,
-  getButtonActivationStateCount,
-  resolveButtonAppearance
+  buttonAppearanceTriggerToVisualState
 } from "../runtime/buttonActivationState";
 import {
   buttonPlacementSizingMode,
@@ -49,15 +45,11 @@ export interface ButtonSkinEditorProps {
   surfaceButtonCount: number;
   allSurfaceButtonsSameSize: boolean;
   buttonLabel: string;
-  activationBehavior: ButtonActivationBehavior | null;
-  visualStateMap: ButtonVisualStateMap | null;
+  activationCycle: ButtonPlacementActivationCycle | null;
+  stateStructureApplied: boolean;
   onButtonLabelChange: (label: string) => void;
-  onActivationBehaviorChange: (
-    behavior: ButtonActivationBehavior,
-    removedStateIds?: readonly string[]
-  ) => void;
-  onVisualStateMapChange: (visualStateMap: ButtonVisualStateMap) => void;
-  onApplyButtonStateSetup: () => void;
+  onActivationCycleChange: (cycle: ButtonPlacementActivationCycle) => void;
+  onHighlightOnHoverChange: (enabled: boolean) => void;
   onApplyAllButtonText: () => void;
   onAssignSize: (assignment: ButtonSizeAssignment) => void;
   onAssignSizeToPanel: (assignment: ButtonSizeAssignment) => void;
@@ -92,11 +84,13 @@ const TEXT_ALIGNMENT_OPTIONS: Array<{ value: ButtonTextAlignment; label: string 
   { value: "right", label: "Right" }
 ];
 
-const ACTIVATION_MODE_LABELS: Record<ButtonActivationMode, string> = {
-  momentary: "Momentary",
-  toggle: "Toggle",
-  cycle: "Cycle"
+const ADVANCE_TRIGGER_LABELS: Record<ButtonCycleAdvanceTrigger, string> = {
+  press: "Press",
+  hover: "Hover",
+  release: "Release"
 };
+
+const ADVANCE_TRIGGERS = Object.keys(ADVANCE_TRIGGER_LABELS) as ButtonCycleAdvanceTrigger[];
 
 const APPEARANCE_TRIGGER_LABELS: Record<ButtonAppearanceTrigger, string> = {
   rest: "Resting",
@@ -121,44 +115,6 @@ const VISUAL_STATE_LABELS: Record<ButtonSkinVisualState, string> = {
   error: "Error"
 };
 
-const DISPLAY_ONLY_STATE_ID = "button-state-preview-default";
-
-function displayActivationBehavior(
-  behavior: ButtonActivationBehavior | null,
-  buttonLabel: string
-): ButtonActivationBehavior {
-  return behavior ?? {
-    mode: "momentary",
-    states: [{ id: DISPLAY_ONLY_STATE_ID, label: buttonLabel, labelOverrides: {} }]
-  };
-}
-
-function materializeActivationBehavior(
-  behavior: ButtonActivationBehavior | null,
-  buttonLabel: string
-): ButtonActivationBehavior {
-  return behavior
-    ? cloneButtonDocument(behavior)
-    : createDefaultButtonActivationBehavior(
-        "momentary",
-        buttonLabel,
-        () => createStableButtonId("button-state")
-      );
-}
-
-function appearanceForTrigger(trigger: ButtonAppearanceTrigger) {
-  return {
-    hovered: trigger === "hover",
-    pressed: trigger === "pressed",
-    held: trigger === "held",
-    play: trigger === "play",
-    release: trigger === "release",
-    selected: trigger === "selected",
-    disabled: trigger === "disabled",
-    error: trigger === "error"
-  };
-}
-
 function visualFlagsForState(visualState: ButtonSkinVisualState) {
   return {
     hovered: visualState === "hover",
@@ -168,6 +124,32 @@ function visualFlagsForState(visualState: ButtonSkinVisualState) {
     release: visualState === "release",
     disabled: visualState === "disabled",
     error: visualState === "error"
+  };
+}
+
+function collectResultMatchLeaves(value: unknown): string[] {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return [String(value)];
+  }
+  if (Array.isArray(value)) return value.flatMap(collectResultMatchLeaves);
+  if (typeof value === "object") {
+    return Object.values(value as Record<string, unknown>).flatMap(collectResultMatchLeaves);
+  }
+  return [];
+}
+
+function summarizeResultMatches(
+  state: ButtonPlacementActivationCycle["states"][number]
+): { label: string; title: string } | null {
+  const matches = state.resultMatches ?? [];
+  if (matches.length === 0) return null;
+  const leafSets = matches.map((match) => new Set(collectResultMatchLeaves(match)));
+  const sharedLeaves = [...leafSets[0]].filter((leaf) => (
+    leafSets.every((candidate) => candidate.has(leaf))
+  ));
+  return {
+    label: sharedLeaves.length > 0 ? sharedLeaves.join(" / ") : `${matches.length} matches`,
+    title: `Action response mappings: ${matches.map((match) => JSON.stringify(match)).join(" or ")}`
   };
 }
 
@@ -213,12 +195,11 @@ export function ButtonSkinEditor({
   surfaceButtonCount,
   allSurfaceButtonsSameSize,
   buttonLabel,
-  activationBehavior,
-  visualStateMap,
+  activationCycle,
+  stateStructureApplied,
   onButtonLabelChange,
-  onActivationBehaviorChange,
-  onVisualStateMapChange,
-  onApplyButtonStateSetup,
+  onActivationCycleChange,
+  onHighlightOnHoverChange,
   onApplyAllButtonText,
   onAssignSize,
   onAssignSizeToPanel,
@@ -238,7 +219,10 @@ export function ButtonSkinEditor({
   const [benchNaturalMeasurement, setBenchNaturalMeasurement] = useState<ButtonCoreMeasurement | null>(null);
   const [benchTextOverflow, setBenchTextOverflow] = useState(false);
   const [selectedActivationStateId, setSelectedActivationStateId] = useState("");
-  const [selectedAppearanceTrigger, setSelectedAppearanceTrigger] = useState<ButtonAppearanceTrigger>("rest");
+  const [cycleStateCountInput, setCycleStateCountInput] = useState(
+    () => activationCycle ? String(activationCycle.states.length) : ""
+  );
+  const [behaviorPreviewHovered, setBehaviorPreviewHovered] = useState(false);
   const [previewAppearanceTrigger, setPreviewAppearanceTrigger] = useState<ButtonAppearanceTrigger>("rest");
   const [previewVisualStateOverride, setPreviewVisualStateOverride] = useState<ButtonSkinVisualState | null>(null);
   const [workingSize, setWorkingSize] = useState<ReturnType<typeof sizeAssignmentFromPlacement> | null>(
@@ -253,26 +237,26 @@ export function ButtonSkinEditor({
     [compileResult]
   );
   const skinActionsDisabled = busy || !compileResult?.ok;
-  const shownBehavior = displayActivationBehavior(activationBehavior, buttonLabel);
-  const activeStateCount = getButtonActivationStateCount(shownBehavior);
-  const shownStates = shownBehavior.states.slice(0, activeStateCount);
-  const selectedState = shownStates.find((state) => state.id === selectedActivationStateId) ?? shownStates[0];
-  const selectedStateIndex = Math.max(0, shownStates.findIndex((state) => state.id === selectedState?.id));
-  const selectedVisualState = selectedState
-    ? visualStateMap?.[selectedState.id]?.[selectedAppearanceTrigger] ??
-      buttonAppearanceTriggerToVisualState(selectedAppearanceTrigger)
-    : "base";
-  const availableVisualStates = BUTTON_SKIN_VISUAL_STATES;
-  const previewAppearance = resolveButtonAppearance({
-    buttonLabel,
-    activationBehavior: shownBehavior,
-    activeStateIndex: selectedStateIndex,
-    visualStateMap,
-    appearance: appearanceForTrigger(previewAppearanceTrigger)
-  });
+  const configuredStates = activationCycle?.states ?? [];
+  const stateTextBlocked = !stateStructureApplied;
+  const selectedState = configuredStates.find((state) => state.id === selectedActivationStateId) ?? configuredStates[0];
+  const stateDisplayName = (state: ButtonPlacementActivationCycle["states"][number], index: number) =>
+    `State ${index + 1}: ${state.label}`;
+  const selectedConfiguredStateIndex = Math.max(
+    0,
+    configuredStates.findIndex((state) => state.id === selectedState?.id)
+  );
+  const selectedVisualState = selectedState?.visualState ?? "base";
+  const selectedVisualFlags = visualFlagsForState(selectedVisualState);
+  const previewLabel = selectedState?.label ?? buttonLabel;
+  const previewVisualState = previewVisualStateOverride ?? (
+    previewAppearanceTrigger === "rest"
+      ? selectedVisualState
+      : buttonAppearanceTriggerToVisualState(previewAppearanceTrigger)
+  );
   const previewVisualFlags = previewVisualStateOverride
     ? visualFlagsForState(previewVisualStateOverride)
-    : previewAppearance.flags;
+    : visualFlagsForState(previewVisualState);
 
   useEffect(() => {
     setWorkingSkin(skin ? cloneButtonDocument(skin) : null);
@@ -285,13 +269,14 @@ export function ButtonSkinEditor({
   }, [workingSkin?.id]);
 
   useEffect(() => {
-    const behavior = displayActivationBehavior(activationBehavior, buttonLabel);
-    const count = getButtonActivationStateCount(behavior);
-    const visibleStates = behavior.states.slice(0, count);
-    if (!visibleStates.some((state) => state.id === selectedActivationStateId)) {
-      setSelectedActivationStateId(visibleStates[0]?.id ?? "");
+    if (!configuredStates.some((state) => state.id === selectedActivationStateId)) {
+      setSelectedActivationStateId(configuredStates[0]?.id ?? "");
     }
-  }, [activationBehavior, buttonLabel, selectedActivationStateId]);
+  }, [configuredStates, selectedActivationStateId]);
+
+  useEffect(() => {
+    setCycleStateCountInput(activationCycle ? String(activationCycle.states.length) : "");
+  }, [activationCycle?.states.length, placement?.id]);
 
   useEffect(() => {
     setWorkingSize(placement ? sizeAssignmentFromPlacement(placement) : null);
@@ -318,75 +303,70 @@ export function ButtonSkinEditor({
   const sizingMode = activeSize.sizingMode;
   const sizeActionsDisabled = busy || allSurfaceButtonsSameSize;
 
-  const setActivationMode = (mode: ButtonActivationMode) => {
-    setPreviewVisualStateOverride(null);
-    const next = materializeActivationBehavior(activationBehavior, buttonLabel);
-    next.mode = mode;
-    const minimumStates = mode === "momentary" ? 1 : 2;
-    while (next.states.length < minimumStates) {
+  const resizeActivationCycle = (requestedCount: number) => {
+    const count = Math.min(
+      BUTTON_PLACEMENT_CYCLE_MAX_STATES,
+      Math.max(2, Math.floor(requestedCount))
+    );
+    const next = cloneButtonDocument(activationCycle ?? { states: [] });
+    while (next.states.length < count) {
       next.states.push({
         id: createStableButtonId("button-state"),
         label: buttonLabel,
-        labelOverrides: {}
+        advanceTrigger: "press",
+        visualState: "base"
       });
     }
-    onActivationBehaviorChange(next);
-    setSelectedActivationStateId(next.states[Math.min(selectedStateIndex, minimumStates - 1)]?.id ?? "");
+    if (next.states.length > count) next.states.splice(count);
+    onActivationCycleChange(next);
+    setPreviewAppearanceTrigger("rest");
+    setPreviewVisualStateOverride(null);
+    setSelectedActivationStateId((current) => (
+      next.states.some((state) => state.id === current)
+        ? current
+        : next.states[next.states.length - 1]?.id ?? ""
+    ));
   };
 
-  const updateSelectedStateLabel = (trigger: ButtonAppearanceTrigger, label: string) => {
-    const next = materializeActivationBehavior(activationBehavior, buttonLabel);
-    const state = next.states[selectedStateIndex] ?? next.states[0];
-    if (!state) return;
-    if (trigger === "rest") {
-      state.label = label;
-    } else if (label) {
-      state.labelOverrides[trigger] = label;
-    } else {
-      delete state.labelOverrides[trigger];
+  const commitCycleStateCount = (rawValue: string) => {
+    if (!rawValue.trim()) {
+      setCycleStateCountInput(activationCycle ? String(activationCycle.states.length) : "");
+      return;
     }
-    onActivationBehaviorChange(next);
+    const parsed = Number(rawValue);
+    const count = Number.isFinite(parsed)
+      ? Math.min(BUTTON_PLACEMENT_CYCLE_MAX_STATES, Math.max(2, Math.floor(parsed)))
+      : 2;
+    setCycleStateCountInput(String(count));
+    resizeActivationCycle(count);
+  };
+
+  const updateCycleState = (
+    stateId: string,
+    patch: Partial<Pick<
+      ButtonPlacementActivationCycle["states"][number],
+      "label" | "advanceTrigger" | "visualState"
+    >>
+  ) => {
+    if (!activationCycle) return;
+    const next = cloneButtonDocument(activationCycle);
+    const state = next.states.find((candidate) => candidate.id === stateId);
+    if (!state) return;
+    Object.assign(state, patch);
+    onActivationCycleChange(next);
     setSelectedActivationStateId(state.id);
   };
 
-  const addCycleState = () => {
-    setPreviewVisualStateOverride(null);
-    const next = materializeActivationBehavior(activationBehavior, buttonLabel);
-    next.mode = "cycle";
-    const state = {
-      id: createStableButtonId("button-state"),
-      label: buttonLabel,
-      labelOverrides: {}
-    };
-    next.states.push(state);
-    onActivationBehaviorChange(next);
-    setSelectedActivationStateId(state.id);
-  };
-
-  const removeSelectedCycleState = () => {
-    if (shownBehavior.mode !== "cycle" || shownBehavior.states.length <= 2 || !selectedState) return;
-    setPreviewVisualStateOverride(null);
-    const next = materializeActivationBehavior(activationBehavior, buttonLabel);
-    const removalIndex = next.states.findIndex((state) => state.id === selectedState.id);
-    if (removalIndex < 0) return;
-    const [removed] = next.states.splice(removalIndex, 1);
-    onActivationBehaviorChange(next, [removed.id]);
-    setSelectedActivationStateId(next.states[Math.min(removalIndex, next.states.length - 1)]?.id ?? "");
+  const updateSelectedStateLabel = (label: string) => {
+    if (!selectedState) return;
+    updateCycleState(selectedState.id, { label });
   };
 
   const updateSelectedVisualState = (visualState: ButtonSkinVisualState) => {
+    if (!selectedState) return;
+    setPreviewAppearanceTrigger("rest");
     setPreviewVisualStateOverride(null);
-    const nextBehavior = materializeActivationBehavior(activationBehavior, buttonLabel);
-    const state = nextBehavior.states[selectedStateIndex] ?? nextBehavior.states[0];
-    if (!state) return;
-    if (!activationBehavior) onActivationBehaviorChange(nextBehavior);
-    const nextMap = cloneButtonDocument(visualStateMap ?? {});
-    nextMap[state.id] = {
-      ...(nextMap[state.id] ?? {}),
-      [selectedAppearanceTrigger]: visualState
-    };
-    onVisualStateMapChange(nextMap);
-    setSelectedActivationStateId(state.id);
+    updateCycleState(selectedState.id, { visualState });
   };
 
   const updateWorkingDimension = (axis: "width" | "height", requestedValue: number) => {
@@ -580,101 +560,179 @@ export function ButtonSkinEditor({
         </div>
       </details>
       <details className="button-skin-section button-behavior-section">
-        <summary title="Choose how presses advance logical states and map each condition to a skin visual.">
-          <span>Button Behavior</span>
-          <small>{ACTIVATION_MODE_LABELS[shownBehavior.mode]}</small>
+        <summary title="Set how this placement advances through states and which authored skin visual each state uses.">
+          <span className="button-section-chevron" aria-hidden="true">&#9656;</span>
+          <span>Button States &amp; Behavior</span>
+          <small>
+            {activationCycle
+              ? activationCycle.states.length === 2
+                ? "On / Off"
+                : `${activationCycle.states.length} states`
+              : "Not set up"}
+          </small>
         </summary>
-        <label title="Momentary returns after release, Toggle alternates states, and Cycle advances through every state.">
-          <span>Activation behavior</span>
-          <select
-            value={shownBehavior.mode}
+        <div className="button-cycle-count-row">
+          <strong>Cycle</strong>
+          <label title="Enter how many logical states this placement cycles through. Two states behave as On and Off.">
+            <span>Number of states</span>
+            <input
+              data-button-cycle-state-count
+              type="number"
+              min={2}
+              max={BUTTON_PLACEMENT_CYCLE_MAX_STATES}
+              step={1}
+              inputMode="numeric"
+              value={cycleStateCountInput}
+              placeholder="2"
+              disabled={busy}
+              onChange={(event) => {
+                const rawValue = event.currentTarget.value;
+                setCycleStateCountInput(rawValue);
+                const parsed = Number(rawValue);
+                if (
+                  Number.isInteger(parsed) &&
+                  parsed >= 2 &&
+                  parsed <= BUTTON_PLACEMENT_CYCLE_MAX_STATES
+                ) {
+                  resizeActivationCycle(parsed);
+                }
+              }}
+              onBlur={() => commitCycleStateCount(cycleStateCountInput)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur();
+              }}
+            />
+          </label>
+        </div>
+        <label
+          className="button-hover-highlight-toggle"
+          title="Brighten only this placement by 15% while the pointer is actually over it. This does not change skin code."
+        >
+          <input
+            type="checkbox"
+            checked={placement.highlightOnHover}
             disabled={busy}
-            onChange={(event) => setActivationMode(event.currentTarget.value as ButtonActivationMode)}
-          >
-            {BUTTON_ACTIVATION_MODES.map((mode) => (
-              <option key={mode} value={mode}>{ACTIVATION_MODE_LABELS[mode]}</option>
-            ))}
-          </select>
+            onChange={(event) => onHighlightOnHoverChange(event.currentTarget.checked)}
+          />
+          <span>Highlight on hover</span>
         </label>
-        <label title="Choose the logical state whose behavior and visual mapping you want to edit.">
-          <span>Button state</span>
-          <select
-            value={selectedState?.id ?? ""}
-            disabled={busy || shownStates.length === 0}
-            onChange={(event) => {
-              setPreviewVisualStateOverride(null);
-              setSelectedActivationStateId(event.currentTarget.value);
-            }}
-          >
-            {shownStates.map((state, index) => (
-              <option key={state.id} value={state.id}>
-                {`State ${index + 1}: ${state.label || "(no label)"}`}
-              </option>
-            ))}
-          </select>
-        </label>
-        <div className="button-state-list-actions">
-          <button
-            type="button"
-            title="Add a logical state and switch this Button to Cycle behavior."
-            disabled={busy}
-            onClick={addCycleState}
-          >
-            Add state
-          </button>
-          <button
-            type="button"
-            title="Remove the selected Cycle state. A Cycle Button keeps at least two states."
-            disabled={busy || shownBehavior.mode !== "cycle" || shownBehavior.states.length <= 2 || !selectedState}
-            onClick={removeSelectedCycleState}
-          >
-            Remove state
-          </button>
+        {activationCycle?.states.length === 2 ? (
+          <output className="button-cycle-toggle-note">2 states = On / Off toggle</output>
+        ) : null}
+        <div className="button-cycle-state-list">
+          {configuredStates.map((state, index) => {
+            const resultMatchSummary = summarizeResultMatches(state);
+            return (
+              <div key={state.id} className="button-cycle-state-row">
+                <span className="button-cycle-state-name">
+                  <strong>{stateDisplayName(state, index)}</strong>
+                  <small>
+                    {index === 0
+                      ? `Initial - ${VISUAL_STATE_LABELS[state.visualState]}`
+                      : VISUAL_STATE_LABELS[state.visualState]}
+                  </small>
+                  {resultMatchSummary ? (
+                    <small className="button-cycle-state-sync" title={resultMatchSummary.title}>
+                      Action: {resultMatchSummary.label}
+                    </small>
+                  ) : null}
+                </span>
+                <label title={`Choose what advances State ${index + 1} to the next state.`}>
+                  <span>Advance on</span>
+                  <select
+                    value={state.advanceTrigger}
+                    disabled={busy}
+                    onChange={(event) => updateCycleState(state.id, {
+                      advanceTrigger: event.currentTarget.value as ButtonCycleAdvanceTrigger
+                    })}
+                  >
+                    {ADVANCE_TRIGGERS.map((trigger) => (
+                      <option key={trigger} value={trigger}>{ADVANCE_TRIGGER_LABELS[trigger]}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            );
+          })}
         </div>
         <div className="button-behavior-state-grid">
-          <label title="Choose the interaction condition to configure for this logical state.">
-            <span>When</span>
+          <label title="Choose which logical state to configure and preview.">
+            <span>State</span>
             <select
-              value={selectedAppearanceTrigger}
-              disabled={busy || !selectedState}
+              value={selectedState?.id ?? ""}
+              disabled={busy || configuredStates.length === 0}
               onChange={(event) => {
-                const trigger = event.currentTarget.value as ButtonAppearanceTrigger;
+                setPreviewAppearanceTrigger("rest");
                 setPreviewVisualStateOverride(null);
-                setSelectedAppearanceTrigger(trigger);
-                setPreviewAppearanceTrigger(trigger);
+                setSelectedActivationStateId(event.currentTarget.value);
               }}
             >
-              {BUTTON_APPEARANCE_TRIGGERS.map((trigger) => (
-                <option key={trigger} value={trigger}>{APPEARANCE_TRIGGER_LABELS[trigger]}</option>
+              {!activationCycle ? <option value="">Not set up</option> : null}
+              {configuredStates.map((state, index) => (
+                <option key={state.id} value={state.id}>{stateDisplayName(state, index)}</option>
               ))}
             </select>
           </label>
-          <label title="Choose which visual section from the working skin appears for this condition.">
+          <label title="Choose one visual state actually authored by the current working skin.">
             <span>Visual state</span>
             <select
               value={selectedVisualState}
               disabled={busy || !selectedState}
               onChange={(event) => updateSelectedVisualState(event.currentTarget.value as ButtonSkinVisualState)}
             >
-              {availableVisualStates.map((visualState) => {
-                const empty = visualState !== "base" && !workingSkin[visualState].trim();
+              {BUTTON_SKIN_VISUAL_STATES.filter((visualState) => (
+                visualState === "base" ||
+                Boolean(workingSkin[visualState].trim()) ||
+                visualState === selectedVisualState
+              )).map((visualState) => {
+                const unavailable = visualState !== "base" && !workingSkin[visualState].trim();
                 return (
-                  <option key={visualState} value={visualState}>
-                    {VISUAL_STATE_LABELS[visualState]}{empty ? " (empty in this skin)" : ""}
+                  <option key={visualState} value={visualState} disabled={unavailable}>
+                    {VISUAL_STATE_LABELS[visualState]}{unavailable ? " (unavailable in this skin)" : ""}
                   </option>
                 );
               })}
             </select>
           </label>
         </div>
-        <button
-          type="button"
-          title="Apply only the Button behavior, logical states, and visual-state mapping."
-          disabled={busy}
-          onClick={onApplyButtonStateSetup}
+        <output className="button-behavior-preview-caption" aria-live="polite">
+          {selectedState
+            ? `Previewing ${stateDisplayName(selectedState, selectedConfiguredStateIndex)} - ${VISUAL_STATE_LABELS[selectedVisualState]}`
+            : "Choose a number of states to begin."}
+        </output>
+        <div
+          className="button-behavior-preview"
+          aria-label="Button state visual preview"
+          title="Live preview of the selected logical state and authored skin visual."
+          onPointerEnter={() => setBehaviorPreviewHovered(true)}
+          onPointerLeave={() => setBehaviorPreviewHovered(false)}
+          onPointerCancel={() => setBehaviorPreviewHovered(false)}
         >
-          Apply Button state setup
-        </button>
+          <ButtonSkinRenderer
+            skin={workingSkin}
+            label={previewLabel}
+            width={activeSize.width}
+            height={activeSize.height}
+            constrained
+            matchHitboxToSkin={sizingMode !== "responsive"}
+            allowStretching={sizingMode === "stretch"}
+            textFitMode={placement.textFitMode}
+            textAlignment={placement.textAlignment}
+            minimumFontSize={placement.minimumFontSize}
+            textSizeOverride={placement.textSizeOverride ?? undefined}
+            textOffsetX={placement.textOffsetX}
+            textOffsetY={placement.textOffsetY}
+            hovered={selectedVisualFlags.hovered}
+            pressed={selectedVisualFlags.pressed}
+            held={selectedVisualFlags.held}
+            play={selectedVisualFlags.play}
+            release={selectedVisualFlags.release}
+            disabled={selectedVisualFlags.disabled}
+            error={selectedVisualFlags.error}
+            highlightOnHover={placement.highlightOnHover}
+            rawHovered={behaviorPreviewHovered}
+          />
+        </div>
       </details>
       <label className="button-skin-paste" title="Paste named skin sections here. Recognized sections apply automatically.">
         <span>Paste Skin</span>
@@ -723,7 +781,7 @@ export function ButtonSkinEditor({
       >
         <ButtonSkinRenderer
           skin={workingSkin}
-          label={previewAppearance.label}
+          label={previewLabel}
           width={activeSize.width}
           height={activeSize.height}
           constrained
@@ -775,7 +833,7 @@ export function ButtonSkinEditor({
               <button
                 type="button"
                 className="button-skin-preview-section"
-                title={`Show the ${sectionLabel(section)} visual in both previews.`}
+                title={`Show the ${sectionLabel(section)} visual in the working skin preview.`}
                 onClick={() => {
                   const visualState = section as ButtonSkinVisualState;
                   setPreviewVisualStateOverride(visualState);
@@ -792,62 +850,44 @@ export function ButtonSkinEditor({
         );
       })}
       <details className="button-skin-section">
-        <summary title="Edit labels per state and condition, then position and fit the selected placement's text.">
+        <summary title="Edit and preview Button Text only. Cycle states and visuals save with the placement.">
           <span>Button Text</span>
+          <small>Text only</small>
         </summary>
-        <label title="Set the Button's default label.">
-          <span>Button label</span>
-          <input value={buttonLabel} disabled={busy} onChange={(event) => onButtonLabelChange(event.currentTarget.value)} />
-        </label>
-        <div className="button-behavior-state-grid">
-          <label title="Choose the logical state whose label you want to edit.">
-            <span>Button state</span>
-            <select
-              value={selectedState?.id ?? ""}
-              disabled={busy || shownStates.length === 0}
-              onChange={(event) => {
-                setPreviewVisualStateOverride(null);
-                setSelectedActivationStateId(event.currentTarget.value);
-              }}
-            >
-              {shownStates.map((state, index) => (
-                <option key={state.id} value={state.id}>{`State ${index + 1}`}</option>
-              ))}
-            </select>
+        {activationCycle ? (
+          <div className="button-behavior-state-grid">
+            <label title="Choose which cycle state's label to edit and preview.">
+              <span>State</span>
+              <select
+                value={selectedState?.id ?? ""}
+                disabled={busy || configuredStates.length === 0}
+                onChange={(event) => {
+                  setPreviewAppearanceTrigger("rest");
+                  setPreviewVisualStateOverride(null);
+                  setSelectedActivationStateId(event.currentTarget.value);
+                }}
+              >
+                {configuredStates.map((state, index) => (
+                  <option key={state.id} value={state.id}>{stateDisplayName(state, index)}</option>
+                ))}
+              </select>
+            </label>
+            <label title="Set the label displayed while this cycle state is active.">
+              <span>State label</span>
+              <input
+                value={selectedState?.label ?? ""}
+                placeholder={buttonLabel}
+                disabled={busy || !selectedState}
+                onChange={(event) => updateSelectedStateLabel(event.currentTarget.value)}
+              />
+            </label>
+          </div>
+        ) : (
+          <label title="Set the Button's default label.">
+            <span>Button label</span>
+            <input value={buttonLabel} disabled={busy} onChange={(event) => onButtonLabelChange(event.currentTarget.value)} />
           </label>
-          <label title="Choose when this state-specific label appears.">
-            <span>Label condition</span>
-            <select
-              value={selectedAppearanceTrigger}
-              disabled={busy || !selectedState}
-              onChange={(event) => {
-                const trigger = event.currentTarget.value as ButtonAppearanceTrigger;
-                setPreviewVisualStateOverride(null);
-                setSelectedAppearanceTrigger(trigger);
-                setPreviewAppearanceTrigger(trigger);
-              }}
-            >
-              {BUTTON_APPEARANCE_TRIGGERS.map((trigger) => (
-                <option key={trigger} value={trigger}>{APPEARANCE_TRIGGER_LABELS[trigger]}</option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label title={selectedAppearanceTrigger === "rest"
-          ? "Set this logical state's normal label."
-          : "Set an optional label for this condition. Leave it blank to use the state's normal label."}>
-          <span>{selectedAppearanceTrigger === "rest" ? "State label" : "Condition label"}</span>
-          <input
-            value={selectedState
-              ? selectedAppearanceTrigger === "rest"
-                ? selectedState.label
-                : selectedState.labelOverrides[selectedAppearanceTrigger] ?? ""
-              : ""}
-            placeholder={selectedAppearanceTrigger === "rest" ? buttonLabel : selectedState?.label || buttonLabel}
-            disabled={busy || !selectedState}
-            onChange={(event) => updateSelectedStateLabel(selectedAppearanceTrigger, event.currentTarget.value)}
-          />
-        </label>
+        )}
         <label title="Choose how the label is reduced or wrapped when it exceeds the Button box.">
           <span>Fit mode</span>
           <select
@@ -952,11 +992,11 @@ export function ButtonSkinEditor({
         </div>
         <div
           className="button-text-bench-preview"
-          title="Live preview of every Button Text change, including the selected state and condition."
+          title="Live preview of every Button Text change, including the selected cycle state when configured."
         >
           <ButtonSkinRenderer
             skin={workingSkin}
-            label={previewAppearance.label}
+            label={previewLabel}
             width={activeSize.width}
             height={activeSize.height}
             constrained
@@ -968,13 +1008,13 @@ export function ButtonSkinEditor({
             textSizeOverride={placement.textSizeOverride ?? undefined}
             textOffsetX={placement.textOffsetX}
             textOffsetY={placement.textOffsetY}
-            hovered={previewVisualFlags.hovered}
-            pressed={previewVisualFlags.pressed}
-            held={previewVisualFlags.held}
-            play={previewVisualFlags.play}
-            release={previewVisualFlags.release}
-            disabled={previewVisualFlags.disabled}
-            error={previewVisualFlags.error}
+            hovered={selectedVisualFlags.hovered}
+            pressed={selectedVisualFlags.pressed}
+            held={selectedVisualFlags.held}
+            play={selectedVisualFlags.play}
+            release={selectedVisualFlags.release}
+            disabled={selectedVisualFlags.disabled}
+            error={selectedVisualFlags.error}
             onMeasurement={setBenchMeasurement}
             onNaturalMeasurement={setBenchNaturalMeasurement}
             onTextOverflowChange={setBenchTextOverflow}
@@ -994,8 +1034,10 @@ export function ButtonSkinEditor({
         <button
           type="button"
           className="button-text-apply-all"
-          title="Apply only the labels and selected placement's text fit, alignment, size, and position."
-          disabled={busy}
+          title={stateTextBlocked
+            ? "Save placement first because the cycle state structure changed. Button Text stays in preview until then."
+            : "Apply every pending Button Text change across the editor: base or cycle labels plus each placement's fit, alignment, size, and X/Y position."}
+          disabled={busy || stateTextBlocked}
           onClick={onApplyAllButtonText}
         >
           Apply All

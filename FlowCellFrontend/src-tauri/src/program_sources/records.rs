@@ -23,6 +23,59 @@ pub(crate) struct ActiveSourceChild {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ToolsetStateQuery {
+    pub slot: String,
+    pub payload: Value,
+}
+
+pub(crate) fn validate_toolset_state_query(
+    query: &ToolsetStateQuery,
+    children: &[ActiveSourceChild],
+) -> Result<ToolsetStateQuery, String> {
+    let slot = query.slot.trim();
+    if slot.is_empty() {
+        return Err("Tool-set stateQuery requires a non-empty child slot.".to_string());
+    }
+    let child = children
+        .iter()
+        .find(|child| child.slot.eq_ignore_ascii_case(slot))
+        .ok_or_else(|| {
+            format!(
+                "Tool-set stateQuery references undeclared child slot '{}'.",
+                slot
+            )
+        })?;
+    let payload = query
+        .payload
+        .as_object()
+        .ok_or_else(|| "Tool-set stateQuery payload must be a JSON object.".to_string())?;
+    if payload.len() != 2 || !payload.contains_key("action") || !payload.contains_key("command") {
+        return Err(
+            "Tool-set stateQuery payload must contain only action and command.".to_string(),
+        );
+    }
+    for key in ["action", "command"] {
+        let value = payload
+            .get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| value.eq_ignore_ascii_case("status"))
+            .ok_or_else(|| {
+                format!("Tool-set stateQuery payload {key} must be the read-only 'status' command.")
+            })?;
+        debug_assert!(!value.is_empty());
+    }
+    let mut normalized_payload = Map::new();
+    normalized_payload.insert("action".to_string(), Value::String("status".to_string()));
+    normalized_payload.insert("command".to_string(), Value::String("status".to_string()));
+    Ok(ToolsetStateQuery {
+        slot: child.slot.clone(),
+        payload: Value::Object(normalized_payload),
+    })
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ActiveSourceRecord {
     pub schema_version: u32,
@@ -46,6 +99,8 @@ pub(crate) struct ActiveSourceRecord {
     pub bridge_action: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bridge_data: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state_query: Option<ToolsetStateQuery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub events: Option<BTreeMap<String, Value>>,
     #[serde(default)]
@@ -192,10 +247,67 @@ pub(crate) fn empty_object() -> Value {
 
 #[cfg(test)]
 mod tests {
-    use super::{recover_active_record, recover_active_records_in_directory};
+    use super::{
+        recover_active_record, recover_active_records_in_directory, validate_toolset_state_query,
+        ActiveSourceChild, ToolsetStateQuery,
+    };
     use serde_json::json;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn state_query_child() -> ActiveSourceChild {
+        ActiveSourceChild {
+            slot: "cycle_x".to_string(),
+            label: "X".to_string(),
+            tooltip: String::new(),
+            payload: None,
+            execution_target: None,
+        }
+    }
+
+    #[test]
+    fn toolset_state_query_normalizes_declared_slot_and_read_only_payload() {
+        let query = ToolsetStateQuery {
+            slot: " CYCLE_X ".to_string(),
+            payload: json!({ "action": " STATUS ", "command": "Status" }),
+        };
+        let normalized = validate_toolset_state_query(&query, &[state_query_child()])
+            .expect("valid state query");
+        assert_eq!(normalized.slot, "cycle_x");
+        assert_eq!(
+            normalized.payload,
+            json!({ "action": "status", "command": "status" })
+        );
+    }
+
+    #[test]
+    fn toolset_state_query_rejects_undeclared_slots_and_non_status_payloads() {
+        let children = [state_query_child()];
+        assert!(validate_toolset_state_query(
+            &ToolsetStateQuery {
+                slot: "missing".to_string(),
+                payload: json!({ "action": "status", "command": "status" }),
+            },
+            &children,
+        )
+        .is_err());
+        assert!(validate_toolset_state_query(
+            &ToolsetStateQuery {
+                slot: "cycle_x".to_string(),
+                payload: json!({ "action": "cycle_x", "command": "cycle_x" }),
+            },
+            &children,
+        )
+        .is_err());
+        assert!(validate_toolset_state_query(
+            &ToolsetStateQuery {
+                slot: "cycle_x".to_string(),
+                payload: json!({ "action": "status", "command": "status", "force": true }),
+            },
+            &children,
+        )
+        .is_err());
+    }
 
     #[test]
     fn missing_active_record_is_recovered_from_legacy_fixed_backup() {

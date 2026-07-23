@@ -1,9 +1,12 @@
 import {
+  useCallback,
   useLayoutEffect,
   useMemo,
   useRef,
+  useState,
   type CSSProperties
 } from "react";
+import { flushSync } from "react-dom";
 import type {
   ButtonCoreMeasurement,
   ButtonSkin,
@@ -28,6 +31,20 @@ import {
   BUTTON_VISUAL_SETTLE_FRAMES,
   resolveButtonVisualSamplingDecision
 } from "./buttonVisualSampling";
+import { applyButtonLabelTextOffset } from "./buttonTextOffset";
+import {
+  buttonVisualMotionBlocksStateChange,
+  commitPreparedButtonVisual,
+  createButtonVisualLatch,
+  finishButtonVisualMotion,
+  requestButtonVisual,
+  resetButtonVisualLatch,
+  settleButtonVisualMotionProbe,
+  type ButtonVisualIntent,
+  type ButtonVisualLatchState,
+  type ButtonVisualMotionKind,
+  type ButtonVisualPresentation
+} from "../runtime/buttonVisualLatch";
 
 type StyleWithVars = CSSProperties & Record<`--${string}`, string | number>;
 
@@ -54,6 +71,8 @@ export interface ButtonSkinRendererProps {
   release?: boolean;
   disabled?: boolean;
   error?: boolean;
+  highlightOnHover?: boolean;
+  rawHovered?: boolean;
   /**
    * Raw physical interaction state used by native visual measurement/sampling.
    * When omitted, the displayed visual flags above are sampled as before.
@@ -68,6 +87,8 @@ export interface ButtonSkinRendererProps {
   onVisualMeasurement?: (measurement: ButtonVisualMeasurement) => void;
   onNaturalMeasurement?: (measurement: ButtonCoreMeasurement) => void;
   onTextOverflowChange?: (overflow: boolean) => void;
+  onPrepareVisualStateChange?: (state: ButtonVisualState) => void | Promise<void>;
+  onVisualStateChange?: (state: ButtonVisualState) => void;
   onDiagnostics?: (diagnostics: readonly ButtonSkinDiagnostic[]) => void;
 }
 
@@ -78,10 +99,73 @@ interface MountedSkin {
   textAlignmentRestores: Array<() => void>;
 }
 
+interface ButtonVisualRenderSnapshot {
+  sourceKey: string;
+  label: string;
+  hovered: boolean;
+  pressed: boolean;
+  held: boolean;
+  play: boolean;
+  release: boolean;
+  disabled: boolean;
+  error: boolean;
+  hoverHighlighted: boolean;
+  samplingState: ButtonVisualState;
+  transitionSamplingKey: string | number | undefined;
+}
+
+interface ButtonSkinMotionInspection {
+  available: boolean;
+  kind: ButtonVisualMotionKind;
+  finiteAnimations: Animation[];
+}
+
 type ButtonHostRenderScale = ButtonSkinScale;
 
 const IDENTITY_HOST_RENDER_SCALE: ButtonHostRenderScale = { scaleX: 1, scaleY: 1 };
 const BUTTON_PERSISTENT_VISUAL_SAMPLE_FRAMES = 12;
+
+function buttonVisualStateFromSnapshot(snapshot: ButtonVisualRenderSnapshot): ButtonVisualState {
+  return {
+    hovered: snapshot.hovered,
+    pressed: snapshot.pressed,
+    held: snapshot.held,
+    play: snapshot.play,
+    release: snapshot.release,
+    error: snapshot.error
+  };
+}
+
+function buttonVisualSnapshotIntent(
+  snapshot: ButtonVisualRenderSnapshot
+): ButtonVisualIntent<ButtonVisualRenderSnapshot> {
+  return {
+    key: JSON.stringify([
+      snapshot.sourceKey,
+      snapshot.label,
+      snapshot.hovered,
+      snapshot.pressed,
+      snapshot.held,
+      snapshot.play,
+      snapshot.release,
+      snapshot.disabled,
+      snapshot.error,
+      snapshot.hoverHighlighted,
+      snapshot.samplingState.hovered,
+      snapshot.samplingState.pressed,
+      snapshot.samplingState.held,
+      snapshot.samplingState.play,
+      snapshot.samplingState.release,
+      snapshot.samplingState.error,
+      snapshot.transitionSamplingKey ?? null
+    ]),
+    value: snapshot,
+    // Press/play/release are authored activation presentations. Once requested,
+    // native Pop/Fan preparation must not let a fast pointer-up or action result
+    // replace them before they reach the skin and expose their finite motion.
+    commitBeforeSupersede: snapshot.pressed || snapshot.play || snapshot.release
+  };
+}
 
 function resolveHostRenderScale(
   host: HTMLElement,
@@ -520,24 +604,68 @@ function readMeasurement(
   });
 }
 
+function inspectButtonSkinMotion(container: HTMLElement): ButtonSkinMotionInspection {
+  if (typeof container.getAnimations !== "function") {
+    return { available: false, kind: "none", finiteAnimations: [] };
+  }
+  try {
+    const animations = container.getAnimations({ subtree: true });
+    const activeAnimations = animations.filter(
+      (animation) => animation.pending || animation.playState === "running"
+    );
+    const finiteAnimations = activeAnimations.filter((animation) => {
+      let endTime: unknown;
+      try {
+        endTime = animation.effect?.getComputedTiming().endTime;
+      } catch {
+        endTime = undefined;
+      }
+      return buttonVisualMotionBlocksStateChange({
+        pending: animation.pending,
+        playState: animation.playState,
+        endTime
+      });
+    });
+    return {
+      available: true,
+      kind: finiteAnimations.length > 0
+        ? "finite"
+        : activeAnimations.length > 0
+          ? "infinite"
+          : "none",
+      finiteAnimations
+    };
+  } catch {
+    return { available: false, kind: "none", finiteAnimations: [] };
+  }
+}
+
 function inspectRunningSkinAnimations(container: HTMLElement): {
   available: boolean;
   running: boolean;
 } {
-  if (typeof container.getAnimations !== "function") {
-    return { available: false, running: false };
-  }
-  try {
-    const animations = container.getAnimations({ subtree: true });
-    return {
-      available: true,
-      running: animations.some(
-        (animation) => animation.pending || animation.playState === "running"
-      )
-    };
-  } catch {
-    return { available: false, running: false };
-  }
+  const inspection = inspectButtonSkinMotion(container);
+  return {
+    available: inspection.available,
+    running: inspection.kind !== "none"
+  };
+}
+
+function waitForButtonVisualFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+function waitForButtonSkinMotionCompletion(animations: readonly Animation[]): Promise<void> {
+  const completions = animations.map((animation) => {
+    try {
+      return animation.finished;
+    } catch {
+      return Promise.resolve();
+    }
+  });
+  return Promise.allSettled(completions).then(() => undefined);
 }
 
 function applySkinRootScale(
@@ -740,13 +868,7 @@ function applyTextOffset(
 ): void {
   const labelNode = mounted.labelNode;
   if (!labelNode) return;
-  if (offsetX === 0 && offsetY === 0) {
-    labelNode.style.removeProperty("translate");
-    return;
-  }
-  // The host-injected label node is the placement seam. Individual `translate`
-  // composes with an authored `transform` without rewriting or remounting the skin.
-  labelNode.style.setProperty("translate", `${offsetX}px ${offsetY}px`, "important");
+  applyButtonLabelTextOffset(labelNode, offsetX, offsetY);
 }
 
 function setBooleanAttribute(host: HTMLElement, name: string, value: boolean): void {
@@ -776,6 +898,8 @@ export function ButtonSkinRenderer({
   release = false,
   disabled = false,
   error = false,
+  highlightOnHover = false,
+  rawHovered = false,
   samplingState,
   transitionSamplingKey,
   onCoreElementChange,
@@ -785,6 +909,8 @@ export function ButtonSkinRenderer({
   onVisualMeasurement,
   onNaturalMeasurement,
   onTextOverflowChange,
+  onPrepareVisualStateChange,
+  onVisualStateChange,
   onDiagnostics
 }: ButtonSkinRendererProps) {
   const hostRef = useRef<HTMLSpanElement | null>(null);
@@ -825,6 +951,8 @@ export function ButtonSkinRenderer({
   const onVisualMeasurementRef = useRef(onVisualMeasurement);
   const onNaturalMeasurementRef = useRef(onNaturalMeasurement);
   const onTextOverflowChangeRef = useRef(onTextOverflowChange);
+  const onPrepareVisualStateChangeRef = useRef(onPrepareVisualStateChange);
+  const onVisualStateChangeRef = useRef(onVisualStateChange);
   const onDiagnosticsRef = useRef(onDiagnostics);
   onCoreElementChangeRef.current = onCoreElementChange;
   onLabelElementChangeRef.current = onLabelElementChange;
@@ -833,6 +961,8 @@ export function ButtonSkinRenderer({
   onVisualMeasurementRef.current = onVisualMeasurement;
   onNaturalMeasurementRef.current = onNaturalMeasurement;
   onTextOverflowChangeRef.current = onTextOverflowChange;
+  onPrepareVisualStateChangeRef.current = onPrepareVisualStateChange;
+  onVisualStateChangeRef.current = onVisualStateChange;
   onDiagnosticsRef.current = onDiagnostics;
   const compileResult = useMemo(() => compileButtonSkin(skin), [skin]);
   if (compileResult.ok) lastValidRef.current = compileResult.compiled;
@@ -843,31 +973,162 @@ export function ButtonSkinRenderer({
   const compiled = compileResult.ok
     ? compileResult.compiled
     : lastValidRef.current ?? (fallback?.ok ? fallback.compiled : null);
-  const renderedLabel = compiled?.hasLabelToken ? label : "";
   const hasMeasurementConsumer = Boolean(onMeasurement || onVisualMeasurement);
   const hasVisualMeasurementConsumer = Boolean(onVisualMeasurement);
-  const sampledHovered = samplingState?.hovered ?? hovered;
-  const sampledPressed = samplingState?.pressed ?? pressed;
-  const sampledHeld = samplingState?.held ?? held;
-  const sampledPlay = samplingState?.play ?? play;
-  const sampledRelease = samplingState?.release ?? release;
-  const sampledError = samplingState?.error ?? error;
-  const visualStateRef = useRef<ButtonVisualState>({
-    hovered: sampledHovered,
-    pressed: sampledPressed,
-    held: sampledHeld,
-    play: sampledPlay,
-    release: sampledRelease,
-    error: sampledError
-  });
-  visualStateRef.current = {
-    hovered: sampledHovered,
-    pressed: sampledPressed,
-    held: sampledHeld,
-    play: sampledPlay,
-    release: sampledRelease,
-    error: sampledError
+  const sourceKey = compiled
+    ? `${compiled.skinId}:${compiled.sourceFingerprint}`
+    : "uncompiled";
+  const desiredSamplingState: ButtonVisualState = {
+    hovered: (samplingState?.hovered ?? hovered) || hovered,
+    pressed: (samplingState?.pressed ?? pressed) || pressed,
+    held: (samplingState?.held ?? held) || held,
+    play: (samplingState?.play ?? play) || play,
+    release: (samplingState?.release ?? release) || release,
+    error: (samplingState?.error ?? error) || error
   };
+  const desiredVisualIntent = buttonVisualSnapshotIntent({
+    sourceKey,
+    label: compiled?.hasLabelToken ? label : "",
+    hovered,
+    pressed,
+    held,
+    play,
+    release,
+    disabled,
+    error,
+    hoverHighlighted: highlightOnHover && rawHovered,
+    samplingState: desiredSamplingState,
+    transitionSamplingKey
+  });
+  const desiredVisualIntentRef = useRef(desiredVisualIntent);
+  desiredVisualIntentRef.current = desiredVisualIntent;
+  const visualLatchStateRef = useRef<ButtonVisualLatchState<ButtonVisualRenderSnapshot>>(
+    createButtonVisualLatch(desiredVisualIntent)
+  );
+  const [appliedVisualPresentation, setAppliedVisualPresentation] = useState<
+    ButtonVisualPresentation<ButtonVisualRenderSnapshot>
+  >(() => visualLatchStateRef.current.presentation);
+  const appliedVisualPresentationRef = useRef(appliedVisualPresentation);
+  appliedVisualPresentationRef.current = appliedVisualPresentation;
+  const visualPresentationApplyGenerationRef = useRef(0);
+  const preparingVisualPresentationIdRef = useRef<number | null>(null);
+  const visualMotionWaitRef = useRef<{ id: number; promise: Promise<void> } | null>(null);
+  const visualLatchActiveRef = useRef(true);
+
+  const applyVisualPresentation = useCallback((
+    presentation: ButtonVisualPresentation<ButtonVisualRenderSnapshot>
+  ) => {
+    const generation = ++visualPresentationApplyGenerationRef.current;
+    preparingVisualPresentationIdRef.current = presentation.id;
+    void (async () => {
+      try {
+        await onPrepareVisualStateChangeRef.current?.(
+          buttonVisualStateFromSnapshot(presentation.intent.value)
+        );
+      } catch (prepareError) {
+        console.error("FlowCell could not prepare the next Button visual state.", prepareError);
+      }
+      if (
+        !visualLatchActiveRef.current ||
+        visualPresentationApplyGenerationRef.current !== generation ||
+        visualLatchStateRef.current.presentation.id !== presentation.id
+      ) return;
+      const committed = commitPreparedButtonVisual(
+        visualLatchStateRef.current,
+        presentation.id
+      );
+      if (committed === visualLatchStateRef.current) return;
+      visualLatchStateRef.current = committed;
+      preparingVisualPresentationIdRef.current = null;
+      // Native Pop/Fan geometry preparation is asynchronous. Commit the
+      // prepared snapshot and its probing phase as one synchronous handoff so
+      // no pointer event can observe a protected-but-still-unpainted candidate.
+      flushSync(() => {
+        appliedVisualPresentationRef.current = presentation;
+        setAppliedVisualPresentation(presentation);
+      });
+    })();
+  }, []);
+
+  const commitVisualLatchState = useCallback((
+    next: ButtonVisualLatchState<ButtonVisualRenderSnapshot>
+  ) => {
+    visualLatchStateRef.current = next;
+    const presentation = next.presentation;
+    if (
+      presentation.id === appliedVisualPresentationRef.current.id ||
+      presentation.id === preparingVisualPresentationIdRef.current
+    ) return;
+    applyVisualPresentation(presentation);
+  }, [applyVisualPresentation]);
+
+  const waitForFiniteVisualMotion = useCallback((presentationId: number) => {
+    if (visualMotionWaitRef.current?.id === presentationId) return;
+    const promise = (async () => {
+      while (visualLatchActiveRef.current) {
+        const current = visualLatchStateRef.current;
+        if (
+          current.presentation.id !== presentationId ||
+          current.motion?.presentationId !== presentationId ||
+          current.motion.phase !== "finite"
+        ) return;
+        const mounted = mountedRef.current;
+        if (!mounted) {
+          await waitForButtonVisualFrame();
+          continue;
+        }
+        const inspection = inspectButtonSkinMotion(mounted.container);
+        if (inspection.kind === "finite") {
+          await waitForButtonSkinMotionCompletion(inspection.finiteAnimations);
+          await waitForButtonVisualFrame();
+          continue;
+        }
+        // Animation promises can settle just before the browser exposes the
+        // final computed frame. Confirm on the following frame before releasing
+        // the presentation and applying the newest requested appearance.
+        await waitForButtonVisualFrame();
+        if (!visualLatchActiveRef.current) return;
+        const confirmedMounted = mountedRef.current;
+        if (confirmedMounted && inspectButtonSkinMotion(confirmedMounted.container).kind === "finite") {
+          continue;
+        }
+        commitVisualLatchState(finishButtonVisualMotion(
+          visualLatchStateRef.current,
+          presentationId
+        ));
+        return;
+      }
+    })();
+    visualMotionWaitRef.current = { id: presentationId, promise };
+    void promise.finally(() => {
+      if (visualMotionWaitRef.current?.promise === promise) {
+        visualMotionWaitRef.current = null;
+      }
+    });
+  }, [commitVisualLatchState]);
+
+  useLayoutEffect(() => {
+    visualLatchActiveRef.current = true;
+    return () => {
+      visualLatchActiveRef.current = false;
+      visualPresentationApplyGenerationRef.current += 1;
+      visualMotionWaitRef.current = null;
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    const desired = desiredVisualIntentRef.current;
+    const current = visualLatchStateRef.current;
+    const next = current.presentation.intent.value.sourceKey === desired.value.sourceKey
+      ? requestButtonVisual(current, desired)
+      : resetButtonVisualLatch(current, desired);
+    commitVisualLatchState(next);
+  }, [commitVisualLatchState, desiredVisualIntent.key]);
+
+  const renderedVisual = appliedVisualPresentation.intent.value;
+  const renderedLabel = renderedVisual.label;
+  const visualStateRef = useRef<ButtonVisualState>(renderedVisual.samplingState);
+  visualStateRef.current = renderedVisual.samplingState;
 
   useLayoutEffect(() => {
     onDiagnosticsRef.current?.(compileResult.ok ? [] : compileResult.diagnostics);
@@ -879,14 +1140,15 @@ export function ButtonSkinRenderer({
     const shadow = host.shadowRoot ?? host.attachShadow({ mode: "open" });
     setBooleanAttribute(host, "data-button-constrained", constrained && !matchHitboxToSkin);
     setBooleanAttribute(host, "data-button-match-hitbox-to-skin", matchHitboxToSkin);
-    setBooleanAttribute(host, "data-button-hover", hovered);
-    setBooleanAttribute(host, "data-button-pressed", pressed);
+    setBooleanAttribute(host, "data-button-hover", renderedVisual.hovered);
+    setBooleanAttribute(host, "data-button-pressed", renderedVisual.pressed);
+    setBooleanAttribute(host, "data-button-pointer-hover", rawHovered);
     setBooleanAttribute(host, "data-button-pointer-pressed", pointerPressed);
-    setBooleanAttribute(host, "data-button-held", held);
-    setBooleanAttribute(host, "data-button-play", play);
-    setBooleanAttribute(host, "data-button-release", release);
-    setBooleanAttribute(host, "data-button-disabled", disabled);
-    setBooleanAttribute(host, "data-button-error", error);
+    setBooleanAttribute(host, "data-button-held", renderedVisual.held);
+    setBooleanAttribute(host, "data-button-play", renderedVisual.play);
+    setBooleanAttribute(host, "data-button-release", renderedVisual.release);
+    setBooleanAttribute(host, "data-button-disabled", renderedVisual.disabled);
+    setBooleanAttribute(host, "data-button-error", renderedVisual.error);
     onShadowRootChangeRef.current?.(shadow);
     let mounted: MountedSkin;
     try {
@@ -906,7 +1168,6 @@ export function ButtonSkinRenderer({
       previewStackWords
     );
     applyTextAlignment(mounted, textAlignment);
-    applyTextOffset(mounted, textOffsetX, textOffsetY);
     applySkinRootScale(
       mounted,
       width,
@@ -915,6 +1176,7 @@ export function ButtonSkinRenderer({
       allowStretching,
       resolveHostRenderScale(host, width, height)
     );
+    applyTextOffset(mounted, textOffsetX, textOffsetY);
     fittedTextRef.current = {
       width,
       height,
@@ -942,6 +1204,7 @@ export function ButtonSkinRenderer({
         sizing.allowStretching,
         renderScale
       );
+      applyTextOffset(mounted, textOffsetX, textOffsetY);
       if (hasMeasurementConsumer) {
         const measurement = readMeasurement(mounted.container, mounted.core, renderScale);
         onMeasurementRef.current?.(measurement);
@@ -1040,6 +1303,9 @@ export function ButtonSkinRenderer({
       allowStretching,
       renderScale
     );
+    // SVG fitting recreates the host-owned line tspans, and its pixel-to-user
+    // conversion must observe the final host scale.
+    applyTextOffset(mounted, textOffsetX, textOffsetY);
     fittedTextRef.current = {
       width,
       height,
@@ -1064,41 +1330,53 @@ export function ButtonSkinRenderer({
     if (!host) return;
     setBooleanAttribute(host, "data-button-constrained", constrained && !matchHitboxToSkin);
     setBooleanAttribute(host, "data-button-match-hitbox-to-skin", matchHitboxToSkin);
-    setBooleanAttribute(host, "data-button-hover", hovered);
-    setBooleanAttribute(host, "data-button-pressed", pressed);
+    setBooleanAttribute(host, "data-button-hover", renderedVisual.hovered);
+    setBooleanAttribute(host, "data-button-pressed", renderedVisual.pressed);
+    setBooleanAttribute(host, "data-button-pointer-hover", rawHovered);
     setBooleanAttribute(host, "data-button-pointer-pressed", pointerPressed);
-    setBooleanAttribute(host, "data-button-held", held);
-    setBooleanAttribute(host, "data-button-play", play);
-    setBooleanAttribute(host, "data-button-release", release);
-    setBooleanAttribute(host, "data-button-disabled", disabled);
-    setBooleanAttribute(host, "data-button-error", error);
-    if (!hasVisualMeasurementConsumer) return;
+    setBooleanAttribute(host, "data-button-held", renderedVisual.held);
+    setBooleanAttribute(host, "data-button-play", renderedVisual.play);
+    setBooleanAttribute(host, "data-button-release", renderedVisual.release);
+    setBooleanAttribute(host, "data-button-disabled", renderedVisual.disabled);
+    setBooleanAttribute(host, "data-button-error", renderedVisual.error);
+    const reapplyCurrentTextOffset = () => {
+      const current = mountedRef.current;
+      if (current) applyTextOffset(current, textOffsetX, textOffsetY);
+    };
+    reapplyCurrentTextOffset();
     let frame: number | null = null;
     let settleFramesRemaining = BUTTON_VISUAL_SETTLE_FRAMES;
-    let transitionFramesRemaining = transitionSamplingKey === undefined
+    let transitionFramesRemaining = renderedVisual.transitionSamplingKey === undefined
       ? 0
       : BUTTON_PERSISTENT_VISUAL_SAMPLE_FRAMES;
+    let offsetFramesRemaining = BUTTON_PERSISTENT_VISUAL_SAMPLE_FRAMES;
     const sample = () => {
       const current = mountedRef.current;
       const onVisualMeasurement = onVisualMeasurementRef.current;
-      if (!current || !onVisualMeasurement) return;
-      const sizing = sizingRef.current;
-      const measurement = readMeasurement(
-        current.container,
-        current.core,
-        resolveHostRenderScale(host, sizing.width, sizing.height)
-      );
-      const state = visualStateRef.current;
-      onVisualMeasurement({ ...measurement, state });
-      const animationState = inspectRunningSkinAnimations(current.container);
-      const decision = resolveButtonVisualSamplingDecision({
-        state,
-        animationInspectionAvailable: animationState.available,
-        hasRunningAnimations: animationState.running,
-        settleFramesRemaining
-      });
-      settleFramesRemaining = decision.settleFramesRemaining;
-      if (decision.continueSampling || transitionFramesRemaining > 0) {
+      if (!current) return;
+      reapplyCurrentTextOffset();
+      let continueMeasurementSampling = false;
+      if (hasVisualMeasurementConsumer && onVisualMeasurement) {
+        const sizing = sizingRef.current;
+        const measurement = readMeasurement(
+          current.container,
+          current.core,
+          resolveHostRenderScale(host, sizing.width, sizing.height)
+        );
+        const state = visualStateRef.current;
+        onVisualMeasurement({ ...measurement, state });
+        const animationState = inspectRunningSkinAnimations(current.container);
+        const decision = resolveButtonVisualSamplingDecision({
+          state,
+          animationInspectionAvailable: animationState.available,
+          hasRunningAnimations: animationState.running,
+          settleFramesRemaining
+        });
+        settleFramesRemaining = decision.settleFramesRemaining;
+        continueMeasurementSampling = decision.continueSampling;
+      }
+      offsetFramesRemaining = Math.max(0, offsetFramesRemaining - 1);
+      if (continueMeasurementSampling || transitionFramesRemaining > 0 || offsetFramesRemaining > 0) {
         transitionFramesRemaining = Math.max(0, transitionFramesRemaining - 1);
         frame = requestAnimationFrame(sample);
       }
@@ -1108,24 +1386,52 @@ export function ButtonSkinRenderer({
       if (frame !== null) cancelAnimationFrame(frame);
     };
   }, [
+    appliedVisualPresentation.id,
     constrained,
     matchHitboxToSkin,
-    hovered,
-    pressed,
+    rawHovered,
     pointerPressed,
-    held,
-    play,
-    release,
-    disabled,
-    error,
-    sampledHovered,
-    sampledPressed,
-    sampledHeld,
-    sampledPlay,
-    sampledRelease,
-    sampledError,
-    transitionSamplingKey,
-    hasVisualMeasurementConsumer
+    hasVisualMeasurementConsumer,
+    textOffsetX,
+    textOffsetY
+  ]);
+
+  useLayoutEffect(() => {
+    const presentationId = appliedVisualPresentation.id;
+    onVisualStateChangeRef.current?.(buttonVisualStateFromSnapshot(renderedVisual));
+    const current = visualLatchStateRef.current;
+    if (
+      current.presentation.id !== presentationId ||
+      current.motion?.presentationId !== presentationId ||
+      current.motion.phase !== "probing"
+    ) return;
+    const frame = requestAnimationFrame(() => {
+      if (
+        !visualLatchActiveRef.current ||
+        appliedVisualPresentationRef.current.id !== presentationId
+      ) return;
+      const mounted = mountedRef.current;
+      const kind = mounted ? inspectButtonSkinMotion(mounted.container).kind : "none";
+      const next = settleButtonVisualMotionProbe(
+        visualLatchStateRef.current,
+        presentationId,
+        kind
+      );
+      commitVisualLatchState(next);
+      if (
+        next.presentation.id === presentationId &&
+        next.motion?.presentationId === presentationId &&
+        next.motion.phase === "finite"
+      ) {
+        waitForFiniteVisualMotion(presentationId);
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [
+    appliedVisualPresentation.id,
+    commitVisualLatchState,
+    renderedVisual,
+    waitForFiniteVisualMotion
   ]);
 
   const style: StyleWithVars = {
@@ -1133,6 +1439,7 @@ export function ButtonSkinRenderer({
     verticalAlign: "top",
     overflow: "visible",
     pointerEvents: "auto",
+    filter: renderedVisual.hoverHighlighted ? "brightness(1.15)" : undefined,
     ...(typeof width === "number" ? { width: `${width}px` } : {}),
     ...(typeof height === "number" ? { height: `${height}px` } : {}),
     ...(typeof width === "number" ? { "--button-core-width": `${width}px` } : {}),

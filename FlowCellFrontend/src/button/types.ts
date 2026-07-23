@@ -72,6 +72,10 @@ export interface ButtonVisualState {
 
 export type ButtonActivationMode = "momentary" | "toggle" | "cycle";
 
+export type ButtonCycleAdvanceTrigger = "press" | "hover" | "release";
+
+export const BUTTON_PLACEMENT_CYCLE_MAX_STATES = 64 as const;
+
 export type ButtonAppearanceTrigger =
   | "rest"
   | "hover"
@@ -104,6 +108,18 @@ export interface ButtonActivationState {
 export interface ButtonActivationBehavior {
   mode: ButtonActivationMode;
   states: ButtonActivationState[];
+}
+
+export interface ButtonPlacementCycleState {
+  id: string;
+  label: string;
+  advanceTrigger: ButtonCycleAdvanceTrigger;
+  visualState: ButtonSkinVisualState;
+  resultMatches?: JsonObject[];
+}
+
+export interface ButtonPlacementActivationCycle {
+  states: ButtonPlacementCycleState[];
 }
 
 export type ButtonVisualStateMap = Record<
@@ -212,7 +228,9 @@ export interface ButtonPlacement extends ButtonRect {
   allowLabelResize: boolean;
   matchHitboxToSkin: boolean;
   allowStretching: boolean;
+  highlightOnHover: boolean;
   resizeAnchor: ButtonResizeAnchor;
+  activationCycle: ButtonPlacementActivationCycle | null;
   visualStateMap: ButtonVisualStateMap | null;
 }
 

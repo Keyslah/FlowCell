@@ -5273,6 +5273,7 @@ mod managed_program_setup_tests {
                 execution_target: None,
                 bridge_action: String::new(),
                 bridge_data: None,
+                state_query: None,
                 events: None,
                 children: vec![ActiveSourceChild {
                     slot: "run".to_string(),

@@ -57,7 +57,9 @@ function documentWithButton() {
     allowLabelResize: true,
     matchHitboxToSkin: true,
     allowStretching: false,
+    highlightOnHover: false,
     resizeAnchor: "top-left",
+    activationCycle: null,
     visualStateMap: null
   };
   document.surfaces[DEFAULT_BUTTON_SURFACE_ID].placementIds = ["placement-one"];
@@ -67,6 +69,18 @@ function documentWithButton() {
 test("placement save commits arrangement without consuming pending skin or animation edits", () => {
   const committed = documentWithButton();
   const draft = structuredClone(committed);
+  const activationCycle = {
+    states: [
+      {
+        id: "state-resting", label: "Resting", advanceTrigger: "press", visualState: "base",
+        resultMatches: [{ mode: "NONE" }]
+      },
+      {
+        id: "state-armed", label: "Armed", advanceTrigger: "release", visualState: "held",
+        resultMatches: [{ mode: "MIN" }]
+      }
+    ]
+  };
   const draftSkin = {
     ...structuredClone(draft.skins[draft.settings.defaultSkinId]),
     id: "skin-pending",
@@ -87,7 +101,9 @@ test("placement save commits arrangement without consuming pending skin or anima
     allowLabelResize: false,
     matchHitboxToSkin: false,
     allowStretching: false,
-    skinOverrideId: draftSkin.id
+    highlightOnHover: true,
+    skinOverrideId: draftSkin.id,
+    activationCycle
   });
   draft.buttons.one.activationAnimation = {
     presetId: "flowcell-plus",
@@ -113,7 +129,8 @@ test("placement save commits arrangement without consuming pending skin or anima
       textOffsetY: saved.placements["placement-one"].textOffsetY,
       allowLabelResize: saved.placements["placement-one"].allowLabelResize,
       matchHitboxToSkin: saved.placements["placement-one"].matchHitboxToSkin,
-      allowStretching: saved.placements["placement-one"].allowStretching
+      allowStretching: saved.placements["placement-one"].allowStretching,
+      highlightOnHover: saved.placements["placement-one"].highlightOnHover
     },
     {
       x: 120,
@@ -128,10 +145,12 @@ test("placement save commits arrangement without consuming pending skin or anima
       textOffsetY: 7,
       allowLabelResize: false,
       matchHitboxToSkin: false,
-      allowStretching: false
+      allowStretching: false,
+      highlightOnHover: true
     }
   );
   assert.equal(saved.placements["placement-one"].skinOverrideId, null);
+  assert.deepEqual(saved.placements["placement-one"].activationCycle, activationCycle);
   assert.equal(saved.buttons.one.activationAnimation, null);
   assert.equal(saved.skins[draftSkin.id], undefined);
 
@@ -144,7 +163,14 @@ test("placement save commits arrangement without consuming pending skin or anima
     textOffsetY: 0,
     allowLabelResize: true,
     matchHitboxToSkin: true,
-    allowStretching: true
+    allowStretching: true,
+    highlightOnHover: false,
+    activationCycle: {
+      states: [
+        { id: "pending-one", label: "Pending one", advanceTrigger: "hover", visualState: "error" },
+        { id: "pending-two", label: "Pending two", advanceTrigger: "press", visualState: "disabled" }
+      ]
+    }
   });
   applyButtonPlacementSavedScope(draft, saved, DEFAULT_BUTTON_SURFACE_ID);
   assert.equal(draft.placements["placement-one"].skinOverrideId, draftSkin.id);
@@ -158,6 +184,8 @@ test("placement save commits arrangement without consuming pending skin or anima
   assert.equal(draft.placements["placement-one"].allowLabelResize, false);
   assert.equal(draft.placements["placement-one"].matchHitboxToSkin, false);
   assert.equal(draft.placements["placement-one"].allowStretching, false);
+  assert.equal(draft.placements["placement-one"].highlightOnHover, true);
+  assert.deepEqual(draft.placements["placement-one"].activationCycle, activationCycle);
 });
 
 test("placement conflict rebase preserves concurrent deletions and adds only editor-new Buttons", () => {
@@ -303,25 +331,51 @@ test("Button behavior save commits state structure and visual mapping without pe
   assert.equal(draft.placements["placement-one"].textOffsetY, 9);
 });
 
-test("Button Text Apply All saves only labels and the focused placement text preview", () => {
+test("Button Text Apply All saves placement-cycle labels without changing the shared Button label", () => {
   const committed = documentWithButton();
-  committed.buttons.one.activationBehavior = {
-    mode: "toggle",
+  committed.placements["placement-one"].activationCycle = {
     states: [
-      { id: "off", label: "Off", labelOverrides: {} },
-      { id: "on", label: "On", labelOverrides: {} }
+      {
+        id: "state-1",
+        label: "Resting",
+        advanceTrigger: "press",
+        visualState: "base",
+        resultMatches: [{ axis: "X", mode: "NONE" }]
+      },
+      {
+        id: "state-2",
+        label: "Armed",
+        advanceTrigger: "release",
+        visualState: "pressed",
+        resultMatches: [{ axis: "X", mode: "MIN" }]
+      }
     ]
   };
   const draft = structuredClone(committed);
   draft.buttons.one.label = "Ready";
-  draft.buttons.one.activationBehavior.mode = "cycle";
-  draft.buttons.one.activationBehavior.states[0].label = "Ready";
-  draft.buttons.one.activationBehavior.states[0].labelOverrides = { hover: "Start" };
-  draft.buttons.one.activationBehavior.states.push({
-    id: "pending-new-state",
-    label: "New state",
-    labelOverrides: {}
-  });
+  draft.placements["placement-one"].activationCycle.states = [
+    {
+      id: "state-2",
+      label: "Engaged",
+      advanceTrigger: "hover",
+      visualState: "held",
+      resultMatches: [{ axis: "X", mode: "MAX" }]
+    },
+    {
+      id: "state-1",
+      label: "Ready",
+      advanceTrigger: "release",
+      visualState: "hover",
+      resultMatches: [{ axis: "X", mode: "MIN" }]
+    },
+    {
+      id: "pending-new-state",
+      label: "New state",
+      advanceTrigger: "press",
+      visualState: "play",
+      resultMatches: [{ axis: "X", mode: "PENDING" }]
+    }
+  ];
   Object.assign(draft.placements["placement-one"], {
     x: 333,
     textFitMode: "shrink-and-stack",
@@ -333,14 +387,28 @@ test("Button Text Apply All saves only labels and the focused placement text pre
     allowLabelResize: false,
     visualStateMap: { off: { hover: "held" } }
   });
-  const scope = { buttonId: "one", placementId: "placement-one" };
+  const scope = { entries: [{ buttonId: "one", placementId: "placement-one" }] };
 
   const saved = buildButtonTextScopedDocument(committed, draft, scope);
-  assert.equal(saved.buttons.one.label, "Ready");
-  assert.equal(saved.buttons.one.activationBehavior.mode, "toggle");
-  assert.deepEqual(saved.buttons.one.activationBehavior.states.map((state) => state.id), ["off", "on"]);
-  assert.equal(saved.buttons.one.activationBehavior.states[0].label, "Ready");
-  assert.deepEqual(saved.buttons.one.activationBehavior.states[0].labelOverrides, { hover: "Start" });
+  assert.equal(saved.buttons.one.label, "One");
+  assert.deepEqual(saved.placements["placement-one"].activationCycle, {
+    states: [
+      {
+        id: "state-1",
+        label: "Ready",
+        advanceTrigger: "press",
+        visualState: "base",
+        resultMatches: [{ axis: "X", mode: "NONE" }]
+      },
+      {
+        id: "state-2",
+        label: "Engaged",
+        advanceTrigger: "release",
+        visualState: "pressed",
+        resultMatches: [{ axis: "X", mode: "MIN" }]
+      }
+    ]
+  });
   assert.equal(saved.placements["placement-one"].x, 10);
   assert.equal(saved.placements["placement-one"].textFitMode, "shrink-and-stack");
   assert.equal(saved.placements["placement-one"].textAlignment, "right");
@@ -352,17 +420,156 @@ test("Button Text Apply All saves only labels and the focused placement text pre
   assert.equal(saved.placements["placement-one"].visualStateMap, null);
 
   draft.buttons.one.label = "Pending";
-  draft.buttons.one.activationBehavior.states[0].label = "Pending";
+  draft.placements["placement-one"].activationCycle.states[0].label = "Pending armed";
+  draft.placements["placement-one"].activationCycle.states[0].advanceTrigger = "press";
+  draft.placements["placement-one"].activationCycle.states[0].visualState = "disabled";
+  draft.placements["placement-one"].activationCycle.states[0].resultMatches = [{ mode: "PENDING-2" }];
+  draft.placements["placement-one"].activationCycle.states[1].label = "Pending resting";
+  draft.placements["placement-one"].activationCycle.states[1].advanceTrigger = "hover";
+  draft.placements["placement-one"].activationCycle.states[1].visualState = "error";
+  draft.placements["placement-one"].activationCycle.states[1].resultMatches = [{ mode: "PENDING-1" }];
   draft.placements["placement-one"].textOffsetX = 25;
+  const pendingCycleStructure = draft.placements["placement-one"].activationCycle.states.map(
+    ({ id, advanceTrigger, visualState, resultMatches }) => ({
+      id,
+      advanceTrigger,
+      visualState,
+      resultMatches
+    })
+  );
   applyButtonTextSavedScope(draft, saved, scope);
-  assert.equal(draft.buttons.one.label, "Ready");
-  assert.equal(draft.buttons.one.activationBehavior.mode, "cycle");
-  assert.equal(draft.buttons.one.activationBehavior.states.length, 3);
-  assert.equal(draft.buttons.one.activationBehavior.states[0].label, "Ready");
+  assert.equal(draft.buttons.one.label, "Pending");
+  assert.deepEqual(
+    draft.placements["placement-one"].activationCycle.states.map(
+      ({ id, advanceTrigger, visualState, resultMatches }) => ({
+        id,
+        advanceTrigger,
+        visualState,
+        resultMatches
+      })
+    ),
+    pendingCycleStructure
+  );
+  assert.deepEqual(
+    draft.placements["placement-one"].activationCycle.states.map(({ id, label }) => ({ id, label })),
+    [
+      { id: "state-2", label: "Engaged" },
+      { id: "state-1", label: "Ready" },
+      { id: "pending-new-state", label: "New state" }
+    ]
+  );
   assert.equal(draft.placements["placement-one"].x, 333);
   assert.equal(draft.placements["placement-one"].textOffsetX, -6);
   assert.equal(draft.placements["placement-one"].allowLabelResize, false);
   assert.deepEqual(draft.placements["placement-one"].visualStateMap, { off: { hover: "held" } });
+});
+
+test("Button Text Apply All commits text drafts across multiple Buttons and placements", () => {
+  const committed = documentWithButton();
+  committed.buttons.two = {
+    ...structuredClone(committed.buttons.one),
+    id: "two",
+    label: "Two"
+  };
+  committed.placements["placement-two"] = {
+    ...structuredClone(committed.placements["placement-one"]),
+    id: "placement-two",
+    buttonId: "two",
+    x: 80
+  };
+  const draft = structuredClone(committed);
+  draft.buttons.one.label = "First";
+  draft.buttons.two.label = "Second";
+  draft.placements["placement-one"].textSizeOverride = 18;
+  draft.placements["placement-two"].textSizeOverride = 24;
+  draft.placements["placement-two"].textAlignment = "right";
+  draft.placements["placement-two"].x = 999;
+  const scope = {
+    entries: [
+      { buttonId: "one", placementId: "placement-one" },
+      { buttonId: "two", placementId: "placement-two" }
+    ]
+  };
+
+  const saved = buildButtonTextScopedDocument(committed, draft, scope);
+  assert.equal(saved.buttons.one.label, "First");
+  assert.equal(saved.buttons.two.label, "Second");
+  assert.equal(saved.placements["placement-one"].textSizeOverride, 18);
+  assert.equal(saved.placements["placement-two"].textSizeOverride, 24);
+  assert.equal(saved.placements["placement-two"].textAlignment, "right");
+  assert.equal(saved.placements["placement-two"].x, 80);
+
+  applyButtonTextSavedScope(draft, saved, scope);
+  assert.equal(draft.buttons.one.label, "First");
+  assert.equal(draft.buttons.two.label, "Second");
+  assert.equal(draft.placements["placement-one"].textSizeOverride, 18);
+  assert.equal(draft.placements["placement-two"].textSizeOverride, 24);
+  assert.equal(draft.placements["placement-two"].x, 999);
+});
+
+test("Button Text Apply All keeps legacy runtime labels aligned without consuming pending behavior structure", () => {
+  const committed = documentWithButton();
+  committed.buttons.one.activationBehavior = {
+    mode: "toggle",
+    states: [
+      { id: "off", label: "Off", labelOverrides: { hover: "Off hover" } },
+      { id: "on", label: "On", labelOverrides: { held: "On held" } }
+    ]
+  };
+  committed.placements["placement-one"].visualStateMap = {
+    off: { rest: "base", hover: "hover" },
+    on: { rest: "held", release: "release" }
+  };
+  const draft = structuredClone(committed);
+  draft.buttons.one.label = "Live";
+  draft.buttons.one.activationBehavior = {
+    mode: "cycle",
+    states: [
+      { id: "on", label: "Pending on", labelOverrides: { error: "Pending error" } },
+      { id: "off", label: "Pending off", labelOverrides: { disabled: "Pending disabled" } },
+      { id: "pending", label: "Pending new", labelOverrides: { hover: "Pending hover" } }
+    ]
+  };
+  draft.placements["placement-one"].visualStateMap = {
+    pending: { rest: "error" }
+  };
+  draft.placements["placement-one"].textOffsetX = 14;
+  const scope = { entries: [{ buttonId: "one", placementId: "placement-one" }] };
+
+  const saved = buildButtonTextScopedDocument(committed, draft, scope);
+  assert.equal(saved.buttons.one.label, "Live");
+  assert.equal(saved.buttons.one.activationBehavior.mode, "toggle");
+  assert.deepEqual(
+    saved.buttons.one.activationBehavior.states,
+    [
+      { id: "off", label: "Live", labelOverrides: { hover: "Off hover" } },
+      { id: "on", label: "Live", labelOverrides: { held: "On held" } }
+    ]
+  );
+  assert.deepEqual(
+    saved.placements["placement-one"].visualStateMap,
+    committed.placements["placement-one"].visualStateMap
+  );
+
+  applyButtonTextSavedScope(draft, saved, scope);
+  assert.equal(draft.buttons.one.label, "Live");
+  assert.equal(draft.buttons.one.activationBehavior.mode, "cycle");
+  assert.deepEqual(
+    draft.buttons.one.activationBehavior.states.map(({ id, label, labelOverrides }) => ({
+      id,
+      label,
+      labelOverrides
+    })),
+    [
+      { id: "on", label: "Live", labelOverrides: { error: "Pending error" } },
+      { id: "off", label: "Live", labelOverrides: { disabled: "Pending disabled" } },
+      { id: "pending", label: "Live", labelOverrides: { hover: "Pending hover" } }
+    ]
+  );
+  assert.deepEqual(draft.placements["placement-one"].visualStateMap, {
+    pending: { rest: "error" }
+  });
+  assert.equal(draft.placements["placement-one"].textOffsetX, 14);
 });
 
 test("animation save retains unrelated draft placement geometry", () => {

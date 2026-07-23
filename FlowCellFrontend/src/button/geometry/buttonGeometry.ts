@@ -1180,8 +1180,9 @@ export function buildButtonReorderRowCandidates(args: {
 
 /**
  * Gives every placement the requested host-owned size, then packs the result
- * without mutating the input. The caller can apply the returned geometry in
- * one transaction only after the complete layout is known to fit.
+ * without moving any placement outside its current visual row or mutating the
+ * input. The caller can apply the returned geometry in one transaction only
+ * after every preserved row is known to fit.
  */
 export function compactUniformButtonPlacements(
   placements: readonly NamedButtonRect[],
@@ -1189,18 +1190,22 @@ export function compactUniformButtonPlacements(
   surface: Pick<ButtonRect, "width" | "height">,
   options: CompactButtonPlacementOptions = {}
 ): CompactButtonPlacementResult {
-  return compactButtonPlacements(
-    placements.map((placement) => ({
+  const resizedById = new Map(placements.map((placement) => [
+    placement.id,
+    {
       ...placement,
       rect: {
         ...placement.rect,
         width: targetSize.width,
         height: targetSize.height
       }
-    })),
-    surface,
-    options
-  );
+    }
+  ]));
+  const rows = inferButtonPlacementRows(placements).map((row) => ({
+    ...row,
+    placements: row.placements.map((placement) => resizedById.get(placement.id)!)
+  }));
+  return compactButtonPlacementRows(rows, surface, options);
 }
 
 export function createStarterButtonLayout(

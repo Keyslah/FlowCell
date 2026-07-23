@@ -1,15 +1,18 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState
 } from "react";
 import type {
   ButtonCoreMeasurement,
+  ButtonCycleAdvanceTrigger,
   ButtonEditorMode,
   ButtonPlacement,
   ButtonRecord,
   ButtonSkin,
+  ButtonSkinVisualState,
   ButtonToolField,
   ButtonVisualMeasurement,
   ButtonVisualState,
@@ -23,13 +26,17 @@ import {
 } from "./runtime/ButtonRuntimeAdapter";
 import { notifyButtonActivationEffect } from "./runtime/buttonActivationEffects";
 import {
+  BUTTON_SKIN_VISUAL_STATES,
   getButtonActivationStateCount,
+  getButtonPlacementActivationStateCount,
   resolveButtonAppearance
 } from "./runtime/buttonActivationState";
 import {
   advanceButtonActivationState,
-  subscribeButtonActivationState
+  subscribeButtonActivationState,
+  triggerButtonActivationState
 } from "./runtime/ButtonActivationStateBus";
+import { buttonPlacementActivationCycleUsesResultMatches } from "./runtime/buttonActivationResultSync";
 import { isButtonWindowGeometryTransitionActive } from "./windows/buttonWindowGeometryTransition";
 
 export interface ButtonHostProps {
@@ -70,6 +77,14 @@ const HOLD_MS = 400;
 const RELEASE_MS = 140;
 const ERROR_MS = 1800;
 const PLAY_SAFETY_MS = 15_000;
+let buttonHostInteractionSequence = 0;
+
+function nextButtonHostInteractionId(placementId: string): string {
+  buttonHostInteractionSequence += 1;
+  const uniquePart = globalThis.crypto?.randomUUID?.()
+    ?? `${Date.now()}:${buttonHostInteractionSequence}`;
+  return `${placementId}:${uniquePart}`;
+}
 
 function eventTargetsInlineEditor(event: Event): boolean {
   return event.composedPath().some(
@@ -130,8 +145,18 @@ export function ButtonHost({
   const [activationStateIndex, setActivationStateIndex] = useState(0);
   const activationStateIndexRef = useRef(activationStateIndex);
   activationStateIndexRef.current = activationStateIndex;
-  const activationStateTransitionRef = useRef(0);
-  const activationStateCount = getButtonActivationStateCount(button.activationBehavior);
+  const activationCycle = placement.activationCycle && placement.activationCycle.states.length >= 2
+    ? placement.activationCycle
+    : null;
+  const activationStateCount = activationCycle
+    ? getButtonPlacementActivationStateCount(activationCycle)
+    : getButtonActivationStateCount(button.activationBehavior);
+  const activationStateKey = activationCycle ? placement.id : button.id;
+  const authoredVisualStates = useMemo(() => new Set<ButtonSkinVisualState>(
+    BUTTON_SKIN_VISUAL_STATES.filter((visualState) => (
+      visualState === "base" || Boolean(skin[visualState].trim())
+    ))
+  ), [skin]);
   const visualPressed = pressed || selected;
   const visualRelease = selected ? false : release;
   const rawVisualState: ButtonVisualState = {
@@ -145,8 +170,10 @@ export function ButtonHost({
   const resolvedAppearance = resolveButtonAppearance({
     buttonLabel: button.label,
     activationBehavior: button.activationBehavior,
+    activationCycle,
     activeStateIndex: activationStateIndex,
     visualStateMap: placement.visualStateMap,
+    authoredVisualStates,
     appearance: {
       hovered,
       pressed,
@@ -164,11 +191,16 @@ export function ButtonHost({
   const releaseTimerRef = useRef<number | null>(null);
   const errorTimerRef = useRef<number | null>(null);
   const playTimerRef = useRef<number | null>(null);
+  const playVisualAvailableRef = useRef(true);
+  const playRequestedRef = useRef(false);
   const playActiveRef = useRef(false);
   const animationCountRef = useRef(0);
   const animationStartedRef = useRef(false);
+  const playVisualProbeGenerationRef = useRef(0);
   const pressEventPlanRef = useRef<ReturnType<typeof resolveButtonPressEventPlan> | null>(null);
+  const pressActivationInteractionIdRef = useRef<string | null>(null);
   const eventQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const activationTriggerQueueRef = useRef<Promise<void>>(Promise.resolve());
   const pendingHoverLeaveRef = useRef(false);
   const syntheticHoverSessionRef = useRef(false);
   const inlineEditorElementRef = useRef<HTMLElement | null>(null);
@@ -178,6 +210,7 @@ export function ButtonHost({
   const modeRef = useRef(mode);
   const selectionOnlyRef = useRef(selectionOnly);
   const buttonRef = useRef(button);
+  const placementRef = useRef(placement);
   const onSelectRef = useRef(onSelect);
   const onDoubleActivateRef = useRef(onDoubleActivate);
   const onRequestContextMenuRef = useRef(onRequestContextMenu);
@@ -186,11 +219,15 @@ export function ButtonHost({
   const onHoverStartRef = useRef(onHoverStart);
   const onHoverEndRef = useRef(onHoverEnd);
   const onHoverCancelRef = useRef(onHoverCancel);
-  const onPrepareVisualStateChangeRef = useRef(onPrepareVisualStateChange);
   const onVisualStateChangeRef = useRef(onVisualStateChange);
-  const hoverTransitionRef = useRef(0);
+  const requestActivationTriggerRef = useRef((
+    _trigger: ButtonCycleAdvanceTrigger,
+    _interactionId: string,
+    _allowSelectionOnlyTrigger = false
+  ) => {});
   modeRef.current = mode;
   buttonRef.current = button;
+  placementRef.current = placement;
   onSelectRef.current = onSelect;
   onDoubleActivateRef.current = onDoubleActivate;
   onRequestContextMenuRef.current = onRequestContextMenu;
@@ -199,40 +236,33 @@ export function ButtonHost({
   onHoverStartRef.current = onHoverStart;
   onHoverEndRef.current = onHoverEnd;
   onHoverCancelRef.current = onHoverCancel;
-  onPrepareVisualStateChangeRef.current = onPrepareVisualStateChange;
   onVisualStateChangeRef.current = onVisualStateChange;
-  const visualStateRef = useRef<ButtonVisualState>(rawVisualState);
-  visualStateRef.current = rawVisualState;
-  const resolvePreparedVisualStateRef = useRef((
-    state: ButtonVisualState,
-    nextActivationStateIndex?: number
-  ): ButtonVisualState => state);
-  resolvePreparedVisualStateRef.current = (state, nextActivationStateIndex = activationStateIndex) => {
-    const next = resolveButtonAppearance({
-      buttonLabel: button.label,
-      activationBehavior: button.activationBehavior,
-      activeStateIndex: nextActivationStateIndex,
-      visualStateMap: placement.visualStateMap,
-      appearance: {
-        hovered: state.hovered,
-        pressed: pointerActiveRef.current,
-        held: state.held,
-        play: state.play,
-        release: state.release,
-        selected,
-        disabled: button.disabled,
-        error: state.error
-      }
+  requestActivationTriggerRef.current = (trigger, interactionId, allowSelectionOnlyTrigger = false) => {
+    const currentPlacement = placementRef.current;
+    const cycle = currentPlacement.activationCycle;
+    if (
+      modeRef.current !== "run" ||
+      (selectionOnlyRef.current && trigger !== "hover" && !allowSelectionOnlyTrigger) ||
+      buttonRef.current.disabled ||
+      !cycle ||
+      cycle.states.length < 2 ||
+      buttonPlacementActivationCycleUsesResultMatches(cycle)
+    ) return;
+    const invoke = () => triggerButtonActivationState(
+      currentPlacement.id,
+      cycle.states.map((state) => state.advanceTrigger),
+      trigger,
+      interactionId
+    );
+    const previous = activationTriggerQueueRef.current;
+    const queued = previous.then(invoke, invoke);
+    activationTriggerQueueRef.current = queued;
+    void queued.catch((triggerError) => {
+      console.error(`Button '${buttonRef.current.label}' could not advance its placement cycle.`, triggerError);
     });
-    return {
-      hovered: next.flags.hovered,
-      pressed: next.flags.pressed,
-      held: next.flags.held,
-      play: next.flags.play,
-      release: next.flags.release,
-      error: next.flags.error
-    };
   };
+  const appliedVisualStateRef = useRef<ButtonVisualState>(rawVisualState);
+  playVisualAvailableRef.current = !activationCycle || authoredVisualStates.has("play");
   const inlineEditFieldId = button.toolSetBehavior?.inlineEditField;
   const inlineEditField = fields?.find((field) => (
     field.id === inlineEditFieldId && (field.kind === "number" || field.kind === "text")
@@ -252,34 +282,13 @@ export function ButtonHost({
     let disposed = false;
     let unsubscribe: (() => void) | null = null;
     void subscribeButtonActivationState(
-      button.id,
+      activationStateKey,
       activationStateCount,
       (index) => {
         if (disposed) return;
-        const transition = ++activationStateTransitionRef.current;
         if (index === activationStateIndexRef.current) return;
-        const commitIndex = () => {
-          if (disposed || activationStateTransitionRef.current !== transition) return;
-          activationStateIndexRef.current = index;
-          setActivationStateIndex(index);
-        };
-        const prepare = onPrepareVisualStateChangeRef.current;
-        if (!prepare) {
-          commitIndex();
-          return;
-        }
-        const preparedState = resolvePreparedVisualStateRef.current(
-          visualStateRef.current,
-          index
-        );
-        void Promise.resolve(prepare(preparedState))
-          .catch((prepareError) => {
-            console.error(
-              `Button '${buttonRef.current.label}' could not prepare its next activation state.`,
-              prepareError
-            );
-          })
-          .finally(commitIndex);
+        activationStateIndexRef.current = index;
+        setActivationStateIndex(index);
       }
     ).then((nextUnsubscribe) => {
       if (disposed) nextUnsubscribe();
@@ -287,34 +296,60 @@ export function ButtonHost({
     });
     return () => {
       disposed = true;
-      activationStateTransitionRef.current += 1;
       unsubscribe?.();
     };
-  }, [activationStateCount, button.id]);
+  }, [activationStateCount, activationStateKey]);
 
   const clearTimer = (timer: { current: number | null }) => {
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
   };
 
-  const startPlay = useCallback(() => {
+  const finishPlay = useCallback(() => {
+    playRequestedRef.current = false;
+    playActiveRef.current = false;
+    playVisualProbeGenerationRef.current += 1;
     clearTimer(playTimerRef);
     animationCountRef.current = 0;
     animationStartedRef.current = false;
-    playActiveRef.current = true;
+    setPlay(false);
+  }, []);
+
+  const startPlay = useCallback(() => {
+    if (
+      !playVisualAvailableRef.current ||
+      playRequestedRef.current ||
+      appliedVisualStateRef.current.play
+    ) return;
+    playRequestedRef.current = true;
+    playVisualProbeGenerationRef.current += 1;
     setPlay(true);
-    playTimerRef.current = window.setTimeout(() => {
-      playActiveRef.current = false;
-      setPlay(false);
-    }, PLAY_SAFETY_MS);
+  }, []);
+
+  const handleAppliedVisualState = useCallback((state: ButtonVisualState) => {
+    appliedVisualStateRef.current = state;
+    onVisualStateChangeRef.current?.(state);
+    if (!state.play) {
+      if (playActiveRef.current) finishPlay();
+      return;
+    }
+    if (!playRequestedRef.current || playActiveRef.current) return;
+    playActiveRef.current = true;
+    animationCountRef.current = 0;
+    animationStartedRef.current = false;
+    clearTimer(playTimerRef);
+    playTimerRef.current = window.setTimeout(finishPlay, PLAY_SAFETY_MS);
+    const generation = ++playVisualProbeGenerationRef.current;
     requestAnimationFrame(() => requestAnimationFrame(() => {
-      if (!animationStartedRef.current) {
-        playActiveRef.current = false;
-        clearTimer(playTimerRef);
-        setPlay(false);
+      if (
+        generation === playVisualProbeGenerationRef.current &&
+        playActiveRef.current &&
+        !animationStartedRef.current
+      ) {
+        finishPlay();
       }
     }));
-  }, []);
+  }, [finishPlay]);
 
   selectionOnlyRef.current = selectionOnly;
 
@@ -449,7 +484,7 @@ export function ButtonHost({
         onExecutionResult?.({ executed: false, fieldValues: fieldValues ?? {}, fieldPatch: {} });
         const pressPlan = resolveButtonPressEventPlan(button);
         const primaryEventName = pressPlan.runClickOnRelease ? "click" : "pressDown";
-        if (eventName === primaryEventName && activationStateCount > 1) {
+        if (!activationCycle && eventName === primaryEventName && activationStateCount > 1) {
           await advanceButtonActivationState(button.id, activationStateCount);
         }
         return;
@@ -463,7 +498,7 @@ export function ButtonHost({
       onExecutionResult?.(result);
       const pressPlan = resolveButtonPressEventPlan(button);
       const primaryEventName = pressPlan.runClickOnRelease ? "click" : "pressDown";
-      if (eventName === primaryEventName && activationStateCount > 1) {
+      if (!activationCycle && eventName === primaryEventName && activationStateCount > 1) {
         await advanceButtonActivationState(button.id, activationStateCount);
       }
     } catch (executionError) {
@@ -478,7 +513,7 @@ export function ButtonHost({
         fieldPatch: {}
       });
     }
-  }, [mode, button, selectionOnly, onActivate, onExecutionResult, fields, fieldValues, onFieldActivate, onFieldPatch, activationStateCount]);
+  }, [mode, button, selectionOnly, onActivate, onExecutionResult, fields, fieldValues, onFieldActivate, onFieldPatch, activationCycle, activationStateCount]);
   const runEventRef = useRef(runEvent);
   runEventRef.current = runEvent;
   const enqueueEvent = useCallback((
@@ -499,7 +534,11 @@ export function ButtonHost({
       inlineEditField ? `${inlineEditField.label || "Value"}: ${renderedLabel}` : renderedLabel || "FlowCell Button"
     );
     coreElement.setAttribute("aria-disabled", button.disabled ? "true" : "false");
-    if (selected || button.activationBehavior?.mode === "toggle") {
+    if (
+      selected ||
+      activationCycle?.states.length === 2 ||
+      (!activationCycle && button.activationBehavior?.mode === "toggle")
+    ) {
       coreElement.setAttribute(
         "aria-pressed",
         selected || activationStateIndex > 0 ? "true" : "false"
@@ -519,7 +558,7 @@ export function ButtonHost({
         : inlineEditField
           ? "text"
           : "pointer";
-  }, [activationStateIndex, coreElement, button, inlineEditField, mode, renderedLabel, selected]);
+  }, [activationCycle, activationStateIndex, coreElement, button, inlineEditField, mode, renderedLabel, selected]);
 
   useEffect(() => {
     if (!coreElement) return;
@@ -541,6 +580,13 @@ export function ButtonHost({
         : resolveButtonPressEventPlan(buttonRef.current);
       pressEventPlanRef.current = pressEventPlan;
       pointerActiveRef.current = true;
+      if (selectionOnlyRef.current) {
+        pressActivationInteractionIdRef.current = null;
+      } else {
+        const interactionId = nextButtonHostInteractionId(placementRef.current.id);
+        pressActivationInteractionIdRef.current = interactionId;
+        requestActivationTriggerRef.current("press", interactionId);
+      }
       setPressed(true);
       if (!selectionOnlyRef.current) startPlay();
       clearTimer(holdTimerRef);
@@ -562,6 +608,8 @@ export function ButtonHost({
       if (!pointerActiveRef.current || modeRef.current === "edit") return;
       const pressEventPlan = pressEventPlanRef.current ?? resolveButtonPressEventPlan(buttonRef.current);
       pressEventPlanRef.current = null;
+      const activationInteractionId = pressActivationInteractionIdRef.current;
+      pressActivationInteractionIdRef.current = null;
       pointerActiveRef.current = false;
       clearTimer(holdTimerRef);
       setPressed(false);
@@ -569,6 +617,9 @@ export function ButtonHost({
       setRelease(true);
       clearTimer(releaseTimerRef);
       releaseTimerRef.current = window.setTimeout(() => setRelease(false), RELEASE_MS);
+      if (activationInteractionId) {
+        requestActivationTriggerRef.current("release", activationInteractionId);
+      }
       if (pressEventPlan.runClickOnRelease) {
         void enqueueEvent("click", activationEvent);
       }
@@ -585,6 +636,7 @@ export function ButtonHost({
       const wasActive = pointerActiveRef.current;
       const pressEventPlan = pressEventPlanRef.current;
       pressEventPlanRef.current = null;
+      pressActivationInteractionIdRef.current = null;
       pointerActiveRef.current = false;
       clearTimer(holdTimerRef);
       setPressed(false);
@@ -609,48 +661,19 @@ export function ButtonHost({
       hoverActiveRef.current = true;
       onHoverStartRef.current?.(buttonRef.current, event as PointerEvent);
       if (!resumesActiveHoverSession) {
+        requestActivationTriggerRef.current(
+          "hover",
+          nextButtonHostInteractionId(placementRef.current.id)
+        );
         void enqueueEvent("hoverEnter");
       }
-      const prepare = onPrepareVisualStateChangeRef.current;
-      if (!prepare) {
-        setHovered(true);
-        return;
-      }
-      const transition = ++hoverTransitionRef.current;
-      const nextState = resolvePreparedVisualStateRef.current({
-        ...visualStateRef.current,
-        hovered: true
-      });
-      // Transparent native windows must grow before an authored hover glow can
-      // paint. Otherwise the first active frame is clipped and a top/left edge
-      // can oscillate while the OS frame catches up.
-      void (async () => {
-        try {
-          await prepare(nextState);
-        } catch (prepareError) {
-          console.error(`Button '${buttonRef.current.label}' could not prepare its hover window.`, prepareError);
-        }
-        if (hoverActiveRef.current && hoverTransitionRef.current === transition) {
-          setHovered(true);
-        }
-      })();
+      setHovered(true);
     };
     const handlePointerLeave = (event: Event) => {
       if (isButtonWindowGeometryTransitionActive()) return;
       if (!hoverActiveRef.current) return;
       hoverActiveRef.current = false;
-      hoverTransitionRef.current += 1;
       setHovered(false);
-      const prepare = onPrepareVisualStateChangeRef.current;
-      if (prepare) {
-        const nextState = resolvePreparedVisualStateRef.current({
-          ...visualStateRef.current,
-          hovered: false
-        });
-        void Promise.resolve(prepare(nextState)).catch((prepareError) => {
-          console.error(`Button '${buttonRef.current.label}' could not restore its idle window.`, prepareError);
-        });
-      }
       onHoverEndRef.current?.(buttonRef.current, event as PointerEvent);
       const shouldDeferHoverLeave = (
         pointerActiveRef.current &&
@@ -692,8 +715,15 @@ export function ButtonHost({
         }
       }
       event.stopPropagation();
-      if (!inlineEditor) interactionElement.setPointerCapture?.(pointerEvent.pointerId);
       beginPress(pointerEvent);
+      if (!inlineEditor) {
+        try {
+          interactionElement.setPointerCapture?.(pointerEvent.pointerId);
+        } catch {
+          // Pointer capture improves delivery inside the WebView, but a capture
+          // failure must not cancel the already-armed Button press.
+        }
+      }
     };
     const handlePointerUp = (event: Event) => {
       if (!eventTargetsInlineEditor(event)) event.preventDefault();
@@ -704,18 +734,7 @@ export function ButtonHost({
       cancelPress(event as PointerEvent);
       if (hoverActiveRef.current) {
         hoverActiveRef.current = false;
-        hoverTransitionRef.current += 1;
         setHovered(false);
-        const prepare = onPrepareVisualStateChangeRef.current;
-        if (prepare) {
-          const nextState = resolvePreparedVisualStateRef.current({
-            ...visualStateRef.current,
-            hovered: false
-          });
-          void Promise.resolve(prepare(nextState)).catch((prepareError) => {
-            console.error(`Button '${buttonRef.current.label}' could not restore its idle window.`, prepareError);
-          });
-        }
         void enqueueEvent("hoverLeave");
       }
       onHoverCancelRef.current?.(buttonRef.current, event as PointerEvent);
@@ -727,8 +746,15 @@ export function ButtonHost({
         try {
           await handler(buttonRef.current, event as MouseEvent);
           const stateCount = getButtonActivationStateCount(buttonRef.current.activationBehavior);
-          if (selectionOnlyRef.current && stateCount > 1) {
-            await advanceButtonActivationState(buttonRef.current.id, stateCount);
+          const placementCycle = placementRef.current.activationCycle;
+          if (selectionOnlyRef.current) {
+            if (placementCycle && placementCycle.states.length >= 2) {
+              const interactionId = nextButtonHostInteractionId(placementRef.current.id);
+              requestActivationTriggerRef.current("press", interactionId, true);
+              requestActivationTriggerRef.current("release", interactionId, true);
+            } else if (stateCount > 1) {
+              await advanceButtonActivationState(buttonRef.current.id, stateCount);
+            }
           }
         } catch (activationError) {
           console.error(`Button '${buttonRef.current.label}' could not complete its double activation.`, activationError);
@@ -783,7 +809,6 @@ export function ButtonHost({
       interactionElement.removeEventListener("keyup", handleKeyUp);
       interactionElement.removeEventListener("blur", handleBlur);
       cancelPress();
-      hoverTransitionRef.current += 1;
       if (hoverActiveRef.current) {
         hoverActiveRef.current = false;
         setHovered(false);
@@ -795,17 +820,25 @@ export function ButtonHost({
   useEffect(() => {
     if (!shadowRoot) return;
     const handleAnimationStart = (event: Event) => {
-      if (!playActiveRef.current || !(event.target instanceof Element) || !event.target.matches("[data-anim]")) return;
+      if (
+        !playActiveRef.current ||
+        !appliedVisualStateRef.current.play ||
+        !(event.target instanceof Element) ||
+        !event.target.matches("[data-anim]")
+      ) return;
       animationStartedRef.current = true;
       animationCountRef.current += 1;
     };
     const handleAnimationFinish = (event: Event) => {
-      if (!playActiveRef.current || !(event.target instanceof Element) || !event.target.matches("[data-anim]")) return;
+      if (
+        !playActiveRef.current ||
+        !appliedVisualStateRef.current.play ||
+        !(event.target instanceof Element) ||
+        !event.target.matches("[data-anim]")
+      ) return;
       animationCountRef.current = Math.max(0, animationCountRef.current - 1);
       if (animationStartedRef.current && animationCountRef.current === 0) {
-        playActiveRef.current = false;
-        clearTimer(playTimerRef);
-        setPlay(false);
+        finishPlay();
       }
     };
     shadowRoot.addEventListener("animationstart", handleAnimationStart);
@@ -816,25 +849,15 @@ export function ButtonHost({
       shadowRoot.removeEventListener("animationend", handleAnimationFinish);
       shadowRoot.removeEventListener("animationcancel", handleAnimationFinish);
     };
-  }, [shadowRoot]);
+  }, [finishPlay, shadowRoot]);
 
   useEffect(() => () => {
     clearTimer(holdTimerRef);
     clearTimer(releaseTimerRef);
     clearTimer(errorTimerRef);
     clearTimer(playTimerRef);
+    playVisualProbeGenerationRef.current += 1;
   }, []);
-
-  useEffect(() => {
-    onVisualStateChangeRef.current?.({
-      hovered,
-      pressed: visualPressed,
-      held,
-      play,
-      release: visualRelease,
-      error
-    });
-  }, [error, held, hovered, play, visualPressed, visualRelease]);
 
   return (
     <span
@@ -864,6 +887,8 @@ export function ButtonHost({
         release={resolvedAppearance.flags.release}
         disabled={resolvedAppearance.flags.disabled}
         error={resolvedAppearance.flags.error}
+        highlightOnHover={placement.highlightOnHover}
+        rawHovered={hovered}
         samplingState={rawVisualState}
         transitionSamplingKey={`${activationStateIndex}:${resolvedAppearance.activeTrigger}:${resolvedAppearance.visualState}`}
         onCoreElementChange={setCoreElement}
@@ -872,6 +897,8 @@ export function ButtonHost({
         onMeasurement={onMeasurement}
         onVisualMeasurement={onVisualMeasurement}
         onNaturalMeasurement={onNaturalMeasurement}
+        onPrepareVisualStateChange={onPrepareVisualStateChange}
+        onVisualStateChange={handleAppliedVisualState}
       />
     </span>
   );
