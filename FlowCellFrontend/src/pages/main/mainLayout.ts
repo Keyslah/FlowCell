@@ -546,6 +546,20 @@ export function buildButtonsSurfaceButtons(
       disabled: options.selectAllDisabled ?? true
     },
     {
+      id: "buttons-open-pop",
+      railId: "buttons-rail",
+      x: buttonsSurfaceGeometry.addButtonX + buttonsSurfaceGeometry.stepX * 2,
+      y: buttonsSurfaceGeometry.fanControlsY,
+      width: buttonsSurfaceGeometry.width,
+      height: buttonsSurfaceGeometry.height,
+      radius: buttonsSurfaceGeometry.radius,
+      label: "Open Pop",
+      tooltip: "Choose a saved Pop-out file and open its Buttons without changing saved Button settings.",
+      actionId: "open-panel-pop-file",
+      allowRename: false,
+      disabled: options.popDisabled ?? true
+    },
+    {
       id: "buttons-pop-selection",
       railId: "buttons-rail",
       x: buttonsSurfaceGeometry.addButtonX + buttonsSurfaceGeometry.stepX * 3,
@@ -554,7 +568,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Pop",
-      tooltip: "Open the selected regular buttons or toolsets as popout windows.",
+      tooltip: "Open this panel's last-used Pop-out file.",
       actionId: "pop-panel-script",
       allowRename: false,
       disabled: options.popDisabled ?? true

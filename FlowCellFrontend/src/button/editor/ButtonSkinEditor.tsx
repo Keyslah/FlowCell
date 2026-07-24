@@ -16,6 +16,7 @@ import {
 import {
   BUTTON_SKIN_SECTION_ORDER,
   BUTTON_SKIN_STATE_SECTIONS,
+  buttonSkinNameFromPath,
   type ButtonSkinSectionSource
 } from "../skins/buttonSkinFormat";
 import {
@@ -35,10 +36,17 @@ import {
   type ButtonPlacementSizingMode,
   type ButtonSizeAssignment
 } from "./buttonSizeAssignments";
+import {
+  buttonSkinFilePathsEqual,
+  type ButtonSkinFileResult,
+  type ButtonSkinRecentFile
+} from "./buttonSkinFiles";
 
 export interface ButtonSkinEditorProps {
   skin: ButtonSkin | null;
   skins: readonly ButtonSkin[];
+  recentSkinFiles: readonly ButtonSkinRecentFile[];
+  skinFilePath: string | null;
   skinContextKey: string;
   busy: boolean;
   placement: ButtonPlacement | null;
@@ -67,8 +75,15 @@ export interface ButtonSkinEditorProps {
   ) => void;
   onAssignSkin: (skin: ButtonSkin) => void;
   onAssignSkinToPanel: (skin: ButtonSkin) => void;
-  onSaveSkin: (skin: ButtonSkin) => void;
-  onSaveAsNewSkin: (skin: ButtonSkin) => void;
+  onLoadSkinFile: (
+    path: string | null,
+    preferredSkinId?: string
+  ) => Promise<ButtonSkinFileResult | null>;
+  onSaveSkin: (
+    skin: ButtonSkin,
+    currentPath: string | null
+  ) => Promise<ButtonSkinFileResult | null>;
+  onSaveAsNewSkin: (skin: ButtonSkin) => Promise<ButtonSkinFileResult | null>;
 }
 
 const TEXT_FIT_OPTIONS: Array<{ value: ButtonTextFitMode; label: string }> = [
@@ -186,9 +201,18 @@ function sectionLabel(section: ButtonSkinSectionName): string {
   return section.replace(/(^|-)([a-z])/g, (_, separator: string, letter: string) => `${separator ? " " : ""}${letter.toUpperCase()}`);
 }
 
+function recentSkinFileLabel(path: string): string {
+  const parts = path.split(/[\\/]/);
+  const parent = parts.slice(0, -1).join("\\");
+  const name = buttonSkinNameFromPath(path);
+  return parent ? `${name} (${parent})` : name;
+}
+
 export function ButtonSkinEditor({
   skin,
   skins,
+  recentSkinFiles,
+  skinFilePath,
   skinContextKey,
   busy,
   placement,
@@ -206,11 +230,15 @@ export function ButtonSkinEditor({
   onPlacementTextChange,
   onAssignSkin,
   onAssignSkinToPanel,
+  onLoadSkinFile,
   onSaveSkin,
   onSaveAsNewSkin
 }: ButtonSkinEditorProps) {
   const [workingSkin, setWorkingSkin] = useState<ButtonSkin | null>(
     () => skin ? cloneButtonDocument(skin) : null
+  );
+  const [workingSkinFilePath, setWorkingSkinFilePath] = useState<string | null>(
+    skinFilePath
   );
   const [paste, setPaste] = useState("");
   const [pasteError, setPasteError] = useState<string | null>(null);
@@ -260,6 +288,7 @@ export function ButtonSkinEditor({
 
   useEffect(() => {
     setWorkingSkin(skin ? cloneButtonDocument(skin) : null);
+    setWorkingSkinFilePath(skinFilePath);
   }, [skinContextKey, skin?.id]);
 
   useEffect(() => {
@@ -420,6 +449,19 @@ export function ButtonSkinEditor({
       setPasteError(error instanceof Error ? error.message : String(error));
     }
   };
+  const applySkinFileResult = (result: ButtonSkinFileResult | null) => {
+    if (!result) return;
+    setWorkingSkin(cloneButtonDocument(result.skin));
+    setWorkingSkinFilePath(result.path);
+  };
+  const workingRecentFileIndex = workingSkinFilePath
+    ? recentSkinFiles.findIndex(
+        (entry) => buttonSkinFilePathsEqual(entry.path, workingSkinFilePath)
+      )
+    : -1;
+  const loadSkinValue = workingRecentFileIndex >= 0
+    ? `recent:${workingRecentFileIndex}`
+    : `saved:${workingSkin.id}`;
 
   return (
     <aside className="button-skin-editor">
@@ -435,29 +477,66 @@ export function ButtonSkinEditor({
         </button>
         <button
           type="button"
-          title="Assign the working skin to every Button on this panel surface."
+          title="Assign the working skin to every Button on the selected Placement's surface."
           disabled={skinActionsDisabled}
           onClick={() => onAssignSkinToPanel(cloneButtonDocument(workingSkin))}
         >
           Assign Skin to Panel
         </button>
-        <label title="Choose a saved skin to edit in this working copy.">
+        <label title={workingSkinFilePath ?? "Choose a saved skin or recent skin file to edit in this working copy."}>
           <span>Load skin</span>
           <select
-            value={workingSkin.id}
+            value={loadSkinValue}
+            disabled={busy}
             onChange={(event) => {
-              const loaded = skins.find((option) => option.id === event.currentTarget.value);
-              if (loaded) setWorkingSkin(cloneButtonDocument(loaded));
+              const value = event.currentTarget.value;
+              if (value.startsWith("saved:")) {
+                const loaded = skins.find((option) => option.id === value.slice("saved:".length));
+                if (!loaded) return;
+                setWorkingSkin(cloneButtonDocument(loaded));
+                setWorkingSkinFilePath(
+                  recentSkinFiles.find((entry) => entry.skinId === loaded.id)?.path ?? null
+                );
+                return;
+              }
+              if (value.startsWith("recent:")) {
+                const recentFile = recentSkinFiles[Number(value.slice("recent:".length))];
+                if (!recentFile) return;
+                void onLoadSkinFile(recentFile.path, recentFile.skinId).then(applySkinFileResult);
+                return;
+              }
+              if (value === "browse") {
+                void onLoadSkinFile(null).then(applySkinFileResult);
+              }
             }}
           >
-            {skins.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+            {recentSkinFiles.length > 0 ? (
+              <optgroup label="Recent files">
+                {recentSkinFiles.map((entry, index) => (
+                  <option key={entry.path} value={`recent:${index}`}>
+                    {recentSkinFileLabel(entry.path)}
+                  </option>
+                ))}
+              </optgroup>
+            ) : null}
+            <optgroup label="Saved skins">
+              {skins.map((option) => (
+                <option key={option.id} value={`saved:${option.id}`}>{option.name}</option>
+              ))}
+            </optgroup>
+            <option value="browse">Browse...</option>
           </select>
         </label>
         <button
           type="button"
           title="Save changes to this skin."
           disabled={skinActionsDisabled}
-          onClick={() => onSaveSkin(cloneButtonDocument(workingSkin))}
+          onClick={() => {
+            void onSaveSkin(
+              cloneButtonDocument(workingSkin),
+              workingSkinFilePath
+            ).then(applySkinFileResult);
+          }}
         >
           Save skin
         </button>
@@ -465,7 +544,9 @@ export function ButtonSkinEditor({
           type="button"
           title="Save this working skin under the name chosen in the file dialog."
           disabled={skinActionsDisabled}
-          onClick={() => onSaveAsNewSkin(cloneButtonDocument(workingSkin))}
+          onClick={() => {
+            void onSaveAsNewSkin(cloneButtonDocument(workingSkin)).then(applySkinFileResult);
+          }}
         >
           Save as new skin
         </button>
@@ -1035,7 +1116,7 @@ export function ButtonSkinEditor({
           type="button"
           className="button-text-apply-all"
           title={stateTextBlocked
-            ? "Save placement first because the cycle state structure changed. Button Text stays in preview until then."
+            ? "Save Settings first because the cycle state structure changed. Button Text stays in preview until then."
             : "Apply every pending Button Text change across the editor: base or cycle labels plus each placement's fit, alignment, size, and X/Y position."}
           disabled={busy || stateTextBlocked}
           onClick={onApplyAllButtonText}

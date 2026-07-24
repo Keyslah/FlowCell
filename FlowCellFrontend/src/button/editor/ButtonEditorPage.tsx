@@ -49,14 +49,19 @@ import {
   createStableButtonId
 } from "../state/buttonDefaults";
 import {
-  getButtonEditorDirectory,
+  getButtonSkinDirectory,
+  getButtonSettingsDirectory,
+  initializeButtonSettingsDefault,
   installButtonSource,
-  loadButtonPlacementFile,
+  loadButtonSkinFile,
+  loadButtonSettingsDefault,
+  loadButtonSettingsFile,
   loadButtonStateDocument,
-  saveButtonPlacementFile,
+  saveButtonSettingsFile,
   saveButtonSkinFile,
   saveButtonStateDocument,
   uninstallButtonSource,
+  updateButtonSettingsDefault,
   type InstallButtonSourceResult
 } from "../state/ButtonStateRepository";
 import { useButtonEditorStore } from "../state/ButtonEditorStore";
@@ -94,14 +99,26 @@ import {
   serializeButtonSkinSections
 } from "../skins/buttonSkinFormat";
 import {
-  BUTTON_PLACEMENT_FILE_EXTENSION,
-  applyButtonPlacementFile,
-  buildButtonPlacementFile
-} from "../state/buttonPlacementFile";
+  BUTTON_SETTINGS_FILE_EXTENSION,
+  applyButtonSettingsFile,
+  buildButtonSettingsFile,
+  buttonSettingsPlacementKind,
+  buttonSettingsPlacementLabel,
+  type ButtonSettingsPlacementKind
+} from "../state/buttonSettingsFile";
 import { ButtonSurfaceSelector } from "./ButtonSurfaceSelector";
 import { ButtonWorkspace } from "./ButtonWorkspace";
 import { ButtonAnimationPickerPage } from "./ButtonAnimationPickerPage";
 import { ButtonSkinEditor } from "./ButtonSkinEditor";
+import {
+  createButtonSkinFromFile,
+  findButtonSkinRecentFile,
+  findButtonSkinRecentFileByPath,
+  readButtonSkinRecentFiles,
+  rememberButtonSkinRecentFile,
+  writeButtonSkinRecentFiles,
+  type ButtonSkinFileResult
+} from "./buttonSkinFiles";
 import { buttonActivationCycleStructureMatches } from "./buttonActivationStateStructure";
 import {
   buttonPlacementSizingPatch,
@@ -110,11 +127,11 @@ import {
 } from "./buttonSizeAssignments";
 import {
   applyButtonAnimationSavedScope,
-  applyButtonPlacementSavedScope,
+  applyButtonSettingsSavedScope,
   applyButtonSkinSavedScope,
   applyButtonTextSavedScope,
   buildButtonAnimationScopedDocument,
-  buildButtonPlacementScopedDocument,
+  buildButtonSettingsScopedDocument,
   buildButtonSkinScopedDocument,
   buildButtonTextScopedDocument,
   buttonSkinsEqual,
@@ -133,7 +150,7 @@ import {
   buildButtonEditorProgramOptions,
   resolveButtonEditorContextPlacementId,
   resolveButtonEditorIdentity,
-  resolveButtonEditorPanelSkinTargetPlacementIds,
+  resolveButtonEditorSurfaceSkinTargetPlacementIds,
   resolveButtonEditorPanelSurfaceId,
   resolveButtonEditorSurfaceIdentity,
   resolvePreferredButtonPlacementId
@@ -170,9 +187,12 @@ function buttonRectsEqual(
   );
 }
 
-function defaultButtonPlacementFileName(now = new Date()): string {
+function defaultButtonSettingsFileName(
+  placementKind: ButtonSettingsPlacementKind,
+  now = new Date()
+): string {
   const timestamp = now.toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15);
-  return `button-placement-${timestamp}${BUTTON_PLACEMENT_FILE_EXTENSION}`;
+  return `${placementKind}-settings-${timestamp}${BUTTON_SETTINGS_FILE_EXTENSION}`;
 }
 
 function defaultButtonSkinFileName(name: string): string {
@@ -182,6 +202,51 @@ function defaultButtonSkinFileName(name: string): string {
     .replace(/[. ]+$/g, "")
     .trim();
   return `${baseName || "button-skin"}${BUTTON_SKIN_FILE_EXTENSION}`;
+}
+
+function isButtonSettingsDefaultRevisionConflict(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes("Button state changed before the settings default was saved.");
+}
+
+async function initializeSettingsDefaultWithRetry(args: {
+  placementKind: ButtonSettingsPlacementKind;
+  surfaceId: string;
+  initialDocument: ButtonStateDocument;
+  fallbackProgramName: string;
+  fallbackPanelName: string;
+}): Promise<string> {
+  let committed = cloneButtonDocument(args.initialDocument);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const surface = committed.surfaces[args.surfaceId];
+    if (!surface || buttonSettingsPlacementKind(surface) !== args.placementKind) {
+      throw new Error("The selected Button placement no longer exists.");
+    }
+    const identity =
+      resolveButtonEditorSurfaceIdentity(committed, args.surfaceId) ??
+      (
+        args.fallbackProgramName.trim() && args.fallbackPanelName.trim()
+          ? {
+              programName: args.fallbackProgramName,
+              panelName: args.fallbackPanelName
+            }
+          : null
+      );
+    if (!identity) throw new Error("The selected surface has no Program and Panel identity.");
+    const file = buildButtonSettingsFile(committed, args.surfaceId, identity);
+    try {
+      return await initializeButtonSettingsDefault(
+        args.placementKind,
+        args.surfaceId,
+        file,
+        committed.revision
+      );
+    } catch (error) {
+      if (attempt === 2 || !isButtonSettingsDefaultRevisionConflict(error)) throw error;
+      committed = await loadButtonStateDocument();
+    }
+  }
+  throw new Error("FlowCell could not initialize the Button settings default.");
 }
 
 interface RegisteredProgramPanels {
@@ -549,6 +614,7 @@ function ButtonEditorContent({
   const [initialSelection] = useState(() => resolveInitialEditorSelection(initialDocument, initialContext));
   const sessionIdRef = useRef(initialContext?.draftSessionId ?? createStableButtonId("editor-session"));
   const stagedInstallsRef = useRef(new Map<string, InstallButtonSourceResult>());
+  const initializedSettingsDefaultsRef = useRef(new Set<string>());
   const freshPlacementsRef = useRef(new Set<string>());
   const naturalCoreMeasurementsRef = useRef(new Map<string, NaturalCoreMeasurementSnapshot>());
   const pendingMatchedMeasurementsRef = useRef(new Map<string, PendingMatchedMeasurement>());
@@ -585,9 +651,17 @@ function ButtonEditorContent({
   const [busy, setBusyState] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [activeAnimationEditorButtonId, setActiveAnimationEditorButtonId] = useState<string | null>(null);
+  const [recentSkinFiles, setRecentSkinFiles] = useState(readButtonSkinRecentFiles);
   const setBusy = useCallback((next: boolean) => {
     busyRef.current = next;
     setBusyState(next);
+  }, []);
+  const rememberSkinFile = useCallback((path: string, skinId: string) => {
+    setRecentSkinFiles((current) => {
+      const next = rememberButtonSkinRecentFile(current, path, skinId);
+      writeButtonSkinRecentFiles(next);
+      return next;
+    });
   }, []);
 
   const selectedPlacement = focusedPlacementId ? store.draft.placements[focusedPlacementId] ?? null : null;
@@ -603,11 +677,21 @@ function ButtonEditorContent({
     .map((placementId) => store.draft.placements[placementId])
     .filter((placement): placement is ButtonPlacement => Boolean(placement)) ?? [];
   const selectedSurfaceButtonCount = selectedSurfacePlacements.length;
+  const selectedSurface = store.draft.surfaces[selectedSurfaceId] ?? null;
+  const settingsPlacementKind = selectedSurface
+    ? buttonSettingsPlacementKind(selectedSurface)
+    : null;
+  const settingsPlacementLabel = buttonSettingsPlacementLabel(
+    settingsPlacementKind ?? "main-page"
+  );
   const allSurfaceButtonsSameSize = Boolean(
     store.draft.surfaces[selectedSurfaceId]?.uniformButtonSize
   );
   const selectedSkin = selectedButton && selectedPlacement
     ? store.draft.skins[selectedPlacement.skinOverrideId ?? selectedButton.defaultSkinId] ?? null
+    : null;
+  const selectedSkinFilePath = selectedSkin
+    ? findButtonSkinRecentFile(recentSkinFiles, selectedSkin.id)?.path ?? null
     : null;
   const programOptions = useMemo(
     () => buildButtonEditorProgramOptions(store.draft, programs),
@@ -721,6 +805,32 @@ function ButtonEditorContent({
       return next;
     });
   }, [focusedPlacementId, panelName, programName, selectedSurfaceId, store.draft]);
+  useEffect(() => {
+    const surface = store.committed.surfaces[selectedSurfaceId];
+    const identity = surface
+      ? resolveButtonEditorSurfaceIdentity(store.committed, surface.id) ??
+        (programName.trim() && panelName.trim() ? { programName, panelName } : null)
+      : null;
+    if (!surface || !identity) return;
+    const placementKind = buttonSettingsPlacementKind(surface);
+    const initializationKey = `${placementKind}:${surface.id}`;
+    if (initializedSettingsDefaultsRef.current.has(initializationKey)) return;
+    initializedSettingsDefaultsRef.current.add(initializationKey);
+    let disposed = false;
+    void initializeSettingsDefaultWithRetry({
+      placementKind,
+      surfaceId: surface.id,
+      initialDocument: store.committed,
+      fallbackProgramName: identity.programName,
+      fallbackPanelName: identity.panelName
+    }).catch((error) => {
+      initializedSettingsDefaultsRef.current.delete(initializationKey);
+      if (!disposed) setMessage(error instanceof Error ? error.message : String(error));
+    });
+    return () => {
+      disposed = true;
+    };
+  }, [panelName, programName, selectedSurfaceId, store.committed]);
 
   useEffect(() => {
     void publishButtonDraft(sessionIdRef.current, store.draft);
@@ -880,61 +990,94 @@ function ButtonEditorContent({
   }, [autoImportRequest, busy, importSource]);
 
   const commitScopedDocument = async (
-    next: ButtonStateDocument,
+    buildNext: (committed: ButtonStateDocument) => ButtonStateDocument,
     applySavedScope: (draft: ButtonStateDocument, saved: ButtonStateDocument) => void,
-    successMessage: string
+    successMessage: string,
+    failurePrefix?: string,
+    canonicalSavedFailurePrefix?: string
   ): Promise<ButtonStateDocument | null> => {
-    const validation = validateButtonStateDocument(next);
-    if (!validation.valid) {
-      setMessage(validation.issues.slice(0, 8).map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
-      return null;
-    }
     setBusy(true);
+    let canonicalSaved = false;
     try {
-      const saved = await saveButtonStateDocument(next, store.committed.revision);
+      let committed = cloneButtonDocument(store.committed);
+      let saved: ButtonStateDocument | null = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const next = buildNext(committed);
+        const validation = validateButtonStateDocument(next);
+        if (!validation.valid) {
+          throw new Error(
+            validation.issues
+              .slice(0, 8)
+              .map((issue) => `${issue.path}: ${issue.message}`)
+              .join("\n")
+          );
+        }
+        try {
+          saved = await saveButtonStateDocument(next, committed.revision);
+          break;
+        } catch (error) {
+          const details = error instanceof Error ? error.message : String(error);
+          if (
+            attempt === 2 ||
+            !details.includes("Button state changed before Save.")
+          ) {
+            throw error;
+          }
+          committed = await loadButtonStateDocument();
+        }
+      }
+      if (!saved) throw new Error("FlowCell could not commit the scoped Button change.");
+      canonicalSaved = true;
       store.acceptScopedSaved(saved, applySavedScope);
       await publishButtonCommit(saved);
       setMessage(successMessage);
       return saved;
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      const details = error instanceof Error ? error.message : String(error);
+      const prefix = canonicalSaved
+        ? canonicalSavedFailurePrefix
+        : failurePrefix;
+      setMessage(prefix ? `${prefix}\n${details}` : details);
       return null;
     } finally {
       setBusy(false);
     }
   };
 
-  const savePlacement = async () => {
+  const saveSettings = async () => {
     if (busyRef.current) return;
     setBusy(true);
+    let targetPath: string | null = null;
     let writtenPath: string | null = null;
+    let canonicalSaved = false;
     try {
-      const placementDraft = cloneButtonDocument(store.current());
+      const settingsDraft = cloneButtonDocument(store.current());
       const editorBaseline = cloneButtonDocument(store.committed);
-      const placementFile = buildButtonPlacementFile(placementDraft, selectedSurfaceId, {
-        programName,
-        panelName
-      });
-      const initialNext = buildButtonPlacementScopedDocument(
+      const surface = settingsDraft.surfaces[selectedSurfaceId];
+      if (!surface) throw new Error("Select a Button placement before saving its settings.");
+      const placementKind = buttonSettingsPlacementKind(surface);
+      const placementLabel = buttonSettingsPlacementLabel(placementKind);
+      const initialNext = buildButtonSettingsScopedDocument(
         editorBaseline,
-        placementDraft,
-        selectedSurfaceId
+        settingsDraft,
+        selectedSurfaceId,
+        { programName, panelName }
       );
       const validation = validateButtonStateDocument(initialNext);
       if (!validation.valid) {
         throw new Error(validation.issues.slice(0, 8).map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
       }
-      const buttonEditorDirectory = await getButtonEditorDirectory();
-      const targetPath = await showSaveFileDialog({
-        title: "Save Button Placement",
-        filter: "FlowCell Button Placement (*.flowcell-button-placement.json)|*.flowcell-button-placement.json|JSON Files (*.json)|*.json",
-        defaultFileName: defaultButtonPlacementFileName(),
-        initialDirectory: buttonEditorDirectory
+      const settingsDirectory = await getButtonSettingsDirectory(placementKind);
+      targetPath = await showSaveFileDialog({
+        title: `Save ${placementLabel} Settings`,
+        filter: "FlowCell Button Settings (*.flowcell-button-settings.json)|*.flowcell-button-settings.json|JSON Files (*.json)|*.json",
+        defaultFileName: defaultButtonSettingsFileName(placementKind),
+        initialDirectory: settingsDirectory
       });
       if (!targetPath) return;
 
       const discardedStagedOwnerIds = resolveDiscardedStagedOwnerButtonIds(
-        placementDraft,
+        settingsDraft,
         [...stagedInstallsRef.current.keys()]
       );
       for (const ownerButtonId of discardedStagedOwnerIds) {
@@ -946,14 +1089,14 @@ function ButtonEditorContent({
         });
         stagedInstallsRef.current.delete(ownerButtonId);
       }
-      writtenPath = await saveButtonPlacementFile(targetPath, placementFile);
       let committedDocument = editorBaseline;
       let saved: ButtonStateDocument | null = null;
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        const next = buildButtonPlacementScopedDocument(
+        const next = buildButtonSettingsScopedDocument(
           committedDocument,
-          placementDraft,
+          settingsDraft,
           selectedSurfaceId,
+          { programName, panelName },
           editorBaseline
         );
         const retryValidation = validateButtonStateDocument(next);
@@ -970,49 +1113,171 @@ function ButtonEditorContent({
         }
       }
       if (!saved) throw new Error("FlowCell could not commit the live Button arrangement.");
+      canonicalSaved = true;
       store.acceptScopedSaved(saved, (draft, canonical) => {
-        applyButtonPlacementSavedScope(draft, canonical, selectedSurfaceId);
+        applyButtonSettingsSavedScope(
+          draft,
+          canonical,
+          selectedSurfaceId,
+          { programName, panelName }
+        );
       });
       stagedInstallsRef.current.clear();
+      const committedSettingsFile = buildButtonSettingsFile(saved, selectedSurfaceId, {
+        programName,
+        panelName
+      });
+      writtenPath = await saveButtonSettingsFile(targetPath, committedSettingsFile);
       await publishButtonCommit(saved);
-      setMessage(`Button placement saved to ${writtenPath}.`);
+      setMessage(`${placementLabel} settings saved to ${writtenPath}.`);
     } catch (error) {
       const failure = error instanceof Error ? error.message : String(error);
-      setMessage(writtenPath
-        ? `The placement file was saved to ${writtenPath}, but FlowCell could not commit the live Button arrangement:\n${failure}`
-        : failure);
+      setMessage(
+        canonicalSaved && !writtenPath && targetPath
+          ? `The Button settings were committed, but FlowCell could not write the settings file to ${targetPath}:\n${failure}`
+          : canonicalSaved && writtenPath
+            ? `The Button settings and file were saved, but FlowCell could not finish synchronizing other windows:\n${failure}`
+            : failure
+      );
     } finally {
       setBusy(false);
     }
   };
 
-  const loadPlacement = async () => {
+  const stageSettingsFile = (
+    settingsFile: Parameters<typeof applyButtonSettingsFile>[2],
+    sourceLabel: string
+  ) => {
+    const loadedDocument = applyButtonSettingsFile(
+      store.current(),
+      selectedSurfaceId,
+      settingsFile,
+      { programName, panelName }
+    );
+    store.transact(() => loadedDocument, { label: `Load ${settingsPlacementLabel} settings` });
+    const firstPlacementId = loadedDocument.surfaces[selectedSurfaceId]?.placementIds[0] ?? null;
+    setSelectedSurfaceId(selectedSurfaceId);
+    setFocusedPlacementId(firstPlacementId);
+    setSelectedPlacementIds(new Set(firstPlacementId ? [firstPlacementId] : []));
+    setActivePage("placement");
+    setReorderMode(false);
+    setMessage(
+      `${settingsPlacementLabel} settings loaded from ${sourceLabel}. ` +
+      `Use Save ${settingsPlacementLabel} Settings to commit them.`
+    );
+  };
+
+  const loadSettings = async () => {
     if (busyRef.current) return;
     setBusy(true);
     setMessage(null);
     try {
-      const buttonEditorDirectory = await getButtonEditorDirectory();
+      if (stagedInstallsRef.current.size > 0) {
+        throw new Error("Save or cancel the newly added Button before loading different settings.");
+      }
+      if (!settingsPlacementKind) {
+        throw new Error("Select a Button placement before loading settings.");
+      }
+      const settingsDirectory = await getButtonSettingsDirectory(settingsPlacementKind);
       const paths = await showOpenFileDialog({
-        title: "Load Button Placement",
-        filter: "FlowCell Button Placement (*.flowcell-button-placement.json)|*.flowcell-button-placement.json|JSON Files (*.json)|*.json",
-        initialDirectory: buttonEditorDirectory,
+        title: `Load ${settingsPlacementLabel} Settings`,
+        filter: "FlowCell Button Settings (*.flowcell-button-settings.json)|*.flowcell-button-settings.json|JSON Files (*.json)|*.json",
+        initialDirectory: settingsDirectory,
         multiselect: false
       });
       const selectedPath = paths[0]?.trim();
       if (!selectedPath) return;
 
-      const placementFile = await loadButtonPlacementFile(selectedPath);
-      const loadedDocument = applyButtonPlacementFile(
-        store.current(),
-        selectedSurfaceId,
-        placementFile
+      const settingsFile = await loadButtonSettingsFile(selectedPath);
+      stageSettingsFile(settingsFile, selectedPath);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const loadDefaultSettings = async () => {
+    if (busyRef.current) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      if (stagedInstallsRef.current.size > 0) {
+        throw new Error("Save or cancel the newly added Button before loading default settings.");
+      }
+      const surface = store.committed.surfaces[selectedSurfaceId];
+      if (!surface || !settingsPlacementKind) {
+        throw new Error("Select a Button placement before loading its default.");
+      }
+      let settingsFile = await loadButtonSettingsDefault(
+        settingsPlacementKind,
+        selectedSurfaceId
       );
-      store.transact(() => loadedDocument, { label: "Load Button placement" });
-      setActivePage("placement");
-      setReorderMode(false);
-      setMessage(
-        `Button placement loaded from ${selectedPath}. Use Save placement to commit it.`
-      );
+      if (!settingsFile) {
+        await initializeSettingsDefaultWithRetry({
+          placementKind: settingsPlacementKind,
+          surfaceId: selectedSurfaceId,
+          initialDocument: store.committed,
+          fallbackProgramName: programName,
+          fallbackPanelName: panelName
+        });
+        settingsFile = await loadButtonSettingsDefault(
+          settingsPlacementKind,
+          selectedSurfaceId
+        );
+      }
+      if (!settingsFile) throw new Error(`${settingsPlacementLabel} has no saved default.`);
+      stageSettingsFile(settingsFile, `${settingsPlacementLabel} default`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateDefaultSettings = async () => {
+    if (busyRef.current) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      if (stagedInstallsRef.current.size > 0) {
+        throw new Error("Save the newly added Button before updating the default settings.");
+      }
+      const settingsDraft = cloneButtonDocument(store.current());
+      const editorBaseline = cloneButtonDocument(store.committed);
+      const surface = settingsDraft.surfaces[selectedSurfaceId];
+      if (!surface || !settingsPlacementKind) {
+        throw new Error("Select a Button placement before updating its default.");
+      }
+      let committed = editorBaseline;
+      let savedPath: string | null = null;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const rebased = buildButtonSettingsScopedDocument(
+          committed,
+          settingsDraft,
+          selectedSurfaceId,
+          { programName, panelName },
+          editorBaseline
+        );
+        const settingsFile = buildButtonSettingsFile(rebased, selectedSurfaceId, {
+          programName,
+          panelName
+        });
+        try {
+          savedPath = await updateButtonSettingsDefault(
+            settingsPlacementKind,
+            selectedSurfaceId,
+            settingsFile,
+            committed.revision
+          );
+          break;
+        } catch (error) {
+          if (attempt === 2 || !isButtonSettingsDefaultRevisionConflict(error)) throw error;
+          committed = await loadButtonStateDocument();
+        }
+      }
+      if (!savedPath) throw new Error("FlowCell could not update the Button settings default.");
+      setMessage(`${settingsPlacementLabel} default updated at ${savedPath}.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1296,7 +1561,7 @@ function ButtonEditorContent({
     }, {
       label: "Assign Button size"
     });
-    setMessage("Size assigned to this Button. Use Save placement to commit it.");
+    setMessage("Size assigned to this Button. Use Save Settings to commit it.");
   }, [focusedPlacementId, store]);
 
   const assignSizeToPanel = useCallback((assignment: ButtonSizeAssignment) => {
@@ -1368,7 +1633,7 @@ function ButtonEditorContent({
     );
     if (applied) {
       setMessage(
-        `Size assigned once to ${orderedPlacementIds.length} Button${orderedPlacementIds.length === 1 ? "" : "s"} next to the edited Button on '${surface.name}'. Use Save placement to commit it.`
+        `Size assigned once to ${orderedPlacementIds.length} Button${orderedPlacementIds.length === 1 ? "" : "s"} next to the edited Button on '${surface.name}'. Use Save Settings to commit it.`
       );
     }
   }, [applyPlacementOrder, focusedPlacementId, store]);
@@ -1560,12 +1825,12 @@ function ButtonEditorContent({
         const target = draft.buttons[buttonId];
         if (target) target.activationAnimation = animation;
       }, { label: "Edit Button animation" });
-      setMessage(`${successMessage} Save placement first because this is a new Button.`);
+      setMessage(`${successMessage} Save Settings first because this is a new Button.`);
       return false;
     }
-    const next = buildButtonAnimationScopedDocument(store.committed, nextDraft, buttonId);
+    const frozenDraft = cloneButtonDocument(nextDraft);
     return Boolean(await commitScopedDocument(
-      next,
+      (committed) => buildButtonAnimationScopedDocument(committed, frozenDraft, buttonId),
       (draft, saved) => applyButtonAnimationSavedScope(draft, saved, buttonId),
       successMessage
     ));
@@ -1665,7 +1930,7 @@ function ButtonEditorContent({
       !committed.placements[placement.id] ||
       !committed.buttons[placement.buttonId]
     )) {
-      setMessage("Save placement first because the editor contains a new Button placement.");
+      setMessage("Save Settings first because the editor contains a new Button placement.");
       return;
     }
     if (draftPlacements.some((placement) =>
@@ -1674,7 +1939,7 @@ function ButtonEditorContent({
         placement.activationCycle
       )
     )) {
-      setMessage("Save placement first because one or more cycle state structures changed.");
+      setMessage("Save Settings first because one or more cycle state structures changed.");
       return;
     }
     const scope = {
@@ -1683,38 +1948,119 @@ function ButtonEditorContent({
         placementId: placement.id
       }))
     };
-    const next = buildButtonTextScopedDocument(committed, draft, scope);
+    const frozenDraft = cloneButtonDocument(draft);
     await commitScopedDocument(
-      next,
+      (latest) => buildButtonTextScopedDocument(latest, frozenDraft, scope),
       (draft, saved) => applyButtonTextSavedScope(draft, saved, scope),
       `Button Text applied to ${scope.entries.length} placement${scope.entries.length === 1 ? "" : "s"}.`
     );
   };
 
-  const saveWorkingSkin = async (workingSkin: ButtonSkin) => {
-    const nextDraft = cloneButtonDocument(store.current());
-    nextDraft.skins[workingSkin.id] = cloneButtonDocument(workingSkin);
-    const scope: ButtonSkinSaveScope = {
-      skinIds: [workingSkin.id]
-    };
-    const next = buildButtonSkinScopedDocument(store.committed, nextDraft, scope);
-    await commitScopedDocument(
-      next,
-      (draft, saved) => applyButtonSkinSavedScope(draft, saved, scope),
-      `Skin '${workingSkin.name}' saved.`
-    );
+  const chooseWorkingSkinSavePath = async (workingSkin: ButtonSkin): Promise<string | null> => {
+    const skinDirectory = await getButtonSkinDirectory();
+    return showSaveFileDialog({
+      title: "Save Button Skin As",
+      filter: "FlowCell Button Skin (*.flowcell-button-skin.txt)|*.flowcell-button-skin.txt|Text Files (*.txt)|*.txt",
+      defaultFileName: defaultButtonSkinFileName(workingSkin.name),
+      initialDirectory: skinDirectory
+    });
   };
 
-  const saveWorkingSkinAsNew = async (workingSkin: ButtonSkin) => {
+  const loadWorkingSkinFile = async (
+    requestedPath: string | null,
+    preferredSkinId?: string
+  ): Promise<ButtonSkinFileResult | null> => {
+    if (busyRef.current) return null;
+    setBusy(true);
+    setMessage(null);
+    try {
+      let selectedPath = requestedPath;
+      if (!selectedPath) {
+        const skinDirectory = await getButtonSkinDirectory();
+        selectedPath = (await showOpenFileDialog({
+          title: "Load Button Skin",
+          filter: "FlowCell Button Skin (*.flowcell-button-skin.txt)|*.flowcell-button-skin.txt|Text Files (*.txt)|*.txt",
+          initialDirectory: skinDirectory,
+          multiselect: false
+        }))[0] ?? null;
+      }
+      if (!selectedPath?.trim()) return null;
+
+      const document = store.current();
+      const linkedSkinId = preferredSkinId ??
+        findButtonSkinRecentFileByPath(recentSkinFiles, selectedPath)?.skinId;
+      const existingSkin = linkedSkinId
+        ? document.skins[linkedSkinId] ?? null
+        : null;
+      const skinId = existingSkin?.id ?? createStableButtonId("skin");
+      const source = await loadButtonSkinFile(selectedPath);
+      const loadedSkin = createButtonSkinFromFile(
+        source,
+        selectedPath,
+        skinId,
+        existingSkin
+      );
+      rememberSkinFile(selectedPath, loadedSkin.id);
+      setMessage(
+        `Skin '${loadedSkin.name}' loaded from ${selectedPath} as a working copy. Use Assign Skin to apply it.`
+      );
+      return { skin: loadedSkin, path: selectedPath };
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveWorkingSkin = async (
+    workingSkin: ButtonSkin,
+    currentPath: string | null
+  ): Promise<ButtonSkinFileResult | null> => {
+    if (busyRef.current) return null;
+    setBusy(true);
+    try {
+      const targetPath = currentPath ?? await chooseWorkingSkinSavePath(workingSkin);
+      if (!targetPath) return null;
+      const writtenPath = await saveButtonSkinFile(
+        targetPath,
+        serializeButtonSkinSections(workingSkin)
+      );
+      const nextDraft = cloneButtonDocument(store.current());
+      nextDraft.skins[workingSkin.id] = cloneButtonDocument(workingSkin);
+      const scope: ButtonSkinSaveScope = {
+        skinIds: [workingSkin.id]
+      };
+      const frozenDraft = cloneButtonDocument(nextDraft);
+      await commitScopedDocument(
+        (committed) => buildButtonSkinScopedDocument(committed, frozenDraft, scope),
+        (draft, canonical) => applyButtonSkinSavedScope(draft, canonical, scope),
+        `Skin '${workingSkin.name}' saved to ${writtenPath}.`,
+        `The skin file was saved to ${writtenPath}, but FlowCell could not update its skin library.`,
+        `The skin file and skin library were saved, but FlowCell could not finish refreshing the editor and other windows.`
+      );
+      rememberSkinFile(writtenPath, workingSkin.id);
+      return {
+        skin: cloneButtonDocument(workingSkin),
+        path: writtenPath
+      };
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveWorkingSkinAsNew = async (
+    workingSkin: ButtonSkin
+  ): Promise<ButtonSkinFileResult | null> => {
+    if (busyRef.current) return null;
+    setBusy(true);
     try {
       const id = createStableButtonId("skin");
-      const targetPath = await showSaveFileDialog({
-        title: "Save Button Skin As",
-        filter: "FlowCell Button Skin (*.flowcell-button-skin.txt)|*.flowcell-button-skin.txt|Text Files (*.txt)|*.txt",
-        defaultFileName: defaultButtonSkinFileName(workingSkin.name)
-      });
-      if (!targetPath) return;
-
+      const targetPath = await chooseWorkingSkinSavePath(workingSkin);
+      if (!targetPath) return null;
       const writtenPath = await saveButtonSkinFile(
         targetPath,
         serializeButtonSkinSections(workingSkin)
@@ -1727,14 +2073,24 @@ function ButtonEditorContent({
       const nextDraft = cloneButtonDocument(store.current());
       nextDraft.skins[id] = duplicate;
       const scope: ButtonSkinSaveScope = { skinIds: [id] };
-      const next = buildButtonSkinScopedDocument(store.committed, nextDraft, scope);
+      const frozenDraft = cloneButtonDocument(nextDraft);
       await commitScopedDocument(
-        next,
-        (draft, saved) => applyButtonSkinSavedScope(draft, saved, scope),
-        `Skin '${duplicate.name}' saved as a new skin at ${writtenPath}.`
+        (committed) => buildButtonSkinScopedDocument(committed, frozenDraft, scope),
+        (draft, canonical) => applyButtonSkinSavedScope(draft, canonical, scope),
+        `Skin '${duplicate.name}' saved as a new skin at ${writtenPath}.`,
+        `The new skin file was saved to ${writtenPath}, but FlowCell could not add it to the skin library.`,
+        `The new skin file and skin library entry were saved, but FlowCell could not finish refreshing the editor and other windows.`
       );
+      rememberSkinFile(writtenPath, duplicate.id);
+      return {
+        skin: duplicate,
+        path: writtenPath
+      };
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
+      return null;
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -1745,14 +2101,14 @@ function ButtonEditorContent({
     forkName: string
   ) => {
     if (targetPlacementIds.length === 0) {
-      setMessage("The selected Button is not on the Main panel for this Program and Panel.");
+      setMessage("The selected placement surface has no Buttons to assign.");
       return;
     }
     const unsavedTarget = targetPlacementIds.find((placementId) =>
       !store.committed.placements[placementId]
     );
     if (unsavedTarget) {
-      setMessage("Save placement for this new Button before assigning its skin.");
+      setMessage("Save Settings for this new Button before assigning its skin.");
       return;
     }
 
@@ -1779,9 +2135,9 @@ function ButtonEditorContent({
       skinIds: [assignedSkin.id],
       placementIds: targetPlacementIds
     };
-    const next = buildButtonSkinScopedDocument(store.committed, nextDraft, scope);
+    const frozenDraft = cloneButtonDocument(nextDraft);
     await commitScopedDocument(
-      next,
+      (committed) => buildButtonSkinScopedDocument(committed, frozenDraft, scope),
       (draft, saved) => applyButtonSkinSavedScope(draft, saved, scope),
       assignmentName
     );
@@ -1903,18 +2259,34 @@ function ButtonEditorContent({
             <button
               type="button"
               className="button-editor-sidebar__placement-file"
-              disabled={busy}
-              onClick={() => void savePlacement()}
+              disabled={busy || !settingsPlacementKind}
+              onClick={() => void saveSettings()}
             >
-              Save placement
+              Save {settingsPlacementLabel} Settings
             </button>
             <button
               type="button"
               className="button-editor-sidebar__placement-file"
-              disabled={busy}
-              onClick={() => void loadPlacement()}
+              disabled={busy || !settingsPlacementKind}
+              onClick={() => void loadSettings()}
             >
-              Load placement
+              Load {settingsPlacementLabel} Settings
+            </button>
+            <button
+              type="button"
+              className="button-editor-sidebar__placement-file"
+              disabled={busy || !settingsPlacementKind}
+              onClick={() => void loadDefaultSettings()}
+            >
+              Load {settingsPlacementLabel} Default
+            </button>
+            <button
+              type="button"
+              className="button-editor-sidebar__placement-file"
+              disabled={busy || !settingsPlacementKind}
+              onClick={() => void updateDefaultSettings()}
+            >
+              Update {settingsPlacementLabel} Default
             </button>
             <label className="button-editor-mode button-editor-sidebar__mode">
               <span>Edit</span>
@@ -2023,6 +2395,8 @@ function ButtonEditorContent({
         <ButtonSkinEditor
           skin={selectedSkin}
           skins={Object.values(store.draft.skins)}
+          recentSkinFiles={recentSkinFiles}
+          skinFilePath={selectedSkinFilePath}
           skinContextKey={selectedPlacement?.id ?? ""}
           busy={busy}
           placement={selectedPlacement}
@@ -2079,21 +2453,23 @@ function ButtonEditorContent({
           }}
           onAssignSkinToPanel={(skin) => {
             if (!selectedPlacement) return;
-            const placementIds = resolveButtonEditorPanelSkinTargetPlacementIds(
-              store.current(),
-              programName,
-              panelName,
+            const document = store.current();
+            const surface = document.surfaces[selectedPlacement.surfaceId];
+            const placementIds = resolveButtonEditorSurfaceSkinTargetPlacementIds(
+              document,
               selectedPlacement.id
             );
+            const surfaceName = surface?.name || panelName || "current surface";
             void assignWorkingSkin(
               skin,
               placementIds,
-              `Skin assigned to ${placementIds.length} Button${placementIds.length === 1 ? "" : "s"} on '${panelName}'.`,
-              panelName || "Panel"
+              `Skin assigned to ${placementIds.length} Button${placementIds.length === 1 ? "" : "s"} on '${surfaceName}'.`,
+              surfaceName
             );
           }}
-          onSaveSkin={(skin) => void saveWorkingSkin(skin)}
-          onSaveAsNewSkin={(skin) => void saveWorkingSkinAsNew(skin)}
+          onLoadSkinFile={loadWorkingSkinFile}
+          onSaveSkin={saveWorkingSkin}
+          onSaveAsNewSkin={saveWorkingSkinAsNew}
         />
       </div>
     </main>

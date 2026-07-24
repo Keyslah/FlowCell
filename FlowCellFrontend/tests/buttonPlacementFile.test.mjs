@@ -16,6 +16,19 @@ import {
   buildButtonPlacementFile,
   validateButtonPlacementFile
 } from "./.compiled-button-system/button/state/buttonPlacementFile.js";
+import {
+  BUTTON_SETTINGS_FILE_EXTENSION,
+  BUTTON_SETTINGS_FILE_FORMAT,
+  applyButtonSettingsFile,
+  buildTransientButtonPopoutSettingsDocument,
+  buildButtonSettingsFile,
+  buttonSettingsPlacementKind,
+  validateButtonSettingsFile
+} from "./.compiled-button-system/button/state/buttonSettingsFile.js";
+import {
+  createButtonSourceIdentity,
+  deriveRegularPopoutSelectionKey
+} from "./.compiled-button-system/button/state/sourceIdentity.js";
 
 function addButton(document, id, marker) {
   document.buttons[id] = {
@@ -99,6 +112,141 @@ function validArrangementFixture() {
     document,
     surface: document.surfaces[fixture.surface.id]
   };
+}
+
+function regularPopSettingsFixture() {
+  const { document, surface: mainSurface } = validArrangementFixture();
+  const surface = {
+    ...structuredClone(mainSurface),
+    id: "surface-saved-pop",
+    name: "Saved Files Pop",
+    kind: "regular-popout",
+    placementIds: [...mainSurface.placementIds]
+  };
+  document.surfaces[surface.id] = surface;
+  mainSurface.placementIds = [];
+  const identities = [];
+  surface.placementIds.forEach((placementId, index) => {
+    const placement = document.placements[placementId];
+    placement.surfaceId = surface.id;
+    const button = document.buttons[placement.buttonId];
+    const identity = createButtonSourceIdentity(
+      "Windows",
+      "Files",
+      `${button.id}-${index}.flowcell-source.json`
+    );
+    button.sourceIdentity = identity;
+    button.executionTarget = {
+      kind: "core-action",
+      actionId: `CURRENT_TARGET_${button.id}`
+    };
+    identities.push(identity);
+  });
+  document.popoutUnits["saved-pop"] = {
+    id: "saved-pop",
+    name: surface.name,
+    kind: "regular",
+    surfaceId: surface.id,
+    canonicalBounds: { x: 0, y: 0, width: surface.width, height: surface.height },
+    desktopBounds: null,
+    desktopBoundsFitMode: "surface",
+    desktopBoundsEnvelope: { x: 0, y: 0, width: surface.width, height: surface.height },
+    memberPlacementIds: [...surface.placementIds],
+    openRule: "toggle",
+    closeRule: "escape",
+    transparency: 1,
+    pinnedDefault: false,
+    windowFitMode: "surface",
+    memberSourceIdentities: structuredClone(identities),
+    selectionKey: deriveRegularPopoutSelectionKey(identities)
+  };
+  const settings = buildButtonSettingsFile(document, surface.id, {
+    programName: "Windows",
+    panelName: "Files",
+    savedAt: "2026-07-23T12:34:56.000Z"
+  });
+  return { document, surface, settings };
+}
+
+function toolSetPopSettingsFixture() {
+  const fixture = regularPopSettingsFixture();
+  const document = fixture.document;
+  const templateButton = document.buttons[fixture.settings.entries[0].buttonId];
+  const templatePlacement = document.placements[fixture.surface.placementIds[0]];
+  const ownerIdentity = createButtonSourceIdentity(
+    "Windows",
+    "Files",
+    "tools.flowcell-source.json"
+  );
+  document.buttons["tool-owner"] = {
+    ...structuredClone(templateButton),
+    id: "tool-owner",
+    role: "tool-set-owner",
+    sourceIdentity: ownerIdentity,
+    label: "Tools",
+    executionTarget: null,
+    toolSetParentId: null,
+    toolSetBehavior: null
+  };
+  for (const childId of ["tool-child-a", "tool-child-b"]) {
+    document.buttons[childId] = {
+      ...structuredClone(templateButton),
+      id: childId,
+      role: "tool-set-child",
+      sourceIdentity: ownerIdentity,
+      label: childId,
+      executionTarget: { kind: "core-action", actionId: `CURRENT_${childId}` },
+      toolSetParentId: "tool-owner",
+      toolSetBehavior: null
+    };
+  }
+  const surface = {
+    id: "surface-tool-pop",
+    name: "Saved Tool Pop",
+    kind: "tool-set-popout",
+    width: 340,
+    height: 90,
+    placementIds: ["tool-placement-a", "tool-placement-b"],
+    visualOverflowAllowance: 24,
+    uniformButtonSize: null
+  };
+  document.surfaces[surface.id] = surface;
+  ["tool-child-a", "tool-child-b"].forEach((buttonId, index) => {
+    document.placements[`tool-placement-${index === 0 ? "a" : "b"}`] = {
+      ...structuredClone(templatePlacement),
+      id: `tool-placement-${index === 0 ? "a" : "b"}`,
+      buttonId,
+      surfaceId: surface.id,
+      x: index * 150,
+      y: 0,
+      zIndex: index
+    };
+  });
+  document.popoutUnits["tool-pop"] = {
+    id: "tool-pop",
+    name: surface.name,
+    kind: "tool-set",
+    surfaceId: surface.id,
+    canonicalBounds: { x: 0, y: 0, width: surface.width, height: surface.height },
+    desktopBounds: null,
+    desktopBoundsFitMode: "surface",
+    desktopBoundsEnvelope: { x: 0, y: 0, width: surface.width, height: surface.height },
+    ownerButtonId: "tool-owner",
+    childButtonIds: ["tool-child-a", "tool-child-b"],
+    childPlacementIds: [...surface.placementIds],
+    openRule: "toggle",
+    closeRule: "escape",
+    transparency: 1,
+    pinnedDefault: false,
+    windowFitMode: "surface",
+    fields: []
+  };
+  const settings = buildButtonSettingsFile(document, surface.id, {
+    programName: "Windows",
+    panelName: "Files",
+    savedAt: "2026-07-23T12:34:56.000Z"
+  });
+  return { document, settings };
 }
 
 test("Button placement file contains only the selected surface arrangement in saved order", () => {
@@ -430,6 +578,327 @@ test("Button placement loading rejects identity drift without mutating the draft
     /different Button/
   );
   assert.deepEqual(document, before);
+});
+
+test("Button settings save and restore exact membership, text, skin, size, highlights, behavior, and animation", () => {
+  const { document, surface } = validArrangementFixture();
+  surface.kind = "panel";
+  surface.visualOverflowAllowance = 37;
+  document.skins["settings-skin"] = {
+    ...structuredClone(document.skins[document.settings.defaultSkinId]),
+    id: "settings-skin",
+    name: "Settings Skin",
+    hover: "filter: brightness(1.4);"
+  };
+  const savedPlacement = document.placements["placement-b"];
+  Object.assign(savedPlacement, {
+    skinOverrideId: "settings-skin",
+    textFitMode: "shrink-and-stack",
+    textAlignment: "right",
+    textOffsetX: 7,
+    textOffsetY: -3,
+    minimumFontSize: 9,
+    textSizeOverride: 18,
+    allowLabelResize: true,
+    matchHitboxToSkin: false,
+    allowStretching: true,
+    highlightOnHover: true
+  });
+  document.buttons["button-b"].label = "Saved Button Text";
+  document.buttons["button-b"].activationBehavior = {
+    mode: "momentary",
+    states: [{ id: "ready", label: "Ready", labelOverrides: { hover: "Hover Ready" } }]
+  };
+  document.buttons["button-b"].activationAnimation = {
+    presetId: "plus-rise",
+    desktopBounds: { left: 100, top: 120, width: 283, height: 295 }
+  };
+  const settings = buildButtonSettingsFile(document, surface.id, {
+    programName: "Blender",
+    panelName: "Files",
+    savedAt: "2026-07-21T12:34:56.000Z"
+  });
+
+  assert.equal(BUTTON_SETTINGS_FILE_EXTENSION, ".flowcell-button-settings.json");
+  assert.equal(settings.format, BUTTON_SETTINGS_FILE_FORMAT);
+  assert.equal(settings.placementKind, "main-page");
+  assert.deepEqual(settings.entries.map((entry) => entry.buttonId), [
+    "button-b",
+    "button-c",
+    "button-a"
+  ]);
+  assert.equal(settings.entries[0].label, "Saved Button Text");
+  assert.equal(settings.entries[0].skin.id, "settings-skin");
+  assert.equal(settings.entries[0].placement.highlightOnHover, true);
+  assert.equal(settings.entries[0].placement.textSizeOverride, 18);
+  assert.deepEqual(settings.entries[0].activationAnimation, {
+    presetId: "plus-rise",
+    desktopBounds: { left: 100, top: 120, width: 283, height: 295 }
+  });
+  assert.equal(validateButtonSettingsFile(settings).valid, true);
+
+  const serialized = JSON.stringify(settings);
+  assert.equal(serialized.includes("executionTarget"), false);
+  assert.equal(serialized.includes("sourceIdentity"), false);
+  assert.equal(serialized.includes("current-action"), false);
+
+  const current = structuredClone(document);
+  current.buttons["button-b"].label = "Current Text";
+  current.buttons["button-b"].activationBehavior = null;
+  current.buttons["button-b"].activationAnimation = null;
+  current.buttons["button-b"].executionTarget = {
+    kind: "core-action",
+    actionId: "current-action"
+  };
+  const removedPlacement = current.placements["placement-b"];
+  delete current.placements[removedPlacement.id];
+  current.surfaces[surface.id].placementIds =
+    current.surfaces[surface.id].placementIds.filter((id) => id !== removedPlacement.id);
+  current.buttons["button-d"] = {
+    ...structuredClone(current.buttons["button-a"]),
+    id: "button-d",
+    label: "Extra Button"
+  };
+  current.placements["placement-d"] = {
+    ...structuredClone(current.placements["placement-a"]),
+    id: "placement-d",
+    buttonId: "button-d",
+    surfaceId: surface.id,
+    x: 240,
+    y: 120,
+    zIndex: current.surfaces[surface.id].placementIds.length
+  };
+  current.surfaces[surface.id].placementIds.push("placement-d");
+
+  const loaded = applyButtonSettingsFile(current, surface.id, settings, {
+    programName: "Blender",
+    panelName: "Files"
+  });
+  const loadedButtonIds = loaded.surfaces[surface.id].placementIds.map(
+    (placementId) => loaded.placements[placementId].buttonId
+  );
+  assert.deepEqual(loadedButtonIds, ["button-b", "button-c", "button-a"]);
+  assert.equal(loadedButtonIds.includes("button-d"), false);
+  assert.equal(loaded.buttons["button-b"].label, "Saved Button Text");
+  assert.deepEqual(
+    loaded.buttons["button-b"].activationBehavior,
+    settings.entries[0].activationBehavior
+  );
+  assert.deepEqual(
+    loaded.buttons["button-b"].activationAnimation,
+    settings.entries[0].activationAnimation
+  );
+  assert.deepEqual(loaded.buttons["button-b"].executionTarget, {
+    kind: "core-action",
+    actionId: "current-action"
+  });
+  const loadedPlacement = loaded.placements[loaded.surfaces[surface.id].placementIds[0]];
+  assert.equal(loadedPlacement.textAlignment, "right");
+  assert.equal(loadedPlacement.textOffsetX, 7);
+  assert.equal(loadedPlacement.highlightOnHover, true);
+  assert.equal(loaded.skins[loadedPlacement.skinOverrideId].hover, settings.entries[0].skin.hover);
+  assert.equal(validateButtonStateDocument(loaded).valid, true);
+});
+
+test("Button settings fail atomically when a saved Button action is no longer installed", () => {
+  const { document, surface } = validArrangementFixture();
+  surface.kind = "panel";
+  const settings = buildButtonSettingsFile(document, surface.id, {
+    programName: "Blender",
+    panelName: "Files",
+    savedAt: "2026-07-21T12:34:56.000Z"
+  });
+  const current = structuredClone(document);
+  delete current.buttons["button-b"];
+  delete current.placements["placement-b"];
+  current.surfaces[surface.id].placementIds =
+    current.surfaces[surface.id].placementIds.filter((id) => id !== "placement-b");
+  const before = structuredClone(current);
+
+  assert.throws(
+    () => applyButtonSettingsFile(current, surface.id, settings, {
+      programName: "Blender",
+      panelName: "Files"
+    }),
+    /is not installed/
+  );
+  assert.deepEqual(current, before);
+});
+
+test("Button settings keep concrete Main Page subtypes separate and survive same-surface renames", () => {
+  const { document, surface } = validArrangementFixture();
+  surface.kind = "panel";
+  const settings = buildButtonSettingsFile(document, surface.id, {
+    programName: "Old Program",
+    panelName: "Old Panel",
+    savedAt: "2026-07-21T12:34:56.000Z"
+  });
+
+  assert.doesNotThrow(() =>
+    applyButtonSettingsFile(document, surface.id, settings, {
+      programName: "Renamed Program",
+      panelName: "Renamed Panel"
+    })
+  );
+
+  const wrongSubtype = structuredClone(document);
+  wrongSubtype.surfaces[surface.id].kind = "main";
+  assert.throws(
+    () =>
+      applyButtonSettingsFile(wrongSubtype, surface.id, settings, {
+        programName: "Old Program",
+        panelName: "Old Panel"
+      }),
+    /different concrete surface type/
+  );
+});
+
+test("Button settings preserve an exact zero-Button surface", () => {
+  const { document, surface } = validArrangementFixture();
+  surface.kind = "panel";
+  const empty = structuredClone(document);
+  for (const placementId of empty.surfaces[surface.id].placementIds) {
+    delete empty.placements[placementId];
+  }
+  empty.surfaces[surface.id].placementIds = [];
+  const settings = buildButtonSettingsFile(empty, surface.id, {
+    programName: "Blender",
+    panelName: "Empty",
+    savedAt: "2026-07-21T12:34:56.000Z"
+  });
+
+  assert.equal(settings.entries.length, 0);
+  const loaded = applyButtonSettingsFile(document, surface.id, settings, {
+    programName: "Blender",
+    panelName: "Empty"
+  });
+  assert.deepEqual(loaded.surfaces[surface.id].placementIds, []);
+  assert.equal(validateButtonStateDocument(loaded).valid, true);
+});
+
+test("Open Pop materializes a regular settings file only in an isolated transient document", () => {
+  const { document, settings } = regularPopSettingsFixture();
+  settings.entries[0].label = "Transient Saved Label";
+  settings.entries[0].placement.x = 321;
+  const before = structuredClone(document);
+
+  const opened = buildTransientButtonPopoutSettingsDocument(
+    document,
+    settings,
+    { programName: "Windows", panelName: "Files" },
+    "files-choice"
+  );
+
+  assert.deepEqual(document, before);
+  assert.match(opened.popoutUnitId, /^open-pop-unit-files-choice/);
+  const unit = opened.document.popoutUnits[opened.popoutUnitId];
+  assert.equal(unit.kind, "regular");
+  assert.notEqual(unit.surfaceId, settings.sourceSurfaceId);
+  const transientSurface = opened.document.surfaces[unit.surfaceId];
+  const transientButtonIds = transientSurface.placementIds.map(
+    (placementId) => opened.document.placements[placementId].buttonId
+  );
+  assert.deepEqual(transientButtonIds, settings.entries.map((entry) => entry.buttonId));
+  const firstPlacement = opened.document.placements[transientSurface.placementIds[0]];
+  assert.equal(firstPlacement.x, 321);
+  assert.equal(opened.document.buttons[firstPlacement.buttonId].label, "Transient Saved Label");
+  assert.deepEqual(
+    opened.document.buttons[firstPlacement.buttonId].executionTarget,
+    document.buttons[firstPlacement.buttonId].executionTarget
+  );
+  assert.equal(validateButtonStateDocument(opened.document).valid, true);
+});
+
+test("Open Pop rejects non-Pop files, wrong panels, and missing installed Buttons atomically", () => {
+  const { document, settings } = regularPopSettingsFixture();
+  const before = structuredClone(document);
+
+  assert.throws(
+    () => buildTransientButtonPopoutSettingsDocument(
+      document,
+      settings,
+      { programName: "Windows", panelName: "Utility" },
+      "wrong-panel"
+    ),
+    /does not belong/
+  );
+
+  const missingButton = structuredClone(document);
+  delete missingButton.buttons[settings.entries[0].buttonId];
+  assert.throws(
+    () => buildTransientButtonPopoutSettingsDocument(
+      missingButton,
+      settings,
+      { programName: "Windows", panelName: "Files" },
+      "missing-button"
+    ),
+    /is not installed/
+  );
+
+  const mainFile = buildButtonSettingsFile(
+    document,
+    Object.values(document.surfaces).find((surface) => surface.kind === "main").id,
+    {
+      programName: "Windows",
+      panelName: "Files",
+      savedAt: "2026-07-23T12:34:56.000Z"
+    }
+  );
+  assert.throws(
+    () => buildTransientButtonPopoutSettingsDocument(
+      document,
+      mainFile,
+      { programName: "Windows", panelName: "Files" },
+      "main-file"
+    ),
+    /only Pop-out settings/
+  );
+  assert.deepEqual(document, before);
+});
+
+test("Open Pop isolates Tool Set presentation while retaining installed fields and execution targets", () => {
+  const { document, settings } = toolSetPopSettingsFixture();
+  const before = structuredClone(document);
+  settings.entries[0].label = "Saved Child";
+
+  const opened = buildTransientButtonPopoutSettingsDocument(
+    document,
+    settings,
+    { programName: "Windows", panelName: "Files" },
+    "tool-choice"
+  );
+
+  assert.deepEqual(document, before);
+  const unit = opened.document.popoutUnits[opened.popoutUnitId];
+  assert.equal(unit.kind, "tool-set");
+  assert.equal(unit.ownerButtonId, "tool-owner");
+  assert.deepEqual(unit.fields, document.popoutUnits["tool-pop"].fields);
+  assert.deepEqual(unit.childButtonIds, ["tool-child-a", "tool-child-b"]);
+  assert.equal(opened.document.buttons["tool-child-a"].label, "Saved Child");
+  assert.deepEqual(
+    opened.document.buttons["tool-child-a"].executionTarget,
+    document.buttons["tool-child-a"].executionTarget
+  );
+
+  const obsolete = structuredClone(settings);
+  obsolete.entries.pop();
+  assert.throws(
+    () => buildTransientButtonPopoutSettingsDocument(
+      document,
+      obsolete,
+      { programName: "Windows", panelName: "Files" },
+      "obsolete-tool-choice"
+    ),
+    /same installed child actions/
+  );
+});
+
+test("Button settings categories collapse physical surfaces to Main Page, Fan, and Pop-out", () => {
+  assert.equal(buttonSettingsPlacementKind({ kind: "main" }), "main-page");
+  assert.equal(buttonSettingsPlacementKind({ kind: "panel" }), "main-page");
+  assert.equal(buttonSettingsPlacementKind({ kind: "fan" }), "fan");
+  assert.equal(buttonSettingsPlacementKind({ kind: "regular-popout" }), "pop-out");
+  assert.equal(buttonSettingsPlacementKind({ kind: "tool-set-popout" }), "pop-out");
 });
 
 test("canonical placement loading backfills and strictly validates activation cycles", () => {

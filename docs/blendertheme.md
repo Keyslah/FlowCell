@@ -14,8 +14,8 @@ Adding the Blender program installs Theme as a declared starter in the
    Buttons Editor opens its native content picker automatically.
 2. Select
    `Programs/Blender/Blender Git Scripts/Toolsets/theme/flowcell.script.json`.
-3. Use Save placement after the Button is added, then name its Button-placement
-   file in the native save dialog.
+3. Use Save Main Page Settings after the Button is added, then name its
+   `.flowcell-button-settings.json` file in the native save dialog.
 4. Reload the FlowCell Blender add-on or restart Blender after deployment.
 
 To use an installed copy, select its Blender panel and activate the `theme`

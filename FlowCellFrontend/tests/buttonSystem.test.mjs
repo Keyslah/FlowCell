@@ -27,8 +27,17 @@ import {
 } from "./.compiled-button-system/button/skins/skinPasteParser.js";
 import {
   buttonSkinNameFromPath,
-  createEmptyButtonSkinSections
+  createEmptyButtonSkinSections,
+  serializeButtonSkinSections
 } from "./.compiled-button-system/button/skins/buttonSkinFormat.js";
+import {
+  BUTTON_SKIN_RECENT_FILE_LIMIT,
+  createButtonSkinFromFile,
+  normalizeButtonSkinRecentFiles,
+  readButtonSkinRecentFiles,
+  rememberButtonSkinRecentFile,
+  writeButtonSkinRecentFiles
+} from "./.compiled-button-system/button/editor/buttonSkinFiles.js";
 import {
   validateButtonSkin
 } from "./.compiled-button-system/button/skins/skinValidator.js";
@@ -76,6 +85,7 @@ import {
   resolveDeterministicLabelGrowth
 } from "./.compiled-button-system/button/geometry/labelGrowth.js";
 import {
+  buttonTextFitAllowsMultipleLines,
   computeButtonTextFitPlan
 } from "./.compiled-button-system/button/text/textFit.js";
 import {
@@ -169,7 +179,7 @@ import {
   buildButtonEditorPlacementOptions,
   resolveButtonEditorContextPlacementId,
   resolveButtonEditorIdentity,
-  resolveButtonEditorPanelSkinTargetPlacementIds,
+  resolveButtonEditorSurfaceSkinTargetPlacementIds,
   resolveButtonEditorPanelSurfaceId,
   resolvePreferredButtonPlacementId
 } from "./.compiled-button-system/button/editor/buttonEditorSelection.js";
@@ -1275,6 +1285,110 @@ test("saved Button skin names come exactly from the chosen filename", () => {
   assert.equal(buttonSkinNameFromPath("D:/skins/My.skin.v2"), "My.skin.v2");
 });
 
+test("recent Button skin files deduplicate Windows paths, move to the front, and stay capped", () => {
+  const candidates = Array.from(
+    { length: BUTTON_SKIN_RECENT_FILE_LIMIT + 2 },
+    (_, index) => ({
+      path: `C:\\Skins\\Skin ${index}.flowcell-button-skin.txt`,
+      skinId: `skin-${index}`
+    })
+  );
+  candidates.splice(1, 0, {
+    path: "c:/skins/SKIN 0.flowcell-button-skin.txt",
+    skinId: "skin-duplicate"
+  });
+  const normalized = normalizeButtonSkinRecentFiles(candidates);
+  assert.equal(normalized.length, BUTTON_SKIN_RECENT_FILE_LIMIT);
+  assert.equal(normalized[0].skinId, "skin-0");
+  assert.equal(normalized.some((entry) => entry.skinId === "skin-duplicate"), false);
+
+  const remembered = rememberButtonSkinRecentFile(
+    normalized,
+    "c:/skins/SKIN 3.flowcell-button-skin.txt",
+    "skin-3-new"
+  );
+  assert.equal(remembered[0].skinId, "skin-3-new");
+  assert.equal(
+    remembered.filter((entry) => /skin 3\.flowcell-button-skin\.txt$/i.test(entry.path)).length,
+    1
+  );
+  const reassigned = rememberButtonSkinRecentFile(
+    remembered,
+    "D:\\Other\\Moved.flowcell-button-skin.txt",
+    "skin-3-new"
+  );
+  assert.equal(reassigned[0].path, "D:\\Other\\Moved.flowcell-button-skin.txt");
+  assert.equal(reassigned.filter((entry) => entry.skinId === "skin-3-new").length, 1);
+});
+
+test("recent Button skin files persist as machine-local WebView history", () => {
+  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const values = new Map();
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      localStorage: {
+        getItem: (key) => values.get(key) ?? null,
+        setItem: (key, value) => values.set(key, value)
+      }
+    }
+  });
+  try {
+    const expected = [{
+      path: "D:\\FlowCell\\Button editor\\Skins\\Neon.flowcell-button-skin.txt",
+      skinId: "skin-neon"
+    }];
+    writeButtonSkinRecentFiles(expected);
+    assert.deepEqual(readButtonSkinRecentFiles(), expected);
+  } finally {
+    if (originalWindow) {
+      Object.defineProperty(globalThis, "window", originalWindow);
+    } else {
+      delete globalThis.window;
+    }
+  }
+});
+
+test("portable Button skin files become complete isolated working skins", () => {
+  const source = serializeButtonSkinSections({
+    ...createEmptyButtonSkinSections(),
+    structure: "<div data-core>{{label}}</div>",
+    base: "--ink:#fff;",
+    hover: "--ink:#0ff;"
+  });
+  const loaded = createButtonSkinFromFile(
+    source,
+    "D:\\Skins\\Neon.flowcell-button-skin.txt",
+    "skin-neon",
+    {
+      id: "skin-existing",
+      name: "Existing",
+      ...createEmptyButtonSkinSections(),
+      structure: "<div data-core>{{label}}</div>",
+      metadata: { author: "FlowCell" },
+      compileCache: {
+        compilerVersion: 1,
+        sourceFingerprint: "stale"
+      }
+    }
+  );
+  assert.equal(loaded.id, "skin-neon");
+  assert.equal(loaded.name, "Neon");
+  assert.equal(loaded.structure, "<div data-core>{{label}}</div>");
+  assert.equal(loaded.base, "--ink:#fff;");
+  assert.equal(loaded.hover, "--ink:#0ff;");
+  assert.deepEqual(loaded.metadata, { author: "FlowCell" });
+  assert.equal(loaded.compileCache, null);
+  assert.throws(
+    () => createButtonSkinFromFile(
+      "=== structure ===\n<div data-core></div>",
+      "D:\\Skins\\Partial.flowcell-button-skin.txt",
+      "skin-partial"
+    ),
+    /missing canonical sections/
+  );
+});
+
 test("skin paste rejects duplicate, unknown, malformed, and prefixed headers atomically", () => {
   for (const candidate of [
     "=== hover ===\na: b;\n=== hover ===\nc: d;",
@@ -2021,49 +2135,121 @@ test("Button Editor navigation resolves exact program, panel, Button, and placem
   assert.deepEqual(buildButtonEditorPanelOptions(document, "Blender", []), ["Tools"]);
   assert.equal(resolveButtonEditorPanelSurfaceId(document, "Blender", "Tools"), "panel");
   assert.deepEqual(
-    resolveButtonEditorPanelSkinTargetPlacementIds(
+    resolveButtonEditorSurfaceSkinTargetPlacementIds(
       document,
-      "Blender",
-      "Tools",
       "panel-single"
     ),
     ["panel-single", "panel-owner"]
   );
   assert.deepEqual(
-    resolveButtonEditorPanelSkinTargetPlacementIds(
+    resolveButtonEditorSurfaceSkinTargetPlacementIds(
       document,
-      "Blender",
-      "Tools",
       "pop-single"
     ),
-    []
+    ["pop-single"]
   );
   assert.deepEqual(
-    resolveButtonEditorPanelSkinTargetPlacementIds(
+    resolveButtonEditorSurfaceSkinTargetPlacementIds(
       document,
-      "Blender",
-      "Tools",
       "toolset-child"
     ),
-    []
+    ["toolset-child"]
   );
   assert.equal(resolvePreferredButtonPlacementId(document, single.id), "panel-single");
   assert.equal(resolvePreferredButtonPlacementId(document, single.id, "pop"), "pop-single");
   assert.deepEqual(
     buildButtonEditorPlacementOptions(document, single.id).map((option) => option.label),
-    ["Main page", "Pop — Single Pop"]
+    ["Main Page", "Pop-out"]
   );
   const ownerPlacementOptions = buildButtonEditorPlacementOptions(document, owner.id);
   assert.deepEqual(
     ownerPlacementOptions.map((option) => option.label),
-    ["Main page"]
+    ["Main Page"]
   );
   assert.deepEqual(
     buildButtonEditorPlacementOptions(document, child.id).map((option) => option.label),
-    ["Pop — Rotate"]
+    ["Pop-out"]
   );
   const options = buildButtonEditorButtonOptions(document, "Blender", "Tools");
   assert.equal(options.some((option) => option.id === child.id && option.label === "X — Rotate"), true);
+});
+
+test("surface skin assignment targets every member of only the focused surface", () => {
+  const document = createButtonStateDocument();
+  document.surfaces = {
+    panel: {
+      id: "panel",
+      name: "Main",
+      kind: "panel",
+      width: 400,
+      height: 300,
+      placementIds: ["panel-a", "panel-b", "stale-placement"],
+      visualOverflowAllowance: 0
+    },
+    pop: {
+      id: "pop",
+      name: "Regular Pop",
+      kind: "regular-popout",
+      width: 400,
+      height: 300,
+      placementIds: ["pop-a", "pop-b"],
+      visualOverflowAllowance: 0
+    },
+    fan: {
+      id: "fan",
+      name: "Fan",
+      kind: "fan",
+      width: 400,
+      height: 300,
+      placementIds: ["fan-a", "fan-b"],
+      visualOverflowAllowance: 0
+    },
+    toolset: {
+      id: "toolset",
+      name: "Tool-set Pop",
+      kind: "tool-set-popout",
+      width: 400,
+      height: 300,
+      placementIds: ["toolset-a", "toolset-b"],
+      visualOverflowAllowance: 0
+    }
+  };
+  document.placements = {
+    "panel-a": { id: "panel-a", buttonId: "shared", surfaceId: "panel" },
+    "panel-b": { id: "panel-b", buttonId: "panel-only", surfaceId: "panel" },
+    "pop-a": { id: "pop-a", buttonId: "shared", surfaceId: "pop" },
+    "pop-b": { id: "pop-b", buttonId: "pop-only", surfaceId: "pop" },
+    "fan-a": { id: "fan-a", buttonId: "shared", surfaceId: "fan" },
+    "fan-b": { id: "fan-b", buttonId: "fan-only", surfaceId: "fan" },
+    "toolset-a": { id: "toolset-a", buttonId: "shared", surfaceId: "toolset" },
+    "toolset-b": { id: "toolset-b", buttonId: "toolset-only", surfaceId: "toolset" },
+    orphan: { id: "orphan", buttonId: "shared", surfaceId: "missing-surface" }
+  };
+
+  assert.deepEqual(
+    resolveButtonEditorSurfaceSkinTargetPlacementIds(document, "panel-a"),
+    ["panel-a", "panel-b"]
+  );
+  assert.deepEqual(
+    resolveButtonEditorSurfaceSkinTargetPlacementIds(document, "pop-a"),
+    ["pop-a", "pop-b"]
+  );
+  assert.deepEqual(
+    resolveButtonEditorSurfaceSkinTargetPlacementIds(document, "fan-a"),
+    ["fan-a", "fan-b"]
+  );
+  assert.deepEqual(
+    resolveButtonEditorSurfaceSkinTargetPlacementIds(document, "toolset-a"),
+    ["toolset-a", "toolset-b"]
+  );
+  assert.deepEqual(
+    resolveButtonEditorSurfaceSkinTargetPlacementIds(document, "missing-placement"),
+    []
+  );
+  assert.deepEqual(
+    resolveButtonEditorSurfaceSkinTargetPlacementIds(document, "orphan"),
+    []
+  );
 });
 
 test("panel-owner reconciliation creates empty panels and preserves presentation", () => {
@@ -2093,18 +2279,19 @@ test("panel-owner reconciliation creates empty panels and preserves presentation
   assert.equal(document.surfaces[first.surfaceId].width, 1225);
   assert.equal(document.surfaces[first.surfaceId].height, 721);
   assert.deepEqual(
-    resolveButtonEditorPanelSkinTargetPlacementIds(
+    resolveButtonEditorSurfaceSkinTargetPlacementIds(
       document,
-      "Windows",
-      "Utility",
       utilityPlacement.id
     ),
-    []
+    [
+      initialPanelOwnerMainPlacementId("Windows", "Files"),
+      initialPanelOwnerMainPlacementId("Windows", "Utility")
+    ]
   );
   const initialPlacementOptions = buildButtonEditorPlacementOptions(document, utility.id);
   assert.deepEqual(
     initialPlacementOptions.map((option) => option.label),
-    ["Main page"]
+    ["Main Page"]
   );
 
   utility.label = "Windows Tools";
@@ -2190,7 +2377,7 @@ test("one panel owner has exact Main and Fan placements", () => {
   );
   assert.deepEqual(
     buildButtonEditorPlacementOptions(document, owner.id).map((option) => option.label),
-    ["Main page", "Fan \u2014 Utility Fan"]
+    ["Main Page", "Fan"]
   );
   assert.equal(buildButtonEditorButtonOptions(document, "Windows", "Utility").some((option) => option.id === owner.id), true);
   const validation = validateButtonStateDocument(document);
@@ -2746,8 +2933,9 @@ test("Button Editor navigation disambiguates final Button and placement label co
 
   const placementOptions = buildButtonEditorPlacementOptions(document, firstButton.id);
   const placementLabels = placementOptions.map((option) => option.label);
-  assert.equal(new Set(placementLabels).size, placementLabels.length);
-  assert.equal(placementLabels.every((label) => label.startsWith("Pop — Same — Same — ")), true);
+  assert.equal(placementLabels.length, 2);
+  assert.equal(new Set(placementLabels).size, 1);
+  assert.equal(placementLabels.every((label) => label === "Pop-out"), true);
 });
 
 test("staged Button import cleanup removes successes and retains failures for retry", async () => {
@@ -2984,6 +3172,39 @@ test("scaled skin measurement removes ancestor scale but retains painted skin sc
   for (const edge of Object.values(measurement.visualOverflow)) {
     assert.ok(Math.abs(edge - 8 * internalSkinScale) < 1e-12);
   }
+});
+
+test("screen measurement converts non-finite visual edges to finite zero overflow", () => {
+  const measurement = normalizeButtonScreenMeasurement({
+    coreRect: {
+      left: 10,
+      top: 20,
+      right: 154,
+      bottom: 68,
+      width: 144,
+      height: 48
+    },
+    visualRect: {
+      left: Number.NaN,
+      top: Number.NaN,
+      right: Number.NaN,
+      bottom: Number.NaN
+    },
+    hostScale: { scaleX: Number.NaN, scaleY: 0 }
+  });
+
+  assert.equal(measurement.width, 144);
+  assert.equal(measurement.height, 48);
+  assert.deepEqual(measurement.visualOverflow, {
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0
+  });
+  assert.equal(
+    Object.values(measurement.visualOverflow).every(Number.isFinite),
+    true
+  );
 });
 
 test("state validation reports malformed skins and all saved Button presentation fields without throwing", () => {
@@ -4544,6 +4765,10 @@ test("matched-core reconciliation discards stale geometry and presentation measu
 });
 
 test("text-fit modes shrink and stack only whole words", () => {
+  assert.equal(buttonTextFitAllowsMultipleLines("shrink"), false);
+  assert.equal(buttonTextFitAllowsMultipleLines("stack-whole-words"), true);
+  assert.equal(buttonTextFitAllowsMultipleLines("shrink-and-stack"), true);
+
   const measure = (fontSize, lines) => ({
     width: Math.max(...lines.map((line) => line.length * fontSize * 0.6)),
     height: lines.length * fontSize * 1.2
@@ -4571,6 +4796,16 @@ test("text-fit modes shrink and stack only whole words", () => {
   });
   assert.ok(stack.lines.length > 1);
   assert.deepEqual(stack.lines.join(" "), "Long Button Label");
+
+  const renderer = readFileSync(
+    join(frontendRoot, "src", "button", "skins", "ButtonSkinRenderer.tsx"),
+    "utf8"
+  );
+  assert.match(renderer, /buttonTextFitAllowsMultipleLines\(mode\)/);
+  assert.match(renderer, /previewStackWords && allowsMultipleLines/);
+  assert.match(renderer, /setProperty\("white-space", "nowrap", "important"\)/);
+  assert.match(renderer, /readLabelTextMeasurement\(labelNode\)/);
+  assert.doesNotMatch(renderer, /Math\.max\(core\.clientWidth, core\.scrollWidth\)/);
 });
 
 test("mixed Pop, regular layouts, fan setups, panel owners, and tool-set owners resolve exactly", () => {

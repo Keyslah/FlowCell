@@ -569,6 +569,7 @@ export async function openButtonPopoutWindow(args: {
   draftSessionId?: string;
   bounds?: FlowCellBounds | null;
   reveal?: boolean;
+  registerInLayout?: boolean;
 }): Promise<void> {
   const windowLabel = buildButtonPopoutWindowLabel(args);
   const pendingOpen = pendingButtonWindowOpens.get(windowLabel);
@@ -596,16 +597,18 @@ export async function openButtonPopoutWindow(args: {
       restoreBounds: args.bounds ?? undefined
     };
     const placement = (await resolveButtonCanvasPlacement(contentBounds)).placement;
-    registerLayoutWindow({
-      windowLabel,
-      kind: "button-popout",
-      programName: args.programName,
-      panelName: args.panelName,
-      buttonPopoutUnitId: args.popoutUnitId,
-      buttonOwnerId: args.ownerButtonId,
-      buttonDisplayMode: context.initialDisplayMode,
-      snapshotBounds: contentBounds
-    });
+    if (args.registerInLayout !== false) {
+      registerLayoutWindow({
+        windowLabel,
+        kind: "button-popout",
+        programName: args.programName,
+        panelName: args.panelName,
+        buttonPopoutUnitId: args.popoutUnitId,
+        buttonOwnerId: args.ownerButtonId,
+        buttonDisplayMode: context.initialDisplayMode,
+        snapshotBounds: contentBounds
+      });
+    }
     let target = await WebviewWindow.getByLabel(windowLabel);
     const existed = Boolean(target);
     let shown = false;

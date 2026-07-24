@@ -26,6 +26,10 @@ export function splitButtonLabelWords(label: string): string[] {
   return normalized ? normalized.split(" ") : [""];
 }
 
+export function buttonTextFitAllowsMultipleLines(mode: ButtonTextFitMode): boolean {
+  return mode === "stack-whole-words" || mode === "shrink-and-stack";
+}
+
 function greedyWholeWordLines(
   words: readonly string[],
   fontSize: number,
@@ -60,7 +64,7 @@ export function computeButtonTextFitPlan(request: ButtonTextFitRequest): ButtonT
   const naturalFontSize = Math.max(1, request.naturalFontSize);
   const minimumFontSize = Math.min(naturalFontSize, Math.max(1, request.minimumFontSize));
   const words = splitButtonLabelWords(request.label);
-  const canStack = request.mode !== "shrink";
+  const canStack = buttonTextFitAllowsMultipleLines(request.mode);
 
   for (let fontSize = naturalFontSize; fontSize >= minimumFontSize; fontSize -= 0.5) {
     if (request.mode === "stack-whole-words" && fontSize !== naturalFontSize) {

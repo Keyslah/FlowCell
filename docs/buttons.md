@@ -35,7 +35,7 @@ the completed architecture only.
   keyed by placement ID. The host that receives a response updates itself before
   broadcasting the exact index to other mounted copies, so transport success
   without an active Main coordinator cannot leave a Pop at its initial state.
-  Neither the live index nor an action is stored in the placement file.
+  Neither the live index nor an executable action is stored in the Button settings file.
 - Legacy Button-owned `momentary`, `toggle`, and `cycle` records remain a read
   compatibility path only when a placement has no new activation cycle.
 - A skin must contain exactly one measurable `[data-core]` element and may
@@ -136,6 +136,10 @@ failure rolls the transaction back. A durable journal records the pre-commit
 and post-commit phases so startup can roll back interrupted pre-commit work or
 finish recycling committed quarantine. Canonical and source JSON writes retain
 recoverable staged/backup artifacts until the replacement is proven valid.
+Editor skin, assignment, Button Text, animation, and settings-default writes
+retain a frozen requested scope and retry up to three times after the exact
+revision-conflict response. Each retry reloads canonical state and rebuilds only
+that scope, preserving unrelated commits and concurrent deletions.
 
 An import remains staged until the Editor saves the canonical Button document.
 Cancel, Reset, and native Editor close discard every staged Local Scripts
@@ -206,34 +210,57 @@ does not silently reattach old bindings.
 Buttons Editor is a polished three-pane workspace. The left pane owns dependent
 Program, Panel, Button, and Placement selectors plus placement controls; the
 center pane shows the complete editable Button surface; the right pane owns the
-Skin Editor. Saved Main, Pop, and Fan choices resolve stable placement IDs and
-switch the workspace to that exact existing surface, where every sibling Button
-remains visible and directly selectable in Edit mode. Tool-set children inherit
-their Program/Panel identity from their owner for navigation only; canonical
-identity ownership is unchanged. Source/package actions are not exposed as an
-Editor pane. `Save placement` opens a native file-save dialog so the arrangement
-can be named. It writes a strict `.flowcell-button-placement.json` v2 file containing
-the selected surface frame, optional uniform size, every sibling placement's
-ordered ID, Button ID, rectangle, and z-index, plus each placement's optional
-hover highlight and activation cycle stable IDs, labels, advance triggers, and
-canonical visual names plus optional non-executable response matches. The
-validator continues to recognize geometry-only v1 files. Skin source,
-actions, animations, Pop/Fan state, settings, and managed-window layout are
-excluded from that portable file. The same action commits the live arrangement
-plus placement-owned sizing, text policy, hover highlight, and activation cycles to
-canonical Button state; it is not Save Layout. The left rail retains the existing
-Edit/Run switch for workspace execution and activation preview.
+Skin Editor. Saved Main, Pop, and Fan choices resolve stable concrete surface
+identities and switch the workspace to that exact existing surface, where every
+sibling Button remains visible and directly selectable in Edit mode. The
+Placement selector displays only `Main Page`, `Fan`, or `Pop-out`; a tool-set
+child surface is a Pop-out. Tool-set children inherit their Program/Panel identity
+from their owner for navigation only; canonical identity ownership is unchanged.
+Source/package actions are not exposed as an Editor pane.
 
-`Load placement` is directly below `Save placement` and uses a native open-file
-picker for the same strict v1/v2 format. Both placement pickers start in
-FlowCell's existing remembered layout/file directory when available and update
-that directory after a successful operation. Load fails closed unless the file
-matches the exact selected surface, placement IDs, and Button IDs. It stages one
-undoable Editor draft containing only the saved surface frame, optional uniform
-size, order, rectangles, and z-indexes; v2 also restores hover highlighting and
-activation cycles, while geometry-only v1 preserves their current values.
-Skin source, actions, animations, and other excluded state remain untouched, and
-`Save placement` is still required to commit the loaded draft canonically.
+`Save Main Page Settings`, `Save Fan Settings`, or `Save Pop-out Settings` opens
+a native file-save dialog in the matching `flowcellbackend/local/Button
+editor/Main Page`, `Fan`, or `Pop-out` folder. It writes a strict named
+`.flowcell-button-settings.json` v1 file containing the selected surface's exact
+ordered Button membership and complete presentation: surface frame and optional
+uniform size; every placement's rectangle, z-index, text, sizing, hover highlight,
+activation cycle, and visual mapping; each effective literal skin; shared labels,
+activation behavior, and activation animations; and the applicable Pop/Fan
+container behavior. Execution targets, action/source packages, live activation
+state, and managed desktop window layout are excluded. The same action performs
+the revision-safe scoped canonical commit; it is not Save Layout. The left rail
+retains the existing Edit/Run switch for workspace execution and activation
+preview.
+
+`Load {type} Settings` is directly below Save and opens the matching type folder.
+Load fails closed unless the file matches the settings category and concrete
+surface subtype and every saved Button ID is still installed. Cross-surface reuse
+must also match the selected Program and Panel; a file tied to the same stable
+surface ID remains valid after a Program or Panel rename. It replaces only the
+selected surface with the file's exact Button amount, order, frame, presentation,
+and container behavior as one undoable Editor draft. Buttons omitted by the file
+leave that surface, but their canonical action records and occurrences elsewhere
+remain intact. Tool-set settings may reorder and restyle only the exact current
+package-owned children; they cannot add or remove actions. `Save {type} Settings`
+is still required to commit a loaded draft.
+
+`Load {type} Default` and `Update {type} Default` appear directly below Load.
+Defaults are keyed by concrete surface in an internal store under the matching
+type folder. If a surface has no default yet, its current committed state is
+captured lazily as the initial default. Load stages that snapshot, while Update
+atomically replaces it with the current Editor draft after confirming the
+canonical revision.
+
+Main places `Open Pop` immediately left of `Pop`. `Open Pop` opens a native
+picker in the Pop-out settings folder, validates the chosen regular or Tool Set
+file against currently installed Buttons in the selected Program/Panel, and
+materializes its ordered presentation in a temporary in-memory Button document.
+That document reaches a uniquely owned Pop window through a draft session. It
+is never loaded into an Editor surface, saved as Button state, published as a
+canonical commit, or registered in Save Layout. Main remembers only the
+successful `{ path, choiceId }` locally under the stable panel-owner Button ID.
+`Pop` reloads that panel's last-used file independently of Main Button
+selection; when none exists it directs the user to `Open Pop`.
 
 A Button that executes an action or toggles a structural owner may own one
 optional activation animation assignment. The left-pane `Animation` control
@@ -243,7 +270,8 @@ selection, and an assigned preset retains Position and size setup, Save position
 and size, and Close setup controls. A top-right X returns to placement editing and
 closes an open setup presenter without clearing the saved assignment. Animation
 Apply and bounds saves commit only the Button's animation field, retaining any
-unsaved arrangement. The transparent setup presenter keeps its
+unsaved arrangement; full Button Settings also save and restore the current
+animation assignment. The transparent setup presenter keeps its
 temporary resize hit regions invisible, so the sprite remains the only rendered
 content while positioning. Saving bounds writes whole physical desktop pixels
 to the Button record before applying native placement, preserving centered
@@ -321,19 +349,25 @@ resizing updates every member atomically and delayed skin/text measurements
 cannot split the sizes. Unchecking stops linking future size edits but
 deliberately keeps the current fixed geometry. The Skin Editor toolbar is ordered
 `Assign Skin`, `Assign Skin to Panel`, `Load skin`, `Save skin`, and `Save as new
-skin`. Load changes only the working copy. Assign Skin writes only the focused
+skin`. Load offers recent files first, saved library skins second, and `Browse...`
+last; every choice changes only the working copy. Recent file paths and their skin
+IDs are machine-local and capped at eight. Assign Skin writes only the focused
 placement override and forks an edited shared skin, including the document-wide
 default skin, first; it never changes the
 Button's default skin or sibling placements. Assign Skin to Panel is the explicit
-panel-wide action and targets only that exact Main panel surface, excluding Pop,
-Fan, and tool-set Pop occurrences. A recognized paste updates an always-visible
+surface-wide action and targets every Button on the focused placement's current
+surface, whether that placement is on Main, a regular Pop, a Fan, or a tool-set
+Pop. Occurrences of the same Button on other surfaces remain unchanged. A
+recognized paste updates an always-visible
 working preview even when WebView exposes the paste only through the textarea's
 normal input event, then clears the transient Paste Skin field after distributing
 the source into its canonical section editors. Unparseable paste remains in the field
-for correction. Save skin updates the library entry. Save as new skin opens a
-native file picker, writes canonical paste-ready `.flowcell-button-skin.txt`
-source, and creates an unassigned library entry named exactly from the chosen
-filename stem. Skin saves retain unrelated
+for correction. Browse, first-time Save skin, and Save as new skin all default to
+`flowcellbackend/local/Button editor/Skins`. Save skin overwrites its associated
+file, or opens the picker when it has no file yet, and updates the same library
+entry. Save as new skin always opens the picker, writes canonical paste-ready
+`.flowcell-button-skin.txt` source, and creates an unassigned library entry named
+exactly from the chosen filename stem. Skin saves retain unrelated
 draft geometry. Button States & Behavior is one compact cycle editor. `Number of
 states` accepts 2 through 64; two is labeled as On/Off but stores no separate mode.
 It generates one row per state, with State 1 marked Initial and one `Advance on`
@@ -395,7 +429,7 @@ or SVG scaling cannot leave a stale X/Y result. The single `Apply All`
 at the bottom of Button Text commits only the base/state labels and those
 focused-placement text settings; it does not apply cycle IDs, triggers, visuals,
 skin code, Button Size, or placement geometry. Changed cycle IDs must first be
-persisted with Save placement. Save placement retains the complete placement-owned
+persisted with Save Settings. Save Settings retains the complete placement-owned
 hover highlight, cycle, and text policy. `Use skin` removes the alignment override and restores the authored
 alignment. There are no Apply Named Sections or Replace Entire Skin buttons.
 For a configured cycle, Apply All preserves the shared base Button label. Without a
@@ -407,7 +441,8 @@ sections to the isolated working copy.
 Cycle structure, triggers, state labels, and visual selections all belong to the
 focused placement because both the desired behavior and available visuals may
 differ between placements of the same Button. Save skin continues to save only
-authored visual source; it never saves or mutates the placement cycle.
+authored visual source to its portable file and library entry; it never saves or
+mutates the placement cycle.
 Changing shared skin source can affect every inheriting placement and tool-set
 child. The safe default is to fork and assign a placement override; a panel-wide or
 global change must be explicit and show its blast radius before it is applied.
@@ -500,6 +535,14 @@ Functional pointer attributes and backend execution remain immediate. A compiled
 skin ID or source-fingerprint change resets the latch so the new source can mount.
 The imported structure and visual-state source remain unchanged.
 
+Text fitting measures the injected label glyphs against the constrained core,
+not the core's complete padded or scroll box. `Shrink` is always one unbroken
+row; only `Stack whole words` and `Shrink and stack` create explicit whole-word
+line spans. Painted visual rectangles with any non-finite edge are discarded,
+and measurement normalization falls back to the core edge, so preview overflow
+cannot report `NaN`. These host rules do not rewrite skin source or alter the
+`[data-core]` hitbox.
+
 The skin compiler keeps wrappers, decorative children, shadow, glow, and visual
 overflow pointer-inert while enabling only `[data-core]`. Transparent Button
 windows map the physical cursor into the webview through the live
@@ -544,7 +587,8 @@ State 1 so controls such as Smart Axis X/Y/Z/Live begin neutral. Successful chil
 responses then reconcile the matching placements to their authoritative exact
 states. Result-mapped cycles do not advance optimistically; ordinary placement
 cycles and unmapped children keep their existing host-owned behavior. Query
-payloads never come from a placement file or skin.
+payloads never come from a Button settings file or skin; result matches remain
+placement-owned settings.
 
 Skins may define only structure and visual state sections:
 

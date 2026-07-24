@@ -10,9 +10,10 @@ const source = readFileSync(
 
 test("Skin Editor keeps source edits in an isolated working skin", () => {
   assert.match(source, /const \[workingSkin, setWorkingSkin\] = useState<ButtonSkin \| null>/);
+  assert.match(source, /const \[workingSkinFilePath, setWorkingSkinFilePath\] = useState<string \| null>/);
   assert.match(source, /setWorkingSkin\(next\)/);
   assert.doesNotMatch(source, /onSkinChange/);
-  assert.doesNotMatch(source, /onLoadSkin/);
+  assert.match(source, /onLoadSkinFile/);
 });
 
 test("Skin Editor exposes only the requested skin actions in the requested order", () => {
@@ -36,15 +37,15 @@ test("Skin Editor exposes only the requested skin actions in the requested order
 test("Load stays local and invalid working skins cannot be saved or assigned", () => {
   assert.match(
     source,
-    /const loaded = skins\.find\([\s\S]{0,180}setWorkingSkin\(cloneButtonDocument\(loaded\)\)/
+    /value\.startsWith\("saved:"\)[\s\S]{0,260}setWorkingSkin\(cloneButtonDocument\(loaded\)\)/
   );
+  assert.match(source, /value\.startsWith\("recent:"\)[\s\S]{0,300}onLoadSkinFile\(recentFile\.path, recentFile\.skinId\)/);
+  assert.match(source, /value === "browse"[\s\S]{0,120}onLoadSkinFile\(null\)/);
   assert.match(source, /const skinActionsDisabled = busy \|\| !compileResult\?\.ok/);
   assert.equal((source.match(/disabled=\{skinActionsDisabled\}/g) ?? []).length, 4);
   for (const callback of [
     "onAssignSkin",
-    "onAssignSkinToPanel",
-    "onSaveSkin",
-    "onSaveAsNewSkin"
+    "onAssignSkinToPanel"
   ]) {
     assert.match(
       source,
@@ -52,6 +53,14 @@ test("Load stays local and invalid working skins cannot be saved or assigned", (
       `${callback} must receive the isolated working skin`
     );
   }
+  assert.match(
+    source,
+    /onSaveSkin\(\s*cloneButtonDocument\(workingSkin\),\s*workingSkinFilePath\s*\)/
+  );
+  assert.match(
+    source,
+    /onSaveAsNewSkin\(cloneButtonDocument\(workingSkin\)\)/
+  );
 });
 
 test("normal WebView paste fallback applies recognized source and exposes a visible working preview", () => {

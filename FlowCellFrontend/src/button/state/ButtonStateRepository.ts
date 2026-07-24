@@ -30,6 +30,11 @@ import {
   validateButtonPlacementFile,
   type ButtonPlacementFile
 } from "./buttonPlacementFile.js";
+import {
+  validateButtonSettingsFile,
+  type ButtonSettingsFile,
+  type ButtonSettingsPlacementKind
+} from "./buttonSettingsFile.js";
 
 export interface InstalledButtonChildResult {
   slot: string;
@@ -351,6 +356,108 @@ export async function loadButtonPlacementFile(path: string): Promise<ButtonPlace
     throw new Error(validation.issues.join("\n"));
   }
   return file as ButtonPlacementFile;
+}
+
+export async function getButtonSettingsDirectory(
+  placementKind: ButtonSettingsPlacementKind
+): Promise<string> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Button settings directories are only available from the FlowCell desktop host.");
+  }
+  return invoke<string>("get_button_settings_directory", { placementKind });
+}
+
+export async function saveButtonSettingsFile(
+  path: string,
+  file: ButtonSettingsFile
+): Promise<string> {
+  const validation = validateButtonSettingsFile(file);
+  if (!validation.valid) throw new Error(validation.issues.join("\n"));
+  if (!isTauriWindowHost()) {
+    throw new Error("Button settings files can only be saved from the FlowCell desktop host.");
+  }
+  return invoke<string>("save_button_settings_file", { path, file });
+}
+
+export async function loadButtonSettingsFile(path: string): Promise<ButtonSettingsFile> {
+  if (!path.trim()) throw new Error("Button settings load path cannot be empty.");
+  if (!isTauriWindowHost()) {
+    throw new Error("Button settings files can only be loaded from the FlowCell desktop host.");
+  }
+  const file = await invoke<unknown>("load_button_settings_file", { path });
+  const validation = validateButtonSettingsFile(file);
+  if (!validation.valid) throw new Error(validation.issues.join("\n"));
+  return file as ButtonSettingsFile;
+}
+
+export async function initializeButtonSettingsDefault(
+  placementKind: ButtonSettingsPlacementKind,
+  surfaceId: string,
+  file: ButtonSettingsFile,
+  expectedRevision: number
+): Promise<string> {
+  const validation = validateButtonSettingsFile(file);
+  if (!validation.valid) throw new Error(validation.issues.join("\n"));
+  if (!isTauriWindowHost()) {
+    throw new Error("Button settings defaults are only available from the FlowCell desktop host.");
+  }
+  return invoke<string>("initialize_button_settings_default", {
+    placementKind,
+    surfaceId,
+    file,
+    expectedRevision
+  });
+}
+
+export async function loadButtonSettingsDefault(
+  placementKind: ButtonSettingsPlacementKind,
+  surfaceId: string
+): Promise<ButtonSettingsFile | null> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Button settings defaults are only available from the FlowCell desktop host.");
+  }
+  const file = await invoke<unknown>("load_button_settings_default", {
+    placementKind,
+    surfaceId
+  });
+  if (file === null || file === undefined) return null;
+  const validation = validateButtonSettingsFile(file);
+  if (!validation.valid) throw new Error(validation.issues.join("\n"));
+  return file as ButtonSettingsFile;
+}
+
+export async function updateButtonSettingsDefault(
+  placementKind: ButtonSettingsPlacementKind,
+  surfaceId: string,
+  file: ButtonSettingsFile,
+  expectedRevision: number
+): Promise<string> {
+  const validation = validateButtonSettingsFile(file);
+  if (!validation.valid) throw new Error(validation.issues.join("\n"));
+  if (!isTauriWindowHost()) {
+    throw new Error("Button settings defaults are only available from the FlowCell desktop host.");
+  }
+  return invoke<string>("update_button_settings_default", {
+    placementKind,
+    surfaceId,
+    file,
+    expectedRevision
+  });
+}
+
+export async function getButtonSkinDirectory(): Promise<string> {
+  if (!isTauriWindowHost()) {
+    throw new Error("The Button skin directory is only available from the FlowCell desktop host.");
+  }
+  return invoke<string>("get_button_skin_directory");
+}
+
+export async function loadButtonSkinFile(path: string): Promise<string> {
+  if (!path.trim()) throw new Error("Button skin load path cannot be empty.");
+  if (!isTauriWindowHost()) {
+    throw new Error("Button skin files can only be loaded from the FlowCell desktop host.");
+  }
+  return invoke<string>("load_button_skin_file", { path });
 }
 
 export async function saveButtonSkinFile(path: string, source: string): Promise<string> {

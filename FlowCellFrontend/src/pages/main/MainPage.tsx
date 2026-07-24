@@ -64,6 +64,7 @@ import {
   reloadCurrentHostWindow
 } from "../../lib/coreWindows";
 import {
+  buildButtonPopoutWindowLabel,
   closeButtonFanWindow,
   closeButtonPopoutWindow,
   openButtonEditorWindow,
@@ -74,6 +75,8 @@ import {
 import { isUsableButtonWindowBounds } from "../../button/windows/buttonWindowGeometry";
 import {
   bootstrapButtonStateDocument,
+  getButtonSettingsDirectory,
+  loadButtonSettingsFile,
   loadButtonStateDocument,
   saveButtonStateDocument
 } from "../../button/state/ButtonStateRepository";
@@ -83,14 +86,19 @@ import {
 } from "../../button/state/installedPageLifecycle";
 import {
   publishButtonCommit,
+  publishButtonDraftToWindow,
+  registerButtonDraftResponder,
+  subscribeButtonDrafts,
   subscribeButtonCommits
 } from "../../button/state/ButtonDraftBus";
 import { cloneButtonDocument } from "../../button/state/buttonDefaults";
 import {
   ensureFanSetup,
-  ensureRegularPopout,
   removeOwnedButtonGraph
 } from "../../button/state/buttonDocumentOperations";
+import {
+  buildTransientButtonPopoutSettingsDocument
+} from "../../button/state/buttonSettingsFile";
 import { resolvePanelOwnerMainPlacement } from "../../button/state/panelOwnerButtonOperations";
 import {
   removePanelButtonDocumentScope,
@@ -124,6 +132,7 @@ import {
   subscribeMotionSettings,
   type MotionSettings
 } from "../../lib/motionSettings";
+import { showOpenFileDialog } from "../../lib/tauri";
 import mainBackground from "../../assets/backgrounds/main-background.jpeg";
 import type { FlowCellBounds, LayoutSnapshot, LayoutSnapshotWindow } from "../../types";
 import {
@@ -158,10 +167,70 @@ const BUTTON_CONTEXT_MENU_WIDTH = 168;
 const BUTTON_CONTEXT_MENU_HEIGHT = 156;
 const BUTTON_CONTEXT_MENU_MARGIN = 8;
 const BUTTON_STATE_MUTATION_ATTEMPTS = 3;
+const MAIN_LAST_POP_SETTINGS_STORAGE_KEY = "flowcell.main.last-pop-settings.v1";
 // Version 7 marks bounds stored in physical desktop pixels, captured exactly
 // as the window sits on its monitor and restored verbatim (position first,
 // then size — see applyWindowBounds / windowing's applyWindowPlacement).
 const LAYOUT_SNAPSHOT_VERSION = 8;
+
+interface MainLastPopChoice {
+  path: string;
+  choiceId: string;
+}
+
+interface MainPopDraftSession {
+  document: ButtonStateDocument;
+  cleanups: Array<() => void>;
+  windowCleanupRegistered: boolean;
+}
+
+function stableMainPopChoiceId(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function readMainLastPopChoices(): Record<string, MainLastPopChoice> {
+  try {
+    const raw = localStorage.getItem(MAIN_LAST_POP_SETTINGS_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return Object.fromEntries(
+      Object.entries(parsed)
+        .filter((entry): entry is [string, { path: string; choiceId: string }] => {
+          const value = entry[1];
+          return Boolean(
+            value &&
+            typeof value === "object" &&
+            !Array.isArray(value) &&
+            typeof (value as { path?: unknown }).path === "string" &&
+            Boolean((value as { path: string }).path.trim()) &&
+            typeof (value as { choiceId?: unknown }).choiceId === "string" &&
+            Boolean((value as { choiceId: string }).choiceId.trim())
+          );
+        })
+        .map(([key, value]) => [
+          key,
+          { path: value.path.trim(), choiceId: value.choiceId.trim() }
+        ])
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeMainLastPopChoice(
+  panelOwnerButtonId: string,
+  choice: MainLastPopChoice
+): void {
+  const choices = readMainLastPopChoices();
+  choices[panelOwnerButtonId] = choice;
+  localStorage.setItem(MAIN_LAST_POP_SETTINGS_STORAGE_KEY, JSON.stringify(choices));
+}
 
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -682,10 +751,18 @@ export default function MainPage() {
   const [buttonDocument, setButtonDocument] = useState<ButtonStateDocument | null>(null);
   const buttonDocumentRef = useRef<ButtonStateDocument | null>(null);
   const previousButtonDocumentRef = useRef<ButtonStateDocument | null>(null);
+  const mainPopDraftSessionsRef = useRef<Map<string, MainPopDraftSession>>(new Map());
   const selectedProgramNameRef = useRef<string | null>(selectedProgramName);
   const selectedPanelNameRef = useRef<string | null>(selectedPanelName);
   selectedProgramNameRef.current = selectedProgramName;
   selectedPanelNameRef.current = selectedPanelName;
+
+  useEffect(() => () => {
+    for (const session of mainPopDraftSessionsRef.current.values()) {
+      session.cleanups.forEach((cleanup) => cleanup());
+    }
+    mainPopDraftSessionsRef.current.clear();
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -1290,15 +1367,7 @@ export default function MainPage() {
       resolvedPanelScripts.filter((record) => selectedPanelScriptFileNameSet.has(record.fileName)),
     [resolvedPanelScripts, selectedPanelScriptFileNameSet]
   );
-  const selectedToolSetRecords = useMemo(
-    () => selectedPanelScriptRecords.filter((record) => isToolSetRecord(record)),
-    [selectedPanelScriptRecords]
-  );
-  const selectedRegularPanelScriptRecords = useMemo(
-    () => selectedPanelScriptRecords.filter((record) => !isToolSetRecord(record)),
-    [selectedPanelScriptRecords]
-  );
-  const popSelectionDisabled = selectedPanelScriptRecords.length === 0;
+  const popControlsDisabled = !selectedProgramName || !selectedPanelName;
   const fanMenuDisabled = !selectedProgramName || !selectedPanelName;
   const fanOptionsDisabled = !selectedProgramName || !selectedPanelName;
   const orderButtonDisabled =
@@ -1373,7 +1442,7 @@ export default function MainPage() {
           selectAllDisabled: toggleAllPanelScriptsDisabled,
           allSelectableScriptsSelected: allSelectablePanelScriptsSelected,
           orderDisabled: orderButtonDisabled,
-          popDisabled: popSelectionDisabled,
+          popDisabled: popControlsDisabled,
           fanDisabled: fanMenuDisabled,
           fanOptionsDisabled
         }
@@ -1386,7 +1455,7 @@ export default function MainPage() {
       fanMenuDisabled,
       orderButtonDisabled,
       panelRailButtons,
-      popSelectionDisabled,
+      popControlsDisabled,
       programRailButtons,
       selectedPanelName,
       selectedProgramName,
@@ -2654,64 +2723,165 @@ export default function MainPage() {
     }
   };
 
-  const handleOpenSelectedScriptPopout = async () => {
-    if (!selectedProgramName || !selectedPanelName || popSelectionDisabled) {
-      return;
+  const openMainPopChoice = async (
+    choice: MainLastPopChoice,
+    sourceDocument?: ButtonStateDocument,
+    sourcePanelOwnerButtonId?: string
+  ) => {
+    if (!selectedProgramName || !selectedPanelName) {
+      throw new Error("Select a program and panel before opening a Pop-out.");
+    }
+    const canonical = sourceDocument ?? await loadButtonStateDocument();
+    const panelOwnerPlacement = resolvePanelOwnerMainPlacement(
+      canonical,
+      selectedProgramName,
+      selectedPanelName
+    );
+    const panelOwnerButtonId = sourcePanelOwnerButtonId ?? panelOwnerPlacement?.buttonId;
+    if (!panelOwnerButtonId) {
+      throw new Error("The selected panel has no canonical panel-owner Button.");
+    }
+    const settingsFile = await loadButtonSettingsFile(choice.path);
+    const transient = buildTransientButtonPopoutSettingsDocument(
+      canonical,
+      settingsFile,
+      {
+        programName: selectedProgramName,
+        panelName: selectedPanelName
+      },
+      choice.choiceId
+    );
+    const sessionId = `main-open-pop:${panelOwnerButtonId}:${choice.choiceId}`;
+    let session = mainPopDraftSessionsRef.current.get(sessionId);
+    const createdSession = !session;
+    if (!session) {
+      session = {
+        document: transient.document,
+        cleanups: [],
+        windowCleanupRegistered: false
+      };
+      mainPopDraftSessionsRef.current.set(sessionId, session);
+      try {
+        const [stopResponding, stopListening] = await Promise.all([
+          registerButtonDraftResponder(sessionId, () => session!.document),
+          subscribeButtonDrafts(sessionId, (document) => {
+            if (document.popoutUnits[transient.popoutUnitId]) {
+              session!.document = document;
+            }
+          })
+        ]);
+        session.cleanups.push(stopResponding, stopListening);
+      } catch (error) {
+        session.cleanups.forEach((cleanup) => cleanup());
+        mainPopDraftSessionsRef.current.delete(sessionId);
+        throw error;
+      }
+    } else {
+      session.document = transient.document;
     }
 
+    const windowLabel = buildButtonPopoutWindowLabel({
+      popoutUnitId: transient.popoutUnitId
+    });
+    const disposeSession = () => {
+      const active = mainPopDraftSessionsRef.current.get(sessionId);
+      if (active !== session) return;
+      mainPopDraftSessionsRef.current.delete(sessionId);
+      active.cleanups.splice(0).forEach((cleanup) => cleanup());
+    };
     try {
-      if (selectedToolSetRecords.length > 0) {
-        await Promise.all(
-          selectedToolSetRecords.map((record) => handleOpenToolSet(record, "open"))
-        );
-      }
-      if (selectedRegularPanelScriptRecords.length === 0) {
-        return;
-      }
-      const currentDocument = buttonDocument ?? await loadButtonStateDocument();
-      const draft = cloneButtonDocument(currentDocument);
-      const selectedButtons = selectedRegularPanelScriptRecords.map((record) => {
-        const button = canonicalButtonsBySource.get(
-          canonicalButtonSourceKey(selectedProgramName, selectedPanelName, record.fileName)
-        ) ?? Object.values(draft.buttons).find((candidate) => {
-          const identity = candidate.sourceIdentity;
-          return Boolean(identity && canonicalButtonSourceKey(
-            identity.displayProgramName,
-            identity.displayPanelName,
-            identity.displayFileName
-          ) === canonicalButtonSourceKey(selectedProgramName, selectedPanelName, record.fileName));
-        });
-        if (!button) throw new Error(`Canonical Button was not found for '${record.label}'.`);
-        return button;
-      });
-      const unit = ensureRegularPopout(draft, selectedButtons);
-      const document = currentDocument.popoutUnits[unit.id]
-        ? currentDocument
-        : await saveButtonStateDocument(draft, currentDocument.revision);
-      if (document !== currentDocument) {
-        acceptButtonDocument(document);
-        await publishButtonCommit(document);
-      }
-      const storedUnit = document.popoutUnits[unit.id];
       await openButtonPopoutWindow({
         programName: selectedProgramName,
         panelName: selectedPanelName,
-        popoutUnitId: storedUnit.id,
-        bounds: storedUnit.desktopBounds
-          ? {
-              Left: storedUnit.desktopBounds.left,
-              Top: storedUnit.desktopBounds.top,
-              Width: storedUnit.desktopBounds.width,
-              Height: storedUnit.desktopBounds.height
-            }
-          : undefined
+        popoutUnitId: transient.popoutUnitId,
+        displayMode: "expanded",
+        draftSessionId: sessionId,
+        registerInLayout: false
       });
+      if (!session.windowCleanupRegistered) {
+        const target = await WebviewWindow.getByLabel(windowLabel);
+        if (target) {
+          const stopDestroyed = await target.once("tauri://destroyed", disposeSession);
+          session.cleanups.push(stopDestroyed);
+          session.windowCleanupRegistered = true;
+        }
+      }
+      await publishButtonDraftToWindow(sessionId, windowLabel, session.document);
+    } catch (error) {
+      if (createdSession) disposeSession();
+      throw error;
+    }
+    try {
+      writeMainLastPopChoice(panelOwnerButtonId, choice);
+    } catch (error) {
+      console.error("The transient Pop opened, but its last-used file could not be remembered.", error);
+      window.alert(
+        `The Pop window opened, but FlowCell could not remember it for the Pop button.\n\n` +
+        formatErrorMessage(error)
+      );
+    }
+  };
+
+  const handleOpenLastPanelPop = async () => {
+    if (!selectedProgramName || !selectedPanelName) return;
+    try {
+      const canonical = await loadButtonStateDocument();
+      const panelOwnerPlacement = resolvePanelOwnerMainPlacement(
+        canonical,
+        selectedProgramName,
+        selectedPanelName
+      );
+      if (!panelOwnerPlacement) {
+        throw new Error("The selected panel has no canonical panel-owner Button.");
+      }
+      const choice = readMainLastPopChoices()[panelOwnerPlacement.buttonId];
+      if (!choice) {
+        throw new Error("This panel has no last-used Pop-out. Use Open Pop first.");
+      }
+      await openMainPopChoice(choice, canonical, panelOwnerPlacement.buttonId);
     } catch (error) {
       console.error(
-        `Failed to open grouped script popout for ${selectedProgramName}/${selectedPanelName}.`,
+        `Failed to open the last Pop-out for ${selectedProgramName}/${selectedPanelName}.`,
         error
       );
       window.alert(`Pop window could not be opened.\n\n${formatErrorMessage(error)}`);
+    }
+  };
+
+  const handleChoosePanelPop = async () => {
+    if (!selectedProgramName || !selectedPanelName) return;
+    try {
+      const settingsDirectory = await getButtonSettingsDirectory("pop-out");
+      const selectedPath = (await showOpenFileDialog({
+        title: `Open Pop for ${selectedProgramName} / ${selectedPanelName}`,
+        filter: "FlowCell Button Settings (*.flowcell-button-settings.json)|*.flowcell-button-settings.json|JSON Files (*.json)|*.json",
+        initialDirectory: settingsDirectory,
+        multiselect: false
+      }))[0]?.trim();
+      if (!selectedPath) return;
+      const canonical = await loadButtonStateDocument();
+      const panelOwnerPlacement = resolvePanelOwnerMainPlacement(
+        canonical,
+        selectedProgramName,
+        selectedPanelName
+      );
+      if (!panelOwnerPlacement) {
+        throw new Error("The selected panel has no canonical panel-owner Button.");
+      }
+      await openMainPopChoice(
+        {
+          path: selectedPath,
+          choiceId: stableMainPopChoiceId(`${panelOwnerPlacement.buttonId}\u0000${selectedPath}`)
+        },
+        canonical,
+        panelOwnerPlacement.buttonId
+      );
+    } catch (error) {
+      console.error(
+        `Failed to choose a Pop-out for ${selectedProgramName}/${selectedPanelName}.`,
+        error
+      );
+      window.alert(`Open Pop could not open the selected file.\n\n${formatErrorMessage(error)}`);
     }
   };
 
@@ -3025,7 +3195,12 @@ export default function MainPage() {
     }
 
     if (button.actionId === "pop-panel-script") {
-      await handleOpenSelectedScriptPopout();
+      await handleOpenLastPanelPop();
+      return;
+    }
+
+    if (button.actionId === "open-panel-pop-file") {
+      await handleChoosePanelPop();
       return;
     }
 

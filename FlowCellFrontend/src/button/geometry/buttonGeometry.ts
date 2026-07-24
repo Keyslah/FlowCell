@@ -663,14 +663,40 @@ export function normalizeButtonScreenMeasurement(args: {
   const scaleY = Number.isFinite(args.hostScale.scaleY) && args.hostScale.scaleY > 0
     ? args.hostScale.scaleY
     : 1;
+  const coreLeft = Number.isFinite(args.coreRect.left) ? args.coreRect.left : 0;
+  const coreTop = Number.isFinite(args.coreRect.top) ? args.coreRect.top : 0;
+  const coreWidth = Number.isFinite(args.coreRect.width)
+    ? Math.max(0, args.coreRect.width)
+    : 0;
+  const coreHeight = Number.isFinite(args.coreRect.height)
+    ? Math.max(0, args.coreRect.height)
+    : 0;
+  const coreRight = Number.isFinite(args.coreRect.right)
+    ? args.coreRect.right
+    : coreLeft + coreWidth;
+  const coreBottom = Number.isFinite(args.coreRect.bottom)
+    ? args.coreRect.bottom
+    : coreTop + coreHeight;
+  const visualLeft = Number.isFinite(args.visualRect.left)
+    ? args.visualRect.left
+    : coreLeft;
+  const visualTop = Number.isFinite(args.visualRect.top)
+    ? args.visualRect.top
+    : coreTop;
+  const visualRight = Number.isFinite(args.visualRect.right)
+    ? args.visualRect.right
+    : coreRight;
+  const visualBottom = Number.isFinite(args.visualRect.bottom)
+    ? args.visualRect.bottom
+    : coreBottom;
   return {
-    width: args.coreRect.width / scaleX,
-    height: args.coreRect.height / scaleY,
+    width: coreWidth / scaleX,
+    height: coreHeight / scaleY,
     visualOverflow: {
-      top: Math.max(0, args.coreRect.top - args.visualRect.top) / scaleY,
-      right: Math.max(0, args.visualRect.right - args.coreRect.right) / scaleX,
-      bottom: Math.max(0, args.visualRect.bottom - args.coreRect.bottom) / scaleY,
-      left: Math.max(0, args.coreRect.left - args.visualRect.left) / scaleX
+      top: Math.max(0, coreTop - visualTop) / scaleY,
+      right: Math.max(0, visualRight - coreRight) / scaleX,
+      bottom: Math.max(0, visualBottom - coreBottom) / scaleY,
+      left: Math.max(0, coreLeft - visualLeft) / scaleX
     }
   };
 }

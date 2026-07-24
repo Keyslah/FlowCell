@@ -5,6 +5,7 @@ import test from "node:test";
 
 const frontendRoot = join(import.meta.dirname, "..");
 const editorRoot = join(frontendRoot, "src", "button", "editor");
+const nativeRoot = join(frontendRoot, "src-tauri", "src");
 
 function readEditorFile(fileName) {
   return readFileSync(join(editorRoot, fileName), "utf8");
@@ -41,48 +42,136 @@ test("Skin Editor keeps automatic paste handling without removed or unrequested 
   assert.match(skinEditor, /setWorkingSkin\(next\);\s*setPaste\(""\);\s*setUpdatedSections/);
 });
 
-test("Save placement opens a named arrangement-file dialog and uses scoped persistence", () => {
+test("Save Settings uses the selected placement type folder and complete scoped persistence", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
-  assert.match(editor, /showSaveFileDialog\(\{[\s\S]{0,260}Save Button Placement/);
-  assert.match(editor, /defaultFileName:\s*defaultButtonPlacementFileName\(\)/);
-  assert.match(editor, /const buttonEditorDirectory = await getButtonEditorDirectory\(\)/);
-  assert.match(editor, /Save Button Placement[\s\S]{0,420}initialDirectory:\s*buttonEditorDirectory/);
-  assert.match(editor, /const savePlacement = async \(\) => \{\s*if \(busyRef\.current\) return;\s*setBusy\(true\);/);
-  assert.match(editor, /const placementDraft = cloneButtonDocument\(store\.current\(\)\)/);
+  assert.match(editor, /showSaveFileDialog\(\{[\s\S]{0,260}Save \$\{placementLabel\} Settings/);
+  assert.match(editor, /defaultFileName:\s*defaultButtonSettingsFileName\(placementKind\)/);
+  assert.match(editor, /getButtonSettingsDirectory\(placementKind\)/);
+  assert.match(editor, /initialDirectory:\s*settingsDirectory/);
+  assert.match(editor, /const saveSettings = async \(\) => \{\s*if \(busyRef\.current\) return;\s*setBusy\(true\);/);
+  assert.match(editor, /const settingsDraft = cloneButtonDocument\(store\.current\(\)\)/);
   assert.match(editor, /const editorBaseline = cloneButtonDocument\(store\.committed\)/);
-  assert.match(editor, /buildButtonPlacementFile\(placementDraft, selectedSurfaceId/);
-  assert.match(editor, /buildButtonPlacementScopedDocument\(\s*committedDocument,\s*placementDraft,[\s\S]{0,120}editorBaseline/);
+  assert.match(editor, /buildButtonSettingsScopedDocument\(\s*committedDocument,\s*settingsDraft,[\s\S]{0,180}editorBaseline/);
   assert.match(editor, /for \(let attempt = 0; attempt < 3; attempt \+= 1\)/);
   assert.match(editor, /committedDocument = await loadButtonStateDocument\(\)/);
-  assert.match(editor, /saveButtonPlacementFile\(targetPath, placementFile\)/);
+  assert.match(editor, /const committedSettingsFile = buildButtonSettingsFile\(saved, selectedSurfaceId/);
+  assert.match(editor, /saveButtonSettingsFile\(targetPath, committedSettingsFile\)/);
+  assert.ok(
+    editor.indexOf("saved = await saveButtonStateDocument") <
+      editor.indexOf("const committedSettingsFile = buildButtonSettingsFile(saved")
+  );
+  assert.ok(
+    editor.indexOf("const committedSettingsFile = buildButtonSettingsFile(saved") <
+      editor.indexOf("saveButtonSettingsFile(targetPath, committedSettingsFile)")
+  );
   assert.doesNotMatch(editor, /(?:read|write)LastLayoutDirectory/);
-  assert.match(editor, /onClick=\{\(\) => void savePlacement\(\)\}[\s\S]{0,80}Save placement/);
+  assert.match(editor, /onClick=\{\(\) => void saveSettings\(\)\}[\s\S]{0,100}Save \{settingsPlacementLabel\} Settings/);
 });
 
-test("Load placement sits below Save and stages a validated file from the Button editor folder", () => {
+test("all scoped Editor commits and settings defaults rebase boundedly on revision conflicts", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const scopedCommit = editor.match(
+    /const commitScopedDocument = async \([\s\S]*?\n  const saveSettings = async/
+  );
+  assert.ok(scopedCommit, "scoped commit helper must exist");
+  assert.match(scopedCommit[0], /buildNext: \(committed: ButtonStateDocument\)/);
+  assert.match(scopedCommit[0], /for \(let attempt = 0; attempt < 3; attempt \+= 1\)/);
+  assert.match(scopedCommit[0], /details\.includes\("Button state changed before Save\."\)/);
+  assert.match(scopedCommit[0], /committed = await loadButtonStateDocument\(\)/);
+  assert.match(editor, /\(committed\) => buildButtonSkinScopedDocument\(committed, frozenDraft, scope\)/);
+  assert.match(editor, /\(latest\) => buildButtonTextScopedDocument\(latest, frozenDraft, scope\)/);
+  assert.match(editor, /isButtonSettingsDefaultRevisionConflict/);
+  assert.match(
+    editor,
+    /Button state changed before the settings default was saved\./
+  );
+  assert.match(editor, /const settingsDraft = cloneButtonDocument\(store\.current\(\)\);[\s\S]{0,160}const editorBaseline = cloneButtonDocument\(store\.committed\);/);
+});
+
+test("Load Settings and placement defaults use the selected type and required button order", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   assert.match(
     editor,
-    /const loadPlacement = async \(\) => \{\s*if \(busyRef\.current\) return;\s*setBusy\(true\);/
+    /const loadSettings = async \(\) => \{\s*if \(busyRef\.current\) return;\s*setBusy\(true\);/
   );
-  assert.match(editor, /showOpenFileDialog\(\{[\s\S]{0,180}title: "Load Button Placement"/);
-  assert.match(editor, /Load Button Placement[\s\S]{0,420}initialDirectory:\s*buttonEditorDirectory/);
-  assert.match(editor, /Load Button Placement[\s\S]{0,480}multiselect:\s*false/);
-  assert.match(editor, /const placementFile = await loadButtonPlacementFile\(selectedPath\)/);
-  assert.match(editor, /applyButtonPlacementFile\(\s*store\.current\(\),\s*selectedSurfaceId,\s*placementFile\s*\)/);
-  assert.match(editor, /store\.transact\(\(\) => loadedDocument, \{ label: "Load Button placement" \}\)/);
+  assert.match(editor, /showOpenFileDialog\(\{[\s\S]{0,180}title: `Load \$\{settingsPlacementLabel\} Settings`/);
+  assert.match(editor, /initialDirectory:\s*settingsDirectory/);
+  assert.match(editor, /multiselect:\s*false/);
+  assert.match(editor, /const settingsFile = await loadButtonSettingsFile\(selectedPath\)/);
+  assert.match(editor, /applyButtonSettingsFile\(\s*store\.current\(\),\s*selectedSurfaceId/);
+  assert.match(editor, /initializeButtonSettingsDefault\(/);
+  assert.match(editor, /loadButtonSettingsDefault\(/);
+  assert.match(editor, /updateButtonSettingsDefault\(/);
   assert.doesNotMatch(editor, /getParentDirectory/);
-  assert.match(editor, /Use Save placement to commit it\./);
-  assert.match(
-    editor,
-    /onClick=\{\(\) => void savePlacement\(\)\}[\s\S]{0,180}Save placement[\s\S]{0,260}onClick=\{\(\) => void loadPlacement\(\)\}[\s\S]{0,80}Load placement/
+  const saveIndex = editor.indexOf("Save {settingsPlacementLabel} Settings");
+  const loadIndex = editor.indexOf("Load {settingsPlacementLabel} Settings");
+  const loadDefaultIndex = editor.indexOf("Load {settingsPlacementLabel} Default");
+  const updateDefaultIndex = editor.indexOf("Update {settingsPlacementLabel} Default");
+  assert.ok(saveIndex >= 0);
+  assert.ok(saveIndex < loadIndex);
+  assert.ok(loadIndex < loadDefaultIndex);
+  assert.ok(loadDefaultIndex < updateDefaultIndex);
+  assert.doesNotMatch(editor, />\s*Save placement\s*</);
+  assert.doesNotMatch(editor, />\s*Load placement\s*</);
+  assert.doesNotMatch(editor, /settingsPlacementLabel[\s\S]{0,100}:\s*"Placement"/);
+  assert.match(editor, /settingsPlacementKind \?\? "main-page"/);
+});
+
+test("Main Pop and Open Pop use only transient file-backed draft windows", () => {
+  const main = readFileSync(
+    join(frontendRoot, "src", "pages", "main", "MainPage.tsx"),
+    "utf8"
   );
+  const layout = readFileSync(
+    join(frontendRoot, "src", "pages", "main", "mainLayout.ts"),
+    "utf8"
+  );
+  const settings = readFileSync(
+    join(frontendRoot, "src", "button", "state", "buttonSettingsFile.ts"),
+    "utf8"
+  );
+  const windows = readFileSync(
+    join(frontendRoot, "src", "button", "windows", "buttonWindows.ts"),
+    "utf8"
+  );
+  const mainPopBlock = main.match(
+    /const openMainPopChoice = async \([\s\S]*?\n  const handleOpenGenericFanSetup = async/
+  );
+  assert.ok(mainPopBlock, "Main transient Pop handlers must exist");
+  assert.match(mainPopBlock[0], /getButtonSettingsDirectory\("pop-out"\)/);
+  assert.match(mainPopBlock[0], /showOpenFileDialog\(\{/);
+  assert.match(mainPopBlock[0], /buildTransientButtonPopoutSettingsDocument/);
+  assert.match(mainPopBlock[0], /registerButtonDraftResponder/);
+  assert.match(mainPopBlock[0], /publishButtonDraftToWindow/);
+  assert.match(mainPopBlock[0], /registerInLayout:\s*false/);
+  assert.match(mainPopBlock[0], /writeMainLastPopChoice/);
+  assert.match(mainPopBlock[0], /Use Open Pop first\./);
+  assert.doesNotMatch(mainPopBlock[0], /saveButtonStateDocument|publishButtonCommit|applyButtonSettingsFile|ensureRegularPopout|acceptButtonDocument/);
+
+  const transientBuilder = settings.slice(
+    settings.indexOf("export function buildTransientButtonPopoutSettingsDocument")
+  );
+  assert.doesNotMatch(transientBuilder, /applyButtonSettingsFile\(/);
+  assert.match(transientBuilder, /open-pop-surface-/);
+  assert.match(transientBuilder, /open-pop-unit-/);
+
+  assert.match(
+    layout,
+    /id:\s*"buttons-open-pop"[\s\S]{0,180}stepX \* 2[\s\S]{0,100}fanControlsY[\s\S]{0,260}label:\s*"Open Pop"[\s\S]{0,180}actionId:\s*"open-panel-pop-file"/
+  );
+  assert.match(
+    layout,
+    /id:\s*"buttons-pop-selection"[\s\S]{0,180}stepX \* 3[\s\S]{0,100}fanControlsY[\s\S]{0,260}label:\s*"Pop"[\s\S]{0,180}last-used Pop-out file/
+  );
+  assert.ok(layout.indexOf('label: "Open Pop"') < layout.indexOf('label: "Pop"'));
+  assert.match(windows, /registerInLayout\?: boolean/);
+  assert.match(windows, /if \(args\.registerInLayout !== false\) \{\s*registerLayoutWindow/);
 });
 
 test("Skin assignment is explicit and selected-only unless Panel assignment is chosen", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   assert.match(editor, /onAssignSkin=\{\(skin\) => \{[\s\S]{0,260}\[selectedPlacement\.id\]/);
-  assert.match(editor, /onAssignSkinToPanel=\{\(skin\) => \{[\s\S]{0,340}resolveButtonEditorPanelSkinTargetPlacementIds/);
+  assert.match(editor, /onAssignSkinToPanel=\{\(skin\) => \{[\s\S]{0,420}resolveButtonEditorSurfaceSkinTargetPlacementIds/);
   assert.doesNotMatch(editor, /onSkinChange=/);
   assert.doesNotMatch(editor, /onLoadSkin=/);
 });
@@ -148,7 +237,7 @@ test("Button Text uses real cycle states and falls back to the base label when n
   assert.doesNotMatch(textSection[0], /materializeActivationBehavior|preview-only|Label condition/);
 });
 
-test("Button Text previews draft cycle labels but waits for Save placement before Apply All", () => {
+test("Button Text previews draft cycle labels but waits for Save Settings before Apply All", () => {
   const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const stateStructure = readEditorFile("buttonActivationStateStructure.ts");
@@ -171,7 +260,7 @@ test("Button Text previews draft cycle labels but waits for Save placement befor
 
   assert.match(skinEditor, /stateStructureApplied: boolean;/);
   assert.match(skinEditor, /const stateTextBlocked = !stateStructureApplied;/);
-  assert.match(textSection[0], /Save placement first because the cycle state structure changed/);
+  assert.match(textSection[0], /Save Settings first because the cycle state structure changed/);
   assert.match(textSection[0], /value=\{selectedState\?\.label \?\? ""\}[\s\S]{0,180}disabled=\{busy \|\| !selectedState\}/);
   assert.match(
     textSection[0],
@@ -203,8 +292,42 @@ test("Save as new skin opens a native file picker and writes canonical portable 
   assert.match(editor, /const saveWorkingSkinAsNew = async/);
   assert.match(editor, /showSaveFileDialog\(\{[\s\S]{0,260}Save Button Skin As/);
   assert.match(editor, /defaultFileName:\s*defaultButtonSkinFileName\(workingSkin\.name\)/);
+  assert.match(editor, /initialDirectory:\s*skinDirectory/);
   assert.match(editor, /saveButtonSkinFile\([\s\S]{0,160}serializeButtonSkinSections\(workingSkin\)/);
   assert.match(editor, /name:\s*buttonSkinNameFromPath\(writtenPath\)/);
+});
+
+test("Skin file loading prioritizes recents, ends with Browse, and shares one default folder", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
+  const repository = readFileSync(
+    join(frontendRoot, "src", "button", "state", "ButtonStateRepository.ts"),
+    "utf8"
+  );
+  const nativeState = readFileSync(join(nativeRoot, "button_state.rs"), "utf8");
+  const nativeMain = readFileSync(join(nativeRoot, "main.rs"), "utf8");
+
+  const recentIndex = skinEditor.indexOf('<optgroup label="Recent files">');
+  const savedIndex = skinEditor.indexOf('<optgroup label="Saved skins">');
+  const browseIndex = skinEditor.indexOf('<option value="browse">Browse...</option>');
+  assert.ok(recentIndex >= 0);
+  assert.ok(recentIndex < savedIndex);
+  assert.ok(savedIndex < browseIndex);
+  assert.match(skinEditor, /recentSkinFileLabel\(entry\.path\)/);
+  assert.match(skinEditor, /onLoadSkinFile\(recentFile\.path, recentFile\.skinId\)/);
+  assert.match(skinEditor, /onLoadSkinFile\(null\)/);
+
+  assert.match(editor, /const skinDirectory = await getButtonSkinDirectory\(\)/);
+  assert.match(editor, /title:\s*"Load Button Skin"[\s\S]{0,240}initialDirectory:\s*skinDirectory/);
+  assert.match(editor, /const targetPath = currentPath \?\? await chooseWorkingSkinSavePath\(workingSkin\)/);
+  assert.match(editor, /const targetPath = await chooseWorkingSkinSavePath\(workingSkin\)/);
+  assert.match(editor, /findButtonSkinRecentFileByPath\(recentSkinFiles, selectedPath\)\?\.skinId/);
+
+  assert.match(repository, /invoke<string>\("get_button_skin_directory"\)/);
+  assert.match(repository, /invoke<string>\("load_button_skin_file", \{ path \}\)/);
+  assert.match(nativeState, /\.join\("Button editor"\)[\s\S]{0,80}\.join\("Skins"\)/);
+  assert.match(nativeMain, /button_state::get_button_skin_directory/);
+  assert.match(nativeMain, /button_state::load_button_skin_file/);
 });
 
 test("Size assignment is explicit, supports current Button or Panel scope, and stays separate from legacy uniform sizing", () => {

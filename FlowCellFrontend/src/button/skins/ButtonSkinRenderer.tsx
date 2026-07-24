@@ -18,7 +18,10 @@ import type {
 import { compileButtonSkin, type CompiledButtonSkin } from "./skinCompiler";
 import { DEFAULT_BUTTON_SKIN } from "./defaultButtonSkin";
 import { BUTTON_SKIN_LABEL_TOKEN } from "./buttonSkinFormat";
-import { computeButtonTextFitPlan } from "../text/textFit";
+import {
+  buttonTextFitAllowsMultipleLines,
+  computeButtonTextFitPlan
+} from "../text/textFit";
 import {
   normalizeButtonScreenMeasurement,
   resolveButtonRenderedCssScale,
@@ -277,6 +280,10 @@ function mountCompiledSkin(
 }
 
 type VisualRect = { left: number; top: number; right: number; bottom: number };
+
+function isFiniteVisualRect(rect: VisualRect): boolean {
+  return [rect.left, rect.top, rect.right, rect.bottom].every(Number.isFinite);
+}
 
 function splitCssList(value: string): string[] {
   const parts: string[] = [];
@@ -554,7 +561,7 @@ function readPaintedVisualRect(
   const transformChainCache = new Map<Element, ButtonTransformChain>();
   for (const element of elements) {
     const rect = element.getBoundingClientRect();
-    if (!Number.isFinite(rect.left) || !Number.isFinite(rect.top)) continue;
+    if (!isFiniteVisualRect(rect)) continue;
     const style = getComputedStyle(element);
     if (style.display === "none" || style.visibility === "hidden") continue;
     const paintScale = resolveElementPaintScale(
@@ -564,24 +571,35 @@ function readPaintedVisualRect(
       resolveTransformChain(element, transformChainCache)
     );
     rects.push(rect);
-    rects.push(...shadowVisualRects(rect, style.boxShadow, paintScale));
-    rects.push(...shadowVisualRects(rect, style.textShadow, paintScale));
+    rects.push(
+      ...shadowVisualRects(rect, style.boxShadow, paintScale).filter(isFiniteVisualRect)
+    );
+    rects.push(
+      ...shadowVisualRects(rect, style.textShadow, paintScale).filter(isFiniteVisualRect)
+    );
     if (style.filter && style.filter !== "none") {
-      rects.push(filteredVisualRect(rect, style.filter, paintScale));
+      const filteredRect = filteredVisualRect(rect, style.filter, paintScale);
+      if (isFiniteVisualRect(filteredRect)) rects.push(filteredRect);
     }
     const outlineWidth = Number.parseFloat(style.outlineWidth) || 0;
     const outlineOffset = Number.parseFloat(style.outlineOffset) || 0;
     const outline = Math.max(0, outlineWidth + outlineOffset);
     if (outline > 0) {
-      rects.push({
+      const outlineRect = {
         left: rect.left - outline * paintScale.scaleX,
         top: rect.top - outline * paintScale.scaleY,
         right: rect.right + outline * paintScale.scaleX,
         bottom: rect.bottom + outline * paintScale.scaleY
-      });
+      };
+      if (isFiniteVisualRect(outlineRect)) rects.push(outlineRect);
     }
   }
-  if (rects.length === 0) return container.getBoundingClientRect();
+  if (rects.length === 0) {
+    const fallback = container.getBoundingClientRect();
+    return isFiniteVisualRect(fallback)
+      ? fallback
+      : { left: 0, top: 0, right: 0, bottom: 0 };
+  }
   return {
     left: Math.min(...rects.map((rect) => rect.left)),
     top: Math.min(...rects.map((rect) => rect.top)),
@@ -731,6 +749,49 @@ function measureNaturalSkin(
   }
 }
 
+function readLabelTextMeasurement(
+  labelNode: HTMLElement | SVGElement
+): { width: number; height: number } {
+  const lineNodes = Array.from(
+    labelNode.querySelectorAll<HTMLElement | SVGElement>("[data-button-label-line]")
+  );
+  const targets = lineNodes.length > 0 ? lineNodes : [labelNode];
+  const rects: VisualRect[] = [];
+  for (const target of targets) {
+    try {
+      if (target.childNodes.length > 0) {
+        const range = target.ownerDocument.createRange();
+        range.selectNodeContents(target);
+        rects.push(
+          ...Array.from(range.getClientRects())
+            .filter(isFiniteVisualRect)
+            .map((rect) => ({
+              left: rect.left,
+              top: rect.top,
+              right: rect.right,
+              bottom: rect.bottom
+            }))
+        );
+      }
+    } catch {
+      // SVG text ranges are not available in every WebView build.
+    }
+    if (rects.length === 0 || lineNodes.length > 0) {
+      const fallback = target.getBoundingClientRect();
+      if (isFiniteVisualRect(fallback)) rects.push(fallback);
+    }
+  }
+  if (rects.length === 0) return { width: 0, height: 0 };
+  const left = Math.min(...rects.map((rect) => rect.left));
+  const top = Math.min(...rects.map((rect) => rect.top));
+  const right = Math.max(...rects.map((rect) => rect.right));
+  const bottom = Math.max(...rects.map((rect) => rect.bottom));
+  return {
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top)
+  };
+}
+
 function applyTextFit(
   mounted: MountedSkin,
   label: string,
@@ -742,10 +803,18 @@ function applyTextFit(
 ): boolean {
   const labelNode = mounted.labelNode;
   if (!labelNode) return false;
+  const allowsMultipleLines = buttonTextFitAllowsMultipleLines(mode);
+  if (!isSvgElement(labelNode)) {
+    // Stacking is host-planned with explicit line spans. Browser-native wrapping
+    // must never turn Shrink (or any planned line) into an extra row.
+    labelNode.style.setProperty("white-space", "nowrap", "important");
+  }
   if (!constrained) {
     applyLabelLines(
       labelNode,
-      previewStackWords ? label.trim().split(/\s+/).filter(Boolean) : [label],
+      previewStackWords && allowsMultipleLines
+        ? label.trim().split(/\s+/).filter(Boolean)
+        : [label],
       textSizeOverride
     );
     return false;
@@ -753,20 +822,23 @@ function applyTextFit(
   applyLabelLines(labelNode, [label], textSizeOverride);
   const computed = getComputedStyle(labelNode);
   const naturalFontSize = textSizeOverride ?? (Number.parseFloat(computed.fontSize) || 13);
-  const core = mounted.core as HTMLElement;
+  const coreRect = mounted.core.getBoundingClientRect();
+  const maximumWidth = Number.isFinite(coreRect.width) && coreRect.width > 0
+    ? coreRect.width
+    : Math.max(1, mounted.core.clientWidth);
+  const maximumHeight = Number.isFinite(coreRect.height) && coreRect.height > 0
+    ? coreRect.height
+    : Math.max(1, mounted.core.clientHeight);
   const plan = computeButtonTextFitPlan({
     label,
     mode,
-    maximumWidth: Math.max(1, core.clientWidth),
-    maximumHeight: Math.max(1, core.clientHeight),
+    maximumWidth,
+    maximumHeight,
     naturalFontSize,
     minimumFontSize,
     measure: (fontSize, lines) => {
       applyLabelLines(labelNode, lines, fontSize);
-      return {
-        width: Math.max(core.clientWidth, core.scrollWidth),
-        height: Math.max(core.clientHeight, core.scrollHeight)
-      };
+      return readLabelTextMeasurement(labelNode);
     }
   });
   applyLabelLines(labelNode, plan.lines, plan.fontSize);

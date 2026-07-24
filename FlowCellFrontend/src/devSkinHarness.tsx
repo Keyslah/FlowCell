@@ -64,6 +64,8 @@ function Harness() {
         <ButtonSkinEditor
           skin={skin}
           skins={[skin]}
+          recentSkinFiles={[]}
+          skinFilePath={null}
           skinContextKey="dev-harness"
           busy={false}
           placement={HARNESS_PLACEMENT}
@@ -81,8 +83,12 @@ function Harness() {
           onPlacementTextChange={() => {}}
           onAssignSkin={(next) => setSkin(next)}
           onAssignSkinToPanel={(next) => setSkin(next)}
-          onSaveSkin={(next) => setSkin(next)}
-          onSaveAsNewSkin={() => {}}
+          onLoadSkinFile={async () => null}
+          onSaveSkin={async (next) => {
+            setSkin(next);
+            return null;
+          }}
+          onSaveAsNewSkin={async () => null}
         />
       </div>
       <div>

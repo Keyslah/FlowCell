@@ -9,11 +9,13 @@ import {
   applyButtonAnimationSavedScope,
   applyButtonBehaviorSavedScope,
   applyButtonPlacementSavedScope,
+  applyButtonSettingsSavedScope,
   applyButtonSkinSavedScope,
   applyButtonTextSavedScope,
   buildButtonAnimationScopedDocument,
   buildButtonBehaviorScopedDocument,
   buildButtonPlacementScopedDocument,
+  buildButtonSettingsScopedDocument,
   buildButtonSkinScopedDocument,
   buildButtonTextScopedDocument,
   skinHasReferencesOutsidePlacements
@@ -186,6 +188,94 @@ test("placement save commits arrangement without consuming pending skin or anima
   assert.equal(draft.placements["placement-one"].allowStretching, false);
   assert.equal(draft.placements["placement-one"].highlightOnHover, true);
   assert.deepEqual(draft.placements["placement-one"].activationCycle, activationCycle);
+});
+
+test("Settings save commits complete presentation and exact surface membership without actions", () => {
+  const committed = documentWithButton();
+  const draft = structuredClone(committed);
+  const pendingSkin = {
+    ...structuredClone(draft.skins[draft.settings.defaultSkinId]),
+    id: "settings-skin",
+    name: "Settings skin",
+    hover: "filter: brightness(1.25);"
+  };
+  draft.skins[pendingSkin.id] = pendingSkin;
+  draft.buttons.one.label = "Saved text";
+  draft.buttons.one.activationBehavior = {
+    mode: "momentary",
+    states: [{ id: "ready", label: "Ready", labelOverrides: {} }]
+  };
+  draft.buttons.one.activationAnimation = {
+    presetId: "plus-rise",
+    desktopBounds: { left: 10, top: 20, width: 283, height: 295 }
+  };
+  Object.assign(draft.placements["placement-one"], {
+    skinOverrideId: pendingSkin.id,
+    textAlignment: "right",
+    textOffsetX: 5,
+    highlightOnHover: true
+  });
+
+  const saved = buildButtonSettingsScopedDocument(
+    committed,
+    draft,
+    DEFAULT_BUTTON_SURFACE_ID,
+    { programName: "Blender", panelName: "Files" }
+  );
+  assert.equal(saved.buttons.one.label, "Saved text");
+  assert.deepEqual(saved.buttons.one.activationBehavior, draft.buttons.one.activationBehavior);
+  assert.deepEqual(saved.buttons.one.activationAnimation, draft.buttons.one.activationAnimation);
+  assert.equal(saved.placements["placement-one"].textAlignment, "right");
+  assert.equal(saved.placements["placement-one"].textOffsetX, 5);
+  assert.equal(saved.placements["placement-one"].highlightOnHover, true);
+  assert.equal(saved.placements["placement-one"].skinOverrideId, pendingSkin.id);
+  assert.deepEqual(saved.skins[pendingSkin.id], pendingSkin);
+  assert.deepEqual(saved.buttons.one.executionTarget, committed.buttons.one.executionTarget);
+
+  const pending = structuredClone(draft);
+  pending.buttons.one.label = "Later unsaved text";
+  applyButtonSettingsSavedScope(
+    pending,
+    saved,
+    DEFAULT_BUTTON_SURFACE_ID,
+    { programName: "Blender", panelName: "Files" }
+  );
+  assert.equal(pending.buttons.one.label, "Saved text");
+  assert.equal(pending.placements["placement-one"].skinOverrideId, pendingSkin.id);
+});
+
+test("Settings conflict rebase preserves a concurrent deletion while adding an editor-new Button", () => {
+  const baseline = documentWithButton();
+  const draft = structuredClone(baseline);
+  const latest = structuredClone(baseline);
+  delete latest.buttons.one;
+  delete latest.placements["placement-one"];
+  latest.surfaces[DEFAULT_BUTTON_SURFACE_ID].placementIds = [];
+  latest.revision = 4;
+
+  draft.buttons.two = { ...structuredClone(draft.buttons.one), id: "two", label: "Two" };
+  draft.placements["placement-two"] = {
+    ...structuredClone(draft.placements["placement-one"]),
+    id: "placement-two",
+    buttonId: "two",
+    x: 120
+  };
+  draft.surfaces[DEFAULT_BUTTON_SURFACE_ID].placementIds.push("placement-two");
+
+  const rebased = buildButtonSettingsScopedDocument(
+    latest,
+    draft,
+    DEFAULT_BUTTON_SURFACE_ID,
+    { programName: "Blender", panelName: "Files" },
+    baseline
+  );
+  assert.equal(rebased.buttons.one, undefined);
+  assert.equal(rebased.placements["placement-one"], undefined);
+  assert.ok(rebased.buttons.two);
+  assert.ok(rebased.placements["placement-two"]);
+  assert.deepEqual(rebased.surfaces[DEFAULT_BUTTON_SURFACE_ID].placementIds, [
+    "placement-two"
+  ]);
 });
 
 test("placement conflict rebase preserves concurrent deletions and adds only editor-new Buttons", () => {

@@ -129,9 +129,9 @@ merge path. An undeclared query is a no-op.
 Opening or expanding a Button surface does not invoke this query. Placement
 cycles with placement-owned `resultMatches` start at State 1 for each newly
 opened expanded surface, and successful child responses map those
-non-executable partial-JSON objects to exact cycle states. The query never lives
-in a placement file, and neither the query nor the matches belong to skin
-source.
+non-executable partial-JSON objects to exact cycle states. The package-owned
+query never lives in a Button settings file; result matches remain
+placement-owned settings, and neither belongs to skin source.
 
 ## Layout Contract
 

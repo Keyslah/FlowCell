@@ -13,8 +13,14 @@ const SOURCE_TRANSACTION_SCHEMA_VERSION: u32 = 1;
 const BUTTON_PLACEMENT_FILE_FORMAT_V1: &str = "flowcell-button-placement/v1";
 const BUTTON_PLACEMENT_FILE_FORMAT_V2: &str = "flowcell-button-placement/v2";
 const BUTTON_PLACEMENT_FILE_EXTENSION: &str = ".flowcell-button-placement.json";
+const BUTTON_SETTINGS_FILE_FORMAT: &str = "flowcell-button-settings/v1";
+const BUTTON_SETTINGS_FILE_EXTENSION: &str = ".flowcell-button-settings.json";
+const BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME: &str = "Defaults";
+const BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION: &str = ".flowcell-button-default.json";
+const BUTTON_SETTINGS_FILE_MAX_BYTES: usize = 16 * 1024 * 1024;
 const BUTTON_PLACEMENT_CYCLE_MAX_STATES: usize = 64;
 const BUTTON_SKIN_FILE_EXTENSION: &str = ".flowcell-button-skin.txt";
+const BUTTON_SKIN_FILE_MAX_BYTES: usize = 2 * 1024 * 1024;
 const BUTTON_SKIN_HEADERS: [&str; 10] = [
     "=== structure ===",
     "=== keyframes ===",
@@ -36,6 +42,35 @@ enum ButtonPlacementSurfaceKind {
     RegularPopout,
     ToolSetPopout,
     Fan,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum ButtonSettingsPlacementKind {
+    MainPage,
+    Fan,
+    PopOut,
+}
+
+impl ButtonSettingsPlacementKind {
+    fn directory_name(self) -> &'static str {
+        match self {
+            Self::MainPage => "Main Page",
+            Self::Fan => "Fan",
+            Self::PopOut => "Pop-out",
+        }
+    }
+
+    fn accepts_surface_kind(self, kind: ButtonPlacementSurfaceKind) -> bool {
+        matches!(
+            (self, kind),
+            (Self::MainPage, ButtonPlacementSurfaceKind::Main)
+                | (Self::MainPage, ButtonPlacementSurfaceKind::Panel)
+                | (Self::Fan, ButtonPlacementSurfaceKind::Fan)
+                | (Self::PopOut, ButtonPlacementSurfaceKind::RegularPopout)
+                | (Self::PopOut, ButtonPlacementSurfaceKind::ToolSetPopout)
+        )
+    }
 }
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
@@ -142,6 +177,20 @@ pub(crate) struct ButtonPlacementFileV2 {
     placements: Vec<ButtonPlacementFileEntryV2>,
 }
 
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct ButtonSettingsFileV1 {
+    format: String,
+    saved_at: String,
+    placement_kind: ButtonSettingsPlacementKind,
+    program_name: String,
+    panel_name: String,
+    source_surface_id: String,
+    surface: Value,
+    behavior: Value,
+    entries: Vec<Value>,
+}
+
 #[derive(Clone, Debug, serde::Serialize)]
 #[serde(untagged)]
 pub(crate) enum ButtonPlacementFile {
@@ -239,6 +288,47 @@ pub(crate) fn get_button_editor_directory() -> Result<String, String> {
     Ok(directory.display().to_string())
 }
 
+fn button_skin_directory() -> Result<PathBuf, String> {
+    Ok(crate::resolve_flowcell_local_root()?
+        .join("Button editor")
+        .join("Skins"))
+}
+
+#[tauri::command]
+pub(crate) fn get_button_skin_directory() -> Result<String, String> {
+    let directory = button_skin_directory()?;
+    fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "Failed to create Button skin folder at {}: {error}",
+            directory.display()
+        )
+    })?;
+    Ok(directory.display().to_string())
+}
+
+fn button_settings_directory(
+    placement_kind: ButtonSettingsPlacementKind,
+) -> Result<PathBuf, String> {
+    Ok(crate::resolve_flowcell_local_root()?
+        .join("Button editor")
+        .join(placement_kind.directory_name()))
+}
+
+#[tauri::command]
+pub(crate) fn get_button_settings_directory(
+    placement_kind: ButtonSettingsPlacementKind,
+) -> Result<String, String> {
+    let directory = button_settings_directory(placement_kind)?;
+    fs::create_dir_all(&directory).map_err(|error| {
+        format!(
+            "Failed to create {} Button settings folder at {}: {error}",
+            placement_kind.directory_name(),
+            directory.display()
+        )
+    })?;
+    Ok(directory.display().to_string())
+}
+
 fn source_quarantine_root() -> Result<PathBuf, String> {
     Ok(crate::resolve_flowcell_local_root()?
         .join("button-system")
@@ -290,6 +380,20 @@ fn normalize_button_placement_file_path(path: &Path) -> PathBuf {
     PathBuf::from(format!("{base_path}{BUTTON_PLACEMENT_FILE_EXTENSION}"))
 }
 
+fn normalize_button_settings_file_path(path: &Path) -> PathBuf {
+    let path_text = path.to_string_lossy().to_string();
+    let lower_path = path_text.to_ascii_lowercase();
+    if lower_path.ends_with(BUTTON_SETTINGS_FILE_EXTENSION) {
+        return PathBuf::from(path_text);
+    }
+    let base_path = if lower_path.ends_with(".json") {
+        &path_text[..path_text.len() - ".json".len()]
+    } else {
+        &path_text
+    };
+    PathBuf::from(format!("{base_path}{BUTTON_SETTINGS_FILE_EXTENSION}"))
+}
+
 fn normalize_button_skin_file_path(path: &Path) -> PathBuf {
     let path_text = path.to_string_lossy().to_string();
     let lower_path = path_text.to_ascii_lowercase();
@@ -308,7 +412,7 @@ fn validate_button_skin_source(source: &str) -> Result<(), String> {
     if source.trim().is_empty() {
         return Err("Button skin source cannot be empty.".to_string());
     }
-    if source.len() > 2 * 1024 * 1024 {
+    if source.len() > BUTTON_SKIN_FILE_MAX_BYTES {
         return Err("Button skin source cannot exceed 2 MiB.".to_string());
     }
 
@@ -627,6 +731,349 @@ fn validate_button_placement_file(file: &ButtonPlacementFile) -> Result<(), Stri
     }
 }
 
+fn exact_object_keys(value: &Value, expected: &[&str], label: &str) -> Result<(), String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| format!("{label} must be a JSON object."))?;
+    let expected = expected.iter().copied().collect::<HashSet<_>>();
+    for key in object.keys() {
+        if !expected.contains(key.as_str()) {
+            return Err(format!("{label} contains unknown field '{key}'."));
+        }
+    }
+    for key in &expected {
+        if !object.contains_key(*key) {
+            return Err(format!("{label} is missing field '{key}'."));
+        }
+    }
+    Ok(())
+}
+
+fn settings_surface_kind(
+    file: &ButtonSettingsFileV1,
+) -> Result<ButtonPlacementSurfaceKind, String> {
+    let value = file
+        .surface
+        .get("kind")
+        .cloned()
+        .ok_or_else(|| "Button settings surface is missing kind.".to_string())?;
+    serde_json::from_value(value)
+        .map_err(|error| format!("Button settings surface kind is invalid: {error}"))
+}
+
+fn validate_button_settings_file(file: &ButtonSettingsFileV1) -> Result<(), String> {
+    if file.format != BUTTON_SETTINGS_FILE_FORMAT {
+        return Err(format!(
+            "Unsupported Button settings format. Expected {BUTTON_SETTINGS_FILE_FORMAT}."
+        ));
+    }
+    if !is_utc_iso_timestamp(file.saved_at.trim()) {
+        return Err("Button settings savedAt must be a UTC ISO timestamp.".to_string());
+    }
+    if file.program_name.trim().is_empty() || file.panel_name.trim().is_empty() {
+        return Err("Button settings programName and panelName cannot be empty.".to_string());
+    }
+    if file.source_surface_id.trim().is_empty() {
+        return Err("Button settings sourceSurfaceId cannot be empty.".to_string());
+    }
+    exact_object_keys(
+        &file.surface,
+        &[
+            "name",
+            "kind",
+            "width",
+            "height",
+            "visualOverflowAllowance",
+            "uniformButtonSize",
+        ],
+        "Button settings surface",
+    )?;
+    let surface_kind = settings_surface_kind(file)?;
+    if !file.placement_kind.accepts_surface_kind(surface_kind) {
+        return Err(
+            "Button settings placementKind does not match the saved surface kind.".to_string(),
+        );
+    }
+    let surface = file
+        .surface
+        .as_object()
+        .ok_or_else(|| "Button settings surface must be an object.".to_string())?;
+    if surface
+        .get("name")
+        .and_then(Value::as_str)
+        .is_none_or(|value| value.trim().is_empty())
+    {
+        return Err("Button settings surface name cannot be empty.".to_string());
+    }
+    for field in ["width", "height"] {
+        let value = surface
+            .get(field)
+            .and_then(Value::as_f64)
+            .ok_or_else(|| format!("Button settings surface {field} must be numeric."))?;
+        if !value.is_finite() || value <= 0.0 {
+            return Err(format!(
+                "Button settings surface {field} must be positive and finite."
+            ));
+        }
+    }
+    let overflow = surface
+        .get("visualOverflowAllowance")
+        .and_then(Value::as_f64)
+        .ok_or_else(|| {
+            "Button settings surface visualOverflowAllowance must be numeric.".to_string()
+        })?;
+    if !overflow.is_finite() || overflow < 0.0 {
+        return Err(
+            "Button settings surface visualOverflowAllowance must be nonnegative and finite."
+                .to_string(),
+        );
+    }
+
+    let behavior_kind = file
+        .behavior
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "Button settings behavior kind is missing.".to_string())?;
+    let behavior_matches = matches!(
+        (surface_kind, behavior_kind),
+        (
+            ButtonPlacementSurfaceKind::Main | ButtonPlacementSurfaceKind::Panel,
+            "main-page"
+        ) | (ButtonPlacementSurfaceKind::Fan, "fan")
+            | (ButtonPlacementSurfaceKind::RegularPopout, "regular-popout")
+            | (ButtonPlacementSurfaceKind::ToolSetPopout, "tool-set-popout")
+    );
+    if !behavior_matches {
+        return Err("Button settings behavior does not match the saved surface kind.".to_string());
+    }
+
+    let mut placement_ids = HashSet::new();
+    let mut button_ids = HashSet::new();
+    for (index, entry) in file.entries.iter().enumerate() {
+        exact_object_keys(
+            entry,
+            &[
+                "placementId",
+                "buttonId",
+                "buttonRole",
+                "label",
+                "activationBehavior",
+                "activationAnimation",
+                "skin",
+                "placement",
+            ],
+            &format!("Button settings entry {index}"),
+        )?;
+        let placement_id = entry
+            .get("placementId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| format!("Button settings entry {index} has no placementId."))?;
+        if !placement_ids.insert(placement_id) {
+            return Err(format!(
+                "Button settings entry {index} repeats placementId '{placement_id}'."
+            ));
+        }
+        let button_id = entry
+            .get("buttonId")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| format!("Button settings entry {index} has no buttonId."))?;
+        if !button_ids.insert(button_id) {
+            return Err(format!(
+                "Button settings entry {index} repeats buttonId '{button_id}'."
+            ));
+        }
+        let placement = entry
+            .get("placement")
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("Button settings entry {index} placement must be an object."))?;
+        if placement.get("zIndex").and_then(Value::as_u64) != Some(index as u64) {
+            return Err(format!(
+                "Button settings entry {index} must use placement zIndex {index}."
+            ));
+        }
+        if !entry.get("skin").is_some_and(Value::is_object) {
+            return Err(format!(
+                "Button settings entry {index} skin must be an object."
+            ));
+        }
+    }
+    let serialized_size = serde_json::to_vec(file)
+        .map_err(|error| format!("Failed to measure Button settings: {error}"))?
+        .len();
+    if serialized_size > BUTTON_SETTINGS_FILE_MAX_BYTES {
+        return Err(format!(
+            "Button settings cannot exceed {} MiB.",
+            BUTTON_SETTINGS_FILE_MAX_BYTES / (1024 * 1024)
+        ));
+    }
+    Ok(())
+}
+
+fn parse_button_settings_file(path: &Path) -> Result<ButtonSettingsFileV1, String> {
+    let raw = fs::read_to_string(path).map_err(|error| {
+        format!(
+            "Failed to read Button settings at {}: {error}",
+            path.display()
+        )
+    })?;
+    let file = serde_json::from_str::<ButtonSettingsFileV1>(&raw)
+        .map_err(|error| format!("Button settings at {} are invalid: {error}", path.display()))?;
+    validate_button_settings_file(&file)?;
+    Ok(file)
+}
+
+fn write_button_settings_file(
+    path: &Path,
+    file: &ButtonSettingsFileV1,
+    mode: AtomicWriteMode,
+) -> Result<String, String> {
+    validate_button_settings_file(file)?;
+    let serialized = serde_json::to_string_pretty(file)
+        .map_err(|error| format!("Failed to serialize Button settings: {error}"))?;
+    transaction::write_json_file(path, serialized.as_bytes(), mode)?;
+    Ok(path.display().to_string())
+}
+
+#[tauri::command]
+pub(crate) fn load_button_settings_file(path: String) -> Result<ButtonSettingsFileV1, String> {
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Button settings load path cannot be empty.".to_string());
+    }
+    parse_button_settings_file(Path::new(trimmed_path))
+}
+
+#[tauri::command]
+pub(crate) fn save_button_settings_file(
+    path: String,
+    file: ButtonSettingsFileV1,
+) -> Result<String, String> {
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Button settings save path cannot be empty.".to_string());
+    }
+    let settings_path = normalize_button_settings_file_path(Path::new(trimmed_path));
+    write_button_settings_file(&settings_path, &file, AtomicWriteMode::Replace)
+}
+
+fn validate_default_surface_id(surface_id: &str) -> Result<String, String> {
+    let trimmed = surface_id.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 240
+        || !trimmed
+            .bytes()
+            .all(|value| value.is_ascii_alphanumeric() || matches!(value, b'-' | b'_' | b'.'))
+    {
+        return Err("Button settings default surface ID is invalid.".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn button_settings_default_path(
+    placement_kind: ButtonSettingsPlacementKind,
+    surface_id: &str,
+) -> Result<PathBuf, String> {
+    let surface_id = validate_default_surface_id(surface_id)?;
+    Ok(button_settings_directory(placement_kind)?
+        .join(BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME)
+        .join(format!(
+            "default-{surface_id}{BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION}"
+        )))
+}
+
+fn validate_default_settings_identity(
+    placement_kind: ButtonSettingsPlacementKind,
+    surface_id: &str,
+    file: &ButtonSettingsFileV1,
+) -> Result<(), String> {
+    validate_button_settings_file(file)?;
+    if file.placement_kind != placement_kind {
+        return Err(
+            "Button settings default is stored under the wrong placement folder.".to_string(),
+        );
+    }
+    if file.source_surface_id != surface_id {
+        return Err("Button settings default belongs to a different concrete surface.".to_string());
+    }
+    Ok(())
+}
+
+fn verify_button_settings_revision(expected_revision: u64) -> Result<(), String> {
+    let path = button_state_path()?;
+    recover_button_state(&path)?;
+    let current_revision = if path.is_file() {
+        document_revision(&read_button_state_document(&path)?)?
+    } else {
+        0
+    };
+    if current_revision != expected_revision {
+        return Err(format!(
+            "Button state changed before the settings default was saved. Expected revision {expected_revision}, found {current_revision}."
+        ));
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) fn initialize_button_settings_default(
+    placement_kind: ButtonSettingsPlacementKind,
+    surface_id: String,
+    file: ButtonSettingsFileV1,
+    expected_revision: u64,
+) -> Result<String, String> {
+    let surface_id = validate_default_surface_id(&surface_id)?;
+    validate_default_settings_identity(placement_kind, &surface_id, &file)?;
+    let _guard = button_state_commit_guard()?;
+    let path = button_settings_default_path(placement_kind, &surface_id)?;
+    if path.is_file() {
+        let existing = parse_button_settings_file(&path)?;
+        validate_default_settings_identity(placement_kind, &surface_id, &existing)?;
+        return Ok(path.display().to_string());
+    }
+    verify_button_settings_revision(expected_revision)?;
+    match write_button_settings_file(&path, &file, AtomicWriteMode::Create) {
+        Ok(saved) => Ok(saved),
+        Err(_error) if path.is_file() => {
+            let existing = parse_button_settings_file(&path)?;
+            validate_default_settings_identity(placement_kind, &surface_id, &existing)?;
+            Ok(path.display().to_string())
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[tauri::command]
+pub(crate) fn load_button_settings_default(
+    placement_kind: ButtonSettingsPlacementKind,
+    surface_id: String,
+) -> Result<Option<ButtonSettingsFileV1>, String> {
+    let surface_id = validate_default_surface_id(&surface_id)?;
+    let path = button_settings_default_path(placement_kind, &surface_id)?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let file = parse_button_settings_file(&path)?;
+    validate_default_settings_identity(placement_kind, &surface_id, &file)?;
+    Ok(Some(file))
+}
+
+#[tauri::command]
+pub(crate) fn update_button_settings_default(
+    placement_kind: ButtonSettingsPlacementKind,
+    surface_id: String,
+    file: ButtonSettingsFileV1,
+    expected_revision: u64,
+) -> Result<String, String> {
+    let surface_id = validate_default_surface_id(&surface_id)?;
+    validate_default_settings_identity(placement_kind, &surface_id, &file)?;
+    let _guard = button_state_commit_guard()?;
+    verify_button_settings_revision(expected_revision)?;
+    let path = button_settings_default_path(placement_kind, &surface_id)?;
+    write_button_settings_file(&path, &file, AtomicWriteMode::Replace)
+}
+
 #[tauri::command]
 pub(crate) fn load_button_placement_file(path: String) -> Result<ButtonPlacementFile, String> {
     let trimmed_path = path.trim();
@@ -669,6 +1116,32 @@ pub(crate) fn save_button_placement_file(
         AtomicWriteMode::Replace,
     )?;
     Ok(placement_path.display().to_string())
+}
+
+#[tauri::command]
+pub(crate) fn load_button_skin_file(path: String) -> Result<String, String> {
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Button skin load path cannot be empty.".to_string());
+    }
+    let skin_path = Path::new(trimmed_path);
+    let metadata = fs::metadata(skin_path).map_err(|error| {
+        format!(
+            "Failed to inspect Button skin at {}: {error}",
+            skin_path.display()
+        )
+    })?;
+    if metadata.len() > BUTTON_SKIN_FILE_MAX_BYTES as u64 {
+        return Err("Button skin source cannot exceed 2 MiB.".to_string());
+    }
+    let source = fs::read_to_string(skin_path).map_err(|error| {
+        format!(
+            "Failed to read Button skin at {}: {error}",
+            skin_path.display()
+        )
+    })?;
+    validate_button_skin_source(&source)?;
+    Ok(source)
 }
 
 #[tauri::command]
@@ -1481,17 +1954,21 @@ pub(crate) fn commit_button_state(
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_source_transaction, document_source_owners, load_button_placement_file,
+        button_settings_default_path, classify_source_transaction, document_source_owners,
+        load_button_placement_file, load_button_settings_file, load_button_skin_file,
         read_button_state_document, recover_button_state, resolve_program_rename_post_commit,
-        save_button_placement_file, save_button_skin_file, validate_button_placement_file,
-        validate_button_skin_source, validate_button_state, ButtonPlacementFile,
+        save_button_placement_file, save_button_settings_file, save_button_skin_file,
+        validate_button_placement_file, validate_button_settings_file, validate_button_skin_source,
+        validate_button_state, validate_default_surface_id, ButtonPlacementFile,
         ButtonPlacementFileEntryV1, ButtonPlacementFileEntryV2, ButtonPlacementFileSize,
         ButtonPlacementFileSurface, ButtonPlacementFileV1, ButtonPlacementFileV2,
-        ButtonPlacementSurfaceKind, ButtonSourceTransactionJournal, SourceTransactionPhase,
-        SourceTransactionRecovery, BUTTON_PLACEMENT_CYCLE_MAX_STATES,
-        BUTTON_PLACEMENT_FILE_EXTENSION, BUTTON_PLACEMENT_FILE_FORMAT_V1,
-        BUTTON_PLACEMENT_FILE_FORMAT_V2, BUTTON_SKIN_FILE_EXTENSION,
-        SOURCE_TRANSACTION_SCHEMA_VERSION,
+        ButtonPlacementSurfaceKind, ButtonSettingsFileV1, ButtonSettingsPlacementKind,
+        ButtonSourceTransactionJournal, SourceTransactionPhase, SourceTransactionRecovery,
+        BUTTON_PLACEMENT_CYCLE_MAX_STATES, BUTTON_PLACEMENT_FILE_EXTENSION,
+        BUTTON_PLACEMENT_FILE_FORMAT_V1, BUTTON_PLACEMENT_FILE_FORMAT_V2,
+        BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME, BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION,
+        BUTTON_SETTINGS_FILE_EXTENSION, BUTTON_SETTINGS_FILE_FORMAT, BUTTON_SKIN_FILE_EXTENSION,
+        BUTTON_SKIN_FILE_MAX_BYTES, SOURCE_TRANSACTION_SCHEMA_VERSION,
     };
     use serde_json::{json, Value};
     use std::fs;
@@ -1600,6 +2077,55 @@ mod tests {
         })
     }
 
+    fn valid_button_settings_file() -> ButtonSettingsFileV1 {
+        ButtonSettingsFileV1 {
+            format: BUTTON_SETTINGS_FILE_FORMAT.to_string(),
+            saved_at: "2026-07-21T12:34:56.000Z".to_string(),
+            placement_kind: ButtonSettingsPlacementKind::MainPage,
+            program_name: "Blender".to_string(),
+            panel_name: "Tools".to_string(),
+            source_surface_id: "surface-tools".to_string(),
+            surface: json!({
+                "name": "Blender / Tools",
+                "kind": "panel",
+                "width": 400.0,
+                "height": 240.0,
+                "visualOverflowAllowance": 24.0,
+                "uniformButtonSize": null
+            }),
+            behavior: json!({ "kind": "main-page" }),
+            entries: vec![json!({
+                "placementId": "placement-one",
+                "buttonId": "button-one",
+                "buttonRole": "single-script",
+                "label": "One",
+                "activationBehavior": null,
+                "activationAnimation": null,
+                "skin": {},
+                "placement": {
+                    "x": 0.0,
+                    "y": 0.0,
+                    "width": 100.0,
+                    "height": 40.0,
+                    "zIndex": 0,
+                    "textFitMode": "shrink",
+                    "textAlignment": "skin",
+                    "textOffsetX": 0.0,
+                    "textOffsetY": 0.0,
+                    "minimumFontSize": 8.0,
+                    "textSizeOverride": null,
+                    "allowLabelResize": false,
+                    "matchHitboxToSkin": true,
+                    "allowStretching": false,
+                    "highlightOnHover": false,
+                    "resizeAnchor": "top-left",
+                    "activationCycle": null,
+                    "visualStateMap": null
+                }
+            })],
+        }
+    }
+
     fn valid_button_skin_source() -> String {
         [
             "=== structure ===\n<div data-core>{{label}}</div>",
@@ -1633,6 +2159,11 @@ mod tests {
         assert!(!requested_path.exists());
         let written = fs::read_to_string(&expected_path).expect("read saved skin");
         assert!(validate_button_skin_source(&written).is_ok());
+        assert_eq!(
+            load_button_skin_file(expected_path.display().to_string())
+                .expect("load saved Button skin"),
+            written
+        );
         fs::remove_dir_all(&root).expect("remove skin test root");
     }
 
@@ -1650,6 +2181,26 @@ mod tests {
         assert!(error.contains("keyframes"));
         assert!(!target.exists());
         fs::remove_dir_all(&root).expect("remove invalid skin test root");
+    }
+
+    #[test]
+    fn button_skin_loader_rejects_invalid_and_oversized_files() {
+        let root = button_placement_test_root("skin-load-invalid");
+        fs::create_dir_all(&root).expect("create invalid skin load root");
+        let invalid_path = root.join(format!("invalid{BUTTON_SKIN_FILE_EXTENSION}"));
+        fs::write(&invalid_path, "=== structure ===\n<div data-core></div>")
+            .expect("write invalid skin source");
+        assert!(load_button_skin_file(invalid_path.display().to_string())
+            .expect_err("invalid skin file must fail")
+            .contains("keyframes"));
+
+        let oversized_path = root.join(format!("oversized{BUTTON_SKIN_FILE_EXTENSION}"));
+        fs::write(&oversized_path, vec![b'x'; BUTTON_SKIN_FILE_MAX_BYTES + 1])
+            .expect("write oversized skin source");
+        assert!(load_button_skin_file(oversized_path.display().to_string())
+            .expect_err("oversized skin file must fail")
+            .contains("2 MiB"));
+        fs::remove_dir_all(&root).expect("remove invalid skin load root");
     }
 
     #[test]
@@ -1694,6 +2245,104 @@ mod tests {
         );
 
         fs::remove_dir_all(&root).expect("remove placement test root");
+    }
+
+    #[test]
+    fn button_settings_writer_uses_type_extension_and_round_trips() {
+        let root = button_placement_test_root("settings-valid");
+        fs::create_dir_all(&root).expect("create settings test root");
+        let requested_path = root.join("named-settings.json");
+        let expected_path = root.join(format!("named-settings{BUTTON_SETTINGS_FILE_EXTENSION}"));
+
+        let saved_path = save_button_settings_file(
+            requested_path.display().to_string(),
+            valid_button_settings_file(),
+        )
+        .expect("save valid Button settings");
+
+        assert_eq!(PathBuf::from(saved_path), expected_path);
+        assert!(!requested_path.exists());
+        let written = fs::read_to_string(&expected_path).expect("read saved settings");
+        let parsed = load_button_settings_file(expected_path.display().to_string())
+            .expect("load saved settings");
+        assert_eq!(
+            serde_json::to_value(&parsed).expect("serialize loaded settings"),
+            serde_json::from_str::<Value>(&written).expect("parse written settings")
+        );
+        assert!(validate_button_settings_file(&parsed).is_ok());
+        assert_eq!(parsed.entries.len(), 1);
+        assert_eq!(parsed.entries[0]["buttonId"], "button-one");
+
+        fs::remove_dir_all(&root).expect("remove settings test root");
+    }
+
+    #[test]
+    fn button_settings_categories_and_default_surface_ids_are_strict() {
+        assert_eq!(
+            ButtonSettingsPlacementKind::MainPage.directory_name(),
+            "Main Page"
+        );
+        assert_eq!(ButtonSettingsPlacementKind::Fan.directory_name(), "Fan");
+        assert_eq!(
+            ButtonSettingsPlacementKind::PopOut.directory_name(),
+            "Pop-out"
+        );
+        assert!(ButtonSettingsPlacementKind::MainPage
+            .accepts_surface_kind(ButtonPlacementSurfaceKind::Main));
+        assert!(ButtonSettingsPlacementKind::MainPage
+            .accepts_surface_kind(ButtonPlacementSurfaceKind::Panel));
+        assert!(
+            ButtonSettingsPlacementKind::Fan.accepts_surface_kind(ButtonPlacementSurfaceKind::Fan)
+        );
+        assert!(ButtonSettingsPlacementKind::PopOut
+            .accepts_surface_kind(ButtonPlacementSurfaceKind::RegularPopout));
+        assert!(ButtonSettingsPlacementKind::PopOut
+            .accepts_surface_kind(ButtonPlacementSurfaceKind::ToolSetPopout));
+        assert!(!ButtonSettingsPlacementKind::PopOut
+            .accepts_surface_kind(ButtonPlacementSurfaceKind::Fan));
+
+        assert_eq!(
+            validate_default_surface_id("surface-safe_1.test")
+                .expect("safe surface ID should pass"),
+            "surface-safe_1.test"
+        );
+        let default_path =
+            button_settings_default_path(ButtonSettingsPlacementKind::Fan, "surface-safe_1.test")
+                .expect("build safe default path");
+        let expected_default_file_name =
+            format!("default-surface-safe_1.test{BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION}");
+        assert_eq!(
+            default_path.file_name().and_then(|value| value.to_str()),
+            Some(expected_default_file_name.as_str())
+        );
+        assert_eq!(
+            default_path
+                .parent()
+                .and_then(|value| value.file_name())
+                .and_then(|value| value.to_str()),
+            Some(BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME)
+        );
+        assert!(!default_path
+            .to_string_lossy()
+            .ends_with(BUTTON_SETTINGS_FILE_EXTENSION));
+        assert!(validate_default_surface_id("../escape").is_err());
+        assert!(validate_default_surface_id("folder/surface").is_err());
+        assert!(validate_default_surface_id(r"folder\surface").is_err());
+
+        let mut wrong_category = valid_button_settings_file();
+        wrong_category.placement_kind = ButtonSettingsPlacementKind::Fan;
+        assert!(validate_button_settings_file(&wrong_category).is_err());
+
+        let mut unknown_outer_field =
+            serde_json::to_value(valid_button_settings_file()).expect("serialize settings fixture");
+        unknown_outer_field
+            .as_object_mut()
+            .expect("settings fixture object")
+            .insert("actions".to_string(), json!([]));
+        assert!(
+            serde_json::from_value::<ButtonSettingsFileV1>(unknown_outer_field).is_err(),
+            "settings files must reject unknown outer fields"
+        );
     }
 
     #[test]

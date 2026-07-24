@@ -4,6 +4,10 @@ import type {
   ButtonSurface
 } from "../types.js";
 import { resolvePanelOwnerMainPlacement } from "../state/panelOwnerButtonOperations.js";
+import {
+  buttonSettingsPlacementKind,
+  buttonSettingsPlacementLabel
+} from "../state/buttonSettingsFile.js";
 
 export interface ButtonEditorIdentity {
   programName: string;
@@ -262,17 +266,7 @@ function comparePlacements(
 function placementBaseLabel(document: ButtonStateDocument, placement: ButtonPlacement): string {
   const surface = document.surfaces[placement.surfaceId];
   if (!surface) return "Missing placement surface";
-  if (surface.kind === "main" || surface.kind === "panel") return "Main page";
-  if (surface.kind === "fan") {
-    const setup = Object.values(document.fanSetups).find(
-      (candidate) => candidate.fanSurfaceId === surface.id
-    );
-    return `Fan — ${setup?.name || surface.name}`;
-  }
-  const unit = Object.values(document.popoutUnits).find(
-    (candidate) => candidate.surfaceId === surface.id
-  );
-  return `Pop — ${unit?.name || surface.name}`;
+  return buttonSettingsPlacementLabel(buttonSettingsPlacementKind(surface));
 }
 
 export function buildButtonEditorPlacementOptions(
@@ -287,22 +281,11 @@ export function buildButtonEditorPlacementOptions(
     )
     .sort((left, right) => comparePlacements(document, left, right));
   const baseLabels = new Map(placements.map((placement) => [placement.id, placementBaseLabel(document, placement)]));
-  const labelCounts = new Map<string, number>();
-  for (const label of baseLabels.values()) {
-    const key = normalized(label);
-    labelCounts.set(key, (labelCounts.get(key) ?? 0) + 1);
-  }
-
   const options: ButtonEditorPlacementOption[] = placements.map((placement) => {
     const base = baseLabels.get(placement.id)!;
-    const duplicate = (labelCounts.get(normalized(base)) ?? 0) > 1;
-    const surface = document.surfaces[placement.surfaceId];
-    const surfaceDetail = surface?.name && !namesMatch(surface.name, base)
-      ? surface.name
-      : shortId(placement.id);
     return {
       id: placement.id,
-      label: duplicate ? `${base} — ${surfaceDetail}` : base,
+      label: base,
       surfaceId: placement.surfaceId
     };
   });
@@ -311,7 +294,7 @@ export function buildButtonEditorPlacementOptions(
     const rightRank = surfacePlacementRank(document.surfaces[right.surfaceId]);
     return leftRank - rightRank;
   });
-  return disambiguateFinalOptionLabels(options);
+  return options;
 }
 
 export function resolvePreferredButtonPlacementId(
@@ -377,36 +360,16 @@ export function resolveButtonEditorPanelSurfaceId(
   return resolvePanelOwnerMainPlacement(document, programName, panelName)?.surfaceId ?? null;
 }
 
-export function resolveButtonEditorPanelSkinTargetPlacementIds(
+export function resolveButtonEditorSurfaceSkinTargetPlacementIds(
   document: ButtonStateDocument,
-  programName: string,
-  panelName: string,
   focusedPlacementId: string
 ): string[] {
-  const panelSurfaceId = resolveButtonEditorPanelSurfaceId(
-    document,
-    programName,
-    panelName
-  );
   const focusedPlacement = document.placements[focusedPlacementId];
-  const surface = panelSurfaceId ? document.surfaces[panelSurfaceId] : null;
-  if (
-    !surface ||
-    surface.kind !== "panel" ||
-    focusedPlacement?.surfaceId !== surface.id
-  ) {
-    return [];
-  }
-
-  return surface.placementIds.filter((placementId) => {
-    const placement = document.placements[placementId];
-    const identity = placement
-      ? resolveButtonEditorIdentity(document, placement.buttonId)
-      : null;
-    return Boolean(
-      identity &&
-      namesMatch(identity.programName, programName) &&
-      namesMatch(identity.panelName, panelName)
-    );
-  });
+  const surface = focusedPlacement
+    ? document.surfaces[focusedPlacement.surfaceId]
+    : null;
+  if (!focusedPlacement || !surface) return [];
+  return surface.placementIds.filter(
+    (placementId) => document.placements[placementId]?.surfaceId === surface.id
+  );
 }

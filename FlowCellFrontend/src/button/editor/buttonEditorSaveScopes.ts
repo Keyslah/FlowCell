@@ -4,6 +4,11 @@ import type {
   ButtonStateDocument
 } from "../types.js";
 import { cloneButtonDocument } from "../state/buttonDefaults.js";
+import {
+  applyButtonSettingsFile,
+  buildButtonSettingsFile,
+  type ButtonSettingsFileApplyContext
+} from "../state/buttonSettingsFile.js";
 
 export interface ButtonSkinSaveScope {
   skinIds: readonly string[];
@@ -45,11 +50,12 @@ function requireDraftRecord<T>(records: Record<string, T>, id: string, label: st
 }
 
 /**
- * Builds the canonical Button-state update behind Save placement. Existing
- * records contribute geometry/order plus placement-owned sizing, text-fit, and
- * activation-cycle policy; skin assignment/source and animation fields stay on
- * the committed baseline. Newly installed Button graphs are included because
- * their placements cannot exist canonically without their owning records.
+ * Builds the geometry/presentation baseline used by the complete Save Settings
+ * scope. Existing records contribute geometry/order plus placement-owned sizing,
+ * text-fit, and activation-cycle policy; skin assignment/source and animation
+ * fields stay on the committed baseline until the settings layer applies them.
+ * Newly installed Button graphs are included because their placements cannot
+ * exist canonically without their owning records.
  */
 export function buildButtonPlacementScopedDocument(
   committed: ButtonStateDocument,
@@ -75,6 +81,10 @@ export function buildButtonPlacementScopedDocument(
   const placementIds = draftSurface.placementIds.filter((placementId) =>
     Boolean(committed.placements[placementId]) || !editorBaseline.placements[placementId]
   );
+  const retainedPlacementIds = new Set(placementIds);
+  for (const placementId of committedSurface?.placementIds ?? []) {
+    if (!retainedPlacementIds.has(placementId)) delete next.placements[placementId];
+  }
 
   next.surfaces[surfaceId] = committedSurface
     ? {
@@ -128,6 +138,48 @@ export function buildButtonPlacementScopedDocument(
 
   next.revision = committed.revision;
   return next;
+}
+
+export function buildButtonSettingsScopedDocument(
+  committed: ButtonStateDocument,
+  draft: ButtonStateDocument,
+  surfaceId: string,
+  context: ButtonSettingsFileApplyContext,
+  editorBaseline: ButtonStateDocument = committed
+): ButtonStateDocument {
+  const settingsFile = buildButtonSettingsFile(draft, surfaceId, context);
+  const scopedBase = buildButtonPlacementScopedDocument(
+    committed,
+    draft,
+    surfaceId,
+    editorBaseline
+  );
+  const retainedPlacementIds = new Set(scopedBase.surfaces[surfaceId]?.placementIds ?? []);
+  const rebasedFile = {
+    ...settingsFile,
+    entries: settingsFile.entries
+      .filter((entry) => retainedPlacementIds.has(entry.placementId))
+      .map((entry, index) => ({
+        ...entry,
+        placement: {
+          ...entry.placement,
+          zIndex: index
+        }
+      }))
+  };
+  return applyButtonSettingsFile(scopedBase, surfaceId, rebasedFile, context);
+}
+
+export function applyButtonSettingsSavedScope(
+  target: ButtonStateDocument,
+  saved: ButtonStateDocument,
+  surfaceId: string,
+  context: ButtonSettingsFileApplyContext
+): void {
+  if (!saved.surfaces[surfaceId]) return;
+  const settingsFile = buildButtonSettingsFile(saved, surfaceId, context);
+  const next = applyButtonSettingsFile(target, surfaceId, settingsFile, context);
+  Object.assign(target, next);
 }
 
 export function applyButtonPlacementSavedScope(
@@ -254,7 +306,7 @@ function buildButtonBehaviorWithoutPendingText(
  * Button activation behavior is Button-owned, while its authored-skin visual
  * mapping is placement-owned. Persisting them together keeps stable state IDs
  * and placement mappings in one explicit Apply action without coupling either
- * to Save skin or Save placement.
+ * to Save skin or Save Settings.
  */
 export function buildButtonBehaviorScopedDocument(
   committed: ButtonStateDocument,
