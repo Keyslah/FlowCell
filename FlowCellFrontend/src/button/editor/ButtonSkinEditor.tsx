@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   BUTTON_SKIN_COMPILER_VERSION,
   type ButtonCycleAdvanceTrigger,
@@ -68,9 +68,11 @@ export interface ButtonSkinEditorProps {
   selectionButtonCount: number;
   allSurfaceButtonsSameSize: boolean;
   buttonLabel: string;
+  buttonTooltip: string;
   activationCycle: ButtonPlacementActivationCycle | null;
   stateStructureApplied: boolean;
   onButtonLabelChange: (label: string) => void;
+  onButtonTooltipChange: (tooltip: string) => void;
   onActivationCycleChange: (cycle: ButtonPlacementActivationCycle) => void;
   onApplyAllButtonText: () => void;
   onSizingModePreviewChange: (sizingMode: ButtonPlacementSizingMode) => void;
@@ -341,6 +343,13 @@ function ButtonColorPickerRow({
   );
 }
 
+function resizeButtonTooltipEditor(editor: HTMLTextAreaElement | null): void {
+  if (!editor || editor.clientWidth <= 0) return;
+  editor.style.height = "auto";
+  const borderHeight = editor.offsetHeight - editor.clientHeight;
+  editor.style.height = `${Math.ceil(editor.scrollHeight + borderHeight)}px`;
+}
+
 export function ButtonSkinEditor({
   skin,
   skins,
@@ -353,9 +362,11 @@ export function ButtonSkinEditor({
   selectionButtonCount,
   allSurfaceButtonsSameSize,
   buttonLabel,
+  buttonTooltip,
   activationCycle,
   stateStructureApplied,
   onButtonLabelChange,
+  onButtonTooltipChange,
   onActivationCycleChange,
   onApplyAllButtonText,
   onSizingModePreviewChange,
@@ -397,6 +408,7 @@ export function ButtonSkinEditor({
     "responsive"
   );
   const [workingPreviewUsesNaturalSize, setWorkingPreviewUsesNaturalSize] = useState(false);
+  const buttonTooltipEditorRef = useRef<HTMLTextAreaElement | null>(null);
   const compileResult = useMemo(
     () => workingSkin ? compileButtonSkin(workingSkin) : null,
     [workingSkin]
@@ -434,6 +446,26 @@ export function ButtonSkinEditor({
   const previewVisualFlags = previewVisualStateOverride
     ? visualFlagsForState(previewVisualStateOverride)
     : visualFlagsForState(previewVisualState);
+
+  useLayoutEffect(() => {
+    resizeButtonTooltipEditor(buttonTooltipEditorRef.current);
+  }, [buttonTooltip, skinContextKey, skin?.id]);
+
+  useEffect(() => {
+    const editor = buttonTooltipEditorRef.current;
+    if (!editor || typeof ResizeObserver === "undefined") return;
+    let observedWidth = -1;
+    const resizeForWidth = () => {
+      const width = editor.getBoundingClientRect().width;
+      if (width <= 0 || Math.abs(width - observedWidth) < 0.5) return;
+      observedWidth = width;
+      resizeButtonTooltipEditor(editor);
+    };
+    const observer = new ResizeObserver(resizeForWidth);
+    observer.observe(editor);
+    resizeForWidth();
+    return () => observer.disconnect();
+  }, [skinContextKey, placement?.id, workingSkin?.id]);
 
   useEffect(() => {
     setWorkingSkin(skin ? cloneButtonDocument(skin) : null);
@@ -1221,29 +1253,37 @@ export function ButtonSkinEditor({
           </details>
         );
       })}
-      <details className="button-skin-section">
-        <summary title="Edit and preview Button Text only. Cycle states and visuals save with the placement.">
+      <details
+        className="button-skin-section"
+        onToggle={(event) => {
+          if (!event.currentTarget.open) return;
+          requestAnimationFrame(() => resizeButtonTooltipEditor(buttonTooltipEditorRef.current));
+        }}
+      >
+        <summary title="Edit Button labels and the shared Button Tooltip. Cycle states and visuals save with the placement.">
           <span>Button Text</span>
-          <small>Text only</small>
+          <small>Text + tooltip</small>
         </summary>
         {activationCycle ? (
-          <div className="button-behavior-state-grid">
-            <label title="Choose which cycle state's label to edit and preview.">
-              <span>State</span>
-              <select
-                value={selectedState?.id ?? ""}
-                disabled={busy || configuredStates.length === 0}
-                onChange={(event) => {
-                  setPreviewAppearanceTrigger("rest");
-                  setPreviewVisualStateOverride(null);
-                  setSelectedActivationStateId(event.currentTarget.value);
-                }}
-              >
-                {configuredStates.map((state, index) => (
-                  <option key={state.id} value={state.id}>{stateDisplayName(state, index)}</option>
-                ))}
-              </select>
-            </label>
+          <label title="Choose which cycle state's label to edit and preview.">
+            <span>State</span>
+            <select
+              value={selectedState?.id ?? ""}
+              disabled={busy || configuredStates.length === 0}
+              onChange={(event) => {
+                setPreviewAppearanceTrigger("rest");
+                setPreviewVisualStateOverride(null);
+                setSelectedActivationStateId(event.currentTarget.value);
+              }}
+            >
+              {configuredStates.map((state, index) => (
+                <option key={state.id} value={state.id}>{stateDisplayName(state, index)}</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <div className="button-text-label-grid">
+          {activationCycle ? (
             <label title="Set the label displayed while this cycle state is active.">
               <span>State label</span>
               <input
@@ -1253,13 +1293,29 @@ export function ButtonSkinEditor({
                 onChange={(event) => updateSelectedStateLabel(event.currentTarget.value)}
               />
             </label>
-          </div>
-        ) : (
-          <label title="Set the Button's default label.">
-            <span>Button label</span>
-            <input value={buttonLabel} disabled={busy} onChange={(event) => onButtonLabelChange(event.currentTarget.value)} />
+          ) : (
+            <label title="Set the Button's default label.">
+              <span>Button label</span>
+              <input value={buttonLabel} disabled={busy} onChange={(event) => onButtonLabelChange(event.currentTarget.value)} />
+            </label>
+          )}
+          <label title="Set the shared tooltip shown when this Button is hovered on any placement. This editor expands so the complete tooltip stays visible and selectable.">
+            <span>Button Tooltip</span>
+            <textarea
+              ref={buttonTooltipEditorRef}
+              className="button-tooltip-editor"
+              rows={3}
+              wrap="soft"
+              value={buttonTooltip}
+              disabled={busy}
+              onFocus={(event) => resizeButtonTooltipEditor(event.currentTarget)}
+              onChange={(event) => {
+                onButtonTooltipChange(event.currentTarget.value);
+                resizeButtonTooltipEditor(event.currentTarget);
+              }}
+            />
           </label>
-        )}
+        </div>
         <label title="Choose how the label is reduced or wrapped when it exceeds the Button box.">
           <span>Fit mode</span>
           <select
@@ -1408,7 +1464,7 @@ export function ButtonSkinEditor({
           className="button-text-apply-all"
           title={stateTextBlocked
             ? "Save Settings first because the cycle state structure changed. Button Text stays in preview until then."
-            : "Apply every pending Button Text change across the editor: base or cycle labels plus each placement's fit, alignment, size, and X/Y position."}
+            : "Apply every pending Button Text change across the editor: base or cycle labels, Button tooltips, and each placement's fit, alignment, size, and X/Y position."}
           disabled={busy || stateTextBlocked}
           onClick={onApplyAllButtonText}
         >

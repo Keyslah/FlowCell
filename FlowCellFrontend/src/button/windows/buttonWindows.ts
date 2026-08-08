@@ -22,6 +22,7 @@ import {
   setHostWindowTopmost,
   unregisterScopedWindowTopmost
 } from "../../lib/tauri";
+import { makeSafeTauriUnlisten } from "../../lib/safeTauriUnlisten.js";
 import {
   buildWindowContextUrl,
   BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
@@ -36,6 +37,11 @@ import {
   resolveTargetButtonWebviewPixelRatio
 } from "./buttonWindowGeometry";
 import { afterPendingWindowOpens } from "./pendingWindowOpen";
+import {
+  ManagedWindowGenerationRegistry,
+  type ManagedWindowGeneration,
+  waitForManagedWindowToDisappear
+} from "./managedWindowLifecycle";
 
 export const BUTTON_EDITOR_WINDOW_LABEL = "flowcell-button-editor";
 export const BUTTON_WINDOW_CONTEXT_UPDATE_EVENT = "flowcell:button-window-context";
@@ -71,7 +77,12 @@ export interface AppliedButtonCanvas {
 }
 
 const pendingButtonWindowOpens = new Map<string, Promise<void>>();
+const pendingButtonWindowCloses = new Map<string, Promise<void>>();
+const pendingButtonWindowCleanups = new Map<string, Promise<void>>();
 const pendingButtonWindowToggles = new Map<string, Promise<void>>();
+const managedButtonWindowGenerations = new ManagedWindowGenerationRegistry();
+const MANAGED_BUTTON_WINDOW_CLOSE_TIMEOUT_MS = 5_000;
+const MANAGED_BUTTON_WINDOW_CLOSE_POLL_MS = 25;
 
 function isUsableBounds(bounds: FlowCellBounds | null | undefined): bounds is FlowCellBounds {
   return isUsableButtonWindowBounds(bounds);
@@ -365,37 +376,95 @@ async function emitContextUpdate(
   } satisfies ButtonWindowContextUpdate);
 }
 
+function cleanupManagedButtonWindowState(
+  windowLabel: string,
+  generation: ManagedWindowGeneration
+): Promise<void> {
+  const pendingCleanup = pendingButtonWindowCleanups.get(windowLabel);
+  if (pendingCleanup) return pendingCleanup;
+
+  const cleanupPromise = (async () => {
+    if (managedButtonWindowGenerations.current(windowLabel) !== generation) return;
+    unregisterLayoutWindow(windowLabel);
+    await Promise.all([
+      unregisterScopedWindowTopmost(windowLabel).catch(() => {}),
+      setHostWindowTopmost(windowLabel, false).catch(() => {})
+    ]);
+    managedButtonWindowGenerations.clearIfCurrent(windowLabel, generation);
+  })().finally(() => {
+    if (pendingButtonWindowCleanups.get(windowLabel) === cleanupPromise) {
+      pendingButtonWindowCleanups.delete(windowLabel);
+    }
+  });
+
+  pendingButtonWindowCleanups.set(windowLabel, cleanupPromise);
+  return cleanupPromise;
+}
+
 async function bindDestroyedCleanup(
   target: WebviewWindow,
   windowLabel: string
 ): Promise<void> {
-  await target.once("tauri://destroyed", () => {
-    unregisterLayoutWindow(windowLabel);
-    void unregisterScopedWindowTopmost(windowLabel).catch(() => {});
-    void setHostWindowTopmost(windowLabel, false).catch(() => {});
-  });
+  const generation = managedButtonWindowGenerations.begin(windowLabel);
+  let safeUnlisten: UnlistenFn | null = null;
+  let destroyedBeforeUnlistenReady = false;
+  try {
+    const unlisten = await target.listen("tauri://destroyed", () => {
+      if (safeUnlisten) safeUnlisten();
+      else destroyedBeforeUnlistenReady = true;
+      void waitForManagedWindowToDisappear({
+        windowLabel,
+        lookup: () => WebviewWindow.getByLabel(windowLabel),
+        timeoutMs: MANAGED_BUTTON_WINDOW_CLOSE_TIMEOUT_MS,
+        pollMs: MANAGED_BUTTON_WINDOW_CLOSE_POLL_MS
+      })
+        .then(() => cleanupManagedButtonWindowState(windowLabel, generation))
+        .catch(() => {});
+    });
+    safeUnlisten = makeSafeTauriUnlisten(unlisten);
+    if (destroyedBeforeUnlistenReady) safeUnlisten();
+  } catch (error) {
+    if (managedButtonWindowGenerations.clearIfCurrent(windowLabel, generation)) {
+      unregisterLayoutWindow(windowLabel);
+    }
+    throw error;
+  }
 }
 
-async function closeManagedButtonWindow(windowLabel: string): Promise<void> {
-  const target = await afterPendingWindowOpens(
-    pendingButtonWindowOpens,
-    windowLabel,
-    () => WebviewWindow.getByLabel(windowLabel)
-  );
-  unregisterLayoutWindow(windowLabel);
-  await unregisterScopedWindowTopmost(windowLabel).catch(() => {});
-  await setHostWindowTopmost(windowLabel, false).catch(() => {});
-  if (!target) return;
-  const destroyed = new Promise<void>((resolve) => {
-    void target.once("tauri://destroyed", () => resolve()).catch(() => resolve());
+export async function closeManagedButtonWindow(windowLabel: string): Promise<void> {
+  const pendingClose = pendingButtonWindowCloses.get(windowLabel);
+  if (pendingClose) {
+    await pendingClose;
+    return;
+  }
+
+  const closePromise = (async () => {
+    const target = await afterPendingWindowOpens(
+      pendingButtonWindowOpens,
+      windowLabel,
+      () => WebviewWindow.getByLabel(windowLabel)
+    );
+    const generation = managedButtonWindowGenerations.current(windowLabel);
+    if (target) {
+      await target.close().catch((error) => {
+        if (!String(error).toLocaleLowerCase("en").includes("window not found")) throw error;
+      });
+      await waitForManagedWindowToDisappear({
+        windowLabel,
+        lookup: () => WebviewWindow.getByLabel(windowLabel),
+        timeoutMs: MANAGED_BUTTON_WINDOW_CLOSE_TIMEOUT_MS,
+        pollMs: MANAGED_BUTTON_WINDOW_CLOSE_POLL_MS
+      });
+    }
+    await cleanupManagedButtonWindowState(windowLabel, generation);
+  })().finally(() => {
+    if (pendingButtonWindowCloses.get(windowLabel) === closePromise) {
+      pendingButtonWindowCloses.delete(windowLabel);
+    }
   });
-  await target.close().catch((error) => {
-    if (!String(error).toLocaleLowerCase("en").includes("window not found")) throw error;
-  });
-  await Promise.race([
-    destroyed,
-    new Promise<void>((resolve) => window.setTimeout(resolve, 750))
-  ]);
+
+  pendingButtonWindowCloses.set(windowLabel, closePromise);
+  return closePromise;
 }
 
 async function cleanupFailedNewButtonWindow(
@@ -486,6 +555,12 @@ export async function openButtonEditorWindow(args: {
   bounds?: FlowCellBounds | null;
 } = {}): Promise<void> {
   const windowLabel = BUTTON_EDITOR_WINDOW_LABEL;
+  const pendingRetirement =
+    pendingButtonWindowCloses.get(windowLabel) ?? pendingButtonWindowCleanups.get(windowLabel);
+  if (pendingRetirement) {
+    await pendingRetirement;
+    return openButtonEditorWindow(args);
+  }
   const pendingOpen = pendingButtonWindowOpens.get(windowLabel);
   if (pendingOpen) {
     await pendingOpen;
@@ -578,6 +653,12 @@ export async function openButtonPopoutWindow(args: {
   registerInLayout?: boolean;
 }): Promise<void> {
   const windowLabel = buildButtonPopoutWindowLabel(args);
+  const pendingRetirement =
+    pendingButtonWindowCloses.get(windowLabel) ?? pendingButtonWindowCleanups.get(windowLabel);
+  if (pendingRetirement) {
+    await pendingRetirement;
+    return openButtonPopoutWindow(args);
+  }
   const pendingOpen = pendingButtonWindowOpens.get(windowLabel);
   if (pendingOpen) {
     await pendingOpen;
@@ -680,6 +761,12 @@ export async function toggleButtonPopoutWindow(args: {
   reveal?: boolean;
 }): Promise<void> {
   const windowLabel = buildButtonPopoutWindowLabel(args);
+  const pendingRetirement =
+    pendingButtonWindowCloses.get(windowLabel) ?? pendingButtonWindowCleanups.get(windowLabel);
+  if (pendingRetirement) {
+    await pendingRetirement;
+    return toggleButtonPopoutWindow(args);
+  }
   const pendingToggle = pendingButtonWindowToggles.get(windowLabel);
   if (pendingToggle) {
     await pendingToggle;
@@ -717,6 +804,12 @@ export async function openButtonFanWindow(args: {
   reveal?: boolean;
 }): Promise<void> {
   const windowLabel = buildButtonFanWindowLabel(args.panelOwnerButtonId);
+  const pendingRetirement =
+    pendingButtonWindowCloses.get(windowLabel) ?? pendingButtonWindowCleanups.get(windowLabel);
+  if (pendingRetirement) {
+    await pendingRetirement;
+    return openButtonFanWindow(args);
+  }
   const pendingOpen = pendingButtonWindowOpens.get(windowLabel);
   if (pendingOpen) {
     await pendingOpen;

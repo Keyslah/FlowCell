@@ -13,6 +13,7 @@ test("Main Save and Load Layout use the existing strict secondary-window pipelin
   const mainPage = readSource("src", "pages", "main", "MainPage.tsx");
   const types = readSource("src", "types.ts");
   const coreWindows = readSource("src", "lib", "coreWindows.ts");
+  const buttonWindows = readSource("src", "button", "windows", "buttonWindows.ts");
   const nativeLayouts = readSource("src-tauri", "src", "commands", "layouts.rs");
 
   assert.match(snapshots, /flowcell\.main-page-layout-directory\.v1/);
@@ -28,6 +29,13 @@ test("Main Save and Load Layout use the existing strict secondary-window pipelin
   assert.match(mainPage, /case "installed-page":/);
   assert.match(mainPage, /resolveInstalledPageOpenDescriptor\(/);
   assert.match(mainPage, /openInstalledPageWindow\(/);
+  assert.match(mainPage, /await closeManagedButtonWindow\(windowHandle\.label\)/);
+  assert.doesNotMatch(mainPage, /await windowHandle\.close\(\)\.catch\(\(\) => \{\}\)/);
+  assert.match(
+    buttonWindows,
+    /await target\.close\(\)[\s\S]{0,420}await waitForManagedWindowToDisappear\(/
+  );
+  assert.match(mainPage, /Installed Page window[\s\S]{0,120}is missing its owner identity/);
   assert.ok(
     mainPage.indexOf("resolveInstalledPageOpenDescriptor({") <
       mainPage.indexOf("await closeManagedLayoutWindows();"),

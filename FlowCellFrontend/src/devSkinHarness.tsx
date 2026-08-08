@@ -73,9 +73,11 @@ function Harness() {
           selectionButtonCount={1}
           allSurfaceButtonsSameSize={false}
           buttonLabel="Button Preview"
+          buttonTooltip="Preview tooltip"
           activationCycle={null}
           stateStructureApplied
           onButtonLabelChange={() => {}}
+          onButtonTooltipChange={() => {}}
           onActivationCycleChange={() => {}}
           onApplyAllButtonText={() => {}}
           onSizingModePreviewChange={() => {}}

@@ -455,22 +455,26 @@ it is never silently rewritten. Fit mode, horizontal text alignment (`Use skin`,
 are independent focused-placement settings. Every edit immediately updates the
 Button Text preview. When a cycle exists, Button Text contains the same State
 dropdown and edits only that state's label; otherwise it edits the base Button
-label. X/Y moves static host-injected HTML labels with flow-preserving relative
+label. A shared Button Tooltip field sits beside the active label field and affects
+every placement of that Button. Its multiline editor wraps and grows to the complete
+tooltip with no internal clipping or scrollbar, keeping every character visible and
+selectable. X/Y moves static host-injected HTML labels with flow-preserving relative
 positioning, composes movement without replacing the positioning model of an authored
 positioned label, and converts screen-pixel offsets to SVG label-line user units. It remains effective
 if a visual state switches the core among inline, block, flex, or grid layout, without
 rewriting authored skin source, authored transforms, core geometry, or hit testing.
 Text offset composition is refreshed during visual transitions so authored translation
 or SVG scaling cannot leave a stale X/Y result. The single `Apply All`
-at the bottom of Button Text commits only the base/state labels and those
-focused-placement text settings; it does not apply cycle IDs, triggers, visuals,
+at the bottom of Button Text commits only the shared Button tooltips, base/state labels,
+and those focused-placement text settings; it does not apply cycle IDs, triggers, visuals,
 skin code, Button Size, or placement geometry. Changed cycle IDs must first be
 persisted with Save Settings. Save Settings retains the complete placement-owned
 cycle and text policy. Older placement hover-highlight values remain readable only
 as compatibility fallback when the active skin has no explicit highlight setting.
 `Use skin` removes the alignment override and restores the authored
 alignment. There are no Apply Named Sections or Replace Entire Skin buttons.
-For a configured cycle, Apply All preserves the shared base Button label. Without a
+For a configured cycle, Apply All preserves the shared base Button label while still
+saving its shared tooltip. Without a
 placement cycle, it mirrors the edited base label into legacy activation-state labels
 so the compatibility runtime matches the preview.
 Pasting a recognized payload automatically validates and applies its named

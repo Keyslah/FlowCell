@@ -48,6 +48,7 @@
     "src/button/editor/stagedInstallCleanup.ts",
     "src/button/windows/buttonWindowGeometry.ts",
     "src/button/windows/buttonCoreHitTest.ts",
+    "src/button/windows/managedWindowLifecycle.ts",
     "src/button/windows/pendingWindowOpen.ts",
     "src/button/windows/nativeCursorIgnoreController.ts",
     "src/button/text/textFit.ts",
@@ -63,6 +64,7 @@
     "src/lib/bindings.ts",
     "src/lib/bindsButtonScope.ts",
     "src/lib/layoutSnapshots.ts",
+    "src/lib/safeTauriUnlisten.ts",
     "src/lib/shortcutProfiles.ts"
   ]
 }

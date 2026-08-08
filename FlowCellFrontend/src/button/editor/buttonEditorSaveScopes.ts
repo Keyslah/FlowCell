@@ -386,12 +386,12 @@ export function applyButtonBehaviorSavedScope(
 }
 
 /**
- * Button Text owns only rendered labels and each scoped placement's host text
- * policy. A configured placement cycle keeps its labels placement-owned and
- * leaves the shared Button label untouched. Without one, the base label also
+ * Button Text owns Button tooltips, rendered labels, and each scoped placement's
+ * host text policy. A configured placement cycle keeps its labels placement-owned
+ * and leaves the shared Button label untouched. Without one, the base label also
  * refreshes legacy activation-state labels so the compatibility runtime renders
- * the value shown in preview. State structure, visual mappings, skin source,
- * and placement geometry remain untouched.
+ * the value shown in preview. State structure, visual mappings, skin source, and
+ * placement geometry remain untouched.
  */
 export function buildButtonTextScopedDocument(
   committed: ButtonStateDocument,
@@ -400,8 +400,10 @@ export function buildButtonTextScopedDocument(
 ): ButtonStateDocument {
   const next = cloneButtonDocument(committed);
   const baseLabelButtonIds = new Set<string>();
+  const scopedButtonIds = new Set<string>();
 
   for (const entry of scope.entries) {
+    scopedButtonIds.add(entry.buttonId);
     const committedPlacement = requireDraftRecord(
       committed.placements,
       entry.placementId,
@@ -437,22 +439,24 @@ export function buildButtonTextScopedDocument(
     };
   }
 
-  for (const buttonId of baseLabelButtonIds) {
+  for (const buttonId of scopedButtonIds) {
     const committedButton = requireDraftRecord(committed.buttons, buttonId, "Saved Button");
     const draftButton = requireDraftRecord(draft.buttons, buttonId, "Button");
-    next.buttons[buttonId] = {
-        ...structuredClone(committedButton),
-        label: draftButton.label,
-        activationBehavior: committedButton.activationBehavior
-          ? {
-              ...structuredClone(committedButton.activationBehavior),
-              states: committedButton.activationBehavior.states.map((state) => ({
-                ...structuredClone(state),
-                label: draftButton.label
-              }))
-            }
-          : null
-    };
+    const nextButton = structuredClone(committedButton);
+    nextButton.tooltip = draftButton.tooltip;
+    if (baseLabelButtonIds.has(buttonId)) {
+      nextButton.label = draftButton.label;
+      nextButton.activationBehavior = committedButton.activationBehavior
+        ? {
+            ...structuredClone(committedButton.activationBehavior),
+            states: committedButton.activationBehavior.states.map((state) => ({
+              ...structuredClone(state),
+              label: draftButton.label
+            }))
+          }
+        : null;
+    }
+    next.buttons[buttonId] = nextButton;
   }
   next.revision = committed.revision;
   return next;
@@ -464,19 +468,24 @@ export function applyButtonTextSavedScope(
   scope: ButtonTextSaveScope
 ): void {
   const baseLabelButtonIds = new Set<string>();
+  const scopedButtonIds = new Set<string>();
   for (const entry of scope.entries) {
+    scopedButtonIds.add(entry.buttonId);
     const savedPlacement = saved.placements[entry.placementId];
     if (savedPlacement?.activationCycle === null) {
       baseLabelButtonIds.add(entry.buttonId);
     }
   }
-  for (const buttonId of baseLabelButtonIds) {
+  for (const buttonId of scopedButtonIds) {
     const savedButton = saved.buttons[buttonId];
     const targetButton = target.buttons[buttonId];
     if (savedButton && targetButton) {
-      targetButton.label = savedButton.label;
-      for (const targetState of targetButton.activationBehavior?.states ?? []) {
-        targetState.label = savedButton.label;
+      targetButton.tooltip = savedButton.tooltip;
+      if (baseLabelButtonIds.has(buttonId)) {
+        targetButton.label = savedButton.label;
+        for (const targetState of targetButton.activationBehavior?.states ?? []) {
+          targetState.label = savedButton.label;
+        }
       }
     }
   }

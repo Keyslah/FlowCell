@@ -3004,6 +3004,7 @@ function ButtonEditorContent({
           selectionButtonCount={selectedPlacementSummaries.length}
           allSurfaceButtonsSameSize={allSurfaceButtonsSameSize}
           buttonLabel={selectedButton?.label ?? "Button Preview"}
+          buttonTooltip={selectedButton?.tooltip ?? ""}
           activationCycle={selectedPlacement?.activationCycle ?? null}
           stateStructureApplied={selectedStateStructureApplied}
           onButtonLabelChange={(label) => {
@@ -3012,6 +3013,13 @@ function ButtonEditorContent({
               const target = draft.buttons[selectedButton.id];
               target.label = label;
             }, { label: "Edit Button label", coalesceKey: `label:${selectedButton.id}` });
+          }}
+          onButtonTooltipChange={(tooltip) => {
+            if (!selectedButton) return;
+            store.transact((draft) => {
+              const target = draft.buttons[selectedButton.id];
+              target.tooltip = tooltip;
+            }, { label: "Edit Button tooltip", coalesceKey: `tooltip:${selectedButton.id}` });
           }}
           onActivationCycleChange={(activationCycle) => {
             if (!selectedPlacement) return;

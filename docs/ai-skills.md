@@ -240,7 +240,9 @@ Hover advances once per real entry. The current index is runtime-only, keyed by
 placement ID, and resets when FlowCell restarts. Button Text uses those exact states
 and the configured visual remains authoritative even when that host is selected.
 Button Text edits one placement-owned label per state, with no interaction-condition label
-matrix. Fit mode, horizontal `Use skin`, `Left`,
+matrix, and exposes the shared Button Tooltip beside the active label field. The tooltip
+uses a wrapping multiline editor that grows to show every selectable character without
+internal clipping or scrolling. Fit mode, horizontal `Use skin`, `Left`,
 `Center`, or `Right` alignment, starting text size, minimum shrink size, and manual
 pixel X/Y movement are independent focused-placement settings. They update the Button
 Text preview immediately. Host-owned X/Y movement uses flow-preserving relative
@@ -248,12 +250,12 @@ positioning for static HTML labels, composes with the authored positioning model
 already-positioned HTML labels, and converts screen-pixel vectors for SVG label lines, so it remains
 effective if authored states switch the core among inline, block, flex, or grid layout.
 The host refreshes that composition during visual transitions. It never rewrites the
-skin's source, authored transforms, `[data-core]`, or hit testing. Its single bottom `Apply All` commits only the labels and
+skin's source, authored transforms, `[data-core]`, or hit testing. Its single bottom `Apply All` commits only the shared Button tooltips, labels, and
 those focused-placement text settings, never cycle IDs, triggers, visuals, skin source,
 Button Size, or placement geometry. Save Settings retains the complete placement-owned
 cycle and text policy. When cycle IDs are pending, Button Text requires Save Settings
 before its text-only Apply All can persist the corresponding labels. With a configured
-cycle Apply All preserves the shared base Button label; without one it keeps legacy
+cycle Apply All preserves the shared base Button label while saving its shared tooltip; without one it keeps legacy
 activation-state labels coherent with the edited base label. Alignment
 overrides the rendered text only for that placement and never rewrites skin source;
 `Use skin` removes the override and restores the authored alignment.

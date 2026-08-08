@@ -1,4 +1,5 @@
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { makeSafeTauriUnlisten } from "../../lib/safeTauriUnlisten.js";
 import type { ButtonCycleAdvanceTrigger } from "../types.js";
 
 const BUTTON_ACTIVATION_ADVANCE_EVENT = "flowcell://button-activation/advance";
@@ -119,30 +120,27 @@ export function resolveTriggeredIndex(
 }
 
 async function createCoordinatorListeners(): Promise<readonly UnlistenFn[]> {
-  const advanceUnlisten = await listen<ButtonActivationRequest>(
-    BUTTON_ACTIVATION_ADVANCE_EVENT,
-    ({ payload }) => {
+  const advanceUnlisten = makeSafeTauriUnlisten(
+    await listen<ButtonActivationRequest>(BUTTON_ACTIVATION_ADVANCE_EVENT, ({ payload }) => {
       const stateCount = normalizedCount(payload.stateCount);
       const current = normalizedIndex(coordinatorIndexes.get(payload.activationKey) ?? 0, stateCount);
       const index = (current + 1) % stateCount;
       coordinatorIndexes.set(payload.activationKey, index);
       queueCoordinatorUpdate({ ...payload, stateCount, index });
-    }
+    })
   );
   try {
-    const setUnlisten = await listen<ButtonActivationUpdate>(
-      BUTTON_ACTIVATION_SET_EVENT,
-      ({ payload }) => {
+    const setUnlisten = makeSafeTauriUnlisten(
+      await listen<ButtonActivationUpdate>(BUTTON_ACTIVATION_SET_EVENT, ({ payload }) => {
         const stateCount = normalizedCount(payload.stateCount);
         const index = normalizedIndex(payload.index, stateCount);
         coordinatorIndexes.set(payload.activationKey, index);
         queueCoordinatorUpdate({ activationKey: payload.activationKey, stateCount, index });
-      }
+      })
     );
     try {
-      const triggerUnlisten = await listen<ButtonActivationTriggerRequest>(
-        BUTTON_ACTIVATION_TRIGGER_EVENT,
-        ({ payload }) => {
+      const triggerUnlisten = makeSafeTauriUnlisten(
+        await listen<ButtonActivationTriggerRequest>(BUTTON_ACTIVATION_TRIGGER_EVENT, ({ payload }) => {
           const stateCount = normalizedCount(payload.stateCount);
           const index = resolveTriggeredIndex(
             { ...payload, stateCount },
@@ -152,17 +150,16 @@ async function createCoordinatorListeners(): Promise<readonly UnlistenFn[]> {
           if (index === null) return;
           coordinatorIndexes.set(payload.activationKey, index);
           queueCoordinatorUpdate({ activationKey: payload.activationKey, stateCount, index });
-        }
+        })
       );
       try {
-        const snapshotUnlisten = await listen<ButtonActivationRequest>(
-          BUTTON_ACTIVATION_SNAPSHOT_EVENT,
-          ({ payload }) => {
+        const snapshotUnlisten = makeSafeTauriUnlisten(
+          await listen<ButtonActivationRequest>(BUTTON_ACTIVATION_SNAPSHOT_EVENT, ({ payload }) => {
             const stateCount = normalizedCount(payload.stateCount);
             const index = normalizedIndex(coordinatorIndexes.get(payload.activationKey) ?? 0, stateCount);
             coordinatorIndexes.set(payload.activationKey, index);
             queueCoordinatorUpdate({ ...payload, stateCount, index });
-          }
+          })
         );
         return [advanceUnlisten, setUnlisten, triggerUnlisten, snapshotUnlisten];
       } catch (error) {
@@ -207,7 +204,7 @@ export async function startButtonActivationStateCoordinator(): Promise<() => voi
     coordinatorIndexes.clear();
     coordinatorPublishQueues.clear();
     coordinatorConsumedInteractionIds.clear();
-    void listeners.then((unlistenFns) => unlistenFns.forEach((unlisten) => unlisten()));
+    void listeners.then((unlistenFns) => unlistenFns.forEach((unlisten) => unlisten())).catch(() => {});
   };
 }
 
@@ -224,14 +221,13 @@ export async function subscribeButtonActivationState(
 
   let unlisten: UnlistenFn | null = null;
   try {
-    unlisten = await listen<ButtonActivationUpdate>(
-      BUTTON_ACTIVATION_UPDATE_EVENT,
-      ({ payload }) => {
+    unlisten = makeSafeTauriUnlisten(
+      await listen<ButtonActivationUpdate>(BUTTON_ACTIVATION_UPDATE_EVENT, ({ payload }) => {
         if (payload.activationKey !== activationKey) return;
         const index = normalizedIndex(payload.index, count);
         localIndexes.set(activationKey, index);
         subscriber(index);
-      }
+      })
     );
     await emit(BUTTON_ACTIVATION_SNAPSHOT_EVENT, { activationKey, stateCount: count } satisfies ButtonActivationRequest);
   } catch {

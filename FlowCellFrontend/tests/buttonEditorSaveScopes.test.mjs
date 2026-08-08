@@ -432,6 +432,7 @@ test("Button behavior save commits state structure and visual mapping without pe
 
 test("Button Text Apply All saves placement-cycle labels without changing the shared Button label", () => {
   const committed = documentWithButton();
+  committed.buttons.one.tooltip = "Original tooltip";
   committed.placements["placement-one"].activationCycle = {
     states: [
       {
@@ -452,6 +453,7 @@ test("Button Text Apply All saves placement-cycle labels without changing the sh
   };
   const draft = structuredClone(committed);
   draft.buttons.one.label = "Ready";
+  draft.buttons.one.tooltip = "Edited tooltip";
   draft.placements["placement-one"].activationCycle.states = [
     {
       id: "state-2",
@@ -490,6 +492,7 @@ test("Button Text Apply All saves placement-cycle labels without changing the sh
 
   const saved = buildButtonTextScopedDocument(committed, draft, scope);
   assert.equal(saved.buttons.one.label, "One");
+  assert.equal(saved.buttons.one.tooltip, "Edited tooltip");
   assert.deepEqual(saved.placements["placement-one"].activationCycle, {
     states: [
       {
@@ -519,6 +522,7 @@ test("Button Text Apply All saves placement-cycle labels without changing the sh
   assert.equal(saved.placements["placement-one"].visualStateMap, null);
 
   draft.buttons.one.label = "Pending";
+  draft.buttons.one.tooltip = "Pending tooltip";
   draft.placements["placement-one"].activationCycle.states[0].label = "Pending armed";
   draft.placements["placement-one"].activationCycle.states[0].advanceTrigger = "press";
   draft.placements["placement-one"].activationCycle.states[0].visualState = "disabled";
@@ -538,6 +542,7 @@ test("Button Text Apply All saves placement-cycle labels without changing the sh
   );
   applyButtonTextSavedScope(draft, saved, scope);
   assert.equal(draft.buttons.one.label, "Pending");
+  assert.equal(draft.buttons.one.tooltip, "Edited tooltip");
   assert.deepEqual(
     draft.placements["placement-one"].activationCycle.states.map(
       ({ id, advanceTrigger, visualState, resultMatches }) => ({
@@ -579,6 +584,8 @@ test("Button Text Apply All commits text drafts across multiple Buttons and plac
   const draft = structuredClone(committed);
   draft.buttons.one.label = "First";
   draft.buttons.two.label = "Second";
+  draft.buttons.one.tooltip = "First tooltip";
+  draft.buttons.two.tooltip = "Second tooltip";
   draft.placements["placement-one"].textSizeOverride = 18;
   draft.placements["placement-two"].textSizeOverride = 24;
   draft.placements["placement-two"].textAlignment = "right";
@@ -593,14 +600,20 @@ test("Button Text Apply All commits text drafts across multiple Buttons and plac
   const saved = buildButtonTextScopedDocument(committed, draft, scope);
   assert.equal(saved.buttons.one.label, "First");
   assert.equal(saved.buttons.two.label, "Second");
+  assert.equal(saved.buttons.one.tooltip, "First tooltip");
+  assert.equal(saved.buttons.two.tooltip, "Second tooltip");
   assert.equal(saved.placements["placement-one"].textSizeOverride, 18);
   assert.equal(saved.placements["placement-two"].textSizeOverride, 24);
   assert.equal(saved.placements["placement-two"].textAlignment, "right");
   assert.equal(saved.placements["placement-two"].x, 80);
 
+  draft.buttons.one.tooltip = "Pending first tooltip";
+  draft.buttons.two.tooltip = "Pending second tooltip";
   applyButtonTextSavedScope(draft, saved, scope);
   assert.equal(draft.buttons.one.label, "First");
   assert.equal(draft.buttons.two.label, "Second");
+  assert.equal(draft.buttons.one.tooltip, "First tooltip");
+  assert.equal(draft.buttons.two.tooltip, "Second tooltip");
   assert.equal(draft.placements["placement-one"].textSizeOverride, 18);
   assert.equal(draft.placements["placement-two"].textSizeOverride, 24);
   assert.equal(draft.placements["placement-two"].x, 999);

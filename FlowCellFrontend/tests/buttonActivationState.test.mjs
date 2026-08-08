@@ -17,6 +17,7 @@ import {
 import {
     resolveTriggeredIndex,
     setButtonActivationState,
+    startButtonActivationStateCoordinator,
     subscribeButtonActivationState
 } from "./.compiled-button-system/button/runtime/ButtonActivationStateBus.js";
 import {
@@ -246,6 +247,92 @@ test("absolute activation-state setter updates its host when Tauri accepts an ev
     if (previousInternals === undefined) delete globalThis.__TAURI_INTERNALS__;
     else globalThis.__TAURI_INTERNALS__ = previousInternals;
     unsubscribe();
+  }
+});
+
+test("activation-state teardown contains Tauri's async missing-listener rejection", async () => {
+  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
+  const previousWindow = globalThis.window;
+  const hadTauriInternals = Object.prototype.hasOwnProperty.call(globalThis, "__TAURI_INTERNALS__");
+  const previousTauriInternals = globalThis.__TAURI_INTERNALS__;
+  const hadEventInternals = Object.prototype.hasOwnProperty.call(
+    globalThis,
+    "__TAURI_EVENT_PLUGIN_INTERNALS__"
+  );
+  const previousEventInternals = globalThis.__TAURI_EVENT_PLUGIN_INTERNALS__;
+  const unregisterAttempts = new Map();
+  const backendUnlistens = [];
+  let callbackId = 900;
+  let listenCount = 0;
+  let resolveFirstListen = null;
+
+  globalThis.window = globalThis;
+  globalThis.__TAURI_INTERNALS__ = {
+    transformCallback: () => callbackId++,
+    invoke: async (command, args) => {
+      if (command === "plugin:event|listen") {
+        const eventId = 700 + listenCount++;
+        if (listenCount === 1) {
+          return new Promise((resolve) => {
+            resolveFirstListen = () => resolve(eventId);
+          });
+        }
+        return eventId;
+      }
+      if (command === "plugin:event|unlisten") {
+        backendUnlistens.push(args.eventId);
+      }
+      return null;
+    }
+  };
+  globalThis.__TAURI_EVENT_PLUGIN_INTERNALS__ = {
+    unregisterListener: (_event, eventId) => {
+      const attempts = (unregisterAttempts.get(eventId) ?? 0) + 1;
+      unregisterAttempts.set(eventId, attempts);
+      if (attempts === 1) {
+        throw new TypeError("Cannot read properties of undefined (reading 'handlerId')");
+      }
+    }
+  };
+
+  const activationKey = `placement-unlisten-test-${Date.now()}`;
+  const observed = [];
+  let returnedCleanup = null;
+  try {
+    const pendingSubscription = subscribeButtonActivationState(
+      activationKey,
+      3,
+      (index) => observed.push(index)
+    ).then((cleanup) => {
+      returnedCleanup = cleanup;
+      cleanup();
+    });
+    await Promise.resolve();
+    assert.equal(typeof resolveFirstListen, "function");
+    resolveFirstListen();
+    await pendingSubscription;
+    returnedCleanup();
+
+    const stopCoordinator = await startButtonActivationStateCoordinator();
+    stopCoordinator();
+    stopCoordinator();
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    await setButtonActivationState(activationKey, 3, 2);
+
+    assert.deepEqual(observed, [0]);
+    assert.deepEqual(
+      [...unregisterAttempts.entries()].sort(([left], [right]) => left - right),
+      [700, 701, 702, 703, 704].map((eventId) => [eventId, 2])
+    );
+    assert.deepEqual([...backendUnlistens].sort((left, right) => left - right), [700, 701, 702, 703, 704]);
+  } finally {
+    if (hadWindow) globalThis.window = previousWindow;
+    else delete globalThis.window;
+    if (hadTauriInternals) globalThis.__TAURI_INTERNALS__ = previousTauriInternals;
+    else delete globalThis.__TAURI_INTERNALS__;
+    if (hadEventInternals) globalThis.__TAURI_EVENT_PLUGIN_INTERNALS__ = previousEventInternals;
+    else delete globalThis.__TAURI_EVENT_PLUGIN_INTERNALS__;
   }
 });
 

@@ -451,6 +451,48 @@ test("Button Text exposes selected-placement horizontal alignment", () => {
   assert.equal((editor.match(/textOffsetY=\{placement\.textOffsetY\}/g) ?? []).length, 3);
 });
 
+test("Button Text exposes the complete selectable Button Tooltip beside the active label", () => {
+  const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const css = readEditorFile("buttonEditor.css");
+  const textSection = skinEditor.match(
+    /<summary title="Edit Button labels and the shared Button Tooltip[\s\S]*?<\/details>/
+  );
+  assert.ok(textSection, "Button Text section must exist");
+
+  assert.match(skinEditor, /buttonTooltip: string;/);
+  assert.match(skinEditor, /onButtonTooltipChange: \(tooltip: string\) => void;/);
+  assert.match(
+    textSection[0],
+    /className="button-text-label-grid"[\s\S]{0,1200}<span>Button Tooltip<\/span>[\s\S]{0,320}<textarea[\s\S]{0,360}value=\{buttonTooltip\}[\s\S]{0,320}onButtonTooltipChange\(event\.currentTarget\.value\)/
+  );
+  assert.doesNotMatch(textSection[0], /<span>Button Tooltip<\/span>\s*<input/);
+  assert.match(textSection[0], /ref=\{buttonTooltipEditorRef\}/);
+  assert.match(textSection[0], /className="button-tooltip-editor"/);
+  assert.match(textSection[0], /rows=\{3\}/);
+  assert.match(textSection[0], /wrap="soft"/);
+  assert.match(textSection[0], /complete tooltip stays visible and selectable/);
+  assert.match(skinEditor, /function resizeButtonTooltipEditor[\s\S]{0,320}editor\.scrollHeight/);
+  assert.match(skinEditor, /useLayoutEffect\(\(\) => \{[\s\S]{0,180}buttonTooltipEditorRef\.current[\s\S]{0,140}\[buttonTooltip, skinContextKey, skin\?\.id\]/);
+  assert.match(skinEditor, /new ResizeObserver\(resizeForWidth\)/);
+  assert.match(skinEditor, /onToggle=\{\(event\) => \{[\s\S]{0,260}resizeButtonTooltipEditor/);
+  assert.match(editor, /buttonTooltip=\{selectedButton\?\.tooltip \?\? ""\}/);
+  assert.match(
+    editor,
+    /onButtonTooltipChange=\{\(tooltip\) => \{[\s\S]{0,260}target\.tooltip = tooltip;[\s\S]{0,180}coalesceKey: `tooltip:\$\{selectedButton\.id\}`/
+  );
+  assert.match(css, /\.button-text-label-grid[\s\S]{0,160}grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  const tooltipEditorCss = css.match(/\.button-tooltip-editor\s*\{[\s\S]*?\}/);
+  assert.ok(tooltipEditorCss, "Button Tooltip editor styles must exist");
+  assert.match(tooltipEditorCss[0], /field-sizing:\s*content/);
+  assert.match(tooltipEditorCss[0], /max-height:\s*none/);
+  assert.match(tooltipEditorCss[0], /overflow:\s*hidden/);
+  assert.match(tooltipEditorCss[0], /overflow-wrap:\s*anywhere/);
+  assert.match(tooltipEditorCss[0], /white-space:\s*pre-wrap/);
+  assert.match(tooltipEditorCss[0], /user-select:\s*text/);
+  assert.doesNotMatch(tooltipEditorCss[0], /text-overflow|nowrap/);
+});
+
 test("Button Color follows Button Text with semantic profile parts, visible Text, and eyedropper controls", () => {
   const editor = readEditorFile("ButtonSkinEditor.tsx");
   const css = readEditorFile("buttonEditor.css");
@@ -506,7 +548,7 @@ test("Skin Editor exposes one placement-owned cycle with triggers, visuals, and 
   assert.doesNotMatch(skinEditor, /Label condition|Condition label|labelOverrides/);
   assert.equal(skinEditor.match(/>\s*Apply All\s*</g)?.length, 1);
   assert.match(skinEditor, /className="button-text-apply-all"[\s\S]{0,560}onClick=\{onApplyAllButtonText\}[\s\S]{0,120}>\s*Apply All\s*</);
-  assert.match(skinEditor, /Apply every pending Button Text change across the editor/);
+  assert.match(skinEditor, /Apply every pending Button Text change across the editor:[\s\S]{0,120}Button tooltips/);
   assert.match(editor, /activationCycle=\{selectedPlacement\?\.activationCycle \?\? null\}/);
   assert.match(editor, /onActivationCycleChange=\{\(activationCycle\) => \{[\s\S]{0,260}draft\.placements\[selectedPlacement\.id\]\.activationCycle/);
   assert.doesNotMatch(editor, /onHighlightOnHoverChange/);
@@ -519,7 +561,7 @@ test("Skin Editor exposes one placement-owned cycle with triggers, visuals, and 
 test("Button Text uses real cycle states and falls back to the base label when no cycle exists", () => {
   const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
   const textSection = skinEditor.match(
-    /<summary title="Edit and preview Button Text only[\s\S]*?<\/details>/
+    /<summary title="Edit Button labels and the shared Button Tooltip[\s\S]*?<\/details>/
   );
   assert.ok(textSection, "Button Text section must exist");
 
@@ -538,7 +580,7 @@ test("Button Text previews draft cycle labels but waits for Save Settings before
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const stateStructure = readEditorFile("buttonActivationStateStructure.ts");
   const textSection = skinEditor.match(
-    /<summary title="Edit and preview Button Text only[\s\S]*?<\/details>/
+    /<summary title="Edit Button labels and the shared Button Tooltip[\s\S]*?<\/details>/
   );
   assert.ok(textSection, "Button Text section must exist");
 
@@ -563,6 +605,7 @@ test("Button Text previews draft cycle labels but waits for Save Settings before
     /className="button-text-apply-all"[\s\S]{0,480}disabled=\{busy \|\| stateTextBlocked\}/
   );
   assert.match(textSection[0], /<span>Button label<\/span>\s*<input value=\{buttonLabel\} disabled=\{busy\}/);
+  assert.match(textSection[0], /<span>Button Tooltip<\/span>[\s\S]{0,320}<textarea[\s\S]{0,320}value=\{buttonTooltip\}/);
 });
 
 test("Skin Editor replaces explanatory section paragraphs with hover tooltips", () => {
@@ -579,7 +622,7 @@ test("Skin Editor replaces explanatory section paragraphs with hover tooltips", 
   }
   assert.match(skinEditor, /<summary title="Choose the policy for the next explicit size edit/);
   assert.match(skinEditor, /<summary title="Set how this placement advances through states/);
-  assert.match(skinEditor, /<summary title="Edit and preview Button Text only/);
+  assert.match(skinEditor, /<summary title="Edit Button labels and the shared Button Tooltip/);
   assert.match(skinEditor, /title=\{`Raw \$\{sectionLabel\(section\)\} skin code\.`\}/);
 });
 

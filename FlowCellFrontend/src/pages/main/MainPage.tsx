@@ -67,6 +67,7 @@ import {
 import {
   buildButtonPopoutWindowLabel,
   closeButtonFanWindow,
+  closeManagedButtonWindow,
   closeButtonPopoutWindow,
   openButtonEditorWindow,
   openButtonFanWindow,
@@ -1657,11 +1658,14 @@ export default function MainPage() {
           if (!registeredWindow) {
             return;
           }
-          if (registeredWindow.kind === "installed-page" && registeredWindow.buttonOwnerId) {
+          if (registeredWindow.kind === "installed-page") {
+            if (!registeredWindow.buttonOwnerId) {
+              throw new Error(`Installed Page window "${windowHandle.label}" is missing its owner identity.`);
+            }
             await closeInstalledPageWindow(registeredWindow.buttonOwnerId);
             return;
           }
-          await windowHandle.close().catch(() => {});
+          await closeManagedButtonWindow(windowHandle.label);
         })
     );
   };
