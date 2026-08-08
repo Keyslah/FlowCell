@@ -4,6 +4,8 @@ import {
   getCurrentWindow,
   LogicalPosition,
   LogicalSize,
+  PhysicalPosition,
+  PhysicalSize,
   type Window as TauriWindow
 } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -15,6 +17,12 @@ import {
   type FlowCellWindowContext,
   type InstalledPageWindowContext
 } from "./windowContext";
+import type { FlowCellBounds } from "../types";
+import {
+  registerLayoutWindow,
+  unregisterLayoutWindow,
+  writeRegisteredLayoutWindowSnapshotBounds
+} from "./layoutSnapshots";
 import {
   registerScopedWindowTopmost,
   refreshScopedWindowTopmost
@@ -34,7 +42,16 @@ interface CoreWindowOptions {
   skipTaskbar?: boolean;
   recreate?: boolean;
   programName?: string;
+  savedBounds?: FlowCellBounds;
 }
+
+type CoreWindowPlacement = {
+  x?: number;
+  y?: number;
+  width: number;
+  height: number;
+  unit: "logical" | "physical";
+};
 
 async function waitForCreated(windowHandle: WebviewWindow): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -54,24 +71,20 @@ async function waitForCreated(windowHandle: WebviewWindow): Promise<void> {
   });
 }
 
-async function centeredPlacement(width: number, height: number): Promise<{
-  x?: number;
-  y?: number;
-  width: number;
-  height: number;
-}> {
+async function centeredPlacement(width: number, height: number): Promise<CoreWindowPlacement> {
   const current = getCurrentWindow();
   const scale = await current.scaleFactor().catch(() => 1);
   const [position, size] = await Promise.all([
     current.outerPosition().catch(() => null),
     current.innerSize().catch(() => null)
   ]);
-  if (!position || !size) return { width, height };
+  if (!position || !size) return { width, height, unit: "logical" };
   const left = position.x / scale;
   const top = position.y / scale;
   return {
     width,
     height,
+    unit: "logical",
     x: left + Math.max((size.width / scale - width) / 2, 24),
     y: top + Math.max((size.height / scale - height) / 2, 24)
   };
@@ -79,12 +92,20 @@ async function centeredPlacement(width: number, height: number): Promise<{
 
 async function applyPlacement(
   target: TauriWindow,
-  placement: { x?: number; y?: number; width: number; height: number }
+  placement: CoreWindowPlacement
 ): Promise<void> {
   if (typeof placement.x === "number" && typeof placement.y === "number") {
-    await target.setPosition(new LogicalPosition(placement.x, placement.y));
+    await target.setPosition(
+      placement.unit === "physical"
+        ? new PhysicalPosition(placement.x, placement.y)
+        : new LogicalPosition(placement.x, placement.y)
+    );
   }
-  await target.setSize(new LogicalSize(placement.width, placement.height));
+  await target.setSize(
+    placement.unit === "physical"
+      ? new PhysicalSize(placement.width, placement.height)
+      : new LogicalSize(placement.width, placement.height)
+  );
 }
 
 async function showAndFocus(target: TauriWindow): Promise<void> {
@@ -93,13 +114,40 @@ async function showAndFocus(target: TauriWindow): Promise<void> {
   await target.setFocus();
 }
 
+async function readCoreWindowBounds(target: TauriWindow): Promise<FlowCellBounds | null> {
+  if (await target.isMinimized().catch(() => false)) {
+    return null;
+  }
+  const [position, size] = await Promise.all([
+    target.outerPosition().catch(() => null),
+    target.innerSize().catch(() => null)
+  ]);
+  if (!position || !size) {
+    return null;
+  }
+  return {
+    Left: position.x,
+    Top: position.y,
+    Width: size.width,
+    Height: size.height
+  };
+}
+
 async function openCoreWindow(options: CoreWindowOptions): Promise<void> {
   const previous = pendingOpens.get(options.label);
   const open = (async () => {
     if (previous) {
       await previous.catch(() => {});
     }
-    const placement = await centeredPlacement(options.width, options.height);
+    const placement: CoreWindowPlacement = options.savedBounds
+      ? {
+          x: options.savedBounds.Left,
+          y: options.savedBounds.Top,
+          width: options.savedBounds.Width,
+          height: options.savedBounds.Height,
+          unit: "physical"
+        }
+      : await centeredPlacement(options.width, options.height);
     let existing = await WebviewWindow.getByLabel(options.label);
     if (existing && options.recreate) {
       await existing.close();
@@ -114,10 +162,10 @@ async function openCoreWindow(options: CoreWindowOptions): Promise<void> {
     const target = new WebviewWindow(options.label, {
       url: buildWindowContextUrl(options.context),
       title: options.title,
-      width: options.width,
-      height: options.height,
-      x: placement.x,
-      y: placement.y,
+      width: placement.unit === "logical" ? placement.width : options.width,
+      height: placement.unit === "logical" ? placement.height : options.height,
+      x: placement.unit === "logical" ? placement.x : undefined,
+      y: placement.unit === "logical" ? placement.y : undefined,
       minWidth: options.minimumWidth,
       minHeight: options.minimumHeight,
       resizable: true,
@@ -202,14 +250,23 @@ export const openAddPanelWindow = (programName: string) => openCoreWindow({
   recreate: true
 });
 
+function hashInstalledPageOwnerId(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 function installedPageWindowLabel(ownerButtonId: string): string {
-  const safeOwner = ownerButtonId
-    .trim()
+  const normalizedOwner = ownerButtonId.trim();
+  const safeOwner = normalizedOwner
     .toLowerCase()
     .replace(/[^a-z0-9_-]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 96) || "page";
-  return `flowcell-installed-page-${safeOwner}`;
+  return `flowcell-installed-page-${safeOwner}-${hashInstalledPageOwnerId(normalizedOwner)}`;
 }
 
 export async function openInstalledPageWindow(args: {
@@ -223,7 +280,9 @@ export async function openInstalledPageWindow(args: {
   height: number;
   minWidth: number;
   minHeight: number;
+  bounds?: FlowCellBounds;
 }): Promise<void> {
+  const windowLabel = installedPageWindowLabel(args.ownerButtonId);
   const context: InstalledPageWindowContext = {
     kind: "installed-page",
     schemaVersion: BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
@@ -233,16 +292,87 @@ export async function openInstalledPageWindow(args: {
     fileName: args.fileName,
     pageId: args.pageId
   };
-  await openCoreWindow({
-    label: installedPageWindowLabel(args.ownerButtonId),
-    context,
-    title: `FlowCell - ${args.title}`,
-    width: args.width,
-    height: args.height,
-    minimumWidth: args.minWidth,
-    minimumHeight: args.minHeight,
-    decorations: true,
-    programName: args.programName
+  registerLayoutWindow({
+    windowLabel,
+    kind: "installed-page",
+    programName: args.programName,
+    panelName: args.panelName,
+    buttonOwnerId: args.ownerButtonId,
+    installedPageFileName: args.fileName,
+    installedPageId: args.pageId,
+    snapshotBounds: args.bounds
+  });
+  try {
+    await openCoreWindow({
+      label: windowLabel,
+      context,
+      title: `FlowCell - ${args.title}`,
+      width: args.width,
+      height: args.height,
+      minimumWidth: args.minWidth,
+      minimumHeight: args.minHeight,
+      decorations: true,
+      programName: args.programName,
+      savedBounds: args.bounds
+    });
+    const target = await WebviewWindow.getByLabel(windowLabel);
+    if (target) {
+      writeRegisteredLayoutWindowSnapshotBounds(
+        windowLabel,
+        await readCoreWindowBounds(target)
+      );
+      await target.once("tauri://destroyed", () => {
+        unregisterLayoutWindow(windowLabel);
+      });
+    }
+  } catch (error) {
+    unregisterLayoutWindow(windowLabel);
+    throw error;
+  }
+}
+
+export interface InstalledPageOpenDescriptor {
+  window: {
+    title: string;
+    width: number;
+    height: number;
+    minWidth: number;
+    minHeight: number;
+  };
+}
+
+export async function resolveInstalledPageOpenDescriptor(args: {
+  ownerButtonId: string;
+  programName: string;
+  panelName: string;
+  fileName: string;
+  pageId: string;
+}): Promise<InstalledPageOpenDescriptor> {
+  return invoke<InstalledPageOpenDescriptor>("resolve_installed_page", args);
+}
+
+export async function resolveAndOpenInstalledPageWindow(args: {
+  ownerButtonId: string;
+  programName: string;
+  panelName: string;
+  fileName: string;
+  pageId: string;
+  bounds?: FlowCellBounds;
+}): Promise<void> {
+  const descriptor = await resolveInstalledPageOpenDescriptor({
+    ownerButtonId: args.ownerButtonId,
+    programName: args.programName,
+    panelName: args.panelName,
+    fileName: args.fileName,
+    pageId: args.pageId
+  });
+  await openInstalledPageWindow({
+    ...args,
+    title: descriptor.window.title,
+    width: descriptor.window.width,
+    height: descriptor.window.height,
+    minWidth: descriptor.window.minWidth,
+    minHeight: descriptor.window.minHeight
   });
 }
 
@@ -250,7 +380,10 @@ export async function closeInstalledPageWindow(ownerButtonId: string): Promise<v
   const label = installedPageWindowLabel(ownerButtonId);
   await pendingOpens.get(label)?.catch(() => {});
   const existing = await WebviewWindow.getByLabel(label);
-  if (!existing) return;
+  if (!existing) {
+    unregisterLayoutWindow(label);
+    return;
+  }
   let acknowledgeDestroyed: (() => void) | null = null;
   const destroyed = new Promise<void>((resolve) => {
     acknowledgeDestroyed = resolve;
@@ -263,6 +396,7 @@ export async function closeInstalledPageWindow(ownerButtonId: string): Promise<v
     await destroyed;
   } finally {
     unlistenDestroyed();
+    unregisterLayoutWindow(label);
   }
 }
 

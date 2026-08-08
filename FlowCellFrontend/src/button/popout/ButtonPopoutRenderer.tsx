@@ -3,6 +3,7 @@ import { ButtonSurface } from "../ButtonSurface";
 import type { ButtonExecutionResult } from "../runtime/ButtonRuntimeAdapter";
 import type {
   ButtonCoreMeasurement,
+  ButtonPlacement,
   ButtonPopoutUnit,
   ButtonRect,
   ButtonRecord,
@@ -10,7 +11,6 @@ import type {
   ButtonToolField,
   ButtonVisualMeasurement,
   ButtonVisualState,
-  ToolSetButtonPopoutUnit,
   JsonValue
 } from "../types";
 import "./buttonPopout.css";
@@ -21,10 +21,10 @@ function initialFieldValues(fields: ButtonToolField[]): Record<string, JsonValue
   return Object.fromEntries(fields.map((field) => [field.id, field.defaultValue]));
 }
 
-function findOwnerPlacementId(
+function findLegacyOwnerPlacement(
   document: ButtonStateDocument,
   ownerButtonId: string
-): string | null {
+): ButtonPlacement | null {
   const candidates = Object.values(document.placements).filter(
     (placement) => placement.buttonId === ownerButtonId
   );
@@ -35,21 +35,29 @@ function findOwnerPlacementId(
       kind === "panel" ? 0 : kind === "main" ? 1 : kind === "fan" ? 2 : 3;
     return rank(leftSurface?.kind) - rank(rightSurface?.kind) || left.id.localeCompare(right.id);
   });
-  return candidates[0]?.id ?? null;
+  return candidates[0] ?? null;
+}
+
+function resolveSavedOwnerPlacement(
+  document: ButtonStateDocument,
+  unit: ButtonPopoutUnit
+): ButtonPlacement | null {
+  const ownerPlacementId = unit.ownerPlacementId?.trim();
+  const ownerButtonId = unit.ownerButtonId?.trim();
+  if (!ownerPlacementId || !ownerButtonId) return null;
+  const placement = document.placements[ownerPlacementId];
+  return placement?.surfaceId === unit.surfaceId && placement.buttonId === ownerButtonId
+    ? placement
+    : null;
 }
 
 function buildCollapsedOwnerDocument(args: {
   document: ButtonStateDocument;
-  unit: ToolSetButtonPopoutUnit;
+  unit: ButtonPopoutUnit;
+  sourcePlacement: ButtonPlacement;
 }): { document: ButtonStateDocument; surfaceId: string; placementId: string } | null {
-  const ownerButtonId = args.unit.ownerButtonId;
-  const sourcePlacementId = findOwnerPlacementId(args.document, ownerButtonId);
-  const sourcePlacement = sourcePlacementId
-    ? args.document.placements[sourcePlacementId]
-    : undefined;
-  if (!sourcePlacement) {
-    return null;
-  }
+  const ownerButtonId = args.sourcePlacement.buttonId;
+  const sourcePlacement = args.sourcePlacement;
 
   const surfaceId = `button-window-owner-surface:${ownerButtonId}`;
   const placementId = `button-window-owner-placement:${ownerButtonId}`;
@@ -153,14 +161,43 @@ export function ButtonPopoutRenderer({
     },
     [acceptFieldValues]
   );
-  const collapsedOwner = useMemo(
-    () => unit.kind === "tool-set" ? buildCollapsedOwnerDocument({ document, unit }) : null,
+  const savedOwnerPlacement = useMemo(
+    () => resolveSavedOwnerPlacement(document, unit),
     [document, unit]
   );
+  const authoredFan = unit.interactionMode === "fan" && Boolean(savedOwnerPlacement);
+  const collapsedSourcePlacement = authoredFan
+    ? savedOwnerPlacement
+    : unit.kind === "tool-set"
+      ? findLegacyOwnerPlacement(document, unit.ownerButtonId)
+      : null;
+  const collapsedOwner = useMemo(
+    () => collapsedSourcePlacement
+      ? buildCollapsedOwnerDocument({ document, unit, sourcePlacement: collapsedSourcePlacement })
+      : null,
+    [collapsedSourcePlacement, document, unit]
+  );
+  const expandedDocument = useMemo(() => {
+    if (authoredFan || !savedOwnerPlacement) return document;
+    const surface = document.surfaces[unit.surfaceId];
+    if (!surface?.placementIds.includes(savedOwnerPlacement.id)) return document;
+    return {
+      ...document,
+      surfaces: {
+        ...document.surfaces,
+        [surface.id]: {
+          ...surface,
+          placementIds: surface.placementIds.filter(
+            (placementId) => placementId !== savedOwnerPlacement.id
+          )
+        }
+      }
+    };
+  }, [authoredFan, document, savedOwnerPlacement, unit.surfaceId]);
 
   if (displayMode === "collapsed") {
-    if (unit.kind !== "tool-set" || !collapsedOwner) {
-      return <div className="button-window-error">Tool-set owner placement is missing.</div>;
+    if (!collapsedOwner) {
+      return <div className="button-window-error">Fan owner placement is missing.</div>;
     }
     return (
       <div
@@ -183,12 +220,13 @@ export function ButtonPopoutRenderer({
             document={collapsedOwner.document}
             surfaceId={collapsedOwner.surfaceId}
             mode="run"
+            ownerPlacementId={collapsedOwner.placementId}
             onRequestInlineEditorFocus={onRequestInlineEditorFocus}
             onPlacementMeasurement={onPlacementMeasurement}
             onPlacementVisualMeasurement={onPlacementVisualMeasurement}
             onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
             onPlacementVisualStateChange={onPlacementVisualStateChange}
-            onActivate={(_placementId: string, button: ButtonRecord) => onOwnerActivate?.(button)}
+            onOwnerActivate={(_placementId: string, button: ButtonRecord) => onOwnerActivate?.(button)}
           />
         </div>
       </div>
@@ -222,9 +260,10 @@ export function ButtonPopoutRenderer({
         }}
       >
         <ButtonSurface
-          document={document}
+          document={expandedDocument}
           surfaceId={surface.id}
           mode="run"
+          ownerPlacementId={authoredFan ? savedOwnerPlacement?.id : undefined}
           resetResultMappedActivationStateOnMount={unit.kind === "tool-set"}
           fields={fields}
           fieldValues={fieldValues}
@@ -243,6 +282,7 @@ export function ButtonPopoutRenderer({
           onPlacementVisualMeasurement={onPlacementVisualMeasurement}
           onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
           onPlacementVisualStateChange={onPlacementVisualStateChange}
+          onOwnerActivate={(_placementId: string, button: ButtonRecord) => onOwnerActivate?.(button)}
         />
         {fieldError ? <div className="button-window-error">{fieldError}</div> : null}
       </div>

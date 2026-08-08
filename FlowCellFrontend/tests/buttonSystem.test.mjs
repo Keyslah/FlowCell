@@ -31,6 +31,19 @@ import {
   serializeButtonSkinSections
 } from "./.compiled-button-system/button/skins/buttonSkinFormat.js";
 import {
+  buttonSkinColorWithPreservedAlpha,
+  buttonSkinOpaqueColor,
+  collectButtonSkinColorBuckets,
+  collectButtonSkinProfileColors,
+  normalizeButtonSkinColor,
+  readButtonSkinHighlightOnHover,
+  readButtonSkinTextColor,
+  replaceButtonSkinColor,
+  setButtonSkinHighlightOnHover,
+  setButtonSkinProfileColor,
+  setButtonSkinTextColor
+} from "./.compiled-button-system/button/skins/buttonSkinColors.js";
+import {
   BUTTON_SKIN_RECENT_FILE_LIMIT,
   createButtonSkinFromFile,
   normalizeButtonSkinRecentFiles,
@@ -60,6 +73,8 @@ import {
   applyButtonLabelTextOffset
 } from "./.compiled-button-system/button/skins/buttonTextOffset.js";
 import {
+  alignButtonPlacementSelectionToTopLeftButton,
+  buttonSpacingPixelsFromMillimeters,
   buttonRectsOverlap,
   buildButtonReorderRowCandidates,
   chooseButtonReorderRowCandidate,
@@ -76,8 +91,11 @@ import {
   resolveButtonSkinScale,
   resolveButtonRenderedCssScale,
   resolveButtonShadowScreenOffsets,
+  resolveButtonGroupTranslationAlongPath,
   resolveButtonGeometry,
   resolveButtonGeometryAlongPath,
+  resizeButtonPlacementSelection,
+  translateButtonPlacementRects,
   validateExactButtonLayoutGeometry
 } from "./.compiled-button-system/button/geometry/buttonGeometry.js";
 import {
@@ -95,6 +113,9 @@ import {
   resolveDiscardedStagedOwnerButtonIds,
   resolveUninstallOwnerButtonIds
 } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
+import {
+  setButtonPopoutFanMode
+} from "./.compiled-button-system/button/state/buttonPopoutInteractionOperations.js";
 import {
   FRONTEND_MACRO_CORE_ACTION_ID,
   attachCanonicalFrontendMacroButton,
@@ -126,6 +147,12 @@ import {
   resolvePanelOwnerMainPlacement
 } from "./.compiled-button-system/button/state/panelOwnerButtonOperations.js";
 import {
+  FLOWCELL_MAIN_PAGE_PROGRAM,
+  ensureFlowCellMainPageButtons,
+  resolveFlowCellMainPageButtonLayout,
+  resolveFlowCellMainPagePresentation
+} from "./.compiled-button-system/button/state/mainPageButtonOperations.js";
+import {
   removePanelButtonDocumentScope,
   removeProgramButtonDocumentScope,
   renamePanelButtonDocumentScope,
@@ -151,7 +178,10 @@ import {
   resolveButtonFrameForScaleFactor,
   resolveButtonWebviewPixelRatio,
   resolveButtonWindowClientPoint,
+  resolveButtonWindowOwnerOriginFromExpandedFrame,
   resolveButtonWindowEnvelope,
+  resolveButtonWindowSubframeBounds,
+  resolveExpandedButtonWindowFrameAtOwnerOrigin,
   resolveExpandedPopoutBounds,
   resolveFixedButtonCanvasBounds,
   resolveInitialPhysicalButtonWindowEnvelopeBounds,
@@ -169,6 +199,9 @@ import {
   isNativeQueryRevisionCurrent,
   shouldIgnoreButtonWindowCursor
 } from "./.compiled-button-system/button/windows/nativeCursorIgnoreController.js";
+import {
+  buttonCoreContainsClientPoint
+} from "./.compiled-button-system/button/windows/buttonCoreHitTest.js";
 import {
   readRegisteredLayoutWindow,
   registerLayoutWindow
@@ -197,7 +230,9 @@ import {
 import {
   buttonPlacementSizingMode,
   buttonPlacementSizingPatch,
-  resolveAssignedButtonDimensions
+  buttonSizingModeLocksAspect,
+  resolveAssignedButtonDimensions,
+  resolveProportionalResizeBasis
 } from "./.compiled-button-system/button/editor/buttonSizeAssignments.js";
 import {
   discardStagedButtonInstalls
@@ -724,8 +759,25 @@ test("Button Editor bounds reject Windows minimized sentinels and discard stale 
       windowLabel: "flowcell-button-editor",
       kind: "button-editor"
     });
+    registerLayoutWindow({
+      windowLabel: "flowcell-installed-page-owner-1",
+      kind: "installed-page",
+      programName: "Illustrator",
+      panelName: "Layers",
+      buttonOwnerId: "owner-1",
+      installedPageFileName: "layers.jsx",
+      installedPageId: "layers-builder"
+    });
     const persisted = JSON.parse(values.get("flowcell.button-layout-windows.v2"));
     assert.equal(persisted["flowcell-button-editor"].snapshotBounds, undefined);
+    const registeredPage = readRegisteredLayoutWindow("flowcell-installed-page-owner-1");
+    assert.equal(registeredPage?.windowLabel, "flowcell-installed-page-owner-1");
+    assert.equal(registeredPage?.buttonOwnerId, "owner-1");
+    assert.equal(persisted["flowcell-installed-page-owner-1"].kind, "installed-page");
+    assert.equal(
+      persisted["flowcell-installed-page-owner-1"].installedPageId,
+      "layers-builder"
+    );
   } finally {
     if (originalWindow === undefined) {
       delete globalThis.window;
@@ -1131,6 +1183,15 @@ test("fixed Button frame rescaling preserves the opposite resize corner", () => 
   assert.deepEqual(resolveButtonFrameForScaleFactor({ ...common, anchorCorner: "NorthWest" }), {
     left: 0, top: 150, width: 500, height: 250
   });
+
+  assert.deepEqual(resolveButtonFrameForScaleFactor({
+    bounds: { left: 76, top: 185, width: 786, height: 368 },
+    envelope: { x: 0, y: 0, width: 640, height: 300 },
+    contentScale: 1,
+    scaleFactor: 1.5,
+    anchorCorner: "SouthEast",
+    anchorSubframeEnvelope: { x: 104, y: 64, width: 438, height: 171 }
+  }), { left: 48, top: 168, width: 960, height: 450 });
 });
 
 test("Button Pop window geometry uniformly fits surfaces and keeps the opposite corner anchored", () => {
@@ -1412,6 +1473,213 @@ test("skin paste tolerates leading blank lines, indentation, and header case", (
   assert.equal(parseButtonSkinPaste("=== hover ===\na: b;\n=== Hover ===\nc: d;").ok, false);
 });
 
+test("Button Color derives stable authored buckets and replaces only matching color values", () => {
+  const source = {
+    ...createEmptyButtonSkinSections(),
+    structure: [
+      '<div data-core style="color:#fff;background:rgb(0 0 0 / 50%)">',
+      '<svg><path data-fill="red" fill="#FFFFFF"></path><use fill="url(#abc)"></use><use fill="url(#red)"></use></svg>',
+      "{{label}}</div>"
+    ].join(""),
+    keyframes: "@keyframes tint{from{box-shadow:0 0 #fff}to{color:hsl(0 100% 50%)}}",
+    base: "--tone:#ffffff;--flowcell-button-text-color:#123456;",
+    hover: "--tone:rgba(255,255,255,1);--anim-pulse:red 120ms;font-family:red;background:red;",
+    disabled: "color:transparent;"
+  };
+  const buckets = collectButtonSkinColorBuckets(source);
+  assert.deepEqual(
+    buckets.map(({ id, occurrences, sections }) => ({ id, occurrences, sections })),
+    [
+      { id: "#FFFFFFFF", occurrences: 5, sections: ["structure", "keyframes", "base", "hover"] },
+      { id: "#00000080", occurrences: 1, sections: ["structure"] },
+      { id: "#FF0000FF", occurrences: 2, sections: ["keyframes", "hover"] },
+      { id: "#00000000", occurrences: 1, sections: ["disabled"] }
+    ]
+  );
+  assert.equal(buckets[1].color, "#00000080");
+  assert.equal(buckets[1].pickerColor, "#000000");
+  assert.equal(buckets[1].alpha, 128);
+
+  const replaced = replaceButtonSkinColor(source, "#FFFFFFFF", "#112233");
+  assert.equal((Object.values(replaced).join("\n").match(/#112233/g) ?? []).length, 5);
+  assert.match(replaced.structure, /url\(#abc\)/);
+  assert.match(replaced.structure, /url\(#red\)/);
+  assert.match(replaced.base, /--flowcell-button-text-color:#123456/);
+  assert.equal(replaced.keyframes.includes("hsl(0 100% 50%)"), true);
+  assert.equal(replaced.disabled, source.disabled);
+
+  const replacedRed = replaceButtonSkinColor(source, "#FF0000FF", "#00FF00");
+  assert.match(replacedRed.hover, /--anim-pulse:red 120ms/);
+  assert.match(replacedRed.hover, /font-family:red/);
+  assert.match(replacedRed.hover, /background:#00FF00/);
+  assert.match(replacedRed.structure, /data-fill="red"/);
+});
+
+test("Button Color exposes only authored semantic profile roots and leaves effects literal", () => {
+  const source = {
+    ...createEmptyButtonSkinSections(),
+    structure: [
+      '<div data-core style="background:var(--flowcell-button-shade-primary-face,#8F8F8F);',
+      'color:var(--flowcell-button-shade-text-main,#191919);',
+      'box-shadow:0 4px 12px rgba(0,0,0,.45);',
+      'filter:drop-shadow(0 1px 2px rgba(0,0,0,.6))">{{label}}</div>'
+    ].join(""),
+    base: [
+      "--flowcell-button-color-primary:#808080",
+      "--flowcell-button-shade-primary-face:color-mix(in oklch,var(--flowcell-button-color-primary,#808080),white 12%)",
+      "--flowcell-button-color-accent:#E89A32",
+      "--flowcell-button-color-text:#191919",
+      "--flowcell-button-shade-text-main:var(--flowcell-button-color-text,#191919)",
+      "--button-shadow:rgba(0,0,0,.45)"
+    ].join(";"),
+    hover: "--flowcell-button-shade-primary-face:color-mix(in oklch,var(--flowcell-button-color-primary,#808080),white 20%);",
+    error: "outline-color:#D26161;"
+  };
+  const profile = collectButtonSkinProfileColors(source);
+  assert.deepEqual(
+    profile.map(({ variable, role, label, color }) => ({ variable, role, label, color })),
+    [
+      {
+        variable: "--flowcell-button-color-primary",
+        role: "primary",
+        label: "Button Color",
+        color: "#808080"
+      },
+      {
+        variable: "--flowcell-button-color-accent",
+        role: "accent",
+        label: "Accent Color",
+        color: "#E89A32"
+      },
+      {
+        variable: "--flowcell-button-color-text",
+        role: "text",
+        label: "Text Color",
+        color: "#191919"
+      }
+    ]
+  );
+
+  const changed = setButtonSkinProfileColor(
+    source,
+    "--flowcell-button-color-primary",
+    "#336699"
+  );
+  assert.match(changed.base, /--flowcell-button-color-primary:#336699/);
+  assert.match(changed.base, /color-mix\(in oklch,var\(--flowcell-button-color-primary,#808080\),white 12%\)/);
+  assert.match(changed.base, /--flowcell-button-color-accent:#E89A32/);
+  assert.match(changed.base, /--flowcell-button-color-text:#191919/);
+  assert.match(changed.base, /--button-shadow:rgba\(0,0,0,\.45\)/);
+  for (const section of ["structure", "keyframes", "hover", "play", "pressed", "held", "release", "disabled", "error"]) {
+    assert.equal(changed[section], source[section], section);
+  }
+
+  const compiled = compileButtonSkin({
+    id: "skin-semantic-color-profile",
+    name: "Semantic Color Profile",
+    ...source,
+    metadata: {},
+    compileCache: null
+  });
+  assert.equal(compiled.ok, true);
+});
+
+test("Button Color normalizes alpha and keeps text color separate from authored buckets", () => {
+  assert.equal(normalizeButtonSkinColor("#abc"), "#AABBCC");
+  assert.equal(normalizeButtonSkinColor("rgba(10, 20, 30, .5)"), "#0A141E80");
+  assert.equal(normalizeButtonSkinColor("rgb(50% 50% 50%)"), "#808080");
+  assert.equal(buttonSkinColorWithPreservedAlpha("#ABCDEF", "#01020340"), "#ABCDEF40");
+  assert.equal(buttonSkinOpaqueColor("#01020340"), "#010203");
+
+  const source = {
+    ...createEmptyButtonSkinSections(),
+    structure: '<div data-core style="color:#fff;background:#123456">{{label}}</div>',
+    base: "--edge:#654321"
+  };
+  const compiledWithoutOverride = compileButtonSkin({
+    id: "skin-button-color-authored-label",
+    name: "Button Color Authored Label",
+    ...source,
+    metadata: {},
+    compileCache: null
+  });
+  assert.equal(compiledWithoutOverride.ok, true);
+  assert.doesNotMatch(compiledWithoutOverride.compiled.scopedCss, /color:var\(--flowcell-button-text-color\)/);
+
+  const changed = setButtonSkinTextColor(source, "#abc");
+  assert.equal(readButtonSkinTextColor(changed), "#AABBCC");
+  assert.match(changed.base, /--flowcell-button-text-color:#AABBCC;/);
+  assert.deepEqual(
+    collectButtonSkinColorBuckets(changed).map((bucket) => bucket.id),
+    ["#FFFFFFFF", "#123456FF", "#654321FF"]
+  );
+  assert.equal(changed.structure, source.structure);
+  const compiled = compileButtonSkin({
+    id: "skin-button-color",
+    name: "Button Color",
+    ...changed,
+    metadata: {},
+    compileCache: null
+  });
+  assert.equal(compiled.ok, true);
+  assert.match(
+    compiled.compiled.scopedCss,
+    /\[data-button-label-node\]\{[^}]*color:var\(--flowcell-button-text-color\)!important;[^}]*fill:var\(--flowcell-button-text-color\)!important;/
+  );
+
+  const restored = setButtonSkinTextColor(changed, null);
+  assert.equal(readButtonSkinTextColor(restored), null);
+  assert.equal(restored.base, source.base);
+  assert.equal(restored.structure, source.structure);
+  const compiledRestored = compileButtonSkin({
+    id: "skin-button-color-restored",
+    name: "Button Color Restored",
+    ...restored,
+    metadata: {},
+    compileCache: null
+  });
+  assert.equal(compiledRestored.ok, true);
+  assert.doesNotMatch(compiledRestored.compiled.scopedCss, /color:var\(--flowcell-button-text-color\)/);
+});
+
+test("skin hover highlight is an explicit portable Base setting", () => {
+  const source = {
+    ...createEmptyButtonSkinSections(),
+    structure: '<div data-core>{{label}}</div>',
+    base: "--flowcell-button-color-surface:#808080;",
+    hover: "--flowcell-button-shade-surface-face:#909090;"
+  };
+  assert.equal(readButtonSkinHighlightOnHover(source), null);
+
+  const enabled = setButtonSkinHighlightOnHover(source, true);
+  assert.equal(readButtonSkinHighlightOnHover(enabled), true);
+  assert.match(enabled.base, /--flowcell-button-highlight-on-hover:1;/);
+  assert.equal(enabled.structure, source.structure);
+  assert.equal(enabled.hover, source.hover);
+  const serialized = serializeButtonSkinSections(enabled);
+  assert.match(serialized, /--flowcell-button-highlight-on-hover:1;/);
+  assert.equal(
+    readButtonSkinHighlightOnHover(createButtonSkinFromFile(
+      serialized,
+      "C:\\Skins\\Portable Highlight.flowcell-button-skin.txt",
+      "skin-portable-highlight-round-trip"
+    )),
+    true
+  );
+
+  const disabled = setButtonSkinHighlightOnHover(enabled, false);
+  assert.equal(readButtonSkinHighlightOnHover(disabled), false);
+  assert.equal((disabled.base.match(/--flowcell-button-highlight-on-hover/g) ?? []).length, 1);
+  assert.match(disabled.base, /--flowcell-button-highlight-on-hover:0;/);
+  assert.equal(compileButtonSkin({
+    id: "skin-portable-hover-highlight",
+    name: "Portable Hover Highlight",
+    ...disabled,
+    metadata: {},
+    compileCache: null
+  }).ok, true);
+});
+
 test("semantic skin validation enforces data-core, label ownership, and safe animation", () => {
   const valid = {
     ...createEmptyButtonSkinSections(),
@@ -1459,7 +1727,7 @@ test("textless animation skins compile without synthesizing a visible label", ()
   assert.equal(result.compiled.sanitizedMarkupTemplate.includes("data-button-label-node"), false);
 });
 
-test("compiled skins keep authored wrappers inert and expose the core to pointer input", () => {
+test("compiled skins keep rectangular wrappers inert and expose the authored core shape", () => {
   const skin = {
     id: "skin-core-hitbox",
     name: "Core Hitbox",
@@ -1470,15 +1738,78 @@ test("compiled skins keep authored wrappers inert and expose the core to pointer
   };
   const result = compileButtonSkin(skin);
   assert.equal(result.ok, true);
-  assert.match(result.compiled.scopedCss, /:host\{[^}]*pointer-events:auto;/);
+  assert.match(result.compiled.scopedCss, /:host\{[^}]*pointer-events:none;/);
   assert.match(result.compiled.scopedCss, /\[data-button-skin-root\]\{[^}]*pointer-events:none;/);
   assert.match(result.compiled.scopedCss, /\[data-core\]\{pointer-events:auto!important;/);
-  assert.match(result.compiled.scopedCss, /svg\[data-core\]\{pointer-events:bounding-box!important;/);
+  assert.match(result.compiled.scopedCss, /svg\[data-core\]\{pointer-events:visiblePainted!important;/);
   assert.match(
     result.compiled.scopedCss,
     /:host\(\[data-button-constrained="true"\]\) \[data-core\]\{[^}]*width:var\(--button-core-width\)!important;[^}]*height:var\(--button-core-height\)!important;[^}]*min-width:0!important;[^}]*max-width:none!important;/
   );
   assert.doesNotMatch(result.compiled.scopedCss, /\[data-core\]\{pointer-events:none!important;/);
+});
+
+test("one inner data-hit-shape can narrow a semantic core without rewriting skin source", () => {
+  const skin = {
+    id: "skin-inner-hit-shape",
+    name: "Inner Hit Shape",
+    ...createEmptyButtonSkinSections(),
+    structure: [
+      "<span data-core style=\"display:inline-block;width:20px;height:20px\">",
+      "<span data-hit-shape style=\"display:block;width:16px;height:16px;border-radius:50%\">{{label}}</span>",
+      "</span>"
+    ].join(""),
+    metadata: {},
+    compileCache: null
+  };
+  const validation = validateButtonSkin(skin);
+  assert.equal(validation.valid, true);
+  assert.equal(validation.analysis.hasHitShape, true);
+  const result = compileButtonSkin(skin);
+  assert.equal(result.ok, true);
+  assert.match(result.compiled.scopedCss, /\[data-core\]\{pointer-events:none!important;\}/);
+  assert.match(result.compiled.scopedCss, /svg\[data-core\]\{pointer-events:none!important;\}/);
+  assert.match(result.compiled.scopedCss, /\[data-hit-shape\]\{pointer-events:auto!important;/);
+  assert.match(
+    result.compiled.scopedCss,
+    /svg \[data-hit-shape\] \*,svg\[data-hit-shape\] \*\{pointer-events:visiblePainted!important;\}/
+  );
+  assert.match(result.compiled.scopedCss, /\[data-button-inline-editor\]\{pointer-events:auto!important;/);
+
+  assert.equal(validateButtonSkin({
+    ...skin,
+    structure: "<span data-hit-shape></span><span data-core>{{label}}</span>"
+  }).valid, false);
+  assert.equal(validateButtonSkin({
+    ...skin,
+    structure: "<span data-core><i data-hit-shape></i><i data-hit-shape></i>{{label}}</span>"
+  }).valid, false);
+  assert.equal(validateButtonSkin({
+    ...skin,
+    structure: "<span data-core><i data-hit-shape></i>{{label}}</span>"
+  }).valid, false);
+  assert.equal(validateButtonSkin({
+    ...skin,
+    structure: "<svg data-core><circle cx=\"10\" cy=\"10\" r=\"8\"></circle></svg>"
+  }).valid, false);
+  assert.equal(validateButtonSkin({
+    ...skin,
+    hover: "pointer-events:auto!important"
+  }).valid, false);
+  assert.equal(validateButtonSkin({
+    ...skin,
+    structure: "<span data-core><span data-hit-shape style=\"pointer-events:auto!important\">{{label}}</span></span>"
+  }).valid, false);
+  const labeledSvg = {
+    ...skin,
+    structure: [
+      "<svg data-core>",
+      "<g data-hit-shape><rect width=\"20\" height=\"20\"></rect><text>{{label}}</text></g>",
+      "</svg>"
+    ].join("")
+  };
+  assert.equal(validateButtonSkin(labeledSvg).valid, true);
+  assert.equal(compileButtonSkin(labeledSvg).ok, true);
 });
 
 test("Responsive sizing aligns an offset core to the placement origin without scaling it", () => {
@@ -1723,6 +2054,69 @@ test("text offsets use one HTML path and host-owned SVG line positions", () => {
   assert.equal(scaledSvgLine.getAttribute("dy"), "3");
 });
 
+test("Button hit testing uses the authored target bounds only as broad phase", () => {
+  const descendant = {};
+  const outside = {};
+  let hit = outside;
+  let authoredHitShape = null;
+  let exactQueries = 0;
+  const root = {
+    elementFromPoint() {
+      exactQueries += 1;
+      return hit;
+    }
+  };
+  const core = {
+    isConnected: true,
+    querySelector() {
+      return authoredHitShape;
+    },
+    getBoundingClientRect() {
+      return { left: 10, top: 20, right: 110, bottom: 70, width: 100, height: 50 };
+    },
+    getRootNode() {
+      return root;
+    },
+    contains(candidate) {
+      return candidate === descendant;
+    }
+  };
+
+  hit = core;
+  assert.equal(buttonCoreContainsClientPoint(core, 50, 40), true);
+  hit = descendant;
+  assert.equal(buttonCoreContainsClientPoint(core, 50, 40), true);
+  hit = outside;
+  assert.equal(
+    buttonCoreContainsClientPoint(core, 12, 22),
+    false,
+    "a browser-rejected transparent corner must remain inactive"
+  );
+  const queriesBeforeBroadReject = exactQueries;
+  assert.equal(buttonCoreContainsClientPoint(core, 9, 40), false);
+  assert.equal(exactQueries, queriesBeforeBroadReject);
+  authoredHitShape = {
+    isConnected: true,
+    getBoundingClientRect() {
+      return { left: 120, top: 20, right: 150, bottom: 50, width: 30, height: 30 };
+    }
+  };
+  hit = descendant;
+  assert.equal(
+    buttonCoreContainsClientPoint(core, 135, 35),
+    true,
+    "a translated authored hit shape must supply the native broad-phase bounds"
+  );
+  authoredHitShape = null;
+  assert.equal(buttonCoreContainsClientPoint({ ...core, isConnected: false }, 50, 40), false);
+  assert.equal(buttonCoreContainsClientPoint({
+    ...core,
+    getBoundingClientRect() {
+      return { left: 10, top: 20, right: 10, bottom: 70, width: 0, height: 50 };
+    }
+  }, 10, 40), false);
+});
+
 test("selection uses the authored pressed state while Main and native input stay core-shaped", () => {
   const buttonHost = readFileSync(
     join(frontendRoot, "src", "button", "ButtonHost.tsx"),
@@ -1746,15 +2140,15 @@ test("selection uses the authored pressed state while Main and native input stay
   assert.match(buttonHost, /pointerPressed=\{pressed\}/);
   assert.match(buttonHost, /const interactionElement = coreElement;/);
   assert.doesNotMatch(buttonHost, /button-system-host--selected|coreElement\.focus/);
-  assert.match(skinRenderer, /pointerEvents: "auto"/);
+  assert.match(skinRenderer, /pointerEvents: "none"/);
   assert.match(nativeHitboxes, /shadowRoot\?\.querySelector<HTMLElement \| SVGElement>\("\[data-core\]"\)/);
-  assert.match(nativeHitboxes, /const rect = hitbox\.element\.getBoundingClientRect\(\);/);
+  assert.match(nativeHitboxes, /buttonCoreContainsClientPoint\(hitbox\.element, clientX, clientY\)/);
   assert.match(nativeHitboxes, /hitbox\.element\.dispatchEvent\(new PointerEvent\("pointerenter"/);
   assert.doesNotMatch(nativeHitboxes, /element\.hasAttribute\("data-button-skin-host"\)/);
   assert.doesNotMatch(mainCss, /button-system-host--selected|fc-selected-highlight/);
 });
 
-test("placement hover highlight follows the visual latch while native hover stays immediate", () => {
+test("skin hover highlight follows the visual latch with a legacy placement fallback", () => {
   const buttonHost = readFileSync(
     join(frontendRoot, "src", "button", "ButtonHost.tsx"),
     "utf8"
@@ -1771,8 +2165,10 @@ test("placement hover highlight follows the visual latch while native hover stay
   assert.match(buttonHost, /highlightOnHover=\{placement\.highlightOnHover\}/);
   assert.match(buttonHost, /rawHovered=\{hovered\}/);
   assert.doesNotMatch(buttonHost, /rawHovered=\{resolvedAppearance\.flags\.hovered\}/);
-  assert.match(skinRenderer, /hoverHighlighted: highlightOnHover && rawHovered/);
-  assert.match(skinRenderer, /filter: renderedVisual\.hoverHighlighted \? "brightness\(1\.15\)" : undefined/);
+  assert.match(skinRenderer, /readButtonSkinHighlightOnHover\(skin\)/);
+  assert.match(skinRenderer, /hoverHighlighted: \(skinHighlightOnHover \?\? highlightOnHover\) && rawHovered/);
+  assert.match(skinRenderer, /filter: buttonHighlightFilter\(renderedVisual\)/);
+  assert.match(skinRenderer, /if \(snapshot\.hoverHighlighted\) lifts\.push\("brightness\(1\.15\)"\)/);
   assert.match(skinRenderer, /setBooleanAttribute\(host, "data-button-pointer-hover", rawHovered\)/);
   assert.match(skinRenderer, /return <span ref=\{hostRef\} data-button-skin-host="true" style=\{style\} \/>/);
   const pointerDownBlock = buttonHost.match(
@@ -1792,6 +2188,33 @@ test("placement hover highlight follows the visual latch while native hover stay
     /shouldIgnoreButtonWindowCursor\(scopeActive,\s*(?:false|hovered),\s*pointerPressActive\)/
   );
   assert.doesNotMatch(nativeHitboxes, /host\.getAttribute\("data-button-hover"\) === "true"/);
+});
+
+test("skin active highlight is skin-owned, run-mode only, and stacks under hover", () => {
+  const buttonHost = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+  const skinRenderer = readFileSync(
+    join(frontendRoot, "src", "button", "skins", "ButtonSkinRenderer.tsx"),
+    "utf8"
+  );
+  const skinColors = readFileSync(
+    join(frontendRoot, "src", "button", "skins", "buttonSkinColors.ts"),
+    "utf8"
+  );
+
+  assert.match(
+    skinColors,
+    /BUTTON_SKIN_HIGHLIGHT_ON_ACTIVE_VARIABLE = "--flowcell-button-highlight-on-active"/
+  );
+  // The active lift is skin-owned only; it has no placement-field fallback.
+  assert.match(buttonHost, /activeHighlight=\{mode === "run" && selected\}/);
+  assert.match(skinRenderer, /readButtonSkinHighlightOnActive\(skin\)/);
+  assert.match(skinRenderer, /activeHighlighted: \(skinHighlightOnActive \?\? false\) && activeHighlight/);
+  assert.match(skinRenderer, /if \(snapshot\.activeHighlighted\) lifts\.push\("brightness\(1\.3\)"\)/);
+  // Both lifts belong to the latched visual snapshot, not to raw render state.
+  assert.match(skinRenderer, /snapshot\.activeHighlighted,\n\s*snapshot\.samplingState\.hovered/);
 });
 
 test("Play tracking arms only after the latched Play presentation is applied", () => {
@@ -2045,6 +2468,302 @@ test("Base custom properties cascade to literal nested visual elements", () => {
   );
   assert.equal(result.compiled.scopedCss.includes(":host{--face:#d22;--ink:#fff;}"), true);
   assert.equal(result.compiled.scopedCss.includes("[data-core]{background:#222;}"), true);
+});
+
+test("FlowCell Main Page exposes each live rail control individually without script Buttons", () => {
+  const document = createButtonStateDocument();
+  reconcileProgramPanelOwners(document, {
+    programName: "Blender",
+    panels: [
+      { panelName: "Tools", rect: { x: 199, y: 126, width: 132, height: 37 } },
+      { panelName: "Modeling", rect: { x: 199, y: 176, width: 132, height: 37 } }
+    ],
+    surfaceBounds: { width: 1225, height: 721 }
+  });
+  reconcileProgramPanelOwners(document, {
+    programName: "Illustrator",
+    panels: [
+      { panelName: "Tools", rect: { x: 199, y: 126, width: 132, height: 37 } }
+    ],
+    surfaceBounds: { width: 1225, height: 721 }
+  });
+
+  assert.equal(
+    ensureFlowCellMainPageButtons(document, ["Blender", "Illustrator"]),
+    true
+  );
+  const programOptions = buildButtonEditorButtonOptions(
+    document,
+    FLOWCELL_MAIN_PAGE_PROGRAM,
+    "Program Rail"
+  );
+  assert.deepEqual(
+    programOptions.map((option) => option.label).sort(),
+    ["Add Program", "Blender", "Illustrator"]
+  );
+  assert.equal(programOptions.some((option) => option.label === "Program Buttons"), false);
+  assert.equal(new Set(programOptions.map((option) => option.id)).size, programOptions.length);
+
+  const blenderTools = findPanelOwnerButton(document, "Blender", "Tools");
+  const blenderModeling = findPanelOwnerButton(document, "Blender", "Modeling");
+  const illustratorTools = findPanelOwnerButton(document, "Illustrator", "Tools");
+  assert.ok(blenderTools);
+  assert.ok(blenderModeling);
+  assert.ok(illustratorTools);
+  const panelOptions = buildButtonEditorButtonOptions(
+    document,
+    FLOWCELL_MAIN_PAGE_PROGRAM,
+    "Panel Rail"
+  );
+  assert.equal(panelOptions.some((option) => option.label === "Panel Buttons"), false);
+  assert.equal(panelOptions.some((option) => option.id === blenderTools.id), true);
+  assert.equal(panelOptions.some((option) => option.id === blenderModeling.id), true);
+  assert.equal(panelOptions.some((option) => option.id === illustratorTools.id), true);
+  assert.equal(panelOptions.some((option) => option.label === "Add Panel"), true);
+
+  const buttonSectionLabels = buildButtonEditorButtonOptions(
+    document,
+    FLOWCELL_MAIN_PAGE_PROGRAM,
+    "Button Section Rail"
+  ).map((option) => option.label).sort();
+  assert.deepEqual(buttonSectionLabels, [
+    "Add Button",
+    "Add Macro",
+    "Delete",
+    "Fan",
+    "Fan Options",
+    "Open Pop",
+    "Order",
+    "Pop",
+    "Select All"
+  ]);
+  assert.equal(buttonSectionLabels.some((label) => label.endsWith(".py")), false);
+
+  const headerLabels = buildButtonEditorButtonOptions(
+    document,
+    FLOWCELL_MAIN_PAGE_PROGRAM,
+    "Header Buttons"
+  ).map((option) => option.label);
+  assert.equal(headerLabels.includes("min"), true);
+  assert.equal(headerLabels.includes("max"), true);
+  assert.equal(headerLabels.includes("close"), true);
+
+  const blenderProgramOption = programOptions.find((option) => option.label === "Blender");
+  const illustratorProgramOption = programOptions.find((option) => option.label === "Illustrator");
+  assert.ok(blenderProgramOption);
+  assert.ok(illustratorProgramOption);
+  const blenderProgramButton = document.buttons[blenderProgramOption.id];
+  blenderProgramButton.label = "Blender Custom";
+  const blenderPresentation = resolveFlowCellMainPagePresentation(document, {
+    id: "program-button-1",
+    railId: "program-rail",
+    folderName: "Blender",
+    x: 21,
+    y: 126,
+    width: 132,
+    height: 37,
+    label: "Blender",
+    actionId: "select-program-folder"
+  });
+  const illustratorPresentation = resolveFlowCellMainPagePresentation(document, {
+    id: "program-button-2",
+    railId: "program-rail",
+    folderName: "Illustrator",
+    x: 21,
+    y: 176,
+    width: 132,
+    height: 37,
+    label: "Illustrator",
+    actionId: "select-program-folder"
+  });
+  assert.equal(blenderPresentation?.button.id, blenderProgramOption.id);
+  assert.equal(blenderPresentation?.button.label, "Blender Custom");
+  assert.equal(illustratorPresentation?.button.id, illustratorProgramOption.id);
+
+  const blenderProgramPlacement = Object.values(document.placements).find(
+    (placement) => placement.buttonId === blenderProgramOption.id
+  );
+  const illustratorProgramPlacement = Object.values(document.placements).find(
+    (placement) => placement.buttonId === illustratorProgramOption.id
+  );
+  assert.ok(blenderProgramPlacement);
+  assert.ok(illustratorProgramPlacement);
+  const initialBlenderY = blenderProgramPlacement.y;
+  const initialIllustratorY = illustratorProgramPlacement.y;
+  assert.equal(ensureFlowCellMainPageButtons(document, ["Illustrator", "Blender"]), true);
+  assert.equal(blenderProgramPlacement.y, initialIllustratorY);
+  assert.equal(illustratorProgramPlacement.y, initialBlenderY);
+  assert.equal(ensureFlowCellMainPageButtons(document, ["Blender", "Illustrator"]), true);
+
+  const addPanelOption = panelOptions.find((option) => option.label === "Add Panel");
+  assert.ok(addPanelOption);
+  const addPanelPlacement = Object.values(document.placements).find(
+    (placement) => placement.buttonId === addPanelOption.id
+  );
+  assert.ok(addPanelPlacement);
+  document.buttons["legacy-panel-row"] = {
+    ...structuredClone(document.buttons[addPanelOption.id]),
+    id: "legacy-panel-row",
+    label: "Panel Buttons",
+    metadata: {
+      ...structuredClone(document.buttons[addPanelOption.id].metadata),
+      mainPageControlKey: "panel-row"
+    }
+  };
+  document.placements["legacy-panel-row-placement"] = {
+    ...structuredClone(addPanelPlacement),
+    id: "legacy-panel-row-placement",
+    buttonId: "legacy-panel-row"
+  };
+  document.surfaces[addPanelPlacement.surfaceId].placementIds.push(
+    "legacy-panel-row-placement"
+  );
+  assert.equal(ensureFlowCellMainPageButtons(document, ["Blender", "Illustrator"]), true);
+  assert.equal(document.buttons["legacy-panel-row"], undefined);
+  assert.equal(ensureFlowCellMainPageButtons(document, ["Blender", "Illustrator"]), false);
+  assert.equal(document.buttons[blenderProgramOption.id].label, "Blender Custom");
+  const renameResult = renameProgramButtonDocumentScope(document, {
+    currentProgramName: "Blender",
+    nextProgramName: "Blender 5"
+  });
+  assert.equal(renameResult.changed, true);
+  ensureFlowCellMainPageButtons(document, ["Blender 5", "Illustrator"]);
+  const renamedProgram = buildButtonEditorButtonOptions(
+    document,
+    FLOWCELL_MAIN_PAGE_PROGRAM,
+    "Program Rail"
+  ).find((option) => option.id === blenderProgramOption.id);
+  assert.equal(renamedProgram?.label, "Blender Custom");
+
+  const validation = validateButtonStateDocument(document);
+  assert.equal(validation.valid, true, validation.issues.join("\n"));
+});
+
+test("FlowCell Main Page discovery preserves presentation until canonical program removal", () => {
+  const document = createButtonStateDocument();
+  ensureFlowCellMainPageButtons(document, ["Blender", "Illustrator"]);
+  const illustratorOption = buildButtonEditorButtonOptions(
+    document,
+    FLOWCELL_MAIN_PAGE_PROGRAM,
+    "Program Rail"
+  ).find((option) => option.label === "Illustrator");
+  assert.ok(illustratorOption);
+  const illustratorButton = document.buttons[illustratorOption.id];
+  const illustratorPlacement = Object.values(document.placements).find(
+    (placement) => placement.buttonId === illustratorOption.id
+  );
+  assert.ok(illustratorButton);
+  assert.ok(illustratorPlacement);
+  illustratorButton.label = "Illustrator Custom";
+  illustratorButton.activationAnimation = {
+    presetId: "plus-rise",
+    desktopBounds: { left: 120, top: 140, width: 283, height: 295 }
+  };
+  illustratorPlacement.x = 444;
+  illustratorPlacement.textAlignment = "right";
+  illustratorPlacement.skinOverrideId = document.settings.defaultSkinId;
+  const buttonBeforeDiscovery = structuredClone(illustratorButton);
+  const placementBeforeDiscovery = structuredClone(illustratorPlacement);
+
+  assert.equal(ensureFlowCellMainPageButtons(document, ["Blender"]), false);
+  assert.deepEqual(document.buttons[illustratorOption.id], buttonBeforeDiscovery);
+  assert.deepEqual(document.placements[illustratorPlacement.id], placementBeforeDiscovery);
+
+  const removal = removeProgramButtonDocumentScope(document, {
+    programName: "Illustrator"
+  });
+  assert.equal(removal.changed, true);
+  assert.equal(removal.removedButtonIds.includes(illustratorOption.id), true);
+  assert.equal(document.buttons[illustratorOption.id], undefined);
+  assert.equal(document.placements[illustratorPlacement.id], undefined);
+});
+
+test("FlowCell Main Page live layout consumes saved control placement geometry", () => {
+  const document = createButtonStateDocument();
+  ensureFlowCellMainPageButtons(document, ["Blender"]);
+  const controls = [
+    {
+      id: "program-button-1",
+      railId: "program-rail",
+      folderName: "Blender",
+      x: 21,
+      y: 126,
+      width: 132,
+      height: 37,
+      label: "Blender",
+      actionId: "select-program-folder"
+    },
+    {
+      id: "panel-add-button",
+      railId: "panel-rail",
+      x: 199,
+      y: 646,
+      width: 132,
+      height: 37,
+      label: "Add Panel",
+      actionId: "add-panel-folder"
+    },
+    {
+      id: "buttons-add-script",
+      railId: "buttons-rail",
+      x: 385,
+      y: 126,
+      width: 132,
+      height: 37,
+      label: "Add Button",
+      actionId: "add-panel-script"
+    },
+    {
+      id: "top-right-button-1",
+      groupId: "top-right-actions",
+      x: 930,
+      y: 36,
+      width: 70,
+      height: 37,
+      label: "min",
+      actionId: "top-right-button-1"
+    }
+  ];
+
+  controls.forEach((control, index) => {
+    const presentation = resolveFlowCellMainPagePresentation(document, control);
+    assert.ok(presentation);
+    const expected = {
+      x: 100 + index * 17,
+      y: 200 + index * 19,
+      width: 80 + index * 11,
+      height: 30 + index * 7
+    };
+    Object.assign(presentation.placement, expected);
+    const liveLayout = resolveFlowCellMainPageButtonLayout(document, control);
+    assert.deepEqual(
+      {
+        x: liveLayout.x,
+        y: liveLayout.y,
+        width: liveLayout.width,
+        height: liveLayout.height
+      },
+      expected
+    );
+    assert.equal(liveLayout.actionId, control.actionId);
+  });
+
+  const installedScript = {
+    id: "installed-script",
+    railId: "buttons-rail",
+    scriptFileName: "installed.py",
+    x: 450,
+    y: 320,
+    width: 96,
+    height: 42,
+    label: "Installed",
+    actionId: "run-panel-script"
+  };
+  assert.equal(
+    resolveFlowCellMainPageButtonLayout(document, installedScript),
+    installedScript,
+    "installed script coordinates must retain their Main-page rail offset"
+  );
 });
 
 test("Button Editor navigation resolves exact program, panel, Button, and placement contexts", () => {
@@ -3052,6 +3771,22 @@ test("explicit Button size assignments preserve each sizing rule deterministical
   assert.equal(buttonPlacementSizingMode({ matchHitboxToSkin: false, allowStretching: false }), "responsive");
   assert.equal(buttonPlacementSizingMode({ matchHitboxToSkin: true, allowStretching: false }), "proportional");
   assert.equal(buttonPlacementSizingMode({ matchHitboxToSkin: true, allowStretching: true }), "stretch");
+  assert.equal(buttonSizingModeLocksAspect("responsive"), false);
+  assert.equal(buttonSizingModeLocksAspect("stretch"), false);
+  assert.equal(buttonSizingModeLocksAspect("proportional"), true);
+  assert.equal(buttonSizingModeLocksAspect("responsive", true), true);
+  const naturalResizeBasis = resolveProportionalResizeBasis(
+    { width: 70, height: 20 },
+    2
+  );
+  assert.ok(Math.abs(naturalResizeBasis.width / naturalResizeBasis.height - 2) < 1e-9);
+  assert.ok(Math.abs(
+    naturalResizeBasis.width * naturalResizeBasis.height - (70 * 20)
+  ) < 1e-9);
+  assert.deepEqual(
+    resolveProportionalResizeBasis({ width: 70, height: 20 }, null),
+    { width: 70, height: 20 }
+  );
 
   assert.deepEqual(
     resolveAssignedButtonDimensions(
@@ -3884,6 +4619,59 @@ test("Button reorder inserts before or after a target without mutating the saved
   assert.deepEqual(original, ["a", "b", "c", "d"]);
 });
 
+test("rigid Button group translation preserves every pairwise offset and clamps one shared delta", () => {
+  const placements = [
+    { id: "a", rect: { x: 10, y: 10, width: 30, height: 20 } },
+    { id: "b", rect: { x: 60, y: 10, width: 30, height: 20 } },
+    { id: "c", rect: { x: 20, y: 60, width: 30, height: 20 } }
+  ];
+  const original = structuredClone(placements);
+  const result = resolveButtonGroupTranslationAlongPath(
+    placements,
+    { x: 0, y: 0 },
+    { x: 500, y: 500 },
+    {
+      surface: { width: 200, height: 120 },
+      otherRects: [],
+      tolerance: 0,
+      gridSize: 1,
+      anchorPlacementId: "b"
+    }
+  );
+
+  assert.equal(result.valid, true);
+  assert.deepEqual(result.delta, { x: 110, y: 40 });
+  assert.deepEqual(result.placements, translateButtonPlacementRects(placements, result.delta));
+  assert.equal(result.placements[1].rect.x - result.placements[0].rect.x, 50);
+  assert.equal(result.placements[2].rect.y - result.placements[0].rect.y, 50);
+  assert.deepEqual(placements, original);
+});
+
+test("rigid Button group translation sweeps every member and cannot tunnel through an unselected Button", () => {
+  const placements = [
+    { id: "a", rect: { x: 0, y: 0, width: 20, height: 20 } },
+    { id: "b", rect: { x: 0, y: 30, width: 20, height: 20 } }
+  ];
+  const result = resolveButtonGroupTranslationAlongPath(
+    placements,
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+    {
+      surface: { width: 200, height: 100 },
+      otherRects: [{ x: 50, y: 0, width: 20, height: 50 }],
+      tolerance: 0,
+      gridSize: 1,
+      anchorPlacementId: "a"
+    }
+  );
+
+  assert.equal(result.valid, true);
+  assert.ok(Math.abs(result.delta.x - 30) <= 0.001, result.delta.x);
+  assert.equal(result.delta.y, 0);
+  assert.ok(result.placements.every((placement) => Math.abs(placement.rect.x - 30) <= 0.001));
+  assert.equal(result.placements[1].rect.y - result.placements[0].rect.y, 30);
+});
+
 test("top-left compaction closes gaps, wraps by row height, and preserves Button sizes", () => {
   const input = [
     { id: "a", rect: { x: 72, y: 40, width: 50, height: 20 } },
@@ -4159,6 +4947,161 @@ test("explicit-row snap left-packs and moves rows up without changing row member
   );
 });
 
+test("selection sizing preserves tight rows and shifts only the neighboring content when required", () => {
+  const input = [
+    { id: "a", rect: { x: 10, y: 5, width: 40, height: 20 } },
+    { id: "b", rect: { x: 50, y: 5, width: 40, height: 20 } },
+    { id: "c", rect: { x: 90, y: 5, width: 40, height: 20 } },
+    { id: "d", rect: { x: 10, y: 40, width: 60, height: 20 } },
+    { id: "e", rect: { x: 70, y: 40, width: 60, height: 20 } },
+    { id: "owner", rect: { x: 145, y: 70, width: 20, height: 20 } }
+  ];
+  const original = structuredClone(input);
+  const originalContentRows = inferButtonPlacementRows(input.filter((item) => item.id !== "owner"))
+    .map((row) => row.placements.map((placement) => placement.id));
+
+  const result = resizeButtonPlacementSelection({
+    placements: input,
+    selectedPlacementIds: ["a", "b"],
+    targetSize: { width: 50, height: 24 },
+    surface: { width: 170, height: 100 },
+    gap: 0,
+    independentPlacementIds: ["owner"]
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.reflowed, true);
+  assert.equal(result.reason, null);
+  assert.deepEqual(input, original);
+  assert.deepEqual(result.placements.map((placement) => placement.id), input.map((placement) => placement.id));
+  const byId = Object.fromEntries(result.placements.map((placement) => [placement.id, placement.rect]));
+  assert.deepEqual(byId.a, { x: 10, y: 5, width: 50, height: 24 });
+  assert.deepEqual(byId.b, { x: 60, y: 5, width: 50, height: 24 });
+  assert.deepEqual(byId.c, { x: 110, y: 5, width: 40, height: 20 });
+  assert.deepEqual(byId.d, { x: 10, y: 40, width: 60, height: 20 });
+  assert.deepEqual(byId.e, { x: 70, y: 40, width: 60, height: 20 });
+  assert.deepEqual(byId.owner, original.find((item) => item.id === "owner").rect);
+  assert.deepEqual(
+    inferButtonPlacementRows(result.placements.filter((item) => item.id !== "owner"))
+      .map((row) => row.placements.map((placement) => placement.id)),
+    originalContentRows
+  );
+  assert.deepEqual(validateExactButtonLayoutGeometry(result.placements, {
+    width: 170,
+    height: 100
+  }), []);
+});
+
+test("selection sizing keeps every coordinate when the copied box already fits", () => {
+  const input = [
+    { id: "a", rect: { x: 10, y: 5, width: 40, height: 20 } },
+    { id: "b", rect: { x: 60, y: 5, width: 40, height: 20 } }
+  ];
+  const original = structuredClone(input);
+
+  const result = resizeButtonPlacementSelection({
+    placements: input,
+    selectedPlacementIds: ["a"],
+    targetSize: { width: 45, height: 20 },
+    surface: { width: 120, height: 40 },
+    gap: 0
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.reflowed, false);
+  assert.deepEqual(result.placements, [
+    { id: "a", rect: { x: 10, y: 5, width: 45, height: 20 } },
+    original[1]
+  ]);
+  assert.deepEqual(input, original);
+});
+
+test("selection sizing fails atomically when the preserved row cannot fit", () => {
+  const input = [
+    { id: "a", rect: { x: 0, y: 0, width: 40, height: 20 } },
+    { id: "b", rect: { x: 40, y: 0, width: 40, height: 20 } },
+    { id: "c", rect: { x: 80, y: 0, width: 40, height: 20 } }
+  ];
+  const original = structuredClone(input);
+
+  const result = resizeButtonPlacementSelection({
+    placements: input,
+    selectedPlacementIds: ["a", "b", "c"],
+    targetSize: { width: 50, height: 20 },
+    surface: { width: 120, height: 40 },
+    gap: 0
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.reflowed, false);
+  assert.match(result.reason, /row 1 is wider/i);
+  assert.deepEqual(result.placements, original);
+  assert.deepEqual(input, original);
+});
+
+test("selection alignment packs the existing rows against their top-left Button", () => {
+  const input = [
+    { id: "a", rect: { x: 20, y: 10, width: 40, height: 20 } },
+    { id: "b", rect: { x: 85, y: 10, width: 30, height: 20 } },
+    { id: "c", rect: { x: 40, y: 50, width: 30, height: 20 } },
+    { id: "d", rect: { x: 120, y: 50, width: 50, height: 20 } },
+    { id: "owner", rect: { x: 190, y: 75, width: 20, height: 20 } }
+  ];
+  const original = structuredClone(input);
+  const originalRows = inferButtonPlacementRows(input.filter((item) => item.id !== "owner"))
+    .map((row) => row.placements.map((placement) => placement.id));
+
+  const result = alignButtonPlacementSelectionToTopLeftButton({
+    placements: input,
+    selectedPlacementIds: input.map((placement) => placement.id),
+    surface: { width: 220, height: 100 },
+    gap: 5,
+    independentPlacementIds: ["owner"]
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.changed, true);
+  assert.equal(result.reason, null);
+  assert.deepEqual(input, original);
+  const byId = Object.fromEntries(result.placements.map((placement) => [placement.id, placement.rect]));
+  assert.deepEqual(byId.a, { x: 20, y: 10, width: 40, height: 20 });
+  assert.deepEqual(byId.b, { x: 65, y: 10, width: 30, height: 20 });
+  assert.deepEqual(byId.c, { x: 20, y: 35, width: 30, height: 20 });
+  assert.deepEqual(byId.d, { x: 55, y: 35, width: 50, height: 20 });
+  assert.deepEqual(byId.owner, original.find((item) => item.id === "owner").rect);
+  assert.deepEqual(
+    inferButtonPlacementRows(result.placements.filter((item) => item.id !== "owner"))
+      .map((row) => row.placements.map((placement) => placement.id)),
+    originalRows
+  );
+  assert.deepEqual(validateExactButtonLayoutGeometry(result.placements, {
+    width: 220,
+    height: 100
+  }), []);
+});
+
+test("selection alignment leaves the layout untouched when an unselected Button blocks it", () => {
+  const input = [
+    { id: "a", rect: { x: 20, y: 10, width: 40, height: 20 } },
+    { id: "b", rect: { x: 110, y: 10, width: 30, height: 20 } },
+    { id: "blocker", rect: { x: 65, y: 10, width: 30, height: 20 } }
+  ];
+  const original = structuredClone(input);
+
+  const result = alignButtonPlacementSelectionToTopLeftButton({
+    placements: input,
+    selectedPlacementIds: ["a", "b"],
+    surface: { width: 180, height: 60 },
+    gap: 5
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.changed, false);
+  assert.match(result.reason, /overlapping another Button/i);
+  assert.deepEqual(result.placements, original);
+  assert.deepEqual(input, original);
+});
+
 test("row-aware reorder exposes every row slot and an explicit new-row target", () => {
   const input = [
     { id: "a", rect: { x: 0, y: 0, width: 30, height: 10 } },
@@ -4274,6 +5217,46 @@ test("explicit rows fail atomically instead of rebalancing an over-wide row", ()
   assert.match(result.reason, /row 1 is wider/i);
 });
 
+test("explicit millimeter spacing remains exact on both Button layout axes", () => {
+  const gap = buttonSpacingPixelsFromMillimeters(0.5);
+  const rows = [
+    {
+      placements: [
+        { id: "a", rect: { x: 0, y: 0, width: 40, height: 20 } },
+        { id: "b", rect: { x: 40, y: 0, width: 30, height: 20 } }
+      ],
+      topOffset: 0
+    },
+    {
+      placements: [
+        { id: "c", rect: { x: 0, y: 20, width: 25, height: 10 } }
+      ],
+      topOffset: 20
+    }
+  ];
+  const result = compactButtonPlacementRows(rows, { width: 200, height: 100 }, {
+    gap,
+    preserveRowTopOffsets: false
+  });
+  assert.equal(result.success, true);
+  const byId = Object.fromEntries(result.placements.map((placement) => [
+    placement.id,
+    placement.rect
+  ]));
+  assert.ok(
+    Math.abs(byId.b.x - (byId.a.x + byId.a.width) - gap) < 1e-10
+  );
+  assert.ok(
+    Math.abs(byId.c.y - (byId.a.y + byId.a.height) - gap) < 1e-10
+  );
+  assert.deepEqual(validateExactButtonLayoutGeometry(result.placements, {
+    width: 200,
+    height: 100
+  }), []);
+  assert.equal(buttonSpacingPixelsFromMillimeters(0), 0);
+  assert.equal(buttonSpacingPixelsFromMillimeters(25.4), 96);
+});
+
 test("snapping aligns edges and collision prevention rejects overlap", () => {
   const snapped = resolveButtonGeometry(
     { x: 3, y: 4, width: 40, height: 24 },
@@ -4316,6 +5299,24 @@ test("continuous drag samples stop flush instead of skipping the snap band", () 
     options
   );
   assert.equal(tunnelJump.rect.x, 160);
+});
+
+test("continuous resize uses one-pixel sizing without moving its free-position anchor", () => {
+  const start = { x: 7.25, y: 5.5, width: 40, height: 20 };
+  const resolved = resolveButtonGeometryAlongPath(
+    start,
+    { ...start, width: 41, height: 21 },
+    {
+      surface: { width: 200, height: 100 },
+      otherRects: [],
+      tolerance: 8,
+      gridSize: 1,
+      keepInsideSurface: true,
+      snapPosition: false
+    }
+  );
+  assert.equal(resolved.valid, true);
+  assert.deepEqual(resolved.rect, { x: 7.25, y: 5.5, width: 41, height: 21 });
 });
 
 test("continuous aspect-locked resize stops flush without ratio drift", () => {
@@ -4434,6 +5435,7 @@ test("schema-1 loading backfills skin sizing defaults before validation", () => 
   delete placement.allowStretching;
   delete placement.highlightOnHover;
   delete placement.textAlignment;
+  delete document.settings.buttonSpacingMm;
   delete placement.textOffsetX;
   delete placement.textOffsetY;
   delete placement.textSizeOverride;
@@ -4453,6 +5455,7 @@ test("schema-1 loading backfills skin sizing defaults before validation", () => 
   assert.equal(result.document.placements[placement.id].textOffsetX, 0);
   assert.equal(result.document.placements[placement.id].textOffsetY, 0);
   assert.equal(result.document.placements[placement.id].textSizeOverride, null);
+  assert.equal(result.document.settings.buttonSpacingMm, 0);
   Object.values(result.document.surfaces).forEach((surface) => {
     assert.equal(surface.uniformButtonSize, null);
   });
@@ -4554,6 +5557,53 @@ test("fixed Pop and Fan canvases keep hover geometry on the resting semantic fra
     assert.doesNotMatch(source, /queueEnvelope\((?:preparedEnvelope|windowEnvelope)\.current\)/);
     assert.match(source, /queueEnvelope\((?:preparedEnvelope|windowEnvelope)\.resting\)/);
   }
+});
+
+test("expanded Pop resize handles follow the visible interactive envelope", () => {
+  const pop = readFileSync(
+    join(frontendRoot, "src", "button", "popout", "ButtonPopoutWindowPage.tsx"),
+    "utf8"
+  );
+  assert.match(
+    pop,
+    /const expandedResizeHandleEnvelope = useMemo\(\(\) => resolveButtonWindowEnvelope\(\{[\s\S]{0,140}mode: "hitbox"/
+  );
+  assert.match(
+    pop,
+    /left: \(expandedResizeHandleEnvelope\.x - renderedEnvelope\.x\) \* surfaceScale/
+  );
+  assert.match(
+    pop,
+    /const expandedResizeHandleEnvelope[\s\S]{0,420}unit\.fields\.filter\(\(field\) => !field\.hidden\)/
+  );
+  assert.match(pop, /className="button-popout-window__resize-frame"/);
+
+  const toolFields = [
+    { x: 8, y: 8, width: 140, height: 32, hidden: true },
+    { x: 104, y: 64, width: 180, height: 40, hidden: false }
+  ];
+  const handleEnvelope = resolveButtonWindowEnvelope({
+    mode: "hitbox",
+    surfaceBounds: { x: 0, y: 0, width: 640, height: 300 },
+    placements: [{ id: "visible", x: 360, y: 195, width: 182, height: 40 }],
+    fixedRects: toolFields.filter((field) => !field.hidden)
+  }).resting;
+  assert.deepEqual(handleEnvelope, { x: 104, y: 64, width: 438, height: 171 });
+
+  const fullBounds = { left: 100, top: 200, width: 640, height: 300 };
+  const handleBounds = resolveButtonWindowSubframeBounds({
+    frameBounds: fullBounds,
+    frameEnvelope: { x: 0, y: 0, width: 640, height: 300 },
+    subframeEnvelope: handleEnvelope
+  });
+  assert.deepEqual(handleBounds, { left: 204, top: 264, width: 438, height: 171 });
+  assert.deepEqual(resolveAspectLockedWindowBounds({
+    initialBounds: fullBounds,
+    initialHandleBounds: handleBounds,
+    initialPointer: { x: 642, y: 435 },
+    pointer: { x: 742, y: 435 },
+    corner: "SouthEast"
+  }), { left: 76, top: 185, width: 786, height: 368 });
 });
 
 test("Space-drag keeps an expanded tool set visible and persists its current mode", () => {
@@ -4686,6 +5736,37 @@ test("collapsed visual-frame drag persists the recovered owner origin", () => {
   });
 });
 
+test("authored Fan expansion keeps the saved owner origin across content scale and DPR", () => {
+  const ownerOrigin = { x: 1000, y: 600 };
+  const ownerOffset = { x: 100, y: 40 };
+  const envelope = { x: -10, y: -4, width: 500, height: 240 };
+  const expanded = resolveExpandedButtonWindowFrameAtOwnerOrigin({
+    ownerOrigin,
+    ownerOffset,
+    envelope,
+    contentScale: 0.7,
+    scaleFactor: 1.5
+  });
+
+  assert.deepEqual(expanded.surfaceOrigin, { x: 895, y: 558 });
+  assert.deepEqual(expanded.bounds, {
+    left: 884,
+    top: 553,
+    width: 526,
+    height: 253
+  });
+
+  const recoveredOwnerOrigin = resolveButtonWindowOwnerOriginFromExpandedFrame({
+    bounds: expanded.bounds,
+    ownerOffset,
+    envelope,
+    contentScale: 0.7,
+    scaleFactor: 1.5
+  });
+  assert.ok(Math.abs(recoveredOwnerOrigin.x - ownerOrigin.x) <= 1);
+  assert.ok(Math.abs(recoveredOwnerOrigin.y - ownerOrigin.y) <= 1);
+});
+
 test("window fit normalization backfills missing modes but preserves invalid explicit values", () => {
   const document = createButtonStateDocument();
   const record = button("fit", "single-script", source("Blender", "Tools", "fit.py"));
@@ -4708,7 +5789,7 @@ test("window fit normalization backfills missing modes but preserves invalid exp
   assert.equal(validation.issues.some((issue) => issue.path === `popoutUnits.${popout.id}.desktopBounds`), true);
 });
 
-test("matched-core reconciliation discards stale geometry and presentation measurements", () => {
+test("legacy matched-core predicate remains deterministic but is not a production geometry writer", () => {
   const document = createButtonStateDocument();
   const record = button("one", "single-script", source("Blender", "Tools", "one.py"));
   document.buttons.one = record;
@@ -4861,9 +5942,10 @@ test("shared document operations normalize duplicate selections deterministicall
   assert.equal(document.placements[popout.memberPlacementIds[0]].allowStretching, false);
   assert.deepEqual(Object.keys(popout).sort(), [
     "canonicalBounds", "closeRule", "desktopBounds", "desktopBoundsEnvelope",
-    "desktopBoundsFitMode", "id", "kind",
+    "desktopBoundsFitMode", "id", "interactionMode", "kind",
     "memberPlacementIds", "memberSourceIdentities", "name", "openRule",
-    "pinnedDefault", "selectionKey", "surfaceId", "transparency", "windowFitMode"
+    "ownerButtonId", "ownerPlacementId", "pinnedDefault", "selectionKey", "surfaceId",
+    "transparency", "windowFitMode"
   ]);
 
   const first = ensureFanSetup({
@@ -4881,6 +5963,72 @@ test("shared document operations normalize duplicate selections deterministicall
   assert.equal(second.id, first.id);
   assert.deepEqual(first.fanMemberButtonIds, ["one"]);
   assert.deepEqual(first.selectedToolSetOwnerButtonIds, ["owner"]);
+});
+
+test("Pop-out Fan mode authors and retains exact regular and Tool Set owner placements", () => {
+  const { document, ids } = buildButtonDocumentScopeFixture();
+  const regular = document.popoutUnits[ids.regular];
+  const regularSurface = document.surfaces[regular.surfaceId];
+  const regularResult = setButtonPopoutFanMode({
+    document,
+    surfaceId: regular.surfaceId,
+    enabled: true,
+    programName: "Blender",
+    panelName: "Tools"
+  });
+  const regularOwner = document.placements[regularResult.ownerPlacementId];
+  assert.equal(regularResult.createdOwnerPlacement, true);
+  assert.equal(regular.interactionMode, "fan");
+  assert.equal(document.buttons[regularOwner.buttonId].role, "panel-owner");
+  assert.equal(regular.memberPlacementIds.includes(regularOwner.id), false);
+  assert.deepEqual(
+    new Set(regularSurface.placementIds),
+    new Set([...regular.memberPlacementIds, regularOwner.id])
+  );
+  assert.ok(regularSurface.width >= 960);
+  assert.ok(regularSurface.height >= 640);
+  assert.equal(regular.windowFitMode, "hitbox");
+
+  const toolUnit = document.popoutUnits[ids.toolUnit];
+  const toolSurface = document.surfaces[toolUnit.surfaceId];
+  const toolResult = setButtonPopoutFanMode({
+    document,
+    surfaceId: toolUnit.surfaceId,
+    enabled: true,
+    programName: "Blender",
+    panelName: "Tools"
+  });
+  const toolOwner = document.placements[toolResult.ownerPlacementId];
+  assert.equal(toolResult.createdOwnerPlacement, true);
+  assert.equal(toolUnit.interactionMode, "fan");
+  assert.equal(toolOwner.buttonId, toolUnit.ownerButtonId);
+  assert.equal(toolUnit.childPlacementIds.includes(toolOwner.id), false);
+  assert.deepEqual(
+    new Set(toolSurface.placementIds),
+    new Set([...toolUnit.childPlacementIds, toolOwner.id])
+  );
+
+  const retainedOwnerId = toolOwner.id;
+  setButtonPopoutFanMode({
+    document,
+    surfaceId: toolUnit.surfaceId,
+    enabled: false,
+    programName: "Blender",
+    panelName: "Tools"
+  });
+  assert.equal(toolUnit.interactionMode, "pop");
+  assert.equal(toolUnit.ownerPlacementId, retainedOwnerId);
+  assert.ok(document.placements[retainedOwnerId]);
+  const reenabled = setButtonPopoutFanMode({
+    document,
+    surfaceId: toolUnit.surfaceId,
+    enabled: true,
+    programName: "Blender",
+    panelName: "Tools"
+  });
+  assert.equal(reenabled.createdOwnerPlacement, false);
+  assert.equal(reenabled.ownerPlacementId, retainedOwnerId);
+  assertValidScopeFixture(document);
 });
 
 test("new Fan subsets receive unique names in the same panel", () => {
@@ -5118,14 +6266,18 @@ test("Illustrator Ill Align supports none or one selected mode independently on 
   const xMax = childFor("x_max");
   const yOrigin = childFor("y_geo");
   const ySurface = childFor("y_surface");
+  const group = childFor("toggle_group");
+  assert.equal(fields.find((field) => field.id === "group")?.hidden, true);
   assert.equal(initialValues.x_surface_active, false);
   assert.equal(initialValues.x_origin_active, false);
   assert.equal(initialValues.y_surface_active, false);
   assert.equal(initialValues.y_origin_active, false);
+  assert.equal(initialValues.group, false);
   assert.equal(isToolSetChildStateSelected(xOrigin, initialValues), false);
   assert.equal(isToolSetChildStateSelected(xSurface, initialValues), false);
   assert.equal(isToolSetChildStateSelected(yOrigin, initialValues), false);
   assert.equal(isToolSetChildStateSelected(ySurface, initialValues), false);
+  assert.equal(isToolSetChildStateSelected(group, initialValues), false);
 
   let dispatchCount = 0;
   let receivedPayload;
@@ -5135,6 +6287,24 @@ test("Illustrator Ill Align supports none or one selected mode independently on 
     return {};
   });
   try {
+    const groupOn = await executeButtonRecord(group, "click", {
+      fields,
+      fieldValues: initialValues
+    });
+    assert.equal(groupOn.executed, false);
+    assert.equal(dispatchCount, 0);
+    assert.equal(groupOn.fieldValues.group, true);
+    assert.equal(isToolSetChildStateSelected(group, groupOn.fieldValues), true);
+
+    const groupOff = await executeButtonRecord(group, "click", {
+      fields,
+      fieldValues: groupOn.fieldValues
+    });
+    assert.equal(groupOff.executed, false);
+    assert.equal(dispatchCount, 0);
+    assert.equal(groupOff.fieldValues.group, false);
+    assert.equal(isToolSetChildStateSelected(group, groupOff.fieldValues), false);
+
     const surfaceOn = await executeButtonRecord(xSurface, "click", {
       fields,
       fieldValues: initialValues
@@ -5220,6 +6390,122 @@ test("Illustrator Ill Align supports none or one selected mode independently on 
     assert.equal(originOff.fieldValues.y_surface_active, true);
     assert.equal(isToolSetChildStateSelected(xOrigin, originOff.fieldValues), false);
     assert.equal(isToolSetChildStateSelected(xSurface, originOff.fieldValues), false);
+  } finally {
+    unregister();
+  }
+});
+
+test("Blender Rotate shares one inline-value Button between Transform and Distribute", async () => {
+  const manifestPath = join(
+    frontendRoot,
+    "..",
+    "Programs",
+    "Blender",
+    "Blender Git Scripts",
+    "Toolsets",
+    "rotate",
+    "flowcell.toolset.json"
+  );
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  assert.equal(manifest.version, "1.1.0");
+  assert.deepEqual(
+    manifest.children.map((child) => child.slot),
+    [
+      "axis_z",
+      "axis_y",
+      "axis_x",
+      "preset_30",
+      "preset_45",
+      "preset_90",
+      "preset_180",
+      "preset_270",
+      "center_geometry",
+      "center_origin",
+      "center_world",
+      "center_cursor",
+      "center_object",
+      "mode_transform",
+      "mode_distribute",
+      "apply_negative",
+      "apply_positive",
+      "value_input"
+    ]
+  );
+  assert.deepEqual(manifest.layout.updatePolicy, { appendMissingChildSlots: true });
+  assert.deepEqual(manifest.layout.placements.value_input, {
+    x: 160,
+    y: 208,
+    width: 144,
+    height: 42
+  });
+  assert.deepEqual(manifest.layout.fields.map((field) => field.id), [
+    "axis",
+    "value",
+    "center_mode",
+    "operation_mode"
+  ]);
+  assert.equal(manifest.layout.fields.every((field) => field.hidden === true), true);
+  assert.deepEqual(manifest.layout.childBehaviors.value_input, {
+    inlineEditField: "value",
+    execute: false
+  });
+
+  const fields = manifest.layout.fields;
+  const initialValues = Object.fromEntries(fields.map((field) => [field.id, field.defaultValue]));
+  const childFor = (slot) => {
+    const childManifest = manifest.children.find((candidate) => candidate.slot === slot);
+    return {
+      ...button(slot, "tool-set-child"),
+      executionTarget: {
+        kind: "core-action",
+        actionId: "test-blender-rotate",
+        payload: childManifest.payload ?? {}
+      },
+      toolSetParentId: "blender-rotate-owner",
+      toolSetBehavior: manifest.layout.childBehaviors[slot]
+    };
+  };
+
+  const distributeResult = await executeButtonRecord(childFor("mode_distribute"), "click", {
+    fields,
+    fieldValues: initialValues
+  });
+  assert.equal(distributeResult.executed, false);
+  assert.equal(distributeResult.fieldValues.operation_mode, "DISTRIBUTE");
+  assert.equal(distributeResult.fieldValues.value, 3);
+
+  const transformResult = await executeButtonRecord(childFor("mode_transform"), "click", {
+    fields,
+    fieldValues: { ...distributeResult.fieldValues, value: 9 }
+  });
+  assert.equal(transformResult.fieldValues.operation_mode, "TRANSFORM");
+  assert.equal(transformResult.fieldValues.value, 15);
+
+  let receivedPayload;
+  const unregister = registerButtonCoreAction("test-blender-rotate", async (target) => {
+    receivedPayload = target.payload;
+    return {};
+  });
+  try {
+    await executeButtonRecord(childFor("preset_45"), "click", {
+      fields,
+      fieldValues: distributeResult.fieldValues
+    });
+    assert.equal(receivedPayload.command, "apply");
+    assert.equal(receivedPayload.direction, "positive");
+    assert.equal(receivedPayload.operation_mode, "TRANSFORM");
+    assert.equal(receivedPayload.angle_deg, 45);
+    assert.equal(receivedPayload.distribute_count, 45);
+
+    await executeButtonRecord(childFor("apply_negative"), "click", {
+      fields,
+      fieldValues: { ...distributeResult.fieldValues, value: 6 }
+    });
+    assert.equal(receivedPayload.command, "apply");
+    assert.equal(receivedPayload.direction, "negative");
+    assert.equal(receivedPayload.operation_mode, "DISTRIBUTE");
+    assert.equal(receivedPayload.angle_deg, 6);
+    assert.equal(receivedPayload.distribute_count, 6);
   } finally {
     unregister();
   }

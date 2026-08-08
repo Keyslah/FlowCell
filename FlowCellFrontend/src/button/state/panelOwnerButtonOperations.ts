@@ -5,7 +5,10 @@ import type {
   ButtonStateDocument,
   ButtonSurface
 } from "../types.js";
-import { buttonRectsOverlap } from "../geometry/buttonGeometry.js";
+import {
+  buttonRectsOverlap,
+  buttonSpacingPixelsFromMillimeters
+} from "../geometry/buttonGeometry.js";
 import { removeOwnedButtonGraph } from "./buttonDocumentOperations.js";
 
 export interface PanelOwnerRailEntry {
@@ -387,7 +390,9 @@ function resolveNewPanelOwnerRect(
   const y = Math.max(
     preferred.y,
     ...horizontallyRelevant.map((placement) =>
-      placement.y + placement.height + document.settings.defaultGap
+      placement.y +
+      placement.height +
+      buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm)
     )
   );
   const appended = { ...preferred, y };

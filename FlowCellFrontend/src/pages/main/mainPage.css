@@ -76,6 +76,12 @@
   z-index: 1;
 }
 
+.main-page__button-group--placement-layer {
+  inset: 0;
+  display: block;
+  pointer-events: none;
+}
+
 .main-page__poptype-control {
   position: absolute;
   display: flex;

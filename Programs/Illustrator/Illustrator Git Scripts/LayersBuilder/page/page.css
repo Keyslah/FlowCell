@@ -152,7 +152,7 @@ button:disabled {
 
 .layer-tree__row {
   display: grid;
-  grid-template-columns: 20px 25px 25px minmax(110px, 1fr) auto 22px;
+  grid-template-columns: 20px 25px 25px minmax(110px, 1fr) auto 22px 22px;
   align-items: center;
   min-height: 28px;
   padding-right: 7px;
@@ -178,11 +178,22 @@ button:disabled {
   opacity: 0.42;
 }
 
+.layer-tree__row.is-artwork-dragging .layer-tree__selection-proxy {
+  cursor: grabbing;
+  opacity: 0.52;
+}
+
 .layer-tree__row.is-drop-target,
 .layer-tree__row.is-drop-target:hover {
   outline: 1px solid #8fc1ff;
   outline-offset: -2px;
   background: #315b55;
+}
+
+.layer-tree__row.is-copy-target,
+.layer-tree__row.is-copy-target:hover {
+  outline-color: #b8d6ff;
+  background: #365078;
 }
 
 .layer-tree__row.is-active .layer-tree__name {
@@ -266,6 +277,19 @@ button:disabled {
 
 .layer-tree__row.is-active .layer-tree__target::after {
   background: #78adff;
+}
+
+.layer-tree__selection-proxy {
+  position: relative;
+  cursor: grab;
+}
+
+.layer-tree__selection-proxy::before {
+  position: absolute;
+  inset: 6px;
+  border: 2px solid #78adff;
+  background: rgba(120, 173, 255, 0.18);
+  content: "";
 }
 
 .layer-tree__status {

@@ -374,6 +374,49 @@ export function resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin(args: {
   };
 }
 
+export function resolveExpandedButtonWindowFrameAtOwnerOrigin(args: {
+  ownerOrigin: ButtonWindowPoint;
+  ownerOffset: ButtonWindowPoint;
+  envelope: ButtonRect;
+  contentScale: number;
+  scaleFactor: number;
+}): { surfaceOrigin: ButtonWindowPoint; bounds: ButtonDesktopBounds } {
+  const physicalPerDesignPixel =
+    positiveOr(args.contentScale, 1) * positiveOr(args.scaleFactor, 1);
+  const surfaceOrigin = {
+    x: args.ownerOrigin.x - args.ownerOffset.x * physicalPerDesignPixel,
+    y: args.ownerOrigin.y - args.ownerOffset.y * physicalPerDesignPixel
+  };
+  return {
+    surfaceOrigin,
+    bounds: resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+      surfaceOrigin,
+      envelope: args.envelope,
+      contentScale: args.contentScale,
+      scaleFactor: args.scaleFactor
+    })
+  };
+}
+
+export function resolveButtonWindowOwnerOriginFromExpandedFrame(args: {
+  bounds: ButtonDesktopBounds;
+  ownerOffset: ButtonWindowPoint;
+  envelope: ButtonRect;
+  contentScale: number;
+  scaleFactor: number;
+}): ButtonWindowPoint {
+  const physicalPerDesignPixel =
+    positiveOr(args.contentScale, 1) * positiveOr(args.scaleFactor, 1);
+  const surfaceOrigin = {
+    x: args.bounds.left - args.envelope.x * physicalPerDesignPixel,
+    y: args.bounds.top - args.envelope.y * physicalPerDesignPixel
+  };
+  return {
+    x: surfaceOrigin.x + args.ownerOffset.x * physicalPerDesignPixel,
+    y: surfaceOrigin.y + args.ownerOffset.y * physicalPerDesignPixel
+  };
+}
+
 function positiveOr(value: number | undefined, fallback: number): number {
   return Number.isFinite(value) && (value ?? 0) > 0 ? value! : fallback;
 }
@@ -393,6 +436,7 @@ export function resolveUniformSurfaceScale(args: {
 
 export function resolveAspectLockedWindowBounds(args: {
   initialBounds: ButtonDesktopBounds;
+  initialHandleBounds?: ButtonDesktopBounds;
   initialPointer: ButtonWindowPoint;
   pointer: ButtonWindowPoint;
   corner: ButtonWindowResizeCorner;
@@ -405,35 +449,57 @@ export function resolveAspectLockedWindowBounds(args: {
   const minimumWidth = positiveOr(args.minimumWidth, 120);
   const minimumHeight = positiveOr(args.minimumHeight, 50);
   const minimumScale = positiveOr(args.minimumScale, 0.35);
+  const initialHandleBounds = args.initialHandleBounds ?? args.initialBounds;
+  const initialHandleWidth = positiveOr(initialHandleBounds.width, initialWidth);
+  const initialHandleHeight = positiveOr(initialHandleBounds.height, initialHeight);
   const horizontalSign = args.corner.includes("East") ? 1 : -1;
   const verticalSign = args.corner.includes("South") ? 1 : -1;
-  const proposedWidth = Math.max(
-    minimumWidth,
-    initialWidth + (args.pointer.x - args.initialPointer.x) * horizontalSign
-  );
-  const proposedHeight = Math.max(
-    minimumHeight,
-    initialHeight + (args.pointer.y - args.initialPointer.y) * verticalSign
-  );
   const scale = Math.max(
-    proposedWidth / initialWidth,
-    proposedHeight / initialHeight,
+    (initialHandleWidth +
+      (args.pointer.x - args.initialPointer.x) * horizontalSign) /
+      initialHandleWidth,
+    (initialHandleHeight +
+      (args.pointer.y - args.initialPointer.y) * verticalSign) /
+      initialHandleHeight,
+    minimumWidth / initialWidth,
+    minimumHeight / initialHeight,
     minimumScale
   );
   // Tauri applies these as physical desktop pixels. Round once here so every
   // queued resize uses stable bounds while the anchored corner stays exact.
   const width = Math.max(1, Math.round(initialWidth * scale));
   const height = Math.max(1, Math.round(initialHeight * scale));
+  const anchorX = args.corner.includes("East")
+    ? initialHandleBounds.left
+    : initialHandleBounds.left + initialHandleWidth;
+  const anchorY = args.corner.includes("South")
+    ? initialHandleBounds.top
+    : initialHandleBounds.top + initialHandleHeight;
 
   return {
-    left: args.corner.includes("West")
-      ? args.initialBounds.left + initialWidth - width
-      : args.initialBounds.left,
-    top: args.corner.includes("North")
-      ? args.initialBounds.top + initialHeight - height
-      : args.initialBounds.top,
+    left: Math.round(anchorX + (args.initialBounds.left - anchorX) * scale),
+    top: Math.round(anchorY + (args.initialBounds.top - anchorY) * scale),
     width,
     height
+  };
+}
+
+export function resolveButtonWindowSubframeBounds(args: {
+  frameBounds: ButtonDesktopBounds;
+  frameEnvelope: ButtonRect;
+  subframeEnvelope: ButtonRect;
+}): ButtonDesktopBounds {
+  const scaleX = positiveOr(args.frameBounds.width, 1) /
+    positiveOr(args.frameEnvelope.width, 1);
+  const scaleY = positiveOr(args.frameBounds.height, 1) /
+    positiveOr(args.frameEnvelope.height, 1);
+  return {
+    left: args.frameBounds.left +
+      (args.subframeEnvelope.x - args.frameEnvelope.x) * scaleX,
+    top: args.frameBounds.top +
+      (args.subframeEnvelope.y - args.frameEnvelope.y) * scaleY,
+    width: args.subframeEnvelope.width * scaleX,
+    height: args.subframeEnvelope.height * scaleY
   };
 }
 
@@ -443,6 +509,7 @@ export function resolveButtonFrameForScaleFactor(args: {
   contentScale: number;
   scaleFactor: number;
   anchorCorner?: ButtonWindowResizeCorner;
+  anchorSubframeEnvelope?: ButtonRect;
 }): ButtonDesktopBounds {
   const contentScale = positiveOr(args.contentScale, 1);
   const scaleFactor = positiveOr(args.scaleFactor, 1);
@@ -450,6 +517,36 @@ export function resolveButtonFrameForScaleFactor(args: {
   const height = Math.max(1, Math.ceil(args.envelope.height * contentScale * scaleFactor));
   const right = args.bounds.left + args.bounds.width;
   const bottom = args.bounds.top + args.bounds.height;
+
+  if (args.anchorCorner && args.anchorSubframeEnvelope) {
+    const currentSubframe = resolveButtonWindowSubframeBounds({
+      frameBounds: args.bounds,
+      frameEnvelope: args.envelope,
+      subframeEnvelope: args.anchorSubframeEnvelope
+    });
+    const anchorX = args.anchorCorner.includes("East")
+      ? currentSubframe.left
+      : currentSubframe.left + currentSubframe.width;
+    const anchorY = args.anchorCorner.includes("South")
+      ? currentSubframe.top
+      : currentSubframe.top + currentSubframe.height;
+    const anchorDesignX = args.anchorCorner.includes("East")
+      ? args.anchorSubframeEnvelope.x
+      : args.anchorSubframeEnvelope.x + args.anchorSubframeEnvelope.width;
+    const anchorDesignY = args.anchorCorner.includes("South")
+      ? args.anchorSubframeEnvelope.y
+      : args.anchorSubframeEnvelope.y + args.anchorSubframeEnvelope.height;
+    return {
+      left: Math.round(
+        anchorX - (anchorDesignX - args.envelope.x) * contentScale * scaleFactor
+      ),
+      top: Math.round(
+        anchorY - (anchorDesignY - args.envelope.y) * contentScale * scaleFactor
+      ),
+      width,
+      height
+    };
+  }
 
   switch (args.anchorCorner) {
     case "NorthEast":

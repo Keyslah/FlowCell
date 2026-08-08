@@ -8,9 +8,11 @@ import {
   loadButtonStateDocument,
   mergeLegacyInstallsIntoDocument,
   saveButtonStateDocument,
-  uninstallButtonSource
+  uninstallButtonSource,
+  updateButtonSource
 } from "../../button/state/ButtonStateRepository";
-import { createStableButtonId } from "../../button/state/buttonDefaults";
+import { cloneButtonDocument } from "../../button/state/buttonDefaults";
+import { applyInstalledSourceUpdate } from "../../button/state/sourceUpdateOperations.js";
 import { showOpenFileDialog, showOpenFolderDialog, showSaveFileDialog } from "../../lib/tauri";
 
 export interface InstalledPageCoreActionPlan {
@@ -47,6 +49,7 @@ interface ToolPackageEntry {
 interface AuthorizedGeneratedStage {
   manifestPath: string;
   stageRoot: string;
+  packageId: string;
 }
 
 const activeToolPackagePaths = new Map<string, string>();
@@ -373,6 +376,39 @@ function isButtonRevisionConflict(error: unknown): boolean {
   return message.includes("Button state changed before Save.");
 }
 
+async function generatedOwnerButtonId(
+  identity: InstalledPageCoreIdentity,
+  packageId: string
+): Promise<string> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new Error("Generated Button identity requires Web Crypto support.");
+  }
+  const identityKey = [
+    "flowcell-installed-page-generated-button-v1",
+    identity.programName.toLocaleLowerCase("en"),
+    identity.pageId.toLocaleLowerCase("en"),
+    packageId.toLocaleLowerCase("en")
+  ].join("\u0000");
+  const digest = await subtle.digest("SHA-256", new TextEncoder().encode(identityKey));
+  const digestHex = [...new Uint8Array(digest)]
+    .map((value) => value.toString(16).padStart(2, "0"))
+    .join("");
+  return `button-generated-${digestHex.slice(0, 32)}`;
+}
+
+function mergeGeneratedInstallIntoDocument(
+  base: Awaited<ReturnType<typeof loadButtonStateDocument>>,
+  installed: Awaited<ReturnType<typeof installButtonSource>>
+) {
+  if (!base.buttons[installed.ownerButtonId]) {
+    return mergeLegacyInstallsIntoDocument(base, [installed]);
+  }
+  const next = cloneButtonDocument(base);
+  applyInstalledSourceUpdate(next, installed);
+  return next;
+}
+
 async function runInstallGeneratedButton(
   identity: InstalledPageCoreIdentity,
   actionId: string,
@@ -407,23 +443,38 @@ async function runInstallGeneratedButton(
   if (!authorizedStage.manifestPath || !authorizedStage.stageRoot) {
     throw new Error("Generated Button stage authorization returned an incomplete result.");
   }
-  const ownerButtonId = createStableButtonId("button-generated");
+  if (!authorizedStage.packageId) {
+    throw new Error("Generated Button stage authorization did not return its package identity.");
+  }
+  const ownerButtonId = await generatedOwnerButtonId(identity, authorizedStage.packageId);
+  let current = await loadButtonStateDocument();
+  const existingOwner = current.buttons[ownerButtonId] ?? null;
+  if (existingOwner && !existingOwner.sourceIdentity) {
+    throw new Error(`Generated Button identity '${ownerButtonId}' conflicts with a non-source Button.`);
+  }
+  if (
+    existingOwner?.sourceIdentity &&
+    existingOwner.sourceIdentity.normalizedProgramName !== programName.toLocaleLowerCase("en")
+  ) {
+    throw new Error(`Generated Button identity '${ownerButtonId}' belongs to another program.`);
+  }
+  const installPanelName = existingOwner?.sourceIdentity?.displayPanelName || panelName;
   let installed: Awaited<ReturnType<typeof installButtonSource>> | null = null;
   let committed = false;
   try {
-    installed = await installButtonSource({
+    const installGeneratedSource = existingOwner ? updateButtonSource : installButtonSource;
+    installed = await installGeneratedSource({
       ownerButtonId,
       programName,
-      panelName,
+      panelName: installPanelName,
       sourcePath: authorizedStage.manifestPath,
       importKind: "script"
     });
     if (!installed.executionTarget || installed.children.length > 0) {
       throw new Error("Generated source did not install as one ordinary single-script Button.");
     }
-    let current = await loadButtonStateDocument();
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const next = mergeLegacyInstallsIntoDocument(current, [installed]);
+      const next = mergeGeneratedInstallIntoDocument(current, installed);
       try {
         const saved = await saveButtonStateDocument(next, current.revision);
         committed = true;
@@ -443,7 +494,7 @@ async function runInstallGeneratedButton(
     }
     throw new Error("Generated Button canonical state could not be committed.");
   } catch (error) {
-    if (installed && !committed) {
+    if (installed && !committed && !existingOwner) {
       await uninstallButtonSource({
         ownerButtonId: installed.ownerButtonId,
         sourceIdentity: installed.sourceIdentity

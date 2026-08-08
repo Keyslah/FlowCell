@@ -236,7 +236,14 @@ test("all 19 Layers Builder actions are ordinary manifest packages", () => {
     );
     classifiedActions.add(actionName);
 
-    assert.equal(contribution.version, actionName === "new-sub" ? "3.1.2" : "3.1.1");
+    assert.equal(
+      contribution.version,
+      actionName === "snapshot"
+        ? "3.1.4"
+        : actionName === "new-sub" || actionName === "3d"
+          ? "3.1.2"
+          : "3.1.1"
+    );
     assert.equal(contribution.importKind, "script");
     assert.equal(contribution.installOnAdd, true);
     assert.equal("installIfMissing" in contribution, false);
@@ -372,6 +379,147 @@ test("the resolver consumes owner runtime state and fails closed", () => {
   );
 });
 
+test("Snapshot prioritizes selected artwork and hides only the Snapshots root", () => {
+  const source = readActionSource("snapshot");
+
+  assert.match(
+    source,
+    /if \(FlowCellSnapshotHasNativeSelection\(\)\) \{\s*return \{\s*document: app\.activeDocument,\s*layers: \[\],\s*restore: \[\]/,
+    "Snapshot must route a native Illustrator selection ahead of Layer Tree highlights"
+  );
+  assert.match(
+    source,
+    /restoreActiveLayer\(doc, originalActiveLayer\);\s*showSnapshotBranch\(snapshotContainer\);[\s\S]*?snapshotContainer\.visible = true;/,
+    "Snapshot must leave the new target container and all of its descendants visible"
+  );
+  assert.match(
+    source,
+    /function showSnapshotBranch\(layer\)[\s\S]*?layer\.visible = true;[\s\S]*?showSnapshotBranch\(layer\.layers\[i\]\);/,
+    "Snapshot must recursively turn on every layer beneath the Snapshots root"
+  );
+  assert.match(
+    source,
+    /showSnapshotDescendants\(roots\.snapshots\);[\s\S]*?setSystemLayerState\(roots\.snapshots, false, false\);/,
+    "Snapshot must turn off only the top-level Snapshots root after its descendants are visible"
+  );
+  assert.doesNotMatch(
+    source,
+    /hideSnapshotDescendants|snapshotEntry\.visible = false|snapshotContainer\.visible = false/,
+    "Snapshot must not hide any layer beneath the Snapshots root"
+  );
+});
+
+test("3D prefers eligible Illustrator artwork and falls back to Layer Tree highlights", () => {
+  const source = readActionSource("3d");
+  const selectionIndex = source.indexOf(
+    "var selectedArtworkTargets = resolveSelectedArtworkTargets(doc);"
+  );
+  const fallbackGuardIndex = source.indexOf(
+    "if (selectedArtworkTargets.length === 0)"
+  );
+  const highlightedTargetsIndex = source.indexOf(
+    "FlowCellLayersBuilderSelection.resolveTargets(false)"
+  );
+
+  assert.ok(selectionIndex >= 0, "3D must resolve Illustrator artwork selection");
+  assert.ok(
+    fallbackGuardIndex > selectionIndex,
+    "3D must inspect eligible artwork before considering Layer Tree highlights"
+  );
+  assert.ok(
+    highlightedTargetsIndex > fallbackGuardIndex,
+    "Layer Tree targets must be resolved only inside the empty-selection fallback"
+  );
+  assert.match(
+    source,
+    /function resolveSelectedArtworkTargets\(documentRef\)[\s\S]*?normalizeSelection\(documentRef\.selection\)[\s\S]*?addPreferredItemTarget\(result, selection\[i\]\)/
+  );
+  assert.match(
+    source,
+    /function resolveTargets\(selectedTargets\)[\s\S]*?if \(result\.length > 0\) \{\s*return result;\s*\}[\s\S]*?layers = FLOWCELL_LB_TARGETS\.layers;/
+  );
+  assert.match(
+    source,
+    /itemType === "InsertionPoint" \|\| itemType === "TextRange"/,
+    "text-edit selections are not eligible 3D artwork"
+  );
+});
+
+test("3D hides only the Live root while retaining prior-version hiding", () => {
+  const sources = [
+    ["Layers Builder 3D", readActionSource("3d")],
+    [
+      "legacy Layers 3D",
+      read(path.join(illustratorRoot, "Illustrator Git Scripts", "Layers", "3D.jsx"))
+    ]
+  ];
+
+  for (const [label, source] of sources) {
+    const hideCalls = Array.from(
+      source.matchAll(/^\s*hideSourceLayer\(([^;]+)\);\s*$/gm),
+      (match) => match[1]
+    ).sort();
+
+    assert.deepEqual(
+      hideCalls,
+      ["containerLayer.layers[i]"],
+      `${label} may use the lock-changing helper only for prior dN entries`
+    );
+    assert.match(source, /hidePrevious3DVersions\(threeDContainer, threeDEntry\)/);
+    assert.match(source, /hideLiveRoot\(roots\.live\);/);
+    const liveRootHelper = source.match(
+      /function hideLiveRoot\(liveRoot\) \{[\s\S]*?\n    \}/
+    )?.[0] ?? "";
+    assert.match(liveRootHelper, /liveRoot\.visible = false;/);
+    assert.doesNotMatch(liveRootHelper, /\.locked|hideSourceLayer/);
+    assert.doesNotMatch(source, /hideLiveTargetLayer|hideLiveTargetItem|hideSourceItem|getTopLevelLiveChild/);
+  }
+});
+
+test("3D restores temporary source state and checks targets before system mutation", () => {
+  const sources = [
+    ["Layers Builder 3D", readActionSource("3d"), "resolveTargets(selectedArtworkTargets)"],
+    [
+      "legacy Layers 3D",
+      read(path.join(illustratorRoot, "Illustrator Git Scripts", "Layers", "3D.jsx")),
+      "resolveTargets(doc)"
+    ]
+  ];
+
+  for (const [label, source, resolverCall] of sources) {
+    const targetIndex = source.indexOf(`var targets = ${resolverCall};`);
+    const emptyGuardIndex = source.indexOf("if (targets.length === 0)", targetIndex);
+    const ensureRootsIndex = source.indexOf("roots = ensureRootLayers(doc);", targetIndex);
+    const threeDStateIndex = source.indexOf("roots.threeD.visible = true;", targetIndex);
+    assert.ok(targetIndex >= 0, `${label} must resolve targets`);
+    assert.ok(emptyGuardIndex > targetIndex, `${label} must reject an empty target set`);
+    assert.ok(
+      ensureRootsIndex > emptyGuardIndex,
+      `${label} must not create or normalize system roots before proving a target exists`
+    );
+    assert.ok(
+      threeDStateIndex > ensureRootsIndex,
+      `${label} may change 3D state only after the nonempty-target guard`
+    );
+
+    const layerBranchStart = source.indexOf('if (target.kind === "layer")');
+    const itemBranchStart = source.indexOf('} else if (target.kind === "item")', layerBranchStart);
+    const unsupportedBranchStart = source.indexOf("} else {", itemBranchStart);
+    const layerBranch = source.slice(layerBranchStart, itemBranchStart);
+    const itemBranch = source.slice(itemBranchStart, unsupportedBranchStart);
+    assert.match(
+      layerBranch,
+      /try \{[\s\S]*?unlockBranchFromState\(sourceState\);[\s\S]*?copyLayerContents\([\s\S]*?\} finally \{\s*restoreBranchState\(sourceState\);\s*\}/,
+      `${label} must restore a source branch even when copying throws`
+    );
+    assert.match(
+      itemBranch,
+      /try \{[\s\S]*?unlockItemFromState\(sourceState\);[\s\S]*?copySingleItem\([\s\S]*?\} finally \{\s*restoreItemFromState\(sourceState\);\s*\}/,
+      `${label} must restore a source item even when copying throws`
+    );
+  }
+});
+
 test("Sort protects and orders the complete five-root system", () => {
   const source = readActionSource("sort");
   assert.match(source, /var ROOT_3D = "3D"/);
@@ -426,7 +574,7 @@ test("New Sub requires exactly one target and creates a direct child", () => {
 
 test("Layer Tree is default-selected but never resurrected after deletion", () => {
   assert.ok(layerTreeContribution);
-  assert.equal(layerTreeContribution.version, "3.0.1");
+  assert.equal(layerTreeContribution.version, "3.0.8");
   assert.equal(layerTreeContribution.sourcePath, "Illustrator Git Scripts/LayersBuilder");
   assert.equal(layerTreeContribution.importKind, "script");
   assert.equal(layerTreeContribution.installOnAdd, true);

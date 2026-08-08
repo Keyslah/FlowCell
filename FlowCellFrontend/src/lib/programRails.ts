@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { LayoutSnapshot } from "../types.js";
-import { showOpenFileDialog } from "./tauri.js";
 
 export const PROGRAM_DATA_INVALIDATED_EVENT = "flowcell://program-data-invalidated";
 export const PROGRAM_SETUP_COMMITTED_EVENT = "flowcell://program-setup-committed";
@@ -205,81 +204,6 @@ export async function emitProgramSetupCommitted(
   payload: ProgramSetupCommittedEvent
 ): Promise<void> {
   await emit(PROGRAM_SETUP_COMMITTED_EVENT, payload);
-}
-
-type SlicerLauncherId = "orca" | "cura" | "slicer";
-
-function slicerLaunchRequest(response: unknown): {
-  slicerId: SlicerLauncherId;
-  exportedPaths: string[];
-  detectedExecutable: string;
-} | null {
-  if (!isRecord(response)) return null;
-  const requested =
-    response.requires_flowcell_slicer_launch === true ||
-    response.requiresFlowCellSlicerLaunch === true ||
-    response.requires_flowcell_orca_launch === true ||
-    response.requiresFlowCellOrcaLaunch === true ||
-    response.requires_flowcell_cura_launch === true ||
-    response.requiresFlowCellCuraLaunch === true;
-  if (!requested) return null;
-
-  const rawId = readString(response.slicer_id) || readString(response.slicerId);
-  const slicerId: SlicerLauncherId =
-    response.requires_flowcell_orca_launch === true ||
-    response.requiresFlowCellOrcaLaunch === true ||
-    rawId.toLowerCase().includes("orca")
-      ? "orca"
-      : response.requires_flowcell_cura_launch === true ||
-          response.requiresFlowCellCuraLaunch === true ||
-          rawId.toLowerCase().includes("cura")
-        ? "cura"
-        : "slicer";
-  const rawPaths = Array.isArray(response.exported_paths)
-    ? response.exported_paths
-    : Array.isArray(response.exportedPaths)
-      ? response.exportedPaths
-      : [];
-  const exportedPaths = rawPaths.map(readString).filter(Boolean);
-  if (exportedPaths.length === 0) {
-    throw new Error("The slicer script did not return any exported model paths.");
-  }
-  return {
-    slicerId,
-    exportedPaths,
-    detectedExecutable:
-      readString(response.detected_executable) || readString(response.detectedExecutable)
-  };
-}
-
-async function handleSlicerLaunchRequest(request: {
-  slicerId: SlicerLauncherId;
-  exportedPaths: string[];
-  detectedExecutable: string;
-}): Promise<string> {
-  let executablePath = await invokeProgramRailCommand<string | null>("load_slicer_executable", {
-    slicerId: request.slicerId
-  });
-  executablePath ||= request.detectedExecutable || null;
-  if (!executablePath) {
-    const displayName = request.slicerId === "orca"
-      ? "OrcaSlicer"
-      : request.slicerId === "cura"
-        ? "UltiMaker Cura"
-        : "slicer";
-    const selectedPaths = await showOpenFileDialog({
-      title: `Choose ${displayName} executable`,
-      filter: "Applications (*.exe)|*.exe|All Files (*.*)|*.*",
-      multiselect: false
-    });
-    executablePath = selectedPaths[0]?.trim() || null;
-  }
-  if (!executablePath) return "Slicer launch cancelled.";
-  return invokeProgramRailCommand<string>("launch_slicer", {
-    slicerId: request.slicerId,
-    executablePath,
-    exportedPaths: request.exportedPaths
-  });
 }
 
 export async function listProgramFolders(): Promise<string[]> {
@@ -495,9 +419,6 @@ export async function runPanelScript(
     fileName
   });
   await emitProgramDataInvalidated(programName, panelName, fileName);
-
-  const slicerRequest = slicerLaunchRequest(response);
-  if (slicerRequest) return handleSlicerLaunchRequest(slicerRequest);
 
   return responseMessage(response);
 }

@@ -7,7 +7,7 @@ use super::transaction::{write_json_file, AtomicWriteMode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
@@ -64,6 +64,17 @@ pub(crate) enum InstalledPageActionHandler {
         capability: String,
         options: Map<String, Value>,
     },
+    Provider {
+        capability: String,
+        program: String,
+        #[serde(rename = "bundledSourceId")]
+        bundled_source_id: String,
+        #[serde(rename = "pageId")]
+        page_id: String,
+        #[serde(rename = "actionId")]
+        action_id: String,
+        payload: Map<String, Value>,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
@@ -80,6 +91,8 @@ pub(crate) struct InstalledPageAction {
     pub handler: InstalledPageActionHandler,
     pub request_schema: Value,
     pub response_schema: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_capability: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -214,6 +227,7 @@ struct GeneratedStagePolicy {
 pub(crate) struct AuthorizedGeneratedStage {
     manifest_path: String,
     stage_root: String,
+    package_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -221,6 +235,7 @@ struct AuthorizedGeneratedStagePaths {
     staging_root: PathBuf,
     manifest_path: PathBuf,
     stage_root: PathBuf,
+    package_id: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -777,6 +792,16 @@ pub(crate) fn validate_and_normalize_page_manifest(
             &action.response_schema,
             &format!("page.actions.{}.responseSchema", action.id),
         )?;
+        if let Some(provider_capability) = &mut action.provider_capability {
+            *provider_capability =
+                normalize_identifier(provider_capability, "page.actions.providerCapability", true)?;
+            if !declared_capabilities.contains(&provider_capability.to_ascii_lowercase()) {
+                return Err(format!(
+                    "Page action '{}' publishes undeclared provider capability '{}'.",
+                    action.id, provider_capability
+                ));
+            }
+        }
         match &mut action.handler {
             InstalledPageActionHandler::Program { capability, .. } => {
                 *capability =
@@ -804,7 +829,42 @@ pub(crate) fn validate_and_normalize_page_manifest(
                     ));
                 }
             }
+            InstalledPageActionHandler::Provider {
+                capability,
+                program,
+                bundled_source_id,
+                page_id,
+                action_id,
+                ..
+            } => {
+                *capability =
+                    normalize_identifier(capability, "page.actions.handler.capability", true)?;
+                if !declared_capabilities.contains(&capability.to_ascii_lowercase()) {
+                    return Err(format!(
+                        "Page action '{}' uses undeclared capability '{}'.",
+                        action.id, capability
+                    ));
+                }
+                *program =
+                    normalize_display_text(program, "page.actions.handler.program", false, 128)?;
+                *bundled_source_id = normalize_identifier(
+                    bundled_source_id,
+                    "page.actions.handler.bundledSourceId",
+                    false,
+                )?;
+                *page_id = normalize_identifier(page_id, "page.actions.handler.pageId", false)?;
+                *action_id =
+                    normalize_identifier(action_id, "page.actions.handler.actionId", false)?;
+            }
             InstalledPageActionHandler::OwnerState { .. } => {}
+        }
+        if action.provider_capability.is_some()
+            && !matches!(&action.handler, InstalledPageActionHandler::Program { .. })
+        {
+            return Err(format!(
+                "Page action '{}' can publish a provider capability only when backed by its owning program.",
+                action.id
+            ));
         }
     }
     Ok(())
@@ -1240,6 +1300,7 @@ fn authorize_generated_stage_at(
         staging_root: canonical_root,
         manifest_path: canonical_requested,
         stage_root: canonical_stage_root,
+        package_id,
     })
 }
 
@@ -2101,6 +2162,172 @@ fn parse_program_response(raw: &str) -> Result<Value, String> {
     Ok(value)
 }
 
+fn merged_object_payload(
+    payload: Value,
+    fixed_payload: &Map<String, Value>,
+    subject: &str,
+) -> Result<Value, String> {
+    let mut merged = payload
+        .as_object()
+        .cloned()
+        .ok_or_else(|| format!("{subject} requires an object payload."))?;
+    for (key, value) in fixed_payload {
+        merged.insert(key.clone(), value.clone());
+    }
+    Ok(Value::Object(merged))
+}
+
+fn run_program_page_action(
+    resolution: &ActiveSourceResolution,
+    action: &InstalledPageAction,
+    payload: Value,
+    subject: &str,
+) -> Result<Value, String> {
+    validate_json_schema_value(
+        &action.request_schema,
+        &payload,
+        &format!("{subject} request"),
+    )?;
+    let InstalledPageActionHandler::Program {
+        capability,
+        payload: fixed_payload,
+    } = &action.handler
+    else {
+        return Err(format!("{subject} must be backed by a program action."));
+    };
+    let merged = merged_object_payload(payload, fixed_payload, subject)?;
+    let args_json = serde_json::to_string(&merged)
+        .map_err(|error| format!("Failed to encode {subject} payload: {error}"))?;
+    let raw = super::execute::run_program_capability_action_blocking(
+        resolution.record.program_name.clone(),
+        resolution.record.panel_name.clone(),
+        resolution.file_name.clone(),
+        capability.clone(),
+        args_json,
+    )?;
+    let response = parse_program_response(&raw)?;
+    validate_json_schema_value(
+        &action.response_schema,
+        &response,
+        &format!("{subject} response"),
+    )?;
+    Ok(response)
+}
+
+fn resolve_provider_page_identity(
+    program_name: &str,
+    bundled_source_id: &str,
+    page_id: &str,
+) -> Result<(ActiveSourceResolution, InstalledPageManifest, PathBuf), String> {
+    let registered_program_name = crate::require_registered_program_name(program_name)?;
+    let manifest = load_program_manifest(&registered_program_name)?;
+    let bundled_source = manifest
+        .bundled_sources
+        .iter()
+        .find(|source| source.id.eq_ignore_ascii_case(bundled_source_id))
+        .ok_or_else(|| {
+            format!(
+                "Installed page provider '{}' is not declared by program '{}'.",
+                bundled_source_id, registered_program_name
+            )
+        })?;
+    if !bundled_source.source_kind.eq_ignore_ascii_case("page") {
+        return Err(format!(
+            "Installed page provider '{}' is not declared as a page source by program '{}'.",
+            bundled_source_id, registered_program_name
+        ));
+    }
+
+    let mut panel_names = BTreeMap::new();
+    panel_names.insert(
+        bundled_source.panel_name.to_ascii_lowercase(),
+        bundled_source.panel_name.clone(),
+    );
+    for panel in &manifest.panels {
+        panel_names
+            .entry(panel.label.to_ascii_lowercase())
+            .or_insert_with(|| panel.label.clone());
+    }
+
+    let mut matches = Vec::new();
+    for panel_name in panel_names.into_values() {
+        for resolution in
+            super::execute::list_active_source_records(&registered_program_name, &panel_name)?
+        {
+            if resolution
+                .record
+                .bundled_source_id
+                .as_deref()
+                .is_some_and(|value| value.eq_ignore_ascii_case(bundled_source_id))
+            {
+                matches.push(resolution);
+            }
+        }
+    }
+    if matches.is_empty() {
+        return Err(format!(
+            "Installed page provider '{}' is not installed and active.",
+            bundled_source_id
+        ));
+    }
+    if matches.len() != 1 {
+        return Err(format!(
+            "Installed page provider '{}' has more than one active owner.",
+            bundled_source_id
+        ));
+    }
+    let resolution = matches.pop().expect("one provider resolution");
+    resolve_page_identity(
+        &resolution.record.owner_button_id,
+        &registered_program_name,
+        &resolution.record.panel_name,
+        &resolution.file_name,
+        page_id,
+    )
+}
+
+fn run_provider_page_action(
+    program_name: &str,
+    bundled_source_id: &str,
+    page_id: &str,
+    action_id: &str,
+    provider_capability: &str,
+    payload: Value,
+) -> Result<Value, String> {
+    let (resolution, page, _) =
+        resolve_provider_page_identity(program_name, bundled_source_id, page_id)?;
+    let action = declared_provider_action(&page, action_id, provider_capability)?;
+    run_program_page_action(
+        &resolution,
+        action,
+        payload,
+        "Installed page provider action",
+    )
+}
+
+fn declared_provider_action<'a>(
+    page: &'a InstalledPageManifest,
+    action_id: &str,
+    provider_capability: &str,
+) -> Result<&'a InstalledPageAction, String> {
+    let action = declared_page_action(page, action_id)?;
+    if !action
+        .provider_capability
+        .as_deref()
+        .is_some_and(|value| value.eq_ignore_ascii_case(provider_capability))
+    {
+        return Err(format!(
+            "Installed page provider action '{action_id}' does not publish capability '{provider_capability}'."
+        ));
+    }
+    if !matches!(&action.handler, InstalledPageActionHandler::Program { .. }) {
+        return Err(format!(
+            "Installed page provider action '{action_id}' must be backed by its owning program."
+        ));
+    }
+    Ok(action)
+}
+
 fn run_installed_page_action_blocking(
     owner_button_id: String,
     program_name: String,
@@ -2120,28 +2347,12 @@ fn run_installed_page_action_blocking(
     let action = declared_page_action(&page, &action_id)?;
     let payload = parse_page_action_payload(action, &payload_json)?;
     let response = match &action.handler {
-        InstalledPageActionHandler::Program {
-            capability,
-            payload: fixed_payload,
-        } => {
-            let mut merged = payload.as_object().cloned().ok_or_else(|| {
-                "Program-backed installed page actions require an object payload.".to_string()
-            })?;
-            for (key, value) in fixed_payload {
-                merged.insert(key.clone(), value.clone());
-            }
-            let args_json = serde_json::to_string(&Value::Object(merged)).map_err(|error| {
-                format!("Failed to encode installed page action payload: {error}")
-            })?;
-            let raw = super::execute::run_program_capability_action_blocking(
-                resolution.record.program_name.clone(),
-                resolution.record.panel_name.clone(),
-                resolution.file_name.clone(),
-                capability.clone(),
-                args_json,
-            )?;
-            parse_program_response(&raw)?
-        }
+        InstalledPageActionHandler::Program { .. } => run_program_page_action(
+            &resolution,
+            action,
+            payload,
+            "Program-backed installed page action",
+        )?,
         InstalledPageActionHandler::OwnerState { operation } => match operation {
             OwnerStateOperation::Read => {
                 json!({ "state": read_owner_state(&resolution.record, &page)? })
@@ -2168,6 +2379,29 @@ fn run_installed_page_action_blocking(
                 options: options.clone(),
                 payload,
             })
+        }
+        InstalledPageActionHandler::Provider {
+            capability,
+            program,
+            bundled_source_id,
+            page_id,
+            action_id,
+            payload: fixed_payload,
+            ..
+        } => {
+            let merged = merged_object_payload(
+                payload,
+                fixed_payload,
+                "Provider-backed installed page action",
+            )?;
+            run_provider_page_action(
+                program,
+                bundled_source_id,
+                page_id,
+                action_id,
+                capability,
+                merged,
+            )?
         }
     };
     validate_json_schema_value(
@@ -2274,6 +2508,7 @@ pub(crate) async fn authorize_installed_page_generated_stage(
         Ok(AuthorizedGeneratedStage {
             manifest_path: stage.paths.manifest_path.display().to_string(),
             stage_root: stage.paths.stage_root.display().to_string(),
+            package_id: stage.paths.package_id,
         })
     })
     .await
@@ -2324,15 +2559,15 @@ pub(crate) async fn discard_installed_page_generated_stage(
 #[cfg(test)]
 mod tests {
     use super::{
-        authorize_generated_stage_at, declared_page_action, normalized_relative_resource_path,
-        parse_page_action_payload, recover_generated_stage_cleanup_journals_in,
-        require_active_page_identity, resolve_declared_resource, sha256_file,
-        validate_and_normalize_page_manifest, validate_json_schema_value,
-        validate_schema_definition, write_generated_stage_cleanup_journal_in,
-        GeneratedStageCleanupJournal, GeneratedStagePolicy, InstalledPageAction,
-        InstalledPageActionHandler, InstalledPageManifest, InstalledPageWindow,
-        OwnerStateOperation, GENERATED_STAGE_CLEANUP_SCHEMA_VERSION,
-        MAX_GENERATED_SOURCE_MANIFEST_BYTES,
+        authorize_generated_stage_at, declared_page_action, declared_provider_action,
+        normalized_relative_resource_path, parse_page_action_payload,
+        recover_generated_stage_cleanup_journals_in, require_active_page_identity,
+        resolve_declared_resource, sha256_file, validate_and_normalize_page_manifest,
+        validate_json_schema_value, validate_schema_definition,
+        write_generated_stage_cleanup_journal_in, GeneratedStageCleanupJournal,
+        GeneratedStagePolicy, InstalledPageAction, InstalledPageActionHandler,
+        InstalledPageManifest, InstalledPageWindow, OwnerStateOperation,
+        GENERATED_STAGE_CLEANUP_SCHEMA_VERSION, MAX_GENERATED_SOURCE_MANIFEST_BYTES,
     };
     use serde_json::{json, Map, Value};
     use std::fs;
@@ -2425,6 +2660,7 @@ mod tests {
                 },
                 request_schema: owner_state_write_request_schema(),
                 response_schema: owner_state_write_response_schema(),
+                provider_capability: None,
             }],
             capabilities: Vec::new(),
             owner_state_format: "example.state.v1".to_string(),
@@ -2582,6 +2818,7 @@ mod tests {
             },
             request_schema: json!({ "type": "null" }),
             response_schema: object_schema(),
+            provider_capability: None,
         });
         assert!(
             validate_and_normalize_page_manifest(&mut duplicate_action, &root, "Example").is_err()
@@ -2661,6 +2898,61 @@ mod tests {
             options: Map::new(),
         };
         assert!(validate_and_normalize_page_manifest(&mut candidate, &root, "Example").is_err());
+    }
+
+    #[test]
+    fn provider_actions_require_a_manifest_fixed_declared_capability() {
+        let root = TestRoot::new("provider-capability");
+        let mut candidate = page(&root);
+        candidate.actions[0].handler = InstalledPageActionHandler::Provider {
+            capability: "windows.setup-organization.prepare-target".to_string(),
+            program: "Windows".to_string(),
+            bundled_source_id: "windows.setup-organization".to_string(),
+            page_id: "windows.setup-organization".to_string(),
+            action_id: "prepare-target".to_string(),
+            payload: Map::new(),
+        };
+        assert!(validate_and_normalize_page_manifest(&mut candidate, &root, "Example").is_err());
+
+        candidate.capabilities = vec!["windows.setup-organization.prepare-target".to_string()];
+        validate_and_normalize_page_manifest(&mut candidate, &root, "Example")
+            .expect("declared provider capability should validate");
+    }
+
+    #[test]
+    fn provider_targets_must_opt_in_and_remain_program_backed() {
+        let root = TestRoot::new("provider-access");
+        let mut candidate = page(&root);
+        assert!(declared_provider_action(&candidate, "state.write", "example.prepare").is_err());
+
+        candidate.actions[0].provider_capability = Some("example.prepare".to_string());
+        let error = declared_provider_action(&candidate, "state.write", "example.prepare")
+            .expect_err("owner state cannot be exposed as a provider");
+        assert!(error.contains("owning program"));
+
+        candidate.actions[0].handler = InstalledPageActionHandler::Program {
+            capability: "example.prepare".to_string(),
+            payload: Map::new(),
+        };
+        assert!(declared_provider_action(&candidate, "state.write", "example.other").is_err());
+        assert!(declared_provider_action(&candidate, "state.write", "example.prepare").is_ok());
+    }
+
+    #[test]
+    fn published_provider_capabilities_must_be_declared() {
+        let root = TestRoot::new("provider-published-capability");
+        let mut candidate = page(&root);
+        candidate.actions[0].handler = InstalledPageActionHandler::Program {
+            capability: "example.program".to_string(),
+            payload: Map::new(),
+        };
+        candidate.actions[0].provider_capability = Some("example.provider".to_string());
+        candidate.capabilities = vec!["example.program".to_string()];
+        assert!(validate_and_normalize_page_manifest(&mut candidate, &root, "Example").is_err());
+
+        candidate.capabilities.push("example.provider".to_string());
+        validate_and_normalize_page_manifest(&mut candidate, &root, "Example")
+            .expect("declared published provider capability should validate");
     }
 
     #[test]

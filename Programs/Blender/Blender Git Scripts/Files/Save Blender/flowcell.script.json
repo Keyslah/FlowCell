@@ -1,0 +1,640 @@
+{
+  "schemaVersion": 1,
+  "id": "blender.save-blender",
+  "label": "Save Blender",
+  "tooltip": "Save the current Blender file, create a named project, or add it to an existing project folder.",
+  "program": "Blender",
+  "source": "save_blender.py",
+  "bridgeData": {
+    "readOnlyCommands": [
+      "status"
+    ],
+    "capabilities": [
+      "blender-save-page"
+    ]
+  },
+  "page": {
+    "schemaVersion": 1,
+    "id": "blender.save-blender",
+    "program": "Blender",
+    "label": "Save Blender",
+    "tooltip": "Create a Blender project or add a named Blender file to an existing project folder.",
+    "entry": "page/index.html",
+    "scripts": [
+      "page/page.js"
+    ],
+    "styles": [
+      "page/page.css"
+    ],
+    "assets": [],
+    "window": {
+      "title": "Save Blender",
+      "width": 640,
+      "height": 470,
+      "minWidth": 520,
+      "minHeight": 400
+    },
+    "actions": [
+      {
+        "id": "owner-state.read",
+        "handler": {
+          "kind": "owner-state",
+          "operation": "read"
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            }
+          },
+          "required": [
+            "state"
+          ]
+        }
+      },
+      {
+        "id": "owner-state.write",
+        "handler": {
+          "kind": "owner-state",
+          "operation": "write"
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {}
+            }
+          },
+          "required": [
+            "state"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "written": {
+              "enum": [
+                true
+              ]
+            }
+          },
+          "required": [
+            "written"
+          ]
+        }
+      },
+      {
+        "id": "parent-folder.select",
+        "handler": {
+          "kind": "core",
+          "capability": "folder.select",
+          "options": {
+            "dialogTitle": "Choose the parent folder for Blender projects"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "path"
+          ]
+        }
+      },
+      {
+        "id": "existing-project-folder.select",
+        "handler": {
+          "kind": "core",
+          "capability": "folder.select",
+          "options": {
+            "dialogTitle": "Choose an existing project folder"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "selected": {
+              "type": "boolean"
+            },
+            "path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "selected",
+            "path"
+          ]
+        }
+      },
+      {
+        "id": "profile.list",
+        "handler": {
+          "kind": "provider",
+          "capability": "windows.setup-organization.list-profiles",
+          "program": "Windows",
+          "bundledSourceId": "windows.setup-organization",
+          "pageId": "windows.setup-organization",
+          "actionId": "list-profiles",
+          "payload": {}
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "profiles"
+          ],
+          "properties": {
+            "profiles": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "profileId",
+                  "name",
+                  "updatedAt",
+                  "folderCount",
+                  "assignedCount"
+                ],
+                "properties": {
+                  "profileId": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "updatedAt": {
+                    "type": "string"
+                  },
+                  "folderCount": {
+                    "type": "integer"
+                  },
+                  "assignedCount": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "project.status",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-save-page",
+          "payload": {
+            "command": "status"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "saved": {
+              "type": "boolean"
+            },
+            "filePath": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "saved",
+            "filePath",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "project.save-current",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-save-page",
+          "payload": {
+            "command": "save-current"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "saved": {
+              "enum": [
+                true
+              ]
+            },
+            "finalPath": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "saved",
+            "finalPath",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "project.create-root",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-save-page",
+          "payload": {
+            "command": "prepare-root"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "projectName": {
+              "type": "string"
+            },
+            "parentFolder": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "projectName",
+            "parentFolder"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prepared": {
+              "enum": [
+                true
+              ]
+            },
+            "projectRoot": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "prepared",
+            "projectRoot",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "project.prepare-target",
+        "handler": {
+          "kind": "provider",
+          "capability": "windows.setup-organization.prepare-target",
+          "program": "Windows",
+          "bundledSourceId": "windows.setup-organization",
+          "pageId": "windows.setup-organization",
+          "actionId": "prepare-target",
+          "payload": {
+            "plannedExtension": ".blend"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "projectRoot": {
+              "type": "string"
+            },
+            "profileId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "projectRoot",
+            "profileId"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prepared": {
+              "enum": [
+                true
+              ]
+            },
+            "projectRoot": {
+              "type": "string"
+            },
+            "profileId": {
+              "type": "string"
+            },
+            "profileName": {
+              "type": "string"
+            },
+            "profilePath": {
+              "type": "string"
+            },
+            "plannedExtension": {
+              "enum": [
+                ".blend"
+              ]
+            },
+            "markerPath": {
+              "type": "string"
+            },
+            "destinationRelativePath": {
+              "type": "string"
+            },
+            "destinationDirectory": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "prepared",
+            "projectRoot",
+            "profileId",
+            "profileName",
+            "profilePath",
+            "plannedExtension",
+            "markerPath",
+            "destinationRelativePath",
+            "destinationDirectory"
+          ]
+        }
+      },
+      {
+        "id": "project.prepare-existing-target",
+        "handler": {
+          "kind": "provider",
+          "capability": "windows.setup-organization.prepare-existing-target",
+          "program": "Windows",
+          "bundledSourceId": "windows.setup-organization",
+          "pageId": "windows.setup-organization",
+          "actionId": "prepare-existing-target",
+          "payload": {
+            "plannedExtension": ".blend"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "projectRoot": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "projectRoot"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "prepared": {
+              "type": "boolean"
+            },
+            "projectRoot": {
+              "type": "string"
+            },
+            "profileId": {
+              "type": "string"
+            },
+            "profileName": {
+              "type": "string"
+            },
+            "profilePath": {
+              "type": "string"
+            },
+            "plannedExtension": {
+              "enum": [
+                ".blend"
+              ]
+            },
+            "markerPath": {
+              "type": "string"
+            },
+            "destinationRelativePath": {
+              "type": "string"
+            },
+            "destinationDirectory": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "prepared",
+            "projectRoot",
+            "profileId",
+            "profileName",
+            "profilePath",
+            "plannedExtension",
+            "markerPath",
+            "destinationRelativePath",
+            "destinationDirectory"
+          ]
+        }
+      },
+      {
+        "id": "project.save-target",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-save-page",
+          "payload": {
+            "command": "save-target"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "projectName": {
+              "type": "string"
+            },
+            "parentFolder": {
+              "type": "string"
+            },
+            "preparedByProfile": {
+              "type": "boolean"
+            },
+            "projectRoot": {
+              "type": "string"
+            },
+            "finalPath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "projectName",
+            "parentFolder",
+            "preparedByProfile",
+            "projectRoot",
+            "finalPath"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "saved": {
+              "enum": [
+                true
+              ]
+            },
+            "projectRoot": {
+              "type": "string"
+            },
+            "finalPath": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "saved",
+            "projectRoot",
+            "finalPath",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "project.save-existing-target",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-save-page",
+          "payload": {
+            "command": "save-existing-target"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "fileName": {
+              "type": "string"
+            },
+            "projectRoot": {
+              "type": "string"
+            },
+            "finalPath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "fileName",
+            "projectRoot",
+            "finalPath"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "saved": {
+              "enum": [
+                true
+              ]
+            },
+            "projectRoot": {
+              "type": "string"
+            },
+            "finalPath": {
+              "type": "string"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "saved",
+            "projectRoot",
+            "finalPath",
+            "message"
+          ]
+        }
+      }
+    ],
+    "capabilities": [
+      "blender-save-page",
+      "folder.select",
+      "windows.setup-organization.list-profiles",
+      "windows.setup-organization.prepare-target",
+      "windows.setup-organization.prepare-existing-target"
+    ],
+    "ownerStateFormat": "flowcell.blender-save-page-state.v1",
+    "supportedDataFormats": [
+      "flowcell.organization-profile.v3"
+    ],
+    "refreshEvents": [],
+    "config": {
+      "stateFormat": "flowcell.blender-save-page-state.v1",
+      "profileFormat": "flowcell.organization-profile.v3",
+      "actions": {
+        "stateRead": "owner-state.read",
+        "stateWrite": "owner-state.write",
+        "selectParentFolder": "parent-folder.select",
+        "selectExistingProjectFolder": "existing-project-folder.select",
+        "listProfiles": "profile.list",
+        "status": "project.status",
+        "saveCurrent": "project.save-current",
+        "createRoot": "project.create-root",
+        "prepareTarget": "project.prepare-target",
+        "prepareExistingTarget": "project.prepare-existing-target",
+        "saveTarget": "project.save-target",
+        "saveExistingTarget": "project.save-existing-target"
+      }
+    }
+  }
+}

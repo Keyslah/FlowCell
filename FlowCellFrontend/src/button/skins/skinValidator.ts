@@ -17,6 +17,7 @@ export interface ButtonSkinAnalysis {
   animationTokens: string[];
   keyframeNames: string[];
   coreTagName: string;
+  hasHitShape: boolean;
   hasLabelToken: boolean;
 }
 
@@ -259,6 +260,14 @@ function unsafeCssMessage(property: string, value: string, inline: boolean): str
   if (property === "position" && /(^|\s)fixed($|\s)/i.test(value)) {
     return "position: fixed is not allowed in a Button skin.";
   }
+  if (property === "pointer-events") {
+    if (!inline) {
+      return "pointer-events is host-owned and is not allowed in Button skin state sections.";
+    }
+    if (!/^\s*none\s*$/i.test(value)) {
+      return "Inline pointer-events may only be 'none' on decorative skin layers.";
+    }
+  }
   if (/url\s*\(/i.test(value)) {
     const urls = [...value.matchAll(/url\s*\(\s*(['"]?)(.*?)\1\s*\)/gi)];
     if (urls.length === 0 || urls.some((match) => !/^#[a-z_][a-z0-9_.:-]*$/i.test(match[2]))) {
@@ -291,11 +300,14 @@ function validateStructure(source: string, diagnostics: ButtonSkinDiagnostic[]):
   if (tokenCount > 1) {
     diagnostics.push({ section: "structure", message: "Structure may contain at most one {{label}} token." });
   }
-  const stack: Array<{ name: string; core: boolean }> = [];
+  const stack: Array<{ name: string; core: boolean; hitShape: boolean }> = [];
   const animationTokens = new Set<string>();
   let labelInsideCore = false;
+  let labelInsideHitShape = false;
   let coreCount = 0;
   let coreTagName = "";
+  let hitShapeCount = 0;
+  let hitShapeInsideCore = false;
   let index = 0;
 
   while (index < source.length) {
@@ -304,6 +316,9 @@ function validateStructure(source: string, diagnostics: ButtonSkinDiagnostic[]):
     const text = source.slice(index, textEnd);
     if (text.includes(BUTTON_SKIN_LABEL_TOKEN) && stack.some((entry) => entry.core)) {
       labelInsideCore = true;
+    }
+    if (text.includes(BUTTON_SKIN_LABEL_TOKEN) && stack.some((entry) => entry.hitShape)) {
+      labelInsideHitShape = true;
     }
     if (tagStart < 0) break;
     if (source.startsWith("<!--", tagStart)) {
@@ -323,6 +338,7 @@ function validateStructure(source: string, diagnostics: ButtonSkinDiagnostic[]):
       }
       const cdata = source.slice(tagStart + 9, cdataEnd);
       if (cdata.includes(BUTTON_SKIN_LABEL_TOKEN) && stack.some((entry) => entry.core)) labelInsideCore = true;
+      if (cdata.includes(BUTTON_SKIN_LABEL_TOKEN) && stack.some((entry) => entry.hitShape)) labelInsideHitShape = true;
       index = cdataEnd + 3;
       continue;
     }
@@ -355,14 +371,25 @@ function validateStructure(source: string, diagnostics: ButtonSkinDiagnostic[]):
     if (FORBIDDEN_TAGS.has(tag.name)) {
       diagnostics.push({ section: "structure", message: `<${tag.name}> is not allowed in a Button skin.`, offset: tagStart });
     }
-    let isCore = false;
+    const isCore = tag.attributes.some((attribute) => attribute.name === "data-core");
+    const isHitShape = tag.attributes.some((attribute) => attribute.name === "data-hit-shape");
+    if (isCore) {
+      coreCount += 1;
+      coreTagName = tag.name;
+    }
+    if (isHitShape) {
+      hitShapeCount += 1;
+      const insideCore = !isCore && stack.some((entry) => entry.core);
+      hitShapeInsideCore ||= insideCore;
+      if (hitShapeCount > 1) {
+        diagnostics.push({ section: "structure", message: "Structure may contain at most one data-hit-shape element.", offset: tagStart });
+      }
+      if (!insideCore) {
+        diagnostics.push({ section: "structure", message: "data-hit-shape must be a descendant of data-core.", offset: tagStart });
+      }
+    }
     for (const attribute of tag.attributes) {
       const value = attribute.value ?? "";
-      if (attribute.name === "data-core") {
-        coreCount += 1;
-        isCore = true;
-        coreTagName = tag.name;
-      }
       if (attribute.name.startsWith("on")) {
         diagnostics.push({ section: "structure", message: `Event handler attribute '${attribute.name}' is not allowed.`, offset: tagStart });
       }
@@ -386,7 +413,11 @@ function validateStructure(source: string, diagnostics: ButtonSkinDiagnostic[]):
       }
     }
     if (!tag.selfClosing && !VOID_HTML_TAGS.has(tag.name)) {
-      stack.push({ name: tag.name, core: isCore || stack.some((entry) => entry.core) });
+      stack.push({
+        name: tag.name,
+        core: isCore || stack.some((entry) => entry.core),
+        hitShape: isHitShape || stack.some((entry) => entry.hitShape)
+      });
     }
     index = tagEnd + 1;
   }
@@ -400,11 +431,24 @@ function validateStructure(source: string, diagnostics: ButtonSkinDiagnostic[]):
   if (tokenCount === 1 && !labelInsideCore) {
     diagnostics.push({ section: "structure", message: "The {{label}} token must be text inside the data-core element." });
   }
+  if (tokenCount === 1 && hitShapeCount === 1 && !labelInsideHitShape) {
+    diagnostics.push({
+      section: "structure",
+      message: "When data-hit-shape is present, the {{label}} token must be inside it."
+    });
+  }
+  if (coreTagName === "svg" && hitShapeCount === 0) {
+    diagnostics.push({
+      section: "structure",
+      message: "An outer SVG data-core must mark one painted descendant as data-hit-shape."
+    });
+  }
   return coreCount === 1 && tokenCount <= 1 && (tokenCount === 0 || labelInsideCore)
     ? {
         animationTokens: [...animationTokens],
         keyframeNames: [],
         coreTagName,
+        hasHitShape: hitShapeCount === 1 && hitShapeInsideCore,
         hasLabelToken: tokenCount === 1
       }
     : null;

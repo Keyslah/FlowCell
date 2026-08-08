@@ -22,7 +22,7 @@
   "bundledSources": [
     {
       "id": "windows.setup-organization",
-      "version": "1.0.0",
+      "version": "1.3.0",
       "panelName": "Files",
       "sourcePath": "Windows Git Scripts/Files/Setup Organization",
       "importKind": "script",

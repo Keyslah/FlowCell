@@ -6,6 +6,8 @@ export interface ButtonSizeAssignment {
   width: number;
   height: number;
   sizingMode: ButtonPlacementSizingMode;
+  /** Natural core basis for the selected working skin; panel assignment uses each member's own basis. */
+  proportionalBasis?: ButtonSizingDimensions;
 }
 
 export interface ButtonSizingDimensions {
@@ -13,11 +15,46 @@ export interface ButtonSizingDimensions {
   height: number;
 }
 
+/**
+ * Projects an existing placement box onto a skin's natural ratio without
+ * privileging its already-wrong width or height. Preserving area makes the
+ * first explicit proportional handle resize start from the authored ratio
+ * while avoiding any implicit geometry change when the mode is merely chosen.
+ */
+export function resolveProportionalResizeBasis(
+  current: ButtonSizingDimensions,
+  naturalAspectRatio?: number | null
+): ButtonSizingDimensions {
+  if (
+    !Number.isFinite(current.width) ||
+    !Number.isFinite(current.height) ||
+    current.width <= 0 ||
+    current.height <= 0 ||
+    !Number.isFinite(naturalAspectRatio) ||
+    (naturalAspectRatio ?? 0) <= 0
+  ) {
+    return current;
+  }
+  const area = current.width * current.height;
+  const height = Math.sqrt(area / naturalAspectRatio!);
+  return {
+    width: height * naturalAspectRatio!,
+    height
+  };
+}
+
 export function buttonPlacementSizingMode(
   placement: Pick<ButtonPlacement, "matchHitboxToSkin" | "allowStretching">
 ): ButtonPlacementSizingMode {
   if (!placement.matchHitboxToSkin) return "responsive";
   return placement.allowStretching ? "stretch" : "proportional";
+}
+
+export function buttonSizingModeLocksAspect(
+  sizingMode: ButtonPlacementSizingMode,
+  forceAspectLock = false
+): boolean {
+  return sizingMode === "proportional" || forceAspectLock;
 }
 
 export function buttonPlacementSizingPatch(

@@ -116,30 +116,85 @@ class FLOWCELL_OT_import_obj_fix_transform(bpy.types.Operator, ImportHelper):
 
     filename_ext = ".obj"
     filter_glob: StringProperty(default="*.obj", options={"HIDDEN"})
+    _picker_active = False
+
+    def invoke(self, context, event):
+        type(self)._picker_active = True
+        try:
+            return ImportHelper.invoke(self, context, event)
+        except Exception:
+            type(self)._picker_active = False
+            raise
 
     def execute(self, context):
-        result = perform_import_obj_fix_transform(context=context, filepath=self.filepath)
-        status = result.get("status", "FINISHED")
-        message = result.get("message", "")
-        report_kind = {"INFO"} if status == "FINISHED" else {"WARNING"}
-        if message:
-            self.report(report_kind, message)
-        return {status}
+        try:
+            result = perform_import_obj_fix_transform(context=context, filepath=self.filepath)
+            status = result.get("status", "FINISHED")
+            message = result.get("message", "")
+            report_kind = {"INFO"} if status == "FINISHED" else {"WARNING"}
+            if message:
+                self.report(report_kind, message)
+            return {status}
+        finally:
+            type(self)._picker_active = False
+
+    def cancel(self, _context):
+        type(self)._picker_active = False
 
 
 def ensure_picker_operator_registered():
     existing = getattr(bpy.types, OPERATOR_CLASS_NAME, None)
     if existing is FLOWCELL_OT_import_obj_fix_transform:
-        return
+        return existing
     if existing is not None:
+        if getattr(existing, "_picker_active", False):
+            return existing
         bpy.utils.unregister_class(existing)
     bpy.utils.register_class(FLOWCELL_OT_import_obj_fix_transform)
+    return FLOWCELL_OT_import_obj_fix_transform
+
+
+def find_picker_context():
+    window_manager = getattr(bpy.context, "window_manager", None)
+    if window_manager is None:
+        return None
+    for window in window_manager.windows:
+        screen = getattr(window, "screen", None)
+        if screen is None:
+            continue
+        for area in screen.areas:
+            if area.type != "VIEW_3D":
+                continue
+            space = area.spaces.active
+            if space is None or getattr(space, "type", "") != "VIEW_3D":
+                continue
+            region = next((item for item in area.regions if item.type == "WINDOW"), None)
+            if region is None:
+                continue
+            return {
+                "window": window,
+                "screen": screen,
+                "area": area,
+                "region": region,
+                "space_data": space,
+                "region_data": space.region_3d,
+            }
+    return None
 
 
 def run_flowcell_action(context=None, data=None):
     if data and data.get("filepath"):
         return perform_import_obj_fix_transform(context=context, data=data)
 
-    ensure_picker_operator_registered()
-    bpy.ops.flowcell.import_obj_fix_transform("INVOKE_DEFAULT")
+    picker_context = find_picker_context()
+    if not picker_context:
+        raise RuntimeError("OBJ import requires an open Blender 3D View for its file picker.")
+    operator_class = ensure_picker_operator_registered()
+    if getattr(operator_class, "_picker_active", False):
+        return _result("CANCELLED", "The OBJ file picker is already open in Blender.")
+    with bpy.context.temp_override(**picker_context):
+        operator_result = bpy.ops.flowcell.import_obj_fix_transform("INVOKE_DEFAULT")
+    if not operator_result or "RUNNING_MODAL" not in operator_result:
+        operator_class._picker_active = False
+        raise RuntimeError("Blender did not open the OBJ file picker.")
     return _result("FINISHED", "OBJ picker opened in Blender.")

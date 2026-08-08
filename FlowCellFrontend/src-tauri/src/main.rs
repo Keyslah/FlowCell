@@ -12,7 +12,6 @@ use commands::image_palette::*;
 use commands::layouts::*;
 use commands::macros::*;
 use commands::programs::*;
-use commands::slicers::*;
 use commands::tool_packages::*;
 use commands::windows::*;
 
@@ -182,8 +181,6 @@ fn main() {
             save_tool_package,
             load_tool_package,
             list_tool_packages,
-            load_slicer_executable,
-            launch_slicer,
             save_layout_snapshot,
             load_layout_snapshot,
             list_program_folders,
@@ -243,6 +240,7 @@ fn main() {
             button_state::update_button_settings_default,
             button_state::save_button_skin_file,
             program_sources::install::install_button_source,
+            program_sources::install::update_button_source,
             program_sources::synchronize::synchronize_bundled_program_sources,
             program_sources::delete::uninstall_button_source,
             program_sources::migrate::prepare_legacy_button_bootstrap,

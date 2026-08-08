@@ -92,7 +92,8 @@ export interface BindsWorkspaceData {
 export type LayoutSnapshotWindowKind =
   | "button-editor"
   | "button-popout"
-  | "button-fan";
+  | "button-fan"
+  | "installed-page";
 
 export interface LayoutSnapshotWindow {
   Kind: LayoutSnapshotWindowKind;
@@ -102,16 +103,14 @@ export interface LayoutSnapshotWindow {
   ButtonFanSetupId?: string;
   ButtonOwnerId?: string;
   ButtonDisplayMode?: "collapsed" | "expanded";
+  InstalledPageFileName?: string;
+  InstalledPageId?: string;
   Bounds: FlowCellBounds;
 }
 
 export interface LayoutSnapshot {
-  SavedAt?: string;
-  Version?: number;
-  LayoutKind?: string;
-  SelectedProgramName?: string;
-  SelectedPanelName?: string;
-  SelectedFileNames?: string[];
-  MainWindowBounds?: FlowCellBounds | null;
-  Windows?: LayoutSnapshotWindow[];
+  SavedAt: string;
+  Version: number;
+  LayoutKind: "FlowCellWindowLayout";
+  Windows: LayoutSnapshotWindow[];
 }

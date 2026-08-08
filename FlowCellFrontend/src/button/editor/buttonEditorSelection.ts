@@ -8,6 +8,12 @@ import {
   buttonSettingsPlacementKind,
   buttonSettingsPlacementLabel
 } from "../state/buttonSettingsFile.js";
+import {
+  FLOWCELL_MAIN_PAGE_PROGRAM,
+  FLOWCELL_MAIN_PAGE_SECTIONS,
+  flowCellMainPageSurfaceId,
+  isFlowCellMainPageProgram
+} from "../state/mainPageButtonOperations.js";
 
 export interface ButtonEditorIdentity {
   programName: string;
@@ -87,6 +93,16 @@ export function resolveButtonEditorIdentity(
   const button = document.buttons[buttonId];
   if (!button) return null;
 
+  const mainPageProgram = button.metadata.mainPageControl === true
+    ? nonemptyString(button.metadata.mainPageProgram)
+    : null;
+  const mainPageSection = button.metadata.mainPageControl === true
+    ? nonemptyString(button.metadata.mainPageSection)
+    : null;
+  if (mainPageProgram && mainPageSection) {
+    return { programName: mainPageProgram, panelName: mainPageSection };
+  }
+
   if (button.sourceIdentity) {
     return {
       programName: button.sourceIdentity.displayProgramName,
@@ -164,7 +180,11 @@ export function buildButtonEditorProgramOptions(
   const documentPrograms = Object.values(document.buttons)
     .map((button) => resolveButtonEditorIdentity(document, button.id)?.programName ?? "");
   const fanPrograms = Object.values(document.fanSetups).map((setup) => setup.programName);
-  return uniqueSortedNames([...registeredPrograms, ...documentPrograms, ...fanPrograms]);
+  const programs = uniqueSortedNames([...registeredPrograms, ...documentPrograms, ...fanPrograms]);
+  return [
+    FLOWCELL_MAIN_PAGE_PROGRAM,
+    ...programs.filter((program) => !namesMatch(program, FLOWCELL_MAIN_PAGE_PROGRAM))
+  ];
 }
 
 export function buildButtonEditorPanelOptions(
@@ -173,6 +193,9 @@ export function buildButtonEditorPanelOptions(
   registeredPanels: readonly string[]
 ): string[] {
   if (!programName.trim()) return [];
+  if (isFlowCellMainPageProgram(programName)) {
+    return [...FLOWCELL_MAIN_PAGE_SECTIONS];
+  }
   const documentPanels = Object.values(document.buttons).flatMap((button) => {
     const identity = resolveButtonEditorIdentity(document, button.id);
     return identity && namesMatch(identity.programName, programName) ? [identity.panelName] : [];
@@ -189,6 +212,12 @@ function buttonOptionBaseLabel(
 ): { label: string; group: string } {
   const button = document.buttons[buttonId];
   const label = button?.label.trim() || buttonId;
+  if (
+    button?.metadata.mainPageControl === true &&
+    nonemptyString(button.metadata.mainPageControlKey)
+  ) {
+    return { label, group: "Main Page Buttons" };
+  }
   if (button?.role === "tool-set-child") {
     const owner = button.toolSetParentId ? document.buttons[button.toolSetParentId] : null;
     const ownerLabel = owner?.label.trim() || "Tool Set";
@@ -207,8 +236,21 @@ export function buildButtonEditorButtonOptions(
 ): ButtonEditorButtonOption[] {
   if (!programName.trim() || !panelName.trim()) return [];
   const placedButtonIds = new Set(Object.values(document.placements).map((placement) => placement.buttonId));
+  const mainPagePanelRail = isFlowCellMainPageProgram(programName) &&
+    namesMatch(panelName, "Panel Rail");
   const candidates = Object.values(document.buttons).filter((button) => {
     if (!placedButtonIds.has(button.id)) return false;
+    if (mainPagePanelRail) {
+      const isActualPanelButton = button.role === "panel-owner" &&
+        nonemptyString(button.metadata.programName) &&
+        nonemptyString(button.metadata.panelName) &&
+        !nonemptyString(button.metadata.mainPageProgram);
+      const isAddPanelButton =
+        button.metadata.mainPageControl === true &&
+        namesMatch(String(button.metadata.mainPageProgram ?? ""), FLOWCELL_MAIN_PAGE_PROGRAM) &&
+        namesMatch(String(button.metadata.mainPageControlKey ?? ""), "panel-add");
+      return Boolean(isActualPanelButton || isAddPanelButton);
+    }
     const identity = resolveButtonEditorIdentity(document, button.id);
     return Boolean(
       identity &&
@@ -217,6 +259,17 @@ export function buildButtonEditorButtonOptions(
     );
   });
   const bases = new Map(candidates.map((button) => [button.id, buttonOptionBaseLabel(document, button.id)]));
+  if (mainPagePanelRail) {
+    for (const button of candidates) {
+      const ownerProgram = nonemptyString(button.metadata.programName);
+      const ownerPanel = nonemptyString(button.metadata.panelName);
+      if (ownerProgram && ownerPanel) {
+        bases.set(button.id, { label: button.label.trim() || ownerPanel, group: ownerProgram });
+      } else {
+        bases.set(button.id, { label: button.label.trim() || "Add Panel", group: "Panel Rail Controls" });
+      }
+    }
+  }
   const labelCounts = new Map<string, number>();
   for (const base of bases.values()) {
     const key = normalized(base.label);
@@ -333,6 +386,9 @@ export function resolveButtonEditorPanelSurfaceId(
   panelName: string
 ): string | null {
   if (!programName.trim() || !panelName.trim()) return null;
+  if (isFlowCellMainPageProgram(programName)) {
+    return flowCellMainPageSurfaceId(panelName);
+  }
   const expectedName = `${programName} / ${panelName}`;
   const candidates = Object.values(document.surfaces).flatMap((surface) => {
     if (surface.kind !== "panel") return [];

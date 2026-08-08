@@ -7,6 +7,5 @@ pub(crate) mod layouts;
 pub(crate) mod macros;
 pub(crate) mod program_rename;
 pub(crate) mod programs;
-pub(crate) mod slicers;
 pub(crate) mod tool_packages;
 pub(crate) mod windows;

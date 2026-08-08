@@ -16,6 +16,7 @@ export interface ButtonRendererProps {
   placementId: string;
   mode?: ButtonEditorMode;
   selected?: boolean;
+  ownerPlacement?: boolean;
   fields?: readonly ButtonToolField[];
   fieldValues?: Readonly<Record<string, JsonValue>>;
   onFieldPatch?: (
@@ -51,6 +52,7 @@ export function ButtonRenderer({
   placementId,
   mode = "run",
   selected = false,
+  ownerPlacement = false,
   fields,
   fieldValues,
   onFieldPatch,
@@ -77,7 +79,11 @@ export function ButtonRenderer({
   if (!button) return null;
   const skin = document.skins[placement.skinOverrideId ?? button.defaultSkinId];
   if (!skin) return null;
-  const activationHandler = (button.role === "tool-set-owner" || button.role === "panel-owner")
+  const activationHandler = (
+    ownerPlacement ||
+    button.role === "tool-set-owner" ||
+    button.role === "panel-owner"
+  )
     ? onOwnerActivate ?? onActivate
     : onActivate;
 

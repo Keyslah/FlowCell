@@ -10,8 +10,6 @@ import {
 import { listen } from "@tauri-apps/api/event";
 import {
   getCurrentWindow,
-  PhysicalPosition,
-  PhysicalSize,
   type Window as TauriWindow
 } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
@@ -44,9 +42,9 @@ import {
   type ProgramSetupCommittedEvent
 } from "../../lib/programRails";
 import {
-  readLastLayoutDirectory,
+  readLastMainPageLayoutDirectory,
   readRegisteredLayoutWindow,
-  writeLastLayoutDirectory
+  writeLastMainPageLayoutDirectory
 } from "../../lib/layoutSnapshots";
 import {
   readLastLayoutPath,
@@ -60,7 +58,10 @@ import {
   openAddPanelWindow,
   openAddProgramWindow,
   openBindsWindow,
+  openInstalledPageWindow,
   openMacroLabWindow,
+  resolveInstalledPageOpenDescriptor,
+  type InstalledPageOpenDescriptor,
   reloadCurrentHostWindow
 } from "../../lib/coreWindows";
 import {
@@ -145,6 +146,10 @@ import {
   type ButtonRecord
 } from "./mainLayout";
 import { MainButtonHost, MainControlHost } from "./MainButtonHost";
+import {
+  resolveFlowCellMainPageButtonLayout,
+  resolveFlowCellMainPagePresentation
+} from "../../button/state/mainPageButtonOperations";
 import "./mainPage.css";
 
 type ButtonContextMenuState = {
@@ -171,7 +176,7 @@ const MAIN_LAST_POP_SETTINGS_STORAGE_KEY = "flowcell.main.last-pop-settings.v1";
 // Version 7 marks bounds stored in physical desktop pixels, captured exactly
 // as the window sits on its monitor and restored verbatim (position first,
 // then size — see applyWindowBounds / windowing's applyWindowPlacement).
-const LAYOUT_SNAPSHOT_VERSION = 8;
+const LAYOUT_SNAPSHOT_VERSION = 9;
 
 interface MainLastPopChoice {
   path: string;
@@ -703,20 +708,6 @@ async function captureWindowBounds(target: WindowBoundsTarget): Promise<FlowCell
     Height: Number(size.height.toFixed(3))
   };
   return isValidFlowCellBounds(bounds) ? bounds : null;
-}
-
-type WindowPlacementTarget = Pick<TauriWindow, "setPosition" | "setSize">;
-
-async function applyWindowBounds(
-  target: WindowPlacementTarget,
-  bounds: FlowCellBounds
-): Promise<void> {
-  // Position before size: a cross-monitor move makes Windows rescale the
-  // window by the DPI ratio, which would corrupt a size applied first.
-  await target
-    .setPosition(new PhysicalPosition(bounds.Left, bounds.Top))
-    .catch(() => {});
-  await target.setSize(new PhysicalSize(bounds.Width, bounds.Height)).catch(() => {});
 }
 
 export default function MainPage() {
@@ -1447,9 +1438,10 @@ export default function MainPage() {
           fanOptionsDisabled
         }
       )
-    ],
+    ].map((button) => resolveFlowCellMainPageButtonLayout(buttonDocument, button)),
     [
       allSelectablePanelScriptsSelected,
+      buttonDocument,
       deleteSelectedPanelScriptsDisabled,
       fanOptionsDisabled,
       fanMenuDisabled,
@@ -1515,28 +1507,6 @@ export default function MainPage() {
     const buttonWidth = topLeftActionButtons[topLeftActionButtons.length - 1]?.width ?? 0;
     return page.width / 2 + buttonWidth;
   }, [topLeftActionButtons]);
-  const topRightActionGap = useMemo(() => {
-    if (topRightActionButtons.length < 2) {
-      return 16;
-    }
-    return Math.max(
-      0,
-      topRightActionButtons[1].x -
-        topRightActionButtons[0].x -
-        topRightActionButtons[0].width
-    );
-  }, [topRightActionButtons]);
-  const topRightActionAnchor = useMemo(() => {
-    if (topRightActionButtons.length === 0) {
-      return null;
-    }
-    const lastButton = topRightActionButtons[topRightActionButtons.length - 1];
-    return {
-      right: page.width - (lastButton.x + lastButton.width),
-      y: topRightActionButtons[0].y
-    };
-  }, [topRightActionButtons]);
-
   useLayoutEffect(() => {
     const groupNode = topLeftActionGroupRef.current;
     if (
@@ -1682,14 +1652,22 @@ export default function MainPage() {
     await Promise.all(
       openWindows
         .filter((windowHandle) => windowHandle.label !== currentWindow.label)
-        .filter((windowHandle) => readRegisteredLayoutWindow(windowHandle.label))
-        .map((windowHandle) => windowHandle.close().catch(() => {}))
+        .map(async (windowHandle) => {
+          const registeredWindow = readRegisteredLayoutWindow(windowHandle.label);
+          if (!registeredWindow) {
+            return;
+          }
+          if (registeredWindow.kind === "installed-page" && registeredWindow.buttonOwnerId) {
+            await closeInstalledPageWindow(registeredWindow.buttonOwnerId);
+            return;
+          }
+          await windowHandle.close().catch(() => {});
+        })
     );
   };
 
   const captureLayoutSnapshotState = async (): Promise<LayoutSnapshot> => {
     const currentWindow = getCurrentWindow();
-    const mainWindowBounds = await captureWindowBounds(currentWindow);
     const managedWindows: LayoutSnapshotWindow[] = [];
 
     for (const windowHandle of (await WebviewWindow.getAll()).sort((left, right) =>
@@ -1707,11 +1685,18 @@ export default function MainPage() {
       const isFixedButtonCanvas =
         registeredWindow.kind === "button-popout" ||
         registeredWindow.kind === "button-fan";
+      const liveNativeBounds = isFixedButtonCanvas
+        ? null
+        : await captureWindowBounds(windowHandle);
       const bounds = isFixedButtonCanvas
         ? isValidFlowCellBounds(registeredWindow.snapshotBounds)
           ? registeredWindow.snapshotBounds
           : null
-        : await captureWindowBounds(windowHandle);
+        : isValidFlowCellBounds(liveNativeBounds)
+          ? liveNativeBounds
+          : isValidFlowCellBounds(registeredWindow.snapshotBounds)
+            ? registeredWindow.snapshotBounds
+            : null;
       if (!isValidFlowCellBounds(bounds)) {
         continue;
       }
@@ -1723,6 +1708,8 @@ export default function MainPage() {
         ButtonFanSetupId: registeredWindow.buttonFanSetupId,
         ButtonOwnerId: registeredWindow.buttonOwnerId,
         ButtonDisplayMode: registeredWindow.buttonDisplayMode,
+        InstalledPageFileName: registeredWindow.installedPageFileName,
+        InstalledPageId: registeredWindow.installedPageId,
         Bounds: bounds
       });
     }
@@ -1731,79 +1718,39 @@ export default function MainPage() {
       SavedAt: new Date().toISOString(),
       Version: LAYOUT_SNAPSHOT_VERSION,
       LayoutKind: "FlowCellWindowLayout",
-      SelectedProgramName: selectedProgramName ?? undefined,
-      SelectedPanelName: selectedPanelName ?? undefined,
-      SelectedFileNames:
-        selectedPanelScriptFileNames.length > 0 ? [...selectedPanelScriptFileNames] : undefined,
-      MainWindowBounds: mainWindowBounds,
       Windows: managedWindows
     };
   };
 
   const restoreLayoutSnapshotState = async (snapshot: LayoutSnapshot) => {
-    preferredPanelSelectionRef.current = null;
-    preferredSelectedPanelScriptFileNamesRef.current = null;
-    await closeManagedLayoutWindows();
-
-    if (isValidFlowCellBounds(snapshot.MainWindowBounds)) {
-      await applyWindowBounds(getCurrentWindow(), snapshot.MainWindowBounds);
-    }
-
-    const nextProgramNames = await listProgramFolders();
-    const previousProgramName = selectedProgramNameRef.current;
-    const nextProgramName = resolveFolderSelection(
-      nextProgramNames,
-      snapshot.SelectedProgramName
-    );
-    const nextPanelNames = nextProgramName
-      ? await listPanelFolders(nextProgramName)
-      : [];
-    const nextPanelName = nextProgramName
-      ? resolveFolderSelection(nextPanelNames, snapshot.SelectedPanelName)
-      : null;
-
-    preferredPanelSelectionRef.current =
-      nextProgramName && !areFolderNamesEqual(previousProgramName, nextProgramName)
-        ? nextPanelName
-        : null;
-    preferredSelectedPanelScriptFileNamesRef.current =
-      nextProgramName && nextPanelName
-        ? {
-            programName: nextProgramName,
-            panelName: nextPanelName,
-            fileNames: [...(snapshot.SelectedFileNames ?? [])]
-          }
-        : null;
-
-    selectedProgramNameRef.current = nextProgramName;
-    selectedPanelNameRef.current = nextPanelName;
-    setProgramNames(nextProgramNames);
-    setSelectedProgramName(nextProgramName);
-    setPanelNames(nextPanelNames);
-    setSelectedPanelName(nextPanelName);
-
-    if (!nextProgramName || !nextPanelName) {
-      setPanelScripts([]);
-      setSelectedPanelScriptFileNames([]);
-    } else {
-      setPanelScripts([]);
-      const requestId = panelScriptLoadRequestRef.current + 1;
-      panelScriptLoadRequestRef.current = requestId;
-      const nextPanelScripts = await listPanelButtonRecords(nextProgramName, nextPanelName);
-      if (
-        panelScriptLoadRequestRef.current === requestId &&
-        areFolderNamesEqual(selectedProgramNameRef.current, nextProgramName) &&
-        areFolderNamesEqual(selectedPanelNameRef.current, nextPanelName)
-      ) {
-        applyPanelScriptRecords(nextProgramName, nextPanelName, nextPanelScripts);
-      }
-    }
-
-    for (const windowEntry of snapshot.Windows ?? []) {
+    const resolvedInstalledPages = new Map<LayoutSnapshotWindow, InstalledPageOpenDescriptor>();
+    for (const windowEntry of snapshot.Windows) {
       if (!isValidFlowCellBounds(windowEntry.Bounds)) {
+        throw new Error("The layout contains invalid managed-window bounds.");
+      }
+      if (windowEntry.Kind !== "installed-page") {
         continue;
       }
+      if (
+        !windowEntry.ButtonOwnerId ||
+        !windowEntry.ProgramName ||
+        !windowEntry.PanelName ||
+        !windowEntry.InstalledPageFileName ||
+        !windowEntry.InstalledPageId
+      ) {
+        throw new Error("The layout contains an incomplete installed Page identity.");
+      }
+      resolvedInstalledPages.set(windowEntry, await resolveInstalledPageOpenDescriptor({
+        ownerButtonId: windowEntry.ButtonOwnerId,
+        programName: windowEntry.ProgramName,
+        panelName: windowEntry.PanelName,
+        fileName: windowEntry.InstalledPageFileName,
+        pageId: windowEntry.InstalledPageId
+      }));
+    }
 
+    await closeManagedLayoutWindows();
+    for (const windowEntry of snapshot.Windows) {
       switch (windowEntry.Kind) {
         case "button-editor":
           await openButtonEditorWindow({
@@ -1842,6 +1789,33 @@ export default function MainPage() {
             });
           }
           break;
+        case "installed-page":
+          if (
+            windowEntry.ButtonOwnerId &&
+            windowEntry.ProgramName &&
+            windowEntry.PanelName &&
+            windowEntry.InstalledPageFileName &&
+            windowEntry.InstalledPageId
+          ) {
+            const descriptor = resolvedInstalledPages.get(windowEntry);
+            if (!descriptor) {
+              throw new Error("The installed Page was not resolved before layout restore.");
+            }
+            await openInstalledPageWindow({
+              ownerButtonId: windowEntry.ButtonOwnerId,
+              programName: windowEntry.ProgramName,
+              panelName: windowEntry.PanelName,
+              fileName: windowEntry.InstalledPageFileName,
+              pageId: windowEntry.InstalledPageId,
+              title: descriptor.window.title,
+              width: descriptor.window.width,
+              height: descriptor.window.height,
+              minWidth: descriptor.window.minWidth,
+              minHeight: descriptor.window.minHeight,
+              bounds: windowEntry.Bounds
+            });
+          }
+          break;
       }
     }
   };
@@ -1856,14 +1830,14 @@ export default function MainPage() {
       const snapshot = await captureLayoutSnapshotState();
       const targetPath = await showSaveLayoutDialog(
         buildSuggestedLayoutName(),
-        readLastLayoutDirectory() ?? undefined
+        readLastMainPageLayoutDirectory() ?? undefined
       );
       if (!targetPath) {
         return;
       }
 
       const savedPath = await saveLayoutSnapshot(targetPath, snapshot);
-      writeLastLayoutDirectory(getParentDirectory(savedPath));
+      writeLastMainPageLayoutDirectory(getParentDirectory(savedPath));
       writeLastLayoutPath(savedPath);
     } finally {
       layoutActionPendingRef.current = false;
@@ -1877,13 +1851,15 @@ export default function MainPage() {
 
     layoutActionPendingRef.current = true;
     try {
-      const selectedPath = await showOpenLayoutDialog(readLastLayoutDirectory() ?? undefined);
+      const selectedPath = await showOpenLayoutDialog(
+        readLastMainPageLayoutDirectory() ?? undefined
+      );
       if (!selectedPath) {
         return;
       }
 
       const snapshot = await loadLayoutSnapshot(selectedPath);
-      writeLastLayoutDirectory(getParentDirectory(selectedPath));
+      writeLastMainPageLayoutDirectory(getParentDirectory(selectedPath));
       await restoreLayoutSnapshotState(snapshot);
       writeLastLayoutPath(selectedPath);
     } finally {
@@ -1949,12 +1925,22 @@ export default function MainPage() {
     const document = sourceDocument ?? buttonDocumentRef.current ?? await loadButtonStateDocument();
     if (!buttonDocumentRef.current) acceptButtonDocument(document);
     const target = resolveToolSetOwnerActivationTarget(document, ownerButtonId);
+    const unit = document.popoutUnits[target.popoutUnitId];
+    const ownerPlacement = unit?.ownerPlacementId
+      ? document.placements[unit.ownerPlacementId]
+      : undefined;
+    const authoredFan = Boolean(
+      unit?.interactionMode === "fan" &&
+      ownerPlacement?.surfaceId === unit.surfaceId &&
+      ownerPlacement.buttonId === unit.ownerButtonId
+    );
     const windowArgs = {
       programName: target.programName,
       panelName: target.panelName,
       popoutUnitId: target.popoutUnitId,
       ownerButtonId: target.ownerButtonId,
-      bounds: target.bounds
+      displayMode: authoredFan ? "collapsed" as const : "expanded" as const,
+      bounds: authoredFan ? undefined : target.bounds
     };
     if (behavior === "open") {
       await openButtonPopoutWindow(windowArgs);
@@ -2779,6 +2765,15 @@ export default function MainPage() {
     } else {
       session.document = transient.document;
     }
+    const transientUnit = transient.document.popoutUnits[transient.popoutUnitId];
+    const ownerPlacement = transientUnit?.ownerPlacementId
+      ? transient.document.placements[transientUnit.ownerPlacementId]
+      : undefined;
+    const authoredFan = Boolean(
+      transientUnit?.interactionMode === "fan" &&
+      ownerPlacement?.surfaceId === transientUnit.surfaceId &&
+      ownerPlacement.buttonId === transientUnit.ownerButtonId
+    );
 
     const windowLabel = buildButtonPopoutWindowLabel({
       popoutUnitId: transient.popoutUnitId
@@ -2794,7 +2789,8 @@ export default function MainPage() {
         programName: selectedProgramName,
         panelName: selectedPanelName,
         popoutUnitId: transient.popoutUnitId,
-        displayMode: "expanded",
+        ownerButtonId: transientUnit?.ownerButtonId ?? undefined,
+        displayMode: authoredFan ? "collapsed" : "expanded",
         draftSessionId: sessionId,
         registerInLayout: false
       });
@@ -3310,7 +3306,8 @@ export default function MainPage() {
         )
       );
     }
-    return canonicalPanelOwnerPresentations.byButtonId.get(button.id);
+    return canonicalPanelOwnerPresentations.byButtonId.get(button.id) ??
+      resolveFlowCellMainPagePresentation(buttonDocument, button);
   };
 
   return (
@@ -3347,21 +3344,22 @@ export default function MainPage() {
               motion={motionSettings.railHover}
             />
           ))}
-          {topLeftActionAnchor ? (
+          {topLeftActionButtons.length > 0 ? (
             <div
               ref={topLeftActionGroupRef}
-              className="main-page__button-group"
-              style={{
-                left: `${topLeftActionAnchor.x}px`,
-                top: `${topLeftActionAnchor.y}px`,
-                gap: `${topLeftActionGap}px`
-              }}
+              className="main-page__button-group main-page__button-group--placement-layer"
             >
               {topLeftActionButtons.map((button) => (
-                <MainControlHost
+                resolveFlowCellMainPagePresentation(buttonDocument, button) ? <MainButtonHost
+                  key={button.id}
+                  button={button}
+                  canonicalPresentation={resolveFlowCellMainPagePresentation(buttonDocument, button)!}
+                  targetHeightOverride={topLeftActionHeight}
+                  onActivate={handleButtonActivate}
+                  onRequestContextMenu={handleButtonContextMenu}
+                /> : <MainControlHost
                   key={button.id}
                   control={button}
-                  absolute={false}
                   targetHeightOverride={topLeftActionHeight}
                   onActivate={handleButtonActivate}
                   onRequestContextMenu={handleButtonContextMenu}
@@ -3369,20 +3367,20 @@ export default function MainPage() {
               ))}
             </div>
           ) : null}
-          {topRightActionAnchor ? (
+          {topRightActionButtons.length > 0 ? (
             <div
-              className="main-page__button-group"
-              style={{
-                right: `${topRightActionAnchor.right}px`,
-                top: `${topRightActionAnchor.y}px`,
-                gap: `${topRightActionGap}px`
-              }}
+              className="main-page__button-group main-page__button-group--placement-layer"
             >
               {topRightActionButtons.map((button) => (
-                <MainControlHost
+                resolveFlowCellMainPagePresentation(buttonDocument, button) ? <MainButtonHost
+                  key={button.id}
+                  button={button}
+                  canonicalPresentation={resolveFlowCellMainPagePresentation(buttonDocument, button)!}
+                  onActivate={handleButtonActivate}
+                  onRequestContextMenu={handleButtonContextMenu}
+                /> : <MainControlHost
                   key={button.id}
                   control={button}
-                  absolute={false}
                   onActivate={handleButtonActivate}
                   onRequestContextMenu={handleButtonContextMenu}
                 />

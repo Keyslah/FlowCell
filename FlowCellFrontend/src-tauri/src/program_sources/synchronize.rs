@@ -55,6 +55,7 @@ struct RecordMatchView {
     panel_name: String,
     label: String,
     kind: String,
+    page_id: Option<String>,
     source_display_leaf: String,
     bundled_source_id: Option<String>,
     bundled_source_version: Option<String>,
@@ -72,6 +73,7 @@ impl From<&ActiveRecordEntry> for RecordMatchView {
                 "tool-set"
             }
             .to_string(),
+            page_id: entry.record.page.as_ref().map(|page| page.id.clone()),
             source_display_leaf: path_leaf(&entry.record.source_display_path),
             bundled_source_id: entry.record.bundled_source_id.clone(),
             bundled_source_version: entry.record.bundled_source_version.clone(),
@@ -210,6 +212,38 @@ fn select_existing_record(
         } else {
             Ok(ExistingMatch::Update(index))
         };
+    }
+
+    if source.source_kind.eq_ignore_ascii_case("page") {
+        let page_matches = records
+            .iter()
+            .enumerate()
+            .filter(|(_, record)| {
+                record.bundled_source_id.is_none()
+                    && record.panel_name.eq_ignore_ascii_case(&source.panel_name)
+                    && record.kind.eq_ignore_ascii_case(&source.import_kind)
+                    && record
+                        .page_id
+                        .as_deref()
+                        .is_some_and(|id| id.eq_ignore_ascii_case(&source.id))
+            })
+            .collect::<Vec<_>>();
+        match page_matches.as_slice() {
+            [] => {}
+            [(index, _)] => return Ok(ExistingMatch::Update(*index)),
+            _ => {
+                return Err(format!(
+                    "Bundled page source '{}' found multiple active owners with page id '{}': {}. Refusing ambiguous synchronization.",
+                    source.id,
+                    source.id,
+                    page_matches
+                        .iter()
+                        .map(|(_, record)| record.owner_button_id.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ));
+            }
+        }
     }
 
     let Some(legacy_label) = source.legacy_match_label.as_deref() else {
@@ -735,6 +769,7 @@ mod tests {
             panel_name: "Tools".to_string(),
             label: "Page".to_string(),
             kind: "script".to_string(),
+            page_id: None,
             source_display_leaf: "Page".to_string(),
             bundled_source_id: version.map(|_| "example.page".to_string()),
             bundled_source_version: version.map(str::to_string),
@@ -774,6 +809,37 @@ mod tests {
             record("button-migrated-two", None),
         ];
         assert!(select_existing_record(&source, &records).is_err());
+    }
+
+    #[test]
+    fn page_matching_adopts_one_exact_unbundled_page_id() {
+        let mut source = bundled_source();
+        source.source_kind = "page".to_string();
+
+        let mut matching = record("existing-page", None);
+        matching.page_id = Some("example.page".to_string());
+        assert_eq!(
+            select_existing_record(&source, &[matching.clone()]).unwrap(),
+            ExistingMatch::Update(0)
+        );
+
+        matching.page_id = Some("example.other".to_string());
+        assert_eq!(
+            select_existing_record(&source, &[matching]).unwrap(),
+            ExistingMatch::Missing
+        );
+    }
+
+    #[test]
+    fn page_matching_refuses_ambiguous_exact_page_ids() {
+        let mut source = bundled_source();
+        source.source_kind = "page".to_string();
+        let mut first = record("existing-page-one", None);
+        first.page_id = Some("example.page".to_string());
+        let mut second = record("existing-page-two", None);
+        second.page_id = Some("example.page".to_string());
+
+        assert!(select_existing_record(&source, &[first, second]).is_err());
     }
 
     #[test]

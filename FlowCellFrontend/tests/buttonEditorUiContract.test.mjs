@@ -18,6 +18,255 @@ function readEditorSources() {
     .join("\n");
 }
 
+test("Button Editor fresh opens use the established restore size and maximize before show", () => {
+  const windows = readFileSync(
+    join(frontendRoot, "src", "button", "windows", "buttonWindows.ts"),
+    "utf8"
+  );
+  assert.match(windows, /const DEFAULT_EDITOR_WIDTH = 2093;/);
+  assert.match(windows, /const DEFAULT_EDITOR_HEIGHT = 1322;/);
+  assert.match(
+    windows,
+    /resolvePlacement\(\s*DEFAULT_EDITOR_WIDTH,\s*DEFAULT_EDITOR_HEIGHT,\s*args\.bounds\s*\)/
+  );
+  assert.match(
+    windows,
+    /new WebviewWindow\(windowLabel, \{[\s\S]{0,180}width: DEFAULT_EDITOR_WIDTH,\s*height: DEFAULT_EDITOR_HEIGHT,/
+  );
+  assert.match(windows, /const shouldMaximize = !isUsableBounds\(args\.bounds\) && !visible;/);
+  assert.match(
+    windows,
+    /if \(shouldMaximize\) \{\s*await target\.maximize\(\);\s*\}[\s\S]{0,320}await showWindow\(target, true\);/
+  );
+});
+
+test("FlowCell Main Page navigation never enters registered-program panel lookup or import", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  assert.match(
+    editor,
+    /const mainPageButtonsChanged = ensureFlowCellMainPageButtons\(next, programNames\);\s*changed \|\|= mainPageButtonsChanged;/
+  );
+  const panelRefresh = editor.match(
+    /useEffect\(\(\) => \{\s*if \(!programName\)[\s\S]*?\n  \}, \[programName\]\);/
+  );
+  assert.ok(panelRefresh, "program-scoped panel refresh effect must exist");
+  const guardIndex = panelRefresh[0].indexOf("isFlowCellMainPageProgram(programName)");
+  const lookupIndex = panelRefresh[0].indexOf("listPanelFolders(programName)");
+  assert.ok(guardIndex >= 0, "synthetic Main Page program must be guarded");
+  assert.ok(lookupIndex > guardIndex, "synthetic guard must run before registered-program lookup");
+  assert.match(
+    panelRefresh[0],
+    /setPanels\(\[\.\.\.FLOWCELL_MAIN_PAGE_SECTIONS\]\);\s*return;/
+  );
+  assert.match(
+    editor,
+    /if \(isFlowCellMainPageProgram\(importProgramName\)\)[\s\S]{0,220}cannot receive deployable Button content/
+  );
+  assert.match(
+    editor,
+    /disabled=\{mainPageControlScope \|\| mode !== "edit" \|\| selectedSurfaceButtonCount < 2 \|\| busy\}/
+  );
+});
+
+test("selected Main Page controls remain draggable in the edit workspace", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const workspace = readEditorFile("ButtonWorkspace.tsx");
+  const overlay = readEditorFile("ButtonEditOverlay.tsx");
+  const mainPage = readFileSync(join(frontendRoot, "src", "pages", "main", "MainPage.tsx"), "utf8");
+  const mainButtonHost = readFileSync(
+    join(frontendRoot, "src", "pages", "main", "MainButtonHost.tsx"),
+    "utf8"
+  );
+  const mainPageCss = readFileSync(
+    join(frontendRoot, "src", "pages", "main", "mainPage.css"),
+    "utf8"
+  );
+  assert.doesNotMatch(editor, /lockPlacementPosition/);
+  assert.doesNotMatch(workspace, /lockPlacementPosition|allowDrag/);
+  assert.doesNotMatch(overlay, /allowDrag/);
+  assert.match(overlay, /cursor: "move"/);
+  assert.match(overlay, /onPointerDown=\{\(event\) => begin\("drag", event\)\}/);
+  assert.match(
+    mainPage,
+    /\.map\(\(button\) => resolveFlowCellMainPageButtonLayout\(buttonDocument, button\)\)/
+  );
+  assert.doesNotMatch(mainPage, /absolute=\{false\}/);
+  assert.match(mainPage, /main-page__button-group--placement-layer/g);
+  assert.match(
+    mainPageCss,
+    /\.main-page__button-group--placement-layer\s*\{[\s\S]{0,120}pointer-events: none;/
+  );
+  assert.match(mainButtonHost, /left: absolute \? button\.x : undefined/);
+  assert.match(mainButtonHost, /top: absolute \? button\.y : undefined/);
+});
+
+test("Button workspace supports marquee selection and one atomic rigid group move", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const workspace = readEditorFile("ButtonWorkspace.tsx");
+  const css = readEditorFile("buttonEditor.css");
+
+  assert.match(workspace, /export type ButtonWorkspaceSelectionMode = "replace" \| "add" \| "toggle"/);
+  assert.match(workspace, /onPointerDownCapture=\{beginSelectedGroupDrag\}/);
+  assert.match(workspace, /for \(const target of event\.composedPath\(\)\)/);
+  assert.match(workspace, /pointerPlacementId\(event\.nativeEvent\)/);
+  assert.match(workspace, /onSelectPlacements\(placementIds, marqueeInteraction\.selectionMode\)/);
+  assert.match(workspace, /resolveButtonGroupTranslationAlongPath\(/);
+  assert.match(workspace, /onPlacementRectsChange\(surfaceId, groupDrag\.lastPlacements\)/);
+  assert.match(
+    workspace,
+    /selectedVisiblePlacementIds\.length === 1[\s\S]{0,180}<ButtonEditOverlay/
+  );
+  assert.match(css, /\.button-workspace-marquee\s*\{[\s\S]{0,220}pointer-events:\s*none/);
+  assert.match(editor, /onSelectPlacements=\{selectWorkspacePlacements\}/);
+  assert.match(editor, /onPlacementRectsChange=\{updatePlacementRects\}/);
+  assert.match(editor, /store\.transact\([\s\S]{0,500}label: "Move selected Buttons"/);
+});
+
+test("Button workspace shows every selected Button and Shift toggles selection membership", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const workspace = readEditorFile("ButtonWorkspace.tsx");
+  const overlay = readEditorFile("ButtonEditOverlay.tsx");
+  const css = readEditorFile("buttonEditor.css");
+  const clickSelection = editor.match(
+    /const selectWorkspacePlacement = useCallback\([\s\S]*?\n  const selectWorkspacePlacements = useCallback/
+  );
+
+  assert.ok(clickSelection, "workspace click-selection handler must exist");
+  assert.match(clickSelection[0], /event\.ctrlKey \|\| event\.metaKey \|\| event\.shiftKey/);
+  assert.match(
+    clickSelection[0],
+    /if \(next\.has\(placementId\)\) next\.delete\(placementId\);\s*else next\.add\(placementId\);/
+  );
+  assert.match(
+    workspace,
+    /event\.ctrlKey \|\| event\.metaKey \|\| event\.shiftKey\s*\? "toggle"\s*:\s*"replace"/
+  );
+  assert.match(
+    overlay,
+    /kind === "drag"[\s\S]{0,160}event\.shiftKey \|\| event\.ctrlKey \|\| event\.metaKey[\s\S]{0,180}onSelect\(event\.nativeEvent\)/
+  );
+  assert.match(
+    workspace,
+    /selectedVisiblePlacementIds\.map\(\(placementId\) => \{[\s\S]{0,220}renderedDocument\.placements\[placementId\][\s\S]{0,420}data-button-selection-indicator=\{placementId\}[\s\S]{0,100}aria-hidden="true"/
+  );
+  assert.match(
+    css,
+    /\.button-workspace-selection-indicator\s*\{[\s\S]{0,360}pointer-events:\s*none/
+  );
+  assert.match(css, /\.button-workspace-selection-indicator\s*\{[\s\S]{0,300}box-shadow:\s*inset/);
+  assert.doesNotMatch(css, /\.button-workspace-selection-indicator::after/);
+  assert.match(
+    editor,
+    /className="button-editor-sidebar__selection"[\s\S]{0,700}selectedPlacementSummaries\.map[\s\S]{0,320}\{entry\.label\}/
+  );
+});
+
+test("copied Button dimensions apply atomically to the selection with row-preserving fallback", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const handler = editor.match(
+    /const addCopiedSizeToSelection = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[copiedButtonSizing, selectedPlacementIds, selectedSurfaceId, store\]\);/
+  );
+
+  assert.ok(handler, "selection-size handler must exist");
+  assert.match(editor, /const \[copiedButtonSizing, setCopiedButtonSizing\] = useState<CopiedButtonSizing \| null>\(null\)/);
+  assert.match(
+    editor,
+    /width: placement\.width,[\s\S]{0,100}height: placement\.height,[\s\S]{0,100}sizingMode: buttonPlacementSizingMode\(placement\)/
+  );
+  assert.doesNotMatch(handler[0], /if \(surface\.uniformButtonSize\)/);
+  assert.match(handler[0], /selectedPlacementIds\.has\(placementId\)/);
+  assert.match(handler[0], /resizeButtonPlacementSelection\(\{/);
+  assert.match(handler[0], /targetSize: copiedButtonSizing/);
+  assert.match(handler[0], /gap: buttonSpacingPixelsFromMillimeters\(document\.settings\.buttonSpacingMm\)/);
+  assert.match(handler[0], /independentPlacementIds: ownerPlacementId/);
+  assert.match(handler[0], /const sizingPatch = buttonPlacementSizingPatch\(copiedButtonSizing\)/);
+  assert.match(
+    handler[0],
+    /store\.transact\([\s\S]{0,220}draft\.surfaces\[surface\.id\]\.uniformButtonSize = null;[\s\S]{0,220}sizeResolution\.placements\.forEach/
+  );
+  assert.doesNotMatch(handler[0], /compactButtonPlacements|applyPlacementOrder|translateButtonPlacementRects/);
+  assert.ok(
+    handler[0].indexOf("if (!sizeResolution.success)") < handler[0].indexOf("store.transact"),
+    "the complete row-preserving resolution must succeed before the one selection transaction"
+  );
+  assert.match(editor, />\s*Copy dimensions\s*</);
+  assert.match(editor, />\s*Add size to selection\s*</);
+  const addSizeControl = editor.match(
+    /<button[\s\S]{0,900}onClick=\{addCopiedSizeToSelection\}[\s\S]{0,120}>\s*Add size to selection/
+  );
+  assert.ok(addSizeControl, "Add size to selection control must exist");
+  assert.doesNotMatch(addSizeControl[0], /allSurfaceButtonsSameSize/);
+  assert.match(
+    editor,
+    /disabled=\{[\s\S]{0,180}!copiedButtonSizing[\s\S]{0,180}selectedSetForSurface\.size === 0/
+  );
+});
+
+test("Pop hides its owner while Fan shows it without including the owner in row reorder", () => {
+  const workspace = readEditorFile("ButtonWorkspace.tsx");
+
+  assert.match(
+    workspace,
+    /unitOwnerPlacementId === placementId && unitInteractionMode !== "fan"/
+  );
+  assert.match(
+    workspace,
+    /visiblePlacementIds\.filter\(\(placementId\) => placementId !== ownerPlacementId\)/
+  );
+  assert.match(workspace, /placementIds: \[\.\.\.visiblePlacementIds\]/);
+});
+
+test("Pop-out Fan is a checkbox immediately above Save Pop-out Settings", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const fanToggleIndex = editor.indexOf("<span>Fan</span>");
+  const saveIndex = editor.indexOf("Save {settingsPlacementLabel} Settings");
+
+  assert.ok(fanToggleIndex >= 0);
+  assert.ok(fanToggleIndex < saveIndex);
+  assert.match(editor, /settingsPlacementKind === "pop-out" && selectedSurfaceUnit/);
+  assert.match(editor, /checked=\{selectedSurfaceShowsOwner\}/);
+  assert.match(editor, /setSelectedPopoutFanEnabled\(event\.currentTarget\.checked\)/);
+  assert.match(editor, /setButtonPopoutFanMode\(\{/);
+  assert.match(editor, /enabled[\s\S]{0,260}result\.ownerPlacementId/);
+});
+
+test("top-left corner alignment translates only selected content as one rigid group", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const handler = editor.match(
+    /const snapSelectedSurfaceToTopLeft = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[selectedPlacementIds, selectedSurfaceId, store\]\);/
+  );
+
+  assert.ok(handler, "selection-scoped top-left handler must exist");
+  assert.match(handler[0], /selectedPlacementIds\.has\(placementId\)/);
+  assert.match(handler[0], /const ownerPlacementId = unitOwnerPlacementId \?\? legacyFanOwnerPlacementId/);
+  assert.match(handler[0], /selectedPlacementIds\.has\(placementId\) && placementId !== ownerPlacementId/);
+  assert.match(handler[0], /translateButtonPlacementRects\(items, \{/);
+  assert.match(handler[0], /x: -anchor\.rect\.x/);
+  assert.match(handler[0], /y: -anchor\.rect\.y/);
+  assert.match(handler[0], /label: "Align top-left Button to corner"/);
+  assert.match(handler[0], /rect: translatedById\.get\(placement\.id\) \?\? placement/);
+  assert.doesNotMatch(handler[0], /compactButtonPlacementRows|inferButtonPlacementRows|applyPlacementOrder/);
+});
+
+test("Align to the Top Left button keeps the anchor and existing content rows", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const handler = editor.match(
+    /const alignSelectionToTopLeftButton = useCallback\(\(\) => \{[\s\S]*?\n  \}, \[selectedPlacementIds, selectedSurfaceId, store\]\);/
+  );
+
+  assert.ok(handler, "top-left Button row-alignment handler must exist");
+  assert.match(handler[0], /selectedPlacementIds\.has\(placementId\)/);
+  assert.match(handler[0], /alignButtonPlacementSelectionToTopLeftButton\(\{/);
+  assert.match(handler[0], /gap: buttonSpacingPixelsFromMillimeters\(document\.settings\.buttonSpacingMm\)/);
+  assert.match(handler[0], /independentPlacementIds: ownerPlacementId/);
+  assert.match(handler[0], /if \(!alignment\.success\)[\s\S]{0,220}return;/);
+  assert.match(handler[0], /label: "Align to the Top Left button"/);
+  assert.match(
+    editor,
+    />\s*Align top-left Button to corner\s*<\/button>\s*<button[\s\S]{0,700}alignSelectionToTopLeftButton\(\);[\s\S]{0,160}>\s*Align to the Top Left button\s*<\/button>/
+  );
+});
+
 test("removed editor action and Fan-construction surfaces stay absent", () => {
   for (const removedFile of ["Button" + "Library.tsx", "Fan" + "Builder.tsx"]) {
     assert.equal(
@@ -39,7 +288,10 @@ test("Skin Editor keeps automatic paste handling without removed or unrequested 
   assert.match(skinEditor, /onPaste=\{\(event\)\s*=>\s*\{[\s\S]{0,320}applyPaste\(source\);/);
   assert.match(skinEditor, /onChange=\{\(event\) => \{[\s\S]{0,260}applyPaste\(source\);/);
   assert.match(skinEditor, /className="button-skin-working-preview"/);
-  assert.match(skinEditor, /setWorkingSkin\(next\);\s*setPaste\(""\);\s*setUpdatedSections/);
+  assert.match(
+    skinEditor,
+    /setWorkingSkin\(next\);[\s\S]{0,180}setWorkingPreviewUsesNaturalSize\(true\);[\s\S]{0,180}setPaste\(""\);\s*setUpdatedSections/
+  );
 });
 
 test("Save Settings uses the selected placement type folder and complete scoped persistence", () => {
@@ -170,8 +422,18 @@ test("Main Pop and Open Pop use only transient file-backed draft windows", () =>
 
 test("Skin assignment is explicit and selected-only unless Panel assignment is chosen", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
-  assert.match(editor, /onAssignSkin=\{\(skin\) => \{[\s\S]{0,260}\[selectedPlacement\.id\]/);
-  assert.match(editor, /onAssignSkinToPanel=\{\(skin\) => \{[\s\S]{0,420}resolveButtonEditorSurfaceSkinTargetPlacementIds/);
+  const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
+  assert.match(editor, /onAssignSkin=\{\(skin, sizingMode\) => \{[\s\S]{0,300}\[selectedPlacement\.id\]/);
+  assert.match(
+    editor,
+    /onAssignSkinToSelection=\{\(skin, sizingMode\) => \{[\s\S]{0,300}surface\.placementIds\.filter[\s\S]{0,180}selectedSetForSurface\.has\(placementId\)[\s\S]{0,300}assignWorkingSkin/
+  );
+  assert.match(editor, /onAssignSkinToPanel=\{\(skin, sizingMode\) => \{[\s\S]{0,420}resolveButtonEditorSurfaceSkinTargetPlacementIds/);
+  assert.match(skinEditor, />\s*Assign Skin to Selection\s*</);
+  assert.match(
+    skinEditor,
+    /onAssignSkinToSelection\(workingSkinForPersistence\(\), sizingMode\)/
+  );
   assert.doesNotMatch(editor, /onSkinChange=/);
   assert.doesNotMatch(editor, /onLoadSkin=/);
 });
@@ -189,6 +451,39 @@ test("Button Text exposes selected-placement horizontal alignment", () => {
   assert.equal((editor.match(/textOffsetY=\{placement\.textOffsetY\}/g) ?? []).length, 3);
 });
 
+test("Button Color follows Button Text with semantic profile parts, visible Text, and eyedropper controls", () => {
+  const editor = readEditorFile("ButtonSkinEditor.tsx");
+  const css = readEditorFile("buttonEditor.css");
+  const textIndex = editor.indexOf("<span>Button Text</span>");
+  const colorIndex = editor.indexOf("<span>Button Color</span>");
+  const highlightIndex = editor.indexOf("<span>Highlight on hover</span>");
+  assert.ok(textIndex >= 0);
+  assert.ok(colorIndex > textIndex);
+  assert.ok(highlightIndex > colorIndex);
+  assert.match(editor, /className="button-skin-section button-color-section" open/);
+  assert.match(editor, /workingMaterialProfile\.length/);
+  assert.match(editor, /workingMaterialProfile\.map\(\(profileColor\) =>/);
+  assert.match(editor, /label=\{profileColor\.label\}/);
+  assert.match(editor, /type="color"[\s\S]{0,500}type="text"/);
+  assert.match(editor, /new EyeDropper\(\)\.open\(\)/);
+  assert.match(editor, /buttonSkinColorWithPreservedAlpha/);
+  assert.match(editor, /label="Text Color"/);
+  assert.match(editor, /preserveAlpha=\{false\}/);
+  assert.match(editor, /onUseSkinColor=\{!workingTextProfile && authoredTextColor/);
+  assert.match(editor, /onLabelElementChange=\{captureWorkingTextColor\}/);
+  assert.match(editor, /setButtonSkinProfileColor/);
+  assert.match(editor, /checked=\{workingSkinHighlightOnHover\}[\s\S]{0,300}setButtonSkinHighlightOnHover\([\s\S]{0,180}event\.currentTarget\.checked/);
+  assert.match(editor, /workingSkinHighlightOnHover = explicitWorkingSkinHighlightOnHover \?\? placement\.highlightOnHover/);
+  assert.match(editor, /const workingSkinForPersistence = \(\): ButtonSkin => cloneButtonDocument\([\s\S]{0,420}setButtonSkinHighlightOnHover/);
+  assert.match(editor, /Assign Skin to Panel carries this setting to the whole panel/);
+  assert.doesNotMatch(editor, /onHighlightOnHoverChange/);
+  assert.match(editor, /This skin has no authored color profile/);
+  assert.doesNotMatch(editor, /workingColorBuckets|label=\{`Color \$\{index \+ 1\}`\}|replaceButtonSkinColor/);
+  assert.match(css, /\.button-color-row\s*\{[\s\S]{0,180}grid-template-columns:\s*42px minmax\(72px, 1fr\) auto/);
+  assert.match(css, /\.button-color-row input\[type="color"\]/);
+  assert.match(css, /\.button-color-profile-empty/);
+});
+
 test("Skin Editor exposes one placement-owned cycle with triggers, visuals, and a live preview", () => {
   const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
   const editor = readEditorFile("ButtonEditorPage.tsx");
@@ -200,7 +495,6 @@ test("Skin Editor exposes one placement-owned cycle with triggers, visuals, and 
   assert.match(skinEditor, /<strong>Cycle<\/strong>[\s\S]{0,500}<span>Number of states<\/span>[\s\S]{0,250}min=\{2\}/);
   assert.match(skinEditor, /value=\{cycleStateCountInput\}[\s\S]{0,620}resizeActivationCycle\(parsed\)[\s\S]{0,220}commitCycleStateCount/);
   assert.match(skinEditor, /2 states = On \/ Off toggle/);
-  assert.match(skinEditor, /checked=\{placement\.highlightOnHover\}[\s\S]{0,180}onHighlightOnHoverChange\(event\.currentTarget\.checked\)[\s\S]{0,120}<span>Highlight on hover<\/span>/);
   assert.match(skinEditor, /configuredStates\.map\(\(state, index\) => \{[\s\S]{0,1200}<span>Advance on<\/span>[\s\S]{0,500}ADVANCE_TRIGGERS\.map/);
   assert.match(skinEditor, /className="button-cycle-state-sync"[\s\S]{0,180}Action: \{resultMatchSummary\.label\}/);
   assert.match(skinEditor, /press: "Press"[\s\S]{0,100}hover: "Hover"[\s\S]{0,100}release: "Release"/);
@@ -215,8 +509,10 @@ test("Skin Editor exposes one placement-owned cycle with triggers, visuals, and 
   assert.match(skinEditor, /Apply every pending Button Text change across the editor/);
   assert.match(editor, /activationCycle=\{selectedPlacement\?\.activationCycle \?\? null\}/);
   assert.match(editor, /onActivationCycleChange=\{\(activationCycle\) => \{[\s\S]{0,260}draft\.placements\[selectedPlacement\.id\]\.activationCycle/);
-  assert.match(editor, /onHighlightOnHoverChange=\{\(highlightOnHover\) => \{[\s\S]{0,240}draft\.placements\[selectedPlacement\.id\]\.highlightOnHover = highlightOnHover/);
-  assert.match(skinEditor, /className="button-behavior-preview"[\s\S]{0,300}onPointerEnter=\{\(\) => setBehaviorPreviewHovered\(true\)\}[\s\S]{0,1500}rawHovered=\{behaviorPreviewHovered\}/);
+  assert.doesNotMatch(editor, /onHighlightOnHoverChange/);
+  assert.match(skinEditor, /core\.addEventListener\("pointerenter", handlePointerEnter\)/);
+  assert.match(skinEditor, /onCoreElementChange=\{setBehaviorPreviewCoreElement\}/);
+  assert.match(skinEditor, /className="button-behavior-preview"[\s\S]{0,1500}rawHovered=\{behaviorPreviewHovered\}/);
   assert.match(editor, /onApplyAllButtonText=\{\(\) => void applyAllButtonText\(\)\}/);
 });
 
@@ -281,7 +577,7 @@ test("Skin Editor replaces explanatory section paragraphs with hover tooltips", 
   ]) {
     assert.doesNotMatch(skinEditor, new RegExp(removedExplanation));
   }
-  assert.match(skinEditor, /<summary title="Set the selected Button's preview size/);
+  assert.match(skinEditor, /<summary title="Choose the policy for the next explicit size edit/);
   assert.match(skinEditor, /<summary title="Set how this placement advances through states/);
   assert.match(skinEditor, /<summary title="Edit and preview Button Text only/);
   assert.match(skinEditor, /title=\{`Raw \$\{sectionLabel\(section\)\} skin code\.`\}/);
@@ -336,8 +632,8 @@ test("Size assignment is explicit, supports current Button or Panel scope, and s
   const sizeAssignments = readEditorFile("buttonSizeAssignments.ts");
   assert.match(skinEditor, />\s*Assign Size\s*</);
   assert.match(skinEditor, />\s*Assign Size to Panel\s*</);
-  assert.match(skinEditor, /onClick=\{\(\) => onAssignSize\(activeSize\)\}/);
-  assert.match(skinEditor, /onClick=\{\(\) => onAssignSizeToPanel\(activeSize\)\}/);
+  assert.match(skinEditor, /onClick=\{\(\) => \{[\s\S]{0,180}onAssignSize\(sizeForAssignment\)/);
+  assert.match(skinEditor, /onClick=\{\(\) => \{[\s\S]{0,180}onAssignSizeToPanel\(sizeForAssignment\)/);
   assert.match(editor, /onAssignSize=\{assignSizeToSelectedPlacement\}/);
   assert.match(editor, /onAssignSizeToPanel=\{assignSizeToPanel\}/);
   assert.match(sizeAssignments, /function buttonPlacementSizingPatch[\s\S]{0,420}matchHitboxToSkin: assignment\.sizingMode !== "responsive"[\s\S]{0,120}allowStretching: assignment\.sizingMode === "stretch"/);
@@ -347,6 +643,130 @@ test("Size assignment is explicit, supports current Button or Panel scope, and s
   assert.doesNotMatch(panelHandler[0], /uniformButtonSize:\s*\{/);
   assert.match(panelHandler[0], /const surface = document\.surfaces\[placement\.surfaceId\]/);
   assert.doesNotMatch(panelHandler[0], /resolveButtonEditorPanelSurfaceId/);
+  assert.doesNotMatch(editor, /shouldApplyMatchedButtonMeasurement|handlePlacementMeasurement|Match Button hitboxes to skins/);
+  const naturalMeasurementHandler = editor.match(
+    /const handleNaturalMeasurement = \(placementId: string, measurement: ButtonCoreMeasurement\) => \{[\s\S]*?\n  \};/
+  );
+  assert.ok(naturalMeasurementHandler, "natural measurement handler must exist");
+  assert.match(naturalMeasurementHandler[0], /const isFresh = freshPlacementsRef\.current\.delete\(placementId\);\s*if \(!isFresh\) return;/);
+  assert.doesNotMatch(naturalMeasurementHandler[0], /allowLabelResize|resolveDeterministicLabelGrowth|Grow Button label/);
+});
+
+test("Button Sizing exposes opt-in unrestricted millimeter spacing below Same size Buttons", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const workspace = readEditorFile("ButtonWorkspace.tsx");
+  const defaults = readFileSync(
+    join(frontendRoot, "src", "button", "state", "buttonDefaults.ts"),
+    "utf8"
+  );
+  const sameSizeIndex = editor.indexOf("<span>Same size Buttons</span>");
+  const sizingIndex = editor.indexOf("<legend>Button Sizing</legend>");
+  assert.ok(sameSizeIndex >= 0);
+  assert.ok(sizingIndex > sameSizeIndex);
+  assert.match(
+    editor,
+    /id="button-spacing-mm"[\s\S]{0,180}type="number"[\s\S]{0,180}min="0"[\s\S]{0,180}step="any"/
+  );
+  assert.match(editor, /draft\.settings\.buttonSpacingMm = nextMillimeters/);
+  assert.match(defaults, /buttonSpacingMm:\s*0/);
+  assert.match(
+    editor,
+    /compactUniformButtonPlacements\([\s\S]{0,240}buttonSpacingPixelsFromMillimeters\(document\.settings\.buttonSpacingMm\)/
+  );
+  assert.doesNotMatch(editor, /compactButtonPlacementRows|inferButtonPlacementRows/);
+  assert.match(
+    workspace,
+    /buildButtonReorderRowCandidates\(\{[\s\S]{0,220}buttonSpacingPixelsFromMillimeters\(document\.settings\.buttonSpacingMm\)/
+  );
+});
+
+test("blue-handle resize previews and commits the selected sizing behavior atomically", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
+  const workspace = readEditorFile("ButtonWorkspace.tsx");
+  const overlay = readEditorFile("ButtonEditOverlay.tsx");
+  const fanRenderer = readFileSync(
+    join(frontendRoot, "src", "button", "fan", "ButtonFanRenderer.tsx"),
+    "utf8"
+  );
+
+  assert.match(skinEditor, /onSizingModePreviewChange\(nextMode\)/);
+  assert.match(editor, /selectedPlacementSizingMode=\{selectedWorkingSizingMode\}/);
+  assert.match(
+    editor,
+    /onSizingModePreviewChange=\{\(sizingMode\) => \{[\s\S]{0,220}setWorkingSizingModeOverride/
+  );
+  assert.match(
+    editor,
+    /const selectedWorkingSizingMode = allSurfaceButtonsSameSize\s*\? "responsive"/
+  );
+  assert.match(
+    editor,
+    /workingSizingModeOverride\?\.placementId === selectedPlacement\?\.id[\s\S]{0,160}: "responsive"/
+  );
+  assert.match(
+    editor,
+    /const assignWorkingSkin = async \([\s\S]{0,240}sizingMode: ButtonPlacementSizingMode/
+  );
+  assert.match(
+    editor,
+    /const scope: ButtonSkinSaveScope = \{\s*skinIds: \[assignedSkin\.id\],\s*placementIds: targetPlacementIds,\s*sizingMode\s*\}/
+  );
+  assert.match(
+    overlay,
+    /const activeSizingMode = sizingMode \?\? buttonPlacementSizingMode\(placement\)/
+  );
+  assert.match(
+    overlay,
+    /buttonSizingModeLocksAspect\(activeSizingMode, event\.shiftKey\)/
+  );
+  assert.match(
+    overlay,
+    /resolveProportionalResizeBasis\(start, naturalAspectRatio\)/
+  );
+  assert.match(
+    overlay,
+    /resolveAspectLockedButtonGeometryAlongPath\(\s*interaction\.aspectStart/
+  );
+  assert.match(overlay, /const interactionGridSize = interaction\.kind === "resize" \? 1 : gridSize/);
+  assert.match(overlay, /snapPosition: interaction\.kind === "resize" \? false : undefined/);
+  assert.match(workspace, /const \[naturalMeasurements, setNaturalMeasurements\] = useState/);
+  assert.match(workspace, /const overlayNaturalAspectRatio = \([\s\S]{0,260}overlayNaturalMeasurement\.width \/ overlayNaturalMeasurement\.height/);
+  assert.match(workspace, /naturalAspectRatio=\{overlayNaturalAspectRatio\}/);
+  assert.match(workspace, /onPlacementNaturalMeasurement=\{handlePlacementNaturalMeasurement\}/);
+  assert.match(fanRenderer, /sourcePlacementId: sourcePlacement\.id/);
+  assert.match(fanRenderer, /onPlacementNaturalMeasurement\?\.\(collapsedOwner\.sourcePlacementId, measurement\)/);
+  assert.match(overlay, /onPreview\(resolution\.rect, interaction\.kind\)/);
+  assert.match(overlay, /onCommit\(interaction\.lastValid, interaction\.kind\)/);
+  assert.match(
+    workspace,
+    /kind === "resize" \? selectedPlacementSizingMode : undefined/
+  );
+  const rectHandler = editor.match(
+    /const updatePlacementRect = useCallback\([\s\S]*?\n  \}, \[applyUniformSizeToSurface, store\]\);/
+  );
+  assert.ok(rectHandler, "placement rectangle handler must exist");
+  assert.match(rectHandler[0], /sizingMode\?: ButtonPlacementSizingMode/);
+  assert.match(rectHandler[0], /buttonPlacementSizingPatch\(\{[\s\S]{0,180}sizingMode/);
+});
+
+test("editor preview viewports contain authored visual overflow without changing runtime overflow", () => {
+  const css = readEditorFile("buttonEditor.css");
+  for (const className of [
+    "button-behavior-preview",
+    "button-text-bench-preview",
+    "button-skin-working-preview"
+  ]) {
+    assert.match(
+      css,
+      new RegExp(`\\.${className} \\{[^}]*overflow:\\s*auto;[^}]*\\}`),
+      `${className} must contain authored overflow`
+    );
+    assert.doesNotMatch(
+      css,
+      new RegExp(`\\.${className} \\{[^}]*overflow:\\s*visible;[^}]*\\}`)
+    );
+  }
 });
 
 test("Button Editor uses the dedicated animation page beside placement editing", () => {

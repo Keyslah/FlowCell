@@ -5,7 +5,10 @@ import type {
   ToolSetActionExecutionTarget,
   ToolSetButtonPopoutUnit
 } from "../types.js";
-import { createStarterButtonLayout } from "../geometry/buttonGeometry.js";
+import {
+  buttonSpacingPixelsFromMillimeters,
+  createStarterButtonLayout
+} from "../geometry/buttonGeometry.js";
 import type { InstallButtonSourceResult } from "./ButtonStateRepository.js";
 import { cloneButtonDocument } from "./buttonDefaults.js";
 
@@ -49,7 +52,7 @@ function appendMissingToolSetChildren(
     installed.children.map((child) => ({ id: child.slot, width: 144, height: 42 })),
     {
       padding: document.settings.defaultSurfacePadding,
-      gap: document.settings.defaultGap,
+      gap: buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm),
       maximumColumns: 4
     }
   );

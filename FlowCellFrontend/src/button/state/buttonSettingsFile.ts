@@ -4,6 +4,7 @@ import type {
   ButtonDesktopBounds,
   ButtonFanAnimationSettings,
   ButtonPlacement,
+  ButtonPopoutInteractionMode,
   ButtonPopoutUnit,
   ButtonPopoutCloseRule,
   ButtonPopoutOpenRule,
@@ -18,6 +19,7 @@ import type {
 import { cloneButtonDocument } from "./buttonDefaults.js";
 import { validateButtonStateDocument } from "./buttonStateValidation.js";
 import { deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
+import { resolveButtonWindowEnvelope } from "../windows/buttonWindowGeometry.js";
 
 export const BUTTON_SETTINGS_FILE_FORMAT = "flowcell-button-settings/v1" as const;
 export const BUTTON_SETTINGS_FILE_EXTENSION = ".flowcell-button-settings.json" as const;
@@ -54,6 +56,9 @@ interface ButtonSettingsMainPageBehavior {
 }
 
 interface ButtonSettingsPopoutBehaviorBase {
+  interactionMode: ButtonPopoutInteractionMode;
+  ownerButtonId: string | null;
+  ownerPlacementId: string | null;
   openRule: ButtonPopoutOpenRule;
   closeRule: ButtonPopoutCloseRule;
   transparency: number;
@@ -140,6 +145,7 @@ const BUTTON_TEXT_ALIGNMENTS = new Set(["skin", "left", "center", "right"]);
 const BUTTON_WINDOW_FIT_MODES = new Set<ButtonWindowFitMode>(["surface", "hitbox", "visual"]);
 const BUTTON_OPEN_RULES = new Set<ButtonPopoutOpenRule>(["toggle", "click", "hover", "manual"]);
 const BUTTON_CLOSE_RULES = new Set<ButtonPopoutCloseRule>(["toggle", "escape", "hover-out", "manual"]);
+const BUTTON_INTERACTION_MODES = new Set<ButtonPopoutInteractionMode>(["pop", "fan"]);
 const BUTTON_SKIN_KEYS = [
   "id",
   "name",
@@ -195,6 +201,28 @@ function normalized(value: string): string {
 
 function namesMatch(left: string, right: string): boolean {
   return normalized(left) === normalized(right);
+}
+
+export function normalizeButtonSettingsFile(value: unknown): unknown {
+  if (!isObject(value) || !isObject(value.behavior)) return value;
+  if (value.behavior.kind !== "regular-popout" && value.behavior.kind !== "tool-set-popout") {
+    return value;
+  }
+  const behavior: Record<string, unknown> = { ...value.behavior };
+  let changed = false;
+  if (!Object.hasOwn(behavior, "interactionMode")) {
+    behavior.interactionMode = "pop";
+    changed = true;
+  }
+  if (!Object.hasOwn(behavior, "ownerPlacementId")) {
+    behavior.ownerPlacementId = null;
+    changed = true;
+  }
+  if (!Object.hasOwn(behavior, "ownerButtonId")) {
+    behavior.ownerButtonId = null;
+    changed = true;
+  }
+  return changed ? { ...value, behavior } : value;
 }
 
 function hasExactKeys(
@@ -304,7 +332,13 @@ function validatePlacement(
   value: unknown,
   index: number,
   surface: ButtonSettingsFileSurface | null,
-  issues: string[]
+  issues: string[],
+  /**
+   * A Fan's owner Button is an anchor rather than surface content, so it may sit
+   * at any offset from the Buttons it opens, including outside the saved surface
+   * and on the negative side of its origin.
+   */
+  unboundedPlacement = false
 ): void {
   const path = `settings.entries.${index}.placement`;
   if (!isObject(value)) {
@@ -313,8 +347,10 @@ function validatePlacement(
   }
   hasExactKeys(value, BUTTON_SETTINGS_PLACEMENT_KEYS, path, issues);
   for (const key of ["x", "y"] as const) {
-    if (!isFiniteNumber(value[key]) || value[key] < 0) {
-      issues.push(`${path}.${key}: Expected a nonnegative finite number.`);
+    if (!isFiniteNumber(value[key]) || (!unboundedPlacement && value[key] < 0)) {
+      issues.push(
+        `${path}.${key}: Expected a ${unboundedPlacement ? "" : "nonnegative "}finite number.`
+      );
     }
   }
   for (const key of ["width", "height"] as const) {
@@ -362,6 +398,7 @@ function validatePlacement(
   }
   if (
     surface &&
+    !unboundedPlacement &&
     isFiniteNumber(value.x) &&
     isFiniteNumber(value.y) &&
     isFiniteNumber(value.width) &&
@@ -392,9 +429,10 @@ function validateBehavior(
   if (value.kind === "regular-popout" || value.kind === "tool-set-popout") {
     hasExactKeys(
       value,
-      value.kind === "tool-set-popout"
-        ? ["kind", "ownerButtonId", "openRule", "closeRule", "transparency", "pinnedDefault", "windowFitMode"]
-        : ["kind", "openRule", "closeRule", "transparency", "pinnedDefault", "windowFitMode"],
+      [
+        "kind", "interactionMode", "ownerButtonId", "ownerPlacementId", "openRule",
+        "closeRule", "transparency", "pinnedDefault", "windowFitMode"
+      ],
       path,
       issues
     );
@@ -403,6 +441,24 @@ function validateBehavior(
     }
     if (value.kind === "tool-set-popout" && !nonemptyString(value.ownerButtonId)) {
       issues.push(`${path}.ownerButtonId: Expected a nonempty owner Button ID.`);
+    }
+    if (value.ownerButtonId !== null && !nonemptyString(value.ownerButtonId)) {
+      issues.push(`${path}.ownerButtonId: Expected null or a nonempty owner Button ID.`);
+    }
+    if (value.ownerPlacementId !== null && !nonemptyString(value.ownerPlacementId)) {
+      issues.push(`${path}.ownerPlacementId: Expected null or a nonempty owner placement ID.`);
+    }
+    if (!BUTTON_INTERACTION_MODES.has(value.interactionMode as ButtonPopoutInteractionMode)) {
+      issues.push(`${path}.interactionMode: Unsupported Pop-out interaction mode.`);
+    }
+    if (value.kind === "regular-popout" && ((value.ownerButtonId === null) !== (value.ownerPlacementId === null))) {
+      issues.push(`${path}: Regular Pop-out owner Button and placement must be assigned together.`);
+    }
+    if (
+      value.interactionMode === "fan" &&
+      (!nonemptyString(value.ownerButtonId) || !nonemptyString(value.ownerPlacementId))
+    ) {
+      issues.push(`${path}: Fan-mode Pop-out requires an exact owner Button placement.`);
     }
     if (!BUTTON_OPEN_RULES.has(value.openRule as ButtonPopoutOpenRule)) {
       issues.push(`${path}.openRule: Unsupported Pop-out open rule.`);
@@ -503,6 +559,7 @@ export function buttonSettingsPlacementLabel(kind: ButtonSettingsPlacementKind):
 
 export function validateButtonSettingsFile(value: unknown): ButtonSettingsFileValidationResult {
   const issues: string[] = [];
+  value = normalizeButtonSettingsFile(value);
   if (!isObject(value)) {
     return { valid: false, issues: ["settings: Button settings file must be an object."] };
   }
@@ -641,8 +698,42 @@ export function validateButtonSettingsFile(value: unknown): ButtonSettingsFileVa
       }
       validateAnimation(entry.activationAnimation, `${path}.activationAnimation`, issues);
       validateSkin(entry.skin, `${path}.skin`, issues);
-      validatePlacement(entry.placement, index, surface, issues);
+      validatePlacement(
+        entry.placement,
+        index,
+        surface,
+        issues,
+        isObject(value.behavior) &&
+          value.behavior.kind === "fan" &&
+          entry.buttonId === value.behavior.panelOwnerButtonId
+      );
     });
+    if (
+      isObject(value.behavior) &&
+      (value.behavior.kind === "regular-popout" || value.behavior.kind === "tool-set-popout") &&
+      nonemptyString(value.behavior.ownerPlacementId)
+    ) {
+      const behavior = value.behavior;
+      const ownerEntry = value.entries.find(
+        (entry) => isObject(entry) && entry.placementId === behavior.ownerPlacementId
+      );
+      if (!isObject(ownerEntry)) {
+        issues.push("settings.behavior.ownerPlacementId: No settings entry has this placement ID.");
+      } else if (ownerEntry.buttonId !== behavior.ownerButtonId) {
+        issues.push("settings.behavior.ownerButtonId: Owner Button does not match its placement entry.");
+      } else if (
+        behavior.kind === "tool-set-popout" &&
+        ownerEntry.buttonRole !== "tool-set-owner"
+      ) {
+        issues.push("settings.behavior.ownerPlacementId: Tool Set owner entry has the wrong Button role.");
+      } else if (
+        behavior.kind === "regular-popout" &&
+        ownerEntry.buttonRole !== "single-script" &&
+        ownerEntry.buttonRole !== "panel-owner"
+      ) {
+        issues.push("settings.behavior.ownerPlacementId: Regular owner entry has the wrong Button role.");
+      }
+    }
   }
   return { valid: issues.length === 0, issues };
 }
@@ -674,6 +765,8 @@ function resolveBehavior(
   );
   if (!unit) throw new Error(`Pop-out surface '${surface.id}' has no saved Pop-out unit.`);
   const common = {
+    interactionMode: unit.interactionMode ?? "pop",
+    ownerPlacementId: unit.ownerPlacementId ?? null,
     openRule: unit.openRule,
     closeRule: unit.closeRule,
     transparency: unit.transparency,
@@ -682,7 +775,7 @@ function resolveBehavior(
   };
   return unit.kind === "tool-set"
     ? { kind: "tool-set-popout", ownerButtonId: unit.ownerButtonId, ...common }
-    : { kind: "regular-popout", ...common };
+    : { kind: "regular-popout", ownerButtonId: unit.ownerButtonId ?? null, ...common };
 }
 
 export function buildButtonSettingsFile(
@@ -778,6 +871,144 @@ function installSettingsSkin(
   return skinId;
 }
 
+function toolSetSlot(document: ButtonStateDocument, buttonId: string): string | null {
+  const slot = document.buttons[buttonId]?.metadata.toolSetSlot;
+  return typeof slot === "string" && slot.trim()
+    ? slot.trim().toLocaleLowerCase("en")
+    : null;
+}
+
+function mapCrossToolSetSettingsFile(
+  document: ButtonStateDocument,
+  surface: ButtonSurface,
+  file: ButtonSettingsFile
+): ButtonSettingsFile {
+  if (surface.kind !== "tool-set-popout" || file.behavior.kind !== "tool-set-popout") {
+    return file;
+  }
+  const unit = Object.values(document.popoutUnits).find(
+    (candidate): candidate is ToolSetButtonPopoutUnit =>
+      candidate.kind === "tool-set" && candidate.surfaceId === surface.id
+  );
+  if (!unit || file.behavior.ownerButtonId === unit.ownerButtonId) return file;
+
+  const behavior = file.behavior;
+  const savedOwnerEntry = behavior.ownerPlacementId
+    ? file.entries.find((entry) => entry.placementId === behavior.ownerPlacementId)
+    : undefined;
+  if (behavior.ownerPlacementId && !savedOwnerEntry) {
+    throw new Error("Tool Set Fan settings have no entry for their saved owner placement.");
+  }
+  if (savedOwnerEntry && savedOwnerEntry.buttonRole !== "tool-set-owner") {
+    throw new Error("Tool Set Fan settings identify a non-owner Button as their owner placement.");
+  }
+  const savedChildEntries = file.entries.filter((entry) => entry !== savedOwnerEntry);
+  if (savedChildEntries.some((entry) => entry.buttonRole !== "tool-set-child")) {
+    throw new Error("Tool Set settings may contain only package children and one optional owner placement.");
+  }
+  const targetChildren = unit.childPlacementIds.map((placementId) => {
+    const placement = document.placements[placementId];
+    const button = placement ? document.buttons[placement.buttonId] : undefined;
+    if (!placement || placement.surfaceId !== surface.id || !button) {
+      throw new Error(`Tool Set child placement '${placementId}' is no longer available.`);
+    }
+    return { placement, button, slot: toolSetSlot(document, button.id) };
+  });
+  if (savedChildEntries.length !== targetChildren.length) {
+    throw new Error(
+      "Tool Set settings require the same number of package-owned child Buttons."
+    );
+  }
+
+  const remainingTargets = [...targetChildren];
+  const targetBySavedPlacementId = new Map<string, (typeof targetChildren)[number]>();
+  for (const entry of savedChildEntries) {
+    const savedSlot = toolSetSlot(document, entry.buttonId);
+    const matchingIndex = savedSlot
+      ? remainingTargets.findIndex((candidate) => candidate.slot === savedSlot)
+      : -1;
+    const targetIndex = matchingIndex >= 0 ? matchingIndex : 0;
+    const [target] = remainingTargets.splice(targetIndex, 1);
+    if (!target) throw new Error("Tool Set settings could not map every saved child Button.");
+    targetBySavedPlacementId.set(entry.placementId, target);
+  }
+
+  const targetOwner = document.buttons[unit.ownerButtonId];
+  if (!targetOwner || targetOwner.role !== "tool-set-owner") {
+    throw new Error("The selected Tool Set no longer has its package-owned owner Button.");
+  }
+  const mappedEntries = file.entries.map((entry): ButtonSettingsFileEntry => {
+    if (entry === savedOwnerEntry) {
+      return {
+        ...structuredClone(entry),
+        placementId: unit.ownerPlacementId ?? entry.placementId,
+        buttonId: targetOwner.id,
+        buttonRole: targetOwner.role,
+        label: targetOwner.label,
+        activationBehavior: structuredClone(targetOwner.activationBehavior),
+        activationAnimation: structuredClone(targetOwner.activationAnimation)
+      };
+    }
+    const target = targetBySavedPlacementId.get(entry.placementId);
+    if (!target) throw new Error(`Tool Set settings child '${entry.placementId}' was not mapped.`);
+    return {
+      ...structuredClone(entry),
+      placementId: target.placement.id,
+      buttonId: target.button.id,
+      buttonRole: target.button.role,
+      label: target.button.label,
+      activationBehavior: structuredClone(target.button.activationBehavior),
+      activationAnimation: structuredClone(target.button.activationAnimation)
+    };
+  });
+  const mappedOwnerEntry = savedOwnerEntry
+    ? mappedEntries[file.entries.indexOf(savedOwnerEntry)]
+    : undefined;
+  return {
+    ...structuredClone(file),
+    behavior: {
+      ...structuredClone(file.behavior),
+      ownerButtonId: unit.ownerButtonId,
+      ownerPlacementId: mappedOwnerEntry?.placementId ?? null
+    },
+    entries: mappedEntries
+  };
+}
+
+function refreshPopoutDesktopEnvelope(
+  document: ButtonStateDocument,
+  surface: ButtonSurface,
+  unit: ButtonPopoutUnit
+): void {
+  const contentPlacementIds = unit.kind === "tool-set"
+    ? unit.childPlacementIds
+    : unit.memberPlacementIds;
+  const placementIds = new Set(contentPlacementIds);
+  if (unit.interactionMode === "fan" && unit.ownerPlacementId) {
+    placementIds.add(unit.ownerPlacementId);
+  }
+  const placements = [...placementIds].flatMap((placementId) => {
+    const placement = document.placements[placementId];
+    return placement && placement.surfaceId === surface.id ? [placement] : [];
+  });
+  const windowFitMode = unit.windowFitMode ?? "surface";
+  const envelope = resolveButtonWindowEnvelope({
+    mode: windowFitMode,
+    surfaceBounds: { x: 0, y: 0, width: surface.width, height: surface.height },
+    placements,
+    fixedRects: unit.kind === "tool-set"
+      ? unit.fields.map((field) => ({
+          x: field.x,
+          y: field.y,
+          width: field.width,
+          height: field.height
+        }))
+      : []
+  });
+  unit.desktopBoundsFitMode = windowFitMode;
+  unit.desktopBoundsEnvelope = envelope.resting;
+}
+
 function updateSurfaceOwnerRecords(
   document: ButtonStateDocument,
   surface: ButtonSurface,
@@ -800,13 +1031,28 @@ function updateSurfaceOwnerRecords(
     }
     unit.openRule = file.behavior.openRule;
     unit.closeRule = file.behavior.closeRule;
+    unit.interactionMode = file.behavior.interactionMode;
     unit.transparency = file.behavior.transparency;
     unit.pinnedDefault = file.behavior.pinnedDefault;
     unit.windowFitMode = file.behavior.windowFitMode;
     unit.canonicalBounds = { x: 0, y: 0, width: surface.width, height: surface.height };
     if (unit.kind === "regular" && file.behavior.kind === "regular-popout") {
-      unit.memberPlacementIds = [...surface.placementIds];
-      unit.memberSourceIdentities = surface.placementIds.map((placementId) => {
+      const ownerButtonId = file.behavior.ownerButtonId;
+      const ownerPlacements = ownerButtonId
+        ? surface.placementIds.filter(
+            (placementId) => document.placements[placementId]?.buttonId === ownerButtonId
+          )
+        : [];
+      if (ownerButtonId && ownerPlacements.length !== 1) {
+        throw new Error("Regular Fan settings must contain exactly one placement for the owner Button.");
+      }
+      unit.ownerButtonId = ownerButtonId;
+      unit.ownerPlacementId = ownerPlacements[0] ?? null;
+      unit.memberPlacementIds = surface.placementIds.filter((placementId) => {
+        const placement = document.placements[placementId];
+        return placement && document.buttons[placement.buttonId]?.role === "single-script";
+      });
+      unit.memberSourceIdentities = unit.memberPlacementIds.map((placementId) => {
         const placement = document.placements[placementId];
         const identity = placement ? document.buttons[placement.buttonId]?.sourceIdentity : null;
         if (!identity) {
@@ -815,13 +1061,21 @@ function updateSurfaceOwnerRecords(
         return structuredClone(identity);
       });
       unit.selectionKey = deriveRegularPopoutSelectionKey(unit.memberSourceIdentities);
+      refreshPopoutDesktopEnvelope(document, surface, unit);
       return;
     }
     if (unit.kind === "tool-set" && file.behavior.kind === "tool-set-popout") {
-      if (file.behavior.ownerButtonId !== unit.ownerButtonId) {
-        throw new Error("Tool Set settings belong to a different owner Button.");
+      const ownerPlacements = surface.placementIds.filter(
+        (placementId) => document.placements[placementId]?.buttonId === unit.ownerButtonId
+      );
+      if (file.behavior.ownerPlacementId && ownerPlacements.length !== 1) {
+        throw new Error("Tool Set Fan settings must contain exactly one placement for the owner Button.");
       }
-      const childButtonIds = surface.placementIds.map(
+      unit.ownerPlacementId = ownerPlacements[0] ?? null;
+      const childPlacementIds = surface.placementIds.filter(
+        (placementId) => placementId !== unit.ownerPlacementId
+      );
+      const childButtonIds = childPlacementIds.map(
         (placementId) => document.placements[placementId].buttonId
       );
       const savedChildIds = new Set(childButtonIds);
@@ -840,7 +1094,8 @@ function updateSurfaceOwnerRecords(
         }
       }
       unit.childButtonIds = childButtonIds;
-      unit.childPlacementIds = [...surface.placementIds];
+      unit.childPlacementIds = childPlacementIds;
+      refreshPopoutDesktopEnvelope(document, surface, unit);
       return;
     }
     throw new Error("The selected Pop-out settings are internally inconsistent.");
@@ -893,9 +1148,10 @@ export function applyButtonSettingsFile(
   value: unknown,
   context: ButtonSettingsFileApplyContext
 ): ButtonStateDocument {
-  const fileValidation = validateButtonSettingsFile(value);
+  const normalizedValue = normalizeButtonSettingsFile(value);
+  const fileValidation = validateButtonSettingsFile(normalizedValue);
   if (!fileValidation.valid) throw new Error(fileValidation.issues.join("\n"));
-  const file = value as ButtonSettingsFile;
+  let file = normalizedValue as ButtonSettingsFile;
   const selectedSurface = document.surfaces[selectedSurfaceId];
   if (!selectedSurface) throw new Error("Select an existing Button surface before loading settings.");
   if (file.placementKind !== buttonSettingsPlacementKind(selectedSurface)) {
@@ -911,8 +1167,11 @@ export function applyButtonSettingsFile(
     );
   }
   const sameConcreteSurface = file.sourceSurfaceId === selectedSurfaceId;
+  const crossToolSetTemplate =
+    file.behavior.kind === "tool-set-popout" && selectedSurface.kind === "tool-set-popout";
   if (
     !sameConcreteSurface &&
+    !crossToolSetTemplate &&
     (!namesMatch(file.programName, context.programName) ||
       !namesMatch(file.panelName, context.panelName))
   ) {
@@ -921,6 +1180,7 @@ export function applyButtonSettingsFile(
       `'${context.programName} / ${context.panelName}'.`
     );
   }
+  file = mapCrossToolSetSettingsFile(document, selectedSurface, file);
 
   const next = cloneButtonDocument(document);
   const nextSurface = next.surfaces[selectedSurfaceId];
@@ -1006,9 +1266,10 @@ export function buildTransientButtonPopoutSettingsDocument(
   context: ButtonSettingsFileApplyContext,
   transientChoiceId: string
 ): TransientButtonPopoutSettingsDocument {
-  const fileValidation = validateButtonSettingsFile(value);
+  const normalizedValue = normalizeButtonSettingsFile(value);
+  const fileValidation = validateButtonSettingsFile(normalizedValue);
   if (!fileValidation.valid) throw new Error(fileValidation.issues.join("\n"));
-  const file = value as ButtonSettingsFile;
+  const file = normalizedValue as ButtonSettingsFile;
   if (file.placementKind !== "pop-out") {
     throw new Error("Open Pop accepts only Pop-out settings files.");
   }
@@ -1041,10 +1302,21 @@ export function buildTransientButtonPopoutSettingsDocument(
 
   let unit: ButtonPopoutUnit;
   if (file.behavior.kind === "regular-popout") {
-    if (file.entries.length === 0) {
+    const behavior = file.behavior;
+    const ownerEntry = behavior.ownerPlacementId
+      ? file.entries.find((entry) => entry.placementId === behavior.ownerPlacementId)
+      : undefined;
+    if (behavior.ownerPlacementId && !ownerEntry) {
+      throw new Error("Regular Fan settings have no entry for their saved owner placement.");
+    }
+    const memberEntries = file.entries.filter((entry) => entry.buttonRole === "single-script");
+    if (memberEntries.length === 0) {
       throw new Error("A regular Pop-out settings file must contain at least one Button.");
     }
-    const buttons = file.entries.map((entry) => {
+    if (file.entries.some((entry) => entry.buttonRole !== "single-script" && entry !== ownerEntry)) {
+      throw new Error("A regular Pop-out may contain only script Buttons and one optional panel owner.");
+    }
+    const buttons = memberEntries.map((entry) => {
       const button = working.buttons[entry.buttonId];
       if (!button) {
         throw new Error(
@@ -1062,6 +1334,16 @@ export function buildTransientButtonPopoutSettingsDocument(
       }
       return button;
     });
+    if (ownerEntry) {
+      const owner = working.buttons[ownerEntry.buttonId];
+      if (
+        !owner ||
+        owner.id !== file.behavior.ownerButtonId ||
+        (owner.role !== "single-script" && owner.role !== "panel-owner")
+      ) {
+        throw new Error("Regular Fan settings no longer have their exact owner Button.");
+      }
+    }
     const memberSourceIdentities = buttons.map((button) =>
       structuredClone(button.sourceIdentity!)
     );
@@ -1087,6 +1369,9 @@ export function buildTransientButtonPopoutSettingsDocument(
       memberPlacementIds: [],
       openRule: file.behavior.openRule,
       closeRule: file.behavior.closeRule,
+      interactionMode: file.behavior.interactionMode,
+      ownerButtonId: file.behavior.ownerButtonId,
+      ownerPlacementId: null,
       transparency: file.behavior.transparency,
       pinnedDefault: file.behavior.pinnedDefault,
       windowFitMode: file.behavior.windowFitMode,
@@ -1094,14 +1379,15 @@ export function buildTransientButtonPopoutSettingsDocument(
       selectionKey: deriveRegularPopoutSelectionKey(memberSourceIdentities)
     };
   } else if (file.behavior.kind === "tool-set-popout") {
-    const owner = working.buttons[file.behavior.ownerButtonId];
+    const behavior = file.behavior;
+    const owner = working.buttons[behavior.ownerButtonId];
     if (
       !owner ||
       owner.role !== "tool-set-owner" ||
       !buttonBelongsToPanel(working, owner.id, context)
     ) {
       throw new Error(
-        `Tool Set owner '${file.behavior.ownerButtonId}' does not belong to ` +
+        `Tool Set owner '${behavior.ownerButtonId}' does not belong to ` +
         `'${context.programName} / ${context.panelName}'.`
       );
     }
@@ -1113,7 +1399,17 @@ export function buildTransientButtonPopoutSettingsDocument(
     if (!sourceUnit) {
       throw new Error(`Tool Set owner '${owner.label}' no longer has an installed Pop-out.`);
     }
-    for (const entry of file.entries) {
+    const ownerEntry = behavior.ownerPlacementId
+      ? file.entries.find((entry) => entry.placementId === behavior.ownerPlacementId)
+      : undefined;
+    if (behavior.ownerPlacementId && !ownerEntry) {
+      throw new Error("Tool Set Fan settings have no entry for their saved owner placement.");
+    }
+    if (ownerEntry && (ownerEntry.buttonId !== owner.id || ownerEntry.buttonRole !== "tool-set-owner")) {
+      throw new Error("Tool Set Fan settings no longer have their exact owner Button.");
+    }
+    const childEntries = file.entries.filter((entry) => entry !== ownerEntry);
+    for (const entry of childEntries) {
       const child = working.buttons[entry.buttonId];
       if (
         !child ||
@@ -1124,7 +1420,7 @@ export function buildTransientButtonPopoutSettingsDocument(
         throw new Error(`Button '${entry.buttonId}' is not an installed child of '${owner.label}'.`);
       }
     }
-    const savedChildIds = new Set(file.entries.map((entry) => entry.buttonId));
+    const savedChildIds = new Set(childEntries.map((entry) => entry.buttonId));
     if (
       savedChildIds.size !== sourceUnit.childButtonIds.length ||
       sourceUnit.childButtonIds.some((buttonId) => !savedChildIds.has(buttonId))
@@ -1155,6 +1451,8 @@ export function buildTransientButtonPopoutSettingsDocument(
       childPlacementIds: [],
       openRule: file.behavior.openRule,
       closeRule: file.behavior.closeRule,
+      interactionMode: file.behavior.interactionMode,
+      ownerPlacementId: null,
       transparency: file.behavior.transparency,
       pinnedDefault: file.behavior.pinnedDefault,
       windowFitMode: file.behavior.windowFitMode
@@ -1164,6 +1462,7 @@ export function buildTransientButtonPopoutSettingsDocument(
   }
 
   const transientSurface = working.surfaces[transientSurfaceId];
+  const transientPlacementBySavedId = new Map<string, string>();
   for (const entry of file.entries) {
     const button = working.buttons[entry.buttonId];
     if (!button) {
@@ -1189,12 +1488,25 @@ export function buildTransientButtonPopoutSettingsDocument(
       zIndex: transientSurface.placementIds.length
     };
     transientSurface.placementIds.push(placementId);
+    transientPlacementBySavedId.set(entry.placementId, placementId);
   }
+  const transientOwnerPlacementId = file.behavior.ownerPlacementId
+    ? transientPlacementBySavedId.get(file.behavior.ownerPlacementId) ?? null
+    : null;
   if (unit.kind === "regular") {
-    unit.memberPlacementIds = [...transientSurface.placementIds];
+    unit.ownerPlacementId = transientOwnerPlacementId;
+    unit.memberPlacementIds = transientSurface.placementIds.filter((placementId) => {
+      const placement = working.placements[placementId];
+      return placement && working.buttons[placement.buttonId]?.role === "single-script";
+    });
   } else {
-    unit.childButtonIds = file.entries.map((entry) => entry.buttonId);
-    unit.childPlacementIds = [...transientSurface.placementIds];
+    unit.ownerPlacementId = transientOwnerPlacementId;
+    unit.childPlacementIds = transientSurface.placementIds.filter(
+      (placementId) => placementId !== transientOwnerPlacementId
+    );
+    unit.childButtonIds = unit.childPlacementIds.map(
+      (placementId) => working.placements[placementId].buttonId
+    );
   }
   working.popoutUnits[unit.id] = unit;
 
@@ -1210,6 +1522,6 @@ export function buildTransientButtonPopoutSettingsDocument(
   return {
     document: working,
     popoutUnitId: transientUnitId,
-    ...(unit.kind === "tool-set" ? { ownerButtonId: unit.ownerButtonId } : {})
+    ...(unit.ownerButtonId ? { ownerButtonId: unit.ownerButtonId } : {})
   };
 }

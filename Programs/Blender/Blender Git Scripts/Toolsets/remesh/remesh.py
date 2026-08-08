@@ -62,11 +62,41 @@ def _clamp_int(value, fallback, minimum, maximum):
     return max(minimum, min(maximum, parsed))
 
 
+REMESH_MODE_CYCLE = ("VOXEL", "SMOOTH", "SHARP", "BLOCKS")
+
+
 def _normalize_mode(value, fallback=DEFAULT_MODE):
     mode = str(value or "").strip().upper()
-    if mode in {"VOXEL", "SMOOTH", "SHARP", "BLOCKS"}:
+    if mode in set(REMESH_MODE_CYCLE):
         return mode
     return fallback
+
+
+def _apply_settings_payload(context, data):
+    """
+    Applies any numeric settings carried by a Create/Apply payload before the
+    modifier runs. The Buttons that edit these values inline are display-only,
+    so the value the user typed reaches Blender with the action that needs it
+    instead of through a separate per-value command.
+    """
+    if not isinstance(data, dict):
+        return
+    settings = (
+        ("voxel_size_mm", "flowcell_remesh_voxel_size_mm", DEFAULT_VOXEL_SIZE_MM, 0.001, 1000.0, False),
+        ("adaptivity", "flowcell_remesh_adaptivity", DEFAULT_ADAPTIVITY, 0.0, 1.0, False),
+        ("octree_depth", "flowcell_remesh_octree_depth", DEFAULT_OCTREE_DEPTH, 1, 12, True),
+        ("scale", "flowcell_remesh_scale", DEFAULT_SCALE, 0.1, 1.0, False),
+        ("threshold", "flowcell_remesh_threshold", DEFAULT_THRESHOLD, 0.0, 1.0, False),
+        ("sharpness", "flowcell_remesh_sharpness", DEFAULT_SHARPNESS, 0.0, 10.0, False),
+    )
+    for key, prop_name, fallback, minimum, maximum, integer in settings:
+        if key not in data or data.get(key) is None:
+            continue
+        _set_value(context, prop_name, data.get(key), fallback, minimum, maximum, integer=integer)
+    requested_mode = _data_value(data, "mode", default=None)
+    if requested_mode is not None:
+        scene = _ctx(context).scene
+        scene.flowcell_remesh_mode = _normalize_mode(requested_mode, scene.flowcell_remesh_mode)
 
 
 def _scene_unit_scale(context=None):
@@ -291,9 +321,10 @@ def _set_value(context, prop_name, raw_value, fallback, minimum, maximum, intege
     return value
 
 
-def create_update_remesh(context=None):
+def create_update_remesh(context=None, data=None):
     ctx = _ctx(context)
     _ensure_scene_props()
+    _apply_settings_payload(ctx, data)
     _ensure_object_mode(ctx)
     obj = _active_mesh(ctx)
     modifier = _get_or_create_modifier(obj)
@@ -306,9 +337,10 @@ def create_update_remesh(context=None):
     )
 
 
-def apply_remesh(context=None):
+def apply_remesh(context=None, data=None):
     ctx = _ctx(context)
     _ensure_scene_props()
+    _apply_settings_payload(ctx, data)
     _ensure_object_mode(ctx)
     obj = _active_mesh(ctx)
     modifier = _get_or_create_modifier(obj)
@@ -340,6 +372,12 @@ def run_flowcell_action(context=None, data=None):
     }
     if command in mode_map:
         scene.flowcell_remesh_mode = mode_map[command]
+        return _status(ctx, message=f"Remesh mode set to {scene.flowcell_remesh_mode}.")
+
+    if command in {"cycle_mode", "mode_cycle", "mode_next"}:
+        current_mode = _normalize_mode(scene.flowcell_remesh_mode)
+        next_index = (REMESH_MODE_CYCLE.index(current_mode) + 1) % len(REMESH_MODE_CYCLE)
+        scene.flowcell_remesh_mode = REMESH_MODE_CYCLE[next_index]
         return _status(ctx, message=f"Remesh mode set to {scene.flowcell_remesh_mode}.")
 
     if command == "set_mode":
@@ -376,9 +414,9 @@ def run_flowcell_action(context=None, data=None):
         value = _set_value(ctx, "flowcell_remesh_sharpness", raw_value, DEFAULT_SHARPNESS, 0.0, 10.0)
         return _status(ctx, message=f"Sharpness set to {value:.2f}.")
     if command in {"create_update_remesh", "create", "update"}:
-        return create_update_remesh(ctx)
+        return create_update_remesh(ctx, data)
     if command in {"apply_remesh", "apply"}:
-        return apply_remesh(ctx)
+        return apply_remesh(ctx, data)
 
     raise ValueError(f"Unsupported Remesh command: {command}")
 

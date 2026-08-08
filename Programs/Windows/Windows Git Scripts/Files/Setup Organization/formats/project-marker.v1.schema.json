@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "flowcell.project.v1",
+  "title": "FlowCell project marker v1",
+  "description": "Written into a project root by a Setup Organization organizer Button on every run. Records which profile organized the project and, per file extension, where that profile sends those files. Program packages (the Blender bridge, Illustrator helpers) read this file to resolve destinations for any profile instead of assuming one fixed layout. It is a denormalized snapshot of the profile at the moment of the last run: it describes where files actually are, not what the profile currently says.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "format",
+    "profileId",
+    "profileName",
+    "organizedAt",
+    "where",
+    "catchAll",
+    "programFolders",
+    "ignored"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "format": {
+      "const": "flowcell.project.v1"
+    },
+    "profileId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "profileName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "organizedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "where": {
+      "description": "Lowercase file extension to project-relative destination folder. One destination per extension: the profile editor rejects a profile that assigns the same extension to two folders.",
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/extension"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/relativeFolder"
+      }
+    },
+    "catchAll": {
+      "description": "Project-relative folder collecting every file no extension claimed, or an empty string when the profile declares none.",
+      "type": "string"
+    },
+    "programFolders": {
+      "description": "Program folders this run created, by label, mapped to their project-relative path. Empty when none were needed.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/relativeFolder"
+      }
+    },
+    "ignored": {
+      "description": "Project-relative folders the profile marks as never touched. Their contents are excluded from the recursive scan and are never moved out.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/relativeFolder"
+      }
+    }
+  },
+  "$defs": {
+    "extension": {
+      "type": "string",
+      "pattern": "^\\.[a-z0-9][a-z0-9._+\\-]*$",
+      "maxLength": 32
+    },
+    "relativeFolder": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 520,
+      "pattern": "^(?![A-Za-z]:)(?![\\/])(?!.*(?:^|[\\/])\\.\\.(?:[\\/]|$)).+$"
+    }
+  }
+}

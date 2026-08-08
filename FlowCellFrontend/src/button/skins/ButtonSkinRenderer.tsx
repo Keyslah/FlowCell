@@ -36,6 +36,10 @@ import {
 } from "./buttonVisualSampling";
 import { applyButtonLabelTextOffset } from "./buttonTextOffset";
 import {
+  readButtonSkinHighlightOnActive,
+  readButtonSkinHighlightOnHover
+} from "./buttonSkinColors";
+import {
   buttonVisualMotionBlocksStateChange,
   commitPreparedButtonVisual,
   createButtonVisualLatch,
@@ -76,6 +80,8 @@ export interface ButtonSkinRendererProps {
   error?: boolean;
   highlightOnHover?: boolean;
   rawHovered?: boolean;
+  /** Latched selected/active state, lifted only when the skin opts in. */
+  activeHighlight?: boolean;
   /**
    * Raw physical interaction state used by native visual measurement/sampling.
    * When omitted, the displayed visual flags above are sampled as before.
@@ -113,6 +119,7 @@ interface ButtonVisualRenderSnapshot {
   disabled: boolean;
   error: boolean;
   hoverHighlighted: boolean;
+  activeHighlighted: boolean;
   samplingState: ButtonVisualState;
   transitionSamplingKey: string | number | undefined;
 }
@@ -127,6 +134,20 @@ type ButtonHostRenderScale = ButtonSkinScale;
 
 const IDENTITY_HOST_RENDER_SCALE: ButtonHostRenderScale = { scaleX: 1, scaleY: 1 };
 const BUTTON_PERSISTENT_VISUAL_SAMPLE_FRAMES = 12;
+
+/**
+ * Composes the host-owned lifts. Active is the stronger of the two so a latched
+ * Button reads as active at a glance, and hover still stacks on top of it so an
+ * active Button under the pointer stays distinguishable from a resting one.
+ */
+function buttonHighlightFilter(
+  snapshot: Pick<ButtonVisualRenderSnapshot, "hoverHighlighted" | "activeHighlighted">
+): string | undefined {
+  const lifts: string[] = [];
+  if (snapshot.activeHighlighted) lifts.push("brightness(1.3)");
+  if (snapshot.hoverHighlighted) lifts.push("brightness(1.15)");
+  return lifts.length > 0 ? lifts.join(" ") : undefined;
+}
 
 function buttonVisualStateFromSnapshot(snapshot: ButtonVisualRenderSnapshot): ButtonVisualState {
   return {
@@ -154,6 +175,7 @@ function buttonVisualSnapshotIntent(
       snapshot.disabled,
       snapshot.error,
       snapshot.hoverHighlighted,
+      snapshot.activeHighlighted,
       snapshot.samplingState.hovered,
       snapshot.samplingState.pressed,
       snapshot.samplingState.held,
@@ -972,6 +994,7 @@ export function ButtonSkinRenderer({
   error = false,
   highlightOnHover = false,
   rawHovered = false,
+  activeHighlight = false,
   samplingState,
   transitionSamplingKey,
   onCoreElementChange,
@@ -1037,6 +1060,14 @@ export function ButtonSkinRenderer({
   onVisualStateChangeRef.current = onVisualStateChange;
   onDiagnosticsRef.current = onDiagnostics;
   const compileResult = useMemo(() => compileButtonSkin(skin), [skin]);
+  const skinHighlightOnHover = useMemo(
+    () => readButtonSkinHighlightOnHover(skin),
+    [skin.base]
+  );
+  const skinHighlightOnActive = useMemo(
+    () => readButtonSkinHighlightOnActive(skin),
+    [skin.base]
+  );
   if (compileResult.ok) lastValidRef.current = compileResult.compiled;
   const fallback = useMemo(
     () => (compileResult.ok ? null : compileButtonSkin(DEFAULT_BUTTON_SKIN)),
@@ -1068,7 +1099,8 @@ export function ButtonSkinRenderer({
     release,
     disabled,
     error,
-    hoverHighlighted: highlightOnHover && rawHovered,
+    hoverHighlighted: (skinHighlightOnHover ?? highlightOnHover) && rawHovered,
+    activeHighlighted: (skinHighlightOnActive ?? false) && activeHighlight,
     samplingState: desiredSamplingState,
     transitionSamplingKey
   });
@@ -1510,8 +1542,8 @@ export function ButtonSkinRenderer({
     display: "inline-block",
     verticalAlign: "top",
     overflow: "visible",
-    pointerEvents: "auto",
-    filter: renderedVisual.hoverHighlighted ? "brightness(1.15)" : undefined,
+    pointerEvents: "none",
+    filter: buttonHighlightFilter(renderedVisual),
     ...(typeof width === "number" ? { width: `${width}px` } : {}),
     ...(typeof height === "number" ? { height: `${height}px` } : {}),
     ...(typeof width === "number" ? { "--button-core-width": `${width}px` } : {}),

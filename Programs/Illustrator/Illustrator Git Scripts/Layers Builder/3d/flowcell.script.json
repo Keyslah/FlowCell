@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "illustrator.layers-builder.3d",
   "label": "3D",
-  "tooltip": "Save highlighted Live layers as new 3D versions and hide their Live sources.",
+  "tooltip": "Save selected Live artwork, or highlighted Live layers as a fallback, then hide only the Live root.",
   "program": "Illustrator",
   "source": "3D.jsx"
 }

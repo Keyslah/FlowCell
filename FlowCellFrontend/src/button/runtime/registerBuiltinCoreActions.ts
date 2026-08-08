@@ -1,6 +1,7 @@
-import { invoke } from "@tauri-apps/api/core";
-
-import { openInstalledPageWindow, openWindowGridWindow } from "../../lib/coreWindows";
+import {
+  openWindowGridWindow,
+  resolveAndOpenInstalledPageWindow
+} from "../../lib/coreWindows";
 import type { CoreActionExecutionTarget, JsonValue } from "../types";
 import type { ButtonCoreActionContext } from "./ButtonRuntimeAdapter";
 import { registerButtonCoreAction } from "./ButtonRuntimeAdapter";
@@ -15,21 +16,6 @@ function payloadString(payload: Readonly<Record<string, JsonValue>> | undefined,
   return typeof value === "string" ? value.trim() : "";
 }
 
-interface InstalledPageOpenDescriptor {
-  ownerButtonId: string;
-  programName: string;
-  panelName: string;
-  fileName: string;
-  pageId: string;
-  window: {
-    title: string;
-    width: number;
-    height: number;
-    minWidth: number;
-    minHeight: number;
-  };
-}
-
 const openInstalledPage: CoreActionHandler = async (target) => {
   const identity = {
     ownerButtonId: payloadString(target.payload, "ownerButtonId"),
@@ -41,15 +27,7 @@ const openInstalledPage: CoreActionHandler = async (target) => {
   if (Object.values(identity).some((value) => !value)) {
     throw new Error("The installed page Button is missing its active owner identity.");
   }
-  const descriptor = await invoke<InstalledPageOpenDescriptor>("resolve_installed_page", identity);
-  await openInstalledPageWindow({
-    ...identity,
-    title: descriptor.window.title,
-    width: descriptor.window.width,
-    height: descriptor.window.height,
-    minWidth: descriptor.window.minWidth,
-    minHeight: descriptor.window.minHeight
-  });
+  await resolveAndOpenInstalledPageWindow(identity);
   return { opened: true };
 };
 

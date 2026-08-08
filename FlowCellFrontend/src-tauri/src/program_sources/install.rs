@@ -911,6 +911,30 @@ fn normalized_relative_path(path: &str) -> String {
     path.replace('/', "\\").to_ascii_lowercase()
 }
 
+fn previous_owned_record_path_matches(
+    recorded: &str,
+    expected_relative: &str,
+    expected_absolute: &Path,
+) -> bool {
+    if normalized_relative_path(recorded) == normalized_relative_path(expected_relative) {
+        return true;
+    }
+
+    let recorded_absolute =
+        crate::commands::execution::windows_child_process_path(Path::new(recorded));
+    let expected_absolute =
+        crate::commands::execution::windows_child_process_path(expected_absolute);
+    normalized_relative_path(
+        recorded_absolute
+            .to_string_lossy()
+            .trim_end_matches(['/', '\\']),
+    ) == normalized_relative_path(
+        expected_absolute
+            .to_string_lossy()
+            .trim_end_matches(['/', '\\']),
+    )
+}
+
 fn validate_install_transaction_journal(
     manifest: &ProgramManifest,
     program_root: &Path,
@@ -1010,13 +1034,18 @@ fn validate_install_transaction_journal(
     ) {
         let previous_source_relative =
             ensure_relative_source_path(&previous_install.source_relative_path)?;
+        let expected_previous_source_absolute = final_package.join(previous_source_relative);
         let expected_previous_source =
-            path_relative_to_program(program_root, &final_package.join(previous_source_relative))?;
-        if normalized_relative_path(&previous_record.local_package_path)
-            != normalized_relative_path(&expected_package)
-            || normalized_relative_path(&previous_record.source_path)
-                != normalized_relative_path(&expected_previous_source)
-        {
+            path_relative_to_program(program_root, &expected_previous_source_absolute)?;
+        if !previous_owned_record_path_matches(
+            &previous_record.local_package_path,
+            &expected_package,
+            &final_package,
+        ) || !previous_owned_record_path_matches(
+            &previous_record.source_path,
+            &expected_previous_source,
+            &expected_previous_source_absolute,
+        ) {
             return Err(
                 "Install transaction previous record points outside its owned Local Scripts package."
                     .to_string(),
@@ -2152,6 +2181,14 @@ pub(crate) fn install_button_source(
     install_from_path(request, false)
 }
 
+#[tauri::command]
+pub(crate) fn update_button_source(
+    mut request: InstallButtonSourceRequest,
+) -> Result<InstallButtonSourceResponse, String> {
+    request.program_name = crate::require_registered_program_name(&request.program_name)?;
+    install_from_path(request, true)
+}
+
 pub(crate) fn merge_toolset_payload(
     record: &ActiveSourceRecord,
     slot: &str,
@@ -2201,12 +2238,12 @@ mod tests {
     use super::{
         blender_install_arguments, build_response, detect_import_kind,
         install_transaction_old_package, merge_toolset_payload, path_relative_to_program,
-        prepare_source, preserve_runtime_directory, read_install_transaction_journal,
-        recover_install_transaction, recover_update_residues_with, update_residue_name,
-        validate_core_execution_target, validate_update_shape, write_install_transaction_journal,
-        InstallTransactionJournal, InstallTransactionPhase, PreparedSource, ScriptManifest,
-        ToolsetManifest, INSTALL_TRANSACTION_SCHEMA_VERSION, SCRIPT_MANIFEST_FILE_NAME,
-        TOOLSET_MANIFEST_FILE_NAME,
+        prepare_source, preserve_runtime_directory, previous_owned_record_path_matches,
+        read_install_transaction_journal, recover_install_transaction,
+        recover_update_residues_with, update_residue_name, validate_core_execution_target,
+        validate_update_shape, write_install_transaction_journal, InstallTransactionJournal,
+        InstallTransactionPhase, PreparedSource, ScriptManifest, ToolsetManifest,
+        INSTALL_TRANSACTION_SCHEMA_VERSION, SCRIPT_MANIFEST_FILE_NAME, TOOLSET_MANIFEST_FILE_NAME,
     };
     use crate::program_sources::manifest::{ProgramManifest, ProgramRunnerManifest};
     use crate::program_sources::records::{
@@ -2224,6 +2261,34 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir().join(format!("flowcell-{name}-{}-{token}", std::process::id()))
+    }
+
+    #[test]
+    fn previous_owned_paths_accept_exact_legacy_absolute_spelling_only() {
+        let root = temporary_test_root("legacy-absolute-owned-path");
+        let expected = root
+            .join("Local Scripts")
+            .join("owner")
+            .join("source")
+            .join("action.py");
+        let relative = path_relative_to_program(&root, &expected).expect("relative owned path");
+        let absolute = expected.to_string_lossy().to_string();
+        let verbatim = format!(r"\\?\{absolute}");
+
+        assert!(previous_owned_record_path_matches(
+            &relative, &relative, &expected
+        ));
+        assert!(previous_owned_record_path_matches(
+            &absolute, &relative, &expected
+        ));
+        assert!(previous_owned_record_path_matches(
+            &verbatim, &relative, &expected
+        ));
+        assert!(!previous_owned_record_path_matches(
+            &root.join("outside.py").to_string_lossy(),
+            &relative,
+            &expected,
+        ));
     }
 
     fn collect_shipped_source_manifests(folder: &Path, output: &mut Vec<PathBuf>) {

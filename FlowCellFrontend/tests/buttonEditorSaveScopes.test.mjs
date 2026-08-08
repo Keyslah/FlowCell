@@ -215,6 +215,7 @@ test("Settings save commits complete presentation and exact surface membership w
     textOffsetX: 5,
     highlightOnHover: true
   });
+  draft.settings.buttonSpacingMm = 0.5;
 
   const saved = buildButtonSettingsScopedDocument(
     committed,
@@ -231,9 +232,11 @@ test("Settings save commits complete presentation and exact surface membership w
   assert.equal(saved.placements["placement-one"].skinOverrideId, pendingSkin.id);
   assert.deepEqual(saved.skins[pendingSkin.id], pendingSkin);
   assert.deepEqual(saved.buttons.one.executionTarget, committed.buttons.one.executionTarget);
+  assert.equal(saved.settings.buttonSpacingMm, 0.5);
 
   const pending = structuredClone(draft);
   pending.buttons.one.label = "Later unsaved text";
+  pending.settings.buttonSpacingMm = 3.75;
   applyButtonSettingsSavedScope(
     pending,
     saved,
@@ -242,6 +245,7 @@ test("Settings save commits complete presentation and exact surface membership w
   );
   assert.equal(pending.buttons.one.label, "Saved text");
   assert.equal(pending.placements["placement-one"].skinOverrideId, pendingSkin.id);
+  assert.equal(pending.settings.buttonSpacingMm, 0.5);
 });
 
 test("Settings conflict rebase preserves a concurrent deletion while adding an editor-new Button", () => {
@@ -313,7 +317,7 @@ test("placement conflict rebase preserves concurrent deletions and adds only edi
   assert.equal(rebased.revision, 4);
 });
 
-test("skin save commits only the skin and explicit assignment", () => {
+test("skin assignment commits its sizing policy without consuming geometry or text edits", () => {
   const committed = documentWithButton();
   committed.skins["skin-custom"] = {
     ...structuredClone(committed.skins[committed.settings.defaultSkinId]),
@@ -332,7 +336,8 @@ test("skin save commits only the skin and explicit assignment", () => {
   draft.buttons.one.label = "Renamed";
   const scope = {
     skinIds: ["skin-custom"],
-    placementIds: ["placement-one"]
+    placementIds: ["placement-one"],
+    sizingMode: "responsive"
   };
 
   const saved = buildButtonSkinScopedDocument(committed, draft, scope);
@@ -343,9 +348,12 @@ test("skin save commits only the skin and explicit assignment", () => {
   assert.equal(saved.placements["placement-one"].textFitMode, "shrink");
   assert.equal(saved.placements["placement-one"].textAlignment, "skin");
   assert.equal(saved.placements["placement-one"].textSizeOverride, null);
-  assert.equal(saved.placements["placement-one"].matchHitboxToSkin, true);
+  assert.equal(saved.placements["placement-one"].matchHitboxToSkin, false);
+  assert.equal(saved.placements["placement-one"].allowStretching, false);
   assert.equal(saved.buttons.one.label, "One");
 
+  draft.placements["placement-one"].matchHitboxToSkin = true;
+  draft.placements["placement-one"].allowStretching = true;
   applyButtonSkinSavedScope(draft, saved, scope);
   assert.equal(draft.placements["placement-one"].x, 333);
   assert.equal(draft.placements["placement-one"].width, 145);
@@ -353,6 +361,7 @@ test("skin save commits only the skin and explicit assignment", () => {
   assert.equal(draft.placements["placement-one"].textAlignment, "right");
   assert.equal(draft.placements["placement-one"].textSizeOverride, 21);
   assert.equal(draft.placements["placement-one"].matchHitboxToSkin, false);
+  assert.equal(draft.placements["placement-one"].allowStretching, false);
   assert.equal(draft.buttons.one.label, "Renamed");
 });
 

@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; base-uri 'none'; object-src 'none'; form-action 'none'; connect-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'"
+    >
+    <title>Save Blender</title>
+    <link rel="stylesheet" href="./page.css">
+    <script src="./page.js" defer></script>
+  </head>
+  <body>
+    <main class="save-page" aria-busy="true">
+      <header class="save-page__header">
+        <span class="save-page__eyebrow">Blender project</span>
+        <h1>Save Blender</h1>
+        <p id="save-summary">Checking the current Blender file…</p>
+      </header>
+
+      <section id="saved-panel" class="save-card" hidden>
+        <h2>Saved in place</h2>
+        <p id="saved-path" class="path-value"></p>
+      </section>
+
+      <form id="project-form" class="save-card" hidden novalidate>
+        <fieldset class="mode-picker">
+          <legend>Save to</legend>
+          <div class="mode-picker__options">
+            <label class="mode-option" for="mode-new-project">
+              <input id="mode-new-project" name="saveMode" type="radio" value="new" checked>
+              <span>
+                <strong>Create new project</strong>
+                <small>Create a new project folder for this Blender file.</small>
+              </span>
+            </label>
+
+            <label class="mode-option" for="mode-existing-project">
+              <input id="mode-existing-project" name="saveMode" type="radio" value="existing">
+              <span>
+                <strong>Add to existing project</strong>
+                <small>Add this Blender file to a project you already have.</small>
+              </span>
+            </label>
+          </div>
+        </fieldset>
+
+        <label class="field field--name" for="project-name">
+          <span id="project-name-label">Project name</span>
+          <input
+            id="project-name"
+            name="projectName"
+            type="text"
+            maxlength="120"
+            autocomplete="off"
+            spellcheck="false"
+            placeholder="My project"
+            required
+          >
+        </label>
+
+        <div id="settings-panel" class="settings-panel">
+          <label class="field" for="parent-folder">
+            <span>Parent folder</span>
+            <span class="field-row">
+              <input id="parent-folder" type="text" readonly placeholder="Choose where project folders are created">
+              <button id="browse-parent" type="button" class="secondary">Browse…</button>
+            </span>
+          </label>
+
+          <label class="field" for="profile-select">
+            <span>Organization profile <small>optional</small></span>
+            <select id="profile-select">
+              <option value="">No organization profile</option>
+            </select>
+          </label>
+        </div>
+
+        <div id="existing-project-panel" class="settings-panel" hidden>
+          <label class="field" for="existing-project-folder">
+            <span>Existing project folder</span>
+            <span class="field-row">
+              <input id="existing-project-folder" type="text" readonly placeholder="Choose an existing project folder">
+              <button id="browse-existing-project" type="button" class="secondary">Browse…</button>
+            </span>
+          </label>
+        </div>
+
+        <div class="form-actions">
+          <button id="save-project" type="submit" class="primary">Save</button>
+          <button id="change-settings" type="button" class="secondary" hidden>Change Settings</button>
+        </div>
+      </form>
+    </main>
+
+    <div id="save-status" class="status" role="status" aria-live="polite"></div>
+    <noscript>This installed page requires its declared package script.</noscript>
+  </body>
+</html>

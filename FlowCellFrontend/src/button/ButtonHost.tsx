@@ -888,6 +888,7 @@ export function ButtonHost({
         disabled={resolvedAppearance.flags.disabled}
         error={resolvedAppearance.flags.error}
         highlightOnHover={placement.highlightOnHover}
+        activeHighlight={mode === "run" && selected}
         rawHovered={hovered}
         samplingState={rawVisualState}
         transitionSamplingKey={`${activationStateIndex}:${resolvedAppearance.activeTrigger}:${resolvedAppearance.visualState}`}

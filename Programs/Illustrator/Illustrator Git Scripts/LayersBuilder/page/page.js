@@ -35,11 +35,7 @@
     renameForm: document.getElementById("rename-form"),
     renameTitle: document.getElementById("rename-title"),
     renameInput: document.getElementById("rename-input"),
-    renameConfirm: document.getElementById("rename-confirm"),
-    forceDialog: document.getElementById("force-delete-dialog"),
-    forceTitle: document.getElementById("force-delete-title"),
-    forceBody: document.getElementById("force-delete-body"),
-    forceConfirm: document.getElementById("force-delete-confirm")
+    renameConfirm: document.getElementById("rename-confirm")
   };
 
   var state = {
@@ -54,7 +50,17 @@
     stateWarning: "",
     stateWriteChain: Promise.resolve(),
     refreshTimers: [],
+    dragMode: "",
     draggedKey: "",
+    dragPointerId: null,
+    dragStartX: 0,
+    dragStartY: 0,
+    dragStarted: false,
+    dragTargetKey: "",
+    dragCopy: false,
+    dragSourceRow: null,
+    dragSourceElement: null,
+    suppressNextClick: false,
     nameDialogAction: "rename",
     nameDialogKey: ""
   };
@@ -83,12 +89,6 @@
     });
     elements.renameTitle.textContent = copy("renameTitle", "Rename " + resourceLabel);
     elements.renameConfirm.textContent = copy("renameConfirm", "Rename");
-    elements.forceTitle.textContent = copy("forceDeleteTitle", "Force delete selected layers?");
-    elements.forceBody.textContent = copy(
-      "forceDeleteBody",
-      "This removes selected layers even when they or their ancestors are locked or hidden."
-    );
-    elements.forceConfirm.textContent = copy("forceDeleteConfirm", "Force Delete");
     document.querySelectorAll("[data-dialog-cancel]").forEach(function (button) {
       button.textContent = copy("cancel", "Cancel");
     });
@@ -257,6 +257,11 @@
   }
 
   function setBusy(next) {
+    if (next && state.dragPointerId !== null) {
+      var wasDragging = state.dragStarted;
+      clearDragState();
+      if (wasDragging) armPointerClickSuppression();
+    }
     state.busy = next;
     elements.root.setAttribute("aria-busy", next ? "true" : "false");
     document.querySelectorAll("button").forEach(function (button) {
@@ -291,11 +296,168 @@
   }
 
   function clearDragState() {
+    var sourceElement = state.dragSourceElement;
+    var pointerId = state.dragPointerId;
+    state.dragMode = "";
     state.draggedKey = "";
-    document.querySelectorAll(".layer-tree__row.is-dragging, .layer-tree__row.is-drop-target")
+    state.dragPointerId = null;
+    state.dragStartX = 0;
+    state.dragStartY = 0;
+    state.dragStarted = false;
+    state.dragTargetKey = "";
+    state.dragCopy = false;
+    state.dragSourceRow = null;
+    state.dragSourceElement = null;
+    if (
+      sourceElement &&
+      pointerId !== null &&
+      typeof sourceElement.hasPointerCapture === "function" &&
+      sourceElement.hasPointerCapture(pointerId)
+    ) {
+      try { sourceElement.releasePointerCapture(pointerId); } catch (error) {}
+    }
+    document.querySelectorAll(
+      ".layer-tree__row.is-dragging, " +
+      ".layer-tree__row.is-artwork-dragging, " +
+      ".layer-tree__row.is-drop-target, " +
+      ".layer-tree__row.is-copy-target"
+    )
       .forEach(function (row) {
-        row.classList.remove("is-dragging", "is-drop-target");
+        row.classList.remove(
+          "is-dragging",
+          "is-artwork-dragging",
+          "is-drop-target",
+          "is-copy-target"
+        );
       });
+  }
+
+  function armPointerClickSuppression() {
+    state.suppressNextClick = true;
+    window.setTimeout(function () {
+      state.suppressNextClick = false;
+    }, 0);
+  }
+
+  function pointerTargetRow(event) {
+    var target = document.elementFromPoint(event.clientX, event.clientY);
+    return target && typeof target.closest === "function"
+      ? target.closest(".layer-tree__row")
+      : null;
+  }
+
+  function updatePointerDrag(event) {
+    if (state.dragPointerId === null || event.pointerId !== state.dragPointerId) return;
+    if (!state.dragStarted) {
+      var distance = Math.hypot(
+        event.clientX - state.dragStartX,
+        event.clientY - state.dragStartY
+      );
+      if (distance < 4) return;
+      state.dragStarted = true;
+      if (state.dragSourceRow) {
+        state.dragSourceRow.classList.add(
+          state.dragMode === "artwork" ? "is-artwork-dragging" : "is-dragging"
+        );
+      }
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    document.querySelectorAll(
+      ".layer-tree__row.is-drop-target, .layer-tree__row.is-copy-target"
+    ).forEach(function (row) {
+      row.classList.remove("is-drop-target", "is-copy-target");
+    });
+
+    var targetRow = pointerTargetRow(event);
+    var targetKey = targetRow && typeof targetRow.dataset.key === "string"
+      ? targetRow.dataset.key
+      : "";
+    var isArtworkDrag = state.dragMode === "artwork";
+    var isCopyDrop = isArtworkDrag && event.altKey;
+    state.dragTargetKey = "";
+    state.dragCopy = isCopyDrop;
+    if (!targetKey || (!isArtworkDrag && !canDropLayer(state.draggedKey, targetKey))) return;
+
+    state.dragTargetKey = targetKey;
+    targetRow.classList.add("is-drop-target");
+    targetRow.classList.toggle("is-copy-target", isCopyDrop);
+  }
+
+  function finishPointerDrag(event, cancelled) {
+    if (state.dragPointerId === null || event.pointerId !== state.dragPointerId) return;
+    if (!cancelled) updatePointerDrag(event);
+
+    var dragMode = state.dragMode;
+    var sourceKey = state.draggedKey;
+    var targetKey = state.dragTargetKey;
+    var copyArtwork = dragMode === "artwork" && state.dragCopy;
+    var wasDragging = state.dragStarted;
+    var targetNode = targetKey ? findNode(targetKey) : null;
+    clearDragState();
+    if (wasDragging && !cancelled) {
+      armPointerClickSuppression();
+    }
+    if (cancelled || !wasDragging || !targetKey || !targetNode) return;
+
+    state.expandedKeys.add(targetKey);
+    if (dragMode === "artwork") {
+      void runAction(
+        "place-selected-artwork",
+        { targetKey: targetKey, copy: copyArtwork },
+        {
+          successMessage: copyArtwork
+            ? "Selected artwork copied into " + targetNode.name + "."
+            : "Selected artwork moved into " + targetNode.name + "."
+        }
+      ).catch(function () {});
+      return;
+    }
+    if (!canDropLayer(sourceKey, targetKey)) return;
+    void runAction("move", { key: sourceKey, targetKey: targetKey }, {
+      selectionPolicy: "clear",
+      successMessage: "Layer moved into " + targetNode.name + "."
+    }).catch(function () {});
+  }
+
+  function beginPointerDrag(mode, node, row, sourceElement, event) {
+    if (
+      state.busy ||
+      state.dragPointerId !== null ||
+      event.button !== 0 ||
+      event.isPrimary === false
+    ) return;
+    event.stopPropagation();
+    state.dragMode = mode;
+    state.draggedKey = node.key;
+    state.dragPointerId = event.pointerId;
+    state.dragStartX = event.clientX;
+    state.dragStartY = event.clientY;
+    state.dragStarted = false;
+    state.dragTargetKey = "";
+    state.dragCopy = false;
+    state.dragSourceRow = row;
+    state.dragSourceElement = sourceElement;
+    if (typeof sourceElement.setPointerCapture === "function") {
+      try { sourceElement.setPointerCapture(event.pointerId); } catch (error) {}
+    }
+  }
+
+  function bindPointerDrag(sourceElement, mode, node, row) {
+    sourceElement.addEventListener("pointerdown", function (event) {
+      beginPointerDrag(mode, node, row, sourceElement, event);
+    });
+    sourceElement.addEventListener("pointermove", updatePointerDrag);
+    sourceElement.addEventListener("pointerup", function (event) {
+      finishPointerDrag(event, false);
+    });
+    sourceElement.addEventListener("pointercancel", function (event) {
+      finishPointerDrag(event, true);
+    });
+    sourceElement.addEventListener("lostpointercapture", function (event) {
+      finishPointerDrag(event, true);
+    });
   }
 
   function render() {
@@ -317,7 +479,6 @@
         node.hidden ? "is-hidden" : ""
       ].filter(Boolean).join(" ");
       row.dataset.key = node.key;
-      row.draggable = !state.busy;
       row.setAttribute("role", "treeitem");
       row.setAttribute("aria-level", String(node.depth + 1));
       row.setAttribute("aria-selected", state.highlightedKeys.has(node.key) ? "true" : "false");
@@ -386,48 +547,59 @@
         }
       ));
 
-      row.addEventListener("click", function (event) {
-        selectRow(node.key, event);
-      });
-      row.addEventListener("dragstart", function (event) {
-        var startedOnButton = event.target && typeof event.target.closest === "function" &&
-          event.target.closest("button");
-        if (state.busy || startedOnButton || !event.dataTransfer) {
+      var artworkDragHandle = document.createElement("button");
+      artworkDragHandle.type = "button";
+      artworkDragHandle.className = "layer-tree__row-button layer-tree__selection-proxy";
+      artworkDragHandle.disabled = state.busy;
+      artworkDragHandle.setAttribute(
+        "aria-label",
+        "Select all Illustrator artwork in " + node.name +
+          ", or drag the current Illustrator selection" +
+          " to another layer; hold Alt while dropping to copy it."
+      );
+      artworkDragHandle.title =
+        "Click to select this layer's artwork. Drag to move the selection; hold Alt to copy.";
+      artworkDragHandle.addEventListener("click", function (event) {
+        event.stopPropagation();
+        if (state.suppressNextClick) {
+          state.suppressNextClick = false;
           event.preventDefault();
           return;
         }
-        state.draggedKey = node.key;
-        event.dataTransfer.effectAllowed = "move";
-        event.dataTransfer.setData("text/plain", node.key);
-        row.classList.add("is-dragging");
+        void runAction(
+          "select-contents",
+          { key: node.key },
+          { successMessage: "Layer contents selected." }
+        );
       });
-      row.addEventListener("dragover", function (event) {
-        if (!canDropLayer(state.draggedKey, node.key)) {
-          row.classList.remove("is-drop-target");
+      bindPointerDrag(artworkDragHandle, "artwork", node, row);
+      row.appendChild(artworkDragHandle);
+
+      row.addEventListener("click", function (event) {
+        if (state.suppressNextClick) {
+          state.suppressNextClick = false;
+          event.preventDefault();
+          event.stopPropagation();
           return;
         }
-        event.preventDefault();
-        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
-        row.classList.add("is-drop-target");
+        selectRow(node.key, event);
       });
-      row.addEventListener("dragleave", function (event) {
-        if (!event.relatedTarget || !row.contains(event.relatedTarget)) {
-          row.classList.remove("is-drop-target");
-        }
+      row.addEventListener("pointerdown", function (event) {
+        var startedOnButton = event.target && typeof event.target.closest === "function" &&
+          event.target.closest("button");
+        if (startedOnButton) return;
+        beginPointerDrag("layer", node, row, row, event);
       });
-      row.addEventListener("drop", function (event) {
-        var sourceKey = state.draggedKey;
-        event.preventDefault();
-        event.stopPropagation();
-        clearDragState();
-        if (!canDropLayer(sourceKey, node.key)) return;
-        state.expandedKeys.add(node.key);
-        void runAction("move", { key: sourceKey, targetKey: node.key }, {
-          selectionPolicy: "clear",
-          successMessage: "Layer moved into " + node.name + "."
-        }).catch(function () {});
+      row.addEventListener("pointermove", updatePointerDrag);
+      row.addEventListener("pointerup", function (event) {
+        finishPointerDrag(event, false);
       });
-      row.addEventListener("dragend", clearDragState);
+      row.addEventListener("pointercancel", function (event) {
+        finishPointerDrag(event, true);
+      });
+      row.addEventListener("lostpointercapture", function (event) {
+        finishPointerDrag(event, true);
+      });
       elements.rows.appendChild(row);
     });
   }
@@ -533,7 +705,6 @@
 
   function closeDialogs() {
     elements.renameDialog.hidden = true;
-    elements.forceDialog.hidden = true;
     state.nameDialogAction = "rename";
     state.nameDialogKey = "";
   }
@@ -567,14 +738,15 @@
     elements.renameInput.select();
   }
 
-  function openForceDeleteDialog() {
-    var keys = requireSelection(
-      "selectForDelete",
-      "Highlight one or more " + resourceLabel.toLowerCase() + " items to delete."
-    );
-    if (!keys) return;
-    elements.forceDialog.hidden = false;
-    elements.forceConfirm.focus();
+  function openCreateRootDialog() {
+    state.nameDialogAction = "create-root";
+    state.nameDialogKey = "";
+    elements.renameTitle.textContent = copy("createRootTitle", "Create New Layer");
+    elements.renameConfirm.textContent = copy("createConfirm", "Create");
+    elements.renameInput.value = copy("createRootDefaultName", resourceLabel);
+    elements.renameDialog.hidden = false;
+    elements.renameInput.focus();
+    elements.renameInput.select();
   }
 
   async function refresh(selectionPolicy, successMessage) {
@@ -612,6 +784,24 @@
     }
   }
 
+  function refreshSourceMatches(payload) {
+    var eventProgram = typeof payload.programName === "string" ? payload.programName.trim() : "";
+    var configuredProgram = typeof config.programName === "string" ? config.programName.trim() : "";
+    if (!eventProgram || !configuredProgram || eventProgram.toLowerCase() !== configuredProgram.toLowerCase()) {
+      return false;
+    }
+    var eventPanel = typeof payload.panelName === "string" ? payload.panelName.trim() : "";
+    var configuredPanels = Array.isArray(config.refreshPanelNames)
+      ? config.refreshPanelNames.filter(function (value) {
+          return typeof value === "string" && value.trim();
+        })
+      : [];
+    if (!eventPanel || configuredPanels.length === 0) return false;
+    return configuredPanels.some(function (panelName) {
+      return panelName.trim().toLowerCase() === eventPanel.toLowerCase();
+    });
+  }
+
   function clearRefreshTimers() {
     state.refreshTimers.forEach(function (timer) {
       window.clearTimeout(timer);
@@ -630,11 +820,7 @@
       var detail = event && event.detail && typeof event.detail === "object" ? event.detail : {};
       if (detail.eventId !== refreshEvent) return;
       var payload = detail.payload && typeof detail.payload === "object" ? detail.payload : {};
-      var eventProgram = typeof payload.programName === "string" ? payload.programName.trim() : "";
-      var configuredProgram = typeof config.programName === "string" ? config.programName.trim() : "";
-      if (eventProgram && configuredProgram && eventProgram.toLowerCase() !== configuredProgram.toLowerCase()) {
-        return;
-      }
+      if (!refreshSourceMatches(payload)) return;
       clearRefreshTimers();
       var delays = Array.isArray(config.refreshDelaysMs)
         ? config.refreshDelaysMs.filter(function (value) {
@@ -650,11 +836,15 @@
   }
 
   function bindToolbar() {
-    document.querySelector('[data-action="create-root"]').addEventListener("click", function () {
-      void runAction("create", { name: resourceLabel }, {
+    function deleteSelectedLayers(force) {
+      void runAction("delete", { keys: highlightedKeys(), force: force }, {
         selectionPolicy: "clear",
-        successMessage: resourceLabel + " created."
+        successMessage: "Layers deleted."
       }).catch(function () {});
+    }
+
+    document.querySelector('[data-action="create-root"]').addEventListener("click", function () {
+      openCreateRootDialog();
     });
     document.querySelector('[data-action="create-child"]').addEventListener("click", function () {
       var parentKey = requireOneSelection(
@@ -669,28 +859,18 @@
       void refresh("clear-if-structure-changed").catch(function () {});
     });
     document.querySelector('[data-action="duplicate"]').addEventListener("click", function () {
-      var keys = requireSelection(
-        "selectForDuplicate",
-        "Highlight one or more " + resourceLabel.toLowerCase() + " items to duplicate."
-      );
-      if (!keys) return;
+      var keys = highlightedKeys();
       void runAction("duplicate", { keys: keys }, {
         selectionPolicy: "clear",
-        successMessage: keys.length === 1 ? "Layer duplicated." : "Layers duplicated."
+        successMessage: keys.length <= 1 ? "Layer duplicated." : "Layers duplicated."
       }).catch(function () {});
     });
     document.querySelector('[data-action="delete"]').addEventListener("click", function () {
-      var keys = requireSelection(
-        "selectForDelete",
-        "Highlight one or more " + resourceLabel.toLowerCase() + " items to delete."
-      );
-      if (!keys) return;
-      void runAction("delete", { keys: keys, force: false }, {
-        selectionPolicy: "clear",
-        successMessage: keys.length === 1 ? "Layer deleted." : "Layers deleted."
-      }).catch(function () {});
+      deleteSelectedLayers(false);
     });
-    document.querySelector('[data-action="force-delete"]').addEventListener("click", openForceDeleteDialog);
+    document.querySelector('[data-action="force-delete"]').addEventListener("click", function () {
+      deleteSelectedLayers(true);
+    });
   }
 
   function bindDialogs() {
@@ -702,7 +882,16 @@
       var name = elements.renameInput.value.trim();
       var action = state.nameDialogAction;
       var key = state.nameDialogKey;
-      if (!key || !name) return;
+      if (!name) return;
+      if (action === "create-root") {
+        closeDialogs();
+        void runAction("create", { name: name }, {
+          selectionPolicy: "clear",
+          successMessage: resourceLabel + " created."
+        }).catch(function () {});
+        return;
+      }
+      if (!key) return;
       closeDialogs();
       if (action === "create-child") {
         state.expandedKeys.add(key);
@@ -716,24 +905,13 @@
         successMessage: "Layer renamed."
       }).catch(function () {});
     });
-    elements.forceConfirm.addEventListener("click", function () {
-      var keys = requireSelection(
-        "selectForDelete",
-        "Highlight one or more " + resourceLabel.toLowerCase() + " items to delete."
-      );
-      if (!keys) return;
-      closeDialogs();
-      void runAction("delete", { keys: keys, force: true }, {
-        selectionPolicy: "clear",
-        successMessage: keys.length === 1 ? "Layer force deleted." : "Layers force deleted."
-      }).catch(function () {});
-    });
     window.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && (!elements.renameDialog.hidden || !elements.forceDialog.hidden)) {
+      if (event.key === "Escape" && !elements.renameDialog.hidden) {
         event.preventDefault();
         closeDialogs();
       }
     });
+    window.addEventListener("blur", clearDragState);
   }
 
   async function start() {

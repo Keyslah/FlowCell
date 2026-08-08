@@ -31,17 +31,30 @@ resolves the exact active record, contains the package UI in its sandbox, and
 runs only the installed `layers.jsx` through the declared
 `illustrator-layer-tree` capability; it never executes the Git copy. Highlight
 and expansion state is stored under that installed owner's `runtime/` folder.
+Layer Tree Duplicate, Delete, and Force Delete use the complete containing
+layers of Illustrator-selected objects before falling back to highlighted tree
+rows. Duplicate recursively copies each resolved layer and its full subtree.
+Each copied root uses the next compact trailing number (`name1`, `name2`) rather
+than a `copy` suffix. The `+ Layer` action opens its name input before creation.
+Force Delete dispatches immediately without a confirmation dialog. Row-body
+pointer dragging still reparents layers. The separate square beside each target
+ring selects that row's artwork when clicked and pointer-drags Illustrator's
+current artwork selection: a normal drop moves it into the destination layer,
+while an Alt-drop copies it.
 
 The 19 actions in `Illustrator Git Scripts/Layers Builder/` are also ordinary
 manifest packages. Eight are document-global and never require a Layer Tree
 highlight: Make Layers, Sort, the four lock/visibility baseline actions, Empty
-Sublayers, and Empty Trash. The other eleven resolve exact highlighted Layer
-references from the unique active Layer Tree owner's validated
+Sublayers, and Empty Trash. Nine targeted actions resolve exact highlighted
+Layer references from the unique active Layer Tree owner's validated
 `runtime/installed-page-state.json`; they do not unlock or unhide artwork merely
-to manufacture an Illustrator selection. Snapshot alone preserves a nonempty
-native Illustrator selection when that owner state is valid but has no
-highlighted rows. The other ten targeted actions, and every missing,
-ambiguous, invalid, or stale owner state, fail closed without a TEMP-file mirror.
+to manufacture an Illustrator selection. Snapshot may use a nonempty native
+Illustrator selection when that owner state is valid but has no highlighted
+rows. 3D instead prefers eligible selected Illustrator artwork and consults the
+Layer Tree only as fallback. It hides only the top-level Live root, preserving
+that root's lock and every descendant's visibility and lock state. Missing,
+ambiguous, invalid, or stale required owner state fails closed without a
+TEMP-file mirror.
 
 FlowCell starts the package-owned named-pipe bridge without launching Illustrator.
 A versioned `v2` pipe and response handshake prevent an older detached bridge from

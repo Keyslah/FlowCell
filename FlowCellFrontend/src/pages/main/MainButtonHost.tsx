@@ -15,6 +15,7 @@ export interface MainButtonHostProps {
     skin: ButtonSkin;
   };
   absolute?: boolean;
+  targetHeightOverride?: number;
   onActivate?: (
     button: MainLayoutButtonRecord,
     event: PointerEvent | KeyboardEvent
@@ -33,6 +34,7 @@ export function MainButtonHost({
   button,
   canonicalPresentation,
   absolute = true,
+  targetHeightOverride,
   onActivate,
   onDoubleActivate,
   onRequestContextMenu,
@@ -41,6 +43,27 @@ export function MainButtonHost({
   onHoverCancel
 }: MainButtonHostProps) {
   const { button: canonical, placement, skin } = canonicalPresentation;
+  const renderedPlacement = targetHeightOverride === undefined
+    ? placement
+    : { ...placement, height: targetHeightOverride };
+  const mainPageDefaultLabel = typeof canonical.metadata.mainPageDefaultLabel === "string"
+    ? canonical.metadata.mainPageDefaultLabel
+    : null;
+  const mainPageDefaultTooltip = typeof canonical.metadata.mainPageDefaultTooltip === "string"
+    ? canonical.metadata.mainPageDefaultTooltip
+    : null;
+  const effectiveCanonical = mainPageDefaultLabel !== null
+    ? {
+        ...canonical,
+        label: canonical.label === mainPageDefaultLabel ? button.label : canonical.label,
+        tooltip:
+          mainPageDefaultTooltip !== null &&
+          canonical.tooltip === mainPageDefaultTooltip
+            ? button.tooltip ?? canonical.tooltip
+            : canonical.tooltip,
+        disabled: canonical.disabled || Boolean(button.disabled)
+      }
+    : canonical;
 
   return (
     <span
@@ -50,8 +73,8 @@ export function MainButtonHost({
         left: absolute ? button.x : undefined,
         top: absolute ? button.y : undefined,
         display: "inline-block",
-        width: placement.width,
-        height: placement.height,
+        width: renderedPlacement.width,
+        height: renderedPlacement.height,
         overflow: "visible",
         pointerEvents: "none",
         // Match .rail-surface's z-index so DOM order keeps buttons above the rails.
@@ -59,8 +82,8 @@ export function MainButtonHost({
       }}
     >
       <ButtonHost
-        button={canonical}
-        placement={placement}
+        button={effectiveCanonical}
+        placement={renderedPlacement}
         skin={skin}
         selected={Boolean(button.isSelected)}
         selectionOnly={Boolean(button.scriptFileName)}

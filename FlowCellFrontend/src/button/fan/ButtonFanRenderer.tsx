@@ -16,7 +16,7 @@ import "./buttonFan.css";
 function buildCollapsedPanelOwnerDocument(args: {
   document: ButtonStateDocument;
   setup: ButtonFanSetup;
-}): { document: ButtonStateDocument; surfaceId: string } | null {
+}): { document: ButtonStateDocument; surfaceId: string; sourcePlacementId: string } | null {
   const sourcePlacement = resolvePanelOwnerFanPlacement(args.document, args.setup.id);
   if (!sourcePlacement) {
     return null;
@@ -26,6 +26,7 @@ function buildCollapsedPanelOwnerDocument(args: {
   const placementId = `button-window-panel-owner-placement:${args.setup.panelOwnerButtonId}`;
   return {
     surfaceId,
+    sourcePlacementId: sourcePlacement.id,
     document: {
       ...args.document,
       placements: {
@@ -68,6 +69,10 @@ export interface ButtonFanRendererProps {
     placementId: string,
     measurement: ButtonCoreMeasurement
   ) => void;
+  onPlacementNaturalMeasurement?: (
+    placementId: string,
+    measurement: ButtonCoreMeasurement
+  ) => void;
   onPlacementVisualMeasurement?: (
     placementId: string,
     measurement: ButtonVisualMeasurement
@@ -89,6 +94,7 @@ export function ButtonFanRenderer({
   onHoverEnd,
   onHoverCancel,
   onPlacementMeasurement,
+  onPlacementNaturalMeasurement,
   onPlacementVisualMeasurement,
   onPreparePlacementVisualStateChange,
   onPlacementVisualStateChange,
@@ -120,6 +126,8 @@ export function ButtonFanRenderer({
             surfaceId={collapsedOwner.surfaceId}
             mode="run"
             onPlacementMeasurement={onPlacementMeasurement}
+            onPlacementNaturalMeasurement={(_placementId, measurement) =>
+              onPlacementNaturalMeasurement?.(collapsedOwner.sourcePlacementId, measurement)}
             onPlacementVisualMeasurement={onPlacementVisualMeasurement}
             onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
             onPlacementVisualStateChange={onPlacementVisualStateChange}
@@ -154,6 +162,7 @@ export function ButtonFanRenderer({
         surfaceId={surface.id}
         mode="run"
         onPlacementMeasurement={onPlacementMeasurement}
+        onPlacementNaturalMeasurement={onPlacementNaturalMeasurement}
         onPlacementVisualMeasurement={onPlacementVisualMeasurement}
         onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
         onPlacementVisualStateChange={onPlacementVisualStateChange}

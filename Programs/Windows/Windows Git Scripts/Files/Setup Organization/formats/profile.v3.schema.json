@@ -1,0 +1,164 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "flowcell.windows.setup-organization.profile.v3",
+  "title": "FlowCell Setup Organization profile v3",
+  "description": "A folder tree plus per-folder file-type assignments, optional program folders, and optional post-route folder cleanup. `folders` is an ordered flat list of project-relative paths: that order is the routing order, and a file goes to the first folder whose effective extensions contain its own. `programFolders` attaches a program file group to a root-level folder that is only created when matching files are actually present, optionally organized by a nested profile.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "format",
+    "profileId",
+    "name",
+    "folders",
+    "programFolders",
+    "createdAt",
+    "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": 3
+    },
+    "format": {
+      "const": "flowcell.windows.setup-organization.profile.v3"
+    },
+    "profileId": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "recycleOtherFolders": {
+      "description": "After file routing, send folders not used by this profile to the Recycle Bin when they are empty. Folders containing an unmoved file are preserved, and profile-authored ignored folders are always protected.",
+      "type": "boolean"
+    },
+    "recyclePreviousIgnoredFolders": {
+      "description": "When empty non-profile-folder cleanup is enabled, also recycle folders listed as ignored by the previous project marker when the current profile no longer owns them. Their contents are not routed first; all current profile folders remain protected.",
+      "type": "boolean"
+    },
+    "folders": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/folder"
+      }
+    },
+    "programFolders": {
+      "description": "Program file groups that get their own root-level folder.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/programFolder"
+      }
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "required": [
+          "recyclePreviousIgnoredFolders"
+        ],
+        "properties": {
+          "recyclePreviousIgnoredFolders": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "recycleOtherFolders"
+        ],
+        "properties": {
+          "recycleOtherFolders": {
+            "const": true
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "extension": {
+      "type": "string",
+      "pattern": "^\\.[a-z0-9][a-z0-9._+\\-]*$",
+      "maxLength": 32
+    },
+    "folder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "groupIds",
+        "fileTypes",
+        "ignored",
+        "catchAll"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 520,
+          "pattern": "^(?![A-Za-z]:)(?![\\/])(?!.*(?:^|[\\/])\\.\\.(?:[\\/]|$)).+$",
+          "description": "Project-relative folder path, or \".\" for the project root itself. The root entry cannot be ignored: ignoring everything would leave nothing to organize."
+        },
+        "groupIds": {
+          "description": "References into the shared file-group namespace. Editing a group changes routing everywhere it is used.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]+$",
+            "maxLength": 128
+          }
+        },
+        "fileTypes": {
+          "description": "Extensions assigned directly to this folder, on top of any referenced groups.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/extension"
+          }
+        },
+        "ignored": {
+          "description": "When true the folder and its whole subtree are excluded from the recursive scan and nothing is ever moved out of it.",
+          "type": "boolean"
+        },
+        "catchAll": {
+          "description": "When true every file no other folder claims is collected here. At most one folder in a profile may set this, and an ignored folder may not.",
+          "type": "boolean"
+        }
+      }
+    },
+    "programFolder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "groupId",
+        "createInRoot",
+        "profileId"
+      ],
+      "properties": {
+        "groupId": {
+          "description": "A program file group. Its label names the created folder.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9._-]+$",
+          "maxLength": 128
+        },
+        "createInRoot": {
+          "description": "Create the folder at the project root only when at least one file of the group's types exists anywhere in the scan, and route those types into it.",
+          "type": "boolean"
+        },
+        "profileId": {
+          "description": "Optional saved profile applied inside the created folder. When that profile assigns this same program group to one of its folders, that folder wins and overrides the program folder root.",
+          "type": "string"
+        }
+      }
+    }
+  }
+}

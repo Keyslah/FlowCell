@@ -13,7 +13,8 @@ export const DEFAULT_BUTTON_SURFACE_ID = "surface-button-editor-main";
 export const DEFAULT_BUTTON_DOCUMENT_SETTINGS: ButtonDocumentSettings = {
   gridSize: 8,
   snapTolerance: 8,
-  defaultGap: 8,
+  buttonSpacingMm: 0,
+  defaultGap: 0,
   defaultSurfacePadding: 8,
   defaultSkinId: DEFAULT_BUTTON_SKIN_ID,
   defaultMinimumFontSize: 8,

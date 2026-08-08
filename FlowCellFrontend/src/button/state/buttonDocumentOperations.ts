@@ -7,6 +7,7 @@ import type {
   ButtonSurface
 } from "../types.js";
 import {
+  buttonSpacingPixelsFromMillimeters,
   createStarterButtonLayout
 } from "../geometry/buttonGeometry.js";
 import { cloneButtonDocument, createStableButtonId } from "./buttonDefaults.js";
@@ -93,7 +94,7 @@ export function ensureRegularPopout(
     eligible.map((button) => ({ id: button.id, width: 160, height: 44 })),
     {
       padding: document.settings.defaultSurfacePadding,
-      gap: document.settings.defaultGap,
+      gap: buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm),
       maximumColumns: 4
     }
   );
@@ -118,6 +119,9 @@ export function ensureRegularPopout(
     memberPlacementIds: [...surface.placementIds],
     openRule: "toggle",
     closeRule: "escape",
+    interactionMode: "pop",
+    ownerButtonId: null,
+    ownerPlacementId: null,
     transparency: 1,
     pinnedDefault: false,
     windowFitMode: "surface",
@@ -229,7 +233,7 @@ export function ensureFanSetup(args: {
     layoutButtons.map((button) => ({ id: button.id, width: 160, height: 44 })),
     {
       padding: args.document.settings.defaultSurfacePadding,
-      gap: args.document.settings.defaultGap,
+      gap: buttonSpacingPixelsFromMillimeters(args.document.settings.buttonSpacingMm),
       maximumColumns: 4
     }
   );
@@ -328,6 +332,11 @@ export function removeOwnedButtonGraph(
       unit.childButtonIds = unit.childButtonIds.filter((id) => !removed.has(id));
       unit.childPlacementIds = unit.childPlacementIds.filter((id) => Boolean(document.placements[id]));
       continue;
+    }
+    if (unit.ownerButtonId && removed.has(unit.ownerButtonId)) {
+      unit.interactionMode = "pop";
+      unit.ownerButtonId = null;
+      unit.ownerPlacementId = null;
     }
     unit.memberPlacementIds = unit.memberPlacementIds.filter((id) => Boolean(document.placements[id]));
     unit.memberSourceIdentities = unit.memberSourceIdentities.filter((identity) =>

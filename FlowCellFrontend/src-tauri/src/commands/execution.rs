@@ -1,5 +1,21 @@
 use crate::*;
 
+#[cfg(windows)]
+use windows_sys::Win32::Foundation::{
+    ERROR_BROKEN_PIPE, ERROR_IO_PENDING, GENERIC_READ, GENERIC_WRITE, INVALID_HANDLE_VALUE,
+    WAIT_TIMEOUT,
+};
+#[cfg(windows)]
+use windows_sys::Win32::Storage::FileSystem::{
+    CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED, OPEN_EXISTING,
+};
+#[cfg(windows)]
+use windows_sys::Win32::System::Threading::CreateEventW;
+#[cfg(windows)]
+use windows_sys::Win32::System::IO::{
+    CancelIoEx, GetOverlappedResult, GetOverlappedResultEx, OVERLAPPED,
+};
+
 pub(crate) static BLENDER_BRIDGE_REQUEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[cfg(windows)]
@@ -14,6 +30,10 @@ const ILLUSTRATOR_BRIDGE_ACTION_WAIT_MS: u64 = 25_000;
 const ILLUSTRATOR_BRIDGE_POLL_MS: u64 = 40;
 #[cfg(windows)]
 const ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES: usize = 1024 * 1024;
+#[cfg(windows)]
+const ILLUSTRATOR_BRIDGE_COMPLETION_RESPONSE_WAIT_MS: u64 = 10 * 60 * 1_000;
+#[cfg(windows)]
+const ILLUSTRATOR_BRIDGE_READ_BUFFER_BYTES: usize = 8 * 1024;
 #[cfg(windows)]
 static ILLUSTRATOR_BRIDGE_START_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 #[cfg(windows)]
@@ -475,6 +495,270 @@ enum IllustratorBridgeSendFailure {
 }
 
 #[cfg(windows)]
+struct IllustratorBridgeHandle(HANDLE);
+
+#[cfg(windows)]
+impl Drop for IllustratorBridgeHandle {
+    fn drop(&mut self) {
+        if !self.0.is_null() && self.0 != INVALID_HANDLE_VALUE {
+            unsafe {
+                let _ = CloseHandle(self.0);
+            }
+        }
+    }
+}
+
+#[cfg(windows)]
+#[derive(Debug)]
+enum IllustratorBridgeIoFailure {
+    BrokenPipe,
+    TimedOut,
+    Failed(std::io::Error),
+}
+
+#[cfg(windows)]
+fn illustrator_bridge_response_timeout(request: &Value) -> Duration {
+    let command = request
+        .get("command")
+        .and_then(Value::as_str)
+        .unwrap_or("run");
+    if command == "ping" {
+        return Duration::from_millis(ILLUSTRATOR_BRIDGE_STARTUP_WAIT_MS);
+    }
+    if command == "run"
+        && request
+            .get("wait")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    {
+        return Duration::from_millis(ILLUSTRATOR_BRIDGE_COMPLETION_RESPONSE_WAIT_MS);
+    }
+    Duration::from_millis(ILLUSTRATOR_BRIDGE_ACTION_WAIT_MS)
+}
+
+#[cfg(windows)]
+fn open_illustrator_bridge_pipe(
+    pipe_path: &str,
+) -> Result<IllustratorBridgeHandle, std::io::Error> {
+    let mut wide_path = pipe_path.encode_utf16().collect::<Vec<_>>();
+    wide_path.push(0);
+    let handle = unsafe {
+        CreateFileW(
+            wide_path.as_ptr(),
+            GENERIC_READ | GENERIC_WRITE,
+            0,
+            std::ptr::null(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED,
+            std::ptr::null_mut(),
+        )
+    };
+    if handle == INVALID_HANDLE_VALUE {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(IllustratorBridgeHandle(handle))
+    }
+}
+
+#[cfg(windows)]
+fn create_illustrator_bridge_overlapped(
+) -> Result<(IllustratorBridgeHandle, OVERLAPPED), IllustratorBridgeIoFailure> {
+    let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+    if event.is_null() {
+        return Err(IllustratorBridgeIoFailure::Failed(
+            std::io::Error::last_os_error(),
+        ));
+    }
+    let event = IllustratorBridgeHandle(event);
+    let mut overlapped = unsafe { std::mem::zeroed::<OVERLAPPED>() };
+    overlapped.hEvent = event.0;
+    Ok((event, overlapped))
+}
+
+#[cfg(windows)]
+fn illustrator_bridge_io_failure_from_last_error() -> IllustratorBridgeIoFailure {
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) {
+        IllustratorBridgeIoFailure::BrokenPipe
+    } else {
+        IllustratorBridgeIoFailure::Failed(error)
+    }
+}
+
+#[cfg(windows)]
+fn cancel_illustrator_bridge_io(handle: HANDLE, overlapped: &OVERLAPPED) {
+    unsafe {
+        let _ = CancelIoEx(handle, overlapped);
+        let mut ignored = 0u32;
+        let _ = GetOverlappedResult(handle, overlapped, &mut ignored, 1);
+    }
+}
+
+#[cfg(windows)]
+fn complete_illustrator_bridge_io(
+    handle: HANDLE,
+    overlapped: &OVERLAPPED,
+    started: BOOL,
+    deadline: Instant,
+) -> Result<u32, IllustratorBridgeIoFailure> {
+    let mut transferred = 0u32;
+    if started != 0 {
+        let completed = unsafe { GetOverlappedResult(handle, overlapped, &mut transferred, 0) };
+        return if completed != 0 {
+            Ok(transferred)
+        } else {
+            Err(illustrator_bridge_io_failure_from_last_error())
+        };
+    }
+
+    let start_error = std::io::Error::last_os_error();
+    if start_error.raw_os_error() != Some(ERROR_IO_PENDING as i32) {
+        return if start_error.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) {
+            Err(IllustratorBridgeIoFailure::BrokenPipe)
+        } else {
+            Err(IllustratorBridgeIoFailure::Failed(start_error))
+        };
+    }
+
+    let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+        cancel_illustrator_bridge_io(handle, overlapped);
+        return Err(IllustratorBridgeIoFailure::TimedOut);
+    };
+    let timeout_ms = remaining.as_millis().max(1).min(u32::MAX as u128) as u32;
+    let completed =
+        unsafe { GetOverlappedResultEx(handle, overlapped, &mut transferred, timeout_ms, 0) };
+    if completed != 0 {
+        return Ok(transferred);
+    }
+    let error = std::io::Error::last_os_error();
+    if error.raw_os_error() == Some(WAIT_TIMEOUT as i32) {
+        cancel_illustrator_bridge_io(handle, overlapped);
+        Err(IllustratorBridgeIoFailure::TimedOut)
+    } else if error.raw_os_error() == Some(ERROR_BROKEN_PIPE as i32) {
+        Err(IllustratorBridgeIoFailure::BrokenPipe)
+    } else {
+        Err(IllustratorBridgeIoFailure::Failed(error))
+    }
+}
+
+#[cfg(windows)]
+fn illustrator_bridge_io_error(
+    failure: IllustratorBridgeIoFailure,
+    operation: &str,
+    request_id: &str,
+    timeout: Duration,
+) -> IllustratorBridgeSendFailure {
+    match failure {
+        IllustratorBridgeIoFailure::TimedOut => IllustratorBridgeSendFailure::Failed(format!(
+            "Illustrator bridge response timed out after {} seconds for request '{request_id}' while {operation}. The local pipe operation was cancelled; Illustrator may still be completing the action.",
+            timeout.as_secs()
+        )),
+        IllustratorBridgeIoFailure::BrokenPipe => IllustratorBridgeSendFailure::Failed(format!(
+            "Illustrator bridge closed the pipe while {operation} for request '{request_id}'."
+        )),
+        IllustratorBridgeIoFailure::Failed(error) => IllustratorBridgeSendFailure::Failed(
+            format!("Illustrator bridge failed while {operation} for request '{request_id}': {error}"),
+        ),
+    }
+}
+
+#[cfg(windows)]
+fn write_illustrator_bridge_request(
+    pipe: &IllustratorBridgeHandle,
+    request_line: &[u8],
+    deadline: Instant,
+) -> Result<(), IllustratorBridgeIoFailure> {
+    let mut written = 0usize;
+    while written < request_line.len() {
+        let (_event, mut overlapped) = create_illustrator_bridge_overlapped()?;
+        let remaining = &request_line[written..];
+        let byte_count = u32::try_from(remaining.len()).map_err(|_| {
+            IllustratorBridgeIoFailure::Failed(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "Illustrator bridge request is too large.",
+            ))
+        })?;
+        let started = unsafe {
+            WriteFile(
+                pipe.0,
+                remaining.as_ptr(),
+                byte_count,
+                std::ptr::null_mut(),
+                &mut overlapped,
+            )
+        };
+        let transferred = complete_illustrator_bridge_io(pipe.0, &overlapped, started, deadline)?;
+        if transferred == 0 {
+            return Err(IllustratorBridgeIoFailure::Failed(std::io::Error::new(
+                std::io::ErrorKind::WriteZero,
+                "Illustrator bridge accepted no request bytes.",
+            )));
+        }
+        written += transferred as usize;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn read_illustrator_bridge_response(
+    pipe: &IllustratorBridgeHandle,
+    deadline: Instant,
+) -> Result<String, IllustratorBridgeIoFailure> {
+    let mut response = Vec::<u8>::new();
+    loop {
+        if response.len() > ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES {
+            return Err(IllustratorBridgeIoFailure::Failed(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!(
+                    "Illustrator bridge response exceeded {ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES} bytes."
+                ),
+            )));
+        }
+        let remaining_capacity = ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES + 1 - response.len();
+        let mut buffer = [0u8; ILLUSTRATOR_BRIDGE_READ_BUFFER_BYTES];
+        let read_capacity = remaining_capacity.min(buffer.len());
+        let (_event, mut overlapped) = create_illustrator_bridge_overlapped()?;
+        let started = unsafe {
+            ReadFile(
+                pipe.0,
+                buffer.as_mut_ptr(),
+                read_capacity as u32,
+                std::ptr::null_mut(),
+                &mut overlapped,
+            )
+        };
+        let transferred =
+            match complete_illustrator_bridge_io(pipe.0, &overlapped, started, deadline) {
+                Ok(transferred) => transferred as usize,
+                Err(IllustratorBridgeIoFailure::BrokenPipe) if !response.is_empty() => break,
+                Err(failure) => return Err(failure),
+            };
+        if transferred == 0 {
+            break;
+        }
+        response.extend_from_slice(&buffer[..transferred]);
+        if let Some(line_end) = response.iter().position(|byte| *byte == b'\n') {
+            response.truncate(line_end);
+            break;
+        }
+    }
+    if response.len() > ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES {
+        return Err(IllustratorBridgeIoFailure::Failed(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!(
+                "Illustrator bridge response exceeded {ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES} bytes."
+            ),
+        )));
+    }
+    String::from_utf8(response).map_err(|error| {
+        IllustratorBridgeIoFailure::Failed(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("Illustrator bridge response was not valid UTF-8: {error}"),
+        ))
+    })
+}
+
+#[cfg(windows)]
 fn parse_illustrator_bridge_response(raw: &str, request: &Value) -> Result<Value, String> {
     let request_id = request
         .get("requestId")
@@ -531,7 +815,7 @@ fn parse_illustrator_bridge_response(raw: &str, request: &Value) -> Result<Value
 fn try_send_illustrator_bridge_request(
     request: &Value,
 ) -> Result<Value, IllustratorBridgeSendFailure> {
-    let _request_id = request
+    let request_id = request
         .get("requestId")
         .and_then(Value::as_str)
         .ok_or_else(|| {
@@ -539,50 +823,40 @@ fn try_send_illustrator_bridge_request(
                 "Illustrator bridge request is missing requestId.".to_string(),
             )
         })?;
-    let mut pipe = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(ILLUSTRATOR_BRIDGE_PIPE_PATH)
-        .map_err(|error| {
-            let message = format!("Illustrator bridge pipe is unavailable: {error}");
-            if error.raw_os_error() == Some(WINDOWS_ERROR_PIPE_BUSY) {
-                IllustratorBridgeSendFailure::Busy(message)
-            } else {
-                IllustratorBridgeSendFailure::Unavailable(message)
-            }
-        })?;
+    let pipe = open_illustrator_bridge_pipe(ILLUSTRATOR_BRIDGE_PIPE_PATH).map_err(|error| {
+        let message = format!("Illustrator bridge pipe is unavailable: {error}");
+        if error.raw_os_error() == Some(WINDOWS_ERROR_PIPE_BUSY) {
+            IllustratorBridgeSendFailure::Busy(message)
+        } else {
+            IllustratorBridgeSendFailure::Unavailable(message)
+        }
+    })?;
+    let response_timeout = illustrator_bridge_response_timeout(request);
+    let deadline = Instant::now() + response_timeout;
     let mut request_line = serde_json::to_string(request).map_err(|error| {
         IllustratorBridgeSendFailure::Failed(format!(
             "Failed to encode Illustrator bridge request: {error}"
         ))
     })?;
     request_line.push('\n');
-    pipe.write_all(request_line.as_bytes()).map_err(|error| {
-        IllustratorBridgeSendFailure::Failed(format!(
-            "Failed to write Illustrator bridge request: {error}"
-        ))
+    write_illustrator_bridge_request(&pipe, request_line.as_bytes(), deadline).map_err(
+        |failure| {
+            illustrator_bridge_io_error(
+                failure,
+                "writing the request",
+                request_id,
+                response_timeout,
+            )
+        },
+    )?;
+    let response = read_illustrator_bridge_response(&pipe, deadline).map_err(|failure| {
+        illustrator_bridge_io_error(
+            failure,
+            "waiting for the response",
+            request_id,
+            response_timeout,
+        )
     })?;
-    pipe.flush().map_err(|error| {
-        IllustratorBridgeSendFailure::Failed(format!(
-            "Failed to flush Illustrator bridge request: {error}"
-        ))
-    })?;
-
-    let mut response = String::new();
-    let mut limited_reader = std::io::Read::take(
-        std::io::BufReader::new(pipe),
-        (ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES + 1) as u64,
-    );
-    std::io::Read::read_to_string(&mut limited_reader, &mut response).map_err(|error| {
-        IllustratorBridgeSendFailure::Failed(format!(
-            "Failed to read Illustrator bridge response: {error}"
-        ))
-    })?;
-    if response.len() > ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES {
-        return Err(IllustratorBridgeSendFailure::Failed(format!(
-            "Illustrator bridge response exceeded {ILLUSTRATOR_BRIDGE_MAX_RESPONSE_BYTES} bytes."
-        )));
-    }
     parse_illustrator_bridge_response(&response, request)
         .map_err(IllustratorBridgeSendFailure::Failed)
 }
@@ -939,11 +1213,12 @@ pub(crate) fn run_illustrator_bridge_action_direct(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, windows))]
 fn illustrator_bridge_test_response(request_id: &str) -> String {
     json!({
         "ok": true,
         "accepted": true,
+        "protocolVersion": ILLUSTRATOR_BRIDGE_PROTOCOL_VERSION,
         "requestId": request_id,
         "actionId": "flowcell_button_test"
     })
@@ -952,8 +1227,22 @@ fn illustrator_bridge_test_response(request_id: &str) -> String {
 
 #[cfg(all(test, windows))]
 mod illustrator_bridge_tests {
-    use super::{illustrator_bridge_test_response, parse_illustrator_bridge_response};
+    use super::{
+        illustrator_bridge_response_timeout, illustrator_bridge_test_response,
+        open_illustrator_bridge_pipe, parse_illustrator_bridge_response,
+        read_illustrator_bridge_response, write_illustrator_bridge_request,
+        IllustratorBridgeHandle, IllustratorBridgeIoFailure, ILLUSTRATOR_BRIDGE_ACTION_WAIT_MS,
+        ILLUSTRATOR_BRIDGE_COMPLETION_RESPONSE_WAIT_MS, ILLUSTRATOR_BRIDGE_STARTUP_WAIT_MS,
+    };
     use serde_json::json;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+    use windows_sys::Win32::Foundation::{ERROR_PIPE_CONNECTED, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Storage::FileSystem::{ReadFile, PIPE_ACCESS_DUPLEX};
+    use windows_sys::Win32::System::Pipes::{
+        ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_BYTE, PIPE_TYPE_BYTE, PIPE_WAIT,
+    };
 
     fn async_request(request_id: &str) -> serde_json::Value {
         json!({
@@ -972,7 +1261,7 @@ mod illustrator_bridge_tests {
 
     #[test]
     fn bridge_response_surfaces_bridge_errors() {
-        let response = r#"{"ok":false,"error":"Illustrator failed."}"#;
+        let response = r#"{"protocolVersion":2,"ok":false,"error":"Illustrator failed."}"#;
         assert_eq!(
             parse_illustrator_bridge_response(response, &async_request("request-a")).unwrap_err(),
             "Illustrator failed."
@@ -981,7 +1270,7 @@ mod illustrator_bridge_tests {
 
     #[test]
     fn asynchronous_bridge_response_requires_acceptance() {
-        let response = r#"{"ok":true,"requestId":"request-a"}"#;
+        let response = r#"{"protocolVersion":2,"ok":true,"requestId":"request-a"}"#;
         assert_eq!(
             parse_illustrator_bridge_response(response, &async_request("request-a")).unwrap_err(),
             "Illustrator bridge did not acknowledge the action as accepted."
@@ -992,6 +1281,130 @@ mod illustrator_bridge_tests {
             "wait": true
         });
         assert!(parse_illustrator_bridge_response(response, &waited_request).is_ok());
+    }
+
+    #[test]
+    fn bridge_response_deadlines_are_finite_and_allow_completion_waits() {
+        let ping = json!({ "command": "ping", "requestId": "ping" });
+        assert_eq!(
+            illustrator_bridge_response_timeout(&ping),
+            Duration::from_millis(ILLUSTRATOR_BRIDGE_STARTUP_WAIT_MS)
+        );
+        assert_eq!(
+            illustrator_bridge_response_timeout(&async_request("async")),
+            Duration::from_millis(ILLUSTRATOR_BRIDGE_ACTION_WAIT_MS)
+        );
+        let waited_request = json!({
+            "command": "run",
+            "requestId": "waited",
+            "wait": true
+        });
+        assert_eq!(
+            illustrator_bridge_response_timeout(&waited_request),
+            Duration::from_millis(ILLUSTRATOR_BRIDGE_COMPLETION_RESPONSE_WAIT_MS)
+        );
+    }
+
+    #[test]
+    fn silent_connected_bridge_read_is_cancelled_at_deadline() {
+        let pipe_path = format!(
+            r"\\.\pipe\FlowCell.Illustrator.Bridge.TimeoutTest.{}.{}",
+            std::process::id(),
+            crate::current_precise_timestamp_token()
+        );
+        let server_pipe_path = pipe_path.clone();
+        let (ready_tx, ready_rx) = mpsc::sync_channel::<Result<(), String>>(1);
+        let (release_tx, release_rx) = mpsc::sync_channel::<()>(1);
+        let server = thread::spawn(move || -> Result<(), String> {
+            let mut wide_path = server_pipe_path.encode_utf16().collect::<Vec<_>>();
+            wide_path.push(0);
+            let handle = unsafe {
+                CreateNamedPipeW(
+                    wide_path.as_ptr(),
+                    PIPE_ACCESS_DUPLEX,
+                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                    1,
+                    4 * 1024,
+                    4 * 1024,
+                    0,
+                    std::ptr::null(),
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                let message = format!(
+                    "Failed to create silent Illustrator test pipe: {}",
+                    std::io::Error::last_os_error()
+                );
+                let _ = ready_tx.send(Err(message.clone()));
+                return Err(message);
+            }
+            let _server_handle = IllustratorBridgeHandle(handle);
+            ready_tx
+                .send(Ok(()))
+                .map_err(|error| format!("Failed to publish test-pipe readiness: {error}"))?;
+            let connected = unsafe { ConnectNamedPipe(handle, std::ptr::null_mut()) };
+            if connected == 0 {
+                let error = std::io::Error::last_os_error();
+                if error.raw_os_error() != Some(ERROR_PIPE_CONNECTED as i32) {
+                    return Err(format!(
+                        "Failed to connect silent Illustrator test pipe: {error}"
+                    ));
+                }
+            }
+            let mut request = [0u8; 4 * 1024];
+            let mut bytes_read = 0u32;
+            let read = unsafe {
+                ReadFile(
+                    handle,
+                    request.as_mut_ptr(),
+                    request.len() as u32,
+                    &mut bytes_read,
+                    std::ptr::null_mut(),
+                )
+            };
+            if read == 0 {
+                return Err(format!(
+                    "Failed to read the silent Illustrator test request: {}",
+                    std::io::Error::last_os_error()
+                ));
+            }
+            release_rx
+                .recv_timeout(Duration::from_secs(2))
+                .map_err(|error| {
+                    format!("Silent Illustrator test pipe was not released: {error}")
+                })?;
+            Ok(())
+        });
+
+        ready_rx
+            .recv_timeout(Duration::from_secs(2))
+            .expect("silent Illustrator test pipe did not become ready")
+            .expect("silent Illustrator test pipe could not be created");
+        let pipe =
+            open_illustrator_bridge_pipe(&pipe_path).expect("test pipe client could not connect");
+        write_illustrator_bridge_request(
+            &pipe,
+            b"{\"command\":\"ping\",\"requestId\":\"timeout-test\"}\n",
+            Instant::now() + Duration::from_secs(1),
+        )
+        .expect("test pipe request could not be written");
+
+        let started = Instant::now();
+        let response =
+            read_illustrator_bridge_response(&pipe, Instant::now() + Duration::from_millis(50));
+        release_tx
+            .send(())
+            .expect("silent Illustrator test pipe could not be released");
+        let failure = response
+            .err()
+            .expect("silent test pipe unexpectedly returned a response");
+        assert!(matches!(failure, IllustratorBridgeIoFailure::TimedOut));
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(pipe);
+        server
+            .join()
+            .expect("silent Illustrator test-pipe thread panicked")
+            .expect("silent Illustrator test-pipe thread failed");
     }
 }
 
@@ -1337,7 +1750,7 @@ pub(crate) fn spawn_via_cmd_start(script_path: &Path) -> Result<(), String> {
         .map_err(|error| format!("Failed to start {}: {error}", script_path.display()))
 }
 
-fn windows_child_process_path(path: &Path) -> PathBuf {
+pub(crate) fn windows_child_process_path(path: &Path) -> PathBuf {
     let value = path.to_string_lossy();
     if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
         return PathBuf::from(format!(r"\\{rest}"));

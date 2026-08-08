@@ -13,7 +13,8 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { FlowCellBounds } from "../../types";
 import {
   registerLayoutWindow,
-  unregisterLayoutWindow
+  unregisterLayoutWindow,
+  writeRegisteredLayoutWindowSnapshotBounds
 } from "../../lib/layoutSnapshots";
 import {
   registerScopedWindowTopmost,
@@ -39,8 +40,8 @@ import { afterPendingWindowOpens } from "./pendingWindowOpen";
 export const BUTTON_EDITOR_WINDOW_LABEL = "flowcell-button-editor";
 export const BUTTON_WINDOW_CONTEXT_UPDATE_EVENT = "flowcell:button-window-context";
 
-const DEFAULT_EDITOR_WIDTH = 1240;
-const DEFAULT_EDITOR_HEIGHT = 860;
+const DEFAULT_EDITOR_WIDTH = 2093;
+const DEFAULT_EDITOR_HEIGHT = 1322;
 const DEFAULT_POPOUT_WIDTH = 560;
 const DEFAULT_POPOUT_HEIGHT = 360;
 const DEFAULT_FAN_WIDTH = 132;
@@ -532,8 +533,12 @@ export async function openButtonEditorWindow(args: {
       target.isVisible().catch(() => false),
       existed ? readWindowBounds(target) : Promise.resolve(null)
     ]);
+    const shouldMaximize = !isUsableBounds(args.bounds) && !visible;
     if (args.bounds || !visible || (existed && !isUsableBounds(currentBounds))) {
       await applyWindowPlacement(target, placement);
+    }
+    if (shouldMaximize) {
+      await target.maximize();
     }
     registerLayoutWindow({
       windowLabel,
@@ -543,6 +548,7 @@ export async function openButtonEditorWindow(args: {
       snapshotBounds: args.bounds ?? undefined
     });
     await showWindow(target, true);
+    writeRegisteredLayoutWindowSnapshotBounds(windowLabel, await readWindowBounds(target));
     if (existed) {
       await emitContextUpdate(windowLabel, context);
     }

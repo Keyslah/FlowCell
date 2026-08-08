@@ -12,7 +12,9 @@ Repository guardrails
 - Protect context aggressively.
 - Cap unknown command output by bytes.
 - Validate based on risk.
-- When a FlowCell change requires a new build, automatically run that build before finishing the task.
+- If any build-affecting FlowCell source changed during the task (frontend, Tauri/Rust, build configuration, or bundled/generated runtime assets), rebuild the compiled release before finishing, even when the final follow-up edit is only local state or data. Judge this across the whole task, not only the last file touched.
+- Use `flowcellbackend/helpers/Start-FlowCellFrontend.ps1 -ForceRestart` as the normal full stop/build/stamp/restart path. Run it once after all build-affecting edits and before the final response.
+- Skip that release rebuild only when no build-affecting source changed, or when the user explicitly says not to rebuild/restart; state the exact reason in the final summary.
 - Final summaries must state changed files, validation run, skipped validation reasons, and remaining risks.
 
 Optional Memtrace policy

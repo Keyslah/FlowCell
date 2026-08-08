@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "id":  "blender.rotate",
-    "version":  "1.0.0",
+    "version":  "1.1.0",
     "label":  "rotate",
     "tooltip":  "rotate objects with, transform, and distribute(evenly spaced copies around pivot)",
     "kind":  "toolset",
@@ -163,6 +163,11 @@
                                          "command":  "apply_positive",
                                          "action":  "apply_positive"
                                      }
+                     },
+                     {
+                         "slot":  "value_input",
+                         "label":  "Value",
+                         "tooltip":  "Click anywhere on this Button, then type the transform angle or distribution count."
                      }
                  ],
     "layout":  {
@@ -172,6 +177,17 @@
                    "padding":  8,
                    "width":  640,
                    "height":  300,
+                   "updatePolicy":  {
+                                         "appendMissingChildSlots":  true
+                                     },
+                   "placements":  {
+                                      "value_input":  {
+                                                            "x":  160,
+                                                            "y":  208,
+                                                            "width":  144,
+                                                            "height":  42
+                                                        }
+                                  },
                    "fields":  [
                                   {
                                       "id":  "axis",
@@ -192,19 +208,18 @@
                                       "hidden":  true
                                   },
                                   {
-                                      "id":  "angle_deg",
+                                      "id":  "value",
                                       "kind":  "number",
-                                      "label":  "Angle",
-                                      "payloadKey":  "angle_deg",
+                                      "label":  "Value",
+                                      "payloadKey":  "value",
                                       "defaultValue":  15,
-                                      "minimum":  0,
-                                      "maximum":  360,
                                       "step":  1,
                                       "x":  8,
-                                      "y":  248,
-                                      "width":  132,
+                                      "y":  8,
+                                      "width":  120,
                                       "height":  36,
-                                      "zIndex":  2
+                                      "zIndex":  1,
+                                      "hidden":  true
                                   },
                                   {
                                       "id":  "center_mode",
@@ -242,21 +257,6 @@
                                       "height":  36,
                                       "zIndex":  1,
                                       "hidden":  true
-                                  },
-                                  {
-                                      "id":  "distribute_count",
-                                      "kind":  "number",
-                                      "label":  "Copies",
-                                      "payloadKey":  "distribute_count",
-                                      "defaultValue":  3,
-                                      "minimum":  1,
-                                      "maximum":  360,
-                                      "step":  1,
-                                      "x":  148,
-                                      "y":  248,
-                                      "width":  132,
-                                      "height":  36,
-                                      "zIndex":  2
                                   }
                               ],
                    "childBehaviors":  {
@@ -268,15 +268,16 @@
                                           "center_world":  { "fieldPatch": { "center_mode": "WORLD" }, "execute": false },
                                           "center_cursor":  { "fieldPatch": { "center_mode": "CURSOR" }, "execute": false },
                                           "center_object":  { "fieldPatch": { "center_mode": "OBJECT" }, "execute": false },
-                                          "mode_transform":  { "fieldPatch": { "operation_mode": "TRANSFORM" }, "execute": false },
-                                          "mode_distribute":  { "fieldPatch": { "operation_mode": "DISTRIBUTE" }, "execute": false },
-                                          "preset_30":  { "fieldPatch": { "angle_deg": 30, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
-                                          "preset_45":  { "fieldPatch": { "angle_deg": 45, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
-                                          "preset_90":  { "fieldPatch": { "angle_deg": 90, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
-                                          "preset_180":  { "fieldPatch": { "angle_deg": 180, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
-                                          "preset_270":  { "fieldPatch": { "angle_deg": 270, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
-                                          "apply_negative":  { "execute": true, "payloadTemplate": { "command": "apply", "direction": "negative", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } },
-                                          "apply_positive":  { "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "angle_deg" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "distribute_count" } } }
+                                          "mode_transform":  { "fieldPatch": { "operation_mode": "TRANSFORM" }, "activationPatch": { "value": 15 }, "execute": false },
+                                          "mode_distribute":  { "fieldPatch": { "operation_mode": "DISTRIBUTE" }, "activationPatch": { "value": 3 }, "execute": false },
+                                          "preset_30":  { "fieldPatch": { "value": 30, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
+                                          "preset_45":  { "fieldPatch": { "value": 45, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
+                                          "preset_90":  { "fieldPatch": { "value": 90, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
+                                          "preset_180":  { "fieldPatch": { "value": 180, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
+                                          "preset_270":  { "fieldPatch": { "value": 270, "operation_mode": "TRANSFORM" }, "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
+                                          "apply_negative":  { "execute": true, "payloadTemplate": { "command": "apply", "direction": "negative", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
+                                          "apply_positive":  { "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "distribute_count": { "$field": "value" } } },
+                                          "value_input":  { "inlineEditField": "value", "execute": false }
                                       }
                }
 }

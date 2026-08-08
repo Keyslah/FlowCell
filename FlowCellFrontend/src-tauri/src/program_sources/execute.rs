@@ -406,6 +406,11 @@ fn windows_script_capability_command(
             "Windows request/response capabilities require an installed .ps1 source.".to_string(),
         );
     }
+    // Ownership resolution canonicalizes installed sources to verbatim
+    // `\\?\` paths. Windows PowerShell 5.1 cannot provider-resolve those when
+    // the script is invoked with `&`, so hand the child the equivalent DOS/UNC
+    // spelling just like the ordinary Windows Button runner does.
+    let source_path = crate::commands::execution::windows_child_process_path(source_path);
     Ok(format!(
         "& '{}' -FlowCellCapability '{}' -ArgsJson '{}'",
         crate::escape_powershell_single_quoted(&source_path.to_string_lossy()),
@@ -443,6 +448,16 @@ fn run_windows_script_capability(
     } else {
         Ok(stdout)
     }
+}
+
+fn blender_bridge_capability_payload(response: Value) -> Result<Value, String> {
+    let mut payload = response.as_object().cloned().ok_or_else(|| {
+        "Blender bridge capability response must use an object envelope.".to_string()
+    })?;
+    for transport_field in ["id", "status", "display"] {
+        payload.remove(transport_field);
+    }
+    Ok(Value::Object(payload))
 }
 
 pub(crate) fn run_program_capability_action_blocking(
@@ -488,7 +503,8 @@ pub(crate) fn run_program_capability_action_blocking(
                 resolution.record.bridge_action.trim(),
                 args,
             )?;
-            serde_json::to_string(&response)
+            let payload = blender_bridge_capability_payload(response)?;
+            serde_json::to_string(&payload)
                 .map_err(|error| format!("Failed to encode capability response: {error}"))
         }
         runner => Err(format!(
@@ -815,8 +831,8 @@ pub(crate) fn run_active_button_event(
 #[cfg(test)]
 mod tests {
     use super::{
-        declared_blender_button_event_action, illustrator_wait_for_completion,
-        path_components_end_with, run_active_toolset_state_query,
+        blender_bridge_capability_payload, declared_blender_button_event_action,
+        illustrator_wait_for_completion, path_components_end_with, run_active_toolset_state_query,
         windows_script_capability_command, ActiveSourceResolution,
     };
     use crate::program_sources::records::{
@@ -947,6 +963,27 @@ mod tests {
     }
 
     #[test]
+    fn blender_capabilities_strip_transport_fields_before_schema_validation() {
+        let payload = blender_bridge_capability_payload(json!({
+            "id": "flowcell-123",
+            "status": "ok",
+            "display": "Current Blender file",
+            "message": "Current Blender file: C:\\Projects\\Example.blend",
+            "saved": true,
+            "filePath": "C:\\Projects\\Example.blend"
+        }))
+        .expect("Blender capability payload");
+        assert_eq!(
+            payload,
+            json!({
+                "message": "Current Blender file: C:\\Projects\\Example.blend",
+                "saved": true,
+                "filePath": "C:\\Projects\\Example.blend"
+            })
+        );
+    }
+
+    #[test]
     fn windows_capabilities_use_only_the_installed_powershell_source_and_typed_arguments() {
         let command = windows_script_capability_command(
             Path::new(r"D:\FlowCell\Windows Local Scripts\owner\source\handler.ps1"),
@@ -957,6 +994,20 @@ mod tests {
         assert_eq!(
             command,
             r#"& 'D:\FlowCell\Windows Local Scripts\owner\source\handler.ps1' -FlowCellCapability 'windows.example' -ArgsJson '{"value":"Aaron''s file"}'"#
+        );
+    }
+
+    #[test]
+    fn windows_capabilities_remove_verbatim_paths_before_powershell_provider_resolution() {
+        let command = windows_script_capability_command(
+            Path::new(r"\\?\D:\FlowCell\Windows Local Scripts\owner\source\handler.ps1"),
+            "windows.example",
+            "{}",
+        )
+        .expect("PowerShell capability command");
+        assert_eq!(
+            command,
+            r#"& 'D:\FlowCell\Windows Local Scripts\owner\source\handler.ps1' -FlowCellCapability 'windows.example' -ArgsJson '{}'"#
         );
     }
 

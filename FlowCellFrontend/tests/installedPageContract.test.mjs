@@ -71,8 +71,15 @@ test("installed pages use a raw WRY boundary without Tauri initialization script
   assert.match(host, /hasRawWryIpc/);
   assert.match(host, /default-world proof was not received/);
   assert.doesNotMatch(host, /probe_installed_page_webview_security/);
-  assert.match(nativeWebview, /WebViewBuilder::new\(\)/);
-  assert.match(nativeWebview, /build_as_child/);
+  assert.match(nativeWebview, /parent_webview\.environment\(\)/);
+  const rawChildBuilder = nativeWebview.match(
+    /WebViewBuilder::new\(\)[\s\S]*?\.build_as_child\(&parent\)/
+  )?.[0] ?? "";
+  assert.match(
+    rawChildBuilder,
+    /\.with_environment\(parent_environment\)/,
+    "the raw installed-page child must reuse its parent WebView2 environment"
+  );
   assert.match(nativeWebview, /security_probe_passed/);
   assert.match(nativeWebview, /compare_exchange\([\s\S]*ISOLATION_PENDING/);
   assert.doesNotMatch(nativeWebview, /evaluate_script_with_callback|recv_timeout/);
@@ -93,6 +100,15 @@ test("installed pages use a raw WRY boundary without Tauri initialization script
     coreWindows,
     /existing\.once\("tauri:\/\/destroyed"[\s\S]*existing\.close\(\)[\s\S]*await destroyed/
   );
+  assert.match(coreWindows, /registerLayoutWindow\(\{[\s\S]*kind:\s*"installed-page"/);
+  assert.match(coreWindows, /installedPageFileName:\s*args\.fileName/);
+  assert.match(coreWindows, /installedPageId:\s*args\.pageId/);
+  assert.match(coreWindows, /resolveInstalledPageOpenDescriptor[\s\S]*resolve_installed_page/);
+  assert.match(coreWindows, /resolveAndOpenInstalledPageWindow[\s\S]*resolveInstalledPageOpenDescriptor/);
+  assert.match(coreWindows, /savedBounds:\s*args\.bounds/);
+  assert.match(coreWindows, /placement\.unit === "physical"[\s\S]*new PhysicalPosition/);
+  assert.match(coreWindows, /placement\.unit === "physical"[\s\S]*new PhysicalSize/);
+  assert.match(coreWindows, /await destroyed;[\s\S]*unregisterLayoutWindow\(label\)/);
   assert.match(
     coreWindows,
     /openInstalledPageWindow[\s\S]*decorations:\s*true,[\s\S]*programName:\s*args\.programName/,
@@ -124,6 +140,39 @@ test("installed-page styles stay scoped away from transparent Pop and Fan roots"
   );
   assert.match(styles, /\.installed-page-host\s*\{/);
   assert.doesNotMatch(styles, /(^|,)\s*(?::root|html|body|#root)\s*(?:,|\{)/m);
+});
+
+test("generated page Buttons update by authenticated package identity instead of duplicating", () => {
+  const broker = read(
+    frontendRoot,
+    "src",
+    "pages",
+    "installed-page",
+    "installedPageCoreBroker.ts"
+  );
+  const nativePage = read(
+    frontendRoot,
+    "src-tauri",
+    "src",
+    "program_sources",
+    "installed_page.rs"
+  );
+  assert.match(nativePage, /AuthorizedGeneratedStage[\s\S]*package_id:\s*String/);
+  assert.match(nativePage, /package_id:\s*stage\.paths\.package_id/);
+  assert.match(broker, /authorizedStage\.packageId/);
+  assert.match(broker, /subtle\.digest\("SHA-256"/);
+  assert.match(broker, /existingOwner\s*\?\s*updateButtonSource\s*:\s*installButtonSource/);
+  assert.match(broker, /applyInstalledSourceUpdate\(next, installed\)/);
+  assert.match(broker, /existingOwner\?\.sourceIdentity\?\.displayPanelName\s*\|\|\s*panelName/);
+  assert.doesNotMatch(broker, /createStableButtonId\("button-generated"\)/);
+  assert.match(
+    read(frontendRoot, "src", "button", "state", "ButtonStateRepository.ts"),
+    /invoke<Record<string, unknown>>\("update_button_source"/
+  );
+  assert.match(
+    read(frontendRoot, "src-tauri", "src", "main.rs"),
+    /program_sources::install::update_button_source/
+  );
 });
 
 test("Illustrator page bridge reacquires stale COM once without replaying script errors", () => {

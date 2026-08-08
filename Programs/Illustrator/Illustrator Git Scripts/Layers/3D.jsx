@@ -2,11 +2,11 @@
 #target illustrator
 
 /*
- * Saves selected Live targets into 3D > [name] > dN, hides the matching
- * Live targets, and makes the new 3D entries visible and editable.
+ * Saves selected Live targets into 3D > [name] > dN, hides only the Live
+ * root, and makes the new 3D entries visible and editable.
  */
 (function () {
-    var SCRIPT_VERSION = "2026-03-25 3D hide old/live";
+    var SCRIPT_VERSION = "2026-07-31 3D live root only";
     var LOG_PATH = Folder.temp.fsName + "/Illustrator_Save_3D_Debug.log";
 
     if (app.documents.length === 0) {
@@ -27,13 +27,17 @@
 
     try {
         resetLog(doc);
-        roots = ensureRootLayers(doc);
         var targets = resolveTargets(doc);
         var report = [];
         var i;
 
         logLine("Resolved target count: " + targets.length);
 
+        if (targets.length === 0) {
+            return;
+        }
+
+        roots = ensureRootLayers(doc);
         roots.threeD.visible = true;
         roots.threeD.locked = false;
 
@@ -54,18 +58,22 @@
 
             if (target.kind === "layer") {
                 sourceState = captureBranchState(target.layer);
-                unlockBranchFromState(sourceState);
-                copyLayerContents(target.layer, threeDEntry, sourceState);
-                restoreBranchState(sourceState);
+                try {
+                    unlockBranchFromState(sourceState);
+                    copyLayerContents(target.layer, threeDEntry, sourceState);
+                } finally {
+                    restoreBranchState(sourceState);
+                }
                 unlockBranch(threeDEntry);
-                hideLiveTargetLayer(target.layer);
             } else if (target.kind === "item") {
                 sourceState = captureItemState(target.item);
-                unlockItemFromState(sourceState);
-                copySingleItem(target.item, threeDEntry, sourceState);
-                restoreItemFromState(sourceState);
+                try {
+                    unlockItemFromState(sourceState);
+                    copySingleItem(target.item, threeDEntry, sourceState);
+                } finally {
+                    restoreItemFromState(sourceState);
+                }
                 unlockBranch(threeDEntry);
-                hideLiveTargetItem(target.item);
             } else {
                 throw new Error("Unsupported target kind: " + target.kind);
             }
@@ -79,9 +87,7 @@
 
         syncContainerOrderToLive(roots.threeD, roots.live);
 
-        if (targets.length > 0) {
-            hideSourceLayer(roots.live);
-        }
+        hideLiveRoot(roots.live);
     } catch (err) {
         logLine("Exception: " + err);
     } finally {
@@ -361,6 +367,11 @@
     }
 
     function addPreferredItemTarget(targets, item) {
+        var itemType = safeRead(item, "typename", "");
+        if (itemType === "InsertionPoint" || itemType === "TextRange") {
+            return;
+        }
+
         var ownerLayer = getDeepestEligibleLayerForItem(item);
 
         if (ownerLayer) {
@@ -872,48 +883,14 @@
         }
     }
 
-    function hideLiveTargetLayer(layer) {
-        var liveBranch = getTopLevelLiveChild(layer);
-
-        if (liveBranch) {
-            hideSourceLayer(liveBranch);
+    function hideLiveRoot(liveRoot) {
+        if (!liveRoot) {
             return;
         }
 
-        hideSourceLayer(layer);
-    }
-
-    function hideLiveTargetItem(item) {
-        var liveBranch;
-        var itemLayer = getItemOwningLayer(item);
-
-        if (itemLayer) {
-            liveBranch = getTopLevelLiveChild(itemLayer);
-            if (liveBranch && liveBranch !== itemLayer) {
-                hideSourceLayer(liveBranch);
-                return;
-            }
-        }
-
-        hideSourceItem(item);
-    }
-
-    function getTopLevelLiveChild(layer) {
-        var current = layer;
-
-        if (!layer) {
-            return null;
-        }
-
-        while (current.parent && current.parent.typename === "Layer") {
-            if (current.parent.name === ROOT_LIVE) {
-                return current;
-            }
-
-            current = current.parent;
-        }
-
-        return null;
+        try {
+            liveRoot.visible = false;
+        } catch (ignore) {}
     }
 
     function hideSourceLayer(layer) {
@@ -923,16 +900,6 @@
 
         try {
             layer.locked = false;
-        } catch (ignore2) {}
-    }
-
-    function hideSourceItem(item) {
-        try {
-            item.hidden = true;
-        } catch (ignore1) {}
-
-        try {
-            item.locked = false;
         } catch (ignore2) {}
     }
 

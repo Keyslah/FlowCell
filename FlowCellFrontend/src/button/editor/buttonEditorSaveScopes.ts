@@ -4,6 +4,7 @@ import type {
   ButtonStateDocument
 } from "../types.js";
 import { cloneButtonDocument } from "../state/buttonDefaults.js";
+import type { ButtonPlacementSizingMode } from "./buttonSizeAssignments.js";
 import {
   applyButtonSettingsFile,
   buildButtonSettingsFile,
@@ -13,6 +14,7 @@ import {
 export interface ButtonSkinSaveScope {
   skinIds: readonly string[];
   placementIds?: readonly string[];
+  sizingMode?: ButtonPlacementSizingMode;
 }
 
 export interface ButtonBehaviorSaveScope {
@@ -154,6 +156,7 @@ export function buildButtonSettingsScopedDocument(
     surfaceId,
     editorBaseline
   );
+  scopedBase.settings.buttonSpacingMm = draft.settings.buttonSpacingMm;
   const retainedPlacementIds = new Set(scopedBase.surfaces[surfaceId]?.placementIds ?? []);
   const rebasedFile = {
     ...settingsFile,
@@ -179,6 +182,7 @@ export function applyButtonSettingsSavedScope(
   if (!saved.surfaces[surfaceId]) return;
   const settingsFile = buildButtonSettingsFile(saved, surfaceId, context);
   const next = applyButtonSettingsFile(target, surfaceId, settingsFile, context);
+  next.settings.buttonSpacingMm = saved.settings.buttonSpacingMm;
   Object.assign(target, next);
 }
 
@@ -256,7 +260,13 @@ export function buildButtonSkinScopedDocument(
     const draftPlacement = requireDraftRecord(draft.placements, placementId, "Button placement");
     next.placements[placementId] = {
       ...structuredClone(committedPlacement),
-      skinOverrideId: draftPlacement.skinOverrideId
+      skinOverrideId: draftPlacement.skinOverrideId,
+      ...(scope.sizingMode
+        ? {
+            matchHitboxToSkin: scope.sizingMode !== "responsive",
+            allowStretching: scope.sizingMode === "stretch"
+          }
+        : {})
     };
   }
   next.revision = committed.revision;
@@ -276,6 +286,10 @@ export function applyButtonSkinSavedScope(
     const placement = saved.placements[placementId];
     if (placement && target.placements[placementId]) {
       target.placements[placementId].skinOverrideId = placement.skinOverrideId;
+      if (scope.sizingMode) {
+        target.placements[placementId].matchHitboxToSkin = placement.matchHitboxToSkin;
+        target.placements[placementId].allowStretching = placement.allowStretching;
+      }
     }
   }
 }

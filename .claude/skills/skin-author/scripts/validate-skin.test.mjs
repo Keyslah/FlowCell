@@ -8,6 +8,7 @@ import { spawnSync } from "node:child_process";
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const validatorPath = join(scriptDirectory, "validate-skin.mjs");
 const exactExamplePath = join(scriptDirectory, "..", "examples", "packed-turquoise-3d.skin.txt");
+const colorProfileExamplePath = join(scriptDirectory, "..", "examples", "packed-turquoise-3d.color-profile.md");
 
 function completePaste(structure, base = "") {
   return [
@@ -60,4 +61,34 @@ test("skin-author preflight keeps labeled core typography deterministic", () => 
     const result = validate(source);
     assert.notEqual(result.status, 0, `failing case ${index + 1} unexpectedly passed`);
   });
+});
+
+test("Color Profile Preview stays outside the canonical skin payload", () => {
+  const skinSource = readFileSync(exactExamplePath, "utf8");
+  const profileSource = readFileSync(colorProfileExamplePath, "utf8");
+  assert.doesNotMatch(skinSource, /Color Profile Preview|Needs confirmation/);
+  assert.match(profileSource, /^# Color Profile Preview/m);
+  assert.match(profileSource, /--flowcell-button-color-surface/);
+  assert.match(profileSource, /--flowcell-button-color-text/);
+  assert.match(profileSource, /Effects excluded/);
+  assert.match(profileSource, /Needs confirmation/);
+  const result = validate(skinSource);
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test("skin-author preflight accepts one inner hit shape and rejects ambiguous placement", () => {
+  const valid = validate(completePaste(
+    '<div data-core style="width:80px;height:30px;font-size:13px;line-height:17px;"><span data-hit-shape>{{label}}</span></div>'
+  ));
+  assert.equal(valid.status, 0, valid.stderr);
+
+  const outside = validate(completePaste(
+    '<span data-hit-shape></span><div data-core style="width:80px;height:30px;"></div>'
+  ));
+  assert.notEqual(outside.status, 0);
+
+  const duplicate = validate(completePaste(
+    '<div data-core style="width:80px;height:30px;"><i data-hit-shape></i><i data-hit-shape></i></div>'
+  ));
+  assert.notEqual(duplicate.status, 0);
 });

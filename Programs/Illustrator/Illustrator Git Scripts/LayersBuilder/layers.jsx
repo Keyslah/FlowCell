@@ -103,6 +103,27 @@
         return candidate;
     }
 
+    function nextDuplicateLayerName(parentLayers, sourceName) {
+        function exists(name) {
+            for (var i = 0; i < parentLayers.length; i += 1) {
+                if (parentLayers[i].name === name) {
+                    return true;
+                }
+            }
+            return false;
+        }
+        var source = String(sourceName);
+        var numbered = source.match(/^(.*?)(\d+)$/);
+        var baseName = numbered ? numbered[1] : source;
+        var suffix = numbered ? parseInt(numbered[2], 10) + 1 : 1;
+        var candidate = baseName + suffix;
+        while (exists(candidate)) {
+            suffix += 1;
+            candidate = baseName + suffix;
+        }
+        return candidate;
+    }
+
     function rememberLayerState(layer, bucket) {
         for (var i = 0; i < bucket.length; i += 1) {
             if (bucket[i].layer === layer) {
@@ -288,6 +309,355 @@
         return normalized;
     }
 
+    function normalizedSelection(value) {
+        var selected = [];
+        if (!value) {
+            return selected;
+        }
+        // PathItem and TextRange can both expose a numeric length. A selection
+        // object must be recognized before treating array-like values as lists.
+        try {
+            if (value.typename) {
+                selected.push(value);
+                return selected;
+            }
+        } catch (typenameError) {}
+        if (typeof value.length === 'number') {
+            for (var i = 0; i < value.length; i += 1) {
+                if (value[i]) {
+                    selected.push(value[i]);
+                }
+            }
+            if (selected.length > 0) {
+                return selected;
+            }
+        }
+        return selected;
+    }
+
+    function owningLayerForSelectedObject(item) {
+        try {
+            if (item.layer && item.layer.typename === 'Layer') {
+                return item.layer;
+            }
+        } catch (layerError) {}
+        var current = item;
+        for (var depth = 0; current && depth < 64; depth += 1) {
+            try {
+                if (current.typename === 'Layer') {
+                    return current;
+                }
+            } catch (typenameError) {}
+            try {
+                current = current.parent;
+            } catch (parentError) {
+                current = null;
+            }
+        }
+        return null;
+    }
+
+    function selectedObjectLayerKeys() {
+        var selection = normalizedSelection(doc.selection);
+        var keys = [];
+        var unique = {};
+        for (var i = 0; i < selection.length; i += 1) {
+            var itemType = '';
+            try {
+                itemType = String(selection[i].typename);
+            } catch (typenameError) {}
+            if (itemType === 'InsertionPoint' || itemType === 'TextRange') {
+                continue;
+            }
+            var layer = owningLayerForSelectedObject(selection[i]);
+            if (!layer) {
+                throw new Error('A selected Illustrator object does not belong to a layer.');
+            }
+            var key = keyForLayer(layer);
+            if (key === null) {
+                throw new Error('A selected Illustrator object layer could not be resolved.');
+            }
+            if (!unique[key]) {
+                unique[key] = true;
+                keys.push(key);
+            }
+        }
+        return keys;
+    }
+
+    function selectedOrHighlightedLayerTargets(value) {
+        var selectedKeys = selectedObjectLayerKeys();
+        if (selectedKeys.length > 0) {
+            return normalizedLayerTargets(selectedKeys);
+        }
+        var highlightedTargets = normalizedLayerTargets(value);
+        if (highlightedTargets.length === 0) {
+            throw new Error('Select Illustrator objects or highlight one or more Layer Tree rows.');
+        }
+        return highlightedTargets;
+    }
+
+    function containsObjectReference(items, candidate) {
+        for (var i = 0; i < items.length; i += 1) {
+            if (items[i] === candidate) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function selectedArtworkItems() {
+        var selection = normalizedSelection(doc.selection);
+        var candidates = [];
+        var i;
+        for (i = 0; i < selection.length; i += 1) {
+            var itemType = '';
+            try { itemType = String(selection[i].typename); } catch (typenameError) {}
+            if (itemType === 'InsertionPoint' || itemType === 'TextRange') {
+                continue;
+            }
+            if (!containsObjectReference(candidates, selection[i])) {
+                candidates.push(selection[i]);
+            }
+        }
+
+        // Illustrator can expose both a selected container and one of its
+        // descendants. Moving the container already carries that descendant.
+        var topmost = [];
+        for (i = 0; i < candidates.length; i += 1) {
+            var current = null;
+            try { current = candidates[i].parent; } catch (parentError) {}
+            var nestedSelection = false;
+            for (var depth = 0; current && depth < 64; depth += 1) {
+                if (containsObjectReference(candidates, current)) {
+                    nestedSelection = true;
+                    break;
+                }
+                try { current = current.parent; } catch (ancestorError) { current = null; }
+            }
+            if (!nestedSelection) {
+                topmost.push(candidates[i]);
+            }
+        }
+        return topmost;
+    }
+
+    function rememberArtworkState(item) {
+        var state = {
+            item: item,
+            parent: null,
+            previousSibling: null,
+            nextSibling: null,
+            locked: false,
+            hidden: false
+        };
+        try { state.parent = item.parent; } catch (parentError) {}
+        try { state.locked = item.locked ? true : false; } catch (lockedError) {}
+        try { state.hidden = item.hidden ? true : false; } catch (hiddenError) {}
+        try {
+            if (state.parent && state.parent.pageItems) {
+                var directItems = [];
+                for (var i = 0; i < state.parent.pageItems.length; i += 1) {
+                    if (state.parent.pageItems[i].parent === state.parent) {
+                        directItems.push(state.parent.pageItems[i]);
+                    }
+                }
+                for (var d = 0; d < directItems.length; d += 1) {
+                    if (directItems[d] === item) {
+                        state.previousSibling = d > 0 ? directItems[d - 1] : null;
+                        state.nextSibling = d + 1 < directItems.length ? directItems[d + 1] : null;
+                        break;
+                    }
+                }
+            }
+        } catch (siblingsError) {}
+        return state;
+    }
+
+    function openArtworkItem(state) {
+        try { state.item.locked = false; } catch (lockedError) {}
+        try { state.item.hidden = false; } catch (hiddenError) {}
+    }
+
+    function restoreArtworkState(state) {
+        try { state.item.hidden = state.hidden; } catch (hiddenError) {}
+        try { state.item.locked = state.locked; } catch (lockedError) {}
+    }
+
+    function restoreArtworkParent(state) {
+        var previousAvailable = false;
+        var nextAvailable = false;
+        try {
+            previousAvailable = state.previousSibling && state.previousSibling.parent === state.parent;
+        } catch (previousError) {}
+        try {
+            nextAvailable = state.nextSibling && state.nextSibling.parent === state.parent;
+        } catch (nextError) {}
+        if (nextAvailable) {
+            state.item.move(state.nextSibling, ElementPlacement.PLACEBEFORE);
+        } else if (previousAvailable) {
+            state.item.move(state.previousSibling, ElementPlacement.PLACEAFTER);
+        } else {
+            state.item.move(state.parent, ElementPlacement.PLACEATBEGINNING);
+        }
+    }
+
+    function findRememberedLayerState(states, layer) {
+        for (var i = 0; i < states.length; i += 1) {
+            if (states[i].layer === layer) {
+                return states[i];
+            }
+        }
+        return null;
+    }
+
+    function findRememberedPageItemState(states, item) {
+        for (var i = 0; i < states.length; i += 1) {
+            if (states[i].item === item) {
+                return states[i];
+            }
+        }
+        return null;
+    }
+
+    function directPageItems(layer) {
+        var items = [];
+        for (var i = 0; i < layer.pageItems.length; i += 1) {
+            if (layer.pageItems[i].parent === layer) {
+                items.push(layer.pageItems[i]);
+            }
+        }
+        return items;
+    }
+
+    function applyCopiedLayerProperties(sourceLayer, targetLayer, rememberedState) {
+        var properties = [
+            'artworkKnockout',
+            'blendingMode',
+            'color',
+            'dimPlacedImages',
+            'opacity',
+            'preview',
+            'printable',
+            'sliced'
+        ];
+        for (var i = 0; i < properties.length; i += 1) {
+            try {
+                targetLayer[properties[i]] = sourceLayer[properties[i]];
+            } catch (propertyError) {}
+        }
+        try {
+            targetLayer.visible = rememberedState ? rememberedState.visible : sourceLayer.visible;
+        } catch (visibleError) {}
+        try {
+            targetLayer.locked = rememberedState ? rememberedState.locked : sourceLayer.locked;
+        } catch (lockedError) {}
+    }
+
+    function copyPageItem(sourceItem, targetLayer, itemStates) {
+        var copiedItem = sourceItem.duplicate(targetLayer, ElementPlacement.PLACEATBEGINNING);
+        var rememberedState = findRememberedPageItemState(itemStates, sourceItem);
+        if (rememberedState) {
+            try { copiedItem.hidden = rememberedState.hidden; } catch (hiddenError) {}
+            try { copiedItem.locked = rememberedState.locked; } catch (lockedError) {}
+        }
+        return copiedItem;
+    }
+
+    function findLayerAnchor(records, sourceItem) {
+        for (var i = 0; i < records.length; i += 1) {
+            if (records[i].sourceAnchor === sourceItem) {
+                return records[i];
+            }
+        }
+        return null;
+    }
+
+    function copyLayerContents(sourceLayer, targetLayer, layerStates, itemStates) {
+        var anchors = [];
+        var i;
+        try {
+            for (i = sourceLayer.layers.length - 1; i >= 0; i -= 1) {
+                var sourceChild = sourceLayer.layers[i];
+                var sourceAnchor = sourceLayer.groupItems.add();
+                var anchorRecord = {
+                    sourceLayer: sourceChild,
+                    sourceAnchor: sourceAnchor,
+                    targetAnchor: null
+                };
+                anchors.push(anchorRecord);
+                sourceAnchor.move(sourceChild, ElementPlacement.PLACEBEFORE);
+            }
+
+            var items = directPageItems(sourceLayer);
+            for (i = items.length - 1; i >= 0; i -= 1) {
+                var copiedItem = copyPageItem(items[i], targetLayer, itemStates);
+                var anchor = findLayerAnchor(anchors, items[i]);
+                if (anchor) {
+                    anchor.targetAnchor = copiedItem;
+                }
+            }
+
+            for (i = 0; i < anchors.length; i += 1) {
+                if (!anchors[i].targetAnchor) {
+                    throw new Error('Layer copy anchor could not be resolved.');
+                }
+                var targetChild = targetLayer.layers.add();
+                targetChild.name = anchors[i].sourceLayer.name;
+                targetChild.visible = true;
+                targetChild.locked = false;
+                copyLayerContents(
+                    anchors[i].sourceLayer,
+                    targetChild,
+                    layerStates,
+                    itemStates
+                );
+                targetChild.move(anchors[i].targetAnchor, ElementPlacement.PLACEAFTER);
+                applyCopiedLayerProperties(
+                    anchors[i].sourceLayer,
+                    targetChild,
+                    findRememberedLayerState(layerStates, anchors[i].sourceLayer)
+                );
+                anchors[i].targetAnchor.remove();
+                anchors[i].targetAnchor = null;
+            }
+        } finally {
+            for (i = anchors.length - 1; i >= 0; i -= 1) {
+                try {
+                    if (anchors[i].targetAnchor) {
+                        anchors[i].targetAnchor.remove();
+                    }
+                } catch (targetAnchorError) {}
+                try { anchors[i].sourceAnchor.remove(); } catch (sourceAnchorError) {}
+            }
+        }
+    }
+
+    function duplicateLayerTree(sourceLayer, layerStates, itemStates) {
+        var parent = sourceLayer.parent;
+        if (!parent || !parent.layers) {
+            throw new Error('Layer parent could not receive a duplicate.');
+        }
+        var copiedName = nextDuplicateLayerName(parent.layers, sourceLayer.name);
+        var copiedLayer = parent.layers.add();
+        try {
+            copiedLayer.name = copiedName;
+            copiedLayer.visible = true;
+            copiedLayer.locked = false;
+            copiedLayer.move(sourceLayer, ElementPlacement.PLACEBEFORE);
+            copyLayerContents(sourceLayer, copiedLayer, layerStates, itemStates);
+            applyCopiedLayerProperties(
+                sourceLayer,
+                copiedLayer,
+                findRememberedLayerState(layerStates, sourceLayer)
+            );
+            return copiedLayer;
+        } catch (copyError) {
+            try { copiedLayer.remove(); } catch (cleanupError) {}
+            throw copyError;
+        }
+    }
+
     function layerOrAncestorIsClosed(layer) {
         var current = layer;
         while (current && current.typename === 'Layer') {
@@ -340,7 +710,7 @@
             }
         } else if (op === 'delete') {
             var force = args.force ? true : false;
-            var doomed = normalizedLayerTargets(args.keys);
+            var doomed = selectedOrHighlightedLayerTargets(args.keys);
             var topLevelCount = 0;
             for (var d = 0; d < doomed.length; d += 1) {
                 if (doomed[d].key.indexOf('.') < 0) {
@@ -365,18 +735,52 @@
                 restoreLayerStates(deleteStates);
             }
         } else if (op === 'duplicate') {
-            var dupTargets = normalizedLayerTargets(args.keys);
+            var dupTargets = selectedOrHighlightedLayerTargets(args.keys);
             var duplicateStates = [];
+            var duplicateItemStates = [];
+            var duplicateItems = [];
+            var duplicatedRoots = [];
+            var duplicatePreviousActiveLayer = doc.activeLayer;
             try {
                 for (var u = 0; u < dupTargets.length; u += 1) {
-                    var duplicateLocked = dupTargets[u].layer.locked ? true : false;
-                    var duplicateVisible = dupTargets[u].layer.visible ? true : false;
                     openAncestors(dupTargets[u].layer, duplicateStates);
-                    var duplicatedLayer = dupTargets[u].layer.duplicate();
-                    try { duplicatedLayer.visible = duplicateVisible; } catch (duplicateVisibleError) {}
-                    try { duplicatedLayer.locked = duplicateLocked; } catch (duplicateLockedError) {}
+                    openSubtree(dupTargets[u].layer, duplicateStates);
+                    collectPageItems(
+                        dupTargets[u].layer,
+                        duplicateItems,
+                        duplicateItemStates
+                    );
                 }
+                for (var v = 0; v < dupTargets.length; v += 1) {
+                    duplicatedRoots.push(
+                        duplicateLayerTree(
+                            dupTargets[v].layer,
+                            duplicateStates,
+                            duplicateItemStates
+                        )
+                    );
+                }
+                doc.activeLayer = duplicatedRoots[duplicatedRoots.length - 1];
+            } catch (duplicateError) {
+                var rollbackFailed = false;
+                for (var w = duplicatedRoots.length - 1; w >= 0; w -= 1) {
+                    try {
+                        openSubtree(duplicatedRoots[w], []);
+                        duplicatedRoots[w].remove();
+                    } catch (rollbackError) {
+                        rollbackFailed = true;
+                    }
+                }
+                try { doc.activeLayer = duplicatePreviousActiveLayer; } catch (activeRestoreError) {}
+                if (rollbackFailed) {
+                    throw new Error(
+                        String(duplicateError) +
+                        ' Duplicate rollback could not remove every completed layer copy.'
+                    );
+                }
+                throw duplicateError;
             } finally {
+                restorePageItemStates(duplicateItemStates);
                 restoreLayerStates(duplicateStates);
             }
         } else if (op === 'setlock') {
@@ -414,6 +818,116 @@
             } finally {
                 restorePageItemStates(selectItemStates);
                 restoreLayerStates(selectLayerStates);
+            }
+        } else if (op === 'placeartwork') {
+            var artworkTargetKey = args.targetKey ? String(args.targetKey) : '';
+            var artworkTargetLayer = resolveLayerByKey(artworkTargetKey);
+            if (!artworkTargetLayer) {
+                return fail('Artwork target layer was not found.');
+            }
+            var artworkItems = selectedArtworkItems();
+            if (artworkItems.length === 0) {
+                return fail('Select one or more Illustrator objects before dragging the selection square.');
+            }
+            var copyArtwork = args.copy ? true : false;
+            var artworkPreviousActiveLayer = doc.activeLayer;
+            var artworkLayerStates = [];
+            var artworkStates = [];
+            var completedArtwork = [];
+            var copiedArtworkSelection = [];
+            var artworkIndex;
+            for (artworkIndex = 0; artworkIndex < artworkItems.length; artworkIndex += 1) {
+                var artworkState = rememberArtworkState(artworkItems[artworkIndex]);
+                if (!artworkState.parent) {
+                    return fail('A selected Illustrator object does not have a movable parent.');
+                }
+                artworkStates.push(artworkState);
+            }
+            for (artworkIndex = 0; artworkIndex < artworkItems.length; artworkIndex += 1) {
+                var artworkSourceLayer = owningLayerForSelectedObject(artworkItems[artworkIndex]);
+                if (artworkSourceLayer) {
+                    openAncestors(artworkSourceLayer, artworkLayerStates);
+                }
+            }
+            openAncestors(artworkTargetLayer, artworkLayerStates);
+            try {
+                // PLACEATBEGINNING reverses each insertion, so walk the
+                // selection backward to retain its order in the target layer.
+                for (artworkIndex = artworkStates.length - 1; artworkIndex >= 0; artworkIndex -= 1) {
+                    var currentArtworkState = artworkStates[artworkIndex];
+                    openArtworkItem(currentArtworkState);
+                    if (copyArtwork) {
+                        var copiedArtwork = currentArtworkState.item.duplicate(
+                            artworkTargetLayer,
+                            ElementPlacement.PLACEATBEGINNING
+                        );
+                        completedArtwork.push({
+                            item: copiedArtwork,
+                            state: currentArtworkState,
+                            copied: true
+                        });
+                        copiedArtworkSelection.unshift(copiedArtwork);
+                        try { copiedArtwork.hidden = currentArtworkState.hidden; } catch (copyHiddenError) {}
+                        try { copiedArtwork.locked = currentArtworkState.locked; } catch (copyLockedError) {}
+                    } else {
+                        if (owningLayerForSelectedObject(currentArtworkState.item) === artworkTargetLayer) {
+                            continue;
+                        }
+                        currentArtworkState.item.move(
+                            artworkTargetLayer,
+                            ElementPlacement.PLACEATBEGINNING
+                        );
+                        completedArtwork.push({
+                            item: currentArtworkState.item,
+                            state: currentArtworkState,
+                            copied: false
+                        });
+                    }
+                }
+                if (copyArtwork) {
+                    try {
+                        doc.selection = null;
+                        doc.selection = copiedArtworkSelection;
+                    } catch (copySelectionError) {
+                        try { doc.selection = artworkItems; } catch (restoreSelectionError) {}
+                    }
+                }
+                try { doc.activeLayer = artworkTargetLayer; } catch (activeLayerError) {}
+            } catch (artworkError) {
+                var artworkRollbackFailed = false;
+                for (var rollbackIndex = completedArtwork.length - 1; rollbackIndex >= 0; rollbackIndex -= 1) {
+                    try {
+                        completedArtwork[rollbackIndex].item.locked = false;
+                    } catch (rollbackUnlockError) {}
+                    try {
+                        completedArtwork[rollbackIndex].item.hidden = false;
+                    } catch (rollbackShowError) {}
+                    try {
+                        if (completedArtwork[rollbackIndex].copied) {
+                            completedArtwork[rollbackIndex].item.remove();
+                        } else {
+                            restoreArtworkParent(completedArtwork[rollbackIndex].state);
+                        }
+                    } catch (artworkRollbackError) {
+                        artworkRollbackFailed = true;
+                    }
+                }
+                try { doc.selection = artworkItems; } catch (rollbackSelectionError) {}
+                try { doc.activeLayer = artworkPreviousActiveLayer; } catch (rollbackActiveLayerError) {}
+                if (artworkRollbackFailed) {
+                    throw new Error(
+                        String(artworkError) +
+                        ' Artwork rollback could not restore every completed item.'
+                    );
+                }
+                throw artworkError;
+            } finally {
+                for (var restoreArtworkIndex = 0;
+                    restoreArtworkIndex < artworkStates.length;
+                    restoreArtworkIndex += 1) {
+                    restoreArtworkState(artworkStates[restoreArtworkIndex]);
+                }
+                restoreLayerStates(artworkLayerStates);
             }
         } else if (op === 'move') {
             var moveLayer = resolveLayerByKey(args.key);

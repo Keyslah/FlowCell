@@ -238,14 +238,26 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     idleMeasurements,
     visualOverflowAllowance: 0
   }), [collapsedPlacement, idleMeasurements, setup?.collapsedBoundsFitMode]);
+  // The owner may be anchored outside the saved surface, so the expanded frame
+  // is the surface box unioned with every placement rather than the box alone.
+  const expandedSurfaceBounds = useMemo(() => {
+    const base = { x: 0, y: 0, width: surface?.width ?? 1, height: surface?.height ?? 1 };
+    if (expandedPlacements.length === 0) return base;
+    const left = Math.min(base.x, ...expandedPlacements.map((placement) => placement.x));
+    const top = Math.min(base.y, ...expandedPlacements.map((placement) => placement.y));
+    const right = Math.max(
+      base.x + base.width,
+      ...expandedPlacements.map((placement) => placement.x + placement.width)
+    );
+    const bottom = Math.max(
+      base.y + base.height,
+      ...expandedPlacements.map((placement) => placement.y + placement.height)
+    );
+    return { x: left, y: top, width: right - left, height: bottom - top };
+  }, [expandedPlacements, surface?.height, surface?.width]);
   const expandedEnvelope = useMemo(() => resolveButtonWindowEnvelope({
     mode: setup?.windowFitMode ?? "surface",
-    surfaceBounds: {
-      x: 0,
-      y: 0,
-      width: surface?.width ?? 1,
-      height: surface?.height ?? 1
-    },
+    surfaceBounds: expandedSurfaceBounds,
     placements: expandedPlacements,
     idleMeasurements,
     currentMeasurements,
@@ -254,6 +266,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   }), [
     currentMeasurements,
     expandedPlacements,
+    expandedSurfaceBounds,
     idleMeasurements,
     setup?.windowFitMode,
     surface,

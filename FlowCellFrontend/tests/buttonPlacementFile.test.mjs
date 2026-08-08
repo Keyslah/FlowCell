@@ -23,12 +23,18 @@ import {
   buildTransientButtonPopoutSettingsDocument,
   buildButtonSettingsFile,
   buttonSettingsPlacementKind,
+  normalizeButtonSettingsFile,
   validateButtonSettingsFile
 } from "./.compiled-button-system/button/state/buttonSettingsFile.js";
 import {
   createButtonSourceIdentity,
   deriveRegularPopoutSelectionKey
 } from "./.compiled-button-system/button/state/sourceIdentity.js";
+import { ensureFanSetup } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
+import {
+  reconcileProgramPanelOwners,
+  resolvePanelOwnerFanPlacement
+} from "./.compiled-button-system/button/state/panelOwnerButtonOperations.js";
 
 function addButton(document, id, marker) {
   document.buttons[id] = {
@@ -245,6 +251,146 @@ function toolSetPopSettingsFixture() {
     programName: "Windows",
     panelName: "Files",
     savedAt: "2026-07-23T12:34:56.000Z"
+  });
+  return { document, settings };
+}
+
+function crossToolSetFanSettingsFixture() {
+  const fixture = toolSetPopSettingsFixture();
+  const document = fixture.document;
+  const sourceSurface = document.surfaces["surface-tool-pop"];
+  const sourceUnit = document.popoutUnits["tool-pop"];
+  const templatePlacement = document.placements["tool-placement-a"];
+
+  document.skins["source-layout-skin"] = {
+    ...structuredClone(document.skins[document.settings.defaultSkinId]),
+    id: "source-layout-skin",
+    name: "Source Layout Skin",
+    hover: "filter: brightness(1.75);"
+  };
+  Object.assign(document.buttons["tool-child-a"].metadata, { toolSetSlot: "left" });
+  Object.assign(document.buttons["tool-child-b"].metadata, { toolSetSlot: "right" });
+  Object.assign(document.placements["tool-placement-a"], {
+    x: 30,
+    y: 10,
+    skinOverrideId: "source-layout-skin"
+  });
+  Object.assign(document.placements["tool-placement-b"], { x: 160, y: 10 });
+  document.placements["tool-owner-fan-placement"] = {
+    ...structuredClone(templatePlacement),
+    id: "tool-owner-fan-placement",
+    buttonId: "tool-owner",
+    surfaceId: sourceSurface.id,
+    x: 250,
+    y: 40,
+    zIndex: 2,
+    skinOverrideId: null
+  };
+  sourceSurface.placementIds.push("tool-owner-fan-placement");
+  Object.assign(sourceUnit, {
+    interactionMode: "fan",
+    ownerPlacementId: "tool-owner-fan-placement",
+    windowFitMode: "hitbox"
+  });
+
+  const targetIdentity = createButtonSourceIdentity(
+    "Blender",
+    "Rotate",
+    "target-tools.flowcell-source.json"
+  );
+  document.buttons["target-tool-owner"] = {
+    ...structuredClone(document.buttons["tool-owner"]),
+    id: "target-tool-owner",
+    sourceIdentity: targetIdentity,
+    label: "Target Tools",
+    metadata: { toolSetPackageId: "target-tools" }
+  };
+  const targetBehavior = {
+    mode: "momentary",
+    states: [{ id: "target-ready", label: "Target Ready", labelOverrides: {} }]
+  };
+  for (const [buttonId, slot, label, actionId] of [
+    ["target-tool-right", "right", "Target Right", "TARGET_RIGHT_ACTION"],
+    ["target-tool-left", "left", "Target Left", "TARGET_LEFT_ACTION"]
+  ]) {
+    document.buttons[buttonId] = {
+      ...structuredClone(document.buttons["tool-child-a"]),
+      id: buttonId,
+      sourceIdentity: targetIdentity,
+      label,
+      executionTarget: { kind: "core-action", actionId },
+      activationBehavior: structuredClone(targetBehavior),
+      toolSetParentId: "target-tool-owner",
+      metadata: { toolSetPackageId: "target-tools", toolSetSlot: slot }
+    };
+  }
+  document.surfaces["surface-target-tool-pop"] = {
+    id: "surface-target-tool-pop",
+    name: "Target Tool Pop",
+    kind: "tool-set-popout",
+    width: 600,
+    height: 240,
+    placementIds: ["target-placement-right", "target-placement-left"],
+    visualOverflowAllowance: 12,
+    uniformButtonSize: null
+  };
+  document.placements["target-placement-right"] = {
+    ...structuredClone(templatePlacement),
+    id: "target-placement-right",
+    buttonId: "target-tool-right",
+    surfaceId: "surface-target-tool-pop",
+    x: 20,
+    y: 130,
+    zIndex: 0,
+    skinOverrideId: null
+  };
+  document.placements["target-placement-left"] = {
+    ...structuredClone(templatePlacement),
+    id: "target-placement-left",
+    buttonId: "target-tool-left",
+    surfaceId: "surface-target-tool-pop",
+    x: 180,
+    y: 130,
+    zIndex: 1,
+    skinOverrideId: null
+  };
+  document.popoutUnits["target-tool-pop"] = {
+    id: "target-tool-pop",
+    name: "Target Tool Pop",
+    kind: "tool-set",
+    surfaceId: "surface-target-tool-pop",
+    canonicalBounds: { x: 0, y: 0, width: 600, height: 240 },
+    desktopBounds: { left: 100, top: 200, width: 600, height: 240 },
+    desktopBoundsFitMode: "surface",
+    desktopBoundsEnvelope: { x: 0, y: 0, width: 600, height: 240 },
+    interactionMode: "pop",
+    ownerButtonId: "target-tool-owner",
+    ownerPlacementId: null,
+    childButtonIds: ["target-tool-right", "target-tool-left"],
+    childPlacementIds: ["target-placement-right", "target-placement-left"],
+    openRule: "toggle",
+    closeRule: "escape",
+    transparency: 1,
+    pinnedDefault: false,
+    windowFitMode: "surface",
+    fields: [{
+      id: "target-field",
+      kind: "text",
+      label: "Target Field",
+      payloadKey: "target_value",
+      x: 5,
+      y: 65,
+      width: 80,
+      height: 20,
+      zIndex: 3,
+      defaultValue: "keep"
+    }]
+  };
+
+  const settings = buildButtonSettingsFile(document, sourceSurface.id, {
+    programName: "Windows",
+    panelName: "Files",
+    savedAt: "2026-08-04T12:34:56.000Z"
   });
   return { document, settings };
 }
@@ -893,6 +1039,99 @@ test("Open Pop isolates Tool Set presentation while retaining installed fields a
   );
 });
 
+test("legacy Pop-out state and settings normalize to Pop mode without an owner placement", () => {
+  const regular = regularPopSettingsFixture();
+  const legacySettings = structuredClone(regular.settings);
+  delete legacySettings.behavior.interactionMode;
+  delete legacySettings.behavior.ownerButtonId;
+  delete legacySettings.behavior.ownerPlacementId;
+
+  const normalizedSettings = normalizeButtonSettingsFile(legacySettings);
+  assert.equal(normalizedSettings.behavior.interactionMode, "pop");
+  assert.equal(normalizedSettings.behavior.ownerButtonId, null);
+  assert.equal(normalizedSettings.behavior.ownerPlacementId, null);
+  assert.equal(validateButtonSettingsFile(legacySettings).valid, true);
+
+  const normalizedState = normalizeLoadedButtonStateDocument(regular.document);
+  assert.equal(normalizedState.popoutUnits["saved-pop"].interactionMode, "pop");
+  assert.equal(normalizedState.popoutUnits["saved-pop"].ownerButtonId, null);
+  assert.equal(normalizedState.popoutUnits["saved-pop"].ownerPlacementId, null);
+  assert.equal(validateButtonStateDocument(normalizedState).valid, true);
+
+  const toolSet = toolSetPopSettingsFixture();
+  const normalizedToolSetState = normalizeLoadedButtonStateDocument(toolSet.document);
+  assert.equal(normalizedToolSetState.popoutUnits["tool-pop"].interactionMode, "pop");
+  assert.equal(normalizedToolSetState.popoutUnits["tool-pop"].ownerButtonId, "tool-owner");
+  assert.equal(normalizedToolSetState.popoutUnits["tool-pop"].ownerPlacementId, null);
+  assert.equal(validateButtonStateDocument(normalizedToolSetState).valid, true);
+});
+
+test("Tool Set Fan settings map by package slot while preserving target behavior and ownership", () => {
+  const { document, settings } = crossToolSetFanSettingsFixture();
+  const before = structuredClone(document);
+  assert.equal(settings.behavior.interactionMode, "fan");
+  assert.equal(settings.behavior.ownerButtonId, "tool-owner");
+  assert.equal(settings.behavior.ownerPlacementId, "tool-owner-fan-placement");
+  assert.equal(validateButtonSettingsFile(settings).valid, true);
+  assert.equal(validateButtonStateDocument(document).valid, true);
+
+  const loaded = applyButtonSettingsFile(
+    document,
+    "surface-target-tool-pop",
+    settings,
+    { programName: "Blender", panelName: "Rotate" }
+  );
+  assert.deepEqual(document, before);
+
+  const unit = loaded.popoutUnits["target-tool-pop"];
+  assert.equal(unit.interactionMode, "fan");
+  assert.equal(unit.ownerButtonId, "target-tool-owner");
+  assert.equal(loaded.placements[unit.ownerPlacementId].buttonId, "target-tool-owner");
+  assert.deepEqual(unit.childButtonIds, ["target-tool-left", "target-tool-right"]);
+  assert.deepEqual(unit.fields, before.popoutUnits["target-tool-pop"].fields);
+  assert.deepEqual(
+    loaded.buttons["target-tool-left"].executionTarget,
+    { kind: "core-action", actionId: "TARGET_LEFT_ACTION" }
+  );
+  assert.equal(loaded.buttons["target-tool-left"].label, "Target Left");
+  assert.deepEqual(
+    loaded.buttons["target-tool-left"].activationBehavior,
+    before.buttons["target-tool-left"].activationBehavior
+  );
+  assert.equal(loaded.buttons["target-tool-left"].toolSetParentId, "target-tool-owner");
+
+  const leftPlacement = Object.values(loaded.placements).find(
+    (placement) => placement.surfaceId === unit.surfaceId && placement.buttonId === "target-tool-left"
+  );
+  const rightPlacement = Object.values(loaded.placements).find(
+    (placement) => placement.surfaceId === unit.surfaceId && placement.buttonId === "target-tool-right"
+  );
+  const ownerPlacement = loaded.placements[unit.ownerPlacementId];
+  assert.equal(leftPlacement.x, 30);
+  assert.equal(rightPlacement.x, 160);
+  assert.equal(ownerPlacement.x, 250);
+  assert.equal(loaded.skins[leftPlacement.skinOverrideId].name, "Source Layout Skin");
+  assert.equal(unit.desktopBoundsFitMode, "hitbox");
+  assert.deepEqual(unit.desktopBoundsEnvelope, { x: 5, y: 10, width: 335, height: 80 });
+  assert.equal(validateButtonStateDocument(loaded).valid, true);
+
+  const wrongCount = structuredClone(settings);
+  wrongCount.entries = wrongCount.entries.filter((entry) => entry.buttonId !== "tool-child-b");
+  wrongCount.entries.forEach((entry, index) => {
+    entry.placement.zIndex = index;
+  });
+  assert.throws(
+    () => applyButtonSettingsFile(
+      document,
+      "surface-target-tool-pop",
+      wrongCount,
+      { programName: "Blender", panelName: "Rotate" }
+    ),
+    /same number of package-owned child Buttons/
+  );
+  assert.deepEqual(document, before);
+});
+
 test("Button settings categories collapse physical surfaces to Main Page, Fan, and Pop-out", () => {
   assert.equal(buttonSettingsPlacementKind({ kind: "main" }), "main-page");
   assert.equal(buttonSettingsPlacementKind({ kind: "panel" }), "main-page");
@@ -1032,4 +1271,89 @@ test("canonical placement loading backfills and strictly validates activation cy
     tooLong.issues.some((issue) => issue.message.includes(`cannot exceed ${BUTTON_PLACEMENT_CYCLE_MAX_STATES} states`)),
     true
   );
+});
+
+test("a Fan owner anchors anywhere while its Buttons keep the bounds and overlap rules", () => {
+  const document = createButtonStateDocument();
+  reconcileProgramPanelOwners(document, {
+    programName: "Windows",
+    panels: [{ panelName: "Utility", rect: { x: 8, y: 8, width: 132, height: 37 } }],
+    surfaceBounds: { width: 1225, height: 721 }
+  });
+  const scripts = ["alpha", "beta"].map((name) => {
+    const script = {
+      id: `fan-${name}`,
+      role: "single-script",
+      sourceIdentity: createButtonSourceIdentity("Windows", "Utility", `${name}.flowcell-source.json`),
+      label: name,
+      tooltip: name,
+      executionTarget: {
+        kind: "panel-script",
+        programName: "Windows",
+        panelName: "Utility",
+        fileName: `${name}.flowcell-source.json`
+      },
+      defaultSkinId: document.settings.defaultSkinId,
+      defaultTextFitMode: "shrink",
+      disabled: false,
+      activationAnimation: null,
+      activationBehavior: null,
+      toolSetParentId: null,
+      toolSetBehavior: null,
+      metadata: {}
+    };
+    document.buttons[script.id] = script;
+    return script;
+  });
+  const setup = ensureFanSetup({
+    document,
+    programName: "Windows",
+    panelName: "Utility",
+    buttons: scripts
+  });
+  const context = { programName: "Windows", panelName: "Utility" };
+  const ownerPlacement = resolvePanelOwnerFanPlacement(document, setup.id);
+  const memberPlacementId = document.surfaces[setup.fanSurfaceId].placementIds.find(
+    (placementId) => placementId !== ownerPlacement.id
+  );
+
+  // The owner is an anchor: negative, far outside, and overlapping all pass.
+  for (const anchor of [{ x: -320, y: -240 }, { x: 4000, y: 3000 }, { x: 0, y: 0 }]) {
+    ownerPlacement.x = anchor.x;
+    ownerPlacement.y = anchor.y;
+    const validation = validateButtonStateDocument(document);
+    assert.equal(
+      validation.valid,
+      true,
+      `owner at ${anchor.x},${anchor.y}: ${validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n")}`
+    );
+    const file = buildButtonSettingsFile(document, setup.fanSurfaceId, context);
+    const fileValidation = validateButtonSettingsFile(file);
+    assert.equal(
+      fileValidation.valid,
+      true,
+      `owner file at ${anchor.x},${anchor.y}: ${fileValidation.issues.join("\n")}`
+    );
+  }
+
+  // Every other Button on the Fan keeps the exact bounds and overlap rules.
+  ownerPlacement.x = 8;
+  ownerPlacement.y = 8;
+  const member = document.placements[memberPlacementId];
+  const restore = { x: member.x, y: member.y };
+  member.x = -40;
+  assert.equal(validateButtonStateDocument(document).valid, false);
+  member.x = restore.x;
+  member.y = restore.y;
+
+  const sibling = document.surfaces[setup.fanSurfaceId].placementIds
+    .map((placementId) => document.placements[placementId])
+    .find((placement) => placement.id !== ownerPlacement.id && placement.id !== memberPlacementId);
+  if (sibling) {
+    member.x = sibling.x;
+    member.y = sibling.y;
+    const overlapping = validateButtonStateDocument(document);
+    assert.equal(overlapping.valid, false);
+    assert.equal(overlapping.issues.some((issue) => issue.message.includes("overlap")), true);
+  }
 });

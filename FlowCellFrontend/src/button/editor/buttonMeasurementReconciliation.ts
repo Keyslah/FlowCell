@@ -17,6 +17,12 @@ export interface PendingMatchedMeasurement {
   sourceLabel: string;
 }
 
+/**
+ * Legacy stale-measurement predicate retained for schema-era regression
+ * coverage. The Button Editor must not call this for existing placements:
+ * rendered measurements are observational and only explicit size actions may
+ * commit geometry.
+ */
 export function shouldApplyMatchedButtonMeasurement(
   placement: ButtonPlacement | undefined,
   button: ButtonRecord | undefined,

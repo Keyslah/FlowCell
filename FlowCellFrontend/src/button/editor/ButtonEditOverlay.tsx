@@ -4,6 +4,14 @@ import {
   resolveAspectLockedButtonGeometryAlongPath,
   resolveButtonGeometryAlongPath
 } from "../geometry/buttonGeometry";
+import {
+  buttonPlacementSizingMode,
+  buttonSizingModeLocksAspect,
+  resolveProportionalResizeBasis,
+  type ButtonPlacementSizingMode
+} from "./buttonSizeAssignments";
+
+export type ButtonEditInteractionKind = "drag" | "resize";
 
 export interface ButtonEditOverlayProps {
   placement: ButtonPlacement;
@@ -11,16 +19,26 @@ export interface ButtonEditOverlayProps {
   otherRects: readonly ButtonRect[];
   gridSize: number;
   snapTolerance: number;
-  onPreview: (rect: ButtonRect) => void;
-  onCommit: (rect: ButtonRect) => void;
+  sizingMode?: ButtonPlacementSizingMode;
+  naturalAspectRatio?: number;
+  /**
+   * A Fan owner anchors its Fan instead of sitting inside it, so it moves to any
+   * offset in any direction without being held inside the surface or pushed off
+   * the Buttons it opens.
+   */
+  unbounded?: boolean;
+  onSelect: (event: PointerEvent) => void;
+  onPreview: (rect: ButtonRect, kind: ButtonEditInteractionKind) => void;
+  onCommit: (rect: ButtonRect, kind: ButtonEditInteractionKind) => void;
 }
 
 interface Interaction {
-  kind: "drag" | "resize";
+  kind: ButtonEditInteractionKind;
   pointerId: number;
   clientX: number;
   clientY: number;
   start: ButtonRect;
+  aspectStart: ButtonRect;
   lastValid: ButtonRect;
 }
 
@@ -30,6 +48,10 @@ export function ButtonEditOverlay({
   otherRects,
   gridSize,
   snapTolerance,
+  sizingMode,
+  naturalAspectRatio,
+  unbounded = false,
+  onSelect,
   onPreview,
   onCommit
 }: ButtonEditOverlayProps) {
@@ -38,6 +60,15 @@ export function ButtonEditOverlay({
 
   const begin = (kind: Interaction["kind"], event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
+    if (
+      kind === "drag" &&
+      (event.shiftKey || event.ctrlKey || event.metaKey)
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+      onSelect(event.nativeEvent);
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
     overlayRef.current?.setPointerCapture(event.pointerId);
@@ -47,12 +78,17 @@ export function ButtonEditOverlay({
       width: placement.width,
       height: placement.height
     };
+    const activeSizingMode = sizingMode ?? buttonPlacementSizingMode(placement);
+    const proportionalBasis = kind === "resize" && activeSizingMode === "proportional"
+      ? resolveProportionalResizeBasis(start, naturalAspectRatio)
+      : start;
     interactionRef.current = {
       kind,
       pointerId: event.pointerId,
       clientX: event.clientX,
       clientY: event.clientY,
       start,
+      aspectStart: { ...start, ...proportionalBasis },
       lastValid: start
     };
   };
@@ -63,25 +99,30 @@ export function ButtonEditOverlay({
     event.preventDefault();
     const dx = event.clientX - interaction.clientX;
     const dy = event.clientY - interaction.clientY;
+    const interactionGridSize = interaction.kind === "resize" ? 1 : gridSize;
     const resized = {
-      width: Math.max(gridSize, interaction.start.width + dx),
-      height: Math.max(gridSize, interaction.start.height + dy)
+      width: Math.max(1, interaction.start.width + dx),
+      height: Math.max(1, interaction.start.height + dy)
     };
     const candidate = interaction.kind === "drag"
       ? { ...interaction.start, x: interaction.start.x + dx, y: interaction.start.y + dy }
       : { ...interaction.start, ...resized };
     const options = {
       surface,
-      otherRects,
+      otherRects: unbounded ? [] : otherRects,
       tolerance: snapTolerance,
-      gridSize,
-      keepInsideSurface: true
+      gridSize: interactionGridSize,
+      // A southeast resize handle owns width/height only. Its top-left anchor
+      // must not jump to the movement grid while the user sizes continuously.
+      snapPosition: interaction.kind === "resize" ? false : undefined,
+      keepInsideSurface: !unbounded
     };
+    const activeSizingMode = sizingMode ?? buttonPlacementSizingMode(placement);
     const locksAspect = interaction.kind === "resize" &&
-      ((placement.matchHitboxToSkin && !placement.allowStretching) || event.shiftKey);
+      buttonSizingModeLocksAspect(activeSizingMode, event.shiftKey);
     const resolution = locksAspect
       ? resolveAspectLockedButtonGeometryAlongPath(
-          interaction.start,
+          interaction.aspectStart,
           interaction.lastValid,
           candidate,
           options
@@ -98,7 +139,7 @@ export function ButtonEditOverlay({
       resolution.rect.height === interaction.lastValid.height
     ) return;
     interaction.lastValid = resolution.rect;
-    onPreview(resolution.rect);
+    onPreview(resolution.rect, interaction.kind);
   };
 
   const finish = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -109,7 +150,7 @@ export function ButtonEditOverlay({
     if (overlayRef.current?.hasPointerCapture(event.pointerId)) {
       overlayRef.current.releasePointerCapture(event.pointerId);
     }
-    onCommit(interaction.lastValid);
+    onCommit(interaction.lastValid, interaction.kind);
   };
 
   return (

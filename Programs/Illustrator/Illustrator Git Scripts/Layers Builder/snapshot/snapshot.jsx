@@ -1,7 +1,7 @@
 // FlowCell Layers Builder catalog source.
 // Runs the original Layers script "snapshot" against the
-// FlowCell-highlighted layers, or the native Illustrator selection when the
-// installed Layer Tree state is valid but has no highlighted rows.
+// Native Illustrator selection first, with FlowCell-highlighted layers as the
+// fallback when no artwork is selected.
 #target illustrator
 
 #include "flowcell-layer-tree-selection.jsxinc"
@@ -29,22 +29,24 @@ function FlowCellSnapshotHasNativeSelection() {
 
 function FlowCellSnapshotResolveTargets() {
     var emptyHighlightMessage = "select at least one layer in the installed Layer Tree page first.";
+
+    if (FlowCellSnapshotHasNativeSelection()) {
+        return {
+            document: app.activeDocument,
+            layers: [],
+            restore: []
+        };
+    }
+
     try {
         return FlowCellLayersBuilderSelection.resolveTargets(false);
     } catch (selectionError) {
         if (String(selectionError).indexOf(emptyHighlightMessage) < 0) {
             throw selectionError;
         }
-        if (!FlowCellSnapshotHasNativeSelection()) {
-            throw new Error(
-                "FlowCell Snapshot: select artwork in Illustrator or highlight at least one layer in Layer Tree."
-            );
-        }
-        return {
-            document: app.activeDocument,
-            layers: [],
-            restore: []
-        };
+        throw new Error(
+            "FlowCell Snapshot: select artwork in Illustrator or highlight at least one layer in Layer Tree."
+        );
     }
 }
 
@@ -61,7 +63,7 @@ try {
  * objects into Snapshots > [sublayer name] > sN.
  */
 (function () {
-    var SCRIPT_VERSION = "2026-06-11 14:18";
+    var SCRIPT_VERSION = "2026-07-31 hidden Snapshots root with visible descendants";
     var LOG_PATH = Folder.temp.fsName + "/Illustrator_Save_Snapshot_Debug.log";
     var runStartedAt = new Date().getTime();
     var debugLogLines = [];
@@ -117,28 +119,35 @@ try {
                 if (target.kind === "layer") {
                     sourceState = captureBranchState(target.layer);
                     markTime("capture branch state: " + getTargetName(target));
-                    unlockBranchFromState(sourceState);
-                    markTime("unlock branch: " + getTargetName(target));
-                    copyLayerContents(target.layer, snapshotEntry, sourceState);
-                    markTime("copy layer contents: " + getTargetName(target));
-                    restoreBranchState(sourceState);
+                    try {
+                        unlockBranchFromState(sourceState);
+                        markTime("unlock branch: " + getTargetName(target));
+                        copyLayerContents(target.layer, snapshotEntry, sourceState);
+                        markTime("copy layer contents: " + getTargetName(target));
+                    } finally {
+                        restoreBranchState(sourceState);
+                    }
                     markTime("restore branch: " + getTargetName(target));
                 } else if (target.kind === "item") {
                     sourceState = captureItemState(target.item);
                     markTime("capture item state: " + getTargetName(target));
-                    unlockItemFromState(sourceState);
-                    markTime("unlock item: " + getTargetName(target));
-                    copySingleItem(target.item, snapshotEntry, sourceState);
-                    markTime("copy item: " + getTargetName(target));
-                    restoreItemFromState(sourceState);
+                    try {
+                        unlockItemFromState(sourceState);
+                        markTime("unlock item: " + getTargetName(target));
+                        copySingleItem(target.item, snapshotEntry, sourceState);
+                        markTime("copy item: " + getTargetName(target));
+                    } finally {
+                        restoreItemFromState(sourceState);
+                    }
                     markTime("restore item: " + getTargetName(target));
                 } else {
                     throw new Error("Unsupported target kind: " + target.kind);
                 }
 
-                snapshotEntry.visible = false;
+                restoreActiveLayer(doc, originalActiveLayer);
+                showSnapshotBranch(snapshotContainer);
                 snapshotEntry.locked = false;
-                snapshotContainer.visible = false;
+                snapshotContainer.visible = true;
                 snapshotContainer.locked = false;
                 logLine("Saved snapshot: " + describeTarget(target) + " -> " + snapshotName);
                 report.push(getTargetName(target) + " -> " + snapshotName);
@@ -154,13 +163,13 @@ try {
     } catch (err) {
         logLine("Exception: " + err);
     } finally {
+        restoreActiveLayer(doc, originalActiveLayer);
         if (roots) {
-            hideSnapshotDescendants(roots.snapshots);
+            showSnapshotDescendants(roots.snapshots);
             setSystemLayerState(roots.trash, false, true);
             setSystemLayerState(roots.archive, false, true);
-            setSystemLayerState(roots.snapshots, true, false);
+            setSystemLayerState(roots.snapshots, false, false);
         }
-        restoreActiveLayer(doc, originalActiveLayer);
         markTime("final cleanup");
         flushLog();
     }
@@ -1180,7 +1189,7 @@ try {
         }
     }
 
-    function hideSnapshotDescendants(rootLayer) {
+    function showSnapshotDescendants(rootLayer) {
         var i;
 
         if (!rootLayer) {
@@ -1188,28 +1197,23 @@ try {
         }
 
         for (i = 0; i < rootLayer.layers.length; i += 1) {
-            hideSnapshotBranch(rootLayer.layers[i]);
+            showSnapshotBranch(rootLayer.layers[i]);
         }
     }
 
-    function hideSnapshotBranch(layer) {
+    function showSnapshotBranch(layer) {
         var i;
 
         if (!layer) {
             return;
         }
 
+        layer.visible = true;
+        layer.locked = false;
+
         for (i = 0; i < layer.layers.length; i += 1) {
-            hideSnapshotBranch(layer.layers[i]);
+            showSnapshotBranch(layer.layers[i]);
         }
-
-        try {
-            layer.visible = false;
-        } catch (ignore1) {}
-
-        try {
-            layer.locked = false;
-        } catch (ignore2) {}
     }
 
     function restoreActiveLayer(documentRef, layerRef) {

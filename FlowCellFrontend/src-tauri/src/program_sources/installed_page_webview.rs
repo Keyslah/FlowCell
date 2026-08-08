@@ -172,6 +172,26 @@ mod platform {
             .ok_or_else(|| "Installed page webview worker stopped before replying.".to_string())?
     }
 
+    async fn run_with_parent_webview<T, F>(
+        window: &WebviewWindow,
+        operation: F,
+    ) -> Result<T, String>
+    where
+        T: Send + 'static,
+        F: FnOnce(tauri::webview::PlatformWebview) -> Result<T, String> + Send + 'static,
+    {
+        let (sender, mut receiver) = tauri::async_runtime::channel(1);
+        window
+            .with_webview(move |parent_webview| {
+                let _ = sender.blocking_send(operation(parent_webview));
+            })
+            .map_err(|error| format!("Failed to schedule installed page webview work: {error}"))?;
+        receiver
+            .recv()
+            .await
+            .ok_or_else(|| "Installed page webview worker stopped before replying.".to_string())?
+    }
+
     pub(super) async fn mount(
         window: WebviewWindow,
         html: String,
@@ -188,7 +208,7 @@ mod platform {
             .map_err(|error| format!("Failed to read installed page host size: {error}"))?;
         let app = window.app_handle().clone();
         let parent = window.clone();
-        run_on_main_thread(&window, move || {
+        run_with_parent_webview(&window, move |parent_webview| {
             let page_html = Arc::new(html.into_bytes());
             let protocol_html = page_html.clone();
             let ipc_label = label.clone();
@@ -196,7 +216,9 @@ mod platform {
             let ipc_app = app.clone();
             let isolation_state = Arc::new(AtomicU8::new(ISOLATION_PENDING));
             let ipc_isolation_state = isolation_state.clone();
+            let parent_environment = parent_webview.environment();
             let webview = WebViewBuilder::new()
+                .with_environment(parent_environment)
                 .with_bounds(page_bounds(size.width, size.height))
                 .with_custom_protocol(PAGE_SCHEME.into(), move |_webview_id, request| {
                     let is_entry = request.uri().path() == "/index.html";

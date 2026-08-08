@@ -2,7 +2,8 @@ import type { FlowCellBounds, LayoutSnapshotWindowKind } from "../types.js";
 import { isUsableButtonWindowBounds } from "../button/windows/buttonWindowGeometry.js";
 
 const MANAGED_LAYOUT_WINDOWS_STORAGE_KEY = "flowcell.button-layout-windows.v2";
-const LAST_LAYOUT_DIRECTORY_STORAGE_KEY = "flowcell.last-layout-directory.v1";
+const LAST_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY =
+  "flowcell.main-page-layout-directory.v1";
 
 export interface RegisteredLayoutWindow {
   windowLabel: string;
@@ -13,6 +14,8 @@ export interface RegisteredLayoutWindow {
   buttonFanSetupId?: string;
   buttonOwnerId?: string;
   buttonDisplayMode?: "collapsed" | "expanded";
+  installedPageFileName?: string;
+  installedPageId?: string;
   snapshotBounds?: FlowCellBounds;
 }
 
@@ -53,7 +56,8 @@ function readRegisteredLayoutWindowMap(): Record<string, RegisteredLayoutWindow>
         .filter(([, entry]) =>
           entry?.kind === "button-editor" ||
           entry?.kind === "button-popout" ||
-          entry?.kind === "button-fan"
+          entry?.kind === "button-fan" ||
+          entry?.kind === "installed-page"
         )
         .map(([windowLabel, entry]) => [
           windowLabel,
@@ -100,6 +104,8 @@ export function registerLayoutWindow(entry: RegisteredLayoutWindow): void {
       entry.buttonDisplayMode === "collapsed" || entry.buttonDisplayMode === "expanded"
         ? entry.buttonDisplayMode
         : previousEntry?.buttonDisplayMode,
+    installedPageFileName: entry.installedPageFileName?.trim() || undefined,
+    installedPageId: entry.installedPageId?.trim() || undefined,
     snapshotBounds:
       normalizeBounds(entry.snapshotBounds) ?? normalizeBounds(previousEntry?.snapshotBounds)
   };
@@ -137,6 +143,8 @@ export function findRegisteredLayoutWindow(args: {
   buttonPopoutUnitId?: string;
   buttonFanSetupId?: string;
   buttonOwnerId?: string;
+  installedPageFileName?: string;
+  installedPageId?: string;
 }): RegisteredLayoutWindow | null {
   const entries = Object.values(readRegisteredLayoutWindowMap());
   return (
@@ -147,7 +155,9 @@ export function findRegisteredLayoutWindow(args: {
         (entry.panelName ?? "") === (args.panelName ?? "") &&
         (entry.buttonPopoutUnitId ?? "") === (args.buttonPopoutUnitId ?? "") &&
         (entry.buttonFanSetupId ?? "") === (args.buttonFanSetupId ?? "") &&
-        (entry.buttonOwnerId ?? "") === (args.buttonOwnerId ?? "")
+        (entry.buttonOwnerId ?? "") === (args.buttonOwnerId ?? "") &&
+        (entry.installedPageFileName ?? "") === (args.installedPageFileName ?? "") &&
+        (entry.installedPageId ?? "") === (args.installedPageId ?? "")
       );
     }) ?? null
   );
@@ -198,25 +208,29 @@ export function writeRegisteredLayoutWindowButtonDisplayMode(
   writeRegisteredLayoutWindowMap(nextValue);
 }
 
-export function readLastLayoutDirectory(): string | null {
+export function readLastMainPageLayoutDirectory(): string | null {
   if (!canUseStorage()) {
     return null;
   }
 
-  const rawValue = window.localStorage.getItem(LAST_LAYOUT_DIRECTORY_STORAGE_KEY)?.trim();
+  const rawValue = window.localStorage
+    .getItem(LAST_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY)
+    ?.trim();
   return rawValue ? rawValue : null;
 }
 
-export function writeLastLayoutDirectory(directory: string | null | undefined): void {
+export function writeLastMainPageLayoutDirectory(
+  directory: string | null | undefined
+): void {
   if (!canUseStorage()) {
     return;
   }
 
   const normalized = directory?.trim();
   if (!normalized) {
-    window.localStorage.removeItem(LAST_LAYOUT_DIRECTORY_STORAGE_KEY);
+    window.localStorage.removeItem(LAST_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY);
     return;
   }
 
-  window.localStorage.setItem(LAST_LAYOUT_DIRECTORY_STORAGE_KEY, normalized);
+  window.localStorage.setItem(LAST_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY, normalized);
 }

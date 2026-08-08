@@ -1,6 +1,6 @@
 ---
 name: skin-author
-description: Author, convert, debug, and validate FlowCell Button Editor skins in the canonical sectioned paste format. Use for React, JSX, styled-components, HTML, CSS, SVG, animation-only, packed-layout, data-core hitbox, state-section, or invalid Skin Editor paste requests.
+description: Author, convert, debug, and validate FlowCell Button Editor skins in the canonical sectioned paste format. Use for React, JSX, styled-components, HTML, CSS, SVG, animation-only, packed-layout, semantic color profiles, shape-aware data-core hit testing, state-section, or invalid Skin Editor paste requests.
 ---
 
 # Skin Author

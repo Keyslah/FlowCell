@@ -6,7 +6,15 @@ export interface ButtonSnapOptions {
   tolerance: number;
   gridSize: number;
   keepInsideSurface?: boolean;
+  snapPosition?: boolean;
   snapSize?: boolean;
+}
+
+export const BUTTON_CSS_PIXELS_PER_MILLIMETER = 96 / 25.4;
+
+export function buttonSpacingPixelsFromMillimeters(millimeters: number): number {
+  if (!Number.isFinite(millimeters) || millimeters <= 0) return 0;
+  return millimeters * BUTTON_CSS_PIXELS_PER_MILLIMETER;
 }
 
 export interface ButtonGeometryResolution {
@@ -37,6 +45,27 @@ export interface StarterLayoutResult {
 export interface NamedButtonRect {
   id: string;
   rect: ButtonRect;
+}
+
+export interface ButtonGroupTranslationDelta {
+  x: number;
+  y: number;
+}
+
+export interface ButtonGroupTranslationOptions {
+  surface: Pick<ButtonRect, "width" | "height">;
+  otherRects: readonly ButtonRect[];
+  tolerance: number;
+  gridSize: number;
+  anchorPlacementId?: string;
+}
+
+export interface ButtonGroupTranslationResolution {
+  placements: NamedButtonRect[];
+  delta: ButtonGroupTranslationDelta;
+  valid: boolean;
+  snappedX: boolean;
+  snappedY: boolean;
 }
 
 export type ButtonReorderPosition = "before" | "after";
@@ -98,6 +127,39 @@ export interface CompactButtonPlacementOptions {
 export interface ButtonLayoutGeometryIssue {
   placementIds: string[];
   message: string;
+}
+
+export interface ButtonSelectionSizeOptions {
+  placements: readonly NamedButtonRect[];
+  selectedPlacementIds: readonly string[];
+  targetSize: Pick<ButtonRect, "width" | "height">;
+  surface: Pick<ButtonRect, "width" | "height">;
+  gap?: number;
+  /** Placements such as a movable Fan owner stay fixed while content rows repack. */
+  independentPlacementIds?: readonly string[];
+}
+
+export interface ButtonSelectionSizeResult {
+  success: boolean;
+  placements: NamedButtonRect[];
+  reflowed: boolean;
+  reason: string | null;
+}
+
+export interface ButtonSelectionTopLeftOptions {
+  placements: readonly NamedButtonRect[];
+  selectedPlacementIds: readonly string[];
+  surface: Pick<ButtonRect, "width" | "height">;
+  gap?: number;
+  /** Placements such as a movable Fan owner stay outside content-row alignment. */
+  independentPlacementIds?: readonly string[];
+}
+
+export interface ButtonSelectionTopLeftResult {
+  success: boolean;
+  placements: NamedButtonRect[];
+  changed: boolean;
+  reason: string | null;
 }
 
 const EPSILON = 0.0001;
@@ -438,6 +500,200 @@ function firstButtonPathConflictProgress(
   return earliest;
 }
 
+export function translateButtonPlacementRects(
+  placements: readonly NamedButtonRect[],
+  delta: ButtonGroupTranslationDelta
+): NamedButtonRect[] {
+  return placements.map((placement) => ({
+    id: placement.id,
+    rect: {
+      ...placement.rect,
+      x: placement.rect.x + delta.x,
+      y: placement.rect.y + delta.y
+    }
+  }));
+}
+
+function clampButtonGroupTranslation(
+  placements: readonly NamedButtonRect[],
+  delta: ButtonGroupTranslationDelta,
+  surface: Pick<ButtonRect, "width" | "height">
+): ButtonGroupTranslationDelta {
+  const left = Math.min(...placements.map((placement) => placement.rect.x));
+  const top = Math.min(...placements.map((placement) => placement.rect.y));
+  const right = Math.max(...placements.map((placement) => placement.rect.x + placement.rect.width));
+  const bottom = Math.max(...placements.map((placement) => placement.rect.y + placement.rect.height));
+  return {
+    x: Math.min(Math.max(delta.x, -left), surface.width - right),
+    y: Math.min(Math.max(delta.y, -top), surface.height - bottom)
+  };
+}
+
+function buttonGroupTranslationIsValid(
+  placements: readonly NamedButtonRect[],
+  delta: ButtonGroupTranslationDelta,
+  options: ButtonGroupTranslationOptions
+): boolean {
+  return translateButtonPlacementRects(placements, delta).every((placement) =>
+    isButtonRectInsideSurface(placement.rect, options.surface) &&
+    !options.otherRects.some((other) => buttonRectsOverlap(placement.rect, other))
+  );
+}
+
+function firstButtonGroupPathConflictProgress(
+  placements: readonly NamedButtonRect[],
+  startDelta: ButtonGroupTranslationDelta,
+  candidateDelta: ButtonGroupTranslationDelta,
+  otherRects: readonly ButtonRect[]
+): number | null {
+  let earliest: number | null = null;
+  for (const placement of placements) {
+    const start = {
+      ...placement.rect,
+      x: placement.rect.x + startDelta.x,
+      y: placement.rect.y + startDelta.y
+    };
+    const candidate = {
+      ...placement.rect,
+      x: placement.rect.x + candidateDelta.x,
+      y: placement.rect.y + candidateDelta.y
+    };
+    const progress = firstButtonPathConflictProgress(start, candidate, otherRects);
+    if (progress !== null) earliest = earliest === null ? progress : Math.min(earliest, progress);
+  }
+  return earliest;
+}
+
+function interpolateButtonGroupTranslation(
+  start: ButtonGroupTranslationDelta,
+  end: ButtonGroupTranslationDelta,
+  progress: number
+): ButtonGroupTranslationDelta {
+  return {
+    x: start.x + (end.x - start.x) * progress,
+    y: start.y + (end.y - start.y) * progress
+  };
+}
+
+function buttonGroupSnapDeltas(
+  placements: readonly NamedButtonRect[],
+  delta: ButtonGroupTranslationDelta,
+  options: ButtonGroupTranslationOptions
+): { x: number; y: number } {
+  const translated = translateButtonPlacementRects(placements, delta);
+  const xCandidates: number[] = [];
+  const yCandidates: number[] = [];
+  for (const placement of translated) {
+    const left = placement.rect.x;
+    const right = left + placement.rect.width;
+    const top = placement.rect.y;
+    const bottom = top + placement.rect.height;
+    xCandidates.push(-left, options.surface.width - right);
+    yCandidates.push(-top, options.surface.height - bottom);
+    for (const other of options.otherRects) {
+      const otherRight = other.x + other.width;
+      const otherBottom = other.y + other.height;
+      xCandidates.push(other.x - left, otherRight - left, other.x - right, otherRight - right);
+      yCandidates.push(other.y - top, otherBottom - top, other.y - bottom, otherBottom - bottom);
+    }
+  }
+  return {
+    x: chooseClosestDelta(xCandidates, options.tolerance),
+    y: chooseClosestDelta(yCandidates, options.tolerance)
+  };
+}
+
+/**
+ * Moves a selected set as one rigid body. Every placement receives the same
+ * delta, selected siblings are never treated as obstacles, and swept collision
+ * checks prevent a fast pointer sample from tunnelling through an unselected
+ * Button.
+ */
+export function resolveButtonGroupTranslationAlongPath(
+  placements: readonly NamedButtonRect[],
+  lastValidDelta: ButtonGroupTranslationDelta,
+  candidateDelta: ButtonGroupTranslationDelta,
+  options: ButtonGroupTranslationOptions
+): ButtonGroupTranslationResolution {
+  if (placements.length === 0) {
+    return {
+      placements: [],
+      delta: { ...lastValidDelta },
+      valid: false,
+      snappedX: false,
+      snappedY: false
+    };
+  }
+
+  const anchor = placements.find((placement) => placement.id === options.anchorPlacementId) ?? placements[0];
+  const boundedCandidate = clampButtonGroupTranslation(placements, candidateDelta, options.surface);
+  const gridCandidate = clampButtonGroupTranslation(placements, {
+    x: snapToGrid(anchor.rect.x + boundedCandidate.x, options.gridSize) - anchor.rect.x,
+    y: snapToGrid(anchor.rect.y + boundedCandidate.y, options.gridSize) - anchor.rect.y
+  }, options.surface);
+  const snap = buttonGroupSnapDeltas(placements, gridCandidate, options);
+  const candidateOptions = [
+    { delta: { x: gridCandidate.x + snap.x, y: gridCandidate.y + snap.y }, snappedX: snap.x !== 0, snappedY: snap.y !== 0 },
+    { delta: { x: gridCandidate.x + snap.x, y: gridCandidate.y }, snappedX: snap.x !== 0, snappedY: false },
+    { delta: { x: gridCandidate.x, y: gridCandidate.y + snap.y }, snappedX: false, snappedY: snap.y !== 0 },
+    { delta: gridCandidate, snappedX: false, snappedY: false }
+  ].map((candidate) => ({
+    ...candidate,
+    delta: clampButtonGroupTranslation(placements, candidate.delta, options.surface)
+  }));
+  const chosen = candidateOptions.find((candidate) =>
+    buttonGroupTranslationIsValid(placements, candidate.delta, options)
+  ) ?? candidateOptions[candidateOptions.length - 1];
+
+  const conflictProgress = firstButtonGroupPathConflictProgress(
+    placements,
+    lastValidDelta,
+    chosen.delta,
+    options.otherRects
+  );
+  const safeCandidate = conflictProgress === null
+    ? chosen.delta
+    : interpolateButtonGroupTranslation(lastValidDelta, chosen.delta, conflictProgress);
+  if (buttonGroupTranslationIsValid(placements, safeCandidate, options)) {
+    return {
+      placements: translateButtonPlacementRects(placements, safeCandidate),
+      delta: safeCandidate,
+      valid: true,
+      snappedX: chosen.snappedX,
+      snappedY: chosen.snappedY
+    };
+  }
+
+  let lower = 0;
+  let upper = 1;
+  let resolvedDelta = { ...lastValidDelta };
+  for (let index = 0; index < 24; index += 1) {
+    const middle = (lower + upper) / 2;
+    const middleDelta = interpolateButtonGroupTranslation(lastValidDelta, safeCandidate, middle);
+    if (
+      buttonGroupTranslationIsValid(placements, middleDelta, options) &&
+      firstButtonGroupPathConflictProgress(
+        placements,
+        lastValidDelta,
+        middleDelta,
+        options.otherRects
+      ) === null
+    ) {
+      lower = middle;
+      resolvedDelta = middleDelta;
+    } else {
+      upper = middle;
+    }
+  }
+  return {
+    placements: translateButtonPlacementRects(placements, resolvedDelta),
+    delta: resolvedDelta,
+    valid: buttonGroupTranslationIsValid(placements, resolvedDelta, options),
+    snappedX: false,
+    snappedY: false
+  };
+}
+
 function boundButtonPathCandidate(
   start: ButtonRect,
   candidate: ButtonRect,
@@ -706,10 +962,11 @@ export function resolveButtonGeometry(
   options: ButtonSnapOptions
 ): ButtonGeometryResolution {
   const normalized = normalizeButtonRect(candidate);
+  const snapPosition = options.snapPosition !== false;
   const gridRect = {
     ...normalized,
-    x: snapToGrid(normalized.x, options.gridSize),
-    y: snapToGrid(normalized.y, options.gridSize),
+    x: snapPosition ? snapToGrid(normalized.x, options.gridSize) : normalized.x,
+    y: snapPosition ? snapToGrid(normalized.y, options.gridSize) : normalized.y,
     width: options.snapSize === false
       ? normalized.width
       : Math.max(1, snapToGrid(normalized.width, options.gridSize)),
@@ -717,8 +974,12 @@ export function resolveButtonGeometry(
       ? normalized.height
       : Math.max(1, snapToGrid(normalized.height, options.gridSize))
   };
-  const dx = chooseClosestDelta(xSnapDeltas(gridRect, options), options.tolerance);
-  const dy = chooseClosestDelta(ySnapDeltas(gridRect, options), options.tolerance);
+  const dx = snapPosition
+    ? chooseClosestDelta(xSnapDeltas(gridRect, options), options.tolerance)
+    : 0;
+  const dy = snapPosition
+    ? chooseClosestDelta(ySnapDeltas(gridRect, options), options.tolerance)
+    : 0;
   const rawCandidates = [
     { rect: candidateRect(gridRect, dx, dy), snappedX: dx !== 0, snappedY: dy !== 0 },
     { rect: candidateRect(gridRect, dx, 0), snappedX: dx !== 0, snappedY: false },
@@ -1312,6 +1573,244 @@ export function validateExactButtonLayoutGeometry(
   return issues;
 }
 
+/**
+ * Applies one exact host box to a selection. The original coordinates win when
+ * they remain valid. If a tight layout would overlap, the same inferred rows
+ * are packed from their current top-left anchor without changing row
+ * membership or order. Independent placements (notably a Fan owner) never
+ * participate in that content-row packing.
+ */
+export function resizeButtonPlacementSelection(
+  options: ButtonSelectionSizeOptions
+): ButtonSelectionSizeResult {
+  const original = options.placements.map((placement) => ({
+    id: placement.id,
+    rect: { ...placement.rect }
+  }));
+  const selectedIds = new Set(options.selectedPlacementIds);
+  const placementIds = new Set(original.map((placement) => placement.id));
+  if (selectedIds.size === 0) {
+    return {
+      success: false,
+      placements: original,
+      reflowed: false,
+      reason: "Select one or more Buttons before adding the copied size."
+    };
+  }
+  if ([...selectedIds].some((placementId) => !placementIds.has(placementId))) {
+    return {
+      success: false,
+      placements: original,
+      reflowed: false,
+      reason: "A selected Button placement no longer exists on this surface."
+    };
+  }
+  if (
+    !Number.isFinite(options.targetSize.width) ||
+    !Number.isFinite(options.targetSize.height) ||
+    options.targetSize.width <= 0 ||
+    options.targetSize.height <= 0
+  ) {
+    return {
+      success: false,
+      placements: original,
+      reflowed: false,
+      reason: "Copied Button dimensions must be positive finite values."
+    };
+  }
+
+  const resized = original.map((placement) => selectedIds.has(placement.id)
+    ? {
+        id: placement.id,
+        rect: {
+          ...placement.rect,
+          width: options.targetSize.width,
+          height: options.targetSize.height
+        }
+      }
+    : placement);
+  const directIssues = validateExactButtonLayoutGeometry(resized, options.surface);
+  if (directIssues.length === 0) {
+    return {
+      success: true,
+      placements: resized,
+      reflowed: false,
+      reason: null
+    };
+  }
+
+  const independentIds = new Set(options.independentPlacementIds ?? []);
+  const originalContent = original.filter((placement) => !independentIds.has(placement.id));
+  if (originalContent.length === 0) {
+    return {
+      success: false,
+      placements: original,
+      reflowed: false,
+      reason: directIssues[0].message
+    };
+  }
+  const resizedById = new Map(resized.map((placement) => [placement.id, placement]));
+  const rows = inferButtonPlacementRows(originalContent).map((row) => ({
+    ...row,
+    placements: row.placements.map((placement) => resizedById.get(placement.id) ?? placement)
+  }));
+  const compacted = compactButtonPlacementRows(rows, options.surface, {
+    anchorX: Math.min(...originalContent.map((placement) => placement.rect.x)),
+    anchorY: Math.min(...originalContent.map((placement) => placement.rect.y)),
+    gap: options.gap,
+    preserveRowTopOffsets: true
+  });
+  if (!compacted.success) {
+    return {
+      success: false,
+      placements: original,
+      reflowed: false,
+      reason: compacted.reason
+    };
+  }
+
+  const compactedById = new Map(compacted.placements.map((placement) => [placement.id, placement.rect]));
+  const packed = resized.map((placement) => ({
+    id: placement.id,
+    rect: independentIds.has(placement.id)
+      ? placement.rect
+      : compactedById.get(placement.id) ?? placement.rect
+  }));
+  const packedIssues = validateExactButtonLayoutGeometry(packed, options.surface);
+  if (packedIssues.length > 0) {
+    return {
+      success: false,
+      placements: original,
+      reflowed: false,
+      reason: packedIssues[0].message
+    };
+  }
+  return {
+    success: true,
+    placements: packed,
+    reflowed: true,
+    reason: null
+  };
+}
+
+/**
+ * Packs only the selected content Buttons against the selected group's visual
+ * top-left Button. Existing row membership and order are retained, both axes
+ * use the configured gap, the anchor Button stays in place, and independent
+ * placements such as a Fan owner do not participate.
+ */
+export function alignButtonPlacementSelectionToTopLeftButton(
+  options: ButtonSelectionTopLeftOptions
+): ButtonSelectionTopLeftResult {
+  const original = options.placements.map((placement) => ({
+    id: placement.id,
+    rect: { ...placement.rect }
+  }));
+  const placementIds = new Set(original.map((placement) => placement.id));
+  const selectedIds = new Set(options.selectedPlacementIds);
+  if (selectedIds.size === 0) {
+    return {
+      success: false,
+      placements: original,
+      changed: false,
+      reason: "Select one or more Buttons before aligning to the top-left Button."
+    };
+  }
+  if ([...selectedIds].some((placementId) => !placementIds.has(placementId))) {
+    return {
+      success: false,
+      placements: original,
+      changed: false,
+      reason: "A selected Button placement no longer exists on this surface."
+    };
+  }
+
+  const independentIds = new Set(options.independentPlacementIds ?? []);
+  const selectedContent = original.filter((placement) =>
+    selectedIds.has(placement.id) && !independentIds.has(placement.id)
+  );
+  if (selectedContent.length === 0) {
+    return {
+      success: false,
+      placements: original,
+      changed: false,
+      reason: "Select one or more content Buttons; the Fan owner stays independent."
+    };
+  }
+  if (selectedContent.length === 1) {
+    return {
+      success: true,
+      placements: original,
+      changed: false,
+      reason: null
+    };
+  }
+
+  const rows = inferButtonPlacementRows(selectedContent);
+  const anchor = rows[0]?.placements[0];
+  if (!anchor) {
+    return {
+      success: false,
+      placements: original,
+      changed: false,
+      reason: "The selected Buttons do not contain a top-left anchor."
+    };
+  }
+  const compacted = compactButtonPlacementRows(rows, options.surface, {
+    anchorX: anchor.rect.x,
+    anchorY: anchor.rect.y,
+    gap: options.gap,
+    preserveRowTopOffsets: false
+  });
+  if (!compacted.success) {
+    return {
+      success: false,
+      placements: original,
+      changed: false,
+      reason: compacted.reason
+    };
+  }
+
+  const packedAnchor = compacted.placements.find((placement) => placement.id === anchor.id);
+  if (
+    !packedAnchor ||
+    Math.abs(packedAnchor.rect.x - anchor.rect.x) > EPSILON ||
+    Math.abs(packedAnchor.rect.y - anchor.rect.y) > EPSILON
+  ) {
+    return {
+      success: false,
+      placements: original,
+      changed: false,
+      reason: "There is not enough surface space to keep the top-left Button fixed while aligning the selection."
+    };
+  }
+
+  const compactedById = new Map(compacted.placements.map((placement) => [placement.id, placement.rect]));
+  const aligned = original.map((placement) => ({
+    id: placement.id,
+    rect: compactedById.get(placement.id) ?? placement.rect
+  }));
+  const geometryIssues = validateExactButtonLayoutGeometry(aligned, options.surface);
+  if (geometryIssues.length > 0) {
+    return {
+      success: false,
+      placements: original,
+      changed: false,
+      reason: "The selected rows cannot align to their top-left Button without overlapping another Button."
+    };
+  }
+  const changed = aligned.some((placement, index) =>
+    Math.abs(placement.rect.x - original[index].rect.x) > EPSILON ||
+    Math.abs(placement.rect.y - original[index].rect.y) > EPSILON
+  );
+  return {
+    success: true,
+    placements: aligned,
+    changed,
+    reason: null
+  };
+}
+
 export function findFirstAvailableButtonPosition(args: {
   width: number;
   height: number;
@@ -1328,8 +1827,10 @@ export function findFirstAvailableButtonPosition(args: {
   for (let y = args.padding; y + height <= args.surface.height; y += stepY) {
     for (let x = args.padding; x + width <= args.surface.width; x += stepX) {
       const rect = {
-        x: snapToGrid(x, args.gridSize),
-        y: snapToGrid(y, args.gridSize),
+        // The explicit millimeter gap owns automatic placement spacing.
+        // Manual movement continues to use the document grid independently.
+        x,
+        y,
         width,
         height
       };

@@ -1,4 +1,4 @@
-import type { PanelButtonEventsRecord } from "../../lib/programRails";
+import type { PanelButtonEventsRecord } from "../../lib/programRails.js";
 
 export type PageRecord = {
   id: string;
@@ -282,7 +282,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "Save Layout",
-    tooltip: "Save the main window and open popout positions to a layout file.",
+    tooltip: "Save every open Button Editor, Pop-out, Fan, and installed Page window.",
     actionId: "top-left-button-1"
   },
   {
@@ -294,7 +294,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "Load Layout",
-    tooltip: "Load a saved FlowCell layout and reopen its saved popout windows.",
+    tooltip: "Restore every saved Button Editor, Pop-out, Fan, and installed Page window.",
     actionId: "top-left-button-2"
   },
   {

@@ -13,6 +13,7 @@ import {
   buttonWindowRectContainsPoint,
   resolveButtonWindowClientPoint
 } from "./buttonWindowGeometry";
+import { buttonCoreContainsClientPoint } from "./buttonCoreHitTest";
 import { isButtonWindowGeometryTransitionActive } from "./buttonWindowGeometryTransition";
 import {
   createNativeCursorIgnoreController,
@@ -81,6 +82,10 @@ function pointHitsInteractiveElement(
   clientX: number,
   clientY: number
 ): boolean {
+  if (hitbox.buttonHost) {
+    return buttonCoreContainsClientPoint(hitbox.element, clientX, clientY);
+  }
+
   // Viewport positions can change when an ancestor semantic frame moves even
   // though neither this element nor its size changed. Keep membership cached,
   // but read the exact rect live so synthetic hover matches WebView click hit testing.
@@ -90,12 +95,6 @@ function pointHitsInteractiveElement(
     { x: clientX, y: clientY }
   )) {
     return false;
-  }
-
-  // Button membership is cached through the light-DOM host, but the authored
-  // core's live rectangle is the exact hitbox after placement and state transforms.
-  if (hitbox.buttonHost) {
-    return true;
   }
 
   const { element } = hitbox;
@@ -334,8 +333,8 @@ export function useNativeButtonHitboxes(args: {
       );
 
       // While the window ignores cursor events the webview receives no pointer
-      // events. Drive hover from each authored core's live rectangle so native
-      // gating and the browser's core-only pointer target stay aligned.
+      // events. Drive hover from each authored target's live bounds so native
+      // gating and the browser's authored core/inner-shape target stay aligned.
       dispatchSyntheticButtonHover(currentInventory.buttonHosts, clientX, clientY, true);
 
       if (currentHoverState !== hovered) {

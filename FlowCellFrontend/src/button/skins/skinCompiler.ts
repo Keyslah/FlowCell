@@ -9,6 +9,7 @@ import {
   type ButtonSkinSectionSource,
   type ButtonSkinStateSectionName
 } from "./buttonSkinFormat.js";
+import { readButtonSkinTextColor } from "./buttonSkinColors.js";
 import {
   fingerprintButtonSkinSource,
   parseCssDeclarations,
@@ -129,6 +130,7 @@ export function compileButtonSkin(skin: ButtonSkin): ButtonSkinCompileResult {
   const sourceFingerprint = fingerprintButtonSkinSource(serialized);
   const sanitized = sanitizeButtonSkinStructure(source.structure);
   const sanitizedMarkupTemplate = sanitized.markup;
+  const textColorOverride = readButtonSkinTextColor(source);
   const namespace = `fc-${safeCssId(skin.id)}-${sourceFingerprint}`;
   const parsedKeyframes = parseCssKeyframes(source.keyframes);
   const keyframeNames = new Map<string, string>();
@@ -139,12 +141,10 @@ export function compileButtonSkin(skin: ButtonSkin): ButtonSkinCompileResult {
   }
 
   const css = [
-    ":host{display:inline-block;box-sizing:border-box;overflow:visible;line-height:normal;pointer-events:auto;contain:layout style;}",
+    ":host{display:inline-block;box-sizing:border-box;overflow:visible;line-height:normal;pointer-events:none;contain:layout style;}",
     "[data-button-skin-root]{display:inline-block;position:relative;box-sizing:border-box;overflow:visible;pointer-events:none;}",
     "[data-button-skin-root] *{pointer-events:none;}",
-    "[data-core]{pointer-events:auto!important;touch-action:none;user-select:none;-webkit-user-select:none;}",
-    "svg[data-core]{pointer-events:bounding-box!important;}",
-    "[data-button-label-node]{font-size:var(--button-label-font-size,inherit);line-height:inherit;}",
+    `[data-button-label-node]{font-size:var(--button-label-font-size,inherit);line-height:inherit;${textColorOverride ? "color:var(--flowcell-button-text-color)!important;-webkit-text-fill-color:var(--flowcell-button-text-color)!important;fill:var(--flowcell-button-text-color)!important;" : ""}}`,
     "[data-button-label-line]{display:block;white-space:nowrap;}",
     ":host([data-button-constrained=\"true\"]) [data-core]{box-sizing:border-box!important;width:var(--button-core-width)!important;height:var(--button-core-height)!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;}",
     ":host([data-button-text-overflow=\"true\"]) [data-core]{outline:1px dashed rgba(255,105,105,.9);outline-offset:-1px;}"
@@ -168,6 +168,23 @@ export function compileButtonSkin(skin: ButtonSkin): ButtonSkinCompileResult {
   for (const section of BUTTON_SKIN_STATE_SECTIONS) {
     css.push(...compileStateSection(section, source[section], keyframeNames));
   }
+  // Pointer ownership is emitted last so authored declarations cannot turn
+  // wrappers back on or replace the host's exact interaction-shape contract.
+  css.push(
+    "[data-button-skin-root] *{pointer-events:none!important;}",
+    "[data-core]{pointer-events:auto!important;touch-action:none;user-select:none;-webkit-user-select:none;}",
+    "svg[data-core]{pointer-events:visiblePainted!important;}"
+  );
+  if (validation.analysis.hasHitShape) {
+    css.push(
+      "[data-core]{pointer-events:none!important;}",
+      "svg[data-core]{pointer-events:none!important;}",
+      "[data-hit-shape]{pointer-events:auto!important;touch-action:none;user-select:none;-webkit-user-select:none;}",
+      "svg [data-hit-shape],svg[data-hit-shape]{pointer-events:visiblePainted!important;}",
+      "svg [data-hit-shape] *,svg[data-hit-shape] *{pointer-events:visiblePainted!important;}"
+    );
+  }
+  css.push("[data-button-inline-editor]{pointer-events:auto!important;user-select:text!important;}");
 
   return {
     ok: true,

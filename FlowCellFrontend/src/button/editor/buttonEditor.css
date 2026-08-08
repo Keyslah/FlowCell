@@ -201,6 +201,93 @@
   font-weight: 600;
 }
 
+.button-editor-sidebar__selection {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #41627e;
+  border-radius: 7px;
+  background: #1d2a35;
+}
+
+.button-editor-sidebar__selection-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.button-editor-sidebar__selection-heading > span {
+  min-width: 24px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  color: #081018;
+  background: #8cc8ff;
+  font-weight: 700;
+  text-align: center;
+}
+
+.button-editor-sidebar__selection ul {
+  display: grid;
+  gap: 3px;
+  max-height: 112px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.button-editor-sidebar__selection li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 3px 5px;
+  border-left: 2px solid #649bc4;
+  color: #d9e8f5;
+  background: rgba(140, 200, 255, .06);
+}
+
+.button-editor-sidebar__selection li > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.button-editor-sidebar__selection li.is-focused {
+  border-left-color: #e8f6ff;
+  color: #fff;
+  background: rgba(140, 200, 255, .14);
+}
+
+.button-editor-sidebar__selection li em {
+  flex: 0 0 auto;
+  color: #9ed5ff;
+  font-size: 10px;
+  font-style: normal;
+  text-transform: uppercase;
+}
+
+.button-editor-sidebar__selection p,
+.button-editor-sidebar__selection small {
+  margin: 0;
+  color: #9eabb9;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.button-editor-sidebar__fan {
+  margin: 0 !important;
+  padding: 8px 9px;
+  border: 1px solid #587260;
+  border-radius: 7px;
+  color: #f0fff4;
+  background: #24372b;
+  font-weight: 600;
+}
+
 .button-editor-sidebar__mode {
   display: flex !important;
   align-items: center;
@@ -229,6 +316,49 @@
   background: #20262d;
 }
 
+.button-editor-sidebar__sizing {
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  margin: 2px 0 0;
+  padding: 10px;
+  border: 1px solid #39434f;
+  border-radius: 7px;
+  background: #20262d;
+}
+
+.button-editor-sidebar__sizing legend {
+  padding: 0 5px;
+  color: #e7ebf0;
+  font-weight: 600;
+}
+
+.button-editor-sidebar__sizing label {
+  margin: 0;
+}
+
+.button-editor-sidebar__sizing > span {
+  color: #8f9baa;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.button-editor-sidebar__size-copy-actions {
+  display: grid;
+  gap: 6px;
+}
+
+.button-editor-sidebar__size-copy-actions > button {
+  width: 100%;
+  text-align: left;
+}
+
+.button-editor-sidebar__copied-size {
+  padding: 6px;
+  border-radius: 5px;
+  background: rgba(140, 200, 255, .06);
+}
+
 .button-workspace-shell {
   position: relative;
   padding: 0;
@@ -241,10 +371,14 @@
   overflow: auto;
   padding: 16px;
   box-sizing: border-box;
+  /* Grid plus auto margins centers the surface in the working area while a
+     surface larger than that area still scrolls from its true top-left. */
+  display: grid;
 }
 
 .button-workspace-canvas {
   position: relative;
+  margin: auto;
   box-sizing: border-box;
   border: 1px solid #59616d;
   border-radius: 2px;
@@ -253,6 +387,34 @@
     linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px);
   background-size: 8px 8px;
+  touch-action: none;
+  user-select: none;
+}
+
+.button-workspace-selection-indicator {
+  position: absolute;
+  z-index: 9000;
+  box-sizing: border-box;
+  border: 2px solid #58bfff;
+  border-radius: 4px;
+  background: rgba(88, 191, 255, .045);
+  box-shadow: inset 0 0 0 1px rgba(4, 10, 16, .9);
+  pointer-events: none;
+}
+
+.button-workspace-selection-indicator.is-focused {
+  border-color: #e8f6ff;
+  box-shadow: inset 0 0 0 1px #58bfff;
+}
+
+.button-workspace-marquee {
+  position: absolute;
+  z-index: 30000;
+  box-sizing: border-box;
+  border: 1px solid #8cc8ff;
+  background: rgba(80, 158, 220, .08);
+  box-shadow: 0 0 0 1px rgba(8, 18, 28, .55);
+  pointer-events: none;
 }
 
 .button-workspace-canvas.is-reorder-mode [data-button-placement-id]:not([data-button-selected="true"]),
@@ -581,6 +743,7 @@
 .button-skin-section > .button-behavior-preview,
 .button-skin-section > .button-text-offset-grid,
 .button-skin-section > .button-text-bench-stats,
+.button-skin-section > .button-color-grid,
 .button-skin-section > .button-skin-preview-section,
 .button-skin-section > button,
 .button-skin-section > .button-text-bench-preview {
@@ -595,6 +758,63 @@
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+
+.button-color-grid {
+  display: grid;
+  gap: 7px;
+}
+
+.button-color-profile-empty {
+  margin: 0;
+  color: #84909e;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.button-color-row {
+  display: grid;
+  grid-template-columns: 42px minmax(72px, 1fr) auto;
+  align-items: end;
+  gap: 6px;
+  min-width: 0;
+  padding: 7px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.button-color-row__label {
+  grid-column: 1 / -1;
+  color: #aeb9c6;
+  font-size: 11px;
+}
+
+.button-color-row input[type="color"] {
+  width: 42px;
+  min-width: 42px;
+  height: 30px;
+  padding: 3px;
+  cursor: pointer;
+}
+
+.button-color-row input[type="text"] {
+  min-width: 0;
+  height: 30px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.button-color-row__pick,
+.button-color-row__reset {
+  min-width: 48px;
+  height: 30px;
+  padding-inline: 8px;
+}
+
+.button-color-row__reset {
+  grid-column: 1 / -1;
+  width: 100%;
 }
 
 .button-cycle-count-row {
@@ -666,7 +886,7 @@
   min-height: 100px;
   display: grid;
   place-items: center;
-  overflow: visible;
+  overflow: auto;
   border: 1px dashed #4d5662;
   background: #14181d;
 }
@@ -693,7 +913,7 @@
   min-height: 100px;
   display: grid;
   place-items: center;
-  overflow: visible;
+  overflow: auto;
   border: 1px dashed #4d5662;
   background: #14181d;
 }
@@ -716,7 +936,7 @@
   display: grid;
   place-items: center;
   margin: 10px 0;
-  overflow: visible;
+  overflow: auto;
   border: 1px dashed #5c6876;
   border-radius: 6px;
   background: #101419;

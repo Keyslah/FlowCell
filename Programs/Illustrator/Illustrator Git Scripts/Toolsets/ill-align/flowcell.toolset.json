@@ -38,7 +38,7 @@
       { "id": "x_origin_active", "kind": "toggle", "label": "X Origin active", "payloadKey": "", "defaultValue": false, "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true },
       { "id": "y_surface_active", "kind": "toggle", "label": "Y Surface active", "payloadKey": "", "defaultValue": false, "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true },
       { "id": "y_origin_active", "kind": "toggle", "label": "Y Origin active", "payloadKey": "", "defaultValue": false, "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true },
-      { "id": "group", "kind": "toggle", "label": "Group selection", "payloadKey": "group", "defaultValue": false, "x": 8, "y": 188, "width": 180, "height": 36, "zIndex": 2 }
+      { "id": "group", "kind": "toggle", "label": "Group selection", "payloadKey": "group", "defaultValue": false, "x": 8, "y": 188, "width": 180, "height": 36, "zIndex": 2, "hidden": true }
     ],
     "childBehaviors": {
       "x_min": { "execute": true, "payloadTemplate": { "command": "align_axis", "axis": "X", "mode": "MIN", "modifier": { "surface": { "$field": "x_surface_active" }, "origin": { "$field": "x_origin_active" } }, "group": { "$field": "group" } } },

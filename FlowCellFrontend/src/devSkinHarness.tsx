@@ -70,18 +70,20 @@ function Harness() {
           busy={false}
           placement={HARNESS_PLACEMENT}
           surfaceButtonCount={1}
+          selectionButtonCount={1}
           allSurfaceButtonsSameSize={false}
           buttonLabel="Button Preview"
           activationCycle={null}
           stateStructureApplied
           onButtonLabelChange={() => {}}
           onActivationCycleChange={() => {}}
-          onHighlightOnHoverChange={() => {}}
           onApplyAllButtonText={() => {}}
+          onSizingModePreviewChange={() => {}}
           onAssignSize={() => {}}
           onAssignSizeToPanel={() => {}}
           onPlacementTextChange={() => {}}
           onAssignSkin={(next) => setSkin(next)}
+          onAssignSkinToSelection={(next) => setSkin(next)}
           onAssignSkinToPanel={(next) => setSkin(next)}
           onLoadSkinFile={async () => null}
           onSaveSkin={async (next) => {

@@ -281,6 +281,7 @@ export interface ButtonSkin {
 
 export type ButtonPopoutOpenRule = "toggle" | "click" | "hover" | "manual";
 export type ButtonPopoutCloseRule = "toggle" | "escape" | "hover-out" | "manual";
+export type ButtonPopoutInteractionMode = "pop" | "fan";
 
 export interface ButtonToolFieldOption {
   id: string;
@@ -363,6 +364,8 @@ interface ButtonPopoutUnitBase {
   desktopBoundsEnvelope?: ButtonRect;
   openRule: ButtonPopoutOpenRule;
   closeRule: ButtonPopoutCloseRule;
+  interactionMode?: ButtonPopoutInteractionMode;
+  ownerPlacementId?: ButtonPlacementId | null;
   transparency: number;
   pinnedDefault: boolean;
   windowFitMode?: ButtonWindowFitMode;
@@ -370,6 +373,7 @@ interface ButtonPopoutUnitBase {
 
 export interface RegularButtonPopoutUnit extends ButtonPopoutUnitBase {
   kind: "regular";
+  ownerButtonId?: ButtonId | null;
   memberPlacementIds: ButtonPlacementId[];
   memberSourceIdentities: ButtonSourceIdentity[];
   selectionKey: string;
@@ -417,6 +421,7 @@ export interface ButtonFanSetup {
 export interface ButtonDocumentSettings {
   gridSize: number;
   snapTolerance: number;
+  buttonSpacingMm: number;
   defaultGap: number;
   defaultSurfacePadding: number;
   defaultSkinId: ButtonSkinId;

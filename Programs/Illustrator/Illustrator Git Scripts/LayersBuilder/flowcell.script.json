@@ -708,6 +708,91 @@
         }
       },
       {
+        "id": "place-selected-artwork",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "placeartwork"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "targetKey",
+            "copy"
+          ],
+          "properties": {
+            "targetKey": {
+              "type": "string"
+            },
+            "copy": {
+              "type": "boolean"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
         "id": "select-contents",
         "handler": {
           "kind": "program",
@@ -890,6 +975,9 @@
     ],
     "config": {
       "programName": "Illustrator",
+      "refreshPanelNames": [
+        "Layers Builder"
+      ],
       "resourceLabel": "Layer",
       "emptyMessage": "No layers found. Open an Illustrator document and Refresh.",
       "refreshEvent": "flowcell://program-data-invalidated",
@@ -903,6 +991,11 @@
         "refreshed": "Layer Tree refreshed.",
         "createRoot": "+ Layer",
         "createChild": "+ Child",
+        "createRootTitle": "Create New Layer",
+        "createRootDefaultName": "Layer",
+        "createChildTitle": "Create New Sublayer",
+        "createChildDefaultName": "Sublayer",
+        "createConfirm": "Create",
         "rename": "Rename",
         "refresh": "Refresh",
         "duplicate": "Duplicate",
@@ -911,13 +1004,9 @@
         "renameTitle": "Rename Layer",
         "renameConfirm": "Rename",
         "cancel": "Cancel",
-        "forceDeleteTitle": "Force delete selected layers?",
-        "forceDeleteBody": "This removes selected layers even when they or their ancestors are locked or hidden.",
-        "forceDeleteConfirm": "Force Delete",
         "selectOneForChild": "Highlight exactly one layer to add a child under it.",
         "selectOneForRename": "Highlight exactly one layer to rename it.",
-        "selectForDuplicate": "Highlight one or more layers to duplicate.",
-        "selectForDelete": "Highlight one or more layers to delete.",
+        "selectForDuplicate": "Select Illustrator artwork or highlight one or more layers to duplicate.",
         "selectionSaveFailed": "Layer selection could not be saved.",
         "stateReadFailed": "Saved Layer Tree state could not be restored.",
         "bridgeUnavailable": "The installed page bridge is unavailable. Close and reopen this Button."

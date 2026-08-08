@@ -131,23 +131,35 @@ pub(crate) struct SaveCoreActionShortcutRequest {
     pub(crate) shortcut: String,
 }
 
+/// Canonical Button state writes an explicit `null` for absent optional values,
+/// and `#[serde(default)]` only covers a *missing* key. Reading through `Option`
+/// makes missing and explicit-null behave identically, so unrelated canonical
+/// data cannot abort the whole Binds workspace load.
+fn null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de> + Default,
+{
+    Ok(Option::<T>::deserialize(deserializer)?.unwrap_or_default())
+}
+
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct BindableButtonStateSnapshot {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     buttons: HashMap<String, BindableCanonicalButton>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     popout_units: HashMap<String, BindableCanonicalPopoutUnit>,
 }
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct BindableCanonicalButton {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     id: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     role: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     label: String,
     #[serde(default)]
     tool_set_parent_id: Option<String>,
@@ -158,20 +170,22 @@ struct BindableCanonicalButton {
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct BindableCanonicalSourceIdentity {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     display_program_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     display_panel_name: String,
 }
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 struct BindableCanonicalPopoutUnit {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "null_as_default")]
     kind: String,
+    /// Only `tool-set` units carry an owner. Regular popout units are unowned
+    /// and canonically persist `"ownerButtonId": null`.
     #[serde(default)]
-    owner_button_id: String,
-    #[serde(default)]
+    owner_button_id: Option<String>,
+    #[serde(default, deserialize_with = "null_as_default")]
     child_button_ids: Vec<String>,
 }
 
@@ -235,6 +249,19 @@ fn normalize_flowcell_path(raw_path: &str) -> String {
     }
 
     trimmed.replace('/', "\\")
+}
+
+/// Ownership resolution rewrites installed source paths to verbatim `\\?\`
+/// spellings. `bindings.ini` is consumed by the resident AutoHotkey backend,
+/// which spawns the script itself, and Windows PowerShell 5.1 cannot
+/// provider-resolve a verbatim path — `Join-Path` fails outright on one, so any
+/// script deriving paths from `$PSScriptRoot` dies before it runs. Bindings
+/// therefore surface and persist the ordinary DOS/UNC spelling, exactly as the
+/// Button runner already hands it to child processes.
+fn binding_script_path(raw_path: &str) -> String {
+    super::execution::windows_child_process_path(Path::new(raw_path.trim()))
+        .to_string_lossy()
+        .to_string()
 }
 
 fn normalize_binding_target_for_compare(raw_path: &str) -> String {
@@ -394,7 +421,9 @@ fn canonical_tool_set_unit<'a>(
     let matches = state
         .popout_units
         .values()
-        .filter(|unit| unit.kind == "tool-set" && unit.owner_button_id == owner_button_id)
+        .filter(|unit| {
+            unit.kind == "tool-set" && unit.owner_button_id.as_deref() == Some(owner_button_id)
+        })
         .collect::<Vec<_>>();
     if matches.len() != 1 {
         return Err(format!(
@@ -545,7 +574,7 @@ fn list_bindable_buttons_for_panel(
                 bindings,
             )?);
         } else {
-            let target = resolution.record.source_path.clone();
+            let target = binding_script_path(&resolution.record.source_path);
             let binding = find_script_binding_for_target(bindings, program_tab_id, &target);
             buttons.push(BindableButtonRecord {
                 id: format!("{program_name}::{panel_name}::{}", resolution.file_name),
@@ -1350,6 +1379,123 @@ ProgramTabId=1
     }
 
     #[test]
+    fn persisted_binding_script_paths_never_keep_verbatim_prefixes() {
+        // Ownership resolution hands Binds a verbatim `\\?\` path. Persisting
+        // that into bindings.ini makes the AutoHotkey backend launch the script
+        // with a path Windows PowerShell 5.1 cannot provider-resolve, so the
+        // script fails at its first Join-Path instead of running.
+        assert_eq!(
+            binding_script_path(
+                r"\\?\D:\Dev\flowcell\Programs\Windows\Windows Local Scripts\owner\source\toggle.ps1"
+            ),
+            r"D:\Dev\flowcell\Programs\Windows\Windows Local Scripts\owner\source\toggle.ps1"
+        );
+        assert_eq!(
+            binding_script_path(r"\\?\UNC\server\share\scripts\toggle.ps1"),
+            r"\\server\share\scripts\toggle.ps1"
+        );
+        // Already-ordinary paths are passed through untouched.
+        assert_eq!(
+            binding_script_path(r"D:\Dev\flowcell\Programs\Windows\a.vbs"),
+            r"D:\Dev\flowcell\Programs\Windows\a.vbs"
+        );
+
+        // An already-persisted verbatim ScriptPath must heal on the next
+        // rewrite rather than staying broken on disk.
+        let mut document = parse_ini_document(
+            r#"
+[Meta]
+Ids=1
+NextId=2
+
+[Binding_1]
+Shortcut=^+1
+ScriptPath=\\?\D:\Dev\flowcell\Programs\Windows\owner\source\toggle.ps1
+ProgramTabId=2
+"#,
+        );
+        let bindings = parse_frontend_bindings_state(&document).expect("parse verbatim binding");
+        rewrite_binding_sections(&mut document, &bindings.script_bindings)
+            .expect("rewrite verbatim binding");
+        let section = document.get("Binding_1").expect("script section");
+        assert_eq!(
+            section.get("ScriptPath").map(String::as_str),
+            Some(r"D:\Dev\flowcell\Programs\Windows\owner\source\toggle.ps1")
+        );
+    }
+
+    #[test]
+    fn canonical_null_optional_strings_do_not_abort_the_binds_workspace() {
+        // Regular popout units are unowned and canonically persist an explicit
+        // `"ownerButtonId": null`. Reading that as a bare `String` used to fail
+        // the whole workspace load with "invalid type: null, expected a string",
+        // even though Binds only ever reads `tool-set` units.
+        let value = serde_json::json!({
+            "buttons": {
+                "owner-rotate": {
+                    "id": "owner-rotate",
+                    "role": "tool-set-owner",
+                    "label": "Rotate",
+                    "toolSetParentId": null,
+                    "sourceIdentity": {
+                        "displayProgramName": "Blender",
+                        "displayPanelName": null
+                    }
+                },
+                "child-negative": {
+                    "id": "child-negative",
+                    "role": "tool-set-child",
+                    "label": null,
+                    "toolSetParentId": "owner-rotate"
+                }
+            },
+            "popoutUnits": {
+                "regular-unowned": {
+                    "kind": "regular",
+                    "ownerButtonId": null,
+                    "childButtonIds": null
+                },
+                "rotate": {
+                    "kind": "tool-set",
+                    "ownerButtonId": "owner-rotate",
+                    "childButtonIds": ["child-negative"]
+                }
+            }
+        });
+
+        let state = parse_bindable_button_state(Some(&value))
+            .expect("null optional strings must not abort the parse")
+            .expect("canonical state exists");
+
+        assert_eq!(state.popout_units.len(), 2);
+        assert_eq!(
+            state.popout_units["regular-unowned"].owner_button_id,
+            None,
+            "an unowned regular popout must read as None, not an empty owner"
+        );
+        assert!(state.popout_units["regular-unowned"]
+            .child_button_ids
+            .is_empty());
+        assert_eq!(state.buttons["child-negative"].label, "");
+        assert_eq!(
+            state.buttons["owner-rotate"]
+                .source_identity
+                .as_ref()
+                .expect("owner source identity")
+                .display_panel_name,
+            ""
+        );
+
+        // The unowned unit must not shadow tool-set resolution, and an empty
+        // owner id must never match it.
+        let unit = canonical_tool_set_unit(&state, "owner-rotate").expect("resolve tool-set unit");
+        assert_eq!(unit.child_button_ids, vec!["child-negative".to_string()]);
+        assert!(canonical_tool_set_unit(&state, "").is_err());
+        validate_canonical_tool_set_owner(&state, "Blender", "owner-rotate")
+            .expect("validate canonical owner");
+    }
+
+    #[test]
     fn canonical_tool_set_inventory_uses_child_ids_and_hierarchical_labels() {
         let value = serde_json::json!({
             "buttons": {
@@ -1374,6 +1520,11 @@ ProgramTabId=1
                     "kind": "tool-set",
                     "ownerButtonId": "owner-rotate",
                     "childButtonIds": ["child-negative"]
+                },
+                "utility": {
+                    "kind": "regular",
+                    "ownerButtonId": null,
+                    "ownerPlacementId": null
                 }
             }
         });
@@ -1791,7 +1942,7 @@ fn rewrite_binding_sections(
         } else {
             section.insert(
                 String::from("ScriptPath"),
-                binding.target.trim().to_string(),
+                binding_script_path(&binding.target),
             );
         }
         if binding.program_tab_id.unwrap_or(0) > 0 {

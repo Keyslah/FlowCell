@@ -9,17 +9,18 @@ Feature logic does not live in the composition function.
 
 | Module | Ownership |
 | --- | --- |
-| `commands/programs.rs` | Program and panel folder discovery/mutation, registered-program commands, source labels, and program catalog paths. |
+| `commands/programs.rs` | Managed program/panel discovery, setup, removal, transaction coordination, source labels, and program catalog paths. |
 | `commands/bindings.rs` | Bindings INI parsing/writes, program-registration sections, shortcut profiles, bindable source discovery, and bind commands. |
+| `commands/button_hotkeys.rs` | Tauri Tool Set owner/child shortcut validation, native registry synchronization, and mounted-Button event routing. |
 | `commands/macros.rs` | Frontend macro schema, persistence, import/export, recording commands, and macro shortcut commands. |
 | `commands/windows.rs` | Native foreground-window inspection, scoped topmost/owner behavior, taskbar-preview handling, host refresh, and the scoped worker. |
 | `commands/filesystem.rs` | Shared repository/local roots, path normalization, PowerShell process helpers, and Recycle Bin primitives used by source transactions. |
 | `commands/execution.rs` | Backend and bridge adapters, Blender/Illustrator/Windows execution, macro recording/execution, and installed-source event dispatch. |
+| `commands/image_palette.rs` | Generic local-image decoding, sampling, and contrast-aware palette extraction for authorized installed-page requests. |
 | `commands/layouts.rs` | Layout and generic file/folder dialogs plus layout snapshot persistence. |
-| `commands/organization.rs` | Organization project scanning, profiles, folder creation, recycling, and restoration. |
-| `commands/illustrator.rs` | Installed Illustrator Layer Tree source resolution and bridge commands. |
+| `commands/program_rename.rs` | Durable program-rename journals, exact native-state reconciliation, rollback/finalization, and startup recovery. |
 | `commands/slicers.rs` | Slicer executable selection and launch behavior. |
-| `commands/themes.rs` | Theme file I/O, image color sampling, and theme export support. |
+| `commands/tool_packages.rs` | Capability-authorized tool-field files and package-library storage, including validated asset copying and listing. |
 
 Canonical Button state and program-source ownership remain outside the command
 modules:

@@ -1,6 +1,7 @@
 use crate::*;
+use std::collections::HashSet;
 
-const LAYOUT_SNAPSHOT_VERSION: u64 = 8;
+const LAYOUT_SNAPSHOT_VERSION: u64 = 9;
 const LAYOUT_SNAPSHOT_KIND: &str = "FlowCellWindowLayout";
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -18,6 +19,7 @@ pub(crate) enum LayoutSnapshotWindowKind {
     ButtonEditor,
     ButtonPopout,
     ButtonFan,
+    InstalledPage,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -37,41 +39,178 @@ pub(crate) struct LayoutSnapshotWindow {
     button_fan_setup_id: Option<String>,
     button_owner_id: Option<String>,
     button_display_mode: Option<LayoutSnapshotButtonDisplayMode>,
+    installed_page_file_name: Option<String>,
+    installed_page_id: Option<String>,
     bounds: LayoutSnapshotBounds,
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "PascalCase", deny_unknown_fields)]
 pub(crate) struct LayoutSnapshotFile {
-    saved_at: Option<String>,
-    version: Option<u64>,
-    layout_kind: Option<String>,
-    selected_program_name: Option<String>,
-    selected_panel_name: Option<String>,
-    selected_file_names: Option<Vec<String>>,
-    main_window_bounds: Option<LayoutSnapshotBounds>,
-    windows: Option<Vec<LayoutSnapshotWindow>>,
+    saved_at: String,
+    version: u64,
+    layout_kind: String,
+    windows: Vec<LayoutSnapshotWindow>,
+}
+
+fn has_text(value: &Option<String>) -> bool {
+    value.as_deref().is_some_and(|text| !text.trim().is_empty())
+}
+
+fn validate_layout_bounds(bounds: &LayoutSnapshotBounds) -> bool {
+    bounds.left.is_finite()
+        && bounds.top.is_finite()
+        && bounds.width.is_finite()
+        && bounds.height.is_finite()
+        && bounds.width > 0.0
+        && bounds.height > 0.0
+        && !(bounds.left <= -30_000.0 && bounds.top <= -30_000.0)
 }
 
 fn validate_layout_snapshot(snapshot: &LayoutSnapshotFile) -> Result<(), String> {
-    if snapshot.version != Some(LAYOUT_SNAPSHOT_VERSION) {
+    if snapshot.version != LAYOUT_SNAPSHOT_VERSION {
         return Err(format!(
             "Unsupported FlowCell layout version. Expected version {LAYOUT_SNAPSHOT_VERSION}."
         ));
     }
-    if snapshot.layout_kind.as_deref() != Some(LAYOUT_SNAPSHOT_KIND) {
+    if snapshot.layout_kind != LAYOUT_SNAPSHOT_KIND {
         return Err(format!(
             "Unsupported FlowCell layout kind. Expected {LAYOUT_SNAPSHOT_KIND}."
         ));
     }
+    if snapshot.saved_at.trim().is_empty() {
+        return Err("FlowCell layout is missing its save timestamp.".to_string());
+    }
+    let mut stable_window_keys = HashSet::new();
+    for window in &snapshot.windows {
+        if !validate_layout_bounds(&window.bounds) {
+            return Err("FlowCell layout contains invalid window bounds.".to_string());
+        }
+        match &window.kind {
+            LayoutSnapshotWindowKind::ButtonEditor => {
+                if window.button_popout_unit_id.is_some()
+                    || window.button_fan_setup_id.is_some()
+                    || window.button_owner_id.is_some()
+                    || window.button_display_mode.is_some()
+                    || window.installed_page_file_name.is_some()
+                    || window.installed_page_id.is_some()
+                {
+                    return Err(
+                        "FlowCell layout contains fields that do not belong to a Button Editor."
+                            .to_string(),
+                    );
+                }
+            }
+            LayoutSnapshotWindowKind::ButtonPopout => {
+                if !has_text(&window.program_name)
+                    || !has_text(&window.button_popout_unit_id)
+                    || window.button_display_mode.is_none()
+                {
+                    return Err(
+                        "FlowCell layout contains an incomplete Button Pop-out identity."
+                            .to_string(),
+                    );
+                }
+                if window.button_fan_setup_id.is_some()
+                    || window.installed_page_file_name.is_some()
+                    || window.installed_page_id.is_some()
+                {
+                    return Err(
+                        "FlowCell layout contains fields that do not belong to a Button Pop-out."
+                            .to_string(),
+                    );
+                }
+            }
+            LayoutSnapshotWindowKind::ButtonFan => {
+                if !has_text(&window.program_name)
+                    || !has_text(&window.panel_name)
+                    || !has_text(&window.button_fan_setup_id)
+                    || !has_text(&window.button_owner_id)
+                {
+                    return Err(
+                        "FlowCell layout contains an incomplete Button Fan identity.".to_string(),
+                    );
+                }
+                if window.button_popout_unit_id.is_some()
+                    || window.button_display_mode.is_some()
+                    || window.installed_page_file_name.is_some()
+                    || window.installed_page_id.is_some()
+                {
+                    return Err(
+                        "FlowCell layout contains fields that do not belong to a Button Fan."
+                            .to_string(),
+                    );
+                }
+            }
+            LayoutSnapshotWindowKind::InstalledPage => {
+                if !has_text(&window.program_name)
+                    || !has_text(&window.panel_name)
+                    || !has_text(&window.button_owner_id)
+                    || !has_text(&window.installed_page_file_name)
+                    || !has_text(&window.installed_page_id)
+                {
+                    return Err(
+                        "FlowCell layout contains an incomplete installed Page identity."
+                            .to_string(),
+                    );
+                }
+                if window.button_popout_unit_id.is_some()
+                    || window.button_fan_setup_id.is_some()
+                    || window.button_display_mode.is_some()
+                {
+                    return Err(
+                        "FlowCell layout contains fields that do not belong to an installed Page."
+                            .to_string(),
+                    );
+                }
+            }
+        }
+        let mut window_keys = Vec::new();
+        match &window.kind {
+            LayoutSnapshotWindowKind::ButtonEditor => {
+                window_keys.push("button-editor".to_string());
+            }
+            LayoutSnapshotWindowKind::ButtonPopout => {
+                let stable_id = if has_text(&window.button_owner_id) {
+                    window.button_owner_id.as_deref().unwrap_or_default()
+                } else {
+                    window.button_popout_unit_id.as_deref().unwrap_or_default()
+                };
+                window_keys.push(format!(
+                    "button-popout:{}",
+                    stable_id.trim()
+                ));
+            }
+            LayoutSnapshotWindowKind::ButtonFan => {
+                window_keys.push(format!(
+                    "button-fan-owner:{}",
+                    window.button_owner_id.as_deref().unwrap_or_default().trim()
+                ));
+            }
+            LayoutSnapshotWindowKind::InstalledPage => {
+                window_keys.push(format!(
+                    "installed-page-owner:{}",
+                    window.button_owner_id.as_deref().unwrap_or_default().trim()
+                ));
+            }
+        }
+        if window_keys
+            .into_iter()
+            .any(|key| !stable_window_keys.insert(key))
+        {
+            return Err("FlowCell layout contains a duplicate managed-window identity.".to_string());
+        }
+    }
     Ok(())
 }
 
-fn resolve_flowcell_layouts_root() -> Result<PathBuf, String> {
-    let layouts_root = resolve_flowcell_local_root()?.join("layouts");
+fn resolve_main_page_layouts_root() -> Result<PathBuf, String> {
+    let layouts_root = resolve_flowcell_local_root()?
+        .join("layouts")
+        .join("Main Page");
     fs::create_dir_all(&layouts_root).map_err(|error| {
         format!(
-            "Failed to create layout folder at {}: {error}",
+            "Failed to create Main Page layout folder at {}: {error}",
             layouts_root.display()
         )
     })?;
@@ -89,7 +228,7 @@ fn resolve_layout_dialog_directory(initial_directory: Option<String>) -> Result<
         }
     }
 
-    resolve_flowcell_layouts_root()
+    resolve_main_page_layouts_root()
 }
 
 fn normalize_layout_file_path(path: &Path) -> PathBuf {
@@ -394,13 +533,38 @@ mod tests {
     fn current_layout_json() -> &'static str {
         r#"{
             "SavedAt": "2026-07-10T00:00:00.000Z",
-            "Version": 8,
+            "Version": 9,
             "LayoutKind": "FlowCellWindowLayout",
-            "Windows": [{
-                "Kind": "button-popout",
-                "ButtonPopoutUnitId": "popout-1",
-                "Bounds": { "Left": 10.0, "Top": 20.0, "Width": 300.0, "Height": 200.0 }
-            }]
+            "Windows": [
+                {
+                    "Kind": "button-editor",
+                    "Bounds": { "Left": 0.0, "Top": 0.0, "Width": 1200.0, "Height": 800.0 }
+                },
+                {
+                    "Kind": "button-popout",
+                    "ProgramName": "Blender",
+                    "ButtonPopoutUnitId": "popout-1",
+                    "ButtonDisplayMode": "expanded",
+                    "Bounds": { "Left": 10.0, "Top": 20.0, "Width": 300.0, "Height": 200.0 }
+                },
+                {
+                    "Kind": "button-fan",
+                    "ProgramName": "Blender",
+                    "PanelName": "Files",
+                    "ButtonFanSetupId": "fan-1",
+                    "ButtonOwnerId": "owner-1",
+                    "Bounds": { "Left": 40.0, "Top": 50.0, "Width": 260.0, "Height": 180.0 }
+                },
+                {
+                    "Kind": "installed-page",
+                    "ProgramName": "Illustrator",
+                    "PanelName": "Layers",
+                    "ButtonOwnerId": "owner-page",
+                    "InstalledPageFileName": "layers.jsx",
+                    "InstalledPageId": "layers-builder",
+                    "Bounds": { "Left": 80.0, "Top": 90.0, "Width": 900.0, "Height": 700.0 }
+                }
+            ]
         }"#
     }
 
@@ -412,22 +576,77 @@ mod tests {
     }
 
     #[test]
-    fn legacy_layout_fields_and_window_kinds_are_rejected() {
-        let legacy_state_path = current_layout_json().replace(
+    fn main_page_state_is_not_part_of_the_layout_schema() {
+        let main_state = current_layout_json().replace(
             "\"Windows\"",
-            "\"FlowCellStatePath\": \"old-state.json\", \"Windows\"",
+            "\"MainWindowBounds\": { \"Left\": 0.0, \"Top\": 0.0, \"Width\": 100.0, \"Height\": 100.0 }, \"Windows\"",
         );
-        assert!(serde_json::from_str::<LayoutSnapshotFile>(&legacy_state_path).is_err());
-
-        let legacy_window = current_layout_json().replace("button-popout", "panel-fan");
-        assert!(serde_json::from_str::<LayoutSnapshotFile>(&legacy_window).is_err());
+        assert!(serde_json::from_str::<LayoutSnapshotFile>(&main_state).is_err());
     }
 
     #[test]
     fn non_current_layout_versions_are_rejected() {
-        let old_version = current_layout_json().replace("\"Version\": 8", "\"Version\": 7");
+        let old_version = current_layout_json().replace("\"Version\": 9", "\"Version\": 8");
         let snapshot = serde_json::from_str::<LayoutSnapshotFile>(&old_version)
             .expect("known fields should deserialize before version validation");
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+    }
+
+    #[test]
+    fn incomplete_window_identity_and_invalid_bounds_are_rejected() {
+        let incomplete_popout = current_layout_json().replace(
+            "\"ProgramName\": \"Blender\",\n                    \"ButtonPopoutUnitId\": \"popout-1\",",
+            "\"ButtonPopoutUnitId\": \"popout-1\",",
+        );
+        let snapshot = serde_json::from_str::<LayoutSnapshotFile>(&incomplete_popout)
+            .expect("known fields should deserialize");
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+
+        let missing_display_mode = current_layout_json().replace(
+            "\"ButtonDisplayMode\": \"expanded\",\n                    ",
+            "",
+        );
+        let snapshot = serde_json::from_str::<LayoutSnapshotFile>(&missing_display_mode)
+            .expect("known fields should deserialize");
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+
+        let cross_kind_field = current_layout_json().replace(
+            "\"ButtonFanSetupId\": \"fan-1\",",
+            "\"ButtonFanSetupId\": \"fan-1\",\n                    \"InstalledPageId\": \"wrong-kind\",",
+        );
+        let snapshot = serde_json::from_str::<LayoutSnapshotFile>(&cross_kind_field)
+            .expect("known fields should deserialize");
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+
+        let invalid_bounds = current_layout_json().replace("\"Width\": 900.0", "\"Width\": 0.0");
+        let snapshot = serde_json::from_str::<LayoutSnapshotFile>(&invalid_bounds)
+            .expect("known fields should deserialize");
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+
+        let minimized_bounds = current_layout_json().replace(
+            "\"Left\": 80.0, \"Top\": 90.0",
+            "\"Left\": -32000.0, \"Top\": -32000.0",
+        );
+        let snapshot = serde_json::from_str::<LayoutSnapshotFile>(&minimized_bounds)
+            .expect("known fields should deserialize");
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+    }
+
+    #[test]
+    fn duplicate_stable_window_identities_are_rejected() {
+        for index in 0..4 {
+            let mut snapshot = serde_json::from_str::<LayoutSnapshotFile>(current_layout_json())
+                .expect("current layout should deserialize");
+            snapshot.windows.push(snapshot.windows[index].clone());
+            assert!(validate_layout_snapshot(&snapshot).is_err());
+        }
+
+        let mut snapshot = serde_json::from_str::<LayoutSnapshotFile>(current_layout_json())
+            .expect("current layout should deserialize");
+        let mut colliding_popout = snapshot.windows[1].clone();
+        colliding_popout.button_popout_unit_id = Some("different-unit".to_string());
+        colliding_popout.button_owner_id = Some("popout-1".to_string());
+        snapshot.windows.push(colliding_popout);
         assert!(validate_layout_snapshot(&snapshot).is_err());
     }
 }

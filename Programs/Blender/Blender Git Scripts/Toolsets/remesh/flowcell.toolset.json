@@ -1,165 +1,374 @@
 {
-    "schemaVersion":  1,
-    "id":  "blender.remesh",
-    "version":  "1.0.0",
-    "label":  "remesh",
-    "tooltip":  "Create, update, and apply Blender Remesh modifiers from a compact FlowCell tool set.",
-    "kind":  "toolset",
-    "program":  "Blender",
-    "source":  "remesh.py",
-    "bridgeData":  {
-
-                   },
-    "children":  [
-                     {
-                         "slot":  "mode_voxel",
-                         "label":  "Voxel",
-                         "tooltip":  "Use Voxel remesh mode.",
-                         "payload":  {
-                                         "command":  "mode_voxel",
-                                         "action":  "mode_voxel"
-                                     }
-                     },
-                     {
-                         "slot":  "mode_smooth",
-                         "label":  "Smooth",
-                         "tooltip":  "Use Smooth remesh mode.",
-                         "payload":  {
-                                         "command":  "mode_smooth",
-                                         "action":  "mode_smooth"
-                                     }
-                     },
-                     {
-                         "slot":  "mode_sharp",
-                         "label":  "Sharp",
-                         "tooltip":  "Use Sharp remesh mode.",
-                         "payload":  {
-                                         "command":  "mode_sharp",
-                                         "action":  "mode_sharp"
-                                     }
-                     },
-                     {
-                         "slot":  "mode_blocks",
-                         "label":  "Blocks",
-                         "tooltip":  "Use Blocks remesh mode.",
-                         "payload":  {
-                                         "command":  "mode_blocks",
-                                         "action":  "mode_blocks"
-                                     }
-                     },
-                     {
-                         "slot":  "set_voxel_size_mm",
-                         "label":  "0.10",
-                         "tooltip":  "Set Voxel Size in millimeters.",
-                         "payload":  {
-                                         "command":  "set_voxel_size_mm",
-                                         "action":  "set_voxel_size_mm"
-                                     }
-                     },
-                     {
-                         "slot":  "set_adaptivity",
-                         "label":  "0.00",
-                         "tooltip":  "Set Voxel Adaptivity.",
-                         "payload":  {
-                                         "command":  "set_adaptivity",
-                                         "action":  "set_adaptivity"
-                                     }
-                     },
-                     {
-                         "slot":  "toggle_smooth_shading",
-                         "label":  "SS",
-                         "tooltip":  "Toggle Smooth Shading.",
-                         "payload":  {
-                                         "command":  "toggle_smooth_shading",
-                                         "action":  "toggle_smooth_shading"
-                                     }
-                     },
-                     {
-                         "slot":  "set_octree_depth",
-                         "label":  "6",
-                         "tooltip":  "Set Octree Depth.",
-                         "payload":  {
-                                         "command":  "set_octree_depth",
-                                         "action":  "set_octree_depth"
-                                     }
-                     },
-                     {
-                         "slot":  "set_scale",
-                         "label":  "0.90",
-                         "tooltip":  "Set Remesh Scale.",
-                         "payload":  {
-                                         "command":  "set_scale",
-                                         "action":  "set_scale"
-                                     }
-                     },
-                     {
-                         "slot":  "toggle_remove_disconnected",
-                         "label":  "RD",
-                         "tooltip":  "Toggle Remove Disconnected.",
-                         "payload":  {
-                                         "command":  "toggle_remove_disconnected",
-                                         "action":  "toggle_remove_disconnected"
-                                     }
-                     },
-                     {
-                         "slot":  "set_threshold",
-                         "label":  "0.10",
-                         "tooltip":  "Set Remove Disconnected Threshold.",
-                         "payload":  {
-                                         "command":  "set_threshold",
-                                         "action":  "set_threshold"
-                                     }
-                     },
-                     {
-                         "slot":  "set_sharpness",
-                         "label":  "1.00",
-                         "tooltip":  "Set Sharp remesh Sharpness.",
-                         "payload":  {
-                                         "command":  "set_sharpness",
-                                         "action":  "set_sharpness"
-                                     }
-                     },
-                     {
-                         "slot":  "create_update_remesh",
-                         "label":  "Create",
-                         "tooltip":  "Create or update the active object\u0027s Remesh modifier.",
-                         "payload":  {
-                                         "command":  "create_update_remesh",
-                                         "action":  "create_update_remesh"
-                                     }
-                     },
-                     {
-                         "slot":  "apply_remesh",
-                         "label":  "Apply",
-                         "tooltip":  "Apply the active object\u0027s Remesh modifier.",
-                         "payload":  {
-                                         "command":  "apply_remesh",
-                                         "action":  "apply_remesh"
-                                     }
-                     }
-                 ],
-    "layout":  {
-                   "mode":  "grid",
-                   "columns":  4,
-                   "gap":  8,
-                   "padding":  8,
-                   "width":  640,
-                   "height":  360,
-                   "fields":  [
-                                  { "id": "voxel_size_mm", "kind": "number", "label": "Voxel mm", "payloadKey": "value", "defaultValue": 0.1, "minimum": 0.001, "maximum": 1000, "step": 0.01, "x": 8, "y": 304, "width": 92, "height": 36, "zIndex": 2 },
-                                  { "id": "adaptivity", "kind": "number", "label": "Adaptivity", "payloadKey": "value", "defaultValue": 0, "minimum": 0, "maximum": 1, "step": 0.01, "x": 108, "y": 304, "width": 92, "height": 36, "zIndex": 2 },
-                                  { "id": "octree_depth", "kind": "number", "label": "Depth", "payloadKey": "value", "defaultValue": 6, "minimum": 1, "maximum": 12, "step": 1, "x": 208, "y": 304, "width": 92, "height": 36, "zIndex": 2 },
-                                  { "id": "scale", "kind": "number", "label": "Scale", "payloadKey": "value", "defaultValue": 0.9, "minimum": 0.1, "maximum": 1, "step": 0.01, "x": 308, "y": 304, "width": 92, "height": 36, "zIndex": 2 },
-                                  { "id": "threshold", "kind": "number", "label": "Threshold", "payloadKey": "value", "defaultValue": 0.1, "minimum": 0, "maximum": 1, "step": 0.01, "x": 408, "y": 304, "width": 92, "height": 36, "zIndex": 2 },
-                                  { "id": "sharpness", "kind": "number", "label": "Sharpness", "payloadKey": "value", "defaultValue": 1, "minimum": 0, "maximum": 10, "step": 0.1, "x": 508, "y": 304, "width": 92, "height": 36, "zIndex": 2 }
-                              ],
-                   "childBehaviors":  {
-                                          "set_voxel_size_mm": { "execute": true, "payloadTemplate": { "command": "set_voxel_size_mm", "value": { "$field": "voxel_size_mm" } } },
-                                          "set_adaptivity": { "execute": true, "payloadTemplate": { "command": "set_adaptivity", "value": { "$field": "adaptivity" } } },
-                                          "set_octree_depth": { "execute": true, "payloadTemplate": { "command": "set_octree_depth", "value": { "$field": "octree_depth" } } },
-                                          "set_scale": { "execute": true, "payloadTemplate": { "command": "set_scale", "value": { "$field": "scale" } } },
-                                          "set_threshold": { "execute": true, "payloadTemplate": { "command": "set_threshold", "value": { "$field": "threshold" } } },
-                                          "set_sharpness": { "execute": true, "payloadTemplate": { "command": "set_sharpness", "value": { "$field": "sharpness" } } }
-                                      }
-               }
+    "schemaVersion": 1,
+    "id": "blender.remesh",
+    "version": "1.1.0",
+    "label": "remesh",
+    "tooltip": "Remesh with one cycling mode Button, inline-editable value Buttons, SS/RD toggles, Create, and Apply.",
+    "kind": "toolset",
+    "program": "Blender",
+    "source": "remesh.py",
+    "bridgeData": {},
+    "children": [
+        {
+            "slot": "mode_cycle",
+            "label": "Voxel",
+            "tooltip": "Cycle the remesh mode between Voxel, Smooth, Sharp, and Blocks.",
+            "payload": {
+                "command": "cycle_mode",
+                "action": "cycle_mode"
+            }
+        },
+        {
+            "slot": "set_voxel_size_mm",
+            "label": "0.10",
+            "tooltip": "Click this Button, then type the voxel size in millimeters."
+        },
+        {
+            "slot": "set_adaptivity",
+            "label": "0.00",
+            "tooltip": "Click this Button, then type the voxel adaptivity."
+        },
+        {
+            "slot": "set_octree_depth",
+            "label": "6",
+            "tooltip": "Click this Button, then type the octree depth."
+        },
+        {
+            "slot": "set_scale",
+            "label": "0.90",
+            "tooltip": "Click this Button, then type the block scale."
+        },
+        {
+            "slot": "set_threshold",
+            "label": "0.10",
+            "tooltip": "Click this Button, then type the sharp threshold."
+        },
+        {
+            "slot": "set_sharpness",
+            "label": "1.00",
+            "tooltip": "Click this Button, then type the sharpness."
+        },
+        {
+            "slot": "toggle_smooth_shading",
+            "label": "SS",
+            "tooltip": "Toggle smooth shading on the remesh result.",
+            "payload": {
+                "command": "toggle_smooth_shading",
+                "action": "toggle_smooth_shading"
+            }
+        },
+        {
+            "slot": "toggle_remove_disconnected",
+            "label": "RD",
+            "tooltip": "Toggle removing disconnected geometry.",
+            "payload": {
+                "command": "toggle_remove_disconnected",
+                "action": "toggle_remove_disconnected"
+            }
+        },
+        {
+            "slot": "create_update_remesh",
+            "label": "Create",
+            "tooltip": "Create or update the Remesh modifier with the current values.",
+            "payload": {
+                "command": "create_update_remesh",
+                "action": "create_update_remesh"
+            }
+        },
+        {
+            "slot": "apply_remesh",
+            "label": "Apply",
+            "tooltip": "Apply the Remesh modifier with the current values.",
+            "payload": {
+                "command": "apply_remesh",
+                "action": "apply_remesh"
+            }
+        }
+    ],
+    "layout": {
+        "mode": "grid",
+        "columns": 4,
+        "gap": 8,
+        "padding": 8,
+        "width": 616,
+        "height": 158,
+        "placements": {
+            "mode_cycle": {
+                "x": 8,
+                "y": 8,
+                "width": 144,
+                "height": 42
+            },
+            "set_voxel_size_mm": {
+                "x": 160,
+                "y": 8,
+                "width": 144,
+                "height": 42
+            },
+            "set_adaptivity": {
+                "x": 312,
+                "y": 8,
+                "width": 144,
+                "height": 42
+            },
+            "set_octree_depth": {
+                "x": 464,
+                "y": 8,
+                "width": 144,
+                "height": 42
+            },
+            "set_scale": {
+                "x": 8,
+                "y": 58,
+                "width": 144,
+                "height": 42
+            },
+            "set_threshold": {
+                "x": 160,
+                "y": 58,
+                "width": 144,
+                "height": 42
+            },
+            "set_sharpness": {
+                "x": 312,
+                "y": 58,
+                "width": 144,
+                "height": 42
+            },
+            "toggle_smooth_shading": {
+                "x": 464,
+                "y": 58,
+                "width": 144,
+                "height": 42
+            },
+            "toggle_remove_disconnected": {
+                "x": 8,
+                "y": 108,
+                "width": 144,
+                "height": 42
+            },
+            "create_update_remesh": {
+                "x": 160,
+                "y": 108,
+                "width": 144,
+                "height": 42
+            },
+            "apply_remesh": {
+                "x": 312,
+                "y": 108,
+                "width": 144,
+                "height": 42
+            }
+        },
+        "fields": [
+            {
+                "id": "voxel_size_mm",
+                "label": "Voxel mm",
+                "payloadKey": "",
+                "defaultValue": 0.1,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "number",
+                "minimum": 0.001,
+                "maximum": 1000,
+                "step": 0.01
+            },
+            {
+                "id": "adaptivity",
+                "label": "Adaptivity",
+                "payloadKey": "",
+                "defaultValue": 0,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "step": 0.01
+            },
+            {
+                "id": "octree_depth",
+                "label": "Depth",
+                "payloadKey": "",
+                "defaultValue": 6,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "number",
+                "minimum": 1,
+                "maximum": 12,
+                "step": 1
+            },
+            {
+                "id": "scale",
+                "label": "Scale",
+                "payloadKey": "",
+                "defaultValue": 0.9,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "number",
+                "minimum": 0.1,
+                "maximum": 1,
+                "step": 0.01
+            },
+            {
+                "id": "threshold",
+                "label": "Threshold",
+                "payloadKey": "",
+                "defaultValue": 0.1,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "step": 0.01
+            },
+            {
+                "id": "sharpness",
+                "label": "Sharpness",
+                "payloadKey": "",
+                "defaultValue": 1,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "number",
+                "minimum": 0,
+                "maximum": 10,
+                "step": 0.1
+            },
+            {
+                "id": "smooth_shading",
+                "label": "Smooth Shading",
+                "payloadKey": "",
+                "defaultValue": false,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "toggle"
+            },
+            {
+                "id": "remove_disconnected",
+                "label": "Remove Disconnected",
+                "payloadKey": "",
+                "defaultValue": true,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "toggle"
+            }
+        ],
+        "childBehaviors": {
+            "set_voxel_size_mm": {
+                "inlineEditField": "voxel_size_mm",
+                "execute": false
+            },
+            "set_adaptivity": {
+                "inlineEditField": "adaptivity",
+                "execute": false
+            },
+            "set_octree_depth": {
+                "inlineEditField": "octree_depth",
+                "execute": false
+            },
+            "set_scale": {
+                "inlineEditField": "scale",
+                "execute": false
+            },
+            "set_threshold": {
+                "inlineEditField": "threshold",
+                "execute": false
+            },
+            "set_sharpness": {
+                "inlineEditField": "sharpness",
+                "execute": false
+            },
+            "toggle_smooth_shading": {
+                "toggleFields": [
+                    "smooth_shading"
+                ],
+                "execute": true
+            },
+            "toggle_remove_disconnected": {
+                "toggleFields": [
+                    "remove_disconnected"
+                ],
+                "execute": true
+            },
+            "create_update_remesh": {
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "create_update_remesh",
+                    "voxel_size_mm": {
+                        "$field": "voxel_size_mm"
+                    },
+                    "adaptivity": {
+                        "$field": "adaptivity"
+                    },
+                    "octree_depth": {
+                        "$field": "octree_depth"
+                    },
+                    "scale": {
+                        "$field": "scale"
+                    },
+                    "threshold": {
+                        "$field": "threshold"
+                    },
+                    "sharpness": {
+                        "$field": "sharpness"
+                    }
+                }
+            },
+            "apply_remesh": {
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "apply_remesh",
+                    "voxel_size_mm": {
+                        "$field": "voxel_size_mm"
+                    },
+                    "adaptivity": {
+                        "$field": "adaptivity"
+                    },
+                    "octree_depth": {
+                        "$field": "octree_depth"
+                    },
+                    "scale": {
+                        "$field": "scale"
+                    },
+                    "threshold": {
+                        "$field": "threshold"
+                    },
+                    "sharpness": {
+                        "$field": "sharpness"
+                    }
+                }
+            }
+        }
+    }
 }

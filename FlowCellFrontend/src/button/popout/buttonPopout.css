@@ -26,6 +26,12 @@
   pointer-events: none;
 }
 
+.button-popout-window__resize-frame {
+  position: absolute;
+  overflow: visible;
+  pointer-events: none;
+}
+
 .button-popout-window__resize-handle {
   position: absolute;
   z-index: 2147483646;

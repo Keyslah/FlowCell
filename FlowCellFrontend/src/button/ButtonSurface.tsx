@@ -71,6 +71,7 @@ export interface ButtonSurfaceProps {
   surfaceId: string;
   mode?: ButtonEditorMode;
   selectedPlacementIds?: ReadonlySet<string>;
+  ownerPlacementId?: string;
   fields?: readonly ButtonToolField[];
   fieldValues?: Readonly<Record<string, JsonValue>>;
   onFieldPatch?: (
@@ -210,6 +211,7 @@ export function ButtonSurface({
   surfaceId,
   mode = "run",
   selectedPlacementIds,
+  ownerPlacementId,
   fields = EMPTY_TOOL_FIELDS,
   fieldValues,
   onFieldPatch,
@@ -457,6 +459,7 @@ export function ButtonSurface({
             placementId={placementId}
             mode={mode}
             selected={selected}
+            ownerPlacement={placementId === ownerPlacementId}
             fields={fields}
             fieldValues={values}
             onFieldActivate={activateField}

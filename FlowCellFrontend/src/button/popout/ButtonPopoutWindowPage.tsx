@@ -28,6 +28,7 @@ import type {
   ButtonCoreMeasurement,
   ButtonDesktopBounds,
   ButtonPlacement,
+  ButtonPopoutUnit,
   ButtonRect,
   ButtonStateDocument,
   ButtonVisualMeasurement,
@@ -48,7 +49,10 @@ import {
   resolveAspectLockedWindowBounds,
   resolveButtonFrameForScaleFactor,
   resolveButtonWebviewPixelRatio,
+  resolveButtonWindowSubframeBounds,
+  resolveButtonWindowOwnerOriginFromExpandedFrame,
   resolveButtonWindowEnvelope,
+  resolveExpandedButtonWindowFrameAtOwnerOrigin,
   resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin,
   resolvePopoutBoundsAfterDrag,
   resolveUniformSurfaceScale,
@@ -105,12 +109,26 @@ function visualStatesEqual(left: ButtonVisualState | undefined, right: ButtonVis
   ));
 }
 
+function resolveSavedOwnerPlacement(
+  document: ButtonStateDocument,
+  unit: ButtonPopoutUnit
+): ButtonPlacement | null {
+  const ownerPlacementId = unit.ownerPlacementId?.trim();
+  const ownerButtonId = unit.ownerButtonId?.trim();
+  if (!ownerPlacementId || !ownerButtonId) return null;
+  const placement = document.placements[ownerPlacementId];
+  return placement?.surfaceId === unit.surfaceId && placement.buttonId === ownerButtonId
+    ? placement
+    : null;
+}
+
 type ButtonPopoutResizeSession = {
   corner: ButtonWindowResizeCorner;
   pointerId: number;
   fallbackPointerScale: number;
   initialPointer: { x: number; y: number };
   initialBounds: ButtonDesktopBounds;
+  initialHandleBounds: ButtonDesktopBounds;
 };
 
 const BUTTON_POPOUT_RESIZE_CORNERS: ReadonlyArray<{
@@ -148,6 +166,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   const surfaceOriginRef = useRef<{ x: number; y: number } | null>(null);
   const appliedEnvelopeRef = useRef<ButtonRect | null>(null);
   const appliedFrameBoundsRef = useRef<ButtonDesktopBounds | null>(null);
+  const appliedFanModeRef = useRef<"collapsed" | "expanded">("collapsed");
   const appliedCanvasRef = useRef<AppliedButtonCanvas | null>(null);
   const restingEnvelopeFrameRef = useRef<{
     envelope: ButtonRect;
@@ -166,7 +185,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   const [activeContext, setActiveContext] = useState(context);
   const [openRevision, setOpenRevision] = useState(0);
   const [displayMode, setDisplayMode] = useState(context.initialDisplayMode);
-  const [renderedToolSetMode, setRenderedToolSetMode] = useState<"collapsed" | "expanded">("collapsed");
+  const [renderedFanMode, setRenderedFanMode] = useState<"collapsed" | "expanded">("collapsed");
   const [pinned, setPinned] = useState(false);
   const [idleMeasurements, setIdleMeasurements] = useState<Record<string, ButtonCoreMeasurement>>({});
   const [currentMeasurements, setCurrentMeasurements] = useState<Record<string, ButtonCoreMeasurement>>({});
@@ -226,7 +245,18 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   );
   const unit = document?.popoutUnits[activeContext.popoutUnitId] ?? null;
   const expandedSurface = unit && document ? document.surfaces[unit.surfaceId] : null;
-  const renderedDisplayMode = unit?.kind === "regular" ? "expanded" : renderedToolSetMode;
+  const savedOwnerPlacement = useMemo(
+    () => document && unit ? resolveSavedOwnerPlacement(document, unit) : null,
+    [document, unit]
+  );
+  const authoredFan = unit?.interactionMode === "fan" && Boolean(savedOwnerPlacement);
+  const legacyCollapsedToolSet = Boolean(
+    unit?.kind === "tool-set" &&
+    !authoredFan &&
+    activeContext.initialDisplayMode === "collapsed"
+  );
+  const collapsiblePopout = authoredFan || legacyCollapsedToolSet;
+  const renderedDisplayMode = collapsiblePopout ? renderedFanMode : "expanded";
   toolSetChildHotkeyStateRef.current = {
     document,
     unit,
@@ -237,13 +267,19 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     if (!unit || !document) return [];
     return (expandedSurface?.placementIds ?? [])
       .map((placementId) => document.placements[placementId])
-      .filter((placement): placement is ButtonPlacement => Boolean(placement));
-  }, [document, expandedSurface?.placementIds, unit]);
+      .filter((placement): placement is ButtonPlacement => Boolean(
+        placement && (authoredFan || placement.id !== savedOwnerPlacement?.id)
+      ));
+  }, [authoredFan, document, expandedSurface?.placementIds, savedOwnerPlacement?.id, unit]);
   const collapsedGeometryPlacements = useMemo<ButtonPlacement[]>(() => {
-    if (!unit || !document || unit.kind !== "tool-set") return [];
-    const source = Object.values(document.placements).find(
-      (placement) => placement.buttonId === unit.ownerButtonId
-    );
+    if (!unit || !document || !collapsiblePopout) return [];
+    const source = authoredFan
+      ? savedOwnerPlacement
+      : unit.kind === "tool-set"
+        ? Object.values(document.placements).find(
+            (placement) => placement.buttonId === unit.ownerButtonId
+          )
+        : undefined;
     if (!source) return [];
     return [{
       ...source,
@@ -253,7 +289,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       y: 0,
       zIndex: 0
     }];
-  }, [document, unit]);
+  }, [authoredFan, collapsiblePopout, document, savedOwnerPlacement, unit]);
   const geometryPlacements = renderedDisplayMode === "expanded"
     ? expandedGeometryPlacements
     : collapsedGeometryPlacements;
@@ -321,6 +357,21 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     idleMeasurements,
     unit
   ]);
+  const expandedResizeHandleEnvelope = useMemo(() => resolveButtonWindowEnvelope({
+    mode: "hitbox",
+    surfaceBounds: expandedGeometrySurfaceBounds,
+    placements: expandedGeometryPlacements,
+    idleMeasurements,
+    visualOverflowAllowance: 0,
+    fixedRects: unit?.kind === "tool-set"
+      ? unit.fields.filter((field) => !field.hidden)
+      : []
+  }).resting, [
+    expandedGeometryPlacements,
+    expandedGeometrySurfaceBounds,
+    idleMeasurements,
+    unit
+  ]);
   const storedCollapsedWindowEnvelope = useMemo(() => resolveButtonWindowEnvelope({
     mode: unit?.desktopBoundsFitMode ?? "surface",
     surfaceBounds: collapsedGeometrySurfaceBounds,
@@ -336,6 +387,9 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   const storedWindowEnvelope = renderedDisplayMode === "expanded"
     ? storedExpandedWindowEnvelope
     : storedCollapsedWindowEnvelope;
+  const savedExpandedEnvelope = activeContext.draftSessionId
+    ? storedExpandedWindowEnvelope.resting
+    : unit?.desktopBoundsEnvelope ?? storedExpandedWindowEnvelope.resting;
   const storedWindowEnvelopeRef = useRef(storedWindowEnvelope);
   storedWindowEnvelopeRef.current = storedWindowEnvelope;
   const surfaceScale = contentScaleRef.current ?? 1;
@@ -587,7 +641,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         setSpaceKeyActive(true);
       }
       if (event.key === "Escape" && unit && !resizing) {
-        if (unit.kind === "tool-set" && displayMode === "expanded") {
+        if (collapsiblePopout) {
           setPinned(false);
           setDisplayMode("collapsed");
         } else if (unit.closeRule === "escape") {
@@ -612,15 +666,32 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       window.removeEventListener("keyup", handleKeyUp, { capture: true });
       window.removeEventListener("blur", handleBlur);
     };
-  }, [activeContext.ownerButtonId, activeContext.popoutUnitId, displayMode, resizing, unit]);
+  }, [
+    activeContext.ownerButtonId,
+    activeContext.popoutUnitId,
+    collapsiblePopout,
+    resizing,
+    unit
+  ]);
 
   useEffect(() => {
     if (!unit || !canvasMetrics.ready) {
       return;
     }
+    const requestedDisplayMode = collapsiblePopout
+      ? activeContext.initialDisplayMode
+      : "expanded";
     const initializationKey = [
       unit.id,
-      activeContext.initialDisplayMode,
+      requestedDisplayMode,
+      authoredFan,
+      savedOwnerPlacement?.id,
+      savedOwnerPlacement?.x,
+      savedOwnerPlacement?.y,
+      savedExpandedEnvelope.x,
+      savedExpandedEnvelope.y,
+      savedExpandedEnvelope.width,
+      savedExpandedEnvelope.height,
       activeContext.restoreBounds?.Left,
       activeContext.restoreBounds?.Top,
       activeContext.restoreBounds?.Width,
@@ -634,8 +705,11 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     initializedUnitIdRef.current = initializationKey;
     setGeometryInitialized(false);
     collapsedOriginRef.current = null;
-    const restoredBounds = buttonDesktopBoundsFromFlowCellBounds(
-      activeContext.restoreBounds ?? activeContext.initialBounds
+    const explicitRestoreBounds = buttonDesktopBoundsFromFlowCellBounds(
+      activeContext.restoreBounds
+    );
+    const initialBounds = buttonDesktopBoundsFromFlowCellBounds(
+      activeContext.initialBounds
     );
     setRuntimeError(null);
     setIdleMeasurements({});
@@ -646,15 +720,21 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     appliedFrameBoundsRef.current = null;
     setAppliedEnvelope(null);
     setAppliedFrameBounds(null);
-    setPinned(unit.pinnedDefault && activeContext.initialDisplayMode === "expanded");
-    setDisplayMode(activeContext.initialDisplayMode);
-    if (unit.kind === "tool-set") {
-      setRenderedToolSetMode(activeContext.initialDisplayMode);
-    }
+    setPinned(unit.pinnedDefault && requestedDisplayMode === "expanded");
+    setDisplayMode(requestedDisplayMode);
+    setRenderedFanMode(requestedDisplayMode);
 
     const initialization = scheduleNativeGeometryTransition(async () => {
       const currentWindow = getCurrentWindow();
-      const canvasSeed = restoredBounds ?? {
+      const expandedEnvelope = savedExpandedEnvelope;
+      const savedExpandedBounds = isUsableDesktopBounds(unit.desktopBounds)
+        ? unit.desktopBounds
+        : null;
+      const canvasSeed = explicitRestoreBounds ?? (
+        authoredFan && requestedDisplayMode === "collapsed"
+          ? savedExpandedBounds
+          : null
+      ) ?? initialBounds ?? {
         left: canvasMetrics.left,
         top: canvasMetrics.top,
         width: 1,
@@ -662,38 +742,41 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       };
       const initialCanvas = await applyCanvasForFrame(canvasSeed);
       const scaleFactor = initialCanvas.scaleFactor;
-      const anchor = restoredBounds ?? {
+      const anchor = initialBounds ?? explicitRestoreBounds ?? {
         left: canvasMetrics.left,
         top: canvasMetrics.top,
         width: 1,
         height: 1
       };
-      const expandedEnvelope = unit.desktopBoundsEnvelope ?? storedExpandedWindowEnvelope.resting;
+      const ownerOffset = authoredFan && savedOwnerPlacement
+        ? { x: savedOwnerPlacement.x, y: savedOwnerPlacement.y }
+        : { x: 0, y: 0 };
+      const authoritativeExpandedBounds = requestedDisplayMode === "expanded"
+        ? explicitRestoreBounds ?? savedExpandedBounds
+        : savedExpandedBounds;
+      const expandedScale = authoritativeExpandedBounds
+        ? resolveUniformSurfaceScale({
+            viewportWidth: authoritativeExpandedBounds.width / scaleFactor,
+            viewportHeight: authoritativeExpandedBounds.height / scaleFactor,
+            surfaceWidth: expandedEnvelope.width,
+            surfaceHeight: expandedEnvelope.height
+          })
+        : 1;
+      expandedContentScaleRef.current = expandedScale;
       let visibleBounds: ButtonDesktopBounds;
 
-      if (activeContext.initialDisplayMode === "expanded") {
-        const authoritativeBounds =
-          activeContext.restoreBounds && restoredBounds
-            ? restoredBounds
-            : isUsableDesktopBounds(unit.desktopBounds)
-              ? unit.desktopBounds
-              : null;
-        const expandedScale = authoritativeBounds
-          ? resolveUniformSurfaceScale({
-              viewportWidth: authoritativeBounds.width / scaleFactor,
-              viewportHeight: authoritativeBounds.height / scaleFactor,
-              surfaceWidth: expandedEnvelope.width,
-              surfaceHeight: expandedEnvelope.height
-            })
-          : 1;
-        expandedContentScaleRef.current = expandedScale;
+      if (requestedDisplayMode === "expanded") {
         contentScaleRef.current = expandedScale;
-        visibleBounds = authoritativeBounds ?? {
-          left: anchor.left,
-          top: anchor.top,
-          width: Math.max(1, Math.ceil(expandedEnvelope.width * scaleFactor)),
-          height: Math.max(1, Math.ceil(expandedEnvelope.height * scaleFactor))
-        };
+        visibleBounds = authoritativeExpandedBounds ??
+          resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+            surfaceOrigin: {
+              x: anchor.left - expandedEnvelope.x * expandedScale * scaleFactor,
+              y: anchor.top - expandedEnvelope.y * expandedScale * scaleFactor
+            },
+            envelope: expandedEnvelope,
+            contentScale: expandedScale,
+            scaleFactor
+          });
         expandedBoundsRef.current = visibleBounds;
         restingEnvelopeFrameRef.current = {
           envelope: expandedEnvelope,
@@ -704,47 +787,61 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
           x: visibleBounds.left - expandedEnvelope.x * physicalPerDesignPixel,
           y: visibleBounds.top - expandedEnvelope.y * physicalPerDesignPixel
         };
+        collapsedOriginRef.current = authoredFan
+          ? resolveButtonWindowOwnerOriginFromExpandedFrame({
+              bounds: visibleBounds,
+              ownerOffset,
+              envelope: expandedEnvelope,
+              contentScale: expandedScale,
+              scaleFactor
+            })
+          : { ...surfaceOriginRef.current };
       } else {
         const collapsedEnvelope = collapsedWindowEnvelope.resting;
-        visibleBounds = activeContext.restoreBounds && restoredBounds
-          ? restoredBounds
-          : {
-              left: anchor.left,
-              top: anchor.top,
-              width: Math.max(1, Math.ceil(collapsedEnvelope.width * scaleFactor)),
-              height: Math.max(1, Math.ceil(collapsedEnvelope.height * scaleFactor))
-            };
         contentScaleRef.current = 1;
-        surfaceOriginRef.current = {
-          x: visibleBounds.left - collapsedEnvelope.x * scaleFactor,
-          y: visibleBounds.top - collapsedEnvelope.y * scaleFactor
-        };
-        const savedExpandedBounds = isUsableDesktopBounds(unit.desktopBounds)
-          ? unit.desktopBounds
-          : null;
-        expandedContentScaleRef.current = savedExpandedBounds
-          ? resolveUniformSurfaceScale({
-              viewportWidth: savedExpandedBounds.width / scaleFactor,
-              viewportHeight: savedExpandedBounds.height / scaleFactor,
-              surfaceWidth: expandedEnvelope.width,
-              surfaceHeight: expandedEnvelope.height
-            })
-          : 1;
-        expandedBoundsRef.current = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
-          surfaceOrigin: surfaceOriginRef.current,
+        const collapsedOwnerOrigin = explicitRestoreBounds
+          ? {
+              x: explicitRestoreBounds.left - collapsedEnvelope.x * scaleFactor,
+              y: explicitRestoreBounds.top - collapsedEnvelope.y * scaleFactor
+            }
+          : authoredFan && savedExpandedBounds
+            ? resolveButtonWindowOwnerOriginFromExpandedFrame({
+                bounds: savedExpandedBounds,
+                ownerOffset,
+                envelope: expandedEnvelope,
+                contentScale: expandedScale,
+                scaleFactor
+              })
+            : {
+                x: anchor.left - collapsedEnvelope.x * scaleFactor,
+                y: anchor.top - collapsedEnvelope.y * scaleFactor
+              };
+        collapsedOriginRef.current = collapsedOwnerOrigin;
+        surfaceOriginRef.current = collapsedOwnerOrigin;
+        visibleBounds = explicitRestoreBounds ??
+          resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
+            surfaceOrigin: collapsedOwnerOrigin,
+            envelope: collapsedEnvelope,
+            contentScale: 1,
+            scaleFactor
+          });
+        const expandedFrame = resolveExpandedButtonWindowFrameAtOwnerOrigin({
+          ownerOrigin: collapsedOwnerOrigin,
+          ownerOffset,
           envelope: expandedEnvelope,
-          contentScale: expandedContentScaleRef.current,
+          contentScale: expandedScale,
           scaleFactor
         });
-        restingEnvelopeFrameRef.current = savedExpandedBounds
-          ? { envelope: expandedEnvelope, bounds: expandedBoundsRef.current }
+        expandedBoundsRef.current = expandedFrame.bounds;
+        restingEnvelopeFrameRef.current = authoritativeExpandedBounds
+          ? { envelope: expandedEnvelope, bounds: expandedFrame.bounds }
           : null;
       }
 
-      collapsedOriginRef.current = { ...surfaceOriginRef.current };
-      appliedEnvelopeRef.current = activeContext.initialDisplayMode === "expanded"
+      appliedEnvelopeRef.current = requestedDisplayMode === "expanded"
         ? expandedEnvelope
         : collapsedWindowEnvelope.resting;
+      appliedFanModeRef.current = requestedDisplayMode;
       appliedFrameBoundsRef.current = visibleBounds;
       setAppliedEnvelope(appliedEnvelopeRef.current);
       setAppliedFrameBounds(visibleBounds);
@@ -769,24 +866,23 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     activeContext.initialDisplayMode,
     activeContext.restoreBounds,
     applyCanvasForFrame,
+    authoredFan,
     canvasMetrics.left,
     canvasMetrics.ready,
     canvasMetrics.scaleFactor,
     canvasMetrics.top,
     collapsedWindowEnvelope.resting,
+    collapsiblePopout,
     ensureCanvasContainsFrame,
     scheduleNativeGeometryTransition,
-    storedExpandedWindowEnvelope.resting,
+    savedExpandedEnvelope,
+    savedOwnerPlacement,
     unit
   ]);
 
   const ensureCollapsedOrigin = useCallback(
-    async (_currentMode: "collapsed" | "expanded") => {
+    async (currentMode: "collapsed" | "expanded") => {
       if (collapsedOriginRef.current) {
-        return collapsedOriginRef.current;
-      }
-      if (surfaceOriginRef.current) {
-        collapsedOriginRef.current = { ...surfaceOriginRef.current };
         return collapsedOriginRef.current;
       }
       const currentWindow = getCurrentWindow();
@@ -794,14 +890,34 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         await currentWindow.scaleFactor().catch(() => 1),
         window.devicePixelRatio
       );
+      const ownerOffset = authoredFan && savedOwnerPlacement
+        ? { x: savedOwnerPlacement.x, y: savedOwnerPlacement.y }
+        : { x: 0, y: 0 };
+      if (surfaceOriginRef.current) {
+        const physicalPerDesignPixel = expandedContentScaleRef.current * scaleFactor;
+        collapsedOriginRef.current = authoredFan && currentMode === "expanded"
+          ? {
+              x: surfaceOriginRef.current.x + ownerOffset.x * physicalPerDesignPixel,
+              y: surfaceOriginRef.current.y + ownerOffset.y * physicalPerDesignPixel
+            }
+          : { ...surfaceOriginRef.current };
+        return collapsedOriginRef.current;
+      }
       const frame = appliedFrameBoundsRef.current ?? expandedBoundsRef.current;
       const envelope = appliedEnvelopeRef.current ?? windowEnvelope.resting;
-      const physicalPerDesignPixel = (contentScaleRef.current ?? 1) * scaleFactor;
       const origin = frame
-        ? {
-            x: frame.left - envelope.x * physicalPerDesignPixel,
-            y: frame.top - envelope.y * physicalPerDesignPixel
-          }
+        ? authoredFan && currentMode === "expanded"
+          ? resolveButtonWindowOwnerOriginFromExpandedFrame({
+              bounds: frame,
+              ownerOffset,
+              envelope,
+              contentScale: contentScaleRef.current ?? 1,
+              scaleFactor
+            })
+          : {
+              x: frame.left - envelope.x * (contentScaleRef.current ?? 1) * scaleFactor,
+              y: frame.top - envelope.y * (contentScaleRef.current ?? 1) * scaleFactor
+            }
         : {
             x: activeContext.initialBounds?.Left ?? canvasMetrics.left,
             y: activeContext.initialBounds?.Top ?? canvasMetrics.top
@@ -810,7 +926,14 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       surfaceOriginRef.current = origin;
       return origin;
     },
-    [activeContext.initialBounds, canvasMetrics.left, canvasMetrics.top, windowEnvelope.resting]
+    [
+      activeContext.initialBounds,
+      authoredFan,
+      canvasMetrics.left,
+      canvasMetrics.top,
+      savedOwnerPlacement,
+      windowEnvelope.resting
+    ]
   );
 
   const applyCollapsedGeometry = useCallback(async (
@@ -819,7 +942,10 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   ) => {
     const origin = await ensureCollapsedOrigin("collapsed");
     surfaceOriginRef.current = origin;
-    await commitAppliedEnvelope(collapsedEnvelope, 1, false, onRenderCommit);
+    await commitAppliedEnvelope(collapsedEnvelope, 1, false, () => {
+      appliedFanModeRef.current = "collapsed";
+      onRenderCommit?.();
+    });
     const collapsedBounds = appliedFrameBoundsRef.current;
     if (collapsedBounds) {
       writeRegisteredLayoutWindowSnapshotBounds(getCurrentWindow().label, {
@@ -838,15 +964,30 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     const origin = await ensureCollapsedOrigin("expanded");
     const expandedEnvelope =
       restingEnvelopeFrameRef.current?.envelope ??
-      unit.desktopBoundsEnvelope ??
-      expandedWindowEnvelope.resting;
-    surfaceOriginRef.current = origin;
+      savedExpandedEnvelope;
+    const scaleFactor = appliedCanvasRef.current?.scaleFactor ?? resolveButtonWebviewPixelRatio(
+      await getCurrentWindow().scaleFactor().catch(() => 1),
+      window.devicePixelRatio
+    );
+    const ownerOffset = authoredFan && savedOwnerPlacement
+      ? { x: savedOwnerPlacement.x, y: savedOwnerPlacement.y }
+      : { x: 0, y: 0 };
+    surfaceOriginRef.current = resolveExpandedButtonWindowFrameAtOwnerOrigin({
+      ownerOrigin: origin,
+      ownerOffset,
+      envelope: expandedEnvelope,
+      contentScale: expandedContentScaleRef.current,
+      scaleFactor
+    }).surfaceOrigin;
     contentScaleRef.current = expandedContentScaleRef.current;
     await commitAppliedEnvelope(
       expandedEnvelope,
       expandedContentScaleRef.current,
       false,
-      onRenderCommit
+      () => {
+        appliedFanModeRef.current = "expanded";
+        onRenderCommit?.();
+      }
     );
     if (appliedFrameBoundsRef.current) {
       expandedBoundsRef.current = appliedFrameBoundsRef.current;
@@ -855,18 +996,23 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         bounds: appliedFrameBoundsRef.current
       };
     }
-  }, [commitAppliedEnvelope, ensureCollapsedOrigin, expandedWindowEnvelope.resting, unit]);
+  }, [
+    authoredFan,
+    commitAppliedEnvelope,
+    ensureCollapsedOrigin,
+    savedExpandedEnvelope,
+    savedOwnerPlacement,
+    unit
+  ]);
 
   useEffect(() => {
     writeRegisteredLayoutWindowButtonDisplayMode(getCurrentWindow().label, displayMode);
     if (!geometryInitialized || !unit) {
       return;
     }
-    // Regular Pops are already placed by the window opener; their envelope
-    // effect is the sole geometry writer so an older full-surface placement
-    // cannot race and overwrite a tighter fit. Tool Sets still need explicit
-    // collapsed/expanded placement around their owner.
-    if (unit.kind === "regular" || dragging) {
+    // Normal Pops are already placed by the window opener. Authored Fans and
+    // legacy collapsed Tool Sets need explicit placement around their owner.
+    if (!collapsiblePopout || dragging) {
       return;
     }
     let cancelled = false;
@@ -874,10 +1020,10 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     const transition = scheduleNativeGeometryTransition(async () => {
       if (displayMode === "expanded") {
         await applyExpandedGeometry(() => {
-          if (!cancelled) setRenderedToolSetMode("expanded");
+          if (!cancelled) setRenderedFanMode("expanded");
         });
       } else {
-        setRenderedToolSetMode("collapsed");
+        setRenderedFanMode("collapsed");
         await waitForAppliedButtonWindowRender();
         if (cancelled) return;
         await applyCollapsedGeometry(collapsedWindowEnvelope.resting);
@@ -893,6 +1039,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     };
   }, [
     displayMode,
+    collapsiblePopout,
     dragging,
     geometryInitialized,
     geometryRefreshToken,
@@ -904,7 +1051,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     if (
       !geometryInitialized ||
       !unit ||
-      unit.kind !== "tool-set" ||
+      !collapsiblePopout ||
       displayMode !== "collapsed" ||
       renderedDisplayMode !== "collapsed" ||
       dragging ||
@@ -922,6 +1069,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     };
   }, [
     collapsedWindowEnvelope.current,
+    collapsiblePopout,
     displayMode,
     dragging,
     geometryInitialized,
@@ -936,7 +1084,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       !geometryInitialized ||
       !unit ||
       renderedDisplayMode !== "expanded" ||
-      (unit.kind === "tool-set" && displayMode !== renderedDisplayMode) ||
+      (collapsiblePopout && displayMode !== renderedDisplayMode) ||
       dragging ||
       resizing
     ) return;
@@ -962,8 +1110,17 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
           x: number;
           y: number;
         } | null;
-        if (unit.kind === "tool-set" && restoredSurfaceOrigin) {
-          collapsedOriginRef.current = { ...restoredSurfaceOrigin };
+        if (collapsiblePopout && restoredSurfaceOrigin) {
+          const ownerOffset = authoredFan && savedOwnerPlacement
+            ? { x: savedOwnerPlacement.x, y: savedOwnerPlacement.y }
+            : { x: 0, y: 0 };
+          const physicalPerDesignPixel =
+            (contentScaleRef.current ?? 1) *
+            (appliedCanvasRef.current?.scaleFactor ?? canvasMetrics.scaleFactor);
+          collapsedOriginRef.current = {
+            x: restoredSurfaceOrigin.x + ownerOffset.x * physicalPerDesignPixel,
+            y: restoredSurfaceOrigin.y + ownerOffset.y * physicalPerDesignPixel
+          };
         }
         });
       })()
@@ -984,6 +1141,26 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         ) return;
         expandedBoundsRef.current = restingBounds;
         expandedContentScaleRef.current = contentScaleRef.current ?? 1;
+        if (collapsiblePopout) {
+          const ownerOffset = authoredFan && savedOwnerPlacement
+            ? { x: savedOwnerPlacement.x, y: savedOwnerPlacement.y }
+            : { x: 0, y: 0 };
+          const expandedSurfaceOrigin = surfaceOriginRef.current;
+          const physicalPerDesignPixel = expandedContentScaleRef.current *
+            (appliedCanvasRef.current?.scaleFactor ?? canvasMetrics.scaleFactor);
+          collapsedOriginRef.current = expandedSurfaceOrigin
+            ? {
+                x: expandedSurfaceOrigin.x + ownerOffset.x * physicalPerDesignPixel,
+                y: expandedSurfaceOrigin.y + ownerOffset.y * physicalPerDesignPixel
+              }
+            : resolveButtonWindowOwnerOriginFromExpandedFrame({
+                bounds: restingBounds,
+                ownerOffset,
+                envelope: windowEnvelope.resting,
+                contentScale: expandedContentScaleRef.current,
+                scaleFactor: appliedCanvasRef.current?.scaleFactor ?? canvasMetrics.scaleFactor
+              });
+        }
         restingEnvelopeFrameRef.current = {
           envelope: windowEnvelope.resting,
           bounds: restingBounds
@@ -1015,12 +1192,16 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     };
   }, [
     dragging,
+    authoredFan,
+    canvasMetrics.scaleFactor,
+    collapsiblePopout,
     displayMode,
     queueEnvelope,
     renderedDisplayMode,
     resizing,
     geometryInitialized,
     scheduleNativeGeometryTransition,
+    savedOwnerPlacement,
     unit,
     windowEnvelope.current,
     windowEnvelope.resting,
@@ -1063,7 +1244,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         closeTimerRef.current = null;
       }
       if (
-        unit.kind === "tool-set" &&
+        collapsiblePopout &&
         hovered &&
         unit.openRule === "hover" &&
         displayMode === "collapsed"
@@ -1072,6 +1253,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         return;
       }
       if (
+        !collapsiblePopout &&
         unit.kind === "regular" &&
         !hovered &&
         !pinned &&
@@ -1087,6 +1269,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         return;
       }
       if (
+        collapsiblePopout &&
         !hovered &&
         displayMode === "expanded" &&
         !pinned &&
@@ -1101,6 +1284,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     [
       activeContext.ownerButtonId,
       activeContext.popoutUnitId,
+      collapsiblePopout,
       displayMode,
       dragging,
       pinned,
@@ -1120,7 +1304,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   });
 
   const handleOwnerActivate = useCallback(() => {
-    if (!unit || unit.kind !== "tool-set") {
+    if (!unit || !collapsiblePopout) {
       return;
     }
     if (displayMode === "expanded") {
@@ -1134,7 +1318,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     }
     setPinned(true);
     setDisplayMode("expanded");
-  }, [displayMode, pinned, unit]);
+  }, [collapsiblePopout, displayMode, pinned, unit]);
 
   const persistPopoutBounds = useCallback(async (
     persistedMode: "collapsed" | "expanded" = displayMode
@@ -1152,7 +1336,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     if (!liveBounds) {
       return;
     }
-    const toolSetCollapsed = unit.kind === "tool-set" && persistedMode === "collapsed";
+    const fanCollapsed = collapsiblePopout && persistedMode === "collapsed";
     const appliedWindowEnvelope = appliedEnvelopeRef.current ?? windowEnvelope.resting;
     const physicalPerDesignPixel = (contentScaleRef.current ?? 1) * scaleFactor;
     const liveSurfaceOrigin = surfaceOriginRef.current ?? {
@@ -1160,35 +1344,44 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       y: liveBounds.top - appliedWindowEnvelope.y * physicalPerDesignPixel
     };
     surfaceOriginRef.current = liveSurfaceOrigin;
-    const collapsedOrigin = toolSetCollapsed ? liveSurfaceOrigin : null;
-    const resolvedBounds = resolvePopoutBoundsAfterDrag({
-      liveWindowBounds: liveBounds,
-      toolSetCollapsed,
-      canonicalBounds: unit.canonicalBounds,
-      scaleFactor,
-      authoritativeExpandedBounds:
-        expandedBoundsRef.current ??
-        (isUsableDesktopBounds(unit.desktopBounds) ? unit.desktopBounds : null),
-      collapsedOrigin
-    });
-    const nextBounds = resolvedBounds.desktopBounds;
-    const snapshotBounds = resolvedBounds.layoutSnapshotBounds;
-    const persistedEnvelope = toolSetCollapsed
+    const collapsedOrigin = fanCollapsed ? liveSurfaceOrigin : null;
+    const persistedEnvelope = fanCollapsed
       ? restingEnvelopeFrameRef.current?.envelope ??
-        unit.desktopBoundsEnvelope ??
-        {
+        savedExpandedEnvelope ?? {
           x: 0,
           y: 0,
           width: expandedSurface?.width ?? unit.canonicalBounds.width,
           height: expandedSurface?.height ?? unit.canonicalBounds.height
         }
       : windowEnvelope.resting;
-    if (unit.kind === "tool-set") {
-      collapsedOriginRef.current = toolSetCollapsed
-        ? collapsedOrigin
-        : liveSurfaceOrigin;
-    }
-    if (!toolSetCollapsed) {
+    let nextBounds = liveBounds;
+    const snapshotBounds = liveBounds;
+    if (fanCollapsed && collapsedOrigin) {
+      if (authoredFan && savedOwnerPlacement) {
+        nextBounds = resolveExpandedButtonWindowFrameAtOwnerOrigin({
+          ownerOrigin: collapsedOrigin,
+          ownerOffset: {
+            x: savedOwnerPlacement.x,
+            y: savedOwnerPlacement.y
+          },
+          envelope: persistedEnvelope,
+          contentScale: expandedContentScaleRef.current,
+          scaleFactor
+        }).bounds;
+      } else {
+        nextBounds = resolvePopoutBoundsAfterDrag({
+          liveWindowBounds: liveBounds,
+          toolSetCollapsed: true,
+          canonicalBounds: unit.canonicalBounds,
+          scaleFactor,
+          authoritativeExpandedBounds:
+            expandedBoundsRef.current ??
+            (isUsableDesktopBounds(unit.desktopBounds) ? unit.desktopBounds : null),
+          collapsedOrigin
+        }).desktopBounds;
+      }
+      collapsedOriginRef.current = collapsedOrigin;
+    } else {
       contentScaleRef.current = resolveUniformSurfaceScale({
         viewportWidth: liveBounds.width / scaleFactor,
         viewportHeight: liveBounds.height / scaleFactor,
@@ -1196,6 +1389,17 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         surfaceHeight: windowEnvelope.resting.height
       });
       expandedContentScaleRef.current = contentScaleRef.current;
+      if (collapsiblePopout) {
+        const ownerOffset = authoredFan && savedOwnerPlacement
+          ? { x: savedOwnerPlacement.x, y: savedOwnerPlacement.y }
+          : { x: 0, y: 0 };
+        collapsedOriginRef.current = {
+          x: liveSurfaceOrigin.x +
+            ownerOffset.x * expandedContentScaleRef.current * scaleFactor,
+          y: liveSurfaceOrigin.y +
+            ownerOffset.y * expandedContentScaleRef.current * scaleFactor
+        };
+      }
     }
     expandedBoundsRef.current = nextBounds;
     restingEnvelopeFrameRef.current = {
@@ -1236,9 +1440,13 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     await publishButtonCommit(saved);
   }, [
     activeContext.draftSessionId,
+    authoredFan,
+    collapsiblePopout,
     displayMode,
     document,
     expandedSurface,
+    savedExpandedEnvelope,
+    savedOwnerPlacement,
     unit,
     windowEnvelope.resting
   ]);
@@ -1271,7 +1479,15 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
           x: nextBounds.left - windowEnvelope.resting.x * nextScale * scaleFactor,
           y: nextBounds.top - windowEnvelope.resting.y * nextScale * scaleFactor
         };
-        collapsedOriginRef.current = { ...surfaceOriginRef.current };
+        const ownerOffset = authoredFan && savedOwnerPlacement
+          ? { x: savedOwnerPlacement.x, y: savedOwnerPlacement.y }
+          : { x: 0, y: 0 };
+        collapsedOriginRef.current = collapsiblePopout
+          ? {
+              x: surfaceOriginRef.current.x + ownerOffset.x * nextScale * scaleFactor,
+              y: surfaceOriginRef.current.y + ownerOffset.y * nextScale * scaleFactor
+            }
+          : { ...surfaceOriginRef.current };
         expandedBoundsRef.current = nextBounds;
         restingEnvelopeFrameRef.current = {
           envelope: windowEnvelope.resting,
@@ -1329,6 +1545,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
     }
     queueResizeBounds(resolveAspectLockedWindowBounds({
       initialBounds: session.initialBounds,
+      initialHandleBounds: session.initialHandleBounds,
       initialPointer: session.initialPointer,
       pointer,
       corner: session.corner
@@ -1368,10 +1585,16 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
             currentWindow.scaleFactor().catch(() => 1),
             cursorPosition().catch(() => null)
           ]);
-          const initialBounds = expandedBoundsRef.current ?? appliedFrameBoundsRef.current;
+          const initialBounds = appliedFrameBoundsRef.current ?? expandedBoundsRef.current;
           if (!initialBounds) {
             throw new Error("Could not read the Button Pop window bounds for resizing.");
           }
+          const initialEnvelope = appliedEnvelopeRef.current ?? windowEnvelope.resting;
+          const initialHandleBounds = resolveButtonWindowSubframeBounds({
+            frameBounds: initialBounds,
+            frameEnvelope: initialEnvelope,
+            subframeEnvelope: expandedResizeHandleEnvelope
+          });
           const scaleFactor = resolveButtonWebviewPixelRatio(
             rawScaleFactor,
             window.devicePixelRatio
@@ -1384,7 +1607,8 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
               x: fallbackScreenX * scaleFactor,
               y: fallbackScreenY * scaleFactor
             },
-            initialBounds
+            initialBounds,
+            initialHandleBounds
           };
 
           if (resizePollTimerRef.current !== null) {
@@ -1427,7 +1651,8 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
                 envelope: windowEnvelope.resting,
                 contentScale: logicalScale,
                 scaleFactor: appliedCanvas.scaleFactor,
-                anchorCorner: corner
+                anchorCorner: corner,
+                anchorSubframeEnvelope: expandedResizeHandleEnvelope
               });
               queueResizeBounds(finalBounds);
               await waitForQueuedResizeBounds();
@@ -1476,6 +1701,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         const initialVisibleBounds = appliedFrameBoundsRef.current;
         const initialExpandedBounds = expandedBoundsRef.current;
         const initialSurfaceOrigin = surfaceOriginRef.current;
+        const initialCollapsedOrigin = collapsedOriginRef.current;
         if (!initialVisibleBounds || !initialExpandedBounds || !initialSurfaceOrigin) {
           throw new Error("Could not read the Button Pop content frame for dragging.");
         }
@@ -1493,7 +1719,12 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
             x: initialSurfaceOrigin.x + delta.x,
             y: initialSurfaceOrigin.y + delta.y
           };
-          collapsedOriginRef.current = { ...surfaceOriginRef.current };
+          collapsedOriginRef.current = initialCollapsedOrigin
+            ? {
+                x: initialCollapsedOrigin.x + delta.x,
+                y: initialCollapsedOrigin.y + delta.y
+              }
+            : { ...surfaceOriginRef.current };
           expandedBoundsRef.current = nextExpandedBounds;
           if (restingEnvelopeFrameRef.current) {
             restingEnvelopeFrameRef.current = {
@@ -1510,29 +1741,45 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
         const appliedCanvas = await applyCanvasForFrame(finalVisibleBounds);
         const envelope = appliedEnvelopeRef.current ?? windowEnvelope.resting;
         const logicalScale = contentScaleRef.current ?? 1;
-        surfaceOriginRef.current = {
+        const finalSurfaceOrigin = {
           x: finalVisibleBounds.left - envelope.x * logicalScale * appliedCanvas.scaleFactor,
           y: finalVisibleBounds.top - envelope.y * logicalScale * appliedCanvas.scaleFactor
         };
-        collapsedOriginRef.current = { ...surfaceOriginRef.current };
+        surfaceOriginRef.current = finalSurfaceOrigin;
+        const ownerOffset = authoredFan && savedOwnerPlacement
+          ? { x: savedOwnerPlacement.x, y: savedOwnerPlacement.y }
+          : { x: 0, y: 0 };
+        const collapsedOwnerOrigin = collapsiblePopout && displayMode === "expanded"
+          ? {
+              x: finalSurfaceOrigin.x +
+                ownerOffset.x * logicalScale * appliedCanvas.scaleFactor,
+              y: finalSurfaceOrigin.y +
+                ownerOffset.y * logicalScale * appliedCanvas.scaleFactor
+            }
+          : { ...finalSurfaceOrigin };
+        collapsedOriginRef.current = collapsedOwnerOrigin;
         finalVisibleBounds = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
-          surfaceOrigin: surfaceOriginRef.current,
+          surfaceOrigin: finalSurfaceOrigin,
           envelope,
           contentScale: logicalScale,
           scaleFactor: appliedCanvas.scaleFactor
         });
         appliedFrameBoundsRef.current = finalVisibleBounds;
         setAppliedFrameBounds(finalVisibleBounds);
-        if (unit.kind === "regular") {
+        if (!collapsiblePopout || displayMode === "expanded") {
           expandedBoundsRef.current = finalVisibleBounds;
           expandedContentScaleRef.current = logicalScale;
         } else {
-          expandedBoundsRef.current = resolvePhysicalButtonWindowEnvelopeAtSurfaceOrigin({
-            surfaceOrigin: surfaceOriginRef.current,
-            envelope: expandedWindowEnvelope.resting,
+          const expandedEnvelope =
+            restingEnvelopeFrameRef.current?.envelope ??
+            savedExpandedEnvelope;
+          expandedBoundsRef.current = resolveExpandedButtonWindowFrameAtOwnerOrigin({
+            ownerOrigin: collapsedOwnerOrigin,
+            ownerOffset,
+            envelope: expandedEnvelope,
             contentScale: expandedContentScaleRef.current,
             scaleFactor: appliedCanvas.scaleFactor
-          });
+          }).bounds;
         }
         await persistPopoutBounds(displayMode);
       } catch (dragError) {
@@ -1576,8 +1823,27 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
       : { ...current, [placementId]: state });
   }, []);
 
+  const renderedEnvelope =
+    collapsiblePopout &&
+    renderedDisplayMode === "collapsed" &&
+    appliedFanModeRef.current === "expanded" &&
+    appliedEnvelope
+      ? {
+          ...appliedEnvelope,
+          x: appliedEnvelope.x - (authoredFan ? savedOwnerPlacement?.x ?? 0 : 0),
+          y: appliedEnvelope.y - (authoredFan ? savedOwnerPlacement?.y ?? 0 : 0)
+        }
+      : appliedEnvelope ?? windowEnvelope.current;
   const contentFrameRect = canvasMetrics.ready
     ? buttonDesktopBoundsToCanvasRect(appliedFrameBounds, canvasMetrics)
+    : null;
+  const resizeHandleFrame = resizeHandlesVisible && renderedEnvelope
+    ? {
+        left: (expandedResizeHandleEnvelope.x - renderedEnvelope.x) * surfaceScale,
+        top: (expandedResizeHandleEnvelope.y - renderedEnvelope.y) * surfaceScale,
+        width: expandedResizeHandleEnvelope.width * surfaceScale,
+        height: expandedResizeHandleEnvelope.height * surfaceScale
+      }
     : null;
 
   return (
@@ -1610,16 +1876,23 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
             height: contentFrameRect.height
           }}
         >
-          {resizeHandlesVisible
-            ? BUTTON_POPOUT_RESIZE_CORNERS.map(({ corner, modifier }) => (
+          {resizeHandleFrame
+            ? (
                 <div
-                  key={corner}
-                  className={`button-popout-window__resize-handle button-popout-window__resize-handle--${modifier}`}
-                  data-button-window-resize-handle={corner}
+                  className="button-popout-window__resize-frame"
+                  style={resizeHandleFrame}
                   aria-hidden="true"
-                  onPointerDown={startResizeDrag(corner)}
-                />
-              ))
+                >
+                  {BUTTON_POPOUT_RESIZE_CORNERS.map(({ corner, modifier }) => (
+                    <div
+                      key={corner}
+                      className={`button-popout-window__resize-handle button-popout-window__resize-handle--${modifier}`}
+                      data-button-window-resize-handle={corner}
+                      onPointerDown={startResizeDrag(corner)}
+                    />
+                  ))}
+                </div>
+              )
             : null}
           <ButtonPopoutRenderer
             key={`${unit.id}:${openRevision}`}
@@ -1627,7 +1900,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
             unit={unit}
             displayMode={renderedDisplayMode}
             surfaceScale={surfaceScale}
-            surfaceEnvelope={appliedEnvelope ?? windowEnvelope.resting}
+            surfaceEnvelope={renderedEnvelope}
             onOwnerActivate={handleOwnerActivate}
             onRequestInlineEditorFocus={requestInlineEditorFocus}
             onPlacementVisualMeasurement={handlePlacementVisualMeasurement}

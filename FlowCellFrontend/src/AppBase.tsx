@@ -2,7 +2,10 @@ import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { hideFlowTooltip, showFlowTooltipForElement } from "./lib/flowTooltip";
 import { getWindowContextFromLocation } from "./lib/windowContext";
-import { unregisterLayoutWindow } from "./lib/layoutSnapshots";
+import {
+  unregisterLayoutWindow,
+  writeRegisteredLayoutWindowSnapshotBounds
+} from "./lib/layoutSnapshots";
 import ButtonEditorPage from "./button/editor/ButtonEditorPage";
 import ButtonFanWindowPage from "./button/fan/ButtonFanWindowPage";
 import ButtonPopoutWindowPage from "./button/popout/ButtonPopoutWindowPage";
@@ -105,16 +108,64 @@ export default function App() {
   useEffect(() => {
     if (
       windowContext.kind !== "button-popout" &&
-      windowContext.kind !== "button-fan"
+      windowContext.kind !== "button-fan" &&
+      windowContext.kind !== "installed-page"
     ) {
       return;
     }
     const currentWindow = getCurrentWindow();
-    const unlistenPromise = currentWindow.onCloseRequested(() => {
-      unregisterLayoutWindow(currentWindow.label);
-    });
+    const unlistenPromise = windowContext.kind === "installed-page"
+      ? currentWindow.once("tauri://destroyed", () => {
+          unregisterLayoutWindow(currentWindow.label);
+        })
+      : currentWindow.onCloseRequested(() => {
+          unregisterLayoutWindow(currentWindow.label);
+        });
     return () => {
       void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, [windowContext.kind]);
+
+  useEffect(() => {
+    if (
+      windowContext.kind !== "button-editor" &&
+      windowContext.kind !== "installed-page"
+    ) {
+      return;
+    }
+    const currentWindow = getCurrentWindow();
+    let disposed = false;
+    let stopMoved: (() => void) | undefined;
+    let stopResized: (() => void) | undefined;
+    const captureNormalBounds = async () => {
+      if (disposed || await currentWindow.isMinimized().catch(() => false)) {
+        return;
+      }
+      const [position, size] = await Promise.all([
+        currentWindow.outerPosition().catch(() => null),
+        currentWindow.innerSize().catch(() => null)
+      ]);
+      if (disposed || !position || !size) {
+        return;
+      }
+      writeRegisteredLayoutWindowSnapshotBounds(currentWindow.label, {
+        Left: position.x,
+        Top: position.y,
+        Width: size.width,
+        Height: size.height
+      });
+    };
+    void currentWindow.onMoved(() => void captureNormalBounds()).then((stop) => {
+      if (disposed) stop(); else stopMoved = stop;
+    });
+    void currentWindow.onResized(() => void captureNormalBounds()).then((stop) => {
+      if (disposed) stop(); else stopResized = stop;
+    });
+    void captureNormalBounds();
+    return () => {
+      disposed = true;
+      stopMoved?.();
+      stopResized?.();
     };
   }, [windowContext.kind]);
 

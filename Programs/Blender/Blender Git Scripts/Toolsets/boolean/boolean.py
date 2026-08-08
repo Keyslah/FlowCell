@@ -1,4 +1,4 @@
-# Description: Quick Boolean with I/U/D operation buttons, solver fanout, SI/HT/HC/S toggles, and Run.
+# Description: Quick Boolean with I/U/D operation buttons, one cycling solver button, SI/HT/HC/S toggles, and Run.
 
 
 
@@ -475,6 +475,9 @@ def _run_boolean_operator(context):
     }
 
 
+QB_SOLVER_CYCLE = ("EXACT", "FAST", "MANIFOLD")
+
+
 def _quick_boolean_state(scene):
     return {
         "operation": scene.qb_operation,
@@ -483,6 +486,13 @@ def _quick_boolean_state(scene):
         "holeTolerant": bool(scene.qb_hole_tolerant),
         "hideCutter": bool(scene.qb_hide_cutter),
         "backupActive": bool(scene.qb_backup_active),
+        "fieldPatch": {
+            "operation": scene.qb_operation,
+            "self_intersection": bool(scene.qb_self_intersection),
+            "hole_tolerant": bool(scene.qb_hole_tolerant),
+            "hide_cutter": bool(scene.qb_hide_cutter),
+            "backup_active": bool(scene.qb_backup_active),
+        },
     }
 
 
@@ -520,6 +530,12 @@ def run_flowcell_action(context=None, data=None):
         "solver_manifold": "MANIFOLD",
         "manifold": "MANIFOLD",
     }
+    if command in {"cycle_solver", "solver_cycle", "solver_next"}:
+        current_solver = scene.qb_solver if scene.qb_solver in QB_SOLVER_CYCLE else QB_SOLVER_CYCLE[0]
+        next_index = (QB_SOLVER_CYCLE.index(current_solver) + 1) % len(QB_SOLVER_CYCLE)
+        scene.qb_solver = QB_SOLVER_CYCLE[next_index]
+        return {"status": "ok", "message": f"Quick Boolean solver set to {scene.qb_solver}.", **_quick_boolean_state(scene)}
+
     if command == "set_solver":
         requested_solver = str(data.get("solver") or data.get("value") or data.get("mode") or "").strip().upper()
         if requested_solver == "FLOAT":

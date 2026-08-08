@@ -56,6 +56,27 @@ const BUTTON_SURFACE_KINDS = new Set(["main", "panel", "regular-popout", "tool-s
 const BUTTON_WINDOW_FIT_MODES = new Set(["surface", "hitbox", "visual"]);
 const BUTTON_ACTIVATION_MODES = new Set(["momentary", "toggle", "cycle"]);
 const BUTTON_ACTIVATION_ADVANCE_TRIGGERS = new Set(["press", "hover", "release"]);
+/**
+ * A Fan's owner Button anchors the Fan rather than sitting inside its content,
+ * so it is the one placement allowed to live at any offset from the Buttons it
+ * opens: outside the saved surface, on the negative side of its origin, and
+ * overlapping them. Every other placement keeps the exact bounds and overlap
+ * rules.
+ */
+function fanOwnerPlacementId(
+  document: Record<string, any>,
+  surfaceId: string,
+  placements: readonly Record<string, any>[]
+): string | null {
+  const surface = document.surfaces?.[surfaceId];
+  if (!isObject(surface) || surface.kind !== "fan" || !isObject(document.fanSetups)) return null;
+  const setup = Object.values(document.fanSetups).find(
+    (candidate) => isObject(candidate) && candidate.fanSurfaceId === surfaceId
+  );
+  if (!isObject(setup) || typeof setup.panelOwnerButtonId !== "string") return null;
+  return placements.find((placement) => placement.buttonId === setup.panelOwnerButtonId)?.id ?? null;
+}
+
 const BUTTON_APPEARANCE_TRIGGERS = new Set([
   "rest",
   "hover",
@@ -495,6 +516,13 @@ function validateTopLevel(value: unknown, issues: ButtonStateValidationIssue[]):
 export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
   if (!isObject(value) || !isObject(value.placements)) return value;
   let changed = false;
+  const settings: Record<string, unknown> | unknown = isObject(value.settings)
+    ? { ...value.settings }
+    : value.settings;
+  if (isObject(settings) && !Object.hasOwn(settings, "buttonSpacingMm")) {
+    settings.buttonSpacingMm = 0;
+    changed = true;
+  }
   const buttons: Record<string, unknown> = isObject(value.buttons)
     ? { ...value.buttons }
     : {};
@@ -582,6 +610,18 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
         unit.desktopBoundsEnvelope = { ...unit.canonicalBounds };
         changed = true;
       }
+      if (!Object.hasOwn(unit, "interactionMode")) {
+        unit.interactionMode = "pop";
+        changed = true;
+      }
+      if (!Object.hasOwn(unit, "ownerPlacementId")) {
+        unit.ownerPlacementId = null;
+        changed = true;
+      }
+      if (unit.kind === "regular" && !Object.hasOwn(unit, "ownerButtonId")) {
+        unit.ownerButtonId = null;
+        changed = true;
+      }
       popoutUnits[id] = unit;
     }
   }
@@ -601,7 +641,9 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
       fanSetups[id] = setup;
     }
   }
-  return changed ? { ...value, buttons, placements, surfaces, popoutUnits, fanSetups } : value;
+  return changed
+    ? { ...value, buttons, placements, surfaces, popoutUnits, fanSetups, settings }
+    : value;
 }
 
 export function validateButtonStateDocument(value: unknown): ButtonStateValidationResult {
@@ -615,6 +657,7 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
   for (const [key, minimum] of [
     ["gridSize", 1],
     ["snapTolerance", 0],
+    ["buttonSpacingMm", 0],
     ["defaultGap", 0],
     ["defaultSurfacePadding", 0],
     ["defaultMinimumFontSize", 1]
@@ -771,12 +814,16 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     const placements = surface.placementIds
       .map((id) => typeof id === "string" ? document.placements[id] : undefined)
       .filter((placement): placement is NonNullable<typeof placement> => isObject(placement));
+    const unboundedPlacementId = fanOwnerPlacementId(document, surfaceId, placements);
     const seen = new Set<string>();
     for (const placement of placements) {
       if (seen.has(placement.id)) addIssue(issues, `surfaces.${surfaceId}.placementIds`, `Duplicate placement '${placement.id}'.`);
       seen.add(placement.id);
       if (placement.surfaceId !== surfaceId) addIssue(issues, `placements.${placement.id}.surfaceId`, "Placement belongs to a different surface.");
-      if (placement.x < 0 || placement.y < 0 || placement.x + placement.width > surface.width || placement.y + placement.height > surface.height) {
+      if (
+        placement.id !== unboundedPlacementId &&
+        (placement.x < 0 || placement.y < 0 || placement.x + placement.width > surface.width || placement.y + placement.height > surface.height)
+      ) {
         addIssue(issues, `placements.${placement.id}`, "Placement is outside its exact surface bounds.");
       }
     }
@@ -802,6 +849,12 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       for (let right = left + 1; right < placements.length; right += 1) {
         const leftPlacement = placements[left];
         const rightPlacement = placements[right];
+        if (
+          leftPlacement?.id === unboundedPlacementId ||
+          rightPlacement?.id === unboundedPlacementId
+        ) {
+          continue;
+        }
         if (leftPlacement && rightPlacement && buttonRectsOverlap(leftPlacement, rightPlacement)) {
           addIssue(issues, `surfaces.${surfaceId}`, `Placements '${leftPlacement.id}' and '${rightPlacement.id}' overlap.`);
         }
@@ -823,10 +876,10 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     const commonKeys = [
       "id", "name", "kind", "surfaceId", "canonicalBounds", "desktopBounds",
       "openRule", "closeRule", "transparency", "pinnedDefault", "windowFitMode",
-      "desktopBoundsFitMode", "desktopBoundsEnvelope"
+      "desktopBoundsFitMode", "desktopBoundsEnvelope", "interactionMode", "ownerPlacementId"
     ];
     const allowedKeys = new Set(unit.kind === "regular"
-      ? [...commonKeys, "memberPlacementIds", "memberSourceIdentities", "selectionKey"]
+      ? [...commonKeys, "ownerButtonId", "memberPlacementIds", "memberSourceIdentities", "selectionKey"]
       : [...commonKeys, "ownerButtonId", "childButtonIds", "childPlacementIds", "fields"]);
     Object.keys(rawUnit).forEach((property) => {
       if (!allowedKeys.has(property)) addIssue(issues, `${path}.${property}`, `Property '${property}' is not part of the ${unit.kind} popout contract.`);
@@ -844,6 +897,40 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     if (unit.desktopBoundsEnvelope && !isUsableButtonRect(unit.desktopBoundsEnvelope)) {
       addIssue(issues, `${path}.desktopBoundsEnvelope`, "Popout desktop-bounds envelope is invalid.");
     }
+    const interactionMode = unit.interactionMode ?? "pop";
+    if (interactionMode !== "pop" && interactionMode !== "fan") {
+      addIssue(issues, `${path}.interactionMode`, "Popout interaction mode is invalid.");
+    }
+    const ownerButtonId = unit.kind === "tool-set"
+      ? unit.ownerButtonId
+      : unit.ownerButtonId ?? null;
+    const ownerPlacementId = unit.ownerPlacementId ?? null;
+    if (unit.kind === "regular" && (ownerButtonId === null) !== (ownerPlacementId === null)) {
+      addIssue(issues, path, "Popout owner Button and placement must be assigned together.");
+    }
+    if (interactionMode === "fan" && (!ownerButtonId || !ownerPlacementId)) {
+      addIssue(issues, path, "Fan-mode Popout requires an exact owner Button placement.");
+    }
+    const ownerPlacement = typeof ownerPlacementId === "string"
+      ? document.placements[ownerPlacementId]
+      : undefined;
+    const ownerButton = typeof ownerButtonId === "string"
+      ? document.buttons[ownerButtonId]
+      : undefined;
+    if (ownerPlacementId !== null && (
+      typeof ownerPlacementId !== "string" ||
+      !ownerPlacement ||
+      ownerPlacement.surfaceId !== unit.surfaceId
+    )) {
+      addIssue(issues, `${path}.ownerPlacementId`, "Popout owner placement must exist on its exact surface.");
+    }
+    if (ownerButtonId !== null && (
+      typeof ownerButtonId !== "string" ||
+      !ownerButton ||
+      (ownerPlacementId !== null && ownerPlacement?.buttonId !== ownerButtonId)
+    )) {
+      addIssue(issues, `${path}.ownerButtonId`, "Popout owner Button must match its exact placement.");
+    }
     if (unit.kind === "regular") {
       const placementIds = Array.isArray(unit.memberPlacementIds) ? unit.memberPlacementIds : [];
       const identities = Array.isArray(unit.memberSourceIdentities) ? unit.memberSourceIdentities : [];
@@ -852,8 +939,14 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       if (hasDuplicateStrings(placementIds)) addIssue(issues, `${path}.memberPlacementIds`, "Regular member placement IDs must be unique.");
       const surface = document.surfaces[unit.surfaceId];
       if (surface?.kind !== "regular-popout") addIssue(issues, `${path}.surfaceId`, "Regular popout must reference a regular-popout surface.");
-      if (surface && !haveSameStringMembers(placementIds, surface.placementIds)) {
-        addIssue(issues, `${path}.memberPlacementIds`, "Regular member placement IDs must exactly match the popout surface.");
+      const ownedPlacementIds = ownerPlacementId && !placementIds.includes(ownerPlacementId)
+        ? [...placementIds, ownerPlacementId]
+        : placementIds;
+      if (surface && !haveSameStringMembers(ownedPlacementIds, surface.placementIds)) {
+        addIssue(issues, `${path}.memberPlacementIds`, "Regular member and owner placement IDs must exactly match the popout surface.");
+      }
+      if (ownerButton && ownerButton.role !== "single-script" && ownerButton.role !== "panel-owner") {
+        addIssue(issues, `${path}.ownerButtonId`, "Regular Popout owner must be a script or panel-owner Button.");
       }
       const validIdentities = identities.filter((identity, index): identity is ButtonSourceIdentity =>
         validateIdentity(identity, `${path}.memberSourceIdentities.${index}`, issues)
@@ -897,8 +990,11 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       if (hasDuplicateStrings(childPlacementIds)) addIssue(issues, `${path}.childPlacementIds`, "Tool-set child placement IDs must be unique.");
       const surface = document.surfaces[unit.surfaceId];
       if (surface?.kind !== "tool-set-popout") addIssue(issues, `${path}.surfaceId`, "Tool-set popout must reference a tool-set-popout surface.");
-      if (surface && !haveSameStringMembers(childPlacementIds, surface.placementIds)) {
-        addIssue(issues, `${path}.childPlacementIds`, "Tool-set child placement IDs must exactly match the popout surface.");
+      const ownedPlacementIds = ownerPlacementId
+        ? [...childPlacementIds, ownerPlacementId]
+        : childPlacementIds;
+      if (surface && !haveSameStringMembers(ownedPlacementIds, surface.placementIds)) {
+        addIssue(issues, `${path}.childPlacementIds`, "Tool-set child and owner placement IDs must exactly match the popout surface.");
       }
       const placedChildButtonIds: string[] = [];
       childPlacementIds.forEach((placementId) => {

@@ -36,9 +36,35 @@ def _result(status="ok", message="", **extra):
     return {"status": status, "message": message, "display": message, **extra}
 
 
+def _bound_corners(obj: bpy.types.Object):
+    """Local-space bound corners for the geometry Blender actually displays.
+
+    ``obj.bound_box`` on the original object ignores modifiers, and for curves
+    and text it is built from control points, so it can sit well outside the
+    visible surface and leave a gap when aligning. The evaluated object carries
+    the displayed extents.
+    """
+    corners = getattr(obj, "bound_box", None)
+    try:
+        evaluated = obj.evaluated_get(_ctx().evaluated_depsgraph_get())
+    except (AttributeError, RuntimeError, TypeError):
+        return corners
+
+    evaluated_corners = getattr(evaluated, "bound_box", None)
+    if not evaluated_corners:
+        return corners
+
+    points = [Vector(corner) for corner in evaluated_corners]
+    if max((point - points[0]).length for point in points) <= 0.0:
+        # Evaluated geometry collapsed to a point (hidden, or consumed by a
+        # modifier); keep the original bounds instead of snapping to nothing.
+        return corners
+    return evaluated_corners
+
+
 def _alignment_bounds(obj: bpy.types.Object) -> tuple[Vector, Vector]:
     world_matrix = obj.matrix_world
-    corners = getattr(obj, "bound_box", None)
+    corners = _bound_corners(obj)
     if not corners:
         origin = world_matrix.translation.copy()
         return origin.copy(), origin.copy()

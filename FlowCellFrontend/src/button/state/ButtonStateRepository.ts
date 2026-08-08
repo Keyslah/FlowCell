@@ -16,6 +16,7 @@ import {
   cloneButtonDocument
 } from "./buttonDefaults.js";
 import {
+  buttonSpacingPixelsFromMillimeters,
   buttonRectsOverlap,
   createStarterButtonLayout
 } from "../geometry/buttonGeometry.js";
@@ -31,6 +32,7 @@ import {
   type ButtonPlacementFile
 } from "./buttonPlacementFile.js";
 import {
+  normalizeButtonSettingsFile,
   validateButtonSettingsFile,
   type ButtonSettingsFile,
   type ButtonSettingsPlacementKind
@@ -384,7 +386,9 @@ export async function loadButtonSettingsFile(path: string): Promise<ButtonSettin
   if (!isTauriWindowHost()) {
     throw new Error("Button settings files can only be loaded from the FlowCell desktop host.");
   }
-  const file = await invoke<unknown>("load_button_settings_file", { path });
+  const file = normalizeButtonSettingsFile(
+    await invoke<unknown>("load_button_settings_file", { path })
+  );
   const validation = validateButtonSettingsFile(file);
   if (!validation.valid) throw new Error(validation.issues.join("\n"));
   return file as ButtonSettingsFile;
@@ -416,10 +420,11 @@ export async function loadButtonSettingsDefault(
   if (!isTauriWindowHost()) {
     throw new Error("Button settings defaults are only available from the FlowCell desktop host.");
   }
-  const file = await invoke<unknown>("load_button_settings_default", {
+  const loaded = await invoke<unknown>("load_button_settings_default", {
     placementKind,
     surfaceId
   });
+  const file = normalizeButtonSettingsFile(loaded);
   if (file === null || file === undefined) return null;
   const validation = validateButtonSettingsFile(file);
   if (!validation.valid) throw new Error(validation.issues.join("\n"));
@@ -722,7 +727,7 @@ function addMigratedToolSet(
     install.children.map((child) => ({ id: child.slot, width: 144, height: 42 })),
     {
       padding: document.settings.defaultSurfacePadding,
-      gap: document.settings.defaultGap,
+      gap: buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm),
       maximumColumns: 4
     }
   );
@@ -785,6 +790,8 @@ function addMigratedToolSet(
     childPlacementIds: [...surface.placementIds],
     openRule: "toggle",
     closeRule: "toggle",
+    interactionMode: "pop",
+    ownerPlacementId: null,
     transparency: 1,
     pinnedDefault: false,
     windowFitMode: "surface",
@@ -898,6 +905,18 @@ export async function installButtonSource(
     throw new Error("Button sources can only be installed from the FlowCell desktop host.");
   }
   const response = await invoke<Record<string, unknown>>("install_button_source", { request: { ...request } });
+  return normalizeInstallResult(request, response);
+}
+
+export async function updateButtonSource(
+  request: InstallButtonSourceRequest
+): Promise<InstallButtonSourceResult> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Button sources can only be updated from the FlowCell desktop host.");
+  }
+  const response = await invoke<Record<string, unknown>>("update_button_source", {
+    request: { ...request }
+  });
   return normalizeInstallResult(request, response);
 }
 

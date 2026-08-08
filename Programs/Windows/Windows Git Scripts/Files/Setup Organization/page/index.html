@@ -7,132 +7,161 @@
   <body>
     <main class="organization-page">
       <header class="page-header">
-        <div>
-          <p class="eyebrow">Windows · Files</p>
+        <div class="header-identity">
+          <p class="eyebrow">Windows &middot; Files</p>
           <h1>Setup Organization</h1>
-          <p class="subtitle">Build reusable rules for any Windows folder and install ordinary profile Buttons.</p>
         </div>
-        <div class="header-badge">Windows owned</div>
+        <div class="profile-bar">
+          <label class="field">
+            <span>Profile</span>
+            <select id="profile-select">
+              <option value="">No saved profiles yet</option>
+            </select>
+          </label>
+          <label class="field field-grow">
+            <span>Name</span>
+            <input id="profile-name" type="text" autocomplete="off" maxlength="120" placeholder="Studio">
+          </label>
+          <div class="profile-cleanup-options" role="group" aria-label="Folder cleanup">
+            <label class="checkbox profile-cleanup-option" title="After files are organized, send empty folders not used by the current profile to the Recycle Bin. Current profile folders are always kept.">
+              <input id="recycle-other-folders" type="checkbox">
+              <span>Recycle empty folders not in current profile</span>
+            </label>
+            <label class="checkbox profile-cleanup-option" title="On every run, compare the previous .flowcell-project.json with the current profile. Recycle folders the previous profile marked ignored when the current profile no longer owns them, without sorting their contents. Current profile folders are always kept.">
+              <input id="recycle-previous-ignored-folders" type="checkbox" disabled>
+              <span>Also recycle ignored folders left by the previous profile</span>
+            </label>
+          </div>
+          <button id="new-profile" type="button" class="button ghost">New</button>
+          <button id="save-profile" type="button" class="button primary">Save</button>
+          <button id="save-profile-as" type="button" class="button secondary">Save as</button>
+          <button id="delete-profile" type="button" class="button danger">Delete</button>
+        </div>
       </header>
 
-      <section class="root-card" aria-labelledby="root-heading">
-        <div class="section-heading">
-          <div>
-            <p class="eyebrow">Working root</p>
-            <h2 id="root-heading">Choose any Windows folder</h2>
-          </div>
-          <span id="scan-summary" class="summary-pill">Not scanned</span>
-        </div>
-        <div class="root-controls">
-          <label class="field field-grow">
-            <span>Absolute root path</span>
-            <input id="root-path" type="text" autocomplete="off" spellcheck="false" placeholder="C:\Projects\Example">
-          </label>
-          <button id="select-root" type="button" class="button secondary">Choose folder</button>
-          <button id="scan-root" type="button" class="button primary">Scan</button>
-        </div>
-      </section>
-
       <div class="workspace-grid">
-        <section class="card tree-card" aria-labelledby="folders-heading">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Current disk</p>
-              <h2 id="folders-heading">Folders</h2>
-            </div>
+        <section class="card folders-card" aria-labelledby="folders-heading">
+          <div class="section-heading">
+            <h2 id="folders-heading">Folders</h2>
             <strong id="folder-count">0</strong>
           </div>
-          <div id="folder-list" class="scroll-list" role="listbox" aria-label="Scanned folders"></div>
           <div class="folder-tools">
-            <label class="field field-grow">
-              <span>Exact relative folder</span>
-              <input id="folder-path" type="text" autocomplete="off" spellcheck="false" placeholder="01 source\Images">
-            </label>
-            <button id="create-folder" type="button" class="button secondary">Create</button>
-            <button id="recycle-folder" type="button" class="button danger">Recycle</button>
+            <button id="add-folder" type="button" class="button secondary">+ Folder</button>
+            <button id="add-subfolder" type="button" class="button secondary">+ Subfolder</button>
+            <button id="rename-folder" type="button" class="button secondary">Rename</button>
+            <button id="delete-folder" type="button" class="button danger">Delete</button>
           </div>
+          <div class="folder-tools">
+            <button id="load-tree" type="button" class="button secondary">Load tree from folder&hellip;</button>
+          </div>
+          <div class="folder-cap">
+            <label class="checkbox">
+              <input id="cap-enabled" type="checkbox" checked>
+              <span>Cap at</span>
+            </label>
+            <input id="cap-count" type="number" min="1" max="5000" step="1" value="12">
+            <span class="cap-suffix">folders</span>
+          </div>
+          <div id="folder-list" class="scroll-list tree-list" role="listbox" aria-label="Profile folders"></div>
+          <p class="rule-help">Files route to the first folder in this list that claims their type.</p>
         </section>
 
         <section class="card files-card" aria-labelledby="files-heading">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Ready to organize</p>
-              <h2 id="files-heading">Loose root files</h2>
-            </div>
-            <strong id="file-count">0</strong>
+          <div class="section-heading">
+            <h2 id="files-heading">Files</h2>
+            <span id="files-target" class="summary-pill">No folder selected</span>
           </div>
-          <div id="file-list" class="scroll-list file-list" role="list" aria-label="Loose files"></div>
+
+          <div class="subsection-heading"><span>File groups</span></div>
+          <div id="group-list" class="scroll-list group-list" role="group" aria-label="File groups"></div>
+          <div class="group-create">
+            <button id="toggle-create-group" type="button" class="button secondary">+ Create group</button>
+          </div>
+          <div id="group-form" class="group-form" hidden>
+            <p id="group-form-title" class="group-form-title">New group</p>
+            <label class="field field-grow">
+              <span>Group name</span>
+              <input id="group-name" type="text" autocomplete="off" maxlength="120" placeholder="Textures">
+            </label>
+            <label class="field field-grow">
+              <span>Extensions</span>
+              <input id="group-extensions" type="text" autocomplete="off" spellcheck="false" placeholder=".png, .tif, .exr">
+            </label>
+            <label class="checkbox">
+              <input id="group-is-program" type="checkbox">
+              <span>Program file group</span>
+            </label>
+            <button id="save-group" type="button" class="button primary">Save group</button>
+            <button id="cancel-group" type="button" class="button ghost">Cancel</button>
+          </div>
+
+          <div class="subsection-heading"><span>Program file groups</span></div>
+          <div id="program-group-list" class="program-group-list" role="group" aria-label="Program file groups"></div>
+          <div class="group-create">
+            <button id="create-program-group" type="button" class="button secondary">+ Create program group</button>
+          </div>
+
+          <div class="subsection-heading"><span>Add file types</span></div>
+          <label class="field field-grow">
+            <span>Extensions for this folder</span>
+            <input id="direct-types" type="text" autocomplete="off" spellcheck="false" placeholder=".tga, .psd">
+          </label>
+
+          <label class="checkbox ignore-toggle">
+            <input id="catch-all-folder" type="checkbox">
+            <span>Collect all other files here</span>
+          </label>
+          <label class="checkbox">
+            <input id="ignore-folder" type="checkbox">
+            <span>Ignore this folder</span>
+          </label>
+          <p class="rule-help">Nothing is ever moved out of an ignored folder, and its whole subtree is skipped.</p>
+
+          <div class="apply-row">
+            <button id="apply-files" type="button" class="button accent">Apply</button>
+          </div>
         </section>
 
-        <section class="card profile-card" aria-labelledby="profile-heading">
-          <div class="section-heading compact">
-            <div>
-              <p class="eyebrow">Shared Windows data</p>
-              <h2 id="profile-heading">Profile</h2>
-            </div>
-            <span id="profile-state" class="summary-pill">New</span>
-          </div>
-
-          <div class="profile-picker">
-            <label class="field field-grow">
-              <span>Saved profile</span>
-              <select id="profile-select">
-                <option value="">No saved profiles yet</option>
-              </select>
-            </label>
-            <button id="load-profile" type="button" class="button secondary">Load</button>
-            <button id="new-profile" type="button" class="button ghost">New</button>
-          </div>
-
-          <div class="profile-actions">
-            <label class="field field-grow">
-              <span>Profile name</span>
-              <input id="profile-name" type="text" autocomplete="off" maxlength="120" placeholder="Studio Project">
-            </label>
-            <button id="save-profile" type="button" class="button primary">Save profile</button>
-            <button id="apply-profile" type="button" class="button accent">Apply to root</button>
-          </div>
-
-          <div class="rules-heading">
-            <div>
-              <p class="eyebrow">First matching rule wins</p>
-              <h3>Folder rules</h3>
-            </div>
-            <button id="add-rule" type="button" class="button secondary">Add rule</button>
-          </div>
-          <div id="rules-list" class="rules-list"></div>
-
-          <div class="generated-button-card">
-            <div>
-              <p class="eyebrow">Ordinary Windows Button</p>
-              <h3>Install saved profile Button</h3>
-              <p>The generated script keeps only this profile’s stable identity and reads the shared saved profile when run.</p>
-            </div>
-            <label class="field">
-              <span>Windows panel</span>
-              <select id="panel-select">
-                <option value="Files">Files</option>
-              </select>
-            </label>
-            <button id="install-profile-button" type="button" class="button primary">Install Button</button>
-          </div>
+        <section class="card installed-card" aria-labelledby="installed-heading">
+        <div class="section-heading">
+          <h2 id="installed-heading">Installed Buttons</h2>
+          <label class="field">
+            <span>Windows panel</span>
+            <select id="panel-select">
+              <option value="Files">Files</option>
+            </select>
+          </label>
+          <button id="install-button" type="button" class="button primary">Install Button</button>
+        </div>
+          <div id="installed-list" class="installed-list"></div>
         </section>
       </div>
 
       <footer class="status-bar">
-        <p id="status" data-tone="neutral" aria-live="polite">Choose a root folder to begin.</p>
+        <p id="status" data-tone="neutral" aria-live="polite">Build a folder tree, assign file types, then save the profile.</p>
         <span id="busy-indicator" aria-hidden="true"></span>
       </footer>
     </main>
 
-    <div id="recycle-dialog" class="dialog-backdrop" hidden>
-      <section class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="recycle-title" aria-describedby="recycle-copy">
-        <p class="eyebrow">Recycle Bin</p>
-        <h2 id="recycle-title">Recycle this exact folder?</h2>
-        <p id="recycle-copy"></p>
+    <div id="prompt-dialog" class="dialog-backdrop" hidden>
+      <section class="dialog" role="dialog" aria-modal="true" aria-labelledby="prompt-title">
+        <h2 id="prompt-title">Folder name</h2>
+        <p id="prompt-copy"></p>
+        <input id="prompt-input" type="text" autocomplete="off" spellcheck="false">
         <div class="dialog-actions">
-          <button id="confirm-recycle" type="button" class="button danger">Send to Recycle Bin</button>
-          <button id="cancel-recycle" type="button" class="button secondary">Cancel</button>
+          <button id="prompt-accept" type="button" class="button primary">OK</button>
+          <button id="prompt-cancel" type="button" class="button secondary">Cancel</button>
+        </div>
+      </section>
+    </div>
+
+    <div id="confirm-dialog" class="dialog-backdrop" hidden>
+      <section class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-copy">
+        <h2 id="confirm-title">Are you sure?</h2>
+        <p id="confirm-copy"></p>
+        <div class="dialog-actions">
+          <button id="confirm-accept" type="button" class="button danger">Confirm</button>
+          <button id="confirm-cancel" type="button" class="button secondary">Cancel</button>
         </div>
       </section>
     </div>

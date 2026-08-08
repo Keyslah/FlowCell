@@ -23,7 +23,7 @@
   "bundledSources": [
     {
       "id": "illustrator.layers-builder.3d",
-      "version": "3.1.1",
+      "version": "3.1.2",
       "panelName": "Layers Builder",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/3d",
       "importKind": "script",
@@ -263,7 +263,7 @@
     },
     {
       "id": "illustrator.layers-builder.snapshot",
-      "version": "3.1.1",
+      "version": "3.1.4",
       "panelName": "Layers Builder",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/snapshot",
       "importKind": "script",
@@ -308,7 +308,7 @@
     },
     {
       "id": "illustrator.layer-tree",
-      "version": "3.0.1",
+      "version": "3.0.8",
       "panelName": "Layers Builder",
       "sourcePath": "Illustrator Git Scripts/LayersBuilder",
       "importKind": "script",

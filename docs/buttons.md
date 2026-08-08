@@ -38,11 +38,22 @@ the completed architecture only.
   Neither the live index nor an executable action is stored in the Button settings file.
 - Legacy Button-owned `momentary`, `toggle`, and `cycle` records remain a read
   compatibility path only when a placement has no new activation cycle.
-- A skin must contain exactly one measurable `[data-core]` element and may
-  contain one `{{label}}` token inside it. After optional label injection, that
-  exact `[data-core]` geometry is the Button hitbox. A textless or
-  animation-only skin receives no synthesized label, fallback face, or
-  rectangular compatibility hitbox.
+- A skin must contain exactly one measurable `[data-core]` element, may contain
+  one `{{label}}` token inside it, and may contain one `data-hit-shape`
+  descendant when the core is a larger semantic/layout wrapper. After optional
+  label injection, the core rectangle supplies placement and accessibility
+  geometry. The live bounds of the core or explicit inner hit shape are only a
+  broad-phase pointer region; exact input follows its authored border/clip/SVG
+  shape. A
+  textless or animation-only skin receives no synthesized label, fallback face,
+  or rectangular compatibility target.
+- An outer `<svg data-core>` must mark one painted descendant as
+  `data-hit-shape`; the SVG viewport itself is not an interaction face.
+- When `data-hit-shape` is present, `{{label}}` must be inside it so an inline
+  text editor cannot create a second pointer region outside the authored face.
+- Pointer ownership is host-reserved. State sections cannot declare
+  `pointer-events`; inline markup may use only `pointer-events:none` on
+  decorative layers.
 - A newly authored painted `[data-core]` is the resting clickable body footprint
   and uses neutral render-only markup. Browser controls and invented exterior
   gutters are forbidden authoring patterns. A literal conversion is different:
@@ -56,13 +67,17 @@ the completed architecture only.
   the PNG statically at 100%, locks app-managed edge and corner resizing to the
   source's 283:295 ratio, and saves whole physical pixels. Playback derives a
   larger cursor-ignored transparent canvas without changing the saved rectangle.
-- Each placement stores one of three host-owned sizing behaviors. Responsive
-  gives `[data-core]` the exact independent placement width and height and does
-  not scale the authored root; a translation-only normalization aligns any
-  authored resting core offset to the placement origin. Proportional uniformly
-  scales the complete authored root from its measured natural ratio and
-  aspect-locks resizing. Stretch explicitly scales X and Y independently and can
-  distort the visual. All three leave skin source literal.
+- Each placement stores one of three host-owned sizing behaviors. Selecting a
+  placement or loading, pasting, or editing a working skin starts its pending
+  policy at Responsive and first renders its natural core; selecting a behavior
+  changes no dimensions. Responsive gives `[data-core]` the exact
+  independently requested width and height and does not scale the authored root;
+  a translation-only normalization aligns any authored resting core offset to
+  the placement origin. Proportional uniformly scales the complete authored root
+  from its measured natural ratio and aspect-locks an explicit resize. Stretch
+  explicitly scales X and Y independently and can distort the visual. Assign
+  Skin commits the pending policy without changing the placement rectangle, and
+  all three behaviors leave skin source literal.
 - Deleting a source-owning Button removes its entire Button graph, removes its
   owned bindings, cleans program runtime artifacts, and sends the owned Local
   package, `runtime/` state, active record, and managed page window to the
@@ -223,7 +238,7 @@ a native file-save dialog in the matching `flowcellbackend/local/Button
 editor/Main Page`, `Fan`, or `Pop-out` folder. It writes a strict named
 `.flowcell-button-settings.json` v1 file containing the selected surface's exact
 ordered Button membership and complete presentation: surface frame and optional
-uniform size; every placement's rectangle, z-index, text, sizing, hover highlight,
+uniform size; every placement's rectangle, z-index, text, sizing, legacy hover-highlight fallback,
 activation cycle, and visual mapping; each effective literal skin; shared labels,
 activation behavior, and activation animations; and the applicable Pop/Fan
 container behavior. Execution targets, action/source packages, live activation
@@ -306,8 +321,9 @@ the control reads `Fan (N)`. `Pop` opens that exact selection. Once popped out,
 an ordinary click runs the Button. With no selection, the existing zero/one/many
 saved-Fan behavior remains intact.
 
-The edit outline, snapping, surface bounds, and collision checks all use the
-same reconciled core rectangle. In normal Edit drag, pointer movement is
+The blue edit outline, snapping, surface bounds, and collision checks use the
+placement/core envelope; that rectangle is an editing frame, not the runtime
+pointer target. In normal Edit drag, pointer movement is
 sampled continuously, so a fast drag cannot skip a neighboring edge: the Button
 stops flush at the furthest valid position and the workspace does not insert
 collision warnings that shift the canvas mid-gesture. Reorder is a separate
@@ -322,39 +338,62 @@ a new row. Buttons that are not being dragged never rebalance into another row;
 an over-wide requested row fails atomically.
 Only neighboring Buttons receive the position transition, so they smoothly
 move out of the way into a row-aligned, undoable saved order with sequential
-z-index. `Snap to top left corner` left-packs the Buttons in each existing row and
-then stacks those same rows upward from `(0, 0)`. It does not change row count,
-membership, order within a row, width, or height. Both actions fail atomically
-when the complete layout cannot fit the surface. The right pane's Button Size
-section uses a working preview: width, height, and Responsive, Proportional, or
-Stretch behavior do not change a placement until an explicit size assignment.
-Responsive constrains the core to the exact independent width and height without
-root scaling; Proportional uniformly transforms the root and keeps the current
-ratio; Stretch transforms X and Y independently. `Assign Size` applies that
-working size and rule only to the focused placement. `Assign Size to Panel`
+  z-index. `Snap to top left corner` left-packs the Buttons in each existing row and
+  then stacks those same rows upward from `(0, 0)`. It does not change row count,
+  membership, order within a row, width, or height. Reorder and Snap use the
+  left rail's Button Sizing gap. That one horizontal-and-vertical value is stored
+  in millimeters, defaults to exactly zero, and accepts any nonnegative decimal
+  without being rounded to the movement grid. Changing it does not move anything
+  by itself; the next Reorder, Snap, Same size, panel-size assignment, or automatic
+  Button placement uses it. Layout actions fail atomically when the complete layout
+  cannot fit the surface. The right pane's Button Size
+section uses a working preview. Selecting a placement or loading, pasting, or
+editing skin source starts the pending policy at Responsive and renders and
+measures the working skin naturally rather than forcing it into the selected
+placement box. Selecting Responsive, Proportional, or Stretch changes only the
+pending policy; it does not alter width or height. Responsive constrains the core
+to explicitly requested independent dimensions without root scaling, so fixed
+nested artwork may overflow instead of reflowing and never causes an automatic
+mode switch. Proportional uniformly transforms the root from its measured
+  natural ratio; the first explicit handle resize uses that ratio even if an
+  older placement box is already distorted. A ratio-locked skin is therefore proportional-only. Stretch
+transforms X and Y independently. `Assign Size` applies that working size and rule
+only to the focused placement. Releasing the blue canvas resize handle is also an
+explicit focused-placement size assignment: it previews the selected working
+behavior during the drag and commits the rectangle and behavior atomically.
+Responsive and Stretch resize independently, Proportional aspect-locks, Shift
+forces an aspect lock, and an ordinary canvas move changes position only.
+`Assign Size to Panel`
 applies that target box once to every Button next to the edited placement on its
 current Main, Pop, Fan, or other Button surface, and compacts that same surface
 atomically when it fits. Responsive and Stretch use
 the exact target dimensions; Proportional keeps each Button's measured natural
-aspect when available and otherwise its current aspect inside the target. Both size actions disable later label-driven geometry
-growth so text edits cannot silently change the assigned box. They do not set or
+  aspect when available and otherwise its current aspect inside the target.
+  Renderer measurement callbacks initialize new placements and cache natural
+  geometry, but never rewrite an existing placement; the legacy
+  `allowLabelResize` field remains load-compatible without authorizing silent
+  growth. The actions do not set or
 update the separate legacy uniform-size field. Existing saved text-size and minimum-shrink values
 remain honored by the host. Skin source and paste edits stay in an isolated
-working copy until an explicit Save or Assign action. The
+working copy until an explicit Save or Assign action. Editor preview viewports
+scroll-contain authored visual overflow so it cannot cover later controls; runtime
+Button overflow remains unchanged. The
 left rail's `Same size Buttons` checkbox applies the focused placement's width
-and height to every placement, switches them to fixed host sizing, disables
-label-driven growth, and compacts the complete surface with zero gap in one
-undoable transaction. The linked size is saved on the surface, so later canvas
+  and height to every placement, switches them to fixed host sizing, disables
+  label-driven growth, and compacts the complete surface with the current Button
+  Sizing gap in one undoable transaction. The linked size is saved on the surface,
+  so later canvas
 resizing updates every member atomically and delayed skin/text measurements
 cannot split the sizes. Unchecking stops linking future size edits but
 deliberately keeps the current fixed geometry. The Skin Editor toolbar is ordered
 `Assign Skin`, `Assign Skin to Panel`, `Load skin`, `Save skin`, and `Save as new
 skin`. Load offers recent files first, saved library skins second, and `Browse...`
 last; every choice changes only the working copy. Recent file paths and their skin
-IDs are machine-local and capped at eight. Assign Skin writes only the focused
-placement override and forks an edited shared skin, including the document-wide
-default skin, first; it never changes the
-Button's default skin or sibling placements. Assign Skin to Panel is the explicit
+IDs are machine-local and capped at eight. Assign Skin writes the focused
+placement override plus the pending sizing policy, preserving the placement's
+x, y, width, height, and text settings. It forks an edited shared skin, including
+the document-wide default skin, first; it never changes the Button's default skin
+or sibling placements. Assign Skin to Panel is the explicit
 surface-wide action and targets every Button on the focused placement's current
 surface, whether that placement is on Main, a regular Pop, a Fan, or a tool-set
 Pop. Occurrences of the same Button on other surfaces remain unchanged. A
@@ -406,9 +445,6 @@ resolution. An empty Pressed, Held, Play, or Release section falls through to th
 next authored input state or the configured resting visual. A completed Hover target
 therefore stays continuously applied through such an interaction instead of being
 removed and re-entered, so its transition does not replay.
-The same section has a placement-only `Highlight on hover` checkbox. It defaults
-off and applies a small host brightness lift only while the exact placement is
-hovered, without editing skin source or changing `[data-core]` geometry or hit testing.
 The raw Base, Hover, Play, Pressed, Held, Release, Disabled, and Error skin code
 sections remain author-editable; selecting Hover in a dropdown never replaces or
 hides the authored Hover section. The visual-state menu reflects the working skin
@@ -430,7 +466,9 @@ at the bottom of Button Text commits only the base/state labels and those
 focused-placement text settings; it does not apply cycle IDs, triggers, visuals,
 skin code, Button Size, or placement geometry. Changed cycle IDs must first be
 persisted with Save Settings. Save Settings retains the complete placement-owned
-hover highlight, cycle, and text policy. `Use skin` removes the alignment override and restores the authored
+cycle and text policy. Older placement hover-highlight values remain readable only
+as compatibility fallback when the active skin has no explicit highlight setting.
+`Use skin` removes the alignment override and restores the authored
 alignment. There are no Apply Named Sections or Replace Entire Skin buttons.
 For a configured cycle, Apply All preserves the shared base Button label. Without a
 placement cycle, it mirrors the edited base label into legacy activation-state labels
@@ -438,17 +476,72 @@ so the compatibility runtime matches the preview.
 Pasting a recognized payload automatically validates and applies its named
 sections to the isolated working copy.
 
+`Button Color` sits immediately below Button Text and begins with a required `Color
+Profile Preview` when a skin is first authored, converted, or completely replaced.
+Instead of exposing every near-identical token, it groups colors by semantic
+material. Each group has one selected Base seed named
+`--flowcell-button-color-<role>` and lists the face, bevel, edge, and state shades it
+drives through `--flowcell-button-shade-<role>-<name>`. Each shade declaration uses
+a deterministic perceptual formula such as `color-mix(in oklch,...)` that references
+the seed and includes a literal fallback; independent literal shades do not become
+profile members. One Surface picker can
+therefore recolor a gray Button while preserving its coordinated light, dark, hover,
+and pressed relationships.
+
+A labeled skin always shows a separate Text picker backed by
+`--flowcell-button-color-text`, even when its current value matches another color.
+The authored label color/fill or Text shade formula consumes that root, so Text
+changes affect only the host-injected HTML label or SVG label; a
+textless skin reports `Text: none`. Box shadows, text shadows, drop shadows, SVG
+shadow/filter/flood effects, and traced glow variables appear under `Effects
+excluded` and remain literal. Exclusion is per occurrence, so the same black may be
+editable Text and an untouched shadow. If a use could plausibly be Surface,
+Accent/Text, or Effect, `Needs confirmation` identifies its section/property and no
+profile is guessed until it is classified.
+
+Each editable material group and the independent Text row follows the Blender Theme
+control pattern: native swatch, editable hex value, and Pick action. Pick uses the
+WebView `EyeDropper` API when available and falls back to the native picker while
+preserving material alpha. Text selections are opaque so a transparent clipped-text
+technique cannot make the selector appear to do nothing.
+
+`Highlight on hover` follows the color rows and belongs to the isolated working
+skin. It defaults off and records an explicit
+`--flowcell-button-highlight-on-hover: 1|0` declaration in Base, so Assign Skin,
+Assign Skin to Panel, Save skin, and Save as new skin carry the choice. The host
+uses it for the same 15% brightness lift while the real authored shape is hovered;
+it does not change `[data-core]` measurement or hit testing. An explicit skin value
+wins over the older placement field, which remains runtime/settings compatibility
+data for skins saved before this option became skin-owned.
+
+`Highlight when active` sits directly below it and is the same kind of skin-owned
+host option, recorded as `--flowcell-button-highlight-on-active: 1|0` in Base and
+defaulting off. It answers the latched selected state instead of pointer hover, so
+a Tool Set child whose fields match its authored choice and a selected Main Page
+Button both lift by 30% until they stop being the active choice. It has no
+placement fallback, hover still stacks on top of it, and edit-mode selection never
+triggers it. Neither lift changes `[data-core]` measurement or hit testing.
+
+The preview is review information outside the clean canonical paste block. Profile
+changes update only their selected Base root and live preview,
+leaving effect colors, non-color source, Button Size, `[data-core]` geometry, and hit
+testing unchanged. They do not assign or save the working skin; Assign Skin, Assign
+Skin to Panel, Save skin, and Save as new skin retain their normal scope and
+shared-skin forking rules.
+
 Cycle structure, triggers, state labels, and visual selections all belong to the
 focused placement because both the desired behavior and available visuals may
 differ between placements of the same Button. Save skin continues to save only
-authored visual source to its portable file and library entry; it never saves or
+the portable canonical skin source, including the reserved hover-highlight Base
+setting, to its file and library entry; it never saves or
 mutates the placement cycle.
 Changing shared skin source can affect every inheriting placement and tool-set
 child. The safe default is to fork and assign a placement override; a panel-wide or
 global change must be explicit and show its blast radius before it is applied.
 
 Every regular/tool-set Pop and saved Fan setup retains its stored window-fit
-mode: surface, hitbox union, or measured visual union. The runtime continues to
+mode: surface, legacy `hitbox union` (the union of interactive-shape bounds), or
+measured visual union. The runtime continues to
 honor those persisted values; the streamlined Editor adds no separate native
 preview or fit controls.
 
@@ -461,7 +554,7 @@ window never blocks Blender, Illustrator, or the desktop underneath it. Once a
 Button receives pointer-down, native input stays enabled through pointer-up even
 if its authored animation moves or shrinks the live core away from the cursor.
 That preserves the release event that dispatches the click, after which ordinary
-live-core gating resumes.
+live-shape gating resumes.
 
 That geometry gate is subordinate to the native program-scope gate. Only the
 exact foreground executable declared by the owning program manifest may make a
@@ -515,10 +608,11 @@ recycle a panel if an active source appeared during the canonical/native handoff
 
 `ButtonHost.tsx` owns pointer, keyboard, hover, hold, release, disabled,
 error, selection, and execution behavior. The compiled skin's `[data-core]`
-is the measured and accessible geometry and the only node with Button input
-listeners. The shadow host remains browser-reachable so its core can receive
-events, but unused host gutters perform no activation and add no functional
-hitbox.
+is the measured/accessibility owner and owns the Button input listeners. Its
+rectangle is only the broad-phase pointer bound. Exact input follows its live
+border radius, `clip-path`, or SVG painted geometry, or one optional
+`data-hit-shape` descendant. The shadow host is pointer-inert; only that inner
+authored shape can receive browser input.
 `ButtonSkinRenderer.tsx` injects the label only when the skin includes
 `{{label}}`, measures the core, and reports visual overflow separately. Responsive
 sizing constrains the core to the exact host width and height and skips root
@@ -541,15 +635,21 @@ row; only `Stack whole words` and `Shrink and stack` create explicit whole-word
 line spans. Painted visual rectangles with any non-finite edge are discarded,
 and measurement normalization falls back to the core edge, so preview overflow
 cannot report `NaN`. These host rules do not rewrite skin source or alter the
-`[data-core]` hitbox.
+authored interaction shape.
 
 The skin compiler keeps wrappers, decorative children, shadow, glow, and visual
-overflow pointer-inert while enabling only `[data-core]`. Transparent Button
+overflow pointer-inert while enabling the core's authored interaction shape.
+When the semantic core contains a larger transparent layout box, exactly one
+inner `data-hit-shape` may narrow input to the actual face. Transparent Button
 windows map the physical cursor into the webview through the live
 `devicePixelRatio` (with native DPI as fallback), discover cores through their
-placement hosts, and test each live core rectangle. Unused placement gutters
-therefore remain click-through. Tool fields and resize handles use their own
-explicit control geometry.
+placement hosts, reject outside the live core rectangle, and then use the same
+Shadow DOM `elementFromPoint` result as browser interaction. Rounded transparent
+corners, clipped-out regions, unused core space, placement gutters, and
+decorative overflow remain click-through. CSS masks, alpha gradients, opacity,
+shadows, and glow do not implicitly redefine the semantic shape; author a
+matching border/clip/SVG geometry or `data-hit-shape` instead. Tool fields and
+resize handles use their own explicit control geometry.
 
 Main-page selection adds no border, outline, or overlay. A selected Button
 stays in that skin's existing pressed state until deselected; transient pointer
@@ -579,6 +679,10 @@ host keeps that editor binding stable through pressed/release rerenders so the
 same focused node receives the replacement value.
 `activationPatch` may reset that shared value when a separate mode Button is
 pressed without coupling the mode's selected visual to the editable value.
+Blender Rotate uses that contract for one number-only Button: Transform resets
+it to 15 degrees, Distribute resets it to 3 total positions, and presets plus
+Positive/Negative map the current number into the existing Blender action
+payload. It does not render separate Angle or Copies form fields.
 
 A Tool Set package may declare one strict read-only `stateQuery` against an
 existing child slot, but opening or expanding a Tool Set does not execute it.

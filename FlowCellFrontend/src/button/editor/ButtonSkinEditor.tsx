@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BUTTON_SKIN_COMPILER_VERSION,
   type ButtonCycleAdvanceTrigger,
@@ -25,6 +25,20 @@ import {
 } from "../skins/skinPasteParser";
 import { compileButtonSkin, diagnosticsBySkinSection } from "../skins/skinCompiler";
 import { ButtonSkinRenderer } from "../skins/ButtonSkinRenderer";
+import {
+  buttonSkinColorWithPreservedAlpha,
+  buttonSkinOpaqueColor,
+  buttonSkinPickerColor,
+  collectButtonSkinProfileColors,
+  normalizeButtonSkinColor,
+  readButtonSkinHighlightOnActive,
+  readButtonSkinHighlightOnHover,
+  readButtonSkinTextColor,
+  setButtonSkinHighlightOnActive,
+  setButtonSkinHighlightOnHover,
+  setButtonSkinProfileColor,
+  setButtonSkinTextColor
+} from "../skins/buttonSkinColors";
 import { cloneButtonDocument, createStableButtonId } from "../state/buttonDefaults";
 import {
   BUTTON_APPEARANCE_TRIGGERS,
@@ -51,14 +65,15 @@ export interface ButtonSkinEditorProps {
   busy: boolean;
   placement: ButtonPlacement | null;
   surfaceButtonCount: number;
+  selectionButtonCount: number;
   allSurfaceButtonsSameSize: boolean;
   buttonLabel: string;
   activationCycle: ButtonPlacementActivationCycle | null;
   stateStructureApplied: boolean;
   onButtonLabelChange: (label: string) => void;
   onActivationCycleChange: (cycle: ButtonPlacementActivationCycle) => void;
-  onHighlightOnHoverChange: (enabled: boolean) => void;
   onApplyAllButtonText: () => void;
+  onSizingModePreviewChange: (sizingMode: ButtonPlacementSizingMode) => void;
   onAssignSize: (assignment: ButtonSizeAssignment) => void;
   onAssignSizeToPanel: (assignment: ButtonSizeAssignment) => void;
   onPlacementTextChange: (
@@ -73,8 +88,9 @@ export interface ButtonSkinEditorProps {
     >>,
     coalesceKey?: string
   ) => void;
-  onAssignSkin: (skin: ButtonSkin) => void;
-  onAssignSkinToPanel: (skin: ButtonSkin) => void;
+  onAssignSkin: (skin: ButtonSkin, sizingMode: ButtonPlacementSizingMode) => void;
+  onAssignSkinToSelection: (skin: ButtonSkin, sizingMode: ButtonPlacementSizingMode) => void;
+  onAssignSkinToPanel: (skin: ButtonSkin, sizingMode: ButtonPlacementSizingMode) => void;
   onLoadSkinFile: (
     path: string | null,
     preferredSkinId?: string
@@ -179,6 +195,15 @@ function sizeAssignmentFromPlacement(placement: ButtonPlacement): ButtonSizeAssi
   };
 }
 
+function responsiveSizeAssignmentFromPlacement(
+  placement: ButtonPlacement
+): ReturnType<typeof sizeAssignmentFromPlacement> {
+  return {
+    ...sizeAssignmentFromPlacement(placement),
+    sizingMode: "responsive"
+  };
+}
+
 function skinSections(skin: ButtonSkin): ButtonSkinSectionSource {
   return Object.fromEntries(
     BUTTON_SKIN_SECTION_ORDER.map((section) => [section, skin[section]])
@@ -208,6 +233,114 @@ function recentSkinFileLabel(path: string): string {
   return parent ? `${name} (${parent})` : name;
 }
 
+interface ButtonColorPickerRowProps {
+  label: string;
+  title: string;
+  value: string;
+  disabled?: boolean;
+  preserveAlpha?: boolean;
+  onColorChange: (value: string) => void;
+  onUseSkinColor?: () => void;
+}
+
+type EyeDropperConstructor = new () => {
+  open: () => Promise<{ sRGBHex: string }>;
+};
+
+function ButtonColorPickerRow({
+  label,
+  title,
+  value,
+  disabled = false,
+  preserveAlpha = true,
+  onColorChange,
+  onUseSkinColor
+}: ButtonColorPickerRowProps) {
+  const colorInputRef = useRef<HTMLInputElement | null>(null);
+  const commitTextColor = (input: HTMLInputElement) => {
+    const normalized = normalizeButtonSkinColor(input.value);
+    const next = preserveAlpha ? normalized : buttonSkinOpaqueColor(input.value);
+    if (next) onColorChange(next);
+    else input.value = value;
+  };
+  const colorFromOpaquePicker = (pickerColor: string) => (
+    preserveAlpha
+      ? buttonSkinColorWithPreservedAlpha(pickerColor, value)
+      : buttonSkinOpaqueColor(pickerColor)
+  );
+  const pickScreenColor = async () => {
+    const EyeDropper = typeof window === "undefined"
+      ? undefined
+      : (window as typeof window & { EyeDropper?: EyeDropperConstructor }).EyeDropper;
+    if (!EyeDropper) {
+      colorInputRef.current?.click();
+      return;
+    }
+    try {
+      const result = await new EyeDropper().open();
+      const next = colorFromOpaquePicker(result.sRGBHex);
+      if (next) onColorChange(next);
+    } catch (error) {
+      if (!(error instanceof DOMException) || error.name !== "AbortError") {
+        console.warn("Button color eyedropper failed.", error);
+      }
+    }
+  };
+
+  return (
+    <div className="button-color-row" title={title}>
+      <span className="button-color-row__label">{label}</span>
+      <input
+        ref={colorInputRef}
+        type="color"
+        aria-label={`${label} color picker`}
+        value={buttonSkinPickerColor(value)}
+        disabled={disabled}
+        onInput={(event) => {
+          const next = colorFromOpaquePicker(event.currentTarget.value);
+          if (next) onColorChange(next);
+        }}
+      />
+      <input
+        key={value}
+        type="text"
+        aria-label={`${label} color value`}
+        defaultValue={value}
+        disabled={disabled}
+        spellCheck={false}
+        onBlur={(event) => commitTextColor(event.currentTarget)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+          if (event.key === "Escape") {
+            event.currentTarget.value = value;
+            event.currentTarget.blur();
+          }
+        }}
+      />
+      <button
+        type="button"
+        className="button-color-row__pick"
+        title="Pick a color from the screen. Falls back to the native color picker when the direct eyedropper is unavailable."
+        disabled={disabled}
+        onClick={() => void pickScreenColor()}
+      >
+        Pick
+      </button>
+      {onUseSkinColor ? (
+        <button
+          type="button"
+          className="button-color-row__reset"
+          title="Remove the generated text-color override and use the skin's authored text color."
+          disabled={disabled}
+          onClick={onUseSkinColor}
+        >
+          Use skin
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function ButtonSkinEditor({
   skin,
   skins,
@@ -217,18 +350,20 @@ export function ButtonSkinEditor({
   busy,
   placement,
   surfaceButtonCount,
+  selectionButtonCount,
   allSurfaceButtonsSameSize,
   buttonLabel,
   activationCycle,
   stateStructureApplied,
   onButtonLabelChange,
   onActivationCycleChange,
-  onHighlightOnHoverChange,
   onApplyAllButtonText,
+  onSizingModePreviewChange,
   onAssignSize,
   onAssignSizeToPanel,
   onPlacementTextChange,
   onAssignSkin,
+  onAssignSkinToSelection,
   onAssignSkinToPanel,
   onLoadSkinFile,
   onSaveSkin,
@@ -246,16 +381,22 @@ export function ButtonSkinEditor({
   const [benchMeasurement, setBenchMeasurement] = useState<ButtonCoreMeasurement | null>(null);
   const [benchNaturalMeasurement, setBenchNaturalMeasurement] = useState<ButtonCoreMeasurement | null>(null);
   const [benchTextOverflow, setBenchTextOverflow] = useState(false);
+  const [detectedTextColor, setDetectedTextColor] = useState<string | null>(null);
   const [selectedActivationStateId, setSelectedActivationStateId] = useState("");
   const [cycleStateCountInput, setCycleStateCountInput] = useState(
     () => activationCycle ? String(activationCycle.states.length) : ""
   );
   const [behaviorPreviewHovered, setBehaviorPreviewHovered] = useState(false);
+  const [behaviorPreviewCoreElement, setBehaviorPreviewCoreElement] = useState<HTMLElement | SVGElement | null>(null);
   const [previewAppearanceTrigger, setPreviewAppearanceTrigger] = useState<ButtonAppearanceTrigger>("rest");
   const [previewVisualStateOverride, setPreviewVisualStateOverride] = useState<ButtonSkinVisualState | null>(null);
   const [workingSize, setWorkingSize] = useState<ReturnType<typeof sizeAssignmentFromPlacement> | null>(
-    () => placement ? sizeAssignmentFromPlacement(placement) : null
+    () => placement ? responsiveSizeAssignmentFromPlacement(placement) : null
   );
+  const [appliedPreviewSizingMode, setAppliedPreviewSizingMode] = useState<ButtonPlacementSizingMode>(
+    "responsive"
+  );
+  const [workingPreviewUsesNaturalSize, setWorkingPreviewUsesNaturalSize] = useState(false);
   const compileResult = useMemo(
     () => workingSkin ? compileButtonSkin(workingSkin) : null,
     [workingSkin]
@@ -263,6 +404,14 @@ export function ButtonSkinEditor({
   const diagnosticGroups = useMemo(
     () => compileResult && !compileResult.ok ? diagnosticsBySkinSection(compileResult.diagnostics) : {},
     [compileResult]
+  );
+  const workingProfileColors = useMemo(
+    () => workingSkin ? collectButtonSkinProfileColors(skinSections(workingSkin)) : [],
+    [workingSkin]
+  );
+  const authoredTextColor = useMemo(
+    () => workingSkin ? readButtonSkinTextColor(skinSections(workingSkin)) : null,
+    [workingSkin]
   );
   const skinActionsDisabled = busy || !compileResult?.ok;
   const configuredStates = activationCycle?.states ?? [];
@@ -289,6 +438,13 @@ export function ButtonSkinEditor({
   useEffect(() => {
     setWorkingSkin(skin ? cloneButtonDocument(skin) : null);
     setWorkingSkinFilePath(skinFilePath);
+    setWorkingSize(placement ? responsiveSizeAssignmentFromPlacement(placement) : null);
+    setAppliedPreviewSizingMode("responsive");
+    onSizingModePreviewChange("responsive");
+    setWorkingPreviewUsesNaturalSize(false);
+    setBenchMeasurement(null);
+    setBenchNaturalMeasurement(null);
+    setDetectedTextColor(null);
   }, [skinContextKey, skin?.id]);
 
   useEffect(() => {
@@ -308,14 +464,41 @@ export function ButtonSkinEditor({
   }, [activationCycle?.states.length, placement?.id]);
 
   useEffect(() => {
-    setWorkingSize(placement ? sizeAssignmentFromPlacement(placement) : null);
-  }, [
-    placement?.id,
-    placement?.width,
-    placement?.height,
-    placement?.matchHitboxToSkin,
-    placement?.allowStretching
-  ]);
+    if (!placement || !allSurfaceButtonsSameSize) return;
+    setWorkingSize(responsiveSizeAssignmentFromPlacement(placement));
+    setAppliedPreviewSizingMode("responsive");
+    onSizingModePreviewChange("responsive");
+  }, [placement?.id, allSurfaceButtonsSameSize]);
+
+  useEffect(() => {
+    setWorkingSize((current) => {
+      if (!placement) return null;
+      if (!current || current.placementId !== placement.id) {
+        return sizeAssignmentFromPlacement(placement);
+      }
+      return {
+        ...current,
+        width: placement.width,
+        height: placement.height
+      };
+    });
+  }, [placement?.id, placement?.width, placement?.height]);
+
+  useEffect(() => {
+    setBehaviorPreviewHovered(false);
+    const core = behaviorPreviewCoreElement;
+    if (!core) return;
+    const handlePointerEnter = () => setBehaviorPreviewHovered(true);
+    const handlePointerLeave = () => setBehaviorPreviewHovered(false);
+    core.addEventListener("pointerenter", handlePointerEnter);
+    core.addEventListener("pointerleave", handlePointerLeave);
+    core.addEventListener("pointercancel", handlePointerLeave);
+    return () => {
+      core.removeEventListener("pointerenter", handlePointerEnter);
+      core.removeEventListener("pointerleave", handlePointerLeave);
+      core.removeEventListener("pointercancel", handlePointerLeave);
+    };
+  }, [behaviorPreviewCoreElement]);
 
   if (!skin || !workingSkin || !placement) {
     return (
@@ -329,8 +512,79 @@ export function ButtonSkinEditor({
   const activeSize = workingSize?.placementId === placement.id
     ? workingSize
     : sizeAssignmentFromPlacement(placement);
+  const sizeForAssignment = {
+    ...activeSize,
+    ...(workingPreviewUsesNaturalSize && benchNaturalMeasurement
+      ? {
+          width: benchNaturalMeasurement.width,
+          height: benchNaturalMeasurement.height
+        }
+      : {}),
+    ...(benchNaturalMeasurement
+      ? {
+          proportionalBasis: {
+            width: benchNaturalMeasurement.width,
+            height: benchNaturalMeasurement.height
+          }
+        }
+      : {})
+  };
   const sizingMode = activeSize.sizingMode;
+  const previewSizingMode = appliedPreviewSizingMode;
   const sizeActionsDisabled = busy || allSurfaceButtonsSameSize;
+  const previewWidth = workingPreviewUsesNaturalSize ? undefined : activeSize.width;
+  const previewHeight = workingPreviewUsesNaturalSize ? undefined : activeSize.height;
+  const previewConstrained = !workingPreviewUsesNaturalSize;
+  const workingSkinHasText = Boolean(compileResult?.ok && compileResult.compiled.hasLabelToken);
+  const workingTextProfile = workingProfileColors.find((color) => color.role === "text") ?? null;
+  const workingMaterialProfile = workingProfileColors.filter((color) => color.role !== "text");
+  const visibleTextColor = workingTextProfile?.color ?? authoredTextColor ?? detectedTextColor ?? "#FFFFFF";
+  const explicitWorkingSkinHighlightOnHover = readButtonSkinHighlightOnHover(workingSkin);
+  const workingSkinHighlightOnHover = explicitWorkingSkinHighlightOnHover ?? placement.highlightOnHover;
+  const workingSkinHighlightOnActive = readButtonSkinHighlightOnActive(workingSkin) ?? false;
+
+  const workingSkinForPersistence = (): ButtonSkin => cloneButtonDocument(
+    explicitWorkingSkinHighlightOnHover === null
+      ? withSections(
+          workingSkin,
+          setButtonSkinHighlightOnHover(skinSections(workingSkin), workingSkinHighlightOnHover)
+        )
+      : workingSkin
+  );
+
+  const applyWorkingColorSections = (sections: ButtonSkinSectionSource) => {
+    const changedSections = BUTTON_SKIN_SECTION_ORDER.filter(
+      (section) => sections[section] !== workingSkin[section]
+    );
+    if (changedSections.length === 0) return;
+    setWorkingSkin(withSections(workingSkin, sections));
+    setUpdatedSections((current) => new Set([...current, ...changedSections]));
+  };
+
+  const resetWorkingSizingMode = () => {
+    setWorkingSize((current) => {
+      const base = current?.placementId === placement.id
+        ? current
+        : sizeAssignmentFromPlacement(placement);
+      return {
+        ...base,
+        sizingMode: "responsive"
+      };
+    });
+    setAppliedPreviewSizingMode("responsive");
+    onSizingModePreviewChange("responsive");
+  };
+
+  const captureWorkingTextColor = (element: HTMLElement | SVGElement | null) => {
+    if (!element) return;
+    const computed = getComputedStyle(element);
+    const source = element.namespaceURI === "http://www.w3.org/2000/svg"
+      ? computed.fill
+      : computed.color;
+    const normalized = normalizeButtonSkinColor(source);
+    const opaque = normalized ? buttonSkinOpaqueColor(normalized) : null;
+    if (opaque) setDetectedTextColor((current) => current === opaque ? current : opaque);
+  };
 
   const resizeActivationCycle = (requestedCount: number) => {
     const count = Math.min(
@@ -400,10 +654,19 @@ export function ButtonSkinEditor({
 
   const updateWorkingDimension = (axis: "width" | "height", requestedValue: number) => {
     if (!Number.isFinite(requestedValue) || requestedValue <= 0) return;
+    setWorkingPreviewUsesNaturalSize(false);
+    setAppliedPreviewSizingMode(sizingMode);
     setWorkingSize((current) => {
-      const base = current?.placementId === placement.id
+      const assignedBase = current?.placementId === placement.id
         ? current
         : sizeAssignmentFromPlacement(placement);
+      const base = workingPreviewUsesNaturalSize && benchNaturalMeasurement
+        ? {
+            ...assignedBase,
+            width: benchNaturalMeasurement.width,
+            height: benchNaturalMeasurement.height
+          }
+        : assignedBase;
       const value = Math.max(1, requestedValue);
       const ratio = Math.max(
         0.0001,
@@ -436,6 +699,10 @@ export function ButtonSkinEditor({
       const sections = applyNamedButtonSkinSections(skinSections(workingSkin), parsed);
       const next = withSections(workingSkin, sections);
       setWorkingSkin(next);
+      resetWorkingSizingMode();
+      setWorkingPreviewUsesNaturalSize(true);
+      setBenchMeasurement(null);
+      setBenchNaturalMeasurement(null);
       setPaste("");
       setUpdatedSections(new Set(parsed.presentSections));
       const compiled = compileButtonSkin(next);
@@ -453,6 +720,10 @@ export function ButtonSkinEditor({
     if (!result) return;
     setWorkingSkin(cloneButtonDocument(result.skin));
     setWorkingSkinFilePath(result.path);
+    resetWorkingSizingMode();
+    setWorkingPreviewUsesNaturalSize(true);
+    setBenchMeasurement(null);
+    setBenchNaturalMeasurement(null);
   };
   const workingRecentFileIndex = workingSkinFilePath
     ? recentSkinFiles.findIndex(
@@ -471,15 +742,32 @@ export function ButtonSkinEditor({
           type="button"
           title="Assign the working skin to only the selected Button placement."
           disabled={skinActionsDisabled}
-          onClick={() => onAssignSkin(cloneButtonDocument(workingSkin))}
+          onClick={() => {
+            setAppliedPreviewSizingMode(sizingMode);
+            onAssignSkin(workingSkinForPersistence(), sizingMode);
+          }}
         >
           Assign Skin
         </button>
         <button
           type="button"
+          title="Assign the working skin to every Button currently selected in the workspace."
+          disabled={skinActionsDisabled || selectionButtonCount === 0}
+          onClick={() => {
+            setAppliedPreviewSizingMode(sizingMode);
+            onAssignSkinToSelection(workingSkinForPersistence(), sizingMode);
+          }}
+        >
+          Assign Skin to Selection
+        </button>
+        <button
+          type="button"
           title="Assign the working skin to every Button on the selected Placement's surface."
           disabled={skinActionsDisabled}
-          onClick={() => onAssignSkinToPanel(cloneButtonDocument(workingSkin))}
+          onClick={() => {
+            setAppliedPreviewSizingMode(sizingMode);
+            onAssignSkinToPanel(workingSkinForPersistence(), sizingMode);
+          }}
         >
           Assign Skin to Panel
         </button>
@@ -497,6 +785,10 @@ export function ButtonSkinEditor({
                 setWorkingSkinFilePath(
                   recentSkinFiles.find((entry) => entry.skinId === loaded.id)?.path ?? null
                 );
+                resetWorkingSizingMode();
+                setWorkingPreviewUsesNaturalSize(true);
+                setBenchMeasurement(null);
+                setBenchNaturalMeasurement(null);
                 return;
               }
               if (value.startsWith("recent:")) {
@@ -533,7 +825,7 @@ export function ButtonSkinEditor({
           disabled={skinActionsDisabled}
           onClick={() => {
             void onSaveSkin(
-              cloneButtonDocument(workingSkin),
+              workingSkinForPersistence(),
               workingSkinFilePath
             ).then(applySkinFileResult);
           }}
@@ -545,38 +837,37 @@ export function ButtonSkinEditor({
           title="Save this working skin under the name chosen in the file dialog."
           disabled={skinActionsDisabled}
           onClick={() => {
-            void onSaveAsNewSkin(cloneButtonDocument(workingSkin)).then(applySkinFileResult);
+            void onSaveAsNewSkin(workingSkinForPersistence()).then(applySkinFileResult);
           }}
         >
           Save as new skin
         </button>
       </div>
       <details className="button-skin-section button-skin-size-section" open>
-        <summary title="Set the selected Button's preview size and choose how its skin fits that box.">
+        <summary title="Choose the policy for the next explicit size edit. Selecting a policy does not change geometry.">
           <span>Button Size</span>
           <small>
-            {allSurfaceButtonsSameSize ? "Legacy size link active" : "Working preview"}
+            {allSurfaceButtonsSameSize
+              ? "Legacy size link active"
+              : workingPreviewUsesNaturalSize
+                ? "Natural skin size"
+                : "Working preview"}
           </small>
         </summary>
-        <label title="Responsive uses an exact box, Proportional scales uniformly, and Stretch scales each axis separately.">
+        <label title="Changing this policy does not resize anything. Responsive applies an explicitly requested box without root scaling; Proportional scales uniformly; Stretch scales each axis independently.">
           <span>Sizing behavior</span>
           <select
             value={sizingMode}
-            disabled={busy}
+            disabled={sizeActionsDisabled}
             onChange={(event) => {
               const nextMode = event.currentTarget.value as ButtonPlacementSizingMode;
+              onSizingModePreviewChange(nextMode);
               setWorkingSize((current) => {
                 const base = current?.placementId === placement.id
                   ? current
                   : sizeAssignmentFromPlacement(placement);
-                const naturalRatio = benchNaturalMeasurement && benchNaturalMeasurement.height > 0
-                  ? benchNaturalMeasurement.width / benchNaturalMeasurement.height
-                  : null;
                 return {
                   ...base,
-                  height: nextMode === "proportional" && naturalRatio
-                    ? Math.max(1, base.width / naturalRatio)
-                    : base.height,
                   sizingMode: nextMode
                 };
               });
@@ -594,8 +885,8 @@ export function ButtonSkinEditor({
               type="number"
               min={1}
               step={1}
-              value={activeSize.width}
-              disabled={busy}
+              value={sizeForAssignment.width}
+              disabled={sizeActionsDisabled}
               onChange={(event) => {
                 const value = event.currentTarget.valueAsNumber;
                 if (Number.isFinite(value) && value > 0) updateWorkingDimension("width", value);
@@ -608,8 +899,8 @@ export function ButtonSkinEditor({
               type="number"
               min={1}
               step={1}
-              value={activeSize.height}
-              disabled={busy}
+              value={sizeForAssignment.height}
+              disabled={sizeActionsDisabled}
               onChange={(event) => {
                 const value = event.currentTarget.valueAsNumber;
                 if (Number.isFinite(value) && value > 0) updateWorkingDimension("height", value);
@@ -624,7 +915,12 @@ export function ButtonSkinEditor({
               ? "Turn off Same size Buttons before assigning an individual size."
               : "Apply this size and sizing behavior to only the selected Button."}
             disabled={sizeActionsDisabled}
-            onClick={() => onAssignSize(activeSize)}
+            onClick={() => {
+              setWorkingSize(sizeForAssignment);
+              setWorkingPreviewUsesNaturalSize(false);
+              setAppliedPreviewSizingMode(sizingMode);
+              onAssignSize(sizeForAssignment);
+            }}
           >
             Assign Size
           </button>
@@ -634,7 +930,12 @@ export function ButtonSkinEditor({
               ? "Turn off Same size Buttons before assigning panel sizes."
               : "Apply this target box and sizing behavior to every Button on this panel surface."}
             disabled={sizeActionsDisabled || surfaceButtonCount === 0}
-            onClick={() => onAssignSizeToPanel(activeSize)}
+            onClick={() => {
+              setWorkingSize(sizeForAssignment);
+              setWorkingPreviewUsesNaturalSize(false);
+              setAppliedPreviewSizingMode(sizingMode);
+              onAssignSizeToPanel(sizeForAssignment);
+            }}
           >
             Assign Size to Panel
           </button>
@@ -685,18 +986,6 @@ export function ButtonSkinEditor({
             />
           </label>
         </div>
-        <label
-          className="button-hover-highlight-toggle"
-          title="Brighten only this placement by 15% while the pointer is actually over it. This does not change skin code."
-        >
-          <input
-            type="checkbox"
-            checked={placement.highlightOnHover}
-            disabled={busy}
-            onChange={(event) => onHighlightOnHoverChange(event.currentTarget.checked)}
-          />
-          <span>Highlight on hover</span>
-        </label>
         {activationCycle?.states.length === 2 ? (
           <output className="button-cycle-toggle-note">2 states = On / Off toggle</output>
         ) : null}
@@ -784,19 +1073,16 @@ export function ButtonSkinEditor({
         <div
           className="button-behavior-preview"
           aria-label="Button state visual preview"
-          title="Live preview of the selected logical state and authored skin visual."
-          onPointerEnter={() => setBehaviorPreviewHovered(true)}
-          onPointerLeave={() => setBehaviorPreviewHovered(false)}
-          onPointerCancel={() => setBehaviorPreviewHovered(false)}
+          title="Live preview. Hover activates only over the authored interactive shape."
         >
           <ButtonSkinRenderer
             skin={workingSkin}
             label={previewLabel}
-            width={activeSize.width}
-            height={activeSize.height}
-            constrained
-            matchHitboxToSkin={sizingMode !== "responsive"}
-            allowStretching={sizingMode === "stretch"}
+            width={previewWidth}
+            height={previewHeight}
+            constrained={previewConstrained}
+            matchHitboxToSkin={previewSizingMode !== "responsive"}
+            allowStretching={previewSizingMode === "stretch"}
             textFitMode={placement.textFitMode}
             textAlignment={placement.textAlignment}
             minimumFontSize={placement.minimumFontSize}
@@ -810,8 +1096,8 @@ export function ButtonSkinEditor({
             release={selectedVisualFlags.release}
             disabled={selectedVisualFlags.disabled}
             error={selectedVisualFlags.error}
-            highlightOnHover={placement.highlightOnHover}
             rawHovered={behaviorPreviewHovered}
+            onCoreElementChange={setBehaviorPreviewCoreElement}
           />
         </div>
       </details>
@@ -863,11 +1149,11 @@ export function ButtonSkinEditor({
         <ButtonSkinRenderer
           skin={workingSkin}
           label={previewLabel}
-          width={activeSize.width}
-          height={activeSize.height}
-          constrained
-          matchHitboxToSkin={sizingMode !== "responsive"}
-          allowStretching={sizingMode === "stretch"}
+          width={previewWidth}
+          height={previewHeight}
+          constrained={previewConstrained}
+          matchHitboxToSkin={previewSizingMode !== "responsive"}
+          allowStretching={previewSizingMode === "stretch"}
           textFitMode={placement.textFitMode}
           textAlignment={placement.textAlignment}
           minimumFontSize={placement.minimumFontSize}
@@ -881,6 +1167,7 @@ export function ButtonSkinEditor({
           release={previewVisualFlags.release}
           disabled={previewVisualFlags.disabled}
           error={previewVisualFlags.error}
+          onLabelElementChange={captureWorkingTextColor}
         />
       </div>
       {BUTTON_SKIN_SECTION_ORDER.map((section) => {
@@ -908,6 +1195,10 @@ export function ButtonSkinEditor({
                   [section]: event.currentTarget.value
                 });
                 setWorkingSkin(next);
+                resetWorkingSizingMode();
+                setWorkingPreviewUsesNaturalSize(true);
+                setBenchMeasurement(null);
+                setBenchNaturalMeasurement(null);
               }}
             />
             {BUTTON_SKIN_STATE_SECTIONS.includes(section as typeof BUTTON_SKIN_STATE_SECTIONS[number]) ? (
@@ -1078,11 +1369,11 @@ export function ButtonSkinEditor({
           <ButtonSkinRenderer
             skin={workingSkin}
             label={previewLabel}
-            width={activeSize.width}
-            height={activeSize.height}
-            constrained
-            matchHitboxToSkin={sizingMode !== "responsive"}
-            allowStretching={sizingMode === "stretch"}
+            width={previewWidth}
+            height={previewHeight}
+            constrained={previewConstrained}
+            matchHitboxToSkin={previewSizingMode !== "responsive"}
+            allowStretching={previewSizingMode === "stretch"}
             textFitMode={placement.textFitMode}
             textAlignment={placement.textAlignment}
             minimumFontSize={placement.minimumFontSize}
@@ -1123,6 +1414,89 @@ export function ButtonSkinEditor({
         >
           Apply All
         </button>
+      </details>
+      <details className="button-skin-section button-color-section" open>
+        <summary title="Edit the active working skin's authored semantic color profile without changing shadows, effects, geometry, or assignment.">
+          <span>Button Color</span>
+          <small>{workingMaterialProfile.length > 0
+            ? `${workingMaterialProfile.length} part${workingMaterialProfile.length === 1 ? "" : "s"}`
+            : "No profile"}</small>
+        </summary>
+        <div className="button-color-grid">
+          <ButtonColorPickerRow
+            label="Text Color"
+            title={workingSkinHasText
+              ? "Edit the independent authored Text profile, or add an isolated label override when this skin has no Text profile."
+              : "This skin has no editable Button label."}
+            value={visibleTextColor}
+            disabled={busy || !workingSkinHasText}
+            preserveAlpha={false}
+            onColorChange={(value) => {
+              applyWorkingColorSections(workingTextProfile
+                ? setButtonSkinProfileColor(skinSections(workingSkin), workingTextProfile.variable, value)
+                : setButtonSkinTextColor(skinSections(workingSkin), value));
+            }}
+            onUseSkinColor={!workingTextProfile && authoredTextColor ? () => {
+              applyWorkingColorSections(setButtonSkinTextColor(skinSections(workingSkin), null));
+              setDetectedTextColor(null);
+            } : undefined}
+          />
+          {workingMaterialProfile.map((profileColor) => (
+            <ButtonColorPickerRow
+              key={profileColor.variable}
+              label={profileColor.label}
+              title={`Edit ${profileColor.variable}. The skin's authored shade formulas update its related faces and states; unprofiled effects remain unchanged.`}
+              value={profileColor.color}
+              disabled={busy}
+              onColorChange={(value) => {
+                applyWorkingColorSections(setButtonSkinProfileColor(
+                  skinSections(workingSkin),
+                  profileColor.variable,
+                  value
+                ));
+              }}
+            />
+          ))}
+          {workingMaterialProfile.length === 0 ? (
+            <p className="button-color-profile-empty">
+              This skin has no authored color profile. Build or adapt it with Skin Author to expose its main parts without including shadows or effects.
+            </p>
+          ) : null}
+        </div>
+        <label
+          className="button-hover-highlight-toggle"
+          title="Brighten every Button using this skin by 15% while hovered. Assign Skin to Panel carries this setting to the whole panel."
+        >
+          <input
+            type="checkbox"
+            checked={workingSkinHighlightOnHover}
+            disabled={busy}
+            onChange={(event) => {
+              applyWorkingColorSections(setButtonSkinHighlightOnHover(
+                skinSections(workingSkin),
+                event.currentTarget.checked
+              ));
+            }}
+          />
+          <span>Highlight on hover</span>
+        </label>
+        <label
+          className="button-hover-highlight-toggle"
+          title="Brighten every Button using this skin by 30% while it is the active choice, such as a selected Tool Set operation or a selected Main Page Button. Hover brightening still stacks on top."
+        >
+          <input
+            type="checkbox"
+            checked={workingSkinHighlightOnActive}
+            disabled={busy}
+            onChange={(event) => {
+              applyWorkingColorSections(setButtonSkinHighlightOnActive(
+                skinSections(workingSkin),
+                event.currentTarget.checked
+              ));
+            }}
+          />
+          <span>Highlight when active</span>
+        </label>
       </details>
     </aside>
   );

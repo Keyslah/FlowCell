@@ -19,6 +19,7 @@ test("Skin Editor keeps source edits in an isolated working skin", () => {
 test("Skin Editor exposes only the requested skin actions in the requested order", () => {
   const labels = [
     "Assign Skin",
+    "Assign Skin to Selection",
     "Assign Skin to Panel",
     "Load skin",
     "Save skin",
@@ -45,21 +46,26 @@ test("Load stays local and invalid working skins cannot be saved or assigned", (
   assert.equal((source.match(/disabled=\{skinActionsDisabled\}/g) ?? []).length, 4);
   for (const callback of [
     "onAssignSkin",
+    "onAssignSkinToSelection",
     "onAssignSkinToPanel"
   ]) {
     assert.match(
       source,
-      new RegExp(`${callback}\\(cloneButtonDocument\\(workingSkin\\)\\)`),
-      `${callback} must receive the isolated working skin`
+      new RegExp(`${callback}\\(workingSkinForPersistence\\(\\), sizingMode\\)`),
+      `${callback} must receive the isolated working skin and pending sizing policy`
     );
   }
   assert.match(
     source,
-    /onSaveSkin\(\s*cloneButtonDocument\(workingSkin\),\s*workingSkinFilePath\s*\)/
+    /disabled=\{skinActionsDisabled \|\| selectionButtonCount === 0\}[\s\S]{0,220}onAssignSkinToSelection/
   );
   assert.match(
     source,
-    /onSaveAsNewSkin\(cloneButtonDocument\(workingSkin\)\)/
+    /onSaveSkin\(\s*workingSkinForPersistence\(\),\s*workingSkinFilePath\s*\)/
+  );
+  assert.match(
+    source,
+    /onSaveAsNewSkin\(workingSkinForPersistence\(\)\)/
   );
 });
 
@@ -75,21 +81,125 @@ test("normal WebView paste fallback applies recognized source and exposes a visi
   );
   assert.match(
     source,
-    /setWorkingSkin\(next\);\s*setPaste\(""\);\s*setUpdatedSections/
+    /setWorkingSkin\(next\);[\s\S]{0,180}setWorkingPreviewUsesNaturalSize\(true\);[\s\S]{0,180}setPaste\(""\);\s*setUpdatedSections/
   );
+});
+
+test("Button Color and hover highlight edit only the isolated working skin", () => {
+  const textIndex = source.indexOf("<span>Button Text</span>");
+  const colorIndex = source.indexOf("<span>Button Color</span>");
+  assert.ok(textIndex >= 0);
+  assert.ok(colorIndex > textIndex, "Button Color must follow Button Text");
+  assert.match(source, /collectButtonSkinProfileColors\(skinSections\(workingSkin\)\)/);
+  assert.match(source, /workingMaterialProfile\.map\(\(profileColor\) =>/);
+  assert.match(source, /type="color"/);
+  assert.match(source, /type="text"/);
+  assert.match(source, /EyeDropper/);
+  assert.match(source, /label="Text Color"/);
+  assert.match(source, /preserveAlpha=\{false\}/);
+  assert.match(source, /setButtonSkinProfileColor\(/);
+  assert.match(source, /setButtonSkinTextColor\(/);
+  assert.match(source, /readButtonSkinHighlightOnHover\(workingSkin\)/);
+  assert.match(source, /setButtonSkinHighlightOnHover\([\s\S]{0,160}event\.currentTarget\.checked/);
+  assert.match(source, /workingSkinHighlightOnHover = explicitWorkingSkinHighlightOnHover \?\? placement\.highlightOnHover/);
+  assert.match(source, /workingSkinForPersistence[\s\S]{0,420}setButtonSkinHighlightOnHover/);
+  assert.match(source, /This skin has no authored color profile/);
+  assert.doesNotMatch(source, /workingColorBuckets|label=\{`Color \$\{index \+ 1\}`\}/);
+
+  const colorUpdate = source.match(
+    /const applyWorkingColorSections = \(sections: ButtonSkinSectionSource\) => \{[\s\S]*?\n  \};/
+  );
+  assert.ok(colorUpdate, "isolated color update helper must exist");
+  assert.match(colorUpdate[0], /setWorkingSkin\(withSections\(workingSkin, sections\)\)/);
+  assert.doesNotMatch(colorUpdate[0], /setWorkingPreviewUsesNaturalSize|setWorkingSize/);
+  assert.doesNotMatch(colorUpdate[0], /onAssignSkin|onSaveSkin/);
 });
 
 test("Button size uses an isolated preview until an explicit assignment action", () => {
   assert.match(source, /const \[workingSize, setWorkingSize\] = useState/);
+  assert.match(
+    source,
+    /const \[appliedPreviewSizingMode, setAppliedPreviewSizingMode\] = useState<ButtonPlacementSizingMode>/
+  );
+  assert.match(source, /const \[workingPreviewUsesNaturalSize, setWorkingPreviewUsesNaturalSize\] = useState\(false\)/);
   assert.match(source, /const activeSize = workingSize\?\.placementId === placement\.id/);
-  assert.match(source, /width=\{activeSize\.width\}/);
-  assert.match(source, /height=\{activeSize\.height\}/);
-  assert.match(source, /matchHitboxToSkin=\{sizingMode !== "responsive"\}/);
-  assert.match(source, /allowStretching=\{sizingMode === "stretch"\}/);
-  assert.match(source, /onAssignSize\(activeSize\)/);
-  assert.match(source, /onAssignSizeToPanel\(activeSize\)/);
+  assert.match(source, /const previewSizingMode = appliedPreviewSizingMode/);
+  assert.match(source, /const previewWidth = workingPreviewUsesNaturalSize \? undefined : activeSize\.width/);
+  assert.match(source, /const previewHeight = workingPreviewUsesNaturalSize \? undefined : activeSize\.height/);
+  assert.equal((source.match(/width=\{previewWidth\}/g) ?? []).length, 3);
+  assert.equal((source.match(/height=\{previewHeight\}/g) ?? []).length, 3);
+  assert.match(source, /value=\{sizingMode\}\s*disabled=\{sizeActionsDisabled\}/);
+  assert.equal((source.match(/disabled=\{sizeActionsDisabled\}/g) ?? []).length, 4);
+  assert.equal(
+    (source.match(/matchHitboxToSkin=\{previewSizingMode !== "responsive"\}/g) ?? []).length,
+    3
+  );
+  assert.equal(
+    (source.match(/allowStretching=\{previewSizingMode === "stretch"\}/g) ?? []).length,
+    3
+  );
+  assert.match(source, /onSizingModePreviewChange\(nextMode\)/);
+  assert.match(source, /onAssignSize\(sizeForAssignment\)/);
+  assert.match(source, /onAssignSizeToPanel\(sizeForAssignment\)/);
   assert.doesNotMatch(source, /onPlacementSizeChange/);
   assert.doesNotMatch(source, /onPlacementSizingModeChange/);
+});
+
+test("paste, load, and source editing return the preview to natural geometry and Responsive policy", () => {
+  assert.match(
+    source,
+    /const sizeForAssignment = \{[\s\S]{0,220}workingPreviewUsesNaturalSize && benchNaturalMeasurement/
+  );
+  assert.ok(
+    (source.match(/setWorkingPreviewUsesNaturalSize\(true\)/g) ?? []).length >= 4,
+    "every working-source replacement path must restore natural preview geometry"
+  );
+  assert.ok(
+    (source.match(/resetWorkingSizingMode\(\)/g) ?? []).length >= 4,
+    "every working-source replacement path must restore Responsive as the pending policy"
+  );
+  assert.match(
+    source,
+    /const updateWorkingDimension[\s\S]{0,260}setWorkingPreviewUsesNaturalSize\(false\);[\s\S]{0,260}setWorkingSize/
+  );
+  assert.doesNotMatch(source, /setWorkingPreviewUsesNaturalSize\(true\)[\s\S]{0,180}onAssignSize/);
+});
+
+test("choosing a sizing behavior changes policy without rewriting width or height", () => {
+  const modeHandler = source.match(
+    /onChange=\{\(event\) => \{\s*const nextMode = event\.currentTarget\.value as ButtonPlacementSizingMode;[\s\S]*?\n            \}\}/
+  );
+  assert.ok(modeHandler, "sizing behavior handler must exist");
+  assert.match(modeHandler[0], /sizingMode: nextMode/);
+  assert.doesNotMatch(modeHandler[0], /width:|height:|naturalRatio/);
+  assert.doesNotMatch(modeHandler[0], /setAppliedPreviewSizingMode/);
+  assert.match(
+    source,
+    /const updateWorkingDimension[\s\S]{0,220}setAppliedPreviewSizingMode\(sizingMode\)/
+  );
+  assert.equal(
+    (source.match(/setAppliedPreviewSizingMode\(sizingMode\)/g) ?? []).length,
+    6,
+    "dimension editing plus explicit size and skin assignments must promote the pending policy"
+  );
+});
+
+test("each selected or replaced working skin starts Responsive without changing geometry", () => {
+  assert.match(
+    source,
+    /function responsiveSizeAssignmentFromPlacement[\s\S]{0,320}sizingMode: "responsive"/
+  );
+  assert.match(
+    source,
+    /setWorkingSkin\(skin \? cloneButtonDocument\(skin\) : null\);[\s\S]{0,260}responsiveSizeAssignmentFromPlacement\(placement\)[\s\S]{0,160}onSizingModePreviewChange\("responsive"\)/
+  );
+
+  const geometrySync = source.match(
+    /useEffect\(\(\) => \{\s*setWorkingSize\(\(current\) => \{[\s\S]*?\n  \}, \[placement\?\.id, placement\?\.width, placement\?\.height\]\);/
+  );
+  assert.ok(geometrySync, "geometry-only working-size synchronization effect must exist");
+  assert.match(geometrySync[0], /\.\.\.current,\s*width: placement\.width,\s*height: placement\.height/);
+  assert.doesNotMatch(geometrySync[0], /sizingMode:/);
 });
 
 test("Button text fitting remains placement-owned and independent from the working size", () => {

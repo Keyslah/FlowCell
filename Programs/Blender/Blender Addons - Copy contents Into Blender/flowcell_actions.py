@@ -20,9 +20,9 @@ Flatten Revolve: Flatten the active mesh into a centered profile, hide the sourc
 
 Cursor Center Hole: With one hole wall face selected in Edit Mode, finds the center point and moves the 3D cursor to it.
 
-Save STL: Export the selected mesh objects to 01 src\00 assets\03 3d.
+Save STL: Export the selected mesh objects into this project's STL folder, resolved from the .flowcell-project.json marker (falling back to "01 src/00 assets/03 3d").
 
-Save PNG: Render the active selected object from the current scene camera to 01 src\00 assets\01 images as a transparent PNG cropped exactly to the visible object bounds.
+Save PNG: Render the active selected object from the current scene camera into this project's PNG folder, resolved from the .flowcell-project.json marker (falling back to "01 src/00 assets/01 images"), as a transparent PNG cropped exactly to the visible object bounds.
 
 Cura: Export selected mesh objects as STL files and send them to Cura.
 
@@ -267,13 +267,75 @@ def sanitize_export_stem(name: str) -> str:
     return cleaned
 
 
+FLOWCELL_PROJECT_MARKER_NAME = ".flowcell-project.json"
+
+
+def find_flowcell_project_marker() -> tuple[Path, dict] | None:
+    """Walk up from the open .blend for a FlowCell project marker.
+
+    Setup Organization writes the marker into a project root every time an
+    organizer Button runs on it. It records which profile organized the project
+    and, per file extension, where that profile sends those files. Reading it
+    keeps this add-on working with any profile instead of one fixed layout.
+    """
+    blend_filepath = str(bpy.data.filepath or "").strip()
+    if not blend_filepath:
+        return None
+
+    blend_path = Path(blend_filepath)
+    for candidate in [blend_path.parent, *blend_path.parent.parents]:
+        marker_path = candidate / FLOWCELL_PROJECT_MARKER_NAME
+        if not marker_path.is_file():
+            continue
+        try:
+            payload = json.loads(marker_path.read_text(encoding="utf-8-sig"))
+        except Exception:
+            continue
+        if isinstance(payload, dict):
+            return candidate, payload
+    return None
+
+
+def resolve_project_directory_for_extension(extension: str) -> Path | None:
+    """Destination folder this project's profile assigns to `extension`."""
+    found = find_flowcell_project_marker()
+    if found is None:
+        return None
+
+    project_root, payload = found
+    destinations = payload.get("where")
+    if not isinstance(destinations, dict):
+        return None
+
+    relative = destinations.get(str(extension).strip().casefold())
+    if not isinstance(relative, str) or not relative.strip():
+        return None
+
+    try:
+        resolved_root = project_root.resolve()
+        target = (resolved_root / relative.replace("/", os.sep)).resolve()
+        # The marker lives inside the project, but it is still file input:
+        # never resolve a destination outside the project root.
+        target.relative_to(resolved_root)
+    except Exception:
+        return None
+
+    target.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 def get_project_root_from_current_file() -> Path:
+    found = find_flowcell_project_marker()
+    if found is not None:
+        return found[0]
+
     blend_filepath = str(bpy.data.filepath or "").strip()
     if not blend_filepath:
         raise ValueError(
             "Save the current .blend file first so FlowCell can locate the project assets folders."
         )
 
+    # Projects organized before the marker existed still use the fixed layout.
     blend_path = Path(blend_filepath)
     search_roots = [blend_path.parent, *blend_path.parent.parents]
     for candidate in search_roots:
@@ -287,7 +349,8 @@ def get_project_root_from_current_file() -> Path:
         return candidate
 
     raise ValueError(
-        "FlowCell could not find '01 src' from the current .blend file path."
+        "FlowCell could not find a FlowCell project marker or '01 src' from the current "
+        ".blend file path. Run a Setup Organization Button on this project folder first."
     )
 
 
@@ -301,10 +364,32 @@ def get_assets_subdirectory_from_current_file(*relative_parts: str) -> Path:
 
 
 def get_assets_3d_directory_from_current_file() -> Path:
-    return get_assets_subdirectory_from_current_file("03 3d")
+    resolved = resolve_project_directory_for_extension(".stl")
+    if resolved is not None:
+        return resolved
+
+    # Keep pre-marker projects on their established asset-tree destination.
+    # A normally saved, unprofiled .blend has neither a marker nor ``01 src``;
+    # slicer buttons still need a predictable project-local destination instead
+    # of refusing to export. In that case the folder containing the .blend is
+    # the project folder and its STL output lives in ``<project>/STL``.
+    try:
+        return get_assets_subdirectory_from_current_file("03 3d")
+    except ValueError:
+        blend_filepath = str(bpy.data.filepath or "").strip()
+        if not blend_filepath:
+            raise ValueError(
+                "Save the current .blend file first so FlowCell can create this project's STL folder."
+            )
+        fallback = Path(blend_filepath).parent / "STL"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
 
 
 def get_assets_images_directory_from_current_file() -> Path:
+    resolved = resolve_project_directory_for_extension(".png")
+    if resolved is not None:
+        return resolved
     return get_assets_subdirectory_from_current_file("01 images")
 
 
@@ -332,6 +417,23 @@ def get_unique_export_path(folder: Path, stem: str, suffix: str) -> Path:
 
 def get_overwrite_export_path(folder: Path, stem: str, suffix: str) -> Path:
     return folder / f"{stem}{suffix}"
+
+
+def get_collision_safe_overwrite_export_path(
+    folder: Path,
+    stem: str,
+    suffix: str,
+    reserved_paths: set[str],
+) -> Path:
+    candidate = get_overwrite_export_path(folder, stem, suffix)
+    collision_index = 2
+    candidate_key = os.path.normcase(str(candidate.resolve()))
+    while candidate_key in reserved_paths:
+        candidate = get_overwrite_export_path(folder, f"{stem}_{collision_index}", suffix)
+        collision_index += 1
+        candidate_key = os.path.normcase(str(candidate.resolve()))
+    reserved_paths.add(candidate_key)
+    return candidate
 
 
 def get_active_selected_object(context: bpy.types.Context) -> bpy.types.Object:
@@ -539,9 +641,35 @@ def perform_cursor_center_hole(context: bpy.types.Context) -> str:
     return "3D cursor moved to the hole center and aligned to the hole axis."
 
 
+def get_flowcell_alignment_bound_corners(obj: bpy.types.Object):
+    """Local-space bound corners for the geometry Blender actually displays.
+
+    ``obj.bound_box`` on the original object ignores modifiers, and for curves
+    and text it is built from control points, so it can sit well outside the
+    visible surface and leave a gap when aligning. The evaluated object carries
+    the displayed extents.
+    """
+    corners = getattr(obj, "bound_box", None)
+    try:
+        evaluated = obj.evaluated_get(bpy.context.evaluated_depsgraph_get())
+    except (AttributeError, RuntimeError, TypeError):
+        return corners
+
+    evaluated_corners = getattr(evaluated, "bound_box", None)
+    if not evaluated_corners:
+        return corners
+
+    points = [Vector(corner) for corner in evaluated_corners]
+    if max((point - points[0]).length for point in points) <= 0.0:
+        # Evaluated geometry collapsed to a point (hidden, or consumed by a
+        # modifier); keep the original bounds instead of snapping to nothing.
+        return corners
+    return evaluated_corners
+
+
 def get_flowcell_alignment_bounds(obj: bpy.types.Object) -> tuple[Vector, Vector]:
     world_matrix = obj.matrix_world
-    corners = getattr(obj, "bound_box", None)
+    corners = get_flowcell_alignment_bound_corners(obj)
     if not corners:
         origin = world_matrix.translation.copy()
         return origin.copy(), origin.copy()
@@ -1315,6 +1443,7 @@ def perform_save_selected_stl_to_assets_result(
     previous_selected = list(selected_objects)
     previous_mode = str(getattr(context, "mode", "OBJECT") or "OBJECT")
     exported_paths: list[Path] = []
+    reserved_export_paths: set[str] = set()
 
     try:
         if previous_mode != "OBJECT":
@@ -1335,7 +1464,12 @@ def perform_save_selected_stl_to_assets_result(
                 if requested_name.strip() and len(selected_meshes) == 1
                 else sanitize_export_stem(strip_hidden_name_pad(strip_version_prefix(obj.name) or obj.name))
             )
-            export_path = get_overwrite_export_path(export_dir, export_stem, ".stl")
+            export_path = get_collision_safe_overwrite_export_path(
+                export_dir,
+                export_stem,
+                ".stl",
+                reserved_export_paths,
+            )
 
             result = bpy.ops.wm.stl_export(
                 filepath=str(export_path),

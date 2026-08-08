@@ -1,120 +1,284 @@
 {
-    "schemaVersion":  1,
-    "id":  "blender.boolean",
-    "version":  "1.0.0",
-    "label":  "boolean",
-    "tooltip":  "Quick Boolean with I/U/D operation buttons, solver fanout, SI/HT/HC/S toggles, and Run.",
-    "kind":  "toolset",
-    "program":  "Blender",
-    "source":  "boolean.py",
-    "bridgeData":  {
-
-                   },
-    "children":  [
-                     {
-                         "slot":  "operation_intersect",
-                         "label":  "I",
-                         "tooltip":  "Set the boolean operation to Intersect.",
-                         "payload":  {
-                                         "command":  "operation_intersect",
-                                         "action":  "operation_intersect"
-                                     }
-                     },
-                     {
-                         "slot":  "operation_union",
-                         "label":  "U",
-                         "tooltip":  "Set the boolean operation to Union.",
-                         "payload":  {
-                                         "command":  "operation_union",
-                                         "action":  "operation_union"
-                                     }
-                     },
-                     {
-                         "slot":  "operation_difference",
-                         "label":  "D",
-                         "tooltip":  "Set the boolean operation to Difference.",
-                         "payload":  {
-                                         "command":  "operation_difference",
-                                         "action":  "operation_difference"
-                                     }
-                     },
-                     {
-                         "slot":  "solver_fast",
-                         "label":  "Float",
-                         "tooltip":  "Use Blender\u0027s Float boolean solver.",
-                         "payload":  {
-                                         "command":  "solver_fast",
-                                         "action":  "solver_fast"
-                                     }
-                     },
-                     {
-                         "slot":  "solver_exact",
-                         "label":  "Exact",
-                         "tooltip":  "Use Blender\u0027s Exact boolean solver.",
-                         "payload":  {
-                                         "command":  "solver_exact",
-                                         "action":  "solver_exact"
-                                     }
-                     },
-                     {
-                         "slot":  "solver_manifold",
-                         "label":  "Manifold",
-                         "tooltip":  "Use Blender\u0027s Manifold boolean solver.",
-                         "payload":  {
-                                         "command":  "solver_manifold",
-                                         "action":  "solver_manifold"
-                                     }
-                     },
-                     {
-                         "slot":  "toggle_self_intersection",
-                         "label":  "SI",
-                         "tooltip":  "Toggle self-intersection support.",
-                         "payload":  {
-                                         "command":  "toggle_self_intersection",
-                                         "action":  "toggle_self_intersection"
-                                     }
-                     },
-                     {
-                         "slot":  "toggle_hole_tolerant",
-                         "label":  "HT",
-                         "tooltip":  "Toggle hole-tolerant solving.",
-                         "payload":  {
-                                         "command":  "toggle_hole_tolerant",
-                                         "action":  "toggle_hole_tolerant"
-                                     }
-                     },
-                     {
-                         "slot":  "toggle_hide_cutter",
-                         "label":  "HC",
-                         "tooltip":  "Toggle hiding the cutter after running.",
-                         "payload":  {
-                                         "command":  "toggle_hide_cutter",
-                                         "action":  "toggle_hide_cutter"
-                                     }
-                     },
-                     {
-                         "slot":  "toggle_backup_active",
-                         "label":  "S",
-                         "tooltip":  "Toggle taking a FlowCell snapshot before running.",
-                         "payload":  {
-                                         "command":  "toggle_backup_active",
-                                         "action":  "toggle_backup_active"
-                                     }
-                     },
-                     {
-                         "slot":  "run_boolean",
-                         "label":  "Run",
-                         "tooltip":  "Run the quick boolean operation.",
-                         "payload":  {
-                                         "command":  "run_boolean",
-                                         "action":  "run_boolean"
-                                     }
-                     }
-                 ],
-    "layout":  {
-                   "mode":  "grid",
-                   "columns":  4,
-                   "gap":  8,
-                   "padding":  8
-               }
+    "schemaVersion": 1,
+    "id": "blender.boolean",
+    "version": "1.1.0",
+    "label": "boolean",
+    "tooltip": "Quick Boolean with I/U/D operation buttons, one cycling solver button, SI/HT/HC/S toggles, and Run.",
+    "kind": "toolset",
+    "program": "Blender",
+    "source": "boolean.py",
+    "bridgeData": {},
+    "children": [
+        {
+            "slot": "operation_intersect",
+            "label": "I",
+            "tooltip": "Set the boolean operation to Intersect.",
+            "payload": {
+                "command": "operation_intersect",
+                "action": "operation_intersect"
+            }
+        },
+        {
+            "slot": "operation_union",
+            "label": "U",
+            "tooltip": "Set the boolean operation to Union.",
+            "payload": {
+                "command": "operation_union",
+                "action": "operation_union"
+            }
+        },
+        {
+            "slot": "operation_difference",
+            "label": "D",
+            "tooltip": "Set the boolean operation to Difference.",
+            "payload": {
+                "command": "operation_difference",
+                "action": "operation_difference"
+            }
+        },
+        {
+            "slot": "solver_cycle",
+            "label": "Exact",
+            "tooltip": "Cycle the boolean solver between Exact, Float, and Manifold.",
+            "payload": {
+                "command": "cycle_solver",
+                "action": "cycle_solver"
+            }
+        },
+        {
+            "slot": "toggle_self_intersection",
+            "label": "SI",
+            "tooltip": "Toggle self-intersection support.",
+            "payload": {
+                "command": "toggle_self_intersection",
+                "action": "toggle_self_intersection"
+            }
+        },
+        {
+            "slot": "toggle_hole_tolerant",
+            "label": "HT",
+            "tooltip": "Toggle hole-tolerant solving.",
+            "payload": {
+                "command": "toggle_hole_tolerant",
+                "action": "toggle_hole_tolerant"
+            }
+        },
+        {
+            "slot": "toggle_hide_cutter",
+            "label": "HC",
+            "tooltip": "Toggle hiding the cutter after running.",
+            "payload": {
+                "command": "toggle_hide_cutter",
+                "action": "toggle_hide_cutter"
+            }
+        },
+        {
+            "slot": "toggle_backup_active",
+            "label": "S",
+            "tooltip": "Toggle taking a FlowCell snapshot before running.",
+            "payload": {
+                "command": "toggle_backup_active",
+                "action": "toggle_backup_active"
+            }
+        },
+        {
+            "slot": "run_boolean",
+            "label": "Run",
+            "tooltip": "Run the quick boolean operation.",
+            "payload": {
+                "command": "run_boolean",
+                "action": "run_boolean"
+            }
+        }
+    ],
+    "layout": {
+        "mode": "grid",
+        "columns": 4,
+        "gap": 8,
+        "padding": 8,
+        "placements": {
+            "operation_intersect": {
+                "x": 8,
+                "y": 8,
+                "width": 144,
+                "height": 42
+            },
+            "operation_union": {
+                "x": 160,
+                "y": 8,
+                "width": 144,
+                "height": 42
+            },
+            "operation_difference": {
+                "x": 312,
+                "y": 8,
+                "width": 144,
+                "height": 42
+            },
+            "solver_cycle": {
+                "x": 464,
+                "y": 8,
+                "width": 144,
+                "height": 42
+            },
+            "toggle_self_intersection": {
+                "x": 8,
+                "y": 58,
+                "width": 144,
+                "height": 42
+            },
+            "toggle_hole_tolerant": {
+                "x": 160,
+                "y": 58,
+                "width": 144,
+                "height": 42
+            },
+            "toggle_hide_cutter": {
+                "x": 312,
+                "y": 58,
+                "width": 144,
+                "height": 42
+            },
+            "toggle_backup_active": {
+                "x": 464,
+                "y": 58,
+                "width": 144,
+                "height": 42
+            },
+            "run_boolean": {
+                "x": 8,
+                "y": 108,
+                "width": 144,
+                "height": 42
+            }
+        },
+        "fields": [
+            {
+                "id": "operation",
+                "label": "Operation",
+                "payloadKey": "",
+                "defaultValue": "DIFFERENCE",
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "select",
+                "options": [
+                    {
+                        "id": "intersect",
+                        "label": "I",
+                        "value": "INTERSECT"
+                    },
+                    {
+                        "id": "union",
+                        "label": "U",
+                        "value": "UNION"
+                    },
+                    {
+                        "id": "difference",
+                        "label": "D",
+                        "value": "DIFFERENCE"
+                    }
+                ]
+            },
+            {
+                "id": "self_intersection",
+                "label": "Self Intersection",
+                "payloadKey": "",
+                "defaultValue": false,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "toggle"
+            },
+            {
+                "id": "hole_tolerant",
+                "label": "Hole Tolerant",
+                "payloadKey": "",
+                "defaultValue": false,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "toggle"
+            },
+            {
+                "id": "hide_cutter",
+                "label": "Hide Cutter",
+                "payloadKey": "",
+                "defaultValue": true,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "toggle"
+            },
+            {
+                "id": "backup_active",
+                "label": "Snapshot Before Run",
+                "payloadKey": "",
+                "defaultValue": true,
+                "x": 8,
+                "y": 8,
+                "width": 120,
+                "height": 36,
+                "zIndex": 1,
+                "hidden": true,
+                "kind": "toggle"
+            }
+        ],
+        "childBehaviors": {
+            "operation_intersect": {
+                "fieldPatch": {
+                    "operation": "INTERSECT"
+                },
+                "execute": true
+            },
+            "operation_union": {
+                "fieldPatch": {
+                    "operation": "UNION"
+                },
+                "execute": true
+            },
+            "operation_difference": {
+                "fieldPatch": {
+                    "operation": "DIFFERENCE"
+                },
+                "execute": true
+            },
+            "toggle_self_intersection": {
+                "toggleFields": [
+                    "self_intersection"
+                ],
+                "execute": true
+            },
+            "toggle_hole_tolerant": {
+                "toggleFields": [
+                    "hole_tolerant"
+                ],
+                "execute": true
+            },
+            "toggle_hide_cutter": {
+                "toggleFields": [
+                    "hide_cutter"
+                ],
+                "execute": true
+            },
+            "toggle_backup_active": {
+                "toggleFields": [
+                    "backup_active"
+                ],
+                "execute": true
+            }
+        }
+    }
 }

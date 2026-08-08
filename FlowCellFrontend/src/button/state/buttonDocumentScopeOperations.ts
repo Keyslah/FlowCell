@@ -12,6 +12,10 @@ import {
   renameProgramPanelOwnerIdentities
 } from "./panelOwnerButtonOperations.js";
 import {
+  removeFlowCellMainPageProgramButton,
+  renameFlowCellMainPageProgramButton
+} from "./mainPageButtonOperations.js";
+import {
   createButtonSourceIdentity,
   deriveRegularPopoutSelectionKey
 } from "./sourceIdentity.js";
@@ -386,9 +390,18 @@ export function renameProgramButtonDocumentScope(
     currentProgramName: rename.currentProgramName,
     nextProgramName: rename.nextProgramName
   });
+  const mainPageProgramButtonChanged = renameFlowCellMainPageProgramButton(
+    document,
+    rename.currentProgramName,
+    rename.nextProgramName
+  );
   const surfaceNamesChanged = updateDefaultSurfaceNames(document, registeredPanelRenames);
   return {
-    changed: sourceResult.changed || ownerResult.changed || surfaceNamesChanged,
+    changed:
+      sourceResult.changed ||
+      ownerResult.changed ||
+      mainPageProgramButtonChanged ||
+      surfaceNamesChanged,
     sourceOwnerButtonIds: sourceResult.sourceOwnerButtonIds
   };
 }
@@ -438,6 +451,13 @@ function removeSourceScope(
     : removeProgramPanelOwnerGraphs(document, scope.programName);
   panelOwnerResult.removedOwnerButtonIds.forEach((id) => removedButtonIds.add(id));
   panelOwnerResult.uninstallOwnerButtonIds.forEach((id) => uninstallOwnerButtonIds.add(id));
+  if (scope.panelName === undefined) {
+    const mainPageProgramButtonId = removeFlowCellMainPageProgramButton(
+      document,
+      scope.programName
+    );
+    if (mainPageProgramButtonId) removedButtonIds.add(mainPageProgramButtonId);
+  }
 
   for (const surfaceId of affectedPanelSurfaceIds) {
     const surface = document.surfaces[surfaceId];

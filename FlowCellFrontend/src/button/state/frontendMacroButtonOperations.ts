@@ -5,7 +5,10 @@ import type {
   ButtonStateDocument,
   ButtonSurface
 } from "../types.js";
-import { findFirstAvailableButtonPosition } from "../geometry/buttonGeometry.js";
+import {
+  buttonSpacingPixelsFromMillimeters,
+  findFirstAvailableButtonPosition
+} from "../geometry/buttonGeometry.js";
 import { removeOwnedButtonGraph } from "./buttonDocumentOperations.js";
 import { createButtonSourceIdentity } from "./sourceIdentity.js";
 
@@ -115,7 +118,7 @@ function nextMacroPlacementRect(
   const width = 160;
   const height = 44;
   const padding = document.settings.defaultSurfacePadding;
-  const gap = document.settings.defaultGap;
+  const gap = buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm);
   surface.width = Math.max(surface.width, width + padding * 2);
   const otherRects = surface.placementIds
     .map((id) => document.placements[id])
