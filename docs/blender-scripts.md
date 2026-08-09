@@ -104,6 +104,45 @@ entry may specify `type: "blenderBridge"` and `data`; it runs through the same
 owner-generated bridge action. A source manifest does not choose or own a bridge
 action ID.
 
+## Illustrator SVG import package
+
+`Import Illustrator SVG` is the internal Blender half of Illustrator's
+`Send SVG to Blender` workflow, not a visible Blender panel Button. It accepts
+a batch of SVG paths and sublayer
+names, imports each SVG through Blender's built-in SVG importer, consolidates
+that file's imported curves, fits X and Y to the physical dimensions reported
+by Illustrator using the current Blender scene unit scale, gives it the exact
+requested full thickness without scaling Z, converts it to a mesh, places its
+base at world Z=0, and restores the sublayer center's X/Y offset from the center
+of the combined Illustrator selection. Finished meshes are linked exclusively
+to the scene's top-level `Live` collection; temporary collections created by
+Before conversion, the importer raises Blender's SVG curve tessellation
+resolution from its usual 12 steps to 16. This produces smoother printable
+sidewalls without changing the artwork's physical dimensions. Blender's SVG
+importer and its zero-user Curve data blocks are removed after conversion.
+
+The mesh conversion welds only coincident cap/side seam vertices using a
+scale-aware tolerance. If Blender's single-precision tessellator collapses a
+cap triangle, the importer dissolves only its provably roundoff-collinear middle
+vertex; genuine positive-area skinny faces remain intact. It recalculates
+normals and then requires a closed manifold result with no zero-length edges,
+degenerate or duplicate faces, or disjoint self-intersections. Any unsafe item
+rolls back the entire imported batch, including newly created Curve and Mesh
+data blocks, so `Ill Orca` cannot export or launch a slicer with a broken
+extrusion.
+
+The source filename remains authoritative for extrusion: only a positive number
+in parentheses at the beginning, such as `(2.5) Name.svg`, means 2.5 mm. Every
+other filename uses 1 mm. The Illustrator helper resolves the internal managed
+bridge action at runtime and starts Blender only when no Blender process is
+running.
+
+The separate Illustrator Files `Ill Orca` Button runs the same import first,
+then resolves the unique active `blender.orca` Files record and invokes its
+Blender bridge action with the new meshes still selected. It deliberately does
+not copy or hardcode Orca's STL/export/launcher implementation, so each FlowCell
+installation uses its own installed Orca Button and normal first-run setup.
+
 ## Tool-Set Package
 
 A tool set is a directory containing `flowcell.toolset.json` and its source:

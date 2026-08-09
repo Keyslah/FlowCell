@@ -56,6 +56,7 @@ test("Save Blender is a Files-panel Blender installed-page package", () => {
   assert.equal(page.program, "Blender");
   assert.equal(page.ownerStateFormat, "flowcell.blender-save-page-state.v1");
   assert.deepEqual(page.supportedDataFormats, ["flowcell.organization-profile.v3"]);
+  assert.equal(page.window.alwaysOnTop, true);
 
   const contribution = blenderManifest.bundledSources.find(({ id }) => id === manifest.id);
   assert.ok(contribution, "Blender must register the Save Blender package");
@@ -64,6 +65,7 @@ test("Save Blender is a Files-panel Blender installed-page package", () => {
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.sourceKind, "page");
   assert.equal(contribution.installOnAdd, true);
+  assert.equal(contribution.version, "1.2.2");
 });
 
 test("every page resource is package-contained and present", () => {
@@ -273,6 +275,20 @@ test("untitled files can be named and added to one existing project folder", () 
   assert.match(pageScript, /fileName,\s*projectRoot: returnedRoot,\s*finalPath/);
 });
 
+test("page removes spaces and unsafe Windows filename characters before saving", () => {
+  assert.match(pageScript, /function sanitizeProjectName\(value\)/);
+  assert.ok(pageScript.includes('.replace(/\\s+/gu, "")'));
+  assert.ok(pageScript.includes('.replace(/[<>:"/\\\\|?*]|[\\u0000-\\u001f]/g, "")'));
+  assert.match(
+    pageScript,
+    /projectName = sanitizeProjectName\(projectNameInput\.value\);\s*projectNameInput\.value = projectName;/
+  );
+  assert.match(
+    pageScript,
+    /fileName = sanitizeProjectName\(projectNameInput\.value\);\s*projectNameInput\.value = fileName;/
+  );
+});
+
 test("page persists only reusable destination settings and clears the project name", () => {
   assert.match(
     pageScript,
@@ -310,16 +326,18 @@ test("profile-backed retries reuse the prepared target and normalize Windows sep
   assert.match(pageScript, /projectNameInput\.value = "";\s*preparedAttempt = null;/s);
 });
 
-test("without a profile the Blender action owns the direct base/name/name.blend path", () => {
+test("without a profile the Blender action owns the direct base/name/Blender/name.blend path", () => {
   assert.match(blenderSource, /project_root = parent_folder \/ project_name/);
-  assert.match(blenderSource, /final_path = project_root \/ f"\{project_name\}\.blend"/);
+  assert.match(blenderSource, /blender_folder = project_root \/ "Blender"/);
+  assert.match(blenderSource, /final_path = blender_folder \/ f"\{project_name\}\.blend"/);
   assert.match(pageScript, /let preparedByProfile = false;\s*let projectRoot = "";\s*let finalPath = "";/);
   assert.match(blenderSource, /Direct saves cannot supply a precomputed project or Blender path/);
 });
 
-test("Blender source refuses unsafe names, nonempty targets, reparse paths, and overwrite", () => {
+test("Blender source sanitizes names and refuses empty names, nonempty targets, reparse paths, and overwrite", () => {
   assert.match(blenderSource, /INVALID_WINDOWS_NAME_CHARS/);
   assert.match(blenderSource, /WINDOWS_RESERVED_NAMES/);
+  assert.match(blenderSource, /def _sanitize_project_name/);
   assert.match(blenderSource, /Project folder already exists and is not empty/);
   assert.match(blenderSource, /FILE_ATTRIBUTE_REPARSE_POINT/);
   assert.match(blenderSource, /_assert_no_reparse_between/);
@@ -345,6 +363,7 @@ class SaveOperator:
     def __init__(self):
         self.paths = []
     def __call__(self, **kwargs):
+        assert pathlib.Path(kwargs["filepath"]).parent.is_dir()
         self.paths.append(kwargs["filepath"])
         return {"FINISHED"}
 
@@ -360,15 +379,26 @@ exec(compile(source_path.read_text(encoding="utf-8"), str(source_path), "exec"),
 parent = temp_root / "projects"
 parent.mkdir()
 result = namespace["_save_target"]({
-    "projectName": "Direct Project",
+    "projectName": " Direct / Project? ",
     "parentFolder": str(parent),
     "preparedByProfile": False,
     "projectRoot": "",
     "finalPath": "",
 })
-expected = parent / "Direct Project" / "Direct Project.blend"
+expected = parent / "DirectProject" / "Blender" / "DirectProject.blend"
 assert pathlib.Path(result["finalPath"]) == expected
 assert save_operator.paths[-1] == str(expected)
+assert expected.parent.is_dir()
+
+bpy.data.filepath = ""
+prepared = namespace["_prepare_root"]({
+    "projectName": " Profile Project ",
+    "parentFolder": str(parent),
+})
+prepared_root = pathlib.Path(prepared["projectRoot"])
+assert prepared_root == parent / "ProfileProject"
+assert prepared_root.is_dir()
+assert list(prepared_root.iterdir()) == []
 
 bpy.data.filepath = ""
 nonempty = parent / "Taken"
@@ -407,9 +437,9 @@ existing_destination.mkdir(parents=True)
 illustrator_file = existing_root / "Illustrator" / "existing.ai"
 illustrator_file.parent.mkdir()
 illustrator_file.write_bytes(b"illustrator-sentinel")
-existing_file = existing_destination / "Named Blender Work.blend"
+existing_file = existing_destination / "NamedBlenderWork.blend"
 result = namespace["_save_existing_target"]({
-    "fileName": "Named Blender Work",
+    "fileName": " Named: Blender Work? ",
     "projectRoot": str(existing_root),
     "finalPath": str(existing_file),
 })
@@ -421,7 +451,7 @@ existing_file.write_bytes(b"existing-blender-sentinel")
 bpy.data.filepath = ""
 try:
     namespace["_save_existing_target"]({
-        "fileName": "Named Blender Work",
+        "fileName": " Named: Blender Work? ",
         "projectRoot": str(existing_root),
         "finalPath": str(existing_file),
     })
@@ -443,13 +473,18 @@ except ValueError as exc:
 else:
     raise AssertionError("outside existing-project target was accepted")
 
-for invalid_name in ("", " bad", "bad.", "CON", "bad/name"):
+assert namespace["_sanitize_project_name"](" Water: Project? ") == "WaterProject"
+assert namespace["_sanitize_project_name"]("bad.") == "bad"
+assert namespace["_sanitize_project_name"]("CON") == "_CON"
+assert namespace["_sanitize_project_name"]("A B\tC") == "ABC"
+
+for invalid_name in ("", " \t ", "<>:?/|*"):
     try:
-        namespace["_validate_project_name"](invalid_name)
+        namespace["_sanitize_project_name"](invalid_name)
     except ValueError:
         pass
     else:
-        raise AssertionError(f"invalid project name was accepted: {invalid_name!r}")
+        raise AssertionError(f"empty sanitized project name was accepted: {invalid_name!r}")
 `;
     const result = spawnSync("python", ["-c", harness, blenderSourcePath, tempRoot], {
       encoding: "utf8",

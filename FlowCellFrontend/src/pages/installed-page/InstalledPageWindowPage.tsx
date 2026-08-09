@@ -42,6 +42,7 @@ interface InstalledPageDescriptor {
     height: number;
     minWidth: number;
     minHeight: number;
+    alwaysOnTop: boolean;
   };
   declaredResourcePaths: string[];
   declaredActions: unknown[];

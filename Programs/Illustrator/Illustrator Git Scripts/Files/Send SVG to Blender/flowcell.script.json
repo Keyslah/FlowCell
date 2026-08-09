@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.send-svg-to-blender",
+  "label": "Send SVG to Blender",
+  "tooltip": "Export selected artwork by owning sublayer as clean SVG 1.0 files, then import and extrude them in Blender.",
+  "program": "Illustrator",
+  "source": "18_Prepare_Selected_OBJ_Export.jsx",
+  "execution": {
+    "waitForCompletion": true
+  }
+}

@@ -212,6 +212,7 @@ import {
   buildButtonEditorPlacementOptions,
   resolveButtonEditorContextPlacementId,
   resolveButtonEditorIdentity,
+  resolveButtonEditorNavigationButtonId,
   resolveButtonEditorSurfaceSkinTargetPlacementIds,
   resolveButtonEditorPanelSurfaceId,
   resolvePreferredButtonPlacementId
@@ -2274,7 +2275,7 @@ test("Main Button single clicks select, double clicks execute, and Pop or Fan st
   assert.match(buttonHost, /interactionElement\.addEventListener\("dblclick", handleDoubleClick\)/);
   assert.match(
     buttonHost,
-    /const handleDoubleClick = \(event: Event\) => \{[\s\S]{0,180}await handler\(buttonRef\.current, event as MouseEvent\);[\s\S]{0,320}const placementCycle = placementRef\.current\.activationCycle;[\s\S]{0,260}placementCycle && placementCycle\.states\.length >= 2[\s\S]{0,260}requestActivationTriggerRef\.current\("press", interactionId, true\);[\s\S]{0,120}requestActivationTriggerRef\.current\("release", interactionId, true\);[\s\S]{0,180}await advanceButtonActivationState\(buttonRef\.current\.id, stateCount\)/
+    /const handleDoubleClick = \(event: Event\) => \{[\s\S]{0,520}await handler\(buttonRef\.current, event as MouseEvent\);[\s\S]{0,320}const placementCycle = placementRef\.current\.activationCycle;[\s\S]{0,260}placementCycle && placementCycle\.states\.length >= 2[\s\S]{0,260}requestActivationTriggerRef\.current\("press", interactionId, true\);[\s\S]{0,120}requestActivationTriggerRef\.current\("release", interactionId, true\);[\s\S]{0,180}await advanceButtonActivationState\(buttonRef\.current\.id, stateCount\)/
   );
   assert.match(buttonHost, /selectionOnlyRef\.current && trigger !== "hover" && !allowSelectionOnlyTrigger/);
   assert.match(buttonHost, /if \(selectionOnlyRef\.current\) \{\s*pressActivationInteractionIdRef\.current = null;\s*\} else \{/);
@@ -2334,6 +2335,50 @@ test("Button activation state drives live labels and mapped visuals without exte
     renderer,
     /continueMeasurementSampling \|\| transitionFramesRemaining > 0 \|\| offsetFramesRemaining > 0/
   );
+});
+
+test("select-field Buttons expose one same-skin transient fanout with complete pointer and keyboard semantics", () => {
+  const buttonHost = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+  const fanout = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonSelectFieldFanout.tsx"),
+    "utf8"
+  );
+
+  assert.match(buttonHost, /const SELECT_HOVER_HANDOFF_MS = 140;/);
+  assert.match(
+    buttonHost,
+    /const renderedLabel = inlineEditField[\s\S]{0,220}: selectField[\s\S]{0,140}selectedSelectOption\?\.label/
+  );
+  assert.match(buttonHost, /if \(selectFieldRef\.current\) openSelectFanout\(false\);/);
+  assert.match(buttonHost, /if \(selectField && eventName === "click"\) toggleSelectPinned\(\);/);
+  assert.match(
+    buttonHost,
+    /"ArrowUp",[\s\S]{0,120}"ArrowDown",[\s\S]{0,120}"Home",[\s\S]{0,80}"End",[\s\S]{0,80}"Escape"/
+  );
+  assert.match(buttonHost, /if \(keyboardEvent\.key === "Escape"\) \{\s*closeSelectFanout\(\);/);
+  assert.match(buttonHost, /if \(selectExpandedRef\.current\) chooseSelectOption\(selectActiveIndexRef\.current\);/);
+  assert.match(
+    buttonHost,
+    /onFieldPatchRef\.current\?\.\(\{ \[field\.id\]: option\.value \}, nextValues\);\s*closeSelectFanout\(\);/
+  );
+  assert.match(buttonHost, /selectRuntimeActive \? "combobox" : "button"/);
+  assert.match(buttonHost, /coreElement\.setAttribute\("aria-haspopup", "listbox"\)/);
+  assert.match(buttonHost, /coreElement\.setAttribute\("aria-expanded", selectExpanded \? "true" : "false"\)/);
+  assert.match(buttonHost, /coreRoot instanceof ShadowRoot/);
+  assert.match(buttonHost, /data-button-select-accessibility-listbox/);
+  assert.match(buttonHost, /coreRoot\.appendChild\(accessibilityListbox\)/);
+  assert.match(buttonHost, /<ButtonSelectFieldFanout[\s\S]{0,220}skin=\{skin\}/);
+
+  assert.match(fanout, /role="listbox"/);
+  assert.match(fanout, /aria-hidden="true"/);
+  assert.match(fanout, /field\.options\.map\(\(option, index\) =>/);
+  assert.match(fanout, /element\.setAttribute\("role", "option"\)/);
+  assert.match(fanout, /element\.setAttribute\("aria-selected", selected \? "true" : "false"\)/);
+  assert.match(fanout, /<ButtonSkinRenderer[\s\S]{0,120}skin=\{skin\}[\s\S]{0,80}label=\{option\.label\}/);
+  assert.doesNotMatch(fanout, /ButtonRecord|createStableButtonId|document\.buttons|childButtonIds|data-button-id/);
 });
 
 test("action-backed placement cycles open neutral and reconcile from action responses", () => {
@@ -2842,8 +2887,8 @@ test("Button Editor navigation resolves exact program, panel, Button, and placem
       id: "tool", name: "Rotate", kind: "tool-set", surfaceId: "toolset",
       canonicalBounds: { x: 0, y: 0, width: 240, height: 160 }, desktopBounds: null,
       ownerButtonId: owner.id, childButtonIds: [child.id], childPlacementIds: ["toolset-child"],
-      fields: [], openRule: "toggle", closeRule: "escape", transparency: 1,
-      pinnedDefault: false
+      fields: [], openRule: "toggle", closeRule: "escape", interactionMode: "pop",
+      ownerPlacementId: null, transparency: 1, pinnedDefault: false
     }
   };
 
@@ -2883,14 +2928,33 @@ test("Button Editor navigation resolves exact program, panel, Button, and placem
   const ownerPlacementOptions = buildButtonEditorPlacementOptions(document, owner.id);
   assert.deepEqual(
     ownerPlacementOptions.map((option) => option.label),
-    ["Main Page"]
+    ["Main Page", "Pop-out", "Fan"]
   );
+  const toolSetPopoutOption = ownerPlacementOptions.find((option) => option.view === "tool-set-popout");
+  const toolSetFanOption = ownerPlacementOptions.find((option) => option.view === "tool-set-fan");
+  assert.ok(toolSetPopoutOption);
+  assert.ok(toolSetFanOption);
+  assert.equal(toolSetPopoutOption.surfaceId, "toolset");
+  assert.equal(toolSetFanOption.surfaceId, "toolset");
+  assert.notEqual(toolSetPopoutOption.id, toolSetFanOption.id);
+  assert.equal(toolSetPopoutOption.placementId, "toolset-child");
+  assert.equal(toolSetFanOption.placementId, null);
   assert.deepEqual(
     buildButtonEditorPlacementOptions(document, child.id).map((option) => option.label),
     ["Pop-out"]
   );
   const options = buildButtonEditorButtonOptions(document, "Blender", "Tools");
-  assert.equal(options.some((option) => option.id === child.id && option.label === "X — Rotate"), true);
+  assert.equal(options.some((option) => option.id === owner.id), true);
+  assert.equal(options.some((option) => option.id === child.id), false);
+  assert.equal(resolveButtonEditorNavigationButtonId(document, child.id), owner.id);
+  assert.equal(
+    resolveButtonEditorContextPlacementId(document, { buttonId: owner.id, surfaceId: "toolset" }),
+    "toolset-child"
+  );
+  assert.equal(
+    resolveButtonEditorContextPlacementId(document, { surfaceId: "toolset" }),
+    "toolset-child"
+  );
 });
 
 test("surface skin assignment targets every member of only the focused surface", () => {
@@ -4041,6 +4105,222 @@ test("uniform surface sizing validates one fixed policy and disabling it preserv
   );
 });
 
+test("selectField validation requires one hidden state-only select without service or inline-edit behavior", () => {
+  const createSelectDocument = () => {
+    const document = createButtonStateDocument();
+    document.buttons.owner = button(
+      "owner",
+      "tool-set-owner",
+      source("Example", "Tools", "selector.flowcell-source.json")
+    );
+    document.buttons.selector = {
+      ...button("selector", "tool-set-child"),
+      executionTarget: { kind: "core-action", actionId: "open-window-grid" },
+      toolSetParentId: "owner",
+      toolSetBehavior: { selectField: "axis", execute: false }
+    };
+    document.surfaces["selector-surface"] = {
+      id: "selector-surface",
+      name: "Selector",
+      kind: "tool-set-popout",
+      width: 240,
+      height: 120,
+      placementIds: ["selector-placement"],
+      visualOverflowAllowance: 24,
+      uniformButtonSize: null
+    };
+    document.placements["selector-placement"] = {
+      id: "selector-placement",
+      buttonId: "selector",
+      surfaceId: "selector-surface",
+      x: 8,
+      y: 8,
+      width: 72,
+      height: 42,
+      zIndex: 0,
+      skinOverrideId: null,
+      textFitMode: "shrink",
+      textAlignment: "skin",
+      textOffsetX: 0,
+      textOffsetY: 0,
+      minimumFontSize: 8,
+      textSizeOverride: null,
+      allowLabelResize: false,
+      matchHitboxToSkin: true,
+      allowStretching: false,
+      highlightOnHover: false,
+      resizeAnchor: "top-left",
+      activationCycle: null,
+      visualStateMap: null
+    };
+    document.popoutUnits.selector = {
+      id: "selector",
+      name: "Selector",
+      kind: "tool-set",
+      surfaceId: "selector-surface",
+      canonicalBounds: { x: 0, y: 0, width: 240, height: 120 },
+      desktopBounds: null,
+      openRule: "toggle",
+      closeRule: "escape",
+      interactionMode: "pop",
+      ownerPlacementId: null,
+      transparency: 1,
+      pinnedDefault: false,
+      ownerButtonId: "owner",
+      childButtonIds: ["selector"],
+      childPlacementIds: ["selector-placement"],
+      fields: [
+        {
+          id: "axis",
+          kind: "select",
+          label: "Axis",
+          payloadKey: "axis",
+          defaultValue: "Y",
+          options: [
+            { id: "x", label: "X", value: "X" },
+            { id: "y", label: "Y", value: "Y" },
+            { id: "z", label: "Z", value: "Z" }
+          ],
+          x: 8,
+          y: 8,
+          width: 72,
+          height: 42,
+          zIndex: 1,
+          hidden: true
+        },
+        {
+          id: "amount",
+          kind: "number",
+          label: "Amount",
+          payloadKey: "amount",
+          defaultValue: 1,
+          x: 88,
+          y: 8,
+          width: 72,
+          height: 42,
+          zIndex: 1,
+          hidden: true
+        }
+      ]
+    };
+    return document;
+  };
+  const findIssue = (document, path, messageFragment) => {
+    const validation = validateButtonStateDocument(document);
+    assert.equal(validation.structurallyValid, true);
+    assert.equal(
+      validation.issues.some((issue) => (
+        issue.path === path && issue.message.includes(messageFragment)
+      )),
+      true,
+      validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n")
+    );
+  };
+
+  const valid = validateButtonStateDocument(createSelectDocument());
+  assert.equal(
+    valid.valid,
+    true,
+    valid.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n")
+  );
+
+  const wrongKind = createSelectDocument();
+  wrongKind.popoutUnits.selector.fields[0].kind = "text";
+  findIssue(
+    wrongKind,
+    "buttons.selector.toolSetBehavior.selectField",
+    "missing or is not a select field"
+  );
+
+  const visible = createSelectDocument();
+  visible.popoutUnits.selector.fields[0].hidden = false;
+  findIssue(
+    visible,
+    "buttons.selector.toolSetBehavior.selectField",
+    "must be hidden"
+  );
+
+  const service = createSelectDocument();
+  service.popoutUnits.selector.fields[0].serviceTarget = {
+    kind: "core-action",
+    actionId: "open-window-grid"
+  };
+  findIssue(
+    service,
+    "buttons.selector.toolSetBehavior.selectField",
+    "cannot dispatch a field service"
+  );
+
+  const executes = createSelectDocument();
+  executes.buttons.selector.toolSetBehavior.execute = true;
+  findIssue(
+    executes,
+    "buttons.selector.toolSetBehavior.execute",
+    "must be state-only controls"
+  );
+
+  const omittedExecute = createSelectDocument();
+  delete omittedExecute.buttons.selector.toolSetBehavior.execute;
+  findIssue(
+    omittedExecute,
+    "buttons.selector.toolSetBehavior.execute",
+    "must be state-only controls"
+  );
+
+  const emptySelectId = createSelectDocument();
+  emptySelectId.buttons.selector.toolSetBehavior.selectField = " ";
+  findIssue(
+    emptySelectId,
+    "buttons.selector.toolSetBehavior.selectField",
+    "must be nonempty strings"
+  );
+
+  const inlineEdit = createSelectDocument();
+  inlineEdit.buttons.selector.toolSetBehavior.inlineEditField = "amount";
+  findIssue(
+    inlineEdit,
+    "buttons.selector.toolSetBehavior",
+    "cannot be both an inline editor and a select fanout"
+  );
+
+  const invalidOptions = createSelectDocument();
+  invalidOptions.popoutUnits.selector.fields[0].options = [
+    { id: "axis", label: "X", value: "X" },
+    { id: "AXIS", label: " ", value: "X" },
+    { id: "z", label: "Z", value: { axis: "Z" } }
+  ];
+  const invalidOptionResult = validateButtonStateDocument(invalidOptions);
+  assert.equal(invalidOptionResult.structurallyValid, true);
+  assert.equal(
+    invalidOptionResult.issues.some((issue) => (
+      issue.path === "popoutUnits.selector.fields.0.options.1.id" &&
+      issue.message.includes("must be unique")
+    )),
+    true
+  );
+  assert.equal(
+    invalidOptionResult.issues.some((issue) => (
+      issue.path === "popoutUnits.selector.fields.0.options.1.label" &&
+      issue.message.includes("must be nonempty")
+    )),
+    true
+  );
+  assert.equal(
+    invalidOptionResult.issues.some((issue) => (
+      issue.path === "popoutUnits.selector.fields.0.options.1.value" &&
+      issue.message.includes("must be unique")
+    )),
+    true
+  );
+  assert.equal(
+    invalidOptionResult.issues.some((issue) => (
+      issue.path === "popoutUnits.selector.fields.0.options.2.value" &&
+      issue.message.includes("JSON primitives")
+    )),
+    true
+  );
+});
+
 test("source updates preserve Button identities and presentation while refreshing runtime targets", () => {
   const document = createButtonStateDocument();
   const singleIdentity = source("Windows", "Files", "single.flowcell-source.json");
@@ -4954,7 +5234,7 @@ test("selection sizing preserves tight rows and shifts only the neighboring cont
     { id: "c", rect: { x: 90, y: 5, width: 40, height: 20 } },
     { id: "d", rect: { x: 10, y: 40, width: 60, height: 20 } },
     { id: "e", rect: { x: 70, y: 40, width: 60, height: 20 } },
-    { id: "owner", rect: { x: 145, y: 70, width: 20, height: 20 } }
+    { id: "owner", rect: { x: -25, y: 5, width: 80, height: 25 } }
   ];
   const original = structuredClone(input);
   const originalContentRows = inferButtonPlacementRows(input.filter((item) => item.id !== "owner"))
@@ -4986,10 +5266,13 @@ test("selection sizing preserves tight rows and shifts only the neighboring cont
       .map((row) => row.placements.map((placement) => placement.id)),
     originalContentRows
   );
-  assert.deepEqual(validateExactButtonLayoutGeometry(result.placements, {
-    width: 170,
-    height: 100
-  }), []);
+  assert.deepEqual(
+    validateExactButtonLayoutGeometry(
+      result.placements.filter((placement) => placement.id !== "owner"),
+      { width: 170, height: 100 }
+    ),
+    []
+  );
 });
 
 test("selection sizing keeps every coordinate when the copied box already fits", () => {
@@ -5045,7 +5328,7 @@ test("selection alignment packs the existing rows against their top-left Button"
     { id: "b", rect: { x: 85, y: 10, width: 30, height: 20 } },
     { id: "c", rect: { x: 40, y: 50, width: 30, height: 20 } },
     { id: "d", rect: { x: 120, y: 50, width: 50, height: 20 } },
-    { id: "owner", rect: { x: 190, y: 75, width: 20, height: 20 } }
+    { id: "owner", rect: { x: -15, y: 10, width: 60, height: 20 } }
   ];
   const original = structuredClone(input);
   const originalRows = inferButtonPlacementRows(input.filter((item) => item.id !== "owner"))
@@ -5074,10 +5357,13 @@ test("selection alignment packs the existing rows against their top-left Button"
       .map((row) => row.placements.map((placement) => placement.id)),
     originalRows
   );
-  assert.deepEqual(validateExactButtonLayoutGeometry(result.placements, {
-    width: 220,
-    height: 100
-  }), []);
+  assert.deepEqual(
+    validateExactButtonLayoutGeometry(
+      result.placements.filter((placement) => placement.id !== "owner"),
+      { width: 220, height: 100 }
+    ),
+    []
+  );
 });
 
 test("selection alignment leaves the layout untouched when an unselected Button blocks it", () => {
@@ -6007,6 +6293,25 @@ test("Pop-out Fan mode authors and retains exact regular and Tool Set owner plac
     new Set(toolSurface.placementIds),
     new Set([...toolUnit.childPlacementIds, toolOwner.id])
   );
+  const authoredToolSetOptions = buildButtonEditorPlacementOptions(
+    document,
+    toolUnit.ownerButtonId
+  );
+  assert.equal(
+    authoredToolSetOptions.find((option) => option.view === "tool-set-fan")?.placementId,
+    toolOwner.id
+  );
+  assert.equal(
+    resolveButtonEditorContextPlacementId(document, {
+      buttonId: toolUnit.ownerButtonId,
+      surfaceId: toolUnit.surfaceId
+    }),
+    toolOwner.id
+  );
+  assert.equal(
+    resolveButtonEditorContextPlacementId(document, { surfaceId: toolUnit.surfaceId }),
+    toolOwner.id
+  );
 
   const retainedOwnerId = toolOwner.id;
   setButtonPopoutFanMode({
@@ -6393,6 +6698,270 @@ test("Illustrator Ill Align supports none or one selected mode independently on 
   } finally {
     unregister();
   }
+});
+
+test("Blender Flatten/Revolve ships one clean-import toolset with skinned selectors and inline values", () => {
+  const packageRoot = join(
+    frontendRoot,
+    "..",
+    "Programs",
+    "Blender",
+    "Blender Git Scripts",
+    "Toolsets",
+    "flatten-revolve"
+  );
+  const manifest = JSON.parse(readFileSync(join(packageRoot, "flowcell.toolset.json"), "utf8"));
+  const pythonSource = readFileSync(join(packageRoot, manifest.source), "utf8");
+  const childSlots = manifest.children.map((child) => child.slot);
+  const childLabels = Object.fromEntries(manifest.children.map((child) => [child.slot, child.label]));
+  const fieldsById = Object.fromEntries(manifest.layout.fields.map((field) => [field.id, field]));
+
+  assert.equal(manifest.kind, "toolset");
+  assert.equal(manifest.program, "Blender");
+  assert.equal(manifest.version, "1.1.0");
+  assert.equal(manifest.source, "flatten revolve.py");
+  assert.deepEqual(childSlots, [
+    "pivot_select",
+    "flatten_profile",
+    "flatten_axis_select",
+    "generate_revolve",
+    "revolve_axis_select",
+    "angle_input",
+    "steps_input",
+    "merge_input"
+  ]);
+  assert.deepEqual(childLabels, {
+    pivot_select: "World",
+    flatten_profile: "Flatten",
+    flatten_axis_select: "Y",
+    generate_revolve: "Revolve",
+    revolve_axis_select: "Z",
+    angle_input: "360",
+    steps_input: "128",
+    merge_input: "0.0001"
+  });
+  assert.equal(manifest.layout.width, 640);
+  assert.equal(manifest.layout.height, 260);
+  assert.deepEqual(manifest.layout.updatePolicy, { appendMissingChildSlots: true });
+  assert.deepEqual(manifest.layout.placements, {
+    pivot_select: { x: 8, y: 8, width: 144, height: 42 },
+    flatten_profile: { x: 8, y: 58, width: 144, height: 42 },
+    flatten_axis_select: { x: 160, y: 58, width: 72, height: 42 },
+    generate_revolve: { x: 8, y: 108, width: 144, height: 42 },
+    revolve_axis_select: { x: 160, y: 108, width: 72, height: 42 },
+    angle_input: { x: 240, y: 108, width: 104, height: 42 },
+    steps_input: { x: 352, y: 108, width: 104, height: 42 },
+    merge_input: { x: 464, y: 108, width: 128, height: 42 }
+  });
+  assert.equal(manifest.layout.fields.length, 6);
+  assert.equal(manifest.layout.fields.every((field) => field.hidden === true), true);
+  assert.deepEqual(
+    Object.fromEntries(manifest.layout.fields.map((field) => [field.id, field.defaultValue])),
+    {
+      center_mode: "WORLD",
+      flatten_axis: "Y",
+      revolve_axis: "Z",
+      angle_deg: 360,
+      revolve_steps: 128,
+      merge_distance: 0.0001
+    }
+  );
+  assert.equal(fieldsById.center_mode.kind, "select");
+  assert.equal(fieldsById.flatten_axis.kind, "select");
+  assert.equal(fieldsById.revolve_axis.kind, "select");
+  assert.equal(fieldsById.angle_deg.kind, "number");
+  assert.equal(fieldsById.revolve_steps.kind, "number");
+  assert.equal(fieldsById.merge_distance.kind, "number");
+
+  assert.deepEqual(manifest.layout.childBehaviors.pivot_select, {
+    selectField: "center_mode",
+    execute: false
+  });
+  assert.deepEqual(manifest.layout.childBehaviors.flatten_axis_select, {
+    selectField: "flatten_axis",
+    execute: false
+  });
+  assert.deepEqual(manifest.layout.childBehaviors.revolve_axis_select, {
+    selectField: "revolve_axis",
+    execute: false
+  });
+  assert.deepEqual(manifest.layout.childBehaviors.angle_input, {
+    inlineEditField: "angle_deg",
+    execute: false
+  });
+  assert.deepEqual(manifest.layout.childBehaviors.steps_input, {
+    inlineEditField: "revolve_steps",
+    execute: false
+  });
+  assert.deepEqual(manifest.layout.childBehaviors.merge_input, {
+    inlineEditField: "merge_distance",
+    execute: false
+  });
+  for (const slot of [
+    "pivot_select",
+    "flatten_axis_select",
+    "revolve_axis_select",
+    "angle_input",
+    "steps_input",
+    "merge_input"
+  ]) {
+    assert.equal(manifest.layout.childBehaviors[slot].execute, false, slot);
+  }
+  assert.equal(manifest.layout.childBehaviors.flatten_profile.execute, true);
+  assert.equal(manifest.layout.childBehaviors.generate_revolve.execute, true);
+
+  const importLines = pythonSource
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("import ") || line.startsWith("from "));
+  assert.deepEqual(importLines, [
+    "from __future__ import annotations",
+    "import math",
+    "import bpy",
+    "from mathutils import Matrix, Vector"
+  ]);
+  assert.match(pythonSource, /^def run_flowcell_action\(context=None, data=None\):/m);
+  assert.doesNotMatch(pythonSource, /flowcell_actions|flatten_revolve_tools/);
+  assert.match(
+    pythonSource,
+    /float\(360\.0 if angle_deg in \(None, ""\) else angle_deg\)/,
+    "an explicitly typed zero angle must not fall back to 360"
+  );
+  assert.match(
+    pythonSource,
+    /float\(0\.0001 if merge_distance in \(None, ""\) else merge_distance\)/,
+    "an explicitly typed zero merge distance must not fall back to 0.0001"
+  );
+});
+
+test("Blender Tri Poly ships clean-import skinned Angle and Sides value Buttons", () => {
+  const packageRoot = join(
+    frontendRoot,
+    "..",
+    "Programs",
+    "Blender",
+    "Blender Git Scripts",
+    "Toolsets",
+    "tri-poly"
+  );
+  const manifest = JSON.parse(readFileSync(join(packageRoot, "flowcell.toolset.json"), "utf8"));
+  const pythonSource = readFileSync(join(packageRoot, manifest.source), "utf8");
+  const fieldsById = Object.fromEntries(manifest.layout.fields.map((field) => [field.id, field]));
+
+  assert.equal(manifest.kind, "toolset");
+  assert.equal(manifest.program, "Blender");
+  assert.equal(manifest.version, "1.1.0");
+  assert.equal(manifest.source, "tri poly.py");
+  assert.deepEqual(
+    manifest.children.map((child) => child.slot),
+    [
+      "triangle_equilateral",
+      "triangle_isosceles",
+      "triangle_50",
+      "triangle_right",
+      "triangle_scalene",
+      "polygon_create",
+      "angle_input",
+      "sides_input"
+    ]
+  );
+  assert.deepEqual(
+    Object.fromEntries(manifest.children.map((child) => [child.slot, child.label])),
+    {
+      triangle_equilateral: "Equila...",
+      triangle_isosceles: "Isosc...",
+      triangle_50: "Angle",
+      triangle_right: "Right",
+      triangle_scalene: "Scalene",
+      polygon_create: "Create",
+      angle_input: "50",
+      sides_input: "15"
+    }
+  );
+  assert.equal(manifest.layout.width, 576);
+  assert.equal(manifest.layout.height, 160);
+  assert.deepEqual(manifest.layout.updatePolicy, { appendMissingChildSlots: true });
+  assert.deepEqual(manifest.layout.placements, {
+    triangle_equilateral: { x: 8, y: 8, width: 144, height: 42 },
+    triangle_isosceles: { x: 160, y: 8, width: 144, height: 42 },
+    triangle_50: { x: 312, y: 8, width: 144, height: 42 },
+    angle_input: { x: 464, y: 8, width: 104, height: 42 },
+    triangle_right: { x: 8, y: 58, width: 144, height: 42 },
+    triangle_scalene: { x: 160, y: 58, width: 144, height: 42 },
+    polygon_create: { x: 312, y: 58, width: 144, height: 42 },
+    sides_input: { x: 464, y: 58, width: 104, height: 42 }
+  });
+  assert.equal(manifest.layout.fields.length, 2);
+  assert.equal(manifest.layout.fields.every((field) => field.hidden === true), true);
+  assert.deepEqual(fieldsById.angle_deg, {
+    id: "angle_deg",
+    kind: "number",
+    label: "Angle",
+    payloadKey: "angle_deg",
+    defaultValue: 50,
+    minimum: 1,
+    maximum: 178,
+    step: 1,
+    x: 464,
+    y: 8,
+    width: 104,
+    height: 42,
+    zIndex: 1,
+    hidden: true
+  });
+  assert.deepEqual(fieldsById.sides, {
+    id: "sides",
+    kind: "number",
+    label: "Sides",
+    payloadKey: "sides",
+    defaultValue: 15,
+    minimum: 3,
+    maximum: 96,
+    step: 1,
+    x: 464,
+    y: 58,
+    width: 104,
+    height: 42,
+    zIndex: 1,
+    hidden: true
+  });
+  assert.deepEqual(manifest.layout.childBehaviors.angle_input, {
+    inlineEditField: "angle_deg",
+    execute: false
+  });
+  assert.deepEqual(manifest.layout.childBehaviors.sides_input, {
+    inlineEditField: "sides",
+    execute: false
+  });
+  assert.deepEqual(manifest.layout.childBehaviors.triangle_50, {
+    execute: true,
+    payloadTemplate: {
+      command: "triangle_50",
+      angle_deg: { $field: "angle_deg" }
+    }
+  });
+  assert.deepEqual(manifest.layout.childBehaviors.polygon_create, {
+    execute: true,
+    payloadTemplate: {
+      command: "polygon_create",
+      sides: { $field: "sides" }
+    }
+  });
+
+  const importLines = pythonSource
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("import ") || line.startsWith("from "));
+  assert.deepEqual(importLines, [
+    "from __future__ import annotations",
+    "import math",
+    "import bmesh",
+    "import bpy"
+  ]);
+  assert.match(pythonSource, /^def run_flowcell_action\(context=None, data=None\):/m);
+  assert.doesNotMatch(pythonSource, /flowcell_actions|tri_poly_tools/);
+  assert.doesNotMatch(pythonSource, /Ã|Â|â€|Æ’/);
+  assert.match(pythonSource, /Angle °/);
 });
 
 test("Blender Rotate shares one inline-value Button between Transform and Distribute", async () => {

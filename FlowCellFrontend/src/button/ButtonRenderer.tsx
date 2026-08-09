@@ -1,3 +1,7 @@
+import {
+  useCallback,
+  useState
+} from "react";
 import type {
   ButtonCoreMeasurement,
   ButtonEditorMode,
@@ -73,6 +77,10 @@ export function ButtonRenderer({
   onVisualStateChange,
   onNaturalMeasurement
 }: ButtonRendererProps) {
+  const [selectExpanded, setSelectExpanded] = useState(false);
+  const handleSelectExpandedChange = useCallback((expanded: boolean) => {
+    setSelectExpanded(expanded);
+  }, []);
   const placement = document.placements[placementId];
   if (!placement) return null;
   const button = document.buttons[placement.buttonId];
@@ -91,13 +99,14 @@ export function ButtonRenderer({
     <span
       data-button-placement-id={placement.id}
       data-button-selected={selected ? "true" : "false"}
+      data-button-select-expanded={selectExpanded ? "true" : "false"}
       style={{
         position: "absolute",
         left: placement.x,
         top: placement.y,
         width: placement.width,
         height: placement.height,
-        zIndex: placement.zIndex,
+        zIndex: selectExpanded ? 2_147_000_000 : placement.zIndex,
         overflow: "visible",
         pointerEvents: "none"
       }}
@@ -113,6 +122,7 @@ export function ButtonRenderer({
         onFieldActivate={onFieldActivate}
         onFieldPatch={onFieldPatch}
         onRequestInlineEditorFocus={onRequestInlineEditorFocus}
+        onSelectExpandedChange={handleSelectExpandedChange}
         onSelect={(event) => onSelect?.(placement.id, event)}
         onActivate={activationHandler ? (_button, event) => activationHandler(placement.id, button, event) : undefined}
         onDoubleActivate={onDoubleActivate ? (_button, event) => onDoubleActivate(placement.id, button, event) : undefined}

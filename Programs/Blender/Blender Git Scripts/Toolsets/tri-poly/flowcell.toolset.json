@@ -1,7 +1,7 @@
 {
     "schemaVersion":  1,
     "id":  "blender.tri-poly",
-    "version":  "1.0.0",
+    "version":  "1.1.0",
     "label":  "tri poly",
     "tooltip":  "Create triangle and regular polygon prism shapes from a compact Tri \u0026 Poly tool set.",
     "kind":  "toolset",
@@ -31,7 +31,7 @@
                      },
                      {
                          "slot":  "triangle_50",
-                         "label":  "50Ãƒâ€šÃ‚Â°",
+                         "label":  "Angle",
                          "tooltip":  "Create a triangular prism with the typed apex angle.",
                          "payload":  {
                                          "command":  "triangle_50",
@@ -64,6 +64,16 @@
                                          "command":  "polygon_create",
                                          "action":  "polygon_create"
                                      }
+                     },
+                     {
+                         "slot":  "angle_input",
+                         "label":  "50",
+                         "tooltip":  "Click anywhere on this Button, then type the triangular prism apex angle."
+                     },
+                     {
+                         "slot":  "sides_input",
+                         "label":  "15",
+                         "tooltip":  "Click anywhere on this Button, then type the regular polygon side count."
                      }
                  ],
     "layout":  {
@@ -71,15 +81,30 @@
                    "columns":  4,
                    "gap":  8,
                    "padding":  8,
-                   "width":  560,
-                   "height":  220,
+                   "width":  576,
+                   "height":  160,
+                   "updatePolicy":  {
+                                         "appendMissingChildSlots":  true
+                                     },
+                   "placements":  {
+                                      "triangle_equilateral":  { "x": 8, "y": 8, "width": 144, "height": 42 },
+                                      "triangle_isosceles":  { "x": 160, "y": 8, "width": 144, "height": 42 },
+                                      "triangle_50":  { "x": 312, "y": 8, "width": 144, "height": 42 },
+                                      "angle_input":  { "x": 464, "y": 8, "width": 104, "height": 42 },
+                                      "triangle_right":  { "x": 8, "y": 58, "width": 144, "height": 42 },
+                                      "triangle_scalene":  { "x": 160, "y": 58, "width": 144, "height": 42 },
+                                      "polygon_create":  { "x": 312, "y": 58, "width": 144, "height": 42 },
+                                      "sides_input":  { "x": 464, "y": 58, "width": 104, "height": 42 }
+                                  },
                    "fields":  [
-                                  { "id": "angle_deg", "kind": "number", "label": "Angle", "payloadKey": "angle_deg", "defaultValue": 50, "minimum": 1, "maximum": 178, "step": 1, "x": 8, "y": 156, "width": 120, "height": 36, "zIndex": 2 },
-                                  { "id": "sides", "kind": "number", "label": "Sides", "payloadKey": "sides", "defaultValue": 15, "minimum": 3, "maximum": 96, "step": 1, "x": 136, "y": 156, "width": 120, "height": 36, "zIndex": 2 }
+                                  { "id": "angle_deg", "kind": "number", "label": "Angle", "payloadKey": "angle_deg", "defaultValue": 50, "minimum": 1, "maximum": 178, "step": 1, "x": 464, "y": 8, "width": 104, "height": 42, "zIndex": 1, "hidden": true },
+                                  { "id": "sides", "kind": "number", "label": "Sides", "payloadKey": "sides", "defaultValue": 15, "minimum": 3, "maximum": 96, "step": 1, "x": 464, "y": 58, "width": 104, "height": 42, "zIndex": 1, "hidden": true }
                               ],
                    "childBehaviors":  {
                                           "triangle_50": { "execute": true, "payloadTemplate": { "command": "triangle_50", "angle_deg": { "$field": "angle_deg" } } },
-                                          "polygon_create": { "execute": true, "payloadTemplate": { "command": "polygon_create", "sides": { "$field": "sides" } } }
+                                          "polygon_create": { "execute": true, "payloadTemplate": { "command": "polygon_create", "sides": { "$field": "sides" } } },
+                                          "angle_input": { "inlineEditField": "angle_deg", "execute": false },
+                                          "sides_input": { "inlineEditField": "sides", "execute": false }
                                       }
                }
 }

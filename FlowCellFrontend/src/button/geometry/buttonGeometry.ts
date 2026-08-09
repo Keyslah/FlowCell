@@ -1535,6 +1535,12 @@ export function hasAnyButtonGeometryOverlap(rects: readonly ButtonRect[]): boole
   return false;
 }
 
+function isFinitePositiveButtonRect(rect: ButtonRect): boolean {
+  return [rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) &&
+    rect.width > 0 &&
+    rect.height > 0;
+}
+
 export function validateExactButtonLayoutGeometry(
   placements: readonly NamedButtonRect[],
   surface: Pick<ButtonRect, "width" | "height">
@@ -1542,11 +1548,7 @@ export function validateExactButtonLayoutGeometry(
   const issues: ButtonLayoutGeometryIssue[] = [];
   for (const placement of placements) {
     const rect = placement.rect;
-    if (
-      ![rect.x, rect.y, rect.width, rect.height].every(Number.isFinite) ||
-      rect.width <= 0 ||
-      rect.height <= 0
-    ) {
+    if (!isFinitePositiveButtonRect(rect)) {
       issues.push({
         placementIds: [placement.id],
         message: `Placement '${placement.id}' must use finite geometry with positive dimensions.`
@@ -1629,7 +1631,22 @@ export function resizeButtonPlacementSelection(
         }
       }
     : placement);
-  const directIssues = validateExactButtonLayoutGeometry(resized, options.surface);
+  const independentIds = new Set(options.independentPlacementIds ?? []);
+  const invalidIndependentPlacement = resized.find((placement) =>
+    independentIds.has(placement.id) && !isFinitePositiveButtonRect(placement.rect)
+  );
+  if (invalidIndependentPlacement) {
+    return {
+      success: false,
+      placements: original,
+      reflowed: false,
+      reason: `Placement '${invalidIndependentPlacement.id}' must use finite geometry with positive dimensions.`
+    };
+  }
+  const directIssues = validateExactButtonLayoutGeometry(
+    resized.filter((placement) => !independentIds.has(placement.id)),
+    options.surface
+  );
   if (directIssues.length === 0) {
     return {
       success: true,
@@ -1639,7 +1656,6 @@ export function resizeButtonPlacementSelection(
     };
   }
 
-  const independentIds = new Set(options.independentPlacementIds ?? []);
   const originalContent = original.filter((placement) => !independentIds.has(placement.id));
   if (originalContent.length === 0) {
     return {
@@ -1676,7 +1692,10 @@ export function resizeButtonPlacementSelection(
       ? placement.rect
       : compactedById.get(placement.id) ?? placement.rect
   }));
-  const packedIssues = validateExactButtonLayoutGeometry(packed, options.surface);
+  const packedIssues = validateExactButtonLayoutGeometry(
+    packed.filter((placement) => !independentIds.has(placement.id)),
+    options.surface
+  );
   if (packedIssues.length > 0) {
     return {
       success: false,
@@ -1790,7 +1809,18 @@ export function alignButtonPlacementSelectionToTopLeftButton(
     id: placement.id,
     rect: compactedById.get(placement.id) ?? placement.rect
   }));
-  const geometryIssues = validateExactButtonLayoutGeometry(aligned, options.surface);
+  const invalidIndependentPlacement = aligned.find((placement) =>
+    independentIds.has(placement.id) && !isFinitePositiveButtonRect(placement.rect)
+  );
+  const geometryIssues = invalidIndependentPlacement
+    ? [{
+        placementIds: [invalidIndependentPlacement.id],
+        message: `Placement '${invalidIndependentPlacement.id}' must use finite geometry with positive dimensions.`
+      }]
+    : validateExactButtonLayoutGeometry(
+        aligned.filter((placement) => !independentIds.has(placement.id)),
+        options.surface
+      );
   if (geometryIssues.length > 0) {
     return {
       success: false,

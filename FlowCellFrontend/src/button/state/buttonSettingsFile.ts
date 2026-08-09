@@ -704,8 +704,17 @@ export function validateButtonSettingsFile(value: unknown): ButtonSettingsFileVa
         surface,
         issues,
         isObject(value.behavior) &&
-          value.behavior.kind === "fan" &&
-          entry.buttonId === value.behavior.panelOwnerButtonId
+          (
+            (
+              value.behavior.kind === "fan" &&
+              entry.buttonId === value.behavior.panelOwnerButtonId
+            ) ||
+            (
+              (value.behavior.kind === "regular-popout" ||
+                value.behavior.kind === "tool-set-popout") &&
+              entry.placementId === value.behavior.ownerPlacementId
+            )
+          )
       );
     });
     if (

@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useId,
   useMemo,
   useRef,
   useState
@@ -11,6 +12,7 @@ import type {
   ButtonEditorMode,
   ButtonPlacement,
   ButtonRecord,
+  ButtonSelectToolField,
   ButtonSkin,
   ButtonSkinVisualState,
   ButtonToolField,
@@ -19,6 +21,7 @@ import type {
   JsonValue
 } from "./types";
 import { ButtonSkinRenderer } from "./skins/ButtonSkinRenderer";
+import { ButtonSelectFieldFanout } from "./ButtonSelectFieldFanout";
 import {
   executeButtonRecord,
   resolveButtonPressEventPlan,
@@ -58,6 +61,7 @@ export interface ButtonHostProps {
     currentValue: JsonValue
   ) => Promise<JsonValue | undefined>;
   onRequestInlineEditorFocus?: () => void | Promise<void>;
+  onSelectExpandedChange?: (expanded: boolean) => void;
   onSelect?: (event: PointerEvent | KeyboardEvent) => void;
   onActivate?: (button: ButtonRecord, event: PointerEvent | KeyboardEvent) => void | Promise<void>;
   onDoubleActivate?: (button: ButtonRecord, event: MouseEvent) => void | Promise<void>;
@@ -75,6 +79,7 @@ export interface ButtonHostProps {
 
 const HOLD_MS = 400;
 const RELEASE_MS = 140;
+const SELECT_HOVER_HANDOFF_MS = 140;
 const ERROR_MS = 1800;
 const PLAY_SAFETY_MS = 15_000;
 let buttonHostInteractionSequence = 0;
@@ -106,6 +111,12 @@ function focusAndSelectInlineEditor(element: HTMLElement): void {
   selectInlineEditorContents(element);
 }
 
+function isButtonSelectValue(
+  value: JsonValue | undefined
+): value is ButtonSelectToolField["defaultValue"] {
+  return value === null || ["string", "number", "boolean"].includes(typeof value);
+}
+
 export function ButtonHost({
   button,
   placement,
@@ -119,6 +130,7 @@ export function ButtonHost({
   onFieldPatch,
   onFieldActivate,
   onRequestInlineEditorFocus,
+  onSelectExpandedChange,
   onSelect,
   onActivate,
   onDoubleActivate,
@@ -142,12 +154,45 @@ export function ButtonHost({
   const [play, setPlay] = useState(false);
   const [release, setRelease] = useState(false);
   const [error, setError] = useState(false);
+  const [selectExpanded, setSelectExpanded] = useState(false);
+  const [selectPinned, setSelectPinned] = useState(false);
+  const [selectActiveIndex, setSelectActiveIndex] = useState(0);
+  const selectListboxId = useId();
   const [activationStateIndex, setActivationStateIndex] = useState(0);
   const activationStateIndexRef = useRef(activationStateIndex);
   activationStateIndexRef.current = activationStateIndex;
   const activationCycle = placement.activationCycle && placement.activationCycle.states.length >= 2
     ? placement.activationCycle
     : null;
+  const inlineEditFieldId = button.toolSetBehavior?.inlineEditField;
+  const inlineEditField = fields?.find((field) => (
+    field.id === inlineEditFieldId && (field.kind === "number" || field.kind === "text")
+  ));
+  const inlineEditValue = inlineEditField
+    ? fieldValues?.[inlineEditField.id] ?? inlineEditField.defaultValue
+    : undefined;
+  const hasSelectBehavior = Boolean(
+    button.toolSetBehavior && Object.hasOwn(button.toolSetBehavior, "selectField")
+  );
+  const rawSelectFieldId = button.toolSetBehavior?.selectField;
+  const selectFieldId = typeof rawSelectFieldId === "string" ? rawSelectFieldId.trim() : undefined;
+  const selectField = fields?.find((field): field is ButtonSelectToolField => (
+    field.id === selectFieldId && field.kind === "select"
+  ));
+  const rawSelectValue = selectField ? fieldValues?.[selectField.id] : undefined;
+  const selectValue = selectField
+    ? isButtonSelectValue(rawSelectValue) ? rawSelectValue : selectField.defaultValue
+    : undefined;
+  const matchedSelectOptionIndex = selectField
+    ? selectField.options.findIndex((option) => Object.is(option.value, selectValue))
+    : -1;
+  const selectedSelectOptionIndex = Math.max(0, matchedSelectOptionIndex);
+  const selectedSelectOption = matchedSelectOptionIndex >= 0
+    ? selectField?.options[matchedSelectOptionIndex]
+    : undefined;
+  const interactionDisabled = button.disabled || (
+    hasSelectBehavior && (!selectField || Boolean(selectField.disabled))
+  );
   const activationStateCount = activationCycle
     ? getButtonPlacementActivationStateCount(activationCycle)
     : getButtonActivationStateCount(button.activationBehavior);
@@ -181,14 +226,20 @@ export function ButtonHost({
       play,
       release,
       selected,
-      disabled: button.disabled,
+      disabled: interactionDisabled,
       error
     }
   });
+  const renderedLabel = inlineEditField
+    ? String(inlineEditValue ?? "")
+    : selectField
+      ? selectedSelectOption?.label ?? String(selectValue ?? "")
+      : resolvedAppearance.label;
   const pointerActiveRef = useRef(false);
   const hoverActiveRef = useRef(false);
   const holdTimerRef = useRef<number | null>(null);
   const releaseTimerRef = useRef<number | null>(null);
+  const selectCloseTimerRef = useRef<number | null>(null);
   const errorTimerRef = useRef<number | null>(null);
   const playTimerRef = useRef<number | null>(null);
   const playVisualAvailableRef = useRef(true);
@@ -204,6 +255,12 @@ export function ButtonHost({
   const pendingHoverLeaveRef = useRef(false);
   const syntheticHoverSessionRef = useRef(false);
   const inlineEditorElementRef = useRef<HTMLElement | null>(null);
+  const selectExpandedRef = useRef(selectExpanded);
+  const selectPinnedRef = useRef(selectPinned);
+  const selectActiveIndexRef = useRef(selectActiveIndex);
+  const selectFieldRef = useRef(selectField);
+  const selectedSelectOptionIndexRef = useRef(selectedSelectOptionIndex);
+  const fieldValuesRef = useRef(fieldValues);
   // Volatile inputs flow through refs so the pointer/keyboard listeners stay
   // attached across re-renders; detaching mid-hover fakes a hoverLeave and
   // strands the hover state.
@@ -215,6 +272,7 @@ export function ButtonHost({
   const onDoubleActivateRef = useRef(onDoubleActivate);
   const onRequestContextMenuRef = useRef(onRequestContextMenu);
   const onRequestInlineEditorFocusRef = useRef(onRequestInlineEditorFocus);
+  const onSelectExpandedChangeRef = useRef(onSelectExpandedChange);
   const onFieldPatchRef = useRef(onFieldPatch);
   const onHoverStartRef = useRef(onHoverStart);
   const onHoverEndRef = useRef(onHoverEnd);
@@ -232,11 +290,18 @@ export function ButtonHost({
   onDoubleActivateRef.current = onDoubleActivate;
   onRequestContextMenuRef.current = onRequestContextMenu;
   onRequestInlineEditorFocusRef.current = onRequestInlineEditorFocus;
+  onSelectExpandedChangeRef.current = onSelectExpandedChange;
   onFieldPatchRef.current = onFieldPatch;
   onHoverStartRef.current = onHoverStart;
   onHoverEndRef.current = onHoverEnd;
   onHoverCancelRef.current = onHoverCancel;
   onVisualStateChangeRef.current = onVisualStateChange;
+  selectExpandedRef.current = selectExpanded;
+  selectPinnedRef.current = selectPinned;
+  selectActiveIndexRef.current = selectActiveIndex;
+  selectFieldRef.current = selectField;
+  selectedSelectOptionIndexRef.current = selectedSelectOptionIndex;
+  fieldValuesRef.current = fieldValues;
   requestActivationTriggerRef.current = (trigger, interactionId, allowSelectionOnlyTrigger = false) => {
     const currentPlacement = placementRef.current;
     const cycle = currentPlacement.activationCycle;
@@ -244,6 +309,10 @@ export function ButtonHost({
       modeRef.current !== "run" ||
       (selectionOnlyRef.current && trigger !== "hover" && !allowSelectionOnlyTrigger) ||
       buttonRef.current.disabled ||
+      Boolean(
+        buttonRef.current.toolSetBehavior &&
+        Object.hasOwn(buttonRef.current.toolSetBehavior, "selectField")
+      ) ||
       !cycle ||
       cycle.states.length < 2 ||
       buttonPlacementActivationCycleUsesResultMatches(cycle)
@@ -263,16 +332,6 @@ export function ButtonHost({
   };
   const appliedVisualStateRef = useRef<ButtonVisualState>(rawVisualState);
   playVisualAvailableRef.current = !activationCycle || authoredVisualStates.has("play");
-  const inlineEditFieldId = button.toolSetBehavior?.inlineEditField;
-  const inlineEditField = fields?.find((field) => (
-    field.id === inlineEditFieldId && (field.kind === "number" || field.kind === "text")
-  ));
-  const inlineEditValue = inlineEditField
-    ? fieldValues?.[inlineEditField.id] ?? inlineEditField.defaultValue
-    : undefined;
-  const renderedLabel = inlineEditField
-    ? String(inlineEditValue ?? "")
-    : resolvedAppearance.label;
 
   useEffect(() => {
     if (activationStateCount <= 1) {
@@ -304,6 +363,128 @@ export function ButtonHost({
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = null;
   };
+
+  const cancelSelectClose = useCallback(() => {
+    if (selectCloseTimerRef.current !== null) {
+      window.clearTimeout(selectCloseTimerRef.current);
+      selectCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const setSelectActive = useCallback((index: number) => {
+    const optionCount = selectFieldRef.current?.options.length ?? 0;
+    if (optionCount <= 0) return;
+    const nextIndex = Math.max(0, Math.min(optionCount - 1, index));
+    selectActiveIndexRef.current = nextIndex;
+    setSelectActiveIndex(nextIndex);
+  }, []);
+
+  const closeSelectFanout = useCallback(() => {
+    cancelSelectClose();
+    selectExpandedRef.current = false;
+    selectPinnedRef.current = false;
+    setSelectExpanded(false);
+    setSelectPinned(false);
+  }, [cancelSelectClose]);
+
+  const openSelectFanout = useCallback((pinned: boolean) => {
+    const field = selectFieldRef.current;
+    if (
+      modeRef.current !== "run" ||
+      buttonRef.current.disabled ||
+      field?.disabled ||
+      !field ||
+      field.options.length <= 0
+    ) return;
+    cancelSelectClose();
+    if (!selectExpandedRef.current) {
+      setSelectActive(selectedSelectOptionIndexRef.current);
+    }
+    selectExpandedRef.current = true;
+    setSelectExpanded(true);
+    if (pinned) {
+      selectPinnedRef.current = true;
+      setSelectPinned(true);
+    }
+  }, [cancelSelectClose, setSelectActive]);
+
+  const toggleSelectPinned = useCallback(() => {
+    if (selectExpandedRef.current && selectPinnedRef.current) {
+      closeSelectFanout();
+      return;
+    }
+    openSelectFanout(true);
+  }, [closeSelectFanout, openSelectFanout]);
+
+  const scheduleSelectClose = useCallback(() => {
+    cancelSelectClose();
+    if (!selectExpandedRef.current || selectPinnedRef.current) return;
+    selectCloseTimerRef.current = window.setTimeout(() => {
+      selectCloseTimerRef.current = null;
+      if (!selectPinnedRef.current) closeSelectFanout();
+    }, SELECT_HOVER_HANDOFF_MS);
+  }, [cancelSelectClose, closeSelectFanout]);
+
+  const chooseSelectOption = useCallback((index: number) => {
+    const field = selectFieldRef.current;
+    const option = field?.options[index];
+    if (!field || !option || field.disabled || buttonRef.current.disabled) return;
+    const nextValues = {
+      ...(fieldValuesRef.current ?? {}),
+      [field.id]: option.value
+    };
+    onFieldPatchRef.current?.({ [field.id]: option.value }, nextValues);
+    closeSelectFanout();
+  }, [closeSelectFanout]);
+
+  const moveSelectActive = useCallback((direction: "previous" | "next" | "first" | "last") => {
+    const field = selectFieldRef.current;
+    const optionCount = field?.options.length ?? 0;
+    if (optionCount <= 0) return;
+    const wasExpanded = selectExpandedRef.current;
+    const currentIndex = wasExpanded
+      ? selectActiveIndexRef.current
+      : selectedSelectOptionIndexRef.current;
+    openSelectFanout(true);
+    const nextIndex = direction === "first"
+      ? 0
+      : direction === "last"
+        ? optionCount - 1
+        : direction === "next"
+          ? (currentIndex + 1) % optionCount
+          : (currentIndex - 1 + optionCount) % optionCount;
+    setSelectActive(nextIndex);
+  }, [openSelectFanout, setSelectActive]);
+
+  useEffect(() => {
+    onSelectExpandedChangeRef.current?.(selectExpanded);
+  }, [selectExpanded]);
+
+  useEffect(() => {
+    if (!selectField || mode !== "run" || interactionDisabled) {
+      closeSelectFanout();
+    }
+  }, [closeSelectFanout, interactionDisabled, mode, selectField]);
+
+  useEffect(() => {
+    const optionCount = selectField?.options.length ?? 0;
+    if (!selectExpandedRef.current) {
+      setSelectActive(selectedSelectOptionIndex);
+    } else if (optionCount > 0 && selectActiveIndexRef.current >= optionCount) {
+      setSelectActive(optionCount - 1);
+    }
+  }, [selectField?.options.length, selectedSelectOptionIndex, setSelectActive]);
+
+  useEffect(() => {
+    if (!selectExpanded) return;
+    const handleDocumentKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      closeSelectFanout();
+    };
+    document.addEventListener("keydown", handleDocumentKeyDown, true);
+    return () => document.removeEventListener("keydown", handleDocumentKeyDown, true);
+  }, [closeSelectFanout, selectExpanded]);
 
   const finishPlay = useCallback(() => {
     playRequestedRef.current = false;
@@ -462,8 +643,12 @@ export function ButtonHost({
   }, [button.disabled, fieldValues, inlineEditField, inlineEditValue, labelElement, mode]);
 
   const runEvent = useCallback(async (eventName: string, activationEvent?: PointerEvent | KeyboardEvent) => {
-    if (mode === "edit" || button.disabled) return;
+    if (mode === "edit" || interactionDisabled) return;
     try {
+      if (hasSelectBehavior) {
+        if (selectField && eventName === "click") toggleSelectPinned();
+        return;
+      }
       if (selectionOnly) {
         if (eventName === "click" && onActivate && activationEvent) {
           await onActivate(button, activationEvent);
@@ -513,7 +698,7 @@ export function ButtonHost({
         fieldPatch: {}
       });
     }
-  }, [mode, button, selectionOnly, onActivate, onExecutionResult, fields, fieldValues, onFieldActivate, onFieldPatch, activationCycle, activationStateCount]);
+  }, [mode, interactionDisabled, hasSelectBehavior, selectField, toggleSelectPinned, selectionOnly, onActivate, button, onExecutionResult, fieldValues, fields, onFieldActivate, onFieldPatch, activationCycle, activationStateCount]);
   const runEventRef = useRef(runEvent);
   runEventRef.current = runEvent;
   const enqueueEvent = useCallback((
@@ -528,16 +713,71 @@ export function ButtonHost({
 
   useEffect(() => {
     if (!coreElement) return;
-    coreElement.setAttribute("role", inlineEditField ? "group" : "button");
+    const selectRuntimeActive = mode === "run" && Boolean(selectField);
+    coreElement.setAttribute(
+      "role",
+      inlineEditField ? "group" : selectRuntimeActive ? "combobox" : "button"
+    );
     coreElement.setAttribute(
       "aria-label",
-      inlineEditField ? `${inlineEditField.label || "Value"}: ${renderedLabel}` : renderedLabel || "FlowCell Button"
+      inlineEditField
+        ? `${inlineEditField.label || "Value"}: ${renderedLabel}`
+        : selectRuntimeActive
+          ? `${selectField?.label || "Option"}: ${renderedLabel}`
+          : renderedLabel || "FlowCell Button"
     );
-    coreElement.setAttribute("aria-disabled", button.disabled ? "true" : "false");
+    coreElement.setAttribute("aria-disabled", interactionDisabled ? "true" : "false");
+    if (selectRuntimeActive) {
+      coreElement.setAttribute("aria-haspopup", "listbox");
+      coreElement.setAttribute("aria-expanded", selectExpanded ? "true" : "false");
+      coreElement.setAttribute("aria-controls", selectListboxId);
+      coreElement.setAttribute("aria-autocomplete", "none");
+      if (selectExpanded && (selectField?.options.length ?? 0) > 0) {
+        coreElement.setAttribute(
+          "aria-activedescendant",
+          `${selectListboxId}-option-${selectActiveIndex}`
+        );
+      } else {
+        coreElement.removeAttribute("aria-activedescendant");
+      }
+    } else {
+      coreElement.removeAttribute("aria-haspopup");
+      coreElement.removeAttribute("aria-expanded");
+      coreElement.removeAttribute("aria-controls");
+      coreElement.removeAttribute("aria-autocomplete");
+      coreElement.removeAttribute("aria-activedescendant");
+    }
+    let accessibilityListbox: HTMLElement | null = null;
+    const coreRoot = coreElement.getRootNode();
+    if (selectRuntimeActive && coreRoot instanceof ShadowRoot) {
+      accessibilityListbox = document.createElement("span");
+      accessibilityListbox.id = selectListboxId;
+      accessibilityListbox.setAttribute("role", "listbox");
+      accessibilityListbox.setAttribute("aria-label", selectField?.label || "Options");
+      accessibilityListbox.hidden = !selectExpanded;
+      accessibilityListbox.setAttribute("data-button-select-accessibility-listbox", "true");
+      accessibilityListbox.style.cssText = "position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;clip-path:inset(50%)!important;white-space:nowrap!important;border:0!important;pointer-events:none!important";
+      selectField?.options.forEach((option, index) => {
+        const accessibleOption = document.createElement("span");
+        accessibleOption.id = `${selectListboxId}-option-${index}`;
+        accessibleOption.setAttribute("role", "option");
+        accessibleOption.setAttribute("aria-label", option.label);
+        accessibleOption.setAttribute(
+          "aria-selected",
+          Object.is(option.value, selectValue) ? "true" : "false"
+        );
+        accessibleOption.setAttribute("aria-disabled", interactionDisabled ? "true" : "false");
+        accessibleOption.textContent = option.label;
+        accessibilityListbox?.appendChild(accessibleOption);
+      });
+      coreRoot.appendChild(accessibilityListbox);
+    }
     if (
-      selected ||
-      activationCycle?.states.length === 2 ||
-      (!activationCycle && button.activationBehavior?.mode === "toggle")
+      !selectRuntimeActive && (
+        selected ||
+        activationCycle?.states.length === 2 ||
+        (!activationCycle && button.activationBehavior?.mode === "toggle")
+      )
     ) {
       coreElement.setAttribute(
         "aria-pressed",
@@ -548,23 +788,41 @@ export function ButtonHost({
     }
     if (button.tooltip) coreElement.setAttribute("title", button.tooltip);
     else coreElement.removeAttribute("title");
-    coreElement.setAttribute("tabindex", mode === "run" && !button.disabled && !inlineEditField ? "0" : "-1");
+    coreElement.setAttribute("tabindex", mode === "run" && !interactionDisabled && !inlineEditField ? "0" : "-1");
     coreElement.setAttribute("data-button-id", button.id);
     coreElement.setAttribute("data-button-core-interactive", "true");
     (coreElement as HTMLElement).style.cursor = mode === "edit"
       ? "move"
-      : button.disabled
+      : interactionDisabled
         ? "not-allowed"
         : inlineEditField
           ? "text"
           : "pointer";
-  }, [activationCycle, activationStateIndex, coreElement, button, inlineEditField, mode, renderedLabel, selected]);
+    return () => accessibilityListbox?.remove();
+  }, [activationCycle, activationStateIndex, coreElement, button, inlineEditField, interactionDisabled, mode, renderedLabel, selectActiveIndex, selectExpanded, selectField, selectListboxId, selectValue, selected]);
 
   useEffect(() => {
     if (!coreElement) return;
     const interactionElement = coreElement;
     const beginPress = (activationEvent: PointerEvent | KeyboardEvent) => {
-      if (buttonRef.current.disabled) return;
+      const currentSelectFieldId = buttonRef.current.toolSetBehavior?.selectField;
+      const declaresSelectField = Boolean(
+        buttonRef.current.toolSetBehavior &&
+        Object.hasOwn(buttonRef.current.toolSetBehavior, "selectField")
+      );
+      const currentSelectField = selectFieldRef.current;
+      if (
+        buttonRef.current.disabled ||
+        (
+          declaresSelectField &&
+          (
+            typeof currentSelectFieldId !== "string" ||
+            !currentSelectFieldId.trim() ||
+            !currentSelectField ||
+            currentSelectField.disabled
+          )
+        )
+      ) return;
       if (modeRef.current === "edit") {
         onSelectRef.current?.(activationEvent);
         return;
@@ -660,6 +918,7 @@ export function ButtonHost({
       if (resumesActiveHoverSession) syntheticHoverSessionRef.current = false;
       hoverActiveRef.current = true;
       onHoverStartRef.current?.(buttonRef.current, event as PointerEvent);
+      if (selectFieldRef.current) openSelectFanout(false);
       if (!resumesActiveHoverSession) {
         requestActivationTriggerRef.current(
           "hover",
@@ -675,6 +934,7 @@ export function ButtonHost({
       hoverActiveRef.current = false;
       setHovered(false);
       onHoverEndRef.current?.(buttonRef.current, event as PointerEvent);
+      if (selectFieldRef.current) scheduleSelectClose();
       const shouldDeferHoverLeave = (
         pointerActiveRef.current &&
         Boolean(pressEventPlanRef.current?.dispatchPressUp)
@@ -714,6 +974,9 @@ export function ButtonHost({
           })();
         }
       }
+      if (selectFieldRef.current && modeRef.current === "run") {
+        interactionElement.focus({ preventScroll: true });
+      }
       event.stopPropagation();
       beginPress(pointerEvent);
       if (!inlineEditor) {
@@ -738,8 +1001,13 @@ export function ButtonHost({
         void enqueueEvent("hoverLeave");
       }
       onHoverCancelRef.current?.(buttonRef.current, event as PointerEvent);
+      if (selectFieldRef.current) scheduleSelectClose();
     };
     const handleDoubleClick = (event: Event) => {
+      if (
+        buttonRef.current.toolSetBehavior &&
+        Object.hasOwn(buttonRef.current.toolSetBehavior, "selectField")
+      ) return;
       const handler = onDoubleActivateRef.current;
       if (!handler) return;
       void (async () => {
@@ -771,6 +1039,55 @@ export function ButtonHost({
     const handleKeyDown = (event: Event) => {
       if (eventTargetsInlineEditor(event)) return;
       const keyboardEvent = event as KeyboardEvent;
+      const currentSelectField = selectFieldRef.current;
+      if (
+        modeRef.current === "run" &&
+        currentSelectField &&
+        !currentSelectField.disabled &&
+        !buttonRef.current.disabled
+      ) {
+        const handled = [
+          "Enter",
+          " ",
+          "ArrowUp",
+          "ArrowDown",
+          "ArrowLeft",
+          "ArrowRight",
+          "Home",
+          "End",
+          "Escape"
+        ].includes(keyboardEvent.key);
+        if (handled) {
+          keyboardEvent.preventDefault();
+          keyboardEvent.stopPropagation();
+        }
+        if (keyboardEvent.key === "Escape") {
+          closeSelectFanout();
+          return;
+        }
+        if (keyboardEvent.key === "ArrowDown" || keyboardEvent.key === "ArrowRight") {
+          moveSelectActive("next");
+          return;
+        }
+        if (keyboardEvent.key === "ArrowUp" || keyboardEvent.key === "ArrowLeft") {
+          moveSelectActive("previous");
+          return;
+        }
+        if (keyboardEvent.key === "Home") {
+          moveSelectActive("first");
+          return;
+        }
+        if (keyboardEvent.key === "End") {
+          moveSelectActive("last");
+          return;
+        }
+        if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
+          if (keyboardEvent.repeat) return;
+          if (selectExpandedRef.current) chooseSelectOption(selectActiveIndexRef.current);
+          else openSelectFanout(true);
+          return;
+        }
+      }
       if ((keyboardEvent.key === "Enter" || keyboardEvent.key === " ") && !keyboardEvent.repeat) {
         keyboardEvent.preventDefault();
         beginPress(keyboardEvent);
@@ -779,6 +1096,14 @@ export function ButtonHost({
     const handleKeyUp = (event: Event) => {
       if (eventTargetsInlineEditor(event)) return;
       const keyboardEvent = event as KeyboardEvent;
+      if (
+        selectFieldRef.current &&
+        (keyboardEvent.key === "Enter" || keyboardEvent.key === " ")
+      ) {
+        keyboardEvent.preventDefault();
+        keyboardEvent.stopPropagation();
+        return;
+      }
       if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
         keyboardEvent.preventDefault();
         finishPress(keyboardEvent);
@@ -815,7 +1140,16 @@ export function ButtonHost({
         void enqueueEvent("hoverLeave");
       }
     };
-  }, [coreElement, enqueueEvent, startPlay]);
+  }, [
+    chooseSelectOption,
+    closeSelectFanout,
+    coreElement,
+    enqueueEvent,
+    moveSelectActive,
+    openSelectFanout,
+    scheduleSelectClose,
+    startPlay
+  ]);
 
   useEffect(() => {
     if (!shadowRoot) return;
@@ -854,16 +1188,28 @@ export function ButtonHost({
   useEffect(() => () => {
     clearTimer(holdTimerRef);
     clearTimer(releaseTimerRef);
+    clearTimer(selectCloseTimerRef);
     clearTimer(errorTimerRef);
     clearTimer(playTimerRef);
     playVisualProbeGenerationRef.current += 1;
+    onSelectExpandedChangeRef.current?.(false);
   }, []);
 
   return (
     <span
       className="button-system-host"
       data-button-host-id={button.id}
-      style={{ display: "inline-block", verticalAlign: "top", overflow: "visible", pointerEvents: "none" }}
+      data-button-select-expanded={selectExpanded ? "true" : "false"}
+      data-button-select-pinned={selectPinned ? "true" : "false"}
+      style={{
+        display: "inline-block",
+        position: "relative",
+        width: placement.width,
+        height: placement.height,
+        verticalAlign: "top",
+        overflow: "visible",
+        pointerEvents: "none"
+      }}
     >
       <ButtonSkinRenderer
         skin={skin}
@@ -901,6 +1247,22 @@ export function ButtonHost({
         onPrepareVisualStateChange={onPrepareVisualStateChange}
         onVisualStateChange={handleAppliedVisualState}
       />
+      {mode === "run" && selectExpanded && selectField ? (
+        <ButtonSelectFieldFanout
+          field={selectField}
+          placement={placement}
+          skin={skin}
+          listboxId={selectListboxId}
+          selectedValue={selectValue === undefined ? selectField.defaultValue : selectValue}
+          activeIndex={selectActiveIndex}
+          disabled={interactionDisabled}
+          constrained={constrained}
+          onChoose={chooseSelectOption}
+          onOptionHover={setSelectActive}
+          onHoverHandoffStart={scheduleSelectClose}
+          onHoverHandoffEnd={cancelSelectClose}
+        />
+      ) : null}
     </span>
   );
 }

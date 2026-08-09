@@ -192,6 +192,7 @@ export interface ButtonToolSetChildBehavior {
   activationPatch?: Record<string, JsonValue>;
   activateField?: string;
   inlineEditField?: string;
+  selectField?: string;
   execute?: boolean;
   payloadTemplate?: ButtonPayloadTemplate;
 }

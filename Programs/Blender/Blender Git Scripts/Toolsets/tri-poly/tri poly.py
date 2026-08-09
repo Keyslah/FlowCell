@@ -1,8 +1,6 @@
 # Description: Create triangle and regular polygon prism shapes from a compact Tri & Poly tool set.
 
 
-
-
 from __future__ import annotations
 
 import math
@@ -309,7 +307,7 @@ def _ensure_scene_props():
         )
     if not hasattr(bpy.types.Scene, "flowcell_tri_poly_angle_deg"):
         bpy.types.Scene.flowcell_tri_poly_angle_deg = bpy.props.FloatProperty(
-            name="Angle Ã‚Â°",
+            name="Angle °",
             default=DEFAULT_ANGLE_DEG,
             min=MIN_ANGLE_DEG,
             max=MAX_ANGLE_DEG,
@@ -355,7 +353,7 @@ class FLOWCELL_PT_tri_poly_panel(bpy.types.Panel):
             op = row.operator(FLOWCELL_OT_tri_poly_action.bl_idname, text=label)
             op.command = command
         row.prop(context.scene, "flowcell_tri_poly_angle_deg", text="")
-        op = row.operator(FLOWCELL_OT_tri_poly_action.bl_idname, text="Ã‚Â°")
+        op = row.operator(FLOWCELL_OT_tri_poly_action.bl_idname, text="°")
         op.command = "triangle_50"
         for command, label in (
             ("triangle_right", "Right"),
@@ -415,7 +413,7 @@ def run_flowcell_action(context=None, data=None):
         angle_deg = _set_scene_angle_deg(context, _data_value(data, "angle_deg", DEFAULT_ANGLE_DEG))
         return _result(
             "OK",
-            f"Triangle angle set to {angle_deg:g}Ã‚Â°.",
+            f"Triangle angle set to {angle_deg:g}°.",
             changed=0,
             sides=_scene_sides(context),
             angle_deg=angle_deg,

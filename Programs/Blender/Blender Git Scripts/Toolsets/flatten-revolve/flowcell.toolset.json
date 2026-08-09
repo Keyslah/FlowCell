@@ -1,53 +1,273 @@
 {
-    "schemaVersion":  1,
-    "id":  "blender.flatten-revolve",
-    "version":  "1.0.0",
-    "label":  "flatten revolve",
-    "tooltip":  "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.",
-    "kind":  "toolset",
-    "program":  "Blender",
-    "source":  "flatten revolve.py",
-    "bridgeData":  {
-
-                   },
-    "children":  [
-                     {
-                         "slot":  "flatten_profile",
-                         "label":  "Flatten",
-                         "tooltip":  "Flatten the active mesh into a centered profile using the current field values.",
-                         "payload":  {
-                                         "command":  "flatten_profile",
-                                         "action":  "flatten_profile"
-                                     }
-                     },
-                     {
-                         "slot":  "generate_revolve",
-                         "label":  "Revolve",
-                         "tooltip":  "Generate revolve geometry from the current flattened profile and field values.",
-                         "payload":  {
-                                         "command":  "generate_revolve",
-                                         "action":  "generate_revolve"
-                                     }
-                     }
-                 ],
-    "layout":  {
-                   "mode":  "grid",
-                   "columns":  2,
-                   "gap":  8,
-                   "padding":  8,
-                   "width":  640,
-                   "height":  260,
-                   "fields":  [
-                                  { "id": "center_mode", "kind": "select", "label": "Center", "payloadKey": "center_mode", "defaultValue": "GEOMETRY", "options": [{ "id": "geometry", "label": "Geometry", "value": "GEOMETRY" }, { "id": "origin", "label": "Origin", "value": "ORIGIN" }, { "id": "world", "label": "World", "value": "WORLD" }, { "id": "cursor", "label": "Cursor", "value": "CURSOR" }, { "id": "object", "label": "Object", "value": "OBJECT" }], "x": 8, "y": 76, "width": 128, "height": 36, "zIndex": 2 },
-                                  { "id": "flatten_axis", "kind": "select", "label": "Flatten Axis", "payloadKey": "flatten_axis", "defaultValue": "Y", "options": [{ "id": "x", "label": "X", "value": "X" }, { "id": "y", "label": "Y", "value": "Y" }, { "id": "z", "label": "Z", "value": "Z" }], "x": 144, "y": 76, "width": 128, "height": 36, "zIndex": 2 },
-                                  { "id": "revolve_axis", "kind": "select", "label": "Revolve Axis", "payloadKey": "revolve_axis", "defaultValue": "Z", "options": [{ "id": "x", "label": "X", "value": "X" }, { "id": "y", "label": "Y", "value": "Y" }, { "id": "z", "label": "Z", "value": "Z" }], "x": 280, "y": 76, "width": 128, "height": 36, "zIndex": 2 },
-                                  { "id": "angle_deg", "kind": "number", "label": "Angle", "payloadKey": "angle_deg", "defaultValue": 360, "minimum": -360, "maximum": 360, "step": 1, "x": 8, "y": 120, "width": 128, "height": 36, "zIndex": 2 },
-                                  { "id": "revolve_steps", "kind": "number", "label": "Steps", "payloadKey": "revolve_steps", "defaultValue": 128, "minimum": 3, "maximum": 4096, "step": 1, "x": 144, "y": 120, "width": 128, "height": 36, "zIndex": 2 },
-                                  { "id": "merge_distance", "kind": "number", "label": "Merge", "payloadKey": "merge_distance", "defaultValue": 0.0001, "minimum": 0, "maximum": 1, "step": 0.0001, "x": 280, "y": 120, "width": 128, "height": 36, "zIndex": 2 }
-                              ],
-                   "childBehaviors":  {
-                                          "flatten_profile": { "execute": true, "payloadTemplate": { "command": "flatten_profile", "center_mode": { "$field": "center_mode" }, "flatten_axis": { "$field": "flatten_axis" } } },
-                                          "generate_revolve": { "execute": true, "payloadTemplate": { "command": "generate_revolve", "center_mode": { "$field": "center_mode" }, "revolve_axis": { "$field": "revolve_axis" }, "angle_deg": { "$field": "angle_deg" }, "revolve_steps": { "$field": "revolve_steps" }, "merge_distance": { "$field": "merge_distance" } } }
-                                      }
-               }
+    "schemaVersion": 1,
+    "id": "blender.flatten-revolve",
+    "version": "1.1.0",
+    "label": "flatten revolve",
+    "tooltip": "Flatten the active mesh into a centered profile, hide the source object, and revolve the profile in place.",
+    "kind": "toolset",
+    "program": "Blender",
+    "source": "flatten revolve.py",
+    "bridgeData": {},
+    "children": [
+        {
+            "slot": "pivot_select",
+            "label": "World",
+            "tooltip": "Choose the shared pivot used by Flatten and Revolve."
+        },
+        {
+            "slot": "flatten_profile",
+            "label": "Flatten",
+            "tooltip": "Flatten the active mesh into a centered profile using the current pivot and flatten axis.",
+            "payload": {
+                "command": "flatten_profile",
+                "action": "flatten_profile"
+            }
+        },
+        {
+            "slot": "flatten_axis_select",
+            "label": "Y",
+            "tooltip": "Choose the axis collapsed by Flatten."
+        },
+        {
+            "slot": "generate_revolve",
+            "label": "Revolve",
+            "tooltip": "Generate revolve geometry using the current pivot, axis, angle, steps, and merge distance.",
+            "payload": {
+                "command": "generate_revolve",
+                "action": "generate_revolve"
+            }
+        },
+        {
+            "slot": "revolve_axis_select",
+            "label": "Z",
+            "tooltip": "Choose the axis used by Revolve."
+        },
+        {
+            "slot": "angle_input",
+            "label": "360",
+            "tooltip": "Click anywhere on this Button, then type the revolve angle in degrees."
+        },
+        {
+            "slot": "steps_input",
+            "label": "128",
+            "tooltip": "Click anywhere on this Button, then type the number of revolve steps."
+        },
+        {
+            "slot": "merge_input",
+            "label": "0.0001",
+            "tooltip": "Click anywhere on this Button, then type the revolve merge distance."
+        }
+    ],
+    "layout": {
+        "mode": "grid",
+        "columns": 5,
+        "gap": 8,
+        "padding": 8,
+        "width": 640,
+        "height": 260,
+        "updatePolicy": {
+            "appendMissingChildSlots": true
+        },
+        "placements": {
+            "pivot_select": {
+                "x": 8,
+                "y": 8,
+                "width": 144,
+                "height": 42
+            },
+            "flatten_profile": {
+                "x": 8,
+                "y": 58,
+                "width": 144,
+                "height": 42
+            },
+            "flatten_axis_select": {
+                "x": 160,
+                "y": 58,
+                "width": 72,
+                "height": 42
+            },
+            "generate_revolve": {
+                "x": 8,
+                "y": 108,
+                "width": 144,
+                "height": 42
+            },
+            "revolve_axis_select": {
+                "x": 160,
+                "y": 108,
+                "width": 72,
+                "height": 42
+            },
+            "angle_input": {
+                "x": 240,
+                "y": 108,
+                "width": 104,
+                "height": 42
+            },
+            "steps_input": {
+                "x": 352,
+                "y": 108,
+                "width": 104,
+                "height": 42
+            },
+            "merge_input": {
+                "x": 464,
+                "y": 108,
+                "width": 128,
+                "height": 42
+            }
+        },
+        "fields": [
+            {
+                "id": "center_mode",
+                "kind": "select",
+                "label": "Pivot",
+                "payloadKey": "center_mode",
+                "defaultValue": "WORLD",
+                "options": [
+                    { "id": "geometry", "label": "Geometry", "value": "GEOMETRY" },
+                    { "id": "origin", "label": "Origin", "value": "ORIGIN" },
+                    { "id": "world", "label": "World", "value": "WORLD" },
+                    { "id": "cursor", "label": "Cursor", "value": "CURSOR" },
+                    { "id": "object", "label": "Object", "value": "OBJECT" }
+                ],
+                "x": 8,
+                "y": 8,
+                "width": 144,
+                "height": 42,
+                "zIndex": 1,
+                "hidden": true
+            },
+            {
+                "id": "flatten_axis",
+                "kind": "select",
+                "label": "Flatten Axis",
+                "payloadKey": "flatten_axis",
+                "defaultValue": "Y",
+                "options": [
+                    { "id": "x", "label": "X", "value": "X" },
+                    { "id": "y", "label": "Y", "value": "Y" },
+                    { "id": "z", "label": "Z", "value": "Z" }
+                ],
+                "x": 160,
+                "y": 58,
+                "width": 72,
+                "height": 42,
+                "zIndex": 1,
+                "hidden": true
+            },
+            {
+                "id": "revolve_axis",
+                "kind": "select",
+                "label": "Revolve Axis",
+                "payloadKey": "revolve_axis",
+                "defaultValue": "Z",
+                "options": [
+                    { "id": "x", "label": "X", "value": "X" },
+                    { "id": "y", "label": "Y", "value": "Y" },
+                    { "id": "z", "label": "Z", "value": "Z" }
+                ],
+                "x": 160,
+                "y": 108,
+                "width": 72,
+                "height": 42,
+                "zIndex": 1,
+                "hidden": true
+            },
+            {
+                "id": "angle_deg",
+                "kind": "number",
+                "label": "Angle",
+                "payloadKey": "angle_deg",
+                "defaultValue": 360,
+                "minimum": -360,
+                "maximum": 360,
+                "step": 1,
+                "x": 240,
+                "y": 108,
+                "width": 104,
+                "height": 42,
+                "zIndex": 1,
+                "hidden": true
+            },
+            {
+                "id": "revolve_steps",
+                "kind": "number",
+                "label": "Steps",
+                "payloadKey": "revolve_steps",
+                "defaultValue": 128,
+                "minimum": 3,
+                "maximum": 4096,
+                "step": 1,
+                "x": 352,
+                "y": 108,
+                "width": 104,
+                "height": 42,
+                "zIndex": 1,
+                "hidden": true
+            },
+            {
+                "id": "merge_distance",
+                "kind": "number",
+                "label": "Merge",
+                "payloadKey": "merge_distance",
+                "defaultValue": 0.0001,
+                "minimum": 0,
+                "maximum": 1,
+                "step": 0.0001,
+                "x": 464,
+                "y": 108,
+                "width": 128,
+                "height": 42,
+                "zIndex": 1,
+                "hidden": true
+            }
+        ],
+        "childBehaviors": {
+            "pivot_select": {
+                "selectField": "center_mode",
+                "execute": false
+            },
+            "flatten_profile": {
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "flatten_profile",
+                    "center_mode": { "$field": "center_mode" },
+                    "flatten_axis": { "$field": "flatten_axis" }
+                }
+            },
+            "flatten_axis_select": {
+                "selectField": "flatten_axis",
+                "execute": false
+            },
+            "generate_revolve": {
+                "execute": true,
+                "payloadTemplate": {
+                    "command": "generate_revolve",
+                    "center_mode": { "$field": "center_mode" },
+                    "revolve_axis": { "$field": "revolve_axis" },
+                    "angle_deg": { "$field": "angle_deg" },
+                    "revolve_steps": { "$field": "revolve_steps" },
+                    "merge_distance": { "$field": "merge_distance" }
+                }
+            },
+            "revolve_axis_select": {
+                "selectField": "revolve_axis",
+                "execute": false
+            },
+            "angle_input": {
+                "inlineEditField": "angle_deg",
+                "execute": false
+            },
+            "steps_input": {
+                "inlineEditField": "revolve_steps",
+                "execute": false
+            },
+            "merge_input": {
+                "inlineEditField": "merge_distance",
+                "execute": false
+            }
+        }
+    }
 }

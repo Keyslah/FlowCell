@@ -533,7 +533,7 @@ test("list-profiles returns names and stable IDs without exposing storage paths"
   }
 });
 
-test("prepare-existing-target leaves an unmarked project at its direct root", () => {
+test("prepare-existing-target creates a Blender folder for an unmarked project", () => {
   const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-existing-unmarked-"));
   try {
     const { isolatedDispatcher } = createIsolatedDispatcher(workspace);
@@ -551,12 +551,13 @@ test("prepare-existing-target leaves an unmarked project at its direct root", ()
     assert.equal(result.status, 0, result.stderr || result.stdout);
     const response = JSON.parse(result.stdout.trim());
     assert.equal(response.prepared, true);
-    assert.equal(response.destinationRelativePath, ".");
-    assert.equal(response.destinationDirectory.toLowerCase(), projectRoot.toLowerCase());
+    assert.equal(response.destinationRelativePath, "Blender");
+    assert.equal(response.destinationDirectory.toLowerCase(), path.join(projectRoot, "Blender").toLowerCase());
     assert.equal(response.profileId, "");
     assert.equal(response.profileName, "");
     assert.equal(response.profilePath, "");
     assert.equal(response.markerPath, "");
+    assert.ok(existsSync(path.join(projectRoot, "Blender")));
     assert.deepEqual(collectFiles(projectRoot), beforeFiles);
     assert.equal(readFileSync(illustratorFile, "utf8"), "illustrator bytes stay here");
     assert.equal(existsSync(path.join(projectRoot, ".flowcell-project.json")), false);

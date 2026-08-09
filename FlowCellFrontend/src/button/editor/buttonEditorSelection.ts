@@ -30,6 +30,8 @@ export interface ButtonEditorPlacementOption {
   id: string;
   label: string;
   surfaceId: string;
+  placementId: string | null;
+  view: "placement" | "tool-set-popout" | "tool-set-fan";
 }
 
 function normalized(value: string): string {
@@ -218,11 +220,6 @@ function buttonOptionBaseLabel(
   ) {
     return { label, group: "Main Page Buttons" };
   }
-  if (button?.role === "tool-set-child") {
-    const owner = button.toolSetParentId ? document.buttons[button.toolSetParentId] : null;
-    const ownerLabel = owner?.label.trim() || "Tool Set";
-    return { label: `${label} — ${ownerLabel}`, group: `Tool Set — ${ownerLabel}` };
-  }
   if (button?.role === "panel-owner") {
     return { label: `${label} — Panel Button`, group: "Panel rail" };
   }
@@ -240,6 +237,7 @@ export function buildButtonEditorButtonOptions(
     namesMatch(panelName, "Panel Rail");
   const candidates = Object.values(document.buttons).filter((button) => {
     if (!placedButtonIds.has(button.id)) return false;
+    if (button.role === "tool-set-child") return false;
     if (mainPagePanelRail) {
       const isActualPanelButton = button.role === "panel-owner" &&
         nonemptyString(button.metadata.programName) &&
@@ -327,10 +325,20 @@ export function buildButtonEditorPlacementOptions(
   buttonId: string
 ): ButtonEditorPlacementOption[] {
   if (!buttonId) return [];
+  const button = document.buttons[buttonId];
+  const matchingToolSetUnit = button?.role === "tool-set-owner"
+    ? Object.values(document.popoutUnits).find(
+        (candidate) => candidate.kind === "tool-set" && candidate.ownerButtonId === buttonId
+      )
+    : undefined;
+  const toolSetUnit = matchingToolSetUnit?.kind === "tool-set"
+    ? matchingToolSetUnit
+    : undefined;
   const placements = Object.values(document.placements)
     .filter((placement) =>
       placement.buttonId === buttonId &&
-      document.surfaces[placement.surfaceId]
+      document.surfaces[placement.surfaceId] &&
+      placement.surfaceId !== toolSetUnit?.surfaceId
     )
     .sort((left, right) => comparePlacements(document, left, right));
   const baseLabels = new Map(placements.map((placement) => [placement.id, placementBaseLabel(document, placement)]));
@@ -339,7 +347,9 @@ export function buildButtonEditorPlacementOptions(
     return {
       id: placement.id,
       label: base,
-      surfaceId: placement.surfaceId
+      surfaceId: placement.surfaceId,
+      placementId: placement.id,
+      view: "placement" as const
     };
   });
   options.sort((left, right) => {
@@ -347,7 +357,49 @@ export function buildButtonEditorPlacementOptions(
     const rightRank = surfacePlacementRank(document.surfaces[right.surfaceId]);
     return leftRank - rightRank;
   });
-  return options;
+  const toolSetSurface = toolSetUnit
+    ? document.surfaces[toolSetUnit.surfaceId]
+    : undefined;
+  if (!toolSetUnit || !toolSetSurface) return options;
+  const firstChildPlacementId = toolSetUnit.childPlacementIds.find((placementId) =>
+    document.placements[placementId]?.surfaceId === toolSetSurface.id
+  ) ?? null;
+  const ownerPlacementId = toolSetUnit.ownerPlacementId &&
+    document.placements[toolSetUnit.ownerPlacementId]?.surfaceId === toolSetSurface.id
+      ? toolSetUnit.ownerPlacementId
+      : null;
+  return [
+    ...options,
+    {
+      id: `button-editor-tool-set-popout:${toolSetUnit.id}`,
+      label: "Pop-out",
+      surfaceId: toolSetSurface.id,
+      placementId: firstChildPlacementId,
+      view: "tool-set-popout"
+    },
+    {
+      id: `button-editor-tool-set-fan:${toolSetUnit.id}`,
+      label: "Fan",
+      surfaceId: toolSetSurface.id,
+      placementId: ownerPlacementId,
+      view: "tool-set-fan"
+    }
+  ];
+}
+
+export function resolveButtonEditorNavigationButtonId(
+  document: ButtonStateDocument,
+  buttonId: string
+): string {
+  const button = document.buttons[buttonId];
+  if (
+    button?.role === "tool-set-child" &&
+    button.toolSetParentId &&
+    document.buttons[button.toolSetParentId]?.role === "tool-set-owner"
+  ) {
+    return button.toolSetParentId;
+  }
+  return buttonId;
 }
 
 export function resolvePreferredButtonPlacementId(
@@ -374,7 +426,36 @@ export function resolveButtonEditorContextPlacementId(
         (candidate) => candidate.fanSurfaceId === context.surfaceId
       )
     : undefined;
-  const buttonId = context.buttonId || fanSetup?.panelOwnerButtonId;
+  const matchingSurfaceToolSetUnit = context.surfaceId
+    ? Object.values(document.popoutUnits).find(
+        (candidate) => candidate.kind === "tool-set" && candidate.surfaceId === context.surfaceId
+      )
+    : undefined;
+  const surfaceToolSetUnit = matchingSurfaceToolSetUnit?.kind === "tool-set"
+    ? matchingSurfaceToolSetUnit
+    : undefined;
+  const buttonId = context.buttonId || fanSetup?.panelOwnerButtonId || surfaceToolSetUnit?.ownerButtonId;
+  const button = buttonId ? document.buttons[buttonId] : undefined;
+  const matchingToolSetUnit = button?.role === "tool-set-owner" &&
+    surfaceToolSetUnit?.ownerButtonId === button.id
+      ? surfaceToolSetUnit
+      : undefined;
+  const toolSetUnit = matchingToolSetUnit?.kind === "tool-set"
+    ? matchingToolSetUnit
+    : undefined;
+  if (toolSetUnit) {
+    const ownerPlacementId = toolSetUnit.ownerPlacementId?.trim();
+    if (
+      toolSetUnit.interactionMode === "fan" &&
+      ownerPlacementId &&
+      document.placements[ownerPlacementId]?.surfaceId === toolSetUnit.surfaceId
+    ) {
+      return ownerPlacementId;
+    }
+    return toolSetUnit.childPlacementIds.find((placementId) =>
+      document.placements[placementId]?.surfaceId === toolSetUnit.surfaceId
+    ) ?? null;
+  }
   return buttonId
     ? resolvePreferredButtonPlacementId(document, buttonId, context.surfaceId)
     : null;

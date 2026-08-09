@@ -32,7 +32,8 @@
       "width": 640,
       "height": 470,
       "minWidth": 520,
-      "minHeight": 400
+      "minHeight": 400,
+      "alwaysOnTop": true
     },
     "actions": [
       {
@@ -386,6 +387,7 @@
               "type": "string"
             },
             "plannedExtension": {
+              "type": "string",
               "enum": [
                 ".blend"
               ]
@@ -458,6 +460,7 @@
               "type": "string"
             },
             "plannedExtension": {
+              "type": "string",
               "enum": [
                 ".blend"
               ]

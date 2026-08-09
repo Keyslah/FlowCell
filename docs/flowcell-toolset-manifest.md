@@ -1,10 +1,11 @@
 # FlowCell Tool-Set Manifest
 
 `flowcell.toolset.json` describes one installable owner Button, its child
-Buttons, optional popout layout/fields, and an optional read-only state query. It is catalog/import metadata. Add
-Button auto-detects the root `flowcell.toolset.json`, copies the entire package
-into the owner's Local Scripts directory, and normal runtime then uses the owned
-copy and `.flowcell-source.json`.
+Buttons, optional popout layout/fields, and an optional read-only state query. It
+is catalog/import metadata. Add Button accepts the package folder, the root
+manifest, or the exact root-level file declared by `source`, copies the entire
+package into the owner's Local Scripts directory, and normal runtime then uses
+the owned copy and `.flowcell-source.json`.
 
 Page-enabled Buttons do not use this format. A Button with a package-owned page
 is an ordinary single-script package whose `flowcell.script.json` declares
@@ -22,6 +23,21 @@ My Tool Set/
 
 `source` must point to a file inside this folder. The whole folder is copied so
 relative package dependencies remain with the installed owner.
+
+### Import Selection
+
+When a selected file sits beside `flowcell.toolset.json` and is the manifest's
+exact declared `source`, automatic import promotes that file to the complete Tool
+Set package. Selecting any other sibling companion is rejected instead of
+installing an incomplete standalone script. If the same package root contains
+both `flowcell.script.json` and `flowcell.toolset.json`, automatic detection fails
+closed as ambiguous.
+
+The catalog package must be sufficient on a clean FlowCell installation: keep
+the declared source and all package-owned dependencies within the copied package.
+Do not depend on an older Local Scripts copy, a pre-generated owner action, or an
+undeclared pre-baked tool. If `source` is nested rather than beside the manifest,
+select the package folder or the manifest itself.
 
 ## Minimal Manifest
 
@@ -269,6 +285,17 @@ Button state; they are mapped into a nested payload through `payloadKey`.
   making those values part of that child's latched selected-state test. This
   lets a mode Button select itself through `fieldPatch` while also resetting a
   shared value to that mode's default.
+- `selectField` turns one child into the skinned selector owner for one hidden
+  `select` field. The current option label replaces the skin's existing HTML
+  `{{label}}` node; option IDs, labels, values, defaults, and placement remain
+  package data. The child must declare `execute: false`, the field cannot have a
+  `serviceTarget`, and the behavior cannot also declare `inlineEditField`.
+  Selector IDs and option IDs/labels must be nonempty, option IDs and primitive
+  values must each be unique, and the default must match exactly one option.
+  Hover opens the transient option fanout, owner click pins/toggles it, Enter or
+  Space opens/selects, Arrow keys and Home/End move the active option, and Escape
+  closes it. Options reuse the owner's skin and geometry and are not canonical
+  child records, editor entries, bindings, or separately skinnable Buttons.
 - `inlineEditField` turns the child itself into the editor for one hidden
   `number` or `text` field. The value replaces the skin's existing HTML
   `{{label}}` node in Run mode; the child remains a normal movable/resizable
@@ -278,6 +305,8 @@ Button state; they are mapped into a nested payload through `payloadKey`.
   whole Button rather than only the rendered glyphs.
   Inline-edit children must declare `execute: false`, cannot use a field
   `serviceTarget`, and do not render separate field chrome.
+- Dynamic selector and inline-edit values require a label-bearing skin. A skin
+  that deliberately omits its HTML `{{label}}` node remains textless.
 - Combining a choice's own Boolean `toggleFields` entry with `fieldPatch` values
   that clear its peer toggles creates an exclusive group that may also have no
   active choice: clicking the active choice toggles it off.
@@ -287,10 +316,96 @@ Button state; they are mapped into a nested payload through `payloadKey`.
   `{ "$field": "fieldId" }` object inserts that field's current value and may
   be nested inside objects or arrays.
 
+This layout fragment is paste-ready after declaring the matching child slots and
+placements. It demonstrates package-owned defaults of World, Y, and Z and the
+same canonical-Button pattern for a numeric value:
+
+```json
+{
+  "layout": {
+    "fields": [
+      {
+        "id": "pivot",
+        "kind": "select",
+        "label": "Pivot",
+        "payloadKey": "pivot",
+        "defaultValue": "WORLD",
+        "options": [
+          { "id": "world", "label": "World", "value": "WORLD" },
+          { "id": "origin", "label": "Origin", "value": "ORIGIN" }
+        ],
+        "x": 8,
+        "y": 8,
+        "width": 144,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "flatten_axis",
+        "kind": "select",
+        "label": "Flatten Axis",
+        "payloadKey": "flatten_axis",
+        "defaultValue": "Y",
+        "options": [
+          { "id": "x", "label": "X", "value": "X" },
+          { "id": "y", "label": "Y", "value": "Y" },
+          { "id": "z", "label": "Z", "value": "Z" }
+        ],
+        "x": 160,
+        "y": 8,
+        "width": 72,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "revolve_axis",
+        "kind": "select",
+        "label": "Revolve Axis",
+        "payloadKey": "revolve_axis",
+        "defaultValue": "Z",
+        "options": [
+          { "id": "x", "label": "X", "value": "X" },
+          { "id": "y", "label": "Y", "value": "Y" },
+          { "id": "z", "label": "Z", "value": "Z" }
+        ],
+        "x": 240,
+        "y": 8,
+        "width": 72,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "angle",
+        "kind": "number",
+        "label": "Angle",
+        "payloadKey": "angle",
+        "defaultValue": 360,
+        "step": 1,
+        "x": 320,
+        "y": 8,
+        "width": 104,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      }
+    ],
+    "childBehaviors": {
+      "pivot_select": { "selectField": "pivot", "execute": false },
+      "flatten_axis_select": { "selectField": "flatten_axis", "execute": false },
+      "revolve_axis_select": { "selectField": "revolve_axis", "execute": false },
+      "angle_input": { "inlineEditField": "angle", "execute": false }
+    }
+  }
+}
+```
+
 Validation requires every referenced field to exist, every `toggleFields` entry
-to name a Boolean toggle, every inline-edited field to satisfy the state-only
-contract above, and every child behavior key to identify an installed child
-slot.
+to name a Boolean toggle, every selected or inline-edited field to satisfy its
+state-only contract above, every selected option set to have stable unique
+identity/value data, and every child behavior key to identify an installed slot.
 
 ## Runner-Specific Execution
 

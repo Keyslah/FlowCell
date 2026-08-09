@@ -214,20 +214,58 @@ test("Pop hides its owner while Fan shows it without including the owner in row 
     /visiblePlacementIds\.filter\(\(placementId\) => placementId !== ownerPlacementId\)/
   );
   assert.match(workspace, /placementIds: \[\.\.\.visiblePlacementIds\]/);
+  assert.match(workspace, /unitOwnerPlacementId === overlayPlacement\.id/);
+  assert.match(workspace, /unbounded=\{overlayIsFanOwner\}/);
 });
 
-test("Pop-out Fan is a checkbox immediately above Save Pop-out Settings", () => {
+test("Tool Set owners expose Pop-out and Fan Placement views without listing child Buttons", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
-  const fanToggleIndex = editor.indexOf("<span>Fan</span>");
-  const saveIndex = editor.indexOf("Save {settingsPlacementLabel} Settings");
+  const selection = readEditorFile("buttonEditorSelection.ts");
 
-  assert.ok(fanToggleIndex >= 0);
-  assert.ok(fanToggleIndex < saveIndex);
-  assert.match(editor, /settingsPlacementKind === "pop-out" && selectedSurfaceUnit/);
-  assert.match(editor, /checked=\{selectedSurfaceShowsOwner\}/);
-  assert.match(editor, /setSelectedPopoutFanEnabled\(event\.currentTarget\.checked\)/);
+  assert.match(selection, /if \(button\.role === "tool-set-child"\) return false/);
+  assert.match(selection, /label: "Pop-out"[\s\S]{0,180}view: "tool-set-popout"/);
+  assert.match(selection, /label: "Fan"[\s\S]{0,180}view: "tool-set-fan"/);
+  assert.match(editor, /buttonId=\{navigationButtonId\}/);
+  assert.match(editor, /placementId=\{selectedPlacementOptionId\}/);
+  assert.match(editor, /option\?\.view === "tool-set-popout"[\s\S]{0,180}selectPopoutPlacementMode\(option\.surfaceId, "pop"\)/);
+  assert.match(editor, /option\?\.view === "tool-set-fan"[\s\S]{0,180}selectPopoutPlacementMode\(option\.surfaceId, "fan"\)/);
   assert.match(editor, /setButtonPopoutFanMode\(\{/);
-  assert.match(editor, /enabled[\s\S]{0,260}result\.ownerPlacementId/);
+  assert.match(editor, /mode === "fan"[\s\S]{0,260}result\.ownerPlacementId/);
+  assert.match(
+    editor,
+    /selectedSurfaceUnit\?\.kind === "regular"[\s\S]{0,180}button-editor-sidebar__fan/
+  );
+  const contextHandler = editor.match(
+    /const applyEditorContext = useCallback\([\s\S]*?\n  \}, \[focusPlacement, panelName, programName, store\]\);/
+  );
+  assert.ok(contextHandler, "existing Editor context handler must exist");
+  assert.match(
+    contextHandler[0],
+    /if \(context\.programName\)[\s\S]{0,100}setProgramName\(context\.programName\)/
+  );
+  assert.match(
+    contextHandler[0],
+    /if \(context\.panelName\)[\s\S]{0,100}setPanelName\(context\.panelName\)/
+  );
+});
+
+test("Same size Buttons keeps the freely positioned Fan owner independent", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const handler = editor.match(
+    /const applyUniformSizeToSurface = useCallback\([\s\S]*?\n  \}, \[applyPlacementOrder, store\]\);/
+  );
+
+  assert.ok(handler, "uniform surface sizing handler must exist");
+  assert.match(handler[0], /resolveIndependentOwnerPlacementId\(document, surfaceId\)/);
+  assert.match(
+    handler[0],
+    /contentPlacementIds = orderedPlacementIds\.filter\([\s\S]{0,160}placementId !== independentOwnerPlacementId/
+  );
+  assert.match(handler[0], /const mergedPlacements = orderedPlacementIds\.flatMap/);
+  assert.match(
+    editor,
+    /placement\.id === independentOwnerPlacementId \? \{\} : placementPatch/
+  );
 });
 
 test("top-left corner alignment translates only selected content as one rigid group", () => {

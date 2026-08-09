@@ -793,11 +793,16 @@ export function ButtonWorkspace({
     .filter(Boolean);
   const overlayIsFanOwner = Boolean(
     overlayPlacement &&
-    surface.kind === "fan" &&
-    Object.values(document.fanSetups).some((setup) => (
-      setup.fanSurfaceId === surface.id &&
-      setup.panelOwnerButtonId === overlayPlacement.buttonId
-    ))
+    (
+      unitOwnerPlacementId === overlayPlacement.id ||
+      (
+        surface.kind === "fan" &&
+        Object.values(document.fanSetups).some((setup) => (
+          setup.fanSurfaceId === surface.id &&
+          setup.panelOwnerButtonId === overlayPlacement.buttonId
+        ))
+      )
+    )
   );
   const reorderDropSlot = reorderPreview?.placements.find(
     (placement) => placement.id === reorderPreview.movingPlacementId

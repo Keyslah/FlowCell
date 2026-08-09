@@ -78,6 +78,7 @@ export interface InstalledPageWindowContext {
   panelName: string;
   fileName: string;
   pageId: string;
+  alwaysOnTop: boolean;
 }
 
 export interface WindowGridWindowContext {
@@ -255,7 +256,8 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
     typeof parsed.fileName === "string" &&
     parsed.fileName.trim() &&
     typeof parsed.pageId === "string" &&
-    parsed.pageId.trim()
+    parsed.pageId.trim() &&
+    (parsed.alwaysOnTop === undefined || typeof parsed.alwaysOnTop === "boolean")
   ) {
     return {
       kind: "installed-page",
@@ -264,7 +266,8 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
       programName: parsed.programName,
       panelName: parsed.panelName,
       fileName: parsed.fileName,
-      pageId: parsed.pageId
+      pageId: parsed.pageId,
+      alwaysOnTop: parsed.alwaysOnTop === true
     };
   }
   if (parsed.kind === "window-grid") return { kind: "window-grid" };

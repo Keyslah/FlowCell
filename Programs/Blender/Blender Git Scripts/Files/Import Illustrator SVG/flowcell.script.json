@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "blender.import-illustrator-svg",
+  "label": "Import Illustrator SVG",
+  "tooltip": "Import Illustrator SVG layers at their physical X/Y size as validated, manifold, millimeter-thick Blender meshes.",
+  "program": "Blender",
+  "source": "import illustrator svg.py"
+}

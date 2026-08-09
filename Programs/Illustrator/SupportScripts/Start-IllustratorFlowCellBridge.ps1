@@ -147,6 +147,17 @@ function Test-IsStaleIllustratorComError {
   return $false
 }
 
+function Test-IsUnavailableDoJavaScriptFileMember {
+  param([Parameter(Mandatory = $true)][System.Management.Automation.ErrorRecord]$ErrorRecord)
+
+  $errorId = [string]$ErrorRecord.FullyQualifiedErrorId
+  $message = [string]$ErrorRecord.Exception.Message
+  return (
+    $errorId -match '(?i)(^|,)MethodNotFound(,|$)' -and
+    $message -match '(?i)\bDoJavaScriptFile\b'
+  )
+}
+
 function Invoke-IllustratorAction {
   param(
     [Parameter(Mandatory = $true)][string]$ActionId,
@@ -169,6 +180,10 @@ function Invoke-IllustratorAction {
   Write-BridgeLog "Running Illustrator action '$($action.id)' from $($action.scriptPath)"
 
   $hasArguments = $null -ne $Arguments
+  $scriptContextPrefix = @(
+    "var FLOWCELL_ACTION_ID = $(ConvertTo-JsStringLiteral -Value $action.id);"
+    "var FLOWCELL_SCRIPT_PATH = $(ConvertTo-JsStringLiteral -Value $action.scriptPath);"
+  ) -join "`r`n"
   $result = $null
   for ($attempt = 0; $attempt -lt 2; $attempt += 1) {
     $app = Get-IllustratorApplication
@@ -176,18 +191,20 @@ function Invoke-IllustratorAction {
       if ($hasArguments) {
         $scriptBody = Get-Content -LiteralPath $action.scriptPath -Raw
         $prefix = @(
-          "var FLOWCELL_ACTION_ID = $(ConvertTo-JsStringLiteral -Value $action.id);"
+          $scriptContextPrefix
           "var FLOWCELL_ARGS = $(ConvertTo-JsLiteral -Value $Arguments);"
         ) -join "`r`n"
         $result = $app.DoJavaScript($prefix + "`r`n" + $scriptBody)
       } else {
         try {
+          [void]$app.DoJavaScript($scriptContextPrefix + "`r`nvar FLOWCELL_ARGS = null;")
           $result = $app.DoJavaScriptFile($action.scriptPath)
         } catch {
           if (Test-IsStaleIllustratorComError -Exception $_.Exception) { throw }
-          Write-BridgeLog "DoJavaScriptFile failed for '$($action.id)', retrying from script text: $($_.Exception.Message)" 'WARN'
+          if (-not (Test-IsUnavailableDoJavaScriptFileMember -ErrorRecord $_)) { throw }
+          Write-BridgeLog "DoJavaScriptFile is unavailable for '$($action.id)'; running from script text for compatibility." 'WARN'
           $scriptBody = Get-Content -LiteralPath $action.scriptPath -Raw
-          $prefix = "var FLOWCELL_ACTION_ID = $(ConvertTo-JsStringLiteral -Value $action.id);"
+          $prefix = $scriptContextPrefix + "`r`nvar FLOWCELL_ARGS = null;"
           $result = $app.DoJavaScript($prefix + "`r`n" + $scriptBody)
         }
       }

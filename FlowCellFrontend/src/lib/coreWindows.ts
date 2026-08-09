@@ -25,7 +25,8 @@ import {
 } from "./layoutSnapshots";
 import {
   registerScopedWindowTopmost,
-  refreshScopedWindowTopmost
+  refreshScopedWindowTopmost,
+  unregisterScopedWindowTopmost
 } from "./tauri";
 
 const pendingOpens = new Map<string, Promise<void>>();
@@ -42,6 +43,7 @@ interface CoreWindowOptions {
   skipTaskbar?: boolean;
   recreate?: boolean;
   programName?: string;
+  alwaysOnTop?: boolean;
   savedBounds?: FlowCellBounds;
 }
 
@@ -154,6 +156,16 @@ async function openCoreWindow(options: CoreWindowOptions): Promise<void> {
       existing = null;
     }
     if (existing) {
+      if (options.alwaysOnTop) {
+        await unregisterScopedWindowTopmost(options.label);
+        await existing.setAlwaysOnTop(true);
+      } else {
+        await existing.setAlwaysOnTop(false).catch(() => {});
+        if (options.programName) {
+          await registerScopedWindowTopmost(options.label, options.programName).catch(() => {});
+          await refreshScopedWindowTopmost(options.label).catch(() => {});
+        }
+      }
       await existing.setDecorations(options.decorations ?? false).catch(() => {});
       await applyPlacement(existing, placement);
       await showAndFocus(existing);
@@ -174,12 +186,12 @@ async function openCoreWindow(options: CoreWindowOptions): Promise<void> {
       shadow: true,
       visible: false,
       focus: true,
-      alwaysOnTop: false,
+      alwaysOnTop: options.alwaysOnTop ?? false,
       skipTaskbar: options.skipTaskbar ?? false
     });
     await waitForCreated(target);
     await applyPlacement(target, placement);
-    if (options.programName) {
+    if (options.programName && !options.alwaysOnTop) {
       await registerScopedWindowTopmost(options.label, options.programName).catch(() => {});
       await refreshScopedWindowTopmost(options.label).catch(() => {});
     }
@@ -280,6 +292,7 @@ export async function openInstalledPageWindow(args: {
   height: number;
   minWidth: number;
   minHeight: number;
+  alwaysOnTop: boolean;
   bounds?: FlowCellBounds;
 }): Promise<void> {
   const windowLabel = installedPageWindowLabel(args.ownerButtonId);
@@ -290,7 +303,8 @@ export async function openInstalledPageWindow(args: {
     programName: args.programName,
     panelName: args.panelName,
     fileName: args.fileName,
-    pageId: args.pageId
+    pageId: args.pageId,
+    alwaysOnTop: args.alwaysOnTop
   };
   registerLayoutWindow({
     windowLabel,
@@ -313,6 +327,7 @@ export async function openInstalledPageWindow(args: {
       minimumHeight: args.minHeight,
       decorations: true,
       programName: args.programName,
+      alwaysOnTop: args.alwaysOnTop,
       savedBounds: args.bounds
     });
     const target = await WebviewWindow.getByLabel(windowLabel);
@@ -338,6 +353,7 @@ export interface InstalledPageOpenDescriptor {
     height: number;
     minWidth: number;
     minHeight: number;
+    alwaysOnTop: boolean;
   };
 }
 
@@ -372,7 +388,8 @@ export async function resolveAndOpenInstalledPageWindow(args: {
     width: descriptor.window.width,
     height: descriptor.window.height,
     minWidth: descriptor.window.minWidth,
-    minHeight: descriptor.window.minHeight
+    minHeight: descriptor.window.minHeight,
+    alwaysOnTop: descriptor.window.alwaysOnTop
   });
 }
 

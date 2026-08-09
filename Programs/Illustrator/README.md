@@ -14,7 +14,59 @@ Tool sets are self-contained packages under `Illustrator Git Scripts/Toolsets/`
 with `flowcell.toolset.json` plus their JSX source. There are no generated
 button wrappers or program-level pre-baked Button entries.
 
+## Send SVG to Blender
+
+The Illustrator Files panel exposes `Send SVG to Blender` and `Ill Orca`.
+Both start from the current Illustrator selection and export one clean SVG 1.0
+file per owning sublayer. In a temporary document, every visible filled contour
+is closed, supported appearances and strokes are expanded, and Pathfinder Unite
+is required and baked before export. The original Illustrator artwork is never
+changed. If Illustrator cannot reduce the temporary copy to closed, filled,
+unstroked native paths, the handoff stops instead of creating an unsafe Blender
+mesh. Each file keeps that sublayer's full name, replaces an existing same-named
+SVG, and is handed to the active Blender instance; if Blender is not running,
+the package resolves and starts the newest installed copy. The post-export
+cleanup supplies the SVG 1.0 doctype and removes Illustrator's unresolved Adobe
+namespace entities before Blender reads the file.
+
+Illustrator converts the cleaned artwork bounds and every sublayer center's
+offset from the combined selection center from points to millimeters. The
+internal Blender bridge action fits X and Y through the current scene unit
+scale, restores those relative X/Y positions, keeps Z at the exact
+filename-driven millimeter thickness, and links the finished meshes only to the
+scene's top-level `Live` collection. Blender raises curve tessellation from its
+usual 12 steps to 16 before mesh conversion for smoother printable sidewalls
+without changing physical dimensions. It welds only coincident conversion
+seams, recalculates normals, and rejects open, non-manifold, degenerate,
+duplicate, or self-intersecting results before the batch can be reported as
+successful. It does not install a visible Blender import Button. `Ill Orca`
+then invokes that FlowCell installation's active
+Blender Files `Orca` Button with the imported meshes still selected, so the
+existing Orca package owns STL output, executable discovery, first-run setup,
+and launch behavior. No generated owner ID, user directory, Blender version,
+unit scale, or Orca executable path is embedded in either Illustrator package.
+
+On another supported Windows computer, the user still needs Illustrator,
+Blender, and (for `Ill Orca`) OrcaSlicer installed, the FlowCell Blender bridge
+add-on enabled, and a saved `.blend` file so the Orca package can choose its STL
+destination. The existing Orca package discovers or prompts for that computer's
+executable and performs its normal first-run single-instance setup. Text and
+live vector appearances are processed automatically; raster artwork must be
+manually Image Traced/expanded with the user's intended tracing settings rather
+than being converted with an arbitrary preset. Clipping groups also fail closed;
+convert a mask into explicit closed filled paths when its clipped appearance is
+intended to become printable geometry.
+
+Only a positive number in parentheses at the very beginning of the sublayer
+name sets the finished Blender thickness in millimeters: `(9) Name` produces
+9 mm. Names such as `V9 Name`, `9 Name`, or `Name (9)` use the 1 mm default.
+
 ## Illustrator bridge
+
+The persistent bridge injects the resolved Button-owned source path as
+`FLOWCELL_SCRIPT_PATH` before execution, so a directory-backed package can find
+its own companions and owner-local `runtime/` folder even when Illustrator's
+`$.fileName` reports the host application's folder.
 
 The Illustrator bridge has no program-level Button inventory. Its one explicit
 bind-only integration is `Actions / Set Anchor`: Binds exposes that Core action

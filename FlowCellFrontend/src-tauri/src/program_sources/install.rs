@@ -424,6 +424,19 @@ fn recognized_root_manifest(
 
 fn detect_import_kind(source_path: &Path) -> Result<&'static str, String> {
     if source_path.is_file() {
+        let parent = source_path
+            .parent()
+            .ok_or_else(|| "Selected Button source has no parent folder.".to_string())?;
+        let script_manifest = recognized_root_manifest(parent, SCRIPT_MANIFEST_FILE_NAME)?;
+        let toolset_manifest = recognized_root_manifest(parent, TOOLSET_MANIFEST_FILE_NAME)?;
+        if script_manifest.is_some() && toolset_manifest.is_some() {
+            return Err(format!(
+                "Source folder '{}' is ambiguous because it contains both {} and {}.",
+                parent.display(),
+                SCRIPT_MANIFEST_FILE_NAME,
+                TOOLSET_MANIFEST_FILE_NAME
+            ));
+        }
         let file_name = source_path
             .file_name()
             .and_then(|value| value.to_str())
@@ -434,7 +447,11 @@ fn detect_import_kind(source_path: &Path) -> Result<&'static str, String> {
         if file_name.eq_ignore_ascii_case(TOOLSET_MANIFEST_FILE_NAME) {
             return Ok("tool-set");
         }
-        return Ok("script");
+        return Ok(if toolset_manifest.is_some() {
+            "tool-set"
+        } else {
+            "script"
+        });
     }
     if !source_path.is_dir() {
         return Err(format!(
@@ -650,6 +667,16 @@ fn prepare_source(
             manifest.label
         ));
     }
+    let selected_package_file = source_path
+        .is_file()
+        .then(|| source_path.to_path_buf())
+        .filter(|path| {
+            !path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .map(|value| value.eq_ignore_ascii_case(TOOLSET_MANIFEST_FILE_NAME))
+                .unwrap_or(false)
+        });
     let manifest_path = if source_path.is_dir() {
         source_path.join(TOOLSET_MANIFEST_FILE_NAME)
     } else if source_path
@@ -659,9 +686,19 @@ fn prepare_source(
         .unwrap_or(false)
     {
         source_path.to_path_buf()
+    } else if let Some(parent) = source_path.parent() {
+        let sibling = parent.join(TOOLSET_MANIFEST_FILE_NAME);
+        if sibling.is_file() {
+            sibling
+        } else {
+            return Err(format!(
+                "Tool-set import requires a folder, declared entry file, or {} file.",
+                TOOLSET_MANIFEST_FILE_NAME
+            ));
+        }
     } else {
         return Err(format!(
-            "Tool-set import requires a folder or {} file.",
+            "Tool-set import requires a folder, declared entry file, or {} file.",
             TOOLSET_MANIFEST_FILE_NAME
         ));
     };
@@ -700,6 +737,28 @@ fn prepare_source(
             "Tool-set source '{}' is missing or unsupported.",
             executable.display()
         ));
+    }
+    if let Some(selected) = selected_package_file.as_ref() {
+        let selected = selected.canonicalize().map_err(|error| {
+            format!(
+                "Selected package file '{}' could not be resolved: {error}",
+                selected.display()
+            )
+        })?;
+        let executable = executable.canonicalize().map_err(|error| {
+            format!(
+                "Tool-set package source '{}' could not be resolved: {error}",
+                executable.display()
+            )
+        })?;
+        if selected != executable {
+            return Err(format!(
+                "'{}' is a companion file in a tool-set package. Add the declared source '{}' or its {} instead.",
+                selected.display(),
+                executable.display(),
+                TOOLSET_MANIFEST_FILE_NAME
+            ));
+        }
     }
     let mut seen_slots = Vec::<String>::new();
     let mut children = Vec::new();
@@ -2332,10 +2391,17 @@ mod tests {
             detect_import_kind(&root).expect("detect root script manifest"),
             "script"
         );
+        assert_eq!(
+            detect_import_kind(&raw_script).expect("detect declared script package entry"),
+            "script"
+        );
 
         fs::write(root.join(TOOLSET_MANIFEST_FILE_NAME), "{}")
             .expect("write root tool-set manifest");
         let error = detect_import_kind(&root).expect_err("dual manifests must be rejected");
+        assert!(error.contains("ambiguous"));
+        let error = detect_import_kind(&raw_script)
+            .expect_err("a selected entry beside dual manifests must be rejected");
         assert!(error.contains("ambiguous"));
 
         fs::remove_file(root.join(SCRIPT_MANIFEST_FILE_NAME)).expect("remove script manifest");
@@ -2346,6 +2412,10 @@ mod tests {
         assert_eq!(
             detect_import_kind(&root.join(TOOLSET_MANIFEST_FILE_NAME))
                 .expect("detect selected tool-set manifest"),
+            "tool-set"
+        );
+        assert_eq!(
+            detect_import_kind(&raw_script).expect("detect declared tool-set package entry"),
             "tool-set"
         );
 
@@ -2720,7 +2790,7 @@ mod tests {
     }
 
     #[test]
-    fn selected_package_entry_promotes_manifest_and_companion_is_rejected() {
+    fn selected_script_and_toolset_entries_promote_manifest_and_companions_are_rejected() {
         let root = std::env::temp_dir().join(format!(
             "flowcell-script-package-{}",
             std::time::SystemTime::now()
@@ -2752,12 +2822,42 @@ mod tests {
         assert!(prepare_source(&windows_manifest(), &root.join("helper.ps1"), "script").is_err());
 
         fs::remove_file(root.join(SCRIPT_MANIFEST_FILE_NAME)).expect("remove script manifest");
-        fs::write(root.join(TOOLSET_MANIFEST_FILE_NAME), "{}").expect("write tool-set marker");
-        let error = match prepare_source(&windows_manifest(), &root.join("entry.vbs"), "script") {
-            Ok(_) => panic!("script import must reject a tool-set entry"),
+        fs::write(
+            root.join(TOOLSET_MANIFEST_FILE_NAME),
+            r#"{
+                "schemaVersion": 1,
+                "id": "windows.test-toolset-package",
+                "label": "Test Tool Set Package",
+                "program": "Windows",
+                "source": "entry.vbs",
+                "children": [
+                    { "slot": "run", "label": "Run", "payload": { "command": "run" } }
+                ]
+            }"#,
+        )
+        .expect("write tool-set manifest");
+        let mut toolset_program = windows_manifest();
+        toolset_program.supports_toolset_manifests = true;
+        let prepared = prepare_source(&toolset_program, &root.join("entry.vbs"), "tool-set")
+            .expect("promote declared tool-set entry to package");
+        assert_eq!(prepared.package_source_root, root);
+        assert_eq!(
+            prepared.source_relative_to_package,
+            PathBuf::from("entry.vbs")
+        );
+        assert_eq!(
+            prepared
+                .children
+                .iter()
+                .map(|child| child.slot.as_str())
+                .collect::<Vec<_>>(),
+            vec!["run"]
+        );
+        let error = match prepare_source(&toolset_program, &root.join("helper.ps1"), "tool-set") {
+            Ok(_) => panic!("tool-set companion import must fail closed"),
             Err(error) => error,
         };
-        assert!(error.contains("Use Add Button"));
+        assert!(error.contains("companion file in a tool-set package"));
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -2984,6 +3084,90 @@ mod tests {
             "old"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shipped_flatten_revolve_entry_promotes_a_self_contained_toolset() {
+        let package_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("Programs")
+            .join("Blender")
+            .join("Blender Git Scripts")
+            .join("Toolsets")
+            .join("flatten-revolve");
+        let entry = package_root.join("flatten revolve.py");
+        assert_eq!(
+            detect_import_kind(&entry).expect("detect shipped tool-set entry"),
+            "tool-set"
+        );
+
+        let mut manifest = windows_manifest();
+        manifest.program_id = "blender".into();
+        manifest.label = "Blender".into();
+        manifest.allowed_script_extensions = vec!["py".into()];
+        manifest.supports_toolset_manifests = true;
+        manifest.runner.kind = "blender-bridge".into();
+        let prepared = prepare_source(&manifest, &entry, "tool-set")
+            .expect("promote shipped Flatten/Revolve entry");
+
+        assert_eq!(prepared.package_source_root, package_root);
+        assert_eq!(
+            prepared.source_relative_to_package,
+            PathBuf::from("flatten revolve.py")
+        );
+        assert_eq!(
+            prepared
+                .children
+                .iter()
+                .map(|child| child.slot.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "pivot_select",
+                "flatten_profile",
+                "flatten_axis_select",
+                "generate_revolve",
+                "revolve_axis_select",
+                "angle_input",
+                "steps_input",
+                "merge_input",
+            ]
+        );
+        let layout = prepared.layout.as_ref().expect("tool-set layout");
+        assert_eq!(
+            layout
+                .pointer("/fields/0/defaultValue")
+                .and_then(Value::as_str),
+            Some("WORLD")
+        );
+        assert_eq!(
+            layout
+                .pointer("/fields/1/defaultValue")
+                .and_then(Value::as_str),
+            Some("Y")
+        );
+        assert_eq!(
+            layout
+                .pointer("/fields/2/defaultValue")
+                .and_then(Value::as_str),
+            Some("Z")
+        );
+        assert_eq!(
+            layout
+                .pointer("/childBehaviors/pivot_select/selectField")
+                .and_then(Value::as_str),
+            Some("center_mode")
+        );
+        assert_eq!(
+            layout
+                .pointer("/childBehaviors/merge_input/inlineEditField")
+                .and_then(Value::as_str),
+            Some("merge_distance")
+        );
+
+        let source = fs::read_to_string(&entry).expect("read shipped Flatten/Revolve source");
+        assert!(source.contains("def run_flowcell_action"));
+        assert!(!source.contains("flowcell_actions"));
+        assert!(!source.contains("flatten_revolve_tools"));
     }
 
     #[test]

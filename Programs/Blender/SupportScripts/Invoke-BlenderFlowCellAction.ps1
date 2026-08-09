@@ -7,7 +7,9 @@ param(
     [string]$DataJson = '',
     [switch]$PassThruResponse,
     [string]$ConfigPath = '',
-    [string]$StatusPath = ''
+    [string]$StatusPath = '',
+    [ValidateRange(0, 600)]
+    [int]$ResponseTimeoutSeconds = 0
 )
 
 Set-StrictMode -Version Latest
@@ -444,7 +446,12 @@ try {
 
     $targetBlenderProcessId = Get-TargetBlenderProcessId
     $requestId = [guid]::NewGuid().ToString('N')
-    $timeoutSeconds = [Math]::Max([int]$config.automation.responseTimeoutSeconds, 1)
+    $timeoutSeconds = if ($ResponseTimeoutSeconds -gt 0) {
+        $ResponseTimeoutSeconds
+    }
+    else {
+        [Math]::Max([int]$config.automation.responseTimeoutSeconds, 1)
+    }
     $bridgeFolders = @(Get-BridgeFolderCandidates -Config $config -TargetBlenderProcessId $targetBlenderProcessId)
 
     $data = [ordered]@{}

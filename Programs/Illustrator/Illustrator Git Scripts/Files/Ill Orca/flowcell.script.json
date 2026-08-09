@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.ill-orca",
+  "label": "Ill Orca",
+  "tooltip": "Send selected Illustrator artwork through the installed SVG-to-Blender workflow, then continue to OrcaSlicer.",
+  "program": "Illustrator",
+  "source": "Ill Orca.jsx",
+  "execution": {
+    "waitForCompletion": true
+  }
+}

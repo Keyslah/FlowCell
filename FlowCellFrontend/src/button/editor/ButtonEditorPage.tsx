@@ -159,6 +159,7 @@ import {
   buildButtonEditorProgramOptions,
   resolveButtonEditorContextPlacementId,
   resolveButtonEditorIdentity,
+  resolveButtonEditorNavigationButtonId,
   resolveButtonEditorSurfaceSkinTargetPlacementIds,
   resolveButtonEditorPanelSurfaceId,
   resolveButtonEditorSurfaceIdentity,
@@ -198,6 +199,30 @@ function buttonRectsEqual(
       Math.abs(left.width - right.width) <= 0.05 &&
       Math.abs(left.height - right.height) <= 0.05
   );
+}
+
+function resolveIndependentOwnerPlacementId(
+  document: ButtonStateDocument,
+  surfaceId: string
+): string | null {
+  const unit = Object.values(document.popoutUnits).find(
+    (candidate) => candidate.surfaceId === surfaceId
+  );
+  const unitOwnerPlacementId = unit?.ownerPlacementId?.trim();
+  if (
+    unitOwnerPlacementId &&
+    document.placements[unitOwnerPlacementId]?.surfaceId === surfaceId
+  ) {
+    return unitOwnerPlacementId;
+  }
+  const setup = Object.values(document.fanSetups).find(
+    (candidate) => candidate.fanSurfaceId === surfaceId
+  );
+  return setup
+    ? document.surfaces[surfaceId]?.placementIds.find((placementId) =>
+        document.placements[placementId]?.buttonId === setup.panelOwnerButtonId
+      ) ?? null
+    : null;
 }
 
 function formatButtonSize(width: number, height: number): string {
@@ -715,6 +740,10 @@ function ButtonEditorContent({
           : "responsive"
       );
   const selectedButton = selectedPlacement ? store.draft.buttons[selectedPlacement.buttonId] ?? null : null;
+  const navigationButtonId = resolveButtonEditorNavigationButtonId(
+    store.draft,
+    selectedButton?.id ?? ""
+  );
   const selectedCommittedPlacement = selectedPlacement
     ? store.committed.placements[selectedPlacement.id] ?? null
     : null;
@@ -785,12 +814,22 @@ function ButtonEditorContent({
     [store.draft, programName, panelName]
   );
   const placementOptions = useMemo(() => {
-    const options = buildButtonEditorPlacementOptions(store.draft, selectedButton?.id ?? "");
+    const options = buildButtonEditorPlacementOptions(store.draft, navigationButtonId);
     if (!isFlowCellMainPageProgram(programName)) return options;
     return options.filter(
       (option) => store.draft.surfaces[option.surfaceId]?.kind === "main"
     );
-  }, [programName, store.draft, selectedButton?.id]);
+  }, [navigationButtonId, programName, store.draft]);
+  const selectedPlacementOptionId = useMemo(() => {
+    const toolSetView = placementOptions.find((option) =>
+      option.surfaceId === selectedSurfaceId &&
+      option.view === (selectedSurfaceShowsOwner ? "tool-set-fan" : "tool-set-popout")
+    );
+    if (toolSetView) return toolSetView.id;
+    return placementOptions.find((option) =>
+      option.view === "placement" && option.placementId === focusedPlacementId
+    )?.id ?? "";
+  }, [focusedPlacementId, placementOptions, selectedSurfaceId, selectedSurfaceShowsOwner]);
 
   const focusPlacement = useCallback((placementId: string, replaceSelection = true) => {
     const document = store.current();
@@ -816,8 +855,26 @@ function ButtonEditorContent({
       setSelectedPlacementIds(new Set());
       return;
     }
-    const placementId = resolvePreferredButtonPlacementId(
-      store.current(),
+    const document = store.current();
+    const button = document.buttons[buttonId];
+    const matchingSelectedToolSetUnit = button?.role === "tool-set-owner"
+      ? Object.values(document.popoutUnits).find(
+          (candidate) =>
+            candidate.kind === "tool-set" &&
+            candidate.ownerButtonId === buttonId &&
+            candidate.surfaceId === selectedSurfaceId
+        )
+      : undefined;
+    const selectedToolSetUnit = matchingSelectedToolSetUnit?.kind === "tool-set"
+      ? matchingSelectedToolSetUnit
+      : undefined;
+    const selectedToolSetPlacementId = selectedToolSetUnit
+      ? selectedToolSetUnit.interactionMode === "fan" && selectedToolSetUnit.ownerPlacementId
+        ? selectedToolSetUnit.ownerPlacementId
+        : selectedToolSetUnit.childPlacementIds[0] ?? null
+      : null;
+    const placementId = selectedToolSetPlacementId ?? resolvePreferredButtonPlacementId(
+      document,
       buttonId,
       selectedSurfaceId
     );
@@ -836,6 +893,21 @@ function ButtonEditorContent({
     const document = store.current();
     const placementId = resolveButtonEditorContextPlacementId(document, context);
     if (placementId) {
+      const placement = document.placements[placementId];
+      const surface = placement ? document.surfaces[placement.surfaceId] : null;
+      const identity = placement
+        ? resolveButtonEditorIdentity(document, placement.buttonId)
+        : null;
+      if (context.programName) {
+        setProgramName(context.programName);
+      } else if (surface?.kind !== "main" && identity?.programName) {
+        setProgramName(identity.programName);
+      }
+      if (context.panelName) {
+        setPanelName(context.panelName);
+      } else if (surface?.kind !== "main" && identity?.panelName) {
+        setPanelName(identity.panelName);
+      }
       focusPlacement(placementId);
       return;
     }
@@ -1383,21 +1455,53 @@ function ButtonEditorContent({
     }
   };
 
-  const setSelectedPopoutFanEnabled = useCallback((enabled: boolean) => {
+  const selectPopoutPlacementMode = useCallback((surfaceId: string, mode: "pop" | "fan") => {
     const current = store.current();
     const unit = Object.values(current.popoutUnits).find(
-      (candidate) => candidate.surfaceId === selectedSurfaceId
+      (candidate) => candidate.surfaceId === surfaceId
     );
     if (!unit) {
       setMessage("Select a Pop-out before changing its Fan behavior.");
+      return;
+    }
+    const currentContentPlacementIds = unit.kind === "tool-set"
+      ? unit.childPlacementIds
+      : unit.memberPlacementIds;
+    const currentOwnerPlacementId = unit.ownerPlacementId?.trim();
+    const hasCurrentOwnerPlacement = Boolean(
+      currentOwnerPlacementId &&
+      current.placements[currentOwnerPlacementId]?.surfaceId === surfaceId
+    );
+    if (
+      (unit.interactionMode ?? "pop") === mode &&
+      (mode === "pop" || hasCurrentOwnerPlacement)
+    ) {
+      const currentFocusIsContent = Boolean(
+        focusedPlacementId && currentContentPlacementIds.includes(focusedPlacementId)
+      );
+      const nextFocusedPlacementId = mode === "fan"
+        ? currentOwnerPlacementId ?? null
+        : currentFocusIsContent
+          ? focusedPlacementId
+          : currentContentPlacementIds[0] ?? null;
+      setActivePage("placement");
+      setReorderMode(false);
+      setSelectedSurfaceId(surfaceId);
+      setFocusedPlacementId(nextFocusedPlacementId);
+      setSelectedPlacementIds(new Set(nextFocusedPlacementId ? [nextFocusedPlacementId] : []));
+      setMessage(
+        mode === "fan"
+          ? `Fan placement selected. The owner Button is editable anywhere around the ${unit.kind === "tool-set" ? "Tool Set" : "Pop-out contents"}; its position controls where the contents open on click or hover.`
+          : `${unit.kind === "tool-set" ? "Pop-out placement selected. Tool Set children" : "Pop-out contents"} remain editable and the retained Fan owner is hidden.`
+      );
       return;
     }
     try {
       const next = cloneButtonDocument(current);
       const result = setButtonPopoutFanMode({
         document: next,
-        surfaceId: selectedSurfaceId,
-        enabled,
+        surfaceId,
+        enabled: mode === "fan",
         programName,
         panelName
       });
@@ -1405,27 +1509,31 @@ function ButtonEditorContent({
       const contentPlacementIds = nextUnit.kind === "tool-set"
         ? nextUnit.childPlacementIds
         : nextUnit.memberPlacementIds;
-      const nextFocusedPlacementId = enabled
+      const currentFocusIsContent = Boolean(
+        focusedPlacementId && contentPlacementIds.includes(focusedPlacementId)
+      );
+      const nextFocusedPlacementId = mode === "fan"
         ? result.ownerPlacementId
-        : focusedPlacementId === result.ownerPlacementId
-          ? contentPlacementIds[0] ?? null
-          : focusedPlacementId;
+        : currentFocusIsContent
+          ? focusedPlacementId
+          : contentPlacementIds[0] ?? null;
       store.transact(() => next, {
-        label: enabled ? "Enable Pop-out Fan" : "Disable Pop-out Fan"
+        label: mode === "fan" ? "Enable Pop-out Fan" : "Disable Pop-out Fan"
       });
       setActivePage("placement");
       setReorderMode(false);
+      setSelectedSurfaceId(surfaceId);
       setFocusedPlacementId(nextFocusedPlacementId);
       setSelectedPlacementIds(new Set(nextFocusedPlacementId ? [nextFocusedPlacementId] : []));
       setMessage(
-        enabled
-          ? "Fan enabled. The owner Button is now editable; move it independently around the saved Pop-out layout, then Save Pop-out Settings."
-          : "Fan disabled. The owner placement is retained and hidden so it returns in the same place if Fan is enabled again."
+        mode === "fan"
+          ? `Fan placement selected. The owner Button is editable anywhere around the ${nextUnit.kind === "tool-set" ? "Tool Set" : "Pop-out contents"}; its position controls where the contents open on click or hover.`
+          : `${nextUnit.kind === "tool-set" ? "Pop-out placement selected. Tool Set children" : "Pop-out contents"} remain editable and the retained Fan owner is hidden.`
       );
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     }
-  }, [focusedPlacementId, panelName, programName, selectedSurfaceId, store]);
+  }, [focusedPlacementId, panelName, programName, store]);
 
   const cancel = useCallback(async (): Promise<boolean> => {
     setBusy(true);
@@ -1530,7 +1638,11 @@ function ButtonEditorContent({
       setMessage("A Button placement disappeared while its order was being edited.");
       return false;
     }
-    const geometryIssues = validateExactButtonLayoutGeometry(orderedPlacements, surface);
+    const independentOwnerPlacementId = resolveIndependentOwnerPlacementId(document, surfaceId);
+    const geometryIssues = validateExactButtonLayoutGeometry(
+      orderedPlacements.filter((placement) => placement.id !== independentOwnerPlacementId),
+      surface
+    );
     if (geometryIssues.length > 0) {
       setMessage(geometryIssues[0].message);
       return false;
@@ -1543,7 +1655,7 @@ function ButtonEditorContent({
       orderedPlacements.forEach((placement) => {
         Object.assign(draft.placements[placement.id], placement.rect, {
           zIndex: placement.zIndex,
-          ...placementPatch
+          ...(placement.id === independentOwnerPlacementId ? {} : placementPatch)
         });
       });
     }, { label, coalesceKey });
@@ -1569,7 +1681,11 @@ function ButtonEditorContent({
       return (leftPlacement?.zIndex ?? 0) - (rightPlacement?.zIndex ?? 0) ||
         left.localeCompare(right);
     });
-    const placements = orderedPlacementIds.flatMap((placementId) => {
+    const independentOwnerPlacementId = resolveIndependentOwnerPlacementId(document, surfaceId);
+    const contentPlacementIds = orderedPlacementIds.filter(
+      (placementId) => placementId !== independentOwnerPlacementId
+    );
+    const placements = contentPlacementIds.flatMap((placementId) => {
       const placement = document.placements[placementId];
       return placement ? [{ id: placement.id, rect: placement }] : [];
     });
@@ -1587,10 +1703,21 @@ function ButtonEditorContent({
       setMessage(compacted.reason ?? "The equal-size Buttons do not fit inside the selected surface.");
       return false;
     }
+    const compactedById = new Map(
+      compacted.placements.map((placement) => [placement.id, placement])
+    );
+    const mergedPlacements = orderedPlacementIds.flatMap((placementId, zIndex) => {
+      const compactedPlacement = compactedById.get(placementId);
+      if (compactedPlacement) return [{ ...compactedPlacement, zIndex }];
+      const placement = document.placements[placementId];
+      return placement
+        ? [{ id: placement.id, rect: placement, zIndex }]
+        : [];
+    });
     return applyPlacementOrder(
       surface.id,
       orderedPlacementIds,
-      compacted.placements,
+      mergedPlacements,
       label,
       { matchHitboxToSkin: false, allowStretching: false, allowLabelResize: false },
       { uniformButtonSize: { width: targetSize.width, height: targetSize.height } },
@@ -1654,7 +1781,15 @@ function ButtonEditorContent({
     if (!placement) return;
     const changesSize = Math.abs(placement.width - rect.width) > 0.05 ||
       Math.abs(placement.height - rect.height) > 0.05;
-    if (document.surfaces[placement.surfaceId]?.uniformButtonSize && changesSize) {
+    const independentOwnerPlacementId = resolveIndependentOwnerPlacementId(
+      document,
+      placement.surfaceId
+    );
+    if (
+      document.surfaces[placement.surfaceId]?.uniformButtonSize &&
+      changesSize &&
+      placement.id !== independentOwnerPlacementId
+    ) {
       applyUniformSizeToSurface(
         placement.surfaceId,
         { width: rect.width, height: rect.height },
@@ -1713,8 +1848,13 @@ function ButtonEditorContent({
       ...placement,
       ...assignedDimensions
     };
+    const independentOwnerPlacementId = resolveIndependentOwnerPlacementId(
+      document,
+      surface.id
+    );
     const geometryIssues = validateExactButtonLayoutGeometry(
       surface.placementIds.flatMap((placementId) => {
+        if (placementId === independentOwnerPlacementId) return [];
         const item = document.placements[placementId];
         if (!item) return [];
         return [{ id: item.id, rect: item.id === placement.id ? candidate : item }];
@@ -1999,7 +2139,10 @@ function ButtonEditorContent({
       setMessage("The selected surface contains a missing Button placement.");
       return;
     }
-    const geometryIssues = validateExactButtonLayoutGeometry(completeLayout, surface);
+    const geometryIssues = validateExactButtonLayoutGeometry(
+      completeLayout.filter((placement) => placement.id !== ownerPlacementId),
+      surface
+    );
     if (geometryIssues.length > 0) {
       setMessage(
         "The selected Buttons cannot align by their top-left Button without leaving the surface or overlapping another Button."
@@ -2239,7 +2382,10 @@ function ButtonEditorContent({
       setMessage("A Button placement disappeared while the selection was being moved.");
       return;
     }
-    const geometryIssues = validateExactButtonLayoutGeometry(completeLayout, surface);
+    const geometryIssues = validateExactButtonLayoutGeometry(
+      completeLayout.filter((placement) => placement.id !== ownerPlacementId),
+      surface
+    );
     if (geometryIssues.length > 0) {
       setMessage(geometryIssues[0].message);
       return;
@@ -2715,8 +2861,8 @@ function ButtonEditorContent({
             programName={programName}
             panelName={panelName}
             navigationLocked={Boolean(lockedImportDestination)}
-            buttonId={selectedButton?.id ?? ""}
-            placementId={focusedPlacementId ?? ""}
+            buttonId={navigationButtonId}
+            placementId={selectedPlacementOptionId}
             onProgramChange={(value) => {
               setProgramName(value);
               setPanelName("");
@@ -2734,22 +2880,31 @@ function ButtonEditorContent({
               setSelectedPlacementIds(new Set());
             }}
             onButtonChange={selectButton}
-            onPlacementChange={(placementId) => {
-              if (placementId) focusPlacement(placementId);
-              else {
+            onPlacementChange={(optionId) => {
+              const option = placementOptions.find((candidate) => candidate.id === optionId);
+              if (option?.view === "tool-set-popout") {
+                selectPopoutPlacementMode(option.surfaceId, "pop");
+              } else if (option?.view === "tool-set-fan") {
+                selectPopoutPlacementMode(option.surfaceId, "fan");
+              } else if (option?.placementId) {
+                focusPlacement(option.placementId);
+              } else {
                 setFocusedPlacementId(null);
                 setSelectedPlacementIds(new Set());
               }
             }}
           />
           <div className="button-editor-sidebar__actions">
-            {settingsPlacementKind === "pop-out" && selectedSurfaceUnit ? (
+            {settingsPlacementKind === "pop-out" && selectedSurfaceUnit?.kind === "regular" ? (
               <label className="button-editor-check button-editor-sidebar__fan">
                 <input
                   type="checkbox"
                   checked={selectedSurfaceShowsOwner}
                   disabled={busy}
-                  onChange={(event) => setSelectedPopoutFanEnabled(event.currentTarget.checked)}
+                  onChange={(event) => selectPopoutPlacementMode(
+                    selectedSurfaceId,
+                    event.currentTarget.checked ? "fan" : "pop"
+                  )}
                 />
                 <span>Fan</span>
               </label>

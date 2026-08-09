@@ -9,7 +9,8 @@ param(
     [string]$BridgeDataJson = '{}',
     [string]$ConfigPath = '',
     [string]$BridgeFolder = '',
-    [switch]$SkipSync
+    [switch]$SkipSync,
+    [switch]$RegistryOnly
 )
 
 Set-StrictMode -Version Latest
@@ -416,7 +417,13 @@ function Set-TopDescription([string]$Path, [string]$NextDescription) {
 
 $selectedFilePaths = @($SelectedPaths | Where-Object { -not [string]::IsNullOrWhiteSpace([string]$_) })
 if ($selectedFilePaths.Count -ne 1) {
+    if ($RegistryOnly) {
+        throw 'An internal Blender registry action requires exactly one source file.'
+    }
     throw 'An owned Blender Button install requires exactly one Local source file.'
+}
+if ($RegistryOnly -and $OwnerButtonId -cnotmatch '^internal-[A-Za-z0-9_-]{1,119}$') {
+    throw "Internal Blender registry actions require an OwnerButtonId beginning with 'internal-'."
 }
 
 try {
@@ -605,7 +612,13 @@ if ($installedCount -le 0) {
     }
 }
 else {
-    $phaseMessage = if ($SkipSync) {
+    $phaseMessage = if ($RegistryOnly -and $SkipSync) {
+        'Registered {0} internal Blender {1} in {2} without creating a panel record, synchronizing, or invoking it,' -f $installedCount, $(if ($installedCount -eq 1) { 'action' } else { 'actions' }), [string]$bridgeLayout.BridgeFolderName
+    }
+    elseif ($RegistryOnly) {
+        'Registered {0} internal Blender {1} in {2} without creating a panel record, and synchronized {3},' -f $installedCount, $(if ($installedCount -eq 1) { 'action' } else { 'actions' }), [string]$bridgeLayout.BridgeFolderName, [string]$bridgeLayout.AddonActionsFileName
+    }
+    elseif ($SkipSync) {
         'Installed {0} Blender {1} on {2}. Registered the {3} sandbox action without synchronizing or invoking it,' -f $installedCount, $buttonWord, $PanelName, [string]$bridgeLayout.BridgeFolderName
     }
     else {

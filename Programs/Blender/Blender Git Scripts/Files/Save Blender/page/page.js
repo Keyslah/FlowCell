@@ -279,15 +279,19 @@
     }
   }
 
-  function validateProjectName(value) {
-    const name = String(value || "");
-    if (!name || name !== name.trim()) {
-      throw new Error("Enter a project name without leading or trailing whitespace.");
+  function sanitizeProjectName(value) {
+    let name = String(value || "")
+      .replace(/\s+/gu, "")
+      .replace(/[<>:"/\\|?*]|[\u0000-\u001f]/g, "")
+      .replace(/\.+$/g, "");
+    name = Array.from(name).slice(0, 120).join("").replace(/\.+$/g, "");
+    if (!name) {
+      throw new Error("Enter a name containing at least one valid filename character.");
     }
-    if (/[<>:"/\\|?*]|[\u0000-\u001f]/.test(name) || name === "." || name === ".." || name.endsWith(".")) {
-      throw new Error("The project name contains characters Windows cannot use.");
+    if (/^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\..*)?$/i.test(name)) {
+      name = `_${name}`;
     }
-    return name;
+    return Array.from(name).slice(0, 120).join("").replace(/\.+$/g, "");
   }
 
   function joinWindowsPath(folder, leaf) {
@@ -326,7 +330,8 @@
 
     let projectName;
     try {
-      projectName = validateProjectName(projectNameInput.value);
+      projectName = sanitizeProjectName(projectNameInput.value);
+      projectNameInput.value = projectName;
       if (!settings.baseFolder) throw new Error("Choose a parent folder first.");
     } catch (error) {
       setStatus(errorMessage(error), "error");
@@ -420,7 +425,8 @@
     let fileName;
     let projectRoot;
     try {
-      fileName = validateProjectName(projectNameInput.value);
+      fileName = sanitizeProjectName(projectNameInput.value);
+      projectNameInput.value = fileName;
       projectRoot = existingProjectRoot.trim();
       if (!projectRoot) throw new Error("Choose an existing project folder first.");
     } catch (error) {

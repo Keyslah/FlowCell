@@ -225,12 +225,18 @@ does not silently reattach old bindings.
 Buttons Editor is a polished three-pane workspace. The left pane owns dependent
 Program, Panel, Button, and Placement selectors plus placement controls; the
 center pane shows the complete editable Button surface; the right pane owns the
-Skin Editor. Saved Main, Pop, and Fan choices resolve stable concrete surface
-identities and switch the workspace to that exact existing surface, where every
-sibling Button remains visible and directly selectable in Edit mode. The
-Placement selector displays only `Main Page`, `Fan`, or `Pop-out`; a tool-set
-child surface is a Pop-out. Tool-set children inherit their Program/Panel identity
-from their owner for navigation only; canonical identity ownership is unchanged.
+Skin Editor. Saved Main, Pop, and legacy Fan choices resolve stable concrete
+surface identities and switch the workspace to that exact existing surface,
+where every sibling Button remains visible and directly selectable in Edit mode.
+The Button selector omits Tool Set children and lists only their owner. Selecting
+that owner exposes `Main Page`, `Pop-out`, and `Fan` Placement choices. Pop-out
+and Fan are semantic views of the same package-owned tool-set popout surface,
+not a legacy Fan setup: Pop-out shows every child with the retained owner hidden;
+Fan creates or reveals the exact owner beside every child, focuses it so Button
+Label and Button Tooltip can be edited, and selects the existing hover-open and
+click-pin Fan behavior. Children remain directly editable in the workspace while
+navigation stays on their owner. Both views remain classified as Pop-out and use
+`Save Pop-out Settings`. A regular Pop-out retains its `Fan` checkbox.
 Source/package actions are not exposed as an Editor pane.
 
 `Save Main Page Settings`, `Save Fan Settings`, or `Save Pop-out Settings` opens
@@ -299,10 +305,11 @@ runtime presenters are transient and are not restored as global layout windows;
 saved bounds travel with the shared Button record across Main, Pop, and Fan
 placements.
 Panel-rail Buttons are grouped with the other Buttons for their panel and can be
-selected directly in the workspace. The Placement selector exposes a Fan only
-when that saved Fan placement already exists; there is no synthetic default-Fan
-choice and no editor-side Fan creation or membership editor. Existing saved Fan
-Run preview still honors its saved open, close, and pinned defaults: it begins
+selected directly in the workspace. For a legacy panel-owner Fan, the Placement
+selector exposes a Fan only when that saved Fan placement already exists; there
+is no synthetic default legacy Fan choice and no editor-side legacy Fan creation
+or membership editor. Existing saved Fan Run preview still honors its saved
+open, close, and pinned defaults: it begins
 collapsed on the real panel owner, expands on hover, collapses after hover-out
 when unpinned, pins on click, and collapses on the next pinned click. The saved
 Fan placement keeps the owner's surface origin fixed, while the collapsed
@@ -311,8 +318,17 @@ ratio inside the fixed native canvas, so skin overflow cannot be clipped or
 shift the later expanded frame. Panel/program lifecycle still owns removal of a
 `panel-owner` and its dependent saved Fans.
 
-The Button Editor neither creates Fans nor changes saved Fan membership. Main
-retains its existing selected/generic Fan commands and saved-Fan runtime. On Main,
+For a Tool Set owner, the Pop-out and Fan Placement choices share its one
+package-owned popout surface. Fan reveals and focuses the exact owner with all
+children; that owner may be dragged anywhere in any direction, including outside
+or across the child layout, and its relative position determines where the Tool
+Set expands. Pop-out hides but retains that owner position and shows all children.
+This is Pop-out authoring and remains `Save Pop-out Settings`, not legacy Fan
+setup construction.
+
+The Button Editor neither creates legacy Fan setups nor changes saved legacy Fan
+membership. Main retains its existing selected/generic Fan commands and saved-Fan
+runtime. On Main,
 one ordinary click toggles the exact script, macro, or Tool Set owner selection;
 it never executes the Button or opens the Tool Set. Double-clicking runs that
 Button's primary action directly on Main, including opening or toggling a Tool
@@ -688,6 +704,20 @@ it to 15 degrees, Distribute resets it to 3 total positions, and presets plus
 Positive/Negative map the current number into the existing Blender action
 payload. It does not render separate Angle or Copies form fields.
 
+A `selectField` child gives one hidden `select` field the same canonical,
+skin-backed treatment. The owner Button displays only the current option label;
+hover opens a compact transient fanout of options, owner click pins or toggles
+it, and keyboard users can open/select with Enter or Space, move with the arrow
+keys or Home/End, and close with Escape. Every option reuses the owner's literal
+skin, geometry, and authored states. Options are views of package data, not new
+Button records, placements, bindings, or independently persisted skins.
+Validation requires `execute: false`, a hidden select field with no field
+service, no simultaneous `inlineEditField`, nonempty selector/option IDs and
+labels, unique option IDs and primitive values, and one exact default match.
+Malformed declarations fail closed instead of falling through to execution.
+Dynamic selector and inline editor text requires a skin with an HTML `{{label}}`
+node; deliberately textless skins remain textless.
+
 A Tool Set package may declare one strict read-only `stateQuery` against an
 existing child slot, but opening or expanding a Tool Set does not execute it.
 Every newly opened expanded surface resets result-mapped placement cycles to
@@ -737,20 +767,22 @@ skins. A sprite preset never changes the authored skin source or core hitbox.
 ## Source Lifecycle
 
 The Button Editor exposes no manual import, update, delete, popout-creation, or
-Fan-building actions. Main's existing Add Button flow opens the Editor locked to
-the chosen Program and Panel and automatically prompts once for source content.
+legacy Fan membership-building actions. Main's existing Add Button flow opens the
+Editor locked to the chosen Program and Panel and automatically prompts once for
+source content.
 Source packages use the same canonical transaction whenever that handoff or
 another authorized installation or synchronization workflow invokes it:
 
-1. Native auto-detection treats a raw file as a script, the exact root
+1. Native auto-detection treats an ordinary raw file as a script, the exact root
    `flowcell.script.json` as a script package, and the exact root
    `flowcell.toolset.json` as a Tool Set package. A folder containing both root
    manifests is ambiguous, and a folder containing neither is invalid. Nested
    manifests do not classify the selected folder.
-2. When a selected script is the declared entry beside
-   `flowcell.script.json`, FlowCell installs the complete package automatically.
-   Selecting a package companion directly is rejected instead of creating a
-   broken partial install.
+2. When a selected root-level file is the declared entry beside either
+   `flowcell.script.json` or `flowcell.toolset.json`, FlowCell installs the
+   complete Script or Tool Set package automatically. Selecting a sibling
+   companion directly is rejected instead of creating a broken partial install;
+   a root containing both manifest kinds also fails closed.
 3. Native install validates the program manifest and source contract.
 4. FlowCell copies the source package into the owner Button's Local Scripts
    package and writes `flowcell.install.json` inside it.
@@ -801,6 +833,11 @@ package config. The declaration is part of the immutable installed `source/`
 tree. All resource paths are owner-contained and links/reparse points are
 rejected. Install assigns only the generic `open-installed-page` execution
 target; packages cannot declare that reserved target themselves.
+
+The page `window` settings may declare `alwaysOnTop: true`. It defaults to
+`false`; opted-in Pages bypass program-scoped topmost registration and keep the
+native host topmost on ordinary open and layout restore. The policy remains a
+generic Page-host capability, while the package decides whether to opt in.
 
 The trusted host mounts a raw WRY child WebView without Tauri initialization
 scripts. A package-only custom protocol serves sanitized entry HTML and only

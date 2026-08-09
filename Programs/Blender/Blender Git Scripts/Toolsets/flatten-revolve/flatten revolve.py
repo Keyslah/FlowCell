@@ -85,7 +85,7 @@ def get_flowcell_combined_bounds(objects):
 
 
 def get_flowcell_center_point(context, source_obj, center_mode):
-    mode = str(center_mode or "GEOMETRY").strip().upper()
+    mode = str(center_mode or "WORLD").strip().upper()
     if mode == "WORLD":
         return Vector((0.0, 0.0, 0.0))
     if mode == "CURSOR":
@@ -274,7 +274,7 @@ def create_flowcell_flatten_profile(context, source_obj, flatten_axis, center_mo
 def get_flowcell_revolve_target(context, center_mode):
     active = getattr(context.view_layer.objects, "active", None)
     selected_meshes = [obj for obj in context.selected_objects if obj.type == "MESH"]
-    mode = str(center_mode or "GEOMETRY").strip().upper()
+    mode = str(center_mode or "WORLD").strip().upper()
 
     if mode == "OBJECT":
         if active is None:
@@ -340,7 +340,7 @@ def perform_flowcell_flatten_revolve_tool(context=None, data=None):
 
     cleanup_legacy_flatten_revolve_collections(ctx)
 
-    center_mode = str(payload.get("center_mode", "GEOMETRY") or "GEOMETRY").strip().upper()
+    center_mode = str(payload.get("center_mode", "WORLD") or "WORLD").strip().upper()
     if center_mode not in {"GEOMETRY", "ORIGIN", "WORLD", "CURSOR", "OBJECT"}:
         raise ValueError(f"Unsupported center mode: {center_mode}")
 
@@ -354,14 +354,17 @@ def perform_flowcell_flatten_revolve_tool(context=None, data=None):
     if command == "generate_revolve":
         target_obj = get_flowcell_revolve_target(ctx, center_mode)
         ensure_object_mode_for_mesh_action(ctx, target_obj)
+        angle_deg = payload.get("angle_deg", 360.0)
+        revolve_steps = payload.get("revolve_steps", 128)
+        merge_distance = payload.get("merge_distance", 0.0001)
         apply_flowcell_revolve(
             ctx,
             target_obj,
             str(payload.get("revolve_axis", "Z") or "Z"),
             center_mode,
-            float(payload.get("angle_deg", 360.0) or 360.0),
-            int(payload.get("revolve_steps", 128) or 128),
-            float(payload.get("merge_distance", 0.0001) or 0.0001),
+            float(360.0 if angle_deg in (None, "") else angle_deg),
+            int(128 if revolve_steps in (None, "") else revolve_steps),
+            float(0.0001 if merge_distance in (None, "") else merge_distance),
         )
         return _result(message=f"Revolved '{target_obj.name}' in place.")
 

@@ -92,23 +92,19 @@ def _assert_no_reparse_between(root: Path, target: Path) -> None:
             raise ValueError(f"Prepared save path contains a non-folder: {current}")
 
 
-def _validate_project_name(value: str) -> str:
-    name = str(value or "")
-    if not name or name != name.strip():
-        raise ValueError("Project name cannot be blank or start or end with whitespace.")
-    if len(name) > MAX_PROJECT_NAME_LENGTH:
-        raise ValueError(f"Project name cannot exceed {MAX_PROJECT_NAME_LENGTH} characters.")
-    if name in {".", ".."} or name.endswith("."):
-        raise ValueError("Project name cannot be '.' or '..' or end with a period.")
-    if INVALID_WINDOWS_NAME_CHARS.search(name):
-        raise ValueError("Project name contains characters Windows cannot use in a folder name.")
+def _sanitize_project_name(value: str) -> str:
+    name = re.sub(r"\s+", "", str(value or ""))
+    name = INVALID_WINDOWS_NAME_CHARS.sub("", name).rstrip(".")
+    name = name[:MAX_PROJECT_NAME_LENGTH].rstrip(".")
+    if not name:
+        raise ValueError("Project name must contain at least one valid filename character.")
     reserved_token = name.split(".", 1)[0].upper()
     if reserved_token in WINDOWS_RESERVED_NAMES:
-        raise ValueError(f"'{name}' is a reserved Windows name.")
-    return name
+        name = f"_{name}"
+    return name[:MAX_PROJECT_NAME_LENGTH].rstrip(".")
 
 
-def _ensure_new_direct_project(parent_folder: Path, project_name: str) -> tuple[Path, Path]:
+def _ensure_new_project_root(parent_folder: Path, project_name: str) -> Path:
     _assert_regular_directory(parent_folder, "Parent folder")
     project_root = parent_folder / project_name
 
@@ -130,7 +126,18 @@ def _ensure_new_direct_project(parent_folder: Path, project_name: str) -> tuple[
             raise ValueError(f"Could not create project folder '{project_root}': {exc}") from exc
 
     _assert_regular_directory(project_root, "Project folder")
-    final_path = project_root / f"{project_name}.blend"
+    return project_root
+
+
+def _ensure_new_direct_project(parent_folder: Path, project_name: str) -> tuple[Path, Path]:
+    project_root = _ensure_new_project_root(parent_folder, project_name)
+    blender_folder = project_root / "Blender"
+    try:
+        blender_folder.mkdir()
+    except OSError as exc:
+        raise ValueError(f"Could not create Blender folder '{blender_folder}': {exc}") from exc
+    _assert_regular_directory(blender_folder, "Blender folder")
+    final_path = blender_folder / f"{project_name}.blend"
     return project_root, final_path
 
 
@@ -227,9 +234,9 @@ def _save_current() -> dict[str, object]:
 def _prepare_root(data: dict) -> dict[str, object]:
     if str(bpy.data.filepath or "").strip():
         raise ValueError("This Blender file is already saved. Use Save in place instead.")
-    project_name = _validate_project_name(str(data.get("projectName", "") or ""))
+    project_name = _sanitize_project_name(str(data.get("projectName", "") or ""))
     parent_folder = _absolute_path(str(data.get("parentFolder", "") or ""), "Parent folder")
-    project_root, _ = _ensure_new_direct_project(parent_folder, project_name)
+    project_root = _ensure_new_project_root(parent_folder, project_name)
     return {
         "prepared": True,
         "projectRoot": str(project_root),
@@ -241,7 +248,7 @@ def _save_target(data: dict) -> dict[str, object]:
     if str(bpy.data.filepath or "").strip():
         raise ValueError("This Blender file is already saved. Use Save in place instead.")
 
-    project_name = _validate_project_name(str(data.get("projectName", "") or ""))
+    project_name = _sanitize_project_name(str(data.get("projectName", "") or ""))
     parent_folder = _absolute_path(str(data.get("parentFolder", "") or ""), "Parent folder")
     prepared_by_profile = bool(data.get("preparedByProfile", False))
 
@@ -271,7 +278,7 @@ def _save_existing_target(data: dict) -> dict[str, object]:
     if str(bpy.data.filepath or "").strip():
         raise ValueError("This Blender file is already saved. Use Save in place instead.")
 
-    file_name = _validate_project_name(str(data.get("fileName", "") or ""))
+    file_name = _sanitize_project_name(str(data.get("fileName", "") or ""))
     project_root, final_path = _validate_existing_project_target(
         file_name,
         str(data.get("projectRoot", "") or ""),

@@ -175,6 +175,28 @@ test("generated page Buttons update by authenticated package identity instead of
   );
 });
 
+test("installed pages can opt into fixed always-on-top window behavior", () => {
+  const appBase = read(frontendRoot, "src", "AppBase.tsx");
+  const coreWindows = read(frontendRoot, "src", "lib", "coreWindows.ts");
+  const windowContext = read(frontendRoot, "src", "lib", "windowContext.ts");
+  const mainPage = read(frontendRoot, "src", "pages", "main", "MainPage.tsx");
+
+  assert.match(coreWindows, /alwaysOnTop:\s*options\.alwaysOnTop\s*\?\?\s*false/);
+  assert.match(coreWindows, /programName\s*&&\s*!options\.alwaysOnTop/);
+  assert.match(
+    coreWindows,
+    /if \(options\.alwaysOnTop\)[\s\S]*await unregisterScopedWindowTopmost\(options\.label\);/
+  );
+  assert.match(
+    coreWindows,
+    /if \(options\.alwaysOnTop\)[\s\S]*else \{[\s\S]*setAlwaysOnTop\(false\)[\s\S]*registerScopedWindowTopmost[\s\S]*refreshScopedWindowTopmost/
+  );
+  assert.match(coreWindows, /alwaysOnTop:\s*descriptor\.window\.alwaysOnTop/);
+  assert.match(windowContext, /alwaysOnTop:\s*parsed\.alwaysOnTop\s*===\s*true/);
+  assert.match(appBase, /if \(fixedAlwaysOnTop\)[\s\S]*applyTopmost\(true\)/);
+  assert.match(mainPage, /alwaysOnTop:\s*descriptor\.window\.alwaysOnTop/);
+});
+
 test("Illustrator page bridge reacquires stale COM once without replaying script errors", () => {
   const bridge = read(
     repoRoot,

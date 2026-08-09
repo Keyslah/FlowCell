@@ -23,7 +23,7 @@
   "bundledSources": [
     {
       "id": "blender.save-blender",
-      "version": "1.2.0",
+      "version": "1.2.2",
       "panelName": "Files",
       "sourcePath": "Blender Git Scripts/Files/Save Blender",
       "importKind": "script",

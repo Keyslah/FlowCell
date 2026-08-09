@@ -22,6 +22,38 @@
   "supportsToolsetManifests": true,
   "bundledSources": [
     {
+      "id": "illustrator.send-svg-to-blender",
+      "version": "1.2.6",
+      "panelName": "Files",
+      "sourcePath": "Illustrator Git Scripts/Files/Send SVG to Blender/18_Prepare_Selected_OBJ_Export.jsx",
+      "importKind": "script",
+      "displayLabel": "Send SVG to Blender",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": ["Installs the selected-artwork SVG export and Blender handoff Button into Files."],
+      "installIfMissing": true,
+      "installOnAdd": true,
+      "legacyMatchLabel": "18 Prepare Selected OBJ Export",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.ill-orca",
+      "version": "1.0.0",
+      "panelName": "Files",
+      "sourcePath": "Illustrator Git Scripts/Files/Ill Orca/Ill Orca.jsx",
+      "importKind": "script",
+      "displayLabel": "Ill Orca",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": ["illustrator.send-svg-to-blender"],
+      "installEffects": ["Installs the selected-artwork SVG, Blender, and Orca handoff Button into Files."],
+      "installIfMissing": true,
+      "installOnAdd": true,
+      "legacyMatchLabel": "Ill Orca",
+      "legacyMatchKind": "script"
+    },
+    {
       "id": "illustrator.layers-builder.3d",
       "version": "3.1.2",
       "panelName": "Layers Builder",

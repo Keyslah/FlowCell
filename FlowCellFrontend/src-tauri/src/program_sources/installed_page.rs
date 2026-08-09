@@ -48,6 +48,8 @@ pub(crate) struct InstalledPageWindow {
     pub height: u32,
     pub min_width: u32,
     pub min_height: u32,
+    #[serde(default)]
+    pub always_on_top: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -2652,6 +2654,7 @@ mod tests {
                 height: 480,
                 min_width: 320,
                 min_height: 240,
+                always_on_top: false,
             },
             actions: vec![InstalledPageAction {
                 id: "state.write".to_string(),
@@ -2777,6 +2780,30 @@ mod tests {
             "unknown": true
         });
         assert!(serde_json::from_value::<InstalledPageManifest>(raw).is_err());
+    }
+
+    #[test]
+    fn page_window_always_on_top_is_optional_and_defaults_off() {
+        let default_window: InstalledPageWindow = serde_json::from_value(json!({
+            "title": "Example Page",
+            "width": 640,
+            "height": 480,
+            "minWidth": 320,
+            "minHeight": 240
+        }))
+        .expect("parse window without alwaysOnTop");
+        assert!(!default_window.always_on_top);
+
+        let topmost_window: InstalledPageWindow = serde_json::from_value(json!({
+            "title": "Example Page",
+            "width": 640,
+            "height": 480,
+            "minWidth": 320,
+            "minHeight": 240,
+            "alwaysOnTop": true
+        }))
+        .expect("parse topmost window");
+        assert!(topmost_window.always_on_top);
     }
 
     #[test]

@@ -1357,3 +1357,67 @@ test("a Fan owner anchors anywhere while its Buttons keep the bounds and overlap
     assert.equal(overlapping.issues.some((issue) => issue.message.includes("overlap")), true);
   }
 });
+
+test("a Tool Set Pop-out Fan owner remains an unrestricted anchor in Fan and Pop views", () => {
+  const { document } = crossToolSetFanSettingsFixture();
+  const surface = document.surfaces["surface-tool-pop"];
+  const unit = document.popoutUnits["tool-pop"];
+  const ownerPlacement = document.placements[unit.ownerPlacementId];
+  const context = { programName: "Windows", panelName: "Files" };
+
+  for (const anchor of [{ x: -480, y: -320 }, { x: 5000, y: 4200 }, { x: 0, y: 0 }]) {
+    ownerPlacement.x = anchor.x;
+    ownerPlacement.y = anchor.y;
+    const validation = validateButtonStateDocument(document);
+    assert.equal(
+      validation.valid,
+      true,
+      `Tool Set owner at ${anchor.x},${anchor.y}: ${validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n")}`
+    );
+    const fileValidation = validateButtonSettingsFile(
+      buildButtonSettingsFile(document, surface.id, context)
+    );
+    assert.equal(
+      fileValidation.valid,
+      true,
+      `Tool Set owner file at ${anchor.x},${anchor.y}: ${fileValidation.issues.join("\n")}`
+    );
+  }
+
+  unit.interactionMode = "pop";
+  ownerPlacement.x = -640;
+  ownerPlacement.y = 2400;
+  assert.equal(
+    validateButtonStateDocument(document).valid,
+    true,
+    "the retained hidden owner must remain valid when the Pop-out view is selected"
+  );
+  assert.equal(
+    validateButtonSettingsFile(buildButtonSettingsFile(document, surface.id, context)).valid,
+    true
+  );
+
+  surface.uniformButtonSize = { width: 90, height: 50 };
+  unit.childPlacementIds.forEach((placementId) => {
+    Object.assign(document.placements[placementId], {
+      width: 90,
+      height: 50,
+      matchHitboxToSkin: false,
+      allowLabelResize: false
+    });
+  });
+  Object.assign(ownerPlacement, {
+    width: 137,
+    height: 61,
+    matchHitboxToSkin: true,
+    allowLabelResize: true
+  });
+  assert.equal(
+    validateButtonStateDocument(document).valid,
+    true,
+    "Same size Buttons must keep the independently sized owner anchor out of the linked child format"
+  );
+
+  document.placements[unit.childPlacementIds[0]].x = -1;
+  assert.equal(validateButtonStateDocument(document).valid, false);
+});

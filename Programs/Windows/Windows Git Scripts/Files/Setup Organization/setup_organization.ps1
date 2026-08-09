@@ -874,7 +874,7 @@ function Resolve-PreparedDestination {
         throw 'The prepared project marker does not match the selected profile.'
     }
 
-    $relative = '.'
+    $relative = 'Blender'
     $route = $marker.where.PSObject.Properties[$PlannedExtension]
     if ($null -ne $route) {
         if ($route.Value -isnot [string]) { throw 'The prepared project marker contains an invalid planned-file route.' }
@@ -1118,7 +1118,7 @@ function Resolve-ExistingProfileDestination {
 
     $catchAll = @($Profile.folders | Where-Object { -not [bool]$_.ignored -and [bool]$_.catchAll })
     if ($catchAll.Count -gt 0) { return [string]$catchAll[0].path }
-    return '.'
+    return 'Blender'
 }
 
 function Ensure-ExistingPreparedDestination {
@@ -1177,7 +1177,7 @@ function Invoke-PrepareExistingTarget {
     $profileName = ''
     $profilePath = ''
     $markerPath = ''
-    $relative = '.'
+    $relative = 'Blender'
     if ($null -ne $markerSelection) {
         $marker = $markerSelection.Record
         $profileId = [string]$marker.profileId

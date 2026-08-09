@@ -60,14 +60,33 @@ const BUTTON_ACTIVATION_ADVANCE_TRIGGERS = new Set(["press", "hover", "release"]
  * A Fan's owner Button anchors the Fan rather than sitting inside its content,
  * so it is the one placement allowed to live at any offset from the Buttons it
  * opens: outside the saved surface, on the negative side of its origin, and
- * overlapping them. Every other placement keeps the exact bounds and overlap
- * rules.
+ * overlapping them. Pop-out owners retain this exemption while hidden in Pop
+ * mode so a saved anchor remains valid when switching views. Every other
+ * placement keeps the exact bounds and overlap rules.
  */
-function fanOwnerPlacementId(
+function unboundedFanOwnerPlacementId(
   document: Record<string, any>,
   surfaceId: string,
   placements: readonly Record<string, any>[]
 ): string | null {
+  const popoutUnit = isObject(document.popoutUnits)
+    ? Object.values(document.popoutUnits).find(
+        (candidate) =>
+          isObject(candidate) &&
+          (candidate.kind === "regular" || candidate.kind === "tool-set") &&
+          candidate.surfaceId === surfaceId &&
+          typeof candidate.ownerPlacementId === "string" &&
+          typeof candidate.ownerButtonId === "string"
+      )
+    : undefined;
+  if (isObject(popoutUnit)) {
+    const ownerPlacement = placements.find(
+      (placement) =>
+        placement.id === popoutUnit.ownerPlacementId &&
+        placement.buttonId === popoutUnit.ownerButtonId
+    );
+    if (ownerPlacement) return ownerPlacement.id;
+  }
   const surface = document.surfaces?.[surfaceId];
   if (!isObject(surface) || surface.kind !== "fan" || !isObject(document.fanSetups)) return null;
   const setup = Object.values(document.fanSetups).find(
@@ -471,7 +490,44 @@ function validateToolField(field: unknown, path: string, issues: ButtonStateVali
   if (field.kind === "number" && !isFiniteNumber(field.defaultValue)) addIssue(issues, `${path}.defaultValue`, "Number defaults must be finite.");
   if (["text", "path", "color"].includes(String(field.kind)) && typeof field.defaultValue !== "string") addIssue(issues, `${path}.defaultValue`, `${String(field.kind)} defaults must be strings.`);
   if (field.kind === "select") {
-    if (!Array.isArray(field.options) || !field.options.some((option) => isObject(option) && Object.is(option.value, field.defaultValue))) {
+    const options = Array.isArray(field.options) ? field.options : [];
+    if (options.length === 0) {
+      addIssue(issues, `${path}.options`, "Select fields require at least one stable option.");
+    }
+    const optionIds = new Set<string>();
+    const optionValues: unknown[] = [];
+    options.forEach((option, index) => {
+      const optionPath = `${path}.options.${index}`;
+      if (!isObject(option)) {
+        addIssue(issues, optionPath, "Select options must be objects.");
+        return;
+      }
+      const normalizedId = typeof option.id === "string" ? option.id.trim().toLocaleLowerCase("en-US") : "";
+      if (!normalizedId) {
+        addIssue(issues, `${optionPath}.id`, "Select option IDs must be nonempty strings.");
+      } else if (optionIds.has(normalizedId)) {
+        addIssue(issues, `${optionPath}.id`, "Select option IDs must be unique.");
+      } else {
+        optionIds.add(normalizedId);
+      }
+      if (typeof option.label !== "string" || !option.label.trim()) {
+        addIssue(issues, `${optionPath}.label`, "Select option labels must be nonempty strings.");
+      }
+      const primitiveValue = (
+        option.value === null ||
+        typeof option.value === "string" ||
+        typeof option.value === "boolean" ||
+        (typeof option.value === "number" && Number.isFinite(option.value))
+      );
+      if (!primitiveValue) {
+        addIssue(issues, `${optionPath}.value`, "Select option values must be JSON primitives.");
+      } else if (optionValues.some((value) => Object.is(value, option.value))) {
+        addIssue(issues, `${optionPath}.value`, "Select option values must be unique.");
+      } else {
+        optionValues.push(option.value);
+      }
+    });
+    if (options.filter((option) => isObject(option) && Object.is(option.value, field.defaultValue)).length !== 1) {
       addIssue(issues, `${path}.defaultValue`, "Select defaults must match one stable option value.");
     }
   }
@@ -814,7 +870,7 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     const placements = surface.placementIds
       .map((id) => typeof id === "string" ? document.placements[id] : undefined)
       .filter((placement): placement is NonNullable<typeof placement> => isObject(placement));
-    const unboundedPlacementId = fanOwnerPlacementId(document, surfaceId, placements);
+    const unboundedPlacementId = unboundedFanOwnerPlacementId(document, surfaceId, placements);
     const seen = new Set<string>();
     for (const placement of placements) {
       if (seen.has(placement.id)) addIssue(issues, `surfaces.${surfaceId}.placementIds`, `Duplicate placement '${placement.id}'.`);
@@ -833,10 +889,13 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       isFiniteNumber(uniformButtonSize.width) &&
       isFiniteNumber(uniformButtonSize.height) &&
       placements.some((placement) =>
-        Math.abs(placement.width - uniformButtonSize.width) > 0.05 ||
-        Math.abs(placement.height - uniformButtonSize.height) > 0.05 ||
-        placement.matchHitboxToSkin !== false ||
-        placement.allowLabelResize !== false
+        placement.id !== unboundedPlacementId &&
+        (
+          Math.abs(placement.width - uniformButtonSize.width) > 0.05 ||
+          Math.abs(placement.height - uniformButtonSize.height) > 0.05 ||
+          placement.matchHitboxToSkin !== false ||
+          placement.allowLabelResize !== false
+        )
       )
     ) {
       addIssue(
@@ -1055,6 +1114,54 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
               issues,
               `buttons.${childId}.toolSetBehavior.execute`,
               "Inline-edit Buttons must be state-only controls."
+            );
+          }
+        }
+        if (behavior && Object.hasOwn(behavior, "selectField")) {
+          const selectFieldId = typeof behavior.selectField === "string"
+            ? behavior.selectField.trim()
+            : "";
+          if (!selectFieldId) {
+            addIssue(
+              issues,
+              `buttons.${childId}.toolSetBehavior.selectField`,
+              "Select fanout field IDs must be nonempty strings."
+            );
+          }
+          const field = fields.find((candidate) => candidate.id === selectFieldId);
+          if (!field || field.kind !== "select") {
+            addIssue(
+              issues,
+              `buttons.${childId}.toolSetBehavior.selectField`,
+              `Selected field '${selectFieldId}' is missing or is not a select field.`
+            );
+          }
+          if (field?.hidden !== true) {
+            addIssue(
+              issues,
+              `buttons.${childId}.toolSetBehavior.selectField`,
+              "Select fanout fields must be hidden so the skinned Button is their only visible control."
+            );
+          }
+          if (field?.serviceTarget) {
+            addIssue(
+              issues,
+              `buttons.${childId}.toolSetBehavior.selectField`,
+              "Select fanout fields cannot dispatch a field service."
+            );
+          }
+          if (behavior.execute !== false) {
+            addIssue(
+              issues,
+              `buttons.${childId}.toolSetBehavior.execute`,
+              "Select fanout Buttons must be state-only controls."
+            );
+          }
+          if (behavior.inlineEditField) {
+            addIssue(
+              issues,
+              `buttons.${childId}.toolSetBehavior`,
+              "A child cannot be both an inline editor and a select fanout."
             );
           }
         }

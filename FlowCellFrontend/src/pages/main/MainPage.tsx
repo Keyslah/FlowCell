@@ -1816,6 +1816,7 @@ export default function MainPage() {
               height: descriptor.window.height,
               minWidth: descriptor.window.minWidth,
               minHeight: descriptor.window.minHeight,
+              alwaysOnTop: descriptor.window.alwaysOnTop,
               bounds: windowEntry.Bounds
             });
           }

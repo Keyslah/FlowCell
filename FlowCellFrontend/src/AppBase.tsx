@@ -73,6 +73,8 @@ function resolveTooltipElement(target: EventTarget | null): HTMLElement | null {
 export default function App() {
   const windowContext = getWindowContextFromLocation();
   const programName = resolveScopedTopmostProgramName(windowContext);
+  const fixedAlwaysOnTop =
+    windowContext.kind === "installed-page" && windowContext.alwaysOnTop;
 
   useEffect(() => registerButtonCoreAction(
     FRONTEND_MACRO_CORE_ACTION_ID,
@@ -287,6 +289,14 @@ export default function App() {
       }
     };
 
+    if (fixedAlwaysOnTop) {
+      void applyTopmost(true);
+      return () => {
+        disposed = true;
+        void applyTopmost(false);
+      };
+    }
+
     if (!programName) {
       void unregisterScopedWindowTopmost(currentWindowLabel).catch(() => {});
       void applyTopmost(false);
@@ -328,7 +338,7 @@ export default function App() {
       void unregisterScopedWindowTopmost(currentWindowLabel).catch(() => {});
       void applyTopmost(false);
     };
-  }, [programName, windowContext.kind]);
+  }, [fixedAlwaysOnTop, programName, windowContext.kind]);
 
   if (windowContext.kind === "button-editor") {
     return <ButtonEditorPage context={windowContext} />;

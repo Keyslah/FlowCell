@@ -29,6 +29,10 @@ test("Main Save and Load Layout use the existing strict secondary-window pipelin
   assert.match(mainPage, /case "installed-page":/);
   assert.match(mainPage, /resolveInstalledPageOpenDescriptor\(/);
   assert.match(mainPage, /openInstalledPageWindow\(/);
+  assert.match(
+    mainPage,
+    /case "installed-page":[\s\S]{0,1200}alwaysOnTop:\s*descriptor\.window\.alwaysOnTop/
+  );
   assert.match(mainPage, /await closeManagedButtonWindow\(windowHandle\.label\)/);
   assert.doesNotMatch(mainPage, /await windowHandle\.close\(\)\.catch\(\(\) => \{\}\)/);
   assert.match(
