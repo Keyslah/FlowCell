@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "id": "illustrator.symmetry",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "label": "Symmetry",
   "tooltip": "Reflect or rotate each newly detected Illustrator path after primary-button release. Illustrator does not expose the active Pencil tool, so avoid other path edits while Symmetry is on.",
   "kind": "toolset",
@@ -75,6 +75,18 @@
     "padding": 8,
     "width": 620,
     "height": 112,
+    "placements": {
+      "enable": { "x": 8, "y": 8, "width": 112, "height": 42 },
+      "disable": { "x": 128, "y": 8, "width": 112, "height": 42 },
+      "mode_mirror": { "x": 248, "y": 8, "width": 112, "height": 42 },
+      "mode_radial": { "x": 368, "y": 8, "width": 112, "height": 42 },
+      "set_center": { "x": 488, "y": 8, "width": 112, "height": 42 },
+      "count_2": { "x": 8, "y": 58, "width": 112, "height": 42 },
+      "count_4": { "x": 128, "y": 58, "width": 112, "height": 42 },
+      "count_6": { "x": 248, "y": 58, "width": 112, "height": 42 },
+      "count_8": { "x": 368, "y": 58, "width": 112, "height": 42 },
+      "count_12": { "x": 488, "y": 58, "width": 112, "height": 42 }
+    },
     "fields": [
       {
         "id": "enabled",

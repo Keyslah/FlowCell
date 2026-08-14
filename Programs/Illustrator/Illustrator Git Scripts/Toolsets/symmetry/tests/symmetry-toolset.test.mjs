@@ -216,6 +216,36 @@ async function loadApi(harness) {
   return harness.context.$.global.__FLOWCELL_ILLUSTRATOR_SYMMETRY_TEST_API__;
 }
 
+test("manifest declares exact non-overlapping placements for every symmetry child", async () => {
+  const manifest = JSON.parse(
+    await readFile(path.join(packageRoot, "flowcell.toolset.json"), "utf8")
+  );
+  const layout = manifest.layout;
+  const slots = manifest.children.map((child) => child.slot);
+  assert.deepEqual(Object.keys(layout.placements), slots);
+
+  const placements = slots.map((slot) => ({ slot, ...layout.placements[slot] }));
+  for (const placement of placements) {
+    assert.ok(Number.isFinite(placement.x));
+    assert.ok(Number.isFinite(placement.y));
+    assert.ok(Number.isFinite(placement.width) && placement.width > 0);
+    assert.ok(Number.isFinite(placement.height) && placement.height > 0);
+    assert.ok(placement.x >= 0 && placement.y >= 0);
+    assert.ok(placement.x + placement.width <= layout.width);
+    assert.ok(placement.y + placement.height <= layout.height);
+  }
+  for (let left = 0; left < placements.length; left += 1) {
+    for (let right = left + 1; right < placements.length; right += 1) {
+      const a = placements[left];
+      const b = placements[right];
+      const overlaps =
+        a.x < b.x + b.width && a.x + a.width > b.x &&
+        a.y < b.y + b.height && a.y + a.height > b.y;
+      assert.equal(overlaps, false, `${a.slot} must not overlap ${b.slot}`);
+    }
+  }
+});
+
 async function runCount(mode, count) {
   const harness = createHarness();
   const api = await loadApi(harness);

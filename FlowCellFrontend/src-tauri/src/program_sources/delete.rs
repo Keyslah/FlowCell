@@ -766,20 +766,16 @@ fn stop_toolset_runtime_with_script(
         }
     }
 
-    let arguments = vec![
-        "-File".to_string(),
-        stop_script.to_string_lossy().to_string(),
-        "-RuntimeFolder".to_string(),
-        runtime.to_string_lossy().to_string(),
-        "-SourcePath".to_string(),
-        owned.source_path.to_string_lossy().to_string(),
-        "-OwnerButtonId".to_string(),
-        record.owner_button_id.clone(),
-        "-OwnerToken".to_string(),
-        lifecycle.owner_token,
-        "-TimeoutMilliseconds".to_string(),
-        "5000".to_string(),
-    ];
+    // Ownership resolution canonicalizes package paths. Windows PowerShell
+    // 5.1 cannot use Join-Path on verbatim `\\?\` values, so lifecycle
+    // scripts receive the equivalent ordinary DOS/UNC spellings.
+    let arguments = toolset_runtime_stop_arguments(
+        &stop_script,
+        &runtime,
+        &owned.source_path,
+        &record.owner_button_id,
+        &lifecycle.owner_token,
+    );
     let output = crate::spawn_powershell_output(&arguments)?;
     if output.status.success() {
         Ok(())
@@ -789,6 +785,32 @@ fn stop_toolset_runtime_with_script(
             &format!("Tool Set runtime cleanup failed for '{}'.", record.label),
         ))
     }
+}
+
+fn toolset_runtime_stop_arguments(
+    stop_script: &Path,
+    runtime: &Path,
+    source_path: &Path,
+    owner_button_id: &str,
+    owner_token: &str,
+) -> Vec<String> {
+    let child_stop_script = crate::commands::execution::windows_child_process_path(stop_script);
+    let child_runtime = crate::commands::execution::windows_child_process_path(runtime);
+    let child_source_path = crate::commands::execution::windows_child_process_path(source_path);
+    vec![
+        "-File".to_string(),
+        child_stop_script.to_string_lossy().to_string(),
+        "-RuntimeFolder".to_string(),
+        child_runtime.to_string_lossy().to_string(),
+        "-SourcePath".to_string(),
+        child_source_path.to_string_lossy().to_string(),
+        "-OwnerButtonId".to_string(),
+        owner_button_id.to_string(),
+        "-OwnerToken".to_string(),
+        owner_token.to_string(),
+        "-TimeoutMilliseconds".to_string(),
+        "5000".to_string(),
+    ]
 }
 
 fn refuse_symmetry_delete_without_recorded_lifecycle(
@@ -1335,7 +1357,8 @@ pub(crate) fn uninstall_button_source(
 mod tests {
     use super::{
         binding_section_belongs_to_owner, refuse_symmetry_delete_without_recorded_lifecycle,
-        rollback_quarantined_source_with, ActiveSourceRecord, QuarantinedOwnedSource,
+        rollback_quarantined_source_with, toolset_runtime_stop_arguments, ActiveSourceRecord,
+        QuarantinedOwnedSource,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -1367,6 +1390,36 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn lifecycle_stop_arguments_strip_verbatim_windows_path_prefixes() {
+        let arguments = toolset_runtime_stop_arguments(
+            Path::new(r"\\?\D:\FlowCell\Programs\Illustrator\Local\owner\source\Stop.ps1"),
+            Path::new(r"\\?\D:\FlowCell\Programs\Illustrator\Local\owner\runtime"),
+            Path::new(r"\\?\D:\FlowCell\Programs\Illustrator\Local\owner\source\Symmetry.jsx"),
+            "owner",
+            "token",
+        );
+
+        let expected = vec![
+            "-File",
+            r"D:\FlowCell\Programs\Illustrator\Local\owner\source\Stop.ps1",
+            "-RuntimeFolder",
+            r"D:\FlowCell\Programs\Illustrator\Local\owner\runtime",
+            "-SourcePath",
+            r"D:\FlowCell\Programs\Illustrator\Local\owner\source\Symmetry.jsx",
+            "-OwnerButtonId",
+            "owner",
+            "-OwnerToken",
+            "token",
+            "-TimeoutMilliseconds",
+            "5000",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect::<Vec<_>>();
+        assert_eq!(arguments, expected);
     }
 
     #[test]
