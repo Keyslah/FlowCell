@@ -1,0 +1,198 @@
+(function () {
+    var COMMAND_FILE_NAME = "illustrator_symmetry_command.json";
+    var STATE_FILE_NAME = "illustrator-symmetry-state.json";
+    var STATUS_FILE_NAME = "illustrator-symmetry-status.txt";
+    var LOG_FILE_NAME = "illustrator-symmetry.log";
+    var WATCHER_LAUNCHER_FILE_NAME = "Start Illustrator Symmetry Watcher.vbs";
+    var COPY_TAG_NAME = "FlowCellSymmetryCopy";
+    var MAX_COMMAND_AGE_MS = 15000;
+    var MAX_CANDIDATE_SCAN = 128;
+    var ALLOWED_COUNTS = [2, 4, 6, 8, 12];
+
+    function nowMs() {
+        return new Date().getTime();
+    }
+
+    function pad(value) {
+        return value < 10 ? "0" + value : String(value);
+    }
+
+    function nowStamp() {
+        var date = new Date();
+        return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) +
+            " " + pad(date.getHours()) + ":" + pad(date.getMinutes()) + ":" + pad(date.getSeconds());
+    }
+
+    function sourceFile() {
+        try {
+            if (typeof FLOWCELL_SCRIPT_PATH !== "undefined" && FLOWCELL_SCRIPT_PATH) {
+                return new File(String(FLOWCELL_SCRIPT_PATH));
+            }
+        } catch (ignored) {
+        }
+        return new File($.fileName);
+    }
+
+    function sourceFolder() {
+        return sourceFile().parent;
+    }
+
+    function ownerFolder() {
+        return sourceFolder().parent;
+    }
+
+    function runtimeFolder() {
+        var folder = new Folder(ownerFolder().fsName + "/runtime");
+        if (!folder.exists && !folder.create()) {
+            throw new Error("Could not create the Symmetry runtime folder: " + folder.fsName);
+        }
+        return folder;
+    }
+
+    function findRepoRoot() {
+        var folder = sourceFolder();
+        for (var i = 0; i < 12 && folder; i += 1) {
+            var programs = new Folder(folder.fsName + "/Programs");
+            var backend = new Folder(folder.fsName + "/flowcellbackend");
+            if (programs.exists && backend.exists) {
+                return folder;
+            }
+            folder = folder.parent;
+        }
+        throw new Error("FlowCell repo root could not be resolved from the installed Symmetry package.");
+    }
+
+    function localFile(fileName) {
+        var folder = new Folder(findRepoRoot().fsName + "/flowcellbackend/local");
+        if (!folder.exists && !folder.create()) {
+            throw new Error("Could not create FlowCell local storage: " + folder.fsName);
+        }
+        return new File(folder.fsName + "/" + fileName);
+    }
+
+    function stateFile() {
+        return new File(runtimeFolder().fsName + "/" + STATE_FILE_NAME);
+    }
+
+    function statusFile() {
+        return new File(runtimeFolder().fsName + "/" + STATUS_FILE_NAME);
+    }
+
+    function logFile() {
+        return new File(runtimeFolder().fsName + "/" + LOG_FILE_NAME);
+    }
+
+    function readTextFile(file) {
+        if (!file.exists || !file.open("r")) {
+            return "";
+        }
+        file.encoding = "UTF-8";
+        var text = file.read();
+        file.close();
+        return text;
+    }
+
+    function writeTextFile(file, text) {
+        file.encoding = "UTF-8";
+        if (!file.open("w")) {
+            throw new Error("Could not write " + file.fsName);
+        }
+        file.write(text);
+        file.close();
+    }
+
+    function appendTextFile(file, text) {
+        file.encoding = "UTF-8";
+        if (!file.open("a")) {
+            return;
+        }
+        file.writeln(text);
+        file.close();
+    }
+
+    function readJsonFile(file) {
+        var raw = readTextFile(file);
+        if (!raw) {
+            return null;
+        }
+        try {
+            return eval("(" + raw + ")");
+        } catch (error) {
+            return null;
+        }
+    }
+
+    function escapeJsonString(value) {
+        return String(value)
+            .replace(/\\/g, "\\\\")
+            .replace(/\"/g, "\\\"")
+            .replace(/\r/g, "\\r")
+            .replace(/\n/g, "\\n")
+            .replace(/\t/g, "\\t")
+            .replace(/\f/g, "\\f")
+            .replace(/\x08/g, "\\b");
+    }
+
+    function isArray(value) {
+        return value && value.constructor === Array;
+    }
+
+    function jsonEncode(value) {
+        var valueType = typeof value;
+        var parts;
+        var key;
+        var i;
+
+        if (value === null || valueType === "undefined") {
+            return "null";
+        }
+        if (valueType === "string") {
+            return "\"" + escapeJsonString(value) + "\"";
+        }
+        if (valueType === "number") {
+            return isFinite(value) ? String(value) : "null";
+        }
+        if (valueType === "boolean") {
+            return value ? "true" : "false";
+        }
+        if (isArray(value)) {
+            parts = [];
+            for (i = 0; i < value.length; i += 1) {
+                parts.push(jsonEncode(value[i]));
+            }
+            return "[" + parts.join(",") + "]";
+        }
+        if (valueType === "object") {
+            parts = [];
+            for (key in value) {
+                if (value.hasOwnProperty && !value.hasOwnProperty(key)) {
+                    continue;
+                }
+                if (typeof value[key] === "function") {
+                    continue;
+                }
+                parts.push("\"" + escapeJsonString(key) + "\":" + jsonEncode(value[key]));
+            }
+            return "{" + parts.join(",") + "}";
+        }
+        return "null";
+    }
+
+    function writeJsonFile(file, value) {
+        writeTextFile(file, jsonEncode(value));
+    }
+
+    function writeLog(message) {
+        try {
+            appendTextFile(logFile(), nowStamp() + " | " + message);
+        } catch (ignored) {
+        }
+        try {
+            $.writeln("[FlowCell Illustrator Symmetry] " + message);
+        } catch (ignoredConsole) {
+        }
+    }
+
+    function setStatus(message, shouldLog) {
+        try {
+            writeTextFile(statusFile(), message + "\n");

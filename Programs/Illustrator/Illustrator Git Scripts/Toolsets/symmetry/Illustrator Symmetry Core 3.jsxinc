@@ -1,0 +1,179 @@
+                if (!bounds) {
+                    bounds = { left: left, right: right, top: top, bottom: bottom };
+                } else {
+                    bounds.left = Math.min(bounds.left, left);
+                    bounds.right = Math.max(bounds.right, right);
+                    bounds.top = Math.max(bounds.top, top);
+                    bounds.bottom = Math.min(bounds.bottom, bottom);
+                }
+            }
+        } catch (ignored) {
+            return null;
+        }
+        if (!bounds) {
+            return null;
+        }
+        return {
+            x: (bounds.left + bounds.right) / 2,
+            y: (bounds.top + bounds.bottom) / 2,
+            source: "SELECTION"
+        };
+    }
+
+    function resolveCenter(doc, state) {
+        var key = getDocumentKey(doc);
+        if (state.center && state.center.documentKey === key &&
+                isFinite(Number(state.center.x)) && isFinite(Number(state.center.y))) {
+            return {
+                x: Number(state.center.x),
+                y: Number(state.center.y),
+                source: String(state.center.source || "STORED")
+            };
+        }
+        return activeArtboardCenter(doc);
+    }
+
+    function baselineCurrentPath(state, doc) {
+        state.documentKey = getDocumentKey(doc);
+        var current = firstEligiblePath(doc);
+        if (current) {
+            state.lastSourceUuid = String(current.uuid);
+            state.lastSourceFingerprint = pathFingerprint(current);
+        } else {
+            state.lastSourceUuid = "";
+            state.lastSourceFingerprint = "";
+        }
+        state.lastCopyCount = 0;
+    }
+
+    function rotationMatrixAbout(center, angleDegrees) {
+        var matrix = app.getRotationMatrix(angleDegrees);
+        matrix.mValueTX = center.x - (matrix.mValueA * center.x + matrix.mValueC * center.y);
+        matrix.mValueTY = center.y - (matrix.mValueB * center.x + matrix.mValueD * center.y);
+        return matrix;
+    }
+
+    function mirrorMatrixAbout(center) {
+        var matrix = app.getScaleMatrix(-100, 100);
+        matrix.mValueTX = center.x - (matrix.mValueA * center.x + matrix.mValueC * center.y);
+        matrix.mValueTY = center.y - (matrix.mValueB * center.x + matrix.mValueD * center.y);
+        return matrix;
+    }
+
+    function transformItem(item, matrix) {
+        item.transform(
+            matrix,
+            true,
+            true,
+            true,
+            true,
+            100,
+            Transformation.DOCUMENTORIGIN
+        );
+    }
+
+    function markCopy(copy, sourceUuid, index) {
+        setTagValue(copy, COPY_TAG_NAME, sourceUuid + "|" + String(index));
+        try {
+            copy.selected = false;
+        } catch (ignored) {
+        }
+    }
+
+    function removeCopiesForSource(doc, sourceUuid) {
+        var prefix = sourceUuid + "|";
+        var removed = 0;
+        for (var i = doc.pathItems.length - 1; i >= 0; i -= 1) {
+            var item = doc.pathItems[i];
+            var tagValue = getTagValue(item, COPY_TAG_NAME);
+            if (tagValue.indexOf(prefix) === 0) {
+                try {
+                    item.remove();
+                    removed += 1;
+                } catch (ignored) {
+                }
+            }
+        }
+        return removed;
+    }
+
+    function createRadialCopies(source, center, count) {
+        var created = 0;
+        var step = 360 / count;
+        for (var i = 1; i < count; i += 1) {
+            var copy = source.duplicate();
+            transformItem(copy, rotationMatrixAbout(center, step * i));
+            markCopy(copy, String(source.uuid), i);
+            created += 1;
+        }
+        return created;
+    }
+
+    function createMirrorCopies(source, center, count) {
+        var pairCount = count / 2;
+        var step = 360 / pairCount;
+        var created = 0;
+        var copyIndex = 1;
+
+        for (var pairIndex = 0; pairIndex < pairCount; pairIndex += 1) {
+            var angle = step * pairIndex;
+            if (pairIndex > 0) {
+                var rotated = source.duplicate();
+                transformItem(rotated, rotationMatrixAbout(center, angle));
+                markCopy(rotated, String(source.uuid), copyIndex);
+                copyIndex += 1;
+                created += 1;
+            }
+
+            var mirrored = source.duplicate();
+            transformItem(mirrored, mirrorMatrixAbout(center));
+            if (angle !== 0) {
+                transformItem(mirrored, rotationMatrixAbout(center, angle));
+            }
+            markCopy(mirrored, String(source.uuid), copyIndex);
+            copyIndex += 1;
+            created += 1;
+        }
+        return created;
+    }
+
+    function processRelease() {
+        var state = readState();
+        if (!state.enabled) {
+            return "disabled";
+        }
+
+        var doc = getActiveDocument();
+        if (!doc) {
+            return "no-document";
+        }
+
+        var key = getDocumentKey(doc);
+        if (state.documentKey !== key) {
+            baselineCurrentPath(state, doc);
+            saveState(state);
+            return "document-baseline";
+        }
+
+        var source = firstEligiblePath(doc);
+        if (!source) {
+            return "no-path";
+        }
+
+        var sourceUuid = String(source.uuid);
+        var fingerprint = pathFingerprint(source);
+        if (sourceUuid === String(state.lastSourceUuid || "") &&
+                fingerprint === String(state.lastSourceFingerprint || "")) {
+            return "no-change";
+        }
+
+        removeCopiesForSource(doc, sourceUuid);
+        var center = resolveCenter(doc, state);
+        var created = state.mode === "MIRROR"
+            ? createMirrorCopies(source, center, state.count)
+            : createRadialCopies(source, center, state.count);
+
+        state.documentKey = key;
+        state.lastSourceUuid = sourceUuid;
+        state.lastSourceFingerprint = fingerprint;
+        state.lastCopyCount = created;

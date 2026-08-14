@@ -1,0 +1,189 @@
+        } catch (ignored) {
+        }
+        if (shouldLog !== false) {
+            writeLog(message);
+        }
+        return message;
+    }
+
+    function defaultState() {
+        return {
+            schemaVersion: 1,
+            enabled: false,
+            mode: "RADIAL",
+            count: 8,
+            documentKey: "",
+            lastSourceUuid: "",
+            lastSourceFingerprint: "",
+            center: null,
+            lastCopyCount: 0,
+            updatedAtMs: nowMs()
+        };
+    }
+
+    function readState() {
+        var stored = readJsonFile(stateFile());
+        var state = defaultState();
+        var key;
+        if (stored && typeof stored === "object") {
+            for (key in stored) {
+                if (!stored.hasOwnProperty || stored.hasOwnProperty(key)) {
+                    state[key] = stored[key];
+                }
+            }
+        }
+        state.schemaVersion = 1;
+        state.enabled = state.enabled === true;
+        state.mode = normalizeMode(state.mode);
+        state.count = normalizeCount(state.count);
+        return state;
+    }
+
+    function saveState(state) {
+        state.schemaVersion = 1;
+        state.updatedAtMs = nowMs();
+        writeJsonFile(stateFile(), state);
+    }
+
+    function normalizeMode(value) {
+        return String(value || "RADIAL").toUpperCase() === "MIRROR" ? "MIRROR" : "RADIAL";
+    }
+
+    function normalizeCount(value) {
+        var number = Math.floor(Number(value));
+        for (var i = 0; i < ALLOWED_COUNTS.length; i += 1) {
+            if (number === ALLOWED_COUNTS[i]) {
+                return number;
+            }
+        }
+        return 8;
+    }
+
+    function getActiveDocument() {
+        return app.documents.length > 0 ? app.activeDocument : null;
+    }
+
+    function getDocumentKey(doc) {
+        var key = String(doc.name || "Untitled");
+        try {
+            if (doc.saved && doc.fullName) {
+                key += "|" + String(doc.fullName.fsName);
+            } else {
+                key += "|unsaved";
+            }
+        } catch (ignored) {
+            key += "|unsaved";
+        }
+        return key;
+    }
+
+    function getTagValue(item, name) {
+        try {
+            for (var i = 0; i < item.tags.length; i += 1) {
+                if (String(item.tags[i].name) === name) {
+                    return String(item.tags[i].value);
+                }
+            }
+        } catch (ignored) {
+        }
+        return "";
+    }
+
+    function setTagValue(item, name, value) {
+        try {
+            for (var i = 0; i < item.tags.length; i += 1) {
+                if (String(item.tags[i].name) === name) {
+                    item.tags[i].value = String(value);
+                    return;
+                }
+            }
+            var tag = item.tags.add();
+            tag.name = name;
+            tag.value = String(value);
+        } catch (error) {
+            throw new Error("Could not tag a generated symmetry copy: " + String(error));
+        }
+    }
+
+    function isEligiblePath(item) {
+        try {
+            if (!item || item.typename !== "PathItem" || item.pathPoints.length < 2) {
+                return false;
+            }
+            if (item.clipping || item.guides || item.hidden || item.locked || item.editable === false) {
+                return false;
+            }
+            if (item.layer && (item.layer.locked || !item.layer.visible)) {
+                return false;
+            }
+            return getTagValue(item, COPY_TAG_NAME) === "";
+        } catch (error) {
+            return false;
+        }
+    }
+
+    function firstEligiblePath(doc) {
+        var limit = Math.min(doc.pathItems.length, MAX_CANDIDATE_SCAN);
+        for (var i = 0; i < limit; i += 1) {
+            if (isEligiblePath(doc.pathItems[i])) {
+                return doc.pathItems[i];
+            }
+        }
+        return null;
+    }
+
+    function fixedNumber(value) {
+        var number = Number(value);
+        if (!isFinite(number)) {
+            return "0";
+        }
+        return number.toFixed(3);
+    }
+
+    function pathFingerprint(item) {
+        var parts = [String(item.uuid), item.closed ? "1" : "0", String(item.pathPoints.length)];
+        for (var i = 0; i < item.pathPoints.length; i += 1) {
+            var point = item.pathPoints[i];
+            parts.push(
+                fixedNumber(point.anchor[0]),
+                fixedNumber(point.anchor[1]),
+                fixedNumber(point.leftDirection[0]),
+                fixedNumber(point.leftDirection[1]),
+                fixedNumber(point.rightDirection[0]),
+                fixedNumber(point.rightDirection[1]),
+                String(point.pointType)
+            );
+        }
+        try {
+            parts.push(item.stroked ? "1" : "0", fixedNumber(item.strokeWidth), item.filled ? "1" : "0");
+        } catch (ignored) {
+        }
+        return parts.join("|");
+    }
+
+    function activeArtboardCenter(doc) {
+        var index = doc.artboards.getActiveArtboardIndex();
+        var rect = doc.artboards[index].artboardRect;
+        return {
+            x: (Number(rect[0]) + Number(rect[2])) / 2,
+            y: (Number(rect[1]) + Number(rect[3])) / 2,
+            source: "ARTBOARD"
+        };
+    }
+
+    function selectionCenter(doc) {
+        var bounds = null;
+        try {
+            if (!doc.selection || doc.selection.length < 1) {
+                return null;
+            }
+            for (var i = 0; i < doc.selection.length; i += 1) {
+                var item = doc.selection[i];
+                if (!item || !item.visibleBounds) {
+                    continue;
+                }
+                var raw = item.visibleBounds;
+                var left = Math.min(Number(raw[0]), Number(raw[2]));
+                var right = Math.max(Number(raw[0]), Number(raw[2]));
+                var top = Math.max(Number(raw[1]), Number(raw[3]));
+                var bottom = Math.min(Number(raw[1]), Number(raw[3]));

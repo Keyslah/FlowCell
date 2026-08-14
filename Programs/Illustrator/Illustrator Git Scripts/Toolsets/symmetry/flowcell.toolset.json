@@ -1,0 +1,228 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.symmetry",
+  "version": "1.0.0",
+  "label": "Symmetry",
+  "tooltip": "Reflect or rotate each newly drawn Illustrator path as soon as the pen or mouse is released.",
+  "kind": "toolset",
+  "program": "Illustrator",
+  "source": "Illustrator Symmetry.jsx",
+  "execution": {
+    "programKey": "illustrator_automation",
+    "commandFile": "illustrator_symmetry_command.json"
+  },
+  "children": [
+    {
+      "slot": "enable",
+      "label": "On",
+      "tooltip": "Turn automatic symmetry on. Existing artwork is used only as the baseline; the next newly drawn path is the first one copied."
+    },
+    {
+      "slot": "disable",
+      "label": "Off",
+      "tooltip": "Turn automatic symmetry off."
+    },
+    {
+      "slot": "mode_mirror",
+      "label": "Mirror",
+      "tooltip": "Use reflected pairs around the stored center."
+    },
+    {
+      "slot": "mode_radial",
+      "label": "Radial",
+      "tooltip": "Use evenly rotated copies around the stored center."
+    },
+    {
+      "slot": "set_center",
+      "label": "Set Center",
+      "tooltip": "Use the current selection center, or the active artboard center when nothing is selected."
+    },
+    {
+      "slot": "count_2",
+      "label": "2",
+      "tooltip": "Create 2 total symmetry positions."
+    },
+    {
+      "slot": "count_4",
+      "label": "4",
+      "tooltip": "Create 4 total symmetry positions."
+    },
+    {
+      "slot": "count_6",
+      "label": "6",
+      "tooltip": "Create 6 total symmetry positions."
+    },
+    {
+      "slot": "count_8",
+      "label": "8",
+      "tooltip": "Create 8 total symmetry positions."
+    },
+    {
+      "slot": "count_12",
+      "label": "12",
+      "tooltip": "Create 12 total symmetry positions."
+    }
+  ],
+  "layout": {
+    "mode": "grid",
+    "columns": 5,
+    "gap": 8,
+    "padding": 8,
+    "width": 620,
+    "height": 112,
+    "fields": [
+      {
+        "id": "enabled",
+        "kind": "toggle",
+        "label": "Enabled",
+        "payloadKey": "enabled",
+        "defaultValue": false,
+        "x": 8,
+        "y": 8,
+        "width": 112,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "mode",
+        "kind": "select",
+        "label": "Mode",
+        "payloadKey": "mode",
+        "defaultValue": "RADIAL",
+        "options": [
+          {
+            "id": "mirror",
+            "label": "Mirror",
+            "value": "MIRROR"
+          },
+          {
+            "id": "radial",
+            "label": "Radial",
+            "value": "RADIAL"
+          }
+        ],
+        "x": 128,
+        "y": 8,
+        "width": 112,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "count",
+        "kind": "number",
+        "label": "Count",
+        "payloadKey": "count",
+        "defaultValue": 8,
+        "minimum": 2,
+        "maximum": 12,
+        "step": 2,
+        "x": 248,
+        "y": 8,
+        "width": 112,
+        "height": 42,
+        "zIndex": 1,
+        "hidden": true
+      }
+    ],
+    "childBehaviors": {
+      "enable": {
+        "fieldPatch": {
+          "enabled": true
+        },
+        "execute": true,
+        "payloadTemplate": {
+          "command": "configure",
+          "enabled": true
+        }
+      },
+      "disable": {
+        "fieldPatch": {
+          "enabled": false
+        },
+        "execute": true,
+        "payloadTemplate": {
+          "command": "configure",
+          "enabled": false
+        }
+      },
+      "mode_mirror": {
+        "fieldPatch": {
+          "mode": "MIRROR"
+        },
+        "execute": true,
+        "payloadTemplate": {
+          "command": "configure",
+          "mode": "MIRROR"
+        }
+      },
+      "mode_radial": {
+        "fieldPatch": {
+          "mode": "RADIAL"
+        },
+        "execute": true,
+        "payloadTemplate": {
+          "command": "configure",
+          "mode": "RADIAL"
+        }
+      },
+      "set_center": {
+        "execute": true,
+        "payloadTemplate": {
+          "command": "set_center"
+        }
+      },
+      "count_2": {
+        "fieldPatch": {
+          "count": 2
+        },
+        "execute": true,
+        "payloadTemplate": {
+          "command": "configure",
+          "count": 2
+        }
+      },
+      "count_4": {
+        "fieldPatch": {
+          "count": 4
+        },
+        "execute": true,
+        "payloadTemplate": {
+          "command": "configure",
+          "count": 4
+        }
+      },
+      "count_6": {
+        "fieldPatch": {
+          "count": 6
+        },
+        "execute": true,
+        "payloadTemplate": {
+          "command": "configure",
+          "count": 6
+        }
+      },
+      "count_8": {
+        "fieldPatch": {
+          "count": 8
+        },
+        "execute": true,
+        "payloadTemplate": {
+          "command": "configure",
+          "count": 8
+        }
+      },
+      "count_12": {
+        "fieldPatch": {
+          "count": 12
+        },
+        "execute": true,
+        "payloadTemplate": {
+          "command": "configure",
+          "count": 12
+        }
+      }
+    }
+  }
+}

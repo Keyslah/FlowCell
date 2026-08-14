@@ -1,0 +1,174 @@
+        state.lastProcessedAtMs = nowMs();
+        saveState(state);
+
+        try {
+            app.redraw();
+        } catch (ignored) {
+        }
+
+        setStatus(
+            "Symmetry created " + created + " copy/copies in " + state.mode +
+                " mode around the " + center.source.toLowerCase() + " center.",
+            true
+        );
+        return "processed|" + sourceUuid + "|" + String(created);
+    }
+
+    function readCommand() {
+        var commandFile = localFile(COMMAND_FILE_NAME);
+        var raw = readTextFile(commandFile);
+        if (!raw) {
+            return { command: "status", payload: {} };
+        }
+        try {
+            commandFile.remove();
+        } catch (ignoredRemove) {
+        }
+
+        var record;
+        try {
+            record = eval("(" + raw + ")");
+        } catch (error) {
+            throw new Error("Symmetry command JSON is invalid: " + String(error));
+        }
+        if (record && record.createdAtMs && nowMs() - Number(record.createdAtMs) > MAX_COMMAND_AGE_MS) {
+            throw new Error("Stale Symmetry command ignored.");
+        }
+        if (record && record.command && !record.createdAtMs && String(record.command).toLowerCase() !== "status") {
+            throw new Error("Undated Symmetry command ignored.");
+        }
+        return {
+            command: record && record.command ? String(record.command) : "status",
+            payload: record && record.payload ? record.payload : {}
+        };
+    }
+
+    function applyPayloadSettings(state, payload) {
+        if (payload && typeof payload.enabled !== "undefined") {
+            state.enabled = payload.enabled === true;
+        }
+        if (payload && typeof payload.mode !== "undefined") {
+            state.mode = normalizeMode(payload.mode);
+        }
+        if (payload && typeof payload.count !== "undefined") {
+            state.count = normalizeCount(payload.count);
+        }
+    }
+
+    function launchWatcher() {
+        var launcher = new File(sourceFolder().fsName + "/" + WATCHER_LAUNCHER_FILE_NAME);
+        if (!launcher.exists) {
+            throw new Error("Symmetry watcher launcher is missing: " + launcher.fsName);
+        }
+        if (!launcher.execute()) {
+            throw new Error("Windows did not start the Symmetry watcher launcher.");
+        }
+    }
+
+    function configure(payload) {
+        var state = readState();
+        var wasEnabled = state.enabled;
+        applyPayloadSettings(state, payload);
+
+        var doc = getActiveDocument();
+        if (state.enabled && doc && (!wasEnabled || state.documentKey !== getDocumentKey(doc))) {
+            baselineCurrentPath(state, doc);
+        }
+        saveState(state);
+
+        if (state.enabled) {
+            launchWatcher();
+        }
+
+        return setStatus(
+            "Symmetry " + (state.enabled ? "ON" : "OFF") +
+                " | " + state.mode + " | " + state.count + " total positions.",
+            true
+        );
+    }
+
+    function setCenter(payload) {
+        var state = readState();
+        applyPayloadSettings(state, payload);
+        var doc = getActiveDocument();
+        if (!doc) {
+            throw new Error("Open an Illustrator document before setting the Symmetry center.");
+        }
+
+        var center = selectionCenter(doc);
+        if (!center) {
+            center = activeArtboardCenter(doc);
+        }
+        center.documentKey = getDocumentKey(doc);
+        state.center = center;
+        if (state.documentKey !== center.documentKey) {
+            baselineCurrentPath(state, doc);
+        }
+        saveState(state);
+
+        if (state.enabled) {
+            launchWatcher();
+        }
+
+        return setStatus(
+            "Symmetry center set from " + center.source.toLowerCase() +
+                " at X " + fixedNumber(center.x) + ", Y " + fixedNumber(center.y) + ".",
+            true
+        );
+    }
+
+    function status() {
+        var state = readState();
+        return setStatus(
+            "Symmetry " + (state.enabled ? "ON" : "OFF") +
+                " | " + state.mode + " | " + state.count + " total positions.",
+            false
+        );
+    }
+
+    function runToolsetCommand() {
+        var record = readCommand();
+        var payload = record.payload || {};
+        var command = payload.command ? String(payload.command).toLowerCase() : String(record.command || "status").toLowerCase();
+
+        if (command === "enable") {
+            payload.enabled = true;
+            command = "configure";
+        } else if (command === "disable") {
+            payload.enabled = false;
+            command = "configure";
+        } else if (command === "mode_mirror") {
+            payload.mode = "MIRROR";
+            command = "configure";
+        } else if (command === "mode_radial") {
+            payload.mode = "RADIAL";
+            command = "configure";
+        } else if (command.indexOf("count_") === 0) {
+            payload.count = Number(command.substring(6));
+            command = "configure";
+        }
+
+        if (command === "configure") {
+            return configure(payload);
+        }
+        if (command === "set_center") {
+            return setCenter(payload);
+        }
+        if (command === "status") {
+            return status();
+        }
+        throw new Error("Unsupported Illustrator Symmetry command: " + command);
+    }
+
+    try {
+        if (typeof FLOWCELL_ARGS !== "undefined" && FLOWCELL_ARGS &&
+                String(FLOWCELL_ARGS.internalCommand || "").toLowerCase() === "process_release") {
+            return processRelease();
+        }
+        return runToolsetCommand();
+    } catch (error) {
+        var message = "Illustrator Symmetry failed: " + String(error && error.message ? error.message : error);
+        setStatus(message, true);
+        throw error;
+    }
+}());
