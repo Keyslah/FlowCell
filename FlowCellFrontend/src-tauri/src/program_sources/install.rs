@@ -48,11 +48,28 @@ enum InstallTransactionCompletionMode {
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CanonicalToolsetChildProjection {
+    execution_target: Value,
+    tool_set_behavior: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CanonicalToolsetProjection {
+    children: BTreeMap<String, CanonicalToolsetChildProjection>,
+    fields: Value,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CanonicalSourceProjection {
     owner_button_id: String,
     role: String,
     source_identity: Value,
-    execution_target: Value,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    execution_target: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    toolset: Option<CanonicalToolsetProjection>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     source_revision: Option<String>,
 }
@@ -172,6 +189,32 @@ struct ToolsetManifest {
     events: Option<BTreeMap<String, Value>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     execution: Option<Value>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ToolsetExecutionManifest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    program_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command_file: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    command_file_scope: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    lifecycle: Option<ToolsetLifecycleManifest>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ToolsetLifecycleManifest {
+    stop_script: String,
+    owner_token: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ToolsetRuntimeLifecycle {
+    pub stop_script: String,
+    pub owner_token: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -833,6 +876,93 @@ fn default_toolset_kind() -> String {
     "toolset".to_string()
 }
 
+fn validate_toolset_execution_file_name(
+    value: &str,
+    field: &str,
+    extension: &str,
+) -> Result<String, String> {
+    let trimmed = value.trim();
+    let path = Path::new(trimmed);
+    if trimmed.is_empty()
+        || path.is_absolute()
+        || path.components().count() != 1
+        || path.file_name().and_then(|value| value.to_str()) != Some(trimmed)
+        || !trimmed.to_ascii_lowercase().ends_with(extension)
+    {
+        return Err(format!(
+            "Tool-set execution.{field} must be one {extension} file name."
+        ));
+    }
+    Ok(trimmed.to_string())
+}
+
+fn parse_toolset_execution(value: &Value) -> Result<ToolsetExecutionManifest, String> {
+    serde_json::from_value::<ToolsetExecutionManifest>(value.clone())
+        .map_err(|error| format!("Tool-set execution is invalid: {error}"))
+}
+
+fn validate_toolset_execution(
+    execution: Option<&Value>,
+) -> Result<Option<ToolsetRuntimeLifecycle>, String> {
+    let Some(execution) = execution else {
+        return Ok(None);
+    };
+    let execution = parse_toolset_execution(execution)?;
+    if let Some(program_key) = execution.program_key.as_deref() {
+        if program_key.trim().is_empty() {
+            return Err("Tool-set execution.programKey cannot be empty.".to_string());
+        }
+    }
+    let command_file = execution
+        .command_file
+        .as_deref()
+        .map(|value| validate_toolset_execution_file_name(value, "commandFile", ".json"))
+        .transpose()?;
+    if let Some(scope) = execution.command_file_scope.as_deref() {
+        if command_file.is_none() {
+            return Err(
+                "Tool-set execution.commandFileScope requires execution.commandFile.".to_string(),
+            );
+        }
+        if !scope.trim().eq_ignore_ascii_case("owner-runtime") {
+            return Err(
+                "Tool-set execution.commandFileScope must be 'owner-runtime' when declared."
+                    .to_string(),
+            );
+        }
+    }
+    let Some(lifecycle) = execution.lifecycle else {
+        return Ok(None);
+    };
+    let stop_script = validate_toolset_execution_file_name(
+        &lifecycle.stop_script,
+        "lifecycle.stopScript",
+        ".ps1",
+    )?;
+    let owner_token = lifecycle.owner_token.trim();
+    if owner_token.len() < 8
+        || owner_token.len() > 128
+        || !owner_token.chars().all(|character| {
+            character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_')
+        })
+    {
+        return Err(
+            "Tool-set execution.lifecycle.ownerToken must contain 8 to 128 ASCII token characters."
+                .to_string(),
+        );
+    }
+    Ok(Some(ToolsetRuntimeLifecycle {
+        stop_script,
+        owner_token: owner_token.to_string(),
+    }))
+}
+
+pub(crate) fn declared_toolset_runtime_lifecycle(
+    record: &ActiveSourceRecord,
+) -> Result<Option<ToolsetRuntimeLifecycle>, String> {
+    validate_toolset_execution(record.runner_data.as_ref())
+}
+
 const CATALOG_CORE_ACTION_IDS: &[&str] = &["open-installed-page", "open-window-grid"];
 
 fn validate_core_execution_target(subject: &str, target: &Value) -> Result<(), String> {
@@ -1486,6 +1616,16 @@ fn prepare_source(
                 .map_err(|error| format!("Failed to serialize tool-set layout: {error}"))
         })
         .transpose()?;
+    let lifecycle = validate_toolset_execution(toolset.execution.as_ref())?;
+    if let Some(lifecycle) = lifecycle.as_ref() {
+        let stop_script = package_root.join(&lifecycle.stop_script);
+        if !stop_script.is_file() {
+            return Err(format!(
+                "Tool-set lifecycle stop script is missing: {}",
+                stop_script.display()
+            ));
+        }
+    }
     let _manifest_version = toolset.version;
     Ok(PreparedSource {
         package_source_root: package_root.to_path_buf(),
@@ -1733,17 +1873,14 @@ fn validate_install_transaction_journal(
             let next_projection = journal.next_canonical_projection.as_ref().ok_or_else(|| {
                 "Deferred canonical update is missing its next projection.".to_string()
             })?;
+            let previous_record = journal.previous_record.as_ref().ok_or_else(|| {
+                "Deferred canonical update is missing its previous active record.".to_string()
+            })?;
             if !journal.replace_existing
-                || !journal.next_record.children.is_empty()
                 || journal.next_record.page.is_some()
-                || journal
-                    .previous_record
-                    .as_ref()
-                    .is_none_or(|record| !record.children.is_empty() || record.page.is_some())
+                || previous_record.page.is_some()
                 || previous_projection.owner_button_id != owner
                 || next_projection.owner_button_id != owner
-                || previous_projection.role != "single-script"
-                || next_projection.role != "single-script"
                 || next_projection
                     .source_revision
                     .as_deref()
@@ -1751,10 +1888,21 @@ fn validate_install_transaction_journal(
                     .is_none_or(str::is_empty)
             {
                 return Err(
-                    "Deferred canonical update is not an ordinary single-script owner transaction."
+                    "Deferred canonical update has an invalid owner, page, or revision contract."
                         .to_string(),
                 );
             }
+            let active_file_name = active_record_file_name(&owner);
+            validate_projection_matches_active_record(
+                previous_projection,
+                previous_record,
+                &active_file_name,
+            )?;
+            validate_projection_matches_active_record(
+                next_projection,
+                &journal.next_record,
+                &active_file_name,
+            )?;
         }
     }
     for (record_owner, record_program_id, record_program, record_panel, subject) in [
@@ -2800,15 +2948,179 @@ pub(crate) fn build_response(
     }
 }
 
+fn normalized_toolset_slot(value: &str, subject: &str) -> Result<String, String> {
+    let slot = value.trim();
+    if slot.is_empty() {
+        return Err(format!("{subject} has an empty Tool Set child slot."));
+    }
+    Ok(slot.to_ascii_lowercase())
+}
+
+fn canonical_toolset_projection(
+    document: &Value,
+    owner: &str,
+    buttons: &serde_json::Map<String, Value>,
+) -> Result<CanonicalToolsetProjection, String> {
+    let units = document
+        .get("popoutUnits")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("Canonical Tool Set owner '{owner}' has no popout units."))?;
+    let matching = units
+        .values()
+        .filter_map(Value::as_object)
+        .filter(|unit| {
+            unit.get("kind").and_then(Value::as_str) == Some("tool-set")
+                && unit.get("ownerButtonId").and_then(Value::as_str) == Some(owner)
+        })
+        .collect::<Vec<_>>();
+    if matching.len() != 1 {
+        return Err(format!(
+            "Canonical Tool Set owner '{owner}' must have exactly one Tool Set popout."
+        ));
+    }
+    let unit = matching[0];
+    let fields = unit
+        .get("fields")
+        .filter(|value| value.is_array())
+        .cloned()
+        .ok_or_else(|| format!("Canonical Tool Set owner '{owner}' has invalid popout fields."))?;
+    let child_ids = unit
+        .get("childButtonIds")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("Canonical Tool Set owner '{owner}' has invalid child ids."))?;
+    let mut children = BTreeMap::new();
+    for child_id in child_ids {
+        let child_id = child_id.as_str().ok_or_else(|| {
+            format!("Canonical Tool Set owner '{owner}' has a non-string child id.")
+        })?;
+        let child = buttons
+            .get(child_id)
+            .and_then(Value::as_object)
+            .ok_or_else(|| {
+                format!("Canonical Tool Set owner '{owner}' references missing child '{child_id}'.")
+            })?;
+        if child.get("id").and_then(Value::as_str) != Some(child_id)
+            || child.get("role").and_then(Value::as_str) != Some("tool-set-child")
+            || child.get("toolSetParentId").and_then(Value::as_str) != Some(owner)
+        {
+            return Err(format!(
+                "Canonical Tool Set owner '{owner}' has an invalid child graph."
+            ));
+        }
+        let slot = child
+            .get("metadata")
+            .and_then(Value::as_object)
+            .and_then(|metadata| metadata.get("toolSetSlot"))
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                format!("Canonical Tool Set child '{child_id}' is missing metadata.toolSetSlot.")
+            })?;
+        let slot =
+            normalized_toolset_slot(slot, &format!("Canonical Tool Set child '{child_id}'"))?;
+        let execution_target = child
+            .get("executionTarget")
+            .filter(|value| value.is_object())
+            .cloned()
+            .ok_or_else(|| {
+                format!("Canonical Tool Set child '{child_id}' has invalid executionTarget.")
+            })?;
+        let tool_set_behavior = child.get("toolSetBehavior").cloned().unwrap_or(Value::Null);
+        if !tool_set_behavior.is_null() && !tool_set_behavior.is_object() {
+            return Err(format!(
+                "Canonical Tool Set child '{child_id}' has invalid toolSetBehavior."
+            ));
+        }
+        if children
+            .insert(
+                slot.clone(),
+                CanonicalToolsetChildProjection {
+                    execution_target,
+                    tool_set_behavior,
+                },
+            )
+            .is_some()
+        {
+            return Err(format!(
+                "Canonical Tool Set owner '{owner}' has duplicate child slot '{slot}'."
+            ));
+        }
+    }
+    Ok(CanonicalToolsetProjection { children, fields })
+}
+
+fn toolset_projection_from_record(
+    record: &ActiveSourceRecord,
+    active_file_name: &str,
+) -> Result<CanonicalToolsetProjection, String> {
+    let response = build_response(record, active_file_name.to_string());
+    if response.children.is_empty() {
+        return Err(format!(
+            "Button '{}' is not a Tool Set.",
+            record.owner_button_id
+        ));
+    }
+    let child_behaviors = record
+        .layout
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|layout| layout.get("childBehaviors"))
+        .and_then(Value::as_object);
+    let mut children = BTreeMap::new();
+    for child in response.children {
+        let slot = normalized_toolset_slot(&child.slot, "Installed Tool Set child")?;
+        let tool_set_behavior = child_behaviors
+            .and_then(|behaviors| behaviors.get(&child.slot))
+            .cloned()
+            .unwrap_or(Value::Null);
+        if !tool_set_behavior.is_null() && !tool_set_behavior.is_object() {
+            return Err(format!(
+                "Installed Tool Set child '{}' has invalid behavior.",
+                child.slot
+            ));
+        }
+        if children
+            .insert(
+                slot.clone(),
+                CanonicalToolsetChildProjection {
+                    execution_target: child.execution_target,
+                    tool_set_behavior,
+                },
+            )
+            .is_some()
+        {
+            return Err(format!(
+                "Installed Tool Set '{}' has duplicate child slot '{slot}'.",
+                record.owner_button_id
+            ));
+        }
+    }
+    let fields = record
+        .layout
+        .as_ref()
+        .and_then(Value::as_object)
+        .and_then(|layout| layout.get("fields"))
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    if !fields.is_array() {
+        return Err(format!(
+            "Installed Tool Set '{}' has invalid fields.",
+            record.owner_button_id
+        ));
+    }
+    Ok(CanonicalToolsetProjection { children, fields })
+}
+
 fn canonical_source_projection(
     document: &Value,
     owner_button_id: &str,
 ) -> Result<CanonicalSourceProjection, String> {
     let owner = validate_owner_button_id(owner_button_id)?;
-    let button = document
+    let buttons = document
         .get("buttons")
         .and_then(Value::as_object)
-        .and_then(|buttons| buttons.get(&owner))
+        .ok_or_else(|| "Canonical Button state has invalid buttons.".to_string())?;
+    let button = buttons
+        .get(&owner)
         .and_then(Value::as_object)
         .ok_or_else(|| {
             format!("Canonical Button state is missing installed source owner '{owner}'.")
@@ -2822,9 +3134,9 @@ fn canonical_source_projection(
         .get("role")
         .and_then(Value::as_str)
         .ok_or_else(|| format!("Canonical Button '{owner}' is missing role."))?;
-    if role != "single-script" {
+    if role != "single-script" && role != "tool-set-owner" {
         return Err(format!(
-            "Button source updates currently support ordinary single-script owners only; '{owner}' has role '{role}'."
+            "Button source update does not support owner '{owner}' with role '{role}'."
         ));
     }
     let source_identity = button
@@ -2857,13 +3169,6 @@ fn canonical_source_projection(
             ));
         }
     }
-    let execution_target = button
-        .get("executionTarget")
-        .filter(|value| value.is_object())
-        .cloned()
-        .ok_or_else(|| {
-            format!("Canonical Button '{owner}' has invalid executionTarget metadata.")
-        })?;
     let metadata = button
         .get("metadata")
         .and_then(Value::as_object)
@@ -2877,11 +3182,36 @@ fn canonical_source_projection(
             ))
         }
     };
+    let (execution_target, toolset) = if role == "single-script" {
+        let execution_target = button
+            .get("executionTarget")
+            .filter(|value| value.is_object())
+            .cloned()
+            .ok_or_else(|| {
+                format!("Canonical Button '{owner}' has invalid executionTarget metadata.")
+            })?;
+        (Some(execution_target), None)
+    } else {
+        if button
+            .get("executionTarget")
+            .map(|value| !value.is_null())
+            .unwrap_or(false)
+        {
+            return Err(format!(
+                "Canonical Tool Set owner '{owner}' must not have an execution target."
+            ));
+        }
+        (
+            None,
+            Some(canonical_toolset_projection(document, &owner, buttons)?),
+        )
+    };
     Ok(CanonicalSourceProjection {
         owner_button_id: owner,
         role: role.to_string(),
         source_identity,
         execution_target,
+        toolset,
         source_revision,
     })
 }
@@ -2891,7 +3221,12 @@ fn validate_projection_matches_active_record(
     record: &ActiveSourceRecord,
     active_file_name: &str,
 ) -> Result<(), String> {
-    if projection.owner_button_id != record.owner_button_id || projection.role != "single-script" {
+    let expected_role = if record.children.is_empty() {
+        "single-script"
+    } else {
+        "tool-set-owner"
+    };
+    if projection.owner_button_id != record.owner_button_id || projection.role != expected_role {
         return Err(format!(
             "Canonical Button '{}' does not match its installed source owner.",
             record.owner_button_id
@@ -2913,12 +3248,26 @@ fn validate_projection_matches_active_record(
             ));
         }
     }
-    let expected_target = canonical_owner_execution_target(record, active_file_name)?;
-    if projection.execution_target != expected_target {
-        return Err(format!(
-            "Canonical Button '{}' executionTarget does not match its active source record.",
-            record.owner_button_id
-        ));
+    if expected_role == "single-script" {
+        let expected_target = canonical_owner_execution_target(record, active_file_name)?;
+        if projection.execution_target.as_ref() != Some(&expected_target)
+            || projection.toolset.is_some()
+        {
+            return Err(format!(
+                "Canonical Button '{}' executionTarget does not match its active source record.",
+                record.owner_button_id
+            ));
+        }
+    } else {
+        let expected_toolset = toolset_projection_from_record(record, active_file_name)?;
+        if projection.toolset.as_ref() != Some(&expected_toolset)
+            || projection.execution_target.is_some()
+        {
+            return Err(format!(
+                "Canonical Tool Set '{}' does not match its active source record.",
+                record.owner_button_id
+            ));
+        }
     }
     Ok(())
 }
@@ -2929,12 +3278,27 @@ fn next_canonical_projection(
     active_file_name: &str,
     transaction_token: &str,
 ) -> Result<CanonicalSourceProjection, String> {
-    let execution_target = canonical_owner_execution_target(record, active_file_name)?;
+    let is_toolset = !record.children.is_empty();
+    let execution_target = if is_toolset {
+        None
+    } else {
+        Some(canonical_owner_execution_target(record, active_file_name)?)
+    };
+    let toolset = if is_toolset {
+        Some(toolset_projection_from_record(record, active_file_name)?)
+    } else {
+        None
+    };
     Ok(CanonicalSourceProjection {
         owner_button_id: previous.owner_button_id.clone(),
-        role: "single-script".to_string(),
+        role: if is_toolset {
+            "tool-set-owner".to_string()
+        } else {
+            "single-script".to_string()
+        },
         source_identity: previous.source_identity.clone(),
         execution_target,
+        toolset,
         source_revision: Some(transaction_token.to_string()),
     })
 }
@@ -3114,13 +3478,10 @@ fn install_from_path_while_source_locked_with_completion(
     };
     let prepared = prepare_source(&manifest, &source_path, import_kind)?;
     if deferred_canonical_update.is_some()
-        && (!replace_existing
-            || bundled_identity.is_some()
-            || !prepared.children.is_empty()
-            || prepared.page.is_some())
+        && (!replace_existing || bundled_identity.is_some() || prepared.page.is_some())
     {
         return Err(
-            "Public Button source update transactions support ordinary, non-bundled single-script owners only."
+            "Public Button source update transactions support non-bundled script or Tool Set owners only."
                 .to_string(),
         );
     }
@@ -3189,9 +3550,9 @@ fn install_from_path_while_source_locked_with_completion(
         }
         validate_update_shape(previous, &prepared)?;
         if let Some(deferred) = deferred_canonical_update.as_ref() {
-            if !previous.children.is_empty() || previous.page.is_some() {
+            if previous.page.is_some() {
                 return Err(
-                    "Public Button source update transactions support ordinary single-script owners only."
+                    "Public Button source update transactions do not support installed Page owners."
                         .to_string(),
                 );
             }
@@ -3251,12 +3612,6 @@ fn install_from_path_while_source_locked_with_completion(
     ) {
         finalize_install_transaction(&transaction_root);
         return Err(error);
-    }
-    if replace_existing {
-        if let Err(error) = preserve_runtime_directory(&final_package, &staged_package) {
-            finalize_install_transaction(&transaction_root);
-            return Err(error);
-        }
     }
     let committed_source = final_package
         .join("source")
@@ -3332,6 +3687,24 @@ fn install_from_path_while_source_locked_with_completion(
     ) {
         finalize_install_transaction(&transaction_root);
         return Err(error);
+    }
+
+    if replace_existing {
+        let previous = previous_record
+            .as_ref()
+            .expect("replace_existing requires a previous active source record");
+        if let Err(error) = super::delete::stop_toolset_runtime_before_update(
+            previous,
+            &record,
+            &staged_source_root,
+        ) {
+            finalize_install_transaction(&transaction_root);
+            return Err(error);
+        }
+        if let Err(error) = preserve_runtime_directory(&final_package, &staged_package) {
+            finalize_install_transaction(&transaction_root);
+            return Err(error);
+        }
     }
 
     let previous_package = install_transaction_old_package(&transaction_root);
@@ -3706,8 +4079,9 @@ mod tests {
         merge_toolset_payload, path_relative_to_program, prepare_source,
         preserve_runtime_directory, previous_owned_record_path_matches,
         read_install_transaction_journal, recover_install_transaction,
-        recover_update_residues_with, resolve_awaiting_canonical_transaction, update_residue_name,
-        validate_core_execution_target, validate_toolset_layout, validate_update_shape,
+        recover_update_residues_with, resolve_awaiting_canonical_transaction,
+        toolset_projection_from_record, update_residue_name, validate_core_execution_target,
+        validate_toolset_execution, validate_toolset_layout, validate_update_shape,
         write_install_transaction_journal, CanonicalSourceProjection, CanonicalUpdateDisposition,
         InstallTransactionCompletionMode, InstallTransactionJournal, InstallTransactionPhase,
         PreparedSource, ScriptManifest, ToolsetManifest, INSTALL_TRANSACTION_SCHEMA_VERSION,
@@ -4067,7 +4441,8 @@ mod tests {
                 "normalizedPanelName": "tools",
                 "normalizedFileName": active_record_file_name("button_1").to_ascii_lowercase()
             }),
-            execution_target,
+            execution_target: Some(execution_target),
+            toolset: None,
             source_revision: source_revision.map(str::to_string),
         }
     }
@@ -4093,6 +4468,81 @@ mod tests {
                 }
             }
         })
+    }
+
+    fn canonical_toolset_document(projection: &CanonicalSourceProjection) -> Value {
+        let toolset = projection.toolset.as_ref().expect("toolset projection");
+        let mut metadata = serde_json::Map::new();
+        if let Some(revision) = projection.source_revision.as_ref() {
+            metadata.insert(
+                "flowcellSourceRevision".into(),
+                Value::String(revision.clone()),
+            );
+        }
+        let mut buttons = serde_json::Map::new();
+        buttons.insert(
+            "button_1".into(),
+            json!({
+                "id": "button_1",
+                "role": "tool-set-owner",
+                "sourceIdentity": projection.source_identity,
+                "executionTarget": null,
+                "metadata": metadata
+            }),
+        );
+        let mut child_ids = Vec::new();
+        for (index, (slot, child)) in toolset.children.iter().enumerate() {
+            let child_id = format!("child-{index}");
+            child_ids.push(child_id.clone());
+            buttons.insert(
+                child_id.clone(),
+                json!({
+                    "id": child_id,
+                    "role": "tool-set-child",
+                    "toolSetParentId": "button_1",
+                    "executionTarget": child.execution_target,
+                    "toolSetBehavior": child.tool_set_behavior,
+                    "metadata": {"toolSetSlot": slot}
+                }),
+            );
+        }
+        json!({
+            "schemaVersion": 1,
+            "revision": 1,
+            "buttons": buttons,
+            "popoutUnits": {
+                "toolset-unit": {
+                    "kind": "tool-set",
+                    "ownerButtonId": "button_1",
+                    "childButtonIds": child_ids,
+                    "fields": toolset.fields
+                }
+            }
+        })
+    }
+
+    fn toolset_projection(
+        record: &ActiveSourceRecord,
+        revision: Option<&str>,
+    ) -> CanonicalSourceProjection {
+        CanonicalSourceProjection {
+            owner_button_id: "button_1".into(),
+            role: "tool-set-owner".into(),
+            source_identity: json!({
+                "displayProgramName": "Windows",
+                "displayPanelName": "Tools",
+                "displayFileName": active_record_file_name("button_1"),
+                "normalizedProgramName": "windows",
+                "normalizedPanelName": "tools",
+                "normalizedFileName": active_record_file_name("button_1").to_ascii_lowercase()
+            }),
+            execution_target: None,
+            toolset: Some(
+                toolset_projection_from_record(record, &active_record_file_name("button_1"))
+                    .expect("toolset projection from record"),
+            ),
+            source_revision: revision.map(str::to_string),
+        }
     }
 
     fn deferred_update_transaction_journal(
@@ -4418,7 +4868,7 @@ mod tests {
         .expect("write transaction journal");
 
         let mut divergent = next_projection.clone();
-        divergent.execution_target = json!({"kind":"core-action","actionId":"different"});
+        divergent.execution_target = Some(json!({"kind":"core-action","actionId":"different"}));
         let error = resolve_awaiting_canonical_transaction(
             &manifest,
             &root,
@@ -4492,6 +4942,82 @@ mod tests {
         let mut malformed = canonical_document(&next);
         malformed["buttons"]["button_1"]["metadata"]["flowcellSourceRevision"] = json!(17);
         assert!(canonical_source_projection(&malformed, "button_1").is_err());
+    }
+
+    #[test]
+    fn toolset_canonical_projection_requires_the_exact_updated_child_contract() {
+        let (mut previous, _) = transaction_state(Path::new("C:\\Programs\\Windows"), "Old", "old");
+        previous.kind = "toolset".into();
+        previous.children = vec![ActiveSourceChild {
+            slot: "run".into(),
+            label: "Run".into(),
+            tooltip: String::new(),
+            payload: Some(json!({"mode":"old"})),
+            execution_target: None,
+        }];
+        previous.layout = Some(json!({
+            "fields": [{"id":"mode","kind":"select"}],
+            "childBehaviors": {"run": {"execute": true}}
+        }));
+        let mut next = previous.clone();
+        next.children[0].payload = Some(json!({"mode":"new"}));
+        next.layout = Some(json!({
+            "fields": [{"id":"mode","kind":"select"}, {"id":"count","kind":"select"}],
+            "childBehaviors": {"run": {"execute": true, "fieldPatch": {"mode":"new"}}}
+        }));
+        let previous_projection = toolset_projection(&previous, None);
+        let next_projection = toolset_projection(&next, Some(".flowcell-install-transaction-test"));
+        let mut journal = update_transaction_journal(
+            previous,
+            transaction_state(Path::new("C:\\Programs\\Windows"), "Old", "old").1,
+            next,
+            transaction_state(Path::new("C:\\Programs\\Windows"), "New", "new").1,
+            InstallTransactionPhase::AwaitingCanonical,
+        );
+        journal.completion_mode = InstallTransactionCompletionMode::AwaitCanonical;
+        journal.previous_canonical_projection = Some(previous_projection.clone());
+        journal.next_canonical_projection = Some(next_projection.clone());
+        assert_eq!(
+            classify_canonical_update(&journal, &canonical_toolset_document(&previous_projection))
+                .expect("previous Tool Set projection"),
+            CanonicalUpdateDisposition::RollBack
+        );
+        assert_eq!(
+            classify_canonical_update(&journal, &canonical_toolset_document(&next_projection))
+                .expect("next Tool Set projection"),
+            CanonicalUpdateDisposition::Finalize
+        );
+        let mut divergent = canonical_toolset_document(&next_projection);
+        divergent["popoutUnits"]["toolset-unit"]["fields"] = json!([]);
+        assert!(classify_canonical_update(&journal, &divergent).is_err());
+    }
+
+    #[test]
+    fn owner_runtime_execution_scope_and_lifecycle_are_strictly_validated() {
+        let valid = json!({
+            "programKey": "illustrator_automation",
+            "commandFile": "illustrator_symmetry_command.json",
+            "commandFileScope": "owner-runtime",
+            "lifecycle": {
+                "stopScript": "Stop Illustrator Symmetry Watcher.ps1",
+                "ownerToken": "flowcell-illustrator-symmetry-v1"
+            }
+        });
+        let lifecycle = validate_toolset_execution(Some(&valid))
+            .expect("valid owner runtime execution")
+            .expect("declared lifecycle");
+        assert_eq!(
+            lifecycle.stop_script,
+            "Stop Illustrator Symmetry Watcher.ps1"
+        );
+        assert_eq!(lifecycle.owner_token, "flowcell-illustrator-symmetry-v1");
+
+        let invalid_scope = json!({"commandFile":"command.json", "commandFileScope":"global"});
+        assert!(validate_toolset_execution(Some(&invalid_scope)).is_err());
+        let invalid_script = json!({
+            "lifecycle": {"stopScript":"nested\\stop.ps1", "ownerToken":"valid-token"}
+        });
+        assert!(validate_toolset_execution(Some(&invalid_script)).is_err());
     }
 
     #[test]

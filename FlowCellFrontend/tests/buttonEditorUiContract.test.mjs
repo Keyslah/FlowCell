@@ -297,6 +297,20 @@ test("Tool Set owners expose Pop-out and Fan Placement views without listing chi
   );
 });
 
+test("installed Button owners expose the normal canonical Update action", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const updateHandler = editor.match(
+    /const updateSelectedSource = useCallback\(async \(\) => \{[\s\S]*?\n  \}, \[selectedButton, setBusy, store\]\);/
+  );
+  assert.ok(updateHandler, "owner-scoped update handler must exist");
+  assert.match(updateHandler[0], /updateButtonSource\(\{/);
+  assert.match(updateHandler[0], /applyInstalledSourceUpdate\(next, installed\)/);
+  assert.match(updateHandler[0], /finalizeButtonSourceUpdate\(owner\.id, transactionToken\)/);
+  assert.match(updateHandler[0], /rollbackButtonSourceUpdate\(/);
+  assert.match(editor, />\s*Update selected Button content\s*</);
+  assert.match(editor, /selectedButton\.role !== "single-script" && selectedButton\.role !== "tool-set-owner"/);
+});
+
 test("Same size Buttons keeps the freely positioned Fan owner independent", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const handler = editor.match(

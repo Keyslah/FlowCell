@@ -724,6 +724,156 @@ fn cleanup_blender_runtime(record: &ActiveSourceRecord) -> Result<(), String> {
     )
 }
 
+fn stop_toolset_runtime_with_script(
+    record: &ActiveSourceRecord,
+    lifecycle: super::install::ToolsetRuntimeLifecycle,
+    stop_script: &Path,
+    allowed_script_root: &Path,
+) -> Result<(), String> {
+    let allowed_script_root = allowed_script_root.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve Tool Set lifecycle script root {}: {error}",
+            allowed_script_root.display()
+        )
+    })?;
+    let stop_script = stop_script.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve Tool Set lifecycle stop script '{}': {error}",
+            lifecycle.stop_script
+        )
+    })?;
+    if !stop_script.is_file() || !stop_script.starts_with(&allowed_script_root) {
+        return Err(format!(
+            "Tool Set lifecycle stop script is outside its owned source package: {}.",
+            stop_script.display()
+        ));
+    }
+    let manifest = load_program_manifest(&record.program_name)?;
+    let owned = super::execute::resolve_owned_source_paths(&manifest, record)?;
+    let runtime = owned.package_path.join("runtime");
+    if runtime.exists() {
+        let resolved_runtime = runtime.canonicalize().map_err(|error| {
+            format!(
+                "Failed to resolve owned Tool Set runtime {}: {error}",
+                runtime.display()
+            )
+        })?;
+        if !resolved_runtime.is_dir() || !resolved_runtime.starts_with(&owned.package_path) {
+            return Err(format!(
+                "Tool Set runtime is outside its owned Local Scripts package: {}.",
+                resolved_runtime.display()
+            ));
+        }
+    }
+
+    let arguments = vec![
+        "-File".to_string(),
+        stop_script.to_string_lossy().to_string(),
+        "-RuntimeFolder".to_string(),
+        runtime.to_string_lossy().to_string(),
+        "-SourcePath".to_string(),
+        owned.source_path.to_string_lossy().to_string(),
+        "-OwnerButtonId".to_string(),
+        record.owner_button_id.clone(),
+        "-OwnerToken".to_string(),
+        lifecycle.owner_token,
+        "-TimeoutMilliseconds".to_string(),
+        "5000".to_string(),
+    ];
+    let output = crate::spawn_powershell_output(&arguments)?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(crate::format_process_failure(
+            &output,
+            &format!("Tool Set runtime cleanup failed for '{}'.", record.label),
+        ))
+    }
+}
+
+fn refuse_symmetry_delete_without_recorded_lifecycle(
+    record: &ActiveSourceRecord,
+    source_root: &Path,
+    source_path: &Path,
+) -> Result<(), String> {
+    if !record.program_id.eq_ignore_ascii_case("illustrator")
+        || !record.kind.eq_ignore_ascii_case("toolset")
+        || source_path.file_name().and_then(|value| value.to_str())
+            != Some("Illustrator Symmetry.jsx")
+    {
+        return Ok(());
+    }
+
+    let manifest_path = source_root.join("flowcell.toolset.json");
+    let raw = fs::read_to_string(&manifest_path).map_err(|error| {
+        format!(
+            "Cannot verify whether installed Illustrator Symmetry can stop safely before Delete at {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let manifest = serde_json::from_str::<serde_json::Value>(&raw).map_err(|error| {
+        format!(
+            "Cannot verify whether installed Illustrator Symmetry can stop safely before Delete at {}: {error}",
+            manifest_path.display()
+        )
+    })?;
+    let is_symmetry = manifest
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(|id| id == "illustrator.symmetry")
+        && manifest.get("source").and_then(serde_json::Value::as_str)
+            == Some("Illustrator Symmetry.jsx");
+    if !is_symmetry {
+        return Ok(());
+    }
+
+    Err(
+        "Installed Illustrator Symmetry has no recorded stop lifecycle. Use 'Update selected Button content' to install version 1.1 before deleting this owner."
+            .to_string(),
+    )
+}
+
+// A Tool Set may declare a source-local stop script for a runtime process it
+// owns. The script is opt-in and runs before its package can be quarantined,
+// so a stale process can never keep reading a deleted package after Delete.
+pub(crate) fn stop_declared_toolset_runtime(record: &ActiveSourceRecord) -> Result<(), String> {
+    if !record.kind.eq_ignore_ascii_case("toolset") {
+        return Ok(());
+    }
+    let manifest = load_program_manifest(&record.program_name)?;
+    let owned = super::execute::resolve_owned_source_paths(&manifest, record)?;
+    let source_root = owned.package_path.join("source");
+    let Some(lifecycle) = super::install::declared_toolset_runtime_lifecycle(record)? else {
+        refuse_symmetry_delete_without_recorded_lifecycle(
+            record,
+            &source_root,
+            &owned.source_path,
+        )?;
+        return Ok(());
+    };
+    let stop_script = source_root.join(&lifecycle.stop_script);
+    stop_toolset_runtime_with_script(record, lifecycle, &stop_script, &source_root)
+}
+
+// Update must use the incoming lifecycle declaration when available: it lets a
+// new package safely stop a predecessor that was installed before lifecycle
+// metadata existed. The incoming script still receives the predecessor's
+// source path and runtime folder, so it cannot cross the owner boundary.
+pub(crate) fn stop_toolset_runtime_before_update(
+    previous: &ActiveSourceRecord,
+    replacement: &ActiveSourceRecord,
+    staged_source_root: &Path,
+) -> Result<(), String> {
+    if !replacement.kind.eq_ignore_ascii_case("toolset") {
+        return stop_declared_toolset_runtime(previous);
+    }
+    let Some(lifecycle) = super::install::declared_toolset_runtime_lifecycle(replacement)? else {
+        return stop_declared_toolset_runtime(previous);
+    };
+    let stop_script = staged_source_root.join(&lifecycle.stop_script);
+    stop_toolset_runtime_with_script(previous, lifecycle, &stop_script, staged_source_root)
+}
+
 fn transaction_token() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -851,6 +1001,7 @@ pub(crate) fn quarantine_owned_source(
     write_source_quarantine_journal(&source)?;
 
     let apply_result = (|| {
+        stop_declared_toolset_runtime(&source.record)?;
         move_into_quarantine(
             &source.original_record_path,
             &source.quarantine_record_path,
@@ -1183,8 +1334,8 @@ pub(crate) fn uninstall_button_source(
 #[cfg(test)]
 mod tests {
     use super::{
-        binding_section_belongs_to_owner, rollback_quarantined_source_with, ActiveSourceRecord,
-        QuarantinedOwnedSource,
+        binding_section_belongs_to_owner, refuse_symmetry_delete_without_recorded_lifecycle,
+        rollback_quarantined_source_with, ActiveSourceRecord, QuarantinedOwnedSource,
     };
     use std::collections::HashMap;
     use std::fs;
@@ -1256,6 +1407,69 @@ mod tests {
             package_root,
             "owner-rotate"
         ));
+    }
+
+    #[test]
+    fn legacy_symmetry_owner_must_update_before_delete_without_a_lifecycle() {
+        let root = TestRoot::new("legacy-symmetry-delete");
+        let source_root = root.join("owner/source");
+        fs::create_dir_all(&source_root).expect("create installed symmetry source");
+        let source_path = source_root.join("Illustrator Symmetry.jsx");
+        fs::write(&source_path, "// symmetry").expect("write installed symmetry entrypoint");
+        fs::write(
+            source_root.join("flowcell.toolset.json"),
+            r#"{
+                "schemaVersion": 1,
+                "id": "illustrator.symmetry",
+                "version": "1.0.0",
+                "source": "Illustrator Symmetry.jsx",
+                "execution": {
+                    "programKey": "illustrator_automation",
+                    "commandFile": "illustrator_symmetry_command.json"
+                }
+            }"#,
+        )
+        .expect("write legacy symmetry manifest");
+        let mut record = test_source(&root, None).record;
+        record.program_id = "illustrator".to_string();
+        record.program_name = "Illustrator".to_string();
+        record.kind = "toolset".to_string();
+        assert!(refuse_symmetry_delete_without_recorded_lifecycle(
+            &record,
+            &source_root,
+            &source_path
+        )
+        .expect_err("legacy owner must not delete without a stop lifecycle")
+        .contains("Update selected Button content"));
+
+        fs::write(
+            source_root.join("flowcell.toolset.json"),
+            r#"{
+                "schemaVersion": 1,
+                "id": "illustrator.symmetry",
+                "version": "1.1.0",
+                "source": "Illustrator Symmetry.jsx",
+                "execution": {
+                    "programKey": "illustrator_automation",
+                    "commandFile": "illustrator_symmetry_command.json",
+                    "lifecycle": {
+                        "stopScript": "Stop Illustrator Symmetry Watcher.ps1",
+                        "ownerToken": "flowcell-illustrator-symmetry-v1"
+                    }
+                }
+            }"#,
+        )
+        .expect("write current symmetry manifest");
+        assert!(refuse_symmetry_delete_without_recorded_lifecycle(&record, &source_root, &source_path).is_err(),
+            "a lifecycle-record drift must remain fail-closed until Update repairs the active record");
+
+        record.kind = "script".to_string();
+        assert!(refuse_symmetry_delete_without_recorded_lifecycle(
+            &record,
+            &source_root,
+            &source_path
+        )
+        .is_ok());
     }
 
     fn test_source(root: &TestRoot, bindings_backup: Option<String>) -> QuarantinedOwnedSource {

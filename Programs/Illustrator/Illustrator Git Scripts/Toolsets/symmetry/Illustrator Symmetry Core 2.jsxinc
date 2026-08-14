@@ -34,8 +34,9 @@
         }
         state.schemaVersion = 1;
         state.enabled = state.enabled === true;
-        state.mode = normalizeMode(state.mode);
-        state.count = normalizeCount(state.count);
+        state.mode = normalizeMode(state.mode) || "RADIAL";
+        state.count = normalizeCount(state.count) || 8;
+        state.knownSources = normalizeKnownSources(state.knownSources);
         return state;
     }
 
@@ -46,35 +47,89 @@
     }
 
     function normalizeMode(value) {
-        return String(value || "RADIAL").toUpperCase() === "MIRROR" ? "MIRROR" : "RADIAL";
+        var normalized = String(value || "").toUpperCase();
+        if (normalized === "MIRROR" || normalized === "RADIAL") {
+            return normalized;
+        }
+        return null;
     }
 
     function normalizeCount(value) {
-        var number = Math.floor(Number(value));
+        var number = Number(value);
+        if (!isFinite(number) || Math.floor(number) !== number) {
+            return null;
+        }
         for (var i = 0; i < ALLOWED_COUNTS.length; i += 1) {
             if (number === ALLOWED_COUNTS[i]) {
                 return number;
             }
         }
-        return 8;
+        return null;
+    }
+
+    function normalizeKnownSources(value) {
+        var normalized = {};
+        var key;
+        if (!value || typeof value !== "object") {
+            return normalized;
+        }
+        for (key in value) {
+            if (value.hasOwnProperty && !value.hasOwnProperty(key)) {
+                continue;
+            }
+            if (typeof value[key] === "string" && value[key]) {
+                normalized[String(key)] = value[key];
+            }
+        }
+        return normalized;
     }
 
     function getActiveDocument() {
         return app.documents.length > 0 ? app.activeDocument : null;
     }
 
+    function unsavedDocumentKey(doc) {
+        var registryName = "__FLOWCELL_ILLUSTRATOR_SYMMETRY_DOCUMENT_REGISTRY__";
+        var registry;
+        var i;
+        try {
+            registry = $.global[registryName];
+            if (!registry || typeof registry !== "object") {
+                registry = {
+                    sessionId: String(nowMs()) + "-" + String(Math.floor(Math.random() * 1000000000)),
+                    nextId: 1,
+                    documents: []
+                };
+                $.global[registryName] = registry;
+            }
+        } catch (error) {
+            throw new Error("Could not establish a per-session identity for this unsaved Illustrator document.");
+        }
+        if (!registry.documents || typeof registry.documents.length !== "number") {
+            registry.documents = [];
+        }
+        for (i = 0; i < registry.documents.length; i += 1) {
+            try {
+                if (registry.documents[i].document === doc) {
+                    return registry.documents[i].key;
+                }
+            } catch (ignored) {
+            }
+        }
+        var key = "unsaved|" + registry.sessionId + "|" + String(registry.nextId);
+        registry.nextId += 1;
+        registry.documents.push({ document: doc, key: key });
+        return key;
+    }
+
     function getDocumentKey(doc) {
-        var key = String(doc.name || "Untitled");
         try {
             if (doc.saved && doc.fullName) {
-                key += "|" + String(doc.fullName.fsName);
-            } else {
-                key += "|unsaved";
+                return "saved|" + String(doc.fullName.fsName);
             }
         } catch (ignored) {
-            key += "|unsaved";
         }
-        return key;
+        return unsavedDocumentKey(doc);
     }
 
     function getTagValue(item, name) {
@@ -122,14 +177,33 @@
         }
     }
 
-    function firstEligiblePath(doc) {
-        var limit = Math.min(doc.pathItems.length, MAX_CANDIDATE_SCAN);
-        for (var i = 0; i < limit; i += 1) {
-            if (isEligiblePath(doc.pathItems[i])) {
-                return doc.pathItems[i];
-            }
+    function sourceUuid(item) {
+        try {
+            var value = String(item.uuid || "");
+            return value && value !== "undefined" && value !== "null" ? value : "";
+        } catch (ignored) {
+            return "";
         }
-        return null;
+    }
+
+    function eligibleSourceRecords(doc) {
+        var records = [];
+        for (var i = 0; i < doc.pathItems.length; i += 1) {
+            var item = doc.pathItems[i];
+            if (!isEligiblePath(item)) {
+                continue;
+            }
+            var uuid = sourceUuid(item);
+            if (!uuid) {
+                continue;
+            }
+            records.push({
+                item: item,
+                uuid: uuid,
+                fingerprint: pathFingerprint(item)
+            });
+        }
+        return records;
     }
 
     function fixedNumber(value) {
@@ -141,7 +215,7 @@
     }
 
     function pathFingerprint(item) {
-        var parts = [String(item.uuid), item.closed ? "1" : "0", String(item.pathPoints.length)];
+        var parts = [sourceUuid(item), item.closed ? "1" : "0", String(item.pathPoints.length)];
         for (var i = 0; i < item.pathPoints.length; i += 1) {
             var point = item.pathPoints[i];
             parts.push(

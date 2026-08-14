@@ -772,10 +772,11 @@ skins. A sprite preset never changes the authored skin source or core hitbox.
 
 ## Source Lifecycle
 
-The Button Editor exposes no manual import, update, delete, popout-creation, or
+The Button Editor exposes no separate import, delete, popout-creation, or
 legacy Fan membership-building actions. Main's existing Add Button flow opens the
 Editor locked to the chosen Program and Panel and automatically prompts once for
-source content.
+source content. Selecting an installed source owner exposes **Update selected
+Button content**, which reuses that owner rather than adding a duplicate.
 Source packages use the same canonical transaction whenever that handoff or
 another authorized installation or synchronization workflow invokes it:
 

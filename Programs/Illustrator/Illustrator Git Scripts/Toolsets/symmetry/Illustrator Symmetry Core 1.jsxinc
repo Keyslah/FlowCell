@@ -6,7 +6,6 @@
     var WATCHER_LAUNCHER_FILE_NAME = "Start Illustrator Symmetry Watcher.vbs";
     var COPY_TAG_NAME = "FlowCellSymmetryCopy";
     var MAX_COMMAND_AGE_MS = 15000;
-    var MAX_CANDIDATE_SCAN = 128;
     var ALLOWED_COUNTS = [2, 4, 6, 8, 12];
 
     function nowMs() {
@@ -47,27 +46,6 @@
             throw new Error("Could not create the Symmetry runtime folder: " + folder.fsName);
         }
         return folder;
-    }
-
-    function findRepoRoot() {
-        var folder = sourceFolder();
-        for (var i = 0; i < 12 && folder; i += 1) {
-            var programs = new Folder(folder.fsName + "/Programs");
-            var backend = new Folder(folder.fsName + "/flowcellbackend");
-            if (programs.exists && backend.exists) {
-                return folder;
-            }
-            folder = folder.parent;
-        }
-        throw new Error("FlowCell repo root could not be resolved from the installed Symmetry package.");
-    }
-
-    function localFile(fileName) {
-        var folder = new Folder(findRepoRoot().fsName + "/flowcellbackend/local");
-        if (!folder.exists && !folder.create()) {
-            throw new Error("Could not create FlowCell local storage: " + folder.fsName);
-        }
-        return new File(folder.fsName + "/" + fileName);
     }
 
     function stateFile() {

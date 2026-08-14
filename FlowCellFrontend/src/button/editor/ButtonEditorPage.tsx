@@ -52,6 +52,7 @@ import {
   getButtonSkinDirectory,
   getButtonSettingsDirectory,
   initializeButtonSettingsDefault,
+  finalizeButtonSourceUpdate,
   installButtonSource,
   loadButtonSkinFile,
   loadButtonSettingsDefault,
@@ -60,10 +61,13 @@ import {
   saveButtonSettingsFile,
   saveButtonSkinFile,
   saveButtonStateDocument,
+  rollbackButtonSourceUpdate,
   uninstallButtonSource,
+  updateButtonSource,
   updateButtonSettingsDefault,
   type InstallButtonSourceResult
 } from "../state/ButtonStateRepository";
+import { applyInstalledSourceUpdate } from "../state/sourceUpdateOperations";
 import { useButtonEditorStore } from "../state/ButtonEditorStore";
 import {
   publishButtonCommit,
@@ -1149,6 +1153,112 @@ function ButtonEditorContent({
       setBusy(false);
     }
   }, [lockedImportDestination, panelName, programName, setBusy, store]);
+
+  const updateSelectedSource = useCallback(async () => {
+    const owner = selectedButton;
+    if (!owner?.sourceIdentity || busyRef.current) return;
+    if (owner.role !== "single-script" && owner.role !== "tool-set-owner") {
+      setMessage("Select an installed Button owner before updating its content.");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    let installed: InstallButtonSourceResult | null = null;
+    let savedCanonical: ButtonStateDocument | null = null;
+    let committed = false;
+    try {
+      const paths = await showOpenFileDialog({
+        title: `Update ${owner.label || "Button"} Content`,
+        filter: "FlowCell Buttons (*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json)|*.py;*.jsx;*.ps1;*.ahk;*.vbs;*.js;*.json|All Files (*.*)|*.*",
+        multiselect: false
+      });
+      const sourcePath = paths[0];
+      if (!sourcePath) return;
+      installed = await updateButtonSource({
+        ownerButtonId: owner.id,
+        programName: owner.sourceIdentity.displayProgramName,
+        panelName: owner.sourceIdentity.displayPanelName,
+        sourcePath,
+        importKind: "auto"
+      });
+      const transactionToken = installed.updateTransactionToken;
+      if (!transactionToken) {
+        throw new Error("Button source update did not return its canonical transaction token.");
+      }
+
+      // Fail before saving if unsaved editor work no longer has a compatible
+      // owner graph; the native transaction can then roll back cleanly.
+      const draftPreview = cloneButtonDocument(store.current());
+      applyInstalledSourceUpdate(draftPreview, installed);
+
+      let canonicalBase = store.committed;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const next = cloneButtonDocument(canonicalBase);
+        applyInstalledSourceUpdate(next, installed);
+        const validation = validateButtonStateDocument(next);
+        if (!validation.valid) {
+          throw new Error(
+            validation.issues
+              .slice(0, 8)
+              .map((issue) => `${issue.path}: ${issue.message}`)
+              .join("\n")
+          );
+        }
+        try {
+          savedCanonical = await saveButtonStateDocument(next, canonicalBase.revision);
+          break;
+        } catch (error) {
+          const details = error instanceof Error ? error.message : String(error);
+          if (attempt === 2 || !details.includes("Button state changed before Save.")) {
+            throw error;
+          }
+          canonicalBase = await loadButtonStateDocument();
+        }
+      }
+      if (!savedCanonical) {
+        throw new Error("FlowCell could not save the updated Button source state.");
+      }
+      const outcome = await finalizeButtonSourceUpdate(owner.id, transactionToken);
+      if (outcome !== "finalized") {
+        throw new Error("Button source update rolled back after its canonical Button Save.");
+      }
+      committed = true;
+      store.acceptScopedSaved(savedCanonical, (draft) => {
+        applyInstalledSourceUpdate(draft, installed!);
+      });
+      await publishButtonCommit(savedCanonical);
+      setMessage(`Updated ${owner.label || "Button"} content.`);
+    } catch (error) {
+      if (installed?.updateTransactionToken && !committed) {
+        try {
+          const outcome = await rollbackButtonSourceUpdate(
+            installed.ownerButtonId,
+            installed.updateTransactionToken
+          );
+          if (outcome === "finalized") {
+            committed = true;
+            const durable = savedCanonical ?? await loadButtonStateDocument();
+            store.acceptScopedSaved(durable, (draft) => {
+              applyInstalledSourceUpdate(draft, installed!);
+            });
+            await publishButtonCommit(durable);
+            setMessage(`Updated ${owner.label || "Button"} content.`);
+            return;
+          }
+        } catch (rollbackError) {
+          const originalMessage = error instanceof Error ? error.message : String(error);
+          const rollbackMessage = rollbackError instanceof Error
+            ? rollbackError.message
+            : String(rollbackError);
+          setMessage(`${originalMessage}\n\nNative source update recovery also failed: ${rollbackMessage}`);
+          return;
+        }
+      }
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  }, [selectedButton, setBusy, store]);
 
   useEffect(() => {
     if (autoImportRequest <= handledAutoImportRequestRef.current || busy) return;
@@ -2910,6 +3020,19 @@ function ButtonEditorContent({
                 <span>Fan</span>
               </label>
             ) : null}
+            <button
+              type="button"
+              className="button-editor-sidebar__placement-file"
+              disabled={
+                busy ||
+                !selectedButton?.sourceIdentity ||
+                (selectedButton.role !== "single-script" && selectedButton.role !== "tool-set-owner")
+              }
+              title="Replace the selected installed Button's source through the normal Update transaction."
+              onClick={() => void updateSelectedSource()}
+            >
+              Update selected Button content
+            </button>
             <button
               type="button"
               className="button-editor-sidebar__placement-file"

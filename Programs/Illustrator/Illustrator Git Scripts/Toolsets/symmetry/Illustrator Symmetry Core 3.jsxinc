@@ -33,17 +33,57 @@
         return activeArtboardCenter(doc);
     }
 
-    function baselineCurrentPath(state, doc) {
-        state.documentKey = getDocumentKey(doc);
-        var current = firstEligiblePath(doc);
-        if (current) {
-            state.lastSourceUuid = String(current.uuid);
-            state.lastSourceFingerprint = pathFingerprint(current);
-        } else {
-            state.lastSourceUuid = "";
-            state.lastSourceFingerprint = "";
+    function rememberEligibleSources(state, doc, records) {
+        var knownSources = {};
+        records = records || eligibleSourceRecords(doc);
+        for (var i = 0; i < records.length; i += 1) {
+            knownSources[records[i].uuid] = records[i].fingerprint;
         }
+        state.documentKey = getDocumentKey(doc);
+        state.knownSources = knownSources;
+        return records;
+    }
+
+    function baselineEligiblePaths(state, doc) {
+        rememberEligibleSources(state, doc);
+        state.lastSourceUuid = "";
+        state.lastSourceFingerprint = "";
         state.lastCopyCount = 0;
+    }
+
+    function changedSourceResult(doc, state) {
+        var records = eligibleSourceRecords(doc);
+        var changed = [];
+        var i;
+        for (i = 0; i < records.length; i += 1) {
+            if (state.knownSources[records[i].uuid] !== records[i].fingerprint) {
+                changed.push(records[i]);
+            }
+        }
+        if (changed.length < 1) {
+            return { record: null, records: records, reason: "no-change" };
+        }
+
+        var selected = [];
+        try {
+            for (i = 0; i < doc.selection.length; i += 1) {
+                var selectedUuid = sourceUuid(doc.selection[i]);
+                for (var changedIndex = 0; changedIndex < changed.length; changedIndex += 1) {
+                    if (selectedUuid && changed[changedIndex].uuid === selectedUuid) {
+                        selected.push(changed[changedIndex]);
+                        break;
+                    }
+                }
+            }
+        } catch (ignoredSelection) {
+        }
+        if (selected.length === 1) {
+            return { record: selected[0], records: records, reason: "selected-change" };
+        }
+        if (changed.length === 1) {
+            return { record: changed[0], records: records, reason: "single-change" };
+        }
+        return { record: null, records: records, reason: "ambiguous-change" };
     }
 
     function rotationMatrixAbout(center, angleDegrees) {
@@ -137,6 +177,27 @@
         return created;
     }
 
+    function processPress() {
+        var state = readState();
+        if (!state.enabled) {
+            return "disabled";
+        }
+
+        var doc = getActiveDocument();
+        if (!doc) {
+            return "no-document";
+        }
+
+        var key = getDocumentKey(doc);
+        if (state.documentKey !== key) {
+            baselineEligiblePaths(state, doc);
+            saveState(state);
+            return "document-baseline";
+        }
+
+        return "ready";
+    }
+
     function processRelease() {
         var state = readState();
         if (!state.enabled) {
@@ -150,30 +211,32 @@
 
         var key = getDocumentKey(doc);
         if (state.documentKey !== key) {
-            baselineCurrentPath(state, doc);
+            baselineEligiblePaths(state, doc);
             saveState(state);
             return "document-baseline";
         }
 
-        var source = firstEligiblePath(doc);
-        if (!source) {
-            return "no-path";
+        var changed = changedSourceResult(doc, state);
+        if (!changed.record) {
+            if (changed.reason === "ambiguous-change") {
+                baselineEligiblePaths(state, doc);
+                saveState(state);
+                setStatus("Symmetry skipped an ambiguous multi-path change to avoid modifying unrelated artwork.", true);
+                return "ambiguous-change";
+            }
+            return changed.reason;
         }
 
-        var sourceUuid = String(source.uuid);
-        var fingerprint = pathFingerprint(source);
-        if (sourceUuid === String(state.lastSourceUuid || "") &&
-                fingerprint === String(state.lastSourceFingerprint || "")) {
-            return "no-change";
-        }
-
-        removeCopiesForSource(doc, sourceUuid);
+        var source = changed.record.item;
+        var sourceId = changed.record.uuid;
+        var fingerprint = changed.record.fingerprint;
+        removeCopiesForSource(doc, sourceId);
         var center = resolveCenter(doc, state);
         var created = state.mode === "MIRROR"
             ? createMirrorCopies(source, center, state.count)
             : createRadialCopies(source, center, state.count);
 
-        state.documentKey = key;
-        state.lastSourceUuid = sourceUuid;
+        rememberEligibleSources(state, doc);
+        state.lastSourceUuid = sourceId;
         state.lastSourceFingerprint = fingerprint;
         state.lastCopyCount = created;

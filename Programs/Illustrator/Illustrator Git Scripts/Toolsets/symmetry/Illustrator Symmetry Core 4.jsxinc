@@ -2,6 +2,11 @@
         saveState(state);
 
         try {
+            source.selected = true;
+        } catch (ignoredSelection) {
+        }
+
+        try {
             app.redraw();
         } catch (ignored) {
         }
@@ -11,11 +16,11 @@
                 " mode around the " + center.source.toLowerCase() + " center.",
             true
         );
-        return "processed|" + sourceUuid + "|" + String(created);
+        return "processed|" + sourceId + "|" + String(created);
     }
 
     function readCommand() {
-        var commandFile = localFile(COMMAND_FILE_NAME);
+        var commandFile = new File(runtimeFolder().fsName + "/" + COMMAND_FILE_NAME);
         var raw = readTextFile(commandFile);
         if (!raw) {
             return { command: "status", payload: {} };
@@ -31,11 +36,18 @@
         } catch (error) {
             throw new Error("Symmetry command JSON is invalid: " + String(error));
         }
-        if (record && record.createdAtMs && nowMs() - Number(record.createdAtMs) > MAX_COMMAND_AGE_MS) {
-            throw new Error("Stale Symmetry command ignored.");
+        if (!record || String(record.ownerButtonId || "").toLowerCase() !== String(ownerFolder().name || "").toLowerCase() ||
+                normalizedPath(record.sourcePath) !== normalizedPath(sourceFile().fsName)) {
+            throw new Error("Symmetry command does not belong to this installed Button owner.");
         }
-        if (record && record.command && !record.createdAtMs && String(record.command).toLowerCase() !== "status") {
-            throw new Error("Undated Symmetry command ignored.");
+        var commandName = String(record.command || "status").toLowerCase();
+        if (commandName !== "status") {
+            var createdAtMs = Number(record.createdAtMs);
+            if (typeof record.createdAtMs !== "number" || !isFinite(createdAtMs) ||
+                    createdAtMs <= 0 || createdAtMs > nowMs() + MAX_COMMAND_AGE_MS ||
+                    nowMs() - createdAtMs > MAX_COMMAND_AGE_MS) {
+                throw new Error("Stale or malformed Symmetry command ignored.");
+            }
         }
         return {
             command: record && record.command ? String(record.command) : "status",
@@ -43,15 +55,36 @@
         };
     }
 
+    function normalizedPath(value) {
+        var normalized = String(value || "").replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+        if (normalized.indexOf("\\\\?\\unc\\") === 0) {
+            normalized = "\\\\" + normalized.substring(8);
+        } else if (normalized.indexOf("\\\\?\\") === 0) {
+            normalized = normalized.substring(4);
+        }
+        return normalized;
+    }
+
     function applyPayloadSettings(state, payload) {
         if (payload && typeof payload.enabled !== "undefined") {
+            if (typeof payload.enabled !== "boolean") {
+                throw new Error("Symmetry enabled must be true or false.");
+            }
             state.enabled = payload.enabled === true;
         }
         if (payload && typeof payload.mode !== "undefined") {
-            state.mode = normalizeMode(payload.mode);
+            var mode = normalizeMode(payload.mode);
+            if (!mode) {
+                throw new Error("Unsupported Symmetry mode. Use MIRROR or RADIAL.");
+            }
+            state.mode = mode;
         }
         if (payload && typeof payload.count !== "undefined") {
-            state.count = normalizeCount(payload.count);
+            var count = normalizeCount(payload.count);
+            if (!count) {
+                throw new Error("Unsupported Symmetry count. Use 2, 4, 6, 8, or 12.");
+            }
+            state.count = count;
         }
     }
 
@@ -72,7 +105,7 @@
 
         var doc = getActiveDocument();
         if (state.enabled && doc && (!wasEnabled || state.documentKey !== getDocumentKey(doc))) {
-            baselineCurrentPath(state, doc);
+            baselineEligiblePaths(state, doc);
         }
         saveState(state);
 
@@ -102,7 +135,7 @@
         center.documentKey = getDocumentKey(doc);
         state.center = center;
         if (state.documentKey !== center.documentKey) {
-            baselineCurrentPath(state, doc);
+            baselineEligiblePaths(state, doc);
         }
         saveState(state);
 
@@ -160,10 +193,46 @@
         throw new Error("Unsupported Illustrator Symmetry command: " + command);
     }
 
+    function publishTestApi() {
+        return {
+            COPY_TAG_NAME: COPY_TAG_NAME,
+            normalizeMode: normalizeMode,
+            normalizeCount: normalizeCount,
+            sourceFile: sourceFile,
+            sourceFolder: sourceFolder,
+            ownerFolder: ownerFolder,
+            runtimeFolder: runtimeFolder,
+            getDocumentKey: getDocumentKey,
+            readState: readState,
+            saveState: saveState,
+            configure: configure,
+            processPress: processPress,
+            processRelease: processRelease,
+            eligibleSourceRecords: eligibleSourceRecords,
+            changedSourceResult: changedSourceResult,
+            createRadialCopies: createRadialCopies,
+            createMirrorCopies: createMirrorCopies,
+            readCommand: readCommand
+        };
+    }
+
     try {
-        if (typeof FLOWCELL_ARGS !== "undefined" && FLOWCELL_ARGS &&
-                String(FLOWCELL_ARGS.internalCommand || "").toLowerCase() === "process_release") {
-            return processRelease();
+        if (typeof $ !== "undefined" && $.global && $.global.__FLOWCELL_ILLUSTRATOR_SYMMETRY_TEST__ === true) {
+            $.global.__FLOWCELL_ILLUSTRATOR_SYMMETRY_TEST_API__ = publishTestApi();
+            return $.global.__FLOWCELL_ILLUSTRATOR_SYMMETRY_TEST_API__;
+        }
+    } catch (ignoredTestMode) {
+    }
+
+    try {
+        if (typeof FLOWCELL_ARGS !== "undefined" && FLOWCELL_ARGS) {
+            var internalCommand = String(FLOWCELL_ARGS.internalCommand || "").toLowerCase();
+            if (internalCommand === "process_press") {
+                return processPress();
+            }
+            if (internalCommand === "process_release") {
+                return processRelease();
+            }
         }
         return runToolsetCommand();
     } catch (error) {

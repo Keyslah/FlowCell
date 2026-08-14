@@ -179,6 +179,12 @@ export function applyInstalledSourceUpdate(
 
   owner.sourceIdentity = installed.sourceIdentity;
   owner.executionTarget = null;
+  if (installed.updateTransactionToken) {
+    owner.metadata = {
+      ...owner.metadata,
+      flowcellSourceRevision: installed.updateTransactionToken
+    };
+  }
   for (const child of installed.children) {
     const childButton = document.buttons[childIdBySlot.get(normalizedSlot(child.slot))!];
     childButton.executionTarget = child.executionTarget;

@@ -420,26 +420,46 @@ Illustrator tool sets may declare:
 {
   "execution": {
     "programKey": "illustrator_automation",
-    "commandFile": "illustrator_tool_command.json"
+    "commandFile": "illustrator_tool_command.json",
+    "commandFileScope": "owner-runtime",
+    "lifecycle": {
+      "stopScript": "Stop Tool Runtime.ps1",
+      "ownerToken": "package-runtime-v1"
+    }
   }
 }
 ```
 
-`commandFile` must be one `.json` file name, not a path. FlowCell writes an
-envelope under `flowcellbackend/local/` containing program, panel, active source
-file, slot, timestamp, and merged payload, then starts the installed Local
-source through the declared program runner.
+`commandFile` and `lifecycle.stopScript` must each be one file name, not a
+path. Without `commandFileScope`, the legacy destination remains
+`flowcellbackend/local/<commandFile>`. `"owner-runtime"` writes the envelope
+to the validated installed owner package at `runtime/<commandFile>` instead.
+That envelope includes the active source file, `ownerButtonId`, absolute
+installed `sourcePath`, slot, timestamp, and merged payload before FlowCell
+starts the installed Local source through the declared program runner.
+
+`lifecycle` is optional. When declared, `ownerToken` is an opaque package
+token and `stopScript` is invoked synchronously from the owner package before
+Update replaces it or Delete quarantines it. The script receives only the
+validated owner runtime folder, installed source path, owner ID, and token. A
+failed stop aborts the transaction rather than moving a package while its
+runtime process is still unproven.
 
 ## Lifecycle Rules
 
 - Add copies the package into a new owner Button's Local Scripts directory.
-- Update replaces the same owner's complete package and active record. An
+- Update replaces the same owner's complete package and active record. The
+  Button Editor's **Update selected Button content** action reuses that same
+  owner-scoped canonical transaction. An
   append-only child-slot migration must be explicitly opted into as described
   above; removal and rename remain invalid.
 - Runtime validates the active record, owner package, and child slot.
 - Delete removes the owner, children, tool-set popout, placements, bindings,
   program runtime output, active record, and Local package as one rollback-capable
   transaction.
+- A package-specific migration may fail Delete closed when an older installed
+  package cannot prove that its runtime has stopped; Update must install a
+  lifecycle-capable package before that owner can be removed.
 - Owned files go to the Recycle Bin. The catalog package is not deleted.
 
 Legacy comment directives are not a tool-set authoring format. Only

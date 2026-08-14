@@ -770,6 +770,17 @@ test("Button Editor bounds reject Windows minimized sentinels and discard stale 
       installedPageFileName: "layers.jsx",
       installedPageId: "layers-builder"
     });
+    registerLayoutWindow({
+      windowLabel: "button-popout-owner-layers",
+      kind: "button-popout",
+      programName: "Illustrator",
+      panelName: "Layers Builder",
+      buttonPopoutUnitId: "open-pop-unit-layers",
+      buttonOwnerId: "owner-layers",
+      buttonDisplayMode: "expanded",
+      buttonPopoutSettingsPath: "C:/FlowCell/layers.flowcell-button-settings.json",
+      buttonPopoutChoiceId: "layers-choice"
+    });
     const persisted = JSON.parse(values.get("flowcell.button-layout-windows.v2"));
     assert.equal(persisted["flowcell-button-editor"].snapshotBounds, undefined);
     const registeredPage = readRegisteredLayoutWindow("flowcell-installed-page-owner-1");
@@ -779,6 +790,18 @@ test("Button Editor bounds reject Windows minimized sentinels and discard stale 
     assert.equal(
       persisted["flowcell-installed-page-owner-1"].installedPageId,
       "layers-builder"
+    );
+    const registeredSettingsBackedPopout = readRegisteredLayoutWindow(
+      "button-popout-owner-layers"
+    );
+    assert.equal(registeredSettingsBackedPopout?.buttonOwnerId, "owner-layers");
+    assert.equal(
+      registeredSettingsBackedPopout?.buttonPopoutSettingsPath,
+      "C:/FlowCell/layers.flowcell-button-settings.json"
+    );
+    assert.equal(
+      persisted["button-popout-owner-layers"].buttonPopoutChoiceId,
+      "layers-choice"
     );
   } finally {
     if (originalWindow === undefined) {
@@ -4439,12 +4462,14 @@ test("source updates preserve Button identities and presentation while refreshin
       childBehaviors: {
         first: { execute: false }
       }
-    }
+    },
+    updateTransactionToken: "toolset-update-123"
   });
   assert.equal(document.buttons.first.label, "Custom First");
   assert.equal(document.buttons.first.executionTarget.payload.version, 2);
   assert.equal(document.buttons.second.executionTarget.payload.version, 2);
   assert.equal(document.buttons.first.toolSetBehavior.execute, false);
+  assert.equal(document.buttons.owner.metadata.flowcellSourceRevision, "toolset-update-123");
   assert.equal(document.popoutUnits.tools.fields[0].id, "amount");
   assert.throws(() => applyInstalledSourceUpdate(document, {
     ownerButtonId: "owner",

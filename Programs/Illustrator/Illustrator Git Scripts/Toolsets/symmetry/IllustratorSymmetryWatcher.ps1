@@ -3,6 +3,8 @@
 param(
   [Parameter(Mandatory = $true)]
   [string]$SourcePath,
+  [Parameter(Mandatory = $true)]
+  [string]$OwnerToken,
   [int]$PollMilliseconds = 16,
   [int]$CommitDelayMilliseconds = 45
 )
@@ -47,6 +49,8 @@ $script:OwnerFolder = Split-Path -Parent $script:SourceFolder
 $script:RuntimeFolder = Join-Path $script:OwnerFolder 'runtime'
 $script:StatePath = Join-Path $script:RuntimeFolder 'illustrator-symmetry-state.json'
 $script:LogPath = Join-Path $script:RuntimeFolder 'illustrator-symmetry.log'
+$script:WatcherRecordPath = Join-Path $script:RuntimeFolder 'illustrator-symmetry-watcher.json'
+$script:OwnerToken = $OwnerToken
 $script:IllustratorApplication = $null
 
 function Write-WatcherLog {
@@ -58,6 +62,33 @@ function Write-WatcherLog {
     }
     $stamp = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
     Add-Content -LiteralPath $script:LogPath -Value "$stamp | Watcher | $Message" -Encoding UTF8
+  } catch {
+  }
+}
+
+function Write-WatcherRecord {
+  param([Parameter(Mandatory = $true)][ValidateSet('running', 'stopped')][string]$Status)
+
+  try {
+    if (-not [System.IO.Directory]::Exists($script:RuntimeFolder)) {
+      return
+    }
+    $process = Get-Process -Id $PID -ErrorAction Stop
+    $record = [ordered]@{
+      schemaVersion = 1
+      ownerToken = $script:OwnerToken
+      processId = [int]$PID
+      executablePath = [string]$process.Path
+      watcherPath = [System.IO.Path]::GetFullPath($PSCommandPath)
+      sourcePath = $script:SourcePath
+      status = $Status
+      updatedAt = (Get-Date).ToString('o')
+    }
+    [System.IO.File]::WriteAllText(
+      $script:WatcherRecordPath,
+      ($record | ConvertTo-Json -Compress),
+      [System.Text.UTF8Encoding]::new($false)
+    )
   } catch {
   }
 }
@@ -146,12 +177,14 @@ function ConvertTo-JsStringLiteral {
 }
 
 function Invoke-SymmetryRelease {
+  param([Parameter(Mandatory = $true)][string]$InternalCommand)
+
   if (-not [System.IO.File]::Exists($script:SourcePath)) {
     return 'source-missing'
   }
 
   $scriptBody = Get-Content -LiteralPath $script:SourcePath -Raw -ErrorAction Stop
-  $args = [pscustomobject]@{ internalCommand = 'process_release' }
+  $args = [pscustomobject]@{ internalCommand = $InternalCommand }
   $prefix = @(
     'var FLOWCELL_ACTION_ID = "flowcell_illustrator_symmetry_watcher";'
     "var FLOWCELL_SCRIPT_PATH = $(ConvertTo-JsStringLiteral -Value $script:SourcePath);"
@@ -189,7 +222,8 @@ try {
     exit 0
   }
 
-  Write-WatcherLog 'Started. Waiting for Illustrator primary-button releases.'
+  Write-WatcherRecord -Status 'running'
+  Write-WatcherLog 'Started. Waiting for Illustrator primary-button transitions.'
   $pointerWasDownInIllustrator = $false
   $missingStateReads = 0
 
@@ -212,16 +246,21 @@ try {
     if ($primaryButtonDown) {
       if (-not $pointerWasDownInIllustrator -and (Test-IllustratorForeground)) {
         $pointerWasDownInIllustrator = $true
+        try {
+          [void](Invoke-SymmetryRelease -InternalCommand 'process_press')
+        } catch {
+          Write-WatcherLog "Press baseline failed: $($_.Exception.Message)"
+        }
       }
     } elseif ($pointerWasDownInIllustrator) {
       $pointerWasDownInIllustrator = $false
       if (Test-IllustratorForeground) {
         Start-Sleep -Milliseconds ([Math]::Max($CommitDelayMilliseconds, 20))
         try {
-          $result = Invoke-SymmetryRelease
+          $result = Invoke-SymmetryRelease -InternalCommand 'process_release'
           if ($result -eq 'no-change' -or $result -eq 'no-path') {
             Start-Sleep -Milliseconds 55
-            [void](Invoke-SymmetryRelease)
+            [void](Invoke-SymmetryRelease -InternalCommand 'process_release')
           }
         } catch {
           Write-WatcherLog "Release processing failed: $($_.Exception.Message)"
@@ -246,7 +285,10 @@ try {
       $mutex.ReleaseMutex()
     } catch {
     }
+    Write-WatcherRecord -Status 'stopped'
   }
   $mutex.Dispose()
-  Write-WatcherLog 'Stopped.'
+  if ($ownsMutex) {
+    Write-WatcherLog 'Stopped.'
+  }
 }

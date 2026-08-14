@@ -670,6 +670,41 @@ pub(crate) fn run_active_source(resolution: &ActiveSourceResolution) -> Result<V
     }
 }
 
+fn owner_runtime_command_path(package_path: &Path, command_file: &str) -> Result<PathBuf, String> {
+    let runtime = package_path.join("runtime");
+    fs::create_dir_all(&runtime)
+        .map_err(|error| format!("Failed to create {}: {error}", runtime.display()))?;
+    let runtime = runtime.canonicalize().map_err(|error| {
+        format!(
+            "Failed to resolve owner runtime {}: {error}",
+            runtime.display()
+        )
+    })?;
+    if !runtime.starts_with(package_path) {
+        return Err("execution.commandFileScope resolved outside the owned package.".to_string());
+    }
+    Ok(runtime.join(command_file))
+}
+
+fn illustrator_toolset_command_envelope(
+    resolution: &ActiveSourceResolution,
+    slot: &str,
+    payload: Value,
+    created_at_ms: u64,
+) -> Value {
+    let record = &resolution.record;
+    json!({
+        "programName": record.program_name,
+        "panelName": record.panel_name,
+        "fileName": resolution.file_name,
+        "ownerButtonId": record.owner_button_id,
+        "sourcePath": record.source_path,
+        "command": slot.trim(),
+        "createdAtMs": created_at_ms,
+        "payload": payload
+    })
+}
+
 pub(crate) fn run_active_toolset_action(
     resolution: &ActiveSourceResolution,
     slot: &str,
@@ -712,10 +747,12 @@ pub(crate) fn run_active_toolset_action(
                         record.label
                     )
                 })?;
-            let command_path = Path::new(command_file.trim());
-            if command_path.is_absolute()
-                || command_path.components().count() != 1
-                || command_path.file_name().and_then(|value| value.to_str())
+            let command_file_path = Path::new(command_file.trim());
+            if command_file_path.is_absolute()
+                || command_file_path.components().count() != 1
+                || command_file_path
+                    .file_name()
+                    .and_then(|value| value.to_str())
                     != Some(command_file.trim())
             {
                 return Err("execution.commandFile must be a single JSON file name.".to_string());
@@ -733,22 +770,38 @@ pub(crate) fn run_active_toolset_action(
                     "Illustrator program manifest is missing runner.programKey.".to_string()
                 );
             }
-            let local_root = crate::resolve_flowcell_local_root()?;
-            fs::create_dir_all(&local_root)
-                .map_err(|error| format!("Failed to create {}: {error}", local_root.display()))?;
-            let command_path = local_root.join(command_file.trim());
+            let command_path = match execution.get("commandFileScope") {
+                None => {
+                    let local_root = crate::resolve_flowcell_local_root()?;
+                    fs::create_dir_all(&local_root).map_err(|error| {
+                        format!("Failed to create {}: {error}", local_root.display())
+                    })?;
+                    local_root.join(command_file.trim())
+                }
+                Some(Value::String(scope))
+                    if scope.trim().eq_ignore_ascii_case("owner-runtime") =>
+                {
+                    let owned = resolve_owned_source_paths(&manifest, record)?;
+                    owner_runtime_command_path(&owned.package_path, command_file.trim())?
+                }
+                Some(Value::String(_)) => {
+                    return Err(
+                        "execution.commandFileScope must be 'owner-runtime' when declared."
+                            .to_string(),
+                    )
+                }
+                Some(_) => {
+                    return Err(
+                        "execution.commandFileScope must be a string when declared.".to_string()
+                    )
+                }
+            };
             let created_at_ms = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_millis() as u64;
-            let envelope = json!({
-                "programName": record.program_name,
-                "panelName": record.panel_name,
-                "fileName": resolution.file_name,
-                "command": slot.trim(),
-                "createdAtMs": created_at_ms,
-                "payload": payload
-            });
+            let envelope =
+                illustrator_toolset_command_envelope(resolution, slot, payload, created_at_ms);
             super::records::atomic_replace_json(&command_path, &envelope)?;
             let source_path = PathBuf::from(&record.source_path);
             let action_id = format!(
@@ -832,7 +885,8 @@ pub(crate) fn run_active_button_event(
 mod tests {
     use super::{
         blender_bridge_capability_payload, declared_blender_button_event_action,
-        illustrator_wait_for_completion, path_components_end_with, run_active_toolset_state_query,
+        illustrator_toolset_command_envelope, illustrator_wait_for_completion,
+        owner_runtime_command_path, path_components_end_with, run_active_toolset_state_query,
         windows_script_capability_command, ActiveSourceResolution,
     };
     use crate::program_sources::records::{
@@ -840,7 +894,9 @@ mod tests {
     };
     use serde_json::json;
     use std::collections::BTreeMap;
-    use std::path::Path;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     fn illustrator_record(runner_data: Option<serde_json::Value>) -> ActiveSourceRecord {
         ActiveSourceRecord {
@@ -884,6 +940,66 @@ mod tests {
             })
         ))));
         assert!(!illustrator_wait_for_completion(&illustrator_record(None)));
+    }
+
+    #[test]
+    fn owner_runtime_command_path_and_envelope_use_only_the_installed_owner() {
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "flowcell-owner-runtime-command-{}-{token}",
+            std::process::id()
+        ));
+        let package = root.join("Illustrator Local Scripts/owner-one");
+        fs::create_dir_all(&package).expect("create owner package");
+        let package = package.canonicalize().expect("resolve owner package");
+        let command = owner_runtime_command_path(&package, "illustrator_symmetry_command.json")
+            .expect("resolve owner runtime command");
+        let runtime = package
+            .join("runtime")
+            .canonicalize()
+            .expect("resolve owner runtime");
+        assert_eq!(command, runtime.join("illustrator_symmetry_command.json"));
+        assert!(command.starts_with(&package));
+        assert_ne!(
+            command,
+            root.join("flowcellbackend/local/illustrator_symmetry_command.json")
+        );
+
+        let mut record = illustrator_record(Some(json!({
+            "programKey": "illustrator_automation",
+            "commandFile": "illustrator_symmetry_command.json",
+            "commandFileScope": "owner-runtime"
+        })));
+        record.kind = "toolset".to_string();
+        record.owner_button_id = "owner-one".to_string();
+        record.source_path = package
+            .join("source/Illustrator Symmetry.jsx")
+            .display()
+            .to_string();
+        let envelope = illustrator_toolset_command_envelope(
+            &ActiveSourceResolution {
+                file_name: "owner-one.flowcell-source.json".to_string(),
+                record,
+            },
+            "enable",
+            json!({"enabled": true}),
+            42,
+        );
+        assert_eq!(envelope["ownerButtonId"], "owner-one");
+        assert_eq!(
+            envelope["sourcePath"],
+            package
+                .join("source/Illustrator Symmetry.jsx")
+                .display()
+                .to_string()
+        );
+        assert_eq!(envelope["command"], "enable");
+        assert_eq!(envelope["payload"], json!({"enabled": true}));
+
+        let _ = fs::remove_dir_all(PathBuf::from(&root));
     }
 
     #[test]

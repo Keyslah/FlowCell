@@ -1,6 +1,6 @@
 Option Explicit
 
-Dim shell, fileSystem, sourceFolder, watcherPath, sourcePath, powerShellPath, command
+Dim shell, fileSystem, sourceFolder, watcherPath, sourcePath, powerShellPath, ownerToken, command
 Set shell = CreateObject("WScript.Shell")
 Set fileSystem = CreateObject("Scripting.FileSystemObject")
 
@@ -8,6 +8,7 @@ sourceFolder = fileSystem.GetParentFolderName(WScript.ScriptFullName)
 watcherPath = fileSystem.BuildPath(sourceFolder, "IllustratorSymmetryWatcher.ps1")
 sourcePath = fileSystem.BuildPath(sourceFolder, "Illustrator Symmetry.jsx")
 powerShellPath = shell.ExpandEnvironmentStrings("%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe")
+ownerToken = "flowcell-illustrator-symmetry-v1"
 
 If Not fileSystem.FileExists(watcherPath) Then
     WScript.Quit 2
@@ -18,7 +19,8 @@ End If
 
 command = QuoteArgument(powerShellPath) & _
     " -NoLogo -NoProfile -ExecutionPolicy Bypass -Sta -File " & QuoteArgument(watcherPath) & _
-    " -SourcePath " & QuoteArgument(sourcePath)
+    " -SourcePath " & QuoteArgument(sourcePath) & _
+    " -OwnerToken " & QuoteArgument(ownerToken)
 
 shell.Run command, 0, False
 WScript.Quit 0

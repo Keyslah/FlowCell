@@ -1,15 +1,20 @@
 {
   "schemaVersion": 1,
   "id": "illustrator.symmetry",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "label": "Symmetry",
-  "tooltip": "Reflect or rotate each newly drawn Illustrator path as soon as the pen or mouse is released.",
+  "tooltip": "Reflect or rotate each newly detected Illustrator path after primary-button release. Illustrator does not expose the active Pencil tool, so avoid other path edits while Symmetry is on.",
   "kind": "toolset",
   "program": "Illustrator",
   "source": "Illustrator Symmetry.jsx",
   "execution": {
     "programKey": "illustrator_automation",
-    "commandFile": "illustrator_symmetry_command.json"
+    "commandFile": "illustrator_symmetry_command.json",
+    "commandFileScope": "owner-runtime",
+    "lifecycle": {
+      "stopScript": "Stop Illustrator Symmetry Watcher.ps1",
+      "ownerToken": "flowcell-illustrator-symmetry-v1"
+    }
   },
   "children": [
     {
@@ -111,13 +116,17 @@
       },
       {
         "id": "count",
-        "kind": "number",
+        "kind": "select",
         "label": "Count",
         "payloadKey": "count",
         "defaultValue": 8,
-        "minimum": 2,
-        "maximum": 12,
-        "step": 2,
+        "options": [
+          { "id": "count_2", "label": "2", "value": 2 },
+          { "id": "count_4", "label": "4", "value": 4 },
+          { "id": "count_6", "label": "6", "value": 6 },
+          { "id": "count_8", "label": "8", "value": 8 },
+          { "id": "count_12", "label": "12", "value": 12 }
+        ],
         "x": 248,
         "y": 8,
         "width": 112,
