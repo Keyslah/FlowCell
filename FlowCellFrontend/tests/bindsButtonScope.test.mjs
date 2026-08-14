@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { deriveBindsPanelButtonScope } from "./.compiled-button-system/lib/bindsButtonScope.js";
+import { deriveBindsPanelMacroScope } from "./.compiled-button-system/lib/bindsMacroScope.js";
 
 const buttons = [
   {
@@ -113,4 +114,73 @@ test("selecting another owner replaces the entire visible tool-set group", () =>
     ["Blender::Tools::owner-b.flowcell-source.json", "b-child-1"]
   );
   assert.equal(scope.toolbarButtonId, "Blender::Tools::owner-b.flowcell-source.json");
+});
+
+const macros = [
+  {
+    id: "macro_delete_layer",
+    label: "Delete layer",
+    programName: "Adobe Fresco",
+    panelName: "Layers",
+    fileName: "macro_delete_layer.ini",
+    createdAt: "1",
+    updatedAt: "2"
+  },
+  {
+    id: "macro_duplicate_layer",
+    label: "Duplicate layer",
+    programName: "Adobe Fresco",
+    panelName: "Layers",
+    fileName: "macro_duplicate_layer.ini",
+    createdAt: "1",
+    updatedAt: "2"
+  },
+  {
+    id: "macro_blender_collection",
+    label: "New collection",
+    programName: "Blender",
+    panelName: "Collections",
+    fileName: "macro_blender_collection.ini",
+    createdAt: "1",
+    updatedAt: "2"
+  }
+];
+
+test("macro scope projects only the selected panel and exposes its saved shortcuts", () => {
+  const scope = deriveBindsPanelMacroScope(
+    macros,
+    { macro_delete_layer: "^+2" },
+    "adobe fresco",
+    "layers",
+    "macro_delete_layer"
+  );
+
+  assert.deepEqual(
+    scope.macroButtons.map((macro) => macro.target),
+    ["macro_delete_layer", "macro_duplicate_layer"]
+  );
+  assert.equal(scope.macroButtons[0].kind, "macro");
+  assert.equal(scope.macroButtons[0].shortcut, "^+2");
+  assert.equal(scope.selectedMacroId, "macro_delete_layer");
+});
+
+test("macro scope falls back inside the selected panel and clears for an empty panel", () => {
+  const localScope = deriveBindsPanelMacroScope(
+    macros,
+    {},
+    "Adobe Fresco",
+    "Layers",
+    "macro_blender_collection"
+  );
+  assert.equal(localScope.selectedMacroId, "macro_delete_layer");
+
+  const emptyScope = deriveBindsPanelMacroScope(
+    macros,
+    {},
+    "Adobe Fresco",
+    "Missing",
+    "macro_delete_layer"
+  );
+  assert.deepEqual(emptyScope.macroButtons, []);
+  assert.equal(emptyScope.selectedMacroId, "");
 });

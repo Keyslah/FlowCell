@@ -27,6 +27,35 @@ test("managed Add Program and Add Panel windows receive the default Tauri capabi
   assert.ok(capability.windows.includes("flowcell-add-panel"));
 });
 
+test("Add Program always offers a registration-only executable path beside managed packages", () => {
+  const addProgram = read(
+    frontendRoot,
+    "src",
+    "pages",
+    "program-setup",
+    "AddProgramWindowPage.tsx"
+  );
+  assert.match(addProgram, />Any program<\/button>/);
+  assert.match(addProgram, />Managed package<\/button>/);
+  assert.match(addProgram, /<label>Program name/);
+  assert.match(addProgram, /<label>Application executable/);
+  assert.match(addProgram, /createPlainProgram:\s*true/);
+  assert.match(addProgram, /createPlainProgram:\s*false/);
+  assert.match(addProgram, /selectedPanels:\s*\[\]/);
+  assert.match(addProgram, /selectedSources:\s*\[\]/);
+  assert.match(addProgram, /inventory\.packages\.length === 0/);
+  assert.match(addProgram, /Choose Any program to add an executable directly/);
+  assert.match(addProgram, /const addPlainProgram = async/);
+  assert.match(
+    addProgram,
+    /const addPlainProgram = async[\s\S]*preflightAddProgramPlan\(request\)[\s\S]*installValidatedPlan\(validatedRequest, validated\)/
+  );
+  assert.match(addProgram, /onClick=\{\(\) => void addPlainProgram\(\)\}/);
+  assert.doesNotMatch(addProgram, /I confirm this EXE filename identifies/);
+  assert.doesNotMatch(addProgram, />Review program<\/button>/);
+  assert.match(addProgram, />Review plan<\/button>/);
+});
+
 test("Add Button fixes its destination and delegates exact content detection to native auto import", () => {
   const main = read(frontendRoot, "src", "pages", "main", "MainPage.tsx");
   const editor = read(frontendRoot, "src", "button", "editor", "ButtonEditorPage.tsx");
@@ -92,6 +121,36 @@ test("installed pages use a raw WRY boundary without Tauri initialization script
     host,
     /onCloseRequested[\s\S]*preventDefault\(\)[\s\S]*unmount_installed_page_webview[\s\S]*currentWindow\.destroy\(\)/
   );
+  const fatalErrorLifecycleStart = host.indexOf("async function revealInstalledPageError(");
+  const fatalErrorLifecycleEnd = host.indexOf("\n}\n\nexport default", fatalErrorLifecycleStart);
+  assert.ok(fatalErrorLifecycleStart >= 0 && fatalErrorLifecycleEnd > fatalErrorLifecycleStart);
+  const fatalErrorLifecycle = host.slice(fatalErrorLifecycleStart, fatalErrorLifecycleEnd);
+  assert.ok(
+    fatalErrorLifecycle.indexOf('await invoke<void>("unmount_installed_page_webview")') <
+      fatalErrorLifecycle.indexOf("reveal(message)"),
+    "the raw child must unmount before the React error surface is revealed"
+  );
+  assert.match(
+    fatalErrorLifecycle,
+    /catch\s*\{[\s\S]*getCurrentWindow\(\)\.destroy\(\)/,
+    "a failed fatal-error unmount must close the parent instead of leaving the raw child over React"
+  );
+  const closeLifecycleStart = host.indexOf("const disposeClose = await currentWindow.onCloseRequested");
+  const closeLifecycleEnd = host.indexOf("\n      if (disposed)", closeLifecycleStart);
+  assert.ok(closeLifecycleStart >= 0 && closeLifecycleEnd > closeLifecycleStart);
+  const closeLifecycle = host.slice(closeLifecycleStart, closeLifecycleEnd);
+  assert.ok(
+    closeLifecycle.indexOf('await invoke<void>("unmount_installed_page_webview")') <
+      closeLifecycle.indexOf("await currentWindow.destroy()"),
+    "close must attempt child unmount before destroying the parent"
+  );
+  assert.match(
+    closeLifecycle,
+    /try\s*\{[\s\S]*unmount_installed_page_webview[\s\S]*\}\s*catch\s*\{[\s\S]*\}\s*try\s*\{[\s\S]*currentWindow\.destroy\(\)/,
+    "close must still destroy the parent when child unmount fails"
+  );
+  assert.match(host, /resize_installed_page_webview[\s\S]*catch\(\(reason\) => \{[\s\S]*failPage\(reason\)/);
+  assert.match(host, /default-world proof was not received\."\)/);
   assert.match(
     host,
     /await currentWindow\.onCloseRequested[\s\S]*await invoke\("mount_installed_page_webview"/
@@ -163,12 +222,23 @@ test("generated page Buttons update by authenticated package identity instead of
   assert.match(broker, /subtle\.digest\("SHA-256"/);
   assert.match(broker, /existingOwner\s*\?\s*updateButtonSource\s*:\s*installButtonSource/);
   assert.match(broker, /applyInstalledSourceUpdate\(next, installed\)/);
+  assert.match(broker, /finalizeButtonSourceUpdate\(/);
+  assert.match(broker, /rollbackButtonSourceUpdate\(/);
+  assert.match(broker, /outcome\s*===\s*"finalized"/);
   assert.match(broker, /existingOwner\?\.sourceIdentity\?\.displayPanelName\s*\|\|\s*panelName/);
   assert.doesNotMatch(broker, /createStableButtonId\("button-generated"\)/);
   assert.match(
     read(frontendRoot, "src", "button", "state", "ButtonStateRepository.ts"),
     /invoke<Record<string, unknown>>\("update_button_source"/
   );
+  const sourceUpdates = read(
+    frontendRoot,
+    "src",
+    "button",
+    "state",
+    "sourceUpdateOperations.ts"
+  );
+  assert.match(sourceUpdates, /flowcellSourceRevision:\s*installed\.updateTransactionToken/);
   assert.match(
     read(frontendRoot, "src-tauri", "src", "main.rs"),
     /program_sources::install::update_button_source/
@@ -374,6 +444,7 @@ test("generated Button staging is token-bound, hash-verified, and product-neutra
     "program_sources",
     "installed_page.rs"
   );
+  const nativeRuntime = native.split("#[cfg(test)]", 1)[0];
   assert.match(broker, /const stageToken = stringValue\(payload, "stageToken"\)/);
   assert.match(broker, /invoke<AuthorizedGeneratedStage>[\s\S]*stageToken,[\s\S]*stagedSourcePath/);
   assert.match(broker, /sourcePath:\s*authorizedStage\.manifestPath/);
@@ -386,5 +457,8 @@ test("generated Button staging is token-bound, hash-verified, and product-neutra
   assert.match(native, /source\/flowcell\.script\.json/);
   assert.match(native, /source manifest SHA-256 does not match stage\.json/);
   assert.match(native, /script SHA-256 does not match stage\.json/);
-  assert.doesNotMatch(native, /windows\.setup-organization|flowcell\.windows\.setup-organization/);
+  assert.doesNotMatch(
+    nativeRuntime,
+    /windows\.setup-organization|flowcell\.windows\.setup-organization/
+  );
 });

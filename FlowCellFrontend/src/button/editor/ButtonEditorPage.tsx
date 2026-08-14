@@ -74,6 +74,7 @@ import {
   subscribeButtonRestingWindowBounds
 } from "../state/ButtonDraftBus";
 import { validateButtonStateDocument } from "../state/buttonStateValidation";
+import { validateInstalledButtonLayout } from "../state/installedButtonLayoutValidation";
 import {
   resolveDiscardedStagedOwnerButtonIds
 } from "../state/buttonDocumentOperations";
@@ -501,7 +502,7 @@ function addInstalledToolSet(
   ownerSurfaceId: string
 ): { ownerPlacement: ButtonPlacement; popoutSurfaceId: string } {
   if (result.children.length === 0) throw new Error("The installed tool set contains no child buttons.");
-  const layout = result.layout;
+  const layout = validateInstalledButtonLayout(result.layout);
   const slots = result.children.map((child) => child.slot);
   if (new Set(slots).size !== slots.length) {
     throw new Error("The installed tool set contains duplicate child placement slots.");

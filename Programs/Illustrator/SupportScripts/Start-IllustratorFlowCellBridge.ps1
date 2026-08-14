@@ -44,13 +44,44 @@ function Write-BridgeLog {
     [string]$Level = 'INFO'
   )
 
-  $directory = Split-Path -Parent $script:LogPath
-  if (-not [System.IO.Directory]::Exists($directory)) {
-    [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+  # Logging must never take down the persistent named-pipe host. Another
+  # diagnostic reader/writer can briefly hold this file without affecting an
+  # otherwise healthy Illustrator connection.
+  try {
+    $directory = Split-Path -Parent $script:LogPath
+    if (-not [System.IO.Directory]::Exists($directory)) {
+      [System.IO.Directory]::CreateDirectory($directory) | Out-Null
+    }
+
+    $stamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffK')
+    Add-Content -LiteralPath $script:LogPath -Value "[$stamp] [$Level] $Message" -Encoding UTF8
+  } catch {
+  }
+}
+
+function Write-BridgeResponse {
+  param(
+    [AllowNull()]$Writer,
+    [Parameter(Mandatory = $true)]$Value
+  )
+
+  if ($null -eq $Writer) {
+    return $false
   }
 
-  $stamp = (Get-Date).ToString('yyyy-MM-ddTHH:mm:ss.fffK')
-  Add-Content -LiteralPath $script:LogPath -Value "[$stamp] [$Level] $Message" -Encoding UTF8
+  try {
+    $Writer.WriteLine((ConvertTo-ResponseLine -Value $Value))
+    return $true
+  } catch {
+    # A client can close the pipe after the request faulted. Do not let the
+    # attempted error response terminate the server; the next loop iteration
+    # accepts a fresh connection.
+    try {
+      Write-BridgeLog "Illustrator bridge client disconnected before receiving a response: $($_.Exception.Message)" 'WARN'
+    } catch {
+    }
+    return $false
+  }
 }
 
 function ConvertTo-ResponseLine {
@@ -361,7 +392,9 @@ while ($true) {
 
     $request = $line | ConvertFrom-Json
     $response = Handle-Request -Request $request
-    $writer.WriteLine((ConvertTo-ResponseLine -Value $response))
+    if (-not (Write-BridgeResponse -Writer $writer -Value $response)) {
+      continue
+    }
 
     if (([string]$request.command) -eq 'run') {
       $wait = if ($request.PSObject.Properties.Name -contains 'wait') { [bool]$request.wait } else { $false }
@@ -377,10 +410,10 @@ while ($true) {
     }
     Write-BridgeLog $message 'ERROR'
     if ($null -ne $writer) {
-      $writer.WriteLine((ConvertTo-ResponseLine -Value ([pscustomobject]@{
+      [void](Write-BridgeResponse -Writer $writer -Value ([pscustomobject]@{
         ok = $false
         error = $message
-      })))
+      }))
     }
   } finally {
     if ($null -ne $writer) { $writer.Dispose() }

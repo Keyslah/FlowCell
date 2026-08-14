@@ -88,11 +88,15 @@ layers of Illustrator-selected objects before falling back to highlighted tree
 rows. Duplicate recursively copies each resolved layer and its full subtree.
 Each copied root uses the next compact trailing number (`name1`, `name2`) rather
 than a `copy` suffix. The `+ Layer` action opens its name input before creation.
-Force Delete dispatches immediately without a confirmation dialog. Row-body
-pointer dragging still reparents layers. The separate square beside each target
-ring selects that row's artwork when clicked and pointer-drags Illustrator's
-current artwork selection: a normal drop moves it into the destination layer,
-while an Alt-drop copies it.
+Force Delete dispatches immediately without a confirmation dialog. Clicking a
+row makes that layer native-active in Illustrator while preserving the current
+artwork selection; no temporary artwork is created. Row-body pointer dragging
+still reparents layers. The separate square beside each target ring selects
+that row's artwork when clicked and, without requiring a prior Illustrator
+selection, pointer-drags that row's artwork: a normal drop moves it into the
+destination layer, while an Alt-drop copies it. Artwork is flattened
+in its existing mixed layer/sublayer visual order. After a drop, only results
+whose restored item and layer state remains visible and unlocked are selected.
 
 The 19 actions in `Illustrator Git Scripts/Layers Builder/` are also ordinary
 manifest packages. Eight are document-global and never require a Layer Tree

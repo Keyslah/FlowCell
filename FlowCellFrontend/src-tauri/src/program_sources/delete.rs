@@ -812,6 +812,7 @@ pub(crate) fn quarantine_owned_source(
     transaction_root: &Path,
 ) -> Result<QuarantinedOwnedSource, String> {
     let owner_button_id = validate_owner_button_id(owner_button_id)?;
+    super::install::ensure_no_awaiting_canonical_update_for_owner(&owner_button_id)?;
     let (record_path, mut record) = locate_owned_source(&owner_button_id, None, None, None)?;
     let resolved = validate_owned_source_location(&record_path, &record, &owner_button_id)?;
     let package_path = resolved.package_path;

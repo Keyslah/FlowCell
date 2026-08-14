@@ -1,0 +1,40 @@
+{
+  "addonReloadNotes": "",
+  "allowedManifestFileNames": [
+    "flowcell.script.json"
+  ],
+  "allowedScriptExtensions": [
+    "ps1",
+    "cmd",
+    "bat",
+    "exe",
+    "lnk",
+    "vbs",
+    "ahk"
+  ],
+  "appRestartNotes": "",
+  "bindScopedNativeOwner": false,
+  "bundledSources": [],
+  "defaultPanels": [],
+  "exePath": "C:\\Program Files\\WindowsApps\\Adobe.Fresco_5.7.0.1447_x64__pc75e8sa7ep4e\\Fresco.exe",
+  "gitScriptsFolder": "Adobe Fresco Git Scripts",
+  "label": "Fresco",
+  "localScriptsFolder": "Adobe Fresco Local Scripts",
+  "panels": [],
+  "panelsFolder": "Panels",
+  "processNames": [
+    "fresco"
+  ],
+  "programId": "plain-adobe-fresco",
+  "programType": "local-script",
+  "runner": {
+    "deleteScript": "",
+    "installScript": "",
+    "kind": "windows-script",
+    "programKey": "windows_generic"
+  },
+  "schemaVersion": 1,
+  "shortcutProfileId": "",
+  "supportScriptsFolder": "SupportScripts",
+  "supportsToolsetManifests": false
+}

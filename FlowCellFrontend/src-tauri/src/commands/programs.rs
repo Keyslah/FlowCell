@@ -67,6 +67,8 @@ pub(crate) struct AddProgramPlanRequest {
     pub(crate) program_name: String,
     pub(crate) executable_path: String,
     #[serde(default)]
+    pub(crate) create_plain_program: bool,
+    #[serde(default)]
     pub(crate) selected_panels: Vec<String>,
     #[serde(default)]
     pub(crate) selected_sources: Vec<AddProgramSourceSelection>,
@@ -1985,8 +1987,15 @@ fn validate_available_program_package(
     let program_root = resolve_program_directory(program_name)?;
     program_sources::installed_page::reject_selected_source_reparse_point(&program_root)?;
     let manifest = program_sources::manifest::load_program_manifest(program_name)?;
+    validate_available_program_package_at(&program_root, &manifest)
+}
+
+fn validate_available_program_package_at(
+    program_root: &Path,
+    manifest: &program_sources::manifest::ProgramManifest,
+) -> Result<AvailableProgramPackage, String> {
     let git_root = program_sources::manifest::resolve_manifest_folder(
-        &program_root,
+        program_root,
         &manifest.git_scripts_folder,
         "gitScriptsFolder",
     )?;
@@ -1998,7 +2007,7 @@ fn validate_available_program_package(
         ));
     }
     let support_root = program_sources::manifest::resolve_manifest_folder(
-        &program_root,
+        program_root,
         &manifest.support_scripts_folder,
         "supportScriptsFolder",
     )?;
@@ -2013,14 +2022,10 @@ fn validate_available_program_package(
     for (value, field) in [
         (&manifest.runner.install_script, "runner.installScript"),
         (&manifest.runner.delete_script, "runner.deleteScript"),
-        (
-            &manifest.runner.capability_script,
-            "runner.capabilityScript",
-        ),
     ] {
         let Some(path) = program_sources::manifest::resolve_runner_script_path(
-            &program_root,
-            &manifest,
+            program_root,
+            manifest,
             value,
             field,
         )?
@@ -2035,7 +2040,7 @@ fn validate_available_program_package(
             ));
         }
         support_content.push(
-            path.strip_prefix(&program_root)
+            path.strip_prefix(program_root)
                 .unwrap_or(&path)
                 .to_string_lossy()
                 .to_string(),
@@ -2045,7 +2050,7 @@ fn validate_available_program_package(
     let mut sources = Vec::new();
     for source in &manifest.bundled_sources {
         let source_path = program_sources::manifest::resolve_relative_manifest_path(
-            &program_root,
+            program_root,
             &source.source_path,
             "bundledSources.sourcePath",
             false,
@@ -2117,8 +2122,8 @@ fn validate_available_program_package(
             )
             .collect(),
         install_effects,
-        addon_reload_notes: manifest.addon_reload_notes,
-        app_restart_notes: manifest.app_restart_notes,
+        addon_reload_notes: manifest.addon_reload_notes.clone(),
+        app_restart_notes: manifest.app_restart_notes.clone(),
     })
 }
 
@@ -2157,6 +2162,36 @@ fn preflight_add_program_plan_inner(
             "Program '{}' is already registered in FlowCell.",
             requested_program
         ));
+    }
+    if request.create_plain_program {
+        if !request.selected_panels.is_empty() || !request.selected_sources.is_empty() {
+            return Err(
+                "A plain Program registration cannot include packaged Panels or Button contributions."
+                    .to_string(),
+            );
+        }
+        let executable =
+            resolve_program_executable(&requested_program, request.executable_path.trim())?;
+        let (_, manifest) = preview_plain_program_package(&requested_program, &executable)?;
+        let process_name = manifest.process_names.first().cloned().unwrap_or_default();
+        return Ok(AddProgramPreflight {
+            program_id: manifest.program_id,
+            program_name: manifest.label,
+            executable_path: executable.to_string_lossy().to_string(),
+            panels: Vec::new(),
+            sources: Vec::new(),
+            install_effects: vec![
+                format!(
+                    "Create a registration-only Program package for {}.",
+                    requested_program
+                ),
+                format!(
+                    "Match Program-scoped Button windows only to the '{}' process.",
+                    process_name
+                ),
+                "Register the Program with no Panels or bundled Button contributions.".to_string(),
+            ],
+        });
     }
     let package = validate_available_program_package(&requested_program)?;
     let executable =
@@ -2271,6 +2306,7 @@ pub(crate) fn preflight_add_program_plan(
 
 const ADD_PROGRAM_TRANSACTION_SCHEMA_VERSION: u32 = 1;
 const ADD_PROGRAM_TRANSACTION_FILE_NAME: &str = "add-program-transaction.json";
+const PLAIN_PROGRAM_PACKAGE_MARKER_FILE_NAME: &str = ".flowcell-add-program-package.json";
 static ADD_PROGRAM_TRANSACTION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -2292,6 +2328,14 @@ struct PlannedProgramSourceOwner {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct PlainProgramPackageMarker {
+    schema_version: u32,
+    transaction_token: String,
+    program_name: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct AddProgramTransactionJournal {
     schema_version: u32,
     phase: AddProgramTransactionPhase,
@@ -2304,6 +2348,10 @@ struct AddProgramTransactionJournal {
     enabled_state_before: Option<String>,
     enabled_state_after: String,
     created_directories: Vec<PathBuf>,
+    #[serde(default)]
+    created_program_package: Option<PathBuf>,
+    #[serde(default)]
+    created_program_package_manifest: Option<String>,
     planned_sources: Vec<PlannedProgramSourceOwner>,
     #[serde(default)]
     expected_button_ids: Vec<String>,
@@ -2353,6 +2401,312 @@ fn read_add_program_journal(root: &Path) -> Result<AddProgramTransactionJournal,
         ));
     }
     Ok(journal)
+}
+
+fn add_program_transaction_token(root: &Path) -> Result<String, String> {
+    root.file_name()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| {
+            format!(
+                "Add Program transaction path is invalid: {}",
+                root.display()
+            )
+        })
+}
+
+fn plain_program_package_marker_path(program_root: &Path) -> PathBuf {
+    program_root.join(PLAIN_PROGRAM_PACKAGE_MARKER_FILE_NAME)
+}
+
+fn read_plain_program_package_marker(
+    program_root: &Path,
+) -> Result<PlainProgramPackageMarker, String> {
+    let path = plain_program_package_marker_path(program_root);
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+    serde_json::from_str(&raw).map_err(|error| {
+        format!(
+            "Plain Program package marker {} is invalid: {error}",
+            path.display()
+        )
+    })
+}
+
+fn validate_plain_program_package_marker(
+    transaction_root: &Path,
+    journal: &AddProgramTransactionJournal,
+) -> Result<PathBuf, String> {
+    let programs_root = resolve_programs_root()?;
+    validate_plain_program_package_marker_in(&programs_root, transaction_root, journal)
+}
+
+fn validate_plain_program_package_marker_in(
+    programs_root: &Path,
+    transaction_root: &Path,
+    journal: &AddProgramTransactionJournal,
+) -> Result<PathBuf, String> {
+    let program_root = journal
+        .created_program_package
+        .as_ref()
+        .ok_or_else(|| "Add Program transaction does not own a generated package.".to_string())?;
+    let expected_root = programs_root.join(validate_folder_name(
+        &journal.preflight.program_name,
+        "Program",
+    )?);
+    if program_root != &expected_root {
+        return Err(format!(
+            "Generated Program package path changed from {} to {}; it was preserved for manual recovery.",
+            expected_root.display(),
+            program_root.display()
+        ));
+    }
+    program_sources::installed_page::reject_selected_source_reparse_point(program_root)?;
+    program_sources::installed_page::reject_package_source_reparse_point(program_root)?;
+    let marker_path = plain_program_package_marker_path(program_root);
+    match fs::symlink_metadata(&marker_path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "Generated Program ownership marker is missing at {}; the package was preserved for manual recovery.",
+                marker_path.display()
+            ));
+        }
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect generated Program ownership marker {}: {error}",
+                marker_path.display()
+            ));
+        }
+    }
+    program_sources::installed_page::reject_package_source_reparse_point(&marker_path)?;
+    let marker = read_plain_program_package_marker(program_root)?;
+    let expected_token = add_program_transaction_token(transaction_root)?;
+    if marker.schema_version != 1
+        || marker.transaction_token != expected_token
+        || !marker
+            .program_name
+            .eq_ignore_ascii_case(&journal.preflight.program_name)
+    {
+        return Err(format!(
+            "Generated Program package ownership changed at {}; it was preserved for manual recovery.",
+            program_root.display()
+        ));
+    }
+    Ok(program_root.clone())
+}
+
+fn validate_plain_program_package_tree(
+    transaction_root: &Path,
+    journal: &AddProgramTransactionJournal,
+    require_complete: bool,
+) -> Result<PathBuf, String> {
+    let programs_root = resolve_programs_root()?;
+    validate_plain_program_package_tree_in(
+        &programs_root,
+        transaction_root,
+        journal,
+        require_complete,
+    )
+}
+
+fn validate_plain_program_package_tree_in(
+    programs_root: &Path,
+    transaction_root: &Path,
+    journal: &AddProgramTransactionJournal,
+    require_complete: bool,
+) -> Result<PathBuf, String> {
+    let program_root =
+        validate_plain_program_package_marker_in(programs_root, transaction_root, journal)?;
+    let expected_manifest_body = journal
+        .created_program_package_manifest
+        .as_deref()
+        .ok_or_else(|| {
+            "Add Program transaction does not record the generated package manifest; the package was preserved for manual recovery."
+                .to_string()
+        })?;
+    let mut expected_manifest =
+        serde_json::from_str::<program_sources::manifest::ProgramManifest>(expected_manifest_body)
+            .map_err(|error| format!("Stored generated Program manifest is invalid: {error}"))?;
+    program_sources::manifest::validate_manifest(
+        &mut expected_manifest,
+        &journal.preflight.program_name,
+        &program_root,
+    )?;
+
+    let manifest_path = program_root.join("flowcell.program.json");
+    let marker_path = plain_program_package_marker_path(&program_root);
+    let mut expected_directories = Vec::new();
+    for (value, field) in [
+        (&expected_manifest.git_scripts_folder, "gitScriptsFolder"),
+        (&expected_manifest.panels_folder, "panelsFolder"),
+        (
+            &expected_manifest.local_scripts_folder,
+            "localScriptsFolder",
+        ),
+        (
+            &expected_manifest.support_scripts_folder,
+            "supportScriptsFolder",
+        ),
+    ] {
+        let directory =
+            program_sources::manifest::resolve_manifest_folder(&program_root, value, field)?;
+        if directory.parent() != Some(program_root.as_path()) {
+            return Err(format!(
+                "Generated Program package folder '{field}' is not an immediate child; the package was preserved for manual recovery."
+            ));
+        }
+        if expected_directories
+            .iter()
+            .any(|existing: &PathBuf| existing == &directory)
+        {
+            return Err(format!(
+                "Generated Program package repeats directory {}; the package was preserved for manual recovery.",
+                directory.display()
+            ));
+        }
+        expected_directories.push(directory);
+    }
+
+    let mut found_manifest = false;
+    let mut found_marker = false;
+    let mut found_directories = BTreeSet::new();
+    for entry in fs::read_dir(&program_root)
+        .map_err(|error| format!("Failed to inspect {}: {error}", program_root.display()))?
+    {
+        let entry = entry
+            .map_err(|error| format!("Failed to inspect {}: {error}", program_root.display()))?;
+        let path = entry.path();
+        program_sources::installed_page::reject_package_source_reparse_point(&path)?;
+        if path == marker_path {
+            if !entry
+                .file_type()
+                .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?
+                .is_file()
+            {
+                return Err(format!(
+                    "Generated Program ownership marker changed type at {}; the package was preserved for manual recovery.",
+                    path.display()
+                ));
+            }
+            found_marker = true;
+            continue;
+        }
+        if path == manifest_path {
+            if !entry
+                .file_type()
+                .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?
+                .is_file()
+            {
+                return Err(format!(
+                    "Generated Program manifest changed type at {}; the package was preserved for manual recovery.",
+                    path.display()
+                ));
+            }
+            let current = fs::read_to_string(&path)
+                .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+            if current != expected_manifest_body {
+                return Err(format!(
+                    "Generated Program manifest changed at {}; the package was preserved for manual recovery.",
+                    path.display()
+                ));
+            }
+            found_manifest = true;
+            continue;
+        }
+        let Some(expected_index) = expected_directories
+            .iter()
+            .position(|directory| directory == &path)
+        else {
+            return Err(format!(
+                "Generated Program package contains an unexpected entry at {}; it was preserved for manual recovery.",
+                path.display()
+            ));
+        };
+        if !entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?
+            .is_dir()
+        {
+            return Err(format!(
+                "Generated Program package directory changed type at {}; it was preserved for manual recovery.",
+                path.display()
+            ));
+        }
+        if fs::read_dir(&path)
+            .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?
+            .next()
+            .transpose()
+            .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?
+            .is_some()
+        {
+            return Err(format!(
+                "Generated Program package directory is no longer empty at {}; it was preserved for manual recovery.",
+                path.display()
+            ));
+        }
+        found_directories.insert(expected_index);
+    }
+    if !found_marker {
+        return Err(format!(
+            "Generated Program ownership marker is missing at {}; the package was preserved for manual recovery.",
+            marker_path.display()
+        ));
+    }
+    if require_complete
+        && (!found_manifest || found_directories.len() != expected_directories.len())
+    {
+        return Err(format!(
+            "Generated Program package is incomplete at {}; it was preserved for manual recovery.",
+            program_root.display()
+        ));
+    }
+    Ok(program_root)
+}
+
+fn create_plain_program_package(
+    transaction_root: &Path,
+    program_root: &Path,
+    manifest: &program_sources::manifest::ProgramManifest,
+    manifest_body: &str,
+) -> Result<(), String> {
+    fs::create_dir(program_root)
+        .map_err(|error| format!("Failed to create {}: {error}", program_root.display()))?;
+    let marker = PlainProgramPackageMarker {
+        schema_version: 1,
+        transaction_token: add_program_transaction_token(transaction_root)?,
+        program_name: manifest.label.clone(),
+    };
+    let marker_body = serde_json::to_vec_pretty(&marker)
+        .map_err(|error| format!("Failed to serialize plain Program package ownership: {error}"))?;
+    if let Err(error) = program_sources::transaction::write_json_file(
+        &plain_program_package_marker_path(program_root),
+        &marker_body,
+        program_sources::transaction::AtomicWriteMode::Create,
+    ) {
+        let _ = fs::remove_dir(program_root);
+        return Err(error);
+    }
+
+    program_sources::transaction::write_json_file(
+        &program_root.join("flowcell.program.json"),
+        manifest_body.as_bytes(),
+        program_sources::transaction::AtomicWriteMode::Create,
+    )?;
+    for (value, field) in [
+        (&manifest.git_scripts_folder, "gitScriptsFolder"),
+        (&manifest.panels_folder, "panelsFolder"),
+        (&manifest.local_scripts_folder, "localScriptsFolder"),
+        (&manifest.support_scripts_folder, "supportScriptsFolder"),
+    ] {
+        let directory =
+            program_sources::manifest::resolve_manifest_folder(program_root, value, field)?;
+        fs::create_dir_all(&directory)
+            .map_err(|error| format!("Failed to create {}: {error}", directory.display()))?;
+    }
+    validate_available_program_package_at(program_root, manifest)?;
+    Ok(())
 }
 
 fn serialize_bindings(document: &IniDocument) -> String {
@@ -2510,6 +2864,16 @@ fn rollback_add_program_transaction(
             Err(error) => errors.push(error),
         }
     }
+    let source_guard = if errors.is_empty() {
+        Some(program_sources::source_quarantine_guard()?)
+    } else {
+        None
+    };
+    let bindings_guard = if errors.is_empty() {
+        Some(super::bindings::bindings_state_guard()?)
+    } else {
+        None
+    };
     if errors.is_empty() {
         match read_bindings_file_state() {
             Ok((_, current, path)) => {
@@ -2598,6 +2962,27 @@ fn rollback_add_program_transaction(
             }
         }
     }
+    if errors.is_empty() {
+        if let Some(program_root) = journal.created_program_package.as_ref() {
+            match fs::symlink_metadata(program_root) {
+                Ok(_) => match validate_plain_program_package_tree(root, journal, false) {
+                    Ok(program_root) => {
+                        if let Err(error) = recycle_directory_path(&program_root) {
+                            errors.push(error);
+                        }
+                    }
+                    Err(error) => errors.push(error),
+                },
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => errors.push(format!(
+                    "Failed to inspect generated Program package {}: {error}",
+                    program_root.display()
+                )),
+            }
+        }
+    }
+    drop(bindings_guard);
+    drop(source_guard);
     if !errors.is_empty() {
         return Err(errors.join(" | "));
     }
@@ -2616,10 +3001,79 @@ fn rollback_add_program_transaction(
     })
 }
 
+fn remove_committed_plain_program_marker(
+    root: &Path,
+    journal: &AddProgramTransactionJournal,
+) -> Result<(), String> {
+    let Some(program_root) = journal.created_program_package.as_ref() else {
+        return Ok(());
+    };
+    let marker_path = plain_program_package_marker_path(program_root);
+    match fs::symlink_metadata(&marker_path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect committed plain Program marker {}: {error}",
+                marker_path.display()
+            ));
+        }
+    }
+    validate_plain_program_package_marker(root, journal)?;
+    fs::remove_file(&marker_path)
+        .map_err(|error| format!("Failed to remove {}: {error}", marker_path.display()))
+}
+
+fn verify_add_program_native_state(
+    root: &Path,
+    journal: &AddProgramTransactionJournal,
+) -> Result<(), String> {
+    let (_, current_bindings, current_bindings_path) = read_bindings_file_state()?;
+    if current_bindings_path != journal.bindings_path
+        || serialize_bindings(&current_bindings) != journal.bindings_after_registration
+    {
+        return Err(
+            "FlowCell bindings changed before Add Program commit; the transaction was preserved for manual recovery."
+                .to_string(),
+        );
+    }
+
+    let current_enabled = fs::read_to_string(&journal.enabled_state_path).map_err(|error| {
+        format!(
+            "Failed to prove Add Program enabled contribution state at {}: {error}",
+            journal.enabled_state_path.display()
+        )
+    })?;
+    let current_enabled = serde_json::from_str::<Value>(&current_enabled).map_err(|error| {
+        format!(
+            "Add Program enabled contribution state at {} is invalid: {error}",
+            journal.enabled_state_path.display()
+        )
+    })?;
+    let expected_enabled = serde_json::from_str::<Value>(&journal.enabled_state_after)
+        .map_err(|error| format!("Stored Add Program enabled state is invalid: {error}"))?;
+    if current_enabled != expected_enabled {
+        return Err(
+            "Enabled contribution state changed before Add Program commit; the transaction was preserved for manual recovery."
+                .to_string(),
+        );
+    }
+
+    if journal.created_program_package.is_some() {
+        validate_plain_program_package_tree(root, journal, true)?;
+    }
+    Ok(())
+}
+
 fn finalize_add_program_transaction(
     root: &Path,
     journal: &mut AddProgramTransactionJournal,
 ) -> Result<(), String> {
+    {
+        let _source_guard = program_sources::source_quarantine_guard()?;
+        let _bindings_guard = super::bindings::bindings_state_guard()?;
+        verify_add_program_native_state(root, journal)?;
+    }
     let manifest =
         program_sources::manifest::load_program_manifest(&journal.preflight.program_name)?;
     if manifest.runner.kind == "blender-bridge" {
@@ -2629,12 +3083,18 @@ fn finalize_add_program_transaction(
         )?;
     }
     restart_flowcell_headless_backend()?;
-    journal.phase = AddProgramTransactionPhase::Committed;
-    write_add_program_journal(
-        root,
-        journal,
-        program_sources::transaction::AtomicWriteMode::Replace,
-    )?;
+    {
+        let _source_guard = program_sources::source_quarantine_guard()?;
+        let _bindings_guard = super::bindings::bindings_state_guard()?;
+        verify_add_program_native_state(root, journal)?;
+        journal.phase = AddProgramTransactionPhase::Committed;
+        write_add_program_journal(
+            root,
+            journal,
+            program_sources::transaction::AtomicWriteMode::Replace,
+        )?;
+    }
+    remove_committed_plain_program_marker(root, journal)?;
     fs::remove_dir_all(root).map_err(|error| {
         format!(
             "Add Program committed, but temporary transaction cleanup failed at {}: {error}",
@@ -2655,8 +3115,18 @@ pub(crate) fn apply_add_program_plan(
     let source_guard = program_sources::source_quarantine_guard()?;
     let bindings_guard = super::bindings::bindings_state_guard()?;
     let preflight = preflight_add_program_plan_inner(&request)?;
-    let program_root = resolve_program_directory(&preflight.program_name)?;
-    let manifest = program_sources::manifest::load_program_manifest(&preflight.program_name)?;
+    let creates_plain_program = request.create_plain_program;
+    let (program_root, manifest) = if creates_plain_program {
+        preview_plain_program_package(
+            &preflight.program_name,
+            Path::new(&preflight.executable_path),
+        )?
+    } else {
+        (
+            resolve_program_directory(&preflight.program_name)?,
+            program_sources::manifest::load_program_manifest(&preflight.program_name)?,
+        )
+    };
     let (_, bindings_before_document, bindings_path) = read_bindings_file_state()?;
     let bindings_before = serialize_bindings(&bindings_before_document);
     let mut bindings_after_document = bindings_before_document.clone();
@@ -2695,14 +3165,16 @@ pub(crate) fn apply_add_program_plan(
         "localScriptsFolder",
     )?;
     let mut created_directories = Vec::new();
-    for directory in [&panels_root, &local_scripts_root] {
-        if !directory.exists() {
-            created_directories.push(directory.clone());
+    if !creates_plain_program {
+        for directory in [&panels_root, &local_scripts_root] {
+            if !directory.exists() {
+                created_directories.push(directory.clone());
+            }
         }
-    }
-    for panel in &preflight.panels {
-        if !panels_root.is_dir() || find_named_child_directory(&panels_root, panel)?.is_none() {
-            created_directories.push(panels_root.join(panel));
+        for panel in &preflight.panels {
+            if !panels_root.is_dir() || find_named_child_directory(&panels_root, panel)?.is_none() {
+                created_directories.push(panels_root.join(panel));
+            }
         }
     }
     let planned_sources = preflight
@@ -2716,6 +3188,14 @@ pub(crate) fn apply_add_program_plan(
             panel_name: source.panel_name.clone(),
         })
         .collect::<Vec<_>>();
+    let created_program_package_manifest = if creates_plain_program {
+        Some(
+            serde_json::to_string_pretty(&manifest)
+                .map_err(|error| format!("Failed to serialize plain Program manifest: {error}"))?,
+        )
+    } else {
+        None
+    };
     let transaction_token = next_setup_transaction_token("add-program");
     let transaction_root = add_program_transactions_root()?.join(&transaction_token);
     let mut journal = AddProgramTransactionJournal {
@@ -2730,6 +3210,8 @@ pub(crate) fn apply_add_program_plan(
         enabled_state_before,
         enabled_state_after,
         created_directories,
+        created_program_package: creates_plain_program.then(|| program_root.clone()),
+        created_program_package_manifest,
         planned_sources,
         expected_button_ids: Vec::new(),
     };
@@ -2740,6 +3222,18 @@ pub(crate) fn apply_add_program_plan(
     )?;
 
     let apply_result = (|| {
+        if creates_plain_program {
+            let manifest_body = journal
+                .created_program_package_manifest
+                .as_deref()
+                .ok_or_else(|| "Plain Program transaction is missing its manifest.".to_string())?;
+            create_plain_program_package(
+                &transaction_root,
+                &program_root,
+                &manifest,
+                manifest_body,
+            )?;
+        }
         fs::create_dir_all(&panels_root)
             .map_err(|error| format!("Failed to create {}: {error}", panels_root.display()))?;
         fs::create_dir_all(&local_scripts_root).map_err(|error| {
@@ -3226,7 +3720,16 @@ pub(crate) fn recover_add_program_transactions_on_startup(
             | AddProgramTransactionPhase::AwaitingCanonical => {
                 rollback_add_program_transaction(app, &root, &mut journal)?;
             }
-            AddProgramTransactionPhase::Committed | AddProgramTransactionPhase::RolledBack => {
+            AddProgramTransactionPhase::Committed => {
+                remove_committed_plain_program_marker(&root, &journal)?;
+                fs::remove_dir_all(&root).map_err(|error| {
+                    format!(
+                        "Failed to clean temporary Add Program transaction {}: {error}",
+                        root.display()
+                    )
+                })?;
+            }
+            AddProgramTransactionPhase::RolledBack => {
                 fs::remove_dir_all(&root).map_err(|error| {
                     format!(
                         "Failed to clean temporary Add Program transaction {}: {error}",
@@ -4319,6 +4822,154 @@ fn stable_program_id(program_name: &str) -> String {
     }
 }
 
+fn generated_plain_program_manifest(
+    program_name: &str,
+    executable_path: &Path,
+    program_root: &Path,
+) -> Result<program_sources::manifest::ProgramManifest, String> {
+    let process_name = executable_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| {
+            format!(
+                "The selected Program executable has no usable process name: {}",
+                executable_path.display()
+            )
+        })?
+        .to_ascii_lowercase();
+    let executable_path = executable_path.to_string_lossy().to_string();
+    let mut manifest =
+        serde_json::from_value::<program_sources::manifest::ProgramManifest>(json!({
+            "schemaVersion": 1,
+            "programId": format!("plain-{}", stable_program_id(program_name)),
+            "label": program_name,
+            "programType": "local-script",
+            "defaultPanels": [],
+            "panels": [],
+            "processNames": [process_name],
+            "exePath": executable_path,
+            "bindScopedNativeOwner": false,
+            "shortcutProfileId": "",
+            "gitScriptsFolder": format!("{program_name} Git Scripts"),
+            "panelsFolder": "Panels",
+            "localScriptsFolder": format!("{program_name} Local Scripts"),
+            "supportScriptsFolder": "SupportScripts",
+            "allowedScriptExtensions": ["ps1", "cmd", "bat", "exe", "lnk", "vbs", "ahk"],
+            "allowedManifestFileNames": ["flowcell.script.json"],
+            "supportsToolsetManifests": false,
+            "bundledSources": [],
+            "runner": {
+                "kind": "windows-script",
+                "programKey": "windows_generic",
+                "installScript": "",
+                "deleteScript": ""
+            },
+            "addonReloadNotes": "",
+            "appRestartNotes": ""
+        }))
+        .map_err(|error| format!("Failed to build the plain Program manifest: {error}"))?;
+    program_sources::manifest::validate_manifest(&mut manifest, program_name, program_root)?;
+    Ok(manifest)
+}
+
+fn preview_plain_program_package(
+    program_name: &str,
+    executable_path: &Path,
+) -> Result<(PathBuf, program_sources::manifest::ProgramManifest), String> {
+    let programs_root = resolve_programs_root()?;
+    preview_plain_program_package_in(&programs_root, program_name, executable_path)
+}
+
+fn load_program_manifest_from_root(
+    programs_root: &Path,
+    folder_name: &str,
+) -> Result<program_sources::manifest::ProgramManifest, String> {
+    let folder_name = validate_folder_name(folder_name, "Program")?;
+    let program_root = programs_root.join(&folder_name);
+    let manifest_path = program_root.join("flowcell.program.json");
+    program_sources::installed_page::reject_selected_source_reparse_point(&program_root)?;
+    program_sources::installed_page::reject_package_source_reparse_point(&program_root)?;
+    program_sources::installed_page::reject_package_source_reparse_point(&manifest_path)?;
+    let raw = fs::read_to_string(&manifest_path).map_err(|error| {
+        format!(
+            "Program package '{}' is missing {}: {error}",
+            folder_name,
+            manifest_path.display()
+        )
+    })?;
+    let mut manifest = serde_json::from_str::<program_sources::manifest::ProgramManifest>(&raw)
+        .map_err(|error| {
+            format!(
+                "Program manifest at {} is invalid JSON: {error}",
+                manifest_path.display()
+            )
+        })?;
+    program_sources::manifest::validate_manifest(&mut manifest, &folder_name, &program_root)?;
+    Ok(manifest)
+}
+
+fn preview_plain_program_package_in(
+    programs_root: &Path,
+    program_name: &str,
+    executable_path: &Path,
+) -> Result<(PathBuf, program_sources::manifest::ProgramManifest), String> {
+    if let Some(existing) = find_named_child_directory(&programs_root, program_name)? {
+        return Err(format!(
+            "A Program folder named '{}' already exists at {}. FlowCell will not overwrite it. Use Managed package if it is valid; otherwise repair or remove the blocking folder, or choose a distinct Program name.",
+            program_name,
+            existing.display()
+        ));
+    }
+    let program_root = programs_root.join(program_name);
+    let manifest = generated_plain_program_manifest(program_name, executable_path, &program_root)?;
+    let candidate_process_names =
+        crate::commands::windows::normalize_configured_process_names(&manifest.process_names)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+    for folder_name in list_child_directory_names(&programs_root)? {
+        let existing_manifest = load_program_manifest_from_root(programs_root, &folder_name)
+            .map_err(|error| {
+                format!(
+                    "Cannot safely generate a Program package while existing folder '{}' has an invalid or unreadable manifest: {error}",
+                    folder_name
+                )
+            })?;
+        if existing_manifest
+            .program_id
+            .eq_ignore_ascii_case(&manifest.program_id)
+        {
+            return Err(format!(
+                "Generated Program ID '{}' conflicts with package '{}'. Choose a distinct Program name; FlowCell will not overwrite shared registration state.",
+                manifest.program_id, folder_name
+            ));
+        }
+        let existing_process_names = crate::commands::windows::normalize_configured_process_names(
+            &existing_manifest.process_names,
+        );
+        if let Some(process_name) = existing_process_names
+            .iter()
+            .find(|process_name| candidate_process_names.contains(*process_name))
+        {
+            return Err(format!(
+                "Process name '{}' is already claimed by Program package '{}'. FlowCell scopes Program windows by executable filename, not full path; choose a host executable with a distinct process name or update the existing package.",
+                process_name, folder_name
+            ));
+        }
+    }
+    let enabled_state_path =
+        program_sources::manifest::enabled_program_contributions_path(&manifest)?;
+    if enabled_state_path.exists() {
+        return Err(format!(
+            "Generated Program ID '{}' already has local registration state at {}. Choose a distinct Program name.",
+            manifest.program_id,
+            enabled_state_path.display()
+        ));
+    }
+    Ok((program_root, manifest))
+}
+
 fn apply_manifest_registration(
     document: &mut IniDocument,
     program_id: i64,
@@ -5128,15 +5779,19 @@ ScriptPath=C:\FlowCell\Illustrator.jsx
 mod managed_program_setup_tests {
     use super::{
         add_program_source_is_required, canonical_source_graph_matches, copy_external_panel_tree,
+        create_plain_program_package, generated_plain_program_manifest,
         install_add_program_sources_while_source_locked, mark_add_program_native_applied,
+        preflight_add_program_plan_inner, preview_plain_program_package_in,
         read_add_program_journal, recover_planned_active_record_path,
-        recycle_owned_add_panel_destination_with, resolve_programs_root,
-        validate_available_program_package, validate_external_panel_source, write_add_panel_marker,
-        write_add_program_journal, AddPanelPreflight, AddPanelTransactionJournal,
-        AddPanelTransactionPhase, AddProgramPlanRequest, AddProgramPreflight,
-        AddProgramSourceSelection, AddProgramTransactionJournal, AddProgramTransactionPhase,
-        PlannedProgramSourceOwner, ProgramSetupSource, ADD_PANEL_TRANSACTION_SCHEMA_VERSION,
-        ADD_PROGRAM_TRANSACTION_SCHEMA_VERSION,
+        recycle_owned_add_panel_destination_with, resolve_programs_root, stable_program_id,
+        validate_available_program_package, validate_available_program_package_at,
+        validate_external_panel_source, validate_plain_program_package_tree_in,
+        write_add_panel_marker, write_add_program_journal, AddPanelPreflight,
+        AddPanelTransactionJournal, AddPanelTransactionPhase, AddProgramPlanRequest,
+        AddProgramPreflight, AddProgramSourceSelection, AddProgramTransactionJournal,
+        AddProgramTransactionPhase, PlannedProgramSourceOwner, ProgramSetupSource,
+        ADD_PANEL_TRANSACTION_SCHEMA_VERSION, ADD_PROGRAM_TRANSACTION_SCHEMA_VERSION,
+        PLAIN_PROGRAM_PACKAGE_MARKER_FILE_NAME,
     };
     use crate::program_sources::execute::ActiveSourceResolution;
     use crate::program_sources::manifest::BundledSourceManifest;
@@ -5144,7 +5799,7 @@ mod managed_program_setup_tests {
     use serde_json::json;
     use std::cell::Cell;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temporary_root(label: &str) -> PathBuf {
@@ -5163,6 +5818,32 @@ mod managed_program_setup_tests {
     impl Drop for TestProgramPackage {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_test_program_package(
+        program_root: &Path,
+        manifest: &crate::program_sources::manifest::ProgramManifest,
+    ) {
+        fs::create_dir(program_root).expect("create test Program package root");
+        fs::write(
+            program_root.join("flowcell.program.json"),
+            serde_json::to_vec_pretty(manifest).expect("serialize test Program manifest"),
+        )
+        .expect("write test Program manifest");
+        for (value, field) in [
+            (&manifest.git_scripts_folder, "gitScriptsFolder"),
+            (&manifest.panels_folder, "panelsFolder"),
+            (&manifest.local_scripts_folder, "localScriptsFolder"),
+            (&manifest.support_scripts_folder, "supportScriptsFolder"),
+        ] {
+            let directory = crate::program_sources::manifest::resolve_manifest_folder(
+                program_root,
+                value,
+                field,
+            )
+            .expect("resolve test Program package folder");
+            fs::create_dir_all(directory).expect("create test Program package folder");
         }
     }
 
@@ -5190,6 +5871,243 @@ mod managed_program_setup_tests {
             panel_preexisted: false,
             expected_button_id: None,
         }
+    }
+
+    #[test]
+    fn plain_program_manifest_is_registration_only_and_exact_process_scoped() {
+        let program_root = temporary_root("plain-program-manifest").join("Krita");
+        let manifest = generated_plain_program_manifest(
+            "Krita",
+            Path::new(r"C:\Program Files\Krita\bin\Krita.exe"),
+            &program_root,
+        )
+        .expect("generate plain Program manifest");
+        assert_eq!(manifest.program_id, "plain-krita");
+        assert_eq!(manifest.process_names, vec!["krita"]);
+        assert_eq!(manifest.exe_path, r"C:\Program Files\Krita\bin\Krita.exe");
+        assert!(manifest.default_panels.is_empty());
+        assert!(manifest.panels.is_empty());
+        assert!(manifest.bundled_sources.is_empty());
+        assert!(!manifest.bind_scoped_native_owner);
+        assert_eq!(manifest.runner.kind, "windows-script");
+    }
+
+    #[test]
+    fn plain_program_preflight_is_read_only() {
+        let _guard = super::ADD_PROGRAM_TRANSACTION_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .expect("lock Add Program tests");
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let program_name = format!("FlowCell Plain Preflight {token}");
+        let programs_root = resolve_programs_root().expect("resolve Programs root");
+        let program_root = programs_root.join(&program_name);
+        assert!(!program_root.exists());
+        let temp_root = temporary_root("plain-program-preflight-exe");
+        fs::create_dir_all(&temp_root).expect("create temporary EXE root");
+        let executable = temp_root.join(format!("FlowCellPlainPreflight{token}.exe"));
+        fs::write(&executable, b"test").expect("write temporary EXE");
+        let result = preflight_add_program_plan_inner(&AddProgramPlanRequest {
+            program_name: program_name.clone(),
+            executable_path: executable.to_string_lossy().to_string(),
+            create_plain_program: true,
+            selected_panels: Vec::new(),
+            selected_sources: Vec::new(),
+        })
+        .expect("plain Program preflight");
+        assert_eq!(result.program_name, program_name);
+        assert!(result.panels.is_empty());
+        assert!(result.sources.is_empty());
+        assert!(!program_root.exists());
+        fs::remove_dir_all(temp_root).expect("remove temporary EXE root");
+    }
+
+    #[test]
+    fn plain_program_creation_writes_one_valid_owned_package() {
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let program_name = format!("FlowCell Plain Create {token}");
+        let test_root = temporary_root("plain-program-create");
+        let _cleanup = TestProgramPackage(test_root.clone());
+        let programs_root = test_root.join("Programs");
+        fs::create_dir(&test_root).expect("create plain Program test root");
+        fs::create_dir(&programs_root).expect("create plain Programs root");
+        let program_root = programs_root.join(&program_name);
+        let transaction_root = test_root.join("add-program-test-transaction");
+        fs::create_dir_all(&transaction_root).expect("create transaction root");
+        let manifest = generated_plain_program_manifest(
+            &program_name,
+            Path::new(r"C:\Apps\Krita.exe"),
+            &program_root,
+        )
+        .expect("generate plain Program manifest");
+        let manifest_body =
+            serde_json::to_string_pretty(&manifest).expect("serialize plain Program manifest");
+        create_plain_program_package(&transaction_root, &program_root, &manifest, &manifest_body)
+            .expect("create plain Program package");
+        let validated = validate_available_program_package_at(&program_root, &manifest)
+            .expect("validate created package");
+        assert_eq!(validated.program_id, manifest.program_id);
+        assert!(validated.panels.is_empty());
+        assert!(validated.sources.is_empty());
+        assert!(program_root
+            .join(PLAIN_PROGRAM_PACKAGE_MARKER_FILE_NAME)
+            .is_file());
+        assert!(program_root.join("flowcell.program.json").is_file());
+        assert!(program_root.join("Panels").is_dir());
+        assert!(program_root.join("SupportScripts").is_dir());
+        let journal = AddProgramTransactionJournal {
+            schema_version: ADD_PROGRAM_TRANSACTION_SCHEMA_VERSION,
+            phase: AddProgramTransactionPhase::NativeApplied,
+            request: AddProgramPlanRequest {
+                program_name: program_name.clone(),
+                executable_path: r"C:\Apps\Krita.exe".to_string(),
+                create_plain_program: true,
+                selected_panels: Vec::new(),
+                selected_sources: Vec::new(),
+            },
+            preflight: AddProgramPreflight {
+                program_id: manifest.program_id.clone(),
+                program_name: program_name.clone(),
+                executable_path: r"C:\Apps\Krita.exe".to_string(),
+                panels: Vec::new(),
+                sources: Vec::new(),
+                install_effects: Vec::new(),
+            },
+            bindings_path: transaction_root.join("bindings.ini"),
+            bindings_before: String::new(),
+            bindings_after_registration: String::new(),
+            enabled_state_path: transaction_root.join("enabled.json"),
+            enabled_state_before: None,
+            enabled_state_after: "{}".to_string(),
+            created_directories: Vec::new(),
+            created_program_package: Some(program_root.clone()),
+            created_program_package_manifest: Some(manifest_body),
+            planned_sources: Vec::new(),
+            expected_button_ids: Vec::new(),
+        };
+        validate_plain_program_package_tree_in(&programs_root, &transaction_root, &journal, true)
+            .expect("exact generated package must validate");
+        let drift_path = program_root.join("Panels").join("user-content.txt");
+        fs::write(&drift_path, "preserve me").expect("write package drift probe");
+        let error = validate_plain_program_package_tree_in(
+            &programs_root,
+            &transaction_root,
+            &journal,
+            false,
+        )
+        .expect_err("rollback must reject a drifted generated package");
+        assert!(error.contains("no longer empty"));
+        assert!(drift_path.is_file());
+        fs::remove_file(&drift_path).expect("remove package drift probe");
+        fs::remove_file(program_root.join(PLAIN_PROGRAM_PACKAGE_MARKER_FILE_NAME))
+            .expect("remove ownership marker probe");
+        let error = validate_plain_program_package_tree_in(
+            &programs_root,
+            &transaction_root,
+            &journal,
+            true,
+        )
+        .expect_err("commit must reject a missing ownership marker");
+        assert!(error.contains("marker"));
+    }
+
+    #[test]
+    fn plain_program_preview_rejects_program_id_collision_without_overwrite() {
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let requested_name = format!("FlowCell-Plain-Collision-{token}");
+        let existing_name = format!("FlowCell Plain Collision {token}");
+        let programs_root = temporary_root("plain-program-id-collision");
+        fs::create_dir(&programs_root).expect("create test Programs root");
+        let _cleanup = TestProgramPackage(programs_root.clone());
+        let existing_root = programs_root.join(&existing_name);
+        let sentinel = format!("plain-{}", stable_program_id(&requested_name));
+        let mut existing_manifest = generated_plain_program_manifest(
+            &existing_name,
+            Path::new(r"C:\Apps\ExistingCollisionHost.exe"),
+            &existing_root,
+        )
+        .expect("generate existing collision manifest");
+        existing_manifest.program_id = sentinel;
+        write_test_program_package(&existing_root, &existing_manifest);
+        let manifest_path = existing_root.join("flowcell.program.json");
+        let before = fs::read(&manifest_path).expect("read collision sentinel");
+        let error = preview_plain_program_package_in(
+            &programs_root,
+            &requested_name,
+            Path::new(r"C:\Apps\Krita.exe"),
+        )
+        .expect_err("Program ID collision must fail closed");
+        assert!(error.contains("conflicts with package"));
+        assert_eq!(
+            fs::read(&manifest_path).expect("existing package preserved"),
+            before
+        );
+    }
+
+    #[test]
+    fn plain_program_preview_rejects_claimed_process_name() {
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let existing_name = format!("FlowCell Process Owner {token}");
+        let requested_name = format!("FlowCell Process Candidate {token}");
+        let process_name = format!("FlowCellSharedProcess{token}");
+        let programs_root = temporary_root("plain-program-process-collision");
+        fs::create_dir(&programs_root).expect("create test Programs root");
+        let _cleanup = TestProgramPackage(programs_root.clone());
+        let existing_root = programs_root.join(&existing_name);
+        let existing_manifest = generated_plain_program_manifest(
+            &existing_name,
+            Path::new(&format!(r"C:\One\{process_name}.exe")),
+            &existing_root,
+        )
+        .expect("generate existing process manifest");
+        write_test_program_package(&existing_root, &existing_manifest);
+        let error = preview_plain_program_package_in(
+            &programs_root,
+            &requested_name,
+            Path::new(&format!(r"D:\Two\{process_name}.exe")),
+        )
+        .expect_err("duplicate process names must fail closed");
+        assert!(error.contains("already claimed"));
+        assert!(error.contains("not full path"));
+    }
+
+    #[test]
+    fn plain_program_preview_rejects_invalid_sibling_manifest_without_overwrite() {
+        let token = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let programs_root = temporary_root("plain-program-invalid-sibling");
+        fs::create_dir(&programs_root).expect("create test Programs root");
+        let _cleanup = TestProgramPackage(programs_root.clone());
+        let invalid_root = programs_root.join(format!("Invalid Sibling {token}"));
+        fs::create_dir(&invalid_root).expect("create invalid sibling root");
+        let manifest_path = invalid_root.join("flowcell.program.json");
+        fs::write(&manifest_path, "{\"programId\":").expect("write invalid sibling manifest");
+        let before = fs::read(&manifest_path).expect("read invalid sibling manifest");
+        let error = preview_plain_program_package_in(
+            &programs_root,
+            &format!("FlowCell Candidate {token}"),
+            Path::new(&format!(r"C:\Apps\FlowCellCandidate{token}.exe")),
+        )
+        .expect_err("invalid sibling manifests must fail closed");
+        assert!(error.contains("invalid or unreadable manifest"));
+        assert_eq!(
+            fs::read(&manifest_path).expect("invalid sibling preserved"),
+            before
+        );
     }
 
     #[test]
@@ -5384,6 +6302,10 @@ mod managed_program_setup_tests {
 
     #[test]
     fn selected_source_install_uses_outer_quarantine_guard_and_reaches_native_applied() {
+        let _program_guard = super::ADD_PROGRAM_TRANSACTION_LOCK
+            .get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .expect("lock Add Program tests");
         let token = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -5495,6 +6417,7 @@ mod managed_program_setup_tests {
             request: AddProgramPlanRequest {
                 program_name: program_name.clone(),
                 executable_path: "explorer.exe".to_string(),
+                create_plain_program: false,
                 selected_panels: vec!["Tools".to_string()],
                 selected_sources: vec![AddProgramSourceSelection {
                     source_id: source_id.clone(),
@@ -5509,6 +6432,8 @@ mod managed_program_setup_tests {
             enabled_state_before: None,
             enabled_state_after: "{}".to_string(),
             created_directories: Vec::new(),
+            created_program_package: None,
+            created_program_package_manifest: None,
             planned_sources: planned_sources.clone(),
             expected_button_ids: Vec::new(),
         };

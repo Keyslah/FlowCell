@@ -13,13 +13,14 @@ import type {
   ButtonVisualState,
   JsonValue
 } from "../types";
+import {
+  createToolFieldRuntimeState,
+  reconcileToolFieldRuntimeState,
+  toolFieldSchemaFingerprint
+} from "./toolFieldRuntimeState";
 import "./buttonPopout.css";
 
 const EMPTY_TOOL_FIELDS: ButtonToolField[] = [];
-
-function initialFieldValues(fields: ButtonToolField[]): Record<string, JsonValue> {
-  return Object.fromEntries(fields.map((field) => [field.id, field.defaultValue]));
-}
 
 function findLegacyOwnerPlacement(
   document: ButtonStateDocument,
@@ -131,27 +132,33 @@ export function ButtonPopoutRenderer({
   onPlacementVisualStateChange
 }: ButtonPopoutRendererProps) {
   const fields = unit.kind === "tool-set" ? unit.fields : EMPTY_TOOL_FIELDS;
-  const [fieldValues, setFieldValues] = useState<Record<string, JsonValue>>(() =>
-    initialFieldValues(fields)
+  const schemaFingerprint = toolFieldSchemaFingerprint(fields);
+  const incomingFieldState = useMemo(
+    () => createToolFieldRuntimeState(unit.id, fields),
+    [unit.id, schemaFingerprint]
   );
+  const [fieldState, setFieldState] = useState(() => incomingFieldState);
   const [fieldError, setFieldError] = useState<string | null>(null);
   useEffect(() => {
-    const nextValues = initialFieldValues(fields);
-    setFieldValues(nextValues);
+    setFieldState((current) => reconcileToolFieldRuntimeState(current, incomingFieldState));
     setFieldError(null);
-  }, [unit.id, fields]);
+  }, [incomingFieldState]);
+
+  const activeFieldState = reconcileToolFieldRuntimeState(fieldState, incomingFieldState);
+  const fieldValues = activeFieldState.values;
 
   const acceptFieldValues = useCallback(
-    (nextValues: Readonly<Record<string, JsonValue>>) => {
-      setFieldValues((current) => {
+    (nextValues: Readonly<typeof fieldValues>) => {
+      setFieldState((current) => {
+        const active = reconcileToolFieldRuntimeState(current, incomingFieldState);
         const keys = Object.keys(nextValues);
         const unchanged =
-          keys.length === Object.keys(current).length &&
-          keys.every((key) => Object.is(current[key], nextValues[key]));
-        return unchanged ? current : { ...nextValues };
+          keys.length === Object.keys(active.values).length &&
+          keys.every((key) => Object.is(active.values[key], nextValues[key]));
+        return unchanged ? active : { ...active, values: { ...nextValues } };
       });
     },
-    []
+    [incomingFieldState]
   );
 
   const applyExecutionResult = useCallback(

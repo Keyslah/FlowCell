@@ -30,9 +30,7 @@ import {
   PROGRAM_SETUP_COMMITTED_EVENT,
   preparePanelDeletion,
   renamePanelFolder,
-  renameProgramFolder,
   recoverProgramRename,
-  rollbackProgramRename,
   rollbackProgramUnregistration,
   rollbackPanelDeletion,
   saveLayoutSnapshot,
@@ -80,6 +78,7 @@ import {
   getButtonSettingsDirectory,
   loadButtonSettingsFile,
   loadButtonStateDocument,
+  runButtonStateBootstrapSequence,
   saveButtonStateDocument
 } from "../../button/state/ButtonStateRepository";
 import {
@@ -105,8 +104,7 @@ import { resolvePanelOwnerMainPlacement } from "../../button/state/panelOwnerBut
 import {
   removePanelButtonDocumentScope,
   removeProgramButtonDocumentScope,
-  renamePanelButtonDocumentScope,
-  renameProgramButtonDocumentScope
+  renamePanelButtonDocumentScope
 } from "../../button/state/buttonDocumentScopeOperations";
 import {
   executeButtonRecord,
@@ -149,7 +147,8 @@ import {
 import { MainButtonHost, MainControlHost } from "./MainButtonHost";
 import {
   resolveFlowCellMainPageButtonLayout,
-  resolveFlowCellMainPagePresentation
+  resolveFlowCellMainPagePresentation,
+  setFlowCellMainPageProgramButtonLabel
 } from "../../button/state/mainPageButtonOperations";
 import "./mainPage.css";
 
@@ -741,6 +740,7 @@ export default function MainPage() {
   );
   const [hoveredRailId, setHoveredRailId] = useState<string | null>(null);
   const [buttonDocument, setButtonDocument] = useState<ButtonStateDocument | null>(null);
+  const [buttonBootstrapError, setButtonBootstrapError] = useState<string | null>(null);
   const buttonDocumentRef = useRef<ButtonStateDocument | null>(null);
   const previousButtonDocumentRef = useRef<ButtonStateDocument | null>(null);
   const mainPopDraftSessionsRef = useRef<Map<string, MainPopDraftSession>>(new Map());
@@ -844,39 +844,60 @@ export default function MainPage() {
     };
 
     void (async () => {
+      let retainedCanonicalDocument = false;
+      let commitSubscriptionError: unknown | null = null;
       try {
-        unlisten = await subscribeButtonCommits((document) => {
-          if (disposed) return;
-          const previous = buttonDocumentRef.current;
-          const programName = selectedProgramNameRef.current;
-          const panelName = selectedPanelNameRef.current;
-          const sourceInventoryChanged = Boolean(
-            programName &&
-            panelName &&
-            (
-              !previous ||
-              canonicalPanelSourceInventorySignature(previous, programName, panelName) !==
-                canonicalPanelSourceInventorySignature(document, programName, panelName)
-            )
-          );
-          if (
-            !acceptButtonDocument(document) ||
-            !sourceInventoryChanged ||
-            !programName ||
-            !panelName
-          ) {
-            return;
-          }
+        try {
+          unlisten = await subscribeButtonCommits((document) => {
+            if (disposed) return;
+            const previous = buttonDocumentRef.current;
+            const programName = selectedProgramNameRef.current;
+            const panelName = selectedPanelNameRef.current;
+            const sourceInventoryChanged = Boolean(
+              programName &&
+              panelName &&
+              (
+                !previous ||
+                canonicalPanelSourceInventorySignature(previous, programName, panelName) !==
+                  canonicalPanelSourceInventorySignature(document, programName, panelName)
+              )
+            );
+            if (
+              !acceptButtonDocument(document) ||
+              !sourceInventoryChanged ||
+              !programName ||
+              !panelName
+            ) {
+              return;
+            }
 
-          refreshPanelSourceRecords(programName, panelName);
-        });
+            refreshPanelSourceRecords(programName, panelName);
+          });
+        } catch (error) {
+          commitSubscriptionError = error;
+          console.error("Failed to subscribe to canonical Button commits.", error);
+        }
         if (disposed) {
-          unlisten();
+          unlisten?.();
           unlisten = null;
           return;
         }
 
-        const { document, changed } = await bootstrapButtonStateDocument();
+        const sequence = await runButtonStateBootstrapSequence(
+          loadButtonStateDocument,
+          (initialDocument) => {
+            if (disposed) return false;
+            retainedCanonicalDocument = true;
+            acceptButtonDocument(initialDocument);
+            return true;
+          },
+          () => bootstrapButtonStateDocument()
+        );
+        if (disposed || sequence.cancelled) return;
+        if (sequence.error) throw sequence.error;
+        if (!sequence.bootstrapResult) return;
+
+        const { document, changed } = sequence.bootstrapResult;
         if (disposed) return;
         const accepted = acceptButtonDocument(document);
         const programName = selectedProgramNameRef.current;
@@ -889,9 +910,24 @@ export default function MainPage() {
             console.error("Failed to publish bootstrapped Button state.", error);
           });
         }
+        setButtonBootstrapError(commitSubscriptionError
+          ? `FlowCell loaded the canonical Button document, but live Button updates are unavailable.\n\n${formatErrorMessage(commitSubscriptionError)}`
+          : null
+        );
       } catch (error) {
         if (!disposed) {
-          console.error("Failed to bootstrap canonical Button state.", error);
+          if (retainedCanonicalDocument || buttonDocumentRef.current) {
+            console.error("Failed to bootstrap canonical Button state.", error);
+            setButtonBootstrapError(
+              `FlowCell kept the last valid canonical Button document and its skins. ` +
+              `Automatic Button source synchronization failed.\n\n${formatErrorMessage(error)}`
+            );
+          } else {
+            console.error("Failed to load canonical Button state.", error);
+            setButtonBootstrapError(
+              `FlowCell could not load the canonical Button document.\n\n${formatErrorMessage(error)}`
+            );
+          }
         }
       }
     })();
@@ -2247,63 +2283,39 @@ export default function MainPage() {
       return;
     }
 
-    const currentName = contextMenuButton.folderName;
+    const programName = contextMenuButton.folderName;
+    const currentLabel = resolveFlowCellMainPagePresentation(
+      buttonDocument,
+      contextMenuButton
+    )?.button.label ?? contextMenuButton.label;
     closeContextMenu();
 
-    const requestedName = window.prompt("Enter the new program folder name.", currentName);
-    if (requestedName === null) {
+    const requestedLabel = window.prompt("Enter the Program Button label.", currentLabel);
+    if (requestedLabel === null) {
       return;
     }
 
-    const trimmedName = requestedName.trim();
-    if (!trimmedName) {
-      window.alert("Program name cannot be empty.");
+    const trimmedLabel = requestedLabel.trim();
+    if (!trimmedLabel) {
+      window.alert("Program Button label cannot be empty.");
       return;
     }
 
-    if (currentName === trimmedName) {
+    if (currentLabel === trimmedLabel) {
       return;
     }
 
     try {
-      const currentDocument = await loadButtonStateDocument();
-      const affectedButtonIds = collectCanonicalRenameButtonIds(currentDocument, {
-        programName: currentName
-      });
-      const rename = await renameProgramFolder(currentName, trimmedName);
-      const renamedProgramName = rename.programName;
-      try {
-        await commitButtonDocumentMutation((document) =>
-          renameProgramButtonDocumentScope(document, {
-            currentProgramName: currentName,
-            nextProgramName: renamedProgramName
-          }).changed,
-          rename.renameToken
-        );
-      } catch (error) {
-        const recoveredDocument = await recoverCanonicalRenameOrRollback(error, {
-          affectedButtonIds,
-          previousScope: { programName: currentName },
-          nextScope: { programName: renamedProgramName },
-          rollback: () => rollbackProgramRename(rename.renameToken),
-          recoverCommitted: () => recoverProgramRename(rename.renameToken),
-          label: "program folder"
-        });
-        acceptButtonDocument(recoveredDocument);
-      }
-      await closeRenamedButtonWindows(currentDocument, currentName);
-      const nextProgramNames = await listProgramFolders();
-      const selectedProgramWasRenamed = areFolderNamesEqual(selectedProgramName, currentName);
-      setProgramNames(nextProgramNames);
-      setSelectedProgramName(
-        resolveFolderSelection(
-          nextProgramNames,
-          selectedProgramWasRenamed ? renamedProgramName : selectedProgramName
+      await commitButtonDocumentMutation((document) =>
+        setFlowCellMainPageProgramButtonLabel(
+          document,
+          programName,
+          trimmedLabel
         )
       );
     } catch (error) {
-      console.error(`Failed to rename program folder or its canonical Buttons for ${currentName}.`, error);
-      window.alert(`Program rename or canonical Button update failed.\n\n${formatErrorMessage(error)}`);
+      console.error(`Failed to save the Program Button label for ${programName}.`, error);
+      window.alert(`Program Button label could not be saved.\n\n${formatErrorMessage(error)}`);
     }
   };
 
@@ -3341,6 +3353,24 @@ export default function MainPage() {
             aria-hidden="true"
             style={{ backgroundImage: `url(${mainBackground})` }}
           />
+          {buttonBootstrapError ? (
+            <section
+              className="main-page__bootstrap-error"
+              role="alert"
+              aria-live="assertive"
+            >
+              <strong>Canonical Button state warning</strong>
+              <p>{buttonBootstrapError}</p>
+              <button
+                type="button"
+                className="main-page__bootstrap-error-close"
+                aria-label="Dismiss canonical Button state warning"
+                onClick={() => setButtonBootstrapError(null)}
+              >
+                ×
+              </button>
+            </section>
+          ) : null}
           {rails.map((rail) => (
             <RailSurface
               key={rail.id}
@@ -3349,7 +3379,7 @@ export default function MainPage() {
               motion={motionSettings.railHover}
             />
           ))}
-          {topLeftActionButtons.length > 0 ? (
+          {buttonDocument && topLeftActionButtons.length > 0 ? (
             <div
               ref={topLeftActionGroupRef}
               className="main-page__button-group main-page__button-group--placement-layer"
@@ -3372,7 +3402,7 @@ export default function MainPage() {
               ))}
             </div>
           ) : null}
-          {topRightActionButtons.length > 0 ? (
+          {buttonDocument && topRightActionButtons.length > 0 ? (
             <div
               className="main-page__button-group main-page__button-group--placement-layer"
             >
@@ -3392,7 +3422,7 @@ export default function MainPage() {
               ))}
             </div>
           ) : null}
-          {independentlyPositionedButtons.map((button) => {
+          {buttonDocument ? independentlyPositionedButtons.map((button) => {
             const canonicalPresentation = canonicalPresentationForMainButton(button);
             const requiresCanonicalPresentation = Boolean(button.scriptFileName);
             return canonicalPresentation ? (
@@ -3412,7 +3442,7 @@ export default function MainPage() {
                 onRequestContextMenu={handleButtonContextMenu}
               />
             );
-          })}
+          }) : null}
           {fanSetupMenu ? (
             <>
               <div
@@ -3516,7 +3546,7 @@ export default function MainPage() {
                   <>
                     <CanonicalActionButton
                       id={`button-context-rename-program:${contextMenuButton.id}`}
-                      label="Rename Program"
+                      label="Rename Program Button"
                       className="button-context-menu__item"
                       onActivate={() => {
                         void handleRenameProgramContextMenuButton();

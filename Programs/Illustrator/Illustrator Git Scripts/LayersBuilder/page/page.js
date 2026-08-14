@@ -405,11 +405,11 @@
     if (dragMode === "artwork") {
       void runAction(
         "place-selected-artwork",
-        { targetKey: targetKey, copy: copyArtwork },
+        { sourceKey: sourceKey, targetKey: targetKey, copy: copyArtwork },
         {
           successMessage: copyArtwork
-            ? "Selected artwork copied into " + targetNode.name + "."
-            : "Selected artwork moved into " + targetNode.name + "."
+            ? "Layer artwork copied into " + targetNode.name + "."
+            : "Layer artwork moved into " + targetNode.name + "."
         }
       ).catch(function () {});
       return;
@@ -484,7 +484,7 @@
       row.setAttribute("aria-selected", state.highlightedKeys.has(node.key) ? "true" : "false");
       if (hasChildren) row.setAttribute("aria-expanded", expanded ? "true" : "false");
       row.style.paddingLeft = String(4 + node.depth * 16) + "px";
-      row.title = "Drag " + node.name + " onto another layer to move it inside.";
+      row.title = "Click to make " + node.name + " active in Illustrator. Drag it onto another layer to move it inside.";
 
       row.appendChild(makeRowButton(
         "layer-tree__twisty",
@@ -554,11 +554,11 @@
       artworkDragHandle.setAttribute(
         "aria-label",
         "Select all Illustrator artwork in " + node.name +
-          ", or drag the current Illustrator selection" +
+          ", or drag that layer's artwork" +
           " to another layer; hold Alt while dropping to copy it."
       );
       artworkDragHandle.title =
-        "Click to select this layer's artwork. Drag to move the selection; hold Alt to copy.";
+        "Click to select this layer's artwork. Drag to move it; hold Alt to copy.";
       artworkDragHandle.addEventListener("click", function (event) {
         event.stopPropagation();
         if (state.suppressNextClick) {
@@ -605,6 +605,7 @@
   }
 
   function selectRow(key, event) {
+    if (state.busy) return;
     var keys = visibleRows().map(function (node) { return node.key; });
     var next = new Set(state.highlightedKeys);
     if (event.shiftKey && state.anchorKey && keys.indexOf(state.anchorKey) >= 0) {
@@ -624,6 +625,13 @@
     state.highlightedKeys = next;
     render();
     void persistOwnerState().catch(function () {});
+    if (next.has(key)) {
+      void runAction(
+        "activate-layer",
+        { key: key },
+        { successMessage: "Layer made active in Illustrator." }
+      );
+    }
   }
 
   function applySnapshot(snapshot, selectionPolicy) {

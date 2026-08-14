@@ -720,15 +720,100 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
+            "sourceKey",
             "targetKey",
             "copy"
           ],
           "properties": {
+            "sourceKey": {
+              "type": "string"
+            },
             "targetKey": {
               "type": "string"
             },
             "copy": {
               "type": "boolean"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "ok",
+            "active",
+            "tree"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "active": {
+              "type": "string"
+            },
+            "tree": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "key",
+                  "name",
+                  "locked",
+                  "hidden",
+                  "depth",
+                  "itemCount",
+                  "children"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "locked": {
+                    "type": "boolean"
+                  },
+                  "hidden": {
+                    "type": "boolean"
+                  },
+                  "depth": {
+                    "type": "number"
+                  },
+                  "itemCount": {
+                    "type": "number"
+                  },
+                  "children": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
+        "id": "activate-layer",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "activate"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "key"
+          ],
+          "properties": {
+            "key": {
+              "type": "string"
             }
           }
         },

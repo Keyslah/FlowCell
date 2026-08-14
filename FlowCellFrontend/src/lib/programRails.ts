@@ -151,6 +151,7 @@ export interface AvailableProgramPackagesResponse {
 export interface AddProgramPlanRequest {
   programName: string;
   executablePath: string;
+  createPlainProgram: boolean;
   selectedPanels: string[];
   selectedSources: Array<{ sourceId: string; destinationPanel: string }>;
 }

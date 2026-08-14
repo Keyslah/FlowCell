@@ -109,11 +109,15 @@ export type ButtonCoreActionHandler = (
 
 const coreActionRegistry = new Map<string, ButtonCoreActionHandler>();
 
+function normalizeCoreActionId(actionId: string): string {
+  return actionId.trim().toLocaleLowerCase("en-US");
+}
+
 export function registerButtonCoreAction(
   actionId: string,
   handler: ButtonCoreActionHandler
 ): () => void {
-  const normalized = actionId.trim();
+  const normalized = normalizeCoreActionId(actionId);
   if (!normalized) throw new Error("A core-action registry ID cannot be empty.");
   coreActionRegistry.set(normalized, handler);
   return () => {
@@ -219,7 +223,7 @@ async function dispatchTarget(
       payload: mergePayload(target.payload ?? {}, payload)
     });
   }
-  const handler = coreActionRegistry.get(target.actionId);
+  const handler = coreActionRegistry.get(normalizeCoreActionId(target.actionId));
   if (!handler) throw new Error(`No FlowCell core action is registered for '${target.actionId}'.`);
   return handler(
     { ...target, payload: mergePayload(target.payload ?? {}, payload) },

@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -9,6 +10,16 @@ use crate::program_sources::transaction::{self, AtomicWriteMode};
 const PROGRAM_RENAME_TRANSACTION_FOLDER: &str = "program-rename-transactions";
 const PROGRAM_RENAME_JOURNAL_FILE: &str = "journal.json";
 const PROGRAM_RENAME_SCHEMA_VERSION: u32 = 1;
+const PROGRAM_RENAME_OWNED_FILE_LIMIT: usize = 16 * 1024 * 1024;
+const PROGRAM_RENAME_OWNED_FILES_TOTAL_LIMIT: usize = 64 * 1024 * 1024;
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProgramRenameOwnedFileSnapshot {
+    file_name: String,
+    previous_contents: Option<Vec<u8>>,
+    next_contents: Option<Vec<u8>>,
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -33,6 +44,10 @@ struct ProgramRenameJournal {
     next_bindings: Vec<u8>,
     previous_button_document: Option<Value>,
     next_button_document: Option<Value>,
+    #[serde(default)]
+    program_registration: Option<ProgramRenameOwnedFileSnapshot>,
+    #[serde(default)]
+    frontend_macros: Vec<ProgramRenameOwnedFileSnapshot>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -69,6 +84,156 @@ fn validate_token(value: &str) -> Result<String, String> {
     Ok(value.to_string())
 }
 
+fn validate_owned_file_name(value: &str, extension: &str, label: &str) -> Result<(), String> {
+    if value.is_empty()
+        || value.len() > 255
+        || Path::new(value).file_name().and_then(|name| name.to_str()) != Some(value)
+        || !value
+            .rsplit_once('.')
+            .is_some_and(|(_, value_extension)| value_extension.eq_ignore_ascii_case(extension))
+    {
+        return Err(format!(
+            "Program rename {label} file name '{value}' is invalid."
+        ));
+    }
+    Ok(())
+}
+
+fn snapshot_size(snapshot: &ProgramRenameOwnedFileSnapshot) -> usize {
+    snapshot
+        .previous_contents
+        .as_ref()
+        .map(Vec::len)
+        .unwrap_or(0)
+        .saturating_add(snapshot.next_contents.as_ref().map(Vec::len).unwrap_or(0))
+}
+
+fn validate_registration_snapshot(
+    snapshot: &ProgramRenameOwnedFileSnapshot,
+    journal: &ProgramRenameJournal,
+) -> Result<(), String> {
+    validate_owned_file_name(&snapshot.file_name, "json", "registration")?;
+    if snapshot.previous_contents.is_some() != snapshot.next_contents.is_some() {
+        return Err(
+            "Program rename registration snapshot must preserve whether the state file exists."
+                .to_string(),
+        );
+    }
+    let (Some(previous), Some(next)) = (
+        snapshot.previous_contents.as_deref(),
+        snapshot.next_contents.as_deref(),
+    ) else {
+        return Ok(());
+    };
+    let previous_state = serde_json::from_slice::<
+        crate::program_sources::manifest::EnabledProgramContributions,
+    >(previous)
+    .map_err(|error| format!("Stored pre-rename registration state is invalid: {error}"))?;
+    let next_state = serde_json::from_slice::<
+        crate::program_sources::manifest::EnabledProgramContributions,
+    >(next)
+    .map_err(|error| format!("Stored post-rename registration state is invalid: {error}"))?;
+    let expected_file_name = format!("{}.json", previous_state.program_id);
+    if previous_state.schema_version != 1
+        || next_state.schema_version != 1
+        || !previous_state
+            .program_name
+            .eq_ignore_ascii_case(&journal.current_name)
+        || next_state.program_name != journal.next_name
+        || !previous_state
+            .program_id
+            .eq_ignore_ascii_case(&next_state.program_id)
+        || !snapshot.file_name.eq_ignore_ascii_case(&expected_file_name)
+    {
+        return Err(
+            "Program rename registration snapshot does not match the journaled identity."
+                .to_string(),
+        );
+    }
+    let mut previous_value = serde_json::to_value(previous_state)
+        .map_err(|error| format!("Failed to validate pre-rename registration state: {error}"))?;
+    previous_value["programName"] = Value::String(journal.next_name.clone());
+    let next_value = serde_json::to_value(next_state)
+        .map_err(|error| format!("Failed to validate post-rename registration state: {error}"))?;
+    if previous_value != next_value {
+        return Err(
+            "Program rename registration snapshot changes fields other than programName."
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn parse_frontend_macro_snapshot(
+    contents: &[u8],
+    label: &str,
+) -> Result<super::bindings::IniDocument, String> {
+    let raw = std::str::from_utf8(contents)
+        .map_err(|error| format!("Stored {label} frontend macro is not UTF-8: {error}"))?;
+    let document = super::bindings::parse_ini_document(raw);
+    let action = document
+        .get("Action")
+        .ok_or_else(|| format!("Stored {label} frontend macro has no Action section."))?;
+    if !action
+        .get("Owner")
+        .is_some_and(|value| value.eq_ignore_ascii_case(super::macros::FRONTEND_MACRO_OWNER))
+        || action.get("SchemaVersion").map(String::as_str)
+            != Some(super::macros::FRONTEND_MACRO_SCHEMA_VERSION)
+    {
+        return Err(format!(
+            "Stored {label} macro is not owned by the FlowCell frontend."
+        ));
+    }
+    Ok(document)
+}
+
+fn validate_frontend_macro_snapshot(
+    snapshot: &ProgramRenameOwnedFileSnapshot,
+    journal: &ProgramRenameJournal,
+) -> Result<(), String> {
+    validate_owned_file_name(&snapshot.file_name, "ini", "frontend macro")?;
+    let (Some(previous), Some(next)) = (
+        snapshot.previous_contents.as_deref(),
+        snapshot.next_contents.as_deref(),
+    ) else {
+        return Err(
+            "Program rename frontend macro snapshots must preserve an existing macro file."
+                .to_string(),
+        );
+    };
+    let mut previous_document = parse_frontend_macro_snapshot(previous, "pre-rename")?;
+    let next_document = parse_frontend_macro_snapshot(next, "post-rename")?;
+    let previous_program = previous_document
+        .get("Action")
+        .and_then(|action| action.get("ProgramName"))
+        .map(String::as_str)
+        .unwrap_or_default();
+    let next_program = next_document
+        .get("Action")
+        .and_then(|action| action.get("ProgramName"))
+        .map(String::as_str)
+        .unwrap_or_default();
+    if !previous_program.eq_ignore_ascii_case(&journal.current_name)
+        || next_program != journal.next_name
+    {
+        return Err(format!(
+            "Program rename frontend macro '{}' does not match the journaled identity.",
+            snapshot.file_name
+        ));
+    }
+    previous_document
+        .get_mut("Action")
+        .expect("frontend macro Action section was checked above")
+        .insert("ProgramName".to_string(), journal.next_name.clone());
+    if previous_document != next_document {
+        return Err(format!(
+            "Program rename frontend macro '{}' changes fields other than ProgramName.",
+            snapshot.file_name
+        ));
+    }
+    Ok(())
+}
+
 fn validate_journal(journal: &ProgramRenameJournal, root: &Path) -> Result<(), String> {
     if journal.schema_version != PROGRAM_RENAME_SCHEMA_VERSION {
         return Err(format!(
@@ -95,6 +260,31 @@ fn validate_journal(journal: &ProgramRenameJournal, root: &Path) -> Result<(), S
             .is_some_and(|value| value.len() > 16 * 1024 * 1024)
     {
         return Err("Program rename bindings snapshot is unexpectedly large.".to_string());
+    }
+    let mut owned_size = 0usize;
+    if let Some(snapshot) = &journal.program_registration {
+        validate_registration_snapshot(snapshot, journal)?;
+        owned_size = owned_size.saturating_add(snapshot_size(snapshot));
+    }
+    let mut macro_names = HashSet::new();
+    for snapshot in &journal.frontend_macros {
+        validate_frontend_macro_snapshot(snapshot, journal)?;
+        if !macro_names.insert(snapshot.file_name.to_ascii_lowercase()) {
+            return Err(format!(
+                "Program rename journal duplicates frontend macro '{}'.",
+                snapshot.file_name
+            ));
+        }
+        owned_size = owned_size.saturating_add(snapshot_size(snapshot));
+    }
+    if journal
+        .program_registration
+        .iter()
+        .chain(journal.frontend_macros.iter())
+        .any(|snapshot| snapshot_size(snapshot) > PROGRAM_RENAME_OWNED_FILE_LIMIT)
+        || owned_size > PROGRAM_RENAME_OWNED_FILES_TOTAL_LIMIT
+    {
+        return Err("Program rename owned-state snapshots are unexpectedly large.".to_string());
     }
     Ok(())
 }
@@ -340,6 +530,212 @@ fn reconcile_program_identity(
     )
 }
 
+fn validate_owned_directory(
+    path: &Path,
+    subject: &str,
+    allow_missing: bool,
+) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => {
+            crate::program_sources::installed_page::reject_package_source_reparse_point(path)?;
+            if !path.is_dir() {
+                return Err(format!(
+                    "Program rename {subject} is not a directory: {}.",
+                    path.display()
+                ));
+            }
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound && allow_missing => Ok(false),
+        Err(error) => Err(format!(
+            "Failed to inspect Program rename {subject} {}: {error}",
+            path.display()
+        )),
+    }
+}
+
+fn prepare_program_registration_snapshot_at(
+    path: &Path,
+    manifest: &crate::program_sources::manifest::ProgramManifest,
+    current_name: &str,
+    next_name: &str,
+) -> Result<ProgramRenameOwnedFileSnapshot, String> {
+    let parent = path.parent().ok_or_else(|| {
+        format!(
+            "Enabled contribution state path has no parent: {}.",
+            path.display()
+        )
+    })?;
+    validate_owned_directory(parent, "registration directory", true)?;
+    transaction::recover_json_file(path, |candidate| {
+        let contents = fs::read(candidate)
+            .map_err(|error| format!("Failed to read {}: {error}", candidate.display()))?;
+        let mut state = serde_json::from_slice::<
+            crate::program_sources::manifest::EnabledProgramContributions,
+        >(&contents)
+        .map_err(|error| {
+            format!(
+                "Enabled contribution state at {} is invalid: {error}",
+                candidate.display()
+            )
+        })?;
+        crate::program_sources::manifest::validate_enabled_program_contributions(
+            &mut state, manifest,
+        )
+    })?;
+    let previous_contents = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "Enabled contribution state path {} must not be a symbolic link.",
+                path.display()
+            ));
+        }
+        Ok(metadata) if metadata.is_file() => Some(
+            fs::read(path)
+                .map_err(|error| format!("Failed to read {}: {error}", path.display()))?,
+        ),
+        Ok(_) => {
+            return Err(format!(
+                "Enabled contribution state path {} is not a regular file.",
+                path.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("Failed to inspect {}: {error}", path.display())),
+    };
+    let next_contents = previous_contents
+        .as_deref()
+        .map(|contents| {
+            let mut state = serde_json::from_slice::<
+                crate::program_sources::manifest::EnabledProgramContributions,
+            >(contents)
+            .map_err(|error| format!("Enabled contribution state is invalid: {error}"))?;
+            if !state.program_name.eq_ignore_ascii_case(current_name) {
+                return Err(format!(
+                    "Enabled contribution state does not match program '{}'.",
+                    current_name
+                ));
+            }
+            state.program_name = next_name.to_string();
+            serde_json::to_vec_pretty(&state).map_err(|error| {
+                format!("Failed to serialize renamed enabled contribution state: {error}")
+            })
+        })
+        .transpose()?;
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            format!(
+                "Enabled contribution state path has no valid file name: {}.",
+                path.display()
+            )
+        })?
+        .to_string();
+    Ok(ProgramRenameOwnedFileSnapshot {
+        file_name,
+        previous_contents,
+        next_contents,
+    })
+}
+
+fn prepare_frontend_macro_snapshots_at(
+    directory: &Path,
+    current_name: &str,
+    next_name: &str,
+) -> Result<Vec<ProgramRenameOwnedFileSnapshot>, String> {
+    if !validate_owned_directory(directory, "recorded-actions directory", true)? {
+        return Ok(Vec::new());
+    }
+    let mut entries = fs::read_dir(directory)
+        .map_err(|error| format!("Failed to inspect {}: {error}", directory.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Failed to inspect {}: {error}", directory.display()))?;
+    entries.sort_by_cached_key(|entry| entry.file_name().to_string_lossy().to_ascii_lowercase());
+    let mut snapshots = Vec::new();
+    for entry in entries {
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|error| format!("Failed to inspect {}: {error}", path.display()))?;
+        if file_type.is_symlink() || !file_type.is_file() {
+            continue;
+        }
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if !file_name
+            .rsplit_once('.')
+            .is_some_and(|(_, extension)| extension.eq_ignore_ascii_case("ini"))
+        {
+            continue;
+        }
+        let previous_contents = fs::read(&path)
+            .map_err(|error| format!("Failed to read {}: {error}", path.display()))?;
+        let raw = std::str::from_utf8(&previous_contents)
+            .map_err(|error| format!("Frontend macro {} is not UTF-8: {error}", path.display()))?;
+        let mut document = super::bindings::parse_ini_document(raw);
+        let Some(action) = document.get("Action") else {
+            continue;
+        };
+        if !action
+            .get("Owner")
+            .is_some_and(|value| value.eq_ignore_ascii_case(super::macros::FRONTEND_MACRO_OWNER))
+            || action.get("SchemaVersion").map(String::as_str)
+                != Some(super::macros::FRONTEND_MACRO_SCHEMA_VERSION)
+            || !action
+                .get("ProgramName")
+                .is_some_and(|value| value.eq_ignore_ascii_case(current_name))
+        {
+            continue;
+        }
+        document
+            .get_mut("Action")
+            .expect("frontend macro Action section was checked above")
+            .insert("ProgramName".to_string(), next_name.to_string());
+        snapshots.push(ProgramRenameOwnedFileSnapshot {
+            file_name,
+            previous_contents: Some(previous_contents),
+            next_contents: Some(super::bindings::serialize_ini_document(&document).into_bytes()),
+        });
+    }
+    Ok(snapshots)
+}
+
+fn prepare_owned_state(
+    current_name: &str,
+    next_name: &str,
+) -> Result<
+    (
+        ProgramRenameOwnedFileSnapshot,
+        Vec<ProgramRenameOwnedFileSnapshot>,
+    ),
+    String,
+> {
+    let manifest = crate::program_sources::manifest::load_program_manifest(current_name)?;
+    let local_root = crate::resolve_flowcell_local_root()?;
+    validate_owned_directory(&local_root, "local root", false)?;
+    let registration_path =
+        crate::program_sources::manifest::enabled_program_contributions_path(&manifest)?;
+    let expected_registration_root = local_root.join("program-registration");
+    if registration_path.parent() != Some(expected_registration_root.as_path()) {
+        return Err(format!(
+            "Enabled contribution state resolved outside {}.",
+            expected_registration_root.display()
+        ));
+    }
+    let program_registration = prepare_program_registration_snapshot_at(
+        &registration_path,
+        &manifest,
+        current_name,
+        next_name,
+    )?;
+    let frontend_macros = prepare_frontend_macro_snapshots_at(
+        &local_root.join(super::macros::FRONTEND_RECORDED_ACTIONS_FOLDER),
+        current_name,
+        next_name,
+    )?;
+    Ok((program_registration, frontend_macros))
+}
+
 fn read_bindings_bytes_at(path: &Path) -> Result<Option<Vec<u8>>, String> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -425,9 +821,319 @@ fn reconcile_bindings_at(
     }
 }
 
+fn owned_file_matches_snapshot_side(
+    current: Option<&[u8]>,
+    snapshot: &ProgramRenameOwnedFileSnapshot,
+) -> bool {
+    bindings_match_side(current, snapshot.previous_contents.as_deref())
+        || bindings_match_side(current, snapshot.next_contents.as_deref())
+}
+
+fn read_owned_file_snapshot_side_at(
+    path: &Path,
+    snapshot: &ProgramRenameOwnedFileSnapshot,
+    label: &str,
+) -> Result<Option<Vec<u8>>, String> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "Program rename {label} path {} must not be a symbolic link.",
+                path.display()
+            ));
+        }
+        Ok(metadata) if !metadata.is_file() => {
+            return Err(format!(
+                "Program rename {label} path {} is not a regular file.",
+                path.display()
+            ));
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("Failed to inspect {}: {error}", path.display())),
+    }
+    if snapshot.previous_contents.is_some() || snapshot.next_contents.is_some() {
+        transaction::recover_json_file(path, |candidate| {
+            let contents = fs::read(candidate)
+                .map_err(|error| format!("Failed to read {}: {error}", candidate.display()))?;
+            if owned_file_matches_snapshot_side(Some(&contents), snapshot) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Program rename {label} at {} does not match either journaled side.",
+                    candidate.display()
+                ))
+            }
+        })?;
+    }
+    let current = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(format!(
+                "Program rename {label} path {} must not be a symbolic link.",
+                path.display()
+            ));
+        }
+        Ok(metadata) if metadata.is_file() => Some(
+            fs::read(path)
+                .map_err(|error| format!("Failed to read {}: {error}", path.display()))?,
+        ),
+        Ok(_) => {
+            return Err(format!(
+                "Program rename {label} path {} is not a regular file.",
+                path.display()
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => return Err(format!("Failed to inspect {}: {error}", path.display())),
+    };
+    if !owned_file_matches_snapshot_side(current.as_deref(), snapshot) {
+        return Err(format!(
+            "Program rename {label} at {} changed outside the pending transaction; refusing to overwrite unrelated edits.",
+            path.display()
+        ));
+    }
+    Ok(current)
+}
+
+fn registration_snapshot_path(
+    local_root: &Path,
+    snapshot: &ProgramRenameOwnedFileSnapshot,
+) -> PathBuf {
+    local_root
+        .join("program-registration")
+        .join(&snapshot.file_name)
+}
+
+fn macro_snapshot_path(local_root: &Path, snapshot: &ProgramRenameOwnedFileSnapshot) -> PathBuf {
+    local_root
+        .join(super::macros::FRONTEND_RECORDED_ACTIONS_FOLDER)
+        .join(&snapshot.file_name)
+}
+
+fn validate_owned_state_directories_at(
+    local_root: &Path,
+    journal: &ProgramRenameJournal,
+) -> Result<(), String> {
+    if journal.program_registration.is_none() && journal.frontend_macros.is_empty() {
+        return Ok(());
+    }
+    validate_owned_directory(local_root, "local root", false)?;
+    if journal.program_registration.is_some() {
+        validate_owned_directory(
+            &local_root.join("program-registration"),
+            "registration directory",
+            true,
+        )?;
+    }
+    if !journal.frontend_macros.is_empty() {
+        validate_owned_directory(
+            &local_root.join(super::macros::FRONTEND_RECORDED_ACTIONS_FOLDER),
+            "recorded-actions directory",
+            false,
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_owned_state_side_at(
+    local_root: &Path,
+    journal: &ProgramRenameJournal,
+) -> Result<(), String> {
+    validate_owned_state_directories_at(local_root, journal)?;
+    if let Some(snapshot) = &journal.program_registration {
+        read_owned_file_snapshot_side_at(
+            &registration_snapshot_path(local_root, snapshot),
+            snapshot,
+            "registration state",
+        )?;
+    }
+    for snapshot in &journal.frontend_macros {
+        read_owned_file_snapshot_side_at(
+            &macro_snapshot_path(local_root, snapshot),
+            snapshot,
+            "frontend macro",
+        )?;
+    }
+    Ok(())
+}
+
+fn reconcile_owned_file_at(
+    path: &Path,
+    snapshot: &ProgramRenameOwnedFileSnapshot,
+    desired: Option<&[u8]>,
+    label: &str,
+) -> Result<(), String> {
+    let current = read_owned_file_snapshot_side_at(path, snapshot, label)?;
+    if bindings_match_side(current.as_deref(), desired) {
+        return Ok(());
+    }
+    match desired {
+        Some(contents) => transaction::write_file_atomically(
+            path,
+            contents,
+            AtomicWriteMode::Replace,
+            |candidate| {
+                let candidate_contents = fs::read(candidate)
+                    .map_err(|error| format!("Failed to read {}: {error}", candidate.display()))?;
+                if owned_file_matches_snapshot_side(Some(&candidate_contents), snapshot) {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "Program rename {label} at {} changed outside the pending transaction.",
+                        candidate.display()
+                    ))
+                }
+            },
+        ),
+        None if current.is_some() => crate::recycle_file_path(path),
+        None => Ok(()),
+    }
+}
+
+fn reconcile_owned_state_at(
+    local_root: &Path,
+    journal: &ProgramRenameJournal,
+    direction: RenameDirection,
+) -> Result<(), String> {
+    validate_owned_state_side_at(local_root, journal)?;
+    if let Some(snapshot) = &journal.program_registration {
+        let desired = match direction {
+            RenameDirection::Previous => snapshot.previous_contents.as_deref(),
+            RenameDirection::Next => snapshot.next_contents.as_deref(),
+        };
+        reconcile_owned_file_at(
+            &registration_snapshot_path(local_root, snapshot),
+            snapshot,
+            desired,
+            "registration state",
+        )?;
+    }
+    for snapshot in &journal.frontend_macros {
+        let desired = match direction {
+            RenameDirection::Previous => snapshot.previous_contents.as_deref(),
+            RenameDirection::Next => snapshot.next_contents.as_deref(),
+        };
+        reconcile_owned_file_at(
+            &macro_snapshot_path(local_root, snapshot),
+            snapshot,
+            desired,
+            "frontend macro",
+        )?;
+    }
+    Ok(())
+}
+
+fn validate_owned_state_exact_at(
+    local_root: &Path,
+    journal: &ProgramRenameJournal,
+    direction: RenameDirection,
+) -> Result<(), String> {
+    validate_owned_state_directories_at(local_root, journal)?;
+    if let Some(snapshot) = &journal.program_registration {
+        let current = read_owned_file_snapshot_side_at(
+            &registration_snapshot_path(local_root, snapshot),
+            snapshot,
+            "registration state",
+        )?;
+        let expected = match direction {
+            RenameDirection::Previous => snapshot.previous_contents.as_deref(),
+            RenameDirection::Next => snapshot.next_contents.as_deref(),
+        };
+        if !bindings_match_side(current.as_deref(), expected) {
+            return Err(
+                "Program registration state does not match the side being finalized.".to_string(),
+            );
+        }
+    }
+    for snapshot in &journal.frontend_macros {
+        let current = read_owned_file_snapshot_side_at(
+            &macro_snapshot_path(local_root, snapshot),
+            snapshot,
+            "frontend macro",
+        )?;
+        let expected = match direction {
+            RenameDirection::Previous => snapshot.previous_contents.as_deref(),
+            RenameDirection::Next => snapshot.next_contents.as_deref(),
+        };
+        if !bindings_match_side(current.as_deref(), expected) {
+            return Err(format!(
+                "Frontend macro '{}' does not match the side being finalized.",
+                snapshot.file_name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_native_exact_at(
+    programs_root: &Path,
+    bindings_path: &Path,
+    local_root: &Path,
+    journal: &ProgramRenameJournal,
+    direction: RenameDirection,
+) -> Result<(), String> {
+    let (desired_name, other_name, expected_bindings) = match direction {
+        RenameDirection::Previous => (
+            journal.current_name.as_str(),
+            journal.next_name.as_str(),
+            journal.previous_bindings.as_deref(),
+        ),
+        RenameDirection::Next => (
+            journal.next_name.as_str(),
+            journal.current_name.as_str(),
+            Some(journal.next_bindings.as_slice()),
+        ),
+    };
+    let program_root = exact_directory(programs_root, desired_name)?.ok_or_else(|| {
+        format!(
+            "Program folder '{}' is missing from the side being finalized.",
+            desired_name
+        )
+    })?;
+    if desired_name != other_name && exact_directory(programs_root, other_name)?.is_some() {
+        return Err(format!(
+            "Program folder '{}' still exists while finalizing '{}'.",
+            other_name, desired_name
+        ));
+    }
+    if let Some(temporary_name) = journal.temporary_name.as_deref() {
+        if exact_directory(programs_root, temporary_name)?.is_some() {
+            return Err(format!(
+                "Case-only Program rename temporary folder '{}' still exists.",
+                temporary_name
+            ));
+        }
+    }
+    let label = read_program_manifest_label(&program_root)?;
+    if label != desired_name {
+        return Err(format!(
+            "Program manifest label '{}' does not match the side '{}' being finalized.",
+            label, desired_name
+        ));
+    }
+    let bindings = validate_bindings_side_at(bindings_path, journal)?;
+    if !bindings_match_side(bindings.as_deref(), expected_bindings) {
+        return Err("FlowCell bindings do not match the side being finalized.".to_string());
+    }
+    validate_owned_state_exact_at(local_root, journal, direction)
+}
+
+fn validate_native_exact(
+    journal: &ProgramRenameJournal,
+    direction: RenameDirection,
+) -> Result<(), String> {
+    validate_native_exact_at(
+        &crate::resolve_programs_root()?,
+        &super::bindings::resolve_bindings_file_path()?,
+        &crate::resolve_flowcell_local_root()?,
+        journal,
+        direction,
+    )
+}
+
 fn reconcile_native_at(
     programs_root: &Path,
     bindings_path: &Path,
+    local_root: &Path,
     journal: &ProgramRenameJournal,
     direction: RenameDirection,
 ) -> Result<(), String> {
@@ -438,10 +1144,13 @@ fn reconcile_native_at(
     // Validate drift before moving the folder or rewriting any manifest-owned
     // identity, then validate again immediately before the bindings write.
     validate_bindings_side_at(bindings_path, journal)?;
+    validate_owned_state_side_at(local_root, journal)?;
     validate_program_manifest_side_at(programs_root, journal)?;
     let program_root = reconcile_program_folder(programs_root, journal, direction)?;
     reconcile_program_identity(&program_root, journal, desired_name)?;
-    reconcile_bindings_at(bindings_path, journal, direction)
+    reconcile_owned_state_at(local_root, journal, direction)?;
+    reconcile_bindings_at(bindings_path, journal, direction)?;
+    validate_native_exact_at(programs_root, bindings_path, local_root, journal, direction)
 }
 
 fn reconcile_native(
@@ -451,6 +1160,7 @@ fn reconcile_native(
     reconcile_native_at(
         &crate::resolve_programs_root()?,
         &super::bindings::resolve_bindings_file_path()?,
+        &crate::resolve_flowcell_local_root()?,
         journal,
         direction,
     )
@@ -555,6 +1265,12 @@ pub(crate) fn begin_program_rename_locked(
     if has_pending_program_rename_transaction()? {
         return Err("Another program rename transaction is still pending recovery.".to_string());
     }
+    crate::validate_folder_name(&current_name, "Program")?;
+    crate::validate_folder_name(&next_name, "Program")?;
+    if current_name == next_name {
+        return Err("Program rename transaction must change the program name.".to_string());
+    }
+    let (program_registration, frontend_macros) = prepare_owned_state(&current_name, &next_name)?;
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -577,6 +1293,8 @@ pub(crate) fn begin_program_rename_locked(
         next_bindings,
         previous_button_document,
         next_button_document: None,
+        program_registration: Some(program_registration),
+        frontend_macros,
     };
     if let Err(error) = write_journal(&root, &journal, AtomicWriteMode::Create) {
         return match finalize_root(&root) {
@@ -629,6 +1347,7 @@ pub(crate) fn complete_canonical_commit_locked(
             "Committed Button state does not match the program rename journal.".to_string(),
         );
     }
+    validate_native_exact(&journal, RenameDirection::Next)?;
     journal.phase = ProgramRenamePhase::CanonicalCommitted;
     write_journal(&root, &journal, AtomicWriteMode::Replace)?;
     finalize_root(&root)
@@ -645,6 +1364,7 @@ pub(crate) fn finalize_without_canonical_change_locked(
             "Canonical Button state changed before program rename finalization.".to_string(),
         );
     }
+    validate_native_exact(&journal, RenameDirection::Next)?;
     journal.next_button_document = journal.previous_button_document.clone();
     journal.phase = ProgramRenamePhase::CanonicalCommitted;
     write_journal(&root, &journal, AtomicWriteMode::Replace)?;
@@ -674,10 +1394,24 @@ fn recover_root_at(
     current_document: Option<&Value>,
     programs_root: &Path,
     bindings_path: &Path,
+    local_root: &Path,
 ) -> Result<(), String> {
     let mut journal = read_journal(root)?;
     let direction = recovery_direction(&journal, current_document)?;
-    reconcile_native_at(programs_root, bindings_path, &journal, direction)?;
+    reconcile_native_at(
+        programs_root,
+        bindings_path,
+        local_root,
+        &journal,
+        direction,
+    )?;
+    validate_native_exact_at(
+        programs_root,
+        bindings_path,
+        local_root,
+        &journal,
+        direction,
+    )?;
     journal.phase = match direction {
         RenameDirection::Previous => ProgramRenamePhase::RolledBack,
         RenameDirection::Next => ProgramRenamePhase::CanonicalCommitted,
@@ -692,6 +1426,7 @@ fn recover_root(root: &Path, current_document: Option<&Value>) -> Result<(), Str
         current_document,
         &crate::resolve_programs_root()?,
         &super::bindings::resolve_bindings_file_path()?,
+        &crate::resolve_flowcell_local_root()?,
     )
 }
 
@@ -708,6 +1443,7 @@ pub(crate) fn rollback_program_rename_locked(
         );
     }
     reconcile_native(&journal, RenameDirection::Previous)?;
+    validate_native_exact(&journal, RenameDirection::Previous)?;
     let mut journal = journal;
     journal.phase = ProgramRenamePhase::RolledBack;
     write_journal(&root, &journal, AtomicWriteMode::Replace)?;
@@ -751,9 +1487,10 @@ pub(crate) fn recover_program_renames_locked(
 #[cfg(test)]
 mod tests {
     use super::{
-        commit_begin_native_with, finalize_root_with, recover_program_rename_roots_with,
-        recover_root_at, recovery_direction, write_journal, ProgramRenameJournal,
-        ProgramRenamePhase, RenameDirection,
+        commit_begin_native_with, finalize_root_with, prepare_frontend_macro_snapshots_at,
+        recover_program_rename_roots_with, recover_root_at, recovery_direction, validate_journal,
+        validate_native_exact_at, write_journal, ProgramRenameJournal,
+        ProgramRenameOwnedFileSnapshot, ProgramRenamePhase, RenameDirection,
     };
     use crate::program_sources::transaction::AtomicWriteMode;
     use serde_json::json;
@@ -826,6 +1563,8 @@ mod tests {
             next_bindings: b"new-bindings".to_vec(),
             previous_button_document: Some(json!({"revision": 1, "side": "old"})),
             next_button_document: next_document,
+            program_registration: None,
+            frontend_macros: Vec::new(),
         };
         write_journal(transaction_root, &journal, AtomicWriteMode::Create)
             .expect("write outer journal");
@@ -844,7 +1583,75 @@ mod tests {
             next_bindings: b"new".to_vec(),
             previous_button_document: Some(json!({"revision": 1})),
             next_button_document: Some(json!({"revision": 2})),
+            program_registration: None,
+            frontend_macros: Vec::new(),
         }
+    }
+
+    fn registration_contents(program_name: &str) -> Vec<u8> {
+        serde_json::to_vec_pretty(&json!({
+            "schemaVersion": 1,
+            "programId": "test",
+            "programName": program_name,
+            "enabledSources": []
+        }))
+        .expect("serialize registration")
+    }
+
+    fn macro_contents(program_name: &str, label: &str) -> Vec<u8> {
+        format!(
+            "[Action]\r\nId=macro_test\r\nLabel={label}\r\nOwner=flowcell_frontend\r\nPanelName=Panel\r\nProgramName={program_name}\r\nSchemaVersion=2\r\n\r\n[Step_001]\r\nDelayMs=0\r\nType=Click\r\n"
+        )
+        .into_bytes()
+    }
+
+    fn attach_owned_state(
+        transaction: &Path,
+        journal: &mut ProgramRenameJournal,
+        previous_program_name: &str,
+        next_program_name: &str,
+    ) {
+        journal.program_registration = Some(ProgramRenameOwnedFileSnapshot {
+            file_name: "test.json".to_string(),
+            previous_contents: Some(registration_contents(previous_program_name)),
+            next_contents: Some(registration_contents(next_program_name)),
+        });
+        journal.frontend_macros = vec![ProgramRenameOwnedFileSnapshot {
+            file_name: "macro_test.ini".to_string(),
+            previous_contents: Some(macro_contents(previous_program_name, "Macro")),
+            next_contents: Some(macro_contents(next_program_name, "Macro")),
+        }];
+        write_journal(transaction, journal, AtomicWriteMode::Replace)
+            .expect("write owned-state journal");
+    }
+
+    fn write_owned_live_state(root: &Path, registration: &[u8], macro_contents: &[u8]) {
+        fs::create_dir_all(root.join("program-registration")).expect("create registration root");
+        fs::create_dir_all(root.join("recorded_actions")).expect("create macro root");
+        fs::write(root.join("program-registration/test.json"), registration)
+            .expect("write registration");
+        fs::write(root.join("recorded_actions/macro_test.ini"), macro_contents)
+            .expect("write macro");
+    }
+
+    #[cfg(windows)]
+    fn create_directory_link(target: &Path, link: &Path) -> bool {
+        std::os::windows::fs::symlink_dir(target, link).is_ok()
+    }
+
+    #[cfg(not(windows))]
+    fn create_directory_link(target: &Path, link: &Path) -> bool {
+        std::os::unix::fs::symlink(target, link).is_ok()
+    }
+
+    #[cfg(windows)]
+    fn remove_directory_link(path: &Path) {
+        fs::remove_dir(path).expect("remove directory link");
+    }
+
+    #[cfg(not(windows))]
+    fn remove_directory_link(path: &Path) {
+        fs::remove_file(path).expect("remove directory link");
     }
 
     #[test]
@@ -859,6 +1666,53 @@ mod tests {
             RenameDirection::Next
         );
         assert!(recovery_direction(&journal, Some(&json!({"revision": 3}))).is_err());
+    }
+
+    #[test]
+    fn macro_snapshot_collection_claims_only_matching_frontend_owned_files() {
+        let root = test_root("macro-snapshot-scope");
+        fs::create_dir_all(&root).expect("create macro root");
+        let matching = macro_contents("Old", "Matching");
+        let other_program = macro_contents("Other", "Other program");
+        let legacy = b"[Action]\r\nOwner=legacy\r\nProgramName=Old\r\n";
+        fs::write(root.join("matching.ini"), &matching).expect("write matching macro");
+        fs::write(root.join("other.ini"), &other_program).expect("write other macro");
+        fs::write(root.join("legacy.ini"), legacy).expect("write legacy macro");
+
+        let snapshots = prepare_frontend_macro_snapshots_at(&root, "Old", "New")
+            .expect("collect owned macro snapshots");
+
+        assert_eq!(snapshots.len(), 1);
+        assert_eq!(snapshots[0].file_name, "matching.ini");
+        assert_eq!(
+            snapshots[0].previous_contents.as_deref(),
+            Some(matching.as_slice())
+        );
+        assert_eq!(fs::read(root.join("other.ini")).unwrap(), other_program);
+        assert_eq!(fs::read(root.join("legacy.ini")).unwrap(), legacy);
+        fs::remove_dir_all(root).expect("remove macro scope test root");
+    }
+
+    #[test]
+    fn macro_snapshot_collection_rejects_a_reparse_parent_outside_local_state() {
+        let root = test_root("macro-reparse-parent");
+        let outside = test_root("macro-reparse-outside");
+        fs::create_dir_all(&root).expect("create local root");
+        fs::create_dir_all(&outside).expect("create outside root");
+        let link = root.join("recorded_actions");
+        if !create_directory_link(&outside, &link) {
+            fs::remove_dir_all(root).expect("remove local root");
+            fs::remove_dir_all(outside).expect("remove outside root");
+            return;
+        }
+
+        let error = prepare_frontend_macro_snapshots_at(&link, "Old", "New")
+            .expect_err("recorded-actions reparse parent must fail closed");
+
+        assert!(error.contains("symbolic link") || error.contains("reparse point"));
+        remove_directory_link(&link);
+        fs::remove_dir_all(root).expect("remove local root");
+        fs::remove_dir_all(outside).expect("remove outside root");
     }
 
     #[test]
@@ -991,6 +1845,7 @@ mod tests {
                 journal.previous_button_document.as_ref(),
                 &programs,
                 &bindings_path,
+                &root,
             )
             .expect("recover previous side");
 
@@ -1007,6 +1862,236 @@ mod tests {
             );
             let _ = fs::remove_dir_all(root);
         }
+    }
+
+    #[test]
+    fn cuts_between_registration_macro_and_bindings_writes_restore_all_previous_ownership() {
+        for (label, registration_name, macro_name, bindings) in [
+            ("before-owned", "Old", "Old", b"old-bindings".as_slice()),
+            (
+                "after-registration",
+                "New",
+                "Old",
+                b"old-bindings".as_slice(),
+            ),
+            ("after-macro", "New", "New", b"old-bindings".as_slice()),
+            ("after-bindings", "New", "New", b"new-bindings".as_slice()),
+        ] {
+            let root = test_root(label);
+            let programs = root.join("Programs");
+            let transaction = root.join("transaction").join(format!("rename-1-{label}"));
+            let bindings_path = root.join("bindings.ini");
+            fs::create_dir_all(&transaction).expect("create transaction root");
+            write_program_manifest(&programs.join("New"), "New");
+            fs::write(&bindings_path, bindings).expect("write bindings");
+            write_owned_live_state(
+                &root,
+                &registration_contents(registration_name),
+                &macro_contents(macro_name, "Macro"),
+            );
+            let mut journal = disk_journal(
+                &transaction,
+                "Old",
+                "New",
+                None,
+                ProgramRenamePhase::Prepared,
+                None,
+            );
+            attach_owned_state(&transaction, &mut journal, "Old", "New");
+
+            recover_root_at(
+                &transaction,
+                journal.previous_button_document.as_ref(),
+                &programs,
+                &bindings_path,
+                &root,
+            )
+            .expect("recover every previous ownership side");
+
+            assert!(programs.join("Old").is_dir());
+            assert_eq!(
+                fs::read(root.join("program-registration/test.json")).expect("read registration"),
+                registration_contents("Old")
+            );
+            assert_eq!(
+                fs::read(root.join("recorded_actions/macro_test.ini")).expect("read macro"),
+                macro_contents("Old", "Macro")
+            );
+            assert_eq!(
+                fs::read(&bindings_path).expect("read bindings"),
+                b"old-bindings"
+            );
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn canonical_commit_rolls_mixed_registration_macro_and_bindings_state_forward() {
+        let root = test_root("owned-roll-forward");
+        let programs = root.join("Programs");
+        let transaction = root.join("transaction/rename-1-owned-forward");
+        let bindings_path = root.join("bindings.ini");
+        fs::create_dir_all(&transaction).expect("create transaction root");
+        write_program_manifest(&programs.join("New"), "New");
+        fs::write(&bindings_path, b"old-bindings").expect("write bindings");
+        write_owned_live_state(
+            &root,
+            &registration_contents("Old"),
+            &macro_contents("New", "Macro"),
+        );
+        let next_document = json!({"revision": 2, "side": "new"});
+        let mut journal = disk_journal(
+            &transaction,
+            "Old",
+            "New",
+            None,
+            ProgramRenamePhase::CanonicalPrepared,
+            Some(next_document.clone()),
+        );
+        attach_owned_state(&transaction, &mut journal, "Old", "New");
+
+        let finalize_error = validate_native_exact_at(
+            &programs,
+            &bindings_path,
+            &root,
+            &journal,
+            RenameDirection::Next,
+        )
+        .expect_err("mixed native state must not finalize");
+        assert!(finalize_error.contains("bindings do not match"));
+
+        recover_root_at(
+            &transaction,
+            Some(&next_document),
+            &programs,
+            &bindings_path,
+            &root,
+        )
+        .expect("finish every committed ownership side");
+
+        assert_eq!(
+            fs::read(root.join("program-registration/test.json")).expect("read registration"),
+            registration_contents("New")
+        );
+        assert_eq!(
+            fs::read(root.join("recorded_actions/macro_test.ini")).expect("read macro"),
+            macro_contents("New", "Macro")
+        );
+        assert_eq!(
+            fs::read(&bindings_path).expect("read bindings"),
+            b"new-bindings"
+        );
+        validate_native_exact_at(
+            &programs,
+            &bindings_path,
+            &root,
+            &journal,
+            RenameDirection::Next,
+        )
+        .expect("fully reconciled next side may finalize");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn owned_state_drift_fails_before_program_identity_is_mutated() {
+        let root = test_root("owned-drift");
+        let programs = root.join("Programs");
+        let transaction = root.join("transaction/rename-1-owned-drift");
+        let bindings_path = root.join("bindings.ini");
+        fs::create_dir_all(&transaction).expect("create transaction root");
+        write_program_manifest(&programs.join("Old"), "Old");
+        fs::write(&bindings_path, b"old-bindings").expect("write bindings");
+        let external_macro = macro_contents("Old", "External edit");
+        write_owned_live_state(&root, &registration_contents("Old"), &external_macro);
+        let mut journal = disk_journal(
+            &transaction,
+            "Old",
+            "New",
+            None,
+            ProgramRenamePhase::Prepared,
+            None,
+        );
+        attach_owned_state(&transaction, &mut journal, "Old", "New");
+
+        let error = recover_root_at(
+            &transaction,
+            journal.previous_button_document.as_ref(),
+            &programs,
+            &bindings_path,
+            &root,
+        )
+        .expect_err("unjournaled macro drift must fail closed");
+
+        assert!(error.contains("does not match either journaled side"));
+        assert!(programs.join("Old").is_dir());
+        assert!(!programs.join("New").exists());
+        assert_eq!(
+            fs::read(root.join("program-registration/test.json")).expect("read registration"),
+            registration_contents("Old")
+        );
+        assert_eq!(
+            fs::read(root.join("recorded_actions/macro_test.ini")).expect("read macro"),
+            external_macro
+        );
+        assert!(transaction.is_dir());
+        fs::remove_dir_all(root).expect("remove owned drift test root");
+    }
+
+    #[test]
+    fn exact_no_op_is_rejected_but_case_only_ownership_rolls_forward() {
+        let mut no_op = journal();
+        no_op.next_name = no_op.current_name.clone();
+        let error = validate_journal(&no_op, Path::new("rename-1-1"))
+            .expect_err("exact no-op rename must be rejected");
+        assert!(error.contains("must change"));
+
+        let root = test_root("case-owned-forward");
+        let programs = root.join("Programs");
+        let temporary_name = ".flowcell-program-rename-1-case-owned";
+        let transaction = root.join("transaction/rename-1-case-owned");
+        let bindings_path = root.join("bindings.ini");
+        fs::create_dir_all(&transaction).expect("create transaction root");
+        write_program_manifest(&programs.join(temporary_name), "Blender");
+        fs::write(&bindings_path, b"old-bindings").expect("write bindings");
+        write_owned_live_state(
+            &root,
+            &registration_contents("Blender"),
+            &macro_contents("Blender", "Macro"),
+        );
+        let next_document = json!({"revision": 2, "side": "new"});
+        let mut journal = disk_journal(
+            &transaction,
+            "Blender",
+            "blender",
+            Some(temporary_name.to_string()),
+            ProgramRenamePhase::CanonicalPrepared,
+            Some(next_document.clone()),
+        );
+        attach_owned_state(&transaction, &mut journal, "Blender", "blender");
+
+        recover_root_at(
+            &transaction,
+            Some(&next_document),
+            &programs,
+            &bindings_path,
+            &root,
+        )
+        .expect("finish case-only ownership rename");
+
+        let names = fs::read_dir(&programs)
+            .expect("read programs")
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+            .collect::<Vec<_>>();
+        assert!(names.iter().any(|name| name == "blender"));
+        assert_eq!(
+            fs::read(root.join("program-registration/test.json")).expect("read registration"),
+            registration_contents("blender")
+        );
+        assert_eq!(
+            fs::read(root.join("recorded_actions/macro_test.ini")).expect("read macro"),
+            macro_contents("blender", "Macro")
+        );
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1033,6 +2118,7 @@ mod tests {
             Some(&next_document),
             &programs,
             &bindings_path,
+            &root,
         )
         .expect("recover committed side");
 
@@ -1068,6 +2154,7 @@ mod tests {
             Some(&next_document),
             &programs,
             &bindings_path,
+            &root,
         )
         .expect_err("external bindings drift must fail closed");
 
@@ -1103,6 +2190,7 @@ mod tests {
             journal.previous_button_document.as_ref(),
             &programs,
             &bindings_path,
+            &root,
         )
         .expect_err("missing file must not equal journaled bytes");
 
@@ -1137,6 +2225,7 @@ mod tests {
             journal.previous_button_document.as_ref(),
             &programs,
             &bindings_path,
+            &root,
         )
         .expect("journaled absence is a valid previous side");
 
@@ -1169,6 +2258,7 @@ mod tests {
             Some(&next_document),
             &programs,
             &bindings_path,
+            &root,
         )
         .expect_err("external manifest drift must fail closed");
 
@@ -1211,6 +2301,7 @@ mod tests {
             journal.previous_button_document.as_ref(),
             &programs,
             &bindings_path,
+            &root,
         )
         .expect("recover case-only temporary move");
 

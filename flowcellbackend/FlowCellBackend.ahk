@@ -1380,11 +1380,14 @@ class FlowCellApp {
 
     StartTempShotsScreenSnip() {
         try {
-            explorerPath := A_WinDir "\explorer.exe"
-            if FileExist(explorerPath) {
-                Run('"' explorerPath '" ms-screenclip:', , "Hide")
-                return true
-            }
+            SendInput "#+s"
+            return true
+        } catch {
+        }
+
+        try {
+            Run("ms-screenclip:", , "Hide")
+            return true
         } catch {
         }
 

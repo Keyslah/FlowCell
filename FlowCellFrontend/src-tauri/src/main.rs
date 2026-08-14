@@ -241,6 +241,8 @@ fn main() {
             button_state::save_button_skin_file,
             program_sources::install::install_button_source,
             program_sources::install::update_button_source,
+            program_sources::install::finalize_button_source_update,
+            program_sources::install::rollback_button_source_update,
             program_sources::synchronize::synchronize_bundled_program_sources,
             program_sources::delete::uninstall_button_source,
             program_sources::migrate::prepare_legacy_button_bootstrap,

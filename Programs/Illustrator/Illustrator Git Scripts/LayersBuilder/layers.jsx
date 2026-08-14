@@ -248,6 +248,12 @@
         return '[' + parts.join(',') + ']';
     }
 
+    function successSnapshot() {
+        var activeKey = keyForLayer(doc.activeLayer);
+        return '{"ok":true,"active":' + jsonString(activeKey === null ? '' : activeKey) +
+            ',"tree":' + buildTree() + '}';
+    }
+
     function asKeyList(value) {
         if (!value) {
             return [];
@@ -406,8 +412,8 @@
         return false;
     }
 
-    function selectedArtworkItems() {
-        var selection = normalizedSelection(doc.selection);
+    function normalizedArtworkItems(value) {
+        var selection = normalizedSelection(value);
         var candidates = [];
         var i;
         for (i = 0; i < selection.length; i += 1) {
@@ -442,7 +448,156 @@
         return topmost;
     }
 
-    function rememberArtworkState(item) {
+    function selectedArtworkItems() {
+        return normalizedArtworkItems(doc.selection);
+    }
+
+    function layerArtworkPlan(layer) {
+        var items = [];
+        var positions = [];
+        var anchors = [];
+
+        function collect(currentLayer) {
+            var localAnchors = [];
+            var i;
+            for (i = currentLayer.layers.length - 1; i >= 0; i -= 1) {
+                var childLayer = currentLayer.layers[i];
+                var sourceAnchor = currentLayer.groupItems.add();
+                var anchorRecord = {
+                    sourceLayer: childLayer,
+                    sourceAnchor: sourceAnchor
+                };
+                anchors.push(anchorRecord);
+                localAnchors.push(anchorRecord);
+                sourceAnchor.move(childLayer, ElementPlacement.PLACEBEFORE);
+            }
+
+            var directItems = directPageItems(currentLayer);
+            var entries = [];
+            for (i = 0; i < directItems.length; i += 1) {
+                var anchor = findLayerAnchor(localAnchors, directItems[i]);
+                entries.push(anchor ? anchor.sourceLayer : directItems[i]);
+            }
+            for (i = 0; i < entries.length; i += 1) {
+                if (entries[i].typename === 'Layer') {
+                    collect(entries[i]);
+                } else {
+                    items.push(entries[i]);
+                    positions.push({
+                        item: entries[i],
+                        parent: currentLayer,
+                        previousSibling: i > 0 ? entries[i - 1] : null,
+                        nextSibling: i + 1 < entries.length ? entries[i + 1] : null
+                    });
+                }
+            }
+        }
+
+        var collectionError = null;
+        var cleanupError = null;
+        try {
+            collect(layer);
+        } catch (planError) {
+            collectionError = planError;
+        }
+        for (var i = anchors.length - 1; i >= 0; i -= 1) {
+            try {
+                anchors[i].sourceAnchor.remove();
+            } catch (anchorCleanupError) {
+                if (!cleanupError) {
+                    cleanupError = anchorCleanupError;
+                }
+            }
+        }
+        if (collectionError) {
+            if (cleanupError) {
+                throw new Error(
+                    String(collectionError) +
+                    ' Temporary artwork-order marker cleanup also failed: ' +
+                    String(cleanupError)
+                );
+            }
+            throw collectionError;
+        }
+        if (cleanupError) {
+            throw new Error(
+                'Temporary artwork-order marker cleanup failed: ' + String(cleanupError)
+            );
+        }
+        // Each directPageItems() pass is parent-filtered and each child Layer is
+        // visited once, so this plan is already unique and topmost in visual order.
+        return { items: items, positions: positions };
+    }
+
+    function clearArtworkSelection() {
+        var previousSelection = normalizedArtworkItems(doc.selection);
+        try { doc.selection = null; } catch (clearSelectionError) {}
+        for (var i = 0; i < previousSelection.length; i += 1) {
+            try { previousSelection[i].selected = false; } catch (clearItemError) {}
+        }
+        for (var j = 0; j < previousSelection.length; j += 1) {
+            try {
+                if (previousSelection[j].selected) {
+                    return false;
+                }
+            } catch (readClearedItemError) {
+                return false;
+            }
+        }
+        return normalizedArtworkItems(doc.selection).length === 0;
+    }
+
+    function selectArtworkItems(items) {
+        if (!clearArtworkSelection()) {
+            return -1;
+        }
+        var selectedCount = 0;
+        for (var i = 0; i < items.length; i += 1) {
+            try {
+                items[i].selected = true;
+                if (items[i].selected) {
+                    selectedCount += 1;
+                }
+            } catch (selectItemError) {}
+        }
+        return selectedCount;
+    }
+
+    function artworkItemCanRemainSelected(item) {
+        try {
+            if (item.hidden || item.locked) {
+                return false;
+            }
+        } catch (itemStateError) {
+            return false;
+        }
+        var layer = owningLayerForSelectedObject(item);
+        while (layer && layer.typename === 'Layer') {
+            try {
+                if (layer.locked || !layer.visible) {
+                    return false;
+                }
+            } catch (layerStateError) {
+                return false;
+            }
+            layer = (layer.parent && layer.parent.typename === 'Layer') ? layer.parent : null;
+        }
+        return true;
+    }
+
+    function selectedArtworkItemCount(items) {
+        var selectedCount = 0;
+        for (var i = 0; i < items.length; i += 1) {
+            try {
+                if (items[i].selected) {
+                    selectedCount += 1;
+                }
+            } catch (readSelectionError) {}
+        }
+        return selectedCount;
+    }
+
+    function rememberArtworkState(item, plannedPosition) {
         var state = {
             item: item,
             parent: null,
@@ -451,10 +606,19 @@
             locked: false,
             hidden: false
         };
-        try { state.parent = item.parent; } catch (parentError) {}
+        if (plannedPosition) {
+            state.parent = plannedPosition.parent;
+            state.previousSibling = plannedPosition.previousSibling;
+            state.nextSibling = plannedPosition.nextSibling;
+        } else {
+            try { state.parent = item.parent; } catch (parentError) {}
+        }
         try { state.locked = item.locked ? true : false; } catch (lockedError) {}
         try { state.hidden = item.hidden ? true : false; } catch (hiddenError) {}
         try {
+            if (plannedPosition) {
+                return state;
+            }
             if (state.parent && state.parent.pageItems) {
                 var directItems = [];
                 for (var i = 0; i < state.parent.pageItems.length; i += 1) {
@@ -795,6 +959,21 @@
             for (var v = 0; v < visTargets.length; v += 1) {
                 visTargets[v].layer.visible = visValue;
             }
+        } else if (op === 'activate') {
+            // The Layer Tree row body maps to Illustrator's native active layer
+            // only. It must not replace the user's artwork selection; the
+            // right-side target controls remain the explicit select-artwork path.
+            var activateLayer = resolveLayerByKey(args.key);
+            if (!activateLayer) {
+                return fail('Layer to activate was not found.');
+            }
+            var activateLayerStates = [];
+            try {
+                openAncestors(activateLayer, activateLayerStates);
+                doc.activeLayer = activateLayer;
+            } finally {
+                restoreLayerStates(activateLayerStates);
+            }
         } else if (op === 'select') {
             // Illustrator-style "target" click: select all artwork on the layer
             // (and its sublayers), temporarily unlocking/unhiding so it can be
@@ -810,117 +989,152 @@
                 openAncestors(selectLayer, selectLayerStates);
                 openSubtree(selectLayer, selectLayerStates);
                 collectPageItems(selectLayer, selectItems, selectItemStates);
-                try { doc.selection = null; } catch (clearSel) {}
-                if (selectItems.length > 0) {
-                    try { doc.selection = selectItems; } catch (setSel) {}
+                selectItems = normalizedArtworkItems(selectItems);
+                if (selectArtworkItems(selectItems) !== selectItems.length) {
+                    throw new Error('Illustrator did not select every layer artwork item.');
                 }
                 try { doc.activeLayer = selectLayer; } catch (setActive) {}
             } finally {
                 restorePageItemStates(selectItemStates);
                 restoreLayerStates(selectLayerStates);
             }
+            if (
+                selectItems.length > 0 &&
+                selectedArtworkItemCount(selectItems) !== selectItems.length
+            ) {
+                selectArtworkItems([]);
+                throw new Error(
+                    'Illustrator could not retain the complete layer artwork selection.'
+                );
+            }
         } else if (op === 'placeartwork') {
+            var artworkSourceKey = args.sourceKey ? String(args.sourceKey) : '';
+            var artworkSourceLayer = artworkSourceKey
+                ? resolveLayerByKey(artworkSourceKey)
+                : null;
+            if (artworkSourceKey && !artworkSourceLayer) {
+                return fail('Artwork source layer was not found.');
+            }
             var artworkTargetKey = args.targetKey ? String(args.targetKey) : '';
             var artworkTargetLayer = resolveLayerByKey(artworkTargetKey);
             if (!artworkTargetLayer) {
                 return fail('Artwork target layer was not found.');
             }
-            var artworkItems = selectedArtworkItems();
-            if (artworkItems.length === 0) {
-                return fail('Select one or more Illustrator objects before dragging the selection square.');
-            }
+            var sameArtworkLayer = artworkSourceKey !== '' &&
+                artworkSourceKey === artworkTargetKey;
             var copyArtwork = args.copy ? true : false;
+            if (sameArtworkLayer && !copyArtwork) {
+                return successSnapshot();
+            }
             var artworkPreviousActiveLayer = doc.activeLayer;
             var artworkLayerStates = [];
             var artworkStates = [];
             var completedArtwork = [];
             var copiedArtworkSelection = [];
+            var placedArtworkSelection = [];
+            var artworkItems = [];
+            var artworkPositions = [];
             var artworkIndex;
-            for (artworkIndex = 0; artworkIndex < artworkItems.length; artworkIndex += 1) {
-                var artworkState = rememberArtworkState(artworkItems[artworkIndex]);
-                if (!artworkState.parent) {
-                    return fail('A selected Illustrator object does not have a movable parent.');
-                }
-                artworkStates.push(artworkState);
-            }
-            for (artworkIndex = 0; artworkIndex < artworkItems.length; artworkIndex += 1) {
-                var artworkSourceLayer = owningLayerForSelectedObject(artworkItems[artworkIndex]);
+            try {
                 if (artworkSourceLayer) {
                     openAncestors(artworkSourceLayer, artworkLayerStates);
+                    openSubtree(artworkSourceLayer, artworkLayerStates);
+                    var artworkPlan = layerArtworkPlan(artworkSourceLayer);
+                    artworkItems = artworkPlan.items;
+                    artworkPositions = artworkPlan.positions;
+                } else {
+                    artworkItems = selectedArtworkItems();
                 }
-            }
-            openAncestors(artworkTargetLayer, artworkLayerStates);
-            try {
-                // PLACEATBEGINNING reverses each insertion, so walk the
-                // selection backward to retain its order in the target layer.
-                for (artworkIndex = artworkStates.length - 1; artworkIndex >= 0; artworkIndex -= 1) {
-                    var currentArtworkState = artworkStates[artworkIndex];
-                    openArtworkItem(currentArtworkState);
-                    if (copyArtwork) {
-                        var copiedArtwork = currentArtworkState.item.duplicate(
-                            artworkTargetLayer,
-                            ElementPlacement.PLACEATBEGINNING
-                        );
-                        completedArtwork.push({
-                            item: copiedArtwork,
-                            state: currentArtworkState,
-                            copied: true
-                        });
-                        copiedArtworkSelection.unshift(copiedArtwork);
-                        try { copiedArtwork.hidden = currentArtworkState.hidden; } catch (copyHiddenError) {}
-                        try { copiedArtwork.locked = currentArtworkState.locked; } catch (copyLockedError) {}
-                    } else {
-                        if (owningLayerForSelectedObject(currentArtworkState.item) === artworkTargetLayer) {
-                            continue;
-                        }
-                        currentArtworkState.item.move(
-                            artworkTargetLayer,
-                            ElementPlacement.PLACEATBEGINNING
-                        );
-                        completedArtwork.push({
-                            item: currentArtworkState.item,
-                            state: currentArtworkState,
-                            copied: false
-                        });
-                    }
-                }
-                if (copyArtwork) {
-                    try {
-                        doc.selection = null;
-                        doc.selection = copiedArtworkSelection;
-                    } catch (copySelectionError) {
-                        try { doc.selection = artworkItems; } catch (restoreSelectionError) {}
-                    }
-                }
-                try { doc.activeLayer = artworkTargetLayer; } catch (activeLayerError) {}
-            } catch (artworkError) {
-                var artworkRollbackFailed = false;
-                for (var rollbackIndex = completedArtwork.length - 1; rollbackIndex >= 0; rollbackIndex -= 1) {
-                    try {
-                        completedArtwork[rollbackIndex].item.locked = false;
-                    } catch (rollbackUnlockError) {}
-                    try {
-                        completedArtwork[rollbackIndex].item.hidden = false;
-                    } catch (rollbackShowError) {}
-                    try {
-                        if (completedArtwork[rollbackIndex].copied) {
-                            completedArtwork[rollbackIndex].item.remove();
-                        } else {
-                            restoreArtworkParent(completedArtwork[rollbackIndex].state);
-                        }
-                    } catch (artworkRollbackError) {
-                        artworkRollbackFailed = true;
-                    }
-                }
-                try { doc.selection = artworkItems; } catch (rollbackSelectionError) {}
-                try { doc.activeLayer = artworkPreviousActiveLayer; } catch (rollbackActiveLayerError) {}
-                if (artworkRollbackFailed) {
+                if (artworkItems.length === 0) {
                     throw new Error(
-                        String(artworkError) +
-                        ' Artwork rollback could not restore every completed item.'
+                        artworkSourceLayer
+                            ? 'The dragged layer does not contain artwork.'
+                            : 'Select one or more Illustrator objects before dragging the selection square.'
                     );
                 }
-                throw artworkError;
+                for (artworkIndex = 0; artworkIndex < artworkItems.length; artworkIndex += 1) {
+                    var artworkState = rememberArtworkState(
+                        artworkItems[artworkIndex],
+                        artworkSourceLayer ? artworkPositions[artworkIndex] : null
+                    );
+                    if (!artworkState.parent) {
+                        throw new Error('A selected Illustrator object does not have a movable parent.');
+                    }
+                    artworkStates.push(artworkState);
+                }
+                for (artworkIndex = 0; artworkIndex < artworkItems.length; artworkIndex += 1) {
+                    var itemSourceLayer = owningLayerForSelectedObject(artworkItems[artworkIndex]);
+                    if (itemSourceLayer) {
+                        openAncestors(itemSourceLayer, artworkLayerStates);
+                    }
+                }
+                openAncestors(artworkTargetLayer, artworkLayerStates);
+                try {
+                    // PLACEATBEGINNING reverses each insertion, so walk the
+                    // source artwork backward to retain its visual order in the target layer.
+                    for (artworkIndex = artworkStates.length - 1; artworkIndex >= 0; artworkIndex -= 1) {
+                        var currentArtworkState = artworkStates[artworkIndex];
+                        openArtworkItem(currentArtworkState);
+                        if (copyArtwork) {
+                            var copiedArtwork = currentArtworkState.item.duplicate(
+                                artworkTargetLayer,
+                                ElementPlacement.PLACEATBEGINNING
+                            );
+                            completedArtwork.push({
+                                item: copiedArtwork,
+                                state: currentArtworkState,
+                                copied: true
+                            });
+                            copiedArtworkSelection.unshift(copiedArtwork);
+                            try { copiedArtwork.hidden = currentArtworkState.hidden; } catch (copyHiddenError) {}
+                            try { copiedArtwork.locked = currentArtworkState.locked; } catch (copyLockedError) {}
+                        } else {
+                            if (
+                                owningLayerForSelectedObject(currentArtworkState.item) === artworkTargetLayer
+                            ) {
+                                continue;
+                            }
+                            currentArtworkState.item.move(
+                                artworkTargetLayer,
+                                ElementPlacement.PLACEATBEGINNING
+                            );
+                            completedArtwork.push({
+                                item: currentArtworkState.item,
+                                state: currentArtworkState,
+                                copied: false
+                            });
+                        }
+                    }
+                    placedArtworkSelection = copyArtwork ? copiedArtworkSelection : artworkItems;
+                    try { doc.activeLayer = artworkTargetLayer; } catch (activeLayerError) {}
+                } catch (artworkError) {
+                    var artworkRollbackFailed = false;
+                    for (var rollbackIndex = completedArtwork.length - 1; rollbackIndex >= 0; rollbackIndex -= 1) {
+                        try {
+                            completedArtwork[rollbackIndex].item.locked = false;
+                        } catch (rollbackUnlockError) {}
+                        try {
+                            completedArtwork[rollbackIndex].item.hidden = false;
+                        } catch (rollbackShowError) {}
+                        try {
+                            if (completedArtwork[rollbackIndex].copied) {
+                                completedArtwork[rollbackIndex].item.remove();
+                            } else {
+                                restoreArtworkParent(completedArtwork[rollbackIndex].state);
+                            }
+                        } catch (artworkRollbackError) {
+                            artworkRollbackFailed = true;
+                        }
+                    }
+                    try { doc.activeLayer = artworkPreviousActiveLayer; } catch (rollbackActiveLayerError) {}
+                    if (artworkRollbackFailed) {
+                        throw new Error(
+                            String(artworkError) +
+                            ' Artwork rollback could not restore every completed item.'
+                        );
+                    }
+                    throw artworkError;
+                }
             } finally {
                 for (var restoreArtworkIndex = 0;
                     restoreArtworkIndex < artworkStates.length;
@@ -928,6 +1142,15 @@
                     restoreArtworkState(artworkStates[restoreArtworkIndex]);
                 }
                 restoreLayerStates(artworkLayerStates);
+            }
+            var selectableArtwork = [];
+            for (artworkIndex = 0; artworkIndex < placedArtworkSelection.length; artworkIndex += 1) {
+                if (artworkItemCanRemainSelected(placedArtworkSelection[artworkIndex])) {
+                    selectableArtwork.push(placedArtworkSelection[artworkIndex]);
+                }
+            }
+            if (selectArtworkItems(selectableArtwork) !== selectableArtwork.length) {
+                clearArtworkSelection();
             }
         } else if (op === 'move') {
             var moveLayer = resolveLayerByKey(args.key);
@@ -967,9 +1190,7 @@
 
         app.redraw();
 
-        var activeKey = keyForLayer(doc.activeLayer);
-        return '{"ok":true,"active":' + jsonString(activeKey === null ? '' : activeKey) +
-            ',"tree":' + buildTree() + '}';
+        return successSnapshot();
     } catch (error) {
         return fail(error && error.message ? error.message : String(error));
     }

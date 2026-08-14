@@ -117,7 +117,6 @@ Label=Registered
                 programKey = 'registered'
                 installScript = $InstallScript
                 deleteScript = ''
-                capabilityScript = ''
             }
         }
         $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $registeredProgramRoot 'flowcell.program.json') -Encoding UTF8

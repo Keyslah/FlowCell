@@ -126,7 +126,7 @@ function Assert-ProgramManifestReferencesTracked(
 ) {
   $supportScriptsFolder = Convert-ToSafeRelativeFolder ([string]$Manifest.supportScriptsFolder) 'supportScriptsFolder' $ProgramDirectory.Name
   if ($Manifest.PSObject.Properties['runner'] -and $null -ne $Manifest.runner) {
-    foreach ($runnerField in @('installScript', 'deleteScript', 'capabilityScript')) {
+    foreach ($runnerField in @('installScript', 'deleteScript')) {
       if (-not $Manifest.runner.PSObject.Properties[$runnerField]) {
         continue
       }

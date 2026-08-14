@@ -300,6 +300,22 @@ function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function revealInstalledPageError(
+  reason: unknown,
+  isDisposed: () => boolean,
+  reveal: (message: string) => void
+): Promise<void> {
+  if (isDisposed()) return;
+  const message = formatError(reason);
+  try {
+    await invoke<void>("unmount_installed_page_webview");
+  } catch {
+    if (!isDisposed()) await getCurrentWindow().destroy().catch(() => {});
+    return;
+  }
+  if (!isDisposed()) reveal(message);
+}
+
 export default function InstalledPageWindowPage({
   context
 }: {
@@ -351,6 +367,14 @@ export default function InstalledPageWindowPage({
     let unlistenResize: UnlistenFn | null = null;
     let isolationProofReceived = false;
     let isolationProofTimeout: ReturnType<typeof setTimeout> | null = null;
+    const currentWindow = getCurrentWindow();
+    const failPage = (reason: unknown) => {
+      void revealInstalledPageError(reason, () => disposed, (message) => {
+        setDescriptor(null);
+        setIsolationVerified(false);
+        setError(message);
+      });
+    };
     const postToPage = (message: Record<string, unknown>) =>
       invoke<void>("post_installed_page_webview_message", {
         messageJson: JSON.stringify(message)
@@ -367,7 +391,7 @@ export default function InstalledPageWindowPage({
           ok: false,
           error: "Page action payload exceeds the 1 MiB request limit."
         }).catch((reason) => {
-          if (!disposed) setError(formatError(reason));
+          if (!disposed) failPage(reason);
         });
         return;
       }
@@ -415,7 +439,7 @@ export default function InstalledPageWindowPage({
           ok: false,
           error: formatError(reason)
         }).catch((postReason) => {
-          if (!disposed) setError(formatError(postReason));
+          if (!disposed) failPage(postReason);
         });
       });
     };
@@ -445,8 +469,7 @@ export default function InstalledPageWindowPage({
               message.hasRawWryIpc;
             setIsolationVerified(verified);
             if (!verified) {
-              setError("Installed page isolation failed closed because its default execution context was not isolated.");
-              void invoke("unmount_installed_page_webview").catch(() => {});
+              failPage("Installed page isolation failed closed because its default execution context was not isolated.");
             }
             return;
           }
@@ -458,18 +481,26 @@ export default function InstalledPageWindowPage({
         return;
       }
       unlistenNative = disposeNative;
-      const currentWindow = getCurrentWindow();
       const disposeClose = await currentWindow.onCloseRequested((event) => {
         event.preventDefault();
         if (closeInProgressRef.current) return;
         closeInProgressRef.current = true;
-        void invoke<void>("unmount_installed_page_webview").then(async () => {
-          if (!disposed) await currentWindow.destroy();
-        }).catch((reason) => {
-          if (!disposed) setError(formatError(reason));
-        }).finally(() => {
-          closeInProgressRef.current = false;
-        });
+        void (async () => {
+          let childUnmounted = false;
+          try {
+            await invoke<void>("unmount_installed_page_webview");
+            childUnmounted = true;
+          } catch {
+            // Destroying the parent is the safe fallback when the raw child cannot unmount.
+          }
+          try {
+            await currentWindow.destroy();
+          } catch (reason) {
+            if (childUnmounted && !disposed) setError(formatError(reason));
+          } finally {
+            closeInProgressRef.current = false;
+          }
+        })();
       });
       if (disposed) {
         disposeClose();
@@ -489,9 +520,7 @@ export default function InstalledPageWindowPage({
         isolationProofTimeout = setTimeout(() => {
           isolationProofTimeout = null;
           if (disposed || isolationProofReceived) return;
-          setIsolationVerified(false);
-          setError("Installed page isolation failed closed because its default-world proof was not received.");
-          void invoke("unmount_installed_page_webview").catch(() => {});
+          failPage("Installed page isolation failed closed because its default-world proof was not received.");
         }, 5_000);
       }
       const disposeResize = await currentWindow.onResized(({ payload }) => {
@@ -499,16 +528,12 @@ export default function InstalledPageWindowPage({
           width: payload.width,
           height: payload.height
         }).catch((reason) => {
-          if (!disposed) setError(formatError(reason));
+          if (!disposed) failPage(reason);
         });
       });
       if (disposed) disposeResize(); else unlistenResize = disposeResize;
     })().catch((reason) => {
-      if (!disposed) {
-        setIsolationVerified(false);
-        setError(formatError(reason));
-      }
-      void invoke("unmount_installed_page_webview").catch(() => {});
+      if (!disposed) failPage(reason);
     });
     return () => {
       disposed = true;
@@ -524,6 +549,13 @@ export default function InstalledPageWindowPage({
     if (!descriptor || !isolationVerified || descriptor.refreshEvents.length === 0) return;
     let disposed = false;
     const unlisten: UnlistenFn[] = [];
+    const failPage = (reason: unknown) => {
+      void revealInstalledPageError(reason, () => disposed, (message) => {
+        setDescriptor(null);
+        setIsolationVerified(false);
+        setError(message);
+      });
+    };
     void Promise.all(descriptor.refreshEvents.map(async (eventId) => {
       const dispose = await listen<unknown>(eventId, (event) => {
         void invoke("post_installed_page_webview_message", {
@@ -535,12 +567,12 @@ export default function InstalledPageWindowPage({
             payload: event.payload
           })
         }).catch((reason) => {
-          if (!disposed) setError(formatError(reason));
+          if (!disposed) failPage(reason);
         });
       });
       if (disposed) dispose(); else unlisten.push(dispose);
     })).catch((reason) => {
-      if (!disposed) setError(formatError(reason));
+      if (!disposed) failPage(reason);
     });
     return () => {
       disposed = true;

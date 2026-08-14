@@ -574,7 +574,7 @@ test("New Sub requires exactly one target and creates a direct child", () => {
 
 test("Layer Tree is default-selected but never resurrected after deletion", () => {
   assert.ok(layerTreeContribution);
-  assert.equal(layerTreeContribution.version, "3.0.8");
+  assert.equal(layerTreeContribution.version, "3.0.11");
   assert.equal(layerTreeContribution.sourcePath, "Illustrator Git Scripts/LayersBuilder");
   assert.equal(layerTreeContribution.importKind, "script");
   assert.equal(layerTreeContribution.installOnAdd, true);

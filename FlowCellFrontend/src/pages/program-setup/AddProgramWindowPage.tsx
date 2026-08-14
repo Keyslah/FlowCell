@@ -30,9 +30,15 @@ import {
 import "./programSetup.css";
 
 type SetupMode = "register" | "everything" | "custom";
+type SetupSource = "plain" | "package";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function inferProgramNameFromExecutable(path: string): string {
+  const fileName = path.trim().replace(/^"+|"+$/g, "").split(/[\\/]/).pop() ?? "";
+  return fileName.replace(/\.exe$/i, "").trim();
 }
 
 function sourceClosure(program: AvailableProgramPackage, seed: Iterable<string>): Set<string> {
@@ -74,8 +80,11 @@ function defaultSetup(program: AvailableProgramPackage): {
 
 export default function AddProgramWindowPage() {
   const [inventory, setInventory] = useState<AvailableProgramPackagesResponse | null>(null);
+  const [setupSource, setSetupSource] = useState<SetupSource>("plain");
   const [selectedProgramName, setSelectedProgramName] = useState("");
   const [executablePath, setExecutablePath] = useState("");
+  const [plainProgramName, setPlainProgramName] = useState("");
+  const [plainExecutablePath, setPlainExecutablePath] = useState("");
   const [hostConfirmed, setHostConfirmed] = useState(false);
   const [mode, setMode] = useState<SetupMode>("custom");
   const [selectedPanels, setSelectedPanels] = useState<Set<string>>(new Set());
@@ -110,9 +119,11 @@ export default function AddProgramWindowPage() {
         setInventory(next);
         const first = next.packages[0];
         if (!first) {
-          setStatus("No validated, unregistered Program packages are available.");
+          setSetupSource("plain");
+          setStatus("Choose any application executable to add a Program context.");
           return;
         }
+        setSetupSource("package");
         setSelectedProgramName(first.programName);
         resetForProgram(first);
       })
@@ -134,6 +145,21 @@ export default function AddProgramWindowPage() {
     if (!program) return;
     setSelectedProgramName(program.programName);
     resetForProgram(program);
+  };
+
+  const chooseSetupSource = (nextSource: SetupSource) => {
+    setSetupSource(nextSource);
+    setHostConfirmed(false);
+    setReviewed(null);
+    if (nextSource === "plain") {
+      setStatus("Choose any application executable to add a Program context.");
+      return;
+    }
+    if (selectedProgram) {
+      resetForProgram(selectedProgram);
+    } else {
+      setStatus("No validated, unregistered managed Program packages are available.");
+    }
   };
 
   const applyMode = (nextMode: SetupMode) => {
@@ -202,10 +228,20 @@ export default function AddProgramWindowPage() {
   };
 
   const request = useMemo<AddProgramPlanRequest | null>(() => {
+    if (setupSource === "plain") {
+      return {
+        programName: plainProgramName.trim(),
+        executablePath: plainExecutablePath,
+        createPlainProgram: true,
+        selectedPanels: [],
+        selectedSources: []
+      };
+    }
     if (!selectedProgram) return null;
     return {
       programName: selectedProgram.programName,
       executablePath,
+      createPlainProgram: false,
       selectedPanels: selectedProgram.panels
         .filter((panel) => selectedPanels.has(panel.label))
         .map((panel) => panel.label),
@@ -216,16 +252,32 @@ export default function AddProgramWindowPage() {
           destinationPanel: destinations[source.id] || source.panelName
         }))
     };
-  }, [destinations, executablePath, selectedPanels, selectedProgram, selectedSources]);
+  }, [
+    destinations,
+    executablePath,
+    plainExecutablePath,
+    plainProgramName,
+    selectedPanels,
+    selectedProgram,
+    selectedSources,
+    setupSource
+  ]);
 
   const reviewPlan = async () => {
     if (!request || !hostConfirmed) return;
     setBusy(true);
     setStatus("Running read-only Program and Button-package preflight…");
+    if (setupSource === "plain") {
+      setStatus("Running read-only Program context preflight…");
+    }
     try {
       const result = await preflightAddProgramPlan(request);
       setReviewed(result);
-      setExecutablePath(result.executablePath);
+      if (setupSource === "plain") {
+        setPlainExecutablePath(result.executablePath);
+      } else {
+        setExecutablePath(result.executablePath);
+      }
       setStatus("Preflight passed. Review the exact effects below, then install.");
     } catch (error) {
       setReviewed(null);
@@ -243,13 +295,14 @@ export default function AddProgramWindowPage() {
     await getCurrentWindow().close();
   };
 
-  const installReviewedPlan = async () => {
-    if (!request || !reviewed) return;
-    setBusy(true);
+  const installValidatedPlan = async (
+    planRequest: AddProgramPlanRequest,
+    validatedPlan: AddProgramPreflight
+  ) => {
     setStatus("Applying the durable Program setup transaction…");
     let transactionToken = "";
     try {
-      const applied = await applyAddProgramPlan(request);
+      const applied = await applyAddProgramPlan(planRequest);
       transactionToken = applied.transactionToken;
       const base = await loadButtonStateDocument();
       const next = reconcileBundledProgramSources(base, applied.descriptors);
@@ -281,7 +334,7 @@ export default function AddProgramWindowPage() {
         try {
           const outcome = await rollbackAddProgramPlan(transactionToken);
           if (outcome === "finalized") {
-            await finishSuccess(reviewed.programName);
+            await finishSuccess(validatedPlan.programName);
             return;
           }
           setStatus(`Program setup failed and was fully rolled back: ${errorMessage(error)}`);
@@ -291,6 +344,34 @@ export default function AddProgramWindowPage() {
           );
         }
       }
+    }
+  };
+
+  const addPlainProgram = async () => {
+    if (!request || setupSource !== "plain") return;
+    setBusy(true);
+    setStatus("Adding the Program…");
+    try {
+      const validated = await preflightAddProgramPlan(request);
+      const validatedRequest: AddProgramPlanRequest = {
+        ...request,
+        programName: validated.programName,
+        executablePath: validated.executablePath
+      };
+      setPlainExecutablePath(validated.executablePath);
+      await installValidatedPlan(validatedRequest, validated);
+    } catch (error) {
+      setStatus(`Program setup failed: ${errorMessage(error)}`);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const installReviewedPlan = async () => {
+    if (!request || !reviewed || setupSource !== "package") return;
+    setBusy(true);
+    try {
+      await installValidatedPlan(request, reviewed);
     } finally {
       setBusy(false);
     }
@@ -307,8 +388,32 @@ export default function AddProgramWindowPage() {
         <button type="button" onClick={() => void getCurrentWindow().close()} disabled={busy}>Close</button>
       </header>
 
-      {inventory.packages.length === 0 ? (
-        <section className="program-setup__card"><p>{status}</p></section>
+      <section className="program-setup__modes" aria-label="Program source">
+        <button className={setupSource === "plain" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("plain")} disabled={busy}>Any program</button>
+        <button className={setupSource === "package" ? "is-active" : ""} type="button" onClick={() => chooseSetupSource("package")} disabled={busy || inventory.packages.length === 0}>Managed package</button>
+      </section>
+
+      {setupSource === "plain" ? (
+        <>
+          <section className="program-setup__card program-setup__grid">
+            <label>Program name
+              <input value={plainProgramName} onChange={(event) => { setPlainProgramName(event.target.value); setStatus("Choose the application executable, then add the Program."); }} disabled={busy} />
+            </label>
+            <label>Application executable
+              <div className="program-setup__inline">
+                <input value={plainExecutablePath} onChange={(event) => { setPlainExecutablePath(event.target.value); setStatus("Add the Program when the name and EXE path are ready."); }} disabled={busy} />
+                <button type="button" disabled={busy} onClick={() => void showOpenFileDialog({ title: "Choose the application executable", filter: "Applications (*.exe)|*.exe", multiselect: false }).then((paths) => {
+                  const selectedPath = paths[0];
+                  if (!selectedPath) return;
+                  setPlainExecutablePath(selectedPath);
+                  setPlainProgramName((current) => current.trim() || inferProgramNameFromExecutable(selectedPath));
+                  setStatus("Add the Program when the name and EXE path are ready.");
+                })}>Browse</button>
+              </div>
+            </label>
+          </section>
+          <footer className="program-setup__footer"><p className="program-setup__status">{status}</p><div><button className="program-setup__primary" type="button" onClick={() => void addPlainProgram()} disabled={busy || !plainProgramName.trim() || !plainExecutablePath.trim()}>Add program</button></div></footer>
+        </>
       ) : selectedProgram ? (
         <>
           <section className="program-setup__card program-setup__grid">
@@ -376,7 +481,9 @@ export default function AddProgramWindowPage() {
           {reviewed ? <section className="program-setup__card program-setup__review"><h2>Validated effects</h2><ul>{reviewed.installEffects.map((effect) => <li key={effect}>{effect}</li>)}</ul></section> : null}
           <footer className="program-setup__footer"><p className="program-setup__status">{status}</p><div>{reviewed ? <button className="program-setup__primary" type="button" onClick={() => void installReviewedPlan()} disabled={busy}>Install validated plan</button> : <button className="program-setup__primary" type="button" onClick={() => void reviewPlan()} disabled={busy || !hostConfirmed || !executablePath.trim()}>Review plan</button>}</div></footer>
         </>
-      ) : null}
+      ) : (
+        <section className="program-setup__card"><p>No validated, unregistered managed Program packages are available. Choose Any program to add an executable directly.</p></section>
+      )}
 
       {inventory.rejectedPackages.length > 0 ? <details className="program-setup__rejected"><summary>Rejected packages ({inventory.rejectedPackages.length})</summary>{inventory.rejectedPackages.map((entry) => <p key={entry.folderName}><strong>{entry.folderName}:</strong> {entry.error}</p>)}</details> : null}
     </main>

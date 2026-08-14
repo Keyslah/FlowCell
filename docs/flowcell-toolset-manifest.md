@@ -190,7 +190,9 @@ rendered by the shared Button/field surface and every interactive control maps t
 an installed child slot. A package that needs a custom page must instead use
 `flowcell.script.json` with a strict `page` declaration and the generic
 installed-page broker described in `docs/buttons.md`. There is no renderer ID,
-product-specific fallback, or alternate Tool Set execution route.
+product-specific fallback, or alternate Tool Set execution route. Layout uses a
+closed schema: unknown root or nested keys, malformed geometry/fields, and
+`layout.presentation` fail before the package is installed.
 
 ## Tool Fields
 

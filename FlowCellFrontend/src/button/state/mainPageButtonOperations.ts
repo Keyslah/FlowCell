@@ -399,6 +399,18 @@ export function ensureFlowCellMainPageButtons(
   return changed;
 }
 
+export function setFlowCellMainPageProgramButtonLabel(
+  document: ButtonStateDocument,
+  programName: string,
+  label: string
+): boolean {
+  const button = findProgramButton(document, programName);
+  const nextLabel = label.trim();
+  if (!button || !nextLabel || button.label === nextLabel) return false;
+  button.label = nextLabel;
+  return true;
+}
+
 export function renameFlowCellMainPageProgramButton(
   document: ButtonStateDocument,
   currentProgramName: string,

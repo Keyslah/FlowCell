@@ -100,6 +100,54 @@ test("selected Main Page controls remain draggable in the edit workspace", () =>
   assert.match(mainButtonHost, /top: absolute \? button\.y : undefined/);
 });
 
+test("Main preserves the validated canonical Button document when source bootstrap fails", () => {
+  const mainPage = readFileSync(
+    join(frontendRoot, "src", "pages", "main", "MainPage.tsx"),
+    "utf8"
+  );
+  const subscribeIndex = mainPage.indexOf("await subscribeButtonCommits(");
+  const sequenceIndex = mainPage.indexOf(
+    "await runButtonStateBootstrapSequence(",
+    subscribeIndex
+  );
+  const acceptIndex = mainPage.indexOf(
+    "acceptButtonDocument(initialDocument);",
+    sequenceIndex
+  );
+  assert.ok(subscribeIndex >= 0, "Main must subscribe to canonical commits");
+  assert.ok(
+    sequenceIndex > subscribeIndex,
+    "Main must subscribe before loading the canonical snapshot"
+  );
+  assert.ok(
+    acceptIndex > sequenceIndex,
+    "Main must pass snapshot acceptance through the fail-soft sequence"
+  );
+
+  const bootstrapEffectEnd = mainPage.indexOf("// Motion settings", sequenceIndex);
+  const bootstrapEffect = mainPage.slice(subscribeIndex, bootstrapEffectEnd);
+  assert.match(
+    bootstrapEffect,
+    /FlowCell kept the last valid canonical Button document and its skins\./
+  );
+  assert.match(bootstrapEffect, /setButtonBootstrapError\(/);
+  assert.doesNotMatch(bootstrapEffect, /setButtonDocument\(null\)/);
+  assert.match(
+    mainPage,
+    /buttonDocument && topLeftActionButtons\.length > 0/
+  );
+  assert.match(
+    mainPage,
+    /buttonDocument && topRightActionButtons\.length > 0/
+  );
+  assert.match(
+    mainPage,
+    /buttonDocument \? independentlyPositionedButtons\.map/
+  );
+  assert.match(mainPage, /className="main-page__bootstrap-error"/);
+  assert.match(mainPage, /role="alert"/);
+});
+
 test("Button workspace supports marquee selection and one atomic rigid group move", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const workspace = readEditorFile("ButtonWorkspace.tsx");

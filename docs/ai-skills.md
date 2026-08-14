@@ -52,10 +52,10 @@ Use this document as the repository-local routing guide for FlowCell work. Inspe
 - When `data-hit-shape` is present, keep `{{label}}` inside it so editable label input remains within the same exact shape.
 - Transparent rounded corners, clipped-out regions, unused core-wrapper space, and decorative overflow are pointer-inert. CSS masks, opacity, alpha gradients, shadows, and glow do not implicitly redefine the semantic shape.
 - Pointer ownership is host-reserved: state sections cannot declare `pointer-events`, and inline markup may use only `pointer-events:none` on decorative layers.
-- Do not add filename classifiers, program-name switches, one-off Button runtimes, or alternate Button state. Reusable tool-page renderers and capability services must be selected by validated installed manifest data.
+- Do not add filename classifiers, program-name switches, one-off Button runtimes, or alternate Button state. Installed Pages and their capability services must be selected by validated installed manifest data.
 - Do not special-case program scripts in the main page. Program-specific meaning belongs in manifests, source packages, or the relevant runner/bridge.
 - Deleting a Button must atomically remove its state graph, active record, owned Local Scripts package, owned bridge artifacts, and owned bindings. All filesystem deletion goes through the Recycle Bin.
-- Panel/program rename must migrate both native source ownership and canonical Button scope while preserving stable presentation IDs. Native folder, record, and bindings changes roll back together; if canonical persistence fails afterward, reverse the native rename unless current state proves the new scope already landed.
+- Main's Program context-menu rename changes only that canonical Program Button's visible label. It must not rename the real Program folder, manifest, registration, source identities, Panels, bindings, windows, or runner data. Panel folder rename retains the native/canonical migration transaction and stable presentation IDs.
 
 ### Workflow
 
@@ -126,7 +126,6 @@ A catalog package is a folder containing `flowcell.toolset.json`, its declared s
 - program, label, tooltip, and source
 - child `slot`, label, tooltip, and optional payload
 - optional bridge data, fields, layout, events, and a strict package-owned read-only `stateQuery`
-- optional validated page presentation metadata for a reusable renderer
 - generic runner metadata where required
 
 Core treats each child slot as command identity and merges payload in this order:
@@ -143,8 +142,9 @@ Runtime values win. Core does not interpret Blender axes, angles, solvers, color
 - Each child has role `tool-set-child`, its own label, skin, text policy, placement, and `tool-set-action` target.
 - Tool-set children render only on their tool-set popout surface. In the Button Editor they remain directly selectable on that surface but never appear as separate Button-selector entries; navigation stays on their owner.
 - The shared Button popout renderer is the only tool-set visual renderer.
-- A validated `layout.presentation` may select a reusable view inside that same canonical popout; it may not bypass `ButtonHost` execution or own separate state.
+- Tool Set `layout` accepts only the shared popout's declared grid, placement, field, behavior, and append-only update data. Unknown keys, including `layout.presentation`, fail closed; page presentation belongs in a validated `flowcell.script.json` Page package instead.
 - In Run mode, Tool Set children with `fieldPatch` and/or `toggleFields` derive their authored pressed visual from live field values: all patched values must match and all toggled fields must be true. Different fixed values for one field create ordinary radio choices. For an optional radio where every choice may be released, give each choice a Boolean toggle and patch its peers to `false`; do not add a program-specific selection store or renderer.
+- Live Tool Set field values are host-owned session state keyed by the exact unit and field schema. Preserve them across cloned-but-equivalent canonical documents; reset them only when that unit or schema actually changes.
 - Tool Set children inherit the shared Button presentation latch. An authoritative response updates the latest desired persistent state, but cannot replace a requested Pressed, Play, or Release presentation until asynchronous native preparation commits it and its finite Web Animations reach their completion signal. Pointer truth and dispatch stay immediate.
 - A Tool Set may declare `stateQuery` only against one of its own child slots, with exactly `{ "action": "status", "command": "status" }`, but normal opening/expansion does not execute it. An expanded surface resets placement cycles with `resultMatches` to State 1, then successful child responses set exact placement indices. Query execution stays package-owned, response matching stays placement-owned, and skins own neither.
 - A child with `inlineEditField` edits one hidden number/text field inside that real Button's existing HTML `{{label}}` node. Primary pointer-down anywhere in its `[data-core]` explicitly focuses the native popout, then focuses/selects that editor, not just clicks directly on the label glyphs. Keep it `execute: false` with no field service; its placement, literal skin, `[data-core]` hitbox, movement, resizing, and authored states remain canonical. Use `activationPatch` on mode Buttons when activation should reset the editable value without making that default part of selected-state matching.
@@ -171,7 +171,7 @@ Runtime values win. Core does not interpret Blender axes, angles, solvers, color
 
 - The catalog package is `Programs/Blender/Blender Git Scripts/Toolsets/theme/`.
 - Import creates a Button-owned package under `Blender Local Scripts/<ownerButtonId>/`; later catalog edits do not silently change that installed Button.
-- Theme child commands, fields, and presentation mapping are manifest data. The reusable `ThemeWorkbench` renderer is selected only by `layout.presentation.renderer`; never select it by Blender name, label, or filename.
+- Theme is an installed `flowcell.script.json` Page package. Its controls, state format, assets, and Core-capability requests remain package-owned and open through the generic installed-Page host; there is no Tool Set `layout.presentation` or `ThemeWorkbench` renderer contract.
 - Blender-side meaning remains in the installed Python source and Blender bridge.
 - Validate Python syntax and manifest JSON, then reload the live FlowCell Blender add-on after deployment changes.
 

@@ -348,12 +348,9 @@ function Ensure-ManifestProgramStructure {
         }
         $installScript = Resolve-ManifestRelativePath -Root $supportScripts -Value ([string]$manifest.runner.installScript) -Field 'runner.installScript' -AllowEmpty
         $deleteScript = Resolve-ManifestRelativePath -Root $supportScripts -Value ([string]$manifest.runner.deleteScript) -Field 'runner.deleteScript' -AllowEmpty
-        $capabilityScriptValue = if ($manifest.runner.PSObject.Properties['capabilityScript']) { [string]$manifest.runner.capabilityScript } else { '' }
-        $capabilityScript = Resolve-ManifestRelativePath -Root $supportScripts -Value $capabilityScriptValue -Field 'runner.capabilityScript' -AllowEmpty
         foreach ($requiredScript in @(
             @{ Path = $installScript; Field = 'runner.installScript' },
-            @{ Path = $deleteScript; Field = 'runner.deleteScript' },
-            @{ Path = $capabilityScript; Field = 'runner.capabilityScript' }
+            @{ Path = $deleteScript; Field = 'runner.deleteScript' }
         )) {
             if (-not [string]::IsNullOrWhiteSpace([string]$requiredScript.Path) -and
                 -not (Test-Path -LiteralPath $requiredScript.Path -PathType Leaf)) {

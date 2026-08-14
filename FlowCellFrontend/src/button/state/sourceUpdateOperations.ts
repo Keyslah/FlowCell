@@ -11,6 +11,7 @@ import {
 } from "../geometry/buttonGeometry.js";
 import type { InstallButtonSourceResult } from "./ButtonStateRepository.js";
 import { cloneButtonDocument } from "./buttonDefaults.js";
+import { validateInstalledButtonLayout } from "./installedButtonLayoutValidation.js";
 
 function stableDocumentIdSegment(value: string): string {
   const normalized = value.trim().toLocaleLowerCase();
@@ -119,6 +120,7 @@ export function applyInstalledSourceUpdate(
   document: ButtonStateDocument,
   installed: InstallButtonSourceResult
 ): void {
+  const layout = validateInstalledButtonLayout(installed.layout);
   const owner = document.buttons[installed.ownerButtonId];
   if (!owner?.sourceIdentity) {
     throw new Error(`Button '${installed.ownerButtonId}' is not an installed source owner.`);
@@ -130,6 +132,12 @@ export function applyInstalledSourceUpdate(
     }
     owner.sourceIdentity = installed.sourceIdentity;
     owner.executionTarget = installed.executionTarget;
+    if (installed.updateTransactionToken) {
+      owner.metadata = {
+        ...owner.metadata,
+        flowcellSourceRevision: installed.updateTransactionToken
+      };
+    }
     return;
   }
 
@@ -157,7 +165,7 @@ export function applyInstalledSourceUpdate(
     childIdBySlot.set(slot, childId);
   }
   const incomingSlots = new Set(installed.children.map((child) => normalizedSlot(child.slot)));
-  const appendMissingSlots = installed.layout?.updatePolicy?.appendMissingChildSlots === true;
+  const appendMissingSlots = layout?.updatePolicy?.appendMissingChildSlots === true;
   if (
     incomingSlots.size !== installed.children.length ||
     [...childIdBySlot.keys()].some((slot) => !incomingSlots.has(slot)) ||
@@ -175,12 +183,12 @@ export function applyInstalledSourceUpdate(
     const childButton = document.buttons[childIdBySlot.get(normalizedSlot(child.slot))!];
     childButton.executionTarget = child.executionTarget;
     childButton.toolSetBehavior = cloneButtonDocument(
-      installed.layout?.childBehaviors?.[child.slot] ?? null
+      layout?.childBehaviors?.[child.slot] ?? null
     );
     childButton.metadata = {
       ...childButton.metadata,
       toolSetSlot: child.slot
     };
   }
-  unit.fields = cloneButtonDocument(installed.layout?.fields ?? []);
+  unit.fields = cloneButtonDocument(layout?.fields ?? []);
 }

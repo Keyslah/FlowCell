@@ -105,8 +105,6 @@ pub(crate) struct ProgramRunnerManifest {
     pub install_script: String,
     #[serde(default)]
     pub delete_script: String,
-    #[serde(default)]
-    pub capability_script: String,
 }
 
 pub(crate) fn normalize_import_kind(value: &str) -> Result<&'static str, String> {
@@ -371,11 +369,6 @@ pub(crate) fn validate_manifest(
         "runner.deleteScript",
         true,
     )?;
-    manifest.runner.capability_script = normalize_relative_manifest_path(
-        &manifest.runner.capability_script,
-        "runner.capabilityScript",
-        true,
-    )?;
     match manifest.runner.kind.trim() {
         "windows-script" | "illustrator-direct" | "photoshop-direct" | "blender-bridge" => {}
         value => return Err(format!("Unsupported program runner kind '{value}'.")),
@@ -405,10 +398,6 @@ pub(crate) fn validate_manifest(
     for (value, field) in [
         (&manifest.runner.install_script, "runner.installScript"),
         (&manifest.runner.delete_script, "runner.deleteScript"),
-        (
-            &manifest.runner.capability_script,
-            "runner.capabilityScript",
-        ),
     ] {
         resolve_runner_script_path(program_root, manifest, value, field)?;
     }

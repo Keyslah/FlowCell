@@ -102,7 +102,8 @@ function mockLayer(
     preview = true,
     printable = true,
     sliced = false,
-    anchorMoveError = ""
+    anchorMoveError = "",
+    anchorRemoveError = ""
   } = {}
 ) {
   const layer = {
@@ -146,7 +147,8 @@ function mockLayer(
       return createMockPageItem(layer, "", {
         typename: "GroupItem",
         atBeginning: true,
-        moveError: anchorMoveError
+        moveError: anchorMoveError,
+        removeError: anchorRemoveError
       });
     }
   };
@@ -172,12 +174,14 @@ function createMockPageItem(
   {
     hidden = false,
     locked = false,
+    selected = false,
     opacity = 100,
     note = "",
     typename = "PathItem",
     atBeginning = false,
     duplicateError = "",
-    moveError = ""
+    moveError = "",
+    removeError = ""
   } = {}
 ) {
   const item = {
@@ -187,6 +191,7 @@ function createMockPageItem(
     layer,
     hidden,
     locked,
+    selected,
     opacity,
     note,
     duplicate(destinationLayer, placement) {
@@ -224,6 +229,7 @@ function createMockPageItem(
     remove() {
       removeMockEntry(item.parent.pageItems, item);
       removeMockEntry(item.parent._stack, item);
+      if (removeError) throw new Error(removeError);
     }
   };
   insertMockPageItem(layer, item, atBeginning ? 0 : layer._stack.length);
@@ -283,12 +289,14 @@ function runDuplicateSource(source, document, { keys = [] } = {}) {
   return runLayerTreeSource(source, document, { op: "duplicate", keys });
 }
 
-function runPlaceArtworkSource(source, document, { targetKey, copy = false }) {
-  return runLayerTreeSource(source, document, {
+function runPlaceArtworkSource(source, document, { sourceKey, targetKey, copy = false }) {
+  const args = {
     op: "placeartwork",
     targetKey,
     copy
-  });
+  };
+  if (sourceKey !== undefined) args.sourceKey = sourceKey;
+  return runLayerTreeSource(source, document, args);
 }
 
 test("Layer Tree is an ordinary self-contained page-enabled script package", async () => {
@@ -416,6 +424,7 @@ test("program actions cover every layers.jsx operation with fixed capability pay
     ["set-visible", "setvis"],
     ["move", "move"],
     ["place-selected-artwork", "placeartwork"],
+    ["activate-layer", "activate"],
     ["select-contents", "select"]
   ]);
   const programActions = actions.filter((action) => action.handler?.kind === "program");
@@ -433,6 +442,10 @@ test("program actions cover every layers.jsx operation with fixed capability pay
     assert.equal(action.responseSchema.properties.tree?.type, "array");
     assert.equal(action.responseSchema.properties.tree?.items?.additionalProperties, false);
   }
+
+  const artworkPlacement = actions.find((action) => action.id === "place-selected-artwork");
+  assert.deepEqual(artworkPlacement.requestSchema.required, ["sourceKey", "targetKey", "copy"]);
+  assert.equal(artworkPlacement.requestSchema.properties.sourceKey?.type, "string");
 
   const jsxOperations = new Set(
     [...jsx.matchAll(/\bop\s*===\s*'([^']+)'/g)].map((match) => match[1])
@@ -485,6 +498,7 @@ test("sandbox page calls only declared FlowCell actions and contains no privileg
     "set-visible",
     "move",
     "place-selected-artwork",
+    "activate-layer",
     "select-contents",
     "read-owner-state",
     "write-owner-state"
@@ -593,10 +607,15 @@ test("pointer drag bypasses native file-drop interception and maps Alt to artwor
   );
   assert.match(
     pageScript,
-    /runAction\(\s*"place-selected-artwork",\s*\{\s*targetKey:\s*targetKey,\s*copy:\s*copyArtwork\s*\}/
+    /runAction\(\s*"place-selected-artwork",\s*\{\s*sourceKey:\s*sourceKey,\s*targetKey:\s*targetKey,\s*copy:\s*copyArtwork\s*\}/
   );
   assert.match(pageScript, /releasePointerCapture\(pointerId\)/);
   assert.match(pageScript, /row\.addEventListener\("click"[\s\S]*?selectRow\(node\.key,\s*event\)/);
+  const selectRowHandler = pageScript.slice(
+    pageScript.indexOf("function selectRow"),
+    pageScript.indexOf("function applySnapshot")
+  );
+  assert.match(selectRowHandler, /next\.has\(key\)[\s\S]*?runAction\(\s*"activate-layer",\s*\{\s*key:\s*key\s*\}/);
   assert.match(pageScript, /state\.suppressNextClick\s*=\s*true[\s\S]*?window\.setTimeout/);
   assert.ok(
     finishHandler.indexOf("armPointerClickSuppression();") <
@@ -610,6 +629,212 @@ test("pointer drag bypasses native file-drop interception and maps Alt to artwor
   assert.doesNotMatch(pageScript, /\bdataTransfer\b/);
   assert.doesNotMatch(pageScript, /\.draggable\s*=/);
   assert.doesNotMatch(pageScript, /addEventListener\("(?:dragstart|dragover|drop|dragleave|dragend)"/);
+});
+
+test("target controls select layer artwork through PageItem.selected", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const child = mockLayer("Child");
+  const root = mockLayer("Root", { children: [child] });
+  const unrelatedLayer = mockLayer("Unrelated");
+  const rootItem = mockPageItem(root, "Root artwork");
+  const childItem = mockPageItem(child, "Child artwork");
+  const unrelatedItem = mockPageItem(unrelatedLayer, "Unrelated artwork", { selected: true });
+  const document = mockDocument([root, unrelatedLayer]);
+  let nativeSelection = [unrelatedItem];
+  Object.defineProperty(document, "selection", {
+    configurable: true,
+    get() {
+      return nativeSelection;
+    },
+    set(value) {
+      if (value === null) {
+        rootItem.selected = false;
+        childItem.selected = false;
+        unrelatedItem.selected = false;
+        nativeSelection = [];
+      }
+      // Illustrator selection is driven through PageItem.selected. Deliberately
+      // ignore array assignment so this test rejects the old silent no-op path.
+    }
+  });
+
+  const result = runLayerTreeSource(source, document, { op: "select", key: "0" });
+
+  assert.equal(result.ok, true);
+  assert.equal(rootItem.selected, true);
+  assert.equal(childItem.selected, true);
+  assert.equal(unrelatedItem.selected, false);
+  assert.equal(document.activeLayer, root);
+});
+
+test("row activation changes the native active layer without replacing artwork selection", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const root = mockLayer("Root");
+  const unrelatedLayer = mockLayer("Unrelated");
+  const unrelatedItem = mockPageItem(unrelatedLayer, "Unrelated artwork", { selected: true });
+  const document = mockDocument([root, unrelatedLayer]);
+  document.selection = [unrelatedItem];
+
+  const result = runLayerTreeSource(source, document, { op: "activate", key: "0" });
+
+  assert.equal(result.ok, true);
+  assert.equal(document.activeLayer, root);
+  assert.equal(unrelatedItem.selected, true);
+  assert.deepEqual(document.selection, [unrelatedItem]);
+});
+
+test("target controls fail instead of reporting a selection that state restoration removed", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const root = mockLayer("Locked artwork");
+  const item = mockPageItem(root, "Locked", { locked: true });
+  let locked = true;
+  Object.defineProperty(item, "locked", {
+    configurable: true,
+    get() {
+      return locked;
+    },
+    set(value) {
+      locked = Boolean(value);
+      if (locked) item.selected = false;
+    }
+  });
+  const document = mockDocument([root]);
+
+  const result = runLayerTreeSource(source, document, { op: "select", key: "0" });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /could not retain the complete layer artwork selection/i);
+  assert.equal(item.locked, true);
+  assert.equal(item.selected, false);
+});
+
+test("target controls fail when Illustrator cannot clear an unrelated artwork selection", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const root = mockLayer("Root");
+  mockPageItem(root, "Root artwork");
+  const unrelatedLayer = mockLayer("Unrelated");
+  const unrelatedItem = mockPageItem(unrelatedLayer, "Stuck selection", { selected: true });
+  const document = mockDocument([root, unrelatedLayer]);
+  Object.defineProperty(unrelatedItem, "selected", {
+    configurable: true,
+    get() {
+      return true;
+    },
+    set() {}
+  });
+  Object.defineProperty(document, "selection", {
+    configurable: true,
+    get() {
+      return [unrelatedItem];
+    },
+    set() {}
+  });
+
+  const result = runLayerTreeSource(source, document, { op: "select", key: "0" });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /did not select every layer artwork item/i);
+  assert.equal(unrelatedItem.selected, true);
+});
+
+test("artwork square source key moves its row artwork without a prior selection", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const childLayer = mockLayer("Child");
+  const sourceLayer = mockLayer("Source", { children: [childLayer] });
+  const first = mockPageItem(sourceLayer, "First");
+  const second = mockPageItem(sourceLayer, "Second");
+  const nested = mockPageItem(childLayer, "Nested");
+  const target = mockLayer("Target");
+  const targetTail = mockPageItem(target, "Target tail");
+  const unrelatedLayer = mockLayer("Unrelated");
+  const unrelated = mockPageItem(unrelatedLayer, "Unrelated", { selected: true });
+  setMockStack(sourceLayer, [first, childLayer, second]);
+  const document = mockDocument([sourceLayer, target, unrelatedLayer]);
+  document.selection = [unrelated];
+
+  const result = runPlaceArtworkSource(source, document, {
+    sourceKey: "0",
+    targetKey: "1",
+    copy: false
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sourceLayer._stack, [childLayer]);
+  assert.deepEqual(childLayer._stack, []);
+  assert.deepEqual(
+    target._stack.map((item) => item.name),
+    ["First", "Nested", "Second", "Target tail"]
+  );
+  assert.equal(first.selected, true);
+  assert.equal(second.selected, true);
+  assert.equal(nested.selected, true);
+  assert.equal(unrelated.parent, unrelatedLayer);
+  assert.equal(unrelated.selected, false);
+  assert.equal(target._stack.at(-1), targetTail);
+  assert.equal(document.activeLayer, target);
+});
+
+test("a direct source-key drop onto the same row is an exact no-op", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const childLayer = mockLayer("Child");
+  const sourceLayer = mockLayer("Source", {
+    children: [childLayer],
+    locked: true,
+    visible: false
+  });
+  const first = mockPageItem(sourceLayer, "First");
+  const nested = mockPageItem(childLayer, "Nested");
+  const second = mockPageItem(sourceLayer, "Second");
+  setMockStack(sourceLayer, [first, childLayer, second]);
+  sourceLayer.groupItems.add = () => {
+    throw new Error("same-row no-op must not create an ordering marker");
+  };
+  const unrelatedLayer = mockLayer("Unrelated");
+  const unrelated = mockPageItem(unrelatedLayer, "Keep selected", { selected: true });
+  const document = mockDocument([sourceLayer, unrelatedLayer]);
+  document.activeLayer = unrelatedLayer;
+  document.selection = [unrelated];
+
+  const result = runPlaceArtworkSource(source, document, {
+    sourceKey: "0",
+    targetKey: "0",
+    copy: false
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(sourceLayer._stack, [first, childLayer, second]);
+  assert.deepEqual(childLayer._stack, [nested]);
+  assert.equal(sourceLayer.locked, true);
+  assert.equal(sourceLayer.visible, false);
+  assert.deepEqual(document.selection, [unrelated]);
+  assert.equal(unrelated.selected, true);
+  assert.equal(document.activeLayer, unrelatedLayer);
+});
+
+test("direct artwork planning fails before moving when a temporary ordering marker cannot clean up", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const childLayer = mockLayer("Child");
+  mockPageItem(childLayer, "Nested");
+  const sourceLayer = mockLayer("Source", {
+    children: [childLayer],
+    anchorRemoveError: "marker cleanup stopped"
+  });
+  const direct = mockPageItem(sourceLayer, "Direct");
+  setMockStack(sourceLayer, [childLayer, direct]);
+  const target = mockLayer("Target");
+  const targetTail = mockPageItem(target, "Target tail");
+  const document = mockDocument([sourceLayer, target]);
+
+  const result = runPlaceArtworkSource(source, document, {
+    sourceKey: "0",
+    targetKey: "1",
+    copy: false
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /temporary artwork-order marker cleanup failed/i);
+  assert.deepEqual(sourceLayer._stack, [childLayer, direct]);
+  assert.deepEqual(target._stack, [targetTail]);
 });
 
 test("selected artwork drops move current Illustrator selection and restore item and layer state", async () => {
@@ -679,9 +904,10 @@ test("selected artwork drops move current Illustrator selection and restore item
   assert.equal(sameLayerDocument.activeLayer, sameLayer);
 });
 
-test("Alt artwork drops copy selected objects without copying or moving their source layers", async () => {
+test("Alt artwork square drops copy its row artwork without moving the source layer", async () => {
   const source = await readFile(jsxPath, "utf8");
-  const sourceLayer = mockLayer("Source");
+  const childLayer = mockLayer("Child");
+  const sourceLayer = mockLayer("Source", { children: [childLayer] });
   const first = mockPageItem(sourceLayer, "First", {
     hidden: true,
     locked: true,
@@ -692,52 +918,69 @@ test("Alt artwork drops copy selected objects without copying or moving their so
     opacity: 81,
     note: "second-copy"
   });
+  const nested = mockPageItem(childLayer, "Nested");
+  setMockStack(sourceLayer, [first, childLayer, second]);
   const target = mockLayer("Target", { locked: true, visible: false });
+  const targetTail = mockPageItem(target, "Target tail");
   const document = mockDocument([sourceLayer, target]);
-  document.selection = [first, second];
+  document.selection = null;
 
   const result = runPlaceArtworkSource(source, document, {
+    sourceKey: "0",
     targetKey: "1",
     copy: true
   });
 
   assert.equal(result.ok, true);
-  assert.deepEqual(sourceLayer._stack.map((item) => item.name), ["First", "Second"]);
-  assert.deepEqual(target._stack.map((item) => item.name), ["First", "Second"]);
+  assert.deepEqual(sourceLayer._stack, [first, childLayer, second]);
+  assert.deepEqual(childLayer._stack, [nested]);
+  assert.deepEqual(
+    target._stack.map((item) => item.name),
+    ["First", "Nested", "Second", "Target tail"]
+  );
   assert.notEqual(target._stack[0], first);
-  assert.notEqual(target._stack[1], second);
+  assert.notEqual(target._stack[2], second);
   assert.equal(target._stack[0].hidden, true);
   assert.equal(target._stack[0].locked, true);
   assert.equal(target._stack[0].opacity, 34);
   assert.equal(target._stack[0].note, "first-copy");
-  assert.equal(target._stack[1].opacity, 81);
-  assert.equal(target._stack[1].note, "second-copy");
+  assert.equal(target._stack[2].opacity, 81);
+  assert.equal(target._stack[2].note, "second-copy");
   assert.equal(target.visible, false);
   assert.equal(target.locked, true);
   assert.equal(document.layers.includes(sourceLayer), true);
-  assert.equal(document.selection.length, 2);
-  assert.equal(document.selection[0], target._stack[0]);
-  assert.equal(document.selection[1], target._stack[1]);
+  assert.equal(target._stack[0].selected, false);
+  assert.equal(target._stack[1].selected, false);
+  assert.equal(target._stack[2].selected, false);
+  assert.equal(target._stack.at(-1), targetTail);
   assert.equal(document.activeLayer, target);
 });
 
 test("selected artwork placement rolls back completed move and copy items after a later failure", async () => {
   const source = await readFile(jsxPath, "utf8");
 
-  const moveSource = mockLayer("Move Source");
+  const moveChild = mockLayer("Move Child", { locked: true, visible: false });
+  const moveSource = mockLayer("Move Source", {
+    children: [moveChild],
+    locked: true,
+    visible: false
+  });
+  const moveTop = mockPageItem(moveSource, "Move top");
+  const moveFailure = mockPageItem(moveChild, "Move failure", {
+    moveError: "move stopped"
+  });
   const movedBeforeFailure = mockPageItem(moveSource, "Moved before failure", {
     hidden: true,
     locked: true
   });
-  const moveFailure = mockPageItem(moveSource, "Move failure", {
-    moveError: "move stopped"
-  });
-  const moveTail = mockPageItem(moveSource, "Move tail");
+  setMockStack(moveSource, [moveTop, moveChild, movedBeforeFailure]);
   const moveTarget = mockLayer("Move Target", { locked: true, visible: false });
+  const moveTargetTail = mockPageItem(moveTarget, "Target tail");
   const moveDocument = mockDocument([moveSource, moveTarget]);
-  moveDocument.selection = [moveFailure, movedBeforeFailure];
+  moveDocument.selection = null;
 
   const moveResult = runPlaceArtworkSource(source, moveDocument, {
+    sourceKey: "0",
     targetKey: "1",
     copy: false
   });
@@ -745,11 +988,16 @@ test("selected artwork placement rolls back completed move and copy items after 
   assert.match(moveResult.error, /move stopped/);
   assert.deepEqual(
     moveSource._stack.map((item) => item.name),
-    ["Moved before failure", "Move failure", "Move tail"]
+    ["Move top", "Move Child", "Moved before failure"]
   );
-  assert.deepEqual(moveTarget._stack, []);
+  assert.deepEqual(moveChild._stack, [moveFailure]);
+  assert.deepEqual(moveTarget._stack, [moveTargetTail]);
   assert.equal(movedBeforeFailure.hidden, true);
   assert.equal(movedBeforeFailure.locked, true);
+  assert.equal(moveSource.visible, false);
+  assert.equal(moveSource.locked, true);
+  assert.equal(moveChild.visible, false);
+  assert.equal(moveChild.locked, true);
   assert.equal(moveTarget.visible, false);
   assert.equal(moveTarget.locked, true);
 

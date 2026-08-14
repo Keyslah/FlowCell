@@ -653,6 +653,16 @@ fn illustrator_bridge_io_error(
             "Illustrator bridge response timed out after {} seconds for request '{request_id}' while {operation}. The local pipe operation was cancelled; Illustrator may still be completing the action.",
             timeout.as_secs()
         )),
+        // The bridge dispatches only after it has read one complete newline-
+        // terminated request. A broken pipe during the write therefore did
+        // not acknowledge this request and can safely use the existing
+        // reconnect/start path. A broken pipe while reading remains terminal:
+        // Illustrator may already have performed a mutating action.
+        IllustratorBridgeIoFailure::BrokenPipe if operation == "writing the request" => {
+            IllustratorBridgeSendFailure::Unavailable(format!(
+                "Illustrator bridge closed the pipe while {operation} for request '{request_id}'."
+            ))
+        }
         IllustratorBridgeIoFailure::BrokenPipe => IllustratorBridgeSendFailure::Failed(format!(
             "Illustrator bridge closed the pipe while {operation} for request '{request_id}'."
         )),
@@ -660,6 +670,14 @@ fn illustrator_bridge_io_error(
             format!("Illustrator bridge failed while {operation} for request '{request_id}': {error}"),
         ),
     }
+}
+
+#[cfg(windows)]
+fn illustrator_bridge_stable_failure_key(error: &str) -> String {
+    error
+        .split_once(" for request '")
+        .map(|(prefix, _)| prefix.to_string())
+        .unwrap_or_else(|| error.to_string())
 }
 
 #[cfg(windows)]
@@ -1097,14 +1115,15 @@ pub(crate) fn start_illustrator_bridge_prewarm_worker() {
                 }
                 Err(error) => {
                     warmed_process_pair = None;
-                    if error != last_error {
+                    let error_key = illustrator_bridge_stable_failure_key(&error);
+                    if error_key != last_error {
                         append_flowcell_local_log(
                             "command_host.log",
                             &format!(
                                 "Illustrator COM could not be prewarmed in the background: {error}"
                             ),
                         );
-                        last_error = error;
+                        last_error = error_key;
                     }
                 }
             }
@@ -1228,11 +1247,13 @@ fn illustrator_bridge_test_response(request_id: &str) -> String {
 #[cfg(all(test, windows))]
 mod illustrator_bridge_tests {
     use super::{
-        illustrator_bridge_response_timeout, illustrator_bridge_test_response,
+        illustrator_bridge_io_error, illustrator_bridge_response_timeout,
+        illustrator_bridge_stable_failure_key, illustrator_bridge_test_response,
         open_illustrator_bridge_pipe, parse_illustrator_bridge_response,
         read_illustrator_bridge_response, write_illustrator_bridge_request,
-        IllustratorBridgeHandle, IllustratorBridgeIoFailure, ILLUSTRATOR_BRIDGE_ACTION_WAIT_MS,
-        ILLUSTRATOR_BRIDGE_COMPLETION_RESPONSE_WAIT_MS, ILLUSTRATOR_BRIDGE_STARTUP_WAIT_MS,
+        IllustratorBridgeHandle, IllustratorBridgeIoFailure, IllustratorBridgeSendFailure,
+        ILLUSTRATOR_BRIDGE_ACTION_WAIT_MS, ILLUSTRATOR_BRIDGE_COMPLETION_RESPONSE_WAIT_MS,
+        ILLUSTRATOR_BRIDGE_STARTUP_WAIT_MS,
     };
     use serde_json::json;
     use std::sync::mpsc;
@@ -1302,6 +1323,43 @@ mod illustrator_bridge_tests {
         assert_eq!(
             illustrator_bridge_response_timeout(&waited_request),
             Duration::from_millis(ILLUSTRATOR_BRIDGE_COMPLETION_RESPONSE_WAIT_MS)
+        );
+    }
+
+    #[test]
+    fn write_side_broken_pipe_reconnects_but_response_side_does_not_replay() {
+        let writing = illustrator_bridge_io_error(
+            IllustratorBridgeIoFailure::BrokenPipe,
+            "writing the request",
+            "request-a",
+            Duration::from_secs(1),
+        );
+        assert!(matches!(
+            writing,
+            IllustratorBridgeSendFailure::Unavailable(message)
+                if message.contains("closed the pipe while writing the request")
+        ));
+
+        let reading = illustrator_bridge_io_error(
+            IllustratorBridgeIoFailure::BrokenPipe,
+            "waiting for the response",
+            "request-a",
+            Duration::from_secs(1),
+        );
+        assert!(matches!(
+            reading,
+            IllustratorBridgeSendFailure::Failed(message)
+                if message.contains("closed the pipe while waiting for the response")
+        ));
+    }
+
+    #[test]
+    fn prewarm_error_deduplication_ignores_request_ids() {
+        assert_eq!(
+            illustrator_bridge_stable_failure_key(
+                "Illustrator bridge closed the pipe while writing the request for request 'ping-a'."
+            ),
+            "Illustrator bridge closed the pipe while writing the request"
         );
     }
 
@@ -1567,7 +1625,7 @@ pub(crate) fn resolve_macro_recorder_script_path() -> Result<PathBuf, String> {
         "FlowCell repo root could not be resolved for macro recording.".to_string()
     })?;
     let recorder_path = repo_root
-        .join("FlowCell")
+        .join("flowcellbackend")
         .join("helpers")
         .join("RecordMacro.ahk");
     if recorder_path.is_file() {
@@ -2007,8 +2065,20 @@ pub(crate) fn query_toolset_state(
 
 #[cfg(test)]
 mod tests {
-    use super::windows_child_process_path;
+    use super::{resolve_macro_recorder_script_path, windows_child_process_path};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn macro_recorder_path_uses_canonical_backend_helper() {
+        let recorder_path = resolve_macro_recorder_script_path()
+            .expect("the tracked Macro Lab recorder helper should resolve");
+
+        assert!(recorder_path.ends_with(
+            Path::new("flowcellbackend")
+                .join("helpers")
+                .join("RecordMacro.ahk")
+        ));
+    }
 
     #[test]
     fn windows_child_process_paths_remove_verbatim_drive_prefixes() {

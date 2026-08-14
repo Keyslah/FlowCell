@@ -4,9 +4,11 @@ import type { JsonValue } from "../../button/types";
 import { mappedToolPackageFields } from "../../button/runtime/toolPackageMapping.js";
 import { publishButtonCommit } from "../../button/state/ButtonDraftBus";
 import {
+  finalizeButtonSourceUpdate,
   installButtonSource,
   loadButtonStateDocument,
   mergeLegacyInstallsIntoDocument,
+  rollbackButtonSourceUpdate,
   saveButtonStateDocument,
   uninstallButtonSource,
   updateButtonSource
@@ -460,7 +462,14 @@ async function runInstallGeneratedButton(
   }
   const installPanelName = existingOwner?.sourceIdentity?.displayPanelName || panelName;
   let installed: Awaited<ReturnType<typeof installButtonSource>> | null = null;
+  let savedCanonical: Awaited<ReturnType<typeof saveButtonStateDocument>> | null = null;
   let committed = false;
+  const resultFor = (result: Awaited<ReturnType<typeof installButtonSource>>) => ({
+    installed: true,
+    ownerButtonId: result.ownerButtonId,
+    programName: result.sourceIdentity.displayProgramName,
+    panelName: result.sourceIdentity.displayPanelName
+  });
   try {
     const installGeneratedSource = existingOwner ? updateButtonSource : installButtonSource;
     installed = await installGeneratedSource({
@@ -473,20 +482,28 @@ async function runInstallGeneratedButton(
     if (!installed.executionTarget || installed.children.length > 0) {
       throw new Error("Generated source did not install as one ordinary single-script Button.");
     }
+    if (existingOwner && !installed.updateTransactionToken) {
+      throw new Error("Generated Button update did not return a canonical transaction token.");
+    }
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const next = mergeGeneratedInstallIntoDocument(current, installed);
       try {
         const saved = await saveButtonStateDocument(next, current.revision);
+        savedCanonical = saved;
+        if (installed.updateTransactionToken) {
+          const outcome = await finalizeButtonSourceUpdate(
+            installed.ownerButtonId,
+            installed.updateTransactionToken
+          );
+          if (outcome !== "finalized") {
+            throw new Error("Generated Button update rolled back after canonical Save.");
+          }
+        }
         committed = true;
         await publishButtonCommit(saved).catch((error) => {
           console.error("Generated Button committed but its cross-window event failed.", error);
         });
-        return {
-          installed: true,
-          ownerButtonId: installed.ownerButtonId,
-          programName: installed.sourceIdentity.displayProgramName,
-          panelName: installed.sourceIdentity.displayPanelName
-        };
+        return resultFor(installed);
       } catch (error) {
         if (attempt === 2 || !isButtonRevisionConflict(error)) throw error;
         current = await loadButtonStateDocument();
@@ -494,6 +511,28 @@ async function runInstallGeneratedButton(
     }
     throw new Error("Generated Button canonical state could not be committed.");
   } catch (error) {
+    if (installed?.updateTransactionToken && !committed) {
+      try {
+        const outcome = await rollbackButtonSourceUpdate(
+          installed.ownerButtonId,
+          installed.updateTransactionToken
+        );
+        if (outcome === "finalized") {
+          committed = true;
+          const durable = savedCanonical ?? await loadButtonStateDocument();
+          await publishButtonCommit(durable).catch((publishError) => {
+            console.error("Generated Button committed but its cross-window event failed.", publishError);
+          });
+          return resultFor(installed);
+        }
+      } catch (rollbackError) {
+        const originalMessage = error instanceof Error ? error.message : String(error);
+        const rollbackMessage = rollbackError instanceof Error
+          ? rollbackError.message
+          : String(rollbackError);
+        throw new Error(`${originalMessage} Native update recovery also failed: ${rollbackMessage}`);
+      }
+    }
     if (installed && !committed && !existingOwner) {
       await uninstallButtonSource({
         ownerButtonId: installed.ownerButtonId,

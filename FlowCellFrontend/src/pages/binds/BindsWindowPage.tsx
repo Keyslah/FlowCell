@@ -7,6 +7,7 @@ import {
   saveCoreActionShortcut
 } from "../../lib/binds";
 import { deriveBindsPanelButtonScope } from "../../lib/bindsButtonScope";
+import { deriveBindsPanelMacroScope } from "../../lib/bindsMacroScope";
 import { formatShortcutForDisplay, parseShortcutInput } from "../../lib/bindings";
 import {
   MACRO_PANEL_CHANGED_EVENT,
@@ -27,8 +28,7 @@ import type {
   BindableButtonRecord,
   BindablePanelRecord,
   BindableProgramRecord,
-  BindsWorkspaceData,
-  FrontendMacroSummaryRecord
+  BindsWorkspaceData
 } from "../../types";
 import "./bindsWindowPage.css";
 
@@ -80,21 +80,6 @@ function findButton(panel: BindablePanelRecord | null, buttonId: string): Bindab
   return panel.buttons.find((button) => button.id === buttonId) ?? null;
 }
 
-function findMacro(
-  workspace: BindsWorkspaceData | null,
-  macroId: string
-): FrontendMacroSummaryRecord | null {
-  if (!workspace) {
-    return null;
-  }
-
-  return workspace.macros.find((macro) => macro.id === macroId) ?? null;
-}
-
-function resolveMacroId(workspace: BindsWorkspaceData | null, macroId: string): string {
-  return findMacro(workspace, macroId)?.id ?? workspace?.macros[0]?.id ?? "";
-}
-
 function reconcileSelection(
   workspace: BindsWorkspaceData | null,
   current: BindsSelection
@@ -126,6 +111,7 @@ export default function BindsWindowPage({
     panelName: "",
     buttonId: ""
   });
+  const selectionRef = useRef(selection);
   const [targetMode, setTargetMode] = useState<BindTargetMode>("button");
   const [selectedMacroId, setSelectedMacroId] = useState("");
   const [shortcutInput, setShortcutInput] = useState("");
@@ -137,10 +123,23 @@ export default function BindsWindowPage({
 
   const reloadWorkspace = async (nextSelection?: BindsSelection) => {
     const nextWorkspace = await loadBindsWorkspace();
-    const resolvedSelection = reconcileSelection(nextWorkspace, nextSelection ?? selection);
+    const resolvedSelection = reconcileSelection(
+      nextWorkspace,
+      nextSelection ?? selectionRef.current
+    );
+    selectionRef.current = resolvedSelection;
     setWorkspace(nextWorkspace);
     setSelection(resolvedSelection);
-    setSelectedMacroId((current) => resolveMacroId(nextWorkspace, current));
+    setSelectedMacroId(
+      (current) =>
+        deriveBindsPanelMacroScope(
+          nextWorkspace.macros,
+          nextWorkspace.bindings.actionHotkeys,
+          resolvedSelection.programName,
+          resolvedSelection.panelName,
+          current
+        ).selectedMacroId
+    );
     setLoadError("");
     return {
       workspace: nextWorkspace,
@@ -166,9 +165,18 @@ export default function BindsWindowPage({
             }
           : { programName: "", panelName: "", buttonId: "" };
         const nextSelection = reconcileSelection(nextWorkspace, seed);
+        selectionRef.current = nextSelection;
         setWorkspace(nextWorkspace);
         setSelection(nextSelection);
-        setSelectedMacroId(resolveMacroId(nextWorkspace, ""));
+        setSelectedMacroId(
+          deriveBindsPanelMacroScope(
+            nextWorkspace.macros,
+            nextWorkspace.bindings.actionHotkeys,
+            nextSelection.programName,
+            nextSelection.panelName,
+            ""
+          ).selectedMacroId
+        );
         setLoadError("");
         if (context.prefill) {
           setTargetMode("button");
@@ -205,6 +213,10 @@ export default function BindsWindowPage({
     workspaceRef.current = workspace;
   }, [workspace]);
 
+  useEffect(() => {
+    selectionRef.current = selection;
+  }, [selection]);
+
   // Select the requested button and focus the shortcut field so a button sent
   // from the main page's right-click "Binds" action is ready to assign.
   const applyPrefill = useCallback((prefill: BindsButtonPrefill) => {
@@ -213,6 +225,7 @@ export default function BindsWindowPage({
       panelName: prefill.panelName,
       buttonId: prefill.buttonId
     });
+    selectionRef.current = resolved;
     setTargetMode("button");
     setSelection(resolved);
     setStatusMessage("");
@@ -239,16 +252,10 @@ export default function BindsWindowPage({
       nextSelection.panelName !== selection.panelName ||
       nextSelection.buttonId !== selection.buttonId
     ) {
+      selectionRef.current = nextSelection;
       setSelection(nextSelection);
     }
   }, [selection, workspace]);
-
-  useEffect(() => {
-    const nextMacroId = resolveMacroId(workspace, selectedMacroId);
-    if (nextMacroId !== selectedMacroId) {
-      setSelectedMacroId(nextMacroId);
-    }
-  }, [selectedMacroId, workspace]);
 
   const selectedProgram = useMemo(
     () => findProgram(workspace, selection.programName),
@@ -266,29 +273,39 @@ export default function BindsWindowPage({
     () => deriveBindsPanelButtonScope(selectedPanel?.buttons ?? [], selection.buttonId),
     [selectedPanel, selection.buttonId]
   );
-  const selectedMacro = useMemo(
-    () => findMacro(workspace, selectedMacroId),
-    [selectedMacroId, workspace]
+  const panelMacroScope = useMemo(
+    () =>
+      deriveBindsPanelMacroScope(
+        workspace?.macros ?? [],
+        workspace?.bindings.actionHotkeys ?? {},
+        selection.programName,
+        selection.panelName,
+        selectedMacroId
+      ),
+    [
+      selectedMacroId,
+      selection.panelName,
+      selection.programName,
+      workspace?.bindings.actionHotkeys,
+      workspace?.macros
+    ]
   );
-  const selectedMacroProgram = useMemo(
-    () => findProgram(workspace, selectedMacro?.programName ?? ""),
-    [selectedMacro?.programName, workspace]
+  const selectedMacroButton = useMemo(
+    () =>
+      panelMacroScope.macroButtons.find(
+        (macro) => macro.target === panelMacroScope.selectedMacroId
+      ) ?? null,
+    [panelMacroScope]
   );
-  const selectedMacroButton = useMemo<BindableButtonRecord | null>(() => {
-    if (!selectedMacro) {
-      return null;
-    }
 
-    return {
-      id: `macro::${selectedMacro.id}`,
-      label: selectedMacro.label,
-      kind: "macro",
-      target: selectedMacro.id,
-      shortcut: workspace?.bindings.actionHotkeys[selectedMacro.id] ?? ""
-    };
-  }, [selectedMacro, workspace]);
+  useEffect(() => {
+    if (panelMacroScope.selectedMacroId !== selectedMacroId) {
+      setSelectedMacroId(panelMacroScope.selectedMacroId);
+    }
+  }, [panelMacroScope.selectedMacroId, selectedMacroId]);
+
   const activeButton = targetMode === "macro" ? selectedMacroButton : selectedButton;
-  const activeProgram = targetMode === "macro" ? selectedMacroProgram : selectedProgram;
+  const activeProgram = selectedProgram;
 
   useEffect(() => {
     setShortcutInput(
@@ -355,23 +372,23 @@ export default function BindsWindowPage({
   };
 
   const handleProgramChange = (programName: string) => {
-    setTargetMode("button");
     const nextSelection = reconcileSelection(workspace, {
       programName,
       panelName: "",
       buttonId: ""
     });
+    selectionRef.current = nextSelection;
     setSelection(nextSelection);
     setStatusMessage("");
   };
 
   const handlePanelChange = (panelName: string) => {
-    setTargetMode("button");
     const nextSelection = reconcileSelection(workspace, {
       programName: selection.programName,
       panelName,
       buttonId: ""
     });
+    selectionRef.current = nextSelection;
     setSelection(nextSelection);
     setStatusMessage("");
   };
@@ -383,6 +400,7 @@ export default function BindsWindowPage({
       panelName: selection.panelName,
       buttonId
     });
+    selectionRef.current = nextSelection;
     setSelection(nextSelection);
     setStatusMessage("");
   };
@@ -398,12 +416,32 @@ export default function BindsWindowPage({
     panelName: string,
     buttonId: string
   ) => {
-    setTargetMode("button");
-    setSelection({
+    const nextSelection = {
       programName,
       panelName,
       buttonId
+    };
+    selectionRef.current = nextSelection;
+    setTargetMode("button");
+    setSelection(nextSelection);
+    setStatusMessage("");
+    setIsShortcutMenuOpen(false);
+  };
+
+  const handleGlobalMacroPick = (
+    programName: string,
+    panelName: string,
+    macroId: string
+  ) => {
+    const nextSelection = reconcileSelection(workspace, {
+      programName,
+      panelName,
+      buttonId: ""
     });
+    selectionRef.current = nextSelection;
+    setTargetMode("macro");
+    setSelection(nextSelection);
+    setSelectedMacroId(macroId);
     setStatusMessage("");
     setIsShortcutMenuOpen(false);
   };
@@ -416,13 +454,8 @@ export default function BindsWindowPage({
   };
 
   const handleAddMacro = async () => {
-    const programName =
-      selectedMacro?.programName || selectedProgram?.name || workspace?.programs[0]?.name || "";
-    const panelName =
-      selectedMacro?.panelName ||
-      selectedPanel?.name ||
-      findProgram(workspace, programName)?.panels[0]?.name ||
-      "";
+    const programName = selectedProgram?.name ?? "";
+    const panelName = selectedPanel?.name ?? "";
     if (!programName || !panelName) {
       setStatusMessage("Pick a program and panel before creating a macro.");
       return;
@@ -436,12 +469,14 @@ export default function BindsWindowPage({
 
   const handleSaveBinding = async () => {
     if (!activeProgram) {
-      setStatusMessage(targetMode === "macro" ? "Pick a macro." : "Pick a program and panel.");
+      setStatusMessage("Pick a program and panel.");
       return;
     }
 
     if (!activeButton) {
-      setStatusMessage(targetMode === "macro" ? "No macros available." : "No buttons in this panel.");
+      setStatusMessage(
+        targetMode === "macro" ? "No macros in this panel." : "No buttons in this panel."
+      );
       return;
     }
 
@@ -543,15 +578,30 @@ export default function BindsWindowPage({
   const currentPanelPath = selectedProgram && selectedPanel
     ? `${selectedProgram.name} / ${selectedPanel.name}`
     : "Pick a program and panel";
-  const globalButtonGroups =
+  const currentPanelTargets =
+    targetMode === "macro"
+      ? panelMacroScope.macroButtons
+      : panelButtonScope.currentPanelButtons;
+  const currentTargetId =
+    targetMode === "macro" ? panelMacroScope.selectedMacroId : selection.buttonId;
+  const globalTargetGroups =
     workspace?.programs.flatMap((program) =>
       program.panels
-        .filter((panel) => panel.buttons.length > 0)
         .map((panel) => ({
           programName: program.name,
           panelName: panel.name,
-          buttons: panel.buttons
+          targets:
+            targetMode === "macro"
+              ? deriveBindsPanelMacroScope(
+                  workspace.macros,
+                  workspace.bindings.actionHotkeys,
+                  program.name,
+                  panel.name,
+                  ""
+                ).macroButtons
+              : panel.buttons
         }))
+        .filter((group) => group.targets.length > 0)
     ) ?? [];
 
   return (
@@ -582,7 +632,7 @@ export default function BindsWindowPage({
                   const nextMode = event.target.value as BindTargetMode;
                   setTargetMode(nextMode);
                   if (nextMode === "macro") {
-                    setSelectedMacroId((current) => resolveMacroId(workspace, current));
+                    setSelectedMacroId(panelMacroScope.selectedMacroId);
                   }
                   setStatusMessage("");
                   setIsShortcutMenuOpen(false);
@@ -593,84 +643,88 @@ export default function BindsWindowPage({
               </select>
             </label>
 
+            <label className="binds-window__field">
+              <span className="binds-window__field-label">Program</span>
+              <select
+                className="binds-window__select"
+                value={selection.programName}
+                onChange={(event) => handleProgramChange(event.target.value)}
+              >
+                <option value="">Pick a program</option>
+                {workspace?.programs.map((program) => (
+                  <option key={program.name} value={program.name}>
+                    {program.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="binds-window__field">
+              <span className="binds-window__field-label">Panel</span>
+              <select
+                className="binds-window__select"
+                value={selection.panelName}
+                onChange={(event) => handlePanelChange(event.target.value)}
+                disabled={!selectedProgram}
+              >
+                <option value="">Pick a panel</option>
+                {selectedProgram?.panels.map((panel) => (
+                  <option key={panel.name} value={panel.name}>
+                    {panel.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             {targetMode === "button" ? (
-              <>
-                <label className="binds-window__field">
-                  <span className="binds-window__field-label">Program</span>
-            <select
-              className="binds-window__select"
-              value={selection.programName}
-              onChange={(event) => handleProgramChange(event.target.value)}
-            >
-              <option value="">Pick a program</option>
-              {workspace?.programs.map((program) => (
-                <option key={program.name} value={program.name}>
-                  {program.name}
-                </option>
-              ))}
-            </select>
-                </label>
-
-                <label className="binds-window__field">
-                  <span className="binds-window__field-label">Panel</span>
-            <select
-              className="binds-window__select"
-              value={selection.panelName}
-              onChange={(event) => handlePanelChange(event.target.value)}
-              disabled={!selectedProgram}
-            >
-              <option value="">Pick a panel</option>
-              {selectedProgram?.panels.map((panel) => (
-                <option key={panel.name} value={panel.name}>
-                  {panel.name}
-                </option>
-              ))}
-            </select>
-                </label>
-
-                <label className="binds-window__field">
-                  <span className="binds-window__field-label">Button</span>
-            <select
-              className="binds-window__select"
-              value={panelButtonScope.toolbarButtonId}
-              onChange={(event) => handleButtonChange(event.target.value)}
-              disabled={!selectedPanel || panelButtonScope.toolbarButtons.length === 0}
-            >
-              <option value="">{selectedPanel ? "Pick a button" : "Pick a panel first"}</option>
-              {panelButtonScope.toolbarButtons.map((button) => (
-                <option key={button.id} value={button.id}>
-                  {button.label}
-                </option>
-              ))}
-            </select>
-                </label>
-              </>
+              <label className="binds-window__field">
+                <span className="binds-window__field-label">Button</span>
+                <select
+                  className="binds-window__select"
+                  value={panelButtonScope.toolbarButtonId}
+                  onChange={(event) => handleButtonChange(event.target.value)}
+                  disabled={!selectedPanel || panelButtonScope.toolbarButtons.length === 0}
+                >
+                  <option value="">
+                    {selectedPanel ? "Pick a button" : "Pick a panel first"}
+                  </option>
+                  {panelButtonScope.toolbarButtons.map((button) => (
+                    <option key={button.id} value={button.id}>
+                      {button.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
             ) : (
-              <>
-                <label className="binds-window__field binds-window__field--wide">
-                  <span className="binds-window__field-label">Macro</span>
+              <div className="binds-window__field">
+                <span className="binds-window__field-label">Macro</span>
+                <div className="binds-window__macro-combo">
                   <select
                     className="binds-window__select"
-                    value={selectedMacroId}
+                    value={panelMacroScope.selectedMacroId}
                     onChange={(event) => handleMacroPick(event.target.value)}
-                    disabled={!workspace || workspace.macros.length === 0}
+                    disabled={!selectedPanel || panelMacroScope.macroButtons.length === 0}
                   >
-                    <option value="">Pick a macro</option>
-                    {workspace?.macros.map((macro) => (
-                      <option key={macro.id} value={macro.id}>
-                        {macro.label} ({macro.programName} / {macro.panelName})
+                    <option value="">
+                      {selectedPanel ? "Pick a macro" : "Pick a panel first"}
+                    </option>
+                    {panelMacroScope.macroButtons.map((macro) => (
+                      <option key={macro.id} value={macro.target}>
+                        {macro.label}
                       </option>
                     ))}
                   </select>
-                </label>
-                <button
-                  type="button"
-                  className="binds-window__bind-button"
-                  onClick={() => void handleAddMacro()}
-                >
-                  Add Macro
-                </button>
-              </>
+                  <button
+                    type="button"
+                    className="binds-window__bind-button binds-window__add-macro-button"
+                    aria-label="Add Macro"
+                    title="Add Macro"
+                    onClick={() => void handleAddMacro()}
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
             )}
 
             <label className="binds-window__field">
@@ -816,9 +870,9 @@ export default function BindsWindowPage({
           </div>
 
           <p className="binds-window__toolbar-note">
-            Pick one button, then press the shortcut keys in the field (or type them, or use ▼).
-            Existing FlowCell conflicts are blocked; Windows or application shortcuts show a warning
-            but are still allowed.
+            Pick one {targetMode === "macro" ? "macro" : "button"}, then press the shortcut keys
+            in the field (or type them, or use ▼). Existing FlowCell conflicts are blocked; Windows
+            or application shortcuts show a warning but are still allowed.
           </p>
 
           {statusMessage ? (
@@ -843,44 +897,50 @@ export default function BindsWindowPage({
                 </div>
               </header>
 
-              {selectedPanel && panelButtonScope.currentPanelButtons.length > 0 ? (
+              {selectedPanel && currentPanelTargets.length > 0 ? (
                 <div className="binds-window__table" role="table" aria-label="Current panel binds">
                   <div className="binds-window__table-header" role="row">
-                    <span role="columnheader">Button</span>
+                    <span role="columnheader">{targetMode === "macro" ? "Macro" : "Button"}</span>
                     <span role="columnheader">Shortcut</span>
                   </div>
                   <div className="binds-window__table-body">
-                    {panelButtonScope.currentPanelButtons.map((button) => (
+                    {currentPanelTargets.map((target) => (
                       <button
-                        key={button.id}
+                        key={target.id}
                         type="button"
                         className={`binds-window__table-row ${
-                          button.id === selection.buttonId ? "is-selected" : ""
+                          target.id === currentTargetId ? "is-selected" : ""
                         }`}
                         role="row"
-                        onClick={() => handleButtonChange(button.id)}
+                        onClick={() =>
+                          targetMode === "macro"
+                            ? handleMacroPick(target.target)
+                            : handleButtonChange(target.id)
+                        }
                       >
-                        <span>{button.label}</span>
-                        <span>{formatBoundShortcut(button.shortcut)}</span>
+                        <span>{target.label}</span>
+                        <span>{formatBoundShortcut(target.shortcut)}</span>
                       </button>
                     ))}
                   </div>
                 </div>
               ) : (
-                <p className="binds-window__empty">No buttons in this panel.</p>
+                <p className="binds-window__empty">
+                  No {targetMode === "macro" ? "macros" : "buttons"} in this panel.
+                </p>
               )}
             </article>
 
             <article className="binds-window__card">
               <header className="binds-window__section-header">
                 <div>
-                  <h2>Global Buttons</h2>
+                  <h2>Global {targetMode === "macro" ? "Macros" : "Buttons"}</h2>
                   <p>All programs / panels</p>
                 </div>
               </header>
 
               <div className="binds-window__global-list">
-                {globalButtonGroups.map((group) => (
+                {globalTargetGroups.map((group) => (
                   <section
                     key={`${group.programName}:${group.panelName}`}
                     className="binds-window__global-group"
@@ -889,23 +949,35 @@ export default function BindsWindowPage({
                       {group.programName} / {group.panelName}
                     </h3>
                     <div className="binds-window__global-buttons">
-                      {group.buttons.map((button) => (
+                      {group.targets.map((target) => (
                         <button
-                          key={button.id}
+                          key={target.id}
                           type="button"
                           className={`binds-window__global-button ${
                             group.programName === selection.programName &&
                             group.panelName === selection.panelName &&
-                            button.id === selection.buttonId
+                            (targetMode === "macro"
+                              ? target.target === panelMacroScope.selectedMacroId
+                              : target.id === selection.buttonId)
                               ? "is-selected"
                               : ""
                           }`}
                           onClick={() =>
-                            handleGlobalButtonPick(group.programName, group.panelName, button.id)
+                            targetMode === "macro"
+                              ? handleGlobalMacroPick(
+                                  group.programName,
+                                  group.panelName,
+                                  target.target
+                                )
+                              : handleGlobalButtonPick(
+                                  group.programName,
+                                  group.panelName,
+                                  target.id
+                                )
                           }
                         >
-                          <span>{button.label}</span>
-                          <small>{formatBoundShortcut(button.shortcut)}</small>
+                          <span>{target.label}</span>
+                          <small>{formatBoundShortcut(target.shortcut)}</small>
                         </button>
                       ))}
                     </div>

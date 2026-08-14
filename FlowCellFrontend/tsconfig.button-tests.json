@@ -46,6 +46,8 @@
     "src/button/editor/buttonFanDisclosure.ts",
     "src/button/editor/buttonMeasurementReconciliation.ts",
     "src/button/editor/stagedInstallCleanup.ts",
+    "src/button/popout/toolFieldRuntimeState.ts",
+    "src/button/state/installedButtonLayoutValidation.ts",
     "src/button/windows/buttonWindowGeometry.ts",
     "src/button/windows/buttonCoreHitTest.ts",
     "src/button/windows/managedWindowLifecycle.ts",
@@ -63,6 +65,7 @@
     "src/button/skins/skinCompiler.ts",
     "src/lib/bindings.ts",
     "src/lib/bindsButtonScope.ts",
+    "src/lib/bindsMacroScope.ts",
     "src/lib/layoutSnapshots.ts",
     "src/lib/safeTauriUnlisten.ts",
     "src/lib/shortcutProfiles.ts"

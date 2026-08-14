@@ -27,6 +27,7 @@ import {
 } from "./buttonStateValidation.js";
 import { createButtonSourceIdentity } from "./sourceIdentity.js";
 import { applyInstalledSourceUpdate } from "./sourceUpdateOperations.js";
+import { validateInstalledButtonLayout } from "./installedButtonLayoutValidation.js";
 import {
   validateButtonPlacementFile,
   type ButtonPlacementFile
@@ -64,6 +65,7 @@ export interface InstallButtonSourceResult {
   tooltip: string;
   children: InstalledButtonChildResult[];
   layout?: InstalledButtonLayout;
+  updateTransactionToken?: string;
 }
 
 export interface InstallButtonSourceRequest {
@@ -175,6 +177,49 @@ interface ButtonStateSnapshotLoad {
 export interface ButtonStateBootstrapResult {
   document: ButtonStateDocument;
   changed: boolean;
+}
+
+export interface ButtonStateBootstrapSequenceResult {
+  initialDocument: ButtonStateDocument;
+  bootstrapResult: ButtonStateBootstrapResult | null;
+  error: unknown | null;
+  cancelled: boolean;
+}
+
+/**
+ * Makes the recovered canonical snapshot available before optional bootstrap
+ * work can fail. The caller keeps that accepted snapshot when the later stage
+ * returns an error.
+ */
+export async function runButtonStateBootstrapSequence(
+  loadInitialDocument: () => Promise<ButtonStateDocument>,
+  acceptInitialDocument: (document: ButtonStateDocument) => boolean,
+  runBootstrap: (initialDocument: ButtonStateDocument) => Promise<ButtonStateBootstrapResult>
+): Promise<ButtonStateBootstrapSequenceResult> {
+  const initialDocument = await loadInitialDocument();
+  if (!acceptInitialDocument(initialDocument)) {
+    return {
+      initialDocument,
+      bootstrapResult: null,
+      error: null,
+      cancelled: true
+    };
+  }
+  try {
+    return {
+      initialDocument,
+      bootstrapResult: await runBootstrap(initialDocument),
+      error: null,
+      cancelled: false
+    };
+  } catch (error) {
+    return {
+      initialDocument,
+      bootstrapResult: null,
+      error,
+      cancelled: false
+    };
+  }
 }
 
 let buttonStateSnapshotGeneration = 0;
@@ -519,7 +564,11 @@ function normalizeInstallResult(
           };
         })
       : [],
-    layout: response.layout as InstalledButtonLayout | undefined
+    layout: validateInstalledButtonLayout(response.layout as InstalledButtonLayout | undefined),
+    updateTransactionToken: typeof response.updateTransactionToken === "string" &&
+      response.updateTransactionToken.trim()
+      ? response.updateTransactionToken
+      : undefined
   };
 }
 
@@ -918,6 +967,45 @@ export async function updateButtonSource(
     request: { ...request }
   });
   return normalizeInstallResult(request, response);
+}
+
+export type ButtonSourceUpdateTransactionOutcome = "finalized" | "rolled-back";
+
+async function resolveButtonSourceUpdateTransaction(
+  command: "finalize_button_source_update" | "rollback_button_source_update",
+  ownerButtonId: string,
+  transactionToken: string
+): Promise<ButtonSourceUpdateTransactionOutcome> {
+  if (!isTauriWindowHost()) {
+    throw new Error("Button source updates can only be resolved from the FlowCell desktop host.");
+  }
+  const outcome = await invoke<string>(command, { ownerButtonId, transactionToken });
+  if (outcome !== "finalized" && outcome !== "rolled-back") {
+    throw new Error(`Button source update returned an invalid transaction outcome '${outcome}'.`);
+  }
+  return outcome;
+}
+
+export function finalizeButtonSourceUpdate(
+  ownerButtonId: string,
+  transactionToken: string
+): Promise<ButtonSourceUpdateTransactionOutcome> {
+  return resolveButtonSourceUpdateTransaction(
+    "finalize_button_source_update",
+    ownerButtonId,
+    transactionToken
+  );
+}
+
+export function rollbackButtonSourceUpdate(
+  ownerButtonId: string,
+  transactionToken: string
+): Promise<ButtonSourceUpdateTransactionOutcome> {
+  return resolveButtonSourceUpdateTransaction(
+    "rollback_button_source_update",
+    ownerButtonId,
+    transactionToken
+  );
 }
 
 export const commitButtonStateDocument = saveButtonStateDocument;

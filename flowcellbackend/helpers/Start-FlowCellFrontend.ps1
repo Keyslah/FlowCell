@@ -16,6 +16,8 @@ $frontendSourceCommitPath = Join-Path $frontendRoot 'src-tauri\target\release\.f
 $frontendSourceStampPath = Join-Path $frontendRoot 'src-tauri\target\release\.flowcell_frontend_source_stamp'
 $logsRoot = Join-Path $projectRoot 'local\logs'
 $launcherLogPath = Join-Path $logsRoot 'frontend-launcher.log'
+$buttonStateRoot = Join-Path $projectRoot 'local\button-system'
+$buttonBootstrapErrorPath = Join-Path $buttonStateRoot 'last-bootstrap-error.log'
 $preflightPath = Join-Path $PSScriptRoot 'Start-FlowCellPreflight.ps1'
 $backendLauncherPath = Join-Path $projectRoot 'run_backend_hidden.vbs'
 $npmCommand = (Get-Command 'npm.cmd' -ErrorAction Stop).Source
@@ -64,6 +66,65 @@ function Write-LauncherLog([string]$Message) {
             }
         }
     }
+}
+
+function New-FlowCellFrontendBootstrapSentinel {
+    Ensure-Directory -Path $buttonStateRoot
+    $sentinel = 'FLOWCELL_FRONTEND_BOOTSTRAP_PENDING:{0}' -f ([Guid]::NewGuid().ToString('N'))
+    Set-Content -LiteralPath $buttonBootstrapErrorPath -Value $sentinel -Encoding UTF8
+    return $sentinel
+}
+
+function Remove-FlowCellFrontendBootstrapSentinel([string]$Sentinel) {
+    if (-not (Test-Path -LiteralPath $buttonBootstrapErrorPath -PathType Leaf)) {
+        return
+    }
+
+    try {
+        $status = [System.IO.File]::ReadAllText($buttonBootstrapErrorPath).Trim()
+        if ($status -eq $Sentinel) {
+            Remove-Item -LiteralPath $buttonBootstrapErrorPath -Force
+        }
+    }
+    catch {
+    }
+}
+
+function Wait-FlowCellFrontendBootstrap {
+    param(
+        [System.Diagnostics.Process]$Process,
+        [string]$Sentinel,
+        [int]$TimeoutMilliseconds = 20000
+    )
+
+    $deadline = [DateTime]::UtcNow.AddMilliseconds($TimeoutMilliseconds)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        $Process.Refresh()
+        if ($Process.HasExited) {
+            throw "FlowCell frontend process $($Process.Id) exited before Button-state bootstrap completed."
+        }
+
+        if (-not (Test-Path -LiteralPath $buttonBootstrapErrorPath -PathType Leaf)) {
+            Write-LauncherLog ("Frontend Button-state bootstrap completed in process {0}." -f $Process.Id)
+            return
+        }
+
+        try {
+            $status = [System.IO.File]::ReadAllText($buttonBootstrapErrorPath).Trim()
+        }
+        catch [System.IO.IOException] {
+            Start-Sleep -Milliseconds 100
+            continue
+        }
+
+        if ((-not [string]::IsNullOrWhiteSpace($status)) -and $status -ne $Sentinel) {
+            throw "FlowCell frontend Button-state bootstrap failed: $status"
+        }
+
+        Start-Sleep -Milliseconds 100
+    }
+
+    throw "Timed out waiting $TimeoutMilliseconds ms for FlowCell frontend Button-state bootstrap health."
 }
 
 function Acquire-FlowCellFrontendLaunchMutex {
@@ -625,7 +686,15 @@ try {
         }
 
         Write-LauncherLog 'Starting compiled Tauri frontend.'
-        Start-Process -FilePath $frontendExePath -WorkingDirectory $frontendRoot
+        $bootstrapSentinel = New-FlowCellFrontendBootstrapSentinel
+        try {
+            $launchedFrontend = Start-Process -FilePath $frontendExePath -WorkingDirectory $frontendRoot -PassThru
+            Wait-FlowCellFrontendBootstrap -Process $launchedFrontend -Sentinel $bootstrapSentinel
+        }
+        catch {
+            Remove-FlowCellFrontendBootstrapSentinel -Sentinel $bootstrapSentinel
+            throw
+        }
     }
     finally {
         Pop-Location

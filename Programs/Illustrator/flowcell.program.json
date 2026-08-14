@@ -340,7 +340,7 @@
     },
     {
       "id": "illustrator.layer-tree",
-      "version": "3.0.8",
+      "version": "3.0.11",
       "panelName": "Layers Builder",
       "sourcePath": "Illustrator Git Scripts/LayersBuilder",
       "importKind": "script",
@@ -358,8 +358,7 @@
     "kind": "illustrator-direct",
     "programKey": "illustrator_automation",
     "installScript": "",
-    "deleteScript": "",
-    "capabilityScript": "Invoke-IllustratorFlowCellAction.ps1"
+    "deleteScript": ""
   },
   "addonReloadNotes": "",
   "appRestartNotes": "Restart FlowCell after changing this program manifest."

@@ -9,37 +9,76 @@ Button contributions; they are not compiled into FlowCell Core.
 
 1. Extracting a program payload creates an available package under `Programs/`;
    it does not register runtime behavior.
-2. `Add Program` inventories only unregistered packages whose complete manifest,
-   declared Panels, contribution packages, support content, and runner contract
-   validate. Invalid packages are listed with their rejection reason.
-3. The user confirms the package's host executable and chooses a reviewed
+2. `Add Program` always offers `Any program`, which accepts an editable Program
+   name and an exact host EXE. One `Add program` action silently preflights the
+   path and applies a minimal registration-only package with no Panels or bundled
+   Button contributions; the application does not need to be running.
+3. `Managed package` inventories only unregistered packages whose complete
+   manifest, declared Panels, contribution packages, support content, and
+   runner contract validate. Invalid packages are listed with their rejection
+   reason. The user confirms the package's host executable and chooses a reviewed
    `Register program only`, `Add everything`, or `Custom` plan. Panels,
    contribution versions/types/defaults/dependencies, destination Panels,
    support content, reload/restart notes, and install effects all come from the
    manifest; labels and catalog paths never invent setup behavior.
-4. The durable Add Program transaction writes the explicit rail registration to
+4. For `Any program`, Apply generates `Programs/<Program>/flowcell.program.json`
+   plus its required empty package folders only after the prepared durable
+   journal exists. Its sole process match is the selected EXE's normalized
+   filename stem, not its full path. Preflight rejects a process name already
+   claimed by another valid Program package. The generated package never
+   overwrites an existing package or shared program ID. A valid same-name package
+   may be selected through `Managed package`; a malformed blocking folder must be
+   repaired, removed, or avoided with a distinct Program name.
+5. The durable Add Program transaction writes the explicit rail registration to
    `flowcellbackend/local/bindings.ini`, persists the exact enabled contribution
    set at `flowcellbackend/local/program-registration/<programId>.json`, creates
    selected Panels and their canonical owners, installs selected packages
    through the ordinary source lifecycle, and coordinates their canonical
    Button commit.
-5. Startup preflight fully validates and refreshes only packages that already
+6. Startup preflight fully validates and refreshes only packages that already
    have a rail registration. Synchronization considers only contributions in
    that package's enabled set. An available but unregistered or malformed
    package has no runtime presence and cannot block Core startup.
-6. `installOnAdd` is a default selection for Add Program and never resurrects a
+7. `installOnAdd` is a default selection for Add Program and never resurrects a
    deleted Button. An enabled `installIfMissing` contribution is the only
    missing contribution startup repairs. Version changes update an existing
    exact managed owner through the normal source transaction.
-7. The frontend lists registered programs whose package folders still exist.
+8. The frontend lists registered programs whose package folders still exist.
 
 Registered-package preflight requires the declared Git Scripts and support
-directories to exist and every nonempty runner install, delete, or capability
-adapter to resolve to an existing file before bindings are refreshed.
+directories to exist and every nonempty runner install or delete script to
+resolve to an existing file before bindings are refreshed.
 
 Catalog sources become Buttons only through Add Button or an explicitly selected
 program contribution. Package extraction and register-only setup never install
 one.
+
+### Registration-Only Program Contexts
+
+The `Any program` path is for applications without a richer FlowCell package.
+Its generated manifest uses a `plain-` program ID, the generic Windows script
+runner, empty `panels` and `bundledSources`, and `bindScopedNativeOwner: false`.
+It creates no Panel owner or source Button during registration. Add Panel and Add
+Button can extend the Program afterward through their normal lifecycles.
+
+Program-scoped Pop, Fan, and related windows compare the foreground process to
+the normalized EXE stem exactly; paths and the `.exe` suffix are removed. Thus
+`krita.exe` matches `krita`, but `krita-helper.exe` does not. Applications that
+render their main window from a separate child process require a future explicit
+process alias rather than a loose substring match. Although preflight rejects a
+process name claimed by another valid Program package, an unknown unregistered
+executable elsewhere with the same filename remains a residual match risk.
+
+The generated package carries a transaction marker until commit. Before commit
+FlowCell re-proves the exact marker, manifest, complete generated tree, native
+rail registration, and enabled-contribution state. Before rollback, every
+generated artifact still present must match the journal, no unexpected content
+may exist, and native state must be at a proved journal boundary. Rollback sends
+the generated package to the Recycle Bin only while that proof still matches;
+drift or reparse points fail closed and preserve existing content. The silent
+preflight never creates the package. Successful Program removal keeps the
+generated package available for later re-registration just like a managed
+package.
 
 ## Manifest Example
 
@@ -84,8 +123,7 @@ one.
     "kind": "windows-script",
     "programKey": "example_generic",
     "installScript": "",
-    "deleteScript": "",
-    "capabilityScript": ""
+    "deleteScript": ""
   },
   "addonReloadNotes": "",
   "appRestartNotes": "Restart FlowCell after changing this program manifest."
@@ -155,10 +193,8 @@ Supported `runner.kind` values:
 | `photoshop-direct` | Sends the installed Local source through the controller using `runner.programKey`. |
 | `blender-bridge` | Deploys and invokes an owner-generated Blender bridge action through `runner.installScript` and removes it through `runner.deleteScript`. |
 
-`programKey`, `installScript`, `deleteScript`, and `capabilityScript` are
-runner-specific. `capabilityScript` is a request/response adapter for installed
-page actions declared by an active program-owned package. Empty values are valid
-only when that runner does not use them.
+`programKey`, `installScript`, and `deleteScript` are runner-specific. Empty
+values are valid only when that runner does not use them.
 
 Removing a program is compensating rather than one-way: native unregister keeps
 an opaque in-process bindings snapshot while canonical Buttons and their owned
@@ -167,17 +203,25 @@ the post-unregister bindings have not drifted, so unrelated binding edits are
 never overwritten. Successful removal finalizes the token and keeps the
 available `Programs/<Program>` package for a later Add Program.
 
-Program rename is a durable cross-file transaction. Before the first directory
+Main's Program context-menu rename is not a registry rename: it changes only the
+visible canonical Program Button label and leaves this complete contract
+untouched. The retained native program-package rename operation is a durable
+cross-file transaction. Before the first directory
 move, native code writes `flowcellbackend/local/program-rename-transactions/<token>/journal.json`
 with the exact previous and intended bindings plus the exact pre-rename
-canonical Button document. The canonical save carries that token and records
-its exact post-rename document before committing `button-state.json`. Startup
-then compares canonical state to those two journal values and can only roll the
-folder, manifests, records, and bindings back or finalize them forward; a third
-state is rejected for manual inspection. This also covers the temporary folder
-used by Windows case-only renames. Bindings use synced staged replacement, and
-startup preflight never reads or rewrites them while one of these journals is
-pending.
+canonical Button document, the exact previous and intended enabled-contribution
+registration bytes or absence, and exact previous and intended bytes for each
+frontend-owned recorded macro whose Program name matches the rename source.
+Unrelated macros are not journaled or rewritten. The canonical save carries the
+same token and records its exact post-rename document before committing
+`button-state.json`. Startup then compares canonical state and every owned file
+to the two journaled sides and can only roll the folder, manifests, records,
+registration, matching macros, and bindings back or finalize them forward; a
+third state or unrelated edit is rejected for manual inspection before folder
+identity is changed. This also covers the temporary folder used by Windows
+case-only renames. Owned files and bindings use synced staged replacement, and
+startup preflight never reads or rewrites bindings while one of these journals
+is pending.
 
 Runner logic may know how to communicate with a program, but it must not contain
 a list of program-specific script Buttons, filename classifiers, or fallback

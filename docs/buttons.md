@@ -25,6 +25,10 @@ the completed architecture only.
   feature or alternate source lifecycle.
 - The functional host owns behavior, state, accessibility, validation, command
   dispatch, and lifecycle. A skin is render-only.
+- Live Tool Set field values are host-owned session state keyed by the exact
+  Tool Set unit and field schema. Canonical document clones and unrelated saves
+  preserve them; changing the owner or field schema resets them to the declared
+  defaults.
 - A placement may own one activation cycle with at least two ordered states.
   Two states are the On/Off toggle; larger counts use the same model. State 1 is
   initial, every state owns one `press`, `hover`, or `release` advance trigger,
@@ -607,15 +611,17 @@ opposite corner. On release, Pop `desktopBounds`, Fan
 physical-pixel frame—not the monitor-sized host. Transient active envelopes are
 never saved.
 
-Panel and program renames keep stable Button, placement, skin, Pop, and Fan IDs.
-The rename migrates canonical source identities, typed execution targets, active
-and install records, owned source paths, catalog manifest identity, panel-owner
-metadata, Fan scope, Pop member identities, and default surface names. Native
-folder/record/bindings work and the following canonical save share a durable
-token. Its stable local journal stores exact pre/post bindings and canonical
-Button documents, so startup deterministically rolls back before the canonical
-commit or finalizes after it, including a process cut during a case-only folder
-rename. Program removal unregisters under an opaque native
+Main's Program context-menu rename edits only the visible canonical Program
+Button label. It does not rename the Program folder, manifest, registration,
+source identities, Panels, bindings, windows, runner data, or any other Button.
+
+Panel folder rename keeps stable Button, placement, skin, Pop, and Fan IDs while
+migrating canonical source identities, typed execution targets, active and
+install records, owned source paths, panel-owner metadata, Fan scope, Pop member
+identities, and default surface names. Native folder, record, and bindings work
+and the following canonical save share a durable token, so startup rolls back
+before the canonical commit or finalizes after it without overwriting unrelated
+edits, including a process cut during a case-only folder rename. Program removal unregisters under an opaque native
 rollback snapshot before canonical/source cleanup; canonical failure restores the
 registration only while bindings still match the post-unregister state, and the
 available program package remains in place. Removed Pop, Fan, and generic
@@ -812,11 +818,27 @@ contribution is the only missing source startup repairs. Existing managed
 owners update through the normal source transaction, preserving owner ID and
 canonical presentation.
 
+Main subscribes to canonical Button commits before its initial pure state load,
+accepts the validated canonical document before bundled-source synchronization,
+and does not render its Button control groups while that first document is still
+unresolved. A later synchronization failure keeps the accepted document and its
+authored skins mounted and presents the exact failure visibly. Fresh launches
+through `Start-FlowCellFrontend.ps1` also require Main to clear a unique pending
+bootstrap marker; a fresh bootstrap error, early process exit, or timeout makes
+the launcher fail instead of treating a broken handoff as healthy.
+
 Add Button creates a new owner. Update transactionally replaces that same
-owner's Local package and active record, immediately refreshes the canonical execution
+owner's Local package and active record, refreshes the canonical execution
 targets, and preserves Button IDs, labels, skins, placements, popout/fan
 references, and package `runtime/` state. Update rejects changes between
-single-script/tool-set roles and rejects removed or renamed tool-set slots.
+single-script/tool-set roles, between ordinary script and Page roles, and rejects
+an installed Page ID or `ownerStateFormat` change because the retained owner state
+would no longer have a proved meaning. Those contract changes require
+delete/re-add. A generated single-script update keeps the previous package in a
+durable awaiting-canonical transaction until Button state carries the matching
+internal source revision; exact startup recovery then finalizes the new package
+or restores the previous one. Another update or delete of that owner is rejected
+while the transaction is unresolved.
 A bundled package may opt into `layout.updatePolicy.appendMissingChildSlots` to
 append new release-owned child slots while preserving every existing child ID
 and placement; other graph changes still require delete/re-add. Delete removes
@@ -865,6 +887,10 @@ validates capability plus request schema before dispatch. A Core service returns
 a plan to the trusted host; native code re-resolves the identity again and
 validates the response schema before anything is returned to the child WebView. No
 product name, page label, source filename, or catalog path selects behavior.
+Fatal mount, resize, isolation, refresh, or bridge failures unmount the raw child
+before the parent shows an error. Closing always attempts to destroy the parent
+even if raw-child unmount fails, so a stale child cannot strand the managed Page
+window lifecycle.
 
 Blender Theme and Illustrator Layer Tree are ordinary program-owned examples of
 this contract. Their UI, assets, configuration, actions, helpers, and runtime
@@ -884,23 +910,41 @@ cleanup journal removes the authorized short-lived stage after success or on
 startup after a crash; drift is preserved for inspection instead of being
 deleted broadly.
 
-## Managed Program And Panel Setup
+## Program And Panel Setup
 
-Add Program inventories only unregistered `Programs/<Program>` packages whose
-`flowcell.program.json` fully validates. The manifest is authoritative for the
-host executable suggestion, Panels, contribution versions/types/defaults,
-dependencies, destination Panels, support content, reload/restart notes, and
-listed install effects. The user confirms the host EXE and chooses one reviewed
-plan: `Register program only`, `Add everything`, or `Custom`. Required sources
-and dependency closure cannot be deselected. Register-only writes an empty
-enabled-contribution set and creates no source Button.
+Add Program has two explicit paths. `Any program` is always available: the user
+enters a name and exact host EXE, then uses one `Add program` action. FlowCell
+silently validates the path and applies a registration-only plan with no Panels
+or bundled Buttons; the application does not need to be running. The generated
+package's only process match is the normalized EXE filename/stem, not its full
+path. Preflight rejects a process name already claimed by another valid Program
+package, but an unknown unregistered executable elsewhere with the same filename
+remains a residual match risk. Add Panel and Add Button can extend it afterward.
+`Managed package` inventories only unregistered
+`Programs/<Program>` packages whose `flowcell.program.json` fully validates. The
+manifest is authoritative for the host executable suggestion, Panels,
+contribution versions/types/defaults, dependencies, destination Panels, support
+content, reload/restart notes, and listed install effects. The user confirms the
+host EXE and chooses one reviewed plan: `Register program only`, `Add everything`,
+or `Custom`. Required sources and dependency closure cannot be deselected.
+Register-only writes an empty enabled-contribution set and creates no source
+Button.
 
-The reviewed plan is one durable transaction across rail registration, enabled
-contribution state, selected Panel roots/owners, ordinary source installs, and
-the canonical Button commit. Startup finalizes only when exact canonical
-Buttons, active records, source identities, Panels, and Tool Set graphs match;
-otherwise it rolls the proved transaction back without overwriting unrelated
-state.
+The direct `Any program` plan and the reviewed `Managed package` plan each use one
+durable transaction across rail registration, enabled contribution state,
+selected Panel roots/owners, ordinary source installs, and the canonical Button
+commit. A generated registration-only package is created
+only after the prepared journal exists and remains marker-owned until commit.
+Before commit, FlowCell re-proves the exact marker, manifest, complete generated
+tree, native rail registration, and enabled-contribution state. Before rollback,
+every generated artifact still present must match the journal, no unexpected
+content may exist, and native state must be at a proved journal boundary. Drift
+or reparse points fail closed and preserve the package. A same-name folder is
+never overwritten: a valid package may be chosen through `Managed package`,
+while a malformed blocking folder must be repaired, removed, or avoided with a
+distinct name. Startup finalizes only when exact canonical Buttons, active
+records, source identities, Panels, and Tool Set graphs match; otherwise it
+rolls the proved transaction back without overwriting unrelated state.
 
 Add Panel creates either an empty managed Panel or a managed copy of one
 external source folder. Preflight reports the exact destination and copy

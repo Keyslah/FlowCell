@@ -131,7 +131,8 @@ import {
 } from "./.compiled-button-system/button/state/installedPageLifecycle.js";
 import {
   buttonStateDocumentsEqual,
-  reconcileBundledProgramSources
+  reconcileBundledProgramSources,
+  runButtonStateBootstrapSequence
 } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
 import {
   findPanelOwnerButton,
@@ -4326,6 +4327,7 @@ test("source updates preserve Button identities and presentation while refreshin
   const singleIdentity = source("Windows", "Files", "single.flowcell-source.json");
   document.buttons.single = button("single", "single-script", singleIdentity);
   document.buttons.single.label = "My Custom Label";
+  document.buttons.single.metadata = { userNote: "keep me" };
   const updatedIdentity = source("Windows", "Files", "single.flowcell-source.json");
   applyInstalledSourceUpdate(document, {
     ownerButtonId: "single",
@@ -4337,11 +4339,16 @@ test("source updates preserve Button identities and presentation while refreshin
     },
     label: "Manifest Label",
     tooltip: "Manifest tooltip",
-    children: []
+    children: [],
+    updateTransactionToken: "source-update-123"
   });
   assert.equal(document.buttons.single.label, "My Custom Label");
   assert.equal(document.buttons.single.sourceIdentity, updatedIdentity);
   assert.equal(document.buttons.single.executionTarget.actionId, "open-window-grid");
+  assert.deepEqual(document.buttons.single.metadata, {
+    userNote: "keep me",
+    flowcellSourceRevision: "source-update-123"
+  });
 
   const ownerIdentity = source("Blender", "Tools", "owner.flowcell-source.json");
   document.buttons.owner = button("owner", "tool-set-owner", ownerIdentity);
@@ -4702,6 +4709,37 @@ test("opt-in source updates append child slots without replacing existing Button
   assert.equal(document.buttons[appendedId].metadata.toolSetSlot, "save_package");
   assert.equal(document.buttons[appendedId].executionTarget.actionId, "save-tool-package");
   assert.equal(document.popoutUnits.tools.childPlacementIds[1], `placement-${appendedId}`);
+});
+
+test("Button bootstrap retains the accepted canonical snapshot when synchronization fails", async () => {
+  const document = createButtonStateDocument();
+  document.revision = 17;
+  const failure = new Error("Program contribution metadata is inconsistent.");
+  const events = [];
+  const accepted = [];
+
+  const result = await runButtonStateBootstrapSequence(
+    async () => {
+      events.push("load");
+      return document;
+    },
+    (candidate) => {
+      events.push("accept");
+      accepted.push(candidate);
+      return true;
+    },
+    async () => {
+      events.push("synchronize");
+      throw failure;
+    }
+  );
+
+  assert.deepEqual(events, ["load", "accept", "synchronize"]);
+  assert.deepEqual(accepted, [document]);
+  assert.equal(result.initialDocument, document);
+  assert.equal(result.bootstrapResult, null);
+  assert.equal(result.error, failure);
+  assert.equal(result.cancelled, false);
 });
 
 test("bundled source reconciliation repairs current owners and materializes missing required owners", () => {
@@ -6457,6 +6495,23 @@ test("source-owning core-action Buttons uninstall their owned package", () => {
   const removed = removeOwnedButtonGraph(document, installed.id);
   assert.deepEqual(removed.uninstallOwnerButtonIds, [installed.id]);
   assert.equal(document.buttons[installed.id], undefined);
+});
+
+test("core-action registry IDs use the same case-insensitive contract as catalog validation", async () => {
+  let calls = 0;
+  const unregister = registerButtonCoreAction("Open-Window-Grid", async () => {
+    calls += 1;
+    return null;
+  });
+  try {
+    const target = button("mixed-case-core-action", "single-script");
+    target.executionTarget = { kind: "core-action", actionId: "OPEN-WINDOW-GRID" };
+    const result = await executeButtonRecord(target);
+    assert.equal(result.executed, true);
+    assert.equal(calls, 1);
+  } finally {
+    unregister();
+  }
 });
 
 test("pressDown owns activation and complete hover-aware pairs support keyboard sessions", () => {
