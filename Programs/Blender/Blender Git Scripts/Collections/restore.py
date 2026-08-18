@@ -3,77 +3,45 @@
 from __future__ import annotations
 
 import importlib
-import json
-import sys
-from pathlib import Path
 
 import bpy
 
 
-def _load_flowcell_bridge():
-    module_names = ("flowcell_bridge", "flowcell_bridge")
-    first_error = None
-    for module_name in module_names:
-        try:
-            module = importlib.import_module(module_name)
-            try:
-                module = importlib.reload(module)
-            except Exception:
-                pass
-            return module
-        except Exception as exc:
-            if first_error is None:
-                first_error = exc
-
-    search_roots = []
-    user_scripts = bpy.utils.user_resource("SCRIPTS")
-    if user_scripts:
-        search_roots.append(Path(user_scripts) / "addons")
-    for root in bpy.utils.script_paths():
-        if root:
-            search_roots.append(Path(root) / "addons")
-
-    seen = set()
-    for addon_root in search_roots:
-        try:
-            addon_root = addon_root.resolve()
-        except Exception:
-            continue
-        addon_key = str(addon_root)
-        if addon_key in seen or not addon_root.is_dir():
-            continue
-        seen.add(addon_key)
-        addon_root_text = str(addon_root)
-        if addon_root_text not in sys.path:
-            sys.path.insert(0, addon_root_text)
-        for module_name in module_names:
-            try:
-                module = importlib.import_module(module_name)
-                try:
-                    module = importlib.reload(module)
-                except Exception:
-                    pass
-                return module
-            except Exception:
-                continue
-
-    raise RuntimeError(
-        "FlowCell Blender bridge module was not found. Reload the FlowCell add-on or restart Blender."
-    ) from first_error
+def _load_flowcell_actions():
+    try:
+        return importlib.import_module("flowcell_actions")
+    except Exception as exc:
+        raise RuntimeError(
+            "FlowCell Blender actions module was not found. Reload the FlowCell add-on or restart Blender."
+        ) from exc
 
 
-def _merge_payload(default_payload, override_payload):
-    payload = dict(default_payload or {})
-    if override_payload:
-        payload.update(dict(override_payload))
-    return payload
+def _selection_is_restore_only(actions, context):
+    selected = list(getattr(context, "selected_objects", []) or [])
+    if not selected:
+        return True
 
-ACTION_NAME = "restore"
-DEFAULT_DATA = json.loads(r'''{}''')
+    scene_root = context.scene.collection
+    parent_map = actions.build_collection_parent_map(scene_root)
+    restore_roots = tuple(
+        root
+        for name in ("Snapshots", "Trash", "Archive")
+        if (root := scene_root.children.get(name)) is not None
+    )
+    return all(
+        any(actions.object_is_in_root(obj, root, parent_map) for root in restore_roots)
+        for obj in selected
+    )
 
 
 def run_flowcell_action(context=None, data=None):
-    del context
-    bridge = _load_flowcell_bridge()
-    payload = _merge_payload(DEFAULT_DATA, data)
-    return bridge.execute_bridge_operator(ACTION_NAME, payload)
+    del data
+    actions = _load_flowcell_actions()
+    active_context = context if context is not None else bpy.context
+    if not list(getattr(active_context, "selected_objects", []) or []):
+        return {"message": "No selected objects to restore."}
+    if not _selection_is_restore_only(actions, active_context):
+        return {
+            "message": "Restore cancelled: select only objects from Snapshots, Trash, or Archive."
+        }
+    return {"message": actions.perform_restore(active_context)}

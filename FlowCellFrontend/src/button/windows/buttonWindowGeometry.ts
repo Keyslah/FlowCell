@@ -132,6 +132,61 @@ export function resolveFixedButtonCanvasBounds(
   };
 }
 
+function flowCellBoundsIntersect(left: FlowCellBounds, right: FlowCellBounds): boolean {
+  return (
+    left.Left < right.Left + right.Width &&
+    left.Left + left.Width > right.Left &&
+    left.Top < right.Top + right.Height &&
+    left.Top + left.Height > right.Top
+  );
+}
+
+function clampButtonBoundsAxis(
+  origin: number,
+  size: number,
+  workAreaOrigin: number,
+  workAreaSize: number
+): number {
+  if (size >= workAreaSize) return workAreaOrigin;
+  return Math.min(
+    Math.max(origin, workAreaOrigin),
+    workAreaOrigin + workAreaSize - size
+  );
+}
+
+export function rehomeOffscreenButtonContentBounds(
+  contentBounds: FlowCellBounds,
+  connectedWorkAreas: readonly FlowCellBounds[],
+  fallbackWorkArea?: FlowCellBounds | null
+): FlowCellBounds {
+  const usableWorkAreas = connectedWorkAreas.filter(isUsableButtonWindowBounds);
+  if (usableWorkAreas.some((workArea) => flowCellBoundsIntersect(contentBounds, workArea))) {
+    return { ...contentBounds };
+  }
+
+  const targetWorkArea = isUsableButtonWindowBounds(fallbackWorkArea)
+    ? fallbackWorkArea
+    : usableWorkAreas[0];
+  if (!targetWorkArea) return { ...contentBounds };
+
+  return {
+    Left: clampButtonBoundsAxis(
+      contentBounds.Left,
+      contentBounds.Width,
+      targetWorkArea.Left,
+      targetWorkArea.Width
+    ),
+    Top: clampButtonBoundsAxis(
+      contentBounds.Top,
+      contentBounds.Height,
+      targetWorkArea.Top,
+      targetWorkArea.Height
+    ),
+    Width: contentBounds.Width,
+    Height: contentBounds.Height
+  };
+}
+
 export function buttonDesktopBoundsInsideCanvas(
   bounds: ButtonDesktopBounds,
   canvas: FlowCellBounds,

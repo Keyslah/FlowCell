@@ -406,14 +406,15 @@ left rail's `Same size Buttons` checkbox applies the focused placement's width
 resizing updates every member atomically and delayed skin/text measurements
 cannot split the sizes. Unchecking stops linking future size edits but
 deliberately keeps the current fixed geometry. The Skin Editor toolbar is ordered
-`Assign Skin`, `Assign Skin to Panel`, `Load skin`, `Save skin`, and `Save as new
+`Assign Skin`, `Assign Skin to Selection`, `Assign Skin to Panel`, `Load skin`, `Save skin`, and `Save as new
 skin`. Load offers recent files first, saved library skins second, and `Browse...`
 last; every choice changes only the working copy. Recent file paths and their skin
 IDs are machine-local and capped at eight. Assign Skin writes the focused
 placement override plus the pending sizing policy, preserving the placement's
 x, y, width, height, and text settings. It forks an edited shared skin, including
 the document-wide default skin, first; it never changes the Button's default skin
-or sibling placements. Assign Skin to Panel is the explicit
+or sibling placements. Assign Skin to Selection uses that isolated working skin
+only for the currently selected placements on the focused surface. Assign Skin to Panel is the explicit
 surface-wide action and targets every Button on the focused placement's current
 surface, whether that placement is on Main, a regular Pop, a Fan, or a tool-set
 Pop. Occurrences of the same Button on other surfaces remain unchanged. A
@@ -485,8 +486,8 @@ if a visual state switches the core among inline, block, flex, or grid layout, w
 rewriting authored skin source, authored transforms, core geometry, or hit testing.
 Text offset composition is refreshed during visual transitions so authored translation
 or SVG scaling cannot leave a stale X/Y result. The single `Apply All`
-at the bottom of Button Text commits only the shared Button tooltips, base/state labels,
-and those focused-placement text settings; it does not apply cycle IDs, triggers, visuals,
+at the bottom of Button Text commits every pending Button Text draft across the editor:
+shared Button tooltips, base/state labels, and each placement's text settings. It does not apply cycle IDs, triggers, visuals,
 skin code, Button Size, or placement geometry. Changed cycle IDs must first be
 persisted with Save Settings. Save Settings retains the complete placement-owned
 cycle and text policy. Older placement hover-highlight values remain readable only
@@ -532,7 +533,7 @@ technique cannot make the selector appear to do nothing.
 `Highlight on hover` follows the color rows and belongs to the isolated working
 skin. It defaults off and records an explicit
 `--flowcell-button-highlight-on-hover: 1|0` declaration in Base, so Assign Skin,
-Assign Skin to Panel, Save skin, and Save as new skin carry the choice. The host
+Assign Skin to Selection, Assign Skin to Panel, Save skin, and Save as new skin carry the choice. The host
 uses it for the same 15% brightness lift while the real authored shape is hovered;
 it does not change `[data-core]` measurement or hit testing. An explicit skin value
 wins over the older placement field, which remains runtime/settings compatibility
@@ -550,7 +551,7 @@ The preview is review information outside the clean canonical paste block. Profi
 changes update only their selected Base root and live preview,
 leaving effect colors, non-color source, Button Size, `[data-core]` geometry, and hit
 testing unchanged. They do not assign or save the working skin; Assign Skin, Assign
-Skin to Panel, Save skin, and Save as new skin retain their normal scope and
+Skin to Selection, Assign Skin to Panel, Save skin, and Save as new skin retain their normal scope and
 shared-skin forking rules.
 
 Cycle structure, triggers, state labels, and visual selections all belong to the

@@ -2503,16 +2503,27 @@ def perform_archive(context: bpy.types.Context) -> str:
 
 def perform_restore(context: bpy.types.Context) -> str:
     scene_root = context.scene.collection
-    root_collections = ensure_root_structure(scene_root)
-    live_collection = root_collections["Live"]
-    trash_collection = root_collections["Trash"]
-    archive_collection = root_collections["Archive"]
-    parent_map = build_collection_parent_map(scene_root)
     targets = list(context.selected_objects)
 
     if not targets:
         return "No selected objects to restore."
 
+    parent_map = build_collection_parent_map(scene_root)
+    restore_roots = tuple(
+        root
+        for name in ("Snapshots", "Trash", "Archive")
+        if (root := scene_root.children.get(name)) is not None
+    )
+    if any(
+        not any(object_is_in_root(obj, root, parent_map) for root in restore_roots)
+        for obj in targets
+    ):
+        return "Restore cancelled: select only objects from Snapshots, Trash, or Archive."
+
+    root_collections = ensure_root_structure(scene_root)
+    live_collection = root_collections["Live"]
+    trash_collection = root_collections["Trash"]
+    archive_collection = root_collections["Archive"]
     restored = 0
 
     for target_name, source_obj in dedupe_selected_targets(targets, root_collections, parent_map):
@@ -3462,7 +3473,7 @@ def execute_bridge_operator(action: str, data: dict) -> dict[str, object]:
     PENDING_UNDO_BRIDGE_ERROR = ""
 
     try:
-        result = bpy.ops.object.flowcell_bridge_undoable_action("EXEC_DEFAULT")
+        result = bpy.ops.object.flowcell_bridge_undoable_action("EXEC_DEFAULT", True)
         if result is None or "FINISHED" not in result:
             error = PENDING_UNDO_BRIDGE_ERROR or f"Action did not finish: {action or '[blank]'}"
             raise ValueError(error)

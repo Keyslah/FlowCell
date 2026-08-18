@@ -481,7 +481,11 @@ test("Main Pop and Open Pop use only transient file-backed draft windows", () =>
   assert.match(mainPopBlock[0], /buildTransientButtonPopoutSettingsDocument/);
   assert.match(mainPopBlock[0], /registerButtonDraftResponder/);
   assert.match(mainPopBlock[0], /publishButtonDraftToWindow/);
-  assert.match(mainPopBlock[0], /registerInLayout:\s*false/);
+  assert.match(
+    mainPopBlock[0],
+    /settingsBackedLayout:\s*\{[\s\S]{0,120}panelOwnerButtonId,[\s\S]{0,180}settingsPath:\s*choice\.path[\s\S]{0,120}choiceId:\s*choice\.choiceId/
+  );
+  assert.doesNotMatch(mainPopBlock[0], /registerInLayout:\s*false/);
   assert.match(mainPopBlock[0], /writeMainLastPopChoice/);
   assert.match(mainPopBlock[0], /Use Open Pop first\./);
   assert.doesNotMatch(mainPopBlock[0], /saveButtonStateDocument|publishButtonCommit|applyButtonSettingsFile|ensureRegularPopout|acceptButtonDocument/);
@@ -503,7 +507,13 @@ test("Main Pop and Open Pop use only transient file-backed draft windows", () =>
   );
   assert.ok(layout.indexOf('label: "Open Pop"') < layout.indexOf('label: "Pop"'));
   assert.match(windows, /registerInLayout\?: boolean/);
-  assert.match(windows, /if \(args\.registerInLayout !== false\) \{\s*registerLayoutWindow/);
+  assert.match(windows, /settingsBackedLayout\?: \{/);
+  assert.match(windows, /panelOwnerButtonId:\s*settingsBackedLayout\?\.panelOwnerButtonId/);
+  assert.match(windows, /buttonPopoutSettingsPath:\s*settingsBackedLayout\?\.settingsPath/);
+  assert.match(
+    windows,
+    /if \(args\.registerInLayout !== false\) \{[\s\S]{0,160}registerLayoutWindow/
+  );
 });
 
 test("Skin assignment is explicit and selected-only unless Panel assignment is chosen", () => {

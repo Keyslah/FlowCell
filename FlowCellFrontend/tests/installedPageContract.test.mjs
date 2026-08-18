@@ -122,7 +122,7 @@ test("installed pages use a raw WRY boundary without Tauri initialization script
     /onCloseRequested[\s\S]*preventDefault\(\)[\s\S]*unmount_installed_page_webview[\s\S]*currentWindow\.destroy\(\)/
   );
   const fatalErrorLifecycleStart = host.indexOf("async function revealInstalledPageError(");
-  const fatalErrorLifecycleEnd = host.indexOf("\n}\n\nexport default", fatalErrorLifecycleStart);
+  const fatalErrorLifecycleEnd = host.indexOf("export default", fatalErrorLifecycleStart);
   assert.ok(fatalErrorLifecycleStart >= 0 && fatalErrorLifecycleEnd > fatalErrorLifecycleStart);
   const fatalErrorLifecycle = host.slice(fatalErrorLifecycleStart, fatalErrorLifecycleEnd);
   assert.ok(

@@ -6,61 +6,68 @@ import importlib
 import json
 import os
 import subprocess
-import sys
 import tempfile
 from pathlib import Path
 
 import bpy
 
 
-def _load_flowcell_bridge():
-    first_error = None
-    for module_name in ("flowcell_bridge",):
-        try:
-            module = importlib.import_module(module_name)
+def _load_flowcell_actions():
+    try:
+        return importlib.import_module("flowcell_actions")
+    except Exception as exc:
+        raise RuntimeError(
+            "FlowCell Blender actions module was not found. Reload the FlowCell add-on or restart Blender."
+        ) from exc
+
+
+def _resolve_current_action_name(actions):
+    current_path = Path(globals().get("__file__", "")).resolve()
+    runtime_matches = []
+    source_matches = []
+
+    for entry in actions.load_custom_actions_registry():
+        action_name = str(entry.get("action", "") or "").strip()
+        if not action_name:
+            continue
+
+        python_path = str(entry.get("pythonPath", "") or "").strip()
+        if python_path:
             try:
-                module = importlib.reload(module)
+                runtime_path = Path(actions.resolve_custom_action_script_path(python_path)).resolve()
+                if runtime_path == current_path:
+                    runtime_matches.append(action_name)
             except Exception:
                 pass
-            return module
-        except Exception as exc:
-            if first_error is None:
-                first_error = exc
 
-    search_roots = []
-    user_scripts = bpy.utils.user_resource("SCRIPTS")
-    if user_scripts:
-        search_roots.append(Path(user_scripts) / "addons")
-    for root in bpy.utils.script_paths():
-        if root:
-            search_roots.append(Path(root) / "addons")
-
-    seen = set()
-    for addon_root in search_roots:
-        try:
-            addon_root = addon_root.resolve()
-        except Exception:
-            continue
-        addon_key = str(addon_root)
-        if addon_key in seen or not addon_root.is_dir():
-            continue
-        seen.add(addon_key)
-        addon_root_text = str(addon_root)
-        if addon_root_text not in sys.path:
-            sys.path.insert(0, addon_root_text)
-        try:
-            module = importlib.import_module("flowcell_bridge")
+        source_path = str(entry.get("sourcePythonPath", "") or "").strip()
+        if source_path:
             try:
-                module = importlib.reload(module)
+                if Path(source_path).resolve() == current_path:
+                    source_matches.append(action_name)
             except Exception:
                 pass
-            return module
-        except Exception:
-            continue
 
-    raise RuntimeError(
-        "FlowCell Blender bridge module was not found. Reload the FlowCell add-on or restart Blender."
-    ) from first_error
+    matches = runtime_matches or source_matches
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise RuntimeError("Rename Selected could not resolve its registered FlowCell action.")
+    raise RuntimeError("Rename Selected matched more than one registered FlowCell action.")
+
+
+def _perform_rename_now(context, items):
+    actions = _load_flowcell_actions()
+    return actions.perform_batch_rename_selected_objects(context, items)
+
+
+def _perform_prompted_rename(items):
+    actions = _load_flowcell_actions()
+    action_name = _resolve_current_action_name(actions)
+    result = actions.execute_bridge_operator(action_name, {"items": items})
+    if not isinstance(result, dict):
+        raise RuntimeError("Rename Selected returned no action result.")
+    return str(result.get("message", "") or f"Renamed {len(items)} object(s).")
 
 
 def _merge_payload(default_payload, override_payload):
@@ -71,6 +78,30 @@ def _merge_payload(default_payload, override_payload):
 
 
 _PROMPT_POLL_SECONDS = 0.15
+_PROMPT_STATE_KEY = "flowcell.rename_selected.prompt_state"
+_FALLBACK_PROMPT_STATE = {}
+
+
+def _prompt_state_store():
+    namespace = getattr(getattr(bpy, "app", None), "driver_namespace", None)
+    if namespace is not None:
+        return namespace
+    return _FALLBACK_PROMPT_STATE
+
+
+def _claim_prompt_state():
+    store = _prompt_state_store()
+    if store.get(_PROMPT_STATE_KEY) is not None:
+        return None
+    state = {"phase": "scheduled"}
+    store[_PROMPT_STATE_KEY] = state
+    return state
+
+
+def _release_prompt_state(state):
+    store = _prompt_state_store()
+    if store.get(_PROMPT_STATE_KEY) is state:
+        store.pop(_PROMPT_STATE_KEY, None)
 
 
 def _flowcell_bridge_root():
@@ -436,7 +467,7 @@ def _start_prompt_process(items):
     return process, input_path, output_path, script_path
 
 
-def _apply_prompt_result(context, output_path):
+def _apply_prompt_result(output_path):
     try:
         result = json.loads(Path(output_path).read_text(encoding="utf-8-sig"))
     except Exception as exc:
@@ -457,8 +488,7 @@ def _apply_prompt_result(context, output_path):
         return
 
     try:
-        bridge = _load_flowcell_bridge()
-        message = bridge.perform_batch_rename_selected_objects(context, items)
+        message = _perform_prompted_rename(items)
         _write_rename_status("applied", message, count=len(items))
         print(f"FlowCell Rename Selected: {message}")
     except Exception as exc:
@@ -466,33 +496,63 @@ def _apply_prompt_result(context, output_path):
         print(f"FlowCell Rename Selected failed: {exc}")
 
 
-def _watch_prompt_process(context, process, input_path, output_path, script_path):
+def _watch_prompt_process(state, process, input_path, output_path, script_path):
     def _poll():
-        if Path(output_path).exists():
-            _apply_prompt_result(context, output_path)
+        try:
+            process_finished = process.poll() is not None
+        except Exception as exc:
+            _write_rename_status("error", str(exc))
+            print(f"FlowCell Rename Selected failed: {exc}")
             _cleanup_prompt_files((input_path, output_path, script_path))
+            _release_prompt_state(state)
             return None
-        if process.poll() is not None:
-            _write_rename_status("error", "Rename Selected prompt closed without a result.")
-            _cleanup_prompt_files((input_path, output_path, script_path))
-            return None
-        return _PROMPT_POLL_SECONDS
 
+        if not process_finished:
+            return _PROMPT_POLL_SECONDS
+
+        try:
+            if Path(output_path).exists():
+                _apply_prompt_result(output_path)
+            else:
+                _write_rename_status("error", "Rename Selected prompt closed without a result.")
+        except Exception as exc:
+            _write_rename_status("error", str(exc))
+            print(f"FlowCell Rename Selected failed: {exc}")
+        finally:
+            _cleanup_prompt_files((input_path, output_path, script_path))
+            _release_prompt_state(state)
+        return None
+
+    state["phase"] = "open"
+    state["process"] = process
+    state["timer"] = _poll
     bpy.app.timers.register(_poll, first_interval=_PROMPT_POLL_SECONDS)
 
 
-def _open_prompt_later(context, items):
+def _open_prompt_later(items):
+    state = _claim_prompt_state()
+    if state is None:
+        message = "Rename Selected prompt is already open."
+        _write_rename_status("already_open", message, count=len(items))
+        return message
+
     def _open_prompt():
         try:
             process, input_path, output_path, script_path = _start_prompt_process(items)
             _write_rename_status("opened", "Opened Rename Selected prompt.", count=len(items))
-            _watch_prompt_process(context, process, input_path, output_path, script_path)
+            _watch_prompt_process(state, process, input_path, output_path, script_path)
         except Exception as exc:
             _write_rename_status("error", str(exc), count=len(items))
             print(f"FlowCell Rename Selected failed to open prompt: {exc}")
+            _release_prompt_state(state)
         return None
 
-    bpy.app.timers.register(_open_prompt, first_interval=0.05)
+    state["timer"] = _open_prompt
+    try:
+        bpy.app.timers.register(_open_prompt, first_interval=0.05)
+    except Exception:
+        _release_prompt_state(state)
+        raise
     _write_rename_status("scheduled", "Opening Rename Selected prompt.", count=len(items))
     return "Opening Rename Selected prompt."
 
@@ -503,9 +563,8 @@ def run_flowcell_action(context=None, data=None):
     items = payload.get("items")
     if not items:
         items = _selected_rename_items(ctx)
-        return {"message": _open_prompt_later(ctx, items)}
+        return {"message": _open_prompt_later(items)}
 
-    bridge = _load_flowcell_bridge()
-    message = bridge.perform_batch_rename_selected_objects(ctx, items)
+    message = _perform_rename_now(ctx, items)
     _write_rename_status("applied", message, count=len(items))
     return {"message": message}

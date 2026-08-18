@@ -2,7 +2,9 @@
 
 import bmesh
 import bpy
+import math
 import os
+import re
 
 from bpy.props import CollectionProperty, FloatProperty, StringProperty
 from bpy.types import OperatorFileListElement
@@ -16,6 +18,10 @@ DISPLACE_MID_LEVEL = -0.01
 TOP_FACE_GROUP_NAME = "TopFaceGroup"
 OPERATOR_ID = "flowcell.create_lithophane_from_image"
 OPERATOR_CLASS_NAME = "FLOWCELL_OT_create_lithophane_from_image"
+FLOWCELL_LITHO_SIZE_SUFFIX_RE = re.compile(
+    r"^(?P<base>.+?)__fcsize_(?P<width>\d+(?:\.\d+)?)x(?P<height>\d+(?:\.\d+)?)mm$",
+    re.IGNORECASE,
+)
 
 
 def _ctx(context=None):
@@ -43,7 +49,17 @@ def _set_active_object(context, obj, select_only=False):
 def _apply_object_scale(context, obj):
     _set_active_object(context, obj, select_only=True)
     _safe_mode_set("OBJECT")
-    bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    result = bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
+    if result is None or "FINISHED" not in result:
+        raise ValueError(f"Could not apply the scale on {obj.name}.")
+
+
+def _apply_modifier(context, obj, modifier):
+    _set_active_object(context, obj, select_only=True)
+    _safe_mode_set("OBJECT")
+    result = bpy.ops.object.modifier_apply(modifier=modifier.name)
+    if result is None or "FINISHED" not in result:
+        raise ValueError(f"Could not apply the {modifier.name} modifier on {obj.name}.")
 
 
 def _set_material_transparency_compat(material):
@@ -67,6 +83,74 @@ def _set_material_transparency_compat(material):
 def _px_to_m(px, dpi):
     safe_dpi = dpi if dpi and dpi > 0.0 else DEFAULT_DPI
     return (float(px) / float(safe_dpi)) * 0.0254
+
+
+def _update_view_layer(context):
+    update = getattr(getattr(context, "view_layer", None), "update", None)
+    if callable(update):
+        update()
+
+
+def _meters_to_blender_units(context, meters):
+    value = float(meters)
+    unit_settings = getattr(getattr(context, "scene", None), "unit_settings", None)
+    scale_length = float(getattr(unit_settings, "scale_length", 1.0) or 1.0)
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError("Lithophane dimensions must be positive and finite.")
+    if not math.isfinite(scale_length) or scale_length <= 0.0:
+        raise ValueError("Blender scene unit scale must be positive and finite.")
+    return value / scale_length
+
+
+def _validate_xy_dimensions(target_x, target_y):
+    resolved_x = float(target_x)
+    resolved_y = float(target_y)
+    if not math.isfinite(resolved_x) or resolved_x <= 0.0:
+        raise ValueError("Lithophane X dimension must be positive and finite.")
+    if not math.isfinite(resolved_y) or resolved_y <= 0.0:
+        raise ValueError("Lithophane Y dimension must be positive and finite.")
+    return resolved_x, resolved_y
+
+
+def _fit_xy_dimensions(context, obj, target_x, target_y):
+    resolved_x, resolved_y = _validate_xy_dimensions(target_x, target_y)
+    _update_view_layer(context)
+    current_x = abs(float(obj.dimensions.x))
+    current_y = abs(float(obj.dimensions.y))
+    if not math.isfinite(current_x) or current_x <= 0.0:
+        raise ValueError(f"{obj.name} has no measurable X dimension.")
+    if not math.isfinite(current_y) or current_y <= 0.0:
+        raise ValueError(f"{obj.name} has no measurable Y dimension.")
+
+    obj.scale.x *= resolved_x / current_x
+    obj.scale.y *= resolved_y / current_y
+    _apply_object_scale(context, obj)
+    _update_view_layer(context)
+
+    final_x = abs(float(obj.dimensions.x))
+    final_y = abs(float(obj.dimensions.y))
+    tolerance_x = max(1e-9, resolved_x * 1e-5)
+    tolerance_y = max(1e-9, resolved_y * 1e-5)
+    if not math.isclose(final_x, resolved_x, rel_tol=1e-5, abs_tol=tolerance_x):
+        raise ValueError(f"{obj.name} did not preserve its X dimension.")
+    if not math.isclose(final_y, resolved_y, rel_tol=1e-5, abs_tol=tolerance_y):
+        raise ValueError(f"{obj.name} did not preserve its Y dimension.")
+
+
+def _resolve_image_plane_spec(context, image, dpi):
+    source_name = os.path.splitext(os.path.basename(image.filepath or image.name))[0]
+    size_match = FLOWCELL_LITHO_SIZE_SUFFIX_RE.match(source_name)
+    if size_match:
+        base_name = size_match.group("base")
+        target_x = _meters_to_blender_units(context, float(size_match.group("width")) / 1000.0)
+        target_y = _meters_to_blender_units(context, float(size_match.group("height")) / 1000.0)
+        return base_name, target_x, target_y
+
+    width_px = float(image.size[0])
+    height_px = float(image.size[1])
+    target_x = _meters_to_blender_units(context, _px_to_m(width_px, dpi))
+    target_y = _meters_to_blender_units(context, _px_to_m(height_px, dpi))
+    return source_name, target_x, target_y
 
 
 def _ensure_plane_uvs(context, plane):
@@ -110,22 +194,15 @@ def _create_textured_plane_for_image(context, image, dpi):
     bpy.ops.mesh.primitive_plane_add(size=1.0)
     plane = context.view_layer.objects.active
 
-    base_name = os.path.splitext(os.path.basename(image.filepath or image.name))[0]
+    base_name, target_x, target_y = _resolve_image_plane_spec(context, image, dpi)
     plane.name = base_name
-
-    width_px = float(image.size[0])
-    height_px = float(image.size[1])
-    plane.dimensions.x = _px_to_m(width_px, dpi)
-    plane.dimensions.y = _px_to_m(height_px, dpi)
-    plane.dimensions.z = 0.0
-
-    _apply_object_scale(context, plane)
+    _fit_xy_dimensions(context, plane, target_x, target_y)
     _ensure_plane_uvs(context, plane)
 
     material = _create_image_material(base_name, image)
     plane.data.materials.clear()
     plane.data.materials.append(material)
-    return plane
+    return plane, (target_x, target_y)
 
 
 def _collect_selected_vertex_indices(mesh):
@@ -185,7 +262,7 @@ def _add_displace_modifier(obj, image):
     return modifier
 
 
-def perform_make_lithophane(context=None, data=None, image=None):
+def perform_make_lithophane(context=None, data=None, image=None, target_xy=None):
     del data
     ctx = _ctx(context)
     obj = getattr(ctx.view_layer.objects, "active", None)
@@ -194,11 +271,24 @@ def perform_make_lithophane(context=None, data=None, image=None):
     if image is None:
         raise ValueError("A loaded image is required to build the lithophane displacement.")
 
+    if target_xy is None:
+        _update_view_layer(ctx)
+        target_x, target_y = _validate_xy_dimensions(
+            abs(float(obj.dimensions.x)),
+            abs(float(obj.dimensions.y)),
+        )
+    else:
+        try:
+            target_x, target_y = target_xy
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Lithophane target_xy must contain X and Y dimensions.") from exc
+        target_x, target_y = _validate_xy_dimensions(target_x, target_y)
+
     _apply_object_scale(ctx, obj)
 
     solidify_modifier = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
     solidify_modifier.thickness = SOLIDIFY_THICKNESS_METERS
-    bpy.ops.object.modifier_apply(modifier=solidify_modifier.name)
+    _apply_modifier(ctx, obj, solidify_modifier)
 
     _set_active_object(ctx, obj, select_only=True)
     _safe_mode_set("EDIT")
@@ -211,8 +301,11 @@ def perform_make_lithophane(context=None, data=None, image=None):
 
     _safe_mode_set("OBJECT")
     _create_or_replace_vertex_group(obj, TOP_FACE_GROUP_NAME, selected_vertex_indices)
-    _add_subsurf_modifier(obj)
-    _add_displace_modifier(obj, image)
+    subsurf_modifier = _add_subsurf_modifier(obj)
+    displace_modifier = _add_displace_modifier(obj, image)
+    _apply_modifier(ctx, obj, subsurf_modifier)
+    _apply_modifier(ctx, obj, displace_modifier)
+    _fit_xy_dimensions(ctx, obj, target_x, target_y)
 
     return {
         "message": f"Lithophane setup complete for {obj.name} using {image.name}.",
@@ -224,10 +317,10 @@ def perform_make_lithophane(context=None, data=None, image=None):
 
 def _create_lithophane_from_path(context, image_path, dpi):
     image = _load_image(image_path)
-    plane = _create_textured_plane_for_image(context, image, dpi)
+    plane, target_xy = _create_textured_plane_for_image(context, image, dpi)
     _set_active_object(context, plane, select_only=True)
 
-    result = perform_make_lithophane(context=context, image=image)
+    result = perform_make_lithophane(context=context, image=image, target_xy=target_xy)
     result["image_path"] = image_path
     result["object"] = result.get("object", plane.name)
     result["image"] = result.get("image", image.name)

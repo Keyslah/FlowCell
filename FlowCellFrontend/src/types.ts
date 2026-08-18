@@ -102,7 +102,10 @@ export interface LayoutSnapshotWindow {
   ButtonPopoutUnitId?: string;
   ButtonFanSetupId?: string;
   ButtonOwnerId?: string;
+  PanelOwnerButtonId?: string;
   ButtonDisplayMode?: "collapsed" | "expanded";
+  ButtonPopoutSettingsPath?: string;
+  ButtonPopoutChoiceId?: string;
   InstalledPageFileName?: string;
   InstalledPageId?: string;
   Bounds: FlowCellBounds;

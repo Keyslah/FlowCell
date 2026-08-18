@@ -192,6 +192,7 @@ import {
   resolvePopoutBoundsAfterDrag,
   resolveUniformSurfaceScale,
   resolveTargetButtonWebviewPixelRatio,
+  rehomeOffscreenButtonContentBounds,
   shouldBypassButtonWindowGeometryTransition,
   translateButtonDesktopBounds
 } from "./.compiled-button-system/button/windows/buttonWindowGeometry.js";
@@ -720,6 +721,49 @@ test("fixed Button canvas maps physical desktop frames into local CSS pixels", (
   });
 });
 
+test("explicit Button opens rehome frames whose saved monitor is disconnected", () => {
+  const dummyWorkArea = { Left: 0, Top: 0, Width: 1920, Height: 1032 };
+  const formerMonitorWorkArea = { Left: 1920, Top: 0, Width: 2560, Height: 1400 };
+  const illAlignBounds = { Left: 1785, Top: 1220, Width: 487, Height: 185 };
+  const illustratorRotateBounds = { Left: 2151, Top: 1143, Width: 407, Height: 156 };
+
+  assert.deepEqual(
+    rehomeOffscreenButtonContentBounds(
+      illustratorRotateBounds,
+      [dummyWorkArea, formerMonitorWorkArea],
+      dummyWorkArea
+    ),
+    illustratorRotateBounds,
+    "a frame that still intersects a connected monitor must keep its physical coordinates"
+  );
+  assert.deepEqual(
+    rehomeOffscreenButtonContentBounds(illAlignBounds, [dummyWorkArea], dummyWorkArea),
+    { Left: 1433, Top: 847, Width: 487, Height: 185 }
+  );
+  assert.deepEqual(
+    rehomeOffscreenButtonContentBounds(
+      illustratorRotateBounds,
+      [dummyWorkArea],
+      dummyWorkArea
+    ),
+    { Left: 1513, Top: 876, Width: 407, Height: 156 }
+  );
+  assert.deepEqual(
+    rehomeOffscreenButtonContentBounds(
+      { Left: 2400, Top: 1200, Width: 2200, Height: 1200 },
+      [dummyWorkArea],
+      dummyWorkArea
+    ),
+    { Left: 0, Top: 0, Width: 2200, Height: 1200 },
+    "oversized content keeps its size and anchors to the usable monitor origin"
+  );
+  assert.deepEqual(
+    rehomeOffscreenButtonContentBounds(illAlignBounds, [], null),
+    illAlignBounds,
+    "monitor-query failure must preserve the saved physical bounds"
+  );
+});
+
 test("fixed Button canvas broad phase rejects unrelated transparent space", () => {
   const frame = { x: 240, y: 120, width: 320, height: 180 };
   assert.equal(buttonWindowRectContainsPoint(frame, { x: 400, y: 200 }), true);
@@ -770,6 +814,17 @@ test("Button Editor bounds reject Windows minimized sentinels and discard stale 
       installedPageFileName: "layers.jsx",
       installedPageId: "layers-builder"
     });
+    registerLayoutWindow({
+      windowLabel: "button-popout-owner-layers",
+      kind: "button-popout",
+      programName: "Illustrator",
+      panelName: "Layers Builder",
+      buttonPopoutUnitId: "open-pop-unit-layers",
+      panelOwnerButtonId: "owner-layers",
+      buttonDisplayMode: "expanded",
+      buttonPopoutSettingsPath: "C:/FlowCell/layers.flowcell-button-settings.json",
+      buttonPopoutChoiceId: "layers-choice"
+    });
     const persisted = JSON.parse(values.get("flowcell.button-layout-windows.v2"));
     assert.equal(persisted["flowcell-button-editor"].snapshotBounds, undefined);
     const registeredPage = readRegisteredLayoutWindow("flowcell-installed-page-owner-1");
@@ -779,6 +834,19 @@ test("Button Editor bounds reject Windows minimized sentinels and discard stale 
     assert.equal(
       persisted["flowcell-installed-page-owner-1"].installedPageId,
       "layers-builder"
+    );
+    const registeredSettingsBackedPopout = readRegisteredLayoutWindow(
+      "button-popout-owner-layers"
+    );
+    assert.equal(registeredSettingsBackedPopout?.buttonOwnerId, undefined);
+    assert.equal(registeredSettingsBackedPopout?.panelOwnerButtonId, "owner-layers");
+    assert.equal(
+      registeredSettingsBackedPopout?.buttonPopoutSettingsPath,
+      "C:/FlowCell/layers.flowcell-button-settings.json"
+    );
+    assert.equal(
+      persisted["button-popout-owner-layers"].buttonPopoutChoiceId,
+      "layers-choice"
     );
   } finally {
     if (originalWindow === undefined) {
@@ -2216,7 +2284,7 @@ test("skin active highlight is skin-owned, run-mode only, and stacks under hover
   assert.match(skinRenderer, /activeHighlighted: \(skinHighlightOnActive \?\? false\) && activeHighlight/);
   assert.match(skinRenderer, /if \(snapshot\.activeHighlighted\) lifts\.push\("brightness\(1\.3\)"\)/);
   // Both lifts belong to the latched visual snapshot, not to raw render state.
-  assert.match(skinRenderer, /snapshot\.activeHighlighted,\n\s*snapshot\.samplingState\.hovered/);
+  assert.match(skinRenderer, /snapshot\.activeHighlighted,\r?\n\s*snapshot\.samplingState\.hovered/);
 });
 
 test("Play tracking arms only after the latched Play presentation is applied", () => {
@@ -2434,8 +2502,10 @@ test("explicit Pop and Fan opens reveal after show while layout restore stays pa
 
   assert.equal((windows.match(/await refreshScopedWindowTopmost\(windowLabel, args\.reveal !== false, true\);/g) ?? []).length, 2);
   assert.equal((windows.match(/applyButtonWindowChrome\(target, true, !existed\)/g) ?? []).length, 2);
+  assert.equal((windows.match(/args\.(?:bounds|collapsedBounds),\s*args\.reveal !== false/g) ?? []).length, 2);
+  assert.equal((windows.match(/restoreBounds: isUsableBounds\(args\.(?:bounds|collapsedBounds)\) \? contentBounds : undefined/g) ?? []).length, 2);
   assert.match(windows, /await showWindow\(target, false\);\s*shown = true;\s*await refreshScopedWindowTopmost/);
-  assert.equal((mainPage.match(/reveal: false/g) ?? []).length, 2);
+  assert.equal((mainPage.match(/reveal: false/g) ?? []).length, 3);
   assert.match(
     popoutPage,
     /await ensureCanvasContainsFrame\(visibleBounds\);\s*setGeometryInitialized\(true\);/
@@ -5881,6 +5951,30 @@ test("fixed Pop and Fan canvases keep hover geometry on the resting semantic fra
     assert.doesNotMatch(source, /queueEnvelope\((?:preparedEnvelope|windowEnvelope)\.current\)/);
     assert.match(source, /queueEnvelope\((?:preparedEnvelope|windowEnvelope)\.resting\)/);
   }
+});
+
+test("expanded Fan resting frames cannot replace the collapsed owner anchor", () => {
+  const fan = readFileSync(
+    join(frontendRoot, "src", "button", "fan", "ButtonFanWindowPage.tsx"),
+    "utf8"
+  );
+  const restoreStart = fan.indexOf("const restoreSavedRestingFrame");
+  const restoreEnd = fan.indexOf(": queueEnvelope(windowEnvelope.resting)", restoreStart);
+  assert.ok(restoreStart >= 0 && restoreEnd > restoreStart, "Fan resting-frame restore should be extractable");
+  const restoreBlock = fan.slice(restoreStart, restoreEnd);
+
+  assert.match(
+    restoreBlock,
+    /if \(!expanded\) \{\s*collapsedBoundsRef\.current = savedRestingFrame\.bounds;\s*\}/
+  );
+  assert.match(
+    restoreBlock,
+    /commitAppliedEnvelope\(\s*windowEnvelope\.resting,\s*true,\s*undefined,\s*savedRestingFrame\.bounds\s*\)/
+  );
+  assert.equal(
+    (restoreBlock.match(/collapsedBoundsRef\.current = savedRestingFrame\.bounds;/g) ?? []).length,
+    1
+  );
 });
 
 test("expanded Pop resize handles follow the visible interactive envelope", () => {

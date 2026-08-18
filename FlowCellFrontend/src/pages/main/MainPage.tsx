@@ -176,7 +176,7 @@ const MAIN_LAST_POP_SETTINGS_STORAGE_KEY = "flowcell.main.last-pop-settings.v1";
 // Version 7 marks bounds stored in physical desktop pixels, captured exactly
 // as the window sits on its monitor and restored verbatim (position first,
 // then size — see applyWindowBounds / windowing's applyWindowPlacement).
-const LAYOUT_SNAPSHOT_VERSION = 9;
+const LAYOUT_SNAPSHOT_VERSION = 10;
 
 interface MainLastPopChoice {
   path: string;
@@ -187,6 +187,20 @@ interface MainPopDraftSession {
   document: ButtonStateDocument;
   cleanups: Array<() => void>;
   windowCleanupRegistered: boolean;
+}
+
+interface MainPopOpenOptions {
+  programName?: string;
+  panelName?: string;
+  bounds?: FlowCellBounds;
+  displayMode?: "collapsed" | "expanded";
+  reveal?: boolean;
+}
+
+interface SettingsBackedPopoutRestoreDescriptor {
+  document: ButtonStateDocument;
+  choice: MainLastPopChoice;
+  panelOwnerButtonId: string;
 }
 
 function stableMainPopChoiceId(value: string): string {
@@ -1747,7 +1761,10 @@ export default function MainPage() {
         ButtonPopoutUnitId: registeredWindow.buttonPopoutUnitId,
         ButtonFanSetupId: registeredWindow.buttonFanSetupId,
         ButtonOwnerId: registeredWindow.buttonOwnerId,
+        PanelOwnerButtonId: registeredWindow.panelOwnerButtonId,
         ButtonDisplayMode: registeredWindow.buttonDisplayMode,
+        ButtonPopoutSettingsPath: registeredWindow.buttonPopoutSettingsPath,
+        ButtonPopoutChoiceId: registeredWindow.buttonPopoutChoiceId,
         InstalledPageFileName: registeredWindow.installedPageFileName,
         InstalledPageId: registeredWindow.installedPageId,
         Bounds: bounds
@@ -1764,9 +1781,63 @@ export default function MainPage() {
 
   const restoreLayoutSnapshotState = async (snapshot: LayoutSnapshot) => {
     const resolvedInstalledPages = new Map<LayoutSnapshotWindow, InstalledPageOpenDescriptor>();
+    const resolvedSettingsBackedPopouts = new Map<
+      LayoutSnapshotWindow,
+      SettingsBackedPopoutRestoreDescriptor
+    >();
+    let settingsBackedCanonicalDocument: ButtonStateDocument | null = null;
     for (const windowEntry of snapshot.Windows) {
       if (!isValidFlowCellBounds(windowEntry.Bounds)) {
         throw new Error("The layout contains invalid managed-window bounds.");
+      }
+      if (
+        windowEntry.Kind === "button-popout" &&
+        (windowEntry.ButtonPopoutSettingsPath || windowEntry.ButtonPopoutChoiceId)
+      ) {
+        if (
+          !windowEntry.ProgramName ||
+          !windowEntry.PanelName ||
+          !windowEntry.ButtonPopoutUnitId ||
+          !windowEntry.PanelOwnerButtonId ||
+          !windowEntry.ButtonPopoutSettingsPath ||
+          !windowEntry.ButtonPopoutChoiceId
+        ) {
+          throw new Error("The layout contains an incomplete settings-backed Button Pop-out identity.");
+        }
+        settingsBackedCanonicalDocument ??= await loadButtonStateDocument();
+        const panelOwnerPlacement = resolvePanelOwnerMainPlacement(
+          settingsBackedCanonicalDocument,
+          windowEntry.ProgramName,
+          windowEntry.PanelName
+        );
+        if (
+          !panelOwnerPlacement ||
+          panelOwnerPlacement.buttonId !== windowEntry.PanelOwnerButtonId
+        ) {
+          throw new Error("The saved Button Pop-out no longer matches its panel owner.");
+        }
+        const settingsFile = await loadButtonSettingsFile(windowEntry.ButtonPopoutSettingsPath);
+        const transient = buildTransientButtonPopoutSettingsDocument(
+          settingsBackedCanonicalDocument,
+          settingsFile,
+          {
+            programName: windowEntry.ProgramName,
+            panelName: windowEntry.PanelName
+          },
+          windowEntry.ButtonPopoutChoiceId
+        );
+        if (transient.popoutUnitId !== windowEntry.ButtonPopoutUnitId) {
+          throw new Error("The saved Button Pop-out no longer matches its selected settings file.");
+        }
+        resolvedSettingsBackedPopouts.set(windowEntry, {
+          document: settingsBackedCanonicalDocument,
+          choice: {
+            path: windowEntry.ButtonPopoutSettingsPath,
+            choiceId: windowEntry.ButtonPopoutChoiceId
+          },
+          panelOwnerButtonId: windowEntry.PanelOwnerButtonId
+        });
+        continue;
       }
       if (windowEntry.Kind !== "installed-page") {
         continue;
@@ -1800,6 +1871,27 @@ export default function MainPage() {
           });
           break;
         case "button-popout":
+          {
+            const settingsBackedDescriptor = resolvedSettingsBackedPopouts.get(windowEntry);
+            if (settingsBackedDescriptor) {
+              if (!windowEntry.ProgramName || !windowEntry.PanelName) {
+                throw new Error("The saved settings-backed Button Pop-out is missing its panel identity.");
+              }
+              await openMainPopChoice(
+                settingsBackedDescriptor.choice,
+                settingsBackedDescriptor.document,
+                settingsBackedDescriptor.panelOwnerButtonId,
+                {
+                  programName: windowEntry.ProgramName,
+                  panelName: windowEntry.PanelName,
+                  bounds: windowEntry.Bounds,
+                  displayMode: windowEntry.ButtonDisplayMode,
+                  reveal: false
+                }
+              );
+              break;
+            }
+          }
           if (windowEntry.ProgramName && windowEntry.ButtonPopoutUnitId) {
             await openButtonPopoutWindow({
               programName: windowEntry.ProgramName,
@@ -2729,28 +2821,34 @@ export default function MainPage() {
   const openMainPopChoice = async (
     choice: MainLastPopChoice,
     sourceDocument?: ButtonStateDocument,
-    sourcePanelOwnerButtonId?: string
+    sourcePanelOwnerButtonId?: string,
+    options: MainPopOpenOptions = {}
   ) => {
-    if (!selectedProgramName || !selectedPanelName) {
+    const programName = options.programName ?? selectedProgramName;
+    const panelName = options.panelName ?? selectedPanelName;
+    if (!programName || !panelName) {
       throw new Error("Select a program and panel before opening a Pop-out.");
     }
     const canonical = sourceDocument ?? await loadButtonStateDocument();
     const panelOwnerPlacement = resolvePanelOwnerMainPlacement(
       canonical,
-      selectedProgramName,
-      selectedPanelName
+      programName,
+      panelName
     );
     const panelOwnerButtonId = sourcePanelOwnerButtonId ?? panelOwnerPlacement?.buttonId;
-    if (!panelOwnerButtonId) {
+    if (!panelOwnerPlacement || !panelOwnerButtonId) {
       throw new Error("The selected panel has no canonical panel-owner Button.");
+    }
+    if (sourcePanelOwnerButtonId && sourcePanelOwnerButtonId !== panelOwnerPlacement.buttonId) {
+      throw new Error("The saved Pop-out no longer matches its panel owner.");
     }
     const settingsFile = await loadButtonSettingsFile(choice.path);
     const transient = buildTransientButtonPopoutSettingsDocument(
       canonical,
       settingsFile,
       {
-        programName: selectedProgramName,
-        panelName: selectedPanelName
+        programName,
+        panelName
       },
       choice.choiceId
     );
@@ -2793,7 +2891,8 @@ export default function MainPage() {
     );
 
     const windowLabel = buildButtonPopoutWindowLabel({
-      popoutUnitId: transient.popoutUnitId
+      popoutUnitId: transient.popoutUnitId,
+      ownerButtonId: transientUnit?.ownerButtonId ?? undefined
     });
     const disposeSession = () => {
       const active = mainPopDraftSessionsRef.current.get(sessionId);
@@ -2803,13 +2902,19 @@ export default function MainPage() {
     };
     try {
       await openButtonPopoutWindow({
-        programName: selectedProgramName,
-        panelName: selectedPanelName,
+        programName,
+        panelName,
         popoutUnitId: transient.popoutUnitId,
         ownerButtonId: transientUnit?.ownerButtonId ?? undefined,
-        displayMode: authoredFan ? "collapsed" : "expanded",
+        displayMode: options.displayMode ?? (authoredFan ? "collapsed" : "expanded"),
         draftSessionId: sessionId,
-        registerInLayout: false
+        bounds: options.bounds,
+        reveal: options.reveal,
+        settingsBackedLayout: {
+          panelOwnerButtonId,
+          settingsPath: choice.path,
+          choiceId: choice.choiceId
+        }
       });
       if (!session.windowCleanupRegistered) {
         const target = await WebviewWindow.getByLabel(windowLabel);

@@ -1,7 +1,8 @@
 use crate::*;
 use std::collections::HashSet;
 
-const LAYOUT_SNAPSHOT_VERSION: u64 = 9;
+const LAYOUT_SNAPSHOT_VERSION: u64 = 10;
+const LEGACY_LAYOUT_SNAPSHOT_VERSION: u64 = 9;
 const LAYOUT_SNAPSHOT_KIND: &str = "FlowCellWindowLayout";
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -38,7 +39,10 @@ pub(crate) struct LayoutSnapshotWindow {
     button_popout_unit_id: Option<String>,
     button_fan_setup_id: Option<String>,
     button_owner_id: Option<String>,
+    panel_owner_button_id: Option<String>,
     button_display_mode: Option<LayoutSnapshotButtonDisplayMode>,
+    button_popout_settings_path: Option<String>,
+    button_popout_choice_id: Option<String>,
     installed_page_file_name: Option<String>,
     installed_page_id: Option<String>,
     bounds: LayoutSnapshotBounds,
@@ -68,9 +72,11 @@ fn validate_layout_bounds(bounds: &LayoutSnapshotBounds) -> bool {
 }
 
 fn validate_layout_snapshot(snapshot: &LayoutSnapshotFile) -> Result<(), String> {
-    if snapshot.version != LAYOUT_SNAPSHOT_VERSION {
+    if snapshot.version != LAYOUT_SNAPSHOT_VERSION
+        && snapshot.version != LEGACY_LAYOUT_SNAPSHOT_VERSION
+    {
         return Err(format!(
-            "Unsupported FlowCell layout version. Expected version {LAYOUT_SNAPSHOT_VERSION}."
+            "Unsupported FlowCell layout version. Expected version {LEGACY_LAYOUT_SNAPSHOT_VERSION} or {LAYOUT_SNAPSHOT_VERSION}."
         ));
     }
     if snapshot.layout_kind != LAYOUT_SNAPSHOT_KIND {
@@ -83,6 +89,16 @@ fn validate_layout_snapshot(snapshot: &LayoutSnapshotFile) -> Result<(), String>
     }
     let mut stable_window_keys = HashSet::new();
     for window in &snapshot.windows {
+        if snapshot.version == LEGACY_LAYOUT_SNAPSHOT_VERSION
+            && (window.panel_owner_button_id.is_some()
+                || window.button_popout_settings_path.is_some()
+                || window.button_popout_choice_id.is_some())
+        {
+            return Err(
+                "FlowCell layout version 9 does not support settings-backed Button Pop-outs."
+                    .to_string(),
+            );
+        }
         if !validate_layout_bounds(&window.bounds) {
             return Err("FlowCell layout contains invalid window bounds.".to_string());
         }
@@ -91,7 +107,10 @@ fn validate_layout_snapshot(snapshot: &LayoutSnapshotFile) -> Result<(), String>
                 if window.button_popout_unit_id.is_some()
                     || window.button_fan_setup_id.is_some()
                     || window.button_owner_id.is_some()
+                    || window.panel_owner_button_id.is_some()
                     || window.button_display_mode.is_some()
+                    || window.button_popout_settings_path.is_some()
+                    || window.button_popout_choice_id.is_some()
                     || window.installed_page_file_name.is_some()
                     || window.installed_page_id.is_some()
                 {
@@ -120,6 +139,21 @@ fn validate_layout_snapshot(snapshot: &LayoutSnapshotFile) -> Result<(), String>
                             .to_string(),
                     );
                 }
+                if window.panel_owner_button_id.is_some()
+                    || window.button_popout_settings_path.is_some()
+                    || window.button_popout_choice_id.is_some()
+                {
+                    if !has_text(&window.panel_name)
+                        || !has_text(&window.panel_owner_button_id)
+                        || !has_text(&window.button_popout_settings_path)
+                        || !has_text(&window.button_popout_choice_id)
+                    {
+                        return Err(
+                            "FlowCell layout contains an incomplete settings-backed Button Pop-out identity."
+                                .to_string(),
+                        );
+                    }
+                }
             }
             LayoutSnapshotWindowKind::ButtonFan => {
                 if !has_text(&window.program_name)
@@ -133,6 +167,9 @@ fn validate_layout_snapshot(snapshot: &LayoutSnapshotFile) -> Result<(), String>
                 }
                 if window.button_popout_unit_id.is_some()
                     || window.button_display_mode.is_some()
+                    || window.panel_owner_button_id.is_some()
+                    || window.button_popout_settings_path.is_some()
+                    || window.button_popout_choice_id.is_some()
                     || window.installed_page_file_name.is_some()
                     || window.installed_page_id.is_some()
                 {
@@ -157,6 +194,9 @@ fn validate_layout_snapshot(snapshot: &LayoutSnapshotFile) -> Result<(), String>
                 if window.button_popout_unit_id.is_some()
                     || window.button_fan_setup_id.is_some()
                     || window.button_display_mode.is_some()
+                    || window.panel_owner_button_id.is_some()
+                    || window.button_popout_settings_path.is_some()
+                    || window.button_popout_choice_id.is_some()
                 {
                     return Err(
                         "FlowCell layout contains fields that do not belong to an installed Page."
@@ -533,7 +573,7 @@ mod tests {
     fn current_layout_json() -> &'static str {
         r#"{
             "SavedAt": "2026-07-10T00:00:00.000Z",
-            "Version": 9,
+            "Version": 10,
             "LayoutKind": "FlowCellWindowLayout",
             "Windows": [
                 {
@@ -556,6 +596,17 @@ mod tests {
                     "Bounds": { "Left": 40.0, "Top": 50.0, "Width": 260.0, "Height": 180.0 }
                 },
                 {
+                    "Kind": "button-popout",
+                    "ProgramName": "Illustrator",
+                    "PanelName": "Layers Builder",
+                    "ButtonPopoutUnitId": "open-pop-unit-layers",
+                    "PanelOwnerButtonId": "owner-layers",
+                    "ButtonDisplayMode": "expanded",
+                    "ButtonPopoutSettingsPath": "C:/FlowCell/layers.flowcell-button-settings.json",
+                    "ButtonPopoutChoiceId": "layers-choice",
+                    "Bounds": { "Left": 60.0, "Top": 70.0, "Width": 360.0, "Height": 220.0 }
+                },
+                {
                     "Kind": "installed-page",
                     "ProgramName": "Illustrator",
                     "PanelName": "Layers",
@@ -568,10 +619,34 @@ mod tests {
         }"#
     }
 
+    fn legacy_layout_json() -> &'static str {
+        r#"{
+            "SavedAt": "2026-07-10T00:00:00.000Z",
+            "Version": 9,
+            "LayoutKind": "FlowCellWindowLayout",
+            "Windows": [
+                {
+                    "Kind": "button-popout",
+                    "ProgramName": "Blender",
+                    "ButtonPopoutUnitId": "popout-1",
+                    "ButtonDisplayMode": "expanded",
+                    "Bounds": { "Left": 10.0, "Top": 20.0, "Width": 300.0, "Height": 200.0 }
+                }
+            ]
+        }"#
+    }
+
     #[test]
     fn current_button_layout_schema_is_accepted() {
         let snapshot = serde_json::from_str::<LayoutSnapshotFile>(current_layout_json())
             .expect("current layout should deserialize");
+        assert!(validate_layout_snapshot(&snapshot).is_ok());
+    }
+
+    #[test]
+    fn legacy_button_layout_schema_is_accepted() {
+        let snapshot = serde_json::from_str::<LayoutSnapshotFile>(legacy_layout_json())
+            .expect("legacy layout should deserialize");
         assert!(validate_layout_snapshot(&snapshot).is_ok());
     }
 
@@ -586,8 +661,13 @@ mod tests {
 
     #[test]
     fn non_current_layout_versions_are_rejected() {
-        let old_version = current_layout_json().replace("\"Version\": 9", "\"Version\": 8");
+        let old_version = current_layout_json().replace("\"Version\": 10", "\"Version\": 8");
         let snapshot = serde_json::from_str::<LayoutSnapshotFile>(&old_version)
+            .expect("known fields should deserialize before version validation");
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+
+        let settings_backed_v9 = current_layout_json().replace("\"Version\": 10", "\"Version\": 9");
+        let snapshot = serde_json::from_str::<LayoutSnapshotFile>(&settings_backed_v9)
             .expect("known fields should deserialize before version validation");
         assert!(validate_layout_snapshot(&snapshot).is_err());
     }
@@ -618,6 +698,24 @@ mod tests {
             .expect("known fields should deserialize");
         assert!(validate_layout_snapshot(&snapshot).is_err());
 
+        let incomplete_settings_backed_popout = current_layout_json().replace(
+            "\"PanelOwnerButtonId\": \"owner-layers\",\n                    ",
+            "",
+        );
+        let snapshot =
+            serde_json::from_str::<LayoutSnapshotFile>(&incomplete_settings_backed_popout)
+                .expect("known fields should deserialize");
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+
+        let settings_backed_cross_kind_field = current_layout_json().replace(
+            "\"ButtonPopoutChoiceId\": \"layers-choice\",",
+            "\"ButtonPopoutChoiceId\": \"layers-choice\",\n                    \"ButtonFanSetupId\": \"wrong-kind\",",
+        );
+        let snapshot =
+            serde_json::from_str::<LayoutSnapshotFile>(&settings_backed_cross_kind_field)
+                .expect("known fields should deserialize");
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+
         let invalid_bounds = current_layout_json().replace("\"Width\": 900.0", "\"Width\": 0.0");
         let snapshot = serde_json::from_str::<LayoutSnapshotFile>(&invalid_bounds)
             .expect("known fields should deserialize");
@@ -634,7 +732,7 @@ mod tests {
 
     #[test]
     fn duplicate_stable_window_identities_are_rejected() {
-        for index in 0..4 {
+        for index in 0..5 {
             let mut snapshot = serde_json::from_str::<LayoutSnapshotFile>(current_layout_json())
                 .expect("current layout should deserialize");
             snapshot.windows.push(snapshot.windows[index].clone());
@@ -647,6 +745,14 @@ mod tests {
         colliding_popout.button_popout_unit_id = Some("different-unit".to_string());
         colliding_popout.button_owner_id = Some("popout-1".to_string());
         snapshot.windows.push(colliding_popout);
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+
+        let mut snapshot = serde_json::from_str::<LayoutSnapshotFile>(current_layout_json())
+            .expect("current layout should deserialize");
+        let mut same_owner_different_settings_file = snapshot.windows[3].clone();
+        same_owner_different_settings_file.button_popout_settings_path =
+            Some("C:/FlowCell/other-layers.flowcell-button-settings.json".to_string());
+        snapshot.windows.push(same_owner_different_settings_file);
         assert!(validate_layout_snapshot(&snapshot).is_err());
     }
 }

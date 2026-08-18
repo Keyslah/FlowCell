@@ -5,7 +5,7 @@
 | Button | Description |
 | --- | --- |
 | `make layers` | Ensures `Live`, `Snapshots`, `3D`, `Trash`, and `Archive` layers exist. |
-| `Sort` | Routes visible non-system top-level layers to `Live`, hidden family copies to `Snapshots`, and other hidden layers to `Trash`, while preserving and ordering the five system roots. |
+| `Sort` | Moves invisible direct sublayers of `Live` to `Trash`, then routes visible non-system top-level layers to `Live`, hidden family copies to `Snapshots`, and other hidden layers to `Trash`, while preserving and ordering the five system roots. |
 | `snapshot` | Copies each Layer Tree-highlighted target, or the currently selected Illustrator artwork when no tree row is highlighted, into `Snapshots > [target name] > sN` and hides the snapshot. |
 | `restore` | Restores each highlighted saved version from outside `Live`, moving the current Live version into `Trash` first. |
 | `back` | Replaces each highlighted Live target with its newest snapshot, moves the current Live content into `Trash`, and consumes that snapshot so repeated runs step backward. |

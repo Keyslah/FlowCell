@@ -45,6 +45,44 @@ function copyMissingRecords<T>(target: Record<string, T>, saved: Record<string, 
   }
 }
 
+function retainNewDraftPlacementSurfaceMembership(
+  target: ButtonStateDocument,
+  editorBaseline: ButtonStateDocument,
+  draft: ButtonStateDocument
+): void {
+  for (const [placementId, placement] of Object.entries(draft.placements)) {
+    if (editorBaseline.placements[placementId]) continue;
+    const draftSurface = draft.surfaces[placement.surfaceId];
+    const targetSurface = target.surfaces[placement.surfaceId];
+    if (
+      !draftSurface?.placementIds.includes(placementId) ||
+      !targetSurface ||
+      targetSurface.placementIds.includes(placementId)
+    ) {
+      continue;
+    }
+    targetSurface.placementIds.push(placementId);
+  }
+}
+
+function retainMissingSavedPlacementSurfaceMembership(
+  target: ButtonStateDocument,
+  saved: ButtonStateDocument
+): void {
+  for (const [placementId, placement] of Object.entries(saved.placements)) {
+    const savedSurface = saved.surfaces[placement.surfaceId];
+    const targetSurface = target.surfaces[placement.surfaceId];
+    if (
+      !savedSurface?.placementIds.includes(placementId) ||
+      !targetSurface ||
+      targetSurface.placementIds.includes(placementId)
+    ) {
+      continue;
+    }
+    targetSurface.placementIds.push(placementId);
+  }
+}
+
 function requireDraftRecord<T>(records: Record<string, T>, id: string, label: string): T {
   const record = records[id];
   if (!record) throw new Error(`${label} '${id}' no longer exists in the Button draft.`);
@@ -127,6 +165,12 @@ export function buildButtonPlacementScopedDocument(
       : structuredClone(draftPlacement);
   }
 
+  // A staged tool set creates its launcher on an existing panel while its
+  // children live on a new pop-out. Saving that pop-out must retain the new
+  // launcher in its owning panel as well, or canonical validation rejects the
+  // copied placement as orphaned before the save dialog can open.
+  retainNewDraftPlacementSurfaceMembership(next, editorBaseline, draft);
+
   const requiredSkinIds = new Set<string>([next.settings.defaultSkinId]);
   Object.values(next.buttons).forEach((button) => requiredSkinIds.add(button.defaultSkinId));
   Object.values(next.placements).forEach((placement) => {
@@ -180,6 +224,17 @@ export function applyButtonSettingsSavedScope(
   context: ButtonSettingsFileApplyContext
 ): void {
   if (!saved.surfaces[surfaceId]) return;
+  // The canonical save may have accepted a newly installed owner while an
+  // existing editor history entry still predates that install. Hydrate the
+  // accepted graph before applying its settings file so rebasing cannot treat
+  // the just-saved Button as an attempt to recreate an action or package.
+  copyMissingRecords(target.buttons, saved.buttons);
+  copyMissingRecords(target.placements, saved.placements);
+  copyMissingRecords(target.surfaces, saved.surfaces);
+  copyMissingRecords(target.skins, saved.skins);
+  copyMissingRecords(target.popoutUnits, saved.popoutUnits);
+  copyMissingRecords(target.fanSetups, saved.fanSetups);
+  retainMissingSavedPlacementSurfaceMembership(target, saved);
   const settingsFile = buildButtonSettingsFile(saved, surfaceId, context);
   const next = applyButtonSettingsFile(target, surfaceId, settingsFile, context);
   next.settings.buttonSpacingMm = saved.settings.buttonSpacingMm;

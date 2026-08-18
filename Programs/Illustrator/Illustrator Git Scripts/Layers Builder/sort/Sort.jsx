@@ -13,7 +13,7 @@
  * original even if its name contains "copy".
  */
 (function () {
-    var SCRIPT_VERSION = "2026-06-15 10:35";
+    var SCRIPT_VERSION = "2026-08-14 21:30";
     var LOG_PATH = Folder.temp.fsName + "/Illustrator_Sort_Layers_Into_Live_Snapshots_Trash_Debug.log";
     var ROOT_LIVE = "Live";
     var ROOT_SNAPSHOTS = "Snapshots";
@@ -35,6 +35,7 @@
         roots = ensureRootLayers(doc);
         liveLockState = captureLayerLockState(roots.live, false);
         prepareRoots(roots);
+        moveInvisibleLiveSublayersToTrash(roots.live, roots.trash);
 
         var sourceLayers = collectSourceLayers(doc);
         var liveBaseLookup = collectLiveBaseLookup(sourceLayers);
@@ -65,6 +66,27 @@
             restoreLayerLocksFromState(liveLockState);
         }
         restoreActiveLayer(doc, originalActiveLayer);
+    }
+
+    function moveInvisibleLiveSublayersToTrash(liveRoot, trashRoot) {
+        var invisibleLayers = [];
+        var i;
+
+        for (i = 0; i < liveRoot.layers.length; i += 1) {
+            if (safeRead(liveRoot.layers[i], "visible", true) === false) {
+                invisibleLayers.push(liveRoot.layers[i]);
+            }
+        }
+
+        logLine("Invisible Live sublayer count: " + invisibleLayers.length);
+
+        for (i = invisibleLayers.length - 1; i >= 0; i -= 1) {
+            moveSourceToTrash(
+                invisibleLayers[i],
+                trashRoot,
+                parseSourceLayerName(invisibleLayers[i].name)
+            );
+        }
     }
 
     function routeSourceLayer(sourceLayer, rootsRef, liveBaseLookup) {

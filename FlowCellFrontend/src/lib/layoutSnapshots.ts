@@ -13,7 +13,10 @@ export interface RegisteredLayoutWindow {
   buttonPopoutUnitId?: string;
   buttonFanSetupId?: string;
   buttonOwnerId?: string;
+  panelOwnerButtonId?: string;
   buttonDisplayMode?: "collapsed" | "expanded";
+  buttonPopoutSettingsPath?: string;
+  buttonPopoutChoiceId?: string;
   installedPageFileName?: string;
   installedPageId?: string;
   snapshotBounds?: FlowCellBounds;
@@ -100,10 +103,13 @@ export function registerLayoutWindow(entry: RegisteredLayoutWindow): void {
     buttonPopoutUnitId: entry.buttonPopoutUnitId?.trim() || undefined,
     buttonFanSetupId: entry.buttonFanSetupId?.trim() || undefined,
     buttonOwnerId: entry.buttonOwnerId?.trim() || undefined,
+    panelOwnerButtonId: entry.panelOwnerButtonId?.trim() || undefined,
     buttonDisplayMode:
       entry.buttonDisplayMode === "collapsed" || entry.buttonDisplayMode === "expanded"
         ? entry.buttonDisplayMode
         : previousEntry?.buttonDisplayMode,
+    buttonPopoutSettingsPath: entry.buttonPopoutSettingsPath?.trim() || undefined,
+    buttonPopoutChoiceId: entry.buttonPopoutChoiceId?.trim() || undefined,
     installedPageFileName: entry.installedPageFileName?.trim() || undefined,
     installedPageId: entry.installedPageId?.trim() || undefined,
     snapshotBounds:
@@ -143,6 +149,9 @@ export function findRegisteredLayoutWindow(args: {
   buttonPopoutUnitId?: string;
   buttonFanSetupId?: string;
   buttonOwnerId?: string;
+  panelOwnerButtonId?: string;
+  buttonPopoutSettingsPath?: string;
+  buttonPopoutChoiceId?: string;
   installedPageFileName?: string;
   installedPageId?: string;
 }): RegisteredLayoutWindow | null {
@@ -156,6 +165,9 @@ export function findRegisteredLayoutWindow(args: {
         (entry.buttonPopoutUnitId ?? "") === (args.buttonPopoutUnitId ?? "") &&
         (entry.buttonFanSetupId ?? "") === (args.buttonFanSetupId ?? "") &&
         (entry.buttonOwnerId ?? "") === (args.buttonOwnerId ?? "") &&
+        (entry.panelOwnerButtonId ?? "") === (args.panelOwnerButtonId ?? "") &&
+        (entry.buttonPopoutSettingsPath ?? "") === (args.buttonPopoutSettingsPath ?? "") &&
+        (entry.buttonPopoutChoiceId ?? "") === (args.buttonPopoutChoiceId ?? "") &&
         (entry.installedPageFileName ?? "") === (args.installedPageFileName ?? "") &&
         (entry.installedPageId ?? "") === (args.installedPageId ?? "")
       );

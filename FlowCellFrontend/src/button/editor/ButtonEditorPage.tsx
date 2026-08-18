@@ -2705,7 +2705,12 @@ function ButtonEditorContent({
       !store.committed.placements[placementId]
     );
     if (unsavedTarget) {
-      setMessage("Save Settings for this new Button before assigning its skin.");
+      const placement = store.current().placements[unsavedTarget];
+      const surface = placement ? store.current().surfaces[placement.surfaceId] : null;
+      const saveLabel = surface
+        ? `Save ${buttonSettingsPlacementLabel(buttonSettingsPlacementKind(surface))} Settings`
+        : "Save Settings";
+      setMessage(`Finish adding this new Button with ${saveLabel} before assigning its skin.`);
       return;
     }
 

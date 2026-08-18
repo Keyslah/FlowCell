@@ -9,7 +9,7 @@ description: Author FlowCell Button Editor skins in the canonical sectioned past
 
 ### FlowCell Button Editor Skin Author
 
-The section grammar source of truth is `FlowCellFrontend/src/button/skins/buttonSkinFormat.ts`. The semantic source of truth is `FlowCellFrontend/src/button/skins/skinValidator.ts`. If this skill disagrees with either file, update this skill.
+The canonical section names, order, and serialization source of truth is `FlowCellFrontend/src/button/skins/buttonSkinFormat.ts`. Header parsing, partial named-section updates, and empty-section clearing are owned by `FlowCellFrontend/src/button/skins/skinPasteParser.ts`. The semantic source of truth is `FlowCellFrontend/src/button/skins/skinValidator.ts`. If this skill disagrees with any of those files, update this skill.
 
 Produce one paste-ready block using only canonical lowercase section headers:
 
@@ -55,6 +55,7 @@ For a new skin, a conversion, or a complete replacement, emit every canonical he
 ### Structure contract
 
 - Include zero or one `{{label}}` token. Put it inside `data-core` when the skin renders visible Button text; omit it entirely for a textless or animation-only skin.
+- A tool-set child with `inlineEditField` or `selectField` requires that token in HTML. Inline editing rejects an SVG label node, and a selector's transient options reuse the same assigned literal skin rather than owning separate option skins.
 - Include exactly one element marked `data-core`.
 - If `data-core` is an outer `<svg>`, mark exactly one painted descendant with `data-hit-shape`; an SVG viewport is not an authored painted interaction shape.
 - When `data-hit-shape` is present, put `{{label}}` inside it so editable text cannot create a separate pointer region outside the face.
@@ -178,10 +179,15 @@ remain in the literal source wrapper where it visually belongs; do not flatten t
 markup, add a transform wrapper, or encode an offset merely to make editor movement
 work. Host movement changes neither skin source, authored transforms, core geometry,
 nor hit testing, and the host reapplies the composition across visual-transition frames.
-The Button Text preview updates immediately, and its bottom `Apply
-All` applies only labels and focused-placement text settings. Save placement persists
-cycle IDs, triggers, labels, and visual names without copying or changing skin source;
-the hover highlight persists with the skin instead.
+The Button Text preview updates immediately, and its bottom `Apply All` commits every
+pending Button Text draft across the editor: shared Button tooltips, base or cycle
+labels, and each placement's text-fit, alignment, size, and X/Y settings. It never
+commits cycle IDs, triggers, visuals, skin source, Button Size, or placement geometry.
+Changed cycle IDs require Save Settings first. Save Settings persists cycle IDs,
+triggers, labels, and visual names without copying or changing skin source; with a
+configured cycle, Apply All preserves the shared base label while saving the tooltip,
+and without one it keeps legacy activation-state labels coherent with the edited base
+label. The hover highlight persists with the skin instead.
 Do not encode execution, toggle state, cycle counters, label sequences, or persistence
 in skin markup or CSS.
 
@@ -316,7 +322,7 @@ background: transparent;
 
 ### Scope and output
 
-This format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Assigned and library skins persist in `flowcellbackend/local/button-system/button-state.json`. Load skin lists machine-local recent files, saved library skins, and then `Browse...`; loading never assigns. Browse, first-time Save skin, and Save as new skin default to `flowcellbackend/local/Button editor/Skins`. Save skin overwrites its associated portable `.flowcell-button-skin.txt` file, or opens the picker when it has no file yet, and updates the same library entry. Save as new skin always opens the picker, exports canonical paste-ready source without assigning it, and uses the chosen filename stem exactly as the new library name. Recent absolute paths remain machine-local rather than entering canonical Button metadata. Before editing a skin, inspect whether the focused placement inherits a shared `defaultSkinId`. Default to forking and assigning a focused-placement override, and warn which placements or tool-set children would change before any explicit shared or panel-wide mutation.
+This format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Assigned and library skins persist in `flowcellbackend/local/button-system/button-state.json`. The assignment order is `Assign Skin`, `Assign Skin to Selection`, then `Assign Skin to Panel`: the first targets the focused placement, Selection targets only the selected placements on its current surface, and Panel targets every placement on that surface. All three use the isolated working skin, preserve Button identity, text, action bindings, geometry, and row structure, and fork edited shared source before assignment. Load skin lists machine-local recent files, saved library skins, and then `Browse...`; loading never assigns. Browse, first-time Save skin, and Save as new skin default to `flowcellbackend/local/Button editor/Skins`. Save skin overwrites its associated portable `.flowcell-button-skin.txt` file, or opens the picker when it has no file yet, and updates the same library entry. Save as new skin always opens the picker, exports canonical paste-ready source without assigning it, and uses the chosen filename stem exactly as the new library name. Recent absolute paths remain machine-local rather than entering canonical Button metadata. Before editing a skin, inspect whether the focused placement inherits a shared `defaultSkinId`. Default to forking and assigning a focused-placement override, and warn which placements or tool-set children would change before any explicit selection-wide, panel-wide, or shared mutation.
 
 ### Required preflight
 

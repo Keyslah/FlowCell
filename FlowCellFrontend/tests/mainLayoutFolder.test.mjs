@@ -29,6 +29,14 @@ test("Main Save and Load Layout use the existing strict secondary-window pipelin
   assert.match(mainPage, /case "installed-page":/);
   assert.match(mainPage, /resolveInstalledPageOpenDescriptor\(/);
   assert.match(mainPage, /openInstalledPageWindow\(/);
+  assert.match(mainPage, /ButtonPopoutSettingsPath:\s*registeredWindow\.buttonPopoutSettingsPath/);
+  assert.match(mainPage, /PanelOwnerButtonId:\s*registeredWindow\.panelOwnerButtonId/);
+  assert.match(mainPage, /resolvedSettingsBackedPopouts/);
+  assert.match(mainPage, /settingsBackedLayout:\s*\{/);
+  assert.match(
+    mainPage,
+    /case "button-popout":[\s\S]{0,900}settingsBackedDescriptor[\s\S]{0,900}openMainPopChoice\(/
+  );
   assert.match(
     mainPage,
     /case "installed-page":[\s\S]{0,1200}alwaysOnTop:\s*descriptor\.window\.alwaysOnTop/
@@ -45,11 +53,18 @@ test("Main Save and Load Layout use the existing strict secondary-window pipelin
       mainPage.indexOf("await closeManagedLayoutWindows();"),
     "installed Pages must resolve before the current managed layout is closed"
   );
+  assert.ok(
+    mainPage.indexOf("resolvedSettingsBackedPopouts.set(") <
+      mainPage.indexOf("await closeManagedLayoutWindows();"),
+    "settings-backed Pop-outs must resolve before the current managed layout is closed"
+  );
   assert.match(
     mainPage,
     /isValidFlowCellBounds\(liveNativeBounds\)[\s\S]{0,180}registeredWindow\.snapshotBounds/
   );
   assert.match(snapshots, /entry\?\.kind === "installed-page"/);
+  assert.match(snapshots, /buttonPopoutSettingsPath/);
+  assert.match(snapshots, /panelOwnerButtonId/);
   assert.match(coreWindows, /kind:\s*"installed-page"/);
   assert.match(coreWindows, /hashInstalledPageOwnerId\(normalizedOwner\)/);
   assert.match(coreWindows, /savedBounds:\s*args\.bounds/);
@@ -74,7 +89,11 @@ test("Main Save and Load Layout use the existing strict secondary-window pipelin
     assert.doesNotMatch(nativeLayouts, new RegExp(forbidden));
   }
   assert.match(types, /Version:\s*number/);
-  assert.match(nativeLayouts, /LAYOUT_SNAPSHOT_VERSION:\s*u64\s*=\s*9/);
+  assert.doesNotMatch(types, /main-panel-popout/);
+  assert.match(nativeLayouts, /LAYOUT_SNAPSHOT_VERSION:\s*u64\s*=\s*10/);
+  assert.match(nativeLayouts, /LEGACY_LAYOUT_SNAPSHOT_VERSION:\s*u64\s*=\s*9/);
+  assert.match(nativeLayouts, /button_popout_settings_path/);
+  assert.match(nativeLayouts, /panel_owner_button_id/);
   assert.match(nativeLayouts, /button_display_mode\.is_none\(\)/);
   assert.match(nativeLayouts, /bounds\.left <= -30_000\.0/);
   assert.match(

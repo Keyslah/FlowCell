@@ -5,6 +5,8 @@ import {
   createButtonStateDocument,
   DEFAULT_BUTTON_SURFACE_ID
 } from "./.compiled-button-system/button/state/buttonDefaults.js";
+import { createButtonSourceIdentity } from "./.compiled-button-system/button/state/sourceIdentity.js";
+import { validateButtonStateDocument } from "./.compiled-button-system/button/state/buttonStateValidation.js";
 import {
   applyButtonAnimationSavedScope,
   applyButtonBehaviorSavedScope,
@@ -66,6 +68,119 @@ function documentWithButton() {
   };
   document.surfaces[DEFAULT_BUTTON_SURFACE_ID].placementIds = ["placement-one"];
   return document;
+}
+
+function stagedToolSetSaveFixture() {
+  const committed = documentWithButton();
+  const panelId = "panel-illustrator-toolset";
+  const popoutSurfaceId = "surface-staged-toolset";
+  const ownerId = "staged-toolset-owner";
+  const ownerPlacementId = "placement-staged-toolset-owner";
+  const childId = "staged-toolset-child";
+  const childPlacementId = "placement-staged-toolset-child";
+  const popoutUnitId = "popout-staged-toolset";
+  committed.surfaces[panelId] = {
+    id: panelId,
+    name: "Illustrator / Toolset",
+    kind: "panel",
+    width: 400,
+    height: 120,
+    placementIds: [],
+    visualOverflowAllowance: 24,
+    uniformButtonSize: null
+  };
+
+  const draft = structuredClone(committed);
+  const templateButton = draft.buttons.one;
+  const templatePlacement = draft.placements["placement-one"];
+  draft.buttons[ownerId] = {
+    ...structuredClone(templateButton),
+    id: ownerId,
+    role: "tool-set-owner",
+    label: "Staged Tool Set",
+    sourceIdentity: createButtonSourceIdentity(
+      "Illustrator",
+      "Toolset",
+      "staged-toolset.flowcell-source.json"
+    ),
+    executionTarget: null,
+    toolSetParentId: null,
+    toolSetBehavior: null
+  };
+  draft.buttons[childId] = {
+    ...structuredClone(templateButton),
+    id: childId,
+    role: "tool-set-child",
+    label: "Configure",
+    sourceIdentity: null,
+    executionTarget: {
+      kind: "tool-set-action",
+      programName: "Illustrator",
+      panelName: "Toolset",
+      ownerFileName: "staged-toolset.flowcell-source.json",
+      command: "configure"
+    },
+    toolSetParentId: ownerId,
+    toolSetBehavior: null
+  };
+  draft.placements[ownerPlacementId] = {
+    ...structuredClone(templatePlacement),
+    id: ownerPlacementId,
+    buttonId: ownerId,
+    surfaceId: panelId,
+    x: 8,
+    y: 8,
+    zIndex: 0
+  };
+  draft.surfaces[panelId].placementIds = [ownerPlacementId];
+  draft.surfaces[popoutSurfaceId] = {
+    id: popoutSurfaceId,
+    name: "Staged Tool Set",
+    kind: "tool-set-popout",
+    width: 240,
+    height: 120,
+    placementIds: [childPlacementId],
+    visualOverflowAllowance: 24,
+    uniformButtonSize: null
+  };
+  draft.placements[childPlacementId] = {
+    ...structuredClone(templatePlacement),
+    id: childPlacementId,
+    buttonId: childId,
+    surfaceId: popoutSurfaceId,
+    x: 8,
+    y: 8,
+    zIndex: 0
+  };
+  draft.popoutUnits[popoutUnitId] = {
+    id: popoutUnitId,
+    name: "Staged Tool Set",
+    kind: "tool-set",
+    surfaceId: popoutSurfaceId,
+    canonicalBounds: { x: 0, y: 0, width: 240, height: 120 },
+    desktopBounds: null,
+    desktopBoundsFitMode: "surface",
+    desktopBoundsEnvelope: { x: 0, y: 0, width: 240, height: 120 },
+    ownerButtonId: ownerId,
+    childButtonIds: [childId],
+    childPlacementIds: [childPlacementId],
+    openRule: "toggle",
+    closeRule: "toggle",
+    transparency: 1,
+    pinnedDefault: false,
+    windowFitMode: "surface",
+    interactionMode: "pop",
+    ownerPlacementId: null,
+    fields: []
+  };
+  return {
+    committed,
+    draft,
+    panelId,
+    popoutSurfaceId,
+    ownerPlacementId,
+    childPlacementId
+  };
 }
 
 test("placement save commits arrangement without consuming pending skin or animation edits", () => {
@@ -246,6 +361,63 @@ test("Settings save commits complete presentation and exact surface membership w
   assert.equal(pending.buttons.one.label, "Saved text");
   assert.equal(pending.placements["placement-one"].skinOverrideId, pendingSkin.id);
   assert.equal(pending.settings.buttonSpacingMm, 0.5);
+});
+
+test("Pop-out settings save commits a staged tool-set launcher on its parent panel", () => {
+  const {
+    committed,
+    draft,
+    panelId,
+    popoutSurfaceId,
+    ownerPlacementId,
+    childPlacementId
+  } = stagedToolSetSaveFixture();
+
+  assert.equal(validateButtonStateDocument(draft).valid, true);
+  const saved = buildButtonSettingsScopedDocument(
+    committed,
+    draft,
+    popoutSurfaceId,
+    { programName: "Illustrator", panelName: "Toolset" },
+    committed
+  );
+
+  assert.equal(validateButtonStateDocument(saved).valid, true);
+  assert.deepEqual(saved.surfaces[panelId].placementIds, [ownerPlacementId]);
+  assert.deepEqual(saved.surfaces[popoutSurfaceId].placementIds, [childPlacementId]);
+});
+
+test("Main Page settings rebase hydrates a newly installed Tool Set owner", () => {
+  const {
+    committed,
+    draft,
+    panelId,
+    ownerPlacementId
+  } = stagedToolSetSaveFixture();
+  const saved = buildButtonSettingsScopedDocument(
+    committed,
+    draft,
+    panelId,
+    { programName: "Illustrator", panelName: "Toolset" },
+    committed
+  );
+  const staleEditorDraft = structuredClone(committed);
+
+  assert.doesNotThrow(() => {
+    applyButtonSettingsSavedScope(
+      staleEditorDraft,
+      saved,
+      panelId,
+      { programName: "Illustrator", panelName: "Toolset" }
+    );
+  });
+  assert.ok(staleEditorDraft.buttons["staged-toolset-owner"]);
+  assert.equal(
+    staleEditorDraft.placements[ownerPlacementId].buttonId,
+    "staged-toolset-owner"
+  );
+  assert.deepEqual(staleEditorDraft.surfaces[panelId].placementIds, [ownerPlacementId]);
+  assert.equal(validateButtonStateDocument(staleEditorDraft).valid, true);
 });
 
 test("Settings conflict rebase preserves a concurrent deletion while adding an editor-new Button", () => {

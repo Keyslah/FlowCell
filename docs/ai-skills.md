@@ -98,8 +98,8 @@ Core utility windows such as Binds, Macro Lab, Window Grid, and Motion Settings 
 - Reorder and `Snap to top left corner` are explicit undoable Editor actions that rewrite exact placement geometry and z-order. Rows are first-class during these actions: Snap left-packs each exact existing row and stacks the same rows upward without changing membership; Reorder exposes every slot in every row plus explicit new-row boundaries and never rebalances untouched Buttons between rows. Save Settings writes and commits that arrangement; restore continues to use it without reflowing, and Save Layout remains a separate application-wide operation.
 - Stored Pop/Fan `windowFitMode` values remain runtime-owned semantic frame choices for the saved surface, the union of Button interaction-shape bounds, or current Button visuals. The streamlined Editor does not expose separate fit or native-preview actions; Button Settings capture and restore the selected surface's existing value.
 - Native Pop/Fan windows are fixed, non-resizable transparent canvases covering the active monitor work area and any outlying semantic content. Set cursor-ignore before show. One shared native worker emits changed physical cursor/modifier snapshots; physical bounds and cursor points must be converted to WebView CSS coordinates with the live `devicePixelRatio` (native monitor DPI is only the fallback because WebView zoom can differ). Each visible window remains in the normal band with input entitlement even when its owning program is closed or inactive, then enables its HWND only while the pointer is over a placement-owned Button interaction shape, tool field, or Pop resize handle. Gaps, taskbar previews, listener/query failures, and effect cleanup must return it to ignored. Owning-program scope controls `TOPMOST`, not whether visible controls can receive clicks. Subscribe before querying initial native state, retry transient listener/query and cursor-style failures, and fail closed while state is unavailable. The hit-test hook rejects points outside the semantic frame and the live bounds of the core or explicit inner hit shape before exact Shadow DOM `elementFromPoint` testing. It may cache interactive membership but must read viewport geometry live because ancestor frame movement can change position without resizing a host. It must not resume per-window continuous polling merely because an envelope or content frame moved.
-- Render the visible frame absolutely inside that canvas. Fit changes, hover overflow, Fan expansion, and tool-set collapse/expansion change only semantic frame/envelope state. Pop resize handles track the visible Button/tool-field envelope, including when controls are inset inside a larger surface, while the aspect-locked resize path continues to resize and persist the complete semantic surface and keeps the opposite visible grip fixed across mixed-DPI canvas changes. Grow or rehome the native canvas only when content escapes it, and use a capacity margin while dragging/resizing so monitor-edge motion stays visible. New unsized Pops start at one design pixel per WebView CSS pixel; restored physical bounds use the destination WebView's effective pixel ratio. Preserve one invariant physical surface origin, normalize ancestor content scale to design units, and retain skin-root/animated overflow scale. Persist Pop/Fan semantic physical bounds and layout snapshots, never the monitor-sized host or transient envelope.
-- Layout snapshots are strict version 9 `FlowCellWindowLayout` documents and persist only the managed secondary-window kinds `button-editor`, `button-popout`, `button-fan`, and `installed-page`; Main-window/navigation/Button placement state, transient previews, incomplete, duplicate, or cross-kind identities, minimized-sentinel bounds, unknown fields, and other versions or window kinds are rejected. Pop/Fan save semantic physical bounds, while Editor/Page save their current or last usable native physical bounds. Load validates all bounds and resolves every installed Page before it closes the current managed set.
+- Render the visible frame absolutely inside that canvas. Fit changes, hover overflow, Fan expansion, and tool-set collapse/expansion change only semantic frame/envelope state. Pop resize handles track the visible Button/tool-field envelope, including when controls are inset inside a larger surface, while the aspect-locked resize path continues to resize and persist the complete semantic surface and keeps the opposite visible grip fixed across mixed-DPI canvas changes. Grow or rehome the native canvas only when content escapes it, and use a capacity margin while dragging/resizing so monitor-edge motion stays visible. New unsized Pops start at one design pixel per WebView CSS pixel; restored physical bounds use the destination WebView's effective pixel ratio. A user-triggered open preserves saved semantic bounds that intersect any connected work area, but rehomes a completely disconnected frame into the opening FlowCell window's monitor; `reveal: false` layout restore remains coordinate-verbatim. Preserve one invariant physical surface origin, normalize ancestor content scale to design units, and retain skin-root/animated overflow scale. Persist Pop/Fan semantic physical bounds and layout snapshots, never the monitor-sized host or transient envelope.
+- Layout snapshots are strict current version 10 `FlowCellWindowLayout` documents and persist only the managed secondary-window kinds `button-editor`, `button-popout`, `button-fan`, and `installed-page`; version 9 remains readable for its established records. Main-window/navigation/Button placement state, transient previews, incomplete, duplicate, or cross-kind identities, minimized-sentinel bounds, unknown fields, and other versions or window kinds are rejected. Pop/Fan save semantic physical bounds, while Editor/Page save their current or last usable native physical bounds. A Main settings-backed Pop also stores its settings file, choice, and panel owner so Load can validate and rebuild that noncanonical draft before it closes the current managed set.
 - Only stable placement-owned authored interaction shapes are native Button hit-test regions. The measured `[data-core]` still owns placement/window framing; native broad phase uses the live bounds of the actual interaction target (the core or inner hit shape), and exact browser geometry rejects gaps and clipped/rounded transparent regions.
 - Program-scoped topmost is an exact native process rule: only the owning manifest's actual foreground executable may select `TOPMOST`. Transparent Pop/Fan controls remain geometry-selectively interactive in the normal band when the owner is closed or inactive; this input entitlement does not authorize topmost promotion or native owner binding. An installed Page may explicitly opt out of this scoped worker with manifest `window.alwaysOnTop: true`; absent that flag, it remains program-scoped. Taskbar previews still suppress input and demote scoped windows behind the actual foreground HWND, not merely call `HWND_NOTOPMOST`.
 
@@ -198,13 +198,15 @@ Main-page script, macro, and Tool Set owner hosts separate gestures: an ordinary
 
 ### FlowCell Button Editor Skin Author
 
-The Skin Editor toolbar is ordered `Assign Skin`, `Assign Skin to Panel`, `Load
-skin`, `Save skin`, and `Save as new skin`. Source and paste edits remain in an
+The Skin Editor toolbar is ordered `Assign Skin`, `Assign Skin to Selection`,
+`Assign Skin to Panel`, `Load skin`, `Save skin`, and `Save as new skin`. Source and paste edits remain in an
 isolated working copy. Load lists machine-local recent files first, saved library
 skins second, and `Browse...` last; it never assigns. Assign Skin writes the
 focused placement override plus the pending sizing policy while preserving x,
 y, width, height, and text settings. It forks edited shared source, including the
-document-wide default skin, before saving; Assign Skin to
+document-wide default skin, before saving. Assign Skin to Selection applies that
+same isolated working skin only to the currently selected placements on the focused
+surface. Assign Skin to
 Panel is the explicit surface-wide action and applies only to every Button on the
 focused placement's current Main, regular Pop, Fan, or tool-set Pop surface.
 Occurrences of those Buttons on other surfaces remain unchanged.
@@ -252,8 +254,7 @@ positioning for static HTML labels, composes with the authored positioning model
 already-positioned HTML labels, and converts screen-pixel vectors for SVG label lines, so it remains
 effective if authored states switch the core among inline, block, flex, or grid layout.
 The host refreshes that composition during visual transitions. It never rewrites the
-skin's source, authored transforms, `[data-core]`, or hit testing. Its single bottom `Apply All` commits only the shared Button tooltips, labels, and
-those focused-placement text settings, never cycle IDs, triggers, visuals, skin source,
+skin's source, authored transforms, `[data-core]`, or hit testing. Its single bottom `Apply All` commits every pending Button Text draft across the editor: shared Button tooltips, labels, and each placement's text settings, never cycle IDs, triggers, visuals, skin source,
 Button Size, or placement geometry. Save Settings retains the complete placement-owned
 cycle and text policy. When cycle IDs are pending, Button Text requires Save Settings
 before its text-only Apply All can persist the corresponding labels. With a configured
@@ -302,7 +303,7 @@ the native picker. Material roots preserve authored alpha, while Text commits an
 opaque color so transparent clipping techniques cannot make the selector ineffective.
 The `Highlight on hover` checkbox follows those rows and writes the explicit Base
 declaration `--flowcell-button-highlight-on-hover: 1|0`. It is part of the working
-skin and therefore travels through Assign Skin, Assign Skin to Panel, Save skin,
+skin and therefore travels through Assign Skin, Assign Skin to Selection, Assign Skin to Panel, Save skin,
 and Save as new skin. The host interprets it as the 15% hover brightness lift without
 changing `[data-core]` measurement or hit testing. Older placement values are only
 a fallback for skins that do not declare the setting. The sibling `Highlight when
@@ -312,7 +313,7 @@ its authored field choice, or a selected Main Page Button — rather than to hov
 It has no placement fallback, hover stacks on top of it, and edit-mode selection
 never triggers it.
 
-The source of truth for section names is `FlowCellFrontend/src/button/skins/buttonSkinFormat.ts`. Produce canonical lowercase headers only:
+The source of truth for section names, order, and serialization is [buttonSkinFormat.ts](../FlowCellFrontend/src/button/skins/buttonSkinFormat.ts); actual header parsing and partial-update behavior are owned by [skinPasteParser.ts](../FlowCellFrontend/src/button/skins/skinPasteParser.ts). Produce canonical lowercase headers only:
 
 ```text
 === structure ===
@@ -344,6 +345,7 @@ New skins, conversions, and complete replacements must include every canonical h
 ### Structure rules
 
 - Include `{{label}}` once inside `data-core` when visible Button text belongs there; omit it for a textless or animation-only skin.
+- A Tool Set child with `inlineEditField` or `selectField` requires that token in HTML. Inline editing rejects an SVG label node, and selector options reuse the same assigned skin instead of owning separate option skins.
 - Include exactly one `data-core`. Its measured post-label rectangle owns placement and accessibility geometry but is only the pointer broad phase. Put the intended border radius or `clip-path` on that core. If it is a larger layout wrapper, include at most one descendant `data-hit-shape` on the actual HTML/SVG face.
 - Use a neutral render-only `div` or `span` core. Interactive, form, media, and navigation elements such as `button`, `a`, `input`, `select`, `textarea`, `form`, `img`, `video`, and `audio` are forbidden because the host owns Button semantics and behavior.
 - A newly authored packed core is the intended resting clickable body footprint; do not invent demo margins or hidden layout gutters. A literal conversion preserves the source interactive control's complete box model, including its own transparent padding when that padding positions a face, base, depth layer, or press travel. Remove only spacing owned by an outer demo/page wrapper.

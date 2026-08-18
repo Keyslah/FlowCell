@@ -240,7 +240,7 @@ test("all 19 Layers Builder actions are ordinary manifest packages", () => {
       contribution.version,
       actionName === "snapshot"
         ? "3.1.4"
-        : actionName === "new-sub" || actionName === "3d"
+        : actionName === "new-sub" || actionName === "3d" || actionName === "sort"
           ? "3.1.2"
           : "3.1.1"
     );
@@ -531,6 +531,28 @@ test("Sort protects and orders the complete five-root system", () => {
   assert.match(
     source,
     /function isSystemRoot\(layer\)[\s\S]*?layer\.name === ROOT_3D[\s\S]*?layer\.name === ROOT_ARCHIVE/
+  );
+});
+
+test("Sort routes invisible direct Live sublayers into Trash", () => {
+  const source = readActionSource("sort");
+  const liveSweepIndex = source.indexOf(
+    "moveInvisibleLiveSublayersToTrash(roots.live, roots.trash)"
+  );
+  const topLevelCollectionIndex = source.indexOf(
+    "var sourceLayers = collectSourceLayers(doc)"
+  );
+  assert.ok(
+    liveSweepIndex >= 0 && liveSweepIndex < topLevelCollectionIndex,
+    "invisible Live sublayers must move before top-level sources are routed"
+  );
+  assert.match(
+    source,
+    /moveInvisibleLiveSublayersToTrash\(roots\.live, roots\.trash\)/
+  );
+  assert.match(
+    source,
+    /function moveInvisibleLiveSublayersToTrash\(liveRoot, trashRoot\)[\s\S]*?liveRoot\.layers\[i\][\s\S]*?"visible", true\) === false[\s\S]*?moveSourceToTrash\([\s\S]*?invisibleLayers\[i\][\s\S]*?trashRoot/s
   );
 });
 

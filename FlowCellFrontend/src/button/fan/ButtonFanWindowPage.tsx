@@ -277,7 +277,8 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   const commitAppliedEnvelope = useCallback(async (
     envelope: ButtonRect,
     reanchorSurface = false,
-    onRenderCommit?: () => void
+    onRenderCommit?: () => void,
+    reanchorBounds?: ButtonDesktopBounds
   ) => {
     const currentWindow = getCurrentWindow();
     const rawScaleFactor = appliedCanvasRef.current?.scaleFactor ??
@@ -287,7 +288,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       window.devicePixelRatio
     );
     if (reanchorSurface || !surfaceOriginRef.current) {
-      const anchor = collapsedBoundsRef.current ?? appliedFrameBoundsRef.current ?? {
+      const anchor = reanchorBounds ?? collapsedBoundsRef.current ?? appliedFrameBoundsRef.current ?? {
         left: activeContext.initialBounds?.Left ?? canvasMetrics.left,
         top: activeContext.initialBounds?.Top ?? canvasMetrics.top,
         width: 1,
@@ -772,9 +773,18 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
         pendingEnvelopeRef.current = null;
         return scheduleNativeGeometryTransition(async () => {
           if (cancelled) return;
-          collapsedBoundsRef.current = savedRestingFrame.bounds;
+          // The expanded resting frame starts at the Fan content's top-left,
+          // not at the collapsed owner. Keep those two anchors independent.
+          if (!expanded) {
+            collapsedBoundsRef.current = savedRestingFrame.bounds;
+          }
           surfaceOriginRef.current = null;
-          await commitAppliedEnvelope(windowEnvelope.resting, true);
+          await commitAppliedEnvelope(
+            windowEnvelope.resting,
+            true,
+            undefined,
+            savedRestingFrame.bounds
+          );
         });
       })()
       : queueEnvelope(windowEnvelope.resting);

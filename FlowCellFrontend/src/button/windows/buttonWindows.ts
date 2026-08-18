@@ -1,5 +1,6 @@
 import { emit, listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
+  availableMonitors,
   currentMonitor,
   getCurrentWindow,
   LogicalPosition,
@@ -32,6 +33,7 @@ import {
 } from "../../lib/windowContext";
 import {
   isUsableButtonWindowBounds,
+  rehomeOffscreenButtonContentBounds,
   resolveButtonWebviewPixelRatio,
   resolveFixedButtonCanvasBounds,
   resolveTargetButtonWebviewPixelRatio
@@ -226,12 +228,31 @@ async function resolveDefaultContentBounds(
 async function resolveButtonContentBounds(
   width: number,
   height: number,
-  bounds?: FlowCellBounds | null
+  bounds?: FlowCellBounds | null,
+  rehomeOffscreen = false
 ): Promise<FlowCellBounds> {
-  if (isUsableBounds(bounds)) {
-    return { ...bounds };
-  }
-  return resolveDefaultContentBounds(width, height);
+  if (!isUsableBounds(bounds)) return resolveDefaultContentBounds(width, height);
+  if (!rehomeOffscreen) return { ...bounds };
+
+  const [monitors, openerMonitor] = await Promise.all([
+    availableMonitors().catch(() => []),
+    currentMonitor().catch(() => null)
+  ]);
+  const workAreaBounds = monitors.map((monitor) => ({
+    Left: monitor.workArea.position.x,
+    Top: monitor.workArea.position.y,
+    Width: monitor.workArea.size.width,
+    Height: monitor.workArea.size.height
+  }));
+  const openerWorkArea = openerMonitor
+    ? {
+        Left: openerMonitor.workArea.position.x,
+        Top: openerMonitor.workArea.position.y,
+        Width: openerMonitor.workArea.size.width,
+        Height: openerMonitor.workArea.size.height
+      }
+    : null;
+  return rehomeOffscreenButtonContentBounds(bounds, workAreaBounds, openerWorkArea);
 }
 
 async function resolveButtonCanvasPlacement(
@@ -651,6 +672,11 @@ export async function openButtonPopoutWindow(args: {
   bounds?: FlowCellBounds | null;
   reveal?: boolean;
   registerInLayout?: boolean;
+  settingsBackedLayout?: {
+    panelOwnerButtonId: string;
+    settingsPath: string;
+    choiceId: string;
+  };
 }): Promise<void> {
   const windowLabel = buildButtonPopoutWindowLabel(args);
   const pendingRetirement =
@@ -669,7 +695,8 @@ export async function openButtonPopoutWindow(args: {
     const contentBounds = await resolveButtonContentBounds(
       DEFAULT_POPOUT_WIDTH,
       DEFAULT_POPOUT_HEIGHT,
-      args.bounds
+      args.bounds,
+      args.reveal !== false
     );
     const context: ButtonPopoutWindowContext = {
       kind: "button-popout",
@@ -681,10 +708,11 @@ export async function openButtonPopoutWindow(args: {
       initialDisplayMode: args.displayMode ?? "expanded",
       draftSessionId: args.draftSessionId,
       initialBounds: contentBounds,
-      restoreBounds: args.bounds ?? undefined
+      restoreBounds: isUsableBounds(args.bounds) ? contentBounds : undefined
     };
     const placement = (await resolveButtonCanvasPlacement(contentBounds)).placement;
     if (args.registerInLayout !== false) {
+      const settingsBackedLayout = args.settingsBackedLayout;
       registerLayoutWindow({
         windowLabel,
         kind: "button-popout",
@@ -692,7 +720,10 @@ export async function openButtonPopoutWindow(args: {
         panelName: args.panelName,
         buttonPopoutUnitId: args.popoutUnitId,
         buttonOwnerId: args.ownerButtonId,
+        panelOwnerButtonId: settingsBackedLayout?.panelOwnerButtonId,
         buttonDisplayMode: context.initialDisplayMode,
+        buttonPopoutSettingsPath: settingsBackedLayout?.settingsPath,
+        buttonPopoutChoiceId: settingsBackedLayout?.choiceId,
         snapshotBounds: contentBounds
       });
     }
@@ -820,7 +851,8 @@ export async function openButtonFanWindow(args: {
     const contentBounds = await resolveButtonContentBounds(
       DEFAULT_FAN_WIDTH,
       DEFAULT_FAN_HEIGHT,
-      args.collapsedBounds
+      args.collapsedBounds,
+      args.reveal !== false
     );
     const context: ButtonFanWindowContext = {
       kind: "button-fan",
@@ -831,7 +863,7 @@ export async function openButtonFanWindow(args: {
       panelOwnerButtonId: args.panelOwnerButtonId,
       draftSessionId: args.draftSessionId,
       initialBounds: contentBounds,
-      restoreBounds: args.collapsedBounds ?? undefined
+      restoreBounds: isUsableBounds(args.collapsedBounds) ? contentBounds : undefined
     };
     const placement = (await resolveButtonCanvasPlacement(contentBounds)).placement;
     registerLayoutWindow({
