@@ -23,7 +23,9 @@ test("Skin Editor exposes only the requested skin actions in the requested order
     "Assign Skin to Panel",
     "Load skin",
     "Save skin",
-    "Save as new skin"
+    "Save as new skin",
+    "Update skin file",
+    "Open skins folder"
   ];
   let previousIndex = -1;
   for (const label of labels) {
@@ -36,12 +38,11 @@ test("Skin Editor exposes only the requested skin actions in the requested order
 });
 
 test("Load stays local and invalid working skins cannot be saved or assigned", () => {
-  assert.match(
-    source,
-    /value\.startsWith\("saved:"\)[\s\S]{0,260}setWorkingSkin\(cloneButtonDocument\(loaded\)\)/
-  );
-  assert.match(source, /value\.startsWith\("recent:"\)[\s\S]{0,300}onLoadSkinFile\(recentFile\.path, recentFile\.skinId\)/);
-  assert.match(source, /value === "browse"[\s\S]{0,120}onLoadSkinFile\(null\)/);
+  assert.match(source, /onLoadSkinFile\(null\)\.then\(applySkinFileResult\)/);
+  assert.match(source, /setWorkingSkin\(cloneButtonDocument\(result\.skin\)\)/);
+  assert.match(source, /setWorkingSkinFilePath\(result\.path\)/);
+  assert.match(source, /setWorkingSkinFilePath\(null\)/);
+  assert.doesNotMatch(source, /Recent files|Saved skins|saved:|recent:/);
   assert.match(source, /const skinActionsDisabled = busy \|\| !compileResult\?\.ok/);
   assert.equal((source.match(/disabled=\{skinActionsDisabled\}/g) ?? []).length, 4);
   for (const callback of [
@@ -61,12 +62,17 @@ test("Load stays local and invalid working skins cannot be saved or assigned", (
   );
   assert.match(
     source,
-    /onSaveSkin\(\s*workingSkinForPersistence\(\),\s*workingSkinFilePath\s*\)/
+    /onSaveSkin\(workingSkinForPersistence\(\)\)/
   );
   assert.match(
     source,
     /onSaveAsNewSkin\(workingSkinForPersistence\(\)\)/
   );
+  assert.match(
+    source,
+    /disabled=\{skinActionsDisabled \|\| !workingSkinFilePath\}[\s\S]{0,420}onUpdateSkinFile\([\s\S]{0,100}workingSkinFilePath/
+  );
+  assert.match(source, /onOpenSkinDirectory\(\)/);
 });
 
 test("normal WebView paste fallback applies recognized source and exposes a visible working preview", () => {
@@ -151,11 +157,11 @@ test("paste, load, and source editing return the preview to natural geometry and
     /const sizeForAssignment = \{[\s\S]{0,220}workingPreviewUsesNaturalSize && benchNaturalMeasurement/
   );
   assert.ok(
-    (source.match(/setWorkingPreviewUsesNaturalSize\(true\)/g) ?? []).length >= 4,
+    (source.match(/setWorkingPreviewUsesNaturalSize\(true\)/g) ?? []).length >= 3,
     "every working-source replacement path must restore natural preview geometry"
   );
   assert.ok(
-    (source.match(/resetWorkingSizingMode\(\)/g) ?? []).length >= 4,
+    (source.match(/resetWorkingSizingMode\(\)/g) ?? []).length >= 3,
     "every working-source replacement path must restore Responsive as the pending policy"
   );
   assert.match(

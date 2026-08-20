@@ -229,6 +229,7 @@ fn main() {
             button_state::set_button_bootstrap_failure,
             button_state::get_button_editor_directory,
             button_state::get_button_skin_directory,
+            button_state::open_button_skin_directory,
             button_state::get_button_settings_directory,
             button_state::initialize_button_settings_default,
             button_state::load_button_skin_file,

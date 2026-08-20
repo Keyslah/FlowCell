@@ -406,10 +406,13 @@ left rail's `Same size Buttons` checkbox applies the focused placement's width
 resizing updates every member atomically and delayed skin/text measurements
 cannot split the sizes. Unchecking stops linking future size edits but
 deliberately keeps the current fixed geometry. The Skin Editor toolbar is ordered
-`Assign Skin`, `Assign Skin to Selection`, `Assign Skin to Panel`, `Load skin`, `Save skin`, and `Save as new
-skin`. Load offers recent files first, saved library skins second, and `Browse...`
-last; every choice changes only the working copy. Recent file paths and their skin
-IDs are machine-local and capped at eight. Assign Skin writes the focused
+`Assign Skin`, `Assign Skin to Selection`, `Assign Skin to Panel`, `Load skin`,
+`Save skin`, `Save as new skin`, `Update skin file`, and `Open skins folder`.
+Selecting a Button copies its private effective appearance into the editor without
+creating a file association. Load opens the native picker directly in
+`flowcellbackend/local/Button editor/Skins` and exposes only actual
+`.flowcell-button-skin.txt` files; loading changes only the isolated working copy.
+Assign Skin writes the focused
 placement override plus the pending sizing policy, preserving the placement's
 x, y, width, height, and text settings. It forks an edited shared skin, including
 the document-wide default skin, first; it never changes the Button's default skin
@@ -422,12 +425,16 @@ recognized paste updates an always-visible
 working preview even when WebView exposes the paste only through the textarea's
 normal input event, then clears the transient Paste Skin field after distributing
 the source into its canonical section editors. Unparseable paste remains in the field
-for correction. Browse, first-time Save skin, and Save as new skin all default to
-`flowcellbackend/local/Button editor/Skins`. Save skin overwrites its associated
-file, or opens the picker when it has no file yet, and updates the same library
-entry. Save as new skin always opens the picker, writes canonical paste-ready
-`.flowcell-button-skin.txt` source, and creates an unassigned library entry named
-exactly from the chosen filename stem. Skin saves retain unrelated
+for correction. Save skin and Save as new skin both immediately open a native
+filename prompt rooted in the shared Skins folder and write canonical paste-ready
+`.flowcell-button-skin.txt` source. Save skin retains the working identity; Save as
+new skin gives the working copy a fresh identity. Neither action creates an
+unassigned runtime-library record or changes any Button. Update skin file is the
+only no-prompt overwrite action and is enabled only while the current working copy
+is associated with a file loaded or saved during that editor session. Open skins
+folder reveals the shared reusable-file folder for manual cleanup. Assign Skin,
+Assign Skin to Selection, and Assign Skin to Panel are the only actions that copy
+the working appearance into canonical Button state. Skin file saves retain unrelated
 draft geometry. Button States & Behavior is one compact cycle editor. `Number of
 states` accepts 2 through 64; two is labeled as On/Off but stores no separate mode.
 It generates one row per state, with State 1 marked Initial and one `Advance on`
@@ -447,6 +454,10 @@ presentation is committed after native window preparation even if pointer-up or
 an action response has already requested the next appearance, so a fast result
 cannot erase the authored activation before its first painted frame. Finite motion
 waits on the Web Animations completion signal rather than interval polling.
+When a placement owns a visual-state map keyed by its configured cycle-state IDs,
+that map may route each non-rest input trigger to another authored visual for that
+logical state. This changes only the temporary presentation; it does not alter the
+cycle's stable visual, index, label, advance trigger, or authoritative result match.
 Infinite-only motion never blocks. Another
 activation while Play is active still executes but does not restart or queue the
 Play visual. Error and Disabled remain the highest-priority desired visuals and do
@@ -551,15 +562,16 @@ The preview is review information outside the clean canonical paste block. Profi
 changes update only their selected Base root and live preview,
 leaving effect colors, non-color source, Button Size, `[data-core]` geometry, and hit
 testing unchanged. They do not assign or save the working skin; Assign Skin, Assign
-Skin to Selection, Assign Skin to Panel, Save skin, and Save as new skin retain their normal scope and
-shared-skin forking rules.
+Skin to Selection, and Assign Skin to Panel retain their assignment and
+shared-skin forking scope, while Save skin and Save as new skin remain portable
+file-only actions.
 
 Cycle structure, triggers, state labels, and visual selections all belong to the
 focused placement because both the desired behavior and available visuals may
 differ between placements of the same Button. Save skin continues to save only
 the portable canonical skin source, including the reserved hover-highlight Base
-setting, to its file and library entry; it never saves or
-mutates the placement cycle.
+setting, to the named portable file; it never creates a runtime-library entry and
+never saves or mutates the placement cycle.
 Changing shared skin source can affect every inheriting placement and tool-set
 child. The safe default is to fork and assign a placement override; a panel-wide or
 global change must be explicit and show its blast radius before it is applied.

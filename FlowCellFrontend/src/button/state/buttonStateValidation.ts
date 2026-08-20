@@ -285,6 +285,7 @@ function validateButtonActivationBehavior(
 function validateButtonVisualStateMap(
   value: unknown,
   button: unknown,
+  activationCycle: unknown,
   path: string,
   issues: ButtonStateValidationIssue[]
 ): void {
@@ -293,21 +294,36 @@ function validateButtonVisualStateMap(
     return;
   }
   const behavior = isObject(button) ? button.activationBehavior : null;
+  const placementCycleStates = isObject(activationCycle) && Array.isArray(activationCycle.states)
+    ? activationCycle.states
+    : null;
+  const usesPlacementCycle = placementCycleStates !== null && placementCycleStates.length >= 2;
   const knownStateIds = new Set(
-    isObject(behavior) && Array.isArray(behavior.states)
+    usesPlacementCycle
+      ? placementCycleStates
+        .filter(isObject)
+        .map((state) => state.id)
+        .filter((id): id is string => typeof id === "string")
+      : isObject(behavior) && Array.isArray(behavior.states)
       ? behavior.states
         .filter(isObject)
         .map((state) => state.id)
         .filter((id): id is string => typeof id === "string")
       : []
   );
-  if (!isObject(behavior)) {
-    addIssue(issues, path, "A visual-state map requires Button activation behavior.");
+  if (!usesPlacementCycle && !isObject(behavior)) {
+    addIssue(issues, path, "A visual-state map requires a placement activation cycle or Button activation behavior.");
   }
   for (const [stateId, stateMap] of Object.entries(value)) {
     const statePath = `${path}.${stateId}`;
     if (!knownStateIds.has(stateId)) {
-      addIssue(issues, statePath, "Visual-state map references an unknown Button activation state.");
+      addIssue(
+        issues,
+        statePath,
+        usesPlacementCycle
+          ? "Visual-state map references an unknown placement activation-cycle state."
+          : "Visual-state map references an unknown Button activation state."
+      );
     }
     if (!isObject(stateMap)) {
       addIssue(issues, statePath, "Visual-state assignments must be an object.");
@@ -814,6 +830,7 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       validateButtonVisualStateMap(
         placement.visualStateMap,
         document.buttons[placement.buttonId],
+        placement.activationCycle,
         `${path}.visualStateMap`,
         issues
       );

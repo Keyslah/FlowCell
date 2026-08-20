@@ -553,6 +553,46 @@ test("configured placement cycle skips empty transient sections and keeps the au
   });
 });
 
+test("configured placement cycle maps transient visuals by the active placement state", () => {
+  const cycle = {
+    states: [
+      { id: "off", label: "Live", advanceTrigger: "press", visualState: "base" },
+      { id: "on", label: "Live", advanceTrigger: "press", visualState: "held" }
+    ]
+  };
+  const visualStateMap = {
+    off: { hover: "release", pressed: "base", held: "base", release: "pressed" },
+    on: { pressed: "held", held: "held", release: "release" }
+  };
+  const authoredVisualStates = new Set(["base", "pressed", "held", "release"]);
+  const resolve = (activeStateIndex, patch) => resolveButtonAppearance({
+    buttonLabel: "Live",
+    activationBehavior: null,
+    activationCycle: cycle,
+    activeStateIndex,
+    visualStateMap,
+    authoredVisualStates,
+    appearance: { ...RESTING_APPEARANCE, ...patch }
+  });
+
+  const mappedEmptyHover = resolve(0, { hovered: true });
+  assert.equal(mappedEmptyHover.activeTrigger, "hover");
+  assert.equal(mappedEmptyHover.visualState, "release");
+  const unmappedEmptyHover = resolve(1, { hovered: true });
+  assert.equal(unmappedEmptyHover.activeTrigger, "rest");
+  assert.equal(unmappedEmptyHover.visualState, "held");
+  assert.equal(resolve(0, {}).activeTrigger, "rest");
+  assert.equal(resolve(0, {}).visualState, "base");
+  assert.equal(resolve(0, { pressed: true }).visualState, "base");
+  const mappedHeld = resolve(0, { pressed: true, held: true });
+  assert.equal(mappedHeld.activeTrigger, "held");
+  assert.equal(mappedHeld.visualState, "base");
+  assert.equal(resolve(1, { pressed: true }).visualState, "held");
+  assert.equal(resolve(1, { pressed: true, held: true }).visualState, "held");
+  assert.equal(resolve(0, { release: true }).visualState, "pressed");
+  assert.equal(resolve(1, { release: true }).visualState, "release");
+});
+
 test("configured placement cycle ignores editor selection without hiding real hover", () => {
   const cycle = makePlacementCycle();
   const appearanceFor = (patch) => resolveButtonAppearance({
@@ -748,4 +788,32 @@ test("activation behavior and placement visual mapping validate strictly", () =>
   assert.ok(validation.issues.some((issue) => issue.message.includes("unknown Button activation state")));
   assert.ok(validation.issues.some((issue) => issue.message.includes("appearance trigger is invalid")));
   assert.ok(validation.issues.some((issue) => issue.message.includes("skin visual state is invalid")));
+});
+
+test("placement visual mapping validates against configured placement-cycle state IDs", () => {
+  const validDocument = makeStateDocument();
+  validDocument.placements.placement.activationCycle = {
+    states: [
+      { id: "off", label: "Off", advanceTrigger: "press", visualState: "base" },
+      { id: "on", label: "On", advanceTrigger: "press", visualState: "held" }
+    ]
+  };
+  validDocument.placements.placement.visualStateMap = {
+    off: { pressed: "base", held: "base", release: "pressed" },
+    on: { pressed: "held", held: "held", release: "release" }
+  };
+  assert.equal(
+    validateButtonStateDocument(validDocument).valid,
+    true,
+    validateButtonStateDocument(validDocument).issues
+      .map((issue) => `${issue.path}: ${issue.message}`)
+      .join("\n")
+  );
+
+  validDocument.placements.placement.visualStateMap.missing = { pressed: "base" };
+  const invalid = validateButtonStateDocument(validDocument);
+  assert.equal(invalid.valid, false);
+  assert.ok(
+    invalid.issues.some((issue) => issue.message.includes("unknown placement activation-cycle state"))
+  );
 });

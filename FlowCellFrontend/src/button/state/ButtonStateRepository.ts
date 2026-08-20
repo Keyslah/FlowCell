@@ -502,6 +502,13 @@ export async function getButtonSkinDirectory(): Promise<string> {
   return invoke<string>("get_button_skin_directory");
 }
 
+export async function openButtonSkinDirectory(): Promise<string> {
+  if (!isTauriWindowHost()) {
+    throw new Error("The Button skin directory is only available from the FlowCell desktop host.");
+  }
+  return invoke<string>("open_button_skin_directory");
+}
+
 export async function loadButtonSkinFile(path: string): Promise<string> {
   if (!path.trim()) throw new Error("Button skin load path cannot be empty.");
   if (!isTauriWindowHost()) {

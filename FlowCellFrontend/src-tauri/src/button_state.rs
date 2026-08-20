@@ -2,6 +2,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -303,6 +304,21 @@ pub(crate) fn get_button_skin_directory() -> Result<String, String> {
             directory.display()
         )
     })?;
+    Ok(directory.display().to_string())
+}
+
+#[tauri::command]
+pub(crate) fn open_button_skin_directory() -> Result<String, String> {
+    let directory = PathBuf::from(get_button_skin_directory()?);
+    Command::new("explorer.exe")
+        .arg(&directory)
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "Failed to open Button skin folder at {}: {error}",
+                directory.display()
+            )
+        })?;
     Ok(directory.display().to_string())
 }
 

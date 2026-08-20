@@ -57,6 +57,7 @@ import {
   loadButtonSettingsDefault,
   loadButtonSettingsFile,
   loadButtonStateDocument,
+  openButtonSkinDirectory,
   saveButtonSettingsFile,
   saveButtonSkinFile,
   saveButtonStateDocument,
@@ -124,11 +125,6 @@ import { ButtonAnimationPickerPage } from "./ButtonAnimationPickerPage";
 import { ButtonSkinEditor } from "./ButtonSkinEditor";
 import {
   createButtonSkinFromFile,
-  findButtonSkinRecentFile,
-  findButtonSkinRecentFileByPath,
-  readButtonSkinRecentFiles,
-  rememberButtonSkinRecentFile,
-  writeButtonSkinRecentFiles,
   type ButtonSkinFileResult
 } from "./buttonSkinFiles";
 import { buttonActivationCycleStructureMatches } from "./buttonActivationStateStructure";
@@ -699,7 +695,6 @@ function ButtonEditorContent({
   const [busy, setBusyState] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [activeAnimationEditorButtonId, setActiveAnimationEditorButtonId] = useState<string | null>(null);
-  const [recentSkinFiles, setRecentSkinFiles] = useState(readButtonSkinRecentFiles);
   const [workingSizingModeOverride, setWorkingSizingModeOverride] = useState<{
     placementId: string;
     sizingMode: ButtonPlacementSizingMode;
@@ -711,13 +706,6 @@ function ButtonEditorContent({
   const setBusy = useCallback((next: boolean) => {
     busyRef.current = next;
     setBusyState(next);
-  }, []);
-  const rememberSkinFile = useCallback((path: string, skinId: string) => {
-    setRecentSkinFiles((current) => {
-      const next = rememberButtonSkinRecentFile(current, path, skinId);
-      writeButtonSkinRecentFiles(next);
-      return next;
-    });
   }, []);
 
   const selectedPlacement = focusedPlacementId ? store.draft.placements[focusedPlacementId] ?? null : null;
@@ -798,9 +786,6 @@ function ButtonEditorContent({
   }, [mainPageControlScope, reorderMode]);
   const selectedSkin = selectedButton && selectedPlacement
     ? store.draft.skins[selectedPlacement.skinOverrideId ?? selectedButton.defaultSkinId] ?? null
-    : null;
-  const selectedSkinFilePath = selectedSkin
-    ? findButtonSkinRecentFile(recentSkinFiles, selectedSkin.id)?.path ?? null
     : null;
   const programOptions = useMemo(
     () => buildButtonEditorProgramOptions(store.draft, programs),
@@ -2552,19 +2537,21 @@ function ButtonEditorContent({
     );
   };
 
-  const chooseWorkingSkinSavePath = async (workingSkin: ButtonSkin): Promise<string | null> => {
+  const chooseWorkingSkinSavePath = async (
+    workingSkin: ButtonSkin,
+    title: string
+  ): Promise<string | null> => {
     const skinDirectory = await getButtonSkinDirectory();
     return showSaveFileDialog({
-      title: "Save Button Skin As",
-      filter: "FlowCell Button Skin (*.flowcell-button-skin.txt)|*.flowcell-button-skin.txt|Text Files (*.txt)|*.txt",
+      title,
+      filter: "FlowCell Button Skin (*.flowcell-button-skin.txt)|*.flowcell-button-skin.txt",
       defaultFileName: defaultButtonSkinFileName(workingSkin.name),
       initialDirectory: skinDirectory
     });
   };
 
   const loadWorkingSkinFile = async (
-    requestedPath: string | null,
-    preferredSkinId?: string
+    requestedPath: string | null
   ): Promise<ButtonSkinFileResult | null> => {
     if (busyRef.current) return null;
     setBusy(true);
@@ -2575,28 +2562,19 @@ function ButtonEditorContent({
         const skinDirectory = await getButtonSkinDirectory();
         selectedPath = (await showOpenFileDialog({
           title: "Load Button Skin",
-          filter: "FlowCell Button Skin (*.flowcell-button-skin.txt)|*.flowcell-button-skin.txt|Text Files (*.txt)|*.txt",
+          filter: "FlowCell Button Skin (*.flowcell-button-skin.txt)|*.flowcell-button-skin.txt",
           initialDirectory: skinDirectory,
           multiselect: false
         }))[0] ?? null;
       }
       if (!selectedPath?.trim()) return null;
 
-      const document = store.current();
-      const linkedSkinId = preferredSkinId ??
-        findButtonSkinRecentFileByPath(recentSkinFiles, selectedPath)?.skinId;
-      const existingSkin = linkedSkinId
-        ? document.skins[linkedSkinId] ?? null
-        : null;
-      const skinId = existingSkin?.id ?? createStableButtonId("skin");
       const source = await loadButtonSkinFile(selectedPath);
       const loadedSkin = createButtonSkinFromFile(
         source,
         selectedPath,
-        skinId,
-        existingSkin
+        createStableButtonId("skin")
       );
-      rememberSkinFile(selectedPath, loadedSkin.id);
       setMessage(
         `Skin '${loadedSkin.name}' loaded from ${selectedPath} as a working copy. Use Assign Skin to apply it.`
       );
@@ -2610,34 +2588,27 @@ function ButtonEditorContent({
   };
 
   const saveWorkingSkin = async (
-    workingSkin: ButtonSkin,
-    currentPath: string | null
+    workingSkin: ButtonSkin
   ): Promise<ButtonSkinFileResult | null> => {
     if (busyRef.current) return null;
     setBusy(true);
+    setMessage(null);
     try {
-      const targetPath = currentPath ?? await chooseWorkingSkinSavePath(workingSkin);
+      const targetPath = await chooseWorkingSkinSavePath(workingSkin, "Name and Save Button Skin");
       if (!targetPath) return null;
       const writtenPath = await saveButtonSkinFile(
         targetPath,
         serializeButtonSkinSections(workingSkin)
       );
-      const nextDraft = cloneButtonDocument(store.current());
-      nextDraft.skins[workingSkin.id] = cloneButtonDocument(workingSkin);
-      const scope: ButtonSkinSaveScope = {
-        skinIds: [workingSkin.id]
+      const savedSkin: ButtonSkin = {
+        ...cloneButtonDocument(workingSkin),
+        name: buttonSkinNameFromPath(writtenPath)
       };
-      const frozenDraft = cloneButtonDocument(nextDraft);
-      await commitScopedDocument(
-        (committed) => buildButtonSkinScopedDocument(committed, frozenDraft, scope),
-        (draft, canonical) => applyButtonSkinSavedScope(draft, canonical, scope),
-        `Skin '${workingSkin.name}' saved to ${writtenPath}.`,
-        `The skin file was saved to ${writtenPath}, but FlowCell could not update its skin library.`,
-        `The skin file and skin library were saved, but FlowCell could not finish refreshing the editor and other windows.`
+      setMessage(
+        `Reusable skin '${savedSkin.name}' saved to ${writtenPath}. Button assignments were not changed.`
       );
-      rememberSkinFile(writtenPath, workingSkin.id);
       return {
-        skin: cloneButtonDocument(workingSkin),
+        skin: savedSkin,
         path: writtenPath
       };
     } catch (error) {
@@ -2653,9 +2624,10 @@ function ButtonEditorContent({
   ): Promise<ButtonSkinFileResult | null> => {
     if (busyRef.current) return null;
     setBusy(true);
+    setMessage(null);
     try {
       const id = createStableButtonId("skin");
-      const targetPath = await chooseWorkingSkinSavePath(workingSkin);
+      const targetPath = await chooseWorkingSkinSavePath(workingSkin, "Name and Save New Button Skin");
       if (!targetPath) return null;
       const writtenPath = await saveButtonSkinFile(
         targetPath,
@@ -2666,18 +2638,9 @@ function ButtonEditorContent({
         id,
         name: buttonSkinNameFromPath(writtenPath)
       };
-      const nextDraft = cloneButtonDocument(store.current());
-      nextDraft.skins[id] = duplicate;
-      const scope: ButtonSkinSaveScope = { skinIds: [id] };
-      const frozenDraft = cloneButtonDocument(nextDraft);
-      await commitScopedDocument(
-        (committed) => buildButtonSkinScopedDocument(committed, frozenDraft, scope),
-        (draft, canonical) => applyButtonSkinSavedScope(draft, canonical, scope),
-        `Skin '${duplicate.name}' saved as a new skin at ${writtenPath}.`,
-        `The new skin file was saved to ${writtenPath}, but FlowCell could not add it to the skin library.`,
-        `The new skin file and skin library entry were saved, but FlowCell could not finish refreshing the editor and other windows.`
+      setMessage(
+        `Reusable skin '${duplicate.name}' saved as a new file at ${writtenPath}. Button assignments were not changed.`
       );
-      rememberSkinFile(writtenPath, duplicate.id);
       return {
         skin: duplicate,
         path: writtenPath
@@ -2685,6 +2648,51 @@ function ButtonEditorContent({
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
       return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateWorkingSkinFile = async (
+    workingSkin: ButtonSkin,
+    path: string
+  ): Promise<ButtonSkinFileResult | null> => {
+    if (busyRef.current || !path.trim()) return null;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const writtenPath = await saveButtonSkinFile(
+        path,
+        serializeButtonSkinSections(workingSkin)
+      );
+      const updatedSkin: ButtonSkin = {
+        ...cloneButtonDocument(workingSkin),
+        name: buttonSkinNameFromPath(writtenPath)
+      };
+      setMessage(
+        `Reusable skin file '${updatedSkin.name}' updated at ${writtenPath}. Button assignments were not changed.`
+      );
+      return {
+        skin: updatedSkin,
+        path: writtenPath
+      };
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openWorkingSkinDirectory = async (): Promise<void> => {
+    if (busyRef.current) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const directory = await openButtonSkinDirectory();
+      setMessage(`Reusable Button skins folder opened: ${directory}`);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
     } finally {
       setBusy(false);
     }
@@ -3155,9 +3163,6 @@ function ButtonEditorContent({
         )}
         <ButtonSkinEditor
           skin={selectedSkin}
-          skins={Object.values(store.draft.skins)}
-          recentSkinFiles={recentSkinFiles}
-          skinFilePath={selectedSkinFilePath}
           skinContextKey={selectedPlacement?.id ?? ""}
           busy={busy}
           placement={selectedPlacement}
@@ -3255,6 +3260,8 @@ function ButtonEditorContent({
           onLoadSkinFile={loadWorkingSkinFile}
           onSaveSkin={saveWorkingSkin}
           onSaveAsNewSkin={saveWorkingSkinAsNew}
+          onUpdateSkinFile={updateWorkingSkinFile}
+          onOpenSkinDirectory={openWorkingSkinDirectory}
         />
       </div>
     </main>

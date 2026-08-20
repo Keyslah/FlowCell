@@ -722,19 +722,33 @@ test("Skin Editor replaces explanatory section paragraphs with hover tooltips", 
   assert.match(skinEditor, /title=\{`Raw \$\{sectionLabel\(section\)\} skin code\.`\}/);
 });
 
-test("Save as new skin opens a native file picker and writes canonical portable source", () => {
+test("explicit skin saves always prompt for a filename and write only portable source", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
+  const save = editor.match(
+    /const saveWorkingSkin = async[\s\S]*?\r?\n  };\r?\n\r?\n  const saveWorkingSkinAsNew/
+  );
+  const saveAsNew = editor.match(
+    /const saveWorkingSkinAsNew = async[\s\S]*?\r?\n  };\r?\n\r?\n  const updateWorkingSkinFile/
+  );
+  assert.ok(save, "Save skin handler must exist");
+  assert.ok(saveAsNew, "Save as new skin handler must exist");
   assert.match(editor, /const saveWorkingSkinAsNew = async/);
-  assert.match(editor, /showSaveFileDialog\(\{[\s\S]{0,260}Save Button Skin As/);
+  assert.match(editor, /showSaveFileDialog\(\{[\s\S]{0,260}title,/);
   assert.match(editor, /defaultFileName:\s*defaultButtonSkinFileName\(workingSkin\.name\)/);
   assert.match(editor, /initialDirectory:\s*skinDirectory/);
-  assert.match(editor, /saveButtonSkinFile\([\s\S]{0,160}serializeButtonSkinSections\(workingSkin\)/);
-  assert.match(editor, /name:\s*buttonSkinNameFromPath\(writtenPath\)/);
+  assert.match(save[0], /chooseWorkingSkinSavePath\(workingSkin, "Name and Save Button Skin"\)/);
+  assert.match(saveAsNew[0], /chooseWorkingSkinSavePath\(workingSkin, "Name and Save New Button Skin"\)/);
+  for (const handler of [save[0], saveAsNew[0]]) {
+    assert.match(handler, /saveButtonSkinFile\([\s\S]{0,160}serializeButtonSkinSections\(workingSkin\)/);
+    assert.match(handler, /name:\s*buttonSkinNameFromPath\(writtenPath\)/);
+    assert.doesNotMatch(handler, /nextDraft\.skins|commitScopedDocument|applyButtonSkinSavedScope/);
+  }
 });
 
-test("Skin file loading prioritizes recents, ends with Browse, and shares one default folder", () => {
+test("Skin file loading uses only the native real-file picker and shares one reusable folder", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const skinEditor = readEditorFile("ButtonSkinEditor.tsx");
+  const skinFiles = readEditorFile("buttonSkinFiles.ts");
   const repository = readFileSync(
     join(frontendRoot, "src", "button", "state", "ButtonStateRepository.ts"),
     "utf8"
@@ -742,27 +756,25 @@ test("Skin file loading prioritizes recents, ends with Browse, and shares one de
   const nativeState = readFileSync(join(nativeRoot, "button_state.rs"), "utf8");
   const nativeMain = readFileSync(join(nativeRoot, "main.rs"), "utf8");
 
-  const recentIndex = skinEditor.indexOf('<optgroup label="Recent files">');
-  const savedIndex = skinEditor.indexOf('<optgroup label="Saved skins">');
-  const browseIndex = skinEditor.indexOf('<option value="browse">Browse...</option>');
-  assert.ok(recentIndex >= 0);
-  assert.ok(recentIndex < savedIndex);
-  assert.ok(savedIndex < browseIndex);
-  assert.match(skinEditor, /recentSkinFileLabel\(entry\.path\)/);
-  assert.match(skinEditor, /onLoadSkinFile\(recentFile\.path, recentFile\.skinId\)/);
-  assert.match(skinEditor, /onLoadSkinFile\(null\)/);
+  assert.match(skinEditor, />\s*Load skin\.\.\.\s*</);
+  assert.match(skinEditor, /onLoadSkinFile\(null\)\.then\(applySkinFileResult\)/);
+  assert.doesNotMatch(skinEditor, /Recent files|Saved skins|saved:|recent:/);
+  assert.doesNotMatch(skinFiles, /localStorage|RecentFile|rememberButtonSkin/);
 
   assert.match(editor, /const skinDirectory = await getButtonSkinDirectory\(\)/);
   assert.match(editor, /title:\s*"Load Button Skin"[\s\S]{0,240}initialDirectory:\s*skinDirectory/);
-  assert.match(editor, /const targetPath = currentPath \?\? await chooseWorkingSkinSavePath\(workingSkin\)/);
-  assert.match(editor, /const targetPath = await chooseWorkingSkinSavePath\(workingSkin\)/);
-  assert.match(editor, /findButtonSkinRecentFileByPath\(recentSkinFiles, selectedPath\)\?\.skinId/);
+  assert.match(editor, /filter:\s*"FlowCell Button Skin \(\*\.flowcell-button-skin\.txt\)\|\*\.flowcell-button-skin\.txt"/);
+  assert.match(editor, /createButtonSkinFromFile\([\s\S]{0,160}createStableButtonId\("skin"\)/);
+  assert.doesNotMatch(editor, /findButtonSkinRecentFile|recentSkinFiles|rememberSkinFile/);
 
   assert.match(repository, /invoke<string>\("get_button_skin_directory"\)/);
   assert.match(repository, /invoke<string>\("load_button_skin_file", \{ path \}\)/);
+  assert.match(repository, /invoke<string>\("open_button_skin_directory"\)/);
   assert.match(nativeState, /\.join\("Button editor"\)[\s\S]{0,80}\.join\("Skins"\)/);
+  assert.match(nativeState, /Command::new\("explorer\.exe"\)[\s\S]{0,100}\.arg\(&directory\)/);
   assert.match(nativeMain, /button_state::get_button_skin_directory/);
   assert.match(nativeMain, /button_state::load_button_skin_file/);
+  assert.match(nativeMain, /button_state::open_button_skin_directory/);
 });
 
 test("Size assignment is explicit, supports current Button or Panel scope, and stays separate from legacy uniform sizing", () => {

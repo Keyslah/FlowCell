@@ -251,18 +251,21 @@ export function resolveButtonAppearanceTrigger(
 
 function resolvePlacementCycleAppearanceTrigger(
   appearance: ButtonAppearanceInput,
+  visualStateMap?: Partial<Record<ButtonAppearanceTrigger, ButtonSkinVisualState>>,
   authoredVisualStates?: ReadonlySet<ButtonSkinVisualState>
 ): ButtonAppearanceTrigger {
   if (appearance.error) return "error";
   if (appearance.disabled) return "disabled";
-  const isAuthored = (visualState: ButtonSkinVisualState) => (
-    !authoredVisualStates || authoredVisualStates.has(visualState)
+  const resolvesToAuthoredVisual = (trigger: ButtonAppearanceTrigger) => (
+    !authoredVisualStates || authoredVisualStates.has(
+      visualStateMap?.[trigger] ?? buttonAppearanceTriggerToVisualState(trigger)
+    )
   );
-  if (appearance.held && isAuthored("held")) return "held";
-  if (appearance.pressed && isAuthored("pressed")) return "pressed";
-  if (appearance.release && isAuthored("release")) return "release";
-  if (appearance.play && isAuthored("play")) return "play";
-  if (appearance.hovered && isAuthored("hover")) return "hover";
+  if (appearance.held && resolvesToAuthoredVisual("held")) return "held";
+  if (appearance.pressed && resolvesToAuthoredVisual("pressed")) return "pressed";
+  if (appearance.release && resolvesToAuthoredVisual("release")) return "release";
+  if (appearance.play && resolvesToAuthoredVisual("play")) return "play";
+  if (appearance.hovered && resolvesToAuthoredVisual("hover")) return "hover";
   return "rest";
 }
 
@@ -302,13 +305,18 @@ export function resolveButtonAppearance(
       options.activationCycle,
       options.activeStateIndex
     );
+    const placementVisualStateMap = options.visualStateMap?.[placementCycleState.id];
     const activeTrigger = resolvePlacementCycleAppearanceTrigger(
       options.appearance,
+      placementVisualStateMap,
       options.authoredVisualStates
     );
-    const visualState = activeTrigger === "rest"
+    const identityVisualState = activeTrigger === "rest"
       ? placementCycleState.visualState
       : buttonAppearanceTriggerToVisualState(activeTrigger);
+    const visualState = activeTrigger === "rest"
+      ? identityVisualState
+      : placementVisualStateMap?.[activeTrigger] ?? identityVisualState;
     return {
       activationState: placementCycleState,
       activationStateIndex,

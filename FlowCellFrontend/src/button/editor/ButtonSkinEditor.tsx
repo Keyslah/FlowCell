@@ -16,7 +16,6 @@ import {
 import {
   BUTTON_SKIN_SECTION_ORDER,
   BUTTON_SKIN_STATE_SECTIONS,
-  buttonSkinNameFromPath,
   type ButtonSkinSectionSource
 } from "../skins/buttonSkinFormat";
 import {
@@ -50,17 +49,10 @@ import {
   type ButtonPlacementSizingMode,
   type ButtonSizeAssignment
 } from "./buttonSizeAssignments";
-import {
-  buttonSkinFilePathsEqual,
-  type ButtonSkinFileResult,
-  type ButtonSkinRecentFile
-} from "./buttonSkinFiles";
+import { type ButtonSkinFileResult } from "./buttonSkinFiles";
 
 export interface ButtonSkinEditorProps {
   skin: ButtonSkin | null;
-  skins: readonly ButtonSkin[];
-  recentSkinFiles: readonly ButtonSkinRecentFile[];
-  skinFilePath: string | null;
   skinContextKey: string;
   busy: boolean;
   placement: ButtonPlacement | null;
@@ -93,15 +85,14 @@ export interface ButtonSkinEditorProps {
   onAssignSkin: (skin: ButtonSkin, sizingMode: ButtonPlacementSizingMode) => void;
   onAssignSkinToSelection: (skin: ButtonSkin, sizingMode: ButtonPlacementSizingMode) => void;
   onAssignSkinToPanel: (skin: ButtonSkin, sizingMode: ButtonPlacementSizingMode) => void;
-  onLoadSkinFile: (
-    path: string | null,
-    preferredSkinId?: string
-  ) => Promise<ButtonSkinFileResult | null>;
-  onSaveSkin: (
-    skin: ButtonSkin,
-    currentPath: string | null
-  ) => Promise<ButtonSkinFileResult | null>;
+  onLoadSkinFile: (path: string | null) => Promise<ButtonSkinFileResult | null>;
+  onSaveSkin: (skin: ButtonSkin) => Promise<ButtonSkinFileResult | null>;
   onSaveAsNewSkin: (skin: ButtonSkin) => Promise<ButtonSkinFileResult | null>;
+  onUpdateSkinFile: (
+    skin: ButtonSkin,
+    path: string
+  ) => Promise<ButtonSkinFileResult | null>;
+  onOpenSkinDirectory: () => Promise<void>;
 }
 
 const TEXT_FIT_OPTIONS: Array<{ value: ButtonTextFitMode; label: string }> = [
@@ -228,13 +219,6 @@ function sectionLabel(section: ButtonSkinSectionName): string {
   return section.replace(/(^|-)([a-z])/g, (_, separator: string, letter: string) => `${separator ? " " : ""}${letter.toUpperCase()}`);
 }
 
-function recentSkinFileLabel(path: string): string {
-  const parts = path.split(/[\\/]/);
-  const parent = parts.slice(0, -1).join("\\");
-  const name = buttonSkinNameFromPath(path);
-  return parent ? `${name} (${parent})` : name;
-}
-
 interface ButtonColorPickerRowProps {
   label: string;
   title: string;
@@ -352,9 +336,6 @@ function resizeButtonTooltipEditor(editor: HTMLTextAreaElement | null): void {
 
 export function ButtonSkinEditor({
   skin,
-  skins,
-  recentSkinFiles,
-  skinFilePath,
   skinContextKey,
   busy,
   placement,
@@ -378,14 +359,14 @@ export function ButtonSkinEditor({
   onAssignSkinToPanel,
   onLoadSkinFile,
   onSaveSkin,
-  onSaveAsNewSkin
+  onSaveAsNewSkin,
+  onUpdateSkinFile,
+  onOpenSkinDirectory
 }: ButtonSkinEditorProps) {
   const [workingSkin, setWorkingSkin] = useState<ButtonSkin | null>(
     () => skin ? cloneButtonDocument(skin) : null
   );
-  const [workingSkinFilePath, setWorkingSkinFilePath] = useState<string | null>(
-    skinFilePath
-  );
+  const [workingSkinFilePath, setWorkingSkinFilePath] = useState<string | null>(null);
   const [paste, setPaste] = useState("");
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [updatedSections, setUpdatedSections] = useState<Set<ButtonSkinSectionName>>(new Set());
@@ -469,7 +450,7 @@ export function ButtonSkinEditor({
 
   useEffect(() => {
     setWorkingSkin(skin ? cloneButtonDocument(skin) : null);
-    setWorkingSkinFilePath(skinFilePath);
+    setWorkingSkinFilePath(null);
     setWorkingSize(placement ? responsiveSizeAssignmentFromPlacement(placement) : null);
     setAppliedPreviewSizingMode("responsive");
     onSizingModePreviewChange("responsive");
@@ -757,15 +738,6 @@ export function ButtonSkinEditor({
     setBenchMeasurement(null);
     setBenchNaturalMeasurement(null);
   };
-  const workingRecentFileIndex = workingSkinFilePath
-    ? recentSkinFiles.findIndex(
-        (entry) => buttonSkinFilePathsEqual(entry.path, workingSkinFilePath)
-      )
-    : -1;
-  const loadSkinValue = workingRecentFileIndex >= 0
-    ? `recent:${workingRecentFileIndex}`
-    : `saved:${workingSkin.id}`;
-
   return (
     <aside className="button-skin-editor">
       <h2>Skin Editor</h2>
@@ -803,76 +775,61 @@ export function ButtonSkinEditor({
         >
           Assign Skin to Panel
         </button>
-        <label title={workingSkinFilePath ?? "Choose a saved skin or recent skin file to edit in this working copy."}>
-          <span>Load skin</span>
-          <select
-            value={loadSkinValue}
-            disabled={busy}
-            onChange={(event) => {
-              const value = event.currentTarget.value;
-              if (value.startsWith("saved:")) {
-                const loaded = skins.find((option) => option.id === value.slice("saved:".length));
-                if (!loaded) return;
-                setWorkingSkin(cloneButtonDocument(loaded));
-                setWorkingSkinFilePath(
-                  recentSkinFiles.find((entry) => entry.skinId === loaded.id)?.path ?? null
-                );
-                resetWorkingSizingMode();
-                setWorkingPreviewUsesNaturalSize(true);
-                setBenchMeasurement(null);
-                setBenchNaturalMeasurement(null);
-                return;
-              }
-              if (value.startsWith("recent:")) {
-                const recentFile = recentSkinFiles[Number(value.slice("recent:".length))];
-                if (!recentFile) return;
-                void onLoadSkinFile(recentFile.path, recentFile.skinId).then(applySkinFileResult);
-                return;
-              }
-              if (value === "browse") {
-                void onLoadSkinFile(null).then(applySkinFileResult);
-              }
-            }}
-          >
-            {recentSkinFiles.length > 0 ? (
-              <optgroup label="Recent files">
-                {recentSkinFiles.map((entry, index) => (
-                  <option key={entry.path} value={`recent:${index}`}>
-                    {recentSkinFileLabel(entry.path)}
-                  </option>
-                ))}
-              </optgroup>
-            ) : null}
-            <optgroup label="Saved skins">
-              {skins.map((option) => (
-                <option key={option.id} value={`saved:${option.id}`}>{option.name}</option>
-              ))}
-            </optgroup>
-            <option value="browse">Browse...</option>
-          </select>
-        </label>
         <button
           type="button"
-          title="Save changes to this skin."
-          disabled={skinActionsDisabled}
+          title="Load a reusable Button skin file into this isolated working copy. Button assignments are unchanged until you use Assign Skin."
+          disabled={busy}
           onClick={() => {
-            void onSaveSkin(
-              workingSkinForPersistence(),
-              workingSkinFilePath
-            ).then(applySkinFileResult);
+            void onLoadSkinFile(null).then(applySkinFileResult);
           }}
         >
-          Save skin
+          Load skin...
         </button>
         <button
           type="button"
-          title="Save this working skin under the name chosen in the file dialog."
+          title="Prompt for a name and save this working appearance as a reusable Button skin file."
+          disabled={skinActionsDisabled}
+          onClick={() => {
+            void onSaveSkin(workingSkinForPersistence()).then(applySkinFileResult);
+          }}
+        >
+          Save skin...
+        </button>
+        <button
+          type="button"
+          title="Prompt for a name and save this working appearance as a separate reusable Button skin file."
           disabled={skinActionsDisabled}
           onClick={() => {
             void onSaveAsNewSkin(workingSkinForPersistence()).then(applySkinFileResult);
           }}
         >
-          Save as new skin
+          Save as new skin...
+        </button>
+        <button
+          type="button"
+          title={workingSkinFilePath
+            ? `Overwrite the currently loaded or saved file: ${workingSkinFilePath}`
+            : "Load or save a skin file before updating it in place."}
+          disabled={skinActionsDisabled || !workingSkinFilePath}
+          onClick={() => {
+            if (!workingSkinFilePath) return;
+            void onUpdateSkinFile(
+              workingSkinForPersistence(),
+              workingSkinFilePath
+            ).then(applySkinFileResult);
+          }}
+        >
+          Update skin file
+        </button>
+        <button
+          type="button"
+          title="Open the folder where FlowCell keeps reusable Button skin files."
+          disabled={busy}
+          onClick={() => {
+            void onOpenSkinDirectory();
+          }}
+        >
+          Open skins folder
         </button>
       </div>
       <details className="button-skin-section button-skin-size-section" open>

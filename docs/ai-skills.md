@@ -199,12 +199,14 @@ Main-page script, macro, and Tool Set owner hosts separate gestures: an ordinary
 ### FlowCell Button Editor Skin Author
 
 The Skin Editor toolbar is ordered `Assign Skin`, `Assign Skin to Selection`,
-`Assign Skin to Panel`, `Load skin`, `Save skin`, and `Save as new skin`. Source and paste edits remain in an
-isolated working copy. Load lists machine-local recent files first, saved library
-skins second, and `Browse...` last; it never assigns. Assign Skin writes the
+`Assign Skin to Panel`, `Load skin`, `Save skin`, `Save as new skin`, `Update skin
+file`, and `Open skins folder`. Source and paste edits remain in an isolated
+working copy. Selecting a Button copies its private effective appearance into the
+editor without associating it with a file. Load opens the native picker directly
+and shows only actual `.flowcell-button-skin.txt` files; it never assigns. Assign Skin writes the
 focused placement override plus the pending sizing policy while preserving x,
 y, width, height, and text settings. It forks edited shared source, including the
-document-wide default skin, before saving. Assign Skin to Selection applies that
+document-wide default skin, before assignment. Assign Skin to Selection applies that
 same isolated working skin only to the currently selected placements on the focused
 surface. Assign Skin to
 Panel is the explicit surface-wide action and applies only to every Button on the
@@ -213,14 +215,15 @@ Occurrences of those Buttons on other surfaces remain unchanged.
 Recognized paste source updates an always-visible working preview through both
 native paste and normal WebView input paths, distributes into the canonical
 section editors, and clears the transient paste field; unparseable input remains for
-correction. Browse, first-time Save skin, and Save as new skin use
-`flowcellbackend/local/Button editor/Skins` as their picker default. Save skin
-overwrites its associated file, or opens the picker when no file is associated,
-and updates the same library entry. Save as new always opens the picker, writes
-canonical paste-ready `.flowcell-button-skin.txt` source, and creates an
-unassigned entry named exactly from the chosen filename stem. Successful
-loads/saves maintain at most eight machine-local `{ path, skinId }` recent
-associations; absolute paths never enter canonical Button state. There are no Apply Named Sections or Replace
+correction. Load, Save skin, and Save as new skin use
+`flowcellbackend/local/Button editor/Skins` as their picker default. Both save
+actions immediately open a native filename prompt and write canonical paste-ready
+`.flowcell-button-skin.txt` source without creating an unassigned runtime-library
+entry or changing a Button. Save skin retains the working identity; Save as new
+skin creates a fresh working identity. Update skin file is the explicit no-prompt
+overwrite for a file loaded or saved during the current editor session. Open skins
+folder reveals the reusable-file folder for cleanup. Absolute paths never enter
+canonical Button state. There are no Apply Named Sections or Replace
 Entire Skin buttons. Static explanations belong in concise hover tooltips instead
 of permanent paragraphs. Selecting a placement or loading, pasting, or editing
 working source starts the pending policy at Responsive and first renders its
@@ -270,8 +273,9 @@ Base. Because edited shared skin source can affect every
 inheriting placement and tool-set child, default to a forked focused-placement
 override and expose the blast radius before any explicit panel-wide or global change.
 Use Save Settings to persist cycle state. `Save skin` persists the portable visual
-source and its reserved skin-owned hover-highlight Base setting to the file and
-library entry; it is never a substitute for placement-cycle persistence.
+source and its reserved skin-owned hover-highlight Base setting to the named file
+only; it creates no runtime-library entry and is never a substitute for
+placement-cycle persistence.
 
 Directly below Button Text, Button Color begins with a required semantic `Color
 Profile Preview` for every newly authored, converted, or complete-replacement skin.
@@ -363,6 +367,7 @@ When converting React, JSX, or styled-components source, treat the imported visu
 
 - State sections contain declarations only: no selectors, braces, markup, or at-rules.
 - Base, Hover, Play, Pressed, Held, Release, Disabled, and Error remain the canonical raw authored visual sections, including an empty or authored Hover section. A placement-cycle state selects its latched resting visual, while real Hover, Pressed, Held, Play, and Release input temporarily renders the matching nonempty authored state before settling back; an empty transient section falls through to the next authored input state or the configured resting visual. This keeps a completed Hover target continuously applied through an interaction whose Pressed, Held, Play, and Release sections are empty, so its entry transition cannot replay. Functional Error and Disabled remain the highest-priority desired visuals without interrupting already-latched finite motion. Once Pressed, Play, or Release is requested, asynchronous native Pop/Fan preparation must commit that authored presentation before pointer-up or an action result may replace it; later requests update only the latest desired appearance. Once applied, finite CSS motion finishes through the Web Animations `Animation.finished` completion signal, followed by final-frame confirmation, before the newest requested persistent/result appearance is applied. Never use interval polling for this boundary. Raw pointer truth and action dispatch remain immediate, infinite-only motion is nonblocking, and another activation does not restart or queue an active Play visual. Its separate Press/Hover/Release trigger decides only when to advance. Skin source never owns the activation index, label sequence, or execution rule.
+- A placement-owned visual-state map may key configured cycle-state IDs to route a non-rest input trigger to another authored visual for that logical state. The mapping changes only the temporary presentation; it does not change the stable cycle visual, index, label, advance trigger, or authoritative result matching.
 - Cycle count, stable state IDs, advance triggers, labels, and visual selections are placement-owned. The opt-in `Highlight on hover` brightness lift is skin-owned through the reserved Base declaration `--flowcell-button-highlight-on-hover: 1|0`; it defaults off, travels with skin assignment/save, and changes neither `[data-core]` measurement nor hit testing. The opt-in `Highlight when active` lift is the same kind of skin-owned declaration, `--flowcell-button-highlight-on-active: 1|0`, applied to the latched selected state instead of hover. Editing shared skin source changes no placement cycle.
 - The core's inline `style` compiles into a lowest-priority `[data-core]` rule, so ordinary state declarations override inline defaults on that core. Nested visual elements remain literal and must consume state-controlled custom properties initialized explicitly in `base`.
 - Use custom properties for decoration shared across the structure.
@@ -375,4 +380,4 @@ Before returning a replacement, run `.claude/skills/skin-author/scripts/validate
 
 ### Scope
 
-The same format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Assigned and library skins persist in `button-state.json`; optional portable `.flowcell-button-skin.txt` files live outside canonical state, and their machine-local recent paths are WebView preferences rather than Button metadata.
+The same format applies to single-script Buttons, panel owners, tool-set owners, every tool-set child button, regular-popout members, and fan members. Assigned private appearances persist in `button-state.json`; explicitly saved reusable `.flowcell-button-skin.txt` files live outside canonical state in `flowcellbackend/local/Button editor/Skins`, and a working file path lasts only for the current editor selection/session rather than becoming Button metadata.

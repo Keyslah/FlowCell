@@ -44,12 +44,7 @@ import {
   setButtonSkinTextColor
 } from "./.compiled-button-system/button/skins/buttonSkinColors.js";
 import {
-  BUTTON_SKIN_RECENT_FILE_LIMIT,
-  createButtonSkinFromFile,
-  normalizeButtonSkinRecentFiles,
-  readButtonSkinRecentFiles,
-  rememberButtonSkinRecentFile,
-  writeButtonSkinRecentFiles
+  createButtonSkinFromFile
 } from "./.compiled-button-system/button/editor/buttonSkinFiles.js";
 import {
   validateButtonSkin
@@ -1416,70 +1411,6 @@ test("saved Button skin names come exactly from the chosen filename", () => {
   assert.equal(buttonSkinNameFromPath("D:/skins/My.skin.v2"), "My.skin.v2");
 });
 
-test("recent Button skin files deduplicate Windows paths, move to the front, and stay capped", () => {
-  const candidates = Array.from(
-    { length: BUTTON_SKIN_RECENT_FILE_LIMIT + 2 },
-    (_, index) => ({
-      path: `C:\\Skins\\Skin ${index}.flowcell-button-skin.txt`,
-      skinId: `skin-${index}`
-    })
-  );
-  candidates.splice(1, 0, {
-    path: "c:/skins/SKIN 0.flowcell-button-skin.txt",
-    skinId: "skin-duplicate"
-  });
-  const normalized = normalizeButtonSkinRecentFiles(candidates);
-  assert.equal(normalized.length, BUTTON_SKIN_RECENT_FILE_LIMIT);
-  assert.equal(normalized[0].skinId, "skin-0");
-  assert.equal(normalized.some((entry) => entry.skinId === "skin-duplicate"), false);
-
-  const remembered = rememberButtonSkinRecentFile(
-    normalized,
-    "c:/skins/SKIN 3.flowcell-button-skin.txt",
-    "skin-3-new"
-  );
-  assert.equal(remembered[0].skinId, "skin-3-new");
-  assert.equal(
-    remembered.filter((entry) => /skin 3\.flowcell-button-skin\.txt$/i.test(entry.path)).length,
-    1
-  );
-  const reassigned = rememberButtonSkinRecentFile(
-    remembered,
-    "D:\\Other\\Moved.flowcell-button-skin.txt",
-    "skin-3-new"
-  );
-  assert.equal(reassigned[0].path, "D:\\Other\\Moved.flowcell-button-skin.txt");
-  assert.equal(reassigned.filter((entry) => entry.skinId === "skin-3-new").length, 1);
-});
-
-test("recent Button skin files persist as machine-local WebView history", () => {
-  const originalWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
-  const values = new Map();
-  Object.defineProperty(globalThis, "window", {
-    configurable: true,
-    value: {
-      localStorage: {
-        getItem: (key) => values.get(key) ?? null,
-        setItem: (key, value) => values.set(key, value)
-      }
-    }
-  });
-  try {
-    const expected = [{
-      path: "D:\\FlowCell\\Button editor\\Skins\\Neon.flowcell-button-skin.txt",
-      skinId: "skin-neon"
-    }];
-    writeButtonSkinRecentFiles(expected);
-    assert.deepEqual(readButtonSkinRecentFiles(), expected);
-  } finally {
-    if (originalWindow) {
-      Object.defineProperty(globalThis, "window", originalWindow);
-    } else {
-      delete globalThis.window;
-    }
-  }
-});
-
 test("portable Button skin files become complete isolated working skins", () => {
   const source = serializeButtonSkinSections({
     ...createEmptyButtonSkinSections(),
@@ -1490,25 +1421,14 @@ test("portable Button skin files become complete isolated working skins", () => 
   const loaded = createButtonSkinFromFile(
     source,
     "D:\\Skins\\Neon.flowcell-button-skin.txt",
-    "skin-neon",
-    {
-      id: "skin-existing",
-      name: "Existing",
-      ...createEmptyButtonSkinSections(),
-      structure: "<div data-core>{{label}}</div>",
-      metadata: { author: "FlowCell" },
-      compileCache: {
-        compilerVersion: 1,
-        sourceFingerprint: "stale"
-      }
-    }
+    "skin-neon"
   );
   assert.equal(loaded.id, "skin-neon");
   assert.equal(loaded.name, "Neon");
   assert.equal(loaded.structure, "<div data-core>{{label}}</div>");
   assert.equal(loaded.base, "--ink:#fff;");
   assert.equal(loaded.hover, "--ink:#0ff;");
-  assert.deepEqual(loaded.metadata, { author: "FlowCell" });
+  assert.deepEqual(loaded.metadata, {});
   assert.equal(loaded.compileCache, null);
   assert.throws(
     () => createButtonSkinFromFile(
