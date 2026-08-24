@@ -1,0 +1,74 @@
+name: Theme Editor Integration
+
+on:
+  push:
+    branches:
+      - theme-editor
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  integrate-and-verify:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: windows-latest
+    steps:
+      - name: Checkout work branch
+        uses: actions/checkout@v4
+        with:
+          ref: theme-editor
+          fetch-depth: 0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: FlowCellFrontend/package-lock.json
+
+      - name: Apply focused integration patch
+        shell: pwsh
+        run: python .github/scripts/apply_theme_editor_integration.py
+
+      - name: Install frontend dependencies
+        working-directory: FlowCellFrontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: FlowCellFrontend
+        run: npm run build
+
+      - name: Run Button and Theme regression tests
+        working-directory: FlowCellFrontend
+        run: npm run test:button
+
+      - name: Check Tauri backend
+        working-directory: FlowCellFrontend
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Commit verified integration
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- `
+            FlowCellFrontend/src/theme/themeModel.ts `
+            FlowCellFrontend/src/pages/theme/themeEditorPage.css `
+            FlowCellFrontend/src/pages/main/mainLayout.ts `
+            FlowCellFrontend/src/pages/main/MainPage.tsx `
+            FlowCellFrontend/src/pages/main/mainPage.css `
+            FlowCellFrontend/src/components/RailSurface.tsx `
+            FlowCellFrontend/src/lib/windowContext.ts `
+            FlowCellFrontend/src/lib/coreWindows.ts `
+            FlowCellFrontend/src/AppBase.tsx `
+            FlowCellFrontend/src-tauri/src/commands/layouts.rs `
+            FlowCellFrontend/src-tauri/src/main.rs `
+            FlowCellFrontend/tests/themeEditor.test.mjs `
+            FlowCellFrontend/package.json
+          if (git diff --cached --quiet) {
+            Write-Host "No integration changes to commit."
+            exit 0
+          }
+          git commit -m "Integrate global FlowCell Theme Editor"
+          git push origin HEAD:theme-editor
