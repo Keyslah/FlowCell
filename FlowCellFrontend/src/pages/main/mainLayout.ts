@@ -568,7 +568,7 @@ export function buildButtonsSurfaceButtons(
       height: buttonsSurfaceGeometry.height,
       radius: buttonsSurfaceGeometry.radius,
       label: "Pop",
-      tooltip: "Open this panel's last-used Pop-out file.",
+      tooltip: "Open this panel's last-used Pop-out file, or its default Pop-out.",
       actionId: "pop-panel-script",
       allowRename: false,
       disabled: options.popDisabled ?? true

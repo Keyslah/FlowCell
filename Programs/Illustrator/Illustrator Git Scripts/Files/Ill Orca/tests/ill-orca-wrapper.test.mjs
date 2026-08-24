@@ -49,7 +49,9 @@ test("Ill Orca is an ordinary completion-waiting Illustrator script package", ()
 });
 
 test("fresh installs expose Ill Orca in Illustrator Files with the SVG owner dependency", () => {
+  const svgContribution = programManifest.bundledSources.find(({ id }) => id === "illustrator.send-svg-to-blender");
   const contribution = programManifest.bundledSources.find(({ id }) => id === "illustrator.ill-orca");
+  assert.equal(svgContribution.version, "1.2.10");
   assert.deepEqual(contribution, {
     id: "illustrator.ill-orca",
     version: "1.0.0",

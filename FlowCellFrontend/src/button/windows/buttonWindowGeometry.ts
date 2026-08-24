@@ -154,6 +154,24 @@ function clampButtonBoundsAxis(
   );
 }
 
+export function confineButtonWindowBoundsToWorkArea(
+  bounds: FlowCellBounds,
+  workArea: FlowCellBounds
+): FlowCellBounds {
+  if (!isUsableButtonWindowBounds(bounds) || !isUsableButtonWindowBounds(workArea)) {
+    return { ...bounds };
+  }
+
+  const width = Math.min(bounds.Width, workArea.Width);
+  const height = Math.min(bounds.Height, workArea.Height);
+  return {
+    Left: clampButtonBoundsAxis(bounds.Left, width, workArea.Left, workArea.Width),
+    Top: clampButtonBoundsAxis(bounds.Top, height, workArea.Top, workArea.Height),
+    Width: width,
+    Height: height
+  };
+}
+
 export function rehomeOffscreenButtonContentBounds(
   contentBounds: FlowCellBounds,
   connectedWorkAreas: readonly FlowCellBounds[],

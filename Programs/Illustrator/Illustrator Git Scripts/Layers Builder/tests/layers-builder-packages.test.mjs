@@ -26,7 +26,8 @@ const globalActions = new Set([
   "set-lock",
   "set-vis",
   "empty-sublayers",
-  "empty-trash"
+  "empty-trash",
+  "copy-live"
 ]);
 const directOpenTreeActions = new Set(["new-sub", "delete-sublayer"]);
 const nonmutatingTreeActions = new Set([
@@ -34,7 +35,6 @@ const nonmutatingTreeActions = new Set([
   "add-to-live",
   "archive",
   "back",
-  "copy-live",
   "flatten-top-sub",
   "restore",
   "trash"
@@ -196,9 +196,9 @@ function resolverFixture(helper) {
 
 test("all 19 Layers Builder actions are ordinary manifest packages", () => {
   assert.equal(contributions.length, 19);
-  assert.equal(globalActions.size, 8);
+  assert.equal(globalActions.size, 9);
   assert.equal(directOpenTreeActions.size, 2);
-  assert.equal(nonmutatingTreeActions.size, 8);
+  assert.equal(nonmutatingTreeActions.size, 7);
   assert.equal(
     globalActions.size + directOpenTreeActions.size + nonmutatingTreeActions.size + 1,
     contributions.length
@@ -240,7 +240,7 @@ test("all 19 Layers Builder actions are ordinary manifest packages", () => {
       contribution.version,
       actionName === "snapshot"
         ? "3.1.4"
-        : actionName === "new-sub" || actionName === "3d" || actionName === "sort"
+        : actionName === "new-sub" || actionName === "3d" || actionName === "sort" || actionName === "copy-live"
           ? "3.1.2"
           : "3.1.1"
     );
@@ -317,7 +317,7 @@ test("all 19 Layers Builder actions are ordinary manifest packages", () => {
   }
 
   assert.equal(classifiedActions.size, 19);
-  assert.equal(helpers.length, 11, "only tree-driven and hybrid actions include the resolver");
+  assert.equal(helpers.length, 10, "only tree-driven and hybrid actions include the resolver");
   assert.equal(new Set(helpers.map(digest)).size, 1, "every included resolver must be identical");
 });
 
@@ -407,6 +407,28 @@ test("Snapshot prioritizes selected artwork and hides only the Snapshots root", 
     /hideSnapshotDescendants|snapshotEntry\.visible = false|snapshotContainer\.visible = false/,
     "Snapshot must not hide any layer beneath the Snapshots root"
   );
+});
+
+test("Copy Live copies Illustrator-selected objects into a named Live sublayer and hides source sublayers", () => {
+  const source = readActionSource("copy-live");
+  const selectionIndex = source.indexOf("var selection = normalizeSelection(doc.selection);");
+  const emptyGuardIndex = source.indexOf("if (selection.length === 0)", selectionIndex);
+  const promptIndex = source.indexOf('prompt("Name for the new Live sublayer:"', emptyGuardIndex);
+  const createIndex = source.indexOf("targetLayer = liveRoot.layers.add();", promptIndex);
+  const copyIndex = source.indexOf("duplicateItemToLayer(", createIndex);
+  const hideIndex = source.indexOf("hideLayer(sourceLayersToHide[i]);", copyIndex);
+
+  assert.ok(selectionIndex >= 0, "Copy Live must read Illustrator's current object selection");
+  assert.ok(emptyGuardIndex > selectionIndex, "Copy Live must reject an empty object selection");
+  assert.ok(promptIndex > emptyGuardIndex, "Copy Live must prompt for the new sublayer name");
+  assert.ok(createIndex > promptIndex, "Copy Live must create the named child under Live after prompting");
+  assert.ok(copyIndex > createIndex, "Copy Live must duplicate the selected objects into the new branch");
+  assert.ok(hideIndex > copyIndex, "Copy Live must hide source sublayers only after copying succeeds");
+  assert.match(source, /itemsToCopy = collectTopLevelSelection\(selection\);/);
+  assert.match(source, /sourceLayersToHide = collectSourceLayersToHide\(selection, liveRoot, targetLayer\);/);
+  assert.match(source, /duplicateItemToLayer\(itemsToCopy\[i\], resolveDestinationLayer\(targetLayer, itemsToCopy\[i\]\)\);/);
+  assert.doesNotMatch(source, /FlowCellLayersBuilderSelection|flowcell-layer-tree-selection/);
+  assert.doesNotMatch(source, /collectHighlightedLayerItems/);
 });
 
 test("3D prefers eligible Illustrator artwork and falls back to Layer Tree highlights", () => {
@@ -596,7 +618,7 @@ test("New Sub requires exactly one target and creates a direct child", () => {
 
 test("Layer Tree is default-selected but never resurrected after deletion", () => {
   assert.ok(layerTreeContribution);
-  assert.equal(layerTreeContribution.version, "3.0.11");
+  assert.equal(layerTreeContribution.version, "3.0.12");
   assert.equal(layerTreeContribution.sourcePath, "Illustrator Git Scripts/LayersBuilder");
   assert.equal(layerTreeContribution.importKind, "script");
   assert.equal(layerTreeContribution.installOnAdd, true);

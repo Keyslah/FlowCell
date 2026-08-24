@@ -6,6 +6,7 @@ import {
   useRef,
   useState
 } from "react";
+import { flushSync } from "react-dom";
 import type {
   ButtonCoreMeasurement,
   ButtonCycleAdvanceTrigger,
@@ -95,6 +96,23 @@ function eventTargetsInlineEditor(event: Event): boolean {
   return event.composedPath().some(
     (target) => target instanceof Element && target.hasAttribute("data-button-inline-editor")
   );
+}
+
+function deepestActiveElement(): Element | null {
+  let activeElement = document.activeElement;
+  while (activeElement?.shadowRoot?.activeElement) {
+    activeElement = activeElement.shadowRoot.activeElement;
+  }
+  return activeElement;
+}
+
+function commitActiveInlineEditorBeforeButtonPress(): void {
+  const activeElement = deepestActiveElement();
+  if (
+    !(activeElement instanceof HTMLElement) ||
+    !activeElement.hasAttribute("data-button-inline-editor")
+  ) return;
+  flushSync(() => activeElement.blur());
 }
 
 function selectInlineEditorContents(element: HTMLElement): void {
@@ -948,6 +966,7 @@ export function ButtonHost({
       const inlineEditor = eventTargetsInlineEditor(event);
       const inlineEditorElement = inlineEditorElementRef.current;
       if (!inlineEditor) {
+        commitActiveInlineEditorBeforeButtonPress();
         event.preventDefault();
       }
       if (inlineEditorElement && modeRef.current === "run" && !buttonRef.current.disabled) {

@@ -406,12 +406,73 @@ export async function loadButtonPlacementFile(path: string): Promise<ButtonPlace
 }
 
 export async function getButtonSettingsDirectory(
-  placementKind: ButtonSettingsPlacementKind
+  placementKind: ButtonSettingsPlacementKind,
+  programName: string,
+  panelName: string
 ): Promise<string> {
   if (!isTauriWindowHost()) {
     throw new Error("Button settings directories are only available from the FlowCell desktop host.");
   }
-  return invoke<string>("get_button_settings_directory", { placementKind });
+  return invoke<string>("get_button_settings_directory", {
+    placementKind,
+    programName,
+    panelName
+  });
+}
+
+function legacyButtonSettingsFileName(
+  path: string,
+  placementKind: ButtonSettingsPlacementKind
+): string | null {
+  const trimmedPath = path.trim();
+  const legacyFolder = placementKind === "main-page"
+    ? "Main Page"
+    : placementKind === "pop-out"
+      ? "Pop-out"
+      : "Fan";
+  const normalizedPath = trimmedPath.replace(/\//g, "\\");
+  const legacyMarker = `\\Button editor\\${legacyFolder}\\`;
+  const legacyMarkerIndex = normalizedPath.toLowerCase().lastIndexOf(
+    legacyMarker.toLowerCase()
+  );
+  if (legacyMarkerIndex < 0) return null;
+
+  const fileName = normalizedPath.slice(legacyMarkerIndex + legacyMarker.length);
+  if (
+    !fileName ||
+    fileName.includes("\\") ||
+    !fileName.toLowerCase().endsWith(".flowcell-button-settings.json")
+  ) {
+    return null;
+  }
+  return fileName;
+}
+
+export function rebaseLegacyButtonSettingsFilePath(
+  path: string,
+  placementKind: ButtonSettingsPlacementKind,
+  scopedDirectory: string
+): string {
+  const trimmedPath = path.trim();
+  const fileName = legacyButtonSettingsFileName(trimmedPath, placementKind);
+  if (!fileName) return trimmedPath;
+  const separator = scopedDirectory.includes("\\") ? "\\" : "/";
+  return `${scopedDirectory.replace(/[\\/]+$/g, "")}${separator}${fileName}`;
+}
+
+export async function resolveButtonSettingsFilePath(
+  path: string,
+  placementKind: ButtonSettingsPlacementKind,
+  programName: string,
+  panelName: string
+): Promise<string> {
+  if (!legacyButtonSettingsFileName(path, placementKind)) return path.trim();
+  const scopedDirectory = await getButtonSettingsDirectory(
+    placementKind,
+    programName,
+    panelName
+  );
+  return rebaseLegacyButtonSettingsFilePath(path, placementKind, scopedDirectory);
 }
 
 export async function saveButtonSettingsFile(

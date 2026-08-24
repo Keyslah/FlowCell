@@ -24,6 +24,14 @@ page host. The installed
 copy under `Blender Local Scripts/<ownerButtonId>/source/` is what runs; the Git
 Scripts package is only the catalog source.
 
+The compact default page starts directly at `Theme Palette`: four slightly
+taller bucket cards fit per row, each bucket's swatch, hex value, and `Apply`
+share one control line, and the darkness profile controls sit directly after
+`Load Buckets`. `Gradient 2` has one unlabeled checkbox directly beside its
+name instead of a separate gradient row. The full Place Picture section follows
+Theme Palette, with HDRI below it. Every action Button exposes its original
+explanatory hover tooltip; newer controls describe their current behavior.
+
 ## Basic Workflow
 
 1. Use the top `Browse` Button to choose a theme image. FlowCell samples it,
@@ -34,7 +42,8 @@ Scripts package is only the catalog source.
 4. Press `Apply` to send the current theme mode and colors to Blender.
 5. Use `Save Package` to copy the theme/Place Picture images and staged fields
    into one portable package. `Open Package`, `Previous`, and `Next` restore a
-   package, apply its theme, and rerun Place Picture.
+   package, apply or clear its Place Picture first, and apply its theme last so
+   Blender saves both halves as one startup bundle.
 6. Use `Save Buckets` or `Load Buckets` when only a JSON field snapshot is
    needed.
 7. Use the Place Picture and HDRI controls independently as needed.
@@ -63,20 +72,19 @@ The color fields map to these Blender surface groups:
 
 | Field | Blender surface group |
 | --- | --- |
-| `Tabs` | Tab and toolbar-style fills. |
+| `Tab Fill` | Tab and toolbar-style fills. |
 | `Tab text` | Text on tabs. |
-| `Headers` | Header strips and panel headers. |
+| `Header` | Header strips and panel headers. |
 | `Header text` | Text on header surfaces. |
-| `Text` | General UI text. |
-| `Control text` | Text on controls and widgets. |
-| `Accent text` | Accent and scene/header text. |
-| `Editor` | Editor and panel backgrounds. |
-| `Scene` | Scene and collection-style surfaces. |
-| `Controls` | Button, field, and widget fills. |
+| `random text` | General UI text. |
+| `tool text` | Text on controls and widgets. |
+| `scene/header text` | Accent and scene/header text. |
+| `Panel` | Editor and panel backgrounds. |
+| `Collection Row` | Scene and collection-style surfaces. |
+| `Control Fill` | Button, field, and widget fills. |
 | `Highlights` | Active, selected, and highlighted states. |
-| `Viewport` | Primary 3D viewport background. |
-| `Gradient color` | Secondary viewport gradient color. |
-| `Gradient` | Enables or disables the viewport gradient. |
+| `Viewport BG` | Primary 3D viewport background. |
+| `Gradient 2` | Secondary viewport gradient color; the adjacent checkbox enables or disables it. |
 
 Blender exposes many related theme paths rather than one field per visible
 surface, so the installed Theme source maps each group across the appropriate
@@ -94,13 +102,19 @@ state.
 | Place Picture path | Holds the image path. |
 | `Browse` | Chooses the Place Picture path without applying it. |
 | `Grid` | Applies the staged near, distance, and far grid values. |
-| `Startup` | Saves the staged Place Picture state for Blender startup restoration. |
+| `Remove Grid` | Removes only the fake grid while leaving the picture and fake gizmos active. |
+| `Startup` | Saves the staged Place Picture state, including grid visibility, for Blender startup restoration. |
 | `Clear` | Removes the overlay while clearing the active Blender-side picture state. |
 
 The near spacing, distance threshold, and far spacing fields are expressed in
 meters and are passed through the installed owner action. Place Picture and the
 grid are Blender-side behavior; FlowCell core only hosts the declared controls
 and transports their payload.
+
+Applying a theme writes one owner-runtime startup snapshot containing the theme
+and the currently active Place Picture, grid values, and grid visibility. A
+saved package therefore cannot restore its theme with an older package's
+picture. A pictureless package explicitly clears the older startup picture.
 
 ## HDRI World
 

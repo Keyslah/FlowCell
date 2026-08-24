@@ -78,6 +78,7 @@ import {
   getButtonSettingsDirectory,
   loadButtonSettingsFile,
   loadButtonStateDocument,
+  resolveButtonSettingsFilePath,
   runButtonStateBootstrapSequence,
   saveButtonStateDocument
 } from "../../button/state/ButtonStateRepository";
@@ -95,6 +96,7 @@ import {
 import { cloneButtonDocument } from "../../button/state/buttonDefaults";
 import {
   ensureFanSetup,
+  ensureRegularPopout,
   removeOwnedButtonGraph
 } from "../../button/state/buttonDocumentOperations";
 import {
@@ -1816,7 +1818,13 @@ export default function MainPage() {
         ) {
           throw new Error("The saved Button Pop-out no longer matches its panel owner.");
         }
-        const settingsFile = await loadButtonSettingsFile(windowEntry.ButtonPopoutSettingsPath);
+        const settingsPath = await resolveButtonSettingsFilePath(
+          windowEntry.ButtonPopoutSettingsPath,
+          "pop-out",
+          windowEntry.ProgramName,
+          windowEntry.PanelName
+        );
+        const settingsFile = await loadButtonSettingsFile(settingsPath);
         const transient = buildTransientButtonPopoutSettingsDocument(
           settingsBackedCanonicalDocument,
           settingsFile,
@@ -1832,7 +1840,7 @@ export default function MainPage() {
         resolvedSettingsBackedPopouts.set(windowEntry, {
           document: settingsBackedCanonicalDocument,
           choice: {
-            path: windowEntry.ButtonPopoutSettingsPath,
+            path: settingsPath,
             choiceId: windowEntry.ButtonPopoutChoiceId
           },
           panelOwnerButtonId: windowEntry.PanelOwnerButtonId
@@ -2842,6 +2850,15 @@ export default function MainPage() {
     if (sourcePanelOwnerButtonId && sourcePanelOwnerButtonId !== panelOwnerPlacement.buttonId) {
       throw new Error("The saved Pop-out no longer matches its panel owner.");
     }
+    choice = {
+      ...choice,
+      path: await resolveButtonSettingsFilePath(
+        choice.path,
+        "pop-out",
+        programName,
+        panelName
+      )
+    };
     const settingsFile = await loadButtonSettingsFile(choice.path);
     const transient = buildTransientButtonPopoutSettingsDocument(
       canonical,
@@ -2940,6 +2957,55 @@ export default function MainPage() {
     }
   };
 
+  const openDefaultPanelPop = async (programName: string, panelName: string) => {
+    let popoutUnitId: string | null = null;
+    const document = await commitButtonDocumentMutation((draft) => {
+      const memberButtons = Object.values(draft.buttons).filter(
+        (candidate) =>
+          candidate.role === "single-script" &&
+          sourceIdentityMatchesFolderScope(candidate.sourceIdentity, programName, panelName)
+      );
+      if (memberButtons.length === 0) {
+        throw new Error("This panel has no script Buttons for a default Pop-out.");
+      }
+      const existingUnitIds = new Set(Object.keys(draft.popoutUnits));
+      const unit = ensureRegularPopout(draft, memberButtons);
+      popoutUnitId = unit.id;
+      return !existingUnitIds.has(unit.id);
+    });
+    if (!popoutUnitId) {
+      throw new Error("FlowCell could not create the panel's default Pop-out.");
+    }
+    const unit = document.popoutUnits[popoutUnitId];
+    if (!unit || unit.kind !== "regular") {
+      throw new Error("The panel's default Pop-out is missing from canonical Button state.");
+    }
+    const ownerPlacement = unit.ownerPlacementId
+      ? document.placements[unit.ownerPlacementId]
+      : undefined;
+    const authoredFan = Boolean(
+      unit.interactionMode === "fan" &&
+      unit.ownerButtonId &&
+      ownerPlacement?.surfaceId === unit.surfaceId &&
+      ownerPlacement.buttonId === unit.ownerButtonId
+    );
+    await openButtonPopoutWindow({
+      programName,
+      panelName,
+      popoutUnitId: unit.id,
+      ownerButtonId: authoredFan ? unit.ownerButtonId ?? undefined : undefined,
+      displayMode: authoredFan ? "collapsed" : "expanded",
+      bounds: !authoredFan && unit.desktopBounds
+        ? {
+            Left: unit.desktopBounds.left,
+            Top: unit.desktopBounds.top,
+            Width: unit.desktopBounds.width,
+            Height: unit.desktopBounds.height
+          }
+        : undefined
+    });
+  };
+
   const handleOpenLastPanelPop = async () => {
     if (!selectedProgramName || !selectedPanelName) return;
     try {
@@ -2954,7 +3020,8 @@ export default function MainPage() {
       }
       const choice = readMainLastPopChoices()[panelOwnerPlacement.buttonId];
       if (!choice) {
-        throw new Error("This panel has no last-used Pop-out. Use Open Pop first.");
+        await openDefaultPanelPop(selectedProgramName, selectedPanelName);
+        return;
       }
       await openMainPopChoice(choice, canonical, panelOwnerPlacement.buttonId);
     } catch (error) {
@@ -2969,7 +3036,11 @@ export default function MainPage() {
   const handleChoosePanelPop = async () => {
     if (!selectedProgramName || !selectedPanelName) return;
     try {
-      const settingsDirectory = await getButtonSettingsDirectory("pop-out");
+      const settingsDirectory = await getButtonSettingsDirectory(
+        "pop-out",
+        selectedProgramName,
+        selectedPanelName
+      );
       const selectedPath = (await showOpenFileDialog({
         title: `Open Pop for ${selectedProgramName} / ${selectedPanelName}`,
         filter: "FlowCell Button Settings (*.flowcell-button-settings.json)|*.flowcell-button-settings.json|JSON Files (*.json)|*.json",

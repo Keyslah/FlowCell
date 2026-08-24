@@ -1,6 +1,9 @@
 import { useMemo } from "react";
 import { ButtonSurface } from "../ButtonSurface";
-import { executeButtonRecord } from "../runtime/ButtonRuntimeAdapter";
+import {
+  executeButtonRecord,
+  type ButtonExecutionResult
+} from "../runtime/ButtonRuntimeAdapter";
 import { resolvePanelOwnerFanPlacement } from "../state/panelOwnerButtonOperations";
 import type {
   ButtonCoreMeasurement,
@@ -65,6 +68,7 @@ export interface ButtonFanRendererProps {
   onHoverStart?: () => void;
   onHoverEnd?: () => void;
   onHoverCancel?: () => void;
+  onExecutionResult?: (placementId: string, result: ButtonExecutionResult) => void;
   onPlacementMeasurement?: (
     placementId: string,
     measurement: ButtonCoreMeasurement
@@ -93,6 +97,7 @@ export function ButtonFanRenderer({
   onHoverStart,
   onHoverEnd,
   onHoverCancel,
+  onExecutionResult,
   onPlacementMeasurement,
   onPlacementNaturalMeasurement,
   onPlacementVisualMeasurement,
@@ -166,6 +171,7 @@ export function ButtonFanRenderer({
         onPlacementVisualMeasurement={onPlacementVisualMeasurement}
         onPreparePlacementVisualStateChange={onPreparePlacementVisualStateChange}
         onPlacementVisualStateChange={onPlacementVisualStateChange}
+        onExecutionResult={onExecutionResult}
         onActivate={async (_placementId: string, button: ButtonRecord) => {
           if (button.id === setup.panelOwnerButtonId) {
             await onOwnerActivate(button);

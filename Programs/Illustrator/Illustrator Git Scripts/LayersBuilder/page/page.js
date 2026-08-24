@@ -867,7 +867,11 @@
       void refresh("clear-if-structure-changed").catch(function () {});
     });
     document.querySelector('[data-action="duplicate"]').addEventListener("click", function () {
-      var keys = highlightedKeys();
+      var keys = requireSelection(
+        "selectForDuplicate",
+        "Highlight one or more " + resourceLabel.toLowerCase() + "s to duplicate."
+      );
+      if (!keys) return;
       void runAction("duplicate", { keys: keys }, {
         selectionPolicy: "clear",
         successMessage: keys.length <= 1 ? "Layer duplicated." : "Layers duplicated."

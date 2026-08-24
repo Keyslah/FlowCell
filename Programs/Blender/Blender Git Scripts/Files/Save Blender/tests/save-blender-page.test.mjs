@@ -65,7 +65,7 @@ test("Save Blender is a Files-panel Blender installed-page package", () => {
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.sourceKind, "page");
   assert.equal(contribution.installOnAdd, true);
-  assert.equal(contribution.version, "1.2.2");
+  assert.equal(contribution.version, "1.2.3");
 });
 
 test("every page resource is package-contained and present", () => {
@@ -343,6 +343,8 @@ test("Blender source sanitizes names and refuses empty names, nonempty targets, 
   assert.match(blenderSource, /_assert_no_reparse_between/);
   assert.match(blenderSource, /_validate_existing_project_target/);
   assert.match(blenderSource, /save-existing-target/);
+  assert.match(blenderSource, /save-prepared-existing-target/);
+  assert.match(blenderSource, /destination \/ f"\{file_name\}\.blend"/);
   assert.match(blenderSource, /Refusing to overwrite an existing Blender file/);
   assert.match(blenderSource, /bpy\.ops\.wm\.save_as_mainfile/);
   assert.doesNotMatch(blenderSource, /setup_organization|subprocess|powershell/i);
@@ -446,6 +448,45 @@ result = namespace["_save_existing_target"]({
 assert pathlib.Path(result["finalPath"]) == existing_file
 assert save_operator.paths[-1] == str(existing_file)
 assert illustrator_file.read_bytes() == b"illustrator-sentinel"
+
+bpy.data.filepath = ""
+prepared_existing_result = namespace["run_flowcell_action"](data={
+    "command": "save-prepared-existing-target",
+    "fileName": " Illustrator: Art? ",
+    "projectRoot": str(existing_root),
+    "destinationDirectory": str(existing_destination),
+})
+prepared_existing_file = existing_destination / "IllustratorArt.blend"
+assert pathlib.Path(prepared_existing_result["finalPath"]) == prepared_existing_file
+assert save_operator.paths[-1] == str(prepared_existing_file)
+
+prepared_existing_file.write_bytes(b"prepared-existing-sentinel")
+bpy.data.filepath = ""
+try:
+    namespace["run_flowcell_action"](data={
+        "command": "save-prepared-existing-target",
+        "fileName": " Illustrator: Art? ",
+        "projectRoot": str(existing_root),
+        "destinationDirectory": str(existing_destination),
+    })
+except ValueError as exc:
+    assert "Refusing to overwrite" in str(exc)
+else:
+    raise AssertionError("prepared existing-project Blender file was overwritten")
+assert prepared_existing_file.read_bytes() == b"prepared-existing-sentinel"
+
+bpy.data.filepath = ""
+try:
+    namespace["run_flowcell_action"](data={
+        "command": "save-prepared-existing-target",
+        "fileName": "Outside",
+        "projectRoot": str(existing_root),
+        "destinationDirectory": str(parent),
+    })
+except ValueError as exc:
+    assert "outside the selected project folder" in str(exc)
+else:
+    raise AssertionError("outside prepared destination was accepted")
 
 existing_file.write_bytes(b"existing-blender-sentinel")
 bpy.data.filepath = ""

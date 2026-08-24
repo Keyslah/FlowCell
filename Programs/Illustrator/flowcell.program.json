@@ -23,7 +23,7 @@
   "bundledSources": [
     {
       "id": "illustrator.send-svg-to-blender",
-      "version": "1.2.6",
+      "version": "1.2.10",
       "panelName": "Files",
       "sourcePath": "Illustrator Git Scripts/Files/Send SVG to Blender/18_Prepare_Selected_OBJ_Export.jsx",
       "importKind": "script",
@@ -51,6 +51,38 @@
       "installIfMissing": true,
       "installOnAdd": true,
       "legacyMatchLabel": "Ill Orca",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.clip",
+      "version": "1.0.4",
+      "panelName": "Utility",
+      "sourcePath": "Illustrator Git Scripts/Utility/clip/clip.jsx",
+      "importKind": "script",
+      "displayLabel": "clip",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": ["Installs the clip Illustrator Button into Utility."],
+      "installIfMissing": true,
+      "installOnAdd": true,
+      "legacyMatchLabel": "clip",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.vacuum",
+      "version": "1.0.0",
+      "panelName": "Utility",
+      "sourcePath": "Illustrator Git Scripts/Utility/vacuum/vacuum.jsx",
+      "importKind": "script",
+      "displayLabel": "vacuum",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": ["Installs the vacuum Illustrator Button into Utility."],
+      "installIfMissing": true,
+      "installOnAdd": true,
+      "legacyMatchLabel": "vacuum",
       "legacyMatchKind": "script"
     },
     {
@@ -145,7 +177,7 @@
     },
     {
       "id": "illustrator.layers-builder.copy-live",
-      "version": "3.1.1",
+      "version": "3.1.2",
       "panelName": "Layers Builder",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/copy-live",
       "importKind": "script",
@@ -340,7 +372,7 @@
     },
     {
       "id": "illustrator.layer-tree",
-      "version": "3.0.11",
+      "version": "3.0.12",
       "panelName": "Layers Builder",
       "sourcePath": "Illustrator Git Scripts/LayersBuilder",
       "importKind": "script",

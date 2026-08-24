@@ -1,16 +1,8 @@
 // FlowCell Layers Builder catalog source.
-// Runs the original Layers script "copy live" against the
-// FlowCell-highlighted layers.
+// Uses Illustrator's current artwork selection; no Layer Tree highlight is required.
 #target illustrator
 
-#include "flowcell-layer-tree-selection.jsxinc"
-
-var FLOWCELL_LB_TARGETS = FlowCellLayersBuilderSelection.resolveTargets(false);
-
-try {
 // Description: Copy the selected item into a new Live sublayer.
-#target illustrator
-
 (function () {
     var ROOT_LIVE = "Live";
 
@@ -19,8 +11,8 @@ try {
         return;
     }
 
-    var doc = FLOWCELL_LB_TARGETS.document;
-    var selection = collectHighlightedLayerItems(FLOWCELL_LB_TARGETS.layers);
+    var doc = app.activeDocument;
+    var selection = normalizeSelection(doc.selection);
     var liveRoot;
     var defaultName;
     var requestedName;
@@ -30,7 +22,7 @@ try {
     var i;
 
     if (selection.length === 0) {
-        alert("Highlight one or more Layer Tree layers containing artwork first.");
+        alert("Select one or more objects first.");
         return;
     }
 
@@ -94,39 +86,26 @@ try {
         return null;
     }
 
-    function collectHighlightedLayerItems(layers) {
+    function normalizeSelection(rawSelection) {
         var result = [];
         var index;
 
-        for (index = 0; index < layers.length; index += 1) {
-            collectLayerItemsRecursive(layers[index], result);
+        if (!rawSelection) {
+            return result;
         }
 
-        return result;
-    }
-
-    function collectLayerItemsRecursive(layer, store) {
-        var index;
-
-        for (index = 0; index < layer.pageItems.length; index += 1) {
-            addUniqueItem(store, layer.pageItems[index]);
-        }
-
-        for (index = 0; index < layer.layers.length; index += 1) {
-            collectLayerItemsRecursive(layer.layers[index], store);
-        }
-    }
-
-    function addUniqueItem(store, item) {
-        var index;
-
-        for (index = 0; index < store.length; index += 1) {
-            if (store[index] === item) {
-                return;
+        if (typeof rawSelection.length === "number") {
+            for (index = 0; index < rawSelection.length; index += 1) {
+                if (rawSelection[index]) {
+                    result.push(rawSelection[index]);
+                }
             }
+
+            return result;
         }
 
-        store.push(item);
+        result.push(rawSelection);
+        return result;
     }
 
     function collectTopLevelSelection(items) {
@@ -348,8 +327,3 @@ try {
         }
     }
 }());
-
-} finally {
-    FlowCellLayersBuilderSelection.restore(FLOWCELL_LB_TARGETS.restore);
-    try { app.redraw(); } catch (redrawError) {}
-}

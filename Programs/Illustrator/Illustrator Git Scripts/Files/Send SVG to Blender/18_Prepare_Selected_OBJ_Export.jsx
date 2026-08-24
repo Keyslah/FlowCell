@@ -23,14 +23,14 @@
     }
 
     function parseExtrudeMillimeters(layerName) {
-        var match = /^\(([0-9]+(?:\.[0-9]+)?)\)/.exec(safeString(layerName));
+        var match = /^(?:\(([0-9]+(?:\.[0-9]+)?)\)|([0-9]+(?:\.[0-9]+)?))/.exec(safeString(layerName));
         var amount;
 
         if (!match) {
             return 1;
         }
 
-        amount = Number(match[1]);
+        amount = Number(match[1] || match[2]);
         if (!(amount > 0) || !isFinite(amount)) {
             return 1;
         }
@@ -117,7 +117,7 @@
         return result + '"';
     }
 
-    function buildRequestJson(requestId, items, postAction) {
+    function buildRequestJson(requestId, items, postAction, sourceDocumentPath) {
         var lines = [];
         var item;
         var i;
@@ -126,6 +126,7 @@
         lines.push('  "schemaVersion": 1,');
         lines.push('  "requestId": ' + jsonQuote(requestId) + ",");
         lines.push('  "postAction": ' + jsonQuote(postAction === "orca" ? "orca" : "none") + ",");
+        lines.push('  "sourceDocumentPath": ' + jsonQuote(sourceDocumentPath) + ",");
         lines.push('  "items": [');
 
         for (i = 0; i < items.length; i += 1) {
@@ -144,6 +145,16 @@
         lines.push("  ]");
         lines.push("}");
         return lines.join("\n") + "\n";
+    }
+
+    function getDocumentPath(documentRef) {
+        try {
+            if (documentRef && documentRef.fullName && documentRef.fullName.fsName) {
+                return safeString(documentRef.fullName.fsName);
+            }
+        } catch (ignoreDocumentPath) {
+        }
+        return "";
     }
 
     function parseStatusText(text) {
@@ -367,6 +378,54 @@
         return groups;
     }
 
+    function adjustOffsetsForBoundsCenterShift(offsetXmm, offsetYmm, beforeBounds, afterBounds) {
+        var beforeCenterX = (Number(beforeBounds[0]) + Number(beforeBounds[2])) / 2;
+        var beforeCenterY = (Number(beforeBounds[1]) + Number(beforeBounds[3])) / 2;
+        var afterCenterX = (Number(afterBounds[0]) + Number(afterBounds[2])) / 2;
+        var afterCenterY = (Number(afterBounds[1]) + Number(afterBounds[3])) / 2;
+
+        return {
+            offsetXmm: Number(offsetXmm) + pointsToMillimeters(afterCenterX - beforeCenterX),
+            offsetYmm: Number(offsetYmm) + pointsToMillimeters(afterCenterY - beforeCenterY)
+        };
+    }
+
+    function recenterExportItems(items) {
+        var combinedLeft = null;
+        var combinedTop = null;
+        var combinedRight = null;
+        var combinedBottom = null;
+        var left;
+        var top;
+        var right;
+        var bottom;
+        var centerX;
+        var centerY;
+        var i;
+
+        for (i = 0; i < items.length; i += 1) {
+            left = items[i].offsetXmm - items[i].widthMm / 2;
+            top = items[i].offsetYmm + items[i].heightMm / 2;
+            right = items[i].offsetXmm + items[i].widthMm / 2;
+            bottom = items[i].offsetYmm - items[i].heightMm / 2;
+            combinedLeft = combinedLeft === null ? left : Math.min(combinedLeft, left);
+            combinedTop = combinedTop === null ? top : Math.max(combinedTop, top);
+            combinedRight = combinedRight === null ? right : Math.max(combinedRight, right);
+            combinedBottom = combinedBottom === null ? bottom : Math.min(combinedBottom, bottom);
+        }
+
+        if (combinedLeft === null) {
+            return items;
+        }
+        centerX = (combinedLeft + combinedRight) / 2;
+        centerY = (combinedTop + combinedBottom) / 2;
+        for (i = 0; i < items.length; i += 1) {
+            items[i].offsetXmm -= centerX;
+            items[i].offsetYmm -= centerY;
+        }
+        return items;
+    }
+
     function resolveExportGroups(rawSelection) {
         var selectedItems = normalizeSelectedPageItems(rawSelection);
         var groups = [];
@@ -449,10 +508,16 @@
             normalizeSelectedPageItems: normalizeSelectedPageItems,
             resolveExportGroups: resolveExportGroups,
             assignRelativeGroupOffsets: assignRelativeGroupOffsets,
+            adjustOffsetsForBoundsCenterShift: adjustOffsetsForBoundsCenterShift,
+            recenterExportItems: recenterExportItems,
             validateVectorArtwork: validateVectorArtwork,
+            removeNonRenderingStrokedPaths: removeNonRenderingStrokedPaths,
+            selectVisibleStrokedArtwork: selectVisibleStrokedArtwork,
+            outlineVisibleStrokes: outlineVisibleStrokes,
             closeOpenFilledPathsForUnite: closeOpenFilledPathsForUnite,
             validateNormalizedVectorArtwork: validateNormalizedVectorArtwork,
-            uniteAndBakeVectorArtwork: uniteAndBakeVectorArtwork
+            uniteAndBakeVectorArtwork: uniteAndBakeVectorArtwork,
+            getDocumentPath: getDocumentPath
         };
         return;
     }
@@ -767,6 +832,211 @@
                 safeString(commandError.message || commandError)
             );
         }
+    }
+
+    function containsItemReference(items, candidate) {
+        var i;
+
+        for (i = 0; i < items.length; i += 1) {
+            if (items[i] === candidate) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function hasZeroSpanBounds(bounds) {
+        var left;
+        var top;
+        var right;
+        var bottom;
+
+        if (!bounds || bounds.length !== 4) {
+            return false;
+        }
+        left = Number(bounds[0]);
+        top = Number(bounds[1]);
+        right = Number(bounds[2]);
+        bottom = Number(bounds[3]);
+        if (!isFinite(left) || !isFinite(top) || !isFinite(right) || !isFinite(bottom)) {
+            return false;
+        }
+        return right === left && top === bottom;
+    }
+
+    function removeNonRenderingStrokedPaths(documentRef, layerName) {
+        var paths = documentRef.pathItems;
+        var removable = [];
+        var pathItem;
+        var parent;
+        var pointCount;
+        var pathLength;
+        var pathArea;
+        var visibleBounds;
+        var geometricBounds;
+        var isGuide;
+        var isClipping;
+        var isStroked;
+        var isFilled;
+        var isClosed;
+        var strokeCap;
+        var parentName;
+        var typename;
+        var i;
+
+        for (i = 0; i < paths.length; i += 1) {
+            pathItem = paths[i];
+            if (!isEffectivelyVisible(pathItem)) {
+                continue;
+            }
+            try {
+                typename = safeString(pathItem.typename);
+                parent = pathItem.parent;
+                parentName = parent ? safeString(parent.name) : "";
+                isGuide = pathItem.guides === true;
+                isClipping = pathItem.clipping === true;
+                isStroked = pathItem.stroked === true;
+                isFilled = pathItem.filled === true;
+                isClosed = pathItem.closed === true;
+                strokeCap = pathItem.strokeCap;
+                pointCount = pathItem.pathPoints.length;
+                pathLength = Number(pathItem.length);
+                pathArea = Number(pathItem.area);
+                visibleBounds = pathItem.visibleBounds;
+                geometricBounds = pathItem.geometricBounds;
+            } catch (inspectionError) {
+                throw new Error(
+                    "Layer " + layerName +
+                    " contains a path that could not be checked for non-rendering geometry: " +
+                    safeString(inspectionError.message || inspectionError)
+                );
+            }
+
+            if (
+                typename !== "PathItem" ||
+                !parent ||
+                safeString(parent.typename) !== "Layer" ||
+                parentName !== layerName ||
+                isGuide ||
+                isClipping ||
+                !isStroked ||
+                isFilled ||
+                isClosed ||
+                strokeCap !== StrokeCap.BUTTENDCAP ||
+                pointCount !== 1 ||
+                !isFinite(pathLength) ||
+                pathLength !== 0 ||
+                !isFinite(pathArea) ||
+                pathArea !== 0 ||
+                !hasZeroSpanBounds(visibleBounds) ||
+                !hasZeroSpanBounds(geometricBounds)
+            ) {
+                continue;
+            }
+            removable.push(pathItem);
+        }
+
+        for (i = removable.length - 1; i >= 0; i -= 1) {
+            try {
+                removable[i].remove();
+            } catch (removeError) {
+                throw new Error(
+                    "Layer " + layerName +
+                    " contains a non-rendering one-anchor stroke that could not be removed from the temporary export copy: " +
+                    safeString(removeError.message || removeError)
+                );
+            }
+        }
+        return removable.length;
+    }
+
+    function selectVisibleStrokedArtwork(documentRef) {
+        var paths = documentRef.pathItems;
+        var selectedTargets = [];
+        var pathItem;
+        var target;
+        var parent;
+        var isGuide;
+        var isStroked;
+        var i;
+
+        clearSelection(documentRef);
+        for (i = 0; i < paths.length; i += 1) {
+            pathItem = paths[i];
+            if (!isEffectivelyVisible(pathItem)) {
+                continue;
+            }
+
+            isGuide = false;
+            isStroked = false;
+            try {
+                isGuide = pathItem.guides === true;
+                isStroked = pathItem.stroked === true;
+            } catch (strokeProbeError) {
+                throw new Error(
+                    "Could not inspect a visible path before outlining its stroke: " +
+                    safeString(strokeProbeError.message || strokeProbeError)
+                );
+            }
+            if (isGuide || !isStroked) {
+                continue;
+            }
+
+            target = pathItem;
+            try {
+                parent = pathItem.parent;
+                if (parent && safeString(parent.typename) === "CompoundPathItem") {
+                    target = parent;
+                }
+            } catch (parentProbeError) {
+                throw new Error(
+                    "Could not inspect a visible stroked path's parent: " +
+                    safeString(parentProbeError.message || parentProbeError)
+                );
+            }
+
+            if (containsItemReference(selectedTargets, target)) {
+                continue;
+            }
+            try {
+                target.selected = true;
+                if (target.selected !== true) {
+                    throw new Error("Illustrator did not select the path.");
+                }
+            } catch (selectionError) {
+                throw new Error(
+                    "Could not select a visible stroked path for outlining: " +
+                    safeString(selectionError.message || selectionError)
+                );
+            }
+            selectedTargets.push(target);
+        }
+
+        return selectedTargets.length;
+    }
+
+    function outlineVisibleStrokes(documentRef, layerName) {
+        var pass;
+
+        for (pass = 0; pass < 3; pass += 1) {
+            if (selectVisibleStrokedArtwork(documentRef) === 0) {
+                return pass > 0;
+            }
+            executeRequiredVectorCleanup(documentRef, "Live Outline Stroke", "stroke outlining", layerName);
+            unlockTemporaryArtwork(documentRef);
+            if (selectTopLevelArtwork(documentRef) > 0) {
+                executeRequiredVectorCleanup(documentRef, "expandStyle", "outlined-stroke expansion", layerName);
+                unlockTemporaryArtwork(documentRef);
+            }
+        }
+
+        if (selectVisibleStrokedArtwork(documentRef) > 0) {
+            throw new Error(
+                "Layer " + layerName +
+                " still contains a visible stroke after three required outline passes."
+            );
+        }
+        return true;
     }
 
     function rejectVisibleClippingGroups(item, layerName) {
@@ -1311,7 +1581,9 @@
         var temporaryLayer;
         var targetFile;
         var duplicate;
+        var preCleanupBounds;
         var exportBounds;
+        var adjustedOffsets;
         var widthMm;
         var heightMm;
         var i;
@@ -1339,17 +1611,24 @@
             }
 
             unlockTemporaryArtwork(temporaryDocument);
+            preCleanupBounds = getVisibleBounds(temporaryDocument, group.layerName);
             outlineVisibleText(temporaryDocument);
             executeVectorCleanup(temporaryDocument, "expandStyle");
             outlineVisibleText(temporaryDocument);
-            executeVectorCleanup(temporaryDocument, "Live Outline Stroke");
-            executeVectorCleanup(temporaryDocument, "expandStyle");
+            removeNonRenderingStrokedPaths(temporaryDocument, group.layerName);
+            outlineVisibleStrokes(temporaryDocument, group.layerName);
             outlineVisibleText(temporaryDocument);
             validateVectorArtwork(temporaryDocument, group.layerName);
             closeOpenFilledPathsForUnite(temporaryDocument, group.layerName);
             uniteAndBakeVectorArtwork(temporaryDocument, group.layerName);
 
             exportBounds = getVisibleBounds(temporaryDocument, group.layerName);
+            adjustedOffsets = adjustOffsetsForBoundsCenterShift(
+                group.offsetXmm,
+                group.offsetYmm,
+                preCleanupBounds,
+                exportBounds
+            );
             widthMm = pointsToMillimeters(exportBounds[2] - exportBounds[0]);
             heightMm = pointsToMillimeters(exportBounds[1] - exportBounds[3]);
             temporaryDocument.artboards[0].artboardRect = exportBounds;
@@ -1372,8 +1651,8 @@
                 extrudeMm: group.extrudeMm,
                 widthMm: widthMm,
                 heightMm: heightMm,
-                offsetXmm: group.offsetXmm,
-                offsetYmm: group.offsetYmm
+                offsetXmm: adjustedOffsets.offsetXmm,
+                offsetYmm: adjustedOffsets.offsetYmm
             };
         } finally {
             closeTemporaryDocument(temporaryDocuments, temporaryDocument);
@@ -1450,6 +1729,7 @@
     var requestItems = [];
     var requestId;
     var postAction = requestedPostAction();
+    var sourceDocumentPath = getDocumentPath(originalDocument);
     var result;
     var caughtError = null;
     var i;
@@ -1473,9 +1753,10 @@
         for (i = 0; i < groups.length; i += 1) {
             requestItems.push(exportGroup(originalDocument, groups[i], ownerPaths.exportFolder, temporaryDocuments));
         }
+        recenterExportItems(requestItems);
 
         requestId = makeRequestId();
-        writeTextFile(ownerPaths.requestFile, buildRequestJson(requestId, requestItems, postAction));
+        writeTextFile(ownerPaths.requestFile, buildRequestJson(requestId, requestItems, postAction, sourceDocumentPath));
         resetStatusFile(ownerPaths.statusFile, requestId);
 
         if (!ownerPaths.handoffFile.execute()) {

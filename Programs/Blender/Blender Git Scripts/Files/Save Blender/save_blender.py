@@ -294,6 +294,21 @@ def _save_existing_target(data: dict) -> dict[str, object]:
     }
 
 
+def _save_prepared_existing_target(data: dict) -> dict[str, object]:
+    file_name = _sanitize_project_name(str(data.get("fileName", "") or ""))
+    destination = _absolute_path(
+        str(data.get("destinationDirectory", "") or ""),
+        "Prepared Blender folder",
+    )
+    return _save_existing_target(
+        {
+            "fileName": file_name,
+            "projectRoot": str(data.get("projectRoot", "") or ""),
+            "finalPath": str(destination / f"{file_name}.blend"),
+        }
+    )
+
+
 def run_flowcell_action(context=None, data=None):
     del context
     payload = _payload_record(data)
@@ -308,4 +323,6 @@ def run_flowcell_action(context=None, data=None):
         return _save_target(payload)
     if command == "save-existing-target":
         return _save_existing_target(payload)
+    if command == "save-prepared-existing-target":
+        return _save_prepared_existing_target(payload)
     raise ValueError(f"Unsupported Save Blender command: {command or '[blank]'}")

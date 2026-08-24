@@ -154,12 +154,24 @@
                                          "command":  "center_everything",
                                          "action":  "center_everything"
                                      }
+                     },
+                     {
+                         "slot":  "center_xy",
+                         "label":  "X+Y",
+                         "tooltip":  "Center selected objects on the active object in X and Y without changing Z.",
+                         "payload":  {
+                                         "command":  "center_xy",
+                                         "action":  "center_xy"
+                                     }
                      }
                  ],
     "layout":  {
                    "mode":  "grid",
                    "columns":  4,
                    "gap":  8,
-                   "padding":  8
+                   "padding":  8,
+                   "updatePolicy":  {
+                                         "appendMissingChildSlots":  true
+                                     }
                }
 }

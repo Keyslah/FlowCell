@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.clip",
+  "label": "clip",
+  "tooltip": "Use the topmost selected closed cutter to trim editable strokes beneath it, temporarily filling the cutter when needed and preserving sublayers.",
+  "program": "Illustrator",
+  "source": "clip.jsx"
+}

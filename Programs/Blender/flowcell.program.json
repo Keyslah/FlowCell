@@ -23,7 +23,7 @@
   "bundledSources": [
     {
       "id": "blender.save-blender",
-      "version": "1.2.2",
+      "version": "1.2.3",
       "panelName": "Files",
       "sourcePath": "Blender Git Scripts/Files/Save Blender",
       "importKind": "script",
@@ -84,7 +84,7 @@
     },
     {
       "id": "blender.theme",
-      "version": "3.0.0",
+      "version": "3.0.4",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/theme",
       "importKind": "script",

@@ -32,6 +32,7 @@ import {
   type ButtonPopoutWindowContext
 } from "../../lib/windowContext";
 import {
+  confineButtonWindowBoundsToWorkArea,
   isUsableButtonWindowBounds,
   rehomeOffscreenButtonContentBounds,
   resolveButtonWebviewPixelRatio,
@@ -170,10 +171,43 @@ async function resolveDefaultPlacement(
 ): Promise<WindowPlacement> {
   const currentWindow = getCurrentWindow();
   const scaleFactor = await currentWindow.scaleFactor().catch(() => 1);
-  const [position, size] = await Promise.all([
+  const [position, size, monitor] = await Promise.all([
     currentWindow.outerPosition().catch(() => null),
-    currentWindow.innerSize().catch(() => null)
+    currentWindow.innerSize().catch(() => null),
+    currentMonitor().catch(() => null)
   ]);
+
+  if (monitor) {
+    const normalizedScale = Number.isFinite(monitor.scaleFactor) && monitor.scaleFactor > 0
+      ? monitor.scaleFactor
+      : Number.isFinite(scaleFactor) && scaleFactor > 0
+        ? scaleFactor
+        : 1;
+    const workArea = {
+      Left: monitor.workArea.position.x,
+      Top: monitor.workArea.position.y,
+      Width: monitor.workArea.size.width,
+      Height: monitor.workArea.size.height
+    };
+    const requestedWidth = width * normalizedScale;
+    const requestedHeight = height * normalizedScale;
+    const confined = confineButtonWindowBoundsToWorkArea(
+      {
+        Left: workArea.Left + (workArea.Width - requestedWidth) / 2,
+        Top: workArea.Top + (workArea.Height - requestedHeight) / 2,
+        Width: requestedWidth,
+        Height: requestedHeight
+      },
+      workArea
+    );
+    return {
+      width: confined.Width,
+      height: confined.Height,
+      x: confined.Left,
+      y: confined.Top,
+      unit: "physical"
+    };
+  }
 
   if (!position || !size) {
     return { width, height, unit: "logical" };
@@ -311,11 +345,24 @@ async function resolvePlacement(
   bounds?: FlowCellBounds | null
 ): Promise<WindowPlacement> {
   if (isUsableBounds(bounds)) {
+    const centerX = bounds.Left + bounds.Width / 2;
+    const centerY = bounds.Top + bounds.Height / 2;
+    const monitor = await monitorFromPoint(centerX, centerY)
+      .catch(() => null)
+      .then((resolved) => resolved ?? currentMonitor().catch(() => null));
+    const confined = monitor
+      ? confineButtonWindowBoundsToWorkArea(bounds, {
+          Left: monitor.workArea.position.x,
+          Top: monitor.workArea.position.y,
+          Width: monitor.workArea.size.width,
+          Height: monitor.workArea.size.height
+        })
+      : bounds;
     return {
-      width: bounds.Width,
-      height: bounds.Height,
-      x: bounds.Left,
-      y: bounds.Top,
+      width: confined.Width,
+      height: confined.Height,
+      x: confined.Left,
+      y: confined.Top,
       unit: "physical"
     };
   }
@@ -629,11 +676,11 @@ export async function openButtonEditorWindow(args: {
       target.isVisible().catch(() => false),
       existed ? readWindowBounds(target) : Promise.resolve(null)
     ]);
-    const shouldMaximize = !isUsableBounds(args.bounds) && !visible;
     if (args.bounds || !visible || (existed && !isUsableBounds(currentBounds))) {
       await applyWindowPlacement(target, placement);
     }
-    if (shouldMaximize) {
+    const maximized = await target.isMaximized().catch(() => false);
+    if (!maximized) {
       await target.maximize();
     }
     registerLayoutWindow({

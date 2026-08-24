@@ -75,7 +75,6 @@ import {
   chooseButtonReorderRowCandidate,
   compactButtonPlacementRows,
   compactButtonPlacements,
-  compactUniformButtonPlacements,
   inferButtonPlacementRows,
   inferButtonPlacementRowProfile,
   lockButtonRectAspect,
@@ -90,6 +89,7 @@ import {
   resolveButtonGeometry,
   resolveButtonGeometryAlongPath,
   resizeButtonPlacementSelection,
+  resizeUniformButtonPlacementsInPlace,
   translateButtonPlacementRects,
   validateExactButtonLayoutGeometry
 } from "./.compiled-button-system/button/geometry/buttonGeometry.js";
@@ -126,6 +126,7 @@ import {
 } from "./.compiled-button-system/button/state/installedPageLifecycle.js";
 import {
   buttonStateDocumentsEqual,
+  rebaseLegacyButtonSettingsFilePath,
   reconcileBundledProgramSources,
   runButtonStateBootstrapSequence
 } from "./.compiled-button-system/button/state/ButtonStateRepository.js";
@@ -168,6 +169,7 @@ import {
   buttonDesktopBoundsToCanvasRect,
   buttonDesktopBoundsFromFlowCellBounds,
   buttonWindowRectContainsPoint,
+  confineButtonWindowBoundsToWorkArea,
   isUsableButtonWindowBounds,
   physicalSurfaceSize,
   resolveAspectLockedWindowBounds,
@@ -756,6 +758,27 @@ test("explicit Button opens rehome frames whose saved monitor is disconnected", 
     rehomeOffscreenButtonContentBounds(illAlignBounds, [], null),
     illAlignBounds,
     "monitor-query failure must preserve the saved physical bounds"
+  );
+});
+
+test("Button Editor restore bounds stay inside one monitor work area", () => {
+  const workArea = { Left: 0, Top: 0, Width: 1920, Height: 1032 };
+
+  assert.deepEqual(
+    confineButtonWindowBoundsToWorkArea(
+      { Left: 206, Top: 206, Width: 2093, Height: 1322 },
+      workArea
+    ),
+    workArea,
+    "an oversized restore rectangle must collapse to the selected monitor work area"
+  );
+  assert.deepEqual(
+    confineButtonWindowBoundsToWorkArea(
+      { Left: 1800, Top: 900, Width: 800, Height: 500 },
+      workArea
+    ),
+    { Left: 1120, Top: 532, Width: 800, Height: 500 },
+    "a normal restore rectangle keeps its size while its origin is clamped"
   );
 });
 
@@ -2161,12 +2184,25 @@ test("skin hover highlight follows the visual latch with a legacy placement fall
   assert.match(skinRenderer, /if \(snapshot\.hoverHighlighted\) lifts\.push\("brightness\(1\.15\)"\)/);
   assert.match(skinRenderer, /setBooleanAttribute\(host, "data-button-pointer-hover", rawHovered\)/);
   assert.match(skinRenderer, /return <span ref=\{hostRef\} data-button-skin-host="true" style=\{style\} \/>/);
+  assert.match(buttonHost, /import \{ flushSync \} from "react-dom";/);
+  assert.match(
+    buttonHost,
+    /while \(activeElement\?\.shadowRoot\?\.activeElement\) \{\s*activeElement = activeElement\.shadowRoot\.activeElement;/
+  );
   const pointerDownBlock = buttonHost.match(
     /const handlePointerDown = \(event: Event\) => \{[\s\S]*?\n    \};/
   )?.[0];
   assert.ok(pointerDownBlock);
+  const commitInlineEditorIndex = pointerDownBlock.indexOf(
+    "commitActiveInlineEditorBeforeButtonPress()"
+  );
+  const preventDefaultIndex = pointerDownBlock.indexOf("event.preventDefault()");
+  const beginPressIndex = pointerDownBlock.indexOf("beginPress(pointerEvent)");
+  assert.ok(commitInlineEditorIndex >= 0);
+  assert.ok(commitInlineEditorIndex < preventDefaultIndex);
+  assert.ok(preventDefaultIndex < beginPressIndex);
   assert.ok(
-    pointerDownBlock.indexOf("beginPress(pointerEvent)") <
+    beginPressIndex <
       pointerDownBlock.indexOf("setPointerCapture")
   );
   assert.match(pointerDownBlock, /try \{[\s\S]*setPointerCapture[\s\S]*\} catch \{/);
@@ -2272,6 +2308,41 @@ test("Main Button single clicks select, double clicks execute, and Pop or Fan st
   assert.match(mainPage, /const pressPlan = resolveButtonPressEventPlan\(canonical\);[\s\S]{0,900}executeLifecycleEvent\("hoverEnter"\)[\s\S]{0,900}executeLifecycleEvent\("pressDown"\)[\s\S]{0,900}executeLifecycleEvent\("click"\)[\s\S]{0,900}executeLifecycleEvent\("pressUp"\)[\s\S]{0,900}executeLifecycleEvent\("hoverLeave"\)/);
   assert.equal(mainPage.match(/onDoubleActivate=\{handleButtonDoubleActivate\}/g)?.length, 1);
   assert.doesNotMatch(mainPage, /PANEL_SCRIPT_REACTIVATION_GUARD_MS|DOUBLE_CLICK/);
+});
+
+test("Button execution failures reach the visible runtime error without a blocking alert", () => {
+  const buttonHost = readFileSync(
+    join(frontendRoot, "src", "button", "ButtonHost.tsx"),
+    "utf8"
+  );
+  const fanRenderer = readFileSync(
+    join(frontendRoot, "src", "button", "fan", "ButtonFanRenderer.tsx"),
+    "utf8"
+  );
+  const fanWindow = readFileSync(
+    join(frontendRoot, "src", "button", "fan", "ButtonFanWindowPage.tsx"),
+    "utf8"
+  );
+
+  assert.match(
+    fanRenderer,
+    /onExecutionResult\?: \(placementId: string, result: ButtonExecutionResult\) => void;/
+  );
+  assert.match(fanRenderer, /onExecutionResult=\{onExecutionResult\}/);
+  assert.match(
+    fanWindow,
+    /onExecutionResult=\{\(_placementId, result\) =>\s*setRuntimeError\(result\.message\?\.trim\(\) \|\| null\)\}/
+  );
+  assert.equal(
+    fanWindow.match(/\{runtimeError \? <div className="button-window-error">\{runtimeError\}<\/div> : null\}/g)?.length,
+    1
+  );
+  const catchBlock = buttonHost.match(/} catch \(executionError\) \{[\s\S]*?\n    \}/)?.[0];
+  assert.ok(catchBlock);
+  assert.equal(catchBlock.match(/onExecutionResult\?\.\(/g)?.length, 1);
+  assert.doesNotMatch(catchBlock, /window\.alert/);
+  assert.doesNotMatch(fanRenderer, /window\.alert/);
+  assert.doesNotMatch(fanWindow, /window\.alert/);
 });
 
 test("Button activation state drives live labels and mapped visuals without extending native sampling", () => {
@@ -2919,17 +2990,12 @@ test("Button Editor navigation resolves exact program, panel, Button, and placem
   const ownerPlacementOptions = buildButtonEditorPlacementOptions(document, owner.id);
   assert.deepEqual(
     ownerPlacementOptions.map((option) => option.label),
-    ["Main Page", "Pop-out", "Fan"]
+    ["Main Page", "Pop-out"]
   );
   const toolSetPopoutOption = ownerPlacementOptions.find((option) => option.view === "tool-set-popout");
-  const toolSetFanOption = ownerPlacementOptions.find((option) => option.view === "tool-set-fan");
   assert.ok(toolSetPopoutOption);
-  assert.ok(toolSetFanOption);
   assert.equal(toolSetPopoutOption.surfaceId, "toolset");
-  assert.equal(toolSetFanOption.surfaceId, "toolset");
-  assert.notEqual(toolSetPopoutOption.id, toolSetFanOption.id);
   assert.equal(toolSetPopoutOption.placementId, "toolset-child");
-  assert.equal(toolSetFanOption.placementId, null);
   assert.deepEqual(
     buildButtonEditorPlacementOptions(document, child.id).map((option) => option.label),
     ["Pop-out"]
@@ -2946,6 +3012,63 @@ test("Button Editor navigation resolves exact program, panel, Button, and placem
     resolveButtonEditorContextPlacementId(document, { surfaceId: "toolset" }),
     "toolset-child"
   );
+});
+
+test("Button Editor offers and materializes one default Pop-out for a source-backed Button", () => {
+  const document = createButtonStateDocument();
+  const record = button(
+    "clip",
+    "single-script",
+    source("Illustrator", "Utility", "clip.flowcell-source.json")
+  );
+  document.buttons[record.id] = record;
+  document.surfaces.panel = {
+    id: "panel",
+    name: "Illustrator / Utility",
+    kind: "panel",
+    width: 640,
+    height: 480,
+    placementIds: ["panel-clip"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.placements["panel-clip"] = {
+    id: "panel-clip",
+    buttonId: record.id,
+    surfaceId: "panel",
+    x: 8,
+    y: 8,
+    width: 160,
+    height: 44,
+    zIndex: 0,
+    skinOverrideId: null,
+    textFitMode: "shrink",
+    textAlignment: "skin",
+    minimumFontSize: 8,
+    textSizeOverride: null,
+    allowLabelResize: false,
+    resizeAnchor: "top-left"
+  };
+
+  const initialOptions = buildButtonEditorPlacementOptions(document, record.id);
+  assert.deepEqual(initialOptions.map((option) => option.label), ["Main Page", "Pop-out"]);
+  const defaultOption = initialOptions.find((option) => option.view === "default-popout");
+  assert.ok(defaultOption);
+  assert.equal(defaultOption.placementId, null);
+
+  const unit = ensureRegularPopout(document, [record]);
+  const reused = ensureRegularPopout(document, [record]);
+  assert.equal(reused.id, unit.id);
+  assert.equal(Object.values(document.popoutUnits).filter((candidate) => candidate.kind === "regular").length, 1);
+  assert.deepEqual(
+    buildButtonEditorPlacementOptions(document, record.id).map((option) => option.label),
+    ["Main Page", "Pop-out"]
+  );
+  const materializedOption = buildButtonEditorPlacementOptions(document, record.id).find(
+    (option) => option.label === "Pop-out"
+  );
+  assert.equal(materializedOption?.view, "placement");
+  assert.ok(materializedOption?.placementId);
 });
 
 test("surface skin assignment targets every member of only the focused surface", () => {
@@ -3151,7 +3274,7 @@ test("one panel owner has exact Main and Fan placements", () => {
   );
   assert.deepEqual(
     buildButtonEditorPlacementOptions(document, owner.id).map((option) => option.label),
-    ["Main Page", "Fan"]
+    ["Main Page"]
   );
   assert.equal(buildButtonEditorButtonOptions(document, "Windows", "Utility").some((option) => option.id === owner.id), true);
   const validation = validateButtonStateDocument(document);
@@ -3615,7 +3738,7 @@ test("program scope deletion uninstalls only that program and preserves the othe
   assertValidScopeFixture(document);
 });
 
-test("Button Editor navigation disambiguates final Button and placement label collisions", () => {
+test("Button Editor navigation disambiguates Buttons and collapses repeated Pop-out placements", () => {
   const document = createButtonStateDocument();
   const firstButton = button(
     "button-owner-alpha-sharedtail",
@@ -3634,6 +3757,24 @@ test("Button Editor navigation disambiguates final Button and placement label co
     [firstButton.id]: firstButton
   };
   document.surfaces = {
+    "surface-main-sharedtail": {
+      id: "surface-main-sharedtail",
+      name: "Blender / Tools",
+      kind: "panel",
+      width: 1225,
+      height: 721,
+      placementIds: ["placement-main-sharedtail"],
+      visualOverflowAllowance: 0
+    },
+    "surface-fan-sharedtail": {
+      id: "surface-fan-sharedtail",
+      name: "Tools Fan",
+      kind: "fan",
+      width: 220,
+      height: 80,
+      placementIds: ["placement-fan-sharedtail"],
+      visualOverflowAllowance: 0
+    },
     "surface-alpha-sharedtail": {
       id: "surface-alpha-sharedtail",
       name: "Same",
@@ -3654,6 +3795,20 @@ test("Button Editor navigation disambiguates final Button and placement label co
     }
   };
   document.placements = {
+    "placement-main-sharedtail": {
+      id: "placement-main-sharedtail", buttonId: firstButton.id,
+      surfaceId: "surface-main-sharedtail", x: 8, y: 8,
+      width: 160, height: 44, zIndex: 0, skinOverrideId: null,
+      textFitMode: "shrink", textAlignment: "skin", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
+      resizeAnchor: "top-left"
+    },
+    "placement-fan-sharedtail": {
+      id: "placement-fan-sharedtail", buttonId: firstButton.id,
+      surfaceId: "surface-fan-sharedtail", x: 8, y: 8,
+      width: 160, height: 44, zIndex: 0, skinOverrideId: null,
+      textFitMode: "shrink", textAlignment: "skin", minimumFontSize: 8, textSizeOverride: null, allowLabelResize: false,
+      resizeAnchor: "top-left"
+    },
     "placement-beta-sharedtail": {
       id: "placement-beta-sharedtail", buttonId: firstButton.id,
       surfaceId: "surface-beta-sharedtail", x: 8, y: 8,
@@ -3707,9 +3862,16 @@ test("Button Editor navigation disambiguates final Button and placement label co
 
   const placementOptions = buildButtonEditorPlacementOptions(document, firstButton.id);
   const placementLabels = placementOptions.map((option) => option.label);
-  assert.equal(placementLabels.length, 2);
-  assert.equal(new Set(placementLabels).size, 1);
-  assert.equal(placementLabels.every((label) => label === "Pop-out"), true);
+  assert.deepEqual(placementLabels, ["Main Page", "Pop-out"]);
+  assert.equal(placementLabels.includes("Fan"), false);
+  assert.equal(
+    buildButtonEditorPlacementOptions(
+      document,
+      firstButton.id,
+      "surface-beta-sharedtail"
+    ).find((option) => option.label === "Pop-out")?.surfaceId,
+    "surface-beta-sharedtail"
+  );
 });
 
 test("staged Button import cleanup removes successes and retains failures for retry", async () => {
@@ -4892,6 +5054,29 @@ test("Button document equality ignores JSON object insertion order but detects v
   assert.equal(buttonStateDocumentsEqual(document, reordered), false);
 });
 
+test("legacy flat Button settings paths rebase into Program, Panel, and Main or Pop", () => {
+  const legacyPopPath = String.raw`D:\Dev\flowcell\flowcellbackend\local\Button editor\Pop-out\greenlock.flowcell-button-settings.json`;
+  const scopedPopDirectory = String.raw`D:\Dev\flowcell\flowcellbackend\local\Button editor\Illustrator\Layers Builder\Pop`;
+  assert.equal(
+    rebaseLegacyButtonSettingsFilePath(legacyPopPath, "pop-out", scopedPopDirectory),
+    String.raw`D:\Dev\flowcell\flowcellbackend\local\Button editor\Illustrator\Layers Builder\Pop\greenlock.flowcell-button-settings.json`
+  );
+  assert.equal(
+    rebaseLegacyButtonSettingsFilePath(legacyPopPath, "main-page", scopedPopDirectory),
+    legacyPopPath,
+    "a remembered path must only rebase through its matching legacy type"
+  );
+  assert.equal(
+    rebaseLegacyButtonSettingsFilePath(
+      `${legacyPopPath}\\nested.flowcell-button-settings.json`,
+      "pop-out",
+      scopedPopDirectory
+    ),
+    `${legacyPopPath}\\nested.flowcell-button-settings.json`,
+    "only a direct legacy settings file may be rebased"
+  );
+});
+
 test("tool-set imports reject exact child placements outside their surface or overlapping", () => {
   assert.deepEqual(validateExactButtonLayoutGeometry([
     { id: "one", rect: { x: 8, y: 8, width: 40, height: 24 } },
@@ -5003,64 +5188,56 @@ test("top-left compaction closes gaps, wraps by row height, and preserves Button
   );
 });
 
-test("uniform Button compaction applies one size atomically without mutating inputs", () => {
+test("uniform Button sizing changes only width and height without mutating inputs", () => {
   const input = [
-    { id: "a", rect: { x: 4, y: 7, width: 20, height: 10 } },
-    { id: "b", rect: { x: 30, y: 7, width: 35, height: 15 } },
-    { id: "c", rect: { x: 70, y: 24, width: 25, height: 12 } }
+    { id: "a", rect: { x: 4.25, y: 7.5, width: 20, height: 10 } },
+    { id: "b", rect: { x: 50.5, y: 7.5, width: 35, height: 15 } },
+    { id: "c", rect: { x: 70.25, y: 40.75, width: 25, height: 12 } }
   ];
   const original = structuredClone(input);
-  const result = compactUniformButtonPlacements(
+  const result = resizeUniformButtonPlacementsInPlace(
     input,
     { width: 40, height: 20 },
-    { width: 100, height: 40 },
-    { gap: 0 }
+    { width: 120, height: 80 }
   );
 
   assert.equal(result.success, true);
   assert.deepEqual(result.placements, [
-    { id: "a", rect: { x: 0, y: 0, width: 40, height: 20 }, zIndex: 0 },
-    { id: "b", rect: { x: 40, y: 0, width: 40, height: 20 }, zIndex: 1 },
-    { id: "c", rect: { x: 0, y: 20, width: 40, height: 20 }, zIndex: 2 }
+    { id: "a", rect: { x: 4.25, y: 7.5, width: 40, height: 20 } },
+    { id: "b", rect: { x: 50.5, y: 7.5, width: 40, height: 20 } },
+    { id: "c", rect: { x: 70.25, y: 40.75, width: 40, height: 20 } }
   ]);
   assert.deepEqual(input, original);
   assert.deepEqual(
-    validateExactButtonLayoutGeometry(result.placements, { width: 100, height: 40 }),
+    validateExactButtonLayoutGeometry(result.placements, { width: 120, height: 80 }),
     []
   );
-
-  const failed = compactUniformButtonPlacements(
-    input,
-    { width: 60, height: 30 },
-    { width: 100, height: 40 }
-  );
-  assert.equal(failed.success, false);
-  assert.deepEqual(failed.placements, []);
-  assert.deepEqual(input, original);
 });
 
-test("uniform Button compaction preserves existing row membership", () => {
+test("uniform Button sizing fails instead of moving Buttons to resolve geometry", () => {
   const input = [
-    { id: "a", rect: { x: 0, y: 0, width: 20, height: 10 } },
-    { id: "b", rect: { x: 20, y: 0, width: 20, height: 10 } },
-    { id: "c", rect: { x: 0, y: 30, width: 20, height: 10 } },
-    { id: "d", rect: { x: 20, y: 30, width: 20, height: 10 } }
+    { id: "a", rect: { x: 4, y: 7, width: 20, height: 10 } },
+    { id: "b", rect: { x: 30, y: 7, width: 35, height: 15 } }
   ];
+  const original = structuredClone(input);
 
-  const result = compactUniformButtonPlacements(
+  const overlapping = resizeUniformButtonPlacementsInPlace(
     input,
-    { width: 30, height: 15 },
-    { width: 120, height: 60 },
-    { gap: 0 }
+    { width: 40, height: 20 },
+    { width: 100, height: 40 }
   );
+  assert.equal(overlapping.success, false);
+  assert.deepEqual(overlapping.placements, []);
+  assert.match(overlapping.reason ?? "", /overlap/);
 
-  assert.equal(result.success, true);
-  assert.deepEqual(result.placements, [
-    { id: "a", rect: { x: 0, y: 0, width: 30, height: 15 }, zIndex: 0 },
-    { id: "b", rect: { x: 30, y: 0, width: 30, height: 15 }, zIndex: 1 },
-    { id: "c", rect: { x: 0, y: 30, width: 30, height: 15 }, zIndex: 2 },
-    { id: "d", rect: { x: 30, y: 30, width: 30, height: 15 }, zIndex: 3 }
-  ]);
+  const outside = resizeUniformButtonPlacementsInPlace(
+    [{ id: "edge", rect: { x: 70, y: 10, width: 20, height: 10 } }],
+    { width: 40, height: 20 },
+    { width: 100, height: 40 }
+  );
+  assert.equal(outside.success, false);
+  assert.deepEqual(outside.placements, []);
+  assert.deepEqual(input, original);
 });
 
 test("reordered compaction normalizes z-index and fails atomically when it cannot fit", () => {
@@ -5873,6 +6050,32 @@ test("fixed Pop and Fan canvases keep hover geometry on the resting semantic fra
   }
 });
 
+test("fixed Button canvases subscribe before reading their authoritative startup origin", () => {
+  const source = readFileSync(
+    join(frontendRoot, "src", "button", "windows", "useFixedButtonCanvas.ts"),
+    "utf8"
+  );
+  const initializationStart = source.indexOf("const initializeMetrics = async () => {");
+  const initializationEnd = source.indexOf("void initializeMetrics();", initializationStart);
+  assert.ok(
+    initializationStart >= 0 && initializationEnd > initializationStart,
+    "fixed-canvas metric initialization should be extractable"
+  );
+  const initialization = source.slice(initializationStart, initializationEnd);
+  const movedSubscription = initialization.indexOf("currentWindow.onMoved");
+  const scaleSubscription = initialization.indexOf("currentWindow.onScaleChanged");
+  const snapshotMarker = initialization.indexOf("const snapshotPositionRevision");
+  const positionSnapshot = initialization.indexOf("currentWindow.outerPosition().catch", snapshotMarker);
+  const scaleSnapshot = initialization.indexOf("currentWindow.scaleFactor().catch", snapshotMarker);
+
+  assert.ok(movedSubscription >= 0 && movedSubscription < snapshotMarker);
+  assert.ok(scaleSubscription >= 0 && scaleSubscription < snapshotMarker);
+  assert.ok(snapshotMarker >= 0 && snapshotMarker < positionSnapshot);
+  assert.ok(snapshotMarker < scaleSnapshot);
+  assert.match(initialization, /positionEventRevision === snapshotPositionRevision/);
+  assert.match(initialization, /scaleEventRevision === snapshotScaleRevision/);
+});
+
 test("expanded Fan resting frames cannot replace the collapsed owner anchor", () => {
   const fan = readFileSync(
     join(frontendRoot, "src", "button", "fan", "ButtonFanWindowPage.tsx"),
@@ -6350,7 +6553,7 @@ test("Pop-out Fan mode authors and retains exact regular and Tool Set owner plac
     toolUnit.ownerButtonId
   );
   assert.equal(
-    authoredToolSetOptions.find((option) => option.view === "tool-set-fan")?.placementId,
+    authoredToolSetOptions.find((option) => option.view === "tool-set-popout")?.placementId,
     toolOwner.id
   );
   assert.equal(
@@ -6607,7 +6810,7 @@ test("tool-set child activation uses the functional host and applies only declar
   }
 });
 
-test("Illustrator Ill Align supports none or one selected mode independently on each axis", async () => {
+test("Illustrator Ill Align keeps Origin modes independent and makes Surface an immediate opposite-side action", async () => {
   const manifestPath = join(
     frontendRoot,
     "..",
@@ -6642,9 +6845,9 @@ test("Illustrator Ill Align supports none or one selected mode independently on 
   const ySurface = childFor("y_surface");
   const group = childFor("toggle_group");
   assert.equal(fields.find((field) => field.id === "group")?.hidden, true);
-  assert.equal(initialValues.x_surface_active, false);
+  assert.equal("x_surface_active" in initialValues, false);
   assert.equal(initialValues.x_origin_active, false);
-  assert.equal(initialValues.y_surface_active, false);
+  assert.equal("y_surface_active" in initialValues, false);
   assert.equal(initialValues.y_origin_active, false);
   assert.equal(initialValues.group, false);
   assert.equal(isToolSetChildStateSelected(xOrigin, initialValues), false);
@@ -6679,89 +6882,87 @@ test("Illustrator Ill Align supports none or one selected mode independently on 
     assert.equal(groupOff.fieldValues.group, false);
     assert.equal(isToolSetChildStateSelected(group, groupOff.fieldValues), false);
 
-    const surfaceOn = await executeButtonRecord(xSurface, "click", {
+    const xSurfaceResult = await executeButtonRecord(xSurface, "click", {
       fields,
       fieldValues: initialValues
     });
-    assert.equal(surfaceOn.executed, false);
-    assert.equal(dispatchCount, 0);
-    assert.equal(surfaceOn.fieldValues.x_surface_active, true);
-    assert.equal(surfaceOn.fieldValues.x_origin_active, false);
-    assert.equal(surfaceOn.fieldValues.y_surface_active, false);
-    assert.equal(surfaceOn.fieldValues.y_origin_active, false);
-    assert.equal(isToolSetChildStateSelected(xSurface, surfaceOn.fieldValues), true);
-    assert.equal(isToolSetChildStateSelected(xOrigin, surfaceOn.fieldValues), false);
-
-    const surfaceOff = await executeButtonRecord(xSurface, "click", {
-      fields,
-      fieldValues: surfaceOn.fieldValues
-    });
-    assert.equal(surfaceOff.fieldValues.x_surface_active, false);
-    assert.equal(surfaceOff.fieldValues.x_origin_active, false);
-    assert.equal(isToolSetChildStateSelected(xSurface, surfaceOff.fieldValues), false);
-    assert.equal(isToolSetChildStateSelected(xOrigin, surfaceOff.fieldValues), false);
-
-    await executeButtonRecord(xMax, "click", {
-      fields,
-      fieldValues: surfaceOff.fieldValues
-    });
+    assert.equal(xSurfaceResult.executed, true);
     assert.equal(dispatchCount, 1);
-    assert.deepEqual(receivedPayload.modifier, { surface: false, origin: false });
-    assert.equal(receivedPayload.mode, "MAX");
+    assert.deepEqual(receivedPayload, {
+      command: "align_axis",
+      axis: "X",
+      mode: "CENTER",
+      modifier: "SURFACE",
+      group: false
+    });
+    assert.deepEqual(xSurfaceResult.fieldValues, initialValues);
+    assert.equal(isToolSetChildStateSelected(xSurface, xSurfaceResult.fieldValues), false);
+
+    const ySurfaceResult = await executeButtonRecord(ySurface, "click", {
+      fields,
+      fieldValues: initialValues
+    });
+    assert.equal(ySurfaceResult.executed, true);
+    assert.equal(dispatchCount, 2);
+    assert.deepEqual(receivedPayload, {
+      command: "align_axis",
+      axis: "Y",
+      mode: "CENTER",
+      modifier: "SURFACE",
+      group: false
+    });
+    assert.deepEqual(ySurfaceResult.fieldValues, initialValues);
+    assert.equal(isToolSetChildStateSelected(ySurface, ySurfaceResult.fieldValues), false);
 
     const originOn = await executeButtonRecord(xOrigin, "click", {
       fields,
-      fieldValues: surfaceOff.fieldValues
+      fieldValues: initialValues
     });
-    assert.equal(originOn.fieldValues.x_surface_active, false);
     assert.equal(originOn.fieldValues.x_origin_active, true);
     assert.equal(isToolSetChildStateSelected(xOrigin, originOn.fieldValues), true);
     assert.equal(isToolSetChildStateSelected(xSurface, originOn.fieldValues), false);
 
-    const ySurfaceOn = await executeButtonRecord(ySurface, "click", {
+    await executeButtonRecord(xMax, "click", {
       fields,
       fieldValues: originOn.fieldValues
     });
-    assert.equal(ySurfaceOn.fieldValues.x_origin_active, true);
-    assert.equal(ySurfaceOn.fieldValues.y_surface_active, true);
-    assert.equal(ySurfaceOn.fieldValues.y_origin_active, false);
-    assert.equal(isToolSetChildStateSelected(ySurface, ySurfaceOn.fieldValues), true);
-    assert.equal(isToolSetChildStateSelected(yOrigin, ySurfaceOn.fieldValues), false);
+    assert.equal(dispatchCount, 3);
+    assert.deepEqual(receivedPayload.modifier, { origin: true });
+    assert.equal(receivedPayload.mode, "MAX");
 
-    const surfaceSwitch = await executeButtonRecord(xSurface, "click", {
+    const yOriginOn = await executeButtonRecord(yOrigin, "click", {
       fields,
-      fieldValues: ySurfaceOn.fieldValues
-    });
-    assert.equal(surfaceSwitch.fieldValues.x_surface_active, true);
-    assert.equal(surfaceSwitch.fieldValues.x_origin_active, false);
-    assert.equal(surfaceSwitch.fieldValues.y_surface_active, true);
-    await executeButtonRecord(xMax, "click", {
-      fields,
-      fieldValues: surfaceSwitch.fieldValues
-    });
-    assert.equal(dispatchCount, 2);
-    assert.deepEqual(receivedPayload.modifier, { surface: true, origin: false });
-
-    const originSwitch = await executeButtonRecord(xOrigin, "click", {
-      fields,
-      fieldValues: surfaceSwitch.fieldValues
-    });
-    assert.equal(originSwitch.fieldValues.x_surface_active, false);
-    assert.equal(originSwitch.fieldValues.x_origin_active, true);
-    await executeButtonRecord(xMax, "click", {
-      fields,
-      fieldValues: originSwitch.fieldValues
+      fieldValues: originOn.fieldValues
     });
     assert.equal(dispatchCount, 3);
-    assert.deepEqual(receivedPayload.modifier, { surface: false, origin: true });
+    assert.equal(yOriginOn.fieldValues.x_origin_active, true);
+    assert.equal(yOriginOn.fieldValues.y_origin_active, true);
+    assert.equal(isToolSetChildStateSelected(xOrigin, yOriginOn.fieldValues), true);
+    assert.equal(isToolSetChildStateSelected(yOrigin, yOriginOn.fieldValues), true);
+
+    const xSurfaceWithOrigins = await executeButtonRecord(xSurface, "click", {
+      fields,
+      fieldValues: yOriginOn.fieldValues
+    });
+    assert.equal(dispatchCount, 4);
+    assert.equal(receivedPayload.modifier, "SURFACE");
+    assert.equal(receivedPayload.group, false);
+    assert.equal(xSurfaceWithOrigins.fieldValues.x_origin_active, true);
+    assert.equal(xSurfaceWithOrigins.fieldValues.y_origin_active, true);
+
+    await executeButtonRecord(xSurface, "click", {
+      fields,
+      fieldValues: groupOn.fieldValues
+    });
+    assert.equal(dispatchCount, 5);
+    assert.equal(receivedPayload.group, true);
 
     const originOff = await executeButtonRecord(xOrigin, "click", {
       fields,
-      fieldValues: originSwitch.fieldValues
+      fieldValues: yOriginOn.fieldValues
     });
-    assert.equal(originOff.fieldValues.x_surface_active, false);
     assert.equal(originOff.fieldValues.x_origin_active, false);
-    assert.equal(originOff.fieldValues.y_surface_active, true);
+    assert.equal(originOff.fieldValues.y_origin_active, true);
     assert.equal(isToolSetChildStateSelected(xOrigin, originOff.fieldValues), false);
     assert.equal(isToolSetChildStateSelected(xSurface, originOff.fieldValues), false);
   } finally {
@@ -7174,14 +7375,48 @@ test("Illustrator Rotate keeps instant presets beside one inline-value Button", 
       "mode_distribute",
       "apply_negative",
       "apply_positive",
+      "toggle_copy",
       "value_input"
     ]
   );
   assert.equal(manifest.layout.fields.every((field) => field.hidden === true), true);
+  assert.deepEqual(manifest.layout.updatePolicy, { appendMissingChildSlots: true });
+  assert.equal(manifest.layout.width, 616);
+  const bottomSlots = [
+    "mode_transform",
+    "mode_distribute",
+    "value_input",
+    "apply_negative",
+    "apply_positive",
+    "toggle_copy"
+  ];
+  const bottomPlacements = bottomSlots.map((slot) => manifest.layout.placements[slot]);
+  assert.equal(bottomPlacements.every((placement) => placement.y === 56), true);
+  assert.equal(bottomPlacements.every((placement) => placement.height === 42), true);
+  for (let index = 1; index < bottomPlacements.length; index += 1) {
+    assert.ok(
+      Math.abs(
+        bottomPlacements[index].x -
+        (bottomPlacements[index - 1].x + bottomPlacements[index - 1].width)
+      ) < 1e-9
+    );
+  }
+  assert.ok(
+    bottomPlacements.at(-1).x + bottomPlacements.at(-1).width <= manifest.layout.width
+  );
   assert.deepEqual(manifest.layout.childBehaviors.value_input, {
     inlineEditField: "value",
     execute: false
   });
+  assert.deepEqual(manifest.layout.childBehaviors.toggle_copy, {
+    toggleFields: ["copy_selection"],
+    fieldPatch: { operation_mode: "TRANSFORM" },
+    execute: false
+  });
+  assert.equal(
+    manifest.layout.childBehaviors.mode_distribute.fieldPatch.copy_selection,
+    false
+  );
 
   const fields = manifest.layout.fields;
   const initialValues = Object.fromEntries(fields.map((field) => [field.id, field.defaultValue]));
@@ -7200,19 +7435,40 @@ test("Illustrator Rotate keeps instant presets beside one inline-value Button", 
   };
   const transform = childFor("mode_transform");
   const distribute = childFor("mode_distribute");
+  const copy = childFor("toggle_copy");
   assert.equal(initialValues.operation_mode, "TRANSFORM");
+  assert.equal(initialValues.copy_selection, false);
   assert.equal(initialValues.value, 90);
   assert.equal(isToolSetChildStateSelected(transform, initialValues), true);
+  assert.equal(isToolSetChildStateSelected(copy, initialValues), false);
 
-  const distributeResult = await executeButtonRecord(distribute, "click", {
+  const copyOnResult = await executeButtonRecord(copy, "click", {
     fields,
     fieldValues: initialValues
   });
+  assert.equal(copyOnResult.executed, false);
+  assert.equal(copyOnResult.fieldValues.operation_mode, "TRANSFORM");
+  assert.equal(copyOnResult.fieldValues.copy_selection, true);
+  assert.equal(isToolSetChildStateSelected(copy, copyOnResult.fieldValues), true);
+
+  const copyOffResult = await executeButtonRecord(copy, "click", {
+    fields,
+    fieldValues: copyOnResult.fieldValues
+  });
+  assert.equal(copyOffResult.fieldValues.copy_selection, false);
+  assert.equal(isToolSetChildStateSelected(copy, copyOffResult.fieldValues), false);
+
+  const distributeResult = await executeButtonRecord(distribute, "click", {
+    fields,
+    fieldValues: copyOnResult.fieldValues
+  });
   assert.equal(distributeResult.executed, false);
   assert.equal(distributeResult.fieldValues.operation_mode, "DISTRIBUTE");
+  assert.equal(distributeResult.fieldValues.copy_selection, false);
   assert.equal(distributeResult.fieldValues.value, 3);
   assert.equal(isToolSetChildStateSelected(distribute, distributeResult.fieldValues), true);
   assert.equal(isToolSetChildStateSelected(transform, distributeResult.fieldValues), false);
+  assert.equal(isToolSetChildStateSelected(copy, distributeResult.fieldValues), false);
 
   const editedValues = { ...distributeResult.fieldValues, value: 11 };
   assert.equal(isToolSetChildStateSelected(distribute, editedValues), true);
@@ -7232,7 +7488,7 @@ test("Illustrator Rotate keeps instant presets beside one inline-value Button", 
   try {
     const presetResult = await executeButtonRecord(childFor("preset_45"), "click", {
       fields,
-      fieldValues: distributeResult.fieldValues
+      fieldValues: copyOnResult.fieldValues
     });
     assert.equal(presetResult.executed, true);
     assert.equal(presetResult.fieldValues.operation_mode, "TRANSFORM");
@@ -7240,13 +7496,23 @@ test("Illustrator Rotate keeps instant presets beside one inline-value Button", 
     assert.equal(receivedPayload.command, "apply");
     assert.equal(receivedPayload.angle_deg, 45);
     assert.equal(receivedPayload.operation_mode, "TRANSFORM");
+    assert.equal(receivedPayload.copy_selection, true);
     assert.equal(receivedPayload.value, 45);
+
+    await executeButtonRecord(childFor("apply_positive"), "click", {
+      fields,
+      fieldValues: { ...initialValues, copy_selection: true, value: -12.75 }
+    });
+    assert.equal(receivedPayload.operation_mode, "TRANSFORM");
+    assert.equal(receivedPayload.copy_selection, true);
+    assert.equal(receivedPayload.value, -12.75);
 
     await executeButtonRecord(childFor("apply_positive"), "click", {
       fields,
       fieldValues: editedValues
     });
     assert.equal(receivedPayload.operation_mode, "DISTRIBUTE");
+    assert.equal(receivedPayload.copy_selection, false);
     assert.equal(receivedPayload.value, 11);
     assert.equal("angle_deg" in receivedPayload, false);
     assert.equal("distribute_count" in receivedPayload, false);
@@ -7265,6 +7531,18 @@ test("Illustrator Rotate keeps instant presets beside one inline-value Button", 
   assert.match(helperSource, /command === "preset_45"/);
   assert.match(helperSource, /command === "preset_90"/);
   assert.match(helperSource, /operationMode = presetAngle === null/);
+  assert.match(
+    helperSource,
+    /copySelection = payloadValue\(payload, "copySelection", "copy_selection", false\) === true/
+  );
+  assert.match(helperSource, /operationMode === "DISTRIBUTE" && copySelection/);
+  assert.match(helperSource, /duplicateItems\(items, duplicates\)/);
+  assert.match(helperSource, /selectItems\(doc, duplicates, true\)/);
+  assert.match(
+    helperSource,
+    /removeItems\(duplicates\);\s*selectItems\(doc, items, false\);\s*throw error;/
+  );
+  assert.match(helperSource, /"Copied and rotated " \+ duplicates\.length/);
 
   const buttonHostSource = readFileSync(
     join(frontendRoot, "src", "button", "ButtonHost.tsx"),
@@ -7284,7 +7562,7 @@ test("Illustrator Rotate keeps instant presets beside one inline-value Button", 
   assert.match(popoutPageSource, /onRequestInlineEditorFocus=\{requestInlineEditorFocus\}/);
 });
 
-test("Illustrator Ill Align normalizes none, origin, and surface modes with exact geometry", () => {
+test("Illustrator Ill Align keeps exact edge/origin geometry and flips Surface to the opposite side", () => {
   const helperPath = join(
     frontendRoot,
     "..",
@@ -7330,7 +7608,7 @@ test("Illustrator Ill Align normalizes none, origin, and surface modes with exac
   assert.deepEqual(delta("X", "CENTER", "GEOCENTER", selected, anchor), { dx: 130, dy: 0 });
   assert.deepEqual(delta("X", "MAX", "GEOCENTER", selected, anchor), { dx: 180, dy: 0 });
   assert.deepEqual(delta("X", "MIN", "SURFACE", selected, anchor), { dx: 70, dy: 0 });
-  assert.deepEqual(delta("X", "CENTER", "SURFACE", selected, anchor), { dx: 130, dy: 0 });
+  assert.deepEqual(delta("X", "CENTER", "SURFACE", selected, anchor), { dx: 190, dy: 0 });
   assert.deepEqual(delta("X", "MAX", "SURFACE", selected, anchor), { dx: 190, dy: 0 });
   assert.deepEqual(delta("Y", "MIN", "", selected, anchor), { dx: 0, dy: 260 });
   assert.deepEqual(delta("Y", "CENTER", "", selected, anchor), { dx: 0, dy: 340 });
@@ -7339,8 +7617,18 @@ test("Illustrator Ill Align normalizes none, origin, and surface modes with exac
   assert.deepEqual(delta("Y", "CENTER", "GEOCENTER", selected, anchor), { dx: 0, dy: 340 });
   assert.deepEqual(delta("Y", "MAX", "GEOCENTER", selected, anchor), { dx: 0, dy: 440 });
   assert.deepEqual(delta("Y", "MIN", "SURFACE", selected, anchor), { dx: 0, dy: 220 });
-  assert.deepEqual(delta("Y", "CENTER", "SURFACE", selected, anchor), { dx: 0, dy: 340 });
+  assert.deepEqual(delta("Y", "CENTER", "SURFACE", selected, anchor), { dx: 0, dy: 460 });
   assert.deepEqual(delta("Y", "MAX", "SURFACE", selected, anchor), { dx: 0, dy: 460 });
+
+  const xMaxSurface = { ...selected, left: 200, right: 220, centerX: 210 };
+  const xMinSurface = { ...selected, left: 80, right: 100, centerX: 90 };
+  assert.deepEqual(delta("X", "CENTER", "SURFACE", xMaxSurface, anchor), { dx: -120, dy: 0 });
+  assert.deepEqual(delta("X", "CENTER", "SURFACE", xMinSurface, anchor), { dx: 120, dy: 0 });
+
+  const yMaxSurface = { ...selected, bottom: 500, top: 540, centerY: 520 };
+  const yMinSurface = { ...selected, bottom: 260, top: 300, centerY: 280 };
+  assert.deepEqual(delta("Y", "CENTER", "SURFACE", yMaxSurface, anchor), { dx: 0, dy: -240 });
+  assert.deepEqual(delta("Y", "CENTER", "SURFACE", yMinSurface, anchor), { dx: 0, dy: 240 });
 });
 
 test("per-click payload overrides win over mapped and manifest payload values", async () => {

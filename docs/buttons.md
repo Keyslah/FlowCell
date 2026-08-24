@@ -229,23 +229,31 @@ does not silently reattach old bindings.
 Buttons Editor is a polished three-pane workspace. The left pane owns dependent
 Program, Panel, Button, and Placement selectors plus placement controls; the
 center pane shows the complete editable Button surface; the right pane owns the
-Skin Editor. Saved Main, Pop, and legacy Fan choices resolve stable concrete
-surface identities and switch the workspace to that exact existing surface,
-where every sibling Button remains visible and directly selectable in Edit mode.
-The Button selector omits Tool Set children and lists only their owner. Selecting
-that owner exposes `Main Page`, `Pop-out`, and `Fan` Placement choices. Pop-out
-and Fan are semantic views of the same package-owned tool-set popout surface,
-not a legacy Fan setup: Pop-out shows every child with the retained owner hidden;
-Fan creates or reveals the exact owner beside every child, focuses it so Button
-Label and Button Tooltip can be edited, and selects the existing hover-open and
-click-pin Fan behavior. Children remain directly editable in the workspace while
-navigation stays on their owner. Both views remain classified as Pop-out and use
-`Save Pop-out Settings`. A regular Pop-out retains its `Fan` checkbox.
+Skin Editor. Saved Main and Pop choices resolve stable concrete surface identities
+and switch the workspace to that exact existing surface, where every sibling
+Button remains visible and directly selectable in Edit mode. A source-backed
+single-script Button with no concrete Pop still exposes `Pop-out`; selecting it
+creates the regular starter Pop as an undoable draft, while opening the selector
+alone changes nothing. Repeated concrete
+Pop-out occurrences collapse to one semantic `Pop-out` option, preferring the
+surface already being edited without deleting the other occurrences. The Button
+selector omits Tool Set children and lists only their owner. Selecting that owner
+exposes one `Main Page` and one `Pop-out` Placement choice. Every canonical regular
+or Tool Set Pop-out uses the same `Fan` checkbox: Pop mode shows the content with
+the retained owner hidden; Fan mode creates or reveals the exact owner beside the
+content, focuses it so Button Label and Button Tooltip can be edited, and selects
+the existing hover-open and click-pin behavior. Children remain directly editable
+in the workspace while navigation stays on their owner. The surface remains
+classified as Pop-out and uses `Save Pop-out Settings` in either mode.
 Source/package actions are not exposed as an Editor pane.
 
-`Save Main Page Settings`, `Save Fan Settings`, or `Save Pop-out Settings` opens
-a native file-save dialog in the matching `flowcellbackend/local/Button
-editor/Main Page`, `Fan`, or `Pop-out` folder. It writes a strict named
+`Save Main Page Settings`, legacy `Save Fan Settings`, or `Save Pop-out Settings`
+opens a native file-save dialog in the selected panel's matching
+`flowcellbackend/local/Button editor/<Program>/<Panel>/Main`,
+`Fan`, or `Pop` folder. Program and Panel names are validated as safe folder
+components. The one-time local migration moves validated files from the former
+flat type folders into this hierarchy, and remembered legacy Pop paths resolve
+to their migrated file without changing the saved choice identity. Save writes a strict named
 `.flowcell-button-settings.json` v1 file containing the selected surface's exact
 ordered Button membership and complete presentation: surface frame and optional
 uniform size; every placement's rectangle, z-index, text, sizing, legacy hover-highlight fallback,
@@ -257,7 +265,8 @@ the revision-safe scoped canonical commit; it is not Save Layout. The left rail
 retains the existing Edit/Run switch for workspace execution and activation
 preview.
 
-`Load {type} Settings` is directly below Save and opens the matching type folder.
+`Load {type} Settings` is directly below Save and opens the selected
+Program/Panel's matching `Main`, `Fan`, or `Pop` folder.
 Load fails closed unless the file matches the settings category and concrete
 surface subtype and every saved Button ID is still installed. Cross-surface reuse
 must also match the selected Program and Panel; a file tied to the same stable
@@ -270,22 +279,26 @@ package-owned children; they cannot add or remove actions. `Save {type} Settings
 is still required to commit a loaded draft.
 
 `Load {type} Default` and `Update {type} Default` appear directly below Load.
-Defaults are keyed by concrete surface in an internal store under the matching
-type folder. If a surface has no default yet, its current committed state is
+Defaults are keyed by concrete surface in the existing internal store under the
+legacy flat type folder; they are not moved into the user-facing scoped picker
+tree. If a surface has no default yet, its current committed state is
 captured lazily as the initial default. Load stages that snapshot, while Update
 atomically replaces it with the current Editor draft after confirming the
 canonical revision.
 
 Main places `Open Pop` immediately left of `Pop`. `Open Pop` opens a native
-picker in the Pop-out settings folder, validates the chosen regular or Tool Set
+picker in the selected `<Program>/<Panel>/Pop` settings folder,
+validates the chosen regular or Tool Set
 file against currently installed Buttons in the selected Program/Panel, and
 materializes its ordered presentation in a temporary in-memory Button document.
 That document reaches a uniquely owned Pop window through a draft session. It
-is never loaded into an Editor surface, saved as Button state, published as a
-canonical commit, or registered in Save Layout. Main remembers only the
-successful `{ path, choiceId }` locally under the stable panel-owner Button ID.
-`Pop` reloads that panel's last-used file independently of Main Button
-selection; when none exists it directs the user to `Open Pop`.
+is never loaded into an Editor surface, saved as Button state, or published as a
+canonical commit. Its managed window does participate in Save Layout with the
+selected file identity and semantic bounds. Main remembers only the successful
+`{ path, choiceId }` locally under the stable panel-owner Button ID. `Pop`
+reloads that panel's last-used file independently of Main Button selection;
+when none exists it creates or reuses a canonical starter Pop containing the
+panel's installed single-script Buttons and opens it.
 
 A Button that executes an action or toggles a structural owner may own one
 optional activation animation assignment. The left-pane `Animation` control
@@ -309,10 +322,10 @@ runtime presenters are transient and are not restored as global layout windows;
 saved bounds travel with the shared Button record across Main, Pop, and Fan
 placements.
 Panel-rail Buttons are grouped with the other Buttons for their panel and can be
-selected directly in the workspace. For a legacy panel-owner Fan, the Placement
-selector exposes a Fan only when that saved Fan placement already exists; there
-is no synthetic default legacy Fan choice and no editor-side legacy Fan creation
-or membership editor. Existing saved Fan Run preview still honors its saved
+selected directly in the workspace. Legacy panel-owner Fans remain stored and
+runtime-compatible but are omitted from the Placement selector; there is no
+synthetic default legacy Fan choice and no editor-side legacy Fan creation or
+membership editor. Existing saved Fan Run preview still honors its saved
 open, close, and pinned defaults: it begins
 collapsed on the real panel owner, expands on hover, collapses after hover-out
 when unpinned, pins on click, and collapses on the next pinned click. The saved
@@ -322,13 +335,13 @@ ratio inside the fixed native canvas, so skin overflow cannot be clipped or
 shift the later expanded frame. Panel/program lifecycle still owns removal of a
 `panel-owner` and its dependent saved Fans.
 
-For a Tool Set owner, the Pop-out and Fan Placement choices share its one
-package-owned popout surface. Fan reveals and focuses the exact owner with all
-children; that owner may be dragged anywhere in any direction, including outside
-or across the child layout, and its relative position determines where the Tool
-Set expands. Pop-out hides but retains that owner position and shows all children.
-This is Pop-out authoring and remains `Save Pop-out Settings`, not legacy Fan
-setup construction.
+For a Tool Set owner, one Pop-out Placement choice and its Fan checkbox edit the
+same package-owned popout surface. Fan mode reveals and focuses the exact owner
+with all children; that owner may be dragged anywhere in any direction, including
+outside or across the child layout, and its relative position determines where
+the Tool Set expands. Pop mode hides but retains that owner position and shows all
+children. This is Pop-out authoring and remains `Save Pop-out Settings`, not
+legacy Fan setup construction.
 
 The Button Editor neither creates legacy Fan setups nor changes saved legacy Fan
 membership. Main retains its existing selected/generic Fan commands and saved-Fan
@@ -399,9 +412,11 @@ working copy until an explicit Save or Assign action. Editor preview viewports
 scroll-contain authored visual overflow so it cannot cover later controls; runtime
 Button overflow remains unchanged. The
 left rail's `Same size Buttons` checkbox applies the focused placement's width
-  and height to every placement, switches them to fixed host sizing, disables
-  label-driven growth, and compacts the complete surface with the current Button
-  Sizing gap in one undoable transaction. The linked size is saved on the surface,
+  and height to every content placement, switches them to fixed host sizing,
+  disables label-driven growth, and preserves every content placement's existing
+  x/y position in one undoable transaction. The independent Fan owner is left
+  unchanged. If those exact resized boxes would overlap or leave the surface, the
+  complete action fails without moving anything. The linked size is saved on the surface,
   so later canvas
 resizing updates every member atomically and delayed skin/text measurements
 cannot split the sizes. Unchecking stops linking future size edits but

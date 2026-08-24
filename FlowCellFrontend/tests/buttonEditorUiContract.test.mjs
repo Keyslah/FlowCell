@@ -18,13 +18,15 @@ function readEditorSources() {
     .join("\n");
 }
 
-test("Button Editor fresh opens use the established restore size and maximize before show", () => {
+test("Button Editor opens stay maximized on one monitor without drag-to-restore", () => {
   const windows = readFileSync(
     join(frontendRoot, "src", "button", "windows", "buttonWindows.ts"),
     "utf8"
   );
+  const editor = readEditorFile("ButtonEditorPage.tsx");
   assert.match(windows, /const DEFAULT_EDITOR_WIDTH = 2093;/);
   assert.match(windows, /const DEFAULT_EDITOR_HEIGHT = 1322;/);
+  assert.match(windows, /confineButtonWindowBoundsToWorkArea/);
   assert.match(
     windows,
     /resolvePlacement\(\s*DEFAULT_EDITOR_WIDTH,\s*DEFAULT_EDITOR_HEIGHT,\s*args\.bounds\s*\)/
@@ -33,11 +35,12 @@ test("Button Editor fresh opens use the established restore size and maximize be
     windows,
     /new WebviewWindow\(windowLabel, \{[\s\S]{0,180}width: DEFAULT_EDITOR_WIDTH,\s*height: DEFAULT_EDITOR_HEIGHT,/
   );
-  assert.match(windows, /const shouldMaximize = !isUsableBounds\(args\.bounds\) && !visible;/);
+  assert.doesNotMatch(windows, /shouldMaximize/);
   assert.match(
     windows,
-    /if \(shouldMaximize\) \{\s*await target\.maximize\(\);\s*\}[\s\S]{0,320}await showWindow\(target, true\);/
+    /const maximized = await target\.isMaximized\(\)\.catch\(\(\) => false\);\s*if \(!maximized\) \{\s*await target\.maximize\(\);\s*\}[\s\S]{0,320}await showWindow\(target, true\);/
   );
+  assert.match(editor, /event\.preventDefault\(\);\s*if \(maximized\) return;[\s\S]{0,500}currentWindow\.startDragging\(\)/);
 });
 
 test("FlowCell Main Page navigation never enters registered-program panel lookup or import", () => {
@@ -266,22 +269,30 @@ test("Pop hides its owner while Fan shows it without including the owner in row 
   assert.match(workspace, /unbounded=\{overlayIsFanOwner\}/);
 });
 
-test("Tool Set owners expose Pop-out and Fan Placement views without listing child Buttons", () => {
+test("Tool Set owners expose one Pop-out Placement and use its Fan checkbox", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const selection = readEditorFile("buttonEditorSelection.ts");
 
   assert.match(selection, /if \(button\.role === "tool-set-child"\) return false/);
-  assert.match(selection, /label: "Pop-out"[\s\S]{0,180}view: "tool-set-popout"/);
-  assert.match(selection, /label: "Fan"[\s\S]{0,180}view: "tool-set-fan"/);
+  assert.match(selection, /label: "Pop-out"[\s\S]{0,420}view: "tool-set-popout"/);
+  assert.doesNotMatch(selection, /tool-set-fan/);
   assert.match(editor, /buttonId=\{navigationButtonId\}/);
   assert.match(editor, /placementId=\{selectedPlacementOptionId\}/);
-  assert.match(editor, /option\?\.view === "tool-set-popout"[\s\S]{0,180}selectPopoutPlacementMode\(option\.surfaceId, "pop"\)/);
-  assert.match(editor, /option\?\.view === "tool-set-fan"[\s\S]{0,180}selectPopoutPlacementMode\(option\.surfaceId, "fan"\)/);
+  assert.match(selection, /view: "placement" \| "tool-set-popout" \| "default-popout"/);
+  assert.match(
+    editor,
+    /const selectDefaultPopoutPlacement = useCallback\([\s\S]{0,900}ensureRegularPopout\(next, \[button\]\)[\s\S]{0,900}store\.transact\(\(\) => next/
+  );
+  assert.match(
+    editor,
+    /option\?\.view === "default-popout"[\s\S]{0,120}selectDefaultPopoutPlacement\(navigationButtonId\)/
+  );
+  assert.match(editor, /if \(option\?\.placementId\) \{[\s\S]{0,100}focusPlacement\(option\.placementId\)/);
   assert.match(editor, /setButtonPopoutFanMode\(\{/);
   assert.match(editor, /mode === "fan"[\s\S]{0,260}result\.ownerPlacementId/);
   assert.match(
     editor,
-    /selectedSurfaceUnit\?\.kind === "regular"[\s\S]{0,180}button-editor-sidebar__fan/
+    /settingsPlacementKind === "pop-out" && selectedSurfaceUnit[\s\S]{0,180}button-editor-sidebar__fan/
   );
   const contextHandler = editor.match(
     /const applyEditorContext = useCallback\([\s\S]*?\n  \}, \[focusPlacement, panelName, programName, store\]\);/
@@ -297,22 +308,28 @@ test("Tool Set owners expose Pop-out and Fan Placement views without listing chi
   );
 });
 
-test("Same size Buttons keeps the freely positioned Fan owner independent", () => {
+test("Same size Buttons changes only content dimensions and keeps the Fan owner independent", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const handler = editor.match(
-    /const applyUniformSizeToSurface = useCallback\([\s\S]*?\n  \}, \[applyPlacementOrder, store\]\);/
+    /const applyUniformSizeToSurface = useCallback\([\s\S]*?\n  \}, \[store\]\);/
   );
 
   assert.ok(handler, "uniform surface sizing handler must exist");
   assert.match(handler[0], /resolveIndependentOwnerPlacementId\(document, surfaceId\)/);
   assert.match(
     handler[0],
-    /contentPlacementIds = orderedPlacementIds\.filter\([\s\S]{0,160}placementId !== independentOwnerPlacementId/
+    /contentPlacementIds = surface\.placementIds\.filter\([\s\S]{0,160}placementId !== independentOwnerPlacementId/
   );
-  assert.match(handler[0], /const mergedPlacements = orderedPlacementIds\.flatMap/);
-  assert.match(
-    editor,
-    /placement\.id === independentOwnerPlacementId \? \{\} : placementPatch/
+  assert.match(handler[0], /resizeUniformButtonPlacementsInPlace\(/);
+  assert.doesNotMatch(
+    handler[0],
+    /compactUniformButtonPlacements|compactButtonPlacements|applyPlacementOrder|buttonSpacingPixelsFromMillimeters|placementIds:|zIndex/
+  );
+  assert.match(handler[0], /width: resizedPlacement\.rect\.width,\s*height: resizedPlacement\.rect\.height/);
+  assert.doesNotMatch(handler[0], /x: resizedPlacement|y: resizedPlacement|\.rect,|\.rect\}/);
+  assert.ok(
+    handler[0].indexOf("if (!resized.success)") < handler[0].indexOf("store.transact"),
+    "the complete fixed-coordinate resize must validate before its transaction"
   );
 });
 
@@ -382,9 +399,32 @@ test("Skin Editor keeps automatic paste handling without removed or unrequested 
 
 test("Save Settings uses the selected placement type folder and complete scoped persistence", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
+  const repository = readFileSync(
+    join(frontendRoot, "src", "button", "state", "ButtonStateRepository.ts"),
+    "utf8"
+  );
   assert.match(editor, /showSaveFileDialog\(\{[\s\S]{0,260}Save \$\{placementLabel\} Settings/);
   assert.match(editor, /defaultFileName:\s*defaultButtonSettingsFileName\(placementKind\)/);
-  assert.match(editor, /getButtonSettingsDirectory\(placementKind\)/);
+  assert.match(
+    editor,
+    /getButtonSettingsDirectory\(\s*placementKind,\s*programName,\s*panelName\s*\)/
+  );
+  assert.match(
+    repository,
+    /getButtonSettingsDirectory\(\s*placementKind: ButtonSettingsPlacementKind,\s*programName: string,\s*panelName: string\s*\)/
+  );
+  assert.match(
+    repository,
+    /invoke<string>\("get_button_settings_directory", \{\s*placementKind,\s*programName,\s*panelName\s*\}\)/
+  );
+  assert.match(
+    repository,
+    /legacyButtonSettingsFileName\([\s\S]{0,900}legacyMarker[\s\S]{0,900}\.flowcell-button-settings\.json/
+  );
+  assert.match(
+    repository,
+    /resolveButtonSettingsFilePath\([\s\S]{0,500}legacyButtonSettingsFileName\(path, placementKind\)[\s\S]{0,500}getButtonSettingsDirectory\(\s*placementKind,\s*programName,\s*panelName\s*\)[\s\S]{0,220}rebaseLegacyButtonSettingsFilePath/
+  );
   assert.match(editor, /initialDirectory:\s*settingsDirectory/);
   assert.match(editor, /const saveSettings = async \(\) => \{\s*if \(busyRef\.current\) return;\s*setBusy\(true\);/);
   assert.match(editor, /const settingsDraft = cloneButtonDocument\(store\.current\(\)\)/);
@@ -433,6 +473,10 @@ test("Load Settings and placement defaults use the selected type and required bu
     /const loadSettings = async \(\) => \{\s*if \(busyRef\.current\) return;\s*setBusy\(true\);/
   );
   assert.match(editor, /showOpenFileDialog\(\{[\s\S]{0,180}title: `Load \$\{settingsPlacementLabel\} Settings`/);
+  assert.match(
+    editor,
+    /getButtonSettingsDirectory\(\s*settingsPlacementKind,\s*programName,\s*panelName\s*\)/
+  );
   assert.match(editor, /initialDirectory:\s*settingsDirectory/);
   assert.match(editor, /multiselect:\s*false/);
   assert.match(editor, /const settingsFile = await loadButtonSettingsFile\(selectedPath\)/);
@@ -455,7 +499,7 @@ test("Load Settings and placement defaults use the selected type and required bu
   assert.match(editor, /settingsPlacementKind \?\? "main-page"/);
 });
 
-test("Main Pop and Open Pop use only transient file-backed draft windows", () => {
+test("Open Pop stays transient while Main Pop falls back to a canonical default", () => {
   const main = readFileSync(
     join(frontendRoot, "src", "pages", "main", "MainPage.tsx"),
     "utf8"
@@ -472,23 +516,44 @@ test("Main Pop and Open Pop use only transient file-backed draft windows", () =>
     join(frontendRoot, "src", "button", "windows", "buttonWindows.ts"),
     "utf8"
   );
-  const mainPopBlock = main.match(
-    /const openMainPopChoice = async \([\s\S]*?\n  const handleOpenGenericFanSetup = async/
+  const transientPopBlock = main.match(
+    /const openMainPopChoice = async \([\s\S]*?\n  const openDefaultPanelPop = async/
   );
-  assert.ok(mainPopBlock, "Main transient Pop handlers must exist");
-  assert.match(mainPopBlock[0], /getButtonSettingsDirectory\("pop-out"\)/);
-  assert.match(mainPopBlock[0], /showOpenFileDialog\(\{/);
-  assert.match(mainPopBlock[0], /buildTransientButtonPopoutSettingsDocument/);
-  assert.match(mainPopBlock[0], /registerButtonDraftResponder/);
-  assert.match(mainPopBlock[0], /publishButtonDraftToWindow/);
+  assert.ok(transientPopBlock, "Main transient Pop file handler must exist");
+  assert.match(transientPopBlock[0], /buildTransientButtonPopoutSettingsDocument/);
+  assert.match(transientPopBlock[0], /registerButtonDraftResponder/);
+  assert.match(transientPopBlock[0], /publishButtonDraftToWindow/);
   assert.match(
-    mainPopBlock[0],
+    transientPopBlock[0],
     /settingsBackedLayout:\s*\{[\s\S]{0,120}panelOwnerButtonId,[\s\S]{0,180}settingsPath:\s*choice\.path[\s\S]{0,120}choiceId:\s*choice\.choiceId/
   );
-  assert.doesNotMatch(mainPopBlock[0], /registerInLayout:\s*false/);
-  assert.match(mainPopBlock[0], /writeMainLastPopChoice/);
-  assert.match(mainPopBlock[0], /Use Open Pop first\./);
-  assert.doesNotMatch(mainPopBlock[0], /saveButtonStateDocument|publishButtonCommit|applyButtonSettingsFile|ensureRegularPopout|acceptButtonDocument/);
+  assert.doesNotMatch(transientPopBlock[0], /registerInLayout:\s*false/);
+  assert.match(transientPopBlock[0], /writeMainLastPopChoice/);
+  assert.doesNotMatch(transientPopBlock[0], /ensureRegularPopout|commitButtonDocumentMutation/);
+
+  const defaultPopBlock = main.match(
+    /const openDefaultPanelPop = async \([\s\S]*?\n  const handleChoosePanelPop = async/
+  );
+  assert.ok(defaultPopBlock, "Main default Pop fallback must exist");
+  assert.match(defaultPopBlock[0], /commitButtonDocumentMutation\(\(draft\) =>/);
+  assert.match(defaultPopBlock[0], /candidate\.role === "single-script"/);
+  assert.match(defaultPopBlock[0], /ensureRegularPopout\(draft, memberButtons\)/);
+  assert.match(defaultPopBlock[0], /if \(!choice\) \{[\s\S]{0,120}openDefaultPanelPop/);
+  assert.match(defaultPopBlock[0], /openButtonPopoutWindow\(\{/);
+  assert.doesNotMatch(defaultPopBlock[0], /Use Open Pop first\./);
+  assert.match(
+    main,
+    /getButtonSettingsDirectory\(\s*"pop-out",\s*selectedProgramName,\s*selectedPanelName\s*\)/
+  );
+  assert.match(
+    main,
+    /resolveButtonSettingsFilePath\(\s*windowEntry\.ButtonPopoutSettingsPath,\s*"pop-out",\s*windowEntry\.ProgramName,\s*windowEntry\.PanelName\s*\)/
+  );
+  assert.match(
+    main,
+    /choice = \{\s*\.\.\.choice,\s*path: await resolveButtonSettingsFilePath\(\s*choice\.path,\s*"pop-out",\s*programName,\s*panelName\s*\)/
+  );
+  assert.match(main, /showOpenFileDialog\(\{/);
 
   const transientBuilder = settings.slice(
     settings.indexOf("export function buildTransientButtonPopoutSettingsDocument")
@@ -503,7 +568,7 @@ test("Main Pop and Open Pop use only transient file-backed draft windows", () =>
   );
   assert.match(
     layout,
-    /id:\s*"buttons-pop-selection"[\s\S]{0,180}stepX \* 3[\s\S]{0,100}fanControlsY[\s\S]{0,260}label:\s*"Pop"[\s\S]{0,180}last-used Pop-out file/
+    /id:\s*"buttons-pop-selection"[\s\S]{0,180}stepX \* 3[\s\S]{0,100}fanControlsY[\s\S]{0,260}label:\s*"Pop"[\s\S]{0,220}last-used Pop-out file, or its default Pop-out/
   );
   assert.ok(layout.indexOf('label: "Open Pop"') < layout.indexOf('label: "Pop"'));
   assert.match(windows, /registerInLayout\?: boolean/);
@@ -803,7 +868,7 @@ test("Size assignment is explicit, supports current Button or Panel scope, and s
   assert.doesNotMatch(naturalMeasurementHandler[0], /allowLabelResize|resolveDeterministicLabelGrowth|Grow Button label/);
 });
 
-test("Button Sizing exposes opt-in unrestricted millimeter spacing below Same size Buttons", () => {
+test("Button Sizing remains below Same size Buttons without driving uniform resizing", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const workspace = readEditorFile("ButtonWorkspace.tsx");
   const defaults = readFileSync(
@@ -820,10 +885,8 @@ test("Button Sizing exposes opt-in unrestricted millimeter spacing below Same si
   );
   assert.match(editor, /draft\.settings\.buttonSpacingMm = nextMillimeters/);
   assert.match(defaults, /buttonSpacingMm:\s*0/);
-  assert.match(
-    editor,
-    /compactUniformButtonPlacements\([\s\S]{0,240}buttonSpacingPixelsFromMillimeters\(document\.settings\.buttonSpacingMm\)/
-  );
+  assert.match(editor, /resizeUniformButtonPlacementsInPlace\(/);
+  assert.doesNotMatch(editor, /compactUniformButtonPlacements/);
   assert.doesNotMatch(editor, /compactButtonPlacementRows|inferButtonPlacementRows/);
   assert.match(
     workspace,

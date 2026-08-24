@@ -146,20 +146,32 @@ class FakeBMeshVertex:
 
 
 class FakeBMeshEdge:
-    def __init__(self, is_boundary=False, is_manifold=True, length=1.0):
+    def __init__(
+        self,
+        is_boundary=False,
+        is_manifold=True,
+        length=1.0,
+        vertices=None,
+        linked_faces=None,
+    ):
         self.is_boundary = is_boundary
         self.is_manifold = is_manifold
         self.length = length
+        self.verts = list(vertices or [])
+        self.link_faces = list(linked_faces or [])
+        self.index = -1
 
     def calc_length(self):
         return self.length
 
 
 class FakeBMeshFace:
-    def __init__(self, vertices, area=1.0):
+    def __init__(self, vertices, area=1.0, normal=(0.0, 0.0, 1.0)):
         self.verts = vertices
         self.area = area
         self.index = -1
+        self.normal = FakePoint(*normal)
+        self.edges = []
 
     def calc_area(self):
         return self.area
@@ -176,6 +188,7 @@ class FakeBMesh:
         self.post_weld_integrity = None
         self.post_dissolve_integrity = None
         self.dissolved_vertex_indices = []
+        self.dissolve_batches = []
         self.dissolve_options = None
         self.freed = False
 
@@ -238,7 +251,9 @@ class FakeBMesh:
             self._load_integrity(self.post_weld_integrity)
 
     def dissolve_verts(self, vertices, use_face_split, use_boundary_tear):
-        self.dissolved_vertex_indices = [vertex.index for vertex in vertices]
+        dissolved_indices = [vertex.index for vertex in vertices]
+        self.dissolved_vertex_indices.extend(dissolved_indices)
+        self.dissolve_batches.append(dissolved_indices)
         self.dissolve_options = (use_face_split, use_boundary_tear)
         if self.post_dissolve_integrity is not None:
             self._load_integrity(self.post_dissolve_integrity)
@@ -250,6 +265,7 @@ class FakeBMesh:
         mesh_data.normals_recalculated = self.normals_recalculated
         mesh_data.remove_doubles_distance = self.remove_doubles_distance
         mesh_data.dissolved_vertex_indices = self.dissolved_vertex_indices
+        mesh_data.dissolve_batches = self.dissolve_batches
         mesh_data.dissolve_options = self.dissolve_options
 
     def free(self):
@@ -544,14 +560,17 @@ class IllustratorSvgImportTests(unittest.TestCase):
         self.assertEqual(manifest["program"], "Blender")
         self.assertEqual(manifest["source"], SCRIPT_PATH.name)
 
-    def test_only_leading_parenthesized_filename_number_sets_thickness(self):
+    def test_leading_filename_number_sets_thickness_with_optional_parentheses(self):
         bpy_module, *_ = fake_bpy()
         module = load_module(bpy_module)
 
         self.assertEqual(module.thickness_mm_from_filepath("(9) V9 display.svg"), 9.0)
         self.assertEqual(module.thickness_mm_from_filepath("(2.5) Part.svg"), 2.5)
+        self.assertEqual(module.thickness_mm_from_filepath("14Main stencil.svg"), 14.0)
+        self.assertEqual(module.thickness_mm_from_filepath("2connect.svg"), 2.0)
+        self.assertEqual(module.thickness_mm_from_filepath("9 display.svg"), 9.0)
+        self.assertEqual(module.thickness_mm_from_filepath("3.25Part.svg"), 3.25)
         self.assertEqual(module.thickness_mm_from_filepath("V9 display.svg"), 1.0)
-        self.assertEqual(module.thickness_mm_from_filepath("9 display.svg"), 1.0)
         self.assertEqual(module.thickness_mm_from_filepath("Part (7).svg"), 1.0)
         self.assertEqual(module.thickness_mm_from_filepath(" (9) display.svg"), 1.0)
         self.assertEqual(module.thickness_mm_from_filepath("(abc) display.svg"), 1.0)
@@ -560,7 +579,7 @@ class IllustratorSvgImportTests(unittest.TestCase):
         self.assertEqual(module.thickness_mm_from_filepath("(2.) display.svg"), 1.0)
         self.assertEqual(module.thickness_mm_from_filepath("(1e2) display.svg"), 1.0)
 
-    def test_matched_leading_parenthesized_value_must_be_positive(self):
+    def test_matched_leading_value_must_be_positive(self):
         bpy_module, *_ = fake_bpy()
         module = load_module(bpy_module)
 
@@ -607,8 +626,8 @@ class IllustratorSvgImportTests(unittest.TestCase):
         module = load_module(bpy_module)
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            first_path = Path(temp_dir) / "(2.5) Alpha.svg"
-            second_path = Path(temp_dir) / "V9 display.svg"
+            first_path = Path(temp_dir) / "2connect.svg"
+            second_path = Path(temp_dir) / "14Main stencil.svg"
             first_path.write_text("<svg/>", encoding="utf-8")
             second_path.write_text("<svg/>", encoding="utf-8")
 
@@ -618,7 +637,7 @@ class IllustratorSvgImportTests(unittest.TestCase):
                     "items": [
                         {
                             "filepath": str(first_path),
-                            "layerName": "  (2.5) Alpha  ",
+                            "layerName": "2connect",
                             "extrudeMm": 999,
                             "widthMm": 25.4,
                             "heightMm": 12.7,
@@ -627,8 +646,8 @@ class IllustratorSvgImportTests(unittest.TestCase):
                         },
                         {
                             "filepath": str(second_path),
-                            "layerName": "V9 display",
-                            "extrudeMm": 9,
+                            "layerName": "14Main stencil",
+                            "extrudeMm": 1,
                             "widthMm": 50.8,
                             "heightMm": 25.4,
                             "offsetXmm": 25.4,
@@ -642,10 +661,10 @@ class IllustratorSvgImportTests(unittest.TestCase):
         self.assertEqual(result["importedCount"], 2)
         self.assertTrue(result["dimensionsPreserved"])
         self.assertTrue(result["relativePositionsPreserved"])
-        self.assertEqual(result["imported_objects"], ["  (2.5) Alpha  ", "V9 display"])
+        self.assertEqual(result["imported_objects"], ["2connect", "14Main stencil"])
         self.assertEqual(
             [item["thicknessMm"] for item in result["results"]],
-            [2.5, 1.0],
+            [2.0, 14.0],
         )
         imported = [obj for obj in state.objects if obj is not original]
         self.assertEqual(len(imported), 2)
@@ -661,8 +680,8 @@ class IllustratorSvgImportTests(unittest.TestCase):
         self.assertTrue(all(obj.data.mesh_updated for obj in imported))
         self.assertTrue(all(obj.selected for obj in imported))
         self.assertFalse(original.selected)
-        self.assertAlmostEqual(imported[0].location.z, 0.00125)
-        self.assertAlmostEqual(imported[1].location.z, 0.0005)
+        self.assertAlmostEqual(imported[0].location.z, 0.001)
+        self.assertAlmostEqual(imported[1].location.z, 0.007)
         self.assertAlmostEqual(imported[0].dimensions.x, 0.0254)
         self.assertAlmostEqual(imported[0].dimensions.y, 0.0127)
         self.assertAlmostEqual(imported[1].dimensions.x, 0.0508)
@@ -732,6 +751,86 @@ class IllustratorSvgImportTests(unittest.TestCase):
         self.assertEqual(len(imported), 1)
         self.assertTrue(imported[0].data.normals_recalculated)
 
+    def test_outer_cap_boundary_subdivision_does_not_count_as_self_intersection(self):
+        bpy_module, _, _, _, _ = fake_bpy()
+        module = load_module(bpy_module)
+
+        def make_boundary_contact_bmesh(*, contact_y=0.0, connected=True):
+            bm = FakeBMesh()
+            coordinates = [
+                (0.0, 0.0, 0.0),
+                (4.0, 0.0, 0.0),
+                (0.0, 3.0, 0.0),
+                (1.0, contact_y, 0.0),
+                (2.0, contact_y, 0.0),
+                (2.0, contact_y, 1.0),
+                (1.0, contact_y, 1.0),
+                (4.0, 0.0, 1.0),
+                (0.0, 0.0, 1.0),
+                (1.5, contact_y, 0.0),
+            ]
+            bm.verts.extend(
+                FakeBMeshVertex(index, coordinate)
+                for index, coordinate in enumerate(coordinates)
+            )
+            cap = FakeBMeshFace(
+                [bm.verts[index] for index in (0, 1, 2)],
+                normal=(0.0, 0.0, -1.0),
+            )
+            side = FakeBMeshFace(
+                [bm.verts[index] for index in (3, 4, 5, 6)],
+                normal=(0.0, -1.0, 0.0),
+            )
+            cap_wall = FakeBMeshFace(
+                [bm.verts[index] for index in (0, 1, 7, 8)],
+                normal=(0.0, -1.0, 0.0),
+            )
+            side_cap = FakeBMeshFace(
+                [bm.verts[index] for index in (3, 4, 9)],
+                normal=(0.0, 0.0, -1.0),
+            )
+            bridge = FakeBMeshFace(
+                [bm.verts[index] for index in (0, 8, 3, 9)],
+                normal=(1.0, 0.0, 0.0),
+            )
+            bm.faces.extend((cap, side, cap_wall, side_cap, bridge))
+            bm.faces.index_update()
+
+            cap_edge = FakeBMeshEdge(
+                vertices=(bm.verts[0], bm.verts[1]),
+                linked_faces=(cap, cap_wall),
+            )
+            contact_edge = FakeBMeshEdge(
+                vertices=(bm.verts[3], bm.verts[4]),
+                linked_faces=(side, side_cap),
+            )
+            cap.edges.append(cap_edge)
+            cap_wall.edges.append(cap_edge)
+            side.edges.append(contact_edge)
+            side_cap.edges.append(contact_edge)
+            bm.edges.extend((cap_edge, contact_edge))
+
+            if connected:
+                cap_bridge_edge = FakeBMeshEdge(linked_faces=(cap_wall, bridge))
+                side_bridge_edge = FakeBMeshEdge(linked_faces=(bridge, side_cap))
+                cap_wall.edges.append(cap_bridge_edge)
+                bridge.edges.extend((cap_bridge_edge, side_bridge_edge))
+                side_cap.edges.append(side_bridge_edge)
+                bm.edges.extend((cap_bridge_edge, side_bridge_edge))
+
+            bm.edges.index_update()
+            bm.overlap_pairs = [(0, 1), (1, 0)]
+            return bm
+
+        safe_contact = make_boundary_contact_bmesh()
+        self.assertEqual(module._non_adjacent_bvh_overlap_count(safe_contact, 1e-8), 0)
+
+        different_components = make_boundary_contact_bmesh(connected=False)
+        self.assertEqual(module._non_adjacent_bvh_overlap_count(different_components, 1e-8), 1)
+
+        cap_interior_contact = make_boundary_contact_bmesh(contact_y=0.5)
+        self.assertEqual(module._non_adjacent_bvh_overlap_count(cap_interior_contact, 1e-8), 1)
+
     def test_curve_conversion_seams_are_welded_before_integrity_checks(self):
         bpy_module, state, context, original, _ = fake_bpy(
             mesh_integrity={
@@ -768,7 +867,7 @@ class IllustratorSvgImportTests(unittest.TestCase):
         self.assertAlmostEqual(imported[0].data.remove_doubles_distance, 1e-11)
         self.assertTrue(imported[0].data.normals_recalculated)
 
-    def test_exact_collinear_cap_vertices_are_safely_dissolved(self):
+    def test_collinear_cap_vertices_are_revalidated_after_each_dissolve(self):
         bpy_module, state, context, original, _ = fake_bpy(
             mesh_integrity={
                 "integrity_vertices": [
@@ -809,7 +908,11 @@ class IllustratorSvgImportTests(unittest.TestCase):
 
         imported = [obj for obj in state.objects if obj is not original]
         self.assertEqual(result["status"], "FINISHED")
-        self.assertEqual(imported[0].data.dissolved_vertex_indices, [1, 4])
+        # Both vertices are candidates in the original snapshot. The first
+        # dissolve replaces that topology with a clean mesh, so the stale
+        # second candidate must not be sent in the same batch.
+        self.assertEqual(imported[0].data.dissolved_vertex_indices, [1])
+        self.assertEqual(imported[0].data.dissolve_batches, [[1]])
         self.assertEqual(imported[0].data.dissolve_options, (False, False))
 
     def test_tiny_positive_cap_face_is_not_treated_as_degenerate(self):

@@ -6,8 +6,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$internalOwnerButtonId = 'internal-illustrator-svg-import'
-$internalBridgeAction = 'flowcell_button_{0}' -f $internalOwnerButtonId
+$internalImportOwnerButtonId = 'internal-illustrator-svg-import'
+$internalImportBridgeAction = 'flowcell_button_{0}' -f $internalImportOwnerButtonId
+$internalSaveOwnerButtonId = 'internal-illustrator-save-blender'
+$internalSaveBridgeAction = 'flowcell_button_{0}' -f $internalSaveOwnerButtonId
 $orcaBundledSourceId = 'blender.orca'
 $bridgeResponseTimeoutSeconds = 110
 $statusFileName = 'send-svg-to-blender.status.txt'
@@ -19,6 +21,7 @@ $mutex = $null
 $ownsMutex = $false
 $bridgeStatusPath = ''
 $orcaBridgeStatusPath = ''
+$saveBridgeStatusPaths = @()
 
 function Get-ObjectPropertyValue {
     param(
@@ -118,21 +121,27 @@ function Resolve-FlowCellRepoRoot {
 }
 
 function Register-InternalBlenderAction {
-    param([Parameter(Mandatory = $true)][string]$RepoRoot)
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$SourceRelativePath,
+        [Parameter(Mandatory = $true)][string]$OwnerButtonId,
+        [Parameter(Mandatory = $true)][string]$ExpectedBridgeAction,
+        [Parameter(Mandatory = $true)][string]$ActionDescription
+    )
 
     $installerPath = Join-Path $RepoRoot 'Programs\Blender\SupportScripts\Install-BlenderFlowCellButtons.ps1'
-    $sourcePath = Join-Path $RepoRoot 'Programs\Blender\Blender Git Scripts\Files\Import Illustrator SVG\import illustrator svg.py'
+    $sourcePath = Join-Path $RepoRoot $SourceRelativePath
     if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
         throw "Blender action registry installer not found: $installerPath"
     }
     if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
-        throw "Illustrator SVG Blender importer not found: $sourcePath"
+        throw "$ActionDescription source not found: $sourcePath"
     }
 
     $installOutput = @(& $installerPath `
         -SelectedPaths @($sourcePath) `
         -PanelName 'Internal' `
-        -OwnerButtonId $internalOwnerButtonId `
+        -OwnerButtonId $OwnerButtonId `
         -BridgeDataJson '{}' `
         -RegistryOnly `
         -SkipSync)
@@ -154,10 +163,10 @@ function Register-InternalBlenderAction {
 
     $registeredResult = @((Get-ObjectPropertyValue -Source $installResult -Name 'results')) | Select-Object -First 1
     $registeredAction = [string](Get-ObjectPropertyValue -Source $registeredResult -Name 'action')
-    if ($registeredAction.Trim() -cne $internalBridgeAction) {
+    if ($registeredAction.Trim() -cne $ExpectedBridgeAction) {
         throw "Blender registered unexpected internal action '$registeredAction'."
     }
-    return $internalBridgeAction
+    return $ExpectedBridgeAction
 }
 
 function Resolve-ActiveBlenderBundledAction {
@@ -511,6 +520,211 @@ function Invoke-BlenderBridgeAction {
     return $responses[0]
 }
 
+function Get-RequiredBooleanResponseValue {
+    param(
+        [object]$Value,
+        [Parameter(Mandatory = $true)][string]$Label
+    )
+
+    if ($Value -is [bool]) {
+        return [bool]$Value
+    }
+    $normalized = [string]$Value
+    if ($normalized.Trim() -ieq 'true') {
+        return $true
+    }
+    if ($normalized.Trim() -ieq 'false') {
+        return $false
+    }
+    throw "$Label returned an invalid saved state."
+}
+
+function Resolve-MarkedProjectRootFromDocumentPath {
+    param([Parameter(Mandatory = $true)][string]$DocumentPath)
+
+    if (-not [System.IO.Path]::IsPathRooted($DocumentPath)) {
+        throw 'The Illustrator document path is not absolute.'
+    }
+    if (-not (Test-Path -LiteralPath $DocumentPath -PathType Leaf)) {
+        throw "The saved Illustrator document could not be found: $DocumentPath"
+    }
+
+    $documentFile = Get-Item -LiteralPath $DocumentPath -Force -ErrorAction Stop
+    $current = $documentFile.Directory
+    while ($null -ne $current) {
+        $markerPath = Join-Path $current.FullName '.flowcell-project.json'
+        if (Test-Path -LiteralPath $markerPath -PathType Leaf) {
+            return [pscustomobject]@{
+                DocumentFile = $documentFile
+                ProjectRoot = $current.FullName
+                MarkerPath = $markerPath
+            }
+        }
+        $current = $current.Parent
+    }
+
+    throw (
+        "Blender is unsaved, and FlowCell could not find .flowcell-project.json above the Illustrator document. " +
+        "Run the Project organizer on that project folder once, then try Ill Orca again."
+    )
+}
+
+function Invoke-SetupOrganizationPrepareExistingTarget {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$ProjectRoot
+    )
+
+    $setupScript = Join-Path $RepoRoot 'Programs\Windows\Windows Git Scripts\Files\Setup Organization\setup_organization.ps1'
+    if (-not (Test-Path -LiteralPath $setupScript -PathType Leaf)) {
+        throw "Setup Organization provider not found: $setupScript"
+    }
+
+    $powerShellHost = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    if ([string]::IsNullOrWhiteSpace($powerShellHost) -or -not (Test-Path -LiteralPath $powerShellHost -PathType Leaf)) {
+        throw 'FlowCell could not resolve the current PowerShell host for Setup Organization.'
+    }
+
+    $argsJson = [pscustomobject][ordered]@{
+        operation = 'prepare-existing-target'
+        projectRoot = $ProjectRoot
+        plannedExtension = '.blend'
+    } | ConvertTo-Json -Depth 5 -Compress
+    $setupScriptBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($setupScript))
+    $argsJsonBase64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($argsJson))
+    $childScript = @'
+$setupScript = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{0}'))
+$argsJson = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{1}'))
+& $setupScript -FlowCellCapability 'windows.setup-organization' -ArgsJson $argsJson
+exit $LASTEXITCODE
+'@ -f $setupScriptBase64, $argsJsonBase64
+    $encodedCommand = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($childScript))
+    $prepareOutput = @(& $powerShellHost `
+        -NoLogo `
+        -NoProfile `
+        -NonInteractive `
+        -ExecutionPolicy Bypass `
+        -EncodedCommand $encodedCommand 2>&1)
+    $prepareExitCode = $LASTEXITCODE
+    $prepareText = ($prepareOutput | ForEach-Object { [string]$_ }) -join "`n"
+    if ($prepareExitCode -ne 0) {
+        if ([string]::IsNullOrWhiteSpace($prepareText)) {
+            $prepareText = 'Setup Organization could not prepare the existing project Blender destination.'
+        }
+        throw $prepareText
+    }
+
+    try {
+        $prepared = $prepareText | ConvertFrom-Json -ErrorAction Stop
+    }
+    catch {
+        throw "Setup Organization returned invalid JSON: $($_.Exception.Message)"
+    }
+    if (-not (Get-RequiredBooleanResponseValue `
+        -Value (Get-ObjectPropertyValue -Source $prepared -Name 'prepared') `
+        -Label 'Setup Organization')) {
+        throw 'Setup Organization did not report a prepared Blender destination.'
+    }
+
+    $preparedRoot = [string](Get-ObjectPropertyValue -Source $prepared -Name 'projectRoot')
+    $destinationDirectory = [string](Get-ObjectPropertyValue -Source $prepared -Name 'destinationDirectory')
+    if ([string]::IsNullOrWhiteSpace($preparedRoot) -or [string]::IsNullOrWhiteSpace($destinationDirectory)) {
+        throw 'Setup Organization omitted the prepared project root or Blender destination.'
+    }
+    $expectedRoot = [System.IO.Path]::GetFullPath($ProjectRoot).TrimEnd('\')
+    $returnedRoot = [System.IO.Path]::GetFullPath($preparedRoot).TrimEnd('\')
+    if ($returnedRoot -ine $expectedRoot) {
+        throw "Setup Organization returned the wrong project folder. Expected '$expectedRoot', got '$returnedRoot'."
+    }
+
+    return $prepared
+}
+
+function Ensure-BlenderSavedForOrca {
+    param(
+        [Parameter(Mandatory = $true)][string]$RepoRoot,
+        [Parameter(Mandatory = $true)][string]$InvokeScript,
+        [Parameter(Mandatory = $true)][string]$SaveBridgeAction,
+        [string]$SourceDocumentPath,
+        [Parameter(Mandatory = $true)][string]$RequestId,
+        [Parameter(Mandatory = $true)][string]$RuntimeDirectory
+    )
+
+    $statusBridgePath = Join-Path $RuntimeDirectory ('send-svg-to-blender.save-status.{0}.tmp' -f $RequestId)
+    $script:saveBridgeStatusPaths = @($script:saveBridgeStatusPaths) + $statusBridgePath
+    $statusResponse = Invoke-BlenderBridgeAction `
+        -InvokeScript $InvokeScript `
+        -Action $SaveBridgeAction `
+        -Label 'Check Blender save status' `
+        -DataJson '{"command":"status"}' `
+        -StatusPath $statusBridgePath `
+        -FailureMessage 'Blender did not report whether the current file is saved.'
+    $alreadySaved = Get-RequiredBooleanResponseValue `
+        -Value (Get-ObjectPropertyValue -Source $statusResponse -Name 'saved') `
+        -Label 'Save Blender status'
+    if ($alreadySaved) {
+        return [pscustomobject]@{
+            AutoSaved = $false
+            FinalPath = [string](Get-ObjectPropertyValue -Source $statusResponse -Name 'filePath')
+            Message = ''
+        }
+    }
+
+    if ([string]::IsNullOrWhiteSpace($SourceDocumentPath)) {
+        throw (
+            'Blender and the Illustrator document are both unsaved. Save the Illustrator document inside its ' +
+            'FlowCell-organized project first, then try Ill Orca again.'
+        )
+    }
+    $project = Resolve-MarkedProjectRootFromDocumentPath -DocumentPath $SourceDocumentPath
+    $prepared = Invoke-SetupOrganizationPrepareExistingTarget `
+        -RepoRoot $RepoRoot `
+        -ProjectRoot ([string]$project.ProjectRoot)
+    $destinationDirectory = [string](Get-ObjectPropertyValue -Source $prepared -Name 'destinationDirectory')
+    $fileName = [System.IO.Path]::GetFileNameWithoutExtension([string]$project.DocumentFile.Name)
+    if ([string]::IsNullOrWhiteSpace($fileName)) {
+        throw 'The Illustrator document filename cannot be used for a Blender filename.'
+    }
+
+    $saveDataJson = [pscustomobject][ordered]@{
+        command = 'save-prepared-existing-target'
+        fileName = $fileName
+        projectRoot = [string]$project.ProjectRoot
+        destinationDirectory = $destinationDirectory
+    } | ConvertTo-Json -Depth 5 -Compress
+    $initialSaveBridgePath = Join-Path $RuntimeDirectory ('send-svg-to-blender.initial-save.{0}.tmp' -f $RequestId)
+    $script:saveBridgeStatusPaths = @($script:saveBridgeStatusPaths) + $initialSaveBridgePath
+    $saveResponse = Invoke-BlenderBridgeAction `
+        -InvokeScript $InvokeScript `
+        -Action $SaveBridgeAction `
+        -Label 'Save Blender in Illustrator project' `
+        -DataJson $saveDataJson `
+        -StatusPath $initialSaveBridgePath `
+        -FailureMessage 'Blender was unsaved and could not be saved in the Illustrator project.'
+    if (-not (Get-RequiredBooleanResponseValue `
+        -Value (Get-ObjectPropertyValue -Source $saveResponse -Name 'saved') `
+        -Label 'Save Blender')) {
+        throw 'Save Blender completed without reporting a saved file.'
+    }
+    $finalPath = [string](Get-ObjectPropertyValue -Source $saveResponse -Name 'finalPath')
+    if ([string]::IsNullOrWhiteSpace($finalPath)) {
+        throw 'Save Blender completed without returning the saved Blender path.'
+    }
+    $saveMessage = [string](Get-ObjectPropertyValue -Source $saveResponse -Name 'display')
+    if ([string]::IsNullOrWhiteSpace($saveMessage)) {
+        $saveMessage = [string](Get-ObjectPropertyValue -Source $saveResponse -Name 'message')
+    }
+    if ([string]::IsNullOrWhiteSpace($saveMessage)) {
+        $saveMessage = "Saved Blender file to $finalPath"
+    }
+
+    return [pscustomobject]@{
+        AutoSaved = $true
+        FinalPath = $finalPath
+        Message = $saveMessage.Trim()
+    }
+}
+
 $runtimeDirectory = Split-Path -Parent $RequestPath
 $statusPath = Join-Path $runtimeDirectory $statusFileName
 
@@ -550,6 +764,8 @@ try {
     if ($postAction -notin @('none', 'orca')) {
         throw "The Illustrator export request has unsupported postAction '$postAction'."
     }
+    $sourceDocumentPath = [string](Get-ObjectPropertyValue -Source $request -Name 'sourceDocumentPath')
+    $sourceDocumentPath = $sourceDocumentPath.Trim()
 
     $items = @((Get-ObjectPropertyValue -Source $request -Name 'items'))
     if ($items.Count -eq 0) {
@@ -570,7 +786,21 @@ try {
     if ($postAction -eq 'orca') {
         $orcaBridgeAction = Resolve-ActiveBlenderBundledAction -RepoRoot $repoRoot -BundledSourceId $orcaBundledSourceId
     }
-    $bridgeAction = Register-InternalBlenderAction -RepoRoot $repoRoot
+    $bridgeAction = Register-InternalBlenderAction `
+        -RepoRoot $repoRoot `
+        -SourceRelativePath 'Programs\Blender\Blender Git Scripts\Files\Import Illustrator SVG\import illustrator svg.py' `
+        -OwnerButtonId $internalImportOwnerButtonId `
+        -ExpectedBridgeAction $internalImportBridgeAction `
+        -ActionDescription 'Illustrator SVG Blender importer'
+    $saveBridgeAction = ''
+    if ($postAction -eq 'orca') {
+        $saveBridgeAction = Register-InternalBlenderAction `
+            -RepoRoot $repoRoot `
+            -SourceRelativePath 'Programs\Blender\Blender Git Scripts\Files\Save Blender\save_blender.py' `
+            -OwnerButtonId $internalSaveOwnerButtonId `
+            -ExpectedBridgeAction $internalSaveBridgeAction `
+            -ActionDescription 'Save Blender'
+    }
     $invokeScript = Join-Path $repoRoot 'Programs\Blender\SupportScripts\Invoke-BlenderFlowCellAction.ps1'
 
     $existingBlenderProcesses = @(Get-Process blender -ErrorAction SilentlyContinue)
@@ -595,6 +825,21 @@ try {
         throw 'The running Blender window does not report a ready FlowCell bridge. Enable or refresh the FlowCell add-on, then try again.'
     }
 
+    $autoSaveState = [pscustomobject]@{
+        AutoSaved = $false
+        FinalPath = ''
+        Message = ''
+    }
+    if ($postAction -eq 'orca') {
+        $autoSaveState = Ensure-BlenderSavedForOrca `
+            -RepoRoot $repoRoot `
+            -InvokeScript $invokeScript `
+            -SaveBridgeAction $saveBridgeAction `
+            -SourceDocumentPath $sourceDocumentPath `
+            -RequestId $requestId `
+            -RuntimeDirectory $runtimeDirectory
+    }
+
     $dataJson = [pscustomobject][ordered]@{ items = $items } | ConvertTo-Json -Depth 10 -Compress
     $bridgeStatusPath = Join-Path $runtimeDirectory ('send-svg-to-blender.bridge.{0}.tmp' -f $requestId)
     $response = Invoke-BlenderBridgeAction `
@@ -615,6 +860,24 @@ try {
     }
 
     if ($postAction -eq 'orca') {
+        if ([bool]$autoSaveState.AutoSaved) {
+            $finalSaveBridgePath = Join-Path $runtimeDirectory ('send-svg-to-blender.final-save.{0}.tmp' -f $requestId)
+            $saveBridgeStatusPaths = @($saveBridgeStatusPaths) + $finalSaveBridgePath
+            $finalSaveResponse = Invoke-BlenderBridgeAction `
+                -InvokeScript $invokeScript `
+                -Action $saveBridgeAction `
+                -Label 'Save imported Illustrator artwork' `
+                -DataJson '{"command":"save-current"}' `
+                -StatusPath $finalSaveBridgePath `
+                -FailureMessage 'Blender imported the Illustrator SVG batch, but could not save the imported artwork.'
+            if (-not (Get-RequiredBooleanResponseValue `
+                -Value (Get-ObjectPropertyValue -Source $finalSaveResponse -Name 'saved') `
+                -Label 'Save Blender')) {
+                throw 'Save Blender did not confirm the imported artwork was saved.'
+            }
+            $message = ('{0} {1}' -f ([string]$autoSaveState.Message).Trim(), $message.Trim()).Trim()
+        }
+
         $orcaBridgeStatusPath = Join-Path $runtimeDirectory ('send-svg-to-blender.orca.{0}.tmp' -f $requestId)
         $orcaResponse = Invoke-BlenderBridgeAction `
             -InvokeScript $invokeScript `
@@ -650,6 +913,11 @@ finally {
     }
     if (-not [string]::IsNullOrWhiteSpace($orcaBridgeStatusPath) -and (Test-Path -LiteralPath $orcaBridgeStatusPath -PathType Leaf)) {
         Remove-Item -LiteralPath $orcaBridgeStatusPath -Force -ErrorAction SilentlyContinue
+    }
+    foreach ($saveBridgeStatusPath in @($saveBridgeStatusPaths)) {
+        if (-not [string]::IsNullOrWhiteSpace($saveBridgeStatusPath) -and (Test-Path -LiteralPath $saveBridgeStatusPath -PathType Leaf)) {
+            Remove-Item -LiteralPath $saveBridgeStatusPath -Force -ErrorAction SilentlyContinue
+        }
     }
     if ($ownsMutex -and $null -ne $mutex) {
         try {

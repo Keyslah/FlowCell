@@ -1,4 +1,4 @@
-# Description: Import Illustrator SVG layers, extrude each leading parenthesized millimeter value, and convert them to meshes.
+# Description: Import Illustrator SVG layers, extrude each leading millimeter value, and convert them to meshes.
 from __future__ import annotations
 
 import math
@@ -13,7 +13,9 @@ from mathutils.bvhtree import BVHTree
 
 DEFAULT_THICKNESS_MM = 1.0
 SVG_CURVE_RESOLUTION_U = 16
-LEADING_PARENTHESIZED_VALUE = re.compile(r"^\(([0-9]+(?:\.[0-9]+)?)\)")
+LEADING_EXTRUSION_VALUE = re.compile(
+    r"^(?:\(([0-9]+(?:\.[0-9]+)?)\)|([0-9]+(?:\.[0-9]+)?))"
+)
 
 
 def _ctx(context=None):
@@ -25,13 +27,13 @@ def _finished(operator_result) -> bool:
 
 
 def thickness_mm_from_filepath(filepath) -> float:
-    """Read only a leading ``(number)`` filename prefix as millimeters."""
+    """Read a leading number, optionally parenthesized, as millimeters."""
     stem = Path(str(filepath or "")).stem
-    match = LEADING_PARENTHESIZED_VALUE.match(stem)
+    match = LEADING_EXTRUSION_VALUE.match(stem)
     if match is None:
         return DEFAULT_THICKNESS_MM
 
-    token = match.group(1)
+    token = match.group(1) or match.group(2)
     thickness_mm = float(token)
     if not math.isfinite(thickness_mm) or thickness_mm <= 0.0:
         raise ValueError(
@@ -405,27 +407,172 @@ def _safe_collinear_cap_middle_vertex(face, length_epsilon: float):
 
 
 def _dissolve_safe_zero_area_cap_vertices(bm, length_epsilon: float) -> int:
-    middle_vertices = []
-    seen_indices = set()
-    for face in list(bm.faces):
-        middle_vertex = _safe_collinear_cap_middle_vertex(face, length_epsilon)
-        if middle_vertex is None or middle_vertex.index in seen_indices:
+    dissolved_count = 0
+    maximum_dissolves = len(bm.verts)
+    while True:
+        middle_vertex = None
+        for face in list(bm.faces):
+            middle_vertex = _safe_collinear_cap_middle_vertex(face, length_epsilon)
+            if middle_vertex is not None:
+                break
+        if middle_vertex is None:
+            return dissolved_count
+
+        # Dissolving one cap seam changes its neighboring cap/side topology.
+        # Re-evaluate the remaining faces after every operation; a vertex that
+        # looked redundant in the original snapshot may no longer be safe once
+        # an adjacent seam has been removed.
+        bmesh.ops.dissolve_verts(
+            bm,
+            verts=[middle_vertex],
+            use_face_split=False,
+            use_boundary_tear=False,
+        )
+        dissolved_count += 1
+        if dissolved_count > maximum_dissolves:
+            raise RuntimeError("Blender could not converge while cleaning collinear cap vertices.")
+        _refresh_bmesh_lookup_tables(bm)
+
+
+def _vertex_xyz(vertex) -> tuple[float, float, float]:
+    coordinate = vertex.co
+    return float(coordinate.x), float(coordinate.y), float(coordinate.z)
+
+
+def _face_z_span(face) -> float:
+    z_values = [float(vertex.co.z) for vertex in face.verts]
+    return max(z_values) - min(z_values)
+
+
+def _normalized_face_normal(face) -> tuple[float, float, float] | None:
+    normal = getattr(face, "normal", None)
+    if normal is None:
+        return None
+    x = float(normal.x)
+    y = float(normal.y)
+    z = float(normal.z)
+    length = math.sqrt((x * x) + (y * y) + (z * z))
+    if not math.isfinite(length) or length <= 0.0:
+        return None
+    return x / length, y / length, z / length
+
+
+def _point_is_on_segment(point, first, second, tolerance: float) -> bool:
+    segment = tuple(second[index] - first[index] for index in range(3))
+    offset = tuple(point[index] - first[index] for index in range(3))
+    squared_length = sum(component * component for component in segment)
+    if squared_length <= tolerance * tolerance:
+        return False
+    projection = sum(offset[index] * segment[index] for index in range(3)) / squared_length
+    parameter_tolerance = tolerance / math.sqrt(squared_length)
+    if projection < -parameter_tolerance or projection > 1.0 + parameter_tolerance:
+        return False
+    closest = tuple(first[index] + (projection * segment[index]) for index in range(3))
+    squared_distance = sum((point[index] - closest[index]) ** 2 for index in range(3))
+    return squared_distance <= tolerance * tolerance
+
+
+def _face_component_data(bm):
+    component_by_face = {}
+    component_z_bounds = {}
+    component_index = 0
+    for seed in bm.faces:
+        if seed.index in component_by_face:
             continue
-        seen_indices.add(middle_vertex.index)
-        middle_vertices.append(middle_vertex)
-    if not middle_vertices:
-        return 0
+        pending = [seed]
+        component_by_face[seed.index] = component_index
+        minimum_z = math.inf
+        maximum_z = -math.inf
+        while pending:
+            face = pending.pop()
+            for vertex in face.verts:
+                z_value = float(vertex.co.z)
+                minimum_z = min(minimum_z, z_value)
+                maximum_z = max(maximum_z, z_value)
+            for edge in face.edges:
+                for linked_face in edge.link_faces:
+                    if linked_face.index in component_by_face:
+                        continue
+                    component_by_face[linked_face.index] = component_index
+                    pending.append(linked_face)
+        component_z_bounds[component_index] = (minimum_z, maximum_z)
+        component_index += 1
+    return component_by_face, component_z_bounds
 
-    bmesh.ops.dissolve_verts(
-        bm,
-        verts=middle_vertices,
-        use_face_split=False,
-        use_boundary_tear=False,
-    )
-    return len(middle_vertices)
+
+def _is_safe_cap_side_boundary_subdivision(
+    first_face,
+    second_face,
+    component_z_bounds,
+    tolerance: float,
+) -> bool:
+    first_span = _face_z_span(first_face)
+    second_span = _face_z_span(second_face)
+    if len(first_face.verts) == 3 and first_span <= tolerance and len(second_face.verts) == 4:
+        cap_face = first_face
+        side_face = second_face
+    elif len(second_face.verts) == 3 and second_span <= tolerance and len(first_face.verts) == 4:
+        cap_face = second_face
+        side_face = first_face
+    else:
+        return False
+
+    cap_normal = _normalized_face_normal(cap_face)
+    side_normal = _normalized_face_normal(side_face)
+    if cap_normal is None or side_normal is None:
+        return False
+    if abs(cap_normal[0]) > 1e-3 or abs(cap_normal[1]) > 1e-3:
+        return False
+    if abs(side_normal[2]) > 1e-3:
+        return False
+
+    component_minimum_z, component_maximum_z = component_z_bounds
+    if component_maximum_z - component_minimum_z <= tolerance:
+        return False
+    cap_z = sum(float(vertex.co.z) for vertex in cap_face.verts) / len(cap_face.verts)
+    if abs(cap_z - component_minimum_z) <= tolerance and cap_normal[2] < -0.999:
+        opposite_z = component_maximum_z
+    elif abs(cap_z - component_maximum_z) <= tolerance and cap_normal[2] > 0.999:
+        opposite_z = component_minimum_z
+    else:
+        return False
+
+    cap_plane_vertices = [
+        vertex for vertex in side_face.verts if abs(float(vertex.co.z) - cap_z) <= tolerance
+    ]
+    opposite_plane_vertices = [
+        vertex for vertex in side_face.verts if abs(float(vertex.co.z) - opposite_z) <= tolerance
+    ]
+    if len(cap_plane_vertices) != 2 or len(opposite_plane_vertices) != 2:
+        return False
+    if len({vertex.index for vertex in cap_plane_vertices + opposite_plane_vertices}) != 4:
+        return False
+
+    contact_vertex_indices = {vertex.index for vertex in cap_plane_vertices}
+    contact_edges = [
+        edge
+        for edge in side_face.edges
+        if {vertex.index for vertex in edge.verts} == contact_vertex_indices
+    ]
+    if len(contact_edges) != 1:
+        return False
+    contact_edge = contact_edges[0]
+    if not bool(contact_edge.is_manifold) or len(contact_edge.link_faces) != 2:
+        return False
+
+    contact_points = [_vertex_xyz(vertex) for vertex in cap_plane_vertices]
+    matching_cap_edges = []
+    for edge in cap_face.edges:
+        if not bool(edge.is_manifold) or len(edge.link_faces) != 2 or len(edge.verts) != 2:
+            continue
+        first = _vertex_xyz(edge.verts[0])
+        second = _vertex_xyz(edge.verts[1])
+        if all(_point_is_on_segment(point, first, second, tolerance) for point in contact_points):
+            matching_cap_edges.append(edge)
+    return len(matching_cap_edges) == 1
 
 
-def _non_adjacent_bvh_overlap_count(bm) -> int:
+def _non_adjacent_bvh_overlap_count(bm, length_epsilon: float) -> int:
     try:
         tree = BVHTree.FromBMesh(bm, epsilon=0.0)
         overlap_pairs = tree.overlap(tree)
@@ -434,6 +581,8 @@ def _non_adjacent_bvh_overlap_count(bm) -> int:
 
     bm.faces.ensure_lookup_table()
     bm.faces.index_update()
+    component_by_face, component_z_bounds = _face_component_data(bm)
+    contact_tolerance = length_epsilon * 10.0
     unique_pairs = set()
     intersecting_pairs = 0
     face_count = len(bm.faces)
@@ -452,8 +601,20 @@ def _non_adjacent_bvh_overlap_count(bm) -> int:
         first_vertices = {vertex.index for vertex in bm.faces[pair[0]].verts}
         second_vertices = {vertex.index for vertex in bm.faces[pair[1]].verts}
         # Neighboring faces normally touch along an edge or vertex. BVH reports
-        # those contacts too, so only disjoint-topology contacts are unsafe here.
+        # those contacts too; the one safe disjoint-index subdivision is handled
+        # separately below.
         if first_vertices.intersection(second_vertices):
+            continue
+        first_component = component_by_face[pair[0]]
+        if first_component == component_by_face[pair[1]] and _is_safe_cap_side_boundary_subdivision(
+            bm.faces[pair[0]],
+            bm.faces[pair[1]],
+            component_z_bounds[first_component],
+            contact_tolerance,
+        ):
+            # Blender can triangulate the cap boundary more coarsely than its
+            # sidewall. BVH then reports a disjoint-index cap/side contact even
+            # though the wall edge lies wholly on one manifold outer cap edge.
             continue
         intersecting_pairs += 1
     return intersecting_pairs
@@ -527,7 +688,7 @@ def _validate_mesh_integrity(mesh_obj) -> None:
             else:
                 seen_face_vertices.add(face_vertices)
 
-        intersecting_pairs = _non_adjacent_bvh_overlap_count(bm)
+        intersecting_pairs = _non_adjacent_bvh_overlap_count(bm, length_epsilon)
         issues = []
         if boundary_edges:
             issues.append(f"{boundary_edges} boundary edge(s)")

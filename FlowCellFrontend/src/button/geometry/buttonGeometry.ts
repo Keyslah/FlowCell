@@ -82,6 +82,12 @@ export interface CompactButtonPlacementResult {
   reason: string | null;
 }
 
+export interface UniformButtonSizeResult {
+  success: boolean;
+  placements: NamedButtonRect[];
+  reason: string | null;
+}
+
 export interface ButtonPlacementRowProfile {
   wrapWidth: number;
   topOffsets: readonly number[];
@@ -1465,36 +1471,6 @@ export function buildButtonReorderRowCandidates(args: {
   };
 }
 
-/**
- * Gives every placement the requested host-owned size, then packs the result
- * without moving any placement outside its current visual row or mutating the
- * input. The caller can apply the returned geometry in one transaction only
- * after every preserved row is known to fit.
- */
-export function compactUniformButtonPlacements(
-  placements: readonly NamedButtonRect[],
-  targetSize: Pick<ButtonRect, "width" | "height">,
-  surface: Pick<ButtonRect, "width" | "height">,
-  options: CompactButtonPlacementOptions = {}
-): CompactButtonPlacementResult {
-  const resizedById = new Map(placements.map((placement) => [
-    placement.id,
-    {
-      ...placement,
-      rect: {
-        ...placement.rect,
-        width: targetSize.width,
-        height: targetSize.height
-      }
-    }
-  ]));
-  const rows = inferButtonPlacementRows(placements).map((row) => ({
-    ...row,
-    placements: row.placements.map((placement) => resizedById.get(placement.id)!)
-  }));
-  return compactButtonPlacementRows(rows, surface, options);
-}
-
 export function createStarterButtonLayout(
   items: readonly StarterLayoutItem[],
   options: { padding: number; gap: number; maximumColumns?: number }
@@ -1573,6 +1549,30 @@ export function validateExactButtonLayoutGeometry(
     }
   }
   return issues;
+}
+
+/**
+ * Gives every placement the requested host-owned size without changing its
+ * position. The complete resize fails when those exact coordinates would put
+ * a Button outside the surface or overlap another content Button.
+ */
+export function resizeUniformButtonPlacementsInPlace(
+  placements: readonly NamedButtonRect[],
+  targetSize: Pick<ButtonRect, "width" | "height">,
+  surface: Pick<ButtonRect, "width" | "height">
+): UniformButtonSizeResult {
+  const resized = placements.map((placement) => ({
+    id: placement.id,
+    rect: {
+      ...placement.rect,
+      width: targetSize.width,
+      height: targetSize.height
+    }
+  }));
+  const issues = validateExactButtonLayoutGeometry(resized, surface);
+  return issues.length > 0
+    ? { success: false, placements: [], reason: issues[0].message }
+    : { success: true, placements: resized, reason: null };
 }
 
 /**

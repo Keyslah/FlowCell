@@ -590,6 +590,7 @@ def _empty_project_theme_state():
             "enabled": False,
             "path": "",
             "relative_path": "",
+            "grid_enabled": True,
             "grid_spacing_m": DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
             "grid_distance_m": DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
             "grid_far_spacing_m": DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
@@ -616,6 +617,9 @@ def _normalize_project_theme_state(value):
         state["place_picture"]["path"] = str(place_picture_state.get("path") or "")
         state["place_picture"]["relative_path"] = str(
             place_picture_state.get("relative_path") or ""
+        )
+        state["place_picture"]["grid_enabled"] = bool(
+            place_picture_state.get("grid_enabled", True)
         )
         spacing_m = place_picture_state.get(
             "grid_spacing_m",
@@ -716,14 +720,12 @@ def _write_project_theme_state(context, state):
 
 def _write_theme_state(context, state):
     normalized = _write_project_theme_state(context, state)
-    # Persist only the theme portion to the owner runtime file. The Place
-    # Picture entry is owned by the package's explicit Startup action.
-    startup_state = _read_owner_runtime_theme_state()
-    if not isinstance(startup_state, dict):
-        startup_state = _empty_project_theme_state()
-    else:
-        startup_state = dict(startup_state)
+    # Theme and Place Picture are one startup bundle. Capturing the live overlay
+    # avoids pairing a newly applied theme with stale project/startup picture
+    # state, which is possible after a package load or startup restore.
+    startup_state = _empty_project_theme_state()
     startup_state["theme"] = normalized.get("theme", {})
+    startup_state["place_picture"] = _startup_place_picture_state_from_runtime(context)
     _write_owner_runtime_theme_state(startup_state)
     return normalized
 
@@ -739,12 +741,54 @@ def _project_relative_path(path: str) -> str:
     return relative_path if str(relative_path).startswith("//") else ""
 
 
+def _startup_place_picture_state_from_runtime(context=None):
+    runtime_state = _overlay_state()
+    runtime_path = str(runtime_state.get("path") or "").strip()
+    if not bool(runtime_state.get("enabled")) or not runtime_path:
+        return {
+            "enabled": False,
+            "path": "",
+            "relative_path": "",
+            "grid_enabled": False,
+            "grid_spacing_m": DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+            "grid_distance_m": DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+            "grid_far_spacing_m": DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+        }
+    return {
+        "enabled": True,
+        "explicit_startup": True,
+        "saved_by": "theme_bundle",
+        "path": runtime_path,
+        "relative_path": _project_relative_path(runtime_path),
+        "grid_enabled": bool(runtime_state.get("grid_enabled", True)),
+        "grid_spacing_m": float(
+            runtime_state.get(
+                "grid_spacing_m",
+                DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+            )
+        ),
+        "grid_distance_m": float(
+            runtime_state.get(
+                "grid_distance_m",
+                DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+            )
+        ),
+        "grid_far_spacing_m": float(
+            runtime_state.get(
+                "grid_far_spacing_m",
+                DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+            )
+        ),
+    }
+
+
 def _set_project_place_picture_state(
     context,
     resolved_path: str,
     grid_spacing_m: float = DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
     grid_distance_m: float = DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
     grid_far_spacing_m: float = DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+    grid_enabled: bool = True,
 ):
     state = _read_project_theme_state(context)
     normalized_path = str(resolved_path or "").strip()
@@ -752,6 +796,7 @@ def _set_project_place_picture_state(
         "enabled": bool(normalized_path),
         "path": normalized_path,
         "relative_path": _project_relative_path(normalized_path),
+        "grid_enabled": bool(grid_enabled),
         "grid_spacing_m": float(grid_spacing_m),
         "grid_distance_m": float(grid_distance_m),
         "grid_far_spacing_m": float(grid_far_spacing_m),
@@ -764,6 +809,13 @@ def _set_startup_place_picture_state(context, payload):
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
     spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
+    runtime_state = _overlay_state()
+    runtime_path = str(runtime_state.get("path") or "").strip()
+    grid_enabled = (
+        bool(runtime_state.get("grid_enabled", True))
+        if runtime_path == resolved_path
+        else True
+    )
     state = _read_owner_runtime_theme_state()
     state["place_picture"] = {
         "enabled": True,
@@ -771,6 +823,7 @@ def _set_startup_place_picture_state(context, payload):
         "saved_by": "startup_button",
         "path": resolved_path,
         "relative_path": _project_relative_path(resolved_path),
+        "grid_enabled": grid_enabled,
         "grid_spacing_m": spacing_m,
         "grid_distance_m": distance_m,
         "grid_far_spacing_m": far_spacing_m,
@@ -779,6 +832,7 @@ def _set_startup_place_picture_state(context, payload):
     return _result(
         f"Place Picture startup image saved from {resolved_path}.",
         static_background_path=resolved_path,
+        grid_enabled=grid_enabled,
         grid_spacing_m=spacing_m,
         grid_distance_m=distance_m,
         grid_far_spacing_m=far_spacing_m,
@@ -800,6 +854,7 @@ def _read_place_picture_runtime_state(context=None):
         place_picture_runtime_has_background_handler=state.get("background_handler") is not None,
         place_picture_runtime_has_overlay_handler=state.get("overlay_handler") is not None,
         place_picture_runtime_has_view3d=any(True for _ in (_iter_view3d_spaces() or [])),
+        grid_enabled=bool(state.get("grid_enabled", True)),
         grid_spacing_m=float(
             state.get("grid_spacing_m", DEFAULT_PLACE_PICTURE_GRID_SPACING_M)
         ),
@@ -842,7 +897,7 @@ def _is_explicit_startup_place_picture_state(place_picture_state) -> bool:
         isinstance(place_picture_state, dict)
         and place_picture_state.get("enabled")
         and place_picture_state.get("explicit_startup") is True
-        and place_picture_state.get("saved_by") == "startup_button"
+        and place_picture_state.get("saved_by") in {"startup_button", "theme_bundle"}
     )
 
 
@@ -2369,6 +2424,7 @@ def _build_viewport_overlay_draw_callback():
 def _register_viewport_overlay_from_resolved_path(
     resolved_path: str,
     grid_only: bool = False,
+    grid_enabled: bool = True,
 ) -> str:
     state = _overlay_state()
     _remove_place_picture_draw_handlers(state)
@@ -2406,6 +2462,7 @@ def _register_viewport_overlay_from_resolved_path(
     state["image_shader"] = image_shader
     state["color_shader"] = color_shader
     state["enabled"] = True
+    state["grid_enabled"] = bool(grid_enabled)
     state["generation"] = generation
 
     def draw_background_image():
@@ -2493,7 +2550,8 @@ def _register_viewport_overlay_from_resolved_path(
                 try:
                     gpu.matrix.load_matrix(Matrix.Identity(4))
                     gpu.matrix.load_projection_matrix(_pixel_projection(region.width, region.height))
-                    _draw_fake_grid_2d(color_shader, region, rv3d)
+                    if state.get("grid_enabled", True):
+                        _draw_fake_grid_2d(color_shader, region, rv3d)
                     _draw_fake_gizmos_2d(color_shader, region, rv3d)
                 finally:
                     gpu.matrix.pop_projection()
@@ -2542,6 +2600,7 @@ def _apply_grid_spacing(context, payload):
     _register_viewport_overlay_from_resolved_path(
         runtime_path,
         grid_only=not bool(runtime_path),
+        grid_enabled=True,
     )
     if runtime_path:
         _set_project_place_picture_state(
@@ -2550,6 +2609,7 @@ def _apply_grid_spacing(context, payload):
             spacing_m,
             distance_m,
             far_spacing_m,
+            grid_enabled=True,
         )
     return _result(
         f"Grid set to {spacing_m:g} m up to {distance_m:g} m from world origin, then {far_spacing_m:g} m.",
@@ -2562,11 +2622,15 @@ def _apply_grid_spacing(context, payload):
 
 def _place_picture_image(context, payload, persist_project_state=True):
     spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
+    grid_enabled = bool(payload.get("grid_enabled", True))
     _set_runtime_grid_settings(spacing_m, distance_m, far_spacing_m)
     resolved_path = _resolve_optional_image_path(
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
-    applied_path = _register_viewport_overlay_from_resolved_path(resolved_path)
+    applied_path = _register_viewport_overlay_from_resolved_path(
+        resolved_path,
+        grid_enabled=grid_enabled,
+    )
     _set_saved_overlay_path(applied_path)
     if persist_project_state:
         _set_project_place_picture_state(
@@ -2575,8 +2639,41 @@ def _place_picture_image(context, payload, persist_project_state=True):
             spacing_m,
             distance_m,
             far_spacing_m,
+            grid_enabled=grid_enabled,
         )
     return applied_path
+
+
+def _remove_place_picture_grid(context=None):
+    state = _overlay_state()
+    state["grid_enabled"] = False
+    runtime_path = str(state.get("path") or "").strip()
+    if runtime_path:
+        _set_project_place_picture_state(
+            context,
+            runtime_path,
+            float(
+                state.get(
+                    "grid_spacing_m",
+                    DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
+                )
+            ),
+            float(
+                state.get(
+                    "grid_distance_m",
+                    DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
+                )
+            ),
+            float(
+                state.get(
+                    "grid_far_spacing_m",
+                    DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
+                )
+            ),
+            grid_enabled=False,
+        )
+    _tag_redraw_view3d()
+    return _result("Grid removed.", grid_enabled=False)
 
 
 def _clear_place_picture_overlay(context=None, persist_project_state=True):
@@ -3955,6 +4052,9 @@ def _restore_project_startup_state(context):
                         "grid_far_spacing_m",
                         DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
                     ),
+                    "grid_enabled": bool(
+                        place_picture_state.get("grid_enabled", True)
+                    ),
                 },
                 persist_project_state=False,
             )
@@ -4172,6 +4272,8 @@ def run_flowcell_action(context=None, data=None):
         return _absorb_current_theme(context)
     if command == "set_grid_spacing":
         return _apply_grid_spacing(context, payload)
+    if command == "remove_grid":
+        return _remove_place_picture_grid(context)
     if command == "place_picture":
         resolved_path = _place_picture_image(context, payload)
         if resolved_path:

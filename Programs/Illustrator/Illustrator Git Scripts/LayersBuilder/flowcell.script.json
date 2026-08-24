@@ -1091,7 +1091,7 @@
         "cancel": "Cancel",
         "selectOneForChild": "Highlight exactly one layer to add a child under it.",
         "selectOneForRename": "Highlight exactly one layer to rename it.",
-        "selectForDuplicate": "Select Illustrator artwork or highlight one or more layers to duplicate.",
+        "selectForDuplicate": "Highlight one or more layers to duplicate.",
         "selectionSaveFailed": "Layer selection could not be saved.",
         "stateReadFailed": "Saved Layer Tree state could not be restored.",
         "bridgeUnavailable": "The installed page bridge is unavailable. Close and reopen this Button."

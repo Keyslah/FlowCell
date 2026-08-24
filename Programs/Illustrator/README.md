@@ -57,9 +57,10 @@ than being converted with an arbitrary preset. Clipping groups also fail closed;
 convert a mask into explicit closed filled paths when its clipped appearance is
 intended to become printable geometry.
 
-Only a positive number in parentheses at the very beginning of the sublayer
-name sets the finished Blender thickness in millimeters: `(9) Name` produces
-9 mm. Names such as `V9 Name`, `9 Name`, or `Name (9)` use the 1 mm default.
+A positive number at the absolute beginning of the sublayer name sets the
+finished Blender thickness in millimeters, with parentheses optional:
+`14Main stencil` produces 14 mm, `2connect` produces 2 mm, and `(9) Name`
+produces 9 mm. Names such as `V9 Name` or `Name (9)` use the 1 mm default.
 
 ## Illustrator bridge
 

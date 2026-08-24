@@ -62,6 +62,14 @@ impl ButtonSettingsPlacementKind {
         }
     }
 
+    fn scoped_directory_name(self) -> &'static str {
+        match self {
+            Self::MainPage => "Main",
+            Self::Fan => "Fan",
+            Self::PopOut => "Pop",
+        }
+    }
+
     fn accepts_surface_kind(self, kind: ButtonPlacementSurfaceKind) -> bool {
         matches!(
             (self, kind),
@@ -330,15 +338,35 @@ fn button_settings_directory(
         .join(placement_kind.directory_name()))
 }
 
+fn button_settings_scope_relative_path(
+    placement_kind: ButtonSettingsPlacementKind,
+    program_name: &str,
+    panel_name: &str,
+) -> Result<PathBuf, String> {
+    let program_name = crate::validate_folder_name(program_name, "Program")?;
+    let panel_name = crate::validate_folder_name(panel_name, "Panel")?;
+    Ok(PathBuf::from(program_name)
+        .join(panel_name)
+        .join(placement_kind.scoped_directory_name()))
+}
+
 #[tauri::command]
 pub(crate) fn get_button_settings_directory(
     placement_kind: ButtonSettingsPlacementKind,
+    program_name: String,
+    panel_name: String,
 ) -> Result<String, String> {
-    let directory = button_settings_directory(placement_kind)?;
+    let directory = crate::resolve_flowcell_local_root()?
+        .join("Button editor")
+        .join(button_settings_scope_relative_path(
+            placement_kind,
+            &program_name,
+            &panel_name,
+        )?);
     fs::create_dir_all(&directory).map_err(|error| {
         format!(
-            "Failed to create {} Button settings folder at {}: {error}",
-            placement_kind.directory_name(),
+            "Failed to create scoped {} Button settings folder at {}: {error}",
+            placement_kind.scoped_directory_name(),
             directory.display()
         )
     })?;
@@ -1970,21 +1998,22 @@ pub(crate) fn commit_button_state(
 #[cfg(test)]
 mod tests {
     use super::{
-        button_settings_default_path, classify_source_transaction, document_source_owners,
-        load_button_placement_file, load_button_settings_file, load_button_skin_file,
-        read_button_state_document, recover_button_state, resolve_program_rename_post_commit,
-        save_button_placement_file, save_button_settings_file, save_button_skin_file,
-        validate_button_placement_file, validate_button_settings_file, validate_button_skin_source,
-        validate_button_state, validate_default_surface_id, ButtonPlacementFile,
-        ButtonPlacementFileEntryV1, ButtonPlacementFileEntryV2, ButtonPlacementFileSize,
-        ButtonPlacementFileSurface, ButtonPlacementFileV1, ButtonPlacementFileV2,
-        ButtonPlacementSurfaceKind, ButtonSettingsFileV1, ButtonSettingsPlacementKind,
-        ButtonSourceTransactionJournal, SourceTransactionPhase, SourceTransactionRecovery,
-        BUTTON_PLACEMENT_CYCLE_MAX_STATES, BUTTON_PLACEMENT_FILE_EXTENSION,
-        BUTTON_PLACEMENT_FILE_FORMAT_V1, BUTTON_PLACEMENT_FILE_FORMAT_V2,
-        BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME, BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION,
-        BUTTON_SETTINGS_FILE_EXTENSION, BUTTON_SETTINGS_FILE_FORMAT, BUTTON_SKIN_FILE_EXTENSION,
-        BUTTON_SKIN_FILE_MAX_BYTES, SOURCE_TRANSACTION_SCHEMA_VERSION,
+        button_settings_default_path, button_settings_scope_relative_path,
+        classify_source_transaction, document_source_owners, load_button_placement_file,
+        load_button_settings_file, load_button_skin_file, read_button_state_document,
+        recover_button_state, resolve_program_rename_post_commit, save_button_placement_file,
+        save_button_settings_file, save_button_skin_file, validate_button_placement_file,
+        validate_button_settings_file, validate_button_skin_source, validate_button_state,
+        validate_default_surface_id, ButtonPlacementFile, ButtonPlacementFileEntryV1,
+        ButtonPlacementFileEntryV2, ButtonPlacementFileSize, ButtonPlacementFileSurface,
+        ButtonPlacementFileV1, ButtonPlacementFileV2, ButtonPlacementSurfaceKind,
+        ButtonSettingsFileV1, ButtonSettingsPlacementKind, ButtonSourceTransactionJournal,
+        SourceTransactionPhase, SourceTransactionRecovery, BUTTON_PLACEMENT_CYCLE_MAX_STATES,
+        BUTTON_PLACEMENT_FILE_EXTENSION, BUTTON_PLACEMENT_FILE_FORMAT_V1,
+        BUTTON_PLACEMENT_FILE_FORMAT_V2, BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME,
+        BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION, BUTTON_SETTINGS_FILE_EXTENSION,
+        BUTTON_SETTINGS_FILE_FORMAT, BUTTON_SKIN_FILE_EXTENSION, BUTTON_SKIN_FILE_MAX_BYTES,
+        SOURCE_TRANSACTION_SCHEMA_VERSION,
     };
     use serde_json::{json, Value};
     use std::fs;
@@ -2303,6 +2332,38 @@ mod tests {
             ButtonSettingsPlacementKind::PopOut.directory_name(),
             "Pop-out"
         );
+        assert_eq!(
+            button_settings_scope_relative_path(
+                ButtonSettingsPlacementKind::MainPage,
+                "Illustrator",
+                "Toolset",
+            )
+            .expect("build scoped Main settings path"),
+            PathBuf::from("Illustrator").join("Toolset").join("Main")
+        );
+        assert_eq!(
+            button_settings_scope_relative_path(
+                ButtonSettingsPlacementKind::PopOut,
+                "FlowCell Main Page",
+                "Header Buttons",
+            )
+            .expect("build scoped Pop settings path"),
+            PathBuf::from("FlowCell Main Page")
+                .join("Header Buttons")
+                .join("Pop")
+        );
+        assert!(button_settings_scope_relative_path(
+            ButtonSettingsPlacementKind::MainPage,
+            "../Illustrator",
+            "Toolset",
+        )
+        .is_err());
+        assert!(button_settings_scope_relative_path(
+            ButtonSettingsPlacementKind::PopOut,
+            "Illustrator",
+            r"Toolset\Unsafe",
+        )
+        .is_err());
         assert!(ButtonSettingsPlacementKind::MainPage
             .accepts_surface_kind(ButtonPlacementSurfaceKind::Main));
         assert!(ButtonSettingsPlacementKind::MainPage

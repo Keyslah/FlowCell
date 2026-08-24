@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "illustrator.layers-builder.copy-live",
   "label": "copy live",
-  "tooltip": "Copy artwork from highlighted layers into a named Live layer and hide the sources.",
+  "tooltip": "Copy selected Illustrator objects into a named Live sublayer and hide their original sublayers.",
   "program": "Illustrator",
   "source": "copy live.jsx"
 }

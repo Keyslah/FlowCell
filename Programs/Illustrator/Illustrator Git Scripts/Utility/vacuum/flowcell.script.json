@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.vacuum",
+  "label": "vacuum",
+  "tooltip": "Move selected objects smaller than 0.1 mm in both visible X and Y into Trash > vacuum bin; no artwork is deleted.",
+  "program": "Illustrator",
+  "source": "vacuum.jsx"
+}

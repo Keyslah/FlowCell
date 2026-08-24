@@ -21,30 +21,47 @@
     { "slot": "mode_distribute", "label": "Distribute", "tooltip": "Create rotated copies.", "payload": { "operation_mode": "DISTRIBUTE" } },
     { "slot": "apply_negative", "label": "Negative", "tooltip": "Apply in the negative direction.", "payload": { "command": "apply", "direction": "negative" } },
     { "slot": "apply_positive", "label": "Positive", "tooltip": "Apply in the positive direction.", "payload": { "command": "apply", "direction": "positive" } },
+    { "slot": "toggle_copy", "label": "Copy", "tooltip": "In Transform mode, rotate a duplicate and preserve the original." },
     { "slot": "value_input", "label": "Value", "tooltip": "Click anywhere on this Button, then type the transform angle or distribution count." }
   ],
   "layout": {
     "mode": "grid",
-    "columns": 3,
+    "columns": 6,
     "gap": 8,
     "padding": 8,
-    "width": 520,
+    "width": 616,
     "height": 236,
+    "updatePolicy": { "appendMissingChildSlots": true },
+    "placements": {
+      "center_world": { "x": 0, "y": 0, "width": 121.4064654289918, "height": 42 },
+      "center_cursor": { "x": 121.4064654289918, "y": 0, "width": 121.4064654289918, "height": 42 },
+      "preset_30": { "x": 242.8129308579836, "y": 0, "width": 121.4064654289918, "height": 42 },
+      "preset_45": { "x": 364.2193962869754, "y": 0, "width": 121.4064654289918, "height": 42 },
+      "preset_90": { "x": 485.6258617159672, "y": 0, "width": 121.4064654289918, "height": 42 },
+      "mode_transform": { "x": 0, "y": 56, "width": 101.17205452415983, "height": 42 },
+      "mode_distribute": { "x": 101.17205452415983, "y": 56, "width": 101.17205452415983, "height": 42 },
+      "value_input": { "x": 202.34410904831966, "y": 56, "width": 101.17205452415983, "height": 42 },
+      "apply_negative": { "x": 303.5161635724795, "y": 56, "width": 101.17205452415983, "height": 42 },
+      "apply_positive": { "x": 404.6882180966393, "y": 56, "width": 101.17205452415983, "height": 42 },
+      "toggle_copy": { "x": 505.8602726207992, "y": 56, "width": 101.17205452415983, "height": 42 }
+    },
     "fields": [
       { "id": "center_mode", "kind": "select", "label": "Center", "payloadKey": "center_mode", "defaultValue": "ARTBOARD", "options": [{ "id": "artboard", "label": "Artboard", "value": "ARTBOARD" }, { "id": "anchor", "label": "Anchor", "value": "ANCHOR" }], "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true },
       { "id": "operation_mode", "kind": "select", "label": "Mode", "payloadKey": "operation_mode", "defaultValue": "TRANSFORM", "options": [{ "id": "transform", "label": "Transform", "value": "TRANSFORM" }, { "id": "distribute", "label": "Distribute", "value": "DISTRIBUTE" }], "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true },
+      { "id": "copy_selection", "kind": "toggle", "label": "Copy selection", "payloadKey": "copy_selection", "defaultValue": false, "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true },
       { "id": "value", "kind": "number", "label": "Value", "payloadKey": "value", "defaultValue": 90, "step": 1, "x": 8, "y": 8, "width": 120, "height": 36, "zIndex": 1, "hidden": true }
     ],
     "childBehaviors": {
       "center_world": { "fieldPatch": { "center_mode": "ARTBOARD" }, "execute": false },
       "center_cursor": { "fieldPatch": { "center_mode": "ANCHOR" }, "execute": false },
-      "preset_30": { "fieldPatch": { "operation_mode": "TRANSFORM", "value": 30 }, "execute": true, "payloadTemplate": { "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "value": { "$field": "value" } } },
-      "preset_45": { "fieldPatch": { "operation_mode": "TRANSFORM", "value": 45 }, "execute": true, "payloadTemplate": { "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "value": { "$field": "value" } } },
-      "preset_90": { "fieldPatch": { "operation_mode": "TRANSFORM", "value": 90 }, "execute": true, "payloadTemplate": { "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "value": { "$field": "value" } } },
+      "preset_30": { "fieldPatch": { "operation_mode": "TRANSFORM", "value": 30 }, "execute": true, "payloadTemplate": { "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "copy_selection": { "$field": "copy_selection" }, "value": { "$field": "value" } } },
+      "preset_45": { "fieldPatch": { "operation_mode": "TRANSFORM", "value": 45 }, "execute": true, "payloadTemplate": { "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "copy_selection": { "$field": "copy_selection" }, "value": { "$field": "value" } } },
+      "preset_90": { "fieldPatch": { "operation_mode": "TRANSFORM", "value": 90 }, "execute": true, "payloadTemplate": { "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "copy_selection": { "$field": "copy_selection" }, "value": { "$field": "value" } } },
       "mode_transform": { "fieldPatch": { "operation_mode": "TRANSFORM" }, "activationPatch": { "value": 90 }, "execute": false },
-      "mode_distribute": { "fieldPatch": { "operation_mode": "DISTRIBUTE" }, "activationPatch": { "value": 3 }, "execute": false },
-      "apply_negative": { "execute": true, "payloadTemplate": { "command": "apply", "direction": "negative", "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "value": { "$field": "value" } } },
-      "apply_positive": { "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "value": { "$field": "value" } } },
+      "mode_distribute": { "fieldPatch": { "operation_mode": "DISTRIBUTE", "copy_selection": false }, "activationPatch": { "value": 3 }, "execute": false },
+      "apply_negative": { "execute": true, "payloadTemplate": { "command": "apply", "direction": "negative", "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "copy_selection": { "$field": "copy_selection" }, "value": { "$field": "value" } } },
+      "apply_positive": { "execute": true, "payloadTemplate": { "command": "apply", "direction": "positive", "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" }, "copy_selection": { "$field": "copy_selection" }, "value": { "$field": "value" } } },
+      "toggle_copy": { "toggleFields": ["copy_selection"], "fieldPatch": { "operation_mode": "TRANSFORM" }, "execute": false },
       "value_input": { "inlineEditField": "value", "execute": false }
     }
   }

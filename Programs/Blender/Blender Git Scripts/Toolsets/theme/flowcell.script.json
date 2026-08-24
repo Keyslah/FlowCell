@@ -39,7 +39,7 @@
       "title": "Blender Theme",
       "width": 920,
       "height": 720,
-      "minWidth": 720,
+      "minWidth": 920,
       "minHeight": 560
     },
     "actions": [
@@ -2034,6 +2034,38 @@
         }
       },
       {
+        "id": "picture.grid.remove",
+        "handler": {
+          "kind": "program",
+          "capability": "blender-theme-page",
+          "payload": {
+            "command": "remove_grid",
+            "action": "remove_grid"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "type": "string"
+            },
+            "grid_enabled": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "message",
+            "grid_enabled"
+          ]
+        }
+      },
+      {
         "id": "picture.startup",
         "handler": {
           "kind": "program",
@@ -2077,6 +2109,9 @@
             "static_background_path": {
               "type": "string"
             },
+            "grid_enabled": {
+              "type": "boolean"
+            },
             "grid_spacing_m": {
               "type": "number"
             },
@@ -2104,6 +2139,7 @@
           "required": [
             "message",
             "static_background_path",
+            "grid_enabled",
             "grid_spacing_m",
             "grid_distance_m",
             "grid_far_spacing_m",
@@ -2591,6 +2627,9 @@
             "place_picture_runtime_has_view3d": {
               "type": "boolean"
             },
+            "grid_enabled": {
+              "type": "boolean"
+            },
             "grid_spacing_m": {
               "type": "number"
             },
@@ -2621,6 +2660,7 @@
             "place_picture_runtime_has_background_handler",
             "place_picture_runtime_has_overlay_handler",
             "place_picture_runtime_has_view3d",
+            "grid_enabled",
             "grid_spacing_m",
             "grid_distance_m",
             "grid_far_spacing_m",
@@ -2657,12 +2697,10 @@
     ],
     "config": {
       "copy": {
-        "eyebrow": "Blender",
-        "title": "Theme",
-        "subtitle": "UI colors, Place Picture grid, and HDRI environment",
-        "themeSectionTitle": "Theme and palette",
-        "pictureSectionTitle": "Picture and grid",
-        "environmentSectionTitle": "HDRI environment",
+        "themeSectionTitle": "Theme Palette",
+        "pictureSectionTitle": "Place Picture",
+        "environmentSectionTitle": "HDRI",
+        "removingGrid": "Removing the grid...",
         "paletteLabel": "Sampled palette",
         "loading": "Loading owner state…",
         "ready": "Blender Theme is ready.",
@@ -2690,31 +2728,64 @@
       "actionLabels": {
         "theme.image.select": "Browse",
         "theme.image.sample": "Sample",
-        "theme.absorb": "Absorb",
+        "theme.absorb": "Absorb Theme",
         "theme.refill": "Refill",
-        "theme.fields.save": "Save Fields",
-        "theme.fields.load": "Load Fields",
+        "theme.fields.save": "Save Buckets",
+        "theme.fields.load": "Load Buckets",
         "theme.package.save": "Save Package",
-        "theme.package.open": "Open",
+        "theme.package.open": "Open Package",
         "theme.package.previous": "Previous",
         "theme.package.next": "Next",
-        "theme.mode.dark": "Dark",
-        "theme.mode.light": "Light",
+        "theme.mode.dark": "Dark Theme",
+        "theme.mode.light": "Light Theme",
+        "theme.profile.save": "Save profile",
         "theme.apply": "Apply",
         "theme.apply-bucket": "Apply",
         "picture.file.select": "Browse",
-        "picture.apply": "Apply Picture",
-        "picture.grid": "Apply Grid",
+        "picture.apply": "Place Picture",
+        "picture.grid": "Grid",
+        "picture.grid.remove": "Remove Grid",
         "picture.startup": "Startup",
         "picture.clear": "Clear",
-        "environment.file.select": "Browse",
-        "environment.apply": "Apply HDRI",
-        "environment.clear": "Clear World",
-        "environment.reset": "Reset World",
+        "environment.file.select": "HDRI Browse",
+        "environment.apply": "HDRI Apply",
+        "environment.clear": "Clear",
+        "environment.reset": "Reset",
         "environment.rotation-x": "X",
         "environment.rotation-y": "Y",
         "environment.rotation-z": "Z",
         "environment.strength": "WS"
+      },
+      "actionTooltips": {
+        "theme.image.select": "Pick an image, sample theme colors, and place it as the Place Picture image.",
+        "theme.image.sample": "Sample theme colors from the selected reference image.",
+        "theme.absorb": "Read the current Blender theme and stage all visible buckets.",
+        "theme.refill": "Randomly remix the staged sampled colors into a different bucket set and apply it.",
+        "theme.fields.save": "Save the current staged Blender theme buckets for later reuse.",
+        "theme.fields.load": "Load saved Blender theme buckets back into this page.",
+        "theme.package.save": "Save the actual theme image(s) plus the staged bucket colors into the Blender themes folder.",
+        "theme.package.open": "Pick a saved theme package, or browse for one.",
+        "theme.package.previous": "Load the previous saved theme package.",
+        "theme.package.next": "Load the next saved theme package.",
+        "theme.mode.dark": "Stage a dark theme preset on this page. Apply sends it to Blender.",
+        "theme.mode.light": "Stage a light theme preset on this page. Apply sends it to Blender.",
+        "theme.profile.save": "Save the current darkness settings under the entered profile name.",
+        "theme.apply": "Apply the currently visible theme role colors.",
+        "theme.apply-bucket": "Apply only this theme bucket.",
+        "picture.file.select": "Pick a Place Picture image.",
+        "picture.apply": "Place the picture path in the Blender viewport with the overlay.",
+        "picture.grid": "Apply the entered near, distance, and far grid spacing values.",
+        "picture.grid.remove": "Hide only the fake grid; keep any Place Picture image and gizmos active.",
+        "picture.startup": "Save the current Place Picture image so Blender restores it on startup.",
+        "picture.clear": "Remove the Place Picture background, grid, and gizmos, and clear the picture path.",
+        "environment.file.select": "Pick an HDRI file.",
+        "environment.apply": "Apply the HDRI path in the field.",
+        "environment.clear": "Clear the current HDRI world from this file.",
+        "environment.reset": "Rebuild a clean Blender world for this file and reapply the current HDRI values.",
+        "environment.rotation-x": "Apply the entered X rotation.",
+        "environment.rotation-y": "Apply the entered Y rotation.",
+        "environment.rotation-z": "Apply the entered Z rotation.",
+        "environment.strength": "Apply the entered world strength."
       },
       "fields": [
         {
@@ -2833,7 +2904,7 @@
         {
           "id": "static_background_path",
           "kind": "path",
-          "label": "Background picture",
+          "label": "Place Picture",
           "placeholder": "Choose a picture",
           "defaultValue": ""
         },
@@ -2919,7 +2990,7 @@
       "roles": [
         {
           "id": "tabs",
-          "label": "Tabs",
+          "label": "Tab Fill",
           "fieldId": "tabs_hex",
           "group": "structure",
           "tone": {
@@ -2930,7 +3001,7 @@
         },
         {
           "id": "headers",
-          "label": "Headers",
+          "label": "Header",
           "fieldId": "headers_hex",
           "group": "structure",
           "tone": {
@@ -2941,7 +3012,7 @@
         },
         {
           "id": "editor",
-          "label": "Editor",
+          "label": "Panel",
           "fieldId": "editor_background_hex",
           "group": "structure",
           "tone": {
@@ -2952,7 +3023,7 @@
         },
         {
           "id": "scene",
-          "label": "Scene",
+          "label": "Collection Row",
           "fieldId": "scene_hex",
           "group": "structure",
           "tone": {
@@ -2963,7 +3034,7 @@
         },
         {
           "id": "controls",
-          "label": "Controls",
+          "label": "Control Fill",
           "fieldId": "controls_hex",
           "group": "structure",
           "tone": {
@@ -2990,7 +3061,7 @@
         },
         {
           "id": "text",
-          "label": "Text",
+          "label": "random text",
           "fieldId": "text_hex",
           "group": "text",
           "tone": "text",
@@ -2998,7 +3069,7 @@
         },
         {
           "id": "control_text",
-          "label": "Control text",
+          "label": "tool text",
           "fieldId": "control_text_hex",
           "group": "text",
           "tone": "text",
@@ -3006,7 +3077,7 @@
         },
         {
           "id": "accent_text",
-          "label": "Accent text",
+          "label": "scene/header text",
           "fieldId": "accent_text_hex",
           "group": "text",
           "tone": "text",
@@ -3025,7 +3096,7 @@
         },
         {
           "id": "viewport",
-          "label": "Viewport",
+          "label": "Viewport BG",
           "fieldId": "viewport_background_hex",
           "group": "viewport",
           "tone": {
@@ -3036,7 +3107,7 @@
         },
         {
           "id": "viewport_gradient",
-          "label": "Gradient",
+          "label": "Gradient 2",
           "fieldId": "viewport_gradient_hex",
           "group": "viewport",
           "tone": {
@@ -3047,7 +3118,7 @@
         }
       ],
       "gradient": {
-        "label": "Use viewport gradient",
+        "label": "Use gradient",
         "enabledFieldId": "viewport_gradient_enabled",
         "backgroundFieldId": "viewport_background_hex",
         "gradientFieldId": "viewport_gradient_hex"
@@ -3107,6 +3178,7 @@
           "select": "picture.file.select",
           "apply": "picture.apply",
           "grid": "picture.grid",
+          "removeGrid": "picture.grid.remove",
           "startup": "picture.startup",
           "clear": "picture.clear"
         },
@@ -3126,7 +3198,8 @@
       "localActions": {
         "refill": "theme.refill",
         "darkMode": "theme.mode.dark",
-        "lightMode": "theme.mode.light"
+        "lightMode": "theme.mode.light",
+        "saveProfile": "theme.profile.save"
       },
       "payloadMaps": {
         "theme": {
@@ -3220,8 +3293,7 @@
         "sliderLabel": "Theme darkness",
         "profileSelectLabel": "Darkness profile",
         "currentProfileLabel": "Current tone",
-        "profileNamePlaceholder": "Name current darkness",
-        "profileSaveLabel": "Save profile"
+        "profileNamePlaceholder": "Name current darkness"
       }
     }
   }

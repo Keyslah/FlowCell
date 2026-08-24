@@ -1041,7 +1041,7 @@ test("text-edit selections are ignored by artwork placement", async () => {
   assert.deepEqual(target._stack, []);
 });
 
-test("Duplicate, Delete, and Force Delete dispatch directly without requiring a tree highlight", async () => {
+test("Duplicate requires a tree highlight while Delete and Force Delete dispatch directly", async () => {
   const pageScript = await readText("page/page.js");
   const toolbar = pageScript.slice(
     pageScript.indexOf("function bindToolbar"),
@@ -1053,8 +1053,8 @@ test("Duplicate, Delete, and Force Delete dispatch directly without requiring a 
   );
 
   assert.match(duplicateHandler, /runAction\("duplicate",\s*\{\s*keys:\s*keys\s*\}/);
-  assert.match(duplicateHandler, /var keys\s*=\s*highlightedKeys\(\)/);
-  assert.doesNotMatch(duplicateHandler, /requireSelection/);
+  assert.match(duplicateHandler, /var keys\s*=\s*requireSelection\(/);
+  assert.match(duplicateHandler, /if \(!keys\) return;/);
   assert.match(
     toolbar,
     /runAction\("delete",\s*\{\s*keys:\s*highlightedKeys\(\),\s*force:\s*force\s*\}/
@@ -1064,12 +1064,14 @@ test("Duplicate, Delete, and Force Delete dispatch directly without requiring a 
   assert.doesNotMatch(pageScript, /openForceDeleteDialog|forceDialog|forceConfirm/);
 });
 
-test("duplicate prefers selected artwork, copies the complete layer tree, and falls back to highlighted rows", async () => {
+test("duplicate uses only highlighted rows and copies the complete layer tree", async () => {
   const source = await readFile(jsxPath, "utf8");
   const nested = mockLayer("Nested", { locked: true, visible: false });
   mockPageItem(nested, "Nested artwork", { hidden: true, locked: true });
+  const nestedRight = mockLayer("Nested Right");
+  mockPageItem(nestedRight, "Nested right artwork");
   const selectedLayer = mockLayer("Selected", {
-    children: [nested],
+    children: [nested, nestedRight],
     locked: true,
     visible: false,
     artworkKnockout: "ENABLED",
@@ -1086,7 +1088,7 @@ test("duplicate prefers selected artwork, copies the complete layer tree, and fa
     locked: true
   });
   const rootBottom = mockPageItem(selectedLayer, "Root bottom");
-  setMockStack(selectedLayer, [rootTop, nested, rootBottom]);
+  setMockStack(selectedLayer, [rootTop, nested, nestedRight, rootBottom]);
   const highlightedFallback = mockLayer("Highlighted Fallback");
   const selectedDocument = mockDocument([
     selectedLayer,
@@ -1094,34 +1096,34 @@ test("duplicate prefers selected artwork, copies the complete layer tree, and fa
     mockLayer("Spare")
   ]);
   selectedDocument.selection = [
-    mockSelectedObject(selectedLayer),
-    mockSelectedObject(nested)
+    mockSelectedObject(nested),
+    mockSelectedObject(nestedRight)
   ];
 
-  const selectedResult = runDuplicateSource(source, selectedDocument, { keys: ["1"] });
-  assert.equal(selectedResult.ok, true);
+  const highlightedResult = runDuplicateSource(source, selectedDocument, { keys: ["0"] });
+  assert.equal(highlightedResult.ok, true);
   assert.equal(
     selectedDocument.layers.filter((layer) => layer.name === "Selected1").length,
     1,
-    "a selected parent and descendant must produce one normalized subtree copy"
-  );
-  assert.equal(
-    selectedDocument.layers.some((layer) => layer.name === "Highlighted Fallback1"),
-    false,
-    "native artwork selection must win over a conflicting highlighted row"
+    "the highlighted parent must produce one sibling copy"
   );
   const selectedCopy = selectedDocument.layers.find((layer) => layer.name === "Selected1");
   assert.ok(selectedCopy);
+  assert.equal(selectedCopy.parent, selectedDocument);
   assert.equal(selectedDocument.activeLayer, selectedCopy);
-  assert.equal(selectedCopy.layers.length, 1);
-  assert.equal(selectedCopy.layers[0].name, "Nested");
+  assert.equal(selectedCopy.layers.length, 2);
+  assert.deepEqual(selectedCopy.layers.map((layer) => layer.name), ["Nested", "Nested Right"]);
   assert.deepEqual(
     selectedCopy._stack.map((entry) => entry.name),
-    ["Root top", "Nested", "Root bottom"],
+    ["Root top", "Nested", "Nested Right", "Root bottom"],
     "artwork and sublayers must retain their shared Illustrator stacking order"
   );
   assert.equal(
     selectedCopy.layers[0].pageItems.some((item) => item.name === "Nested artwork"),
+    true
+  );
+  assert.equal(
+    selectedCopy.layers[1].pageItems.some((item) => item.name === "Nested right artwork"),
     true
   );
   assert.equal(selectedLayer.visible, false);
@@ -1140,22 +1142,33 @@ test("duplicate prefers selected artwork, copies the complete layer tree, and fa
   assert.equal(selectedCopy.preview, false);
   assert.equal(selectedCopy.printable, false);
   assert.equal(selectedCopy.sliced, true);
+  assert.equal(
+    selectedLayer.layers.some((layer) => layer.name === "Nested1" || layer.name === "Nested Right1"),
+    false,
+    "selected child artwork must not redirect Duplicate into the highlighted parent"
+  );
 
   const highlightedChild = mockLayer("Highlighted Child");
   mockPageItem(highlightedChild, "Highlighted artwork");
   const highlightedRoot = mockLayer("Highlighted Root", { children: [highlightedChild] });
   const highlightedDocument = mockDocument([highlightedRoot, mockLayer("Spare")]);
-  const highlightedResult = runDuplicateSource(source, highlightedDocument, { keys: ["0.0"] });
-  assert.equal(highlightedResult.ok, true);
+  const highlightedOnlyResult = runDuplicateSource(source, highlightedDocument, { keys: ["0.0"] });
+  assert.equal(highlightedOnlyResult.ok, true);
   assert.equal(
     highlightedRoot.layers.some((layer) => layer.name === "Highlighted Child1"),
     true
   );
 
-  const emptyDocument = mockDocument([mockLayer("Only"), mockLayer("Spare")]);
-  const emptyResult = runDuplicateSource(source, emptyDocument);
-  assert.equal(emptyResult.ok, false);
-  assert.match(emptyResult.error, /Select Illustrator objects or highlight/i);
+  const selectionOnlyLayer = mockLayer("Selection Only");
+  const selectionOnlyDocument = mockDocument([selectionOnlyLayer, mockLayer("Spare")]);
+  selectionOnlyDocument.selection = [mockSelectedObject(selectionOnlyLayer)];
+  const selectionOnlyResult = runDuplicateSource(source, selectionOnlyDocument);
+  assert.equal(selectionOnlyResult.ok, false);
+  assert.match(selectionOnlyResult.error, /Highlight one or more Layer Tree rows/i);
+  assert.deepEqual(
+    selectionOnlyDocument.layers.map((layer) => layer.name),
+    ["Selection Only", "Spare"]
+  );
   assert.doesNotMatch(source, /\.layer\.duplicate\s*\(/);
 });
 
@@ -1165,25 +1178,21 @@ test("duplicate sublayer names advance one compact trailing number", async () =>
   mockPageItem(original, "Artwork");
   const root = mockLayer("Root", { children: [original] });
   const document = mockDocument([root, mockLayer("Spare")]);
-  document.selection = [mockSelectedObject(original)];
-
-  const firstResult = runDuplicateSource(source, document);
+  const firstResult = runDuplicateSource(source, document, { keys: ["0.0"] });
   assert.equal(firstResult.ok, true);
   assert.equal(root.layers.some((layer) => layer.name === "name1"), true);
 
-  const secondResult = runDuplicateSource(source, document);
+  const secondResult = runDuplicateSource(source, document, { keys: ["0.0"] });
   assert.equal(secondResult.ok, true);
   assert.equal(root.layers.some((layer) => layer.name === "name2"), true);
 
-  const firstCopy = root.layers.find((layer) => layer.name === "name1");
-  document.selection = [mockSelectedObject(firstCopy)];
-  const thirdResult = runDuplicateSource(source, document);
+  const thirdResult = runDuplicateSource(source, document, { keys: ["0.0"] });
   assert.equal(thirdResult.ok, true);
   assert.equal(root.layers.some((layer) => layer.name === "name3"), true);
   assert.equal(root.layers.some((layer) => /\bcopy\b/i.test(layer.name)), false);
 });
 
-test("duplicate rolls back every completed root when a later selected layer cannot be copied", async () => {
+test("duplicate rolls back every completed root when a later highlighted layer cannot be copied", async () => {
   const source = await readFile(jsxPath, "utf8");
   const first = mockLayer("First");
   mockPageItem(first, "First artwork");
@@ -1194,9 +1203,7 @@ test("duplicate rolls back every completed root when a later selected layer cann
     duplicateError: "unsupported artwork"
   });
   const document = mockDocument([first, second, mockLayer("Spare")]);
-  document.selection = [mockSelectedObject(first), mockSelectedObject(second)];
-
-  const result = runDuplicateSource(source, document);
+  const result = runDuplicateSource(source, document, { keys: ["0", "1"] });
   assert.equal(result.ok, false);
   assert.match(result.error, /unsupported artwork/);
   assert.deepEqual(document.layers.map((layer) => layer.name), ["First", "Second", "Spare"]);
@@ -1217,9 +1224,7 @@ test("duplicate removes a temporary source anchor when Illustrator rejects its p
     anchorMoveError: "anchor placement failed"
   });
   const document = mockDocument([target, mockLayer("Spare")]);
-  document.selection = [mockSelectedObject(target)];
-
-  const result = runDuplicateSource(source, document);
+  const result = runDuplicateSource(source, document, { keys: ["0"] });
   assert.equal(result.ok, false);
   assert.match(result.error, /anchor placement failed/);
   assert.deepEqual(document.layers.map((layer) => layer.name), ["Target", "Spare"]);

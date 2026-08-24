@@ -25,6 +25,7 @@ SLOT_PAYLOADS = {
     "z_surface": {"command": "align_axis", "axis": "Z", "mode": "CENTER", "modifier": "SURFACE"},
     "z_geo": {"command": "align_axis", "axis": "Z", "mode": "CENTER", "modifier": "GEOCENTER"},
     "center_everything": {"command": "center_all"},
+    "center_xy": {"command": "center_xy"},
 }
 
 
@@ -135,15 +136,25 @@ def _run_alignment(context, data):
     active_min, active_max = _alignment_bounds(active)
     active_center = (active_min + active_max) / 2.0
 
-    if command == "center_all":
+    if command in {"center_all", "center_xy"}:
+        axis_indexes = (0, 1, 2) if command == "center_all" else (0, 1)
         for obj in moved_objects:
             obj_min, obj_max = _alignment_bounds(obj)
             obj_center = (obj_min + obj_max) / 2.0
+            offset = active_center - obj_center
             matrix = obj.matrix_world.copy()
-            matrix.translation = matrix.translation + (active_center - obj_center)
+            translation = matrix.translation.copy()
+            for axis_index in axis_indexes:
+                translation[axis_index] += offset[axis_index]
+            matrix.translation = translation
             obj.matrix_world = matrix
         _restore_selection(context, selected_objects, active)
-        return _result("ok", f"Centered {len(moved_objects)} object(s).", changed=len(moved_objects))
+        message = (
+            f"Centered {len(moved_objects)} object(s) on X and Y."
+            if command == "center_xy"
+            else f"Centered {len(moved_objects)} object(s)."
+        )
+        return _result("ok", message, changed=len(moved_objects))
 
     if command != "align_axis":
         raise ValueError(f"Unsupported alignment command: {command}")

@@ -115,11 +115,12 @@ by Illustrator using the current Blender scene unit scale, gives it the exact
 requested full thickness without scaling Z, converts it to a mesh, places its
 base at world Z=0, and restores the sublayer center's X/Y offset from the center
 of the combined Illustrator selection. Finished meshes are linked exclusively
-to the scene's top-level `Live` collection; temporary collections created by
-Before conversion, the importer raises Blender's SVG curve tessellation
+to the scene's top-level `Live` collection. Before conversion, the importer
+raises Blender's SVG curve tessellation
 resolution from its usual 12 steps to 16. This produces smoother printable
-sidewalls without changing the artwork's physical dimensions. Blender's SVG
-importer and its zero-user Curve data blocks are removed after conversion.
+sidewalls without changing the artwork's physical dimensions. Temporary
+collections created by Blender's SVG importer and its zero-user Curve data
+blocks are removed after conversion.
 
 The mesh conversion welds only coincident cap/side seam vertices using a
 scale-aware tolerance. If Blender's single-precision tessellator collapses a
@@ -130,6 +131,12 @@ degenerate or duplicate faces, or disjoint self-intersections. Any unsafe item
 rolls back the entire imported batch, including newly created Curve and Mesh
 data blocks, so `Ill Orca` cannot export or launch a slicer with a broken
 extrusion.
+
+The self-intersection check excludes only Blender's exact outer-cap boundary
+subdivision artifact: a standard extrusion wall in the same connected component
+whose manifold cap-plane edge lies wholly on one manifold edge of an outer cap
+triangle. Cross-component contacts, wall crossings through a cap interior, and
+all other BVH overlaps remain unsafe.
 
 The source filename remains authoritative for extrusion: only a positive number
 in parentheses at the beginning, such as `(2.5) Name.svg`, means 2.5 mm. Every

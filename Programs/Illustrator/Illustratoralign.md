@@ -8,22 +8,24 @@ Install the Illustrator payload, then assign `Illustrator > Actions > Set Anchor
 
 After the anchor is set, select the object or objects you want to move and press an align button. Anchor-based moves use the stored bounds and center as a fixed target and include every selected page item, including the object that originally captured the anchor. The `Art` button targets the active artboard directly.
 
-The X and Y rows each have three independent states: neither mode (the default), `Origin`, or `Surface`. With neither mode pressed, Min and Max align matching visible edges. Clicking Surface or Origin selects only that mode on that axis and releases its partner; clicking the already-selected mode releases it so both buttons are up again. Changing X never changes Y. Mode clicks perform no movement. Min and Max use the active state, while Center always aligns centers and does not change it.
+The X and Y rows each keep an independent `Origin` mode for Min and Max. With Origin released, Min and Max align matching visible edges; with Origin pressed, they align the selected artwork's center-point origin to the requested anchor edge. Clicking the already-selected Origin button releases it. Center always aligns centers and does not change Origin mode.
+
+Surface is an immediate action instead of a mode. Pressing X Surface or Y Surface moves the selected artwork flush against the opposite outside surface of the anchor on that axis. Pressing the same Surface button again flips the artwork back to the other side, so repeated presses toggle between the Min and Max outside surfaces. Surface does not change the axis's Origin mode.
 
 ## Button Reference
 
 | Button | Description |
 | --- | --- |
-| `X Min` | With neither mode selected, matches the selected object's left edge to the anchor's left edge. In Origin mode, moves the selected object's horizontal center to the anchor's left edge. In Surface mode, places the selected object's right edge against the anchor's left edge. |
+| `X Min` | Matches the selected object's left edge to the anchor's left edge. In Origin mode, moves the selected object's horizontal center to the anchor's left edge. |
 | `X Center` | Moves the selected object horizontally so its visible center matches the anchor's horizontal center, regardless of mode. |
-| `X Max` | With neither mode selected, matches the selected object's right edge to the anchor's right edge. In Origin mode, moves the selected object's horizontal center to the anchor's right edge. In Surface mode, places the selected object's left edge against the anchor's right edge. |
-| `X Surface` | Toggles Surface mode for X without moving anything. Selecting it releases X Origin; clicking it again releases Surface. |
-| `X Origin` | Toggles Origin mode for X without moving anything. Selecting it releases X Surface; clicking it again releases Origin. |
-| `Y Min` | With neither mode selected, matches the selected object's bottom edge to the anchor's bottom edge. In Origin mode, moves the selected object's vertical center to the anchor's bottom edge. In Surface mode, places the selected object's top edge against the anchor's bottom edge. |
+| `X Max` | Matches the selected object's right edge to the anchor's right edge. In Origin mode, moves the selected object's horizontal center to the anchor's right edge. |
+| `X Surface` | Moves the selected object to the opposite outside X surface. Repeated presses alternate between placing its right edge against the anchor's left edge and its left edge against the anchor's right edge. |
+| `X Origin` | Toggles Origin mode for X without moving anything. Clicking it again releases Origin. |
+| `Y Min` | Matches the selected object's bottom edge to the anchor's bottom edge. In Origin mode, moves the selected object's vertical center to the anchor's bottom edge. |
 | `Y Center` | Moves the selected object vertically so its visible center matches the anchor's vertical center, regardless of mode. |
-| `Y Max` | With neither mode selected, matches the selected object's top edge to the anchor's top edge. In Origin mode, moves the selected object's vertical center to the anchor's top edge. In Surface mode, places the selected object's bottom edge against the anchor's top edge. |
-| `Y Surface` | Toggles Surface mode for Y without moving anything. Selecting it releases Y Origin; clicking it again releases Surface. |
-| `Y Origin` | Toggles Origin mode for Y without moving anything. Selecting it releases Y Surface; clicking it again releases Origin. |
+| `Y Max` | Matches the selected object's top edge to the anchor's top edge. In Origin mode, moves the selected object's vertical center to the anchor's top edge. |
+| `Y Surface` | Moves the selected object to the opposite outside Y surface. Repeated presses alternate between placing its top edge against the anchor's bottom edge and its bottom edge against the anchor's top edge. |
+| `Y Origin` | Toggles Origin mode for Y without moving anything. Clicking it again releases Origin. |
 | `Art` | Centers every selected page item on the active Illustrator artboard instead of the stored anchor. |
 | `Anchor` | Centers every selected page item on the stored FlowCell anchor in both X and Y. |
 | `Group` | Toggles virtual group movement. When active, FlowCell calculates one combined visible-bounds box and moves the participating items by the same delta, preserving their spacing. |

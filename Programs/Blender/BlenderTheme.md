@@ -60,27 +60,35 @@ network access.
 
 Theme controls:
 
+- The page opens without a decorative header. Four slightly taller bucket cards
+  fit per row; each card keeps its original label visible and keeps swatch, hex,
+  and `Apply` on one control line. Gradient 2 carries one unlabeled checkbox
+  directly beside its name instead of a separate description row. Darkness
+  profile controls sit directly after `Load Buckets`. Every action Button has
+  its original explanatory hover tooltip, with behavior-accurate descriptions
+  for newer controls.
 - `Browse` selects and samples a reference image through the generic
   `image.sample-palette` broker capability.
-- `Absorb` reads Blender's current theme into the package fields.
-- `Refill`, `Dark`, `Light`, the tone slider, and named profiles stage colors
+- `Absorb Theme` reads Blender's current theme into the package fields.
+- `Refill`, `Dark Theme`, `Light Theme`, the tone slider, and named profiles stage colors
   with package-owned tone logic.
 - Every visible color bucket has a package-declared per-bucket Apply action;
   the full `Apply` action sends the complete staged theme.
-- `Save Fields` and `Load Fields` use generic field-file operations.
-- `Previous`, `Open`, `Next`, and `Save Package` use the generic package
+- `Save Buckets` and `Load Buckets` use generic field-file operations.
+- `Previous`, `Open Package`, `Next`, and `Save Package` use the generic package
   library operations and the package's declared field and asset mappings.
 
 Place Picture controls:
 
-- `Browse`, `Apply Picture`, `Apply Grid`, `Startup`, and `Clear` operate on the
-  declared image-path and grid fields.
+- `Browse`, `Place Picture`, `Grid`, `Remove Grid`, `Startup`, and `Clear`
+  operate on the declared image-path and grid fields. `Remove Grid` leaves the
+  picture and fake gizmos active.
 - Near spacing, distance, and far spacing are owner-state fields sent only to
   fixed package-declared `theme.py` commands.
 
 HDRI controls:
 
-- `Browse`, `Apply HDRI`, `Clear World`, and `Reset World` manage the world
+- `HDRI Browse`, `HDRI Apply`, `Clear`, and `Reset` manage the world
   image.
 - `X`, `Y`, `Z`, and `WS` apply the declared rotation and strength fields.
 
@@ -88,6 +96,11 @@ The page declares the owner-contained `blender-theme-page` capability. Startup
 restoration remains declared by the package as
 `restore-project-theme-state`; it resolves the installed owner instead of a
 hardcoded Theme action name.
+
+Theme apply commits the current theme and live Place Picture as one owner
+startup bundle, including grid values and grid visibility. Package load applies
+or clears its picture first and applies the theme last, so a saved theme cannot
+restore with an older picture.
 
 ## Validation And Reload
 

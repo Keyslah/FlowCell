@@ -24,7 +24,14 @@ const blenderRegistryInstallerSource = readFileSync(blenderRegistryInstallerPath
 
 function loadTestApi(postAction, appOverride) {
   const globalObject = { __FLOWCELL_SEND_SVG_TO_BLENDER_TEST__: true };
-  const context = { $: { global: globalObject } };
+  const context = {
+    $: { global: globalObject },
+    StrokeCap: {
+      BUTTENDCAP: "butt",
+      ROUNDENDCAP: "round",
+      PROJECTINGENDCAP: "projecting"
+    }
+  };
   if (postAction !== undefined) {
     context.FLOWCELL_SEND_SVG_POST_ACTION = postAction;
   }
@@ -50,17 +57,20 @@ function mockItem(parent, typename = "PathItem") {
   };
 }
 
-test("extrusion comes only from a positive decimal parenthesized at the absolute beginning", () => {
+test("a positive leading number sets extrusion with or without parentheses", () => {
   const { parseExtrudeMillimeters } = loadTestApi();
 
   assert.equal(parseExtrudeMillimeters("(9) Name"), 9);
   assert.equal(parseExtrudeMillimeters("(2.5) Name"), 2.5);
+  assert.equal(parseExtrudeMillimeters("14Main stencil"), 14);
+  assert.equal(parseExtrudeMillimeters("2connect"), 2);
+  assert.equal(parseExtrudeMillimeters("9 Name"), 9);
+  assert.equal(parseExtrudeMillimeters("3.25Part"), 3.25);
 
   for (const invalid of [
     " (9) Name",
     "   (3.25) Name",
     "V9 Name",
-    "9 Name",
     "Name (9)",
     "(0) Name",
     "(0.0) Name",
@@ -118,6 +128,21 @@ test("selection is grouped by nearest layer identity and ignores text cursors an
   assert.equal(groups[1].extrudeMm, 1);
 });
 
+test("export groups carry the exact leading-name millimeter values", () => {
+  const { resolveExportGroups } = loadTestApi();
+  const document = { typename: "Document" };
+  const mainLayer = mockLayer("14Main stencil", document);
+  const connectLayer = mockLayer("2connect", document);
+
+  const groups = resolveExportGroups([mockItem(mainLayer), mockItem(connectLayer)]);
+
+  assert.equal(groups.length, 2);
+  assert.equal(groups[0].fileName, "14Main stencil");
+  assert.equal(groups[0].extrudeMm, 14);
+  assert.equal(groups[1].fileName, "2connect");
+  assert.equal(groups[1].extrudeMm, 2);
+});
+
 test("multiple owner layers retain their centers relative to the combined Illustrator selection", () => {
   const { resolveExportGroups, pointsToMillimeters } = loadTestApi();
   const firstLayer = mockLayer("First");
@@ -139,6 +164,69 @@ test("multiple owner layers retain their centers relative to the combined Illust
   assert.ok(
     Math.abs((groups[1].offsetYmm - groups[0].offsetYmm) - pointsToMillimeters(20)) < 1e-12
   );
+});
+
+test("cleanup center shifts are added to the exported layer placement", () => {
+  const { adjustOffsetsForBoundsCenterShift, pointsToMillimeters } = loadTestApi();
+  const adjusted = adjustOffsetsForBoundsCenterShift(
+    10,
+    -4,
+    [100, 300, 300, 100],
+    [104, 294, 304, 94]
+  );
+
+  assert.ok(Math.abs(adjusted.offsetXmm - (10 + pointsToMillimeters(4))) < 1e-12);
+  assert.ok(Math.abs(adjusted.offsetYmm - (-4 - pointsToMillimeters(6))) < 1e-12);
+});
+
+test("the cleaned Orca batch preserves layer alignment and recenters on the cleaned artwork", () => {
+  const {
+    adjustOffsetsForBoundsCenterShift,
+    recenterExportItems
+  } = loadTestApi();
+  const mmToPoints = (millimeters) => millimeters * 72 / 25.4;
+  const correctedY = (dirtyOffsetYmm, removedArtifactShiftMm) =>
+    adjustOffsetsForBoundsCenterShift(
+      0,
+      dirtyOffsetYmm,
+      [0, 100, 100, 0],
+      [0, 100 - (2 * mmToPoints(removedArtifactShiftMm)), 100, 0]
+    ).offsetYmm;
+  const items = [
+    {
+      layerName: "Ring",
+      widthMm: 105.5001926,
+      heightMm: 105.4998481,
+      offsetXmm: 0,
+      offsetYmm: -1.7766
+    },
+    {
+      layerName: "14Main stencil",
+      widthMm: 103.6899625,
+      heightMm: 97.5013699,
+      offsetXmm: 0.0072565,
+      offsetYmm: correctedY(3.6597425, 2.116156)
+    },
+    {
+      layerName: "2connect",
+      widthMm: 102.4971029,
+      heightMm: 80.4943115,
+      offsetXmm: 1.2798643,
+      offsetYmm: correctedY(2.6232919, 6.922551)
+    }
+  ];
+
+  recenterExportItems(items);
+
+  assert.ok(Math.abs(items[0].offsetYmm) < 1e-9);
+  assert.ok(Math.abs(items[1].offsetYmm - 3.3201865) < 1e-7);
+  assert.ok(Math.abs(items[2].offsetYmm - (-2.5226591)) < 1e-7);
+  const top = Math.max(...items.map((item) => item.offsetYmm + item.heightMm / 2));
+  const bottom = Math.min(...items.map((item) => item.offsetYmm - item.heightMm / 2));
+  const left = Math.min(...items.map((item) => item.offsetXmm - item.widthMm / 2));
+  const right = Math.max(...items.map((item) => item.offsetXmm + item.widthMm / 2));
+  assert.ok(Math.abs((top + bottom) / 2) < 1e-9);
+  assert.ok(Math.abs((left + right) / 2) < 1e-9);
 });
 
 test("selected compound paths and clipping groups remain the exact selected export objects", () => {
@@ -197,8 +285,8 @@ test("distinct owner layers may not collide after Windows filename sanitation", 
   );
 });
 
-test("request JSON carries physical dimensions, relative placement, and the requested post action", () => {
-  const { buildRequestJson } = loadTestApi();
+test("request JSON carries the Illustrator document path, physical dimensions, placement, and post action", () => {
+  const { buildRequestJson, getDocumentPath } = loadTestApi();
   const request = JSON.parse(buildRequestJson("request-1", [
     {
       filepath: "C:\\FlowCell\\runtime\\svg-exports\\(2.5) A.svg",
@@ -209,12 +297,13 @@ test("request JSON carries physical dimensions, relative placement, and the requ
       offsetXmm: -3.5,
       offsetYmm: 7.25
     }
-  ], "orca"));
+  ], "orca", "C:\\Projects\\Stencil\\art.ai"));
 
   assert.deepEqual(request, {
     schemaVersion: 1,
     requestId: "request-1",
     postAction: "orca",
+    sourceDocumentPath: "C:\\Projects\\Stencil\\art.ai",
     items: [{
       filepath: "C:\\FlowCell\\runtime\\svg-exports\\(2.5) A.svg",
       layerName: "(2.5) A \"quoted\"",
@@ -225,6 +314,8 @@ test("request JSON carries physical dimensions, relative placement, and the requ
       offsetYmm: 7.25
     }]
   });
+  assert.equal(getDocumentPath({ fullName: { fsName: "C:\\Projects\\Stencil\\art.ai" } }), "C:\\Projects\\Stencil\\art.ai");
+  assert.equal(getDocumentPath({}), "");
   assert.doesNotMatch(source, /\bJSON\s*\./);
 });
 
@@ -389,12 +480,130 @@ test("Pathfinder Unite and expansion are mandatory and command errors fail close
   );
 });
 
+test("visible nested strokes are selected directly, compound paths are deduplicated, and outline errors fail closed", () => {
+  const layer = mockLayer("Stencil");
+  const group = { typename: "GroupItem", parent: layer, hidden: false, selected: false };
+  const compound = { typename: "CompoundPathItem", parent: group, hidden: false, selected: false };
+  const nestedStroke = normalizedPath(group, { stroked: true, selected: false });
+  const compoundStrokeA = normalizedPath(compound, { stroked: true, selected: false });
+  const compoundStrokeB = normalizedPath(compound, { stroked: true, selected: false });
+  const document = {
+    pathItems: [nestedStroke, compoundStrokeA, compoundStrokeB],
+    pageItems: [group],
+    layers: [],
+    selection: null,
+    activate() {
+      appMock.activeDocument = document;
+    }
+  };
+  const calls = [];
+  const appMock = {
+    activeDocument: null,
+    executeMenuCommand(command) {
+      calls.push(command);
+      if (command === "Live Outline Stroke") {
+        nestedStroke.stroked = false;
+        compoundStrokeA.stroked = false;
+        compoundStrokeB.stroked = false;
+      }
+    }
+  };
+  const { selectVisibleStrokedArtwork, outlineVisibleStrokes } = loadTestApi(undefined, appMock);
+
+  assert.equal(selectVisibleStrokedArtwork(document), 2);
+  assert.equal(nestedStroke.selected, true);
+  assert.equal(compound.selected, true);
+
+  outlineVisibleStrokes(document, "Stencil");
+  assert.deepEqual(calls, ["Live Outline Stroke", "expandStyle"]);
+
+  nestedStroke.stroked = true;
+  appMock.executeMenuCommand = (command) => {
+    throw new Error(`disabled: ${command}`);
+  };
+  assert.throws(
+    () => outlineVisibleStrokes(document, "Stencil"),
+    /could not complete stroke outlining: disabled: Live Outline Stroke/
+  );
+});
+
+test("only proven non-rendering one-anchor strokes are removed from the temporary export copy", () => {
+  const layer = mockLayer("2connect");
+  const group = { typename: "GroupItem", parent: layer, hidden: false };
+  const compound = { typename: "CompoundPathItem", parent: layer, hidden: false };
+  const makePath = (parent, overrides = {}) => ({
+    typename: "PathItem",
+    parent,
+    hidden: false,
+    guides: false,
+    clipping: false,
+    stroked: true,
+    filled: false,
+    closed: false,
+    strokeCap: "butt",
+    pathPoints: [{}],
+    length: 0,
+    area: 0,
+    visibleBounds: [10, 20, 10, 20],
+    geometricBounds: [10, 20, 10, 20],
+    removed: false,
+    remove() {
+      this.removed = true;
+    },
+    ...overrides
+  });
+  const orphanStroke = makePath(layer);
+  const adjacentOrphanStroke = makePath(layer);
+  const preserved = [
+    makePath(layer, { visibleBounds: [9, 21, 11, 19] }),
+    makePath(layer, { geometricBounds: [9, 21, 11, 19] }),
+    makePath(layer, { pathPoints: [{}, {}] }),
+    makePath(layer, { length: 0.001 }),
+    makePath(layer, { area: 0.001 }),
+    makePath(layer, { filled: true }),
+    makePath(layer, { guides: true }),
+    makePath(layer, { clipping: true }),
+    makePath(layer, { closed: true }),
+    makePath(layer, { strokeCap: "round" }),
+    makePath(layer, { strokeCap: "projecting" }),
+    makePath(group),
+    makePath(compound)
+  ];
+  const document = {
+    pathItems: [orphanStroke, adjacentOrphanStroke, ...preserved]
+  };
+  const { removeNonRenderingStrokedPaths } = loadTestApi();
+
+  assert.equal(removeNonRenderingStrokedPaths(document, "2connect"), 2);
+  assert.equal(orphanStroke.removed, true);
+  assert.equal(adjacentOrphanStroke.removed, true);
+  for (const pathItem of preserved) {
+    assert.equal(pathItem.removed, false);
+  }
+
+  const unreadable = makePath(layer);
+  Object.defineProperty(unreadable, "length", {
+    get() {
+      throw new Error("unreadable length");
+    }
+  });
+  assert.throws(
+    () => removeNonRenderingStrokedPaths({ pathItems: [unreadable] }, "2connect"),
+    /could not be checked for non-rendering geometry: unreadable length/
+  );
+});
+
 test("source enforces temporary vector cleanup, SVG 1.0 export, overwrite, and fixed handoff", () => {
   assert.match(source, /app\.documents\.add\(originalDocument\.documentColorSpace\)/);
   assert.match(source, /\.duplicate\(temporaryLayer, ElementPlacement\.PLACEATEND\)/);
   assert.match(source, /\.createOutline\(\)/);
   assert.match(source, /executeVectorCleanup\(temporaryDocument, "expandStyle"\)/);
-  assert.match(source, /executeVectorCleanup\(temporaryDocument, "Live Outline Stroke"\)/);
+  assert.match(source, /removeNonRenderingStrokedPaths\(temporaryDocument, group\.layerName\)/);
+  assert.doesNotMatch(source, /removeNonRenderingStrokedPaths\(originalDocument/);
+  assert.match(source, /outlineVisibleStrokes\(temporaryDocument, group\.layerName\)/);
+  assert.ok(source.indexOf("executeVectorCleanup(temporaryDocument") < source.indexOf("removeNonRenderingStrokedPaths(temporaryDocument"));
+  assert.ok(source.indexOf("removeNonRenderingStrokedPaths(temporaryDocument") < source.indexOf("outlineVisibleStrokes(temporaryDocument"));
+  assert.match(source, /executeRequiredVectorCleanup\(documentRef, "Live Outline Stroke", "stroke outlining", layerName\)/);
   assert.match(source, /executeRequiredVectorCleanup\(documentRef, "Live Pathfinder Add", "Pathfinder Unite", layerName\)/);
   assert.match(source, /executeRequiredVectorCleanup\(documentRef, "expandStyle", "Pathfinder result expansion", layerName\)/);
   assert.match(source, /closeOpenFilledPathsForUnite\(temporaryDocument, group\.layerName\)/);
@@ -413,13 +622,24 @@ test("source enforces temporary vector cleanup, SVG 1.0 export, overwrite, and f
   assert.match(source, /options\.embedRasterImages = false/);
   assert.match(source, /options\.preserveEditability = false/);
   assert.match(source, /options\.coordinatePrecision = SVG_COORDINATE_PRECISION/);
+  assert.match(source, /preCleanupBounds = getVisibleBounds/);
+  assert.ok(source.indexOf("preCleanupBounds = getVisibleBounds") < source.indexOf("outlineVisibleText(temporaryDocument)"));
   assert.match(source, /exportBounds = getVisibleBounds/);
+  assert.match(source, /adjustOffsetsForBoundsCenterShift\([\s\S]*?preCleanupBounds,[\s\S]*?exportBounds/);
   assert.match(source, /\.artboardRect = exportBounds/);
   assert.match(source, /widthMm = pointsToMillimeters/);
   assert.match(source, /heightMm = pointsToMillimeters/);
-  assert.match(source, /offsetXmm: group\.offsetXmm/);
-  assert.match(source, /offsetYmm: group\.offsetYmm/);
+  assert.match(source, /offsetXmm: adjustedOffsets\.offsetXmm/);
+  assert.match(source, /offsetYmm: adjustedOffsets\.offsetYmm/);
+  assert.match(source, /recenterExportItems\(requestItems\)/);
+  assert.ok(source.indexOf("requestItems.push(exportGroup") < source.indexOf("recenterExportItems(requestItems)"));
+  assert.ok(
+    source.indexOf("recenterExportItems(requestItems)") <
+      source.indexOf("buildRequestJson(requestId", source.indexOf("recenterExportItems(requestItems)"))
+  );
   assert.match(source, /var postAction = requestedPostAction\(\)/);
+  assert.match(source, /var sourceDocumentPath = getDocumentPath\(originalDocument\)/);
+  assert.match(source, /buildRequestJson\(requestId, requestItems, postAction, sourceDocumentPath\)/);
   assert.match(source, /targetFile\.exists && !targetFile\.remove\(\)/);
   assert.ok(source.indexOf("targetFile.remove()") < source.indexOf("temporaryDocument.exportFile"));
   assert.match(source, /cleanExportedSvg\(targetFile\)/);
@@ -467,11 +687,13 @@ test("handoff registers the SVG importer as a fixed internal Blender action with
     /without creating a panel record/
   );
 
-  assert.match(handoffSource, /\$internalOwnerButtonId\s*=\s*'internal-illustrator-svg-import'/);
+  assert.match(handoffSource, /\$internalImportOwnerButtonId\s*=\s*'internal-illustrator-svg-import'/);
   assert.match(
     handoffSource,
-    /\$internalBridgeAction\s*=\s*'flowcell_button_\{0\}'\s*-f\s*\$internalOwnerButtonId/
+    /\$internalImportBridgeAction\s*=\s*'flowcell_button_\{0\}'\s*-f\s*\$internalImportOwnerButtonId/
   );
+  assert.match(handoffSource, /\$internalSaveOwnerButtonId\s*=\s*'internal-illustrator-save-blender'/);
+  assert.match(handoffSource, /Save Blender\\save_blender\.py/);
   assert.match(handoffSource, /function Register-InternalBlenderAction/);
   assert.match(handoffSource, /Install-BlenderFlowCellButtons\.ps1/);
   assert.match(handoffSource, /-RegistryOnly/);
@@ -481,7 +703,7 @@ test("handoff registers the SVG importer as a fixed internal Blender action with
     /\$installOutput\s*=\s*@\([\s\S]*?\$LASTEXITCODE[\s\S]*?\$installText\s*=/
   );
   assert.match(handoffSource, /installedCount'\)\s*-ne\s*1/);
-  assert.match(handoffSource, /\$registeredAction\.Trim\(\)\s*-cne\s*\$internalBridgeAction/);
+  assert.match(handoffSource, /\$registeredAction\.Trim\(\)\s*-cne\s*\$ExpectedBridgeAction/);
   assert.match(handoffSource, /\$bridgeAction\s*=\s*Register-InternalBlenderAction/);
   assert.match(handoffSource, /\$bridgeAction\s*=\s*Register-InternalBlenderAction[\s\S]*?-Action \$bridgeAction/);
 
@@ -517,12 +739,29 @@ test("Ill Orca resolves and invokes exactly the user's active Blender Orca Butto
   assert.match(handoffSource, /\$bridgeResponseTimeoutSeconds\s*=\s*110/);
   assert.match(handoffSource, /ResponseTimeoutSeconds = \$bridgeResponseTimeoutSeconds/);
   assert.match(handoffSource, /send-svg-to-blender\.orca\.\{0\}\.tmp/);
+  assert.match(handoffSource, /function Resolve-MarkedProjectRootFromDocumentPath/);
+  assert.match(handoffSource, /\.flowcell-project\.json/);
+  assert.match(handoffSource, /function Invoke-SetupOrganizationPrepareExistingTarget/);
+  assert.match(handoffSource, /operation = 'prepare-existing-target'/);
+  assert.match(handoffSource, /plannedExtension = '\.blend'/);
+  assert.match(handoffSource, /ToBase64String\(\[Text\.Encoding\]::UTF8\.GetBytes\(\$argsJson\)\)/);
+  assert.match(handoffSource, /-EncodedCommand \$encodedCommand/);
+  assert.match(handoffSource, /command = 'save-prepared-existing-target'/);
+  assert.match(handoffSource, /-DataJson '\{"command":"save-current"\}'/);
   assert.match(
     handoffSource,
     /-Action \$orcaBridgeAction\s*`[\s\S]*?-Label 'Orca'\s*`[\s\S]*?-DataJson '\{\}'/
   );
   assert.ok(
+    handoffSource.indexOf("$autoSaveState = Ensure-BlenderSavedForOrca") <
+      handoffSource.indexOf("$response = Invoke-BlenderBridgeAction")
+  );
+  assert.ok(
     handoffSource.indexOf("$response = Invoke-BlenderBridgeAction") <
+      handoffSource.indexOf("$orcaResponse = Invoke-BlenderBridgeAction")
+  );
+  assert.ok(
+    handoffSource.indexOf("$finalSaveResponse = Invoke-BlenderBridgeAction") <
       handoffSource.indexOf("$orcaResponse = Invoke-BlenderBridgeAction")
   );
   assert.ok(

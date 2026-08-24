@@ -3,6 +3,7 @@ import { readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import vm from "node:vm";
 
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const manifestPath = path.join(packageRoot, "flowcell.script.json");
@@ -46,6 +47,58 @@ function assertStrictRootSchema(schema, subject) {
   for (const required of schema.required || []) {
     assert.ok(required in schema.properties, `${subject} requires undeclared property ${required}`);
   }
+}
+
+class TestElement {
+  constructor(tagName) {
+    this.tagName = tagName.toLowerCase();
+    this.children = [];
+    this.dataset = {};
+    this.style = {};
+    this.title = "";
+    this.textContent = "";
+  }
+
+  append(...children) {
+    this.children.push(...children);
+  }
+
+  replaceChildren(...children) {
+    this.children = [...children];
+  }
+
+  setAttribute(name, value) {
+    this[name] = String(value);
+  }
+
+  addEventListener() {}
+
+  querySelectorAll(selector) {
+    return this.children.flatMap((child) => child instanceof TestElement
+      ? [...(child.tagName === selector ? [child] : []), ...child.querySelectorAll(selector)]
+      : []);
+  }
+}
+
+async function renderThemePage() {
+  const root = new TestElement("main");
+  const status = new TestElement("div");
+  const document = {
+    getElementById: (id) => id === "theme-page" ? root : id === "theme-status" ? status : null,
+    createElement: (tagName) => new TestElement(tagName)
+  };
+  const window = {
+    flowcellPage: {
+      descriptor: page,
+      request: async () => ({ state: {} })
+    },
+    clearTimeout,
+    setTimeout
+  };
+  vm.runInNewContext(pageScript, { document, window });
+  await Promise.resolve();
+  await Promise.resolve();
+  return root;
 }
 
 test("Theme is an ordinary page-enabled Blender script package", () => {
@@ -128,7 +181,7 @@ test("Theme owns its Blender lifecycle and generic deletion owns its sidecar", (
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.0");
+  assert.equal(contribution.version, "3.0.4");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -245,6 +298,126 @@ test("all existing Theme fields, buckets, and mappings are package-owned", () =>
   for (const fieldId of page.config.persistence.assetFieldIds) assert.ok(fieldById.has(fieldId));
 });
 
+test("the package restores the original Theme wording", () => {
+  assert.deepEqual(
+    Object.fromEntries(page.config.roles.map((role) => [role.id, role.label])),
+    {
+      tabs: "Tab Fill",
+      headers: "Header",
+      editor: "Panel",
+      scene: "Collection Row",
+      controls: "Control Fill",
+      tab_text: "Tab text",
+      header_text: "Header text",
+      text: "random text",
+      control_text: "tool text",
+      accent_text: "scene/header text",
+      highlights: "Highlights",
+      viewport: "Viewport BG",
+      viewport_gradient: "Gradient 2"
+    }
+  );
+  assert.deepEqual(
+    Object.fromEntries([
+      "theme.absorb",
+      "theme.fields.save",
+      "theme.fields.load",
+      "theme.package.open",
+      "theme.mode.dark",
+      "theme.mode.light",
+      "picture.apply",
+      "picture.grid",
+      "picture.grid.remove",
+      "environment.file.select",
+      "environment.apply",
+      "environment.clear",
+      "environment.reset"
+    ].map((actionId) => [actionId, page.config.actionLabels[actionId]])),
+    {
+      "theme.absorb": "Absorb Theme",
+      "theme.fields.save": "Save Buckets",
+      "theme.fields.load": "Load Buckets",
+      "theme.package.open": "Open Package",
+      "theme.mode.dark": "Dark Theme",
+      "theme.mode.light": "Light Theme",
+      "picture.apply": "Place Picture",
+      "picture.grid": "Grid",
+      "picture.grid.remove": "Remove Grid",
+      "environment.file.select": "HDRI Browse",
+      "environment.apply": "HDRI Apply",
+      "environment.clear": "Clear",
+      "environment.reset": "Reset"
+    }
+  );
+});
+
+test("every rendered Theme button restores an explanatory tooltip", async () => {
+  assert.deepEqual(page.config.actionTooltips, {
+    "theme.image.select": "Pick an image, sample theme colors, and place it as the Place Picture image.",
+    "theme.image.sample": "Sample theme colors from the selected reference image.",
+    "theme.absorb": "Read the current Blender theme and stage all visible buckets.",
+    "theme.refill": "Randomly remix the staged sampled colors into a different bucket set and apply it.",
+    "theme.fields.save": "Save the current staged Blender theme buckets for later reuse.",
+    "theme.fields.load": "Load saved Blender theme buckets back into this page.",
+    "theme.package.save": "Save the actual theme image(s) plus the staged bucket colors into the Blender themes folder.",
+    "theme.package.open": "Pick a saved theme package, or browse for one.",
+    "theme.package.previous": "Load the previous saved theme package.",
+    "theme.package.next": "Load the next saved theme package.",
+    "theme.mode.dark": "Stage a dark theme preset on this page. Apply sends it to Blender.",
+    "theme.mode.light": "Stage a light theme preset on this page. Apply sends it to Blender.",
+    "theme.profile.save": "Save the current darkness settings under the entered profile name.",
+    "theme.apply": "Apply the currently visible theme role colors.",
+    "theme.apply-bucket": "Apply only this theme bucket.",
+    "picture.file.select": "Pick a Place Picture image.",
+    "picture.apply": "Place the picture path in the Blender viewport with the overlay.",
+    "picture.grid": "Apply the entered near, distance, and far grid spacing values.",
+    "picture.grid.remove": "Hide only the fake grid; keep any Place Picture image and gizmos active.",
+    "picture.startup": "Save the current Place Picture image so Blender restores it on startup.",
+    "picture.clear": "Remove the Place Picture background, grid, and gizmos, and clear the picture path.",
+    "environment.file.select": "Pick an HDRI file.",
+    "environment.apply": "Apply the HDRI path in the field.",
+    "environment.clear": "Clear the current HDRI world from this file.",
+    "environment.reset": "Rebuild a clean Blender world for this file and reapply the current HDRI values.",
+    "environment.rotation-x": "Apply the entered X rotation.",
+    "environment.rotation-y": "Apply the entered Y rotation.",
+    "environment.rotation-z": "Apply the entered Z rotation.",
+    "environment.strength": "Apply the entered world strength."
+  });
+  assert.deepEqual(
+    Object.keys(page.config.actionTooltips).sort(),
+    Object.keys(page.config.actionLabels).sort()
+  );
+  assert.equal(
+    Object.values(page.config.actionTooltips).every((tooltip) => typeof tooltip === "string" && tooltip.trim()),
+    true
+  );
+  assert.equal(
+    (pageScript.match(/element\("button"/g) || []).length,
+    1,
+    "all Theme buttons must use actionButton"
+  );
+
+  const root = await renderThemePage();
+  const buttons = root.querySelectorAll("button");
+  assert.equal(buttons.length, 23 + page.config.roles.length + page.config.environment.valueFields.length);
+  assert.deepEqual(
+    buttons.flatMap((button, index) => button.title.trim() ? [] : [`${index}: ${button.textContent}`]),
+    []
+  );
+  assert.deepEqual(
+    buttons
+      .filter((button) => button.title.startsWith("Apply only the "))
+      .map((button) => button.title),
+    page.config.roles.map((role) => `Apply only the ${role.label} bucket.`)
+  );
+  const checkboxes = root.querySelectorAll("input").filter((input) => input.type === "checkbox");
+  const gradientRole = root.querySelectorAll("div").find((node) => node.title === "Gradient 2");
+  assert.equal(checkboxes.length, 1);
+  assert.ok(gradientRole);
+  assert.equal(gradientRole.querySelectorAll("input").filter((input) => input.type === "checkbox").length, 1);
+  assert.equal(root.querySelectorAll("span").some((node) => node.textContent === page.config.gradient.label), false);
+});
+
 test("every program action resolves to an existing fixed theme.py command", () => {
   const expectedCommands = [
     "status",
@@ -253,6 +426,7 @@ test("every program action resolves to an existing fixed theme.py command", () =
     "apply_theme_bucket",
     "place_picture",
     "set_grid_spacing",
+    "remove_grid",
     "set_place_picture_startup",
     "clear_place_picture",
     "set_hdri_path",
@@ -325,9 +499,90 @@ test("package page has no direct privileged or legacy Core UI path", () => {
   }
 });
 
-test("package page keeps every control scroll-accessible without a visible scrollbar", () => {
+test("package page is headerless and keeps Theme plus Place Picture compact", () => {
+  assert.deepEqual(page.window, {
+    title: "Blender Theme",
+    width: 920,
+    height: 720,
+    minWidth: 920,
+    minHeight: 560
+  });
   assert.match(pageCss, /body\s*\{[\s\S]*overflow:\s*hidden;/);
   assert.match(pageCss, /\.theme-page\s*\{[\s\S]*overflow-y:\s*auto;/);
-  assert.match(pageCss, /scrollbar-width:\s*none;/);
-  assert.match(pageCss, /\.theme-page::\-webkit-scrollbar\s*\{[\s\S]*display:\s*none;/);
+  assert.match(pageCss, /\.theme-page\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\);/);
+  assert.match(pageCss, /\.theme-role-grid\s*\{[\s\S]*grid-template-columns:\s*repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.equal((pageCss.match(/\.theme-role-grid\s*\{/g) || []).length, 1);
+  assert.match(
+    pageCss,
+    /\.theme-role\s*\{[\s\S]*grid-template-columns:\s*minmax\(0, 1fr\) 22px 58px 36px;[\s\S]*min-height:\s*40px;/
+  );
+  assert.match(pageCss, /\.theme-role__label-row\s*\{[\s\S]*display:\s*flex;/);
+  assert.match(pageCss, /\.theme-role__label\s*\{[\s\S]*word-break:\s*normal;/);
+  assert.doesNotMatch(pageCss, /\.theme-gradient/);
+  assert.match(pageCss, /\.theme-profiles\s*\{\s*display:\s*contents;/);
+  assert.match(
+    pageCss,
+    /\.theme-number-grid--picture\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/
+  );
+  assert.doesNotMatch(pageCss, /scrollbar-width:\s*none;/);
+  assert.doesNotMatch(pageCss, /\.theme-page__header/);
+  assert.doesNotMatch(pageScript, /function renderHeader\(/);
+  assert.doesNotMatch(pageScript, /theme-page__columns/);
+  assert.equal("eyebrow" in page.config.copy, false);
+  assert.equal("title" in page.config.copy, false);
+  assert.equal("subtitle" in page.config.copy, false);
+  assert.match(
+    pageScript,
+    /root\.append\(\s*renderThemeCard\(\),\s*renderPictureCard\(\),\s*renderEnvironmentCard\(\)/
+  );
+  assert.match(pageScript, /const grid = element\("div", "theme-role-grid"\);\s*roles\.forEach/);
+  assert.match(pageScript, /role\.fieldId === config\.gradient\.gradientFieldId/);
+  assert.match(pageScript, /gradientCheckbox\.setAttribute\("aria-label", config\.gradient\.label\)/);
+  assert.doesNotMatch(pageScript, /element\("label", "theme-gradient"\)/);
+
+  const renderToneStart = pageScript.indexOf("function renderToneControls(");
+  const renderRolesStart = pageScript.indexOf("function renderRoleGroups(");
+  const renderThemeStart = pageScript.indexOf("function renderThemeCard(");
+  const renderPictureStart = pageScript.indexOf("function renderPictureCard(");
+  assert.ok(renderToneStart >= 0 && renderRolesStart > renderToneStart);
+  assert.ok(renderThemeStart >= 0 && renderPictureStart > renderThemeStart);
+  const renderToneSource = pageScript.slice(renderToneStart, renderRolesStart);
+  const renderThemeSource = pageScript.slice(renderThemeStart, renderPictureStart);
+  assert.match(renderToneSource, /row\.append\(tone, actionButton\(actions\.theme\.apply, applyTheme\)\)/);
+  assert.match(renderToneSource, /profiles\.append\(select, nameInput, saveButton\);\s*storage\.append\(profiles\);/);
+  assert.ok(renderThemeSource.indexOf("actions.theme.loadFields") < renderThemeSource.indexOf("renderToneControls(section, storage)"));
+  assert.doesNotMatch(renderThemeSource, /applyRow/);
+});
+
+test("Remove Grid preserves the picture and the startup bundle stays atomic", () => {
+  assert.equal(page.config.actions.picture.removeGrid, "picture.grid.remove");
+  assert.match(
+    pageScript,
+    /actionButton\(actions\.picture\.removeGrid[\s\S]*copy\.removingGrid/
+  );
+
+  const removeGridStart = blenderSource.indexOf("def _remove_place_picture_grid(");
+  const clearPictureStart = blenderSource.indexOf("def _clear_place_picture_overlay(");
+  assert.ok(removeGridStart >= 0 && clearPictureStart > removeGridStart);
+  const removeGridSource = blenderSource.slice(removeGridStart, clearPictureStart);
+  assert.match(removeGridSource, /state\["grid_enabled"\] = False/);
+  assert.doesNotMatch(removeGridSource, /_remove_viewport_overlay_handler|_clear_place_picture_overlay|_disable_camera_background_images|_set_saved_overlay_path/);
+  assert.match(
+    blenderSource,
+    /if state\.get\("grid_enabled", True\):\s*_draw_fake_grid_2d[\s\S]*_draw_fake_gizmos_2d/
+  );
+
+  const loadPackageStart = pageScript.indexOf("async function loadPackage(");
+  const selectFileStart = pageScript.indexOf("async function selectFile(");
+  assert.ok(loadPackageStart >= 0 && selectFileStart > loadPackageStart);
+  const loadPackageSource = pageScript.slice(loadPackageStart, selectFileStart);
+  assert.ok(loadPackageSource.indexOf("await applyPicture()") < loadPackageSource.indexOf("await applyTheme()"));
+  assert.ok(loadPackageSource.indexOf("actions.picture.clear") < loadPackageSource.indexOf("await applyTheme()"));
+  assert.match(loadPackageSource, /if \(!pictureResponse\) return;/);
+  assert.match(
+    blenderSource,
+    /startup_state\["place_picture"\] = _startup_place_picture_state_from_runtime\(context\)/
+  );
+  assert.match(blenderSource, /"saved_by": "theme_bundle"/);
+  assert.match(blenderSource, /\{"startup_button", "theme_bundle"\}/);
 });

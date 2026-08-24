@@ -174,9 +174,15 @@
     return objectRecord(config.actionLabels)?.[actionId] || actionId;
   }
 
-  function actionButton(actionId, handler) {
+  function actionTooltip(actionId) {
+    return objectRecord(config.actionTooltips)?.[actionId] || "";
+  }
+
+  function actionButton(actionId, handler, tooltipOverride = "") {
     const button = element("button", "", actionLabel(actionId));
     button.type = "button";
+    const tooltip = tooltipOverride || actionTooltip(actionId);
+    if (tooltip) button.title = tooltip;
     button.addEventListener("click", () => void handler());
     return button;
   }
@@ -546,8 +552,14 @@
       name: String(response.packageName || response.name || "")
     };
     schedulePersistence();
+    let pictureResponse = null;
+    if (String(model.fields[config.picture.pathFieldId] || "").trim()) {
+      pictureResponse = await applyPicture();
+    } else {
+      pictureResponse = await runPictureAction(actions.picture.clear, {}, copy.clearingPicture);
+    }
+    if (!pictureResponse) return;
     await applyTheme();
-    if (String(model.fields[config.picture.pathFieldId] || "").trim()) await applyPicture();
   }
 
   async function selectFile(actionId, fieldId, progressMessage) {
@@ -558,23 +570,12 @@
   async function runPictureAction(actionId, payload, progressMessage) {
     const response = await requestAction(actionId, payload, progressMessage);
     applyResponsePatch(response);
+    return response;
   }
 
   async function runEnvironmentAction(actionId, payload, progressMessage) {
     const response = await requestAction(actionId, payload, progressMessage);
     applyResponsePatch(response);
-  }
-
-  function renderHeader() {
-    const header = element("header", "theme-page__header");
-    const heading = element("div", "theme-page__heading");
-    heading.append(
-      element("span", "theme-page__eyebrow", copy.eyebrow),
-      element("h1", "theme-page__title", copy.title),
-      element("span", "theme-page__subtitle", copy.subtitle)
-    );
-    header.append(heading);
-    return header;
   }
 
   function renderPalette(heading) {
@@ -589,8 +590,8 @@
     heading.append(palette);
   }
 
-  function renderToneControls(section) {
-    const row = element("div", "theme-row theme-row--wrap");
+  function renderToneControls(section, storage) {
+    const row = element("div", "theme-row theme-row--tone");
     row.append(
       actionButton(localActions.darkMode, () => {
         model.tone.activeProfileId = "";
@@ -621,7 +622,7 @@
       patchFields(tonePatch({ mode, level }), false);
     });
     tone.append(slider, value);
-    row.append(tone);
+    row.append(tone, actionButton(actions.theme.apply, applyTheme));
     section.append(row);
 
     const profiles = element("div", "theme-profiles");
@@ -649,9 +650,7 @@
     const nameInput = document.createElement("input");
     nameInput.type = "text";
     nameInput.placeholder = config.tone.profileNamePlaceholder;
-    const saveButton = element("button", "", config.tone.profileSaveLabel);
-    saveButton.type = "button";
-    saveButton.addEventListener("click", () => {
+    const saveButton = actionButton(localActions.saveProfile, () => {
       const profile = makeProfile(nameInput.value);
       if (!profile) return;
       model.tone.profiles = normalizeProfiles([
@@ -663,42 +662,45 @@
       render();
     });
     profiles.append(select, nameInput, saveButton);
-    section.append(profiles);
+    storage.append(profiles);
   }
 
   function renderRoleGroups(section) {
-    const groups = element("div", "theme-role-groups");
-    const groupLabels = objectRecord(config.roleGroupLabels) || {};
-    Object.entries(groupLabels).forEach(([groupId, groupLabel]) => {
-      const fieldset = element("fieldset", "theme-role-group");
-      fieldset.append(element("legend", "", groupLabel));
-      const grid = element("div", "theme-role-grid");
-      roles.filter((role) => role.group === groupId).forEach((role) => {
-        const roleNode = element("div", "theme-role");
-        roleNode.append(element("span", "theme-role__label", role.label));
-        const field = fieldById.get(role.fieldId);
-        const colorInput = inputForField(field, "color");
-        const textInput = inputForField(field, "text");
-        roleNode.append(colorInput, textInput, actionButton(actions.theme.applyBucket, async () => {
-          const payload = {
-            ...themePayload(),
-            bucket: role.bucket,
-            bucket_hex: model.fields[role.fieldId]
-          };
-          const response = await requestAction(actions.theme.applyBucket, payload, copy.applyingBucket);
-          applyResponsePatch(response);
-        }));
-        grid.append(roleNode);
-      });
-      fieldset.append(grid);
-      groups.append(fieldset);
+    const grid = element("div", "theme-role-grid");
+    roles.forEach((role) => {
+      const roleNode = element("div", "theme-role");
+      roleNode.title = role.label;
+      const roleLabel = element("div", "theme-role__label-row");
+      roleLabel.append(element("span", "theme-role__label", role.label));
+      if (role.fieldId === config.gradient.gradientFieldId) {
+        const gradientCheckbox = inputForField(fieldById.get(config.gradient.enabledFieldId), "checkbox");
+        gradientCheckbox.setAttribute("aria-label", config.gradient.label);
+        roleLabel.append(gradientCheckbox);
+      }
+      roleNode.append(roleLabel);
+      const field = fieldById.get(role.fieldId);
+      const colorInput = inputForField(field, "color");
+      const textInput = inputForField(field, "text");
+      roleNode.append(
+        colorInput,
+        textInput,
+        actionButton(
+          actions.theme.applyBucket,
+          async () => {
+            const payload = {
+              ...themePayload(),
+              bucket: role.bucket,
+              bucket_hex: model.fields[role.fieldId]
+            };
+            const response = await requestAction(actions.theme.applyBucket, payload, copy.applyingBucket);
+            applyResponsePatch(response);
+          },
+          `Apply only the ${role.label} bucket.`
+        )
+      );
+      grid.append(roleNode);
     });
-    section.append(groups);
-
-    const gradientField = fieldById.get(config.gradient.enabledFieldId);
-    const gradient = element("label", "theme-gradient");
-    gradient.append(inputForField(gradientField, "checkbox"), element("span", "", config.gradient.label));
-    section.append(gradient);
+    section.append(grid);
   }
 
   function renderThemeCard() {
@@ -714,7 +716,7 @@
     );
     section.append(imageRow);
 
-    const storage = element("div", "theme-row theme-row--actions");
+    const storage = element("div", "theme-row theme-storage");
     storage.append(
       actionButton(actions.theme.previousPackage, () => loadPackage(actions.theme.previousPackage)),
       actionButton(actions.theme.openPackage, () => loadPackage(actions.theme.openPackage)),
@@ -724,12 +726,8 @@
       actionButton(actions.theme.loadFields, loadFields)
     );
     section.append(storage);
-    renderToneControls(section);
+    renderToneControls(section, storage);
     renderRoleGroups(section);
-
-    const applyRow = element("div", "theme-row theme-row--actions");
-    applyRow.append(actionButton(actions.theme.apply, applyTheme));
-    section.append(applyRow);
     return section;
   }
 
@@ -746,13 +744,18 @@
       ))
     );
     section.append(pathRow);
-    const numberGrid = element("div", "theme-number-grid");
+    const numberGrid = element("div", "theme-number-grid theme-number-grid--picture");
     config.picture.gridFieldIds.forEach((fieldId) => numberGrid.append(labeledField(fieldById.get(fieldId))));
     section.append(numberGrid);
     const row = element("div", "theme-row theme-row--actions");
     row.append(
       actionButton(actions.picture.apply, applyPicture),
       actionButton(actions.picture.grid, () => runPictureAction(actions.picture.grid, picturePayload(), copy.applyingGrid)),
+      actionButton(actions.picture.removeGrid, () => runPictureAction(
+        actions.picture.removeGrid,
+        {},
+        copy.removingGrid
+      )),
       actionButton(actions.picture.startup, () => runPictureAction(actions.picture.startup, picturePayload(), copy.savingStartup)),
       actionButton(actions.picture.clear, () => runPictureAction(actions.picture.clear, {}, copy.clearingPicture))
     );
@@ -813,12 +816,11 @@
   function render() {
     controlsByFieldId.clear();
     root.replaceChildren();
-    root.append(renderHeader());
-    const left = element("div", "theme-page__columns");
-    left.append(renderThemeCard());
-    const right = element("div", "theme-page__columns");
-    right.append(renderPictureCard(), renderEnvironmentCard());
-    root.append(left, right);
+    root.append(
+      renderThemeCard(),
+      renderPictureCard(),
+      renderEnvironmentCard()
+    );
     setBusy(busy);
   }
 

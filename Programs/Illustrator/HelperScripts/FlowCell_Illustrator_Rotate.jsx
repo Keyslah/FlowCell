@@ -349,27 +349,57 @@
         );
     }
 
-    function applyTransform(items, pivot, angleDeg) {
-        for (var i = 0; i < items.length; i += 1) {
-            transformItem(items[i], pivot, angleDeg);
+    function applyTransform(doc, items, pivot, angleDeg, copySelection) {
+        if (!copySelection) {
+            for (var i = 0; i < items.length; i += 1) {
+                transformItem(items[i], pivot, angleDeg);
+            }
+            return "Rotated " + items.length + " selected object(s) " + angleDeg.toFixed(3) + " degrees.";
         }
-        return "Rotated " + items.length + " selected object(s) " + angleDeg.toFixed(3) + " degrees.";
+
+        var duplicates = [];
+        try {
+            duplicateItems(items, duplicates);
+            for (var duplicateIndex = 0; duplicateIndex < duplicates.length; duplicateIndex += 1) {
+                transformItem(duplicates[duplicateIndex], pivot, angleDeg);
+            }
+            selectItems(doc, duplicates, true);
+        } catch (error) {
+            removeItems(duplicates);
+            selectItems(doc, items, false);
+            throw error;
+        }
+        return "Copied and rotated " + duplicates.length + " selected object(s) " +
+            angleDeg.toFixed(3) + " degrees.";
     }
 
-    function duplicateItems(items) {
-        var duplicates = [];
+    function duplicateItems(items, destination) {
+        var duplicates = destination || [];
         for (var i = 0; i < items.length; i += 1) {
             duplicates.push(items[i].duplicate());
         }
         return duplicates;
     }
 
-    function selectItems(doc, items) {
+    function removeItems(items) {
+        for (var i = items.length - 1; i >= 0; i -= 1) {
+            try {
+                items[i].remove();
+            } catch (error) {
+                writeLog("copy cleanup skipped: " + String(error));
+            }
+        }
+    }
+
+    function selectItems(doc, items, failOnError) {
         try {
             doc.selection = null;
             doc.selection = items;
         } catch (error) {
             writeLog("selection update skipped: " + String(error));
+            if (failOnError) {
+                throw error;
+            }
         }
     }
 
@@ -445,6 +475,10 @@
             ? Math.abs(finiteNumber(payloadValue(payload, "angleDeg", "angle_deg", sharedValue), sharedValue))
             : presetAngle;
         var distributeCount = finiteNumber(payloadValue(payload, "distributeCount", "distribute_count", sharedValue), sharedValue);
+        var copySelection = payloadValue(payload, "copySelection", "copy_selection", false) === true;
+        if (operationMode === "DISTRIBUTE" && copySelection) {
+            throw new Error("Copy is only available in Transform mode.");
+        }
         // The retired Rotate toolbox dispatched its instant presets through
         // apply_positive. Preserve that exact Illustrator sign so their visible
         // direction stays unchanged.
@@ -471,7 +505,7 @@
             throw new Error("Unsupported Illustrator rotate mode: " + operationMode);
         }
 
-        return status(applyTransform(items, pivot, directionSign * angleBase));
+        return status(applyTransform(doc, items, pivot, directionSign * angleBase, copySelection));
     }
 
     var previousCoordinateSystem = null;

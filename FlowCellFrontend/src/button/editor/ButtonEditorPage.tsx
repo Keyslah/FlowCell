@@ -77,6 +77,7 @@ import {
 import { validateButtonStateDocument } from "../state/buttonStateValidation";
 import { validateInstalledButtonLayout } from "../state/installedButtonLayoutValidation";
 import {
+  ensureRegularPopout,
   resolveDiscardedStagedOwnerButtonIds
 } from "../state/buttonDocumentOperations";
 import { setButtonPopoutFanMode } from "../state/buttonPopoutInteractionOperations";
@@ -92,10 +93,10 @@ import {
   alignButtonPlacementSelectionToTopLeftButton,
   buttonSpacingPixelsFromMillimeters,
   compactButtonPlacements,
-  compactUniformButtonPlacements,
   createStarterButtonLayout,
   findFirstAvailableButtonPosition,
   resizeButtonPlacementSelection,
+  resizeUniformButtonPlacementsInPlace,
   snapToGrid,
   translateButtonPlacementRects,
   validateExactButtonLayoutGeometry,
@@ -800,22 +801,26 @@ function ButtonEditorContent({
     [store.draft, programName, panelName]
   );
   const placementOptions = useMemo(() => {
-    const options = buildButtonEditorPlacementOptions(store.draft, navigationButtonId);
+    const options = buildButtonEditorPlacementOptions(
+      store.draft,
+      navigationButtonId,
+      selectedSurfaceId
+    );
     if (!isFlowCellMainPageProgram(programName)) return options;
     return options.filter(
       (option) => store.draft.surfaces[option.surfaceId]?.kind === "main"
     );
-  }, [navigationButtonId, programName, store.draft]);
+  }, [navigationButtonId, programName, selectedSurfaceId, store.draft]);
   const selectedPlacementOptionId = useMemo(() => {
     const toolSetView = placementOptions.find((option) =>
       option.surfaceId === selectedSurfaceId &&
-      option.view === (selectedSurfaceShowsOwner ? "tool-set-fan" : "tool-set-popout")
+      option.view === "tool-set-popout"
     );
     if (toolSetView) return toolSetView.id;
     return placementOptions.find((option) =>
       option.view === "placement" && option.placementId === focusedPlacementId
     )?.id ?? "";
-  }, [focusedPlacementId, placementOptions, selectedSurfaceId, selectedSurfaceShowsOwner]);
+  }, [focusedPlacementId, placementOptions, selectedSurfaceId]);
 
   const focusPlacement = useCallback((placementId: string, replaceSelection = true) => {
     const document = store.current();
@@ -866,6 +871,31 @@ function ButtonEditorContent({
     );
     if (placementId) focusPlacement(placementId);
   }, [focusPlacement, selectedSurfaceId, store]);
+
+  const selectDefaultPopoutPlacement = useCallback((buttonId: string) => {
+    const current = store.current();
+    const button = current.buttons[buttonId];
+    if (button?.role !== "single-script" || !button.sourceIdentity) {
+      setMessage("Only an installed script Button can create a default Pop-out.");
+      return;
+    }
+    const next = cloneButtonDocument(current);
+    const unit = ensureRegularPopout(next, [button]);
+    const placementId = unit.memberPlacementIds.find(
+      (candidateId) => next.placements[candidateId]?.buttonId === button.id
+    ) ?? null;
+    if (!placementId) {
+      setMessage(`The default Pop-out for '${button.label}' has no Button placement.`);
+      return;
+    }
+    store.transact(() => next, { label: "Create default Pop-out" });
+    setActivePage("placement");
+    setReorderMode(false);
+    setSelectedSurfaceId(unit.surfaceId);
+    setFocusedPlacementId(placementId);
+    setSelectedPlacementIds(new Set([placementId]));
+    setMessage("Default Pop-out created as a working draft. Use Save Pop-out Settings to keep it.");
+  }, [store]);
 
   const applyEditorContext = useCallback((context: ButtonEditorWindowContext) => {
     setLockedImportDestination(
@@ -1219,7 +1249,11 @@ function ButtonEditorContent({
       if (!validation.valid) {
         throw new Error(validation.issues.slice(0, 8).map((issue) => `${issue.path}: ${issue.message}`).join("\n"));
       }
-      const settingsDirectory = await getButtonSettingsDirectory(placementKind);
+      const settingsDirectory = await getButtonSettingsDirectory(
+        placementKind,
+        programName,
+        panelName
+      );
       targetPath = await showSaveFileDialog({
         title: `Save ${placementLabel} Settings`,
         filter: "FlowCell Button Settings (*.flowcell-button-settings.json)|*.flowcell-button-settings.json|JSON Files (*.json)|*.json",
@@ -1334,7 +1368,11 @@ function ButtonEditorContent({
       if (!settingsPlacementKind) {
         throw new Error("Select a Button placement before loading settings.");
       }
-      const settingsDirectory = await getButtonSettingsDirectory(settingsPlacementKind);
+      const settingsDirectory = await getButtonSettingsDirectory(
+        settingsPlacementKind,
+        programName,
+        panelName
+      );
       const paths = await showOpenFileDialog({
         title: `Load ${settingsPlacementLabel} Settings`,
         filter: "FlowCell Button Settings (*.flowcell-button-settings.json)|*.flowcell-button-settings.json|JSON Files (*.json)|*.json",
@@ -1661,14 +1699,8 @@ function ButtonEditorContent({
       setMessage("The selected Button surface no longer exists.");
       return false;
     }
-    const orderedPlacementIds = [...surface.placementIds].sort((left, right) => {
-      const leftPlacement = document.placements[left];
-      const rightPlacement = document.placements[right];
-      return (leftPlacement?.zIndex ?? 0) - (rightPlacement?.zIndex ?? 0) ||
-        left.localeCompare(right);
-    });
     const independentOwnerPlacementId = resolveIndependentOwnerPlacementId(document, surfaceId);
-    const contentPlacementIds = orderedPlacementIds.filter(
+    const contentPlacementIds = surface.placementIds.filter(
       (placementId) => placementId !== independentOwnerPlacementId
     );
     const placements = contentPlacementIds.flatMap((placementId) => {
@@ -1679,37 +1711,39 @@ function ButtonEditorContent({
       setMessage("The selected surface has no Buttons to resize.");
       return false;
     }
-    const compacted = compactUniformButtonPlacements(
-      placements,
-      targetSize,
-      surface,
-      { gap: buttonSpacingPixelsFromMillimeters(document.settings.buttonSpacingMm) }
-    );
-    if (!compacted.success) {
-      setMessage(compacted.reason ?? "The equal-size Buttons do not fit inside the selected surface.");
+    if (placements.length !== contentPlacementIds.length) {
+      setMessage("A Button placement disappeared while the surface was being resized.");
       return false;
     }
-    const compactedById = new Map(
-      compacted.placements.map((placement) => [placement.id, placement])
+    const resized = resizeUniformButtonPlacementsInPlace(
+      placements,
+      targetSize,
+      surface
     );
-    const mergedPlacements = orderedPlacementIds.flatMap((placementId, zIndex) => {
-      const compactedPlacement = compactedById.get(placementId);
-      if (compactedPlacement) return [{ ...compactedPlacement, zIndex }];
-      const placement = document.placements[placementId];
-      return placement
-        ? [{ id: placement.id, rect: placement, zIndex }]
-        : [];
-    });
-    return applyPlacementOrder(
-      surface.id,
-      orderedPlacementIds,
-      mergedPlacements,
-      label,
-      { matchHitboxToSkin: false, allowStretching: false, allowLabelResize: false },
-      { uniformButtonSize: { width: targetSize.width, height: targetSize.height } },
-      coalesceKey
-    );
-  }, [applyPlacementOrder, store]);
+    if (!resized.success) {
+      setMessage(resized.reason ?? "The equal-size Buttons do not fit at their current positions.");
+      return false;
+    }
+    store.transact((draft) => {
+      draft.surfaces[surface.id].uniformButtonSize = {
+        width: targetSize.width,
+        height: targetSize.height
+      };
+      resized.placements.forEach((resizedPlacement) => {
+        const target = draft.placements[resizedPlacement.id];
+        if (!target) return;
+        Object.assign(target, {
+          width: resizedPlacement.rect.width,
+          height: resizedPlacement.rect.height,
+          matchHitboxToSkin: false,
+          allowStretching: false,
+          allowLabelResize: false
+        });
+      });
+    }, { label, coalesceKey });
+    setMessage(null);
+    return true;
+  }, [store]);
 
   const setAllSurfaceButtonsSameSize = useCallback((enabled: boolean) => {
     const document = store.current();
@@ -2896,12 +2930,14 @@ function ButtonEditorContent({
             onButtonChange={selectButton}
             onPlacementChange={(optionId) => {
               const option = placementOptions.find((candidate) => candidate.id === optionId);
-              if (option?.view === "tool-set-popout") {
-                selectPopoutPlacementMode(option.surfaceId, "pop");
-              } else if (option?.view === "tool-set-fan") {
-                selectPopoutPlacementMode(option.surfaceId, "fan");
+              if (option?.view === "default-popout") {
+                selectDefaultPopoutPlacement(navigationButtonId);
               } else if (option?.placementId) {
                 focusPlacement(option.placementId);
+              } else if (option) {
+                setSelectedSurfaceId(option.surfaceId);
+                setFocusedPlacementId(null);
+                setSelectedPlacementIds(new Set());
               } else {
                 setFocusedPlacementId(null);
                 setSelectedPlacementIds(new Set());
@@ -2909,7 +2945,7 @@ function ButtonEditorContent({
             }}
           />
           <div className="button-editor-sidebar__actions">
-            {settingsPlacementKind === "pop-out" && selectedSurfaceUnit?.kind === "regular" ? (
+            {settingsPlacementKind === "pop-out" && selectedSurfaceUnit ? (
               <label className="button-editor-check button-editor-sidebar__fan">
                 <input
                   type="checkbox"
@@ -3273,7 +3309,7 @@ function isTitlebarWindowControl(target: EventTarget | null): boolean {
 }
 
 function ButtonEditorTitlebar() {
-  const [maximized, setMaximized] = useState(false);
+  const [maximized, setMaximized] = useState(true);
 
   useEffect(() => {
     const currentWindow = getCurrentWindow();
@@ -3300,6 +3336,7 @@ function ButtonEditorTitlebar() {
       onPointerDown={(event) => {
         if (event.button !== 0 || isTitlebarWindowControl(event.target)) return;
         event.preventDefault();
+        if (maximized) return;
         const currentWindow = getCurrentWindow();
         // event.detail counts consecutive clicks: a double-click on the bar
         // toggles maximize (native title-bar behavior); a single press drags.

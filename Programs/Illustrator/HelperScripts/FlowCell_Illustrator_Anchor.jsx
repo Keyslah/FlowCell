@@ -161,11 +161,12 @@
     function moveAll(items, dx, dy) { for (var i = 0; i < items.length; i += 1) { moveBy(items[i], dx, dy); } return items.length; }
     function delta(axis, mode, mod, b, a) {
         if (axis === "X") {
-            if (mode === "CENTER") { return { dx: a.centerX - b.centerX, dy: 0 }; }
             if (mod === "SURFACE") {
                 if (mode === "MIN") { return { dx: a.left - b.right, dy: 0 }; }
                 if (mode === "MAX") { return { dx: a.right - b.left, dy: 0 }; }
+                return b.centerX <= a.centerX ? { dx: a.right - b.left, dy: 0 } : { dx: a.left - b.right, dy: 0 };
             }
+            if (mode === "CENTER") { return { dx: a.centerX - b.centerX, dy: 0 }; }
             if (mod === "GEOCENTER" || mod === "ORIGIN") {
                 if (mode === "MIN") { return { dx: a.left - b.centerX, dy: 0 }; }
                 if (mode === "MAX") { return { dx: a.right - b.centerX, dy: 0 }; }
@@ -174,11 +175,12 @@
             if (mode === "MAX") { return { dx: a.right - b.right, dy: 0 }; }
             return { dx: a.centerX - b.centerX, dy: 0 };
         }
-        if (mode === "CENTER") { return { dx: 0, dy: a.centerY - b.centerY }; }
         if (mod === "SURFACE") {
             if (mode === "MIN") { return { dx: 0, dy: a.bottom - b.top }; }
             if (mode === "MAX") { return { dx: 0, dy: a.top - b.bottom }; }
+            return b.centerY <= a.centerY ? { dx: 0, dy: a.top - b.bottom } : { dx: 0, dy: a.bottom - b.top };
         }
+        if (mode === "CENTER") { return { dx: 0, dy: a.centerY - b.centerY }; }
         if (mod === "GEOCENTER" || mod === "ORIGIN") {
             if (mode === "MIN") { return { dx: 0, dy: a.bottom - b.centerY }; }
             if (mode === "MAX") { return { dx: 0, dy: a.top - b.centerY }; }

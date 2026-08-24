@@ -1119,6 +1119,8 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
             expanded={renderedExpanded}
             surfaceEnvelope={renderedEnvelope}
             onOwnerActivate={handleOwnerActivate}
+            onExecutionResult={(_placementId, result) =>
+              setRuntimeError(result.message?.trim() || null)}
             onPlacementMeasurement={(placementId, measurement) => {
               if (!renderedExpanded && placementId.includes(setup.panelOwnerButtonId)) {
                 setOwnerMeasurement(measurement);
