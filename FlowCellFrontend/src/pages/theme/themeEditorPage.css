@@ -1,65 +1,63 @@
-:root {
+.theme-editor {
+  box-sizing: border-box;
+  min-width: 760px;
   font-family: "Segoe UI", sans-serif;
   color: #edf3ef;
-  background: #111715;
-}
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  min-width: 760px;
   background:
     radial-gradient(circle at 15% 0%, rgba(115, 167, 128, 0.14), transparent 34%),
     #111715;
 }
 
-button,
-input,
-select {
+.theme-editor *,
+.theme-editor *::before,
+.theme-editor *::after {
+  box-sizing: border-box;
+}
+
+.theme-editor button,
+.theme-editor input,
+.theme-editor select {
   font: inherit;
 }
 
-button,
-select,
-input[type="number"],
-input:not([type]) {
+.theme-editor button,
+.theme-editor select,
+.theme-editor input[type="number"],
+.theme-editor input:not([type]) {
   border: 1px solid rgba(231, 241, 235, 0.17);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.055);
   color: inherit;
 }
 
-button {
+.theme-editor button {
   min-height: 34px;
   padding: 7px 12px;
   cursor: pointer;
 }
 
-button:hover:not(:disabled) {
+.theme-editor button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.11);
 }
 
-button:disabled {
+.theme-editor button:disabled {
   cursor: default;
   opacity: 0.46;
 }
 
-input,
-select {
+.theme-editor input,
+.theme-editor select {
   min-height: 34px;
   padding: 6px 8px;
 }
 
-input[type="color"] {
+.theme-editor input[type="color"] {
   width: 38px;
   min-width: 38px;
   padding: 2px;
 }
 
-input[type="range"] {
+.theme-editor input[type="range"] {
   width: 100%;
 }
 

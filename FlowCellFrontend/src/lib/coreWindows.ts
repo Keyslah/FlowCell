@@ -216,6 +216,27 @@ export async function openBindsWindow(prefill?: BindsButtonPrefill): Promise<voi
   if (prefill) await emit(BINDS_PREFILL_EVENT, prefill).catch(() => {});
 }
 
+export async function openThemeEditorWindow(args: {
+  target?: string;
+  page?: string;
+} = {}): Promise<void> {
+  await openCoreWindow({
+    label: "flowcell-theme-editor",
+    context: {
+      kind: "theme-editor",
+      target: args.target?.trim() || undefined,
+      page: args.page?.trim() || undefined
+    },
+    title: "FlowCell - Theme Editor",
+    width: 1240,
+    height: 900,
+    minimumWidth: 820,
+    minimumHeight: 620,
+    decorations: true,
+    recreate: false
+  });
+}
+
 export async function openMacroLabWindow(args: {
   programName: string;
   panelName: string;

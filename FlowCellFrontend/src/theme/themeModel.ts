@@ -336,11 +336,21 @@ function applyAppearanceToPlacement(
 
 function recenterManagedMainPlacement(
   document: ButtonStateDocument,
-  placement: ButtonPlacement
+  placement: ButtonPlacement,
+  previousRect: Pick<ButtonPlacement, "x" | "y" | "width" | "height">
 ): void {
   const button = document.buttons[placement.buttonId];
-  const metadata = button?.metadata;
-  if (!button || !isRecord(metadata)) return;
+  if (!button) return;
+
+  if (button.role === "panel-owner") {
+    const panelRail = rails.find((candidate) => candidate.id === "panel-rail");
+    if (!panelRail) return;
+    placement.x = panelRail.x + (panelRail.width - placement.width) / 2;
+    placement.y = previousRect.y + previousRect.height / 2 - placement.height / 2;
+    return;
+  }
+
+  const metadata = button.metadata;
   const section = typeof metadata.mainPageSection === "string" ? metadata.mainPageSection : "";
   const defaultRect = isRecord(metadata.mainPageDefaultRect) ? metadata.mainPageDefaultRect : null;
   if (!defaultRect) return;
@@ -348,20 +358,18 @@ function recenterManagedMainPlacement(
   const y = typeof defaultRect.y === "number" ? defaultRect.y : null;
   const width = typeof defaultRect.width === "number" ? defaultRect.width : null;
   const height = typeof defaultRect.height === "number" ? defaultRect.height : null;
-  if ([x, y, width, height].some((value) => value === null || !Number.isFinite(value))) return;
+  if (x === null || y === null || width === null || height === null) return;
+  if (![x, y, width, height].every(Number.isFinite)) return;
 
-  const railId = section === "Program Rail"
-    ? "program-rail"
-    : section === "Panel Rail"
-      ? "panel-rail"
-      : section === "Button Section Rail"
-        ? "buttons-rail"
-        : null;
-  if (!railId) return;
-  const rail = rails.find((candidate) => candidate.id === railId);
-  if (!rail) return;
-  placement.x = rail.x + (rail.width - placement.width) / 2;
-  placement.y = (y as number) + (height as number) / 2 - placement.height / 2;
+  if (section === "Program Rail" || section === "Panel Rail") {
+    const railId = section === "Program Rail" ? "program-rail" : "panel-rail";
+    const rail = rails.find((candidate) => candidate.id === railId);
+    if (!rail) return;
+    placement.x = rail.x + (rail.width - placement.width) / 2;
+  } else {
+    placement.x = x + width / 2 - placement.width / 2;
+  }
+  placement.y = y + height / 2 - placement.height / 2;
 }
 
 function alignPanelSurfaceAfterTheme(
@@ -406,11 +414,17 @@ export function applyThemeFile(
       missingButtonCount += 1;
       continue;
     }
+    const previousRect = {
+      x: placement.x,
+      y: placement.y,
+      width: placement.width,
+      height: placement.height
+    };
     applyAppearanceToPlacement(document, placement, appearance);
     appliedButtonCount += 1;
     const surface = document.surfaces[placement.surfaceId];
     if (surface?.kind === "panel") touchedPanelSurfaces.add(surface.id);
-    if (surface?.kind === "main") recenterManagedMainPlacement(document, placement);
+    if (surface?.kind === "main") recenterManagedMainPlacement(document, placement, previousRect);
   }
 
   touchedPanelSurfaces.forEach((surfaceId) => alignPanelSurfaceAfterTheme(document, surfaceId));

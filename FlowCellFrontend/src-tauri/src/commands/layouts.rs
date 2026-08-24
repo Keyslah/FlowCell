@@ -508,6 +508,53 @@ pub(crate) fn show_save_file_dialog(
     Ok(dialog.save_file().map(|path| path.display().to_string()))
 }
 
+fn normalize_theme_file_path(path: &Path) -> PathBuf {
+    let path_text = path.to_string_lossy().to_string();
+    let lower_path = path_text.to_ascii_lowercase();
+    if lower_path.ends_with(".flowtheme.json") {
+        return PathBuf::from(path_text);
+    }
+    if lower_path.ends_with(".json") {
+        return PathBuf::from(format!("{}{}", &path_text[..path_text.len() - 5], ".flowtheme.json"));
+    }
+    PathBuf::from(format!("{path_text}.flowtheme.json"))
+}
+
+#[tauri::command]
+pub(crate) fn save_flowcell_theme_file(path: String, theme: Value) -> Result<String, String> {
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Theme save path cannot be empty.".to_string());
+    }
+    let theme_path = normalize_theme_file_path(Path::new(trimmed_path));
+    if let Some(parent) = theme_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("Failed to create Theme folder at {}: {error}", parent.display())
+        })?;
+    }
+    let contents = serde_json::to_string_pretty(&theme)
+        .map_err(|error| format!("Failed to serialize FlowCell Theme: {error}"))?;
+    fs::write(&theme_path, contents).map_err(|error| {
+        format!("Failed to write FlowCell Theme at {}: {error}", theme_path.display())
+    })?;
+    Ok(theme_path.display().to_string())
+}
+
+#[tauri::command]
+pub(crate) fn load_flowcell_theme_file(path: String) -> Result<Value, String> {
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Theme load path cannot be empty.".to_string());
+    }
+    let theme_path = PathBuf::from(trimmed_path);
+    let contents = fs::read_to_string(&theme_path).map_err(|error| {
+        format!("Failed to read FlowCell Theme at {}: {error}", theme_path.display())
+    })?;
+    serde_json::from_str::<Value>(&contents).map_err(|error| {
+        format!("FlowCell Theme at {} is not valid JSON: {error}", theme_path.display())
+    })
+}
+
 #[tauri::command]
 pub(crate) fn save_layout_snapshot(
     path: String,
