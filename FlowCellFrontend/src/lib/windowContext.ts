@@ -95,6 +95,8 @@ export interface ThemeEditorWindowContext {
   page?: string;
 }
 
+export const THEME_EDITOR_CONTEXT_EVENT = "flowcell:theme-editor-context";
+
 export interface MacroLabWindowContext {
   kind: "macro-lab";
   programName: string;

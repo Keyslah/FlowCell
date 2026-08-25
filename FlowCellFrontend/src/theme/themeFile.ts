@@ -19,6 +19,9 @@ export async function saveFlowCellThemeFile(
   theme: FlowCellThemeFile,
   suggestedName: string
 ): Promise<string | null> {
+  if (!isFlowCellThemeFile(theme)) {
+    throw new Error("The Theme Editor produced an invalid FlowCell Theme file.");
+  }
   const path = await showSaveFileDialog({
     title: "Save FlowCell Theme",
     filter: THEME_FILE_FILTER,

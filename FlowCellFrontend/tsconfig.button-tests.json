@@ -27,6 +27,7 @@
     "src/button/state/sourceIdentity.ts",
     "src/button/state/sourceUpdateOperations.ts",
     "src/button/state/installedPageLifecycle.ts",
+    "src/button/state/mainPageButtonDiscovery.ts",
     "src/button/runtime/ButtonRuntimeAdapter.ts",
     "src/button/runtime/ButtonActivationStateBus.ts",
     "src/button/runtime/buttonActivationState.ts",
@@ -68,6 +69,9 @@
     "src/lib/bindsMacroScope.ts",
     "src/lib/layoutSnapshots.ts",
     "src/lib/safeTauriUnlisten.ts",
-    "src/lib/shortcutProfiles.ts"
+    "src/lib/shortcutProfiles.ts",
+    "src/theme/themeEditorState.ts",
+    "src/theme/themeModel.ts",
+    "src/theme/themePageRegistry.ts"
   ]
 }

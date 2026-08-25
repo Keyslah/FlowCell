@@ -150,6 +150,9 @@ import {
   resolveFlowCellMainPagePresentation
 } from "./.compiled-button-system/button/state/mainPageButtonOperations.js";
 import {
+  reconcileMainPageButtonDiscovery
+} from "./.compiled-button-system/button/state/mainPageButtonDiscovery.js";
+import {
   removePanelButtonDocumentScope,
   removeProgramButtonDocumentScope,
   renamePanelButtonDocumentScope,
@@ -2575,6 +2578,52 @@ test("Base custom properties cascade to literal nested visual elements", () => {
   );
   assert.equal(result.compiled.scopedCss.includes(":host{--face:#d22;--ink:#fff;}"), true);
   assert.equal(result.compiled.scopedCss.includes("[data-core]{background:#222;}"), true);
+});
+
+test("shared Main discovery reconcile creates canonical controls and preserves stale owners", () => {
+  const document = createButtonStateDocument();
+  const first = reconcileMainPageButtonDiscovery(
+    document,
+    [
+      { programName: "Blender", panelNames: ["Tools", "Modeling"] },
+      { programName: "Illustrator", panelNames: ["Layers"] }
+    ],
+    { removeStaleOwners: false }
+  );
+  assert.equal(first.changed, true);
+  assert.deepEqual(first.removedOwnerButtonIds, []);
+
+  const themeControl = Object.values(document.buttons).find(
+    (button) => button.metadata.mainPageControlKey === "top-left-button-10"
+  );
+  const blenderControl = Object.values(document.buttons).find(
+    (button) => button.metadata.mainPageProgramName === "Blender"
+  );
+  const toolsOwner = findPanelOwnerButton(document, "Blender", "Tools");
+  const modelingOwner = findPanelOwnerButton(document, "Blender", "Modeling");
+  assert.equal(themeControl?.label, "Theme");
+  assert.equal(themeControl?.metadata.mainPageSection, "Header Buttons");
+  assert.equal(blenderControl?.metadata.mainPageSection, "Program Rail");
+  assert.ok(toolsOwner);
+  assert.ok(modelingOwner);
+  assert.ok(resolvePanelOwnerMainPlacement(document, "Blender", "Tools"));
+
+  const staleDiscovery = reconcileMainPageButtonDiscovery(
+    document,
+    [{ programName: "Blender", panelNames: ["Tools"] }],
+    { removeStaleOwners: false }
+  );
+  assert.deepEqual(staleDiscovery.removedOwnerButtonIds, []);
+  assert.equal(
+    findPanelOwnerButton(document, "Blender", "Modeling")?.id,
+    modelingOwner.id
+  );
+  const validation = validateButtonStateDocument(document);
+  assert.equal(
+    validation.valid,
+    true,
+    validation.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n")
+  );
 });
 
 test("FlowCell Main Page exposes each live rail control individually without script Buttons", () => {

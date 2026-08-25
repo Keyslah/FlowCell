@@ -176,6 +176,11 @@ const buttonsSurfaceGeometry = {
   radius: 18.647463
 } as const;
 
+export const buttonsSurfaceContentOrigin = {
+  x: buttonsSurfaceGeometry.scriptStartX,
+  y: buttonsSurfaceGeometry.scriptStartY
+} as const;
+
 export const buttonsSurfacePopTypeControlGeometry = {
   x: buttonsSurfaceGeometry.addButtonX + buttonsSurfaceGeometry.stepX * 2,
   y: buttonsSurfaceGeometry.fanControlsY,

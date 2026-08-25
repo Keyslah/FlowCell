@@ -521,6 +521,46 @@ fn normalize_theme_file_path(path: &Path) -> PathBuf {
 }
 
 #[tauri::command]
+pub(crate) fn authorize_flowcell_theme_asset(
+    app: AppHandle,
+    path: String,
+) -> Result<String, String> {
+    let trimmed_path = path.trim();
+    if trimmed_path.is_empty() {
+        return Err("Theme asset path cannot be empty.".to_string());
+    }
+    let asset_path = fs::canonicalize(trimmed_path).map_err(|error| {
+        format!("Failed to resolve Theme asset at {trimmed_path}: {error}")
+    })?;
+    if !asset_path.is_file() {
+        return Err(format!(
+            "Theme asset is not a file: {}",
+            asset_path.display()
+        ));
+    }
+    let extension = asset_path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !["png", "jpg", "jpeg", "webp"].contains(&extension.as_str()) {
+        return Err(format!(
+            "Theme asset '{}' must be a PNG, JPG, JPEG, or WebP image.",
+            asset_path.display()
+        ));
+    }
+    app.asset_protocol_scope()
+        .allow_file(&asset_path)
+        .map_err(|error| {
+            format!(
+                "Failed to authorize Theme asset at {}: {error}",
+                asset_path.display()
+            )
+        })?;
+    Ok(asset_path.display().to_string())
+}
+
+#[tauri::command]
 pub(crate) fn save_flowcell_theme_file(path: String, theme: Value) -> Result<String, String> {
     let trimmed_path = path.trim();
     if trimmed_path.is_empty() {
