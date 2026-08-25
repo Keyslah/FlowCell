@@ -37,7 +37,7 @@
 .main-page__background {
   position: absolute;
   inset: 0;
-  background-color: #9db678;
+  background-color: var(--flowcell-main-background-color, #9db678);
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;
@@ -89,9 +89,9 @@
   pointer-events: auto;
   gap: 8px;
   padding: 0 10px 0 12px;
-  border: 1px solid rgba(226, 234, 236, 0.36);
-  background: rgba(16, 23, 28, 0.84);
-  color: rgba(241, 246, 248, 0.94);
+  border: 1px solid var(--flowcell-main-poptype-border, rgba(226, 234, 236, 0.36));
+  background: var(--flowcell-main-poptype-background, rgba(16, 23, 28, 0.84));
+  color: var(--flowcell-main-poptype-text, rgba(241, 246, 248, 0.94));
   z-index: 1;
 }
 
@@ -131,11 +131,11 @@
   gap: 8px;
   width: min(420px, calc(100vw - 36px));
   padding: 14px 44px 16px 16px;
-  border: 1px solid rgba(255, 134, 120, 0.44);
+  border: 1px solid var(--flowcell-main-error-border, rgba(255, 134, 120, 0.44));
   border-radius: 8px;
-  background: rgba(24, 25, 26, 0.96);
-  color: rgba(255, 247, 244, 0.96);
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
+  background: var(--flowcell-main-error-background, rgba(24, 25, 26, 0.96));
+  color: var(--flowcell-main-error-text, rgba(255, 247, 244, 0.96));
+  box-shadow: 0 18px 44px var(--flowcell-main-error-shadow, rgba(0, 0, 0, 0.32));
   font: 600 13px/1.35 "Segoe UI", sans-serif;
 }
 
@@ -147,7 +147,7 @@
 .main-page__script-error p,
 .main-page__bootstrap-error p {
   margin: 0;
-  color: rgba(255, 232, 227, 0.9);
+  color: var(--flowcell-main-error-detail-text, rgba(255, 232, 227, 0.9));
   white-space: pre-wrap;
 }
 
@@ -160,15 +160,15 @@
   height: 28px;
   border: 0;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 247, 244, 0.96);
+  background: var(--flowcell-main-error-control-background, rgba(255, 255, 255, 0.08));
+  color: var(--flowcell-main-error-text, rgba(255, 247, 244, 0.96));
   font: 800 13px/1 "Segoe UI", sans-serif;
   cursor: pointer;
 }
 
 .main-page__script-error-close:hover,
 .main-page__bootstrap-error-close:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--flowcell-main-error-control-hover-background, rgba(255, 255, 255, 0.16));
 }
 
 .sr-only {
@@ -197,12 +197,16 @@
   padding: 6px;
   border-radius: 14px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.05)),
-    rgba(12, 16, 18, 0.94);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+    linear-gradient(
+      180deg,
+      var(--flowcell-main-chrome-gradient-top, rgba(255, 255, 255, 0.14)),
+      var(--flowcell-main-chrome-gradient-bottom, rgba(255, 255, 255, 0.05))
+    ),
+    var(--flowcell-main-context-menu-background, rgba(12, 16, 18, 0.94));
+  border: 1px solid var(--flowcell-main-chrome-border, rgba(255, 255, 255, 0.12));
   box-shadow:
-    0 20px 48px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    0 20px 48px var(--flowcell-main-chrome-shadow, rgba(0, 0, 0, 0.34)),
+    inset 0 1px 0 var(--flowcell-main-chrome-inset-highlight, rgba(255, 255, 255, 0.08));
   z-index: 40;
   backdrop-filter: blur(18px);
 }
@@ -232,15 +236,19 @@
   max-height: min(520px, calc(100vh - 24px));
   padding: 8px;
   overflow: auto;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--flowcell-main-chrome-border, rgba(255, 255, 255, 0.12));
   border-radius: 14px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.05)),
-    rgba(12, 16, 18, 0.96);
+    linear-gradient(
+      180deg,
+      var(--flowcell-main-chrome-gradient-top, rgba(255, 255, 255, 0.14)),
+      var(--flowcell-main-chrome-gradient-bottom, rgba(255, 255, 255, 0.05))
+    ),
+    var(--flowcell-main-chrome-background, rgba(12, 16, 18, 0.96));
   box-shadow:
-    0 20px 48px rgba(0, 0, 0, 0.34),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
-  color: rgba(244, 247, 241, 0.96);
+    0 20px 48px var(--flowcell-main-chrome-shadow, rgba(0, 0, 0, 0.34)),
+    inset 0 1px 0 var(--flowcell-main-chrome-inset-highlight, rgba(255, 255, 255, 0.08));
+  color: var(--flowcell-main-fan-menu-text, rgba(244, 247, 241, 0.96));
   backdrop-filter: blur(18px);
 }
 
@@ -254,7 +262,7 @@
 .fan-setup-menu__empty {
   margin: 0;
   padding: 6px;
-  color: rgba(224, 231, 232, 0.76);
+  color: var(--flowcell-main-chrome-muted-text, rgba(224, 231, 232, 0.76));
   font: 600 12px/1.4 "Segoe UI", sans-serif;
 }
 
@@ -267,7 +275,7 @@
   position: fixed;
   inset: 0;
   z-index: 49;
-  background: rgba(0, 0, 0, 0.42);
+  background: var(--flowcell-main-overlay-background, rgba(0, 0, 0, 0.42));
 }
 
 .main-page__settings {
@@ -281,14 +289,18 @@
   width: min(360px, calc(100vw - 48px));
   padding: 18px 20px 20px;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--flowcell-main-chrome-border, rgba(255, 255, 255, 0.12));
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04)),
-    rgba(12, 16, 18, 0.96);
-  color: rgba(241, 246, 248, 0.96);
+    linear-gradient(
+      180deg,
+      var(--flowcell-main-settings-gradient-top, rgba(255, 255, 255, 0.12)),
+      var(--flowcell-main-settings-gradient-bottom, rgba(255, 255, 255, 0.04))
+    ),
+    var(--flowcell-main-chrome-background, rgba(12, 16, 18, 0.96));
+  color: var(--flowcell-main-chrome-text, rgba(241, 246, 248, 0.96));
   box-shadow:
-    0 24px 56px rgba(0, 0, 0, 0.42),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    0 24px 56px var(--flowcell-main-settings-shadow, rgba(0, 0, 0, 0.42)),
+    inset 0 1px 0 var(--flowcell-main-chrome-inset-highlight, rgba(255, 255, 255, 0.08));
   font: 600 13px/1.4 "Segoe UI", sans-serif;
 }
 
@@ -308,14 +320,14 @@
   height: 28px;
   border: 0;
   border-radius: 6px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--flowcell-main-chrome-control-background, rgba(255, 255, 255, 0.08));
   color: inherit;
   font: 800 13px/1 "Segoe UI", sans-serif;
   cursor: pointer;
 }
 
 .main-page__settings-close:hover {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--flowcell-main-chrome-control-hover-background, rgba(255, 255, 255, 0.16));
 }
 
 .main-page__settings-option {

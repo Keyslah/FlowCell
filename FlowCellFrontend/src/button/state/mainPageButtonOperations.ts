@@ -232,7 +232,8 @@ function rectMatches(
 
 export function ensureFlowCellMainPageButtons(
   document: ButtonStateDocument,
-  programNames: readonly string[]
+  programNames: readonly string[],
+  options: { removeLegacyTemplates?: boolean } = {}
 ): boolean {
   let changed = false;
   for (const section of FLOWCELL_MAIN_PAGE_SECTIONS) {
@@ -255,15 +256,17 @@ export function ensureFlowCellMainPageButtons(
 
   // Discovery can be incomplete while a folder is unavailable. Only the
   // canonical program-removal transaction may delete a program presentation.
-  for (const button of Object.values(document.buttons)) {
-    if (!isManagedMainPageButton(button)) continue;
-    const key = typeof button.metadata.mainPageControlKey === "string"
-      ? button.metadata.mainPageControlKey
-      : "";
-    const legacyTemplate = key === "program-row" || key === "panel-row";
-    if (!legacyTemplate) continue;
-    removeButton(document, button.id);
-    changed = true;
+  if (options.removeLegacyTemplates !== false) {
+    for (const button of Object.values(document.buttons)) {
+      if (!isManagedMainPageButton(button)) continue;
+      const key = typeof button.metadata.mainPageControlKey === "string"
+        ? button.metadata.mainPageControlKey
+        : "";
+      const legacyTemplate = key === "program-row" || key === "panel-row";
+      if (!legacyTemplate) continue;
+      removeButton(document, button.id);
+      changed = true;
+    }
   }
 
   const definitions = [

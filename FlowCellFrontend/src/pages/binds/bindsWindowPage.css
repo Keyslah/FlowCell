@@ -3,8 +3,8 @@
   height: 100vh;
   padding: 18px;
   overflow: hidden;
-  background: #12161a;
-  color: #eef3f8;
+  background: var(--flowcell-binds-background, #12161a);
+  color: var(--flowcell-binds-text, #eef3f8);
 }
 
 .binds-window {
@@ -33,13 +33,13 @@
   font: 700 0.72rem/1 "Segoe UI", sans-serif;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: #9fb0bf;
+  color: var(--flowcell-binds-muted-text, #9fb0bf);
 }
 
 .binds-window__title-block h1 {
   margin: 0;
   font: 700 1.3rem/1.15 "Segoe UI", sans-serif;
-  color: #f7fbff;
+  color: var(--flowcell-binds-heading-text, #f7fbff);
 }
 
 .binds-window__chrome-button,
@@ -55,10 +55,10 @@
 .binds-window__bind-button,
 .binds-window__shortcut-toggle {
   min-height: 42px;
-  border: 1px solid #44515d;
+  border: 1px solid var(--flowcell-binds-control-border, #44515d);
   border-radius: 10px;
-  background: #1a2128;
-  color: #eef3f8;
+  background: var(--flowcell-binds-button, #1a2128);
+  color: var(--flowcell-binds-text, #eef3f8);
   font: 600 14px/1 "Segoe UI", sans-serif;
 }
 
@@ -70,9 +70,9 @@
 .binds-window__station,
 .binds-window__card {
   min-height: 0;
-  border: 1px solid #2d363f;
+  border: 1px solid var(--flowcell-binds-border, #2d363f);
   border-radius: 14px;
-  background: #171c21;
+  background: var(--flowcell-binds-surface, #171c21);
 }
 
 .binds-window__station {
@@ -104,7 +104,7 @@
   font: 700 0.78rem/1 "Segoe UI", sans-serif;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #b4c0cb;
+  color: var(--flowcell-binds-secondary-text, #b4c0cb);
 }
 
 .binds-window__input,
@@ -112,16 +112,16 @@
   width: 100%;
   min-height: 42px;
   padding: 0 12px;
-  border: 1px solid #44515d;
+  border: 1px solid var(--flowcell-binds-control-border, #44515d);
   border-radius: 10px;
-  background: #0f1418;
-  color: #eef3f8;
+  background: var(--flowcell-binds-input, #0f1418);
+  color: var(--flowcell-binds-text, #eef3f8);
   font: 600 14px/1.2 "Segoe UI", sans-serif;
   outline: none;
 }
 
 .binds-window__input::placeholder {
-  color: #7f8c98;
+  color: var(--flowcell-binds-placeholder-text, #7f8c98);
 }
 
 .binds-window__input:focus,
@@ -132,7 +132,7 @@
 .binds-window__table-row:focus,
 .binds-window__global-button:focus,
 .binds-window__shortcut-option:focus {
-  border-color: #62b7ff;
+  border-color: var(--flowcell-binds-accent, #62b7ff);
   box-shadow: 0 0 0 1px rgba(98, 183, 255, 0.28);
 }
 
@@ -179,9 +179,9 @@
   max-height: 260px;
   padding: 6px;
   overflow: auto;
-  border: 1px solid #44515d;
+  border: 1px solid var(--flowcell-binds-control-border, #44515d);
   border-radius: 10px;
-  background: #0f1418;
+  background: var(--flowcell-binds-input, #0f1418);
   box-shadow: 0 18px 30px rgba(0, 0, 0, 0.34);
   z-index: 10;
 }
@@ -193,7 +193,7 @@
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
-  color: #eef3f8;
+  color: var(--flowcell-binds-text, #eef3f8);
   font: 600 13px/1.15 "Segoe UI", sans-serif;
   text-align: left;
 }
@@ -204,14 +204,14 @@
 .binds-window__chrome-button:hover:not(:disabled),
 .binds-window__bind-button:hover:not(:disabled),
 .binds-window__shortcut-toggle:hover:not(:disabled) {
-  border-color: #62b7ff;
+  border-color: var(--flowcell-binds-accent, #62b7ff);
 }
 
 .binds-window__shortcut-option.is-selected,
 .binds-window__table-row.is-selected,
 .binds-window__global-button.is-selected {
-  border-color: #62b7ff;
-  background: #1b2530;
+  border-color: var(--flowcell-binds-accent, #62b7ff);
+  background: var(--flowcell-binds-selection, #1b2530);
 }
 
 .binds-window__bind-button {
@@ -228,35 +228,35 @@
 }
 
 .binds-window__toolbar-note {
-  color: #b4c0cb;
+  color: var(--flowcell-binds-secondary-text, #b4c0cb);
 }
 
 .binds-window__status,
 .binds-window__warning,
 .binds-window__empty {
   padding: 10px 12px;
-  border: 1px solid #3c4650;
+  border: 1px solid var(--flowcell-binds-status-border, #3c4650);
   border-radius: 10px;
-  background: #12171c;
+  background: var(--flowcell-binds-status-background, #12171c);
 }
 
 .binds-window__status.is-success {
-  color: #b7f3bc;
-  border-color: #2f6741;
-  background: #152118;
+  color: var(--flowcell-binds-success-text, #b7f3bc);
+  border-color: var(--flowcell-binds-success-border, #2f6741);
+  background: var(--flowcell-binds-success-background, #152118);
 }
 
 .binds-window__status.is-warning {
-  color: #ffe3a3;
-  border-color: #80642e;
-  background: #271f10;
+  color: var(--flowcell-binds-warning-text, #ffe3a3);
+  border-color: var(--flowcell-binds-warning-border, #80642e);
+  background: var(--flowcell-binds-warning-background, #271f10);
 }
 
 .binds-window__status.is-error,
 .binds-window__warning {
-  color: #ffd1d1;
-  border-color: #704545;
-  background: #221516;
+  color: var(--flowcell-binds-error-text, #ffd1d1);
+  border-color: var(--flowcell-binds-error-border, #704545);
+  background: var(--flowcell-binds-error-background, #221516);
 }
 
 .binds-window__grid {
@@ -283,11 +283,11 @@
 .binds-window__section-header h2 {
   margin: 0 0 4px;
   font: 700 1.02rem/1.2 "Segoe UI", sans-serif;
-  color: #f7fbff;
+  color: var(--flowcell-binds-heading-text, #f7fbff);
 }
 
 .binds-window__section-header p {
-  color: #9fb0bf;
+  color: var(--flowcell-binds-muted-text, #9fb0bf);
 }
 
 .binds-window__table {
@@ -310,7 +310,7 @@
   font: 700 0.76rem/1 "Segoe UI", sans-serif;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #9fb0bf;
+  color: var(--flowcell-binds-muted-text, #9fb0bf);
 }
 
 .binds-window__table-body,
@@ -329,10 +329,10 @@
 .binds-window__table-row {
   width: 100%;
   padding: 11px 12px;
-  border: 1px solid #303944;
+  border: 1px solid var(--flowcell-binds-item-border, #303944);
   border-radius: 10px;
-  background: #11161a;
-  color: #eef3f8;
+  background: var(--flowcell-binds-item-background, #11161a);
+  color: var(--flowcell-binds-text, #eef3f8);
   text-align: left;
 }
 
@@ -346,7 +346,7 @@
 
 .binds-window__table-row span:last-child {
   text-align: right;
-  color: #d4e0ec;
+  color: var(--flowcell-binds-item-value-text, #d4e0ec);
 }
 
 .binds-window__global-list {
@@ -364,7 +364,7 @@
 .binds-window__global-group h3 {
   margin: 0;
   font: 700 0.92rem/1.2 "Segoe UI", sans-serif;
-  color: #f7fbff;
+  color: var(--flowcell-binds-heading-text, #f7fbff);
 }
 
 .binds-window__global-buttons {
@@ -380,15 +380,15 @@
   align-items: center;
   width: 100%;
   padding: 11px 12px;
-  border: 1px solid #303944;
+  border: 1px solid var(--flowcell-binds-item-border, #303944);
   border-radius: 10px;
-  background: #11161a;
-  color: #eef3f8;
+  background: var(--flowcell-binds-item-background, #11161a);
+  color: var(--flowcell-binds-text, #eef3f8);
   text-align: left;
 }
 
 .binds-window__global-button small {
-  color: #c1d0dc;
+  color: var(--flowcell-binds-item-detail-text, #c1d0dc);
   font: 600 0.8rem/1.2 "Segoe UI", sans-serif;
   text-align: right;
 }

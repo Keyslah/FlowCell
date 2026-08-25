@@ -47,8 +47,9 @@ test("FlowCell Main Page navigation never enters registered-program panel lookup
   const editor = readEditorFile("ButtonEditorPage.tsx");
   assert.match(
     editor,
-    /const mainPageButtonsChanged = ensureFlowCellMainPageButtons\(next, programNames\);\s*changed \|\|= mainPageButtonsChanged;/
+    /void loadMainPageButtonBootstrap\(\)\s*\.then\(\(loaded\) => \{ if \(active\) setBootstrap\(loaded\); \}\)/
   );
+  assert.doesNotMatch(editor, /\bensureFlowCellMainPageButtons\b/);
   const panelRefresh = editor.match(
     /useEffect\(\(\) => \{\s*if \(!programName\)[\s\S]*?\n  \}, \[programName\]\);/
   );

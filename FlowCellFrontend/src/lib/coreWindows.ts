@@ -12,6 +12,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import {
   BINDS_PREFILL_EVENT,
   BUTTON_WINDOW_CONTEXT_SCHEMA_VERSION,
+  THEME_EDITOR_CONTEXT_EVENT,
   buildWindowContextUrl,
   type BindsButtonPrefill,
   type FlowCellWindowContext,
@@ -214,6 +215,29 @@ export async function openBindsWindow(prefill?: BindsButtonPrefill): Promise<voi
     decorations: true
   });
   if (prefill) await emit(BINDS_PREFILL_EVENT, prefill).catch(() => {});
+}
+
+export async function openThemeEditorWindow(args: {
+  target?: string;
+  page?: string;
+} = {}): Promise<void> {
+  const context = {
+    kind: "theme-editor" as const,
+    target: args.target?.trim() || undefined,
+    page: args.page?.trim() || undefined
+  };
+  await openCoreWindow({
+    label: "flowcell-theme-editor",
+    context,
+    title: "FlowCell - Theme Editor",
+    width: 1240,
+    height: 900,
+    minimumWidth: 820,
+    minimumHeight: 620,
+    decorations: true,
+    recreate: false
+  });
+  await emit(THEME_EDITOR_CONTEXT_EVENT, context).catch(() => {});
 }
 
 export async function openMacroLabWindow(args: {

@@ -1,7 +1,6 @@
 import {
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -58,6 +57,7 @@ import {
   openBindsWindow,
   openInstalledPageWindow,
   openMacroLabWindow,
+  openThemeEditorWindow,
   resolveInstalledPageOpenDescriptor,
   type InstalledPageOpenDescriptor,
   reloadCurrentHostWindow
@@ -727,7 +727,6 @@ async function captureWindowBounds(target: WindowBoundsTarget): Promise<FlowCell
 }
 
 export default function MainPage() {
-  const topLeftActionGroupRef = useRef<HTMLDivElement | null>(null);
   const layoutActionPendingRef = useRef(false);
   const preferredPanelSelectionRef = useRef<string | null>(null);
   const preferredSelectedPanelScriptFileNamesRef = useRef<{
@@ -1528,114 +1527,6 @@ export default function MainPage() {
       ),
     [allButtons]
   );
-  const topLeftActionGap = useMemo(() => {
-    if (topLeftActionButtons.length < 2) {
-      return 16;
-    }
-    return Math.max(
-      0,
-      topLeftActionButtons[1].x -
-        topLeftActionButtons[0].x -
-        topLeftActionButtons[0].width
-    );
-  }, [topLeftActionButtons]);
-  const topLeftActionAnchor = useMemo(() => {
-    if (topLeftActionButtons.length === 0) {
-      return null;
-    }
-    return {
-      x: topLeftActionButtons[0].x,
-      y: topLeftActionButtons[0].y
-    };
-  }, [topLeftActionButtons]);
-  const topLeftBaselineHeight = useMemo(
-    () => topLeftActionButtons[0]?.height ?? 0,
-    [topLeftActionButtons]
-  );
-  const [topLeftActionHeight, setTopLeftActionHeight] = useState(topLeftBaselineHeight);
-  useEffect(() => {
-    setTopLeftActionHeight(topLeftBaselineHeight);
-  }, [topLeftBaselineHeight, topLeftActionButtons.length]);
-  const topLeftActionMaxRight = useMemo(() => {
-    const buttonWidth = topLeftActionButtons[topLeftActionButtons.length - 1]?.width ?? 0;
-    return page.width / 2 + buttonWidth;
-  }, [topLeftActionButtons]);
-  useLayoutEffect(() => {
-    const groupNode = topLeftActionGroupRef.current;
-    if (
-      !groupNode ||
-      !topLeftActionAnchor ||
-      topLeftBaselineHeight <= 0 ||
-      topLeftActionButtons.length === 0
-    ) {
-      return;
-    }
-
-    const gapTotal = topLeftActionGap * Math.max(topLeftActionButtons.length - 1, 0);
-    const availableContentWidth = Math.max(
-      1,
-      topLeftActionMaxRight - topLeftActionAnchor.x - gapTotal
-    );
-    const minHeight = Math.max(18, topLeftBaselineHeight * 0.72);
-
-    const updateHeight = () => {
-      const childButtons = Array.from(groupNode.children).filter(
-        (child): child is HTMLElement => child instanceof HTMLElement
-      );
-      const totalChildWidth = childButtons.reduce(
-        (sum, child) => sum + child.offsetWidth,
-        0
-      );
-      if (totalChildWidth <= 0) {
-        return;
-      }
-
-      const currentHeight = topLeftActionHeight > 0 ? topLeftActionHeight : topLeftBaselineHeight;
-      const baselineEstimatedWidth =
-        totalChildWidth * (topLeftBaselineHeight / currentHeight);
-      const nextHeight =
-        baselineEstimatedWidth <= availableContentWidth
-          ? topLeftBaselineHeight
-          : Math.max(
-              minHeight,
-              topLeftBaselineHeight * (availableContentWidth / baselineEstimatedWidth)
-            );
-      const roundedHeight = Number(nextHeight.toFixed(3));
-      if (Math.abs(roundedHeight - currentHeight) > 0.25) {
-        setTopLeftActionHeight(roundedHeight);
-      }
-    };
-
-    const animationFrameId = window.requestAnimationFrame(updateHeight);
-    if (typeof ResizeObserver === "undefined") {
-      return () => {
-        window.cancelAnimationFrame(animationFrameId);
-      };
-    }
-
-    const observer = new ResizeObserver(() => {
-      updateHeight();
-    });
-    observer.observe(groupNode);
-    Array.from(groupNode.children).forEach((child) => {
-      if (child instanceof HTMLElement) {
-        observer.observe(child);
-      }
-    });
-
-    return () => {
-      window.cancelAnimationFrame(animationFrameId);
-      observer.disconnect();
-    };
-  }, [
-    topLeftActionAnchor,
-    topLeftActionButtons,
-    topLeftActionGap,
-    topLeftActionHeight,
-    topLeftActionMaxRight,
-    topLeftBaselineHeight
-  ]);
-
   const resolvedButtonsById = useMemo(
     () => new Map(allButtons.map((button) => [button.id, button])),
     [allButtons]
@@ -3271,6 +3162,16 @@ export default function MainPage() {
       return;
     }
 
+    if (button.actionId === "open-theme-editor") {
+      try {
+        await openThemeEditorWindow({ target: "FlowCell", page: "main" });
+      } catch (error) {
+        console.error("Failed to open Theme Editor.", error);
+        window.alert(`Theme Editor could not be opened.\n\n${formatErrorMessage(error)}`);
+      }
+      return;
+    }
+
     if (button.actionId === "top-right-button-1") {
       await handleMinimizeMainWindow();
       return;
@@ -3527,7 +3428,7 @@ export default function MainPage() {
           <div
             className="main-page__background"
             aria-hidden="true"
-            style={{ backgroundImage: `url(${mainBackground})` }}
+            style={{ backgroundImage: `var(--flowcell-main-background-image, url(${mainBackground}))` }}
           />
           {buttonBootstrapError ? (
             <section
@@ -3557,7 +3458,6 @@ export default function MainPage() {
           ))}
           {buttonDocument && topLeftActionButtons.length > 0 ? (
             <div
-              ref={topLeftActionGroupRef}
               className="main-page__button-group main-page__button-group--placement-layer"
             >
               {topLeftActionButtons.map((button) => (
@@ -3565,13 +3465,11 @@ export default function MainPage() {
                   key={button.id}
                   button={button}
                   canonicalPresentation={resolveFlowCellMainPagePresentation(buttonDocument, button)!}
-                  targetHeightOverride={topLeftActionHeight}
                   onActivate={handleButtonActivate}
                   onRequestContextMenu={handleButtonContextMenu}
                 /> : <MainControlHost
                   key={button.id}
                   control={button}
-                  targetHeightOverride={topLeftActionHeight}
                   onActivate={handleButtonActivate}
                   onRequestContextMenu={handleButtonContextMenu}
                 />

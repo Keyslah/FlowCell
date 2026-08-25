@@ -176,6 +176,11 @@ const buttonsSurfaceGeometry = {
   radius: 18.647463
 } as const;
 
+export const buttonsSurfaceContentOrigin = {
+  x: buttonsSurfaceGeometry.scriptStartX,
+  y: buttonsSurfaceGeometry.scriptStartY
+} as const;
+
 export const buttonsSurfacePopTypeControlGeometry = {
   x: buttonsSurfaceGeometry.addButtonX + buttonsSurfaceGeometry.stepX * 2,
   y: buttonsSurfaceGeometry.fanControlsY,
@@ -356,6 +361,18 @@ export const staticButtons: ButtonRecord[] = [
     label: "Buttons",
     tooltip: "Open the FlowCell Buttons Editor.",
     actionId: "open-button-editor"
+  },
+  {
+    id: "top-left-button-10",
+    groupId: "top-left-actions",
+    x: 637.814518,
+    y: 36.353741,
+    width: 92.446043,
+    height: 37.294964,
+    radius: 18.647463,
+    label: "Theme",
+    tooltip: "Open the FlowCell Theme Editor.",
+    actionId: "open-theme-editor"
   },
   {
     id: "top-right-button-1",

@@ -89,6 +89,14 @@ export interface MotionSettingsWindowContext {
   kind: "motion-settings";
 }
 
+export interface ThemeEditorWindowContext {
+  kind: "theme-editor";
+  target?: string;
+  page?: string;
+}
+
+export const THEME_EDITOR_CONTEXT_EVENT = "flowcell:theme-editor-context";
+
 export interface MacroLabWindowContext {
   kind: "macro-lab";
   programName: string;
@@ -114,6 +122,7 @@ export type FlowCellWindowContext =
   | InstalledPageWindowContext
   | WindowGridWindowContext
   | MotionSettingsWindowContext
+  | ThemeEditorWindowContext
   | MacroLabWindowContext
   | TooltipWindowContext;
 
@@ -272,6 +281,13 @@ function parseWindowContext(value: unknown): FlowCellWindowContext {
   }
   if (parsed.kind === "window-grid") return { kind: "window-grid" };
   if (parsed.kind === "motion-settings") return { kind: "motion-settings" };
+  if (parsed.kind === "theme-editor") {
+    return {
+      kind: "theme-editor",
+      target: optionalString(parsed.target),
+      page: optionalString(parsed.page)
+    };
+  }
   if (
     parsed.kind === "macro-lab" &&
     typeof parsed.programName === "string" &&

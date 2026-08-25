@@ -4,8 +4,8 @@
   height: 100vh;
   padding: 16px;
   overflow: hidden;
-  background: #101316;
-  color: #eef3f8;
+  background: var(--flowcell-macro-lab-background, #101316);
+  color: var(--flowcell-macro-lab-text, #eef3f8);
 }
 
 .macro-lab-page *,
@@ -53,7 +53,7 @@
   font: 700 0.72rem/1 "Segoe UI", sans-serif;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #aeb9c2;
+  color: var(--flowcell-macro-lab-muted-text, #aeb9c2);
 }
 
 .macro-lab__title h1 {
@@ -61,7 +61,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  color: #f7fbff;
+  color: var(--flowcell-macro-lab-heading-text, #f7fbff);
   font: 700 1.28rem/1.15 "Segoe UI", sans-serif;
 }
 
@@ -82,9 +82,9 @@
   gap: 10px;
   align-items: end;
   padding: 12px;
-  border: 1px solid #2e3942;
+  border: 1px solid var(--flowcell-macro-lab-border, #2e3942);
   border-radius: 8px;
-  background: #171c21;
+  background: var(--flowcell-macro-lab-surface, #171c21);
 }
 
 .macro-lab label {
@@ -100,11 +100,11 @@
   width: 100%;
   min-height: 38px;
   padding: 0 10px;
-  border: 1px solid #43505b;
+  border: 1px solid var(--flowcell-macro-lab-control-border, #43505b);
   border-radius: 8px;
   outline: none;
-  background: #0e1317;
-  color: #eef3f8;
+  background: var(--flowcell-macro-lab-input, #0e1317);
+  color: var(--flowcell-macro-lab-text, #eef3f8);
   font: 600 13px/1.2 "Segoe UI", sans-serif;
 }
 
@@ -118,24 +118,24 @@
 .macro-lab select:focus,
 .macro-lab textarea:focus,
 .macro-lab button:focus {
-  border-color: #73c0ff;
+  border-color: var(--flowcell-macro-lab-accent, #73c0ff);
   box-shadow: 0 0 0 1px rgba(115, 192, 255, 0.28);
 }
 
 .macro-lab button {
   min-height: 38px;
   padding: 0 12px;
-  border: 1px solid #43505b;
+  border: 1px solid var(--flowcell-macro-lab-control-border, #43505b);
   border-radius: 8px;
-  background: #1a2127;
-  color: #eef3f8;
+  background: var(--flowcell-macro-lab-button, #1a2127);
+  color: var(--flowcell-macro-lab-text, #eef3f8);
   font: 700 13px/1 "Segoe UI", sans-serif;
   cursor: pointer;
 }
 
 .macro-lab button:hover:not(:disabled) {
-  border-color: #73c0ff;
-  background: #202a32;
+  border-color: var(--flowcell-macro-lab-accent, #73c0ff);
+  background: var(--flowcell-macro-lab-button-hover, #202a32);
 }
 
 .macro-lab button:disabled,
@@ -152,14 +152,14 @@
   min-height: 38px;
   padding: 0 10px;
   justify-content: center;
-  border: 1px solid #43505b;
+  border: 1px solid var(--flowcell-macro-lab-control-border, #43505b);
   border-radius: 8px;
-  background: #0e1317;
+  background: var(--flowcell-macro-lab-input, #0e1317);
 }
 
 .macro-lab__mouse-readout strong {
   font: 800 14px/1 "Segoe UI", sans-serif;
-  color: #d9f8cf;
+  color: var(--flowcell-macro-lab-readout-text, #d9f8cf);
 }
 
 .macro-lab__command-bar {
@@ -170,23 +170,23 @@
   min-height: 36px;
   margin: 0;
   padding: 9px 12px;
-  border: 1px solid #3c4650;
+  border: 1px solid var(--flowcell-macro-lab-status-border, #3c4650);
   border-radius: 8px;
-  background: #171c21;
-  color: #c7d0d8;
+  background: var(--flowcell-macro-lab-surface, #171c21);
+  color: var(--flowcell-macro-lab-status-text, #c7d0d8);
   font: 600 13px/1.3 "Segoe UI", sans-serif;
 }
 
 .macro-lab__status.is-success {
-  color: #bef2c1;
-  border-color: #326640;
-  background: #132017;
+  color: var(--flowcell-macro-lab-success-text, #bef2c1);
+  border-color: var(--flowcell-macro-lab-success-border, #326640);
+  background: var(--flowcell-macro-lab-success-background, #132017);
 }
 
 .macro-lab__status.is-error {
-  color: #ffd1d1;
-  border-color: #744149;
-  background: #221416;
+  color: var(--flowcell-macro-lab-error-text, #ffd1d1);
+  border-color: var(--flowcell-macro-lab-error-border, #744149);
+  background: var(--flowcell-macro-lab-error-background, #221416);
 }
 
 .macro-lab__workspace {
@@ -203,9 +203,9 @@
   gap: 10px;
   min-height: 0;
   padding: 12px;
-  border: 1px solid #2e3942;
+  border: 1px solid var(--flowcell-macro-lab-border, #2e3942);
   border-radius: 8px;
-  background: #171c21;
+  background: var(--flowcell-macro-lab-surface, #171c21);
 }
 
 .macro-lab__editor {
@@ -221,7 +221,7 @@
 
 .macro-lab__section-header h2 {
   margin: 0;
-  color: #f7fbff;
+  color: var(--flowcell-macro-lab-heading-text, #f7fbff);
   font: 700 1rem/1.2 "Segoe UI", sans-serif;
 }
 
@@ -230,9 +230,9 @@
   grid-template-rows: auto minmax(0, 1fr);
   min-height: 0;
   overflow: hidden;
-  border: 1px solid #2e3942;
+  border: 1px solid var(--flowcell-macro-lab-border, #2e3942);
   border-radius: 8px;
-  background: #0e1317;
+  background: var(--flowcell-macro-lab-input, #0e1317);
 }
 
 .macro-lab__step-head,
@@ -245,9 +245,9 @@
 
 .macro-lab__step-head {
   min-height: 38px;
-  border-bottom: 1px solid #2e3942;
-  background: #1d252c;
-  color: #aeb9c2;
+  border-bottom: 1px solid var(--flowcell-macro-lab-border, #2e3942);
+  background: var(--flowcell-macro-lab-table-heading, #1d252c);
+  color: var(--flowcell-macro-lab-muted-text, #aeb9c2);
   font: 800 11px/1 "Segoe UI", sans-serif;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -273,27 +273,27 @@
   padding: 0;
   border-width: 0 0 1px;
   border-style: solid;
-  border-color: #202932;
+  border-color: var(--flowcell-macro-lab-row-border, #202932);
   border-radius: 0;
   background: transparent;
-  color: #eef3f8;
+  color: var(--flowcell-macro-lab-text, #eef3f8);
   text-align: left;
   font: 600 13px/1.2 "Segoe UI", sans-serif;
 }
 
 .macro-lab__step-row:hover {
-  background: #1c252d;
+  background: var(--flowcell-macro-lab-row-hover, #1c252d);
 }
 
 .macro-lab__step-row.is-selected {
-  background: #18314a;
-  box-shadow: inset 3px 0 0 #73c0ff;
+  background: var(--flowcell-macro-lab-selection, #18314a);
+  box-shadow: inset 3px 0 0 var(--flowcell-macro-lab-accent, #73c0ff);
 }
 
 .macro-lab__empty {
   margin: 0;
   padding: 16px;
-  color: #aeb9c2;
+  color: var(--flowcell-macro-lab-muted-text, #aeb9c2);
   font: 600 13px/1.3 "Segoe UI", sans-serif;
 }
 
@@ -337,7 +337,7 @@
 
 .macro-lab__hint {
   margin: 0;
-  color: #aeb9c2;
+  color: var(--flowcell-macro-lab-muted-text, #aeb9c2);
   font: 600 12px/1.35 "Segoe UI", sans-serif;
 }
 

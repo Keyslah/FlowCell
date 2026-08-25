@@ -29,12 +29,14 @@ import BindsWindowPage from "./pages/binds/BindsWindowPage";
 import WindowGridWindowPage from "./pages/window-grid/WindowGridWindowPage";
 import MotionSettingsWindowPage from "./pages/motion-settings/MotionSettingsWindowPage";
 import MacroLabWindowPage from "./pages/macro-lab/MacroLabWindowPage";
+import ThemeEditorPage from "./pages/theme/ThemeEditorPage";
 import MainPage from "./pages/main/MainPage";
 import InstalledPageWindowPage from "./pages/installed-page/InstalledPageWindowPage";
 import AddProgramWindowPage from "./pages/program-setup/AddProgramWindowPage";
 import AddPanelWindowPage from "./pages/program-setup/AddPanelWindowPage";
 import TooltipWindowPage from "./pages/tooltip/TooltipWindowPage";
 import { runFrontendMacro } from "./lib/macros";
+import { installThemeRuntime } from "./theme/themeRuntime";
 
 function resolveScopedTopmostProgramName(
   windowContext: ReturnType<typeof getWindowContextFromLocation>
@@ -49,7 +51,8 @@ function resolveScopedTopmostProgramName(
     windowContext.kind === "add-panel" ||
     windowContext.kind === "macro-lab" ||
     windowContext.kind === "window-grid" ||
-    windowContext.kind === "motion-settings"
+    windowContext.kind === "motion-settings" ||
+    windowContext.kind === "theme-editor"
   ) {
     return "";
   }
@@ -75,6 +78,8 @@ export default function App() {
   const programName = resolveScopedTopmostProgramName(windowContext);
   const fixedAlwaysOnTop =
     windowContext.kind === "installed-page" && windowContext.alwaysOnTop;
+
+  useEffect(() => installThemeRuntime(), []);
 
   useEffect(() => registerButtonCoreAction(
     FRONTEND_MACRO_CORE_ACTION_ID,
@@ -373,6 +378,9 @@ export default function App() {
   }
   if (windowContext.kind === "macro-lab") {
     return <MacroLabWindowPage context={windowContext} />;
+  }
+  if (windowContext.kind === "theme-editor") {
+    return <ThemeEditorPage context={windowContext} />;
   }
   if (windowContext.kind === "tooltip") {
     return <TooltipWindowPage context={windowContext} />;

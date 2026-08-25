@@ -13,10 +13,6 @@ import {
   listProgramFolders
 } from "../../lib/programRails";
 import {
-  buildPanelRailOwnerEntries,
-  panelRailOwnerSurfaceBounds
-} from "../../pages/main/mainLayout";
-import {
   showOpenFileDialog,
   showSaveFileDialog
 } from "../../lib/tauri";
@@ -28,7 +24,6 @@ import {
 import {
   buildButtonFanWindowLabel,
   buildButtonPopoutWindowLabel,
-  closeButtonFanWindow,
   listenForButtonWindowContextUpdates,
   openButtonFanWindow,
   openButtonPopoutWindow
@@ -82,13 +77,14 @@ import {
 } from "../state/buttonDocumentOperations";
 import { setButtonPopoutFanMode } from "../state/buttonPopoutInteractionOperations";
 import {
-  reconcileProgramPanelOwners
-} from "../state/panelOwnerButtonOperations";
-import {
   FLOWCELL_MAIN_PAGE_SECTIONS,
-  ensureFlowCellMainPageButtons,
   isFlowCellMainPageProgram
 } from "../state/mainPageButtonOperations";
+import {
+  loadMainPageButtonBootstrap,
+  type MainPageButtonBootstrap,
+  type RegisteredProgramPanels
+} from "../state/mainPageButtonBootstrap";
 import {
   alignButtonPlacementSelectionToTopLeftButton,
   buttonSpacingPixelsFromMillimeters,
@@ -289,11 +285,6 @@ async function initializeSettingsDefaultWithRetry(args: {
   throw new Error("FlowCell could not initialize the Button settings default.");
 }
 
-interface RegisteredProgramPanels {
-  programName: string;
-  panelNames: string[];
-}
-
 interface NaturalCoreMeasurementSnapshot {
   measurement: ButtonCoreMeasurement;
   sourceSkinId: string;
@@ -316,11 +307,6 @@ function currentNaturalCoreMeasurement(
   ) ? source.measurement : null;
 }
 
-interface ButtonEditorBootstrap {
-  document: ButtonStateDocument;
-  registeredPanels: RegisteredProgramPanels[];
-}
-
 function registeredPanelsForProgram(
   registeredPanels: readonly RegisteredProgramPanels[],
   programName: string
@@ -329,47 +315,6 @@ function registeredPanelsForProgram(
   return registeredPanels.find((entry) =>
     entry.programName.normalize("NFC").trim().toLocaleLowerCase("en") === normalizedProgramName
   )?.panelNames ?? [];
-}
-
-async function loadButtonEditorBootstrap(): Promise<ButtonEditorBootstrap> {
-  const programNames = await listProgramFolders();
-  const registeredPanels = await Promise.all(programNames.map(async (programName) => ({
-    programName,
-    panelNames: await listPanelFolders(programName)
-  })));
-
-  let current = await loadButtonStateDocument();
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    const next = cloneButtonDocument(current);
-    let changed = false;
-    const removedOwnerButtonIds = new Set<string>();
-    for (const entry of registeredPanels) {
-      const result = reconcileProgramPanelOwners(next, {
-        programName: entry.programName,
-        panels: buildPanelRailOwnerEntries(entry.panelNames),
-        surfaceBounds: panelRailOwnerSurfaceBounds
-      });
-      changed ||= result.changed;
-      result.removedOwnerButtonIds.forEach((buttonId) => removedOwnerButtonIds.add(buttonId));
-    }
-    const mainPageButtonsChanged = ensureFlowCellMainPageButtons(next, programNames);
-    changed ||= mainPageButtonsChanged;
-    if (!changed) return { document: current, registeredPanels };
-
-    try {
-      const saved = await saveButtonStateDocument(next, current.revision);
-      await publishButtonCommit(saved);
-      await Promise.all(
-        [...removedOwnerButtonIds].map((buttonId) => closeButtonFanWindow(buttonId))
-      );
-      return { document: saved, registeredPanels };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (attempt === 2 || !message.includes("Button state changed before Save.")) throw error;
-      current = await loadButtonStateDocument();
-    }
-  }
-  throw new Error("Panel Buttons could not be reconciled into Button state.");
 }
 
 function createButtonRecord(args: {
@@ -3380,7 +3325,7 @@ function ButtonEditorTitlebar() {
 }
 
 export function ButtonEditorPage({ context }: ButtonEditorPageProps) {
-  const [bootstrap, setBootstrap] = useState<ButtonEditorBootstrap | null>(null);
+  const [bootstrap, setBootstrap] = useState<MainPageButtonBootstrap | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (bootstrap) return;
@@ -3399,7 +3344,7 @@ export function ButtonEditorPage({ context }: ButtonEditorPageProps) {
   }, [bootstrap]);
   useEffect(() => {
     let active = true;
-    void loadButtonEditorBootstrap()
+    void loadMainPageButtonBootstrap()
       .then((loaded) => { if (active) setBootstrap(loaded); })
       .catch((loadError) => { if (active) setError(loadError instanceof Error ? loadError.message : String(loadError)); });
     return () => { active = false; };
