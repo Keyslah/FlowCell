@@ -58,6 +58,7 @@ import {
   openBindsWindow,
   openInstalledPageWindow,
   openMacroLabWindow,
+  openThemeEditorWindow,
   resolveInstalledPageOpenDescriptor,
   type InstalledPageOpenDescriptor,
   reloadCurrentHostWindow
@@ -3271,6 +3272,16 @@ export default function MainPage() {
       return;
     }
 
+    if (button.actionId === "open-theme-editor") {
+      try {
+        await openThemeEditorWindow({ target: "FlowCell", page: "main" });
+      } catch (error) {
+        console.error("Failed to open Theme Editor.", error);
+        window.alert(`Theme Editor could not be opened.\n\n${formatErrorMessage(error)}`);
+      }
+      return;
+    }
+
     if (button.actionId === "top-right-button-1") {
       await handleMinimizeMainWindow();
       return;
@@ -3527,7 +3538,7 @@ export default function MainPage() {
           <div
             className="main-page__background"
             aria-hidden="true"
-            style={{ backgroundImage: `url(${mainBackground})` }}
+            style={{ backgroundImage: `var(--flowcell-main-background-image, url(${mainBackground}))` }}
           />
           {buttonBootstrapError ? (
             <section

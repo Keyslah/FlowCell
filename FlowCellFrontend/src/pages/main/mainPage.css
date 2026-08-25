@@ -37,7 +37,7 @@
 .main-page__background {
   position: absolute;
   inset: 0;
-  background-color: #9db678;
+  background-color: var(--flowcell-main-background-color, #9db678);
   background-position: center;
   background-repeat: no-repeat;
   background-size: cover;

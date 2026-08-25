@@ -32,14 +32,15 @@ export function RailSurface({
   ].join(", ");
   const blurPx = isHovered && motion.clearOnHover ? 0 : REST_BLUR_PX;
 
+  const cssRailId = rail.id.replace(/[^a-z0-9-]/gi, "-").toLowerCase();
   const style: CSSProperties = {
     left: `${rail.x}px`,
     top: `${rail.y}px`,
     width: `${rail.width}px`,
     height: `${rail.height}px`,
     borderRadius: `${rail.radius ?? 0}px`,
-    border: `${rail.strokeWidth}px solid ${rail.border}`,
-    background: rail.background,
+    border: `${rail.strokeWidth}px solid var(--flowcell-main-rail-${cssRailId}-border, ${rail.border})`,
+    background: `var(--flowcell-main-rail-${cssRailId}-background, ${rail.background})`,
     backdropFilter: `blur(${blurPx}px)`,
     WebkitBackdropFilter: `blur(${blurPx}px)`,
     transition,

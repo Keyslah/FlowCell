@@ -358,6 +358,18 @@ export const staticButtons: ButtonRecord[] = [
     actionId: "open-button-editor"
   },
   {
+    id: "top-left-button-10",
+    groupId: "top-left-actions",
+    x: 637.814518,
+    y: 36.353741,
+    width: 92.446043,
+    height: 37.294964,
+    radius: 18.647463,
+    label: "Theme",
+    tooltip: "Open the FlowCell Theme Editor.",
+    actionId: "open-theme-editor"
+  },
+  {
     id: "top-right-button-1",
     groupId: "top-right-actions",
     x: 929.586346,

@@ -183,6 +183,8 @@ fn main() {
             list_tool_packages,
             save_layout_snapshot,
             load_layout_snapshot,
+            save_flowcell_theme_file,
+            load_flowcell_theme_file,
             list_program_folders,
             list_panel_folders,
             list_available_program_packages,
