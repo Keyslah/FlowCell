@@ -15,6 +15,8 @@ foreach($key in @('FLOWCELL_LOCAL_ROOT','FLOWCELL_PROGRAMS_ROOT','FLOWCELL_RESOU
 try {
     . $helper
     if($FlowCellLocalRoot -ne (Join-Path $root 'flowcellbackend/local') -or $FlowCellProgramsRoot -ne (Join-Path $root 'Programs')){throw 'Development defaults changed.'}
+    . $helper
+    if($FlowCellProgramsRoot -ne (Join-Path $root 'Programs')){throw 'Repeated preflight relocated development Programs.'}
     $env:FLOWCELL_LOCAL_ROOT='';$env:FLOWCELL_PROGRAMS_ROOT=''
     '{}'|Set-Content -LiteralPath (Join-Path $root 'flowcell-installed.json')
     . $helper

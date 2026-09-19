@@ -66,12 +66,19 @@ pub(crate) fn installed_resource_root() -> Option<PathBuf> {
     root.join("flowcell-installed.json").is_file().then(|| root.to_path_buf())
 }
 
+fn runtime_programs_root(resource: &Path, local: &Path, use_local: bool, inherited: Option<PathBuf>) -> PathBuf {
+    // Preflight initializes both variables, including the normal development local
+    // root. Its presence alone must not relocate the already-resolved Programs root.
+    inherited.unwrap_or_else(|| if use_local { local.join("Programs") } else { resource.join("Programs") })
+}
+
 pub(crate) fn initialize_runtime_paths() -> Result<(), String> {
     let explicit_local = env::var_os("FLOWCELL_LOCAL_ROOT").filter(|value| !value.is_empty()).is_some();
     let installed = installed_resource_root().is_some();
     let resource = resolve_repo_root().ok_or("FlowCell resources could not be resolved.")?;
     let local = resolve_flowcell_local_root()?;
-    let programs = if installed || explicit_local { local.join("Programs") } else { resource.join("Programs") };
+    let programs = runtime_programs_root(&resource, &local, installed || explicit_local,
+        env::var_os("FLOWCELL_PROGRAMS_ROOT").filter(|value| !value.is_empty()).map(PathBuf::from));
     fs::create_dir_all(&local).map_err(|e| e.to_string())?;
     fs::create_dir_all(&programs).map_err(|e| e.to_string())?;
     if installed { fs::create_dir_all(programs.join("Windows")).map_err(|e| e.to_string())?; }
@@ -79,6 +86,28 @@ pub(crate) fn initialize_runtime_paths() -> Result<(), String> {
     env::set_var("FLOWCELL_PROGRAMS_ROOT", &programs);
     env::set_var("FLOWCELL_RESOURCE_ROOT", &resource);
     Ok(())
+}
+
+#[cfg(test)]
+mod runtime_path_tests {
+    use super::runtime_programs_root;
+    use std::path::Path;
+
+    #[test]
+    fn preflight_initialized_development_paths_keep_existing_programs() {
+        let resource = Path::new("C:/FlowCell Source");
+        let local = resource.join("flowcellbackend/local");
+        let programs = resource.join("Programs");
+        assert_eq!(runtime_programs_root(resource, &local, true, Some(programs.clone())), programs);
+    }
+
+    #[test]
+    fn installed_and_direct_override_paths_use_local_programs_without_preflight() {
+        let resource = Path::new("C:/FlowCell Install");
+        let local = Path::new("C:/User Data/FlowCell/local");
+        assert_eq!(runtime_programs_root(resource, local, true, None), local.join("Programs"));
+        assert_eq!(runtime_programs_root(resource, local, false, None), resource.join("Programs"));
+    }
 }
 
 pub(crate) fn start_installed_backend() -> Result<(), String> {
