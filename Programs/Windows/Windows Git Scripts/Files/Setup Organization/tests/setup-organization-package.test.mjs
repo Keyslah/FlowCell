@@ -8,6 +8,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync
 } from "node:fs";
@@ -16,6 +17,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const testsRoot = path.dirname(fileURLToPath(import.meta.url));
+// Windows CI can expose TEMP through an 8.3 alias; PowerShell resolves its full path.
+const tempRoot = realpathSync.native(tmpdir());
 const packageRoot = path.dirname(testsRoot);
 const manifestPath = path.join(packageRoot, "flowcell.script.json");
 const dispatcherPath = path.join(packageRoot, "setup_organization.ps1");
@@ -493,7 +496,7 @@ function validProjectMarker(profileId, overrides = {}) {
 }
 
 test("list-profiles returns names and stable IDs without exposing storage paths", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-list-profiles-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-list-profiles-"));
   try {
     const { isolatedDispatcher } = createIsolatedDispatcher(workspace);
     const profilesRoot = path.join(
@@ -534,7 +537,7 @@ test("list-profiles returns names and stable IDs without exposing storage paths"
 });
 
 test("prepare-existing-target creates a Blender folder for an unmarked project", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-existing-unmarked-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-existing-unmarked-"));
   try {
     const { isolatedDispatcher } = createIsolatedDispatcher(workspace);
     const projectRoot = path.join(workspace, "Existing Project");
@@ -567,7 +570,7 @@ test("prepare-existing-target creates a Blender folder for an unmarked project",
 });
 
 test("prepare-existing-target trusts an existing marker route without requiring its profile", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-existing-marker-route-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-existing-marker-route-"));
   const profileId = "30303030-3030-4030-8030-303030303030";
   try {
     const { isolatedDispatcher } = createIsolatedDispatcher(workspace);
@@ -605,7 +608,7 @@ test("prepare-existing-target trusts an existing marker route without requiring 
 });
 
 test("prepare-existing-target resolves only the Program Kiln Blender destination", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-existing-program-route-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-existing-program-route-"));
   const profileId = "40404040-4040-4040-8040-404040404040";
   const nestedProfileId = "50505050-5050-4050-8050-505050505050";
   try {
@@ -716,7 +719,7 @@ test("prepare-existing-target resolves only the Program Kiln Blender destination
 });
 
 test("prepare-existing-target fails closed for invalid markers and route conflicts", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-existing-invalid-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-existing-invalid-"));
   const profileId = "60606060-6060-4060-8060-606060606060";
   try {
     const { isolatedDispatcher } = createIsolatedDispatcher(workspace);
@@ -788,7 +791,7 @@ test("prepare-existing-target fails closed for invalid markers and route conflic
 });
 
 test("prepare-target activates a planned Blender route through the real organizer engine", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-prepare-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-prepare-"));
   const profileId = "78787878-7878-4878-8878-787878787878";
   const nestedProfileId = "89898989-8989-4989-8989-898989898989";
   try {
@@ -937,7 +940,7 @@ test("prepare-target activates a planned Blender route through the real organize
 });
 
 test("the dispatcher and rendered organizer template both parse", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-parse-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-parse-"));
   try {
     const rendered = path.join(workspace, "organize_folder.ps1");
     writeFileSync(
@@ -967,7 +970,7 @@ test("the dispatcher and rendered organizer template both parse", () => {
 });
 
 test("load-folder-tree copies structure breadth-first, caps, and never writes to the source", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-tree-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-tree-"));
   try {
     // A source tree wide at the top and deep on one branch: a cap must keep the
     // shallow structure rather than one spine.
@@ -1118,7 +1121,7 @@ test("the organizer creates program folders only when their files are present", 
 });
 
 test("cleanup recycles only stale ignored folders from the previous profile", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-program-tree-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-program-tree-"));
   const dataRoot = path.join(workspace, "program-data");
   const profilesRoot = path.join(dataRoot, "profiles");
   const target = path.join(workspace, "project");
@@ -1235,7 +1238,7 @@ test("cleanup recycles only stale ignored folders from the previous profile", ()
 });
 
 test("a program file found only inside a stale ignored tree does not activate its program folder", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-stale-program-only-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-stale-program-only-"));
   const target = path.join(workspace, "project");
   const dataRoot = path.join(workspace, "program-data");
   const profilesRoot = path.join(dataRoot, "profiles");
@@ -1310,7 +1313,7 @@ test("a program file found only inside a stale ignored tree does not activate it
 });
 
 test("an invalid existing project marker aborts before any mutation", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-invalid-marker-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-invalid-marker-"));
   const target = path.join(workspace, "project");
   try {
     mkdirSync(target, { recursive: true });
@@ -1342,7 +1345,7 @@ test("an invalid existing project marker aborts before any mutation", () => {
 });
 
 test("current ignored folders survive when there is no previous marker", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-no-marker-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-no-marker-"));
   const target = path.join(workspace, "project");
   const dataRoot = path.join(workspace, "program-data");
   const profilesRoot = path.join(dataRoot, "profiles");
@@ -1380,7 +1383,7 @@ test("current ignored folders survive when there is no previous marker", () => {
 });
 
 test("an existing stale marker path that is not a safe folder aborts before mutation", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-unsafe-stale-path-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-unsafe-stale-path-"));
   const target = path.join(workspace, "project");
   const dataRoot = path.join(workspace, "program-data");
   const profilesRoot = path.join(dataRoot, "profiles");
@@ -1431,7 +1434,7 @@ test("an existing stale marker path that is not a safe folder aborts before muta
 });
 
 test("stale cleanup aborts before mutation when current nested ownership is unavailable", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-missing-nested-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-missing-nested-"));
   const target = path.join(workspace, "project");
   const dataRoot = path.join(workspace, "program-data");
   const profilesRoot = path.join(dataRoot, "profiles");
@@ -1487,7 +1490,7 @@ test("stale cleanup aborts before mutation when current nested ownership is unav
 });
 
 test("a stale-folder recycle failure preserves the previous marker for retry", () => {
-  const workspace = mkdtempSync(path.join(tmpdir(), "setup-org-recycle-failure-"));
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-recycle-failure-"));
   const target = path.join(workspace, "project");
   const dataRoot = path.join(workspace, "program-data");
   const profilesRoot = path.join(dataRoot, "profiles");
