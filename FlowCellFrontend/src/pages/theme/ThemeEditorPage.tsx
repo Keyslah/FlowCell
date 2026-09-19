@@ -8,8 +8,9 @@ import {
 } from "../../lib/windowContext.js";
 import { listPanelFolders, listProgramFolders } from "../../lib/programRails.js";
 import { showOpenFileDialog } from "../../lib/tauri.js";
-import { openButtonEditorWindow } from "../../button/windows/buttonWindows.js";
 import {
+  listButtonSkinFiles,
+  loadButtonSkinFile,
   loadButtonStateDocument,
   saveButtonStateDocument
 } from "../../button/state/ButtonStateRepository.js";
@@ -19,24 +20,39 @@ import {
   subscribeButtonCommits
 } from "../../button/state/ButtonDraftBus.js";
 import { cloneButtonDocument } from "../../button/state/buttonDefaults.js";
+import { createButtonSkinFromFile } from "../../button/editor/buttonSkinFiles.js";
 import {
-  readButtonSkinHighlightOnActive,
-  readButtonSkinHighlightOnHover,
-  setButtonSkinHighlightOnActive,
-  setButtonSkinHighlightOnHover
+  BUTTON_GLOW_AMOUNT_MAX,
+  BUTTON_HIGHLIGHT_AMOUNT_MAX,
+  BUTTON_HIGHLIGHT_AMOUNT_MIN,
+  DEFAULT_BUTTON_HIGHLIGHT_AMOUNT,
+  buttonSkinColorOpacityPercent,
+  buttonSkinColorWithOpacity,
+  buttonSkinColorWithPreservedAlpha,
+  buttonSkinPickerColor,
+  normalizeButtonGlowAmount,
+  normalizeButtonHighlightAmount,
+  normalizeButtonSkinColor,
+  resolveButtonGlowAmount,
+  resolveButtonHighlightAmount
 } from "../../button/skins/buttonSkinColors.js";
 import type {
   ButtonPlacement,
   ButtonSkin,
-  ButtonStateDocument
+  ButtonStateDocument,
+  ButtonThemeOverride
 } from "../../button/types.js";
 import {
   applyThemeFile,
   bakeThemeGradientForDeployedLayout,
+  buttonThemeOverrideIsEmpty,
   captureThemeFile,
-  extractSkinColorRoots,
+  clearButtonThemeOverrideColors,
+  emptyButtonThemeOverride,
   listThemePlacements,
-  setSkinColorRoot,
+  resolveThemeHighlightColorResetPlacementIds,
+  resolveThemeSkinAssignmentPlacementIds,
+  themeSkinAssignmentIdentity,
   type FlowCellThemeFile,
   type ThemeApplyResult,
   type ThemeGradientDefinition,
@@ -59,8 +75,7 @@ import {
 } from "../../theme/themeRuntime.js";
 import {
   readThemeEditorScopeState,
-  writeThemeEditorScopeState,
-  type ThemeEditorButtonParticipation
+  writeThemeEditorScopeState
 } from "../../theme/themeEditorState.js";
 import {
   loadFlowCellThemeFile,
@@ -70,9 +85,7 @@ import "./themeEditorPage.css";
 
 const FLOWCELL_TARGET_VALUE = "__flowcell__";
 const ALL_PANELS_VALUE = "__all_panels__";
-const THEME_DRAFT_SKIN_PREFIX = "flowcell-theme-draft-skin:";
-
-type ButtonParticipation = ThemeEditorButtonParticipation;
+const POPOUTS_ONLY_VALUE = "__popouts_only__";
 
 type PageControlGroup = {
   name: string;
@@ -87,14 +100,62 @@ type ResolvedEditorContext = {
   unavailableTarget: string | null;
 };
 
+type SavedSkinChoice = {
+  path: string;
+  skin: ButtonSkin;
+};
+
+type ThemeEffectAmountField =
+  | "hoverHighlightAmount"
+  | "activeHighlightAmount"
+  | "hoverGlowAmount"
+  | "activeGlowAmount";
+
+type ThemeEffectAmountControl = {
+  field: ThemeEffectAmountField;
+  label: string;
+  ariaLabel: string;
+  max: number;
+};
+
+const HIGHLIGHT_AMOUNT_CONTROLS: readonly ThemeEffectAmountControl[] = [
+  { field: "hoverHighlightAmount", label: "On hover", ariaLabel: "Highlight on hover", max: BUTTON_HIGHLIGHT_AMOUNT_MAX },
+  { field: "activeHighlightAmount", label: "When active", ariaLabel: "Highlight when active", max: BUTTON_HIGHLIGHT_AMOUNT_MAX }
+];
+
+const GLOW_AMOUNT_CONTROLS: readonly ThemeEffectAmountControl[] = [
+  { field: "hoverGlowAmount", label: "On hover", ariaLabel: "Glow on hover", max: BUTTON_GLOW_AMOUNT_MAX },
+  { field: "activeGlowAmount", label: "When active", ariaLabel: "Glow when active", max: BUTTON_GLOW_AMOUNT_MAX }
+];
+
+const ALL_EFFECT_AMOUNT_CONTROLS = [
+  ...HIGHLIGHT_AMOUNT_CONTROLS,
+  ...GLOW_AMOUNT_CONTROLS
+] as const;
+
 const DEFAULT_GRADIENT: ThemeGradientDefinition = {
   role: "surface",
-  topColor: "#8dcf9b",
+  topColor: "#8DCF9B",
   bottomColor: "#254936",
   spread: 100,
   scatter: 20,
   seed: 1
 };
+
+const THEME_EDITOR_GRADIENT_ROLES: readonly string[] = [
+  "surface",
+  "text"
+];
+
+function initialScopeGradient(stored: ThemeGradientDefinition | null | undefined): ThemeGradientDefinition {
+  return { ...(stored ?? DEFAULT_GRADIENT), role: "surface" };
+}
+
+function gradientRoleLabel(role: string): string {
+  if (role === "surface") return "Surface";
+  if (role === "text") return "Text";
+  return role;
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -119,10 +180,6 @@ function normalizeName(value: string): string {
   return value.normalize("NFC").trim().toLocaleLowerCase("en");
 }
 
-function draftSkinId(placementId: string): string {
-  return `${THEME_DRAFT_SKIN_PREFIX}${encodeURIComponent(placementId)}`;
-}
-
 function activePlacementSkin(
   document: ButtonStateDocument,
   placement: ButtonPlacement
@@ -133,23 +190,32 @@ function activePlacementSkin(
     : null;
 }
 
-function ensurePlacementPrivateSkin(
+function ensureThemeOverride(
   document: ButtonStateDocument,
   placementId: string
-): ButtonSkin | null {
-  const placement = document.placements[placementId];
-  if (!placement) return null;
-  const id = draftSkinId(placementId);
-  if (placement.skinOverrideId === id && document.skins[id]) return document.skins[id];
-  const source = activePlacementSkin(document, placement);
-  if (!source) return null;
-  const skin = structuredClone(source);
-  skin.id = id;
-  skin.name = `${source.name} - ${document.buttons[placement.buttonId]?.label ?? "Theme"}`;
-  skin.compileCache = null;
-  document.skins[id] = skin;
-  placement.skinOverrideId = id;
-  return skin;
+): ButtonThemeOverride {
+  document.themeOverrides ??= {};
+  document.themeOverrides[placementId] ??= emptyButtonThemeOverride();
+  return document.themeOverrides[placementId];
+}
+
+function scopedEffectAmountSummary(
+  document: ButtonStateDocument | null,
+  placements: readonly ButtonPlacement[],
+  field: ThemeEffectAmountField
+): { value: number; mixed: boolean } {
+  const values = placements.map((placement) => {
+    const override = document?.themeOverrides?.[placement.id];
+    const value = override?.[field] ?? override?.highlightAmount;
+    return field === "hoverGlowAmount" || field === "activeGlowAmount"
+      ? resolveButtonGlowAmount(value)
+      : resolveButtonHighlightAmount(value);
+  });
+  const value = values[0] ?? DEFAULT_BUTTON_HIGHLIGHT_AMOUNT;
+  return {
+    value,
+    mixed: values.some((candidate) => candidate !== value)
+  };
 }
 
 function readAllPageAppearances(): Record<FlowCellThemePageId, ThemePageAppearance> {
@@ -206,10 +272,12 @@ function targetFromSelection(
   if (targetValue === FLOWCELL_TARGET_VALUE) {
     return { kind: "flowcell", page: pageValue };
   }
+  const popoutsOnly = panelValue === POPOUTS_ONLY_VALUE;
   return {
     kind: "program",
     programName: targetValue,
-    panelName: panelValue === ALL_PANELS_VALUE ? null : panelValue
+    panelName: popoutsOnly || panelValue === ALL_PANELS_VALUE ? null : panelValue,
+    ...(popoutsOnly ? { area: "popouts" as const } : {})
   };
 }
 
@@ -217,6 +285,7 @@ function themeSuggestedName(target: ThemeTarget): string {
   if (target.kind === "flowcell") {
     return `FlowCell ${getFlowCellThemePageDefinition(target.page).label} Theme`;
   }
+  if (target.area === "popouts") return `${target.programName} Pop-outs Theme`;
   return target.panelName
     ? `${target.programName} ${target.panelName} Theme`
     : `${target.programName} Theme`;
@@ -237,17 +306,14 @@ function pageControlGroups(pageId: FlowCellThemePageId): PageControlGroup[] {
   return [...groups.values()];
 }
 
-function isPickerColor(value: string): boolean {
-  return /^#[0-9a-f]{6}$/i.test(value.trim());
-}
-
 function formatApplyStatus(prefix: string, result: ThemeApplyResult): string {
-  const messages = [`${prefix} ${result.appliedButtonCount} Button${result.appliedButtonCount === 1 ? "" : "s"}.`];
+  const messages = [
+    `${prefix} ${result.appliedButtonCount} Button${result.appliedButtonCount === 1 ? "" : "s"}.`
+  ];
   if (result.missingButtonCount > 0) {
-    messages.push(`${result.missingButtonCount} saved Button${result.missingButtonCount === 1 ? " was" : "s were"} not found.`);
-  }
-  if (result.skippedButtonCount > 0) {
-    messages.push(`${result.skippedButtonCount} Button${result.skippedButtonCount === 1 ? " was" : "s were"} skipped.`);
+    messages.push(
+      `${result.missingButtonCount} saved Button${result.missingButtonCount === 1 ? " was" : "s were"} not found.`
+    );
   }
   result.issues.forEach((issue) => messages.push(`${issue.surfaceName}: ${issue.message}`));
   return messages.join(" ");
@@ -264,45 +330,99 @@ function mergeCanonicalIntoDraft(
     const draftPlacement = current.placements[placementId];
     const incomingPlacement = merged.placements[placementId];
     if (!draftPlacement || !incomingPlacement) continue;
-    Object.assign(incomingPlacement, {
-      width: draftPlacement.width,
-      height: draftPlacement.height,
-      skinOverrideId: draftPlacement.skinOverrideId,
-      textFitMode: draftPlacement.textFitMode,
-      textAlignment: draftPlacement.textAlignment,
-      textOffsetX: draftPlacement.textOffsetX,
-      textOffsetY: draftPlacement.textOffsetY,
-      minimumFontSize: draftPlacement.minimumFontSize,
-      textSizeOverride: draftPlacement.textSizeOverride,
-      allowLabelResize: draftPlacement.allowLabelResize,
-      matchHitboxToSkin: draftPlacement.matchHitboxToSkin,
-      allowStretching: draftPlacement.allowStretching,
-      highlightOnHover: draftPlacement.highlightOnHover
-    });
+    incomingPlacement.skinOverrideId = draftPlacement.skinOverrideId;
+    merged.themeOverrides ??= {};
+    const override = current.themeOverrides?.[placementId];
+    if (override) merged.themeOverrides[placementId] = structuredClone(override);
+    else delete merged.themeOverrides[placementId];
     const skinId = draftPlacement.skinOverrideId;
-    if (skinId?.startsWith(THEME_DRAFT_SKIN_PREFIX) && current.skins[skinId]) {
+    if (skinId && current.skins[skinId] && !merged.skins[skinId]) {
       merged.skins[skinId] = structuredClone(current.skins[skinId]);
     }
   }
   return merged;
 }
 
-function participationFromTheme(
-  theme: FlowCellThemeFile,
-  matchedPlacementIds: Readonly<Record<string, string>> = Object.fromEntries(
-    theme.buttons.map((button) => [button.placementId, button.placementId])
-  )
-): Record<string, ButtonParticipation> {
-  return Object.fromEntries(theme.buttons.flatMap((button) => {
-    const placementId = matchedPlacementIds[button.placementId];
-    return placementId ? [[
-      placementId,
-      {
-        gradientEnabled: button.gradientEnabled,
-        scatterEnabled: button.scatterEnabled
-      }
-    ]] : [];
-  }));
+function skinSourcesMatch(left: ButtonSkin, right: ButtonSkin): boolean {
+  return [
+    "structure",
+    "keyframes",
+    "base",
+    "hover",
+    "play",
+    "pressed",
+    "held",
+    "release",
+    "disabled",
+    "error"
+  ].every((section) => (
+    left[section as keyof ButtonSkin] === right[section as keyof ButtonSkin]
+  ));
+}
+
+function stableSkinId(path: string, source: string): string {
+  let hash = 0x811c9dc5;
+  const value = `${normalizeName(path)}\u0000${source}`;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `flowcell-saved-skin-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function installSavedSkin(document: ButtonStateDocument, saved: ButtonSkin): string {
+  const existing = Object.values(document.skins).find((skin) => skinSourcesMatch(skin, saved));
+  if (existing) return existing.id;
+  let id = saved.id;
+  let suffix = 2;
+  while (document.skins[id] && !skinSourcesMatch(document.skins[id], saved)) {
+    id = `${saved.id}-${suffix}`;
+    suffix += 1;
+  }
+  document.skins[id] = { ...structuredClone(saved), id, compileCache: null };
+  return id;
+}
+
+function ThemeColorControl({
+  value,
+  label,
+  onChange
+}: {
+  value: string;
+  label: string;
+  onChange: (value: string) => void;
+}) {
+  const normalized = normalizeButtonSkinColor(value) ?? "#FFFFFF";
+  const opacity = buttonSkinColorOpacityPercent(normalized);
+  return (
+    <div className="theme-editor__color-control">
+      <input
+        type="color"
+        aria-label={`${label} color`}
+        value={buttonSkinPickerColor(normalized)}
+        onChange={(event) => {
+          const next = buttonSkinColorWithPreservedAlpha(event.currentTarget.value, normalized);
+          if (next) onChange(next);
+        }}
+      />
+      <label className="theme-editor__opacity-control">
+        <span>Opacity</span>
+        <input
+          type="number"
+          aria-label={`${label} opacity percent`}
+          min="0"
+          max="100"
+          step="1"
+          value={opacity}
+          onChange={(event) => {
+            const next = buttonSkinColorWithOpacity(normalized, Number(event.currentTarget.value));
+            if (next) onChange(next);
+          }}
+        />
+        <b>%</b>
+      </label>
+    </div>
+  );
 }
 
 export default function ThemeEditorPage({
@@ -325,11 +445,19 @@ export default function ThemeEditorPage({
   const [canonicalDocument, setCanonicalDocument] = useState<ButtonStateDocument | null>(null);
   const [draftDocument, setDraftDocument] = useState<ButtonStateDocument | null>(null);
   const [pageAppearances, setPageAppearances] = useState(readAllPageAppearances);
-  const [buttonParticipation, setButtonParticipation] = useState<Record<string, ButtonParticipation>>({});
+  const [savedSkins, setSavedSkins] = useState<SavedSkinChoice[]>([]);
+  const [selectedPlacementId, setSelectedPlacementId] = useState("");
+  const [selectedSavedSkinPath, setSelectedSavedSkinPath] = useState("");
+  const [assignEveryButtonInScope, setAssignEveryButtonInScope] = useState(false);
   const [gradient, setGradient] = useState<ThemeGradientDefinition>(DEFAULT_GRADIENT);
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState("Loading Theme Editor...");
   const dirtyPlacementIds = useRef(new Set<string>());
+  const skinAssignmentPlacementIds = useRef(new Set<string>());
+  const highlightColorResetPlacementIds = useRef({
+    hover: new Set<string>(),
+    active: new Set<string>()
+  });
   const editorDirty = useRef(false);
 
   const target = useMemo(
@@ -340,7 +468,6 @@ export default function ThemeEditorPage({
   const selectedPageAppearance = pageAppearances[pageValue] ?? defaultThemePageAppearance(pageValue);
   const selectedPageGroups = useMemo(() => pageControlGroups(pageValue), [pageValue]);
   const supportsButtons = target.kind === "program" ||
-    selectedPageDefinition.buttonSurfaceKinds.length > 0 ||
     selectedPageDefinition.buttonSurfaceIds.length > 0 ||
     selectedPageDefinition.buttonSurfaceIdPrefixes.length > 0;
 
@@ -367,8 +494,29 @@ export default function ThemeEditorPage({
     return () => {
       cancelled = true;
     };
-    // The URL context is resolved once; later requests arrive on the window event.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void listButtonSkinFiles()
+      .then(async (paths) => Promise.all(paths.map(async (path) => {
+        const source = await loadButtonSkinFile(path);
+        return {
+          path,
+          skin: createButtonSkinFromFile(source, path, stableSkinId(path, source))
+        } satisfies SavedSkinChoice;
+      })))
+      .then((choices) => {
+        if (cancelled) return;
+        setSavedSkins(choices);
+        setSelectedSavedSkinPath((current) => current || choices[0]?.path || "");
+      })
+      .catch((error) => {
+        if (!cancelled) setStatus(`Saved skins could not load: ${errorMessage(error)}`);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -422,7 +570,7 @@ export default function ThemeEditorPage({
         dirtyPlacementIds.current
       ));
       if (editorDirty.current) {
-        setStatus("Canonical Buttons updated; unsaved Theme Editor appearance changes were preserved.");
+        setStatus("Canonical Buttons updated; unsaved Theme Editor changes were preserved.");
       }
     })
       .then((dispose) => {
@@ -449,7 +597,9 @@ export default function ThemeEditorPage({
         if (cancelled) return;
         setPanelNames(panels);
         setPanelValue((current) =>
-          current === ALL_PANELS_VALUE || panels.includes(current)
+          current === ALL_PANELS_VALUE ||
+          current === POPOUTS_ONLY_VALUE ||
+          panels.includes(current)
             ? current
             : ALL_PANELS_VALUE
         );
@@ -464,8 +614,9 @@ export default function ThemeEditorPage({
 
   useEffect(() => {
     const stored = readThemeEditorScopeState(target);
-    setGradient(stored?.gradient ?? DEFAULT_GRADIENT);
-    setButtonParticipation(stored?.buttonParticipation ?? {});
+    setGradient(initialScopeGradient(stored?.gradient));
+    setAssignEveryButtonInScope(false);
+    skinAssignmentPlacementIds.current.clear();
   }, [target]);
 
   const scopedPlacements = useMemo(
@@ -473,21 +624,17 @@ export default function ThemeEditorPage({
     [draftDocument, target]
   );
 
-  const gradientRoles = useMemo(() => {
-    if (!draftDocument) return [];
-    const roles = new Set<string>();
-    scopedPlacements.forEach((placement) => {
-      const skin = activePlacementSkin(draftDocument, placement);
-      if (skin) extractSkinColorRoots(skin).forEach((root) => roles.add(root.role));
-    });
-    return [...roles].sort();
-  }, [draftDocument, scopedPlacements]);
+  useEffect(() => {
+    if (!scopedPlacements.some((placement) => placement.id === selectedPlacementId)) {
+      setSelectedPlacementId(scopedPlacements[0]?.id ?? "");
+    }
+  }, [scopedPlacements, selectedPlacementId]);
 
   useEffect(() => {
-    if (gradientRoles.length > 0 && !gradientRoles.includes(gradient.role)) {
-      setGradient((current) => ({ ...current, role: gradientRoles[0] }));
+    if (!THEME_EDITOR_GRADIENT_ROLES.includes(gradient.role)) {
+      setGradient((current) => ({ ...current, role: "surface" }));
     }
-  }, [gradient.role, gradientRoles]);
+  }, [gradient.role]);
 
   const markEditorDirty = () => {
     editorDirty.current = true;
@@ -495,7 +642,7 @@ export default function ThemeEditorPage({
 
   const updateDraft = (
     mutate: (document: ButtonStateDocument) => void,
-    placementIds: readonly string[] = []
+    placementIds: readonly string[]
   ) => {
     placementIds.forEach((placementId) => dirtyPlacementIds.current.add(placementId));
     markEditorDirty();
@@ -523,76 +670,107 @@ export default function ThemeEditorPage({
     setGradient(mutate);
   };
 
-  const updatePlacementColor = (placementId: string, role: string, color: string) => {
-    updateDraft((document) => {
-      const skin = ensurePlacementPrivateSkin(document, placementId);
-      if (!skin) return;
-      document.skins[skin.id] = setSkinColorRoot(skin, role, color);
-    }, [placementId]);
-  };
-
-  const updatePlacementHighlight = (
-    placementId: string,
-    kind: "hover" | "active",
-    enabled: boolean
-  ) => {
-    updateDraft((document) => {
-      const skin = ensurePlacementPrivateSkin(document, placementId);
-      if (!skin) return;
-      const sections = kind === "hover"
-        ? setButtonSkinHighlightOnHover(skin, enabled)
-        : setButtonSkinHighlightOnActive(skin, enabled);
-      document.skins[skin.id] = { ...skin, ...sections, compileCache: null };
-    }, [placementId]);
-  };
-
-  const updateButtonParticipation = (
-    placementId: string,
-    patch: Partial<ButtonParticipation>
-  ) => {
-    markEditorDirty();
-    setButtonParticipation((current) => ({
-      ...current,
-      [placementId]: {
-        gradientEnabled: current[placementId]?.gradientEnabled ?? true,
-        scatterEnabled: current[placementId]?.scatterEnabled ?? true,
-        ...patch
-      }
-    }));
-  };
-
   const applyGradient = (nextGradient = gradient) => {
-    if (!draftDocument || !canonicalDocument || !nextGradient.role) return;
+    if (!draftDocument || !nextGradient.role || scopedPlacements.length === 0) return;
     try {
       const previewTheme = captureThemeFile({
         document: draftDocument,
         target,
         page: target.kind === "flowcell" ? selectedPageAppearance : null,
         gradient: nextGradient,
-        buttonParticipation
+        buttonParticipation: {},
+        skinAssignmentPlacementIds: skinAssignmentPlacementIds.current
       });
-      const baked = bakeThemeGradientForDeployedLayout(canonicalDocument, previewTheme);
+      const baked = bakeThemeGradientForDeployedLayout(draftDocument, previewTheme);
       const placementIds = Object.keys(baked.colorsBySavedPlacementId);
-      if (placementIds.length === 0) {
-        setStatus(`No deployable participating Buttons in this scope expose '${nextGradient.role}'.`);
+      const resolvedPlacementIds = new Set(placementIds);
+      if (
+        placementIds.length !== scopedPlacements.length ||
+        scopedPlacements.some((placement) => !resolvedPlacementIds.has(placement.id))
+      ) {
+        setStatus(
+          `Nothing changed: the gradient did not resolve the exact ${scopedPlacements.length}-Button scope.`
+        );
         return;
       }
       updateDraft((document) => {
         placementIds.forEach((placementId) => {
-          const skin = ensurePlacementPrivateSkin(document, placementId);
           const color = baked.colorsBySavedPlacementId[placementId];
-          if (!skin || !color) return;
-          document.skins[skin.id] = setSkinColorRoot(skin, nextGradient.role, color);
+          if (!color) return;
+          const override = ensureThemeOverride(document, placementId);
+          override.colors[nextGradient.role] = color;
         });
       }, placementIds);
       setGradient(nextGradient);
-      const skipped = baked.layout.skippedButtonCount > 0
-        ? ` ${baked.layout.skippedButtonCount} Buttons were skipped because their final layout was invalid.`
-        : "";
-      setStatus(`Applied ${nextGradient.role} gradient to ${placementIds.length} Buttons using final deployed positions.${skipped}`);
+      setStatus(`Applied ${nextGradient.role} across all ${placementIds.length} in-scope Buttons.`);
     } catch (error) {
       setStatus(`Gradient could not be applied: ${errorMessage(error)}`);
     }
+  };
+
+  const applyEffectAmount = (
+    field: ThemeEffectAmountField,
+    label: string,
+    value: number
+  ) => {
+    if (!draftDocument || scopedPlacements.length === 0) return;
+    const amount = field === "hoverGlowAmount" || field === "activeGlowAmount"
+      ? normalizeButtonGlowAmount(value)
+      : normalizeButtonHighlightAmount(value);
+    if (amount === null) {
+      setStatus(`Amount must be a whole percentage from 0 through ${
+        field === "hoverGlowAmount" || field === "activeGlowAmount"
+          ? BUTTON_GLOW_AMOUNT_MAX
+          : BUTTON_HIGHLIGHT_AMOUNT_MAX
+      }.`);
+      return;
+    }
+    const placementIds = scopedPlacements.map((placement) => placement.id);
+    updateDraft((document) => {
+      placementIds.forEach((placementId) => {
+        ensureThemeOverride(document, placementId)[field] = amount;
+      });
+    }, placementIds);
+    setStatus(
+      `Set ${label.toLocaleLowerCase("en")} to ${amount}% across all ${placementIds.length} in-scope Buttons.`
+    );
+  };
+
+  const handleAssignSkin = () => {
+    if (!draftDocument || !selectedPlacementId) return;
+    const selectedPlacement = scopedPlacements.find(
+      (placement) => placement.id === selectedPlacementId
+    );
+    const saved = savedSkins.find((choice) => choice.path === selectedSavedSkinPath);
+    if (!selectedPlacement || !saved) return;
+    const targetIds = resolveThemeSkinAssignmentPlacementIds(
+      scopedPlacements,
+      selectedPlacement.id,
+      assignEveryButtonInScope
+    );
+    if (targetIds.length === 0) return;
+    updateDraft((document) => {
+      const assignedSkinId = installSavedSkin(document, saved.skin);
+      targetIds.forEach((placementId) => {
+        const placement = document.placements[placementId];
+        const button = placement ? document.buttons[placement.buttonId] : null;
+        if (!placement || !button) return;
+        placement.skinOverrideId = button.defaultSkinId === assignedSkinId ? null : assignedSkinId;
+        const colorReset = clearButtonThemeOverrideColors(
+          document.themeOverrides?.[placementId]
+        );
+        if (buttonThemeOverrideIsEmpty(colorReset)) {
+          if (document.themeOverrides) delete document.themeOverrides[placementId];
+        } else {
+          document.themeOverrides ??= {};
+          document.themeOverrides[placementId] = colorReset;
+        }
+        skinAssignmentPlacementIds.current.add(placementId);
+      });
+    }, targetIds);
+    setStatus(
+      `Assigned '${saved.skin.name}' to ${assignEveryButtonInScope ? "all " : ""}${targetIds.length} Button${targetIds.length === 1 ? "" : "s"} inside the current scope with its authored colors. No saved skin file was edited.`
+    );
   };
 
   const captureCurrentTheme = (): FlowCellThemeFile => {
@@ -602,7 +780,9 @@ export default function ThemeEditorPage({
       target,
       page: target.kind === "flowcell" ? selectedPageAppearance : null,
       gradient,
-      buttonParticipation
+      buttonParticipation: {},
+      skinAssignmentPlacementIds: skinAssignmentPlacementIds.current,
+      highlightColorResetPlacementIds: highlightColorResetPlacementIds.current
     });
   };
 
@@ -619,7 +799,8 @@ export default function ThemeEditorPage({
       : null;
     let saved = latest;
     const warnings: string[] = [];
-    if (applied.appliedButtonCount > 0) {
+    const buttonStateChanged = stableJson(applied.document) !== stableJson(latest);
+    if (buttonStateChanged) {
       const expectedSaved = cloneButtonDocument(applied.document);
       expectedSaved.revision = latest.revision + 1;
       try {
@@ -660,6 +841,21 @@ export default function ThemeEditorPage({
     }
   };
 
+  const adoptHighlightColorResetIntents = (
+    theme: FlowCellThemeFile,
+    applied: ThemeApplyResult
+  ) => {
+    const resetPlacementIds = highlightColorResetPlacementIds.current;
+    const resolved = resolveThemeHighlightColorResetPlacementIds(
+      theme,
+      applied.matchedPlacementIds
+    );
+    resetPlacementIds.hover.clear();
+    resetPlacementIds.active.clear();
+    resolved.hover.forEach((placementId) => resetPlacementIds.hover.add(placementId));
+    resolved.active.forEach((placementId) => resetPlacementIds.active.add(placementId));
+  };
+
   const handleApply = async () => {
     if (pending) return;
     setPending(true);
@@ -667,16 +863,12 @@ export default function ThemeEditorPage({
       const theme = captureCurrentTheme();
       const committed = await commitTheme(theme);
       const acceptedGradient = theme.gradient ?? DEFAULT_GRADIENT;
-      const acceptedParticipation = participationFromTheme(
-        theme,
-        committed.applied.matchedPlacementIds
-      );
       writeThemeEditorScopeState(theme.target, {
         gradient: acceptedGradient,
-        buttonParticipation: acceptedParticipation
+        buttonParticipation: {}
       });
       setGradient(acceptedGradient);
-      setButtonParticipation(acceptedParticipation);
+      adoptHighlightColorResetIntents(theme, committed.applied);
       acceptCommittedTheme(committed.saved, committed.page);
       setStatus(
         `${formatApplyStatus("Applied theme to", committed.applied)}${warningSuffix(committed.warnings)}`
@@ -694,10 +886,7 @@ export default function ThemeEditorPage({
     try {
       const capturedTheme = captureCurrentTheme();
       const theme = capturedTheme.page
-        ? {
-            ...capturedTheme,
-            page: await authorizeThemePageAssets(capturedTheme.page)
-          }
+        ? { ...capturedTheme, page: await authorizeThemePageAssets(capturedTheme.page) }
         : capturedTheme;
       const path = await saveFlowCellThemeFile(theme, themeSuggestedName(target));
       if (path) setStatus(`Saved theme: ${path}`);
@@ -716,32 +905,33 @@ export default function ThemeEditorPage({
       if (!loaded) return;
       const committed = await commitTheme(loaded.theme);
       const programs = await listProgramFolders();
+      const loadedTarget = loaded.theme.target;
       setProgramNames(programs);
-      if (loaded.theme.target.kind === "flowcell") {
+      if (loadedTarget.kind === "flowcell") {
         setTargetValue(FLOWCELL_TARGET_VALUE);
-        setPageValue(loaded.theme.target.page);
+        setPageValue(loadedTarget.page);
         setPanelValue(ALL_PANELS_VALUE);
       } else {
-        const targetProgramName = loaded.theme.target.programName;
-        const installedTarget = programs.find(
-          (programName) => normalizeName(programName) === normalizeName(targetProgramName)
+        const installedTarget = programs.find((programName) =>
+          normalizeName(programName) === normalizeName(loadedTarget.programName)
         );
         if (installedTarget) {
           setTargetValue(installedTarget);
-          setPanelValue(loaded.theme.target.panelName ?? ALL_PANELS_VALUE);
+          setPanelValue(
+            loadedTarget.area === "popouts"
+              ? POPOUTS_ONLY_VALUE
+              : loadedTarget.panelName ?? ALL_PANELS_VALUE
+          );
         }
       }
       const loadedGradient = loaded.theme.gradient ?? DEFAULT_GRADIENT;
-      const loadedParticipation = participationFromTheme(
-        loaded.theme,
-        committed.applied.matchedPlacementIds
-      );
       writeThemeEditorScopeState(loaded.theme.target, {
         gradient: loadedGradient,
-        buttonParticipation: loadedParticipation
+        buttonParticipation: {}
       });
       setGradient(loadedGradient);
-      setButtonParticipation(loadedParticipation);
+      skinAssignmentPlacementIds.current.clear();
+      adoptHighlightColorResetIntents(loaded.theme, committed.applied);
       acceptCommittedTheme(committed.saved, committed.page);
       setStatus(
         `${loaded.path}: ${formatApplyStatus("applied", committed.applied)}${warningSuffix(committed.warnings)}`
@@ -769,67 +959,99 @@ export default function ThemeEditorPage({
     if (canonicalDocument) setDraftDocument(cloneButtonDocument(canonicalDocument));
     setPageAppearances(readAllPageAppearances());
     const stored = readThemeEditorScopeState(target);
-    setButtonParticipation(stored?.buttonParticipation ?? {});
-    setGradient(stored?.gradient ?? DEFAULT_GRADIENT);
+    setGradient(initialScopeGradient(stored?.gradient));
     dirtyPlacementIds.current.clear();
+    skinAssignmentPlacementIds.current.clear();
+    highlightColorResetPlacementIds.current.hover.clear();
+    highlightColorResetPlacementIds.current.active.clear();
     editorDirty.current = false;
     setStatus("Discarded unsaved Theme Editor changes.");
   };
+
+  const surfaceSummary = useMemo(() => {
+    if (!draftDocument) return "";
+    const counts = new Map<string, number>();
+    scopedPlacements.forEach((placement) => {
+      const kind = draftDocument.surfaces[placement.surfaceId]?.kind ?? "unknown";
+      counts.set(kind, (counts.get(kind) ?? 0) + 1);
+    });
+    return [...counts.entries()].map(([kind, count]) => `${kind}: ${count}`).join(" · ");
+  }, [draftDocument, scopedPlacements]);
+
+  const effectAmountSummaries = useMemo(() => {
+    return Object.fromEntries(ALL_EFFECT_AMOUNT_CONTROLS.map((control) => [
+      control.field,
+      scopedEffectAmountSummary(draftDocument, scopedPlacements, control.field)
+    ])) as Record<ThemeEffectAmountField, { value: number; mixed: boolean }>;
+  }, [draftDocument, scopedPlacements]);
+
+  const selectedPlacement = scopedPlacements.find(
+    (placement) => placement.id === selectedPlacementId
+  ) ?? null;
+  const selectedButton = selectedPlacement
+    ? draftDocument?.buttons[selectedPlacement.buttonId] ?? null
+    : null;
+  const selectedSkin = selectedPlacement && draftDocument
+    ? activePlacementSkin(draftDocument, selectedPlacement)
+    : null;
+  const selectedSkinIdentity = selectedPlacement && draftDocument
+    ? themeSkinAssignmentIdentity(draftDocument, selectedPlacement)
+    : null;
 
   return (
     <main className="theme-editor">
       <header className="theme-editor__header">
         <div>
           <h1>Theme Editor</h1>
-          <p>Appearance only. Button actions, scripts, bindings, and managed windows stay unchanged.</p>
+          <p>Bulk appearance only. Actions, scripts, bindings, saved skin files, and layouts stay unchanged.</p>
         </div>
         <div className="theme-editor__header-actions">
-          <button type="button" onClick={handleLoadTheme} disabled={pending}>Open Theme</button>
-          <button type="button" onClick={handleSaveTheme} disabled={pending || !draftDocument}>Save Theme</button>
-          <button type="button" onClick={handleApply} disabled={pending || !draftDocument}>Apply</button>
-          <button type="button" onClick={resetDraftFromCanonical} disabled={pending || !draftDocument}>Discard</button>
-          <button type="button" onClick={() => void getCurrentWindow().close()}>Close</button>
+          <button type="button" disabled={pending} onClick={() => void handleLoadTheme()}>Open Theme</button>
+          <button type="button" disabled={pending || !draftDocument} onClick={() => void handleSaveTheme()}>Save Theme</button>
+          <button type="button" disabled={pending || !draftDocument} onClick={() => void handleApply()}>Apply</button>
+          <button type="button" disabled={pending} onClick={resetDraftFromCanonical}>Discard</button>
+          <button type="button" disabled={pending} onClick={() => void getCurrentWindow().close()}>Close</button>
         </div>
       </header>
 
-      <section className="theme-editor__scope theme-editor__card">
+      <section className="theme-editor__card theme-editor__scope">
         <label>
           <span>Target</span>
-          <select
-            value={targetValue}
-            onChange={(event) => {
-              setTargetValue(event.target.value);
-              setPanelValue(ALL_PANELS_VALUE);
-            }}
-          >
+          <select value={targetValue} onChange={(event) => setTargetValue(event.currentTarget.value)}>
             <option value={FLOWCELL_TARGET_VALUE}>FlowCell</option>
             {programNames.map((programName) => (
               <option key={programName} value={programName}>{programName}</option>
             ))}
           </select>
         </label>
-        <label>
-          <span>{targetValue === FLOWCELL_TARGET_VALUE ? "Page" : "Area"}</span>
-          {targetValue === FLOWCELL_TARGET_VALUE ? (
-            <select
-              value={pageValue}
-              onChange={(event) => {
-                if (isFlowCellThemePageId(event.target.value)) setPageValue(event.target.value);
-              }}
-            >
+        {targetValue === FLOWCELL_TARGET_VALUE ? (
+          <label>
+            <span>Page</span>
+            <select value={pageValue} onChange={(event) => {
+              const value = event.currentTarget.value;
+              if (isFlowCellThemePageId(value)) setPageValue(value);
+            }}>
               {FLOWCELL_THEME_PAGE_REGISTRY.map((page) => (
                 <option key={page.id} value={page.id}>{page.label}</option>
               ))}
             </select>
-          ) : (
-            <select value={panelValue} onChange={(event) => setPanelValue(event.target.value)}>
-              <option value={ALL_PANELS_VALUE}>All Panels</option>
+          </label>
+        ) : (
+          <label>
+            <span>Area</span>
+            <select value={panelValue} onChange={(event) => setPanelValue(event.currentTarget.value)}>
+              <option value={ALL_PANELS_VALUE}>All Panels and Pop-outs</option>
+              <option value={POPOUTS_ONLY_VALUE}>Pop-outs Only</option>
               {panelNames.map((panelName) => (
                 <option key={panelName} value={panelName}>{panelName}</option>
               ))}
             </select>
-          )}
-        </label>
+          </label>
+        )}
+        <p className="theme-editor__scope-summary">
+          {scopedPlacements.length} Button occurrence{scopedPlacements.length === 1 ? "" : "s"} in scope
+          {surfaceSummary ? ` · ${surfaceSummary}` : ""}
+        </p>
       </section>
 
       {target.kind === "flowcell" ? (
@@ -837,84 +1059,53 @@ export default function ThemeEditorPage({
           <div className="theme-editor__section-heading">
             <div>
               <h2>{selectedPageDefinition.label} Page</h2>
-              <p>Registered page tokens stay separate from Layout files and managed-window state.</p>
+              <p>Pick colors visually; opacity is shown as a percentage.</p>
             </div>
           </div>
           <div className="theme-editor__token-groups">
             {selectedPageGroups.map((group) => (
-              <section className="theme-editor__token-group" key={group.name}>
+              <div className="theme-editor__token-group" key={group.name}>
                 <h3>{group.name}</h3>
                 <div className="theme-editor__grid">
-                  {group.tokens.map((token) => {
-                    const value = selectedPageAppearance.tokens[token.id] ?? token.defaultValue;
-                    return (
-                      <label key={token.id}>
-                        <span>{token.label}</span>
-                        <div className="theme-editor__color-control">
-                          {isPickerColor(value) ? (
-                            <input
-                              type="color"
-                              value={value}
-                              onChange={(event) => updatePageAppearance((appearance) => {
-                                appearance.tokens[token.id] = event.target.value;
-                              })}
-                            />
-                          ) : null}
-                          <input
-                            type="text"
-                            value={value}
-                            onChange={(event) => updatePageAppearance((appearance) => {
-                              appearance.tokens[token.id] = event.target.value;
-                            })}
-                          />
-                        </div>
-                      </label>
-                    );
-                  })}
+                  {group.tokens.map((token) => (
+                    <label key={token.id}>
+                      <span>{token.label}</span>
+                      <ThemeColorControl
+                        label={token.label}
+                        value={selectedPageAppearance.tokens[token.id]}
+                        onChange={(color) => updatePageAppearance((appearance) => {
+                          appearance.tokens[token.id] = color;
+                        })}
+                      />
+                    </label>
+                  ))}
                   {group.assets.map((asset) => {
-                    const value = selectedPageAppearance.assets[asset.id] ?? { mode: "default", path: null };
+                    const current = selectedPageAppearance.assets[asset.id];
                     return (
                       <div className="theme-editor__asset-row" key={asset.id}>
                         <label>
                           <span>{asset.label}</span>
-                          <select
-                            value={value.mode}
-                            onChange={(event) => updatePageAppearance((appearance) => {
-                              const mode = event.target.value as "default" | "none" | "custom";
+                          <select value={current.mode} onChange={(event) => {
+                            const mode = event.currentTarget.value as "default" | "none" | "custom";
+                            updatePageAppearance((appearance) => {
                               appearance.assets[asset.id] = {
                                 mode,
-                                path: mode === "custom" ? value.path ?? "" : null
+                                path: mode === "custom" ? current.path : null
                               };
-                            })}
-                          >
+                            });
+                          }}>
                             <option value="default">Default</option>
                             <option value="none">None</option>
-                            <option value="custom">Custom</option>
+                            <option value="custom">Custom image</option>
                           </select>
                         </label>
-                        {value.mode === "custom" ? (
-                          <>
-                            <label>
-                              <span>Image path</span>
-                              <input
-                                type="text"
-                                value={value.path ?? ""}
-                                onChange={(event) => updatePageAppearance((appearance) => {
-                                  appearance.assets[asset.id] = {
-                                    mode: "custom",
-                                    path: event.target.value
-                                  };
-                                })}
-                              />
-                            </label>
-                            <button type="button" onClick={() => void handleBrowsePageAsset(asset)}>Browse</button>
-                          </>
-                        ) : null}
+                        <output>{current.path ?? "No custom image selected"}</output>
+                        <button type="button" onClick={() => void handleBrowsePageAsset(asset)}>Browse</button>
                       </div>
                     );
                   })}
                 </div>
-              </section>
+              </div>
             ))}
           </div>
         </section>
@@ -925,365 +1116,219 @@ export default function ThemeEditorPage({
           <section className="theme-editor__card">
             <div className="theme-editor__section-heading">
               <div>
-                <h2>Button Gradient</h2>
-                <p>Position follows top-to-bottom deployment. Scatter is deterministic until Reshuffle.</p>
+                <h2>Button Appearance</h2>
+                <p>One gradient/scatter rule is applied to every Button in the selected scope.</p>
               </div>
-              <button
-                type="button"
-                disabled={!draftDocument || gradientRoles.length === 0}
-                onClick={() => applyGradient()}
-              >
-                Apply Gradient
-              </button>
+              <div className="theme-editor__section-actions">
+                <button type="button" disabled={!draftDocument || scopedPlacements.length === 0} onClick={() => applyGradient()}>
+                  Apply Gradient
+                </button>
+                <button
+                  type="button"
+                  disabled={!draftDocument || scopedPlacements.length === 0}
+                  onClick={() => applyGradient({
+                    ...gradient,
+                    bottomColor: gradient.topColor,
+                    spread: 0,
+                    scatter: 0
+                  })}
+                >
+                  Apply One Color
+                </button>
+              </div>
             </div>
             <div className="theme-editor__gradient-grid">
               <label>
-                <span>Semantic role</span>
-                <select
-                  value={gradient.role}
-                  onChange={(event) => updateGradient((current) => ({ ...current, role: event.target.value }))}
-                >
-                  {gradientRoles.length === 0 ? <option value="">No editable roles</option> : null}
-                  {gradientRoles.map((role) => <option key={role} value={role}>{role}</option>)}
+                <span>Channel</span>
+                <select value={gradient.role} onChange={(event) => {
+                  const role = event.currentTarget.value;
+                  updateGradient((current) => ({ ...current, role }));
+                }}>
+                  {THEME_EDITOR_GRADIENT_ROLES.map((role) => (
+                    <option key={role} value={role}>{gradientRoleLabel(role)}</option>
+                  ))}
                 </select>
               </label>
               <label>
                 <span>Top</span>
-                <input type="color" value={gradient.topColor} onChange={(event) => updateGradient((current) => ({ ...current, topColor: event.target.value }))} />
+                <ThemeColorControl
+                  label="Gradient top"
+                  value={gradient.topColor}
+                  onChange={(topColor) => updateGradient((current) => ({ ...current, topColor }))}
+                />
               </label>
               <label>
                 <span>Bottom</span>
-                <input type="color" value={gradient.bottomColor} onChange={(event) => updateGradient((current) => ({ ...current, bottomColor: event.target.value }))} />
+                <ThemeColorControl
+                  label="Gradient bottom"
+                  value={gradient.bottomColor}
+                  onChange={(bottomColor) => updateGradient((current) => ({ ...current, bottomColor }))}
+                />
               </label>
               <label>
                 <span>Spread {gradient.spread}%</span>
-                <input type="range" min="0" max="100" value={gradient.spread} onChange={(event) => updateGradient((current) => ({ ...current, spread: Number(event.target.value) }))} />
+                <input type="range" min="0" max="100" value={gradient.spread} onChange={(event) => {
+                  const spread = Number(event.currentTarget.value);
+                  updateGradient((current) => ({ ...current, spread }));
+                }} />
               </label>
               <label>
                 <span>Scatter {gradient.scatter}%</span>
-                <input type="range" min="0" max="100" value={gradient.scatter} onChange={(event) => updateGradient((current) => ({ ...current, scatter: Number(event.target.value) }))} />
+                <input type="range" min="0" max="100" value={gradient.scatter} onChange={(event) => {
+                  const scatter = Number(event.currentTarget.value);
+                  updateGradient((current) => ({ ...current, scatter }));
+                }} />
               </label>
               <button
                 type="button"
-                onClick={() => {
-                  const next = { ...gradient, seed: gradient.seed + 1 };
-                  applyGradient(next);
-                }}
-                disabled={!draftDocument || gradientRoles.length === 0}
+                onClick={() => applyGradient({ ...gradient, seed: gradient.seed + 1 })}
+                disabled={!draftDocument || scopedPlacements.length === 0}
               >
                 Reshuffle
               </button>
             </div>
           </section>
 
-          <section className="theme-editor__card theme-editor__buttons-card">
+          <section className="theme-editor__card">
             <div className="theme-editor__section-heading">
               <div>
-                <h2>Buttons</h2>
-                <p>{scopedPlacements.length} placement{scopedPlacements.length === 1 ? "" : "s"} in this scope.</p>
+                <h2>Highlight</h2>
+                <p>Set the brightness lift independently for hover and active Buttons.</p>
               </div>
             </div>
-            <div className="theme-editor__button-list">
-              {draftDocument && scopedPlacements.map((placement) => {
-                const button = draftDocument.buttons[placement.buttonId];
-                const surface = draftDocument.surfaces[placement.surfaceId];
-                const skin = activePlacementSkin(draftDocument, placement);
-                const colorRoots = skin ? extractSkinColorRoots(skin) : [];
-                const identity = button?.sourceIdentity;
-                const participation = buttonParticipation[placement.id] ?? {
-                  gradientEnabled: true,
-                  scatterEnabled: true
-                };
-                const skinHighlightOnHover = skin
-                  ? readButtonSkinHighlightOnHover(skin) ?? placement.highlightOnHover
-                  : placement.highlightOnHover;
-                const skinHighlightOnActive = skin
-                  ? readButtonSkinHighlightOnActive(skin) ?? false
-                  : false;
-                const candidateSkins = Object.values(draftDocument.skins)
-                  .filter((candidate) =>
-                    !candidate.id.startsWith(THEME_DRAFT_SKIN_PREFIX) || candidate.id === skin?.id
-                  )
-                  .sort((left, right) => left.name.localeCompare(right.name));
+            <div className="theme-editor__effect-amount-grid">
+              {HIGHLIGHT_AMOUNT_CONTROLS.map((control) => {
+                const summary = effectAmountSummaries[control.field];
                 return (
-                  <article className="theme-editor__button-row" key={placement.id}>
-                    <div className="theme-editor__button-title">
-                      <div>
-                        <strong>{button?.label ?? placement.buttonId}</strong>
-                        <small>
-                          {surface?.name ?? placement.surfaceId}
-                          {identity ? ` - ${identity.displayProgramName} / ${identity.displayPanelName} / ${identity.displayFileName}` : ""}
-                        </small>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void openButtonEditorWindow({
-                          programName: identity?.displayProgramName,
-                          panelName: identity?.displayPanelName,
-                          buttonId: placement.buttonId,
-                          surfaceId: placement.surfaceId
-                        })}
-                      >
-                        Edit in Button Editor
-                      </button>
-                    </div>
-
-                    <div className="theme-editor__skin-source">
-                      <span>Skin source</span>
-                      <strong>{skin?.name ?? "No assigned skin"}</strong>
-                      <small>The complete canonical skin source is embedded when this theme is saved.</small>
-                    </div>
-
-                    <div className="theme-editor__button-controls">
-                      <label>
-                        <span>Assigned skin</span>
-                        <select
-                          value={skin?.id ?? ""}
-                          onChange={(event) => updateDraft((document) => {
-                            const nextPlacement = document.placements[placement.id];
-                            const nextButton = document.buttons[placement.buttonId];
-                            if (!nextPlacement || !nextButton) return;
-                            nextPlacement.skinOverrideId = event.target.value === nextButton.defaultSkinId
-                              ? null
-                              : event.target.value || null;
-                          }, [placement.id])}
-                        >
-                          {candidateSkins.map((candidate) => (
-                            <option key={candidate.id} value={candidate.id}>{candidate.name}</option>
-                          ))}
-                        </select>
-                      </label>
-                      <label>
-                        <span>Width</span>
-                        <input
-                          type="number"
-                          min="1"
-                          step="1"
-                          value={Number(placement.width.toFixed(2))}
-                          onChange={(event) => updateDraft((document) => {
-                            const next = document.placements[placement.id];
-                            const value = Number(event.target.value);
-                            if (next && Number.isFinite(value) && value > 0) next.width = value;
-                          }, [placement.id])}
-                        />
-                      </label>
-                      <label>
-                        <span>Height</span>
-                        <input
-                          type="number"
-                          min="1"
-                          step="1"
-                          value={Number(placement.height.toFixed(2))}
-                          onChange={(event) => updateDraft((document) => {
-                            const next = document.placements[placement.id];
-                            const value = Number(event.target.value);
-                            if (next && Number.isFinite(value) && value > 0) next.height = value;
-                          }, [placement.id])}
-                        />
-                      </label>
-                      {colorRoots.map((root) => (
-                        <label key={root.role}>
-                          <span>{root.role}</span>
-                          <div className="theme-editor__color-control">
-                            {isPickerColor(root.value) ? (
-                              <input
-                                type="color"
-                                value={root.value}
-                                onChange={(event) => updatePlacementColor(placement.id, root.role, event.target.value)}
-                              />
-                            ) : null}
-                            <input
-                              type="text"
-                              value={root.value}
-                              onChange={(event) => updatePlacementColor(placement.id, root.role, event.target.value)}
-                            />
-                          </div>
-                        </label>
-                      ))}
-                    </div>
-
-                    <div className="theme-editor__toggle-row">
-                      <label className="theme-editor__toggle">
-                        <input
-                          type="checkbox"
-                          checked={participation.gradientEnabled}
-                          onChange={(event) => updateButtonParticipation(placement.id, {
-                            gradientEnabled: event.currentTarget.checked
-                          })}
-                        />
-                        <span>Gradient</span>
-                      </label>
-                      <label className="theme-editor__toggle">
-                        <input
-                          type="checkbox"
-                          checked={participation.scatterEnabled}
-                          disabled={!participation.gradientEnabled}
-                          onChange={(event) => updateButtonParticipation(placement.id, {
-                            scatterEnabled: event.currentTarget.checked
-                          })}
-                        />
-                        <span>Scatter</span>
-                      </label>
-                      <label className="theme-editor__toggle">
-                        <input
-                          type="checkbox"
-                          checked={skinHighlightOnHover}
-                          onChange={(event) => updatePlacementHighlight(
-                            placement.id,
-                            "hover",
-                            event.currentTarget.checked
-                          )}
-                        />
-                        <span>Highlight on hover</span>
-                      </label>
-                      <label className="theme-editor__toggle">
-                        <input
-                          type="checkbox"
-                          checked={skinHighlightOnActive}
-                          onChange={(event) => updatePlacementHighlight(
-                            placement.id,
-                            "active",
-                            event.currentTarget.checked
-                          )}
-                        />
-                        <span>Highlight when active</span>
-                      </label>
-                    </div>
-
-                    <details className="theme-editor__button-details">
-                      <summary>More appearance controls</summary>
-                      <div className="theme-editor__button-controls">
-                        <label>
-                          <span>Text fit</span>
-                          <select
-                            value={placement.textFitMode}
-                            onChange={(event) => updateDraft((document) => {
-                              const next = document.placements[placement.id];
-                              if (next) next.textFitMode = event.target.value as ButtonPlacement["textFitMode"];
-                            }, [placement.id])}
-                          >
-                            <option value="shrink">Shrink</option>
-                            <option value="stack-whole-words">Stack whole words</option>
-                            <option value="shrink-and-stack">Shrink and stack</option>
-                          </select>
-                        </label>
-                        <label>
-                          <span>Text alignment</span>
-                          <select
-                            value={placement.textAlignment}
-                            onChange={(event) => updateDraft((document) => {
-                              const next = document.placements[placement.id];
-                              if (next) next.textAlignment = event.target.value as ButtonPlacement["textAlignment"];
-                            }, [placement.id])}
-                          >
-                            <option value="skin">Skin</option>
-                            <option value="left">Left</option>
-                            <option value="center">Center</option>
-                            <option value="right">Right</option>
-                          </select>
-                        </label>
-                        <label>
-                          <span>Text offset X</span>
-                          <input
-                            type="number"
-                            step="1"
-                            value={placement.textOffsetX}
-                            onChange={(event) => updateDraft((document) => {
-                              const next = document.placements[placement.id];
-                              const value = Number(event.target.value);
-                              if (next && Number.isFinite(value)) next.textOffsetX = value;
-                            }, [placement.id])}
-                          />
-                        </label>
-                        <label>
-                          <span>Text offset Y</span>
-                          <input
-                            type="number"
-                            step="1"
-                            value={placement.textOffsetY}
-                            onChange={(event) => updateDraft((document) => {
-                              const next = document.placements[placement.id];
-                              const value = Number(event.target.value);
-                              if (next && Number.isFinite(value)) next.textOffsetY = value;
-                            }, [placement.id])}
-                          />
-                        </label>
-                        <label>
-                          <span>Minimum font size</span>
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={placement.minimumFontSize}
-                            onChange={(event) => updateDraft((document) => {
-                              const next = document.placements[placement.id];
-                              const value = Number(event.target.value);
-                              if (next && Number.isFinite(value) && value > 0) next.minimumFontSize = value;
-                            }, [placement.id])}
-                          />
-                        </label>
-                        <label>
-                          <span>Text size override</span>
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            value={placement.textSizeOverride ?? ""}
-                            placeholder="Skin default"
-                            onChange={(event) => updateDraft((document) => {
-                              const next = document.placements[placement.id];
-                              const raw = event.target.value.trim();
-                              const value = Number(raw);
-                              if (next && (!raw || Number.isFinite(value) && value > 0)) {
-                                next.textSizeOverride = raw ? value : null;
-                              }
-                            }, [placement.id])}
-                          />
-                        </label>
-                      </div>
-                      <div className="theme-editor__toggle-row">
-                        <label className="theme-editor__toggle">
-                          <input
-                            type="checkbox"
-                            checked={placement.allowLabelResize}
-                            onChange={(event) => updateDraft((document) => {
-                              const next = document.placements[placement.id];
-                              if (next) next.allowLabelResize = event.currentTarget.checked;
-                            }, [placement.id])}
-                          />
-                          <span>Allow label resize</span>
-                        </label>
-                        <label className="theme-editor__toggle">
-                          <input
-                            type="checkbox"
-                            checked={placement.matchHitboxToSkin}
-                            onChange={(event) => updateDraft((document) => {
-                              const next = document.placements[placement.id];
-                              if (next) next.matchHitboxToSkin = event.currentTarget.checked;
-                            }, [placement.id])}
-                          />
-                          <span>Match hitbox to skin</span>
-                        </label>
-                        <label className="theme-editor__toggle">
-                          <input
-                            type="checkbox"
-                            checked={placement.allowStretching}
-                            onChange={(event) => updateDraft((document) => {
-                              const next = document.placements[placement.id];
-                              if (next) next.allowStretching = event.currentTarget.checked;
-                            }, [placement.id])}
-                          />
-                          <span>Allow stretching</span>
-                        </label>
-                      </div>
-                    </details>
-                  </article>
+                  <div className="theme-editor__effect-amount" key={control.field}>
+                    <label>
+                      <span>{control.label}</span>
+                      <input
+                        type="range"
+                        aria-label={control.ariaLabel}
+                        min={BUTTON_HIGHLIGHT_AMOUNT_MIN}
+                        max={control.max}
+                        step="1"
+                        value={summary.value}
+                        disabled={!draftDocument || scopedPlacements.length === 0}
+                        onChange={(event) => {
+                          const value = Number(event.currentTarget.value);
+                          applyEffectAmount(control.field, control.ariaLabel, value);
+                        }}
+                      />
+                    </label>
+                    <output>{summary.mixed ? "Mixed" : `${summary.value}%`}</output>
+                  </div>
                 );
               })}
-              {draftDocument && scopedPlacements.length === 0 ? (
-                <p className="theme-editor__empty">No canonical Button placements are available for this scope.</p>
-              ) : null}
             </div>
+            <p className="theme-editor__scope-note">
+              Defaults are {DEFAULT_BUTTON_HIGHLIGHT_AMOUNT}%. The range reaches {BUTTON_HIGHLIGHT_AMOUNT_MAX}% so the lift can be deliberately extreme. These controls do not turn highlighting on or off or edit saved skins.
+            </p>
+          </section>
+
+          <section className="theme-editor__card">
+            <div className="theme-editor__section-heading">
+              <div>
+                <h2>Glow</h2>
+                <p>Set the outer glow independently for hover and active Buttons.</p>
+              </div>
+            </div>
+            <div className="theme-editor__effect-amount-grid">
+              {GLOW_AMOUNT_CONTROLS.map((control) => {
+                const summary = effectAmountSummaries[control.field];
+                return (
+                  <div className="theme-editor__effect-amount" key={control.field}>
+                    <label>
+                      <span>{control.label}</span>
+                      <input
+                        type="range"
+                        aria-label={control.ariaLabel}
+                        min={BUTTON_HIGHLIGHT_AMOUNT_MIN}
+                        max={control.max}
+                        step="1"
+                        value={summary.value}
+                        disabled={!draftDocument || scopedPlacements.length === 0}
+                        onChange={(event) => {
+                          const value = Number(event.currentTarget.value);
+                          applyEffectAmount(control.field, control.ariaLabel, value);
+                        }}
+                      />
+                    </label>
+                    <output>{summary.mixed ? "Mixed" : `${summary.value}%`}</output>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="theme-editor__scope-note">
+              Defaults are {DEFAULT_BUTTON_HIGHLIGHT_AMOUNT}% with a {BUTTON_GLOW_AMOUNT_MAX}% maximum. Glow is visual only and never expands the Button hit area.
+            </p>
+          </section>
+
+          <section className="theme-editor__card">
+            <div className="theme-editor__section-heading">
+              <div>
+                <h2>Assign a Saved Skin</h2>
+                <p>This only changes which saved skin the Button uses. It never edits the saved skin file.</p>
+              </div>
+            </div>
+            <div className="theme-editor__assignment-grid">
+              <label>
+                <span>Button occurrence</span>
+                <select value={selectedPlacementId} onChange={(event) => setSelectedPlacementId(event.currentTarget.value)}>
+                  {scopedPlacements.map((placement) => {
+                    const button = draftDocument?.buttons[placement.buttonId];
+                    const surface = draftDocument?.surfaces[placement.surfaceId];
+                    return (
+                      <option key={placement.id} value={placement.id}>
+                        {button?.label ?? placement.id} · {surface?.name ?? placement.surfaceId}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+              <label>
+                <span>Saved skin</span>
+                <select
+                  value={selectedSavedSkinPath}
+                  disabled={savedSkins.length === 0}
+                  onChange={(event) => setSelectedSavedSkinPath(event.currentTarget.value)}
+                >
+                  {savedSkins.length === 0 ? <option value="">No saved skin files</option> : null}
+                  {savedSkins.map((choice) => (
+                    <option key={choice.path} value={choice.path}>{choice.skin.name}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="theme-editor__assignment-current">
+                <span>Current skin</span>
+                <strong>{selectedSkinIdentity?.label ?? selectedSkin?.name ?? "No assigned skin"}</strong>
+                <small>{selectedButton?.label ?? "Select a Button occurrence"}</small>
+              </div>
+              <button
+                type="button"
+                disabled={!selectedPlacement || !selectedSavedSkinPath}
+                onClick={handleAssignSkin}
+              >
+                Assign Skin
+              </button>
+            </div>
+            <label className="theme-editor__toggle theme-editor__assignment-scope">
+              <input
+                type="checkbox"
+                checked={assignEveryButtonInScope}
+                onChange={(event) => setAssignEveryButtonInScope(event.currentTarget.checked)}
+              />
+              <span>
+                Apply this saved skin to all {scopedPlacements.length} Buttons in the current scope.
+              </span>
+            </label>
+            <p className="theme-editor__note">
+              Checkbox off: only the selected Button occurrence uses the saved skin. Checkbox on: every Button in this scope uses it, even if those Buttons currently use different skins. Buttons outside this scope do not change, and no saved skin file is edited.
+            </p>
+            <p className="theme-editor__note">
+              Assignment starts with the saved skin's authored colors. Use Button Appearance after assigning only when you want to recolor it.
+            </p>
           </section>
         </>
       ) : null}

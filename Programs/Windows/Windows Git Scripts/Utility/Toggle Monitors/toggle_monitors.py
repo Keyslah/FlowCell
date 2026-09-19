@@ -3,13 +3,17 @@ from __future__ import annotations
 
 import argparse
 import base64
+import binascii
 import copy
 import ctypes
+import hashlib
 import json
 import logging
 import os
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +24,7 @@ from ctypes import wintypes
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
 
 UINT16 = ctypes.c_uint16
 UINT32 = ctypes.c_uint32
@@ -38,6 +43,7 @@ QDC_VIRTUAL_REFRESH_RATE_AWARE = 0x00000040
 
 SDC_TOPOLOGY_SUPPLIED = 0x00000010
 SDC_USE_SUPPLIED_DISPLAY_CONFIG = 0x00000020
+SDC_VALIDATE = 0x00000040
 SDC_APPLY = 0x00000080
 SDC_NO_OPTIMIZATION = 0x00000100
 SDC_SAVE_TO_DATABASE = 0x00000200
@@ -75,6 +81,10 @@ DISPLAYCONFIG_MODE_INFO_TYPE_DESKTOP_IMAGE = 3
 DISPLAYCONFIG_PATH_ACTIVE = 0x00000001
 DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE = 0x00000008
 DISPLAYCONFIG_PATH_MODE_IDX_INVALID = 0xFFFFFFFF
+DISPLAYCONFIG_PATH_CLONE_GROUP_INVALID = 0xFFFF
+DISPLAYCONFIG_PATH_SOURCE_MODE_IDX_INVALID = 0xFFFF
+DISPLAYCONFIG_PATH_TARGET_MODE_IDX_INVALID = 0xFFFF
+DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID = 0xFFFF
 
 ERROR_SUCCESS = 0
 ERROR_INSUFFICIENT_BUFFER = 122
@@ -83,6 +93,13 @@ ERROR_ALREADY_EXISTS = 183
 WM_HOTKEY = 0x0312
 WM_KEYDOWN = 0x0100
 WM_SYSKEYDOWN = 0x0104
+WM_DESTROY = 0x0002
+WM_POWERBROADCAST = 0x0218
+WM_WTSSESSION_CHANGE = 0x02B1
+PBT_APMRESUMEAUTOMATIC = 0x0012
+WTS_SESSION_LOCK = 0x7
+WTS_SESSION_UNLOCK = 0x8
+NOTIFY_FOR_THIS_SESSION = 0
 MOD_SHIFT = 0x0004
 MOD_CONTROL = 0x0002
 VK_F2 = 0x71
@@ -318,6 +335,25 @@ class KBDLLHOOKSTRUCT(ctypes.Structure):
     ]
 
 
+LRESULT = ctypes.c_ssize_t
+WindowProc = ctypes.WINFUNCTYPE(LRESULT, wintypes.HWND, UINT32, wintypes.WPARAM, wintypes.LPARAM)
+
+
+class WNDCLASSW(ctypes.Structure):
+    _fields_ = [
+        ("style", UINT32),
+        ("lpfnWndProc", WindowProc),
+        ("cbClsExtra", ctypes.c_int),
+        ("cbWndExtra", ctypes.c_int),
+        ("hInstance", wintypes.HANDLE),
+        ("hIcon", wintypes.HANDLE),
+        ("hCursor", wintypes.HANDLE),
+        ("hbrBackground", wintypes.HANDLE),
+        ("lpszMenuName", wintypes.LPCWSTR),
+        ("lpszClassName", wintypes.LPCWSTR),
+    ]
+
+
 user32.GetDisplayConfigBufferSizes.argtypes = [UINT32, ctypes.POINTER(UINT32), ctypes.POINTER(UINT32)]
 user32.GetDisplayConfigBufferSizes.restype = LONG
 user32.QueryDisplayConfig.argtypes = [
@@ -389,6 +425,35 @@ kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 kernel32.CloseHandle.restype = BOOL
 kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
 kernel32.GetModuleHandleW.restype = wintypes.HANDLE
+user32.RegisterClassW.argtypes = [ctypes.POINTER(WNDCLASSW)]
+user32.RegisterClassW.restype = wintypes.ATOM
+user32.UnregisterClassW.argtypes = [wintypes.LPCWSTR, wintypes.HANDLE]
+user32.UnregisterClassW.restype = BOOL
+user32.CreateWindowExW.argtypes = [
+    wintypes.DWORD,
+    wintypes.LPCWSTR,
+    wintypes.LPCWSTR,
+    wintypes.DWORD,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    wintypes.HWND,
+    wintypes.HANDLE,
+    wintypes.HANDLE,
+    ctypes.c_void_p,
+]
+user32.CreateWindowExW.restype = wintypes.HWND
+user32.DefWindowProcW.argtypes = [wintypes.HWND, UINT32, wintypes.WPARAM, wintypes.LPARAM]
+user32.DefWindowProcW.restype = LRESULT
+user32.DestroyWindow.argtypes = [wintypes.HWND]
+user32.DestroyWindow.restype = BOOL
+user32.PostQuitMessage.argtypes = [ctypes.c_int]
+user32.PostQuitMessage.restype = None
+wtsapi32.WTSRegisterSessionNotification.argtypes = [wintypes.HWND, wintypes.DWORD]
+wtsapi32.WTSRegisterSessionNotification.restype = BOOL
+wtsapi32.WTSUnRegisterSessionNotification.argtypes = [wintypes.HWND]
+wtsapi32.WTSUnRegisterSessionNotification.restype = BOOL
 
 
 class DisplayConfigError(RuntimeError):
@@ -433,18 +498,27 @@ class SingleInstance:
     def __init__(self, name: str) -> None:
         self.name = name
         self.handle = None
+        self.owns_mutex = False
 
     def acquire(self) -> bool:
-        self.handle = kernel32.CreateMutexW(None, False, self.name)
+        ctypes.set_last_error(ERROR_SUCCESS)
+        self.handle = kernel32.CreateMutexW(None, True, self.name)
         if not self.handle:
             raise_win32(ctypes.get_last_error(), "CreateMutexW")
-        return ctypes.get_last_error() != ERROR_ALREADY_EXISTS
+        if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
+            kernel32.CloseHandle(self.handle)
+            self.handle = None
+            return False
+        self.owns_mutex = True
+        return True
 
     def release(self) -> None:
         if self.handle:
-            kernel32.ReleaseMutex(self.handle)
+            if self.owns_mutex:
+                kernel32.ReleaseMutex(self.handle)
             kernel32.CloseHandle(self.handle)
             self.handle = None
+            self.owns_mutex = False
 
 
 LowLevelKeyboardProc = ctypes.WINFUNCTYPE(wintypes.LPARAM, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM)
@@ -454,6 +528,14 @@ DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 ACTIVE_PROFILE_FILENAME = "active_profile.txt"
 PROFILE_METADATA_FILENAME = "profile.json"
+BUTTON_STATE_FILENAME = "toggle-monitors-state.json"
+ACTIVE_OWNER_FILENAME = "active-owner.json"
+TARGET_TOKEN_PREFIX = "tm1."
+BUTTON_CONFIG_SCHEMA = 3
+PICKER_FILENAME = "Toggle Monitors Picker.ps1"
+CONFIGURATION_CANCELLED_EXIT_CODE = 3
+GLOBAL_TOPOLOGY_MUTEX = "Local\\ToggleMonitorsTopologyMutation"
+STARTUP_SAFETY_MUTEX = "Local\\ToggleMonitorsStartupSafetyGuardian"
 
 
 def raise_win32(code: int, context: str) -> None:
@@ -565,11 +647,30 @@ class DisplayConfigSnapshot:
 
     @classmethod
     def from_arrays(cls, path_array, mode_array, path_count: int, mode_count: int) -> "DisplayConfigSnapshot":
-        path_blob = ctypes.string_at(ctypes.addressof(path_array), ctypes.sizeof(path_array))
-        mode_blob = ctypes.string_at(ctypes.addressof(mode_array), ctypes.sizeof(mode_array))
+        if path_count < 0 or mode_count < 0:
+            raise DisplayConfigError("Display snapshot counts cannot be negative.")
+        path_blob_size = path_count * ctypes.sizeof(DISPLAYCONFIG_PATH_INFO)
+        mode_blob_size = mode_count * ctypes.sizeof(DISPLAYCONFIG_MODE_INFO)
+        path_blob = ctypes.string_at(ctypes.addressof(path_array), path_blob_size)
+        mode_blob = ctypes.string_at(ctypes.addressof(mode_array), mode_blob_size)
         return cls(path_count=path_count, mode_count=mode_count, path_blob=path_blob, mode_blob=mode_blob)
 
+    def validate(self) -> None:
+        expected_path_bytes = self.path_count * ctypes.sizeof(DISPLAYCONFIG_PATH_INFO)
+        expected_mode_bytes = self.mode_count * ctypes.sizeof(DISPLAYCONFIG_MODE_INFO)
+        if self.path_count < 0 or self.mode_count < 0:
+            raise DisplayConfigError("Display snapshot counts cannot be negative.")
+        if len(self.path_blob) != expected_path_bytes:
+            raise DisplayConfigError(
+                f"Display snapshot path blob has {len(self.path_blob)} bytes; expected {expected_path_bytes}."
+            )
+        if len(self.mode_blob) != expected_mode_bytes:
+            raise DisplayConfigError(
+                f"Display snapshot mode blob has {len(self.mode_blob)} bytes; expected {expected_mode_bytes}."
+            )
+
     def path_array(self):
+        self.validate()
         array_type = DISPLAYCONFIG_PATH_INFO * max(self.path_count, 1)
         array = array_type()
         if self.path_count:
@@ -577,6 +678,7 @@ class DisplayConfigSnapshot:
         return array
 
     def mode_array(self):
+        self.validate()
         array_type = DISPLAYCONFIG_MODE_INFO * max(self.mode_count, 1)
         array = array_type()
         if self.mode_count:
@@ -584,6 +686,7 @@ class DisplayConfigSnapshot:
         return array
 
     def to_json(self) -> str:
+        self.validate()
         return json.dumps(
             {
                 "path_count": self.path_count,
@@ -597,12 +700,14 @@ class DisplayConfigSnapshot:
     @classmethod
     def from_json(cls, payload: str) -> "DisplayConfigSnapshot":
         data = json.loads(payload)
-        return cls(
+        snapshot = cls(
             path_count=int(data["path_count"]),
             mode_count=int(data["mode_count"]),
             path_blob=base64.b64decode(data["path_blob_b64"]),
             mode_blob=base64.b64decode(data["mode_blob_b64"]),
         )
+        snapshot.validate()
+        return snapshot
 
 
 @dataclass
@@ -611,6 +716,178 @@ class GdiDisplayDevice:
     description: str
     state_flags: int
     devmode: DEVMODEW
+
+
+@dataclass(frozen=True)
+class TargetDescriptor:
+    """A monitor identity that survives GDI source-name reassignment.
+
+    ``monitorDevicePath`` is the durable identity when Windows exposes it.  The
+    adapter/target tuple, friendly name, and source name are retained only as
+    progressively weaker fallbacks for drivers that omit that path.
+    """
+
+    device_path: str = ""
+    adapter_high: int = 0
+    adapter_low: int = 0
+    target_id: int = -1
+    friendly: str = ""
+    source: str = ""
+
+    def identity_key(self) -> str:
+        if self.device_path.strip():
+            return f"path:{self.device_path.strip().casefold()}"
+        if self.target_id >= 0:
+            return f"target:{self.adapter_high}:{self.adapter_low}:{self.target_id}"
+        if self.source.strip():
+            return f"source:{self.source.strip().casefold()}"
+        if self.friendly.strip():
+            return f"friendly:{self.friendly.strip().casefold()}"
+        raise DisplayConfigError("Monitor descriptor has no usable identity.")
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "v": 1,
+            "p": self.device_path.strip(),
+            "ah": int(self.adapter_high),
+            "al": int(self.adapter_low),
+            "t": int(self.target_id),
+            "f": self.friendly.strip(),
+            "s": self.source.strip(),
+        }
+
+
+@dataclass(frozen=True)
+class MonitorChoice:
+    label: str
+    token: str
+    descriptor: TargetDescriptor
+    active: bool
+    main: bool
+
+
+def encode_target_descriptor(descriptor: TargetDescriptor) -> str:
+    descriptor.identity_key()
+    payload = json.dumps(descriptor.payload(), sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    encoded = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+    return TARGET_TOKEN_PREFIX + encoded
+
+
+def decode_target_descriptor(token: str) -> TargetDescriptor:
+    value = token.strip()
+    if not value.startswith(TARGET_TOKEN_PREFIX):
+        raise DisplayConfigError("Monitor selector is not a Toggle Monitors target token.")
+    encoded = value[len(TARGET_TOKEN_PREFIX) :]
+    if not encoded:
+        raise DisplayConfigError("Monitor target token is empty.")
+    try:
+        padding = "=" * (-len(encoded) % 4)
+        data = json.loads(base64.urlsafe_b64decode(encoded + padding).decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("target descriptor payload must be an object")
+        if int(data.get("v", 0)) != 1:
+            raise ValueError("unsupported token version")
+        descriptor = TargetDescriptor(
+            device_path=str(data.get("p", "")),
+            adapter_high=int(data.get("ah", 0)),
+            adapter_low=int(data.get("al", 0)),
+            target_id=int(data.get("t", -1)),
+            friendly=str(data.get("f", "")),
+            source=str(data.get("s", "")),
+        )
+        descriptor.identity_key()
+        return descriptor
+    except (AttributeError, binascii.Error, KeyError, TypeError, ValueError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise DisplayConfigError(f"Invalid monitor target token: {error}") from error
+
+
+def read_button_config(path: Path) -> dict[str, str]:
+    if not path.exists():
+        raise DisplayConfigError(f"Button monitor configuration was not found: {path}")
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip().upper()] = value.strip()
+    return values
+
+
+def selectors_from_button_config(path: Path) -> list[str]:
+    values = read_button_config(path)
+    target_value = values.get("TARGETS", "")
+    if target_value:
+        selectors = [item.strip() for item in target_value.split(",") if item.strip()]
+    else:
+        legacy = values.get("DISPLAY", "").strip()
+        selectors = [legacy] if legacy else []
+    if not selectors:
+        raise DisplayConfigError("Choose at least one monitor for this Toggle Monitors Button.")
+    return selectors
+
+
+def split_selector_value(value: str) -> list[str]:
+    selectors: list[str] = []
+    seen: set[str] = set()
+    for item in value.split(","):
+        selector = item.strip()
+        if not selector or selector in seen:
+            continue
+        selectors.append(selector)
+        seen.add(selector)
+    return selectors
+
+
+def validate_selector_groups(
+    group_1: Iterable[str],
+    group_2: Iterable[str],
+    allowed_tokens: Optional[set[str]] = None,
+) -> tuple[list[str], list[str]]:
+    first = split_selector_value(",".join(map(str, group_1)))
+    second = split_selector_value(",".join(map(str, group_2)))
+    if not first or not second:
+        raise DisplayConfigError("Choose at least one monitor in both Group 1 and Group 2.")
+    if set(first) == set(second):
+        raise DisplayConfigError("Group 1 and Group 2 must be different monitor combinations.")
+    for selector in [*first, *second]:
+        if not selector.startswith(TARGET_TOKEN_PREFIX):
+            raise DisplayConfigError("Monitor groups must contain opaque Toggle Monitors target tokens.")
+        decode_target_descriptor(selector)
+        if allowed_tokens is not None and selector not in allowed_tokens:
+            raise DisplayConfigError("The picker returned a monitor that is not in its current monitor list.")
+    return first, second
+
+
+def selector_groups_from_button_config(path: Path) -> tuple[list[str], list[str]]:
+    values = read_button_config(path)
+    if values.get("SCHEMA", "") != str(BUTTON_CONFIG_SCHEMA):
+        raise DisplayConfigError("This Toggle Monitors Button needs its two monitor groups configured.")
+    return validate_selector_groups(
+        split_selector_value(values.get("GROUP_1", "")),
+        split_selector_value(values.get("GROUP_2", "")),
+    )
+
+
+def write_button_group_config(
+    path: Path,
+    pythonw_path: str,
+    group_1: Iterable[str],
+    group_2: Iterable[str],
+) -> None:
+    first, second = validate_selector_groups(group_1, group_2)
+    normalized_python = str(pythonw_path).strip().replace("\r", "").replace("\n", "")
+    if not normalized_python:
+        raise DisplayConfigError("Toggle Monitors could not preserve its Python launcher path.")
+    content = (
+        "# Toggle Monitors - this Button owner's saved monitor groups.\n"
+        "# Each GROUP value contains opaque monitor identities supplied by the owned Python engine.\n"
+        f"SCHEMA={BUTTON_CONFIG_SCHEMA}\n"
+        f"PYTHONW={normalized_python}\n"
+        f"GROUP_1={','.join(first)}\n"
+        f"GROUP_2={','.join(second)}\n"
+    )
+    write_text_atomic(path, content)
 
 
 def get_display_config_buffers(base_flag: int) -> tuple[int, int]:
@@ -632,7 +909,16 @@ def query_display_config(flags: int):
         mode_array = mode_array_type()
         path_count_u = UINT32(path_count)
         mode_count_u = UINT32(mode_count)
-        result = user32.QueryDisplayConfig(flags, ctypes.byref(path_count_u), path_array, ctypes.byref(mode_count_u), mode_array, None)
+        topology_id = UINT32()
+        topology_id_pointer = ctypes.byref(topology_id) if base_flag == QDC_DATABASE_CURRENT else None
+        result = user32.QueryDisplayConfig(
+            flags,
+            ctypes.byref(path_count_u),
+            path_array,
+            ctypes.byref(mode_count_u),
+            mode_array,
+            topology_id_pointer,
+        )
         if result == ERROR_INSUFFICIENT_BUFFER:
             continue
         if result != ERROR_SUCCESS:
@@ -718,6 +1004,141 @@ def get_target_identity_details(path: DISPLAYCONFIG_PATH_INFO) -> tuple[str, str
     return friendly, device_path
 
 
+def target_descriptor_from_path(path: DISPLAYCONFIG_PATH_INFO) -> TargetDescriptor:
+    friendly, device_path = get_target_identity_details(path)
+    return TargetDescriptor(
+        device_path=device_path,
+        adapter_high=int(path.targetInfo.adapterId.HighPart),
+        adapter_low=int(path.targetInfo.adapterId.LowPart),
+        target_id=int(path.targetInfo.id),
+        friendly=friendly,
+        source=get_source_name(path),
+    )
+
+
+def target_identity_key(path: DISPLAYCONFIG_PATH_INFO) -> str:
+    return target_descriptor_from_path(path).identity_key()
+
+
+def source_identity_key(path: DISPLAYCONFIG_PATH_INFO) -> tuple[int, int, int]:
+    return (
+        int(path.sourceInfo.adapterId.HighPart),
+        int(path.sourceInfo.adapterId.LowPart),
+        int(path.sourceInfo.id),
+    )
+
+
+def descriptor_matches(configured: TargetDescriptor, candidate: TargetDescriptor) -> bool:
+    configured_path = configured.device_path.strip()
+    candidate_path = candidate.device_path.strip()
+    if configured_path and candidate_path:
+        return configured_path.casefold() == candidate_path.casefold()
+    if configured.target_id >= 0 and candidate.target_id >= 0:
+        return (
+            configured.adapter_high == candidate.adapter_high
+            and configured.adapter_low == candidate.adapter_low
+            and configured.target_id == candidate.target_id
+        )
+    if configured.source.strip() and candidate.source.strip():
+        return configured.source.strip().casefold() == candidate.source.strip().casefold()
+    if configured.friendly.strip() and candidate.friendly.strip():
+        return configured.friendly.strip().casefold() == candidate.friendly.strip().casefold()
+    return False
+
+
+def configured_selector_label(selector: str) -> str:
+    if selector.startswith(TARGET_TOKEN_PREFIX):
+        configured = decode_target_descriptor(selector)
+        return (
+            configured.friendly.strip()
+            or configured.source.strip()
+            or configured.device_path.strip()
+            or f"Monitor target {configured.target_id}"
+        )
+    return selector
+
+
+def resolve_available_target_descriptors(
+    selectors: Iterable[str],
+    path_array,
+    path_count: int,
+) -> tuple[list[TargetDescriptor], list[str]]:
+    physical_candidates: dict[str, tuple[TargetDescriptor, bool]] = {}
+    for path in path_array[:path_count]:
+        if path.targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST:
+            continue
+        descriptor = target_descriptor_from_path(path)
+        key = descriptor.identity_key()
+        existing = physical_candidates.get(key)
+        available = bool(path.targetInfo.targetAvailable)
+        if existing is None or (available and not existing[1]):
+            physical_candidates[key] = (descriptor, available)
+
+    resolved: list[TargetDescriptor] = []
+    resolved_keys: set[str] = set()
+    unavailable_labels: list[str] = []
+    for raw_selector in selectors:
+        selector = raw_selector.strip()
+        if not selector:
+            continue
+        if selector.startswith(TARGET_TOKEN_PREFIX):
+            configured = decode_target_descriptor(selector)
+            matches = [
+                candidate
+                for candidate in physical_candidates.values()
+                if descriptor_matches(configured, candidate[0])
+            ]
+        else:
+            wanted = selector.casefold()
+            matches = [
+                candidate
+                for candidate in physical_candidates.values()
+                if wanted
+                in {
+                    candidate[0].device_path.strip().casefold(),
+                    candidate[0].friendly.strip().casefold(),
+                    candidate[0].source.strip().casefold(),
+                }
+            ]
+
+        unique_matches = {match[0].identity_key(): match for match in matches}
+        if not unique_matches:
+            label = configured_selector_label(selector)
+            if label not in unavailable_labels:
+                unavailable_labels.append(label)
+            continue
+        if len(unique_matches) > 1:
+            raise DisplayConfigError(
+                f"Configured monitor name is ambiguous: {selector}. Reconfigure this Button to store target tokens."
+            )
+        match, available = next(iter(unique_matches.values()))
+        if not available:
+            label = configured_selector_label(selector)
+            if label not in unavailable_labels:
+                unavailable_labels.append(label)
+            continue
+        key = match.identity_key()
+        if key not in resolved_keys:
+            resolved.append(match)
+            resolved_keys.add(key)
+
+    return resolved, unavailable_labels
+
+
+def resolve_target_descriptors(
+    selectors: Iterable[str],
+    path_array,
+    path_count: int,
+) -> list[TargetDescriptor]:
+    resolved, unavailable_labels = resolve_available_target_descriptors(selectors, path_array, path_count)
+    if unavailable_labels:
+        raise DisplayConfigError(f"Configured monitor is not currently available: {unavailable_labels[0]}")
+
+    if not resolved:
+        raise DisplayConfigError("Choose at least one physical monitor for this Toggle Monitors Button.")
+    return resolved
+
+
 def get_target_name(path: DISPLAYCONFIG_PATH_INFO) -> str:
     friendly, device_path = get_target_identity_details(path)
     return friendly or device_path or "<unnamed target>"
@@ -736,20 +1157,24 @@ def get_target_match_keys(path: DISPLAYCONFIG_PATH_INFO) -> set[str]:
 
 
 def source_mode_for_path(path: DISPLAYCONFIG_PATH_INFO, modes) -> Optional[DISPLAYCONFIG_MODE_INFO]:
-    idx = path.sourceInfo.sourceModeInfoIdx if path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE else path.sourceInfo.modeInfoIdx
-    return None if idx == DISPLAYCONFIG_PATH_MODE_IDX_INVALID else modes[idx]
+    virtual = bool(path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE)
+    idx = path.sourceInfo.sourceModeInfoIdx if virtual else path.sourceInfo.modeInfoIdx
+    invalid = DISPLAYCONFIG_PATH_SOURCE_MODE_IDX_INVALID if virtual else DISPLAYCONFIG_PATH_MODE_IDX_INVALID
+    return None if idx == invalid or idx >= len(modes) else modes[idx]
 
 
 def target_mode_for_path(path: DISPLAYCONFIG_PATH_INFO, modes) -> Optional[DISPLAYCONFIG_MODE_INFO]:
-    idx = path.targetInfo.targetModeInfoIdx if path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE else path.targetInfo.modeInfoIdx
-    return None if idx == DISPLAYCONFIG_PATH_MODE_IDX_INVALID else modes[idx]
+    virtual = bool(path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE)
+    idx = path.targetInfo.targetModeInfoIdx if virtual else path.targetInfo.modeInfoIdx
+    invalid = DISPLAYCONFIG_PATH_TARGET_MODE_IDX_INVALID if virtual else DISPLAYCONFIG_PATH_MODE_IDX_INVALID
+    return None if idx == invalid or idx >= len(modes) else modes[idx]
 
 
 def desktop_mode_for_path(path: DISPLAYCONFIG_PATH_INFO, modes) -> Optional[DISPLAYCONFIG_MODE_INFO]:
     if not (path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE):
         return None
     idx = path.targetInfo.desktopModeInfoIdx
-    return None if idx == DISPLAYCONFIG_PATH_MODE_IDX_INVALID else modes[idx]
+    return None if idx == DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID or idx >= len(modes) else modes[idx]
 
 
 def list_display_lines(path_array: Iterable[DISPLAYCONFIG_PATH_INFO], mode_array) -> list[str]:
@@ -943,7 +1368,7 @@ def activate_single_path(path: DISPLAYCONFIG_PATH_INFO, mode_array, logger: logg
 
 
 def save_snapshot(snapshot: DisplayConfigSnapshot, destination: Path) -> None:
-    destination.write_text(snapshot.to_json(), encoding="utf-8")
+    write_text_atomic(destination, snapshot.to_json())
 
 
 def load_snapshot(path: Path) -> DisplayConfigSnapshot:
@@ -1091,38 +1516,85 @@ def resolve_target_source_name(path_array, path_count: int, target_display: str)
     return get_source_name(match).upper()
 
 
-def list_available_displays() -> list[tuple[str, str]]:
-    """Return (label, selector) for every distinct monitor Windows can see.
+def list_available_monitor_choices() -> list[MonitorChoice]:
+    """Return every distinct physical monitor Windows can currently identify.
 
-    The selector is a value --target-display will match (friendly name, monitor
-    device path, or GDI source). Inactive monitors are included so a monitor that
-    is currently switched off can still be picked from the launcher menu.
+    Each token is an opaque, base64url target descriptor suitable for a
+    Button's Group 1 or Group 2 setting. Inactive physical monitors are included so a
+    currently disabled target can still be selected without relying on its
+    mutable GDI source name.
     """
-    snapshot, path_array, _ = query_display_config(awareness_query_flags(QDC_ALL_PATHS))
-    named_seen: set[str] = set()
-    other_seen: set[str] = set()
-    named: list[tuple[str, str]] = []
-    other: list[tuple[str, str]] = []
+    snapshot, path_array, mode_array = query_display_config(awareness_query_flags(QDC_ALL_PATHS))
+    records: dict[str, dict[str, object]] = {}
     for path in path_array[: snapshot.path_count]:
-        friendly, device_path = get_target_identity_details(path)
-        source = get_source_name(path).strip()
-        friendly = friendly.strip()
-        if friendly:
-            key = friendly.upper()
-            if key not in named_seen:
-                named_seen.add(key)
-                named.append((friendly, friendly))
+        if (
+            path.targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST
+            or not path.targetInfo.targetAvailable
+        ):
             continue
-        selector = device_path or source
-        if not selector:
-            continue
-        key = selector.upper()
-        if key not in other_seen:
-            other_seen.add(key)
-            other.append((selector, selector))
-    # Prefer real, recognizable monitor names; bare "\\.\DISPLAYn" GDI sources
-    # are phantom/driver paths and only shown if nothing has a friendly name.
-    return named if named else other
+        descriptor = target_descriptor_from_path(path)
+        key = descriptor.identity_key()
+        active = bool(path.flags & DISPLAYCONFIG_PATH_ACTIVE)
+        source_mode = source_mode_for_path(path, mode_array)
+        main = bool(
+            active
+            and source_mode is not None
+            and source_mode.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE
+            and source_mode.sourceMode.position.x == 0
+            and source_mode.sourceMode.position.y == 0
+        )
+        existing = records.get(key)
+        if existing is None or (active and not bool(existing["active"])):
+            records[key] = {
+                "descriptor": descriptor,
+                "active": active,
+                "main": main,
+            }
+        elif active:
+            existing["main"] = bool(existing["main"]) or main
+
+    base_counts: dict[str, int] = {}
+    for record in records.values():
+        descriptor = record["descriptor"]
+        assert isinstance(descriptor, TargetDescriptor)
+        base = descriptor.friendly or descriptor.device_path or descriptor.source or f"Monitor {descriptor.target_id}"
+        base_counts[base.casefold()] = base_counts.get(base.casefold(), 0) + 1
+
+    items: list[tuple[tuple[int, str], MonitorChoice]] = []
+    for record in records.values():
+        descriptor = record["descriptor"]
+        assert isinstance(descriptor, TargetDescriptor)
+        active = bool(record["active"])
+        main = bool(record["main"])
+        base = descriptor.friendly or descriptor.device_path or descriptor.source or f"Monitor {descriptor.target_id}"
+        if base_counts.get(base.casefold(), 0) > 1:
+            adapter_high = descriptor.adapter_high & 0xFFFFFFFF
+            adapter_low = descriptor.adapter_low & 0xFFFFFFFF
+            stable_discriminator = f"adapter {adapter_high:08X}:{adapter_low:08X} target {descriptor.target_id}"
+            base = f"{base} - {stable_discriminator}"
+        status = "main, active" if main else ("active" if active else "inactive")
+        label = f"{base} [{status}]"
+        tier = 0 if main else (1 if active else 2)
+        items.append(
+            (
+                (tier, base.casefold()),
+                MonitorChoice(
+                    label=label,
+                    token=encode_target_descriptor(descriptor),
+                    descriptor=descriptor,
+                    active=active,
+                    main=main,
+                ),
+            )
+        )
+    items.sort(key=lambda item: item[0])
+    return [choice for _, choice in items]
+
+
+def list_available_displays() -> list[tuple[str, str]]:
+    """Compatibility view used by the text-list CLI and existing callers."""
+
+    return [(choice.label, choice.token) for choice in list_available_monitor_choices()]
 
 
 def write_display_list(out_path: Optional[str]) -> str:
@@ -1138,6 +1610,223 @@ def write_display_list(out_path: Optional[str]) -> str:
     elif sys.stdout is not None:
         print(text)
     return text
+
+
+def selector_keys_from_choices(selectors: Iterable[str], choices: list[MonitorChoice]) -> set[str]:
+    resolved: set[str] = set()
+    for raw_selector in selectors:
+        selector = str(raw_selector).strip()
+        if not selector:
+            continue
+        if selector.startswith(TARGET_TOKEN_PREFIX):
+            configured = decode_target_descriptor(selector)
+            matches = [choice for choice in choices if descriptor_matches(configured, choice.descriptor)]
+        else:
+            normalized = selector.casefold()
+            matches = [
+                choice
+                for choice in choices
+                if normalized
+                in {
+                    choice.descriptor.identity_key().casefold(),
+                    choice.descriptor.device_path.strip().casefold(),
+                    choice.descriptor.friendly.strip().casefold(),
+                    choice.descriptor.source.strip().casefold(),
+                }
+            ]
+        if len(matches) > 1:
+            raise DisplayConfigError(f"Configured monitor name is ambiguous: {selector}.")
+        if matches:
+            resolved.add(matches[0].descriptor.identity_key())
+    return resolved
+
+
+def picker_default_group_keys(
+    config_path: Path,
+    choices: list[MonitorChoice],
+    logger: logging.Logger,
+) -> tuple[set[str], set[str]]:
+    available_keys = {choice.descriptor.identity_key() for choice in choices}
+    active_keys = {choice.descriptor.identity_key() for choice in choices if choice.active}
+    main_keys = {choice.descriptor.identity_key() for choice in choices if choice.main}
+    values = read_button_config(config_path) if config_path.exists() else {}
+    state_paths = button_state_paths(config_path.parent)
+    metadata = read_json_object(state_paths["metadata"])
+
+    group_1: set[str] = set()
+    group_2: set[str] = set()
+
+    if values.get("SCHEMA", "") == str(BUTTON_CONFIG_SCHEMA):
+        try:
+            group_1 = selector_keys_from_choices(split_selector_value(values.get("GROUP_1", "")), choices)
+            group_2 = selector_keys_from_choices(split_selector_value(values.get("GROUP_2", "")), choices)
+        except DisplayConfigError as error:
+            logger.warning("Could not reuse existing group defaults: %s", error)
+    else:
+        saved_full = metadata.get("full_physical_keys", [])
+        if isinstance(saved_full, list):
+            group_1 = set(map(str, saved_full)) & available_keys
+
+        try:
+            legacy_selectors = selectors_from_button_config(config_path) if config_path.exists() else []
+            group_2 = selector_keys_from_choices(legacy_selectors, choices)
+        except DisplayConfigError as error:
+            logger.warning("Could not map the previous monitor choice into Group 2: %s", error)
+
+        if not group_2:
+            saved_reduced = metadata.get("reduced_physical_keys", metadata.get("selected_keys", []))
+            if isinstance(saved_reduced, list):
+                group_2 = set(map(str, saved_reduced)) & available_keys
+
+    if not group_1:
+        group_1 = active_keys or main_keys or {choices[0].descriptor.identity_key()}
+    if not group_2:
+        group_2 = main_keys or {choices[0].descriptor.identity_key()}
+    return group_1, group_2
+
+
+def picker_choices_with_saved_unavailable(
+    config_path: Path,
+    choices: list[MonitorChoice],
+) -> list[MonitorChoice]:
+    """Keep configured-but-disconnected members visible during reconfiguration."""
+    if not config_path.exists():
+        return list(choices)
+    values = read_button_config(config_path)
+    if values.get("SCHEMA", "") != str(BUTTON_CONFIG_SCHEMA):
+        return list(choices)
+
+    configured_selectors = split_selector_value(values.get("GROUP_1", "")) + split_selector_value(
+        values.get("GROUP_2", "")
+    )
+    augmented = list(choices)
+    preserved_tokens = {choice.token for choice in augmented}
+    for selector in configured_selectors:
+        if not selector.startswith(TARGET_TOKEN_PREFIX) or selector in preserved_tokens:
+            continue
+        configured = decode_target_descriptor(selector)
+        if any(descriptor_matches(configured, choice.descriptor) for choice in augmented):
+            continue
+        base = (
+            configured.friendly.strip()
+            or configured.source.strip()
+            or configured.device_path.strip()
+            or f"Monitor target {configured.target_id}"
+        )
+        augmented.append(
+            MonitorChoice(
+                label=f"{base} [not connected; saved target {configured.target_id}]",
+                token=selector,
+                descriptor=configured,
+                active=False,
+                main=False,
+            )
+        )
+        preserved_tokens.add(selector)
+    return augmented
+
+
+def build_picker_model(
+    config_path: Path,
+    choices: list[MonitorChoice],
+    logger: logging.Logger,
+) -> dict[str, object]:
+    group_1, group_2 = picker_default_group_keys(config_path, choices, logger)
+    return {
+        "schemaVersion": 1,
+        "monitors": [
+            {
+                "label": choice.label,
+                "token": choice.token,
+                "group1": choice.descriptor.identity_key() in group_1,
+                "group2": choice.descriptor.identity_key() in group_2,
+            }
+            for choice in choices
+        ],
+    }
+
+
+def configure_button_groups(
+    config_path: Path,
+    pythonw_path: str,
+    logger: logging.Logger,
+) -> bool:
+    choices = picker_choices_with_saved_unavailable(config_path, list_available_monitor_choices())
+    if not choices:
+        raise DisplayConfigError("Windows did not report any physical monitors to configure.")
+
+    picker_path = Path(__file__).resolve().with_name(PICKER_FILENAME)
+    if not picker_path.exists():
+        raise DisplayConfigError(f"Toggle Monitors is missing {PICKER_FILENAME}. Update this Button package.")
+
+    powershell_path = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+    if not powershell_path.exists():
+        raise DisplayConfigError("Toggle Monitors could not find Windows PowerShell for its monitor-group picker.")
+
+    model = build_picker_model(config_path, choices, logger)
+    with tempfile.TemporaryDirectory(prefix="ToggleMonitorsPicker-") as temporary:
+        temporary_root = Path(temporary)
+        model_path = temporary_root / "model.json"
+        result_path = temporary_root / "result.json"
+        write_json_object(model_path, model)
+        completed = subprocess.run(
+            [
+                str(powershell_path),
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Sta",
+                "-File",
+                str(picker_path),
+                "-ModelPath",
+                str(model_path),
+                "-ResultPath",
+                str(result_path),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+            creationflags=0x08000000,
+        )
+        if completed.returncode != 0:
+            raise DisplayConfigError("The Toggle Monitors group picker failed. No monitor settings were changed.")
+        result = read_json_object(result_path)
+        if int(result.get("schemaVersion", 0)) != 1:
+            raise DisplayConfigError("The Toggle Monitors picker returned an unsupported result schema.")
+        if bool(result.get("cancelled", True)):
+            logger.info("Monitor-group setup was cancelled")
+            return False
+        raw_group_1 = result.get("group1", [])
+        raw_group_2 = result.get("group2", [])
+        if not isinstance(raw_group_1, list) or not isinstance(raw_group_2, list):
+            raise DisplayConfigError("The Toggle Monitors picker returned malformed monitor groups.")
+        allowed_tokens = {choice.token for choice in choices}
+        group_1, group_2 = validate_selector_groups(raw_group_1, raw_group_2, allowed_tokens)
+        previous_config = config_path.read_text(encoding="utf-8") if config_path.exists() else None
+        write_button_group_config(config_path, pythonw_path, group_1, group_2)
+        try:
+            invalidate_active_owner_after_configuration(config_path, group_1, group_2)
+        except Exception as marker_error:
+            try:
+                if previous_config is not None:
+                    write_text_atomic(config_path, previous_config)
+                else:
+                    write_text_atomic(
+                        config_path,
+                        "# Toggle Monitors configuration save did not complete.\nSCHEMA=0\n",
+                    )
+            except Exception as rollback_error:
+                raise DisplayConfigError(
+                    "Could not finish saving the monitor groups, and restoring the previous Button config also failed."
+                ) from rollback_error
+            raise DisplayConfigError(
+                "Could not finish saving the monitor groups. The Button config was restored to a safe state."
+            ) from marker_error
+        logger.info("Saved two monitor groups for this Button owner")
+        return True
 
 
 def save_snapshot_bundle(paths: dict[str, Path], bundle: dict[str, DisplayConfigSnapshot]) -> None:
@@ -1320,8 +2009,8 @@ def synthesize_source_only_snapshot(path: DISPLAYCONFIG_PATH_INFO, logger: loggi
     synthesized_path.flags |= DISPLAYCONFIG_PATH_ACTIVE
     if synthesized_path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE:
         synthesized_path.sourceInfo.sourceModeInfoIdx = 0
-        synthesized_path.targetInfo.desktopModeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID
-        synthesized_path.targetInfo.targetModeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID
+        synthesized_path.targetInfo.desktopModeInfoIdx = DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID
+        synthesized_path.targetInfo.targetModeInfoIdx = DISPLAYCONFIG_PATH_TARGET_MODE_IDX_INVALID
     else:
         synthesized_path.sourceInfo.modeInfoIdx = 0
         synthesized_path.targetInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID
@@ -1336,8 +2025,8 @@ def remap_single_path_snapshot(original_path: DISPLAYCONFIG_PATH_INFO, original_
     mode_items: list[DISPLAYCONFIG_MODE_INFO] = []
     remap: dict[int, int] = {}
 
-    def append_mode(old_idx: int) -> int:
-        if old_idx == DISPLAYCONFIG_PATH_MODE_IDX_INVALID:
+    def append_mode(old_idx: int, invalid_idx: int) -> int:
+        if old_idx == invalid_idx:
             return old_idx
         if old_idx not in remap:
             remap[old_idx] = len(mode_items)
@@ -1345,12 +2034,18 @@ def remap_single_path_snapshot(original_path: DISPLAYCONFIG_PATH_INFO, original_
         return remap[old_idx]
 
     if path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE:
-        path.sourceInfo.sourceModeInfoIdx = append_mode(path.sourceInfo.sourceModeInfoIdx)
-        path.targetInfo.desktopModeInfoIdx = append_mode(path.targetInfo.desktopModeInfoIdx)
-        path.targetInfo.targetModeInfoIdx = append_mode(path.targetInfo.targetModeInfoIdx)
+        path.sourceInfo.sourceModeInfoIdx = append_mode(
+            path.sourceInfo.sourceModeInfoIdx, DISPLAYCONFIG_PATH_SOURCE_MODE_IDX_INVALID
+        )
+        path.targetInfo.desktopModeInfoIdx = append_mode(
+            path.targetInfo.desktopModeInfoIdx, DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID
+        )
+        path.targetInfo.targetModeInfoIdx = append_mode(
+            path.targetInfo.targetModeInfoIdx, DISPLAYCONFIG_PATH_TARGET_MODE_IDX_INVALID
+        )
     else:
-        path.sourceInfo.modeInfoIdx = append_mode(path.sourceInfo.modeInfoIdx)
-        path.targetInfo.modeInfoIdx = append_mode(path.targetInfo.modeInfoIdx)
+        path.sourceInfo.modeInfoIdx = append_mode(path.sourceInfo.modeInfoIdx, DISPLAYCONFIG_PATH_MODE_IDX_INVALID)
+        path.targetInfo.modeInfoIdx = append_mode(path.targetInfo.modeInfoIdx, DISPLAYCONFIG_PATH_MODE_IDX_INVALID)
 
     path.flags |= DISPLAYCONFIG_PATH_ACTIVE
     path_array = (DISPLAYCONFIG_PATH_INFO * 1)(path)
@@ -1365,8 +2060,8 @@ def build_filtered_snapshot(path_array, mode_array, path_count: int, keep_predic
     mode_items: list[DISPLAYCONFIG_MODE_INFO] = []
     remap: dict[int, int] = {}
 
-    def append_mode(old_idx: int) -> int:
-        if old_idx == DISPLAYCONFIG_PATH_MODE_IDX_INVALID:
+    def append_mode(old_idx: int, invalid_idx: int) -> int:
+        if old_idx == invalid_idx:
             return old_idx
         if old_idx not in remap:
             remap[old_idx] = len(mode_items)
@@ -1379,12 +2074,18 @@ def build_filtered_snapshot(path_array, mode_array, path_count: int, keep_predic
         kept = duplicate_path(path)
         kept.flags |= DISPLAYCONFIG_PATH_ACTIVE
         if kept.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE:
-            kept.sourceInfo.sourceModeInfoIdx = append_mode(kept.sourceInfo.sourceModeInfoIdx)
-            kept.targetInfo.desktopModeInfoIdx = append_mode(kept.targetInfo.desktopModeInfoIdx)
-            kept.targetInfo.targetModeInfoIdx = append_mode(kept.targetInfo.targetModeInfoIdx)
+            kept.sourceInfo.sourceModeInfoIdx = append_mode(
+                kept.sourceInfo.sourceModeInfoIdx, DISPLAYCONFIG_PATH_SOURCE_MODE_IDX_INVALID
+            )
+            kept.targetInfo.desktopModeInfoIdx = append_mode(
+                kept.targetInfo.desktopModeInfoIdx, DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID
+            )
+            kept.targetInfo.targetModeInfoIdx = append_mode(
+                kept.targetInfo.targetModeInfoIdx, DISPLAYCONFIG_PATH_TARGET_MODE_IDX_INVALID
+            )
         else:
-            kept.sourceInfo.modeInfoIdx = append_mode(kept.sourceInfo.modeInfoIdx)
-            kept.targetInfo.modeInfoIdx = append_mode(kept.targetInfo.modeInfoIdx)
+            kept.sourceInfo.modeInfoIdx = append_mode(kept.sourceInfo.modeInfoIdx, DISPLAYCONFIG_PATH_MODE_IDX_INVALID)
+            kept.targetInfo.modeInfoIdx = append_mode(kept.targetInfo.modeInfoIdx, DISPLAYCONFIG_PATH_MODE_IDX_INVALID)
         kept_paths.append(kept)
 
     if not kept_paths:
@@ -1401,13 +2102,197 @@ def build_filtered_snapshot(path_array, mode_array, path_count: int, keep_predic
     return DisplayConfigSnapshot.from_arrays(path_array_out, mode_array_out, len(kept_paths), len(mode_items))
 
 
+def rebase_snapshot_to_target(snapshot: DisplayConfigSnapshot, anchor_target_key: str) -> DisplayConfigSnapshot:
+    path_array = snapshot.path_array()
+    mode_array = snapshot.mode_array()
+    anchor_position: Optional[tuple[int, int]] = None
+    for path in path_array[: snapshot.path_count]:
+        if target_identity_key(path) != anchor_target_key:
+            continue
+        source_mode = source_mode_for_path(path, mode_array)
+        if source_mode is None or source_mode.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE:
+            continue
+        anchor_position = (int(source_mode.sourceMode.position.x), int(source_mode.sourceMode.position.y))
+        break
+    if anchor_position is None or anchor_position == (0, 0):
+        return snapshot
+
+    translated_indexes: set[int] = set()
+    for path in path_array[: snapshot.path_count]:
+        virtual = bool(path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE)
+        index = path.sourceInfo.sourceModeInfoIdx if virtual else path.sourceInfo.modeInfoIdx
+        invalid = DISPLAYCONFIG_PATH_SOURCE_MODE_IDX_INVALID if virtual else DISPLAYCONFIG_PATH_MODE_IDX_INVALID
+        if index == invalid or index >= len(mode_array) or index in translated_indexes:
+            continue
+        mode = mode_array[index]
+        if mode.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE:
+            continue
+        mode.sourceMode.position.x -= anchor_position[0]
+        mode.sourceMode.position.y -= anchor_position[1]
+        translated_indexes.add(index)
+    return DisplayConfigSnapshot.from_arrays(path_array, mode_array, snapshot.path_count, snapshot.mode_count)
+
+
+def build_selected_snapshot(
+    snapshot: DisplayConfigSnapshot,
+    selected_target_keys: list[str],
+    preserve_wireless: bool = True,
+) -> DisplayConfigSnapshot:
+    selected_set = set(selected_target_keys)
+    path_array = snapshot.path_array()
+    mode_array = snapshot.mode_array()
+
+    filtered = build_filtered_snapshot(
+        path_array,
+        mode_array,
+        snapshot.path_count,
+        lambda path: target_identity_key(path) in selected_set
+        or (preserve_wireless and path.targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST),
+    )
+
+    anchor_key = None
+    filtered_paths = filtered.path_array()
+    filtered_modes = filtered.mode_array()
+    for path in filtered_paths[: filtered.path_count]:
+        key = target_identity_key(path)
+        if key not in selected_set:
+            continue
+        source_mode = source_mode_for_path(path, filtered_modes)
+        if (
+            source_mode is not None
+            and source_mode.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE
+            and source_mode.sourceMode.position.x == 0
+            and source_mode.sourceMode.position.y == 0
+        ):
+            anchor_key = key
+            break
+    if anchor_key is None:
+        anchor_key = selected_target_keys[0]
+    return rebase_snapshot_to_target(filtered, anchor_key)
+
+
+def build_no_wireless_snapshot(snapshot: DisplayConfigSnapshot) -> DisplayConfigSnapshot:
+    path_array = snapshot.path_array()
+    mode_array = snapshot.mode_array()
+    try:
+        return build_filtered_snapshot(
+            path_array,
+            mode_array,
+            snapshot.path_count,
+            lambda path: path.targetInfo.outputTechnology != DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST,
+        )
+    except DisplayConfigError:
+        return snapshot
+
+
+def validate_snapshot_exact(snapshot: DisplayConfigSnapshot) -> None:
+    path_array = snapshot.path_array()
+    mode_array = snapshot.mode_array()
+    flags = awareness_set_flags(SDC_VALIDATE | SDC_USE_SUPPLIED_DISPLAY_CONFIG)
+    result = user32.SetDisplayConfig(snapshot.path_count, path_array, snapshot.mode_count, mode_array, flags)
+    if result != ERROR_SUCCESS:
+        raise_win32(result, "SetDisplayConfig(validate supplied snapshot)")
+
+
+def apply_snapshot_exact(snapshot: DisplayConfigSnapshot, save_to_database: bool) -> None:
+    validate_snapshot_exact(snapshot)
+    path_array = snapshot.path_array()
+    mode_array = snapshot.mode_array()
+    flags = awareness_set_flags(
+        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | (SDC_SAVE_TO_DATABASE if save_to_database else 0)
+    )
+    result = user32.SetDisplayConfig(snapshot.path_count, path_array, snapshot.mode_count, mode_array, flags)
+    if result != ERROR_SUCCESS:
+        raise_win32(result, "SetDisplayConfig(apply exact supplied snapshot)")
+
+
+def choose_distinct_target_paths(
+    descriptors: list[TargetDescriptor],
+    path_array,
+    path_count: int,
+    *,
+    include_wireless: bool = False,
+) -> list[DISPLAYCONFIG_PATH_INFO]:
+    candidate_groups: list[list[DISPLAYCONFIG_PATH_INFO]] = []
+    for descriptor in descriptors:
+        by_connection: dict[tuple[tuple[int, int, int], str], DISPLAYCONFIG_PATH_INFO] = {}
+        for path in path_array[:path_count]:
+            if (
+                (not include_wireless and path.targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST)
+                or not path.targetInfo.targetAvailable
+            ):
+                continue
+            candidate = target_descriptor_from_path(path)
+            if not descriptor_matches(descriptor, candidate):
+                continue
+            connection_key = (source_identity_key(path), candidate.identity_key())
+            existing = by_connection.get(connection_key)
+            if existing is None or (path.flags & DISPLAYCONFIG_PATH_ACTIVE and not existing.flags & DISPLAYCONFIG_PATH_ACTIVE):
+                by_connection[connection_key] = duplicate_path(path)
+        candidates = sorted(
+            by_connection.values(),
+            key=lambda path: (0 if path.flags & DISPLAYCONFIG_PATH_ACTIVE else 1, source_identity_key(path)),
+        )
+        if not candidates:
+            raise DisplayConfigError(f"No display path is available for {descriptor.friendly or descriptor.identity_key()}.")
+        candidate_groups.append(candidates)
+
+    chosen: list[DISPLAYCONFIG_PATH_INFO] = []
+    used_sources: set[tuple[int, int, int]] = set()
+
+    def select(index: int) -> bool:
+        if index == len(candidate_groups):
+            return True
+        for path in candidate_groups[index]:
+            source_key = source_identity_key(path)
+            if source_key in used_sources:
+                continue
+            used_sources.add(source_key)
+            chosen.append(path)
+            if select(index + 1):
+                return True
+            chosen.pop()
+            used_sources.remove(source_key)
+        return False
+
+    if not select(0):
+        raise DisplayConfigError("Windows has no conflict-free source path for the selected monitor set.")
+    return chosen
+
+
+def validate_and_apply_topology(paths: list[DISPLAYCONFIG_PATH_INFO]) -> None:
+    """Activate paths temporarily, letting Windows generate missing modes.
+
+    SDC_TOPOLOGY_SUPPLIED selects a persisted topology; omitting SAVE_TO_DATABASE
+    does not make that operation the documented temporary-mode operation. Always
+    use USE_SUPPLIED_DISPLAY_CONFIG here, including the first switch after boot
+    when cached snapshots contain stale adapter IDs. Only startup safety may
+    deliberately persist its verified normal layout via apply_snapshot_exact.
+    """
+    if not paths:
+        raise DisplayConfigError("A display topology cannot contain zero paths.")
+    path_array = (DISPLAYCONFIG_PATH_INFO * len(paths))()
+    for index, path in enumerate(paths):
+        path_array[index] = invalidate_topology_indexes(path)
+    temporary_flags = SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES
+    validate_flags = awareness_set_flags(SDC_VALIDATE | temporary_flags)
+    result = user32.SetDisplayConfig(len(paths), path_array, 0, None, validate_flags)
+    if result != ERROR_SUCCESS:
+        raise_win32(result, "SetDisplayConfig(validate temporary topology)")
+    apply_flags = awareness_set_flags(SDC_APPLY | temporary_flags)
+    result = user32.SetDisplayConfig(len(paths), path_array, 0, None, apply_flags)
+    if result != ERROR_SUCCESS:
+        raise_win32(result, "SetDisplayConfig(apply temporary topology)")
+
+
 def invalidate_topology_indexes(path: DISPLAYCONFIG_PATH_INFO) -> DISPLAYCONFIG_PATH_INFO:
     path = duplicate_path(path)
     path.flags |= DISPLAYCONFIG_PATH_ACTIVE
     if path.flags & DISPLAYCONFIG_PATH_SUPPORT_VIRTUAL_MODE:
-        path.sourceInfo.sourceModeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID
-        path.targetInfo.desktopModeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID
-        path.targetInfo.targetModeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID
+        path.sourceInfo.cloneGroupId = DISPLAYCONFIG_PATH_CLONE_GROUP_INVALID
+        path.sourceInfo.sourceModeInfoIdx = DISPLAYCONFIG_PATH_SOURCE_MODE_IDX_INVALID
+        path.targetInfo.desktopModeInfoIdx = DISPLAYCONFIG_PATH_DESKTOP_IMAGE_IDX_INVALID
+        path.targetInfo.targetModeInfoIdx = DISPLAYCONFIG_PATH_TARGET_MODE_IDX_INVALID
     else:
         path.sourceInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID
         path.targetInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID
@@ -1933,17 +2818,849 @@ class MonitorToggle:
             self.logger.info("Hotkey unregistered; exiting")
 
 
+def button_state_paths(state_root: Path) -> dict[str, Path]:
+    state_root.mkdir(parents=True, exist_ok=True)
+    return {
+        "full": state_root / "toggle-monitors-full.json",
+        "full_no_wireless": state_root / "toggle-monitors-full-no-wireless.json",
+        "reduced": state_root / "toggle-monitors-reduced.json",
+        "reduced_no_wireless": state_root / "toggle-monitors-reduced-no-wireless.json",
+        "metadata": state_root / BUTTON_STATE_FILENAME,
+    }
+
+
+def active_owner_path() -> Path:
+    return config_root() / ACTIVE_OWNER_FILENAME
+
+
+def read_json_object(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + ".tmp")
+    with temporary.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write(text)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
+
+
+def write_json_object(path: Path, payload: dict[str, object]) -> None:
+    write_text_atomic(path, json.dumps(payload, indent=2, sort_keys=True))
+
+
+def owner_id_for_path(path: Path) -> str:
+    normalized = str(path.resolve()).casefold().encode("utf-8")
+    return hashlib.sha256(normalized).hexdigest()[:24]
+
+
+def configuration_fingerprint_for_groups(group_1: Iterable[str], group_2: Iterable[str]) -> str:
+    payload = {
+        "group_1": sorted({str(selector).strip() for selector in group_1 if str(selector).strip()}),
+        "group_2": sorted({str(selector).strip() for selector in group_2 if str(selector).strip()}),
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def invalidate_active_owner_after_configuration(
+    config_path: Path,
+    group_1: Iterable[str],
+    group_2: Iterable[str],
+) -> None:
+    marker = read_json_object(active_owner_path())
+    owner_id = owner_id_for_path(config_path)
+    if str(marker.get("owner_id", "")) != owner_id:
+        return
+    write_json_object(
+        active_owner_path(),
+        {
+            "active": False,
+            "phase": "reconfigured",
+            "owner_id": owner_id,
+            "physical_keys": [],
+            "topology_signature": "",
+            "configuration_fingerprint": configuration_fingerprint_for_groups(group_1, group_2),
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        },
+    )
+
+
+def target_key_sets(path_array, path_count: int) -> tuple[set[str], set[str]]:
+    physical: set[str] = set()
+    wireless: set[str] = set()
+    for path in path_array[:path_count]:
+        key = target_identity_key(path)
+        if path.targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST:
+            wireless.add(key)
+        else:
+            physical.add(key)
+    return physical, wireless
+
+
+def available_physical_target_keys(path_array, path_count: int) -> set[str]:
+    return {
+        target_identity_key(path)
+        for path in path_array[:path_count]
+        if path.targetInfo.outputTechnology != DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST
+        and bool(path.targetInfo.targetAvailable)
+    }
+
+
+def topology_fingerprint(path_array, mode_array, path_count: int) -> str:
+    records: list[dict[str, object]] = []
+    for path in path_array[:path_count]:
+        source_mode = source_mode_for_path(path, mode_array)
+        source_payload: Optional[dict[str, int]] = None
+        if source_mode is not None and source_mode.infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE:
+            source_payload = {
+                "x": int(source_mode.sourceMode.position.x),
+                "y": int(source_mode.sourceMode.position.y),
+                "w": int(source_mode.sourceMode.width),
+                "h": int(source_mode.sourceMode.height),
+            }
+        records.append(
+            {
+                "target": target_identity_key(path),
+                "source": source_identity_key(path),
+                "wireless": path.targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST,
+                "mode": source_payload,
+            }
+        )
+    encoded = json.dumps(records, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def clear_active_owner_after_startup_safety(physical_keys: set[str], topology_signature: str) -> None:
+    write_json_object(
+        active_owner_path(),
+        {
+            "active": False,
+            "phase": "restore_all_available",
+            "owner_id": "",
+            "physical_keys": sorted(physical_keys),
+            "topology_signature": topology_signature,
+            "configuration_fingerprint": "",
+            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+        },
+    )
+
+
+def startup_safety_target_descriptors(path_array, path_count: int) -> list[TargetDescriptor]:
+    """Discover every available display, independent of saved toggle groups."""
+    candidates: dict[str, TargetDescriptor] = {}
+    for path in path_array[:path_count]:
+        if not path.targetInfo.targetAvailable:
+            continue
+        descriptor = target_descriptor_from_path(path)
+        candidates.setdefault(descriptor.identity_key(), descriptor)
+    return list(candidates.values())
+
+
+def restore_all_available_monitors_once(
+    button_config_path: Path,
+    logger: logging.Logger,
+    *,
+    persist_database: bool,
+    expected_keys: Optional[frozenset[str]] = None,
+) -> tuple[frozenset[str], bool]:
+    """Restore every available target, independently of Button groups.
+
+    button_config_path is retained for compatibility with existing task callers;
+    neither that file nor either toggle group determines the safety monitor set.
+    """
+    topology_lock = SingleInstance(GLOBAL_TOPOLOGY_MUTEX)
+    if not topology_lock.acquire():
+        raise DisplayConfigError("Another monitor layout change is already in progress. Try again in a moment.")
+
+    active_snapshot: Optional[DisplayConfigSnapshot] = None
+    database_snapshot: Optional[DisplayConfigSnapshot] = None
+    topology_may_have_changed = False
+    database_was_changed = False
+    try:
+        active_snapshot, active_paths, _ = query_display_config(awareness_query_flags(QDC_ONLY_ACTIVE_PATHS))
+        all_snapshot, all_paths, _ = query_display_config(awareness_query_flags(QDC_ALL_PATHS))
+        descriptors = startup_safety_target_descriptors(all_paths, all_snapshot.path_count)
+        if not descriptors:
+            raise DisplayConfigError("No monitor is currently available; leaving the display topology unchanged.")
+
+        desired_keys = {descriptor.identity_key() for descriptor in descriptors}
+        desired_frozen = frozenset(desired_keys)
+        persist_this_pass = persist_database and (expected_keys is None or desired_frozen == expected_keys)
+        current_physical, current_wireless = target_key_sets(active_paths, active_snapshot.path_count)
+
+        if persist_this_pass:
+            database_snapshot, _, _ = query_display_config(awareness_query_flags(QDC_DATABASE_CURRENT))
+
+        if current_physical | current_wireless != desired_keys:
+            chosen = choose_distinct_target_paths(descriptors, all_paths, all_snapshot.path_count, include_wireless=True)
+            topology_may_have_changed = True
+            validate_and_apply_topology(chosen)
+        else:
+            logger.info("Startup safety found every available monitor already active")
+
+        verified_snapshot, verified_paths, verified_modes = query_display_config(
+            awareness_query_flags(QDC_ONLY_ACTIVE_PATHS)
+        )
+        verified_physical, verified_wireless = target_key_sets(verified_paths, verified_snapshot.path_count)
+        verified_keys = verified_physical | verified_wireless
+        if verified_keys != desired_keys:
+            raise DisplayConfigError("Windows did not activate exactly the available monitor set.")
+
+        if not persist_this_pass:
+            logger.info(
+                "Startup safety temporarily restored %d monitor(s) while enumeration stabilizes",
+                len(verified_keys),
+            )
+            return frozenset(verified_keys), False
+
+        # Group toggles are session-only. This verified normal layout is the one
+        # topology deliberately persisted for the next cold-boot sign-in screen.
+        topology_may_have_changed = True
+        apply_snapshot_exact(verified_snapshot, save_to_database=True)
+        database_was_changed = True
+        final_snapshot, final_paths, final_modes = query_display_config(
+            awareness_query_flags(QDC_ONLY_ACTIVE_PATHS)
+        )
+        final_physical, final_wireless = target_key_sets(final_paths, final_snapshot.path_count)
+        final_keys = final_physical | final_wireless
+        if final_keys != desired_keys:
+            raise DisplayConfigError("The persisted startup-safe topology did not retain the available monitor set.")
+
+        signature = topology_fingerprint(final_paths, final_modes, final_snapshot.path_count)
+        clear_active_owner_after_startup_safety(final_physical, signature)
+        logger.info(
+            "Startup safety restored and persisted %d available monitor(s)",
+            len(final_keys),
+        )
+        return frozenset(final_keys), True
+    except Exception:
+        if database_was_changed and database_snapshot is not None:
+            try:
+                apply_snapshot_exact(database_snapshot, save_to_database=True)
+            except Exception:
+                logger.exception("Persistent-database rollback after startup-safety failure also failed")
+        if topology_may_have_changed and active_snapshot is not None:
+            try:
+                apply_snapshot_exact(active_snapshot, save_to_database=False)
+            except Exception:
+                logger.exception("Emergency rollback after startup-safety failure also failed")
+        raise
+    finally:
+        topology_lock.release()
+
+
+def restore_all_available_monitors(
+    button_config_path: Path,
+    logger: logging.Logger,
+    attempts: int = 6,
+    retry_seconds: float = 2.0,
+) -> frozenset[str]:
+    """Retry until the connected normal-monitor set is stable across two passes."""
+    attempt_count = max(1, int(attempts))
+    last_keys: Optional[frozenset[str]] = None
+    last_error: Optional[Exception] = None
+
+    for attempt in range(1, attempt_count + 1):
+        try:
+            keys, persisted = restore_all_available_monitors_once(
+                button_config_path,
+                logger,
+                persist_database=attempt_count == 1 or last_keys is not None,
+                expected_keys=last_keys,
+            )
+            last_error = None
+            if persisted:
+                return keys
+            last_keys = keys
+        except Exception as error:
+            last_error = error
+            logger.warning("Startup-safety restore attempt %d/%d failed: %s", attempt, attempt_count, error)
+        if attempt < attempt_count:
+            time.sleep(max(0.0, retry_seconds))
+
+    if last_error is not None:
+        raise last_error
+    raise DisplayConfigError("Startup safety could not observe a stable available topology.")
+
+
+def startup_safety_trigger_reason(message: int, wparam: int) -> Optional[str]:
+    if message == WM_POWERBROADCAST and wparam == PBT_APMRESUMEAUTOMATIC:
+        return "automatic-resume"
+    if message == WM_WTSSESSION_CHANGE and wparam == WTS_SESSION_LOCK:
+        return "session-lock"
+    if message == WM_WTSSESSION_CHANGE and wparam == WTS_SESSION_UNLOCK:
+        return "session-unlock"
+    return None
+
+
+class StartupSafetyGuardian:
+    """Hidden interactive-session listener for sleep/resume and lock transitions."""
+
+    def __init__(self, logger: logging.Logger, button_config_path: Path) -> None:
+        self.logger = logger
+        self.button_config_path = button_config_path
+        self.request_event = threading.Event()
+        self.stop_event = threading.Event()
+        self.request_lock = threading.Lock()
+        self.pending_reason = "guardian-start"
+        self.window_proc = WindowProc(self._window_proc)
+        self.worker = threading.Thread(target=self._worker_loop, name="ToggleMonitorsStartupSafety", daemon=True)
+
+    def request_restore(self, reason: str) -> None:
+        with self.request_lock:
+            self.pending_reason = reason
+        self.request_event.set()
+
+    def _worker_loop(self) -> None:
+        while not self.stop_event.is_set():
+            if not self.request_event.wait(1.0):
+                continue
+            self.request_event.clear()
+            with self.request_lock:
+                reason = self.pending_reason
+            attempts = 1 if reason == "session-lock" else 8
+            self.logger.info("Startup-safety guardian handling %s", reason)
+            try:
+                restore_all_available_monitors(
+                    self.button_config_path,
+                    self.logger,
+                    attempts=attempts,
+                    retry_seconds=2.0,
+                )
+            except Exception:
+                self.logger.exception("Startup-safety guardian could not restore monitors after %s", reason)
+
+    def _window_proc(self, hwnd, message, wparam, lparam):
+        reason = startup_safety_trigger_reason(int(message), int(wparam))
+        if reason is not None:
+            self.request_restore(reason)
+            return 0
+        if message == WM_DESTROY:
+            user32.PostQuitMessage(0)
+            return 0
+        return user32.DefWindowProcW(hwnd, message, wparam, lparam)
+
+    def run(self) -> None:
+        instance_handle = kernel32.GetModuleHandleW(None)
+        class_name = f"FlowCellToggleMonitorsStartupSafety-{os.getpid()}"
+        window_class = WNDCLASSW()
+        window_class.lpfnWndProc = self.window_proc
+        window_class.hInstance = instance_handle
+        window_class.lpszClassName = class_name
+        if not user32.RegisterClassW(ctypes.byref(window_class)):
+            raise_win32(ctypes.get_last_error(), "RegisterClassW(startup safety)")
+
+        hwnd = user32.CreateWindowExW(
+            0,
+            class_name,
+            "FlowCell Toggle Monitors Startup Safety",
+            0,
+            0,
+            0,
+            0,
+            0,
+            None,
+            None,
+            instance_handle,
+            None,
+        )
+        if not hwnd:
+            user32.UnregisterClassW(class_name, instance_handle)
+            raise_win32(ctypes.get_last_error(), "CreateWindowExW(startup safety)")
+
+        registered_for_session = bool(
+            wtsapi32.WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION)
+        )
+        if not registered_for_session:
+            self.logger.warning(
+                "WTS session notifications are unavailable: %s",
+                ctypes.FormatError(ctypes.get_last_error()),
+            )
+
+        self.worker.start()
+        self.request_restore("guardian-start")
+        self.logger.info("Startup-safety guardian is listening for resume, lock, and unlock")
+        try:
+            message = wintypes.MSG()
+            while True:
+                result = int(user32.GetMessageW(ctypes.byref(message), None, 0, 0))
+                if result == -1:
+                    raise_win32(ctypes.get_last_error(), "GetMessageW(startup safety)")
+                if result == 0:
+                    break
+                user32.TranslateMessage(ctypes.byref(message))
+                user32.DispatchMessageW(ctypes.byref(message))
+        finally:
+            self.stop_event.set()
+            self.request_event.set()
+            if registered_for_session:
+                wtsapi32.WTSUnRegisterSessionNotification(hwnd)
+            user32.DestroyWindow(hwnd)
+            user32.UnregisterClassW(class_name, instance_handle)
+
+
+def run_startup_safety_guardian(button_config_path: Path, logger: logging.Logger) -> None:
+    instance = SingleInstance(STARTUP_SAFETY_MUTEX)
+    if not instance.acquire():
+        logger.info("Startup-safety guardian is already running; exiting")
+        return
+    try:
+        StartupSafetyGuardian(logger, button_config_path).run()
+    finally:
+        instance.release()
+
+
+class ButtonMonitorToggle:
+    """One-shot toggle between two explicit, package-owned monitor groups."""
+
+    def __init__(
+        self,
+        logger: logging.Logger,
+        group_1_selectors: list[str],
+        group_2_selectors: list[str],
+        state_root: Path,
+        button_config_path: Optional[Path] = None,
+    ) -> None:
+        if not group_1_selectors or not group_2_selectors:
+            raise DisplayConfigError("Choose at least one monitor in both Group 1 and Group 2.")
+        self.logger = logger
+        self.group_selectors = {1: list(group_1_selectors), 2: list(group_2_selectors)}
+        self.group_descriptors: dict[int, list[TargetDescriptor]] = {1: [], 2: []}
+        self.group_keys: dict[int, list[str]] = {1: [], 2: []}
+        self.group_unavailable_labels: dict[int, list[str]] = {1: [], 2: []}
+        self.state_root = state_root
+        self.button_config_path = button_config_path
+        self.paths = button_state_paths(state_root)
+        self.owner_id = owner_id_for_path(button_config_path or state_root)
+
+    def configuration_fingerprint(self) -> str:
+        return configuration_fingerprint_for_groups(self.group_selectors[1], self.group_selectors[2])
+
+    def marker_matches_configuration(self, marker: dict[str, object]) -> bool:
+        return str(marker.get("configuration_fingerprint", "")) == self.configuration_fingerprint()
+
+    def resolve_groups(self) -> None:
+        snapshot, path_array, _ = query_display_config(awareness_query_flags(QDC_ALL_PATHS))
+        for side in (1, 2):
+            descriptors, unavailable_labels = resolve_available_target_descriptors(
+                self.group_selectors[side],
+                path_array,
+                snapshot.path_count,
+            )
+            self.group_descriptors[side] = descriptors
+            self.group_keys[side] = [descriptor.identity_key() for descriptor in descriptors]
+            self.group_unavailable_labels[side] = unavailable_labels
+
+        unavailable_lines = [
+            f"Group {side}: {', '.join(self.group_unavailable_labels[side])}"
+            for side in (1, 2)
+            if self.group_unavailable_labels[side]
+        ]
+        blocking_reason = ""
+        empty_sides = [str(side) for side in (1, 2) if not self.group_keys[side]]
+        if empty_sides:
+            blocking_reason = (
+                f"Group {' and '.join(empty_sides)} has no connected monitors, so Toggle Monitors cannot continue."
+            )
+        elif set(self.group_keys[1]) == set(self.group_keys[2]):
+            blocking_reason = (
+                "The connected monitors make Group 1 and Group 2 identical, so Toggle Monitors cannot continue."
+            )
+
+        if unavailable_lines:
+            self.logger.info(
+                "Ignoring configured monitors that are not connected or currently available: %s",
+                " | ".join(unavailable_lines),
+            )
+        if blocking_reason:
+            raise DisplayConfigError(blocking_reason)
+        self.logger.info("Group 1 physical targets: %s", ", ".join(self.group_keys[1]))
+        self.logger.info("Group 2 physical targets: %s", ", ".join(self.group_keys[2]))
+
+    def query_active(self):
+        return query_display_config(awareness_query_flags(QDC_ONLY_ACTIVE_PATHS))
+
+    def current_topology_state(self) -> tuple[set[str], set[str], str]:
+        snapshot, path_array, mode_array = self.query_active()
+        physical, wireless = target_key_sets(path_array, snapshot.path_count)
+        return physical, wireless, topology_fingerprint(path_array, mode_array, snapshot.path_count)
+
+    def current_side(self, physical: set[str]) -> Optional[int]:
+        if physical == set(self.group_keys[1]):
+            return 1
+        if physical == set(self.group_keys[2]):
+            return 2
+        return None
+
+    def read_metadata(self) -> dict[str, object]:
+        return read_json_object(self.paths["metadata"])
+
+    def write_metadata(self, **updates: object) -> None:
+        metadata = self.read_metadata()
+        metadata.update(
+            {
+                "schema": BUTTON_CONFIG_SCHEMA,
+                "owner_id": self.owner_id,
+                "group_1_tokens": self.group_selectors[1],
+                "group_1_keys": self.group_keys[1],
+                "group_2_tokens": self.group_selectors[2],
+                "group_2_keys": self.group_keys[2],
+                # Retain the schema-2 aliases so an older installed source can
+                # still recognize Group 2 without corrupting the saved sides.
+                "selected_tokens": self.group_selectors[2],
+                "selected_keys": self.group_keys[2],
+            }
+        )
+        metadata.update(updates)
+        write_json_object(self.paths["metadata"], metadata)
+
+    def owner_marker(self) -> dict[str, object]:
+        return read_json_object(active_owner_path())
+
+    def marker_matches_current(
+        self,
+        marker: dict[str, object],
+        physical: set[str],
+        topology_signature: Optional[str] = None,
+    ) -> bool:
+        marker_keys = marker.get("physical_keys", [])
+        if not (bool(marker.get("active")) and isinstance(marker_keys, list) and set(map(str, marker_keys)) == physical):
+            return False
+        saved_signature = str(marker.get("topology_signature", ""))
+        if saved_signature and topology_signature is not None:
+            return saved_signature == topology_signature
+        return True
+
+    def reject_foreign_group_2_owner(self, physical: set[str]) -> None:
+        marker = self.owner_marker()
+        if (
+            marker.get("owner_id")
+            and str(marker.get("owner_id")) != self.owner_id
+            and self.marker_matches_current(marker, physical)
+        ):
+            raise DisplayConfigError(
+                "Another Toggle Monitors Button currently owns this Group 2 layout. "
+                "Use that Button to return to Group 1 before switching this one."
+            )
+
+    def mark_group_2_owner(self, physical: set[str], topology_signature: str) -> None:
+        write_json_object(
+            active_owner_path(),
+            {
+                "active": True,
+                "phase": "group_2",
+                "owner_id": self.owner_id,
+                "physical_keys": sorted(physical),
+                "topology_signature": topology_signature,
+                "configuration_fingerprint": self.configuration_fingerprint(),
+                "state_root": str(self.state_root),
+                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+        )
+
+    def clear_group_2_owner(self) -> None:
+        marker = self.owner_marker()
+        if str(marker.get("owner_id", "")) != self.owner_id:
+            return
+        write_json_object(
+            active_owner_path(),
+            {
+                "active": False,
+                "phase": "group_1",
+                "owner_id": self.owner_id,
+                "physical_keys": [],
+                "topology_signature": "",
+                "configuration_fingerprint": self.configuration_fingerprint(),
+                "updated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            },
+        )
+
+    def side_paths(self, side: int) -> tuple[Path, Path]:
+        if side == 1:
+            return self.paths["full"], self.paths["full_no_wireless"]
+        if side == 2:
+            return self.paths["reduced"], self.paths["reduced_no_wireless"]
+        raise DisplayConfigError(f"Unknown Toggle Monitors group: {side}")
+
+    def saved_side_matches_configuration(self, side: int) -> bool:
+        normal_path, _ = self.side_paths(side)
+        if not normal_path.exists():
+            return False
+        metadata = self.read_metadata()
+        key_name = "full_physical_keys" if side == 1 else "reduced_physical_keys"
+        saved_keys = metadata.get(key_name, [])
+        if not (isinstance(saved_keys, list) and set(map(str, saved_keys)) == set(self.group_keys[side])):
+            return False
+        try:
+            self.load_matching_side_snapshot(side, normal_path)
+        except (OSError, KeyError, TypeError, ValueError, binascii.Error, DisplayConfigError) as error:
+            self.logger.warning("Ignoring invalid saved Group %d layout: %s", side, error)
+            return False
+        return True
+
+    def load_matching_side_snapshot(self, side: int, path: Path) -> DisplayConfigSnapshot:
+        snapshot = load_snapshot(path)
+        physical, _ = target_key_sets(snapshot.path_array(), snapshot.path_count)
+        expected = set(self.group_keys[side])
+        if physical != expected:
+            raise DisplayConfigError(
+                f"Saved Group {side} layout targets do not match its configured connected monitors."
+            )
+        return snapshot
+
+    def capture_side_layout(self, side: int, snapshot: DisplayConfigSnapshot, path_array) -> None:
+        physical, wireless = target_key_sets(path_array, snapshot.path_count)
+        expected = set(self.group_keys[side])
+        if physical != expected:
+            raise DisplayConfigError(f"Refusing to capture an unmatched layout as Group {side}.")
+        if self.group_unavailable_labels[side]:
+            self.logger.info(
+                "Skipping Group %d snapshot capture while configured monitors are unavailable",
+                side,
+            )
+            return
+        normal_path, no_wireless_path = self.side_paths(side)
+        save_snapshot(snapshot, normal_path)
+        save_snapshot(build_no_wireless_snapshot(snapshot), no_wireless_path)
+        prefix = "full" if side == 1 else "reduced"
+        self.write_metadata(
+            **{
+                f"{prefix}_physical_keys": sorted(physical),
+                f"{prefix}_wireless_keys": sorted(wireless),
+            }
+        )
+        self.logger.info("Captured Group %d layout for this Button: %s", side, normal_path)
+
+    def verify_group_state(self, side: int, path_array, path_count: int) -> tuple[set[str], set[str]]:
+        physical, wireless = target_key_sets(path_array, path_count)
+        if physical != set(self.group_keys[side]):
+            raise DisplayConfigError(f"Windows did not activate exactly the configured Group {side} monitor set.")
+        return physical, wireless
+
+    def apply_saved_side(self, side: int) -> None:
+        normal_path, no_wireless_path = self.side_paths(side)
+        snapshot = self.load_matching_side_snapshot(side, normal_path)
+        no_wireless_snapshot: Optional[DisplayConfigSnapshot] = None
+        if no_wireless_path.exists():
+            try:
+                no_wireless_snapshot = self.load_matching_side_snapshot(side, no_wireless_path)
+            except (OSError, KeyError, TypeError, ValueError, binascii.Error, DisplayConfigError) as error:
+                self.logger.warning("Ignoring invalid no-wireless Group %d layout: %s", side, error)
+        try:
+            apply_snapshot_exact(snapshot, save_to_database=False)
+        except DisplayConfigError as exact_error:
+            if no_wireless_snapshot is None:
+                raise
+            self.logger.warning("Exact Group %d restore failed; trying its no-wireless copy: %s", side, exact_error)
+            apply_snapshot_exact(no_wireless_snapshot, save_to_database=False)
+
+    def activate_side(
+        self,
+        side: int,
+        current_snapshot: DisplayConfigSnapshot,
+        current_paths,
+    ):
+        target_keys = set(self.group_keys[side])
+        current_physical, _ = target_key_sets(current_paths, current_snapshot.path_count)
+        if self.saved_side_matches_configuration(side):
+            self.apply_saved_side(side)
+        elif target_keys.issubset(current_physical):
+            selected = build_selected_snapshot(current_snapshot, self.group_keys[side], preserve_wireless=True)
+            apply_snapshot_exact(selected, save_to_database=False)
+        else:
+            all_snapshot, all_paths, _ = query_display_config(awareness_query_flags(QDC_ALL_PATHS))
+            chosen = choose_distinct_target_paths(self.group_descriptors[side], all_paths, all_snapshot.path_count)
+            for path in current_paths[: current_snapshot.path_count]:
+                if path.targetInfo.outputTechnology == DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST:
+                    chosen.append(duplicate_path(path))
+            validate_and_apply_topology(chosen)
+
+        active_snapshot, active_paths, active_modes = self.query_active()
+        physical, wireless = self.verify_group_state(side, active_paths, active_snapshot.path_count)
+        self.capture_side_layout(side, active_snapshot, active_paths)
+        return active_snapshot, active_paths, active_modes, physical, wireless
+
+    def launch_wireless_drop_watcher(self) -> None:
+        if self.button_config_path is None:
+            self.logger.warning("Skipping wireless-drop watcher because this toggle has no Button config path")
+            return
+        python_exe = Path(sys.executable)
+        pythonw_candidate = python_exe.with_name("pythonw.exe")
+        launcher = pythonw_candidate if pythonw_candidate.exists() else python_exe
+        subprocess.Popen(
+            [
+                str(launcher),
+                __file__,
+                "--watch-wireless-drop",
+                "--button-config",
+                str(self.button_config_path),
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+        )
+        self.logger.info("Launched per-Button wireless-drop watcher")
+
+    def switch_to_side(
+        self,
+        target_side: int,
+        active_snapshot: DisplayConfigSnapshot,
+        active_paths,
+        active_modes,
+        source_side: Optional[int],
+    ) -> None:
+        current_physical, _ = target_key_sets(active_paths, active_snapshot.path_count)
+        current_signature = topology_fingerprint(active_paths, active_modes, active_snapshot.path_count)
+        if source_side is not None:
+            self.capture_side_layout(source_side, active_snapshot, active_paths)
+        else:
+            self.logger.info("Current layout matches neither configured group; applying Group 1 without capturing it")
+
+        source_label = f"group_{source_side}" if source_side is not None else "unmatched"
+        self.write_metadata(transition=f"{source_label}_to_group_{target_side}")
+        try:
+            target_snapshot, target_paths, target_modes, physical, wireless = self.activate_side(
+                target_side,
+                active_snapshot,
+                active_paths,
+            )
+            target_signature = topology_fingerprint(target_paths, target_modes, target_snapshot.path_count)
+            if target_side == 2:
+                self.mark_group_2_owner(physical, target_signature)
+                if wireless:
+                    self.launch_wireless_drop_watcher()
+            else:
+                self.clear_group_2_owner()
+            self.write_metadata(transition=f"group_{target_side}")
+        except Exception:
+            try:
+                # A failed SetDisplayConfig can retain the same monitor set and
+                # desktop geometry while changing rotation, refresh, or target
+                # modes. Restore the complete pre-switch snapshot unconditionally.
+                apply_snapshot_exact(active_snapshot, save_to_database=False)
+                if source_side == 2:
+                    self.mark_group_2_owner(current_physical, current_signature)
+                elif source_side == 1:
+                    self.clear_group_2_owner()
+                self.write_metadata(transition=source_label)
+            except Exception:
+                self.logger.exception("Emergency rollback after monitor-group switch failure also failed")
+            raise
+
+    def restore_full(self) -> None:
+        if not self.group_keys[1] or not self.group_keys[2]:
+            self.resolve_groups()
+        active_snapshot, active_paths, active_modes = self.query_active()
+        physical, _ = target_key_sets(active_paths, active_snapshot.path_count)
+        source_side = self.current_side(physical)
+        if source_side == 1:
+            self.clear_group_2_owner()
+            self.write_metadata(transition="group_1")
+            return
+        self.switch_to_side(1, active_snapshot, active_paths, active_modes, source_side)
+
+    def toggle_once(self) -> None:
+        topology_lock = SingleInstance(GLOBAL_TOPOLOGY_MUTEX)
+        if not topology_lock.acquire():
+            raise DisplayConfigError("Another monitor layout change is already in progress. Try again in a moment.")
+        try:
+            self.resolve_groups()
+            active_snapshot, active_paths, active_modes = self.query_active()
+            current_physical, _ = target_key_sets(active_paths, active_snapshot.path_count)
+            self.reject_foreign_group_2_owner(current_physical)
+            source_side = self.current_side(current_physical)
+            target_side = 2 if source_side == 1 else 1
+            self.switch_to_side(target_side, active_snapshot, active_paths, active_modes, source_side)
+        finally:
+            topology_lock.release()
+
+    def watch_wireless_drop_and_restore(self, poll_seconds: float = 1.0, missing_grace_polls: int = 2) -> None:
+        if not self.group_keys[1] or not self.group_keys[2]:
+            self.resolve_groups()
+        configuration_fingerprint = self.configuration_fingerprint()
+        metadata = self.read_metadata()
+        expected_wireless = metadata.get("reduced_wireless_keys", [])
+        _, initial_wireless, _ = self.current_topology_state()
+        saw_wireless = bool(isinstance(expected_wireless, list) and expected_wireless) or bool(initial_wireless)
+        missing_count = 0
+        while True:
+            time.sleep(poll_seconds)
+            physical, wireless, _ = self.current_topology_state()
+            marker = self.owner_marker()
+            if (
+                str(marker.get("owner_id", "")) != self.owner_id
+                or str(marker.get("configuration_fingerprint", "")) != configuration_fingerprint
+                or not self.marker_matches_current(marker, physical)
+            ):
+                self.logger.info("Watcher exiting because this Button no longer owns the active Group 2 topology")
+                return
+            if wireless:
+                saw_wireless = True
+                missing_count = 0
+                continue
+            if not saw_wireless:
+                self.logger.info("Watcher exiting because no wireless target was observed")
+                return
+            missing_count += 1
+            if missing_count < missing_grace_polls:
+                continue
+            topology_lock = SingleInstance(GLOBAL_TOPOLOGY_MUTEX)
+            if not topology_lock.acquire():
+                self.logger.info("Watcher exiting because another topology change is in progress")
+                return
+            try:
+                physical, _, _ = self.current_topology_state()
+                marker = self.owner_marker()
+                if (
+                    str(marker.get("owner_id", "")) == self.owner_id
+                    and str(marker.get("configuration_fingerprint", "")) == configuration_fingerprint
+                    and self.marker_matches_current(marker, physical)
+                ):
+                    self.restore_full()
+            finally:
+                topology_lock.release()
+            return
+
+
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Toggle between the chosen single-monitor state and the saved monitor layout.")
+    parser = argparse.ArgumentParser(description="Toggle between two explicitly configured physical monitor groups.")
     parser.add_argument("--list-only", action="store_true", help="Log all active and available display paths, then exit.")
     parser.add_argument("--save-layout", metavar="NAME", help="Save the current active layout under a friendly name and make it the active saved profile.")
     parser.add_argument("--set-active-layout", metavar="NAME", help="Mark an existing saved layout name as the active profile for future restores.")
     parser.add_argument("--apply-layout", metavar="NAME", help="Apply a saved layout now and also mark it as the active profile.")
     parser.add_argument("--list-layouts-json", action="store_true", help="Print saved layout profile metadata as JSON.")
     parser.add_argument("--toggle-once", action="store_true", help="Toggle once and exit instead of running the background hotkey service.")
-    parser.add_argument("--watch-wireless-drop", action="store_true", help="Watch the reduced state and restore the saved layout if the wireless display disappears.")
+    parser.add_argument("--watch-wireless-drop", action="store_true", help="Watch Group 2 and restore Group 1 if its wireless display disappears.")
+    parser.add_argument(
+        "--restore-all-available",
+        action="store_true",
+        help="Restore and persist every available monitor, including dummy targets; independent of toggle groups.",
+    )
+    parser.add_argument(
+        "--startup-safety-guardian",
+        action="store_true",
+        help="Run the hidden guardian that restores available monitors at logon, resume, lock, and unlock.",
+    )
     parser.add_argument("--list-displays", action="store_true", help="Write the available monitors (one 'label<TAB>selector' line each) for the launcher's picker, then exit.")
+    parser.add_argument("--configure-button", action="store_true", help="Open the two-group checkbox picker for one Button owner.")
     parser.add_argument("--out", metavar="FILE", help="Write --list-displays output to this file instead of stdout (needed under pythonw.exe).")
+    parser.add_argument(
+        "--button-config",
+        metavar="FILE",
+        help="Load this Button owner's Group 1 and Group 2 configuration and keep snapshots beside it.",
+    )
+    parser.add_argument("--pythonw-path", help="Python launcher path to preserve when --configure-button saves the Button config.")
     parser.add_argument(
         "--target-display",
         default=DEFAULT_TARGET_DISPLAY,
@@ -1956,6 +3673,26 @@ def main() -> int:
     args = parse_args()
     logger = setup_logging()
     logger.info("Process started with arguments: %s", " ".join(sys.argv[1:]) or "<none>")
+
+    if args.startup_safety_guardian:
+        if not args.button_config:
+            raise DisplayConfigError("--startup-safety-guardian requires --button-config.")
+        run_startup_safety_guardian(Path(args.button_config).resolve(), logger)
+        return 0
+
+    if args.restore_all_available:
+        if not args.button_config:
+            raise DisplayConfigError("--restore-all-available requires --button-config.")
+        restore_all_available_monitors(Path(args.button_config).resolve(), logger)
+        return 0
+
+    if args.configure_button:
+        if not args.button_config:
+            raise DisplayConfigError("--configure-button requires --button-config.")
+        config_path = Path(args.button_config).resolve()
+        pythonw_path = str(args.pythonw_path or sys.executable)
+        configured = configure_button_groups(config_path, pythonw_path, logger)
+        return 0 if configured else CONFIGURATION_CANCELLED_EXIT_CODE
 
     if args.save_layout:
         result = save_named_layout_profile(args.save_layout, args.target_display, logger)
@@ -1987,19 +3724,27 @@ def main() -> int:
         return 0
 
     if args.toggle_once:
-        if not args.target_display.strip():
-            logger.error("No monitor configured. Delete and re-add the Toggle Monitors button to choose one.")
-            return 2
-        MonitorToggle(logger, args.target_display).toggle_once()
+        if not args.button_config:
+            raise DisplayConfigError("--toggle-once requires a two-group --button-config.")
+        button_config_path = Path(args.button_config).resolve()
+        group_1, group_2 = selector_groups_from_button_config(button_config_path)
+        ButtonMonitorToggle(logger, group_1, group_2, button_config_path.parent, button_config_path).toggle_once()
         return 0
 
     if args.watch_wireless_drop:
-        instance = SingleInstance("Local\\ToggleMonitorsWirelessWatch")
+        if not args.button_config:
+            raise DisplayConfigError("--watch-wireless-drop requires a two-group --button-config.")
+        button_config_path = Path(args.button_config).resolve()
+        group_1, group_2 = selector_groups_from_button_config(button_config_path)
+        toggle = ButtonMonitorToggle(logger, group_1, group_2, button_config_path.parent, button_config_path)
+        toggle.resolve_groups()
+        fingerprint = toggle.configuration_fingerprint()[:16]
+        instance = SingleInstance(f"Local\\ToggleMonitorsWirelessWatch-{toggle.owner_id}-{fingerprint}")
         if not instance.acquire():
-            logger.info("Wireless-drop watcher is already running; exiting")
+            logger.info("This Button's wireless-drop watcher is already running; exiting")
             return 0
         try:
-            MonitorToggle(logger, args.target_display).watch_wireless_drop_and_restore()
+            toggle.watch_wireless_drop_and_restore()
             return 0
         finally:
             instance.release()

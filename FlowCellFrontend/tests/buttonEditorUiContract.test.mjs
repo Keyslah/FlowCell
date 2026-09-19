@@ -43,6 +43,21 @@ test("Button Editor opens stay maximized on one monitor without drag-to-restore"
   assert.match(editor, /event\.preventDefault\(\);\s*if \(maximized\) return;[\s\S]{0,500}currentWindow\.startDragging\(\)/);
 });
 
+test("Button windows round physical placement before Tauri window commands", () => {
+  const windows = readFileSync(
+    join(frontendRoot, "src", "button", "windows", "buttonWindows.ts"),
+    "utf8"
+  );
+  assert.match(
+    windows,
+    /new PhysicalPosition\(Math\.round\(x\), Math\.round\(y\)\)/
+  );
+  assert.match(
+    windows,
+    /new PhysicalSize\(\s*Math\.max\(1, Math\.round\(placement\.width\)\),\s*Math\.max\(1, Math\.round\(placement\.height\)\)\s*\)/
+  );
+});
+
 test("FlowCell Main Page navigation never enters registered-program panel lookup or import", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   assert.match(
@@ -309,6 +324,77 @@ test("Tool Set owners expose one Pop-out Placement and use its Fan checkbox", ()
   );
 });
 
+test("legacy Fan Options exposes and previews a draft-only spinning animation checkbox", () => {
+  const editor = readEditorFile("ButtonEditorPage.tsx");
+  const workspace = readEditorFile("ButtonWorkspace.tsx");
+
+  assert.match(
+    editor,
+    /const selectedFanSetup = Object\.values\(store\.draft\.fanSetups\)\.find\([\s\S]{0,180}candidate\.fanSurfaceId === selectedSurfaceId/
+  );
+  assert.match(
+    editor,
+    /const setSelectedFanSpinEnabled = useCallback\([\s\S]{0,700}store\.transact\([\s\S]{0,260}target\.animation\.spinEnabled = enabled/
+  );
+  assert.match(
+    editor,
+    /settingsPlacementKind === "fan" && selectedFanSetup[\s\S]{0,320}checked=\{selectedFanSetup\.animation\.spinEnabled\}[\s\S]{0,320}Spin Buttons as they fan out/
+  );
+  assert.match(
+    editor,
+    /<fieldset className="button-editor-sidebar__fan-styles" disabled=\{busy\}>[\s\S]{0,120}<legend>Fan styles<\/legend>/
+  );
+  assert.equal(
+    editor.indexOf("Spin Buttons as they fan out") <
+      editor.indexOf("Save {settingsPlacementLabel} Settings"),
+    true
+  );
+  assert.match(
+    workspace,
+    /enabledButtonFanMotionStyles\(fanSetup\?\.animation\)/
+  );
+  assert.match(
+    workspace,
+    /expanded=\{displayedFanExpanded\}[\s\S]{0,260}motionPhase=\{displayedFanMotionPhase\}[\s\S]{0,180}motionStyles=\{previewFanMotionStyles\}/
+  );
+  assert.match(
+    workspace,
+    /phase: renderedFanExpandedRef\.current \? "closing" : "resting"/
+  );
+  assert.match(
+    workspace,
+    /if \(phase === "closing" && !fanDisclosureExpandedRef\.current\) \{\s*setRenderedFanExpanded\(false\);/
+  );
+  assert.match(
+    workspace,
+    /previewFanConfigurationMatches[\s\S]{0,260}: false;[\s\S]{0,180}displayedFanMotionPhase[\s\S]{0,120}: "resting";/
+  );
+  assert.match(
+    workspace,
+    /previewFanConfigurationRef\.current !== previewFanConfiguration[\s\S]{0,520}setFanDisclosure\(initialDisclosure\)[\s\S]{0,260}return;/
+  );
+  assert.match(
+    workspace,
+    /previewFanMotionPhaseRef\.current === "opening"\) return;[\s\S]{0,80}scheduleFanHoverClose\(\)/
+  );
+  assert.match(
+    workspace,
+    /if \(!previewFanMotionEnabled\) \{[\s\S]{0,180}wasOpening[\s\S]{0,220}setPreviewFanMotion\(\{ phase: "resting", sequence \}\)[\s\S]{0,260}scheduleFanHoverClose\(\)/
+  );
+  assert.match(
+    workspace,
+    /buttonFanPreviewIsHovered[\s\S]{0,180}\.button-fan-renderer--expanded \[data-button-placement-id\]:hover/
+  );
+  assert.match(
+    workspace,
+    /const pointerStillOverFan = phase === "opening" &&[\s\S]{0,100}buttonFanPreviewIsHovered\(canvasRef\.current\)[\s\S]{0,260}!pointerStillOverFan[\s\S]{0,240}scheduleFanHoverClose\(\)/
+  );
+  assert.match(
+    workspace,
+    /mode === "run" &&\s*previewFanMotionEnabled &&\s*previewFanMotionPhaseRef\.current !== "resting" &&\s*placementId !== fanOwnerPlacementId\s*\) return;/
+  );
+});
+
 test("Same size Buttons changes only content dimensions and keeps the Fan owner independent", () => {
   const editor = readEditorFile("ButtonEditorPage.tsx");
   const handler = editor.match(
@@ -406,6 +492,8 @@ test("Save Settings uses the selected placement type folder and complete scoped 
   );
   assert.match(editor, /showSaveFileDialog\(\{[\s\S]{0,260}Save \$\{placementLabel\} Settings/);
   assert.match(editor, /defaultFileName:\s*defaultButtonSettingsFileName\(placementKind\)/);
+  assert.match(editor, /filter:\s*"JSON Files \(\*\.json\)\|\*\.json"/);
+  assert.doesNotMatch(editor, /FlowCell Button Settings \(\*\.flowcell-button-settings\.json\)/);
   assert.match(
     editor,
     /getButtonSettingsDirectory\(\s*placementKind,\s*programName,\s*panelName\s*\)/
@@ -435,6 +523,7 @@ test("Save Settings uses the selected placement type folder and complete scoped 
   assert.match(editor, /committedDocument = await loadButtonStateDocument\(\)/);
   assert.match(editor, /const committedSettingsFile = buildButtonSettingsFile\(saved, selectedSurfaceId/);
   assert.match(editor, /saveButtonSettingsFile\(targetPath, committedSettingsFile\)/);
+  assert.match(editor, /writtenPath\.split\(\/\[\\\\\/\]\/\)\.at\(-1\) \?\? writtenPath/);
   assert.ok(
     editor.indexOf("saved = await saveButtonStateDocument") <
       editor.indexOf("const committedSettingsFile = buildButtonSettingsFile(saved")
@@ -524,6 +613,7 @@ test("Open Pop stays transient while Main Pop falls back to a canonical default"
   assert.match(transientPopBlock[0], /buildTransientButtonPopoutSettingsDocument/);
   assert.match(transientPopBlock[0], /registerButtonDraftResponder/);
   assert.match(transientPopBlock[0], /publishButtonDraftToWindow/);
+  assert.match(transientPopBlock[0], /draftSessionId:\s*sessionId/);
   assert.match(
     transientPopBlock[0],
     /settingsBackedLayout:\s*\{[\s\S]{0,120}panelOwnerButtonId,[\s\S]{0,180}settingsPath:\s*choice\.path[\s\S]{0,120}choiceId:\s*choice\.choiceId/
@@ -575,6 +665,7 @@ test("Open Pop stays transient while Main Pop falls back to a canonical default"
   assert.match(windows, /registerInLayout\?: boolean/);
   assert.match(windows, /settingsBackedLayout\?: \{/);
   assert.match(windows, /panelOwnerButtonId:\s*settingsBackedLayout\?\.panelOwnerButtonId/);
+  assert.match(windows, /buttonDraftSessionId:\s*args\.draftSessionId/);
   assert.match(windows, /buttonPopoutSettingsPath:\s*settingsBackedLayout\?\.settingsPath/);
   assert.match(
     windows,

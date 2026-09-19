@@ -3,7 +3,8 @@ use super::installed_page::{
     validate_and_normalize_page_manifest, InstalledPageManifest,
 };
 use super::manifest::{
-    extension_is_allowed, load_program_manifest, normalize_import_kind, ProgramManifest,
+    extension_is_allowed, is_managed_bridge_runner, load_program_manifest, normalize_import_kind,
+    ProgramManifest,
 };
 use super::records::{
     active_record_file_name, atomic_replace_json, atomic_write_json, empty_object,
@@ -2071,7 +2072,7 @@ fn rollback_prepared_install_transaction(
         ));
     }
 
-    rollback_blender_deployment(
+    rollback_bridge_deployment(
         manifest,
         &journal.owner_button_id,
         &journal.next_record.label,
@@ -2109,8 +2110,8 @@ fn complete_pending_install_transaction(
             committed_source.display()
         ));
     }
-    if manifest.runner.kind == "blender-bridge" {
-        let action = deploy_blender_source(
+    if is_managed_bridge_runner(&manifest.runner.kind) {
+        let action = deploy_bridge_source(
             manifest,
             &journal.owner_button_id,
             &journal.panel_name,
@@ -2604,7 +2605,7 @@ fn owned_bridge_action(owner_button_id: &str) -> String {
     format!("flowcell_button_{}", owner_button_id.to_ascii_lowercase())
 }
 
-fn blender_install_arguments(
+fn bridge_install_arguments(
     script_path: &Path,
     owner_button_id: &str,
     panel_name: &str,
@@ -2613,10 +2614,10 @@ fn blender_install_arguments(
 ) -> Result<Vec<String>, String> {
     let selected_paths_json =
         serde_json::to_string(&vec![installed_source.to_string_lossy().to_string()])
-            .map_err(|error| format!("Failed to encode Blender install source: {error}"))?;
+            .map_err(|error| format!("Failed to encode bridge install source: {error}"))?;
     let bridge_data_json = match bridge_data {
         Some(value) => serde_json::to_string(value)
-            .map_err(|error| format!("Failed to encode Blender bridgeData: {error}"))?,
+            .map_err(|error| format!("Failed to encode bridgeData: {error}"))?,
         None => "{}".to_string(),
     };
     Ok(vec![
@@ -2633,13 +2634,24 @@ fn blender_install_arguments(
     ])
 }
 
-pub(crate) fn deploy_blender_source(
+pub(crate) fn deploy_bridge_source(
     manifest: &ProgramManifest,
     owner_button_id: &str,
     panel_name: &str,
     installed_source: &Path,
     bridge_data: Option<&Value>,
 ) -> Result<String, String> {
+    if !is_managed_bridge_runner(&manifest.runner.kind) {
+        return Err(format!(
+            "Program '{}' does not use a managed bridge runner.",
+            manifest.label
+        ));
+    }
+    let bridge_label = if manifest.runner.kind == "fusion-bridge" {
+        "Fusion"
+    } else {
+        "Blender"
+    };
     let program_root = crate::resolve_program_directory(&manifest.label)?;
     let script_path = super::manifest::resolve_runner_script_path(
         &program_root,
@@ -2647,14 +2659,14 @@ pub(crate) fn deploy_blender_source(
         &manifest.runner.install_script,
         "runner.installScript",
     )?
-    .ok_or_else(|| "Blender program manifest is missing runner.installScript.".to_string())?;
+    .ok_or_else(|| format!("{bridge_label} program manifest is missing runner.installScript."))?;
     if !script_path.is_file() {
         return Err(format!(
-            "Blender install adapter was not found at {}.",
+            "{bridge_label} install adapter was not found at {}.",
             script_path.display()
         ));
     }
-    let arguments = blender_install_arguments(
+    let arguments = bridge_install_arguments(
         &script_path,
         owner_button_id,
         panel_name,
@@ -2665,23 +2677,23 @@ pub(crate) fn deploy_blender_source(
     if !output.status.success() {
         return Err(crate::format_process_failure(
             &output,
-            "Blender Button source deployment failed.",
+            &format!("{bridge_label} Button source deployment failed."),
         ));
     }
     let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let parsed = serde_json::from_str::<Value>(&stdout).map_err(|error| {
-        format!("Blender install adapter returned invalid JSON: {error}. Output: {stdout}")
+        format!("{bridge_label} install adapter returned invalid JSON: {error}. Output: {stdout}")
     })?;
     let result = parsed
         .get("results")
         .and_then(Value::as_array)
         .and_then(|values| values.first())
-        .ok_or_else(|| "Blender install adapter returned no result.".to_string())?;
+        .ok_or_else(|| format!("{bridge_label} install adapter returned no result."))?;
     if result.get("installed").and_then(Value::as_bool) != Some(true) {
         return Err(result
             .get("message")
             .and_then(Value::as_str)
-            .unwrap_or("Blender install adapter rejected the source.")
+            .unwrap_or("Bridge install adapter rejected the source.")
             .to_string());
     }
     Ok(result
@@ -2692,19 +2704,19 @@ pub(crate) fn deploy_blender_source(
         .unwrap_or_else(|| owned_bridge_action(owner_button_id)))
 }
 
-fn rollback_blender_deployment(
+fn rollback_bridge_deployment(
     manifest: &ProgramManifest,
     owner_button_id: &str,
     label: &str,
     previous_record: Option<&ActiveSourceRecord>,
 ) -> Result<(), String> {
-    if manifest.runner.kind != "blender-bridge" {
+    if !is_managed_bridge_runner(&manifest.runner.kind) {
         return Ok(());
     }
     if let Some(previous) = previous_record {
         let previous_source =
             super::execute::resolve_owned_source_paths(manifest, previous)?.source_path;
-        return deploy_blender_source(
+        return deploy_bridge_source(
             manifest,
             owner_button_id,
             &previous.panel_name,
@@ -2713,7 +2725,7 @@ fn rollback_blender_deployment(
         )
         .map(|_| ());
     }
-    super::delete::cleanup_blender_owner(
+    super::delete::cleanup_bridge_owner(
         &manifest.label,
         owner_button_id,
         label,
@@ -3276,7 +3288,7 @@ fn install_from_path_while_source_locked_with_completion(
         runner: manifest.runner.kind.clone(),
         runner_data: prepared.runner_data,
         execution_target: prepared.execution_target,
-        bridge_action: if manifest.runner.kind == "blender-bridge" {
+        bridge_action: if is_managed_bridge_runner(&manifest.runner.kind) {
             owned_bridge_action(&owner_button_id)
         } else {
             String::new()
@@ -3354,8 +3366,8 @@ fn install_from_path_while_source_locked_with_completion(
         ));
     }
 
-    if manifest.runner.kind == "blender-bridge" {
-        match deploy_blender_source(
+    if is_managed_bridge_runner(&manifest.runner.kind) {
+        match deploy_bridge_source(
             &manifest,
             &owner_button_id,
             &panel_name,
@@ -3700,7 +3712,7 @@ pub(crate) fn merge_toolset_payload(
 #[cfg(test)]
 mod tests {
     use super::{
-        blender_install_arguments, build_response, canonical_owner_execution_target,
+        bridge_install_arguments, build_response, canonical_owner_execution_target,
         canonical_source_projection, classify_canonical_update, detect_import_kind,
         ensure_no_awaiting_canonical_update_in_program, install_transaction_old_package,
         merge_toolset_payload, path_relative_to_program, prepare_source,
@@ -4767,8 +4779,8 @@ mod tests {
     }
 
     #[test]
-    fn blender_install_receives_manifest_bridge_data() {
-        let arguments = blender_install_arguments(
+    fn bridge_install_receives_manifest_bridge_data() {
+        let arguments = bridge_install_arguments(
             Path::new("Install-BlenderFlowCellButtons.ps1"),
             "button_1",
             "Tools",

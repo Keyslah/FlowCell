@@ -232,6 +232,7 @@ fn main() {
             button_state::get_button_editor_directory,
             button_state::get_button_skin_directory,
             button_state::open_button_skin_directory,
+            button_state::list_button_skin_files,
             button_state::get_button_settings_directory,
             button_state::initialize_button_settings_default,
             button_state::load_button_skin_file,

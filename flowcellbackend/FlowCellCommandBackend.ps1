@@ -57,6 +57,9 @@ function Get-ProgramLabelKey([string]$Label) {
         'illustrator' { return 'illustrator' }
         'windows' { return 'windows' }
         'blender' { return 'blender' }
+        'fusion 360' { return 'fusion' }
+        'fusion360' { return 'fusion' }
+        'fusion' { return 'fusion' }
         'photoshop' { return 'photoshop' }
         default { return (($normalizedLabel -replace '[^a-z0-9]+', '_').Trim('_')) }
     }
@@ -85,13 +88,13 @@ function Get-FlowCellJsonStringProperty($Source, [string]$Name) {
     return [string]$property.Value
 }
 
-function Resolve-FlowCellBlenderBridgeActionForScriptPath([string]$ScriptPath) {
+function Resolve-FlowCellManagedBridgeActionForScriptPath([string]$ProgramName, [string]$ScriptPath) {
     $normalizedScriptPath = Get-FlowCellNormalizedPath $ScriptPath
     if ([string]::IsNullOrWhiteSpace($normalizedScriptPath)) {
         return ''
     }
 
-    $panelsRoot = Join-Path $script:FlowCellHomeRoot 'Programs\Blender\Panels'
+    $panelsRoot = Join-Path $script:FlowCellHomeRoot (Join-Path 'Programs' (Join-Path $ProgramName 'Panels'))
     if (-not (Test-Path -LiteralPath $panelsRoot -PathType Container)) {
         return ''
     }
@@ -121,12 +124,20 @@ function Resolve-FlowCellBlenderBridgeActionForScriptPath([string]$ScriptPath) {
 
         $bridgeAction = $bridgeAction.Trim()
         if (-not [string]::IsNullOrWhiteSpace($resolvedAction) -and $resolvedAction -ine $bridgeAction) {
-            throw ("Active Blender source records disagree about the bridge action for {0}." -f $ScriptPath)
+            throw ("Active {0} source records disagree about the bridge action for {1}." -f $ProgramName, $ScriptPath)
         }
         $resolvedAction = $bridgeAction
     }
 
     return $resolvedAction
+}
+
+function Resolve-FlowCellBlenderBridgeActionForScriptPath([string]$ScriptPath) {
+    return (Resolve-FlowCellManagedBridgeActionForScriptPath -ProgramName 'Blender' -ScriptPath $ScriptPath)
+}
+
+function Resolve-FlowCellFusionBridgeActionForScriptPath([string]$ScriptPath) {
+    return (Resolve-FlowCellManagedBridgeActionForScriptPath -ProgramName 'Fusion 360' -ScriptPath $ScriptPath)
 }
 
 function Get-FlowCellBlenderConfigPath {
@@ -397,7 +408,11 @@ function Wait-FlowCellBridgeResponse([string]$ResponsePath, [string]$RequestId, 
         if (Test-Path -LiteralPath $ResponsePath -PathType Leaf) {
             try {
                 $response = Get-Content -LiteralPath $ResponsePath -Raw | ConvertFrom-Json
-                if ([string]$response.id -eq $RequestId) {
+                $responseRequestId = Get-FlowCellJsonStringProperty -Source $response -Name 'requestId'
+                if ([string]::IsNullOrWhiteSpace($responseRequestId)) {
+                    $responseRequestId = Get-FlowCellJsonStringProperty -Source $response -Name 'id'
+                }
+                if ($responseRequestId -eq $RequestId) {
                     return $response
                 }
             }
@@ -466,6 +481,156 @@ function Invoke-FlowCellBlenderBridgeRequest([string]$Action, [hashtable]$Data =
     }
 
     throw ("Timed out waiting for Blender. Target PID {0}. Checked bridge path(s): {1}" -f $targetBlenderProcessId, ($bridgeFolders -join '; '))
+}
+
+function Get-FlowCellFusionAddonRootCandidates {
+    $applicationDataRoot = [string]$env:APPDATA
+    if ([string]::IsNullOrWhiteSpace($applicationDataRoot)) {
+        $applicationDataRoot = [Environment]::GetFolderPath('ApplicationData')
+    }
+
+    return @(
+        (Join-Path $applicationDataRoot 'Autodesk\Autodesk Fusion 360\API\AddIns\FlowCellFusionBridge'),
+        (Join-Path $applicationDataRoot 'Autodesk\Autodesk Fusion\API\AddIns\FlowCellFusionBridge'),
+        (Join-Path $applicationDataRoot 'Autodesk\FusionAddins\FlowCellFusionBridge')
+    )
+}
+
+function Resolve-FlowCellFusionAddonRoot {
+    $checkedPaths = @(Get-FlowCellFusionAddonRootCandidates)
+    foreach ($candidate in $checkedPaths) {
+        if (Test-Path -LiteralPath $candidate -PathType Container) {
+            return $candidate
+        }
+    }
+    throw ("FlowCell Fusion add-in is not installed. Checked path(s): {0}" -f ($checkedPaths -join '; '))
+}
+
+function Get-FlowCellFusionRuntimeProcessIds([string]$BridgeRoot) {
+    $processIds = New-Object System.Collections.Generic.List[int]
+    if (-not (Test-Path -LiteralPath $BridgeRoot -PathType Container)) {
+        return @()
+    }
+
+    foreach ($processDirectory in @(Get-ChildItem -LiteralPath $BridgeRoot -Directory -ErrorAction SilentlyContinue)) {
+        $directoryProcessId = 0
+        if (-not [int]::TryParse([string]$processDirectory.Name, [ref]$directoryProcessId) -or $directoryProcessId -le 0) {
+            continue
+        }
+        $statusPath = Join-Path $processDirectory.FullName 'runtime_status.json'
+        if (-not (Test-Path -LiteralPath $statusPath -PathType Leaf)) {
+            continue
+        }
+
+        try {
+            $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
+        }
+        catch {
+            continue
+        }
+        $reportedProcessIdText = Get-FlowCellJsonStringProperty -Source $status -Name 'pid'
+        if ([string]::IsNullOrWhiteSpace($reportedProcessIdText)) {
+            $reportedProcessIdText = Get-FlowCellJsonStringProperty -Source $status -Name 'processId'
+        }
+        if (
+            [string]::IsNullOrWhiteSpace($reportedProcessIdText) -and
+            $status.PSObject.Properties['last_event'] -and
+            $null -ne $status.last_event
+        ) {
+            $reportedProcessIdText = Get-FlowCellJsonStringProperty -Source $status.last_event -Name 'pid'
+        }
+        $reportedProcessId = $directoryProcessId
+        if (-not [string]::IsNullOrWhiteSpace($reportedProcessIdText)) {
+            if (-not [int]::TryParse($reportedProcessIdText, [ref]$reportedProcessId) -or $reportedProcessId -ne $directoryProcessId) {
+                continue
+            }
+        }
+        if (-not $processIds.Contains($reportedProcessId)) {
+            [void]$processIds.Add($reportedProcessId)
+        }
+    }
+
+    return @($processIds)
+}
+
+function Get-FlowCellTargetFusionProcessId([string]$BridgeRoot) {
+    $runtimeProcessIds = @(Get-FlowCellFusionRuntimeProcessIds -BridgeRoot $BridgeRoot)
+    $candidates = New-Object System.Collections.Generic.List[object]
+    foreach ($runtimeProcessId in $runtimeProcessIds) {
+        $process = Get-Process -Id $runtimeProcessId -ErrorAction SilentlyContinue
+        if (
+            $null -eq $process -or
+            ([string]$process.ProcessName -ine 'Fusion360' -and [string]$process.ProcessName -ine 'FusionLauncher')
+        ) {
+            continue
+        }
+        [void]$candidates.Add($process)
+    }
+    if ($candidates.Count -eq 0) {
+        throw 'Fusion 360 is not running with the FlowCell add-in enabled.'
+    }
+
+    $target = @(
+        $candidates | Sort-Object `
+            @{ Expression = { [string]$_.ProcessName -ieq 'Fusion360' }; Descending = $true }, `
+            @{ Expression = { $_.MainWindowHandle -ne 0 }; Descending = $true }, `
+            @{ Expression = { $_.Id }; Descending = $true }
+    )[0]
+    return [int]$target.Id
+}
+
+function Invoke-FlowCellFusionBridgeRequest([string]$Action, [hashtable]$Payload = @{}, [int]$TimeoutSeconds = 20, [switch]$NoWait) {
+    if ([string]::IsNullOrWhiteSpace($Action)) {
+        throw 'Fusion bridge action cannot be empty.'
+    }
+
+    $addonRoot = Resolve-FlowCellFusionAddonRoot
+    $bridgeRoot = Join-Path $addonRoot 'Bridge'
+    $targetProcessId = Get-FlowCellTargetFusionProcessId -BridgeRoot $bridgeRoot
+    $processBridgeRoot = Join-Path $bridgeRoot ([string]$targetProcessId)
+    $requestId = [guid]::NewGuid().ToString('N')
+    $requestPath = Join-Path $processBridgeRoot 'request.json'
+    $responsePath = Join-Path $processBridgeRoot 'response.json'
+    $temporaryRequestPath = Join-Path $processBridgeRoot ('.request-{0}.tmp' -f $requestId)
+    New-Item -ItemType Directory -Path $processBridgeRoot -Force | Out-Null
+
+    $request = [pscustomobject][ordered]@{
+        requestId = $requestId
+        action = $Action.Trim()
+        payload = $Payload
+        requested = (Get-Date).ToString('o')
+    }
+    $json = $request | ConvertTo-Json -Depth 10
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($temporaryRequestPath, $json, $utf8NoBom)
+    Move-Item -LiteralPath $temporaryRequestPath -Destination $requestPath -Force
+    Write-CommandHostLog ('Fusion bridge request written. RequestId={0}; Action={1}; Path={2}; WaitForResponse={3}' -f $requestId, $Action, $requestPath, (-not [bool]$NoWait))
+
+    if ($NoWait) {
+        return [pscustomobject]@{
+            id = $requestId
+            requestId = $requestId
+            action = $Action.Trim()
+            status = 'queued'
+            message = 'Fusion action queued.'
+            bridge_folder = $processBridgeRoot
+        }
+    }
+
+    $deadline = (Get-Date).AddSeconds([Math]::Max($TimeoutSeconds, 1))
+    $response = Wait-FlowCellBridgeResponse -ResponsePath $responsePath -RequestId $requestId -Deadline $deadline
+    if ($null -eq $response) {
+        throw ("Timed out waiting for Fusion 360. Target PID {0}. Bridge path: {1}" -f $targetProcessId, $processBridgeRoot)
+    }
+    $status = (Get-FlowCellJsonStringProperty -Source $response -Name 'status').Trim().ToLowerInvariant()
+    if (@('', 'ok', 'success', 'finished') -contains $status) {
+        return $response
+    }
+    $message = Get-FlowCellJsonStringProperty -Source $response -Name 'message'
+    if (-not [string]::IsNullOrWhiteSpace($message)) {
+        throw $message
+    }
+    throw 'Fusion 360 returned an error.'
 }
 
 function Get-FlowCellAutoHotkeyExePath {
@@ -550,8 +715,9 @@ function Invoke-FlowCellScriptCommand($Envelope) {
 
     $programLabel = if ($Envelope.program.PSObject.Properties['label']) { [string]$Envelope.program.label } else { '' }
     $programKey = Get-ProgramLabelKey $programLabel
+    $runMethod = if ($Envelope.program.PSObject.Properties['run_method']) { [string]$Envelope.program.run_method } else { '' }
 
-    if ($programKey -eq 'blender') {
+    if ($runMethod -eq 'blender_bridge' -or ([string]::IsNullOrWhiteSpace($runMethod) -and $programKey -eq 'blender')) {
         $bridgeAction = Resolve-FlowCellBlenderBridgeActionForScriptPath -ScriptPath $resolvedTarget
         if ([string]::IsNullOrWhiteSpace($bridgeAction)) {
             throw ("Blender script target is missing bridge metadata and will not be opened through Windows defaults: {0}" -f $resolvedTarget)
@@ -563,6 +729,20 @@ function Invoke-FlowCellScriptCommand($Envelope) {
         Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
         Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=blender_bridge_fire_and_forget; Status=queued; RequestId={1}; Message={2}' -f [string]$Envelope.command_id, [string]$queuedRequest.id, $statusText)
         return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget $resolvedTarget -ExecutionMethod 'blender_bridge_fire_and_forget' -Details $queuedRequest)
+    }
+
+    if ($runMethod -eq 'fusion_bridge' -or ([string]::IsNullOrWhiteSpace($runMethod) -and $programKey -eq 'fusion')) {
+        $bridgeAction = Resolve-FlowCellFusionBridgeActionForScriptPath -ScriptPath $resolvedTarget
+        if ([string]::IsNullOrWhiteSpace($bridgeAction)) {
+            throw ("Fusion script target is missing bridge metadata and will not be opened through Windows defaults: {0}" -f $resolvedTarget)
+        }
+
+        Write-CommandHostLog ('Resolved execution target. CommandId={0}; Method=fusion_bridge_fire_and_forget; Target={1}; Action={2}' -f [string]$Envelope.command_id, $resolvedTarget, $bridgeAction)
+        $queuedRequest = Invoke-FlowCellFusionBridgeRequest -Action $bridgeAction -Payload @{} -NoWait
+        $statusText = 'Fusion action queued.'
+        Write-SharedTextFile -Path $script:LastActionStatusPath -Text $statusText
+        Write-CommandHostLog ('Bridge/runner execution result. CommandId={0}; Method=fusion_bridge_fire_and_forget; Status=queued; RequestId={1}; Message={2}' -f [string]$Envelope.command_id, [string]$queuedRequest.requestId, $statusText)
+        return (New-BackendResult -Succeeded $true -Message $statusText -ResolvedTarget $resolvedTarget -ExecutionMethod 'fusion_bridge_fire_and_forget' -Details $queuedRequest)
     }
 
     Write-CommandHostLog ('Resolved execution target. CommandId={0}; Method=controller_cli; Target={1}; Program={2}' -f [string]$Envelope.command_id, $resolvedTarget, $programKey)

@@ -84,7 +84,7 @@
     },
     {
       "id": "blender.theme",
-      "version": "3.0.4",
+      "version": "3.0.11",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/theme",
       "importKind": "script",
@@ -95,6 +95,22 @@
       "installEffects": ["Installs the Blender Theme page Button and its package-owned actions into the selected panel."],
       "installOnAdd": true,
       "legacyMatchLabel": "Theme",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "blender.lithophane",
+      "version": "1.1.3",
+      "panelName": "Utility",
+      "sourcePath": "Blender Git Scripts/Utility/lithophane.py",
+      "importKind": "script",
+      "displayLabel": "lithophane",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": ["Installs the alpha-aware, dimension-preserving Blender Lithophane Button with collision-safe numeric object naming into Utility."],
+      "installIfMissing": true,
+      "installOnAdd": true,
+      "legacyMatchLabel": "lithophane",
       "legacyMatchKind": "script"
     }
   ],

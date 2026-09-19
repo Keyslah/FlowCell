@@ -210,6 +210,7 @@ fn canonical_program_tab_id(program_name: &str) -> i64 {
         "windows" => 2,
         "blender" => 3,
         "photoshop" => 4,
+        "fusion" => 5,
         _ => 0,
     }
 }
@@ -938,7 +939,7 @@ pub(crate) fn write_program_registration_section(
         .to_ascii_lowercase();
     let git_scripts_path = program_path.join(format!("{program_name} Git Scripts"));
     let script_folder = match template_key {
-        "illustrator" | "photoshop" | "blender" | "windows" => git_scripts_path,
+        "illustrator" | "photoshop" | "blender" | "fusion" | "windows" => git_scripts_path,
         _ => Path::new(exe_path)
             .parent()
             .unwrap_or(program_path)
@@ -974,6 +975,17 @@ pub(crate) fn write_program_registration_section(
             "Collections|Files|Utility",
             if process_name.is_empty() {
                 String::from("blender")
+            } else {
+                process_name.clone()
+            },
+        ),
+        "fusion" => (
+            "bridge_runner",
+            "fusion_bridge",
+            ".py",
+            "Toolset|Utility",
+            if process_name.is_empty() {
+                String::from("fusion360|fusionlauncher")
             } else {
                 process_name.clone()
             },
@@ -1148,6 +1160,32 @@ mod program_registration_tests {
                 .and_then(|section| section.get("ProgramTabIds"))
                 .map(String::as_str),
             Some("1")
+        );
+    }
+
+    #[test]
+    fn fusion_registration_uses_the_managed_bridge_runner() {
+        let mut document = IniDocument::new();
+        let executable = r"C:\Program Files\Autodesk\webdeploy\production\Fusion360.exe";
+        let program_id = upsert_program_registration(
+            &mut document,
+            "Fusion 360",
+            Path::new(r"D:\FlowCell\Programs\Fusion 360"),
+            executable,
+        );
+
+        let section = document
+            .get(&format!("ProgramTab_{program_id}"))
+            .expect("Fusion registration");
+        assert_eq!(program_id, 5);
+        assert_eq!(
+            section.get("RunMethod").map(String::as_str),
+            Some("fusion_bridge")
+        );
+        assert_eq!(section.get("ExePath").map(String::as_str), Some(executable));
+        assert_eq!(
+            section.get("ProcessNames").map(String::as_str),
+            Some("fusion360")
         );
     }
 

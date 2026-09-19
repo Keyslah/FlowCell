@@ -941,15 +941,97 @@ pub(crate) fn query_process_path_by_id(process_id: u32) -> Option<String> {
     }
 }
 
+fn select_existing_matching_process_path(
+    process_names: &[String],
+    candidate_paths: &[String],
+) -> Option<String> {
+    let normalized_process_names = normalize_configured_process_names(process_names);
+    candidate_paths
+        .iter()
+        .find(|candidate| {
+            Path::new(candidate.as_str()).is_file()
+                && matches_process_token(&normalized_process_names, candidate)
+        })
+        .cloned()
+}
+
+#[cfg(windows)]
+#[derive(Default)]
+struct RunningProcessPathSearch {
+    paths: Vec<String>,
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn enum_running_process_paths(hwnd: HWND, lparam: LPARAM) -> BOOL {
+    if hwnd.is_null() {
+        return 1;
+    }
+    let mut process_id = 0u32;
+    GetWindowThreadProcessId(hwnd, &mut process_id);
+    let Some(process_path) = query_process_path_by_id(process_id) else {
+        return 1;
+    };
+    let search = &mut *(lparam as *mut RunningProcessPathSearch);
+    if !search
+        .paths
+        .iter()
+        .any(|candidate| candidate.eq_ignore_ascii_case(&process_path))
+    {
+        search.paths.push(process_path);
+    }
+    1
+}
+
+#[cfg(windows)]
+pub(crate) fn find_running_process_executable(process_names: &[String]) -> Option<String> {
+    let mut candidates = Vec::new();
+    let foreground = get_foreground_process_info_impl();
+    if !foreground.process_path.trim().is_empty() {
+        candidates.push(foreground.process_path);
+    }
+    let mut search = RunningProcessPathSearch::default();
+    unsafe {
+        EnumWindows(
+            Some(enum_running_process_paths),
+            &mut search as *mut RunningProcessPathSearch as LPARAM,
+        );
+    }
+    candidates.extend(search.paths);
+    select_existing_matching_process_path(process_names, &candidates)
+}
+
+#[cfg(not(windows))]
+pub(crate) fn find_running_process_executable(_process_names: &[String]) -> Option<String> {
+    None
+}
+
 #[cfg(windows)]
 fn is_blender_process_id(process_id: u32) -> bool {
+    process_id_has_name(process_id, &["blender.exe", "blender"])
+}
+
+#[cfg(windows)]
+fn is_fusion_process_id(process_id: u32) -> bool {
+    process_id_has_name(
+        process_id,
+        &[
+            "fusion360.exe",
+            "fusion360",
+            "fusionlauncher.exe",
+            "fusionlauncher",
+        ],
+    )
+}
+
+#[cfg(windows)]
+fn process_id_has_name(process_id: u32, expected_names: &[&str]) -> bool {
     query_process_path_by_id(process_id)
         .and_then(|process_path| {
             Path::new(&process_path)
                 .file_name()
                 .map(|value| value.to_string_lossy().to_ascii_lowercase())
         })
-        .map(|process_name| process_name == "blender.exe" || process_name == "blender")
+        .map(|process_name| expected_names.contains(&process_name.as_str()))
         .unwrap_or(false)
 }
 
@@ -983,7 +1065,7 @@ fn get_window_process_id_by_handle(window_handle: isize) -> u32 {
 }
 
 #[cfg(windows)]
-fn find_blender_process_id_below_window(start_window: isize) -> u32 {
+fn find_process_id_below_window(start_window: isize, matches_process: impl Fn(u32) -> bool) -> u32 {
     if start_window == 0 {
         return 0;
     }
@@ -1000,7 +1082,7 @@ fn find_blender_process_id_below_window(start_window: isize) -> u32 {
         }
 
         let process_id = get_window_process_id_by_handle(current_window);
-        if process_id > 0 && is_blender_process_id(process_id) {
+        if process_id > 0 && matches_process(process_id) {
             return process_id;
         }
     }
@@ -1016,7 +1098,8 @@ pub(crate) fn resolve_target_blender_process_id(bridge_root: &Path) -> Result<u3
         return Ok(foreground_process_id);
     }
 
-    let below_foreground_process_id = find_blender_process_id_below_window(foreground_window);
+    let below_foreground_process_id =
+        find_process_id_below_window(foreground_window, is_blender_process_id);
     if below_foreground_process_id > 0 {
         return Ok(below_foreground_process_id);
     }
@@ -1037,6 +1120,42 @@ pub(crate) fn resolve_target_blender_process_id(bridge_root: &Path) -> Result<u3
 #[cfg(not(windows))]
 pub(crate) fn resolve_target_blender_process_id(_bridge_root: &Path) -> Result<u32, String> {
     Err("Direct Blender bridge requests are only supported on Windows.".to_string())
+}
+
+#[cfg(windows)]
+pub(crate) fn resolve_target_fusion_process_id(bridge_root: &Path) -> Result<u32, String> {
+    let runtime_process_ids = read_fusion_bridge_runtime_process_ids(bridge_root);
+    let is_ready_fusion_process = |process_id: u32| {
+        runtime_process_ids.contains(&process_id) && is_fusion_process_id(process_id)
+    };
+    let foreground_window = get_root_foreground_window_handle();
+    let foreground_process_id = get_window_process_id_by_handle(foreground_window);
+    if foreground_process_id > 0 && is_ready_fusion_process(foreground_process_id) {
+        return Ok(foreground_process_id);
+    }
+
+    let below_foreground_process_id =
+        find_process_id_below_window(foreground_window, is_ready_fusion_process);
+    if below_foreground_process_id > 0 {
+        return Ok(below_foreground_process_id);
+    }
+
+    if let Some(runtime_process_id) = runtime_process_ids
+        .into_iter()
+        .find(|process_id| is_fusion_process_id(*process_id))
+    {
+        return Ok(runtime_process_id);
+    }
+
+    Err(
+        "Could not determine which Fusion 360 bridge process is active. Activate Fusion 360 and try again."
+            .to_string(),
+    )
+}
+
+#[cfg(not(windows))]
+pub(crate) fn resolve_target_fusion_process_id(_bridge_root: &Path) -> Result<u32, String> {
+    Err("Direct Fusion bridge requests are only supported on Windows.".to_string())
 }
 
 #[tauri::command]
@@ -1405,7 +1524,8 @@ mod tests {
     use super::{
         continues_explicit_open_reveal, matches_process_token, resolve_scoped_owner_hwnds,
         resolve_scoped_window_placement, resolve_selective_window_interactivity,
-        should_reapply_scoped_window_state, NativeInputSnapshot, ScopedWindowPlacement,
+        select_existing_matching_process_path, should_reapply_scoped_window_state,
+        NativeInputSnapshot, ScopedWindowPlacement,
     };
 
     #[test]
@@ -1421,6 +1541,28 @@ mod tests {
             &configured,
             "ApplicationFrameHost.exe"
         ));
+    }
+
+    #[test]
+    fn running_process_executable_selection_requires_an_existing_exact_name() {
+        let current_executable = std::env::current_exe().expect("current test executable");
+        let process_name = current_executable
+            .file_name()
+            .expect("test executable file name")
+            .to_string_lossy()
+            .to_string();
+        let candidates = vec![
+            current_executable
+                .with_file_name(format!("not-{process_name}"))
+                .to_string_lossy()
+                .to_string(),
+            current_executable.to_string_lossy().to_string(),
+        ];
+
+        assert_eq!(
+            select_existing_matching_process_path(&[process_name], &candidates),
+            Some(current_executable.to_string_lossy().to_string())
+        );
     }
 
     #[cfg(windows)]

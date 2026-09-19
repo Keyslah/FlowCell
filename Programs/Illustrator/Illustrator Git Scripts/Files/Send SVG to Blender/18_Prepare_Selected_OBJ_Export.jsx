@@ -18,6 +18,28 @@
         }
     }
 
+    function showBlockingWarning(error) {
+        var message = "";
+
+        try {
+            if (error && error.flowcellWarningMessage) {
+                message = trim(error.flowcellWarningMessage);
+            }
+        } catch (ignoreWarningMessage) {
+            message = "";
+        }
+        if (!message) {
+            return false;
+        }
+
+        try {
+            alert(message);
+            return true;
+        } catch (ignoreWarningDialog) {
+            return false;
+        }
+    }
+
     function trim(value) {
         return safeString(value).replace(/^\s+|\s+$/g, "");
     }
@@ -511,6 +533,7 @@
             adjustOffsetsForBoundsCenterShift: adjustOffsetsForBoundsCenterShift,
             recenterExportItems: recenterExportItems,
             validateVectorArtwork: validateVectorArtwork,
+            showBlockingWarning: showBlockingWarning,
             removeNonRenderingStrokedPaths: removeNonRenderingStrokedPaths,
             selectVisibleStrokedArtwork: selectVisibleStrokedArtwork,
             outlineVisibleStrokes: outlineVisibleStrokes,
@@ -1042,7 +1065,9 @@
     function rejectVisibleClippingGroups(item, layerName) {
         var childItems;
         var childCount;
+        var clippingError;
         var isClipped;
+        var warningMessage;
         var i;
 
         if (!isEffectivelyVisible(item) || safeString(item.typename) !== "GroupItem") {
@@ -1058,10 +1083,16 @@
             );
         }
         if (isClipped) {
-            throw new Error(
+            warningMessage =
+                "FlowCell cannot send this artwork to Blender.\n\nLayer \"" + layerName +
+                "\" contains a visible clipping mask. Expand or release the mask and convert the result " +
+                "to explicit closed filled paths, then try again.";
+            clippingError = new Error(
                 "Layer " + layerName +
                 " contains a visible clipping group. Convert the clipping mask into explicit closed filled paths before sending it to Blender."
             );
+            clippingError.flowcellWarningMessage = warningMessage;
+            throw clippingError;
         }
 
         try {
@@ -1772,6 +1803,7 @@
     }
 
     if (caughtError) {
+        showBlockingWarning(caughtError);
         throw caughtError;
     }
 

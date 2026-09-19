@@ -15,7 +15,7 @@ Adding the Blender program installs Theme as a declared starter in the
 2. Select
    `Programs/Blender/Blender Git Scripts/Toolsets/theme/flowcell.script.json`.
 3. Use Save Main Page Settings after the Button is added, then name its
-   `.flowcell-button-settings.json` file in the native save dialog.
+   `.json` file in the native save dialog.
 4. Reload the FlowCell Blender add-on or restart Blender after deployment.
 
 To use an installed copy, select its Blender panel and activate the `theme`
@@ -28,8 +28,9 @@ The compact default page starts directly at `Theme Palette`: four slightly
 taller bucket cards fit per row, each bucket's swatch, hex value, and `Apply`
 share one control line, and the darkness profile controls sit directly after
 `Load Buckets`. `Gradient 2` has one unlabeled checkbox directly beside its
-name instead of a separate gradient row. The full Place Picture section follows
-Theme Palette, with HDRI below it. Every action Button exposes its original
+name instead of a separate gradient row. A separate `Popped Button Colors`
+section follows Theme Palette, then the full Place Picture section, with HDRI
+below it. Every action Button exposes its original
 explanatory hover tooltip; newer controls describe their current behavior.
 
 ## Basic Workflow
@@ -47,6 +48,52 @@ explanatory hover tooltip; newer controls describe their current behavior.
 6. Use `Save Buckets` or `Load Buckets` when only a JSON field snapshot is
    needed.
 7. Use the Place Picture and HDRI controls independently as needed.
+
+## Popped Button Colors
+
+This section manages aggregate Surface colors for action Buttons in currently
+open Blender Pop-out and Fan windows. It never lists Button names or offers
+per-Button controls. Expanded regular and Tool Set Pop-outs contribute their
+rendered placements. Authored Pop-out Fans and legacy standalone Fans contribute
+the exact Fan-surface owner plus every member even while collapsed, so the owner
+and the Buttons revealed by fanning out already share the applied gradient.
+Closed or minimized windows, the separate Main/Panel occurrence of a Fan owner,
+Button Editor preview Fans, and other programs remain outside the scope.
+
+The action controls share one row in this exact order: `Rescan`,
+`Apply Gradient`, `Apply Buckets`, `Refill`, `Scatter`, then `Toggle Text`.
+Every ordered stop is visible in one horizontally scrollable row: `Top`, the
+intermediate `Color 2` through `Color N-1` controls, then `Bottom`. The
+`Gradient Colors` count control follows that stop row rather than joining the
+action row.
+
+| Control | Behavior |
+| --- | --- |
+| `Rescan` | Enumerates live Blender Pop-out and Fan windows, reads canonical windows plus Main-owned settings-backed live drafts, groups equal effective Surface colors, and records the exact hidden placement membership behind each aggregate bucket. A Fan contributes its real Fan-surface owner and members in either collapsed or expanded state. |
+| `Apply Gradient` | Applies the current ordered multi-color gradient, Spread, and gradient Scatter controls with the remembered seed to every currently scoped placement. Adjacent colors form smooth gradient segments, and every stop can be edited directly. By default the gradient follows each Pop-out or Fan's local Button layout. With `Screen Top-to-Bottom` checked, each Button center is mapped through its window frame to its containing monitor, so the monitor top is the Top color and the monitor bottom is the Bottom color. An authored Fan must be expanded while this screen mode is applied so its live full frame is available; a legacy Fan uses its saved surface envelope anchored to the collapsed owner. |
+| `Apply Buckets` | Writes the edited aggregate buckets back as per-placement Surface overrides. Any changed open-window set, draft, placement, color, or canonical revision makes the operation fail with a Rescan prompt instead of overwriting newer work. |
+| `Refill` | Freshly samples exactly the number of distinct colors requested by `Gradient Colors` from the current Theme image, stores and displays them in sampler order as the gradient stops, updates Top and Bottom, advances the remembered seed, and applies that smooth gradient to the currently scoped Buttons. It fails without changing the current gradient when the image returns too few distinct colors. |
+| `Scatter` | Redistributes the currently present popped-Button bucket colors across the remembered placements. It advances the persisted seed and hashes that seed with each hidden placement ID, so the color mapping remains deterministic until Scatter is pressed again. |
+| `Toggle Text` | Resolves the current live Blender Pop-out/Fan scope and switches all scoped Button label text together between black and white. The action changes only per-placement Text overrides; Surface colors and saved skins are preserved. |
+| `Gradient Colors` | Accepts a whole number from 2 through 16. It is the exact count of ordered colors that `Refill` requests from the current Theme image, displays between Top and Bottom, and includes in the smooth gradient. Changing the count resamples and immediately redraws every current stop so `Apply Gradient` remains usable before the next Refill. |
+| Aggregate color bucket | Shows one editable color plus the count of popped Buttons currently using it. Editing a bucket stages that color for every remembered member. |
+| Skin materials | Shows the exact non-text material colors for a tint-only skin that has no honest single Surface root. These groups stay read-only until `Refill` establishes an explicit Surface color. |
+| Top / intermediate colors / Bottom | Edit any ordered color in the popped-Button Surface gradient. Top and Bottom are the endpoints; every intermediate color appears between them. |
+| Spread | Controls how much of the Top-to-Bottom range is used. |
+| Gradient Scatter | Adds the same deterministic per-placement color jitter used by the Main Theme Editor. It remains part of the gradient controls used by `Apply Gradient`, independently of the `Scatter` action Button. |
+| `Screen Top-to-Bottom` | When checked, anchors `Apply Gradient` to each Button's physical position from the top to the bottom of its monitor work area instead of repeating the local gradient inside each Pop-out. The setting is off by default. |
+
+The gradient color count and ordered stops, scatter seed, gradient controls, screen-gradient checkbox,
+aggregate buckets, and internal placement mapping are stored in the installed Theme Button's owner
+state. Scatter uses the stable hidden placement identity rather than the
+visible bucket order, so rescanning, reordering, or reopening the same settings
+choice does not reshuffle colors while the saved seed is unchanged. Canonical
+Pop-out colors are saved and published; settings-backed Open Pop colors are
+published only to that isolated live draft and do not rewrite its settings
+file. Saved skin source, actions, membership, and geometry are not changed.
+`Toggle Text` derives its next black-or-white result from the current live
+aggregate scope on every press, so it does not store a separate page toggle
+state or expose individual Button choices.
 
 ## Theme Controls
 
@@ -138,8 +185,9 @@ release-owned Theme update must also bump the matching
 registered-program synchronization then updates the existing owner in place.
 Ad hoc local edits are not updated from the Buttons Editor; intentionally replace
 the owner through the normal source lifecycle instead.
-After either path, reload the FlowCell Blender add-on or restart Blender before
-testing the changed deployment.
+After either path, close and reopen the installed Theme page after its owner has
+synchronized. Reload the FlowCell Blender add-on or restart Blender only when
+the package's Blender-side source also changed.
 
 Deleting the Theme owner closes its page and removes its canonical graph, active
 record, owned Local Scripts package, bindings, generated bridge artifacts,

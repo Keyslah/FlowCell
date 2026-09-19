@@ -25,7 +25,9 @@
   const config = objectRecord(descriptor.config) || {};
   const copy = objectRecord(config.copy) || {};
   const actions = objectRecord(config.actions) || {};
+  const buttonThemeActions = objectRecord(actions.buttonTheme) || {};
   const localActions = objectRecord(config.localActions) || {};
+  const buttonThemeConfig = objectRecord(config.buttonTheme) || {};
   const fieldDefinitions = Array.isArray(config.fields) ? config.fields : [];
   const roles = Array.isArray(config.roles) ? config.roles : [];
   const fieldById = new Map(fieldDefinitions.map((field) => [field.id, field]));
@@ -43,8 +45,27 @@
     activePackage: {
       path: "",
       name: ""
+    },
+    buttonTheme: {
+      revision: null,
+      topColor: normalizeHex(buttonThemeConfig.topColor) || "#8FDB0A",
+      bottomColor: normalizeHex(buttonThemeConfig.bottomColor) || "#141414",
+      spread: bounded(finiteNumber(buttonThemeConfig.spread, 100), 0, 100),
+      scatter: bounded(finiteNumber(buttonThemeConfig.scatter, 20), 0, 100),
+      seed: Number.isSafeInteger(buttonThemeConfig.seed) ? buttonThemeConfig.seed : 1,
+      gradientColorCount: boundedInteger(buttonThemeConfig.gradientColorCount, 5, 2, 16),
+      gradientColors: [],
+      screenTopToBottom: buttonThemeConfig.screenTopToBottom === true,
+      placements: [],
+      buckets: []
     }
   };
+  model.buttonTheme.gradientColors = resampledButtonThemeGradientColors(
+    buttonThemeConfig.gradientColors,
+    model.buttonTheme.gradientColorCount,
+    model.buttonTheme.topColor,
+    model.buttonTheme.bottomColor
+  );
 
   let busy = false;
   let persistenceTimer = 0;
@@ -62,6 +83,12 @@
 
   function bounded(value, minimum = 0, maximum = 1) {
     return Math.max(minimum, Math.min(maximum, finiteNumber(value, minimum)));
+  }
+
+  function boundedInteger(value, fallback, minimum, maximum) {
+    const parsed = typeof value === "number" ? value : Number(value);
+    const resolved = Number.isFinite(parsed) ? Math.trunc(parsed) : fallback;
+    return Math.max(minimum, Math.min(maximum, resolved));
   }
 
   function normalizeHex(value) {
@@ -120,7 +147,8 @@
       schemaVersion: 1,
       fields: pickFields(fieldDefinitions.map((field) => field.id)),
       tone: cloneValue(model.tone),
-      activePackage: cloneValue(model.activePackage)
+      activePackage: cloneValue(model.activePackage),
+      buttonTheme: cloneValue(model.buttonTheme)
     };
   }
 
@@ -153,8 +181,10 @@
     setStatus(progressMessage || copy.working || "Working…");
     try {
       const response = await pageApi.request(actionId, payload || {});
-      setStatus(responseMessage(response, copy.complete || "Complete."), "success");
-      return objectRecord(response) || {};
+      const record = objectRecord(response) || {};
+      const statusKind = record.changedCount === 0 ? "info" : "success";
+      setStatus(responseMessage(record, copy.complete || "Complete."), statusKind);
+      return record;
     } catch (error) {
       setStatus(error instanceof Error ? error.message : String(error), "error");
       return null;
@@ -434,6 +464,205 @@
     patchFields(tonePatch({ mode, level: model.tone.level, targets }), false);
   }
 
+  function normalizeMaterialColors(value) {
+    if (!Array.isArray(value)) return [];
+    return Array.from(new Set(value.flatMap((entry) => {
+      if (typeof entry !== "string") return [];
+      const normalized = entry.trim().toUpperCase();
+      return /^#[0-9A-F]{6}(?:[0-9A-F]{2})?$/.test(normalized) ? [normalized] : [];
+    }))).sort();
+  }
+
+  function countedButtonThemeBuckets(placements, buckets) {
+    const counts = new Map();
+    placements.forEach(({ bucketId }) => counts.set(bucketId, (counts.get(bucketId) || 0) + 1));
+    return buckets
+      .map((bucket) => ({ ...bucket, count: counts.get(bucket.id) || 0 }))
+      .filter((bucket) => bucket.count > 0)
+      .sort((left, right) => {
+        if (left.kind !== right.kind) return left.kind === "surface" ? -1 : 1;
+        if (left.kind === "surface") return hexLuminance(left.color) - hexLuminance(right.color) || left.color.localeCompare(right.color);
+        return left.id.localeCompare(right.id);
+      });
+  }
+
+  function scannedButtonThemePalette(value) {
+    const placementById = new Map();
+    const bucketById = new Map();
+    (Array.isArray(value) ? value : []).forEach((entry) => {
+      const placement = objectRecord(entry);
+      const placementId = typeof placement?.placementId === "string" ? placement.placementId.trim() : "";
+      if (!placementId) return;
+      const color = normalizeHex(placement.color);
+      const materialColors = color ? [] : normalizeMaterialColors(placement.materialColors);
+      const bucketId = color
+        ? `surface:${color}`
+        : `material:${materialColors.join("|") || "unresolved"}`;
+      if (!bucketById.has(bucketId)) {
+        bucketById.set(bucketId, color
+          ? { id: bucketId, kind: "surface", color, materialColors: [] }
+          : { id: bucketId, kind: "material", color: null, materialColors });
+      }
+      placementById.set(placementId, { placementId, bucketId });
+    });
+    const placements = [...placementById.values()];
+    return {
+      placements,
+      buckets: countedButtonThemeBuckets(placements, [...bucketById.values()])
+    };
+  }
+
+  function adoptButtonThemeResponse(response) {
+    const record = objectRecord(response);
+    if (!record || !Array.isArray(record.placements) || !Number.isSafeInteger(record.revision)) return false;
+    const palette = scannedButtonThemePalette(record.placements);
+    model.buttonTheme.revision = record.revision;
+    model.buttonTheme.placements = palette.placements;
+    model.buttonTheme.buckets = palette.buckets;
+    schedulePersistence();
+    render();
+    return true;
+  }
+
+  function buttonThemeAssignments() {
+    const buckets = new Map(model.buttonTheme.buckets.map((bucket) => [bucket.id, bucket]));
+    return model.buttonTheme.placements.map(({ placementId, bucketId }) => {
+      const bucket = buckets.get(bucketId);
+      if (!bucket) throw new Error("The popped Button palette is incomplete. Press Rescan and try again.");
+      return bucket.kind === "surface"
+        ? { placementId, color: bucket.color }
+        : { placementId };
+    });
+  }
+
+  function opaqueButtonThemeColor(value) {
+    if (typeof value !== "string") return null;
+    const normalized = value.trim().toUpperCase();
+    return normalizeHex(/^#[0-9A-F]{8}$/.test(normalized) ? normalized.slice(0, 7) : normalized);
+  }
+
+  function exactButtonThemePalette(value) {
+    return Array.from(new Set((Array.isArray(value) ? value : []).map(opaqueButtonThemeColor).filter(Boolean)));
+  }
+
+  function orderedButtonThemeGradientColors(value) {
+    return (Array.isArray(value) ? value : [])
+      .map(opaqueButtonThemeColor)
+      .filter(Boolean)
+      .slice(0, 16);
+  }
+
+  function interpolatedButtonThemeColor(topColor, bottomColor, amount) {
+    const top = normalizeHex(topColor);
+    const bottom = normalizeHex(bottomColor);
+    if (!top || !bottom) return top || bottom || "#000000";
+    const boundedAmount = bounded(amount, 0, 1);
+    return rgbToHex(
+      Number.parseInt(top.slice(1, 3), 16) +
+        (Number.parseInt(bottom.slice(1, 3), 16) - Number.parseInt(top.slice(1, 3), 16)) * boundedAmount,
+      Number.parseInt(top.slice(3, 5), 16) +
+        (Number.parseInt(bottom.slice(3, 5), 16) - Number.parseInt(top.slice(3, 5), 16)) * boundedAmount,
+      Number.parseInt(top.slice(5, 7), 16) +
+        (Number.parseInt(bottom.slice(5, 7), 16) - Number.parseInt(top.slice(5, 7), 16)) * boundedAmount
+    );
+  }
+
+  function buttonThemeGradientColorAt(colors, amount) {
+    if (colors.length <= 1) return colors[0] || "#000000";
+    const scaled = bounded(amount, 0, 1) * (colors.length - 1);
+    const startIndex = Math.min(colors.length - 2, Math.floor(scaled));
+    return interpolatedButtonThemeColor(colors[startIndex], colors[startIndex + 1], scaled - startIndex);
+  }
+
+  function resampledButtonThemeGradientColors(value, count, topColor, bottomColor) {
+    const requestedCount = boundedInteger(count, 5, 2, 16);
+    let colors = orderedButtonThemeGradientColors(value);
+    if (colors.length < 2) {
+      colors = [normalizeHex(topColor), normalizeHex(bottomColor)].filter(Boolean);
+    }
+    if (colors.length < 2) colors = [colors[0] || "#8FDB0A", colors[0] || "#141414"];
+    return Array.from(
+      { length: requestedCount },
+      (_, index) => buttonThemeGradientColorAt(colors, index / (requestedCount - 1))
+    );
+  }
+
+  function synchronizeButtonThemeGradientEndpoints() {
+    const colors = model.buttonTheme.gradientColors;
+    model.buttonTheme.topColor = colors[0] || model.buttonTheme.topColor;
+    model.buttonTheme.bottomColor = colors[colors.length - 1] || model.buttonTheme.bottomColor;
+  }
+
+  function currentButtonThemePalette() {
+    return exactButtonThemePalette(model.buttonTheme.buckets.flatMap((bucket) => (
+      bucket.kind === "surface" ? [bucket.color] : bucket.materialColors
+    )));
+  }
+
+  function scatteredButtonThemeAssignments(colors, seed) {
+    const palette = exactButtonThemePalette(colors);
+    if (!palette.length) throw new Error(copy.buttonThemeNeedsColors || "No popped Button colors are available. Press Rescan and try again.");
+    return model.buttonTheme.placements
+      .map(({ placementId }) => ({ placementId, rank: stableNoise(`${seed}\u0000${placementId}`) }))
+      .sort((left, right) => left.rank - right.rank || left.placementId.localeCompare(right.placementId))
+      .map(({ placementId }, index) => ({ placementId, color: palette[index % palette.length] }));
+  }
+
+  function hydrateButtonThemeState(value) {
+    const state = objectRecord(value);
+    if (!state) return;
+    model.buttonTheme.topColor = normalizeHex(state.topColor) || model.buttonTheme.topColor;
+    model.buttonTheme.bottomColor = normalizeHex(state.bottomColor) || model.buttonTheme.bottomColor;
+    model.buttonTheme.spread = bounded(finiteNumber(state.spread, model.buttonTheme.spread), 0, 100);
+    model.buttonTheme.scatter = bounded(finiteNumber(state.scatter, model.buttonTheme.scatter), 0, 100);
+    model.buttonTheme.seed = Number.isSafeInteger(state.seed) ? state.seed : model.buttonTheme.seed;
+    model.buttonTheme.gradientColorCount = boundedInteger(
+      state.gradientColorCount ?? state.refillRange,
+      model.buttonTheme.gradientColorCount,
+      2,
+      16
+    );
+    model.buttonTheme.gradientColors = resampledButtonThemeGradientColors(
+      state.gradientColors,
+      model.buttonTheme.gradientColorCount,
+      model.buttonTheme.topColor,
+      model.buttonTheme.bottomColor
+    );
+    synchronizeButtonThemeGradientEndpoints();
+    model.buttonTheme.screenTopToBottom = typeof state.screenTopToBottom === "boolean"
+      ? state.screenTopToBottom
+      : model.buttonTheme.screenTopToBottom;
+    model.buttonTheme.revision = Number.isSafeInteger(state.revision) ? state.revision : null;
+
+    const bucketById = new Map();
+    (Array.isArray(state.buckets) ? state.buckets : []).forEach((entry) => {
+      const bucket = objectRecord(entry);
+      const id = typeof bucket?.id === "string" ? bucket.id.trim() : "";
+      if (!id || !["surface", "material"].includes(bucket.kind)) return;
+      if (bucket.kind === "surface") {
+        const color = normalizeHex(bucket.color);
+        if (color) bucketById.set(id, { id, kind: "surface", color, materialColors: [] });
+      } else {
+        bucketById.set(id, {
+          id,
+          kind: "material",
+          color: null,
+          materialColors: normalizeMaterialColors(bucket.materialColors)
+        });
+      }
+    });
+    const placementById = new Map();
+    (Array.isArray(state.placements) ? state.placements : []).forEach((entry) => {
+      const placement = objectRecord(entry);
+      const placementId = typeof placement?.placementId === "string" ? placement.placementId.trim() : "";
+      const bucketId = typeof placement?.bucketId === "string" ? placement.bucketId.trim() : "";
+      if (placementId && bucketById.has(bucketId)) placementById.set(placementId, { placementId, bucketId });
+    });
+    const placements = [...placementById.values()];
+    model.buttonTheme.placements = placements;
+    model.buttonTheme.buckets = countedButtonThemeBuckets(placements, [...bucketById.values()]);
+  }
+
   function themePayload() {
     const map = objectRecord(config.payloadMaps?.theme) || {};
     return Object.fromEntries(Object.entries(map).map(([payloadKey, fieldId]) => [payloadKey, cloneValue(model.fields[fieldId])]));
@@ -509,6 +738,129 @@
       refillVariant: model.tone.refillVariant
     }));
     await applyTheme();
+  }
+
+  async function rescanButtonTheme() {
+    const response = await requestAction(
+      buttonThemeActions.scan,
+      {},
+      copy.scanningButtonTheme
+    );
+    if (response) adoptButtonThemeResponse(response);
+  }
+
+  async function applyButtonThemeBuckets() {
+    let assignments;
+    try {
+      assignments = buttonThemeAssignments();
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : String(error), "error");
+      return;
+    }
+    await applyButtonThemeAssignments(assignments, copy.applyingButtonTheme);
+  }
+
+  async function applyButtonThemeAssignments(assignments, progressMessage) {
+    if (!Number.isSafeInteger(model.buttonTheme.revision)) {
+      setStatus(copy.buttonThemeNeedsScan || "Press Rescan before applying popped Button colors.", "error");
+      return null;
+    }
+    const response = await requestAction(
+      buttonThemeActions.apply,
+      { expectedRevision: model.buttonTheme.revision, assignments },
+      progressMessage || copy.applyingButtonTheme
+    );
+    if (response) adoptButtonThemeResponse(response);
+    return response;
+  }
+
+  function buttonThemeGradientPayload(seed, colors = model.buttonTheme.gradientColors) {
+    return {
+      colors: [...colors],
+      spread: model.buttonTheme.spread,
+      scatter: model.buttonTheme.scatter,
+      seed,
+      screenTopToBottom: model.buttonTheme.screenTopToBottom
+    };
+  }
+
+  async function applyButtonThemeGradient() {
+    const response = await requestAction(
+      buttonThemeActions.refill,
+      buttonThemeGradientPayload(model.buttonTheme.seed),
+      copy.applyingButtonThemeGradient || copy.applyingButtonTheme
+    );
+    if (response) adoptButtonThemeResponse(response);
+  }
+
+  async function refillButtonTheme() {
+    const imageFieldId = config.palette?.imageFieldId;
+    const imagePath = String(model.fields[imageFieldId] || "").trim();
+    if (!imagePath) {
+      setStatus(copy.buttonThemeNeedsImage || "Choose a theme image before refilling the popped Button gradient.", "error");
+      return;
+    }
+    const sample = await requestAction(
+      actions.theme.sample,
+      { imagePath },
+      copy.samplingButtonThemePalette || copy.samplingPalette
+    );
+    if (!sample || sample.selected === false) return;
+    const sampledPalette = exactButtonThemePalette(sample.paletteHexes);
+    const requestedCount = model.buttonTheme.gradientColorCount;
+    if (sampledPalette.length < requestedCount) {
+      setStatus(
+        `The theme image returned only ${sampledPalette.length} distinct color${sampledPalette.length === 1 ? "" : "s"}. Lower Gradient Colors and try again.`,
+        "error"
+      );
+      return;
+    }
+    const nextSeed = Number.isSafeInteger(model.buttonTheme.seed + 1) ? model.buttonTheme.seed + 1 : 1;
+    const nextColors = sampledPalette.slice(0, requestedCount);
+    const response = await requestAction(
+      buttonThemeActions.refill,
+      buttonThemeGradientPayload(nextSeed, nextColors),
+      copy.refillingButtonTheme
+    );
+    if (!response) return;
+    const previousSeed = model.buttonTheme.seed;
+    const previousColors = model.buttonTheme.gradientColors;
+    model.buttonTheme.seed = nextSeed;
+    model.buttonTheme.gradientColors = nextColors;
+    synchronizeButtonThemeGradientEndpoints();
+    if (!adoptButtonThemeResponse(response)) {
+      model.buttonTheme.seed = previousSeed;
+      model.buttonTheme.gradientColors = previousColors;
+      synchronizeButtonThemeGradientEndpoints();
+    }
+  }
+
+  async function scatterButtonTheme() {
+    if (!Number.isSafeInteger(model.buttonTheme.revision)) {
+      setStatus(copy.buttonThemeNeedsScan || "Press Rescan before applying popped Button colors.", "error");
+      return;
+    }
+    let assignments;
+    const previousSeed = model.buttonTheme.seed;
+    model.buttonTheme.seed = Number.isSafeInteger(previousSeed + 1) ? previousSeed + 1 : 1;
+    try {
+      assignments = scatteredButtonThemeAssignments(currentButtonThemePalette(), model.buttonTheme.seed);
+    } catch (error) {
+      model.buttonTheme.seed = previousSeed;
+      setStatus(error instanceof Error ? error.message : String(error), "error");
+      return;
+    }
+    const response = await applyButtonThemeAssignments(assignments, copy.scatteringButtonTheme);
+    if (!response) model.buttonTheme.seed = previousSeed;
+  }
+
+  async function toggleButtonThemeText() {
+    const response = await requestAction(
+      buttonThemeActions.toggleText,
+      {},
+      copy.togglingButtonThemeText || "Toggling popped Button text..."
+    );
+    if (response) adoptButtonThemeResponse(response);
   }
 
   async function saveFields() {
@@ -731,6 +1083,240 @@
     return section;
   }
 
+  function renderButtonThemeGradientStopControl(index) {
+    const lastIndex = model.buttonTheme.gradientColors.length - 1;
+    const labelText = index === 0
+      ? buttonThemeConfig.topLabel || "Top"
+      : index === lastIndex
+        ? buttonThemeConfig.bottomLabel || "Bottom"
+        : `Color ${index + 1}`;
+    const control = element("label", "button-theme-gradient__color");
+    control.append(element("span", "button-theme-gradient__label", labelText));
+    const inputs = element("span", "button-theme-gradient__color-inputs");
+    const picker = document.createElement("input");
+    picker.type = "color";
+    picker.value = model.buttonTheme.gradientColors[index];
+    picker.setAttribute("aria-label", `${labelText} color picker`);
+    const textInput = document.createElement("input");
+    textInput.type = "text";
+    textInput.value = model.buttonTheme.gradientColors[index];
+    textInput.setAttribute("aria-label", `${labelText} color`);
+    const update = (value) => {
+      const color = normalizeHex(value);
+      if (!color) {
+        textInput.value = model.buttonTheme.gradientColors[index];
+        return;
+      }
+      model.buttonTheme.gradientColors[index] = color;
+      if (index === 0) model.buttonTheme.topColor = color;
+      if (index === lastIndex) model.buttonTheme.bottomColor = color;
+      picker.value = color;
+      textInput.value = color;
+      schedulePersistence();
+    };
+    picker.addEventListener("input", () => update(picker.value));
+    textInput.addEventListener("change", () => update(textInput.value));
+    inputs.append(picker, textInput);
+    control.append(inputs);
+    return control;
+  }
+
+  function populateButtonThemeGradientStops(stops) {
+    stops.replaceChildren();
+    model.buttonTheme.gradientColors.forEach((_color, index) => {
+      stops.append(renderButtonThemeGradientStopControl(index));
+    });
+  }
+
+  function renderButtonThemeGradientStops() {
+    const stops = element("div", "button-theme-gradient__stops");
+    populateButtonThemeGradientStops(stops);
+    return stops;
+  }
+
+  function renderButtonThemeRangeControl(labelText, key) {
+    const control = element("label", "button-theme-gradient__range");
+    const labelRow = element("span", "button-theme-gradient__range-label");
+    const valueNode = element("span", "button-theme-gradient__value", Math.round(model.buttonTheme[key]));
+    labelRow.append(element("span", "", labelText), valueNode);
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "100";
+    slider.step = "1";
+    slider.value = String(model.buttonTheme[key]);
+    slider.addEventListener("input", () => {
+      model.buttonTheme[key] = bounded(Number(slider.value), 0, 100);
+      valueNode.textContent = String(Math.round(model.buttonTheme[key]));
+      schedulePersistence();
+    });
+    control.append(labelRow, slider);
+    return control;
+  }
+
+  function renderButtonThemeScreenGradientControl() {
+    const control = element("label", "button-theme-gradient__screen-toggle");
+    control.title = buttonThemeConfig.screenTopToBottomTooltip ||
+      "Use each Button's position within its monitor so one gradient runs from the top to the bottom of the screen.";
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = model.buttonTheme.screenTopToBottom;
+    checkbox.addEventListener("change", () => {
+      model.buttonTheme.screenTopToBottom = checkbox.checked === true;
+      schedulePersistence();
+    });
+    control.append(
+      checkbox,
+      element(
+        "span",
+        "button-theme-gradient__screen-label",
+        buttonThemeConfig.screenTopToBottomLabel || "Screen Top-to-Bottom"
+      )
+    );
+    return control;
+  }
+
+  function renderButtonThemeGradientColorCountControl(stops) {
+    const minimum = boundedInteger(buttonThemeConfig.gradientColorCountMinimum, 2, 2, 16);
+    const maximum = boundedInteger(buttonThemeConfig.gradientColorCountMaximum, 16, minimum, 16);
+    const labelText = buttonThemeConfig.gradientColorCountLabel || "Gradient Colors";
+    const control = element("label", "button-theme-gradient__color-count");
+    control.title = buttonThemeConfig.gradientColorCountTooltip ||
+      "Choose how many colors the popped-Button gradient uses. Refill samples this many colors from the current Theme image.";
+    control.append(element("span", "button-theme-gradient__color-count-label", labelText));
+    const inputs = element("span", "button-theme-gradient__color-count-inputs");
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.min = String(minimum);
+    slider.max = String(maximum);
+    slider.step = "1";
+    slider.value = String(model.buttonTheme.gradientColorCount);
+    slider.setAttribute("aria-label", `${labelText} slider`);
+    const number = document.createElement("input");
+    number.type = "number";
+    number.min = String(minimum);
+    number.max = String(maximum);
+    number.step = "1";
+    number.value = String(model.buttonTheme.gradientColorCount);
+    number.setAttribute("aria-label", labelText);
+    const update = (value) => {
+      const nextCount = boundedInteger(value, model.buttonTheme.gradientColorCount, minimum, maximum);
+      model.buttonTheme.gradientColors = resampledButtonThemeGradientColors(
+        model.buttonTheme.gradientColors,
+        nextCount,
+        model.buttonTheme.topColor,
+        model.buttonTheme.bottomColor
+      );
+      model.buttonTheme.gradientColorCount = nextCount;
+      synchronizeButtonThemeGradientEndpoints();
+      slider.value = String(model.buttonTheme.gradientColorCount);
+      number.value = String(model.buttonTheme.gradientColorCount);
+      schedulePersistence();
+      populateButtonThemeGradientStops(stops);
+    };
+    slider.addEventListener("input", () => update(slider.value));
+    number.addEventListener("change", () => update(number.value));
+    inputs.append(slider, number);
+    control.append(inputs);
+    return control;
+  }
+
+  function updateButtonThemeBucketColor(bucket, value, picker, textInput) {
+    const color = normalizeHex(value);
+    if (!color) {
+      textInput.value = bucket.color;
+      return;
+    }
+    bucket.color = color;
+    picker.value = color;
+    textInput.value = color;
+    schedulePersistence();
+  }
+
+  function renderButtonThemeBucket(bucket) {
+    const node = element("div", `button-theme-bucket button-theme-bucket--${bucket.kind}`);
+    const countLabel = `${bucket.count} Button${bucket.count === 1 ? "" : "s"}`;
+    if (bucket.kind === "surface") {
+      node.title = `${bucket.color} is currently present on ${countLabel}.`;
+      node.append(element("div", "button-theme-bucket__label", `Surface · ${countLabel}`));
+      const controls = element("div", "button-theme-bucket__controls");
+      const picker = document.createElement("input");
+      picker.type = "color";
+      picker.value = bucket.color;
+      const textInput = document.createElement("input");
+      textInput.type = "text";
+      textInput.value = bucket.color;
+      picker.addEventListener("input", () => updateButtonThemeBucketColor(bucket, picker.value, picker, textInput));
+      textInput.addEventListener("change", () => updateButtonThemeBucketColor(bucket, textInput.value, picker, textInput));
+      controls.append(picker, textInput);
+      node.append(controls);
+      return node;
+    }
+
+    node.title = copy.buttonThemeMaterialTooltip ||
+      "These exact skin material colors have no single Surface root. Refill creates an editable Surface color.";
+    node.append(element("div", "button-theme-bucket__label", `Skin materials · ${countLabel}`));
+    const swatches = element("div", "button-theme-bucket__materials");
+    if (bucket.materialColors.length === 0) {
+      swatches.append(element("span", "button-theme-bucket__unresolved", "No editable Surface root"));
+    } else {
+      bucket.materialColors.forEach((color) => {
+        const swatch = element("span", "button-theme-bucket__material");
+        swatch.title = color;
+        swatch.style.backgroundColor = color;
+        swatches.append(swatch);
+      });
+    }
+    node.append(swatches);
+    return node;
+  }
+
+  function renderButtonThemeCard() {
+    const { section, heading } = makeCard(copy.buttonThemeSectionTitle || "Popped Button Colors");
+    const presentColors = new Set();
+    model.buttonTheme.buckets.forEach((bucket) => {
+      if (bucket.kind === "surface") presentColors.add(bucket.color);
+      else bucket.materialColors.forEach((color) => presentColors.add(color));
+    });
+    const buttonCount = model.buttonTheme.placements.length;
+    heading.append(element(
+      "span",
+      "button-theme-summary",
+      buttonCount
+        ? `${presentColors.size} color${presentColors.size === 1 ? "" : "s"} · ${buttonCount} scoped popped Button${buttonCount === 1 ? "" : "s"}`
+        : copy.buttonThemeEmpty || "Press Rescan to collect popped Button colors."
+    ));
+
+    const actionsRow = element("div", "theme-row theme-row--actions button-theme-actions");
+    actionsRow.append(
+      actionButton(buttonThemeActions.scan, rescanButtonTheme),
+      actionButton(localActions.applyButtonGradient, applyButtonThemeGradient),
+      actionButton(buttonThemeActions.apply, applyButtonThemeBuckets),
+      actionButton(localActions.refillButtonColors, refillButtonTheme),
+      actionButton(localActions.scatterButtonColors, scatterButtonTheme),
+      actionButton(buttonThemeActions.toggleText, toggleButtonThemeText)
+    );
+    section.append(actionsRow);
+
+    const gradient = element("div", "button-theme-gradient");
+    const gradientStops = renderButtonThemeGradientStops();
+    gradient.append(
+      gradientStops,
+      renderButtonThemeGradientColorCountControl(gradientStops),
+      renderButtonThemeRangeControl(buttonThemeConfig.spreadLabel || "Spread", "spread"),
+      renderButtonThemeRangeControl(buttonThemeConfig.scatterLabel || "Scatter", "scatter"),
+      renderButtonThemeScreenGradientControl()
+    );
+    section.append(gradient);
+
+    if (model.buttonTheme.buckets.length) {
+      const buckets = element("div", "button-theme-buckets");
+      model.buttonTheme.buckets.forEach((bucket) => buckets.append(renderButtonThemeBucket(bucket)));
+      section.append(buckets);
+    }
+    return section;
+  }
+
   function renderPictureCard() {
     const { section } = makeCard(copy.pictureSectionTitle);
     const pathField = fieldById.get(config.picture.pathFieldId);
@@ -818,6 +1404,7 @@
     root.replaceChildren();
     root.append(
       renderThemeCard(),
+      renderButtonThemeCard(),
       renderPictureCard(),
       renderEnvironmentCard()
     );
@@ -850,6 +1437,7 @@
         name: typeof activePackage.name === "string" ? activePackage.name : ""
       };
     }
+    hydrateButtonThemeState(state.buttonTheme);
   }
 
   async function initialize() {

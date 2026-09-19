@@ -35,6 +35,12 @@ import {
   reconcileProgramPanelOwners,
   resolvePanelOwnerFanPlacement
 } from "./.compiled-button-system/button/state/panelOwnerButtonOperations.js";
+import {
+  applyProgramPopoutPaletteTargets,
+  gradientProgramPopoutPaletteAssignments,
+  programPopoutPaletteTargetPositions,
+  scanProgramPopoutPaletteTargets
+} from "./.compiled-button-system/theme/programPopoutPalette.js";
 
 function addButton(document, id, marker) {
   document.buttons[id] = {
@@ -765,7 +771,7 @@ test("Button settings save and restore exact membership, text, skin, size, highl
     savedAt: "2026-07-21T12:34:56.000Z"
   });
 
-  assert.equal(BUTTON_SETTINGS_FILE_EXTENSION, ".flowcell-button-settings.json");
+  assert.equal(BUTTON_SETTINGS_FILE_EXTENSION, ".json");
   assert.equal(settings.format, BUTTON_SETTINGS_FILE_FORMAT);
   assert.equal(settings.placementKind, "main-page");
   assert.deepEqual(settings.entries.map((entry) => entry.buttonId), [
@@ -951,6 +957,46 @@ test("Open Pop materializes a regular settings file only in an isolated transien
   assert.deepEqual(
     opened.document.buttons[firstPlacement.buttonId].executionTarget,
     document.buttons[firstPlacement.buttonId].executionTarget
+  );
+  const targets = unit.memberPlacementIds.map((placementId) => ({
+    paletteId: JSON.stringify(["button-popout-files-choice", placementId]),
+    placementId
+  }));
+  const scan = scanProgramPopoutPaletteTargets(opened.document, "Windows", targets);
+  assert.equal(scan.buttonCount, unit.memberPlacementIds.length);
+  const recolored = applyProgramPopoutPaletteTargets(
+    opened.document,
+    "Windows",
+    targets,
+    targets.map(({ paletteId }) => ({ placementId: paletteId, color: "#2468AC" }))
+  );
+  for (const placementId of unit.memberPlacementIds) {
+    assert.equal(recolored.document.themeOverrides[placementId].colors.surface, "#2468AC");
+  }
+  assert.deepEqual(document, before, "recoloring a live Open Pop draft must not mutate canonical state");
+
+  const reopened = buildTransientButtonPopoutSettingsDocument(
+    document,
+    settings,
+    { programName: "Windows", panelName: "Files" },
+    "files-choice"
+  );
+  const reopenedUnit = reopened.document.popoutUnits[reopened.popoutUnitId];
+  const reopenedTargets = reopenedUnit.memberPlacementIds.map((placementId) => ({
+    paletteId: JSON.stringify(["button-popout-files-choice", placementId]),
+    placementId
+  }));
+  assert.deepEqual(reopenedTargets, targets);
+  const gradient = { colors: ["#102030", "#D0E0F0"], spread: 70, scatter: 85, seed: 9 };
+  assert.deepEqual(
+    gradientProgramPopoutPaletteAssignments(
+      programPopoutPaletteTargetPositions(reopened.document, "Windows", reopenedTargets),
+      gradient
+    ),
+    gradientProgramPopoutPaletteAssignments(
+      programPopoutPaletteTargetPositions(opened.document, "Windows", targets),
+      gradient
+    )
   );
   assert.equal(validateButtonStateDocument(opened.document).valid, true);
 });
@@ -1316,6 +1362,74 @@ test("a Fan owner anchors anywhere while its Buttons keep the bounds and overlap
   const memberPlacementId = document.surfaces[setup.fanSurfaceId].placementIds.find(
     (placementId) => placementId !== ownerPlacement.id
   );
+
+  assert.equal(setup.animation.spinEnabled, false);
+  setup.animation.spinEnabled = true;
+  const spinningSettings = buildButtonSettingsFile(document, setup.fanSurfaceId, context);
+  assert.equal(spinningSettings.behavior.kind, "fan");
+  assert.equal(spinningSettings.behavior.animation.spinEnabled, true);
+  const restored = applyButtonSettingsFile(
+    document,
+    setup.fanSurfaceId,
+    spinningSettings,
+    context
+  );
+  assert.equal(restored.fanSetups[setup.id].animation.spinEnabled, true);
+
+  const legacySettings = structuredClone(spinningSettings);
+  delete legacySettings.behavior.animation.spinEnabled;
+  const normalizedSettings = normalizeButtonSettingsFile(legacySettings);
+  assert.equal(normalizedSettings.behavior.animation.spinEnabled, false);
+  assert.equal(validateButtonSettingsFile(legacySettings).valid, true);
+
+  const invalidSettings = structuredClone(spinningSettings);
+  invalidSettings.behavior.animation.spinEnabled = "yes";
+  const invalidSettingsResult = validateButtonSettingsFile(invalidSettings);
+  assert.equal(invalidSettingsResult.valid, false);
+  assert.equal(
+    invalidSettingsResult.issues.some((issue) =>
+      issue.includes("settings.behavior.animation.spinEnabled")
+    ),
+    true
+  );
+
+  const legacyState = structuredClone(document);
+  delete legacyState.fanSetups[setup.id].animation.spinEnabled;
+  const normalizedState = normalizeLoadedButtonStateDocument(legacyState);
+  assert.equal(normalizedState.fanSetups[setup.id].animation.spinEnabled, false);
+  assert.equal(validateButtonStateDocument(normalizedState).valid, true);
+
+  const invalidState = structuredClone(document);
+  invalidState.fanSetups[setup.id].animation.spinEnabled = "yes";
+  const invalidStateResult = validateButtonStateDocument(invalidState);
+  assert.equal(invalidStateResult.valid, false);
+  assert.equal(
+    invalidStateResult.issues.some((issue) =>
+      issue.path === `fanSetups.${setup.id}.animation.spinEnabled`
+    ),
+    true
+  );
+  for (const [field, invalidValue] of [
+    ["durationMs", -1],
+    ["easing", undefined],
+    ["staggerMs", -1]
+  ]) {
+    const malformedAnimationState = structuredClone(document);
+    if (invalidValue === undefined) {
+      delete malformedAnimationState.fanSetups[setup.id].animation[field];
+    } else {
+      malformedAnimationState.fanSetups[setup.id].animation[field] = invalidValue;
+    }
+    const malformedAnimationResult = validateButtonStateDocument(malformedAnimationState);
+    assert.equal(malformedAnimationResult.valid, false);
+    assert.equal(
+      malformedAnimationResult.issues.some((issue) =>
+        issue.path === `fanSetups.${setup.id}.animation.${field}`
+      ),
+      true
+    );
+  }
+  setup.animation.spinEnabled = false;
 
   // The owner is an anchor: negative, far outside, and overlapping all pass.
   for (const anchor of [{ x: -320, y: -240 }, { x: 4000, y: 3000 }, { x: 0, y: 0 }]) {

@@ -31,13 +31,29 @@ import {
   serializeButtonSkinSections
 } from "./.compiled-button-system/button/skins/buttonSkinFormat.js";
 import {
+  BUTTON_GLOW_AMOUNT_MAX,
+  BUTTON_HIGHLIGHT_AMOUNT_MAX,
+  DEFAULT_BUTTON_HIGHLIGHT_AMOUNT,
+  applyButtonSkinSurfaceThemeFallback,
+  buttonHighlightFilter,
+  buttonSkinColorOpacityPercent,
+  buttonSkinSurfaceThemeMode,
+  buttonSkinSurfaceThemeVariable,
+  buttonSkinThemeColorVariables,
+  buttonSkinTextThemeVariable,
+  buttonSkinColorWithOpacity,
   buttonSkinColorWithPreservedAlpha,
   buttonSkinOpaqueColor,
   collectButtonSkinColorBuckets,
   collectButtonSkinProfileColors,
+  collectButtonSkinSurfaceThemeFallbackColors,
+  normalizeButtonGlowAmount,
+  normalizeButtonHighlightAmount,
   normalizeButtonSkinColor,
   readButtonSkinHighlightOnHover,
   readButtonSkinTextColor,
+  resolveButtonGlowAmount,
+  resolveButtonHighlightAmount,
   replaceButtonSkinColor,
   setButtonSkinHighlightOnHover,
   setButtonSkinProfileColor,
@@ -109,6 +125,7 @@ import {
   resolveUninstallOwnerButtonIds
 } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
 import {
+  expandedButtonPopoutPlacementIds,
   setButtonPopoutFanMode
 } from "./.compiled-button-system/button/state/buttonPopoutInteractionOperations.js";
 import {
@@ -227,6 +244,12 @@ import {
   createInitialButtonFanDisclosureState,
   reduceButtonFanDisclosure
 } from "./.compiled-button-system/button/editor/buttonFanDisclosure.js";
+import {
+  BUTTON_FAN_MAX_STAGGER_WINDOW_MS,
+  buttonFanCollapsedTransform,
+  enabledButtonFanMotionStyles,
+  resolveButtonFanMotionItems
+} from "./.compiled-button-system/button/fan/buttonFanMotion.js";
 import {
   shouldApplyMatchedButtonMeasurement
 } from "./.compiled-button-system/button/editor/buttonMeasurementReconciliation.js";
@@ -843,6 +866,7 @@ test("Button Editor bounds reject Windows minimized sentinels and discard stale 
       buttonPopoutUnitId: "open-pop-unit-layers",
       panelOwnerButtonId: "owner-layers",
       buttonDisplayMode: "expanded",
+      buttonDraftSessionId: "  main-open-pop:owner-layers:layers-choice  ",
       buttonPopoutSettingsPath: "C:/FlowCell/layers.flowcell-button-settings.json",
       buttonPopoutChoiceId: "layers-choice"
     });
@@ -866,8 +890,25 @@ test("Button Editor bounds reject Windows minimized sentinels and discard stale 
       "C:/FlowCell/layers.flowcell-button-settings.json"
     );
     assert.equal(
+      registeredSettingsBackedPopout?.buttonDraftSessionId,
+      "main-open-pop:owner-layers:layers-choice"
+    );
+    assert.equal(
       persisted["button-popout-owner-layers"].buttonPopoutChoiceId,
       "layers-choice"
+    );
+    registerLayoutWindow({
+      windowLabel: "button-popout-owner-layers",
+      kind: "button-popout",
+      programName: "Illustrator",
+      panelName: "Layers Builder",
+      buttonPopoutUnitId: "canonical-popout",
+      buttonDisplayMode: "expanded"
+    });
+    assert.equal(
+      readRegisteredLayoutWindow("button-popout-owner-layers")?.buttonDraftSessionId,
+      undefined,
+      "a canonical reopen must clear a stale draft session"
     );
   } finally {
     if (originalWindow === undefined) {
@@ -1379,6 +1420,85 @@ test("Button Fan collapsed geometry keeps its physical anchor and refreshes meas
   }), anchor);
 });
 
+test("Button Fan spin motion is opt-in and plans any child count around the fixed owner", () => {
+  const animation = {
+    durationMs: 180,
+    easing: "ease-out",
+    staggerMs: 30,
+    spinEnabled: false
+  };
+  assert.deepEqual(enabledButtonFanMotionStyles(animation), []);
+  assert.deepEqual(enabledButtonFanMotionStyles({ ...animation, spinEnabled: true }), ["spin"]);
+
+  const placements = [
+    { id: "owner", x: 100, y: 80, width: 40, height: 40 },
+    { id: "one", x: 0, y: 0, width: 20, height: 20 },
+    { id: "two", x: 50, y: 10, width: 60, height: 20 },
+    { id: "three", x: 160, y: 120, width: 20, height: 60 },
+    { id: "four", x: 220, y: 160, width: 40, height: 40 }
+  ];
+  const opening = resolveButtonFanMotionItems({
+    placements,
+    ownerPlacementId: "owner",
+    animation: { ...animation, spinEnabled: true },
+    direction: "opening"
+  });
+
+  assert.equal(opening.length, 4);
+  assert.deepEqual(opening.map((item) => item.placementId), ["one", "two", "three", "four"]);
+  assert.deepEqual(opening.map((item) => item.delayMs), [0, 30, 60, 90]);
+  assert.deepEqual(opening.map((item) => item.rotationDeg), [-270, 270, -270, 270]);
+  assert.deepEqual(
+    { x: opening[0].offsetX, y: opening[0].offsetY },
+    { x: 110, y: 90 },
+    "different-sized children should collapse center-to-center over the owner"
+  );
+  assert.match(buttonFanCollapsedTransform(opening[0]), /^translate\(110px, 90px\) rotate\(-270deg\)/);
+
+  const closing = resolveButtonFanMotionItems({
+    placements,
+    ownerPlacementId: "owner",
+    animation: { ...animation, spinEnabled: true },
+    direction: "closing"
+  });
+  assert.deepEqual(closing.map((item) => item.delayMs), [90, 60, 30, 0]);
+  assert.equal(closing.some((item) => item.placementId === "owner"), false);
+
+  const reduced = resolveButtonFanMotionItems({
+    placements,
+    ownerPlacementId: "owner",
+    animation: { ...animation, spinEnabled: true },
+    direction: "opening",
+    reducedMotion: true
+  });
+  assert.deepEqual(reduced.map((item) => [item.durationMs, item.delayMs]), [
+    [0, 0], [0, 0], [0, 0], [0, 0]
+  ]);
+
+  const largeGrid = resolveButtonFanMotionItems({
+    placements: [
+      placements[0],
+      ...Array.from({ length: 100 }, (_, index) => ({
+        id: `large-${index}`,
+        x: index * 10,
+        y: index * 5,
+        width: 20,
+        height: 20
+      }))
+    ],
+    ownerPlacementId: "owner",
+    animation: { ...animation, spinEnabled: true },
+    direction: "opening"
+  });
+  assert.ok(
+    Math.abs(largeGrid.at(-1).delayMs - BUTTON_FAN_MAX_STAGGER_WINDOW_MS) < 1e-9
+  );
+  assert.equal(
+    largeGrid.every((item, index) => index === 0 || item.delayMs >= largeGrid[index - 1].delayMs),
+    true
+  );
+});
+
 test("Button state round-trips and validates schema version", () => {
   const document = createButtonStateDocument();
   const parsed = parseButtonStateDocumentJson(JSON.stringify(document));
@@ -1389,6 +1509,46 @@ test("Button state round-trips and validates schema version", () => {
   const invalid = validateButtonStateDocument(wrongVersion);
   assert.equal(invalid.structurallyValid, false);
   assert.match(invalid.issues[0].message, /Unsupported Button schema version/);
+});
+
+test("Button state accepts separate persisted highlight and glow amounts and rejects invalid percentages", () => {
+  const { document } = buildButtonDocumentScopeFixture();
+  const placementId = Object.keys(document.placements)[0];
+  document.themeOverrides[placementId] = {
+    colors: {},
+    hoverEnabled: null,
+    activeEnabled: null,
+    hoverColor: null,
+    activeColor: null,
+    highlightAmount: 86,
+    hoverHighlightAmount: 40,
+    activeHighlightAmount: 70,
+    hoverGlowAmount: 30,
+    activeGlowAmount: 90
+  };
+  assert.equal(validateButtonStateDocument(document).valid, true);
+
+  for (const field of [
+    "highlightAmount",
+    "hoverHighlightAmount",
+    "activeHighlightAmount",
+    "hoverGlowAmount",
+    "activeGlowAmount"
+  ]) {
+    const maximum = field === "hoverHighlightAmount" || field === "activeHighlightAmount"
+      ? BUTTON_HIGHLIGHT_AMOUNT_MAX
+      : BUTTON_GLOW_AMOUNT_MAX;
+    for (const invalidAmount of [-1, maximum + 1, 25.5, "75"]) {
+      const invalidDocument = structuredClone(document);
+      invalidDocument.themeOverrides[placementId][field] = invalidAmount;
+      const validation = validateButtonStateDocument(invalidDocument);
+      assert.equal(validation.valid, false);
+      assert.equal(
+        validation.issues.some((issue) => issue.path === `themeOverrides.${placementId}.${field}`),
+        true
+      );
+    }
+  }
 });
 
 test("source identities normalize independently from editable Button fields", () => {
@@ -1531,6 +1691,146 @@ test("Button Color derives stable authored buckets and replaces only matching co
   assert.match(replacedRed.structure, /data-fill="red"/);
 });
 
+test("Theme Surface resolves one authored path or a render-only paint fallback", () => {
+  const rootless = {
+    ...createEmptyButtonSkinSections(),
+    structure: '<div data-core style="background:linear-gradient(#123456,#789ABC);color:#FFFFFF;box-shadow:0 0 2px rgba(0,0,0,.5)">{{label}}</div>'
+  };
+  const legacy = {
+    ...rootless,
+    structure: '<div data-core style="background:var(--button-bg,#123456)">{{label}}</div>'
+  };
+  const primary = {
+    ...rootless,
+    base: "--flowcell-button-color-primary:#123456"
+  };
+  const semantic = {
+    ...primary,
+    base: `${primary.base};--flowcell-button-color-surface:#654321`
+  };
+  const commentedSemantic = {
+    ...rootless,
+    base: "/* Theme surface */ --flowcell-button-color-surface:#654321"
+  };
+  const commentedLegacy = {
+    ...rootless,
+    structure: '<div data-core data-note="var(--button-bg)" style="background:#123456">{{label}}</div>',
+    base: "/* background:var(--button-bg); */ --note:#FFFFFF"
+  };
+  const falseLegacyProperty = {
+    ...rootless,
+    base: "/* background */ --unrelated:var(--button-bg)"
+  };
+  const before = structuredClone(rootless);
+
+  assert.equal(buttonSkinSurfaceThemeMode(semantic), "semantic");
+  assert.equal(buttonSkinSurfaceThemeVariable(semantic), "--flowcell-button-color-surface");
+  assert.equal(buttonSkinSurfaceThemeVariable(commentedSemantic), "--flowcell-button-color-surface");
+  assert.equal(buttonSkinSurfaceThemeVariable(primary), "--flowcell-button-color-primary");
+  assert.equal(buttonSkinSurfaceThemeMode(legacy), "legacy-variable");
+  assert.equal(buttonSkinSurfaceThemeVariable(legacy), "--button-bg");
+  assert.equal(buttonSkinSurfaceThemeMode(rootless), "tint");
+  assert.equal(buttonSkinSurfaceThemeMode(commentedLegacy), "tint");
+  assert.equal(buttonSkinSurfaceThemeMode(falseLegacyProperty), "tint");
+  assert.deepEqual(
+    collectButtonSkinSurfaceThemeFallbackColors(rootless).sort(),
+    ["#00000080", "#123456", "#789ABC"]
+  );
+  assert.deepEqual(rootless, before);
+
+  const themed = applyButtonSkinSurfaceThemeFallback(rootless, "#8DCF9B80");
+  assert.notEqual(themed, rootless);
+  assert.notEqual(themed.structure, rootless.structure);
+  assert.match(themed.structure, /color:#FFFFFF/);
+  assert.doesNotMatch(themed.structure, /#123456|#789ABC|rgba\(0,0,0,.5\)/);
+  assert.match(themed.structure, /#[0-9A-F]{8}/);
+  assert.deepEqual(rootless, before);
+  assert.equal(applyButtonSkinSurfaceThemeFallback(rootless, "not-a-color"), rootless);
+
+  const transparent = applyButtonSkinSurfaceThemeFallback(rootless, "#8DCF9B00");
+  assert.match(transparent.structure, /#[0-9A-F]{6}00/);
+  assert.match(transparent.structure, /color:#FFFFFF/);
+
+  const labelGradient = {
+    ...createEmptyButtonSkinSections(),
+    structure: '<div data-core style="background:#102030"><span style="color:transparent;background-image:linear-gradient(#F1E2D3,#C4B5A6);background-clip:text"><b>{{label}}</b></span></div>'
+  };
+  const themedLabelGradient = applyButtonSkinSurfaceThemeFallback(labelGradient, "#8DCF9B");
+  assert.deepEqual(collectButtonSkinSurfaceThemeFallbackColors(labelGradient), ["#102030"]);
+  assert.doesNotMatch(themedLabelGradient.structure, /background:#102030/);
+  assert.match(themedLabelGradient.structure, /linear-gradient\(#F1E2D3,#C4B5A6\)/);
+
+  const svgLabel = {
+    ...createEmptyButtonSkinSections(),
+    structure: '<svg data-core><rect fill="#102030"/><text fill="#F1E2D3"><tspan>{{label}}</tspan></text></svg>'
+  };
+  const themedSvgLabel = applyButtonSkinSurfaceThemeFallback(svgLabel, "#8DCF9B");
+  assert.deepEqual(collectButtonSkinSurfaceThemeFallbackColors(svgLabel), ["#102030"]);
+  assert.doesNotMatch(themedSvgLabel.structure, /rect fill="#102030"/);
+  assert.match(themedSvgLabel.structure, /text fill="#F1E2D3"/);
+});
+
+test("Theme Text resolves semantic and legacy variables before label fallback", () => {
+  const rootless = {
+    ...createEmptyButtonSkinSections(),
+    structure: '<div data-core style="background:#123456;color:#FFFFFF">{{label}}</div>'
+  };
+  const semantic = { ...rootless, base: "--flowcell-button-color-text:#FFFFFF" };
+  const legacy = {
+    ...rootless,
+    structure: '<div data-core style="color:var(--ycb-ink,#FFFFFF)">{{label}}</div>'
+  };
+  assert.equal(buttonSkinTextThemeVariable(semantic), "--flowcell-button-color-text");
+  assert.equal(buttonSkinTextThemeVariable(legacy), "--ycb-ink");
+  assert.equal(buttonSkinTextThemeVariable(rootless), null);
+});
+
+test("Theme color variables drive only the skin's resolved channel", () => {
+  const rootless = {
+    ...createEmptyButtonSkinSections(),
+    structure: '<div data-core style="background:#123456;color:#FFFFFF">{{label}}</div>'
+  };
+  const semantic = {
+    ...rootless,
+    base: [
+      "--flowcell-button-color-surface:#111111",
+      "--flowcell-button-color-primary:#222222",
+      "--flowcell-button-color-text:#FFFFFF"
+    ].join(";")
+  };
+  const semanticVariables = buttonSkinThemeColorVariables(semantic, {
+    surface: "#8DCF9B",
+    text: "#191919",
+    accent: "#ABCDEF"
+  });
+  assert.deepEqual(semanticVariables, {
+    "--flowcell-button-color-surface": "#8DCF9B",
+    "--flowcell-button-color-text": "#191919",
+    "--flowcell-button-color-accent": "#ABCDEF"
+  });
+  assert.equal("--flowcell-button-color-primary" in semanticVariables, false);
+  assert.equal("--button-bg" in semanticVariables, false);
+
+  const legacy = {
+    ...rootless,
+    structure: '<div data-core style="background:var(--button-bg,#123456);color:var(--button-ink,#FFFFFF)">{{label}}</div>'
+  };
+  assert.deepEqual(buttonSkinThemeColorVariables(legacy, {
+    surface: "#8DCF9B",
+    text: "#191919"
+  }), {
+    "--button-bg": "#8DCF9B",
+    "--button-ink": "#191919"
+  });
+
+  assert.deepEqual(buttonSkinThemeColorVariables(rootless, {
+    surface: "#8DCF9B",
+    text: "#191919"
+  }), {
+    "--flowcell-button-text-color": "#191919"
+  });
+});
+
 test("Button Color exposes only authored semantic profile roots and leaves effects literal", () => {
   const source = {
     ...createEmptyButtonSkinSections(),
@@ -1598,12 +1898,15 @@ test("Button Color exposes only authored semantic profile roots and leaves effec
     compileCache: null
   });
   assert.equal(compiled.ok, true);
+  assert.match(compiled.compiled.scopedCss, /data-button-theme-text/);
 });
 
 test("Button Color normalizes alpha and keeps text color separate from authored buckets", () => {
   assert.equal(normalizeButtonSkinColor("#abc"), "#AABBCC");
   assert.equal(normalizeButtonSkinColor("rgba(10, 20, 30, .5)"), "#0A141E80");
   assert.equal(normalizeButtonSkinColor("rgb(50% 50% 50%)"), "#808080");
+  assert.equal(buttonSkinColorOpacityPercent("rgba(12, 16, 18, .96)"), 96);
+  assert.equal(buttonSkinColorWithOpacity("#102030", 50), "#10203080");
   assert.equal(buttonSkinColorWithPreservedAlpha("#ABCDEF", "#01020340"), "#ABCDEF40");
   assert.equal(buttonSkinOpaqueColor("#01020340"), "#010203");
 
@@ -1620,7 +1923,12 @@ test("Button Color normalizes alpha and keeps text color separate from authored 
     compileCache: null
   });
   assert.equal(compiledWithoutOverride.ok, true);
-  assert.doesNotMatch(compiledWithoutOverride.compiled.scopedCss, /color:var\(--flowcell-button-text-color\)/);
+  const authoredLabelRule = compiledWithoutOverride.compiled.scopedCss.match(
+    /^\[data-button-label-node\]\{[^}]*\}/m
+  )?.[0];
+  assert.ok(authoredLabelRule);
+  assert.doesNotMatch(authoredLabelRule, /color:var\(--flowcell-button-text-color\)/);
+  assert.match(compiledWithoutOverride.compiled.scopedCss, /data-button-theme-text/);
 
   const changed = setButtonSkinTextColor(source, "#abc");
   assert.equal(readButtonSkinTextColor(changed), "#AABBCC");
@@ -1655,7 +1963,11 @@ test("Button Color normalizes alpha and keeps text color separate from authored 
     compileCache: null
   });
   assert.equal(compiledRestored.ok, true);
-  assert.doesNotMatch(compiledRestored.compiled.scopedCss, /color:var\(--flowcell-button-text-color\)/);
+  const restoredLabelRule = compiledRestored.compiled.scopedCss.match(
+    /^\[data-button-label-node\]\{[^}]*\}/m
+  )?.[0];
+  assert.ok(restoredLabelRule);
+  assert.doesNotMatch(restoredLabelRule, /color:var\(--flowcell-button-text-color\)/);
 });
 
 test("skin hover highlight is an explicit portable Base setting", () => {
@@ -2179,14 +2491,20 @@ test("skin hover highlight follows the visual latch with a legacy placement fall
   );
 
   assert.match(buttonHost, /highlightOnHover=\{placement\.highlightOnHover\}/);
+  assert.match(buttonHost, /themeOverride=\{themeOverride\}/);
   assert.match(buttonHost, /rawHovered=\{hovered\}/);
   assert.doesNotMatch(buttonHost, /rawHovered=\{resolvedAppearance\.flags\.hovered\}/);
   assert.match(skinRenderer, /readButtonSkinHighlightOnHover\(skin\)/);
-  assert.match(skinRenderer, /hoverHighlighted: \(skinHighlightOnHover \?\? highlightOnHover\) && rawHovered/);
+  assert.match(skinRenderer, /hoverHighlighted: \(themeOverride\?\.hoverEnabled \?\? skinHighlightOnHover \?\? highlightOnHover\) && rawHovered/);
+  assert.match(skinRenderer, /hoverHighlightAmount: resolveButtonHighlightAmount\(\s*themeOverride\?\.hoverHighlightAmount \?\? themeOverride\?\.highlightAmount/);
+  assert.match(skinRenderer, /activeHighlightAmount: resolveButtonHighlightAmount\(\s*themeOverride\?\.activeHighlightAmount \?\? themeOverride\?\.highlightAmount/);
+  assert.match(skinRenderer, /hoverGlowAmount: resolveButtonGlowAmount\(\s*themeOverride\?\.hoverGlowAmount \?\? themeOverride\?\.highlightAmount/);
+  assert.match(skinRenderer, /activeGlowAmount: resolveButtonGlowAmount\(\s*themeOverride\?\.activeGlowAmount \?\? themeOverride\?\.highlightAmount/);
   assert.match(skinRenderer, /filter: buttonHighlightFilter\(renderedVisual\)/);
-  assert.match(skinRenderer, /if \(snapshot\.hoverHighlighted\) lifts\.push\("brightness\(1\.15\)"\)/);
   assert.match(skinRenderer, /setBooleanAttribute\(host, "data-button-pointer-hover", rawHovered\)/);
-  assert.match(skinRenderer, /return <span ref=\{hostRef\} data-button-skin-host="true" style=\{style\} \/>/);
+  assert.match(skinRenderer, /data-button-skin-host="true"/);
+  assert.match(skinRenderer, /data-button-theme-surface-fallback/);
+  assert.match(skinRenderer, /style=\{style\}/);
   assert.match(buttonHost, /import \{ flushSync \} from "react-dom";/);
   assert.match(
     buttonHost,
@@ -2219,6 +2537,92 @@ test("skin hover highlight follows the visual latch with a legacy placement fall
   assert.doesNotMatch(nativeHitboxes, /host\.getAttribute\("data-button-hover"\) === "true"/);
 });
 
+test("host highlight and glow amounts default prominently and scale hover and active independently", () => {
+  assert.equal(BUTTON_HIGHLIGHT_AMOUNT_MAX, 1000);
+  assert.equal(BUTTON_GLOW_AMOUNT_MAX, 100);
+  assert.equal(DEFAULT_BUTTON_HIGHLIGHT_AMOUNT, 75);
+  assert.equal(normalizeButtonHighlightAmount(0), 0);
+  assert.equal(normalizeButtonHighlightAmount(1000), 1000);
+  assert.equal(normalizeButtonHighlightAmount(1001), null);
+  assert.equal(normalizeButtonGlowAmount(100), 100);
+  assert.equal(normalizeButtonGlowAmount(101), null);
+  assert.equal(normalizeButtonHighlightAmount(25.5), null);
+  assert.equal(resolveButtonHighlightAmount(undefined), DEFAULT_BUTTON_HIGHLIGHT_AMOUNT);
+  assert.equal(resolveButtonGlowAmount(undefined), DEFAULT_BUTTON_HIGHLIGHT_AMOUNT);
+
+  assert.equal(buttonHighlightFilter({
+    hoverHighlighted: false,
+    activeHighlighted: false,
+    hoverHighlightColor: null,
+    activeHighlightColor: null
+  }), undefined);
+  assert.equal(buttonHighlightFilter({
+    hoverHighlighted: true,
+    activeHighlighted: false,
+    hoverHighlightColor: null,
+    activeHighlightColor: null,
+    highlightAmount: 0
+  }), undefined);
+
+  const defaultHover = buttonHighlightFilter({
+    hoverHighlighted: true,
+    activeHighlighted: false,
+    hoverHighlightColor: null,
+    activeHighlightColor: null
+  });
+  assert.match(defaultHover, /^brightness\(1\.26[23]\)/);
+  assert.match(defaultHover, /drop-shadow\(0 0 12\.5px #FFFFFF99\)$/);
+
+  const fullActive = buttonHighlightFilter({
+    hoverHighlighted: false,
+    activeHighlighted: true,
+    hoverHighlightColor: null,
+    activeHighlightColor: "#00FF0080",
+    highlightAmount: 100
+  });
+  assert.equal(fullActive, "brightness(1.5) drop-shadow(0 0 16px #00FF0080)");
+
+  const hoverHighlightOnly = buttonHighlightFilter({
+    hoverHighlighted: true,
+    activeHighlighted: false,
+    hoverHighlightColor: null,
+    activeHighlightColor: null,
+    hoverHighlightAmount: 40,
+    hoverGlowAmount: 0
+  });
+  assert.equal(hoverHighlightOnly, "brightness(1.14)");
+
+  const extremeHoverHighlight = buttonHighlightFilter({
+    hoverHighlighted: true,
+    activeHighlighted: false,
+    hoverHighlightColor: null,
+    activeHighlightColor: null,
+    hoverHighlightAmount: 1000,
+    hoverGlowAmount: 0
+  });
+  assert.equal(extremeHoverHighlight, "brightness(4.5)");
+
+  const extremeActiveHighlight = buttonHighlightFilter({
+    hoverHighlighted: false,
+    activeHighlighted: true,
+    hoverHighlightColor: null,
+    activeHighlightColor: null,
+    activeHighlightAmount: 1000,
+    activeGlowAmount: 0
+  });
+  assert.equal(extremeActiveHighlight, "brightness(6)");
+
+  const activeGlowOnly = buttonHighlightFilter({
+    hoverHighlighted: false,
+    activeHighlighted: true,
+    hoverHighlightColor: null,
+    activeHighlightColor: "#00FF0080",
+    activeHighlightAmount: 0,
+    activeGlowAmount: 50
+  });
+  assert.equal(activeGlowOnly, "drop-shadow(0 0 9px #00FF0040)");
+});
+
 test("skin active highlight is skin-owned, run-mode only, and stacks under hover", () => {
   const buttonHost = readFileSync(
     join(frontendRoot, "src", "button", "ButtonHost.tsx"),
@@ -2240,10 +2644,10 @@ test("skin active highlight is skin-owned, run-mode only, and stacks under hover
   // The active lift is skin-owned only; it has no placement-field fallback.
   assert.match(buttonHost, /activeHighlight=\{mode === "run" && selected\}/);
   assert.match(skinRenderer, /readButtonSkinHighlightOnActive\(skin\)/);
-  assert.match(skinRenderer, /activeHighlighted: \(skinHighlightOnActive \?\? false\) && activeHighlight/);
-  assert.match(skinRenderer, /if \(snapshot\.activeHighlighted\) lifts\.push\("brightness\(1\.3\)"\)/);
+  assert.match(skinRenderer, /activeHighlighted: \(themeOverride\?\.activeEnabled \?\? skinHighlightOnActive \?\? false\) && activeHighlight/);
+  assert.match(skinColors, /if \(args\.activeHighlighted && activeHighlightIntensity > 0\) \{\s*filters\.push\(`brightness/);
   // Both lifts belong to the latched visual snapshot, not to raw render state.
-  assert.match(skinRenderer, /snapshot\.activeHighlighted,\r?\n\s*snapshot\.samplingState\.hovered/);
+  assert.match(skinRenderer, /snapshot\.activeHighlighted,\r?\n\s*snapshot\.hoverHighlightColor,\r?\n\s*snapshot\.activeHighlightColor,\r?\n\s*snapshot\.hoverHighlightAmount,\r?\n\s*snapshot\.activeHighlightAmount,\r?\n\s*snapshot\.hoverGlowAmount,\r?\n\s*snapshot\.activeGlowAmount,\r?\n\s*snapshot\.samplingState\.hovered/);
 });
 
 test("Play tracking arms only after the latched Play presentation is applied", () => {
@@ -2381,7 +2785,10 @@ test("Button activation state drives live labels and mapped visuals without exte
   assert.doesNotMatch(buttonHost, /activationStateTransitionRef|resolvePreparedVisualStateRef/);
   assert.match(buttonHost, /hovered=\{resolvedAppearance\.flags\.hovered\}[\s\S]{0,360}error=\{resolvedAppearance\.flags\.error\}/);
   assert.match(buttonHost, /samplingState=\{rawVisualState\}/);
-  assert.match(buttonHost, /transitionSamplingKey=\{`\$\{activationStateIndex\}:\$\{resolvedAppearance\.activeTrigger\}:\$\{resolvedAppearance\.visualState\}`\}/);
+  assert.match(
+    buttonHost,
+    /transitionSamplingKey=\{`\$\{activationStateIndex\}:\$\{resolvedAppearance\.activeTrigger\}:\$\{resolvedAppearance\.visualState\}:\$\{visualMeasurementSamplingKey \?\? "default"\}`\}/
+  );
   assert.match(buttonHost, /onPrepareVisualStateChange=\{onPrepareVisualStateChange\}/);
   assert.match(renderer, /await onPrepareVisualStateChangeRef\.current\?\.\([\s\S]{0,1400}setAppliedVisualPresentation\(presentation\)/);
   assert.match(renderer, /visualLatchStateRef\.current = committed;[\s\S]{0,420}flushSync\(\(\) => \{[\s\S]{0,180}setAppliedVisualPresentation\(presentation\)/);
@@ -6149,6 +6556,60 @@ test("expanded Fan resting frames cannot replace the collapsed owner anchor", ()
   );
 });
 
+test("opt-in Fan motion uses skin-independent wrappers and finishes exit before collapse", () => {
+  const renderer = readFileSync(
+    join(frontendRoot, "src", "button", "fan", "ButtonFanRenderer.tsx"),
+    "utf8"
+  );
+  const fanWindow = readFileSync(
+    join(frontendRoot, "src", "button", "fan", "ButtonFanWindowPage.tsx"),
+    "utf8"
+  );
+  const nativeHitboxes = readFileSync(
+    join(frontendRoot, "src", "button", "windows", "useNativeButtonHitboxes.ts"),
+    "utf8"
+  );
+
+  assert.match(renderer, /querySelectorAll<HTMLElement>\("\[data-button-placement-id\]"\)/);
+  assert.match(renderer, /wrapper\.dataset\.buttonPlacementId !== ownerPlacementId/);
+  assert.match(renderer, /return wrapper\.animate\(/);
+  assert.match(renderer, /wrapper\.toggleAttribute\("inert", inert\)/);
+  assert.match(renderer, /window\.matchMedia\("\(prefers-reduced-motion: reduce\)"\)/);
+  assert.match(renderer, /function supportedFanMotionEasing\(value: unknown\)/);
+  assert.match(
+    renderer,
+    /visualMeasurementSamplingKey=\{motionPhase === "resting" \? motionSequence : undefined\}/
+  );
+  assert.doesNotMatch(renderer, /ButtonSkinRenderer|\[data-core\].*animate/);
+
+  const closeStart = fanWindow.indexOf('beginFanMotion("closing")');
+  const closeFinish = fanWindow.indexOf("await motion.completion", closeStart);
+  const collapsedRender = fanWindow.indexOf("setRenderedExpanded(false)", closeFinish);
+  const collapsedGeometry = fanWindow.indexOf("await applyCollapsedGeometry", collapsedRender);
+  assert.ok(closeStart >= 0 && closeStart < closeFinish);
+  assert.ok(closeFinish < collapsedRender);
+  assert.ok(collapsedRender < collapsedGeometry);
+  assert.match(
+    fanWindow,
+    /const motion = fanMotionStyles\.length > 0[\s\S]{0,180}: null;\s*if \(!motion\) cancelFanMotion\(\);/
+  );
+  assert.match(
+    fanWindow,
+    /if \(motion\) \{\s*await motion\.completion;[\s\S]{0,300}setFanMotion[\s\S]{0,180}\n\s*\}\s*if \(\s*!nativeHoveredRef\.current/
+  );
+  assert.match(
+    fanWindow,
+    /if \(phase === "opening"\) \{\s*motionMeasurementsFrozenRef\.current = false;\s*\}[\s\S]{0,420}waiter\.resolve\(\)/
+  );
+  assert.match(
+    fanWindow,
+    /await applyCollapsedGeometry[\s\S]{0,180}motionMeasurementsFrozenRef\.current = false;/
+  );
+
+  assert.match(nativeHitboxes, /buttonHost\?\.closest\("\[inert\]"\)/);
+  assert.match(nativeHitboxes, /"inert",\s*"style"/);
+});
+
 test("expanded Pop resize handles follow the visible interactive envelope", () => {
   const pop = readFileSync(
     join(frontendRoot, "src", "button", "popout", "ButtonPopoutWindowPage.tsx"),
@@ -6506,7 +6967,7 @@ test("mixed Pop, regular layouts, fan setups, panel owners, and tool-set owners 
     fanSurfaceId: "surface-button-editor-main", fanMemberPlacementIds: [], toolSetOwnerAnchors: {},
     collapsedPanelOwnerBounds: { left: 0, top: 0, width: 40, height: 20 },
     openRule: "hover", closeRule: "hover-out", pinnedDefault: false,
-    animation: { durationMs: 100, easing: "linear", staggerMs: 0 }
+    animation: { durationMs: 100, easing: "linear", staggerMs: 0, spinEnabled: false }
   };
 
   const split = splitMixedButtonPopSelection(document, ["owner", "one", "two"]);
@@ -6575,6 +7036,8 @@ test("Pop-out Fan mode authors and retains exact regular and Tool Set owner plac
     new Set(regularSurface.placementIds),
     new Set([...regular.memberPlacementIds, regularOwner.id])
   );
+  assert.deepEqual(expandedButtonPopoutPlacementIds(document, regular), regularSurface.placementIds);
+  assert.equal(expandedButtonPopoutPlacementIds(document, regular).includes(regularOwner.id), true);
   assert.ok(regularSurface.width >= 960);
   assert.ok(regularSurface.height >= 640);
   assert.equal(regular.windowFitMode, "hitbox");
@@ -6597,6 +7060,8 @@ test("Pop-out Fan mode authors and retains exact regular and Tool Set owner plac
     new Set(toolSurface.placementIds),
     new Set([...toolUnit.childPlacementIds, toolOwner.id])
   );
+  assert.deepEqual(expandedButtonPopoutPlacementIds(document, toolUnit), toolSurface.placementIds);
+  assert.equal(expandedButtonPopoutPlacementIds(document, toolUnit).includes(toolOwner.id), true);
   const authoredToolSetOptions = buildButtonEditorPlacementOptions(
     document,
     toolUnit.ownerButtonId
@@ -6628,6 +7093,14 @@ test("Pop-out Fan mode authors and retains exact regular and Tool Set owner plac
   assert.equal(toolUnit.interactionMode, "pop");
   assert.equal(toolUnit.ownerPlacementId, retainedOwnerId);
   assert.ok(document.placements[retainedOwnerId]);
+  assert.deepEqual(
+    expandedButtonPopoutPlacementIds(document, toolUnit),
+    toolSurface.placementIds.filter((placementId) => placementId !== retainedOwnerId)
+  );
+  assert.equal(
+    expandedButtonPopoutPlacementIds(document, toolUnit).includes(retainedOwnerId),
+    false
+  );
   const reenabled = setButtonPopoutFanMode({
     document,
     surfaceId: toolUnit.surfaceId,

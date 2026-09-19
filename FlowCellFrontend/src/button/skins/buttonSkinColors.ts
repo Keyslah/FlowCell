@@ -1,5 +1,6 @@
 import type { ButtonSkinSectionName } from "../types.js";
 import {
+  BUTTON_SKIN_LABEL_TOKEN,
   BUTTON_SKIN_SECTION_ORDER,
   type ButtonSkinSectionSource
 } from "./buttonSkinFormat.js";
@@ -8,6 +9,13 @@ export const BUTTON_SKIN_TEXT_COLOR_VARIABLE = "--flowcell-button-text-color";
 export const BUTTON_SKIN_PROFILE_COLOR_PREFIX = "--flowcell-button-color-";
 export const BUTTON_SKIN_HIGHLIGHT_ON_HOVER_VARIABLE = "--flowcell-button-highlight-on-hover";
 export const BUTTON_SKIN_HIGHLIGHT_ON_ACTIVE_VARIABLE = "--flowcell-button-highlight-on-active";
+export const BUTTON_SKIN_LEGACY_SURFACE_VARIABLES = ["--button-bg", "--ycb-face"] as const;
+export const BUTTON_SKIN_LEGACY_TEXT_VARIABLES = ["--button-ink", "--ycb-ink"] as const;
+export const BUTTON_HIGHLIGHT_AMOUNT_MIN = 0;
+export const BUTTON_HIGHLIGHT_AMOUNT_MAX = 1000;
+export const BUTTON_GLOW_AMOUNT_MAX = 100;
+export const DEFAULT_BUTTON_HIGHLIGHT_AMOUNT = 75;
+const BUTTON_EFFECT_AMOUNT_REFERENCE = 100;
 
 interface ParsedColor {
   red: number;
@@ -28,6 +36,7 @@ interface ButtonSkinColorToken {
   start: number;
   end: number;
   color: ParsedColor;
+  property: string;
 }
 
 export interface ButtonSkinColorBucket {
@@ -263,6 +272,10 @@ function parseColor(value: string): ParsedColor | null {
     (basic ? parseHexColor(basic) : browserNamedColor(trimmed));
 }
 
+function stripCssComments(value: string): string {
+  return value.replace(/\/\*[\s\S]*?\*\//g, "");
+}
+
 function cssValueRanges(source: string, sourceOffset = 0): CssValueRange[] {
   const ranges: CssValueRange[] = [];
   let declarationStart = 0;
@@ -332,7 +345,7 @@ function cssValueRanges(source: string, sourceOffset = 0): CssValueRange[] {
       continue;
     }
     if (char === ":" && valueStart < 0) {
-      property = source.slice(declarationStart, index).trim().toLowerCase();
+      property = stripCssComments(source.slice(declarationStart, index)).trim().toLowerCase();
       valueStart = index + 1;
       continue;
     }
@@ -457,7 +470,7 @@ function colorTokens(source: string, ranges: readonly CssValueRange[]): ButtonSk
         const compactPrefix = source.slice(Math.max(range.start, index - 6), index).replace(/\s/g, "").toLowerCase();
         if (match && !compactPrefix.endsWith("url(")) {
           const color = parseHexColor(match[0]);
-          if (color) tokens.push({ start: index, end: index + match[0].length, color });
+          if (color) tokens.push({ start: index, end: index + match[0].length, color, property: range.property });
           index += match[0].length - 1;
         }
         continue;
@@ -480,7 +493,7 @@ function colorTokens(source: string, ranges: readonly CssValueRange[]): ButtonSk
         if (closing >= 0) {
           const candidate = source.slice(index, closing + 1);
           const color = parseColor(candidate);
-          if (color) tokens.push({ start: index, end: closing + 1, color });
+          if (color) tokens.push({ start: index, end: closing + 1, color, property: range.property });
           index = closing;
           continue;
         }
@@ -488,7 +501,7 @@ function colorTokens(source: string, ranges: readonly CssValueRange[]): ButtonSk
       const identifier = /^[a-z][a-z0-9-]*/i.exec(source.slice(index, range.end))?.[0];
       if (!identifier) continue;
       const color = propertyAllowsNamedColors(range.property) ? parseColor(identifier) : null;
-      if (color) tokens.push({ start: index, end: index + identifier.length, color });
+      if (color) tokens.push({ start: index, end: index + identifier.length, color, property: range.property });
       index += identifier.length - 1;
     }
   }
@@ -502,6 +515,101 @@ function tokensForSection(section: ButtonSkinSectionName, source: string): Butto
 export function normalizeButtonSkinColor(value: string): string | null {
   const parsed = parseColor(value);
   return parsed ? colorText(parsed) : null;
+}
+
+export function normalizeButtonHighlightAmount(value: unknown): number | null {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= BUTTON_HIGHLIGHT_AMOUNT_MIN &&
+    value <= BUTTON_HIGHLIGHT_AMOUNT_MAX
+    ? value
+    : null;
+}
+
+export function resolveButtonHighlightAmount(value: unknown): number {
+  return normalizeButtonHighlightAmount(value) ?? DEFAULT_BUTTON_HIGHLIGHT_AMOUNT;
+}
+
+export function normalizeButtonGlowAmount(value: unknown): number | null {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= BUTTON_HIGHLIGHT_AMOUNT_MIN &&
+    value <= BUTTON_GLOW_AMOUNT_MAX
+    ? value
+    : null;
+}
+
+export function resolveButtonGlowAmount(value: unknown): number {
+  return normalizeButtonGlowAmount(value) ?? DEFAULT_BUTTON_HIGHLIGHT_AMOUNT;
+}
+
+function highlightFilterNumber(value: number): string {
+  return Number(value.toFixed(3)).toString();
+}
+
+function buttonHighlightGlowColor(value: string | null, intensity: number): string {
+  const color = (value ? parseColor(value) : null) ?? {
+    red: 255,
+    green: 255,
+    blue: 255,
+    alpha: 204
+  };
+  return colorText({
+    ...color,
+    alpha: clampByte(color.alpha * intensity)
+  });
+}
+
+/**
+ * Builds the host-owned fallback highlight without changing authored skin
+ * states. Hover/active brightness and glow are independently scalable; active
+ * remains stronger at the same percentage, and hover still stacks on it.
+ */
+export function buttonHighlightFilter(args: {
+  hoverHighlighted: boolean;
+  activeHighlighted: boolean;
+  hoverHighlightColor: string | null;
+  activeHighlightColor: string | null;
+  /** @deprecated Compatibility fallback for the original combined amount. */
+  highlightAmount?: number | null;
+  hoverHighlightAmount?: number | null;
+  activeHighlightAmount?: number | null;
+  hoverGlowAmount?: number | null;
+  activeGlowAmount?: number | null;
+}): string | undefined {
+  if (!args.hoverHighlighted && !args.activeHighlighted) return undefined;
+  const hoverHighlightIntensity = resolveButtonHighlightAmount(
+    args.hoverHighlightAmount ?? args.highlightAmount
+  ) / BUTTON_EFFECT_AMOUNT_REFERENCE;
+  const activeHighlightIntensity = resolveButtonHighlightAmount(
+    args.activeHighlightAmount ?? args.highlightAmount
+  ) / BUTTON_EFFECT_AMOUNT_REFERENCE;
+  const hoverGlowIntensity = resolveButtonGlowAmount(
+    args.hoverGlowAmount ?? args.highlightAmount
+  ) / BUTTON_EFFECT_AMOUNT_REFERENCE;
+  const activeGlowIntensity = resolveButtonGlowAmount(
+    args.activeGlowAmount ?? args.highlightAmount
+  ) / BUTTON_EFFECT_AMOUNT_REFERENCE;
+  const filters: string[] = [];
+  if (args.activeHighlighted && activeHighlightIntensity > 0) {
+    filters.push(`brightness(${highlightFilterNumber(1 + 0.5 * activeHighlightIntensity)})`);
+  }
+  if (args.hoverHighlighted && hoverHighlightIntensity > 0) {
+    filters.push(`brightness(${highlightFilterNumber(1 + 0.35 * hoverHighlightIntensity)})`);
+  }
+  if (args.activeHighlighted && activeGlowIntensity > 0) {
+    const activeGlowRadius = highlightFilterNumber(2 + 14 * activeGlowIntensity);
+    filters.push(
+      `drop-shadow(0 0 ${activeGlowRadius}px ${buttonHighlightGlowColor(args.activeHighlightColor, activeGlowIntensity)})`
+    );
+  }
+  if (args.hoverHighlighted && hoverGlowIntensity > 0) {
+    const hoverGlowRadius = highlightFilterNumber(2 + 14 * hoverGlowIntensity);
+    filters.push(
+      `drop-shadow(0 0 ${hoverGlowRadius}px ${buttonHighlightGlowColor(args.hoverHighlightColor, hoverGlowIntensity)})`
+    );
+  }
+  return filters.length > 0 ? filters.join(" ") : undefined;
 }
 
 export function buttonSkinPickerColor(value: string): string {
@@ -519,6 +627,20 @@ export function buttonSkinColorWithPreservedAlpha(nextPickerColor: string, curre
   const current = parseColor(currentColor);
   if (!next || !current) return null;
   return colorText({ ...next, alpha: current.alpha });
+}
+
+export function buttonSkinColorOpacityPercent(value: string): number {
+  const parsed = parseColor(value);
+  return parsed ? Math.round(parsed.alpha / 255 * 100) : 100;
+}
+
+export function buttonSkinColorWithOpacity(value: string, opacityPercent: number): string | null {
+  const parsed = parseColor(value);
+  if (!parsed || !Number.isFinite(opacityPercent)) return null;
+  return colorText({
+    ...parsed,
+    alpha: clampByte(clampUnit(opacityPercent / 100) * 255)
+  });
 }
 
 function buttonSkinProfileColorLabel(role: string): string {
@@ -555,6 +677,259 @@ export function collectButtonSkinProfileColors(
     });
   }
   return [...colors.values()];
+}
+
+export type ButtonSkinSurfaceThemeMode = "semantic" | "legacy-variable" | "tint";
+
+function sectionValueRanges(
+  source: ButtonSkinSectionSource
+): Array<{ source: string; range: CssValueRange }> {
+  return BUTTON_SKIN_SECTION_ORDER.flatMap((section) => (
+    sectionColorRanges(section, source[section]).map((range) => ({
+      source: source[section],
+      range
+    }))
+  ));
+}
+
+function valueConsumesVariable(value: string, variable: string): boolean {
+  return new RegExp(`var\\(\\s*${variable}(?:\\s*[,)]|\\s*$)`).test(stripCssComments(value));
+}
+
+function isSurfacePaintProperty(property: string): boolean {
+  const normalized = property.trim().toLowerCase();
+  if (normalized.startsWith("--")) return false;
+  return [
+    "background",
+    "border",
+    "box-shadow",
+    "fill",
+    "filter",
+    "flood-color",
+    "lighting-color",
+    "outline",
+    "stroke"
+  ].some((part) => normalized.includes(part));
+}
+
+function isTextPaintProperty(property: string): boolean {
+  const normalized = property.trim().toLowerCase();
+  return normalized === "color" ||
+    normalized === "fill" ||
+    normalized === "-webkit-text-fill-color" ||
+    normalized === "-webkit-text-stroke-color";
+}
+
+function consumedLegacyVariable(
+  source: ButtonSkinSectionSource,
+  variables: readonly string[],
+  acceptsProperty: (property: string) => boolean
+): string | null {
+  const ranges = sectionValueRanges(source);
+  for (const variable of variables) {
+    const consumed = ranges.some(({ source: sectionSource, range }) => (
+      acceptsProperty(range.property) &&
+      valueConsumesVariable(sectionSource.slice(range.start, range.end), variable)
+    ));
+    if (consumed) return variable;
+  }
+  return null;
+}
+
+/** Returns the one authored variable the Surface channel should drive. */
+export function buttonSkinSurfaceThemeVariable(
+  source: ButtonSkinSectionSource
+): string | null {
+  const roles = new Set(collectButtonSkinProfileColors(source).map(({ role }) => role));
+  if (roles.has("surface")) return `${BUTTON_SKIN_PROFILE_COLOR_PREFIX}surface`;
+  if (roles.has("primary")) return `${BUTTON_SKIN_PROFILE_COLOR_PREFIX}primary`;
+  return consumedLegacyVariable(source, BUTTON_SKIN_LEGACY_SURFACE_VARIABLES, isSurfacePaintProperty);
+}
+
+/** Returns the one authored variable the Text channel should drive. */
+export function buttonSkinTextThemeVariable(
+  source: ButtonSkinSectionSource
+): string | null {
+  const roles = new Set(collectButtonSkinProfileColors(source).map(({ role }) => role));
+  if (roles.has("text")) return `${BUTTON_SKIN_PROFILE_COLOR_PREFIX}text`;
+  return consumedLegacyVariable(source, BUTTON_SKIN_LEGACY_TEXT_VARIABLES, isTextPaintProperty);
+}
+
+/** Resolves Theme colors to only the authored channel each skin actually consumes. */
+export function buttonSkinThemeColorVariables(
+  source: ButtonSkinSectionSource,
+  colors: Readonly<Record<string, string>> | null | undefined
+): Record<`--${string}`, string> {
+  const variables: Record<`--${string}`, string> = {};
+  const surfaceVariable = buttonSkinSurfaceThemeVariable(source);
+  const textVariable = buttonSkinTextThemeVariable(source);
+  for (const [role, rawColor] of Object.entries(colors ?? {})) {
+    if (!/^[a-z][a-z0-9-]*$/.test(role)) continue;
+    const color = normalizeButtonSkinColor(rawColor);
+    if (!color) continue;
+    if (role === "surface") {
+      if (surfaceVariable) variables[surfaceVariable as `--${string}`] = color;
+      continue;
+    }
+    if (role === "text") {
+      variables[(textVariable ?? BUTTON_SKIN_TEXT_COLOR_VARIABLE) as `--${string}`] = color;
+      continue;
+    }
+    variables[`${BUTTON_SKIN_PROFILE_COLOR_PREFIX}${role}`] = color;
+  }
+  return variables;
+}
+
+/** Chooses an exact authored path when one exists, otherwise host paint mapping. */
+export function buttonSkinSurfaceThemeMode(
+  source: ButtonSkinSectionSource
+): ButtonSkinSurfaceThemeMode {
+  const variable = buttonSkinSurfaceThemeVariable(source);
+  if (!variable) return "tint";
+  return variable.startsWith(BUTTON_SKIN_PROFILE_COLOR_PREFIX) ? "semantic" : "legacy-variable";
+}
+
+function isFallbackSurfaceColorProperty(property: string): boolean {
+  const normalized = property.trim().toLowerCase();
+  if (normalized.startsWith("--")) {
+    if (normalized.startsWith("--anim-")) return false;
+    return !/(?:text|label|ink|font|foreground|\bfg\b)/.test(normalized);
+  }
+  if ([
+    "color",
+    "caret-color",
+    "text-decoration-color",
+    "text-emphasis-color",
+    "text-shadow",
+    "text-stroke",
+    "-webkit-text-fill-color",
+    "-webkit-text-stroke",
+    "-webkit-text-stroke-color"
+  ].some((textProperty) => normalized === textProperty || normalized.startsWith(`${textProperty}-`))) {
+    return false;
+  }
+  return propertyAllowsNamedColors(normalized);
+}
+
+interface LabelOpeningTag {
+  name: string;
+  start: number;
+  end: number;
+  source: string;
+}
+
+const HTML_VOID_ELEMENTS = new Set([
+  "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+  "meta", "param", "source", "track", "wbr"
+]);
+
+function labelOpeningTags(structure: string): LabelOpeningTag[] {
+  const labelIndex = structure.indexOf(BUTTON_SKIN_LABEL_TOKEN);
+  if (labelIndex < 0) return [];
+  const stack: LabelOpeningTag[] = [];
+  const pattern = /<\s*(\/?)\s*([a-z][a-z0-9:-]*)\b[^>]*>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(structure)) && match.index < labelIndex) {
+    const name = match[2].toLowerCase();
+    if (match[1]) {
+      const matchingIndex = stack.map((entry) => entry.name).lastIndexOf(name);
+      if (matchingIndex >= 0) stack.splice(matchingIndex);
+      continue;
+    }
+    if (match[0].endsWith("/>") || HTML_VOID_ELEMENTS.has(name)) continue;
+    stack.push({
+      name,
+      start: match.index,
+      end: match.index + match[0].length,
+      source: match[0]
+    });
+  }
+  return stack;
+}
+
+function isLabelOwnedSurfaceToken(
+  section: ButtonSkinSectionName,
+  token: ButtonSkinColorToken,
+  labelTags: readonly LabelOpeningTag[]
+): boolean {
+  if (section !== "structure") return false;
+  const labelTag = labelTags.find((tag) => (
+    token.start >= tag.start && token.end <= tag.end
+  ));
+  if (!labelTag) return false;
+  const property = token.property.trim().toLowerCase();
+  if ((labelTag.name === "text" || labelTag.name === "tspan") && (
+    property === "fill" || property === "stroke"
+  )) return true;
+  return property.startsWith("background") &&
+    /(?:-webkit-)?background-clip\s*:\s*text/i.test(stripCssComments(labelTag.source));
+}
+
+function fallbackSurfaceColor(source: ParsedColor, target: ParsedColor): string {
+  const luminance = (
+    source.red * 0.2126 +
+    source.green * 0.7152 +
+    source.blue * 0.0722
+  ) / 255;
+  const shade = (luminance - 0.5) * 255;
+  return colorText({
+    red: clampByte(target.red + shade),
+    green: clampByte(target.green + shade),
+    blue: clampByte(target.blue + shade),
+    alpha: clampByte(source.alpha * target.alpha / 255)
+  });
+}
+
+/** Lists the exact authored paints consumed by the render-only Surface tint path. */
+export function collectButtonSkinSurfaceThemeFallbackColors(
+  source: ButtonSkinSectionSource
+): string[] {
+  const colors = new Set<string>();
+  const labelTags = labelOpeningTags(source.structure);
+  for (const section of BUTTON_SKIN_SECTION_ORDER) {
+    for (const token of tokensForSection(section, source[section])) {
+      if (
+        isFallbackSurfaceColorProperty(token.property) &&
+        !isLabelOwnedSurfaceToken(section, token, labelTags)
+      ) {
+        colors.add(colorText(token.color));
+      }
+    }
+  }
+  return [...colors];
+}
+
+/**
+ * Creates an in-memory, render-only source for skins without a Surface root.
+ * It maps paint colors around the selected hue while preserving relative
+ * shading and multiplying source alpha by the selected opacity. Text paint is
+ * left alone so the Text channel remains independent. The saved skin object is
+ * never mutated.
+ */
+export function applyButtonSkinSurfaceThemeFallback(
+  source: ButtonSkinSectionSource,
+  value: string
+): ButtonSkinSectionSource {
+  const target = parseColor(value);
+  if (!target) return source;
+  const next = { ...source };
+  const labelTags = labelOpeningTags(source.structure);
+  for (const section of BUTTON_SKIN_SECTION_ORDER) {
+    const sectionSource = source[section];
+    const matches = tokensForSection(section, sectionSource)
+      .filter((token) => (
+        isFallbackSurfaceColorProperty(token.property) &&
+        !isLabelOwnedSurfaceToken(section, token, labelTags)
+      ))
+      .sort((left, right) => right.start - left.start);
+    if (matches.length === 0) continue;
+    let changed = sectionSource;
+    for (const match of matches) {
+      changed = `${changed.slice(0, match.start)}${fallbackSurfaceColor(match.color, target)}${changed.slice(match.end)}`;
+    }
+    next[section] = changed;
+  }
+  return next;
 }
 
 /** Updates one declared profile root without touching any visual occurrence. */

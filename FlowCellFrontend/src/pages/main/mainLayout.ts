@@ -407,7 +407,7 @@ export const staticButtons: ButtonRecord[] = [
     height: 37.294964,
     radius: 18.647463,
     label: "close",
-    tooltip: "Close the main FlowCell window.",
+    tooltip: "Close FlowCell and all of its open windows.",
     actionId: "top-right-button-3"
   }
 ];

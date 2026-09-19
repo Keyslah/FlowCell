@@ -1590,7 +1590,9 @@ export default function MainPage() {
     }
   };
 
-  const closeManagedLayoutWindows = async () => {
+  const closeManagedLayoutWindows = useCallback(async (
+    closeUnregisteredWindows = false
+  ) => {
     const currentWindow = getCurrentWindow();
     const openWindows = await WebviewWindow.getAll();
     await Promise.all(
@@ -1599,6 +1601,9 @@ export default function MainPage() {
         .map(async (windowHandle) => {
           const registeredWindow = readRegisteredLayoutWindow(windowHandle.label);
           if (!registeredWindow) {
+            if (closeUnregisteredWindows) {
+              await windowHandle.close();
+            }
             return;
           }
           if (registeredWindow.kind === "installed-page") {
@@ -1611,7 +1616,46 @@ export default function MainPage() {
           await closeManagedButtonWindow(windowHandle.label);
         })
     );
-  };
+  }, []);
+
+  useEffect(() => {
+    const mainWindow = getCurrentWindow();
+    if (mainWindow.label !== "main") {
+      return;
+    }
+
+    let closeInProgress = false;
+    let disposed = false;
+    const unlistenPromise = mainWindow.onCloseRequested(async (event) => {
+      event.preventDefault();
+      if (closeInProgress) {
+        return;
+      }
+
+      closeInProgress = true;
+      try {
+        await closeManagedLayoutWindows(true);
+        await mainWindow.destroy();
+      } catch (error) {
+        if (!disposed) {
+          console.error("Failed to close every FlowCell window.", error);
+          window.alert(`FlowCell could not close every window.\n\n${formatErrorMessage(error)}`);
+        }
+      } finally {
+        closeInProgress = false;
+      }
+    });
+    void unlistenPromise.catch((error) => {
+      if (!disposed) {
+        console.error("Failed to register the FlowCell close-all handler.", error);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
+    };
+  }, [closeManagedLayoutWindows]);
 
   const captureLayoutSnapshotState = async (): Promise<LayoutSnapshot> => {
     const currentWindow = getCurrentWindow();
@@ -2934,7 +2978,7 @@ export default function MainPage() {
       );
       const selectedPath = (await showOpenFileDialog({
         title: `Open Pop for ${selectedProgramName} / ${selectedPanelName}`,
-        filter: "FlowCell Button Settings (*.flowcell-button-settings.json)|*.flowcell-button-settings.json|JSON Files (*.json)|*.json",
+        filter: "JSON Files (*.json)|*.json",
         initialDirectory: settingsDirectory,
         multiselect: false
       }))[0]?.trim();

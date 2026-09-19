@@ -17,6 +17,12 @@ use windows_sys::Win32::System::IO::{
 };
 
 pub(crate) static BLENDER_BRIDGE_REQUEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+pub(crate) static FUSION_BRIDGE_REQUEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+const DEFAULT_FUSION_BRIDGE_TIMEOUT_SECONDS: u64 = 20;
+const FUSION_BRIDGE_RESPONSE_POLL_MS: u64 = 4;
+const FUSION_BRIDGE_NOT_RUNNING_MESSAGE: &str =
+    "Open Fusion 360 with the FlowCell add-in enabled, then run the button again.";
 
 #[cfg(windows)]
 const ILLUSTRATOR_BRIDGE_PIPE_PATH: &str = r"\\.\pipe\FlowCell.Illustrator.Bridge.v2";
@@ -259,6 +265,77 @@ pub(crate) fn read_blender_bridge_runtime_pid(bridge_root: &Path) -> Option<u32>
     u32::try_from(pid_value).ok()
 }
 
+pub(crate) fn fusion_addin_root_candidates(application_data_root: &Path) -> Vec<PathBuf> {
+    vec![
+        application_data_root
+            .join("Autodesk")
+            .join("Autodesk Fusion 360")
+            .join("API")
+            .join("AddIns")
+            .join("FlowCellFusionBridge"),
+        application_data_root
+            .join("Autodesk")
+            .join("Autodesk Fusion")
+            .join("API")
+            .join("AddIns")
+            .join("FlowCellFusionBridge"),
+        application_data_root
+            .join("Autodesk")
+            .join("FusionAddins")
+            .join("FlowCellFusionBridge"),
+    ]
+}
+
+pub(crate) fn resolve_fusion_addin_root() -> Option<PathBuf> {
+    let application_data_root = env::var_os("APPDATA").map(PathBuf::from)?;
+    fusion_addin_root_candidates(&application_data_root)
+        .into_iter()
+        .find(|candidate| candidate.is_dir())
+}
+
+pub(crate) fn resolve_fusion_bridge_root() -> Option<PathBuf> {
+    resolve_fusion_addin_root().map(|root| root.join("Bridge"))
+}
+
+fn fusion_runtime_status_process_id(status_path: &Path) -> Option<u32> {
+    let directory_process_id = status_path
+        .parent()?
+        .file_name()?
+        .to_string_lossy()
+        .parse::<u32>()
+        .ok()?;
+    let raw = fs::read_to_string(status_path).ok()?;
+    let payload = serde_json::from_str::<Value>(&raw).ok()?;
+    let recorded_process_id = payload
+        .get("pid")
+        .or_else(|| payload.get("processId"))
+        .and_then(Value::as_u64)
+        .or_else(|| {
+            payload
+                .get("last_event")
+                .and_then(|value| value.get("pid"))
+                .and_then(Value::as_u64)
+        })
+        .and_then(|value| u32::try_from(value).ok())
+        .unwrap_or(directory_process_id);
+    (recorded_process_id == directory_process_id).then_some(directory_process_id)
+}
+
+pub(crate) fn read_fusion_bridge_runtime_process_ids(bridge_root: &Path) -> Vec<u32> {
+    let mut process_ids = fs::read_dir(bridge_root)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .filter_map(|entry| entry.file_type().ok()?.is_dir().then_some(entry.path()))
+        .filter_map(|directory| {
+            fusion_runtime_status_process_id(&directory.join("runtime_status.json"))
+        })
+        .collect::<Vec<_>>();
+    process_ids.sort_unstable_by(|left, right| right.cmp(left));
+    process_ids.dedup();
+    process_ids
+}
+
 pub(crate) fn build_blender_bridge_request_id() -> String {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -295,7 +372,82 @@ pub(crate) fn wait_for_blender_bridge_response(
     None
 }
 
+fn fusion_bridge_response_matches_request(response: &Value, request_id: &str) -> bool {
+    response
+        .get("requestId")
+        .or_else(|| response.get("id"))
+        .and_then(Value::as_str)
+        .is_some_and(|value| value == request_id)
+}
+
+pub(crate) fn wait_for_fusion_bridge_response(
+    response_path: &Path,
+    request_id: &str,
+    timeout: Duration,
+) -> Option<Value> {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if let Ok(raw) = fs::read_to_string(response_path) {
+            if let Ok(response) = serde_json::from_str::<Value>(&raw) {
+                if fusion_bridge_response_matches_request(&response, request_id) {
+                    return Some(response);
+                }
+            }
+        }
+        thread::sleep(Duration::from_millis(FUSION_BRIDGE_RESPONSE_POLL_MS));
+    }
+    None
+}
+
+#[cfg(windows)]
+fn publish_fusion_bridge_request(staged_path: &Path, request_path: &Path) -> Result<(), String> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{
+        MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+    };
+
+    let staged = staged_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let request = request_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let replaced = unsafe {
+        MoveFileExW(
+            staged.as_ptr(),
+            request.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+    if replaced == 0 {
+        return Err(format!(
+            "Failed to publish Fusion bridge request at {}: {}",
+            request_path.display(),
+            std::io::Error::last_os_error()
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn publish_fusion_bridge_request(staged_path: &Path, request_path: &Path) -> Result<(), String> {
+    fs::rename(staged_path, request_path).map_err(|error| {
+        format!(
+            "Failed to publish Fusion bridge request at {}: {error}",
+            request_path.display()
+        )
+    })
+}
+
 pub(crate) fn did_blender_bridge_response_succeed(response: &Value) -> bool {
+    did_bridge_response_succeed(response)
+}
+
+pub(crate) fn did_bridge_response_succeed(response: &Value) -> bool {
     let normalized_status = response
         .get("status")
         .and_then(|value| value.as_str())
@@ -307,6 +459,10 @@ pub(crate) fn did_blender_bridge_response_succeed(response: &Value) -> bool {
 }
 
 pub(crate) fn extract_blender_bridge_response_message(response: &Value) -> String {
+    extract_bridge_response_message(response, "Blender")
+}
+
+pub(crate) fn extract_bridge_response_message(response: &Value, bridge_label: &str) -> String {
     response
         .get("display")
         .and_then(|value| value.as_str())
@@ -318,7 +474,7 @@ pub(crate) fn extract_blender_bridge_response_message(response: &Value) -> Strin
                 .filter(|value| !value.trim().is_empty())
         })
         .map(|value| value.trim().to_string())
-        .unwrap_or_else(|| "Blender action completed.".to_string())
+        .unwrap_or_else(|| format!("{bridge_label} action completed."))
 }
 
 pub(crate) fn normalize_panel_button_event_name(name: &str) -> Option<String> {
@@ -1788,6 +1944,65 @@ pub(crate) fn bootstrap_blender_program(
     }
 }
 
+pub(crate) fn bootstrap_fusion_program(
+    program_name: &str,
+    exe_path: Option<&str>,
+) -> Result<String, String> {
+    let fusion_program_directory = resolve_program_directory(program_name)?;
+    let installer_path = fusion_program_directory
+        .join("SupportScripts")
+        .join("Install-FlowCellFusionAddon.ps1");
+    if !installer_path.is_file() {
+        return Ok(format!(
+            "{} was added, but the Fusion add-in installer is missing. Repair the Fusion 360 Program package, then add Fusion 360 again.",
+            program_name
+        ));
+    }
+
+    let mut command = Command::new(resolve_powershell_path());
+    command
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-ExecutionPolicy")
+        .arg("Bypass")
+        .arg("-File")
+        .arg(&installer_path);
+    if let Some(exe_path) = exe_path.map(str::trim).filter(|value| !value.is_empty()) {
+        command.arg("-FusionExePath").arg(exe_path);
+    }
+
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+
+    let output = command.output().map_err(|error| {
+        format!(
+            "Failed to start the Fusion bridge installer at {}: {error}",
+            installer_path.display()
+        )
+    })?;
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let message = if !stdout.is_empty() { stdout } else { stderr };
+
+    if output.status.success() {
+        if message.is_empty() {
+            Ok(
+                "Fusion bridge installed. Restart Fusion 360 once after adding it in FlowCell."
+                    .to_string(),
+            )
+        } else {
+            Ok(message)
+        }
+    } else if message.is_empty() {
+        Err(format!(
+            "Fusion bridge installation failed with exit code {:?}.",
+            output.status.code()
+        ))
+    } else {
+        Err(message)
+    }
+}
+
 pub(crate) fn current_timestamp_string() -> String {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1958,6 +2173,70 @@ pub(crate) fn run_blender_bridge_action_direct_with_options(
     Ok(response)
 }
 
+pub(crate) fn run_fusion_bridge_action_direct(
+    action: &str,
+    payload: Value,
+) -> Result<Value, String> {
+    let action = action.trim();
+    if action.is_empty() {
+        return Err("Fusion bridge action cannot be empty.".to_string());
+    }
+    let lock = FUSION_BRIDGE_REQUEST_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock
+        .lock()
+        .map_err(|_| "Fusion bridge request lock was poisoned.".to_string())?;
+
+    let bridge_root = resolve_fusion_bridge_root()
+        .ok_or_else(|| "FlowCell Fusion add-in is not installed.".to_string())?;
+    let target_process_id = resolve_target_fusion_process_id(&bridge_root)
+        .map_err(|_| FUSION_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
+    let process_bridge_root = bridge_root.join(target_process_id.to_string());
+    fs::create_dir_all(&process_bridge_root).map_err(|error| {
+        format!(
+            "Failed to create Fusion bridge folder at {}: {error}",
+            process_bridge_root.display()
+        )
+    })?;
+
+    let request_id = format!("fusion-{}", build_blender_bridge_request_id());
+    let request_path = process_bridge_root.join("request.json");
+    let response_path = process_bridge_root.join("response.json");
+    let request_payload = json!({
+        "requestId": request_id.clone(),
+        "action": action,
+        "payload": payload,
+        "requested": SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+            .to_string()
+    });
+    let temporary_request_path = process_bridge_root.join(format!(".request-{request_id}.tmp"));
+    fs::write(&temporary_request_path, request_payload.to_string()).map_err(|error| {
+        format!(
+            "Failed to stage Fusion bridge request at {}: {error}",
+            temporary_request_path.display()
+        )
+    })?;
+    publish_fusion_bridge_request(&temporary_request_path, &request_path)?;
+
+    let response = wait_for_fusion_bridge_response(
+        &response_path,
+        &request_id,
+        Duration::from_secs(DEFAULT_FUSION_BRIDGE_TIMEOUT_SECONDS),
+    )
+    .ok_or_else(|| FUSION_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
+    let message = extract_bridge_response_message(&response, "Fusion");
+    write_last_action_status_message(&message);
+    if !did_bridge_response_succeed(&response) {
+        return Err(message);
+    }
+
+    // Keep the complete action result so tool-set fieldPatch and future
+    // manifest-declared response fields reach the Button host unchanged.
+    Ok(response)
+}
+
 pub(crate) fn run_panel_script_response_impl(
     _app: &AppHandle,
     program_name: String,
@@ -2065,8 +2344,26 @@ pub(crate) fn query_toolset_state(
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_macro_recorder_script_path, windows_child_process_path};
+    use super::{
+        fusion_addin_root_candidates, fusion_bridge_response_matches_request,
+        read_fusion_bridge_runtime_process_ids, resolve_macro_recorder_script_path,
+        wait_for_fusion_bridge_response, windows_child_process_path,
+    };
+    use serde_json::json;
+    use std::fs;
     use std::path::{Path, PathBuf};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    fn temporary_fusion_bridge_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "flowcell-fusion-bridge-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ))
+    }
 
     #[test]
     fn macro_recorder_path_uses_canonical_backend_helper() {
@@ -2104,5 +2401,92 @@ mod tests {
     fn windows_child_process_paths_preserve_ordinary_paths() {
         let path = Path::new(r"D:\FlowCell\Programs\Windows\action.ps1");
         assert_eq!(windows_child_process_path(path), path);
+    }
+
+    #[test]
+    fn fusion_addin_candidates_follow_the_supported_appdata_order() {
+        let appdata = Path::new(r"C:\Users\Test\AppData\Roaming");
+        assert_eq!(
+            fusion_addin_root_candidates(appdata),
+            vec![
+                appdata.join(r"Autodesk\Autodesk Fusion 360\API\AddIns\FlowCellFusionBridge"),
+                appdata.join(r"Autodesk\Autodesk Fusion\API\AddIns\FlowCellFusionBridge"),
+                appdata.join(r"Autodesk\FusionAddins\FlowCellFusionBridge"),
+            ]
+        );
+    }
+
+    #[test]
+    fn fusion_runtime_status_accepts_only_its_own_pid_directory() {
+        let root = temporary_fusion_bridge_root("runtime-status");
+        let valid = root.join("4201");
+        let mismatched = root.join("4202");
+        let implicit = root.join("4203");
+        fs::create_dir_all(&valid).expect("create valid runtime root");
+        fs::create_dir_all(&mismatched).expect("create mismatched runtime root");
+        fs::create_dir_all(&implicit).expect("create implicit runtime root");
+        fs::write(
+            valid.join("runtime_status.json"),
+            json!({"pid":4201}).to_string(),
+        )
+        .expect("write valid runtime status");
+        fs::write(
+            mismatched.join("runtime_status.json"),
+            json!({"pid":9999}).to_string(),
+        )
+        .expect("write mismatched runtime status");
+        fs::write(
+            implicit.join("runtime_status.json"),
+            json!({"status":"ready"}).to_string(),
+        )
+        .expect("write implicit runtime status");
+
+        assert_eq!(
+            read_fusion_bridge_runtime_process_ids(&root),
+            vec![4203, 4201]
+        );
+        fs::remove_dir_all(root).expect("remove temporary Fusion bridge root");
+    }
+
+    #[test]
+    fn fusion_response_identity_accepts_preferred_and_legacy_fields_only() {
+        assert!(fusion_bridge_response_matches_request(
+            &json!({"requestId":"request-a"}),
+            "request-a"
+        ));
+        assert!(fusion_bridge_response_matches_request(
+            &json!({"id":"request-a"}),
+            "request-a"
+        ));
+        assert!(!fusion_bridge_response_matches_request(
+            &json!({"requestId":"request-b","id":"request-a"}),
+            "request-a"
+        ));
+    }
+
+    #[test]
+    fn fusion_response_keeps_field_patch_and_action_data_unchanged() {
+        let root = temporary_fusion_bridge_root("response-payload");
+        fs::create_dir_all(&root).expect("create response root");
+        let response_path = root.join("response.json");
+        let response = json!({
+            "schemaVersion": 1,
+            "requestId": "request-field-patch",
+            "action": "flowcell_button_scale",
+            "status": "FINISHED",
+            "message": "Dimensions refreshed.",
+            "fieldPatch": {"dimensionX": 25.4, "lockAspect": true}
+        });
+        fs::write(&response_path, response.to_string()).expect("write Fusion response");
+
+        assert_eq!(
+            wait_for_fusion_bridge_response(
+                &response_path,
+                "request-field-patch",
+                Duration::from_millis(25),
+            ),
+            Some(response)
+        );
+        fs::remove_dir_all(root).expect("remove temporary Fusion response root");
     }
 }

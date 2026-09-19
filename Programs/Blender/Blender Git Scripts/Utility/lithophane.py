@@ -6,6 +6,8 @@ import math
 import os
 import re
 
+from array import array
+
 from bpy.props import CollectionProperty, FloatProperty, StringProperty
 from bpy.types import OperatorFileListElement
 from bpy_extras.io_utils import ImportHelper
@@ -16,6 +18,7 @@ TOP_FACE_SUBDIVISION_CUTS = 20
 SUBSURF_LEVELS = 6
 DISPLACE_MID_LEVEL = -0.01
 TOP_FACE_GROUP_NAME = "TopFaceGroup"
+ALPHA_CUTOFF = 0.5
 OPERATOR_ID = "flowcell.create_lithophane_from_image"
 OPERATOR_CLASS_NAME = "FLOWCELL_OT_create_lithophane_from_image"
 FLOWCELL_LITHO_SIZE_SUFFIX_RE = re.compile(
@@ -112,6 +115,47 @@ def _validate_xy_dimensions(target_x, target_y):
     return resolved_x, resolved_y
 
 
+def _resolve_explicit_target_xy(context, data):
+    if not isinstance(data, dict):
+        return None
+
+    width_mm = data.get("width_mm")
+    height_mm = data.get("height_mm")
+    if width_mm is None and height_mm is None:
+        return None
+    if width_mm is None or height_mm is None:
+        raise ValueError("Illustrator lithophane dimensions require both width_mm and height_mm.")
+
+    try:
+        width_meters = float(width_mm) / 1000.0
+        height_meters = float(height_mm) / 1000.0
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Illustrator lithophane dimensions must be numeric millimeter values.") from exc
+
+    return (
+        _meters_to_blender_units(context, width_meters),
+        _meters_to_blender_units(context, height_meters),
+    )
+
+
+def _resolve_explicit_object_name(data):
+    if not isinstance(data, dict) or "object_name" not in data:
+        return None
+    object_name = data.get("object_name")
+    if not isinstance(object_name, str) or not object_name.strip() or "\x00" in object_name:
+        raise ValueError("Illustrator lithophane object_name must be a non-empty layer name.")
+    return object_name
+
+
+def _resolve_available_object_name(base_name):
+    candidate = base_name
+    suffix = 1
+    while bpy.data.objects.get(candidate) is not None:
+        candidate = f"{base_name}{suffix}"
+        suffix += 1
+    return candidate
+
+
 def _fit_xy_dimensions(context, obj, target_x, target_y):
     resolved_x, resolved_y = _validate_xy_dimensions(target_x, target_y)
     _update_view_layer(context)
@@ -189,12 +233,18 @@ def _load_image(path):
         raise ValueError(f"Could not load image '{path}': {exc}") from exc
 
 
-def _create_textured_plane_for_image(context, image, dpi):
+def _create_textured_plane_for_image(context, image, dpi, target_xy=None):
     _safe_mode_set("OBJECT")
     bpy.ops.mesh.primitive_plane_add(size=1.0)
     plane = context.view_layer.objects.active
 
     base_name, target_x, target_y = _resolve_image_plane_spec(context, image, dpi)
+    if target_xy is not None:
+        try:
+            target_x, target_y = target_xy
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Lithophane target_xy must contain X and Y dimensions.") from exc
+        target_x, target_y = _validate_xy_dimensions(target_x, target_y)
     plane.name = base_name
     _fit_xy_dimensions(context, plane, target_x, target_y)
     _ensure_plane_uvs(context, plane)
@@ -262,6 +312,113 @@ def _add_displace_modifier(obj, image):
     return modifier
 
 
+def _read_image_alpha(image):
+    width = int(image.size[0])
+    height = int(image.size[1])
+    channels = int(getattr(image, "channels", 0) or 0)
+    if width <= 0 or height <= 0 or channels < 4:
+        return None
+
+    expected_length = width * height * channels
+    pixels = array("f", [0.0]) * expected_length
+    try:
+        image.pixels.foreach_get(pixels)
+    except (AttributeError, TypeError):
+        pixels = array("f", image.pixels[:])
+    if len(pixels) < expected_length:
+        raise ValueError(f"Could not read the complete alpha channel from {image.name}.")
+
+    alpha_values = range(3, expected_length, channels)
+    has_transparency = any(pixels[index] < ALPHA_CUTOFF for index in alpha_values)
+    if not has_transparency:
+        return None
+    if not any(pixels[index] >= ALPHA_CUTOFF for index in alpha_values):
+        raise ValueError(f"{image.name} contains no visible pixels above the alpha cutoff.")
+
+    return width, height, channels, pixels
+
+
+def _sample_alpha(alpha_data, u, v):
+    width, height, channels, pixels = alpha_data
+    resolved_u = min(1.0, max(0.0, float(u)))
+    resolved_v = min(1.0, max(0.0, float(v)))
+    pixel_x = min(width - 1, max(0, int(round(resolved_u * (width - 1)))))
+    pixel_y = min(height - 1, max(0, int(round(resolved_v * (height - 1)))))
+    return float(pixels[((pixel_y * width) + pixel_x) * channels + 3])
+
+
+def _delete_transparent_faces(obj, alpha_data):
+    mesh = obj.data
+    bm = bmesh.new()
+    try:
+        bm.from_mesh(mesh)
+        uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.active
+        if uv_layer is None:
+            raise ValueError(f"{obj.name} has no UV map for alpha cleanup.")
+
+        transparent_faces = []
+        for face in bm.faces:
+            if not face.loops:
+                transparent_faces.append(face)
+                continue
+            center_u = sum(loop[uv_layer].uv.x for loop in face.loops) / len(face.loops)
+            center_v = sum(loop[uv_layer].uv.y for loop in face.loops) / len(face.loops)
+            if _sample_alpha(alpha_data, center_u, center_v) < ALPHA_CUTOFF:
+                transparent_faces.append(face)
+
+        if transparent_faces:
+            bmesh.ops.delete(bm, geom=transparent_faces, context="FACES")
+        loose_vertices = [vertex for vertex in bm.verts if not vertex.link_faces]
+        if loose_vertices:
+            bmesh.ops.delete(bm, geom=loose_vertices, context="VERTS")
+        if not bm.faces:
+            raise ValueError(f"{obj.name} contains no visible pixels above the alpha cutoff.")
+
+        bm.to_mesh(mesh)
+        mesh.update()
+        return len(transparent_faces)
+    finally:
+        bm.free()
+
+
+def _collect_top_surface_vertex_indices(obj):
+    vertices = list(obj.data.vertices)
+    if not vertices:
+        raise ValueError(f"{obj.name} has no vertices after alpha cleanup.")
+    top_z = max(float(vertex.co.z) for vertex in vertices)
+    tolerance = max(1e-9, abs(top_z) * 1e-7, abs(SOLIDIFY_THICKNESS_METERS) * 1e-7)
+    indices = [
+        vertex.index
+        for vertex in vertices
+        if math.isclose(float(vertex.co.z), top_z, rel_tol=1e-7, abs_tol=tolerance)
+    ]
+    if not indices:
+        raise ValueError(f"{obj.name} has no measurable top surface after alpha cleanup.")
+    return indices
+
+
+def _make_alpha_cutout_lithophane(context, obj, image, alpha_data):
+    _set_active_object(context, obj, select_only=True)
+    _safe_mode_set("EDIT")
+    bpy.ops.mesh.select_all(action="SELECT")
+    bpy.ops.mesh.subdivide(number_cuts=TOP_FACE_SUBDIVISION_CUTS)
+    _safe_mode_set("OBJECT")
+
+    subsurf_modifier = _add_subsurf_modifier(obj)
+    _apply_modifier(context, obj, subsurf_modifier)
+    removed_face_count = _delete_transparent_faces(obj, alpha_data)
+
+    solidify_modifier = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
+    solidify_modifier.thickness = SOLIDIFY_THICKNESS_METERS
+    _apply_modifier(context, obj, solidify_modifier)
+
+    selected_vertex_indices = _collect_top_surface_vertex_indices(obj)
+    _create_or_replace_vertex_group(obj, TOP_FACE_GROUP_NAME, selected_vertex_indices)
+    displace_modifier = _add_displace_modifier(obj, image)
+    _apply_modifier(context, obj, displace_modifier)
+    return removed_face_count
+
+
 def perform_make_lithophane(context=None, data=None, image=None, target_xy=None):
     del data
     ctx = _ctx(context)
@@ -286,45 +443,127 @@ def perform_make_lithophane(context=None, data=None, image=None, target_xy=None)
 
     _apply_object_scale(ctx, obj)
 
-    solidify_modifier = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
-    solidify_modifier.thickness = SOLIDIFY_THICKNESS_METERS
-    _apply_modifier(ctx, obj, solidify_modifier)
+    alpha_data = _read_image_alpha(image)
+    removed_alpha_faces = 0
+    if alpha_data is not None:
+        removed_alpha_faces = _make_alpha_cutout_lithophane(ctx, obj, image, alpha_data)
+    else:
+        solidify_modifier = obj.modifiers.new(name="Solidify", type="SOLIDIFY")
+        solidify_modifier.thickness = SOLIDIFY_THICKNESS_METERS
+        _apply_modifier(ctx, obj, solidify_modifier)
 
-    _set_active_object(ctx, obj, select_only=True)
-    _safe_mode_set("EDIT")
-    bpy.ops.mesh.select_mode(type="FACE")
-    bpy.ops.mesh.select_all(action="DESELECT")
+        _set_active_object(ctx, obj, select_only=True)
+        _safe_mode_set("EDIT")
+        bpy.ops.mesh.select_mode(type="FACE")
+        bpy.ops.mesh.select_all(action="DESELECT")
 
-    _select_top_face(obj.data)
-    bpy.ops.mesh.subdivide(number_cuts=TOP_FACE_SUBDIVISION_CUTS)
-    selected_vertex_indices = _collect_selected_vertex_indices(obj.data)
+        _select_top_face(obj.data)
+        bpy.ops.mesh.subdivide(number_cuts=TOP_FACE_SUBDIVISION_CUTS)
+        selected_vertex_indices = _collect_selected_vertex_indices(obj.data)
 
-    _safe_mode_set("OBJECT")
-    _create_or_replace_vertex_group(obj, TOP_FACE_GROUP_NAME, selected_vertex_indices)
-    subsurf_modifier = _add_subsurf_modifier(obj)
-    displace_modifier = _add_displace_modifier(obj, image)
-    _apply_modifier(ctx, obj, subsurf_modifier)
-    _apply_modifier(ctx, obj, displace_modifier)
+        _safe_mode_set("OBJECT")
+        _create_or_replace_vertex_group(obj, TOP_FACE_GROUP_NAME, selected_vertex_indices)
+        subsurf_modifier = _add_subsurf_modifier(obj)
+        displace_modifier = _add_displace_modifier(obj, image)
+        _apply_modifier(ctx, obj, subsurf_modifier)
+        _apply_modifier(ctx, obj, displace_modifier)
     _fit_xy_dimensions(ctx, obj, target_x, target_y)
 
     return {
-        "message": f"Lithophane setup complete for {obj.name} using {image.name}.",
-        "display": "Lithophane setup complete",
+        "message": (
+            f"Lithophane setup complete for {obj.name} using {image.name}. "
+            f"Removed {removed_alpha_faces} transparent face(s)."
+            if removed_alpha_faces
+            else f"Lithophane setup complete for {obj.name} using {image.name}."
+        ),
+        "display": (
+            "Lithophane complete; transparency removed"
+            if removed_alpha_faces
+            else "Lithophane setup complete"
+        ),
         "object": obj.name,
         "image": image.name,
+        "removed_alpha_faces": removed_alpha_faces,
     }
 
 
-def _create_lithophane_from_path(context, image_path, dpi):
-    image = _load_image(image_path)
-    plane, target_xy = _create_textured_plane_for_image(context, image, dpi)
-    _set_active_object(context, plane, select_only=True)
+def _data_block_pointer(data_block):
+    pointer = getattr(data_block, "as_pointer", None)
+    return pointer() if callable(pointer) else id(data_block)
 
-    result = perform_make_lithophane(context=context, image=image, target_xy=target_xy)
-    result["image_path"] = image_path
-    result["object"] = result.get("object", plane.name)
-    result["image"] = result.get("image", image.name)
-    return result
+
+def _remove_new_unused_data_blocks(collection, original_pointers):
+    for data_block in list(collection):
+        if _data_block_pointer(data_block) in original_pointers:
+            continue
+        if int(getattr(data_block, "users", 0) or 0) != 0:
+            continue
+        collection.remove(data_block)
+
+
+def _cleanup_failed_lithophane(plane, original_materials, original_textures, original_images):
+    mesh = getattr(plane, "data", None) if plane is not None else None
+    if plane is not None:
+        try:
+            bpy.data.objects.remove(plane, do_unlink=True)
+        except (ReferenceError, RuntimeError):
+            pass
+    if mesh is not None and int(getattr(mesh, "users", 0) or 0) == 0:
+        try:
+            bpy.data.meshes.remove(mesh)
+        except (ReferenceError, RuntimeError):
+            pass
+
+    _remove_new_unused_data_blocks(bpy.data.textures, original_textures)
+    _remove_new_unused_data_blocks(bpy.data.materials, original_materials)
+    _remove_new_unused_data_blocks(bpy.data.images, original_images)
+
+
+def _create_lithophane_from_path(
+    context,
+    image_path,
+    dpi,
+    target_xy=None,
+    object_name=None,
+):
+    original_materials = {_data_block_pointer(item) for item in bpy.data.materials}
+    original_textures = {_data_block_pointer(item) for item in bpy.data.textures}
+    original_images = {_data_block_pointer(item) for item in bpy.data.images}
+    available_object_name = (
+        _resolve_available_object_name(object_name)
+        if object_name is not None
+        else None
+    )
+    plane = None
+    try:
+        image = _load_image(image_path)
+        plane, target_xy = _create_textured_plane_for_image(
+            context,
+            image,
+            dpi,
+            target_xy=target_xy,
+        )
+        if available_object_name is not None:
+            plane.name = available_object_name
+            if plane.name != available_object_name:
+                raise ValueError(
+                    "Blender could not assign the available Illustrator Lithophane object name."
+                )
+        _set_active_object(context, plane, select_only=True)
+
+        result = perform_make_lithophane(context=context, image=image, target_xy=target_xy)
+        result["image_path"] = image_path
+        result["object"] = result.get("object", plane.name)
+        result["image"] = result.get("image", image.name)
+        return result
+    except Exception:
+        _cleanup_failed_lithophane(
+            plane,
+            original_materials,
+            original_textures,
+            original_images,
+        )
+        raise
 
 
 def _normalize_paths(data):
@@ -346,9 +585,22 @@ def perform_create_lithophane_from_images(context=None, data=None, image_paths=N
         raise ValueError("No image paths were provided for lithophane creation.")
 
     resolved_dpi = float(dpi if dpi is not None else (data or {}).get("dpi", DEFAULT_DPI))
+    explicit_target_xy = _resolve_explicit_target_xy(ctx, data)
+    explicit_object_name = _resolve_explicit_object_name(data)
+    if (explicit_target_xy is not None or explicit_object_name is not None) and len(resolved_paths) != 1:
+        raise ValueError("Explicit Illustrator dimensions and object name require exactly one lithophane image.")
+
     results = []
     for image_path in resolved_paths:
-        results.append(_create_lithophane_from_path(ctx, image_path, resolved_dpi))
+        results.append(
+            _create_lithophane_from_path(
+                ctx,
+                image_path,
+                resolved_dpi,
+                target_xy=explicit_target_xy,
+                object_name=explicit_object_name,
+            )
+        )
 
     final_result = results[-1]
     return _result(

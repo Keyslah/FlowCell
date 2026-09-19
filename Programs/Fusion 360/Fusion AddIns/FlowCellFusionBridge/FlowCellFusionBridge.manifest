@@ -1,0 +1,13 @@
+{
+  "autodeskProduct": "Fusion",
+  "type": "addin",
+  "author": "FlowCell",
+  "description": {
+    "": "Owner-scoped filesystem bridge for FlowCell actions in Autodesk Fusion."
+  },
+  "version": "1.0.0",
+  "runOnStartup": true,
+  "supportedOS": "windows",
+  "editEnabled": true,
+  "id": "9b6c6f48-c23e-42d0-9f0e-c0b7c363713f"
+}

@@ -104,4 +104,55 @@ test("Main Save and Load Layout use the existing strict secondary-window pipelin
     nativeLayouts,
     /fn resolve_layout_dialog_directory[\s\S]{0,500}resolve_main_page_layouts_root\(\)/
   );
+  assert.match(
+    nativeLayouts,
+    /add_filter\("FlowCell Layout", &\["flowlayout\.json"\]\)/
+  );
+  assert.match(
+    nativeLayouts,
+    /add_filter\("Legacy FlowCell Layout", &\["json"\]\)/
+  );
+  const openLayoutDialogStart = nativeLayouts.indexOf(
+    "pub(crate) fn show_open_layout_dialog"
+  );
+  const openLayoutDialogEnd = nativeLayouts.indexOf(
+    ".pick_file();",
+    openLayoutDialogStart
+  );
+  const openLayoutDialog = nativeLayouts.slice(
+    openLayoutDialogStart,
+    openLayoutDialogEnd
+  );
+  assert.notEqual(openLayoutDialogStart, -1);
+  assert.notEqual(openLayoutDialogEnd, -1);
+  assert.doesNotMatch(openLayoutDialog, /\.add_filter\(/);
+  assert.match(nativeLayouts, /validate_layout_file_path\(&layout_path\)\?/);
+  assert.match(nativeLayouts, /FlowCell Theme, not a FlowCell Layout/);
+});
+
+test("Main native close retires every secondary FlowCell window before destroying Main", () => {
+  const mainPage = readSource("src", "pages", "main", "MainPage.tsx");
+  const closeCoordinatorStart = mainPage.indexOf("const closeManagedLayoutWindows");
+  const closeCoordinatorEnd = mainPage.indexOf(
+    "const captureLayoutSnapshotState",
+    closeCoordinatorStart
+  );
+  const closeCoordinator = mainPage.slice(closeCoordinatorStart, closeCoordinatorEnd);
+  const closeHookStart = mainPage.indexOf("mainWindow.onCloseRequested");
+  const closeHookEnd = mainPage.indexOf("const captureLayoutSnapshotState", closeHookStart);
+  const closeHook = mainPage.slice(closeHookStart, closeHookEnd);
+
+  assert.notEqual(closeCoordinatorStart, -1);
+  assert.match(closeCoordinator, /closeUnregisteredWindows\s*=\s*false/);
+  assert.match(
+    closeCoordinator,
+    /if \(closeUnregisteredWindows\)[\s\S]{0,160}await windowHandle\.close\(\)/
+  );
+  assert.notEqual(closeHookStart, -1);
+  assert.match(closeHook, /event\.preventDefault\(\)/);
+  assert.ok(
+    closeHook.indexOf("await closeManagedLayoutWindows(true)") <
+      closeHook.indexOf("await mainWindow.destroy()"),
+    "Main must finish the secondary-window close pass before it destroys itself"
+  );
 });

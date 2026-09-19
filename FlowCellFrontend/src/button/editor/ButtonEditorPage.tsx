@@ -694,6 +694,9 @@ function ButtonEditorContent({
   const selectedSurfaceUnit = Object.values(store.draft.popoutUnits).find(
     (candidate) => candidate.surfaceId === selectedSurfaceId
   );
+  const selectedFanSetup = Object.values(store.draft.fanSetups).find(
+    (candidate) => candidate.fanSurfaceId === selectedSurfaceId
+  ) ?? null;
   const selectedSurfaceOwnerPlacementId = selectedSurfaceUnit &&
     "ownerPlacementId" in selectedSurfaceUnit &&
     typeof selectedSurfaceUnit.ownerPlacementId === "string"
@@ -1201,7 +1204,7 @@ function ButtonEditorContent({
       );
       targetPath = await showSaveFileDialog({
         title: `Save ${placementLabel} Settings`,
-        filter: "FlowCell Button Settings (*.flowcell-button-settings.json)|*.flowcell-button-settings.json|JSON Files (*.json)|*.json",
+        filter: "JSON Files (*.json)|*.json",
         defaultFileName: defaultButtonSettingsFileName(placementKind),
         initialDirectory: settingsDirectory
       });
@@ -1264,7 +1267,8 @@ function ButtonEditorContent({
       });
       writtenPath = await saveButtonSettingsFile(targetPath, committedSettingsFile);
       await publishButtonCommit(saved);
-      setMessage(`${placementLabel} settings saved to ${writtenPath}.`);
+      const writtenFileName = writtenPath.split(/[\\/]/).at(-1) ?? writtenPath;
+      setMessage(`${placementLabel} settings saved to ${writtenFileName}.`);
     } catch (error) {
       const failure = error instanceof Error ? error.message : String(error);
       setMessage(
@@ -1320,7 +1324,7 @@ function ButtonEditorContent({
       );
       const paths = await showOpenFileDialog({
         title: `Load ${settingsPlacementLabel} Settings`,
-        filter: "FlowCell Button Settings (*.flowcell-button-settings.json)|*.flowcell-button-settings.json|JSON Files (*.json)|*.json",
+        filter: "JSON Files (*.json)|*.json",
         initialDirectory: settingsDirectory,
         multiselect: false
       });
@@ -1328,7 +1332,7 @@ function ButtonEditorContent({
       if (!selectedPath) return;
 
       const settingsFile = await loadButtonSettingsFile(selectedPath);
-      stageSettingsFile(settingsFile, selectedPath);
+      stageSettingsFile(settingsFile, selectedPath.split(/[\\/]/).at(-1) ?? selectedPath);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
     } finally {
@@ -1423,6 +1427,26 @@ function ButtonEditorContent({
       setBusy(false);
     }
   };
+
+  const setSelectedFanSpinEnabled = useCallback((enabled: boolean) => {
+    const current = store.current();
+    const setup = Object.values(current.fanSetups).find(
+      (candidate) => candidate.fanSurfaceId === selectedSurfaceId
+    );
+    if (!setup) {
+      setMessage("Select a saved Fan before changing its animation style.");
+      return;
+    }
+    if (setup.animation.spinEnabled === enabled) return;
+    store.transact((draft) => {
+      const target = draft.fanSetups[setup.id];
+      if (!target || target.fanSurfaceId !== selectedSurfaceId) return;
+      target.animation.spinEnabled = enabled;
+    }, {
+      label: enabled ? "Enable Fan spin" : "Disable Fan spin"
+    });
+    setMessage(null);
+  }, [selectedSurfaceId, store]);
 
   const selectPopoutPlacementMode = useCallback((surfaceId: string, mode: "pop" | "fan") => {
     const current = store.current();
@@ -2903,6 +2927,19 @@ function ButtonEditorContent({
                 />
                 <span>Fan</span>
               </label>
+            ) : null}
+            {settingsPlacementKind === "fan" && selectedFanSetup ? (
+              <fieldset className="button-editor-sidebar__fan-styles" disabled={busy}>
+                <legend>Fan styles</legend>
+                <label className="button-editor-check button-editor-sidebar__fan-animation">
+                  <input
+                    type="checkbox"
+                    checked={selectedFanSetup.animation.spinEnabled}
+                    onChange={(event) => setSelectedFanSpinEnabled(event.currentTarget.checked)}
+                  />
+                  <span>Spin Buttons as they fan out</span>
+                </label>
+              </fieldset>
             ) : null}
             <button
               type="button"

@@ -1759,6 +1759,13 @@ pub(crate) fn infer_program_template_key(
     if normalized_program_name.contains("blender") || exe_name.contains("blender") {
         return "blender";
     }
+    if normalized_program_name.contains("fusion 360")
+        || normalized_program_name == "fusion"
+        || exe_name.contains("fusion360")
+        || exe_name.contains("fusionlauncher")
+    {
+        return "fusion";
+    }
     if normalized_program_name.contains("illustrator") || exe_name.contains("illustrator") {
         return "illustrator";
     }
@@ -1907,24 +1914,28 @@ pub(crate) fn list_program_folders() -> Result<Vec<String>, String> {
 
 fn suggested_program_executable(manifest: &program_sources::manifest::ProgramManifest) -> String {
     let declared = manifest.exe_path.trim().trim_matches('"');
-    if declared.is_empty() {
-        return String::new();
+    if !declared.is_empty() {
+        let declared_path = PathBuf::from(declared);
+        if declared_path.is_file() {
+            return declared_path.to_string_lossy().to_string();
+        }
+        let output = Command::new("where.exe").arg(declared).output();
+        if let Some(resolved) = output
+            .ok()
+            .filter(|output| output.status.success())
+            .and_then(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| !line.is_empty() && Path::new(line).is_file())
+                    .map(str::to_string)
+            })
+        {
+            return resolved;
+        }
     }
-    let declared_path = PathBuf::from(declared);
-    if declared_path.is_file() {
-        return declared_path.to_string_lossy().to_string();
-    }
-    let output = Command::new("where.exe").arg(declared).output();
-    output
-        .ok()
-        .filter(|output| output.status.success())
-        .and_then(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .map(str::trim)
-                .find(|line| !line.is_empty() && Path::new(line).is_file())
-                .map(str::to_string)
-        })
+
+    crate::commands::windows::find_running_process_executable(&manifest.process_names)
         .unwrap_or_default()
 }
 
@@ -3076,11 +3087,20 @@ fn finalize_add_program_transaction(
     }
     let manifest =
         program_sources::manifest::load_program_manifest(&journal.preflight.program_name)?;
-    if manifest.runner.kind == "blender-bridge" {
-        bootstrap_blender_program(
-            &journal.preflight.program_name,
-            Some(&journal.preflight.executable_path),
-        )?;
+    match manifest.runner.kind.as_str() {
+        "blender-bridge" => {
+            bootstrap_blender_program(
+                &journal.preflight.program_name,
+                Some(&journal.preflight.executable_path),
+            )?;
+        }
+        "fusion-bridge" => {
+            bootstrap_fusion_program(
+                &journal.preflight.program_name,
+                Some(&journal.preflight.executable_path),
+            )?;
+        }
+        _ => {}
     }
     restart_flowcell_headless_backend()?;
     {
@@ -4740,6 +4760,7 @@ pub(crate) fn resolve_program_executable(
     let template_key = infer_program_template_key(program_name, Some(selected_location));
     let preferred_stem = match template_key {
         "blender" => Some("blender"),
+        "fusion" => Some("fusion360"),
         "illustrator" => Some("illustrator"),
         "photoshop" => Some("photoshop"),
         "windows" => Some("explorer"),
@@ -4970,6 +4991,17 @@ fn preview_plain_program_package_in(
     Ok((program_root, manifest))
 }
 
+fn backend_run_method_for_runner(kind: &str) -> Result<&'static str, String> {
+    match kind {
+        "windows-script" => Ok("windows_generic"),
+        "illustrator-direct" => Ok("illustrator_direct"),
+        "photoshop-direct" => Ok("photoshop_direct"),
+        "blender-bridge" => Ok("blender_bridge"),
+        "fusion-bridge" => Ok("fusion_bridge"),
+        value => Err(format!("Unsupported program runner kind '{value}'.")),
+    }
+}
+
 fn apply_manifest_registration(
     document: &mut IniDocument,
     program_id: i64,
@@ -4985,13 +5017,7 @@ fn apply_manifest_registration(
         &manifest.local_scripts_folder,
         "localScriptsFolder",
     )?;
-    let run_method = match manifest.runner.kind.as_str() {
-        "windows-script" => "windows_generic",
-        "illustrator-direct" => "illustrator_direct",
-        "photoshop-direct" => "photoshop_direct",
-        "blender-bridge" => "blender_bridge",
-        value => return Err(format!("Unsupported program runner kind '{value}'.")),
-    };
+    let run_method = backend_run_method_for_runner(&manifest.runner.kind)?;
     section.insert("Label".to_string(), manifest.label.clone());
     section.insert(
         "NormalizedName".to_string(),
@@ -5778,20 +5804,20 @@ ScriptPath=C:\FlowCell\Illustrator.jsx
 #[cfg(test)]
 mod managed_program_setup_tests {
     use super::{
-        add_program_source_is_required, canonical_source_graph_matches, copy_external_panel_tree,
-        create_plain_program_package, generated_plain_program_manifest,
-        install_add_program_sources_while_source_locked, mark_add_program_native_applied,
-        preflight_add_program_plan_inner, preview_plain_program_package_in,
-        read_add_program_journal, recover_planned_active_record_path,
-        recycle_owned_add_panel_destination_with, resolve_programs_root, stable_program_id,
-        validate_available_program_package, validate_available_program_package_at,
-        validate_external_panel_source, validate_plain_program_package_tree_in,
-        write_add_panel_marker, write_add_program_journal, AddPanelPreflight,
-        AddPanelTransactionJournal, AddPanelTransactionPhase, AddProgramPlanRequest,
-        AddProgramPreflight, AddProgramSourceSelection, AddProgramTransactionJournal,
-        AddProgramTransactionPhase, PlannedProgramSourceOwner, ProgramSetupSource,
-        ADD_PANEL_TRANSACTION_SCHEMA_VERSION, ADD_PROGRAM_TRANSACTION_SCHEMA_VERSION,
-        PLAIN_PROGRAM_PACKAGE_MARKER_FILE_NAME,
+        add_program_source_is_required, backend_run_method_for_runner,
+        canonical_source_graph_matches, copy_external_panel_tree, create_plain_program_package,
+        generated_plain_program_manifest, install_add_program_sources_while_source_locked,
+        mark_add_program_native_applied, preflight_add_program_plan_inner,
+        preview_plain_program_package_in, read_add_program_journal,
+        recover_planned_active_record_path, recycle_owned_add_panel_destination_with,
+        resolve_programs_root, stable_program_id, validate_available_program_package,
+        validate_available_program_package_at, validate_external_panel_source,
+        validate_plain_program_package_tree_in, write_add_panel_marker, write_add_program_journal,
+        AddPanelPreflight, AddPanelTransactionJournal, AddPanelTransactionPhase,
+        AddProgramPlanRequest, AddProgramPreflight, AddProgramSourceSelection,
+        AddProgramTransactionJournal, AddProgramTransactionPhase, PlannedProgramSourceOwner,
+        ProgramSetupSource, ADD_PANEL_TRANSACTION_SCHEMA_VERSION,
+        ADD_PROGRAM_TRANSACTION_SCHEMA_VERSION, PLAIN_PROGRAM_PACKAGE_MARKER_FILE_NAME,
     };
     use crate::program_sources::execute::ActiveSourceResolution;
     use crate::program_sources::manifest::BundledSourceManifest;
@@ -5890,6 +5916,15 @@ mod managed_program_setup_tests {
         assert!(manifest.bundled_sources.is_empty());
         assert!(!manifest.bind_scoped_native_owner);
         assert_eq!(manifest.runner.kind, "windows-script");
+    }
+
+    #[test]
+    fn fusion_bridge_maps_to_the_constrained_backend_runner() {
+        assert_eq!(
+            backend_run_method_for_runner("fusion-bridge").expect("Fusion runner mapping"),
+            "fusion_bridge"
+        );
+        assert!(backend_run_method_for_runner("arbitrary").is_err());
     }
 
     #[test]

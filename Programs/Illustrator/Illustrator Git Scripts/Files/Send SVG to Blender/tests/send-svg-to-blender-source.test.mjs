@@ -22,10 +22,13 @@ const blenderRegistryInstallerPath = path.resolve(
 );
 const blenderRegistryInstallerSource = readFileSync(blenderRegistryInstallerPath, "utf8");
 
-function loadTestApi(postAction, appOverride) {
+function loadTestApi(postAction, appOverride, warnings) {
   const globalObject = { __FLOWCELL_SEND_SVG_TO_BLENDER_TEST__: true };
   const context = {
     $: { global: globalObject },
+    alert(message) {
+      if (warnings) warnings.push(String(message));
+    },
     StrokeCap: {
       BUTTENDCAP: "butt",
       ROUNDENDCAP: "round",
@@ -243,7 +246,8 @@ test("selected compound paths and clipping groups remain the exact selected expo
 });
 
 test("pre-Unite validation rejects visible clipping groups, including nested masks", () => {
-  const { validateVectorArtwork } = loadTestApi();
+  const warnings = [];
+  const { showBlockingWarning, validateVectorArtwork } = loadTestApi(undefined, undefined, warnings);
   const layer = mockLayer("Stencil");
   const outerGroup = {
     typename: "GroupItem",
@@ -262,13 +266,23 @@ test("pre-Unite validation rejects visible clipping groups, including nested mas
   const validPath = normalizedPath(outerGroup);
   outerGroup.pageItems.push(validPath, clippingGroup);
 
-  assert.throws(
-    () => validateVectorArtwork(
+  let clippingError;
+  try {
+    validateVectorArtwork(
       { pageItems: [outerGroup], pathItems: [validPath] },
       "Stencil"
-    ),
-    /contains a visible clipping group/
-  );
+    );
+  } catch (error) {
+    clippingError = error;
+  }
+  assert.match(clippingError.message, /contains a visible clipping group/);
+  assert.deepEqual(warnings, []);
+  assert.equal(showBlockingWarning(clippingError), true);
+  assert.deepEqual(warnings, [
+    "FlowCell cannot send this artwork to Blender.\n\n" +
+      "Layer \"Stencil\" contains a visible clipping mask. Expand or release the mask and convert the result " +
+      "to explicit closed filled paths, then try again."
+  ]);
 });
 
 test("distinct owner layers may not collide after Windows filename sanitation", () => {
@@ -674,6 +688,10 @@ test("all temporary documents close unsaved and original document state is resto
   assert.match(source, /finally \{\s*closeAllTemporaryDocuments\(temporaryDocuments\);\s*restoreOriginalState/s);
   assert.match(source, /documentRef\.activate\(\)/);
   assert.match(source, /documentRef\.selection = selectionSnapshot/);
+  assert.ok(
+    source.indexOf("restoreOriginalState(originalDocument, originalActiveLayer, originalSelection)") <
+      source.indexOf("showBlockingWarning(caughtError)")
+  );
 });
 
 test("handoff registers the SVG importer as a fixed internal Blender action without a panel record", () => {

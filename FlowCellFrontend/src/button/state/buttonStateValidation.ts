@@ -19,6 +19,11 @@ import {
 } from "./sourceIdentity.js";
 import { BUTTON_SKIN_SECTION_ORDER } from "../skins/buttonSkinFormat.js";
 import { validateButtonSkin } from "../skins/skinValidator.js";
+import {
+  normalizeButtonGlowAmount,
+  normalizeButtonHighlightAmount,
+  normalizeButtonSkinColor
+} from "../skins/buttonSkinColors.js";
 import { isButtonActivationAnimationPresetId } from "../animations/buttonActivationAnimations.js";
 
 export interface ButtonStateValidationIssue {
@@ -577,6 +582,9 @@ function validateTopLevel(value: unknown, issues: ButtonStateValidationIssue[]):
   for (const key of ["buttons", "placements", "surfaces", "skins", "popoutUnits", "fanSetups", "settings"]) {
     if (!isObject(value[key])) addIssue(issues, key, `${key} must be an object.`, "fatal");
   }
+  if (value.themeOverrides !== undefined && !isObject(value.themeOverrides)) {
+    addIssue(issues, "themeOverrides", "Theme overrides must be an object.", "fatal");
+  }
   return !issues.some((issue) => issue.severity === "fatal");
 }
 
@@ -588,6 +596,10 @@ function validateTopLevel(value: unknown, issues: ButtonStateValidationIssue[]):
 export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
   if (!isObject(value) || !isObject(value.placements)) return value;
   let changed = false;
+  const themeOverrides = isObject(value.themeOverrides)
+    ? { ...value.themeOverrides }
+    : {};
+  if (!Object.hasOwn(value, "themeOverrides")) changed = true;
   const settings: Record<string, unknown> | unknown = isObject(value.settings)
     ? { ...value.settings }
     : value.settings;
@@ -710,11 +722,15 @@ export function normalizeLoadedButtonStateDocument(value: unknown): unknown {
         setup.collapsedBoundsFitMode = "surface";
         changed = true;
       }
+      if (isObject(setup.animation) && !Object.hasOwn(setup.animation, "spinEnabled")) {
+        setup.animation = { ...setup.animation, spinEnabled: false };
+        changed = true;
+      }
       fanSetups[id] = setup;
     }
   }
   return changed
-    ? { ...value, buttons, placements, surfaces, popoutUnits, fanSetups, settings }
+    ? { ...value, buttons, placements, surfaces, popoutUnits, fanSetups, themeOverrides, settings }
     : value;
 }
 
@@ -879,6 +895,71 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     }
     if (placement.resizeAnchor !== "top-left") {
       addIssue(issues, `${path}.resizeAnchor`, "Placement resize anchor is invalid.");
+    }
+  }
+
+  for (const [placementId, override] of Object.entries(document.themeOverrides ?? {})) {
+    const path = `themeOverrides.${placementId}`;
+    if (!document.placements[placementId]) {
+      addIssue(issues, path, "Theme override references a missing placement.");
+    }
+    if (!isObject(override)) {
+      addIssue(issues, path, "Theme override must be an object.");
+      continue;
+    }
+    const requiredKeys = ["colors", "hoverEnabled", "activeEnabled", "hoverColor", "activeColor"];
+    const amountKeys = [
+      "highlightAmount",
+      "hoverHighlightAmount",
+      "activeHighlightAmount",
+      "hoverGlowAmount",
+      "activeGlowAmount"
+    ];
+    const allowedKeys = new Set([...requiredKeys, ...amountKeys]);
+    if (
+      Object.keys(override).some((key) => !allowedKeys.has(key)) ||
+      !requiredKeys.every((key) => Object.hasOwn(override, key))
+    ) {
+      addIssue(issues, path, "Theme override fields are invalid.");
+      continue;
+    }
+    if (!isObject(override.colors)) {
+      addIssue(issues, `${path}.colors`, "Theme override colors must be an object.");
+    } else {
+      for (const [role, color] of Object.entries(override.colors)) {
+        if (!/^[a-z][a-z0-9-]*$/.test(role)) {
+          addIssue(issues, `${path}.colors.${role}`, "Theme color role is invalid.");
+        }
+        if (typeof color !== "string" || !normalizeButtonSkinColor(color)) {
+          addIssue(issues, `${path}.colors.${role}`, "Theme color must be a concrete CSS color.");
+        }
+      }
+    }
+    for (const key of ["hoverEnabled", "activeEnabled"] as const) {
+      if (override[key] !== null && typeof override[key] !== "boolean") {
+        addIssue(issues, `${path}.${key}`, "Theme highlight setting must be boolean or null.");
+      }
+    }
+    for (const key of ["hoverColor", "activeColor"] as const) {
+      const color = override[key];
+      if (color !== null && (typeof color !== "string" || !normalizeButtonSkinColor(color))) {
+        addIssue(issues, `${path}.${key}`, "Theme highlight color must be a concrete CSS color or null.");
+      }
+    }
+    for (const key of amountKeys) {
+      if (
+        override[key] !== undefined &&
+        override[key] !== null &&
+        (key === "hoverHighlightAmount" || key === "activeHighlightAmount"
+          ? normalizeButtonHighlightAmount(override[key])
+          : normalizeButtonGlowAmount(override[key])) === null
+      ) {
+        addIssue(
+          issues,
+          `${path}.${key}`,
+          "Theme highlight or glow amount must be a whole percentage from 0 through 100 or null."
+        );
+      }
     }
   }
 
@@ -1208,6 +1289,22 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     }
     if (setup.collapsedBoundsEnvelope && !isUsableButtonRect(setup.collapsedBoundsEnvelope)) {
       addIssue(issues, `${path}.collapsedBoundsEnvelope`, "Fan collapsed-bounds envelope is invalid.");
+    }
+    if (!isObject(setup.animation)) {
+      addIssue(issues, `${path}.animation`, "Fan animation settings must be an object.");
+    } else {
+      if (!isFiniteNumber(setup.animation.durationMs) || setup.animation.durationMs < 0) {
+        addIssue(issues, `${path}.animation.durationMs`, "Fan duration must be a nonnegative finite number.");
+      }
+      if (typeof setup.animation.easing !== "string") {
+        addIssue(issues, `${path}.animation.easing`, "Fan easing must be a string.");
+      }
+      if (!isFiniteNumber(setup.animation.staggerMs) || setup.animation.staggerMs < 0) {
+        addIssue(issues, `${path}.animation.staggerMs`, "Fan stagger must be a nonnegative finite number.");
+      }
+      if (typeof setup.animation.spinEnabled !== "boolean") {
+        addIssue(issues, `${path}.animation.spinEnabled`, "Fan spin setting must be a boolean.");
+      }
     }
     const normalizedName = typeof setup.name === "string" ? setup.name.trim().toLocaleLowerCase("en") : "";
     const normalizedProgram = typeof setup.programName === "string" ? setup.programName.trim().toLocaleLowerCase("en") : "";

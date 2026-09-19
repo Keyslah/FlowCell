@@ -15,6 +15,7 @@ export interface RegisteredLayoutWindow {
   buttonOwnerId?: string;
   panelOwnerButtonId?: string;
   buttonDisplayMode?: "collapsed" | "expanded";
+  buttonDraftSessionId?: string;
   buttonPopoutSettingsPath?: string;
   buttonPopoutChoiceId?: string;
   installedPageFileName?: string;
@@ -108,6 +109,7 @@ export function registerLayoutWindow(entry: RegisteredLayoutWindow): void {
       entry.buttonDisplayMode === "collapsed" || entry.buttonDisplayMode === "expanded"
         ? entry.buttonDisplayMode
         : previousEntry?.buttonDisplayMode,
+    buttonDraftSessionId: entry.buttonDraftSessionId?.trim() || undefined,
     buttonPopoutSettingsPath: entry.buttonPopoutSettingsPath?.trim() || undefined,
     buttonPopoutChoiceId: entry.buttonPopoutChoiceId?.trim() || undefined,
     installedPageFileName: entry.installedPageFileName?.trim() || undefined,

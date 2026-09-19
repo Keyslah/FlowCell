@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "programId": "fusion-360",
+  "label": "Fusion 360",
+  "programType": "bridge",
+  "defaultPanels": ["Tool Sets"],
+  "panels": [
+    { "id": "toolset", "label": "Tool Sets", "defaultSelected": true }
+  ],
+  "processNames": ["Fusion360", "FusionLauncher"],
+  "bindScopedNativeOwner": false,
+  "shortcutProfileId": "",
+  "gitScriptsFolder": "Fusion Git Scripts",
+  "panelsFolder": "Panels",
+  "localScriptsFolder": "Fusion Local Scripts",
+  "supportScriptsFolder": "SupportScripts",
+  "allowedScriptExtensions": ["py"],
+  "allowedManifestFileNames": ["flowcell.script.json", "flowcell.toolset.json"],
+  "supportsToolsetManifests": true,
+  "bundledSources": [
+    {
+      "id": "fusion-360.align",
+      "version": "1.0.1",
+      "panelName": "Tool Sets",
+      "sourcePath": "Fusion Git Scripts/Toolsets/align",
+      "importKind": "tool-set",
+      "displayLabel": "Align",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the Fusion Align Tool Set and its owner-scoped action into Tool Sets."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "fusion-360.rotate",
+      "version": "1.0.1",
+      "panelName": "Tool Sets",
+      "sourcePath": "Fusion Git Scripts/Toolsets/rotate",
+      "importKind": "tool-set",
+      "displayLabel": "Rotate",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the Fusion Rotate Tool Set and its owner-scoped action into Tool Sets."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "fusion-360.scale",
+      "version": "1.0.2",
+      "panelName": "Tool Sets",
+      "sourcePath": "Fusion Git Scripts/Toolsets/scale",
+      "importKind": "tool-set",
+      "displayLabel": "Scale",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the Fusion Scale Tool Set with editable XYZ dimensions, aspect locking, side pinning, and a native drag command."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    }
+  ],
+  "runner": {
+    "kind": "fusion-bridge",
+    "programKey": "fusion_bridge",
+    "installScript": "Install-FusionFlowCellButtons.ps1",
+    "deleteScript": "Remove-FusionFlowCellButton.ps1"
+  },
+  "addonReloadNotes": "Restart Fusion 360 after the FlowCell Fusion add-in itself changes; installed owner actions reload for each request.",
+  "appRestartNotes": "Restart FlowCell after changing this program manifest."
+}

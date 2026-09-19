@@ -107,6 +107,10 @@ pub(crate) struct ProgramRunnerManifest {
     pub delete_script: String,
 }
 
+pub(crate) fn is_managed_bridge_runner(kind: &str) -> bool {
+    matches!(kind.trim(), "blender-bridge" | "fusion-bridge")
+}
+
 pub(crate) fn normalize_import_kind(value: &str) -> Result<&'static str, String> {
     match value.trim().to_ascii_lowercase().as_str() {
         "" | "script" | "single-script" => Ok("script"),
@@ -370,7 +374,8 @@ pub(crate) fn validate_manifest(
         true,
     )?;
     match manifest.runner.kind.trim() {
-        "windows-script" | "illustrator-direct" | "photoshop-direct" | "blender-bridge" => {}
+        "windows-script" | "illustrator-direct" | "photoshop-direct" | "blender-bridge"
+        | "fusion-bridge" => {}
         value => return Err(format!("Unsupported program runner kind '{value}'.")),
     }
     if manifest.allowed_script_extensions.is_empty() {
@@ -379,13 +384,13 @@ pub(crate) fn validate_manifest(
             manifest.label
         ));
     }
-    if manifest.runner.kind.trim() == "blender-bridge"
+    if is_managed_bridge_runner(&manifest.runner.kind)
         && (manifest.runner.install_script.is_empty() || manifest.runner.delete_script.is_empty())
     {
-        return Err(
-            "Blender program manifests require runner.installScript and runner.deleteScript."
-                .to_string(),
-        );
+        return Err(format!(
+            "Program runner '{}' requires runner.installScript and runner.deleteScript.",
+            manifest.runner.kind.trim()
+        ));
     }
     for (value, field) in [
         (&manifest.git_scripts_folder, "gitScriptsFolder"),
@@ -711,8 +716,9 @@ pub(crate) fn extension_is_allowed(manifest: &ProgramManifest, path: &Path) -> b
 #[cfg(test)]
 mod tests {
     use super::{
-        normalize_import_kind, normalize_relative_manifest_path, validate_bundled_source_id,
-        validate_bundled_source_version, validate_manifest, ProgramManifest,
+        is_managed_bridge_runner, normalize_import_kind, normalize_relative_manifest_path,
+        validate_bundled_source_id, validate_bundled_source_version, validate_manifest,
+        ProgramManifest,
     };
     use std::fs;
     use std::path::PathBuf;
@@ -746,6 +752,34 @@ mod tests {
             ""
         );
         assert!(normalize_relative_manifest_path("..", "runner.installScript", true).is_err());
+    }
+
+    #[test]
+    fn fusion_bridge_is_supported_and_requires_both_lifecycle_adapters() {
+        let manifest_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("Programs")
+            .join("Windows")
+            .join("flowcell.program.json");
+        let raw = fs::read_to_string(manifest_path).expect("Windows manifest");
+        let mut manifest = serde_json::from_str::<ProgramManifest>(&raw).expect("manifest schema");
+        manifest.runner.kind = "fusion-bridge".to_string();
+        manifest.runner.install_script.clear();
+        manifest.runner.delete_script.clear();
+        let program_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("Programs")
+            .join("Windows");
+
+        let error = validate_manifest(&mut manifest, "Windows", &program_root)
+            .expect_err("Fusion bridge without adapters must fail closed");
+        assert!(error.contains("fusion-bridge"));
+        assert!(error.contains("runner.installScript and runner.deleteScript"));
+        assert!(is_managed_bridge_runner("fusion-bridge"));
+        assert!(is_managed_bridge_runner("blender-bridge"));
+        assert!(!is_managed_bridge_runner("windows-script"));
     }
 
     #[test]

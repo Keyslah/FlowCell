@@ -3,7 +3,8 @@ import type {
   ButtonSkin,
   ButtonSourceIdentity,
   ButtonStateDocument,
-  ButtonSurfaceKind
+  ButtonSurfaceKind,
+  ButtonThemeOverride
 } from "../button/types.js";
 import { cloneButtonDocument } from "../button/state/buttonDefaults.js";
 import { validateButtonStateDocument } from "../button/state/buttonStateValidation.js";
@@ -17,7 +18,11 @@ import {
 import {
   BUTTON_SKIN_PROFILE_COLOR_PREFIX,
   collectButtonSkinProfileColors,
+  normalizeButtonGlowAmount,
+  normalizeButtonHighlightAmount,
   normalizeButtonSkinColor,
+  readButtonSkinHighlightOnActive,
+  readButtonSkinHighlightOnHover,
   readButtonSkinTextColor,
   setButtonSkinTextColor,
   setButtonSkinProfileColor
@@ -40,13 +45,19 @@ import {
 } from "./themePageRegistry.js";
 
 export const FLOWCELL_THEME_KIND = "FlowCellTheme" as const;
-export const FLOWCELL_THEME_VERSION = 1 as const;
+export const FLOWCELL_THEME_VERSION = 2 as const;
+const LEGACY_FLOWCELL_THEME_VERSION = 1 as const;
 
 export type { FlowCellThemePageId, ThemePageAppearance } from "./themePageRegistry.js";
 
 export type ThemeTarget =
   | { kind: "flowcell"; page: FlowCellThemePageId }
-  | { kind: "program"; programName: string; panelName: string | null };
+  | {
+      kind: "program";
+      programName: string;
+      panelName: string | null;
+      area?: "popouts";
+    };
 
 export interface MainRailThemeAppearance {
   background: string;
@@ -84,6 +95,14 @@ export interface ButtonThemeAppearance {
   highlightOnHover: boolean;
   gradientEnabled: boolean;
   scatterEnabled: boolean;
+  themeOverride: ButtonThemeOverride;
+  assignSkin: boolean;
+  highlightColorReset?: ThemeHighlightColorResetIntent;
+}
+
+export interface ThemeHighlightColorResetIntent {
+  hover: boolean;
+  active: boolean;
 }
 
 export interface ThemeGradientDefinition {
@@ -107,6 +126,24 @@ export interface FlowCellThemeFile {
   gradient: ThemeGradientDefinition | null;
 }
 
+export const THEME_HOVER_HIGHLIGHT_ROLE = "hover-highlight";
+export const THEME_ACTIVE_HIGHLIGHT_ROLE = "active-highlight";
+const LEGACY_THEME_SKIN_ID_PREFIX = "flowcell-theme-skin-";
+
+export interface ThemeSkinAssignmentIdentity {
+  key: string;
+  label: string;
+  skinId: string;
+}
+
+interface LegacyFlowCellThemeFile extends Omit<FlowCellThemeFile, "version" | "buttons"> {
+  version: typeof LEGACY_FLOWCELL_THEME_VERSION;
+  buttons: Array<Omit<
+    ButtonThemeAppearance,
+    "themeOverride" | "assignSkin" | "highlightColorReset"
+  >>;
+}
+
 export interface ThemeApplyResult {
   document: ButtonStateDocument;
   appliedButtonCount: number;
@@ -114,6 +151,20 @@ export interface ThemeApplyResult {
   skippedButtonCount: number;
   matchedPlacementIds: Record<string, string>;
   issues: ThemeApplyIssue[];
+}
+
+export function resolveThemeHighlightColorResetPlacementIds(
+  theme: Pick<FlowCellThemeFile, "buttons">,
+  matchedPlacementIds: Readonly<Record<string, string>>
+): { hover: Set<string>; active: Set<string> } {
+  const resolved = { hover: new Set<string>(), active: new Set<string>() };
+  theme.buttons.forEach((appearance) => {
+    const placementId = matchedPlacementIds[appearance.placementId];
+    if (!placementId) return;
+    if (appearance.highlightColorReset?.hover) resolved.hover.add(placementId);
+    if (appearance.highlightColorReset?.active) resolved.active.add(placementId);
+  });
+  return resolved;
 }
 
 export interface ThemeApplyIssue {
@@ -128,12 +179,50 @@ export interface SkinColorRoot {
   value: string;
 }
 
+export function emptyButtonThemeOverride(): ButtonThemeOverride {
+  return {
+    colors: {},
+    hoverEnabled: null,
+    activeEnabled: null,
+    hoverColor: null,
+    activeColor: null
+  };
+}
+
+export function buttonThemeOverrideIsEmpty(override: ButtonThemeOverride): boolean {
+  return Object.keys(override.colors).length === 0 &&
+    override.hoverEnabled === null &&
+    override.activeEnabled === null &&
+    override.hoverColor === null &&
+    override.activeColor === null &&
+    override.highlightAmount == null &&
+    override.hoverHighlightAmount == null &&
+    override.activeHighlightAmount == null &&
+    override.hoverGlowAmount == null &&
+    override.activeGlowAmount == null;
+}
+
+export function clearButtonThemeOverrideColors(
+  override: ButtonThemeOverride | undefined
+): ButtonThemeOverride {
+  const next = structuredClone(override ?? emptyButtonThemeOverride());
+  next.colors = {};
+  next.hoverColor = null;
+  next.activeColor = null;
+  return next;
+}
+
 const BUTTON_SURFACE_KINDS = new Set<ButtonSurfaceKind>([
   "main",
   "panel",
   "regular-popout",
   "tool-set-popout",
   "fan"
+]);
+
+const PROGRAM_POPOUT_SURFACE_KINDS = new Set<ButtonSurfaceKind>([
+  "regular-popout",
+  "tool-set-popout"
 ]);
 
 const TEXT_FIT_MODES = new Set<ButtonPlacement["textFitMode"]>([
@@ -155,6 +244,94 @@ function normalizeName(value: string): string {
 
 function namesMatch(left: string, right: string): boolean {
   return normalizeName(left) === normalizeName(right);
+}
+
+function legacyThemeSkinBaseName(name: string, buttonLabel: string): string {
+  const suffixes = [` - ${buttonLabel}`, ` · Theme ${buttonLabel}`]
+    .filter((suffix) => suffix.trim().length > 1);
+  let result = name;
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const suffix of suffixes) {
+      if (!result.endsWith(suffix)) continue;
+      result = result.slice(0, -suffix.length);
+      changed = true;
+    }
+  }
+  return result.trim() || name;
+}
+
+function legacyThemeSkinLineageName(
+  document: ButtonStateDocument,
+  placement: ButtonPlacement
+): string | null {
+  const button = document.buttons[placement.buttonId];
+  const skinId = button ? placement.skinOverrideId ?? button.defaultSkinId : null;
+  const skin = skinId ? document.skins[skinId] : null;
+  return button && skinId?.startsWith(LEGACY_THEME_SKIN_ID_PREFIX) && skin
+    ? legacyThemeSkinBaseName(skin.name, button.label)
+    : null;
+}
+
+function retainedSkinFamily(
+  document: ButtonStateDocument,
+  lineageName: string
+): { key: string; label: string } | null {
+  const candidates = Object.values(document.skins)
+    .filter((skin) =>
+      !skin.id.startsWith(LEGACY_THEME_SKIN_ID_PREFIX) && namesMatch(skin.name, lineageName)
+    )
+    .sort((left, right) => left.id.localeCompare(right.id));
+  if (candidates.length === 0) return null;
+  if (!candidates.every((skin) => sameButtonSkinSource(skin, candidates[0]))) return null;
+  return {
+    key: candidates.length === 1
+      ? `skin:${candidates[0].id}`
+      : `skin-family:${candidates.map((skin) => skin.id).join("|")}`,
+    label: candidates[0].name
+  };
+}
+
+function hasLegacyThemeSkinLineage(
+  document: ButtonStateDocument,
+  lineageName: string
+): boolean {
+  return Object.values(document.placements).some((placement) => {
+    const recovered = legacyThemeSkinLineageName(document, placement);
+    return recovered ? namesMatch(recovered, lineageName) : false;
+  });
+}
+
+/**
+ * Theme v1 assigned a private clone ID to every placement. Those IDs discarded
+ * the shared skin ID, but the clone name retained the source name and, in older
+ * builds, appended the Button label. Recover that explicit lineage so the
+ * Theme Editor can display the retained saved-skin family instead of a private
+ * legacy clone name.
+ */
+export function themeSkinAssignmentIdentity(
+  document: ButtonStateDocument,
+  placement: ButtonPlacement
+): ThemeSkinAssignmentIdentity | null {
+  const button = document.buttons[placement.buttonId];
+  const skinId = button ? placement.skinOverrideId ?? button.defaultSkinId : null;
+  const skin = skinId ? document.skins[skinId] : null;
+  if (!button || !skinId || !skin) return null;
+  const legacyLineageName = legacyThemeSkinLineageName(document, placement);
+  if (legacyLineageName) {
+    const retained = retainedSkinFamily(document, legacyLineageName);
+    return {
+      key: retained?.key ?? `legacy-theme-skin:${normalizeName(legacyLineageName)}`,
+      label: retained?.label ?? legacyLineageName,
+      skinId
+    };
+  }
+  if (hasLegacyThemeSkinLineage(document, skin.name)) {
+    const retained = retainedSkinFamily(document, skin.name);
+    if (retained) return { ...retained, skinId };
+  }
+  return { key: `skin:${skinId}`, label: skin.name, skinId };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -188,7 +365,27 @@ function placementProgramPanel(
       panelName: identity.displayPanelName
     };
   }
-  return panelOwnerIdentity(document, placement.buttonId);
+  const executionTarget = button?.executionTarget;
+  if (executionTarget?.kind === "panel-script" || executionTarget?.kind === "tool-set-action") {
+    return {
+      programName: executionTarget.programName,
+      panelName: executionTarget.panelName
+    };
+  }
+  const owner = panelOwnerIdentity(document, placement.buttonId);
+  if (owner) return owner;
+  const parent = button?.toolSetParentId ? document.buttons[button.toolSetParentId] : null;
+  const parentIdentity = parent?.sourceIdentity;
+  if (parentIdentity) {
+    return {
+      programName: parentIdentity.displayProgramName,
+      panelName: parentIdentity.displayPanelName
+    };
+  }
+  const parentTarget = parent?.executionTarget;
+  return parentTarget?.kind === "panel-script" || parentTarget?.kind === "tool-set-action"
+    ? { programName: parentTarget.programName, panelName: parentTarget.panelName }
+    : null;
 }
 
 export function defaultMainThemeAppearance(): MainThemeAppearance {
@@ -220,9 +417,9 @@ export function placementMatchesThemeTarget(
     return themePageSupportsButtonSurface(target.page, surface);
   }
 
-  if (surface.kind !== "panel") return false;
   const identity = placementProgramPanel(document, placement);
   if (!identity || !namesMatch(identity.programName, target.programName)) return false;
+  if (target.area === "popouts") return PROGRAM_POPOUT_SURFACE_KINDS.has(surface.kind);
   return !target.panelName || namesMatch(identity.panelName, target.panelName);
 }
 
@@ -242,6 +439,17 @@ export function listThemePlacements(
         left.id.localeCompare(right.id)
       );
     });
+}
+
+export function resolveThemeSkinAssignmentPlacementIds(
+  scopedPlacements: readonly ButtonPlacement[],
+  selectedPlacementId: string,
+  assignEveryButtonInScope: boolean
+): string[] {
+  if (!scopedPlacements.some((placement) => placement.id === selectedPlacementId)) return [];
+  return assignEveryButtonInScope
+    ? scopedPlacements.map((placement) => placement.id)
+    : [selectedPlacementId];
 }
 
 export function extractSkinColorRoots(skin: ButtonSkin): SkinColorRoot[] {
@@ -385,6 +593,11 @@ export function captureThemeFile(args: {
     gradientEnabled: boolean;
     scatterEnabled: boolean;
   }>>;
+  skinAssignmentPlacementIds?: ReadonlySet<string>;
+  highlightColorResetPlacementIds?: {
+    hover: ReadonlySet<string>;
+    active: ReadonlySet<string>;
+  };
   savedAt?: string;
 }): FlowCellThemeFile {
   const savedAt = args.savedAt ?? new Date().toISOString();
@@ -405,6 +618,10 @@ export function captureThemeFile(args: {
     if (!button || !surface || !sourceSkin) return [];
     const skin = structuredClone(sourceSkin);
     skin.compileCache = null;
+    const highlightColorReset = {
+      hover: args.highlightColorResetPlacementIds?.hover.has(placement.id) ?? false,
+      active: args.highlightColorResetPlacementIds?.active.has(placement.id) ?? false
+    };
     return [{
       placementId: placement.id,
       buttonId: button.id,
@@ -428,7 +645,14 @@ export function captureThemeFile(args: {
       allowStretching: placement.allowStretching,
       highlightOnHover: placement.highlightOnHover,
       gradientEnabled: args.buttonParticipation?.[placement.id]?.gradientEnabled ?? true,
-      scatterEnabled: args.buttonParticipation?.[placement.id]?.scatterEnabled ?? true
+      scatterEnabled: args.buttonParticipation?.[placement.id]?.scatterEnabled ?? true,
+      themeOverride: structuredClone(
+        args.document.themeOverrides?.[placement.id] ?? emptyButtonThemeOverride()
+      ),
+      assignSkin: args.skinAssignmentPlacementIds?.has(placement.id) ?? false,
+      ...(highlightColorReset.hover || highlightColorReset.active
+        ? { highlightColorReset }
+        : {})
     } satisfies ButtonThemeAppearance];
   });
   const theme: FlowCellThemeFile = {
@@ -517,29 +741,105 @@ function findThemePlacement(
   return candidates[0] ?? null;
 }
 
+function sameButtonSkinSource(left: ButtonSkin, right: ButtonSkin): boolean {
+  return BUTTON_SKIN_SECTION_ORDER.every((section) => left[section] === right[section]);
+}
+
+function assignedThemeSkinId(
+  document: ButtonStateDocument,
+  appearance: ButtonThemeAppearance
+): string {
+  const exact = document.skins[appearance.skin.id];
+  if (exact && sameButtonSkinSource(exact, appearance.skin)) return exact.id;
+  const reusable = Object.values(document.skins).find((skin) =>
+    sameButtonSkinSource(skin, appearance.skin)
+  );
+  if (reusable) return reusable.id;
+  const fingerprint = BUTTON_SKIN_SECTION_ORDER.map((section) => appearance.skin[section]).join("\u0000");
+  const base = `flowcell-theme-embedded-${stableHash(fingerprint).toString(16).padStart(8, "0")}`;
+  let id = base;
+  let suffix = 2;
+  while (document.skins[id] && !sameButtonSkinSource(document.skins[id], appearance.skin)) {
+    id = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  if (!document.skins[id]) {
+    document.skins[id] = {
+      ...structuredClone(appearance.skin),
+      id,
+      compileCache: null
+    };
+  }
+  return id;
+}
+
+function mergeThemeOverride(
+  current: ButtonThemeOverride | undefined,
+  incoming: ButtonThemeOverride
+): ButtonThemeOverride {
+  const next = structuredClone(current ?? emptyButtonThemeOverride());
+  for (const [role, color] of Object.entries(incoming.colors)) {
+    const normalized = normalizeButtonSkinColor(color);
+    if (normalized) next.colors[role] = normalized;
+  }
+  if (incoming.hoverEnabled !== null) next.hoverEnabled = incoming.hoverEnabled;
+  if (incoming.activeEnabled !== null) next.activeEnabled = incoming.activeEnabled;
+  if (incoming.hoverColor !== null) next.hoverColor = normalizeButtonSkinColor(incoming.hoverColor);
+  if (incoming.activeColor !== null) next.activeColor = normalizeButtonSkinColor(incoming.activeColor);
+  if (incoming.highlightAmount != null) {
+    const highlightAmount = normalizeButtonGlowAmount(incoming.highlightAmount);
+    if (highlightAmount !== null) next.highlightAmount = highlightAmount;
+  }
+  if (incoming.hoverHighlightAmount != null) {
+    const amount = normalizeButtonHighlightAmount(incoming.hoverHighlightAmount);
+    if (amount !== null) next.hoverHighlightAmount = amount;
+  }
+  if (incoming.activeHighlightAmount != null) {
+    const amount = normalizeButtonHighlightAmount(incoming.activeHighlightAmount);
+    if (amount !== null) next.activeHighlightAmount = amount;
+  }
+  if (incoming.hoverGlowAmount != null) {
+    const amount = normalizeButtonGlowAmount(incoming.hoverGlowAmount);
+    if (amount !== null) next.hoverGlowAmount = amount;
+  }
+  if (incoming.activeGlowAmount != null) {
+    const amount = normalizeButtonGlowAmount(incoming.activeGlowAmount);
+    if (amount !== null) next.activeGlowAmount = amount;
+  }
+  return next;
+}
+
 function applyAppearanceToPlacement(
   document: ButtonStateDocument,
   placement: ButtonPlacement,
-  appearance: ButtonThemeAppearance,
-  savedAt: string
+  appearance: ButtonThemeAppearance
 ): void {
-  const skin = structuredClone(appearance.skin);
-  skin.id = themeSkinId(document, savedAt, placement.id);
-  skin.compileCache = null;
-  document.skins[skin.id] = skin;
-  placement.skinOverrideId = skin.id;
-  placement.width = appearance.width;
-  placement.height = appearance.height;
-  placement.textFitMode = appearance.textFitMode;
-  placement.textAlignment = appearance.textAlignment;
-  placement.textOffsetX = appearance.textOffsetX;
-  placement.textOffsetY = appearance.textOffsetY;
-  placement.minimumFontSize = appearance.minimumFontSize;
-  placement.textSizeOverride = appearance.textSizeOverride;
-  placement.allowLabelResize = appearance.allowLabelResize;
-  placement.matchHitboxToSkin = appearance.matchHitboxToSkin;
-  placement.allowStretching = appearance.allowStretching;
-  placement.highlightOnHover = appearance.highlightOnHover;
+  if (appearance.assignSkin) {
+    const skinId = assignedThemeSkinId(document, appearance);
+    const button = document.buttons[placement.buttonId];
+    placement.skinOverrideId = button?.defaultSkinId === skinId ? null : skinId;
+  }
+  if (
+    appearance.assignSkin ||
+    !buttonThemeOverrideIsEmpty(appearance.themeOverride) ||
+    appearance.highlightColorReset
+  ) {
+    const currentOverride = appearance.assignSkin
+      ? clearButtonThemeOverrideColors(document.themeOverrides?.[placement.id])
+      : document.themeOverrides?.[placement.id];
+    const next = mergeThemeOverride(
+      currentOverride,
+      appearance.themeOverride
+    );
+    if (appearance.highlightColorReset?.hover) next.hoverColor = null;
+    if (appearance.highlightColorReset?.active) next.activeColor = null;
+    if (buttonThemeOverrideIsEmpty(next)) {
+      if (document.themeOverrides) delete document.themeOverrides[placement.id];
+    } else {
+      document.themeOverrides ??= {};
+      document.themeOverrides[placement.id] = next;
+    }
+  }
 }
 
 interface MatchedThemeAppearance {
@@ -972,15 +1272,14 @@ export function applyThemeFile(
   theme: FlowCellThemeFile
 ): ThemeApplyResult {
   if (!isFlowCellThemeFile(theme)) {
-    throw new Error("The selected file is not a valid version 1 FlowCell Theme.");
+    throw new Error(`The selected file is not a valid version ${FLOWCELL_THEME_VERSION} FlowCell Theme.`);
   }
-  let document = cloneButtonDocument(current);
+  const document = cloneButtonDocument(current);
   let appliedButtonCount = 0;
   let missingButtonCount = 0;
-  let skippedButtonCount = 0;
+  const skippedButtonCount = 0;
   const issues: ThemeApplyIssue[] = [];
   const claimedPlacementIds = new Set<string>();
-  const matchesBySurface = new Map<string, MatchedThemeAppearance[]>();
   const matchedPlacementIds: Record<string, string> = {};
 
   for (const appearance of theme.buttons) {
@@ -990,37 +1289,9 @@ export function applyThemeFile(
       continue;
     }
     claimedPlacementIds.add(placement.id);
-    const entries = matchesBySurface.get(placement.surfaceId) ?? [];
-    entries.push({ appearance, placementId: placement.id });
-    matchesBySurface.set(placement.surfaceId, entries);
-  }
-
-  for (const [surfaceId, entries] of matchesBySurface) {
-    const candidate = cloneButtonDocument(document);
-    const surface = candidate.surfaces[surfaceId];
-    const problem = surface?.kind === "main"
-      ? layoutMainSurface(candidate, surfaceId, entries)
-      : surface?.kind === "panel"
-        ? layoutPanelSurface(candidate, surfaceId, entries)
-        : "Theme sizing is supported only for registered Main and Button Section areas.";
-    if (problem) {
-      skippedButtonCount += entries.length;
-      issues.push({
-        surfaceId,
-        surfaceName: surface?.name ?? entries[0]?.appearance.surfaceName ?? surfaceId,
-        savedButtonCount: entries.length,
-        message: problem
-      });
-      continue;
-    }
-    for (const entry of entries) {
-      const placement = candidate.placements[entry.placementId];
-      if (!placement) continue;
-      applyAppearanceToPlacement(candidate, placement, entry.appearance, theme.savedAt);
-      matchedPlacementIds[entry.appearance.placementId] = entry.placementId;
-    }
-    document = candidate;
-    appliedButtonCount += entries.length;
+    applyAppearanceToPlacement(document, placement, appearance);
+    matchedPlacementIds[appearance.placementId] = placement.id;
+    appliedButtonCount += 1;
   }
 
   document.revision = current.revision;
@@ -1065,13 +1336,13 @@ export function interpolateThemeColor(top: string, bottom: string, t: number): s
   return `#${channelHex(start.r + (end.r - start.r) * amount)}${channelHex(start.g + (end.g - start.g) * amount)}${channelHex(start.b + (end.b - start.b) * amount)}${start.a === 255 && end.a === 255 ? "" : alpha}`;
 }
 
-export function gradientColorForPlacement(args: {
+export function gradientPositionForPlacement(args: {
   placementId: string;
   y: number;
   minimumY: number;
   maximumY: number;
-  gradient: ThemeGradientDefinition;
-}): string {
+  gradient: Pick<ThemeGradientDefinition, "spread" | "scatter" | "seed">;
+}): number {
   const range = Math.max(1, args.maximumY - args.minimumY);
   const normalized = Math.min(1, Math.max(0, (args.y - args.minimumY) / range));
   const spread = Math.min(1, Math.max(0, args.gradient.spread / 100));
@@ -1079,10 +1350,20 @@ export function gradientColorForPlacement(args: {
   const baseT = 0.5 + (normalized - 0.5) * spread;
   const unit = stableHash(`${args.gradient.seed}\u0000${args.placementId}`) / 0xffffffff;
   const jitter = (unit - 0.5) * 0.5 * scatter;
+  return Math.min(1, Math.max(0, baseT + jitter));
+}
+
+export function gradientColorForPlacement(args: {
+  placementId: string;
+  y: number;
+  minimumY: number;
+  maximumY: number;
+  gradient: ThemeGradientDefinition;
+}): string {
   return interpolateThemeColor(
     args.gradient.topColor,
     args.gradient.bottomColor,
-    Math.min(1, Math.max(0, baseT + jitter))
+    gradientPositionForPlacement(args)
   );
 }
 
@@ -1103,9 +1384,6 @@ export function bakeThemeGradientForDeployedLayout(
 
   const eligible = baked.buttons.flatMap((appearance) => {
     if (!appearance.gradientEnabled) return [];
-    if (!extractSkinColorRoots(appearance.skin).some((root) => root.role === baked.gradient?.role)) {
-      return [];
-    }
     const matchedPlacementId = layout.matchedPlacementIds[appearance.placementId];
     const placement = matchedPlacementId
       ? layout.document.placements[matchedPlacementId]
@@ -1131,11 +1409,13 @@ export function bakeThemeGradientForDeployedLayout(
       maximumY,
       gradient
     });
-    entry.appearance.skin = setSkinColorRoot(
-      entry.appearance.skin,
-      baked.gradient.role,
-      color
-    );
+    if (baked.gradient.role === THEME_HOVER_HIGHLIGHT_ROLE) {
+      entry.appearance.themeOverride.hoverColor = color;
+    } else if (baked.gradient.role === THEME_ACTIVE_HIGHLIGHT_ROLE) {
+      entry.appearance.themeOverride.activeColor = color;
+    } else {
+      entry.appearance.themeOverride.colors[baked.gradient.role] = color;
+    }
     colorsBySavedPlacementId[entry.appearance.placementId] = color;
   }
   return { theme: baked, layout, colorsBySavedPlacementId };
@@ -1170,15 +1450,80 @@ export function isFlowCellThemeFile(value: unknown): value is FlowCellThemeFile 
       { id: button.surfaceId, kind: button.surfaceKind }
     ))) return false;
   } else {
-    if (value.page !== null) return false;
-    if (buttons.some((button) => button.surfaceKind !== "panel")) return false;
+    if (
+      value.page !== null ||
+      (target.area === "popouts" && buttons.some((button) =>
+        !PROGRAM_POPOUT_SURFACE_KINDS.has(button.surfaceKind)
+      ))
+    ) return false;
   }
   return true;
+}
+
+function isLegacyFlowCellThemeFile(value: unknown): value is LegacyFlowCellThemeFile {
+  if (!isRecord(value) || !hasOnlyKeys(
+    value,
+    ["kind", "version", "savedAt", "target", "page", "buttons", "gradient"]
+  )) return false;
+  const target = value.target;
+  const buttons = value.buttons;
+  if (
+    value.kind !== FLOWCELL_THEME_KIND ||
+    value.version !== LEGACY_FLOWCELL_THEME_VERSION ||
+    typeof value.savedAt !== "string" ||
+    !value.savedAt.trim() ||
+    !Number.isFinite(Date.parse(value.savedAt)) ||
+    !isThemeTarget(target) ||
+    !Array.isArray(buttons) ||
+    !buttons.every(isLegacyButtonThemeAppearance) ||
+    !isThemeGradientDefinition(value.gradient)
+  ) return false;
+  if (new Set(buttons.map((button) => button.placementId)).size !== buttons.length) return false;
+  if (target.kind === "flowcell") {
+    return isThemePageAppearance(value.page) && value.page.pageId === target.page;
+  }
+  return value.page === null && (
+    target.area !== "popouts" ||
+    buttons.every((button) => PROGRAM_POPOUT_SURFACE_KINDS.has(button.surfaceKind))
+  );
+}
+
+export function normalizeFlowCellThemeFile(value: unknown): FlowCellThemeFile | null {
+  if (isFlowCellThemeFile(value)) return structuredClone(value);
+  if (!isLegacyFlowCellThemeFile(value)) return null;
+  const migrated: FlowCellThemeFile = {
+    ...structuredClone(value),
+    version: FLOWCELL_THEME_VERSION,
+    buttons: value.buttons.map((appearance) => ({
+      ...structuredClone(appearance),
+      themeOverride: {
+        colors: Object.fromEntries(
+          extractSkinColorRoots(appearance.skin).map((root) => [root.role, root.value])
+        ),
+        hoverEnabled: readButtonSkinHighlightOnHover(appearance.skin) ?? appearance.highlightOnHover,
+        activeEnabled: readButtonSkinHighlightOnActive(appearance.skin),
+        hoverColor: null,
+        activeColor: null
+      },
+      assignSkin: true
+    }))
+  };
+  return isFlowCellThemeFile(migrated) ? migrated : null;
 }
 
 function hasOnlyKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
   const allowed = new Set(keys);
   return Object.keys(value).every((key) => allowed.has(key)) && keys.every((key) => key in value);
+}
+
+function hasRequiredAndOptionalKeys(
+  value: Record<string, unknown>,
+  requiredKeys: readonly string[],
+  optionalKeys: readonly string[]
+): boolean {
+  const allowed = new Set([...requiredKeys, ...optionalKeys]);
+  return Object.keys(value).every((key) => allowed.has(key)) &&
+    requiredKeys.every((key) => key in value);
 }
 
 function isNonemptyString(value: unknown): value is string {
@@ -1209,9 +1554,15 @@ function isThemeTarget(value: unknown): value is ThemeTarget {
       isFlowCellThemePageId(value.page);
   }
   return value.kind === "program" &&
-    hasOnlyKeys(value, ["kind", "programName", "panelName"]) &&
+    hasRequiredAndOptionalKeys(
+      value,
+      ["kind", "programName", "panelName"],
+      ["area"]
+    ) &&
     isNonemptyString(value.programName) &&
-    (value.panelName === null || isNonemptyString(value.panelName));
+    (value.panelName === null || isNonemptyString(value.panelName)) &&
+    (value.area === undefined || value.area === "popouts") &&
+    (value.area !== "popouts" || value.panelName === null);
 }
 
 function isSourceIdentity(value: unknown): value is ButtonSourceIdentity {
@@ -1261,7 +1612,7 @@ function isButtonSkin(value: unknown): value is ButtonSkin {
 
 function isButtonThemeAppearance(value: unknown): value is ButtonThemeAppearance {
   if (!isRecord(value)) return false;
-  if (!hasOnlyKeys(value, [
+  const requiredKeys = [
     "placementId",
     "buttonId",
     "surfaceId",
@@ -1284,11 +1635,14 @@ function isButtonThemeAppearance(value: unknown): value is ButtonThemeAppearance
     "allowStretching",
     "highlightOnHover",
     "gradientEnabled",
-    "scatterEnabled"
-  ])) {
+    "scatterEnabled",
+    "themeOverride",
+    "assignSkin"
+  ];
+  if (!hasRequiredAndOptionalKeys(value, requiredKeys, ["highlightColorReset"])) {
     return false;
   }
-  return isNonemptyString(value.placementId) &&
+  const valid = isNonemptyString(value.placementId) &&
     isNonemptyString(value.buttonId) &&
     isNonemptyString(value.surfaceId) &&
     isNonemptyString(value.surfaceName) &&
@@ -1313,7 +1667,103 @@ function isButtonThemeAppearance(value: unknown): value is ButtonThemeAppearance
     typeof value.allowStretching === "boolean" &&
     typeof value.highlightOnHover === "boolean" &&
     typeof value.gradientEnabled === "boolean" &&
-    typeof value.scatterEnabled === "boolean";
+    typeof value.scatterEnabled === "boolean" &&
+    isButtonThemeOverride(value.themeOverride) &&
+    typeof value.assignSkin === "boolean" &&
+    (value.highlightColorReset === undefined || isThemeHighlightColorResetIntent(
+      value.highlightColorReset
+    ));
+  if (!valid) return false;
+  const reset = value.highlightColorReset as ThemeHighlightColorResetIntent | undefined;
+  const override = value.themeOverride as ButtonThemeOverride;
+  return !reset || (
+    (!reset.hover || override.hoverColor === null) &&
+    (!reset.active || override.activeColor === null)
+  );
+}
+
+function isThemeHighlightColorResetIntent(
+  value: unknown
+): value is ThemeHighlightColorResetIntent {
+  return isRecord(value) &&
+    hasOnlyKeys(value, ["hover", "active"]) &&
+    typeof value.hover === "boolean" &&
+    typeof value.active === "boolean" &&
+    (value.hover || value.active);
+}
+
+function isLegacyButtonThemeAppearance(
+  value: unknown
+): value is Omit<
+  ButtonThemeAppearance,
+  "themeOverride" | "assignSkin" | "highlightColorReset"
+> {
+  if (!isRecord(value) || !hasOnlyKeys(value, [
+    "placementId",
+    "buttonId",
+    "surfaceId",
+    "surfaceName",
+    "surfaceKind",
+    "sourceIdentity",
+    "panelOwnerIdentity",
+    "label",
+    "skin",
+    "width",
+    "height",
+    "textFitMode",
+    "textAlignment",
+    "textOffsetX",
+    "textOffsetY",
+    "minimumFontSize",
+    "textSizeOverride",
+    "allowLabelResize",
+    "matchHitboxToSkin",
+    "allowStretching",
+    "highlightOnHover",
+    "gradientEnabled",
+    "scatterEnabled"
+  ])) return false;
+  return isButtonThemeAppearance({
+    ...value,
+    themeOverride: emptyButtonThemeOverride(),
+    assignSkin: false
+  });
+}
+
+function isButtonThemeOverride(value: unknown): value is ButtonThemeOverride {
+  if (!isRecord(value) || !hasRequiredAndOptionalKeys(
+    value,
+    ["colors", "hoverEnabled", "activeEnabled", "hoverColor", "activeColor"],
+    [
+      "highlightAmount",
+      "hoverHighlightAmount",
+      "activeHighlightAmount",
+      "hoverGlowAmount",
+      "activeGlowAmount"
+    ]
+  )) return false;
+  if (!isRecord(value.colors)) return false;
+  if (!Object.entries(value.colors).every(([role, color]) =>
+    /^[a-z][a-z0-9-]*$/.test(role) &&
+    typeof color === "string" &&
+    normalizeButtonSkinColor(color) !== null
+  )) return false;
+  return (value.hoverEnabled === null || typeof value.hoverEnabled === "boolean") &&
+    (value.activeEnabled === null || typeof value.activeEnabled === "boolean") &&
+    (value.hoverColor === null || (
+      typeof value.hoverColor === "string" && normalizeButtonSkinColor(value.hoverColor) !== null
+    )) &&
+    (value.activeColor === null || (
+      typeof value.activeColor === "string" && normalizeButtonSkinColor(value.activeColor) !== null
+    )) &&
+    [value.hoverHighlightAmount, value.activeHighlightAmount].every(
+      (amount) => amount === undefined || amount === null ||
+        normalizeButtonHighlightAmount(amount) !== null
+    ) &&
+    [value.highlightAmount, value.hoverGlowAmount, value.activeGlowAmount].every(
+      (amount) => amount === undefined || amount === null ||
+        normalizeButtonGlowAmount(amount) !== null
+    );
 }
 
 export function isThemeGradientDefinition(

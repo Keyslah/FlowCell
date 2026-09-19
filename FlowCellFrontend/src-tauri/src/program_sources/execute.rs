@@ -450,14 +450,31 @@ fn run_windows_script_capability(
     }
 }
 
-fn blender_bridge_capability_payload(response: Value) -> Result<Value, String> {
+fn bridge_capability_payload(response: Value, bridge_label: &str) -> Result<Value, String> {
     let mut payload = response.as_object().cloned().ok_or_else(|| {
-        "Blender bridge capability response must use an object envelope.".to_string()
+        format!("{bridge_label} bridge capability response must use an object envelope.")
     })?;
-    for transport_field in ["id", "status", "display"] {
+    for transport_field in [
+        "id",
+        "requestId",
+        "action",
+        "schemaVersion",
+        "completedUtc",
+        "status",
+        "display",
+        "ok",
+    ] {
         payload.remove(transport_field);
     }
     Ok(Value::Object(payload))
+}
+
+fn run_managed_bridge_action(runner: &str, action: &str, data: Value) -> Result<Value, String> {
+    match runner {
+        "blender-bridge" => crate::run_blender_bridge_action_direct(action, data),
+        "fusion-bridge" => crate::run_fusion_bridge_action_direct(action, data),
+        value => Err(format!("Runner '{value}' is not a managed bridge runner.")),
+    }
 }
 
 pub(crate) fn run_program_capability_action_blocking(
@@ -499,11 +516,28 @@ pub(crate) fn run_program_capability_action_blocking(
                     resolution.record.label
                 ));
             }
-            let response = crate::run_blender_bridge_action_direct(
+            let response = run_managed_bridge_action(
+                &resolution.record.runner,
                 resolution.record.bridge_action.trim(),
                 args,
             )?;
-            let payload = blender_bridge_capability_payload(response)?;
+            let payload = bridge_capability_payload(response, "Blender")?;
+            serde_json::to_string(&payload)
+                .map_err(|error| format!("Failed to encode capability response: {error}"))
+        }
+        "fusion-bridge" => {
+            if resolution.record.bridge_action.trim().is_empty() {
+                return Err(format!(
+                    "Installed Button '{}' is missing bridgeAction.",
+                    resolution.record.label
+                ));
+            }
+            let response = run_managed_bridge_action(
+                &resolution.record.runner,
+                resolution.record.bridge_action.trim(),
+                args,
+            )?;
+            let payload = bridge_capability_payload(response, "Fusion")?;
             serde_json::to_string(&payload)
                 .map_err(|error| format!("Failed to encode capability response: {error}"))
         }
@@ -661,7 +695,21 @@ pub(crate) fn run_active_source(resolution: &ActiveSourceResolution) -> Result<V
                     record.label
                 ));
             }
-            crate::run_blender_bridge_action_direct(
+            run_managed_bridge_action(
+                &record.runner,
+                record.bridge_action.trim(),
+                record.bridge_data.clone().unwrap_or_else(|| json!({})),
+            )
+        }
+        "fusion-bridge" => {
+            if record.bridge_action.trim().is_empty() {
+                return Err(format!(
+                    "Installed Fusion Button '{}' is missing bridgeAction.",
+                    record.label
+                ));
+            }
+            run_managed_bridge_action(
+                &record.runner,
                 record.bridge_action.trim(),
                 record.bridge_data.clone().unwrap_or_else(|| json!({})),
             )
@@ -682,14 +730,14 @@ pub(crate) fn run_active_toolset_action(
     let payload = merge_toolset_payload(record, slot, runtime_payload)?;
     let manifest = load_program_manifest(&record.program_name)?;
     match record.runner.as_str() {
-        "blender-bridge" => {
+        "blender-bridge" | "fusion-bridge" => {
             if record.bridge_action.trim().is_empty() {
                 return Err(format!(
                     "The toolset manifest for '{}' is missing bridgeAction.",
                     record.label
                 ));
             }
-            crate::run_blender_bridge_action_direct(record.bridge_action.trim(), payload)
+            run_managed_bridge_action(&record.runner, record.bridge_action.trim(), payload)
         }
         "illustrator-direct" => {
             let execution = record
@@ -775,7 +823,7 @@ pub(crate) fn run_active_toolset_state_query(
     run_active_toolset_action(resolution, &query.slot, Some(query.payload)).map(Some)
 }
 
-fn declared_blender_button_event_action<'a>(
+fn declared_bridge_button_event_action<'a>(
     event: &'a Map<String, Value>,
     event_name: &str,
 ) -> Result<&'a str, String> {
@@ -808,30 +856,44 @@ pub(crate) fn run_active_button_event(
                 resolution.record.label, normalized
             )
         })?;
+    let expected_action_type = match resolution.record.runner.as_str() {
+        "blender-bridge" => "blenderBridge",
+        "fusion-bridge" => "fusionBridge",
+        runner => {
+            return Err(format!(
+                "Button events are not supported by runner '{runner}'."
+            ))
+        }
+    };
     let action_type = event
         .get("type")
         .and_then(Value::as_str)
-        .unwrap_or("blenderBridge");
+        .unwrap_or(expected_action_type);
     if action_type.eq_ignore_ascii_case("none") {
         return Ok("Button event has no action.".to_string());
     }
-    if !action_type.eq_ignore_ascii_case("blenderBridge")
-        || resolution.record.runner != "blender-bridge"
-    {
+    if !action_type.eq_ignore_ascii_case(expected_action_type) {
         return Err(format!(
             "Button event type '{action_type}' is not supported by this runner."
         ));
     }
-    let action = declared_blender_button_event_action(event, &normalized)?;
+    let action = declared_bridge_button_event_action(event, &normalized)?;
     let data = event.get("data").cloned().unwrap_or_else(|| json!({}));
-    let response = crate::run_blender_bridge_action_direct(action, data)?;
-    Ok(crate::extract_blender_bridge_response_message(&response))
+    let response = run_managed_bridge_action(&resolution.record.runner, action, data)?;
+    Ok(crate::extract_bridge_response_message(
+        &response,
+        if resolution.record.runner == "fusion-bridge" {
+            "Fusion"
+        } else {
+            "Blender"
+        },
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        blender_bridge_capability_payload, declared_blender_button_event_action,
+        bridge_capability_payload, declared_bridge_button_event_action,
         illustrator_wait_for_completion, path_components_end_with, run_active_toolset_state_query,
         windows_script_capability_command, ActiveSourceResolution,
     };
@@ -942,7 +1004,7 @@ mod tests {
             "action": "cycle_collection_hover_save_visibility"
         });
         assert_eq!(
-            declared_blender_button_event_action(
+            declared_bridge_button_event_action(
                 event.as_object().expect("event object"),
                 "hoverEnter"
             )
@@ -954,7 +1016,7 @@ mod tests {
     #[test]
     fn declared_button_event_rejects_a_missing_action() {
         let event = json!({ "type": "blenderBridge", "action": "  " });
-        let error = declared_blender_button_event_action(
+        let error = declared_bridge_button_event_action(
             event.as_object().expect("event object"),
             "pressUp",
         )
@@ -963,15 +1025,23 @@ mod tests {
     }
 
     #[test]
-    fn blender_capabilities_strip_transport_fields_before_schema_validation() {
-        let payload = blender_bridge_capability_payload(json!({
-            "id": "flowcell-123",
-            "status": "ok",
-            "display": "Current Blender file",
-            "message": "Current Blender file: C:\\Projects\\Example.blend",
-            "saved": true,
-            "filePath": "C:\\Projects\\Example.blend"
-        }))
+    fn managed_bridge_capabilities_strip_transport_fields_before_schema_validation() {
+        let payload = bridge_capability_payload(
+            json!({
+                "id": "flowcell-123",
+                "requestId": "flowcell-456",
+                "action": "flowcell.current_file",
+                "schemaVersion": 1,
+                "completedUtc": "2026-09-07T12:00:00Z",
+                "status": "ok",
+                "ok": true,
+                "display": "Current Blender file",
+                "message": "Current Blender file: C:\\Projects\\Example.blend",
+                "saved": true,
+                "filePath": "C:\\Projects\\Example.blend"
+            }),
+            "Blender",
+        )
         .expect("Blender capability payload");
         assert_eq!(
             payload,

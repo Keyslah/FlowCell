@@ -54,13 +54,46 @@ executable and performs its normal first-run single-instance setup. Text and
 live vector appearances are processed automatically; raster artwork must be
 manually Image Traced/expanded with the user's intended tracing settings rather
 than being converted with an arbitrary preset. Clipping groups also fail closed;
-convert a mask into explicit closed filled paths when its clipped appearance is
-intended to become printable geometry.
+before stopping, both handoff Buttons show a warning that names the affected layer
+and explains that its clipping mask must be expanded or released. Convert the
+result into explicit closed filled paths when its clipped appearance is intended
+to become printable geometry.
 
 A positive number at the absolute beginning of the sublayer name sets the
 finished Blender thickness in millimeters, with parentheses optional:
 `14Main stencil` produces 14 mm, `2connect` produces 2 mm, and `(9) Name`
 produces 9 mm. Names such as `V9 Name` or `Name (9)` use the 1 mm default.
+
+## Lithophane
+
+The Illustrator Utility `Lithophane` Button starts from exactly one selected
+PNG PlacedItem or RasterItem. Its clipping-aware geometric bounds are converted
+from Illustrator points to authoritative physical millimeters. The nearest
+owning Illustrator layer or sublayer supplies the preferred Blender object
+name. If that name is occupied, Blender uses the first available unpadded
+numeric suffix (`New Dust`, `New Dust1`, `New Dust2`) without changing the
+existing objects. A temporary export filename never becomes the object name. A usable linked PNG is
+passed through unchanged; an embedded or unavailable raster is copied
+only into a temporary document and captured as a transparent 300 PPI PNG.
+Clipped, rotated, sheared, or mirrored linked PNGs use that same capture path so
+Blender receives their actual Illustrator appearance instead of stretching the
+untransformed source bitmap. The source document and selection are not edited,
+and the temporary document is closed without saving.
+
+The package resolves that installation's single active Blender Utility
+`blender.lithophane` owner and sends the PNG path plus explicit X/Y millimeter
+dimensions through its normal managed action. Bridge readiness recognizes the
+current running Blender PID from the bounded status history, so a cleanup event
+written later by an overlapping older Blender process cannot hide the ready
+window. Explicit Illustrator dimensions override filename or DPI inference. PNG
+alpha is also geometry authority:
+faces below the alpha cutoff are removed before the remaining silhouette is
+solidified, so a transparent background does not become a thin rectangular
+sheet. Opaque images retain the established rectangular modifier path. Both
+paths apply their generated modifiers and re-fit the finished mesh to the
+requested X/Y dimensions. The established Blender Solidify thickness and
+Displace strength behavior is retained unchanged; this handoff controls only
+the source appearance and finished X/Y dimensions.
 
 ## Illustrator bridge
 

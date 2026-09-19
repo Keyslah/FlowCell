@@ -359,8 +359,8 @@ function Ensure-ManifestProgramStructure {
         }
 
         $runnerKind = [string]$manifest.runner.kind
-        if ($runnerKind -eq 'blender-bridge' -and ([string]::IsNullOrWhiteSpace($installScript) -or [string]::IsNullOrWhiteSpace($deleteScript))) {
-            throw "Blender program manifest requires runner.installScript and runner.deleteScript: $manifestPath"
+        if ($runnerKind -in @('blender-bridge', 'fusion-bridge') -and ([string]::IsNullOrWhiteSpace($installScript) -or [string]::IsNullOrWhiteSpace($deleteScript))) {
+            throw "Managed bridge program manifest requires runner.installScript and runner.deleteScript: $manifestPath"
         }
 
         foreach ($requiredPath in @($localScripts, $panels)) {
@@ -384,6 +384,7 @@ function Ensure-ManifestProgramStructure {
             'illustrator-direct' { 'illustrator_direct' }
             'photoshop-direct' { 'photoshop_direct' }
             'blender-bridge' { 'blender_bridge' }
+            'fusion-bridge' { 'fusion_bridge' }
             default { throw "Unsupported runner kind '$runnerKind' in $manifestPath" }
         }
         $allowedExtensions = @($manifest.allowedScriptExtensions | ForEach-Object {

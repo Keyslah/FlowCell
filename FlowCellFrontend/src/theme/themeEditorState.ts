@@ -75,11 +75,15 @@ function normalizeScopeName(value: string): string {
 }
 
 export function themeEditorScopeKey(target: ThemeTarget): string {
-  return target.kind === "flowcell"
-    ? JSON.stringify(["flowcell", target.page])
+  if (target.kind === "flowcell") {
+    return JSON.stringify(["flowcell", target.page]);
+  }
+  const programName = normalizeScopeName(target.programName);
+  return target.area === "popouts"
+    ? JSON.stringify(["program", programName, "*", "popouts"])
     : JSON.stringify([
         "program",
-        normalizeScopeName(target.programName),
+        programName,
         target.panelName ? normalizeScopeName(target.panelName) : "*"
       ]);
 }

@@ -15,6 +15,7 @@ import type {
   ButtonRecord,
   ButtonSelectToolField,
   ButtonSkin,
+  ButtonThemeOverride,
   ButtonSkinVisualState,
   ButtonToolField,
   ButtonVisualMeasurement,
@@ -47,6 +48,7 @@ export interface ButtonHostProps {
   button: ButtonRecord;
   placement: ButtonPlacement;
   skin: ButtonSkin;
+  themeOverride?: ButtonThemeOverride;
   mode?: ButtonEditorMode;
   selected?: boolean;
   selectionOnly?: boolean;
@@ -73,6 +75,7 @@ export interface ButtonHostProps {
   onExecutionResult?: (result: ButtonExecutionResult) => void;
   onMeasurement?: (measurement: ButtonCoreMeasurement) => void;
   onVisualMeasurement?: (measurement: ButtonVisualMeasurement) => void;
+  visualMeasurementSamplingKey?: string | number;
   onPrepareVisualStateChange?: (state: ButtonVisualState) => void | Promise<void>;
   onVisualStateChange?: (state: ButtonVisualState) => void;
   onNaturalMeasurement?: (measurement: ButtonCoreMeasurement) => void;
@@ -139,6 +142,7 @@ export function ButtonHost({
   button,
   placement,
   skin,
+  themeOverride,
   mode = "run",
   selected = false,
   selectionOnly = false,
@@ -159,6 +163,7 @@ export function ButtonHost({
   onExecutionResult,
   onMeasurement,
   onVisualMeasurement,
+  visualMeasurementSamplingKey,
   onPrepareVisualStateChange,
   onVisualStateChange,
   onNaturalMeasurement
@@ -1232,6 +1237,7 @@ export function ButtonHost({
     >
       <ButtonSkinRenderer
         skin={skin}
+        themeOverride={themeOverride}
         label={renderedLabel}
         width={placement.width}
         height={placement.height}
@@ -1256,7 +1262,7 @@ export function ButtonHost({
         activeHighlight={mode === "run" && selected}
         rawHovered={hovered}
         samplingState={rawVisualState}
-        transitionSamplingKey={`${activationStateIndex}:${resolvedAppearance.activeTrigger}:${resolvedAppearance.visualState}`}
+        transitionSamplingKey={`${activationStateIndex}:${resolvedAppearance.activeTrigger}:${resolvedAppearance.visualState}:${visualMeasurementSamplingKey ?? "default"}`}
         onCoreElementChange={setCoreElement}
         onLabelElementChange={setLabelElement}
         onShadowRootChange={setShadowRoot}

@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "windows.temp-shots",
   "label": "Temp Shots",
-  "tooltip": "Open Windows screen snip and save the capture to the chosen Temp Shots folder.",
+  "tooltip": "Capture a rectangle directly to the Temp Shots folder. Escape cancels without saving.",
   "program": "Windows",
   "source": "Temp_Shots.vbs"
 }

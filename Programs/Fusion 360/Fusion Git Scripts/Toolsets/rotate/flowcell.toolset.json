@@ -1,0 +1,157 @@
+{
+  "schemaVersion": 1,
+  "id": "fusion360.rotate",
+  "version": "1.0.1",
+  "label": "rotate",
+  "tooltip": "Rotate selected native root bodies or component occurrences around world axes with Geometry, Origin, World, Pick, or last-selected Object pivots.",
+  "kind": "toolset",
+  "program": "Fusion 360",
+  "source": "rotate.py",
+  "bridgeData": {},
+  "children": [
+    { "slot": "axis_z", "label": "Z", "tooltip": "Set the quick-rotate world axis to Z.", "payload": { "command": "axis_z", "action": "axis_z" } },
+    { "slot": "axis_y", "label": "Y", "tooltip": "Set the quick-rotate world axis to Y.", "payload": { "command": "axis_y", "action": "axis_y" } },
+    { "slot": "axis_x", "label": "X", "tooltip": "Set the quick-rotate world axis to X.", "payload": { "command": "axis_x", "action": "axis_x" } },
+    { "slot": "preset_30", "label": "30 deg", "tooltip": "Rotate 30 degrees in the positive direction and stage 30.", "payload": { "command": "preset_30", "action": "preset_30" } },
+    { "slot": "preset_45", "label": "45 deg", "tooltip": "Rotate 45 degrees in the positive direction and stage 45.", "payload": { "command": "preset_45", "action": "preset_45" } },
+    { "slot": "preset_90", "label": "90 deg", "tooltip": "Rotate 90 degrees in the positive direction and stage 90.", "payload": { "command": "preset_90", "action": "preset_90" } },
+    { "slot": "preset_180", "label": "180 deg", "tooltip": "Rotate 180 degrees in the positive direction and stage 180.", "payload": { "command": "preset_180", "action": "preset_180" } },
+    { "slot": "preset_270", "label": "270 deg", "tooltip": "Rotate 270 degrees in the positive direction and stage 270.", "payload": { "command": "preset_270", "action": "preset_270" } },
+    { "slot": "center_geometry", "label": "Geometry", "tooltip": "Use the average selected bounding-box center as the pivot.", "payload": { "command": "center_geometry", "action": "center_geometry" } },
+    { "slot": "center_origin", "label": "Origin", "tooltip": "Use the average selected component origin as the pivot.", "payload": { "command": "center_origin", "action": "center_origin" } },
+    { "slot": "center_world", "label": "World", "tooltip": "Use the Fusion world origin as the pivot.", "payload": { "command": "center_world", "action": "center_world" } },
+    { "slot": "center_pick", "label": "Pick", "tooltip": "Use the last selection's picked point as the pivot.", "payload": { "command": "center_pick", "action": "center_pick" } },
+    { "slot": "center_object", "label": "Object", "tooltip": "Use the last-selected body/component origin as pivot and rotate all earlier selections.", "payload": { "command": "center_object", "action": "center_object" } },
+    { "slot": "mode_transform", "label": "Transform", "tooltip": "Use safe native Fusion transform mode.", "payload": { "command": "mode_transform", "action": "mode_transform" } },
+    { "slot": "apply_negative", "label": "Negative", "tooltip": "Apply the staged angle in the negative world-axis direction.", "payload": { "command": "apply_negative", "action": "apply_negative" } },
+    { "slot": "apply_positive", "label": "Positive", "tooltip": "Apply the staged angle in the positive world-axis direction.", "payload": { "command": "apply_positive", "action": "apply_positive" } },
+    { "slot": "value_input", "label": "Value", "tooltip": "Click this Button, then type the rotation angle in degrees." }
+  ],
+  "layout": {
+    "mode": "grid",
+    "columns": 4,
+    "gap": 8,
+    "padding": 8,
+    "width": 640,
+    "height": 300,
+    "updatePolicy": { "appendMissingChildSlots": true },
+    "placements": {
+      "value_input": { "x": 160, "y": 208, "width": 144, "height": 42 }
+    },
+    "fields": [
+      {
+        "id": "axis",
+        "kind": "select",
+        "label": "Axis",
+        "payloadKey": "axis",
+        "defaultValue": "Z",
+        "options": [
+          { "id": "axis-x", "label": "X", "value": "X" },
+          { "id": "axis-y", "label": "Y", "value": "Y" },
+          { "id": "axis-z", "label": "Z", "value": "Z" }
+        ],
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "value",
+        "kind": "number",
+        "label": "Value",
+        "payloadKey": "value",
+        "defaultValue": 15,
+        "step": 1,
+        "x": 8,
+        "y": 8,
+        "width": 120,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "center_mode",
+        "kind": "select",
+        "label": "Center",
+        "payloadKey": "center_mode",
+        "defaultValue": "WORLD",
+        "options": [
+          { "id": "geometry", "label": "Geometry", "value": "GEOMETRY" },
+          { "id": "origin", "label": "Origin", "value": "ORIGIN" },
+          { "id": "world", "label": "World", "value": "WORLD" },
+          { "id": "pick", "label": "Pick", "value": "PICK" },
+          { "id": "object", "label": "Object", "value": "OBJECT" }
+        ],
+        "x": 148,
+        "y": 248,
+        "width": 132,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true
+      },
+      {
+        "id": "operation_mode",
+        "kind": "select",
+        "label": "Mode",
+        "payloadKey": "operation_mode",
+        "defaultValue": "TRANSFORM",
+        "options": [
+          { "id": "transform", "label": "Transform", "value": "TRANSFORM" }
+        ],
+        "x": 288,
+        "y": 248,
+        "width": 132,
+        "height": 36,
+        "zIndex": 1,
+        "hidden": true
+      }
+    ],
+    "childBehaviors": {
+      "axis_x": { "fieldPatch": { "axis": "X" }, "execute": false },
+      "axis_y": { "fieldPatch": { "axis": "Y" }, "execute": false },
+      "axis_z": { "fieldPatch": { "axis": "Z" }, "execute": false },
+      "center_geometry": { "fieldPatch": { "center_mode": "GEOMETRY" }, "execute": false },
+      "center_origin": { "fieldPatch": { "center_mode": "ORIGIN" }, "execute": false },
+      "center_world": { "fieldPatch": { "center_mode": "WORLD" }, "execute": false },
+      "center_pick": { "fieldPatch": { "center_mode": "PICK" }, "execute": false },
+      "center_object": { "fieldPatch": { "center_mode": "OBJECT" }, "execute": false },
+      "mode_transform": { "fieldPatch": { "operation_mode": "TRANSFORM" }, "activationPatch": { "value": 15 }, "execute": false },
+      "preset_30": {
+        "fieldPatch": { "value": 30, "operation_mode": "TRANSFORM" },
+        "execute": true,
+        "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" } }
+      },
+      "preset_45": {
+        "fieldPatch": { "value": 45, "operation_mode": "TRANSFORM" },
+        "execute": true,
+        "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" } }
+      },
+      "preset_90": {
+        "fieldPatch": { "value": 90, "operation_mode": "TRANSFORM" },
+        "execute": true,
+        "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" } }
+      },
+      "preset_180": {
+        "fieldPatch": { "value": 180, "operation_mode": "TRANSFORM" },
+        "execute": true,
+        "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" } }
+      },
+      "preset_270": {
+        "fieldPatch": { "value": 270, "operation_mode": "TRANSFORM" },
+        "execute": true,
+        "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" } }
+      },
+      "apply_negative": {
+        "execute": true,
+        "payloadTemplate": { "command": "apply", "direction": "negative", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" } }
+      },
+      "apply_positive": {
+        "execute": true,
+        "payloadTemplate": { "command": "apply", "direction": "positive", "axis": { "$field": "axis" }, "angle_deg": { "$field": "value" }, "center_mode": { "$field": "center_mode" }, "operation_mode": { "$field": "operation_mode" } }
+      },
+      "value_input": { "inlineEditField": "value", "execute": false }
+    }
+  }
+}

@@ -156,6 +156,23 @@ function resolveSavedOwnerPlacement(
     : null;
 }
 
+/**
+ * Mirrors the placements rendered by an expanded Pop-out window. Authored
+ * Fans keep their owner visible; ordinary Pop-outs hide a retained owner.
+ */
+export function expandedButtonPopoutPlacementIds(
+  document: ButtonStateDocument,
+  unit: ButtonPopoutUnit
+): string[] {
+  const surface = document.surfaces[unit.surfaceId];
+  if (!surface) return [];
+  const ownerPlacement = resolveSavedOwnerPlacement(document, unit);
+  if (!ownerPlacement || unit.interactionMode === "fan") {
+    return [...surface.placementIds];
+  }
+  return surface.placementIds.filter((placementId) => placementId !== ownerPlacement.id);
+}
+
 function updatePopoutEnvelope(
   document: ButtonStateDocument,
   unit: ButtonPopoutUnit,

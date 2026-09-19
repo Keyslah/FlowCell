@@ -278,7 +278,7 @@ export function ensureFanSetup(args: {
       width: starter.rects[panelOwner.id].width,
       height: starter.rects[panelOwner.id].height
     },
-    animation: { durationMs: 180, easing: "ease-out", staggerMs: 30 }
+    animation: { durationMs: 180, easing: "ease-out", staggerMs: 30, spinEnabled: false }
   };
   args.document.fanSetups[id] = setup;
   return setup;

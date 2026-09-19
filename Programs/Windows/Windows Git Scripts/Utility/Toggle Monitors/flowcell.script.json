@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "windows.toggle-monitors",
   "label": "Toggle Monitors",
-  "tooltip": "Toggle to one remembered monitor using the engine owned by this Button package.",
+  "tooltip": "Choose two checkbox monitor groups; startup and wake recovery enable every available display, including dummy monitors, regardless of either group.",
   "program": "Windows",
   "source": "Toggle Monitors.vbs"
 }

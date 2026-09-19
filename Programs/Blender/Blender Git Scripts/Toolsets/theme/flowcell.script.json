@@ -105,6 +105,334 @@
         }
       },
       {
+        "id": "button-theme.scan",
+        "handler": {
+          "kind": "core",
+          "capability": "button-theme.palette",
+          "options": {
+            "operation": "scan"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "revision": {
+              "type": "integer"
+            },
+            "placements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "placementId": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "materialColors": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "placementId",
+                  "materialColors"
+                ]
+              }
+            },
+            "buttonCount": {
+              "type": "integer"
+            },
+            "colorCount": {
+              "type": "integer"
+            },
+            "changedCount": {
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "revision",
+            "placements",
+            "buttonCount",
+            "colorCount",
+            "changedCount",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "button-theme.apply",
+        "handler": {
+          "kind": "core",
+          "capability": "button-theme.palette",
+          "options": {
+            "operation": "apply"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "expectedRevision": {
+              "type": "integer"
+            },
+            "assignments": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "placementId": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "placementId"
+                ]
+              }
+            }
+          },
+          "required": [
+            "expectedRevision",
+            "assignments"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "revision": {
+              "type": "integer"
+            },
+            "placements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "placementId": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "materialColors": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "placementId",
+                  "materialColors"
+                ]
+              }
+            },
+            "buttonCount": {
+              "type": "integer"
+            },
+            "colorCount": {
+              "type": "integer"
+            },
+            "changedCount": {
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "revision",
+            "placements",
+            "buttonCount",
+            "colorCount",
+            "changedCount",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "button-theme.refill",
+        "handler": {
+          "kind": "core",
+          "capability": "button-theme.palette",
+          "options": {
+            "operation": "refill"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "colors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "spread": {
+              "type": "number"
+            },
+            "scatter": {
+              "type": "number"
+            },
+            "seed": {
+              "type": "integer"
+            },
+            "screenTopToBottom": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "colors",
+            "spread",
+            "scatter",
+            "seed",
+            "screenTopToBottom"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "revision": {
+              "type": "integer"
+            },
+            "placements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "placementId": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "materialColors": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "placementId",
+                  "materialColors"
+                ]
+              }
+            },
+            "buttonCount": {
+              "type": "integer"
+            },
+            "colorCount": {
+              "type": "integer"
+            },
+            "changedCount": {
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "revision",
+            "placements",
+            "buttonCount",
+            "colorCount",
+            "changedCount",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "button-theme.toggle-text",
+        "handler": {
+          "kind": "core",
+          "capability": "button-theme.palette",
+          "options": {
+            "operation": "toggle-text"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "revision": {
+              "type": "integer"
+            },
+            "placements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "placementId": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "materialColors": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "placementId",
+                  "materialColors"
+                ]
+              }
+            },
+            "buttonCount": {
+              "type": "integer"
+            },
+            "colorCount": {
+              "type": "integer"
+            },
+            "changedCount": {
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "revision",
+            "placements",
+            "buttonCount",
+            "colorCount",
+            "changedCount",
+            "message"
+          ]
+        }
+      },
+      {
         "id": "theme.image.select",
         "handler": {
           "kind": "core",
@@ -2678,6 +3006,7 @@
       "theme-package-library",
       "file.select",
       "image.sample-palette",
+      "button-theme.palette",
       "tool-fields.save",
       "tool-fields.load",
       "tool-package.save",
@@ -2698,6 +3027,19 @@
     "config": {
       "copy": {
         "themeSectionTitle": "Theme Palette",
+        "buttonThemeSectionTitle": "Popped Button Colors",
+        "buttonThemeEmpty": "Press Rescan to collect colors from open Blender Pop-outs and Fans.",
+        "buttonThemeNeedsScan": "Press Rescan before applying popped Button colors.",
+        "buttonThemeNeedsImage": "Choose a theme image before refilling the popped Button gradient.",
+        "buttonThemeNeedsColors": "No popped Button colors are available. Press Rescan and try again.",
+        "buttonThemeMaterialTooltip": "These exact skin material colors have no single Surface root. Refill creates an editable Surface color.",
+        "scanningButtonTheme": "Scanning open Blender Pop-out and Fan colors...",
+        "applyingButtonTheme": "Applying popped Button colors...",
+        "applyingButtonThemeGradient": "Applying the popped Button gradient...",
+        "samplingButtonThemePalette": "Sampling popped Button gradient colors from the current Theme image...",
+        "refillingButtonTheme": "Refilling the popped Button gradient from the current Theme image...",
+        "scatteringButtonTheme": "Scattering the current popped Button colors...",
+        "togglingButtonThemeText": "Toggling popped Button text between black and white...",
         "pictureSectionTitle": "Place Picture",
         "environmentSectionTitle": "HDRI",
         "removingGrid": "Removing the grid...",
@@ -2741,6 +3083,13 @@
         "theme.profile.save": "Save profile",
         "theme.apply": "Apply",
         "theme.apply-bucket": "Apply",
+        "button-theme.scan": "Rescan",
+        "button-theme.apply": "Apply Buckets",
+        "button-theme.apply-gradient": "Apply Gradient",
+        "button-theme.refill": "Refill",
+        "button-theme.refill-colors": "Refill",
+        "button-theme.scatter": "Scatter",
+        "button-theme.toggle-text": "Toggle Text",
         "picture.file.select": "Browse",
         "picture.apply": "Place Picture",
         "picture.grid": "Grid",
@@ -2772,6 +3121,13 @@
         "theme.profile.save": "Save the current darkness settings under the entered profile name.",
         "theme.apply": "Apply the currently visible theme role colors.",
         "theme.apply-bucket": "Apply only this theme bucket.",
+        "button-theme.scan": "Collect and group Surface colors from scoped action Buttons in open Blender Pop-out and Fan windows. Fans include their surface owner and members even while collapsed; editor previews remain excluded.",
+        "button-theme.apply": "Apply the edited aggregate Surface buckets back to the same live scanned Buttons; Rescan is required if the open windows changed.",
+        "button-theme.apply-gradient": "Apply the visible ordered multi-color Top-to-Bottom Surface gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Screen Top-to-Bottom anchors colors to each Button's position on its monitor and requires an authored Fan to be expanded while applying; otherwise each window uses its local layout. Scatter stays placement-stable.",
+        "button-theme.refill": "Apply the ordered multi-color Top-to-Bottom Surface gradient to scoped Buttons in the currently open Blender Pop-outs and Fans.",
+        "button-theme.refill-colors": "Sample the selected number of Gradient Colors from the current Theme image, show them as ordered gradient stops, and apply the gradient to scoped Buttons in open Blender Pop-outs and Fans.",
+        "button-theme.scatter": "Redistribute the currently present aggregate colors across the same live scanned Buttons using remembered hidden placement IDs.",
+        "button-theme.toggle-text": "Toggle all scoped Button label text in open Blender Pop-outs and Fans between black and white without changing Surface colors or saved skins.",
         "picture.file.select": "Pick a Place Picture image.",
         "picture.apply": "Place the picture path in the Blender viewport with the overlay.",
         "picture.grid": "Apply the entered near, distance, and far grid spacing values.",
@@ -3174,6 +3530,12 @@
           "apply": "theme.apply",
           "applyBucket": "theme.apply-bucket"
         },
+        "buttonTheme": {
+          "scan": "button-theme.scan",
+          "apply": "button-theme.apply",
+          "refill": "button-theme.refill",
+          "toggleText": "button-theme.toggle-text"
+        },
         "picture": {
           "select": "picture.file.select",
           "apply": "picture.apply",
@@ -3197,6 +3559,9 @@
       },
       "localActions": {
         "refill": "theme.refill",
+        "applyButtonGradient": "button-theme.apply-gradient",
+        "refillButtonColors": "button-theme.refill-colors",
+        "scatterButtonColors": "button-theme.scatter",
         "darkMode": "theme.mode.dark",
         "lightMode": "theme.mode.light",
         "saveProfile": "theme.profile.save"
@@ -3294,6 +3659,29 @@
         "profileSelectLabel": "Darkness profile",
         "currentProfileLabel": "Current tone",
         "profileNamePlaceholder": "Name current darkness"
+      },
+      "buttonTheme": {
+        "topColor": "#8FDB0A",
+        "bottomColor": "#141414",
+        "gradientColorCount": 5,
+        "gradientColors": [
+          "#8FDB0A",
+          "#141414"
+        ],
+        "spread": 100,
+        "scatter": 20,
+        "seed": 1,
+        "screenTopToBottom": false,
+        "gradientColorCountMinimum": 2,
+        "gradientColorCountMaximum": 16,
+        "topLabel": "Top",
+        "bottomLabel": "Bottom",
+        "spreadLabel": "Spread",
+        "scatterLabel": "Scatter",
+        "screenTopToBottomLabel": "Screen Top-to-Bottom",
+        "screenTopToBottomTooltip": "Use each Button's position within its monitor so one gradient runs from the top to the bottom of the screen.",
+        "gradientColorCountLabel": "Gradient Colors",
+        "gradientColorCountTooltip": "Choose how many colors the popped-Button gradient uses. Every ordered stop appears from Top through Bottom, and Refill samples this many colors from the current Theme image."
       }
     }
   }

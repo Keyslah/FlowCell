@@ -13,6 +13,7 @@ import type {
   ButtonVisualState,
   JsonValue
 } from "../types";
+import { expandedButtonPopoutPlacementIds } from "../state/buttonPopoutInteractionOperations";
 import {
   createToolFieldRuntimeState,
   reconcileToolFieldRuntimeState,
@@ -62,6 +63,7 @@ function buildCollapsedOwnerDocument(args: {
 
   const surfaceId = `button-window-owner-surface:${ownerButtonId}`;
   const placementId = `button-window-owner-placement:${ownerButtonId}`;
+  const sourceThemeOverride = args.document.themeOverrides?.[sourcePlacement.id];
   return {
     surfaceId,
     placementId,
@@ -90,7 +92,10 @@ function buildCollapsedOwnerDocument(args: {
           visualOverflowAllowance: 0,
           uniformButtonSize: null
         }
-      }
+      },
+      themeOverrides: sourceThemeOverride
+        ? { ...args.document.themeOverrides, [placementId]: sourceThemeOverride }
+        : args.document.themeOverrides
     }
   };
 }
@@ -185,22 +190,26 @@ export function ButtonPopoutRenderer({
     [collapsedSourcePlacement, document, unit]
   );
   const expandedDocument = useMemo(() => {
-    if (authoredFan || !savedOwnerPlacement) return document;
     const surface = document.surfaces[unit.surfaceId];
-    if (!surface?.placementIds.includes(savedOwnerPlacement.id)) return document;
+    if (!surface) return document;
+    const placementIds = expandedButtonPopoutPlacementIds(document, unit);
+    if (
+      placementIds.length === surface.placementIds.length &&
+      placementIds.every((placementId, index) => placementId === surface.placementIds[index])
+    ) {
+      return document;
+    }
     return {
       ...document,
       surfaces: {
         ...document.surfaces,
         [surface.id]: {
           ...surface,
-          placementIds: surface.placementIds.filter(
-            (placementId) => placementId !== savedOwnerPlacement.id
-          )
+          placementIds
         }
       }
     };
-  }, [authoredFan, document, savedOwnerPlacement, unit.surfaceId]);
+  }, [document, unit]);
 
   if (displayMode === "collapsed") {
     if (!collapsedOwner) {

@@ -32,6 +32,7 @@ const CORE_PAGE_CAPABILITIES: &[&str] = &[
     "file.select",
     "folder.select",
     "image.sample-palette",
+    "button-theme.palette",
     "tool-fields.save",
     "tool-fields.load",
     "tool-package.save",

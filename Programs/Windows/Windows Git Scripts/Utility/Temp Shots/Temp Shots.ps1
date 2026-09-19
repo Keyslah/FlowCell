@@ -1,11 +1,6 @@
-# Description: Opens Windows screen snip and saves the captured image to a first-use chosen Temp Shots folder.
+# Description: Requests one direct-to-folder capture from the resident FlowCell backend.
 [CmdletBinding()]
-param(
-    [switch]$ValidateOnly,
-    [switch]$StaRelaunch,
-    [switch]$SaveStartedSnip,
-    [uint32]$InitialSequence = 0
-)
+param([switch]$ValidateOnly)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -66,99 +61,6 @@ function Write-Utf8NoBomText {
     $encoding = [System.Text.UTF8Encoding]::new($false)
     [System.IO.File]::WriteAllText($Path, $Text, $encoding)
 }
-
-function Stop-OlderTempShotsRuns {
-    $currentPid = [int]$PID
-    $currentParentPid = 0
-    try {
-        $currentProcess = Get-CimInstance Win32_Process -Filter ("ProcessId = {0}" -f $currentPid) -ErrorAction Stop
-        $currentParentPid = [int]$currentProcess.ParentProcessId
-    }
-    catch {
-        $currentParentPid = 0
-    }
-
-    $processes = @()
-    foreach ($processName in @('powershell.exe', 'pwsh.exe', 'wscript.exe', 'cscript.exe')) {
-        $processes += @(Get-CimInstance Win32_Process -Filter ("Name = '{0}'" -f $processName) -ErrorAction SilentlyContinue)
-    }
-
-    foreach ($process in $processes) {
-        $processId = [int]$process.ProcessId
-        if ($processId -eq $currentPid -or $processId -eq $currentParentPid) {
-            continue
-        }
-
-        $name = [string]$process.Name
-        $commandLine = [string]$process.CommandLine
-        if ([string]::IsNullOrWhiteSpace($commandLine)) {
-            continue
-        }
-
-        $isTempShotsPowerShell =
-            ($name -ieq 'powershell.exe' -or $name -ieq 'pwsh.exe') -and
-            ($commandLine -match 'Temp Shots\.ps1')
-        $isTempShotsLauncher =
-            ($name -ieq 'wscript.exe' -or $name -ieq 'cscript.exe') -and
-            ($commandLine -match 'Temp_Shots\.vbs')
-
-        if ($isTempShotsPowerShell -or $isTempShotsLauncher) {
-            Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
-        }
-    }
-}
-
-if ($ValidateOnly) {
-    try {
-        Add-Type -AssemblyName System.Windows.Forms
-        Add-Type -AssemblyName System.Drawing
-        [void][Environment]::GetFolderPath([System.Environment+SpecialFolder]::MyPictures)
-        $explorerPath = Join-Path $env:WINDIR 'explorer.exe'
-        if (-not (Test-Path -LiteralPath $explorerPath -PathType Leaf)) {
-            throw "Windows Explorer was not found at $explorerPath."
-        }
-        Write-FlowCellStatus -Message 'Temp Shots script validation OK.'
-        exit 0
-    }
-    catch {
-        Write-FlowCellStatus -Message ("Temp Shots validation failed: {0}" -f $_.Exception.Message)
-        exit 1
-    }
-}
-
-if (-not $StaRelaunch -and [System.Threading.Thread]::CurrentThread.GetApartmentState() -ne 'STA') {
-    $powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
-    $scriptPath = if (-not [string]::IsNullOrWhiteSpace($PSCommandPath)) {
-        $PSCommandPath
-    }
-    else {
-        $MyInvocation.MyCommand.Path
-    }
-    $childArgs = @(
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Sta',
-        '-WindowStyle',
-        'Hidden',
-        '-File',
-        $scriptPath,
-        '-StaRelaunch'
-    )
-    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $powershell
-    foreach ($argument in $childArgs) {
-        [void]$startInfo.ArgumentList.Add($argument)
-    }
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
-    $startInfo.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
-    $process = [System.Diagnostics.Process]::Start($startInfo)
-    $process.WaitForExit()
-    exit ([int]$process.ExitCode)
-}
-
-Stop-OlderTempShotsRuns
 
 function Read-TempShotsFolder {
     if (Test-Path -LiteralPath $script:FolderCachePath -PathType Leaf) {
@@ -241,118 +143,69 @@ function Resolve-TempShotsFolder {
     return $selectedFolder
 }
 
-function Add-ClipboardSequenceType {
-    if ('FlowCell.TempShots.NativeMethods' -as [type]) {
-        return
-    }
-
-    Add-Type -Namespace FlowCell.TempShots -Name NativeMethods -MemberDefinition @'
-[System.Runtime.InteropServices.DllImport("user32.dll")]
-public static extern uint GetClipboardSequenceNumber();
+function Add-TempShotsBackendBridge {
+    if ('FlowCell.TempShots.BackendBridge' -as [type]) { return }
+    Add-Type -Namespace FlowCell.TempShots -Name BackendBridge -MemberDefinition @'
+[System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+public struct CopyData {
+    public System.UIntPtr Id;
+    public int ByteCount;
+    public System.IntPtr Data;
+}
+[System.Runtime.InteropServices.DllImport("user32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern System.IntPtr FindWindow(string className, string title);
+[System.Runtime.InteropServices.DllImport("user32.dll", SetLastError = true)]
+public static extern System.IntPtr SendMessageTimeout(System.IntPtr hwnd, uint message,
+    System.IntPtr wParam, ref CopyData data, uint flags, uint timeout, out System.UIntPtr result);
 '@
 }
 
-function Get-ClipboardSequenceNumber {
-    Add-ClipboardSequenceType
-    return [FlowCell.TempShots.NativeMethods]::GetClipboardSequenceNumber()
-}
-
-function Start-WindowsScreenSnip {
+function Invoke-TempShotsBackend {
+    Add-TempShotsBackendBridge
+    $receiver = [FlowCell.TempShots.BackendBridge]::FindWindow($null, 'FlowCellBackendDirectScriptReceiver')
+    if ($receiver -eq [IntPtr]::Zero) {
+        throw 'The FlowCell capture backend is not running. Restart FlowCell and try Temp Shots again.'
+    }
+    # Both the panel button and hotkey use the same resident, in-memory capture.
+    # Do not fall back to Windows Snipping Tool: it independently auto-saves.
+    $payload = @{
+        command = 'run_script_now'
+        scriptPath = Join-Path $PSScriptRoot 'Temp_Shots.vbs'
+        programKey = 'windows_generic'
+        requestId = 'temp-shots-' + [guid]::NewGuid().ToString('N')
+    } | ConvertTo-Json -Compress
+    $dataPointer = [Runtime.InteropServices.Marshal]::StringToHGlobalUni($payload)
     try {
-        $explorerPath = Join-Path $env:WINDIR 'explorer.exe'
-        Start-Process -FilePath $explorerPath -ArgumentList 'ms-screenclip:' -ErrorAction Stop
-        return
-    }
-    catch {
-        try {
-            Start-Process -FilePath 'SnippingTool.exe' -ArgumentList '/clip' -ErrorAction Stop
-            return
-        }
-        catch {
-            throw 'Windows screen snip could not be started.'
+        $data = New-Object 'FlowCell.TempShots.BackendBridge+CopyData'
+        $data.Id = [UIntPtr]::new(0x46435344)
+        $data.ByteCount = ($payload.Length + 1) * 2
+        $data.Data = $dataPointer
+        $reply = [UIntPtr]::Zero
+        $sent = [FlowCell.TempShots.BackendBridge]::SendMessageTimeout(
+            $receiver, 0x4A, [IntPtr]::Zero, [ref]$data, 2, 2000, [ref]$reply)
+        if ($sent -eq [IntPtr]::Zero -or $reply.ToUInt64() -ne 1) {
+            throw 'The FlowCell capture backend did not accept Temp Shots. Try again when its current action finishes.'
         }
     }
-}
-
-function Wait-ForClipboardScreenshot {
-    param(
-        [Parameter(Mandatory = $true)][uint32]$InitialSequence,
-        [int]$TimeoutSeconds = 90
-    )
-
-    Add-Type -AssemblyName System.Windows.Forms
-    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
-    $clipboardChangedWithoutImageAt = $null
-    while ((Get-Date) -lt $deadline) {
-        Start-Sleep -Milliseconds 60
-        $currentSequence = Get-ClipboardSequenceNumber
-        if ($currentSequence -eq $InitialSequence) {
-            $clipboardChangedWithoutImageAt = $null
-            continue
-        }
-
-        if ([System.Windows.Forms.Clipboard]::ContainsImage()) {
-            $image = [System.Windows.Forms.Clipboard]::GetImage()
-            if ($null -ne $image) {
-                return $image
-            }
-        }
-
-        if ($null -eq $clipboardChangedWithoutImageAt) {
-            $clipboardChangedWithoutImageAt = Get-Date
-        }
-        elseif (((Get-Date) - $clipboardChangedWithoutImageAt).TotalMilliseconds -ge 1200) {
-            return $null
-        }
-    }
-
-    return $null
-}
-
-function New-TempShotPath {
-    param([Parameter(Mandatory = $true)][string]$Folder)
-
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
-    for ($index = 0; $index -lt 100; $index++) {
-        $suffix = if ($index -eq 0) { '' } else { '-{0:00}' -f $index }
-        $candidate = Join-Path $Folder ("temp-shot-{0}{1}.png" -f $stamp, $suffix)
-        if (-not (Test-Path -LiteralPath $candidate)) {
-            return $candidate
-        }
-    }
-
-    return (Join-Path $Folder ("temp-shot-{0}-{1}.png" -f $stamp, [guid]::NewGuid().ToString('N')))
+    finally { [Runtime.InteropServices.Marshal]::FreeHGlobal($dataPointer) }
 }
 
 try {
-    $targetFolder = Resolve-TempShotsFolder
-    Ensure-Directory -Path $targetFolder
-
-    Add-Type -AssemblyName System.Drawing
-    if ($SaveStartedSnip) {
-        $initialSequence = $InitialSequence
-    }
-    else {
-        $initialSequence = Get-ClipboardSequenceNumber
-        Start-WindowsScreenSnip
-    }
-    Write-FlowCellStatus -Message 'Temp Shots is waiting for a screen snip.'
-
-    $image = Wait-ForClipboardScreenshot -InitialSequence $initialSequence
-    if ($null -eq $image) {
-        Write-FlowCellStatus -Message 'Temp Shots cancelled or no screenshot was copied.'
+    Add-TempShotsBackendBridge
+    if ($ValidateOnly) {
+        $captureHelper = Join-Path $script:RepoRoot 'flowcellbackend\helpers\TempShotsCapture.ahk'
+        if (-not (Test-Path -LiteralPath $captureHelper -PathType Leaf)) {
+            throw 'The direct Temp Shots capture helper is missing.'
+        }
+        if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'Temp_Shots.vbs') -PathType Leaf)) {
+            throw 'The owned Temp Shots launcher is missing.'
+        }
+        Write-Output 'Temp Shots direct-capture package validation OK.'
         exit 0
     }
-
-    $shotPath = New-TempShotPath -Folder $targetFolder
-    try {
-        $image.Save($shotPath, [System.Drawing.Imaging.ImageFormat]::Png)
-    }
-    finally {
-        $image.Dispose()
-    }
-
-    Write-FlowCellStatus -Message ("Saved Temp Shot: {0}" -f $shotPath)
+    $targetFolder = Resolve-TempShotsFolder
+    Ensure-Directory -Path $targetFolder
+    Invoke-TempShotsBackend
     exit 0
 }
 catch {

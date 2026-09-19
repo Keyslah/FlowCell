@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { showOpenFileDialog, showSaveFileDialog } from "../lib/tauri.js";
 import {
   isFlowCellThemeFile,
+  normalizeFlowCellThemeFile,
   type FlowCellThemeFile
 } from "./themeModel.js";
 
@@ -41,8 +42,9 @@ export async function loadFlowCellThemeFile(): Promise<{
     multiselect: false
   }))[0]?.trim();
   if (!path) return null;
-  const theme = await invoke<unknown>("load_flowcell_theme_file", { path });
-  if (!isFlowCellThemeFile(theme)) {
+  const loaded = await invoke<unknown>("load_flowcell_theme_file", { path });
+  const theme = normalizeFlowCellThemeFile(loaded);
+  if (!theme) {
     throw new Error("The selected file is not a supported FlowCell Theme file.");
   }
   return { path, theme };

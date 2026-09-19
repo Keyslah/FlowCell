@@ -94,6 +94,7 @@ export interface ButtonSurfaceProps {
     placementId: string,
     measurement: ButtonVisualMeasurement
   ) => void;
+  visualMeasurementSamplingKey?: string | number;
   onPreparePlacementVisualStateChange?: (
     placementId: string,
     state: ButtonVisualState
@@ -228,6 +229,7 @@ export function ButtonSurface({
   onFieldExecutionResult,
   onPlacementMeasurement,
   onPlacementVisualMeasurement,
+  visualMeasurementSamplingKey,
   onPreparePlacementVisualStateChange,
   onPlacementVisualStateChange,
   onPlacementNaturalMeasurement,
@@ -476,6 +478,7 @@ export function ButtonSurface({
             onExecutionResult={handlePlacementExecutionResult}
             onMeasurement={onPlacementMeasurement}
             onVisualMeasurement={onPlacementVisualMeasurement}
+            visualMeasurementSamplingKey={visualMeasurementSamplingKey}
             onPrepareVisualStateChange={onPreparePlacementVisualStateChange}
             onVisualStateChange={onPlacementVisualStateChange}
             onNaturalMeasurement={onPlacementNaturalMeasurement}

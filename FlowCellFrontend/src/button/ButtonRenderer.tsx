@@ -43,6 +43,7 @@ export interface ButtonRendererProps {
   onExecutionResult?: (placementId: string, result: ButtonExecutionResult) => void;
   onMeasurement?: (placementId: string, measurement: ButtonCoreMeasurement) => void;
   onVisualMeasurement?: (placementId: string, measurement: ButtonVisualMeasurement) => void;
+  visualMeasurementSamplingKey?: string | number;
   onPrepareVisualStateChange?: (
     placementId: string,
     state: ButtonVisualState
@@ -73,6 +74,7 @@ export function ButtonRenderer({
   onExecutionResult,
   onMeasurement,
   onVisualMeasurement,
+  visualMeasurementSamplingKey,
   onPrepareVisualStateChange,
   onVisualStateChange,
   onNaturalMeasurement
@@ -115,6 +117,7 @@ export function ButtonRenderer({
         button={button}
         placement={placement}
         skin={skin}
+        themeOverride={document.themeOverrides?.[placement.id]}
         mode={mode}
         selected={selected}
         fields={fields}
@@ -133,6 +136,7 @@ export function ButtonRenderer({
         onExecutionResult={(result) => onExecutionResult?.(placement.id, result)}
         onMeasurement={onMeasurement ? (measurement) => onMeasurement(placement.id, measurement) : undefined}
         onVisualMeasurement={onVisualMeasurement ? (measurement) => onVisualMeasurement(placement.id, measurement) : undefined}
+        visualMeasurementSamplingKey={visualMeasurementSamplingKey}
         onPrepareVisualStateChange={onPrepareVisualStateChange
           ? (state) => onPrepareVisualStateChange(placement.id, state)
           : undefined}

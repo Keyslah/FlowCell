@@ -52,7 +52,13 @@ test("Theme Editor is opened from Main and discovers Blender only as a universal
   assert.match(main, /openThemeEditorWindow\(\{ target: "FlowCell", page: "main" \}\)/);
   assert.match(editor, /listProgramFolders\(\)/);
   assert.match(editor, /<option value=\{FLOWCELL_TARGET_VALUE\}>FlowCell<\/option>/);
-  assert.match(editor, /<option value=\{ALL_PANELS_VALUE\}>All Panels<\/option>/);
+  assert.match(editor, /<option value=\{ALL_PANELS_VALUE\}>All Panels and Pop-outs<\/option>/);
+  assert.match(editor, /<option value=\{POPOUTS_ONLY_VALUE\}>Pop-outs Only<\/option>/);
+  assert.match(editor, /panelValue === POPOUTS_ONLY_VALUE/);
+  assert.match(editor, /popoutsOnly \? \{ area: "popouts" as const \} : \{\}/);
+  assert.match(editor, /current === POPOUTS_ONLY_VALUE/);
+  assert.match(editor, /loadedTarget\.area === "popouts"[\s\S]{0,120}POPOUTS_ONLY_VALUE/);
+  assert.match(editor, /target\.area === "popouts"[\s\S]{0,100}Pop-outs Theme/);
   assert.match(editor, /programNames\.map\(\(programName\)/);
   assert.match(editor, /FLOWCELL_THEME_PAGE_REGISTRY/);
   assert.equal(
@@ -71,45 +77,98 @@ test("Theme Editor is opened from Main and discovers Blender only as a universal
   }
 });
 
-test("Theme Editor reuses canonical Button geometry and persistence paths", () => {
+test("Theme Editor is a bulk override and saved-skin assignment workflow", () => {
   const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
+  const css = read("src", "pages", "theme", "themeEditorPage.css");
   const main = read("src", "pages", "main", "MainPage.tsx");
   const model = read("src", "theme", "themeModel.ts");
+  const renderer = read("src", "button", "skins", "ButtonSkinRenderer.tsx");
+  const compiler = read("src", "button", "skins", "skinCompiler.ts");
   const file = read("src", "theme", "themeFile.ts");
   const nativeLayouts = read("src-tauri", "src", "commands", "layouts.rs");
-  assert.match(model, /resizeButtonPlacementSelection/);
-  assert.match(model, /alignButtonPlacementSelectionToTopLeftButton/);
-  assert.match(model, /buttonSpacingPixelsFromMillimeters/);
-  assert.match(model, /function layoutMainGrid/);
-  assert.match(model, /mainGridGaps/);
-  assert.match(model, /templateEnvelope/);
-  assert.match(model, /touchedGroups/);
-  assert.match(model, /mainPageDefaultRect/);
   assert.match(model, /validateButtonStateDocument/);
   assert.doesNotMatch(
     main,
     /topLeftActionHeight|topLeftBaselineHeight|targetHeightOverride=/,
     "Main must render each top-left control at its independent canonical height"
   );
-  for (const skinOwnedHelper of [
-    "readButtonSkinHighlightOnHover",
-    "setButtonSkinHighlightOnHover",
-    "readButtonSkinHighlightOnActive",
-    "setButtonSkinHighlightOnActive"
-  ]) {
-    assert.match(editor, new RegExp(`\\b${skinOwnedHelper}\\b`));
-  }
-  assert.match(editor, /gradientEnabled/);
-  assert.match(editor, /scatterEnabled/);
-  assert.match(editor, /buttonParticipation/);
+  assert.match(editor, /listButtonSkinFiles\(\)/);
+  assert.match(editor, /loadButtonSkinFile\(path\)/);
+  assert.match(editor, /createButtonSkinFromFile/);
+  assert.match(
+    editor,
+    /resolveThemeSkinAssignmentPlacementIds\(\s*scopedPlacements,\s*selectedPlacement\.id,\s*assignEveryButtonInScope\s*\)/
+  );
+  assert.doesNotMatch(editor, /sourceIdentity\.key/);
+  assert.match(model, /LEGACY_THEME_SKIN_ID_PREFIX/);
+  assert.match(editor, /Apply this saved skin to all \{scopedPlacements\.length\} Buttons in the current scope/);
+  assert.match(editor, /Checkbox off: only the selected Button occurrence uses the saved skin/);
+  assert.match(editor, /Checkbox on: every Button in this scope uses it/);
+  assert.match(
+    editor,
+    /clearButtonThemeOverrideColors\(\s*document\.themeOverrides\?\.\[placementId\]\s*\)/
+  );
+  assert.match(editor, /Assignment starts with the saved skin's authored colors/);
+  assert.match(editor, /No saved skin file was edited/);
+  assert.doesNotMatch(editor, /saveButtonSkinFile/);
+  assert.doesNotMatch(editor, /Hover and Active|Preserve current values|Use Default Highlight/);
+  assert.doesNotMatch(editor, /THEME_HOVER_HIGHLIGHT_ROLE|THEME_ACTIVE_HIGHLIGHT_ROLE/);
+  assert.match(editor, /<h2>Highlight<\/h2>/);
+  assert.match(editor, /<h2>Glow<\/h2>/);
+  assert.match(editor, /ariaLabel: "Highlight on hover"/);
+  assert.match(editor, /ariaLabel: "Highlight when active"/);
+  assert.match(editor, /ariaLabel: "Glow on hover"/);
+  assert.match(editor, /ariaLabel: "Glow when active"/);
+  assert.match(editor, /max: BUTTON_HIGHLIGHT_AMOUNT_MAX/);
+  assert.match(editor, /max: BUTTON_GLOW_AMOUNT_MAX/);
+  assert.match(editor, /The range reaches \{BUTTON_HIGHLIGHT_AMOUNT_MAX\}%/);
+  assert.match(editor, /Defaults are \{DEFAULT_BUTTON_HIGHLIGHT_AMOUNT\}%/);
+  assert.match(editor, /ensureThemeOverride\(document, placementId\)\[field\] = amount/);
+  assert.match(editor, /Set \$\{label\.toLocaleLowerCase\("en"\)\} to \$\{amount\}% across all \$\{placementIds\.length\} in-scope Buttons/);
+  assert.doesNotMatch(editor, /Highlight color|Enable hover|Enable active/);
+  assert.match(
+    editor,
+    /const value = Number\(event\.currentTarget\.value\);\s*applyEffectAmount\(control\.field, control\.ariaLabel, value\);/
+  );
+  assert.match(editor, /buttonSkinColorOpacityPercent/);
+  assert.match(editor, /const role = event\.currentTarget\.value;\s*updateGradient\(\(current\) => \(\{ \.\.\.current, role \}\)\);/);
+  assert.match(editor, /const spread = Number\(event\.currentTarget\.value\);\s*updateGradient\(\(current\) => \(\{ \.\.\.current, spread \}\)\);/);
+  assert.match(editor, /const scatter = Number\(event\.currentTarget\.value\);\s*updateGradient\(\(current\) => \(\{ \.\.\.current, scatter \}\)\);/);
+  assert.doesNotMatch(
+    editor,
+    /updateGradient\(\(current\) => \(\{ \.\.\.current, (?:role|spread|scatter): [^}]*event\.currentTarget/
+  );
+  assert.doesNotMatch(editor, /setButtonSkinHighlightOnHover|setButtonSkinHighlightOnActive/);
+  assert.doesNotMatch(editor, /ensurePlacementPrivateSkin|THEME_DRAFT_SKIN_PREFIX/);
+  assert.doesNotMatch(editor, /compatible saved skin|do not expose the|extractSkinColorRoots/i);
+  assert.match(editor, /THEME_EDITOR_GRADIENT_ROLES[\s\S]{0,180}"surface"[\s\S]{0,180}"text"/);
+  assert.match(editor, /THEME_EDITOR_GRADIENT_ROLES\.map\(\(role\) =>/);
+  assert.match(editor, /initialScopeGradient[\s\S]{0,180}role: "surface"/);
+  assert.equal(
+    (editor.match(/setGradient\(initialScopeGradient\(stored\?\.gradient\)\)/g) ?? []).length,
+    2,
+    "scope changes and Discard must both restore Surface as the visible channel"
+  );
+  assert.match(renderer, /buttonSkinSurfaceThemeMode\(skin\)/);
+  assert.match(renderer, /applyButtonSkinSurfaceThemeFallback\(skin, themeSurfaceColor\)/);
+  assert.match(renderer, /buttonSkinThemeColorVariables\(skin, themeOverride\?\.colors\)/);
+  assert.doesNotMatch(renderer, /applyButtonThemeSurfaceTint|data-button-theme-surface-filter/);
+  assert.match(renderer, /data-button-theme-surface-fallback/);
+  assert.match(renderer, /data-button-theme-text/);
+  assert.match(compiler, /:host\(\[data-button-theme-text=/);
+  assert.match(css, /height: 100vh;[\s\S]*overflow-y: auto;/);
+  assert.match(css, /select option \{[\s\S]*background: #1d2522;/);
   const gradientStart = editor.indexOf("const applyGradient =");
   const gradientEnd = editor.indexOf("const captureCurrentTheme", gradientStart);
   assert.notEqual(gradientStart, -1);
   assert.notEqual(gradientEnd, -1);
   const applyGradient = editor.slice(gradientStart, gradientEnd);
+  assert.doesNotMatch(applyGradient, /extractSkinColorRoots|unsupported|compatible/i);
+  assert.match(applyGradient, /resolvedPlacementIds/);
+  assert.match(applyGradient, /did not resolve the exact/);
   const bakeIndex = applyGradient.indexOf("bakeThemeGradientForDeployedLayout(");
   const gradientDraftIndex = applyGradient.indexOf("updateDraft(", bakeIndex);
-  const gradientColorIndex = applyGradient.indexOf("setSkinColorRoot(", gradientDraftIndex);
+  const gradientColorIndex = applyGradient.indexOf("ensureThemeOverride(", gradientDraftIndex);
   assert.equal(
     0 <= bakeIndex && bakeIndex < gradientDraftIndex && gradientDraftIndex < gradientColorIndex,
     true,
@@ -180,6 +239,15 @@ test("Theme Editor reuses canonical Button geometry and persistence paths", () =
   assert.match(nativeLayouts, /load_flowcell_theme_file/);
   assert.match(nativeLayouts, /\.flowtheme\.json/);
   assert.doesNotMatch(nativeLayouts, /FlowCellTheme[\s\S]{0,120}LayoutSnapshotFile/);
+});
+
+test("Theme Editor preserves loaded default-highlight resets without exposing legacy enablement or color controls", () => {
+  const editor = read("src", "pages", "theme", "ThemeEditorPage.tsx");
+  assert.match(editor, /const highlightColorResetPlacementIds = useRef/);
+  assert.match(editor, /highlightColorResetPlacementIds: highlightColorResetPlacementIds\.current/);
+  assert.match(editor, /const handleApply[\s\S]*?adoptHighlightColorResetIntents\(theme, committed\.applied\)/);
+  assert.match(editor, /adoptHighlightColorResetIntents\(loaded\.theme, committed\.applied\)/);
+  assert.doesNotMatch(editor, /applyHighlightChange|useDefaultHighlightColor|highlightSummary/);
 });
 
 test("Theme runtime publishes cross-window updates with a storage fallback", () => {

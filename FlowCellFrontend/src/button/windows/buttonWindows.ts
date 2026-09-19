@@ -143,13 +143,16 @@ function placementPosition(
   const x = placement.x ?? 0;
   const y = placement.y ?? 0;
   return placement.unit === "physical"
-    ? new PhysicalPosition(x, y)
+    ? new PhysicalPosition(Math.round(x), Math.round(y))
     : new LogicalPosition(x, y);
 }
 
 function placementSize(placement: WindowPlacement): LogicalSize | PhysicalSize {
   return placement.unit === "physical"
-    ? new PhysicalSize(placement.width, placement.height)
+    ? new PhysicalSize(
+        Math.max(1, Math.round(placement.width)),
+        Math.max(1, Math.round(placement.height))
+      )
     : new LogicalSize(placement.width, placement.height);
 }
 
@@ -769,6 +772,7 @@ export async function openButtonPopoutWindow(args: {
         buttonOwnerId: args.ownerButtonId,
         panelOwnerButtonId: settingsBackedLayout?.panelOwnerButtonId,
         buttonDisplayMode: context.initialDisplayMode,
+        buttonDraftSessionId: args.draftSessionId,
         buttonPopoutSettingsPath: settingsBackedLayout?.settingsPath,
         buttonPopoutChoiceId: settingsBackedLayout?.choiceId,
         snapshotBounds: contentBounds
@@ -920,6 +924,7 @@ export async function openButtonFanWindow(args: {
       panelName: args.panelName,
       buttonFanSetupId: args.fanSetupId,
       buttonOwnerId: args.panelOwnerButtonId,
+      buttonDraftSessionId: args.draftSessionId,
       snapshotBounds: contentBounds
     });
     let target = await WebviewWindow.getByLabel(windowLabel);

@@ -278,7 +278,8 @@
   line-height: 1.35;
 }
 
-.button-editor-sidebar__fan {
+.button-editor-sidebar__fan,
+.button-editor-sidebar__fan-animation {
   margin: 0 !important;
   padding: 8px 9px;
   border: 1px solid #587260;
@@ -286,6 +287,25 @@
   color: #f0fff4;
   background: #24372b;
   font-weight: 600;
+}
+
+.button-editor-sidebar__fan-styles {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid #465360;
+  border-radius: 7px;
+}
+
+.button-editor-sidebar__fan-styles legend {
+  padding: 0 4px;
+  color: #aebdca;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
 }
 
 .button-editor-sidebar__mode {

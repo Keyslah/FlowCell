@@ -29,8 +29,11 @@ import {
   refreshScopedWindowTopmost,
   unregisterScopedWindowTopmost
 } from "./tauri";
+import { waitForManagedWindowToDisappear } from "../button/windows/managedWindowLifecycle";
 
 const pendingOpens = new Map<string, Promise<void>>();
+const INSTALLED_PAGE_WINDOW_CLOSE_TIMEOUT_MS = 5_000;
+const INSTALLED_PAGE_WINDOW_CLOSE_POLL_MS = 25;
 
 interface CoreWindowOptions {
   label: string;
@@ -425,18 +428,22 @@ export async function closeInstalledPageWindow(ownerButtonId: string): Promise<v
     unregisterLayoutWindow(label);
     return;
   }
-  let acknowledgeDestroyed: (() => void) | null = null;
-  const destroyed = new Promise<void>((resolve) => {
-    acknowledgeDestroyed = resolve;
-  });
-  const unlistenDestroyed = await existing.once("tauri://destroyed", () => {
-    acknowledgeDestroyed?.();
-  });
+  let closeError: unknown = null;
   try {
-    await existing.close();
-    await destroyed;
+    await existing.close().catch((error) => {
+      closeError = error;
+    });
+    try {
+      await waitForManagedWindowToDisappear({
+        windowLabel: label,
+        lookup: () => WebviewWindow.getByLabel(label),
+        timeoutMs: INSTALLED_PAGE_WINDOW_CLOSE_TIMEOUT_MS,
+        pollMs: INSTALLED_PAGE_WINDOW_CLOSE_POLL_MS
+      });
+    } catch (error) {
+      throw closeError ?? error;
+    }
   } finally {
-    unlistenDestroyed();
     unregisterLayoutWindow(label);
   }
 }

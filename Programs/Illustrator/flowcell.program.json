@@ -23,7 +23,7 @@
   "bundledSources": [
     {
       "id": "illustrator.send-svg-to-blender",
-      "version": "1.2.10",
+      "version": "1.2.12",
       "panelName": "Files",
       "sourcePath": "Illustrator Git Scripts/Files/Send SVG to Blender/18_Prepare_Selected_OBJ_Export.jsx",
       "importKind": "script",
@@ -83,6 +83,22 @@
       "installIfMissing": true,
       "installOnAdd": true,
       "legacyMatchLabel": "vacuum",
+      "legacyMatchKind": "script"
+    },
+    {
+      "id": "illustrator.lithophane",
+      "version": "1.0.2",
+      "panelName": "Utility",
+      "sourcePath": "Illustrator Git Scripts/Utility/Lithophane/Lithophane.jsx",
+      "importKind": "script",
+      "displayLabel": "Lithophane",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": ["Installs the selected-PNG Blender Lithophane handoff Button into Utility."],
+      "installIfMissing": true,
+      "installOnAdd": true,
+      "legacyMatchLabel": "blender litho",
       "legacyMatchKind": "script"
     },
     {

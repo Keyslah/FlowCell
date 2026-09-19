@@ -157,7 +157,7 @@ test("installed pages use a raw WRY boundary without Tauri initialization script
   );
   assert.match(
     coreWindows,
-    /existing\.once\("tauri:\/\/destroyed"[\s\S]*existing\.close\(\)[\s\S]*await destroyed/
+    /existing\.close\(\)\.catch\([\s\S]*waitForManagedWindowToDisappear\(\{[\s\S]*lookup:\s*\(\) => WebviewWindow\.getByLabel\(label\)/
   );
   assert.match(coreWindows, /registerLayoutWindow\(\{[\s\S]*kind:\s*"installed-page"/);
   assert.match(coreWindows, /installedPageFileName:\s*args\.fileName/);
@@ -167,7 +167,10 @@ test("installed pages use a raw WRY boundary without Tauri initialization script
   assert.match(coreWindows, /savedBounds:\s*args\.bounds/);
   assert.match(coreWindows, /placement\.unit === "physical"[\s\S]*new PhysicalPosition/);
   assert.match(coreWindows, /placement\.unit === "physical"[\s\S]*new PhysicalSize/);
-  assert.match(coreWindows, /await destroyed;[\s\S]*unregisterLayoutWindow\(label\)/);
+  assert.match(
+    coreWindows,
+    /timeoutMs:\s*INSTALLED_PAGE_WINDOW_CLOSE_TIMEOUT_MS[\s\S]*pollMs:\s*INSTALLED_PAGE_WINDOW_CLOSE_POLL_MS[\s\S]*throw closeError \?\? error[\s\S]*unregisterLayoutWindow\(label\)/
+  );
   assert.match(
     coreWindows,
     /openInstalledPageWindow[\s\S]*decorations:\s*true,[\s\S]*programName:\s*args\.programName/,
@@ -243,6 +246,116 @@ test("generated page Buttons update by authenticated package identity instead of
     read(frontendRoot, "src-tauri", "src", "main.rs"),
     /program_sources::install::update_button_source/
   );
+});
+
+test("installed-page Button-theme palette is live Pop-out/Fan scoped, stale-scan guarded, and read-only on scan", () => {
+  const broker = read(
+    frontendRoot,
+    "src",
+    "pages",
+    "installed-page",
+    "installedPageCoreBroker.ts"
+  );
+  const nativePage = read(
+    frontendRoot,
+    "src-tauri",
+    "src",
+    "program_sources",
+    "installed_page.rs"
+  );
+  const helper = read(frontendRoot, "src", "theme", "programPopoutPalette.ts");
+  const popoutOperations = read(
+    frontendRoot,
+    "src",
+    "button",
+    "state",
+    "buttonPopoutInteractionOperations.ts"
+  );
+  const popoutRenderer = read(
+    frontendRoot,
+    "src",
+    "button",
+    "popout",
+    "ButtonPopoutRenderer.tsx"
+  );
+  const fanRenderer = read(
+    frontendRoot,
+    "src",
+    "button",
+    "fan",
+    "ButtonFanRenderer.tsx"
+  );
+  const buttonWindows = read(
+    frontendRoot,
+    "src",
+    "button",
+    "windows",
+    "buttonWindows.ts"
+  );
+  assert.match(nativePage, /CORE_PAGE_CAPABILITIES[\s\S]*"button-theme\.palette"/);
+  assert.match(broker, /case "button-theme\.palette": return runButtonThemePalette\(identity, options, payload\)/);
+  assert.match(broker, /WebviewWindow\.getAll\(\)/);
+  assert.match(broker, /readRegisteredLayoutWindow\(handle\.label\)/);
+  assert.match(broker, /snapshotBounds:\s*registered\.snapshotBounds/);
+  assert.match(broker, /monitorFromPoint\(/);
+  assert.match(broker, /programPopoutPaletteScreenPositions\(/);
+  assert.match(broker, /registered\.kind !== "button-popout" && registered\.kind !== "button-fan"/);
+  assert.match(broker, /registered\.kind === "button-popout"/);
+  assert.match(broker, /candidate\.windowKind === "button-popout"[\s\S]{0,100}if \(!popoutUnit\)/);
+  assert.match(broker, /candidate\.displayMode === "collapsed" && popoutUnit\.interactionMode !== "fan"/);
+  assert.match(broker, /handle\.isVisible\(\)/);
+  assert.match(broker, /expandedButtonPopoutPlacementIds\(document, unit\)/);
+  assert.match(broker, /expandedFanPlacementIds\(document, candidate\.fanSetupId, programName\)/);
+  assert.match(broker, /resolvePanelOwnerFanPlacement\(document, setup\.id\)/);
+  assert.match(broker, /Expand this Blender Fan while applying Screen Top-to-Bottom/);
+  assert.match(popoutRenderer, /expandedButtonPopoutPlacementIds\(document, unit\)/);
+  assert.match(popoutOperations, /unit\.interactionMode === "fan"[\s\S]{0,160}surface\.placementIds/);
+  assert.match(broker, /registered\.buttonDraftSessionId\?\.trim\(\)[\s\S]{0,80}continue/);
+  assert.match(buttonWindows, /kind: "button-fan"[\s\S]{0,240}buttonDraftSessionId: args\.draftSessionId/);
+  for (const renderer of [fanRenderer, popoutRenderer]) {
+    assert.match(renderer, /const sourceThemeOverride = .*themeOverrides\?\.\[sourcePlacement\.id\]/);
+    assert.match(renderer, /themeOverrides: sourceThemeOverride[\s\S]{0,180}\[placementId\]: sourceThemeOverride/);
+  }
+  assert.match(broker, /buttonPopoutSettingsPath/);
+  assert.match(broker, /requestLiveButtonDraft\(sessionId, requesterLabel\)/);
+  assert.match(broker, /assertRememberedPopoutPaletteScan/);
+  assert.match(broker, /remembered\.fingerprint !== fingerprint/);
+  assert.match(broker, /saveButtonStateDocument\(canonicalGroup\.document, current\.revision\)/);
+  assert.match(broker, /publishButtonCommit\(savedCanonical\)/);
+  assert.match(broker, /publishButtonDraft\(group\.draftSessionId!, group\.document\)/);
+  assert.match(
+    broker,
+    /const allBlack = hasTargets && scope\.groups\.every\([\s\S]*programPopoutPaletteTargetsHaveTextColor/
+  );
+  assert.match(
+    broker,
+    /operation === "toggle-text"[\s\S]*nextLiveProgramPopoutTextColor\(live,[\s\S]*applyLiveProgramPopoutTextColor\(live,[\s\S]*commitLiveProgramPopoutPalette\(current, result\)/
+  );
+  const runStart = broker.indexOf("async function runButtonThemePalette(");
+  const nextStart = broker.indexOf("async function runSaveFields(", runStart);
+  const runSource = broker.slice(runStart, nextStart);
+  const scanStart = runSource.indexOf('operation === "scan"');
+  const applyStart = runSource.indexOf('operation === "apply"');
+  assert.ok(runStart >= 0 && nextStart > runStart && scanStart >= 0 && applyStart > scanStart);
+  assert.doesNotMatch(runSource.slice(scanStart, applyStart), /saveButtonStateDocument|publishButtonCommit/);
+  assert.doesNotMatch(runSource, /payload[^\n]*programName|programName[^\n]*payload/);
+  assert.doesNotMatch(helper, /Object\.values\(document\.popoutUnits\)/);
+  assert.match(helper, /scanProgramPopoutPaletteTargets/);
+  assert.match(helper, /placementMatchesThemeTarget/);
+  assert.match(helper, /PROGRAM_POPPED_PALETTE_SURFACE_KINDS[\s\S]*"fan"/);
+  assert.match(helper, /applyProgramPopoutTextColorTargets[\s\S]*override\.colors\.text = color/);
+  assert.doesNotMatch(helper, /setButtonSkinTextColor/);
+  assert.match(
+    helper,
+    /multiStopGradientColor\(gradient\.colors, gradientPositionForPlacement\(\{[\s\S]*placementId:\s*paletteId/
+  );
+  assert.match(broker, /colors:\s*Array\.isArray\(payload\.colors\)/);
+  assert.match(helper, /visibleBounds\.Top[\s\S]*envelope\.y[\s\S]*monitorWorkArea\.Top/);
+  assert.match(
+    broker,
+    /screenTopToBottom\s*\?\s*\{\s*minimumY:\s*0,\s*maximumY:\s*1\s*\}\s*:\s*undefined/
+  );
+  assert.doesNotMatch(runSource, /outerPosition\(/);
 });
 
 test("installed pages can opt into fixed always-on-top window behavior", () => {

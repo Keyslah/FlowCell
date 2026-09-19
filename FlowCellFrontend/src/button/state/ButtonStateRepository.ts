@@ -570,6 +570,11 @@ export async function openButtonSkinDirectory(): Promise<string> {
   return invoke<string>("open_button_skin_directory");
 }
 
+export async function listButtonSkinFiles(): Promise<string[]> {
+  if (!isTauriWindowHost()) return [];
+  return invoke<string[]>("list_button_skin_files");
+}
+
 export async function loadButtonSkinFile(path: string): Promise<string> {
   if (!path.trim()) throw new Error("Button skin load path cannot be empty.");
   if (!isTauriWindowHost()) {

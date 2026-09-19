@@ -49,6 +49,7 @@ export function createButtonStateDocument(): ButtonStateDocument {
     skins: {
       [DEFAULT_BUTTON_SKIN_ID]: cloneButtonDocument(DEFAULT_BUTTON_SKIN)
     },
+    themeOverrides: {},
     popoutUnits: {},
     fanSetups: {},
     settings: cloneButtonDocument(DEFAULT_BUTTON_DOCUMENT_SETTINGS)

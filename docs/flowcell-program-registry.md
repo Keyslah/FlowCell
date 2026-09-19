@@ -192,9 +192,16 @@ Supported `runner.kind` values:
 | `illustrator-direct` | Sends the installed Local source through the Illustrator backend using `runner.programKey`. |
 | `photoshop-direct` | Sends the installed Local source through the controller using `runner.programKey`. |
 | `blender-bridge` | Deploys and invokes an owner-generated Blender bridge action through `runner.installScript` and removes it through `runner.deleteScript`. |
+| `fusion-bridge` | Deploys and invokes an owner-generated Fusion action through the per-process Fusion add-in bridge and removes it through `runner.deleteScript`. |
 
 `programKey`, `installScript`, and `deleteScript` are runner-specific. Empty
 values are valid only when that runner does not use them.
+
+The Fusion bridge add-in owns one runtime directory per Fusion process. Its
+filesystem watcher may only enqueue a registered custom event; registry lookup,
+managed-module loading, and all Fusion API work run from that event on Fusion's
+main thread. A request is routed only to a live PID that published a matching
+runtime status, and the response must carry the exact request identity.
 
 Removing a program is compensating rather than one-way: native unregister keeps
 an opaque in-process bindings snapshot while canonical Buttons and their owned

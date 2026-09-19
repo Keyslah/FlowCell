@@ -414,6 +414,13 @@ identity/value data, and every child behavior key to identify an installed slot.
 Blender tool sets call the owner-generated bridge action with the merged
 payload.
 
+Fusion tool sets use the same owner-generated action boundary. The Fusion
+runner sends the merged payload to the active Fusion process's add-in runtime;
+the add-in resolves only the exact registered owner action and executes its
+`run_flowcell_action` entrypoint on Fusion's main thread. A dictionary returned
+by that entrypoint is preserved at the response top level, including a
+`fieldPatch` used to refresh host-owned Tool Set fields.
+
 Illustrator tool sets may declare:
 
 ```json

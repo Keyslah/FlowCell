@@ -235,6 +235,27 @@ export interface ButtonPlacement extends ButtonRect {
   visualStateMap: ButtonVisualStateMap | null;
 }
 
+/**
+ * Host-owned appearance layered over an assigned Button skin by the Theme
+ * Editor. Null highlight values inherit from the assigned skin (and then the
+ * legacy placement fallback), so untouched Theme controls never rewrite a
+ * skin's authored behavior or source.
+ */
+export interface ButtonThemeOverride {
+  colors: Record<string, string>;
+  hoverEnabled: boolean | null;
+  activeEnabled: boolean | null;
+  hoverColor: string | null;
+  activeColor: string | null;
+  /** @deprecated Compatibility fallback for the original combined Highlight Amount control. */
+  highlightAmount?: number | null;
+  /** Optional for compatibility with Button state and Theme files saved before these controls existed. */
+  hoverHighlightAmount?: number | null;
+  activeHighlightAmount?: number | null;
+  hoverGlowAmount?: number | null;
+  activeGlowAmount?: number | null;
+}
+
 export interface ButtonSurface {
   id: ButtonSurfaceId;
   name: string;
@@ -394,6 +415,7 @@ export interface ButtonFanAnimationSettings {
   durationMs: number;
   easing: string;
   staggerMs: number;
+  spinEnabled: boolean;
 }
 
 export interface ButtonFanSetup {
@@ -439,6 +461,7 @@ export interface ButtonStateDocument {
   skins: Record<ButtonSkinId, ButtonSkin>;
   popoutUnits: Record<ButtonPopoutUnitId, ButtonPopoutUnit>;
   fanSetups: Record<ButtonFanSetupId, ButtonFanSetup>;
+  themeOverrides?: Record<ButtonPlacementId, ButtonThemeOverride>;
   settings: ButtonDocumentSettings;
 }
 

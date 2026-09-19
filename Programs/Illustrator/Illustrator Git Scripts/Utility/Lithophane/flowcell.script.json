@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.lithophane",
+  "label": "Lithophane",
+  "tooltip": "Send one selected PNG to Blender as a lithophane named from its owning sublayer at its exact Illustrator width and height.",
+  "program": "Illustrator",
+  "source": "Lithophane.jsx",
+  "execution": {
+    "waitForCompletion": true
+  }
+}

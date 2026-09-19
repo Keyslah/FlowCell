@@ -299,6 +299,189 @@ select:focus-visible {
   font-size: 0.58rem;
 }
 
+.button-theme-summary {
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-align: right;
+}
+
+.button-theme-actions {
+  align-items: flex-end;
+  flex-wrap: nowrap;
+  margin-bottom: 6px;
+}
+
+.button-theme-actions > button {
+  flex: 0 0 auto;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.button-theme-gradient__color-count {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.button-theme-gradient__color-count-inputs {
+  display: grid;
+  grid-template-columns: minmax(52px, 1fr) 48px;
+  align-items: center;
+  gap: 4px;
+}
+
+.button-theme-gradient__color-count-inputs input[type="number"] {
+  height: var(--control-height);
+  padding: 3px 5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.button-theme-gradient,
+.button-theme-buckets {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.button-theme-gradient {
+  padding: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 7px;
+  background: rgba(0, 0, 0, 0.12);
+}
+
+.button-theme-gradient__stops {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 5px;
+  min-width: 0;
+  padding-bottom: 2px;
+  overflow-x: auto;
+}
+
+.button-theme-gradient__color,
+.button-theme-gradient__range {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.button-theme-gradient__stops > .button-theme-gradient__color {
+  flex: 1 0 104px;
+}
+
+.button-theme-gradient__screen-toggle {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 0.66rem;
+  cursor: pointer;
+}
+
+.button-theme-gradient__screen-toggle input[type="checkbox"] {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.button-theme-gradient__color-inputs {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 3px;
+}
+
+.button-theme-gradient__color-inputs input[type="color"] {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 1px;
+}
+
+.button-theme-gradient__color-inputs input[type="text"],
+.button-theme-bucket__controls input[type="text"] {
+  height: 28px;
+  padding: 2px 4px;
+  font-family: "Cascadia Mono", Consolas, monospace;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+}
+
+.button-theme-gradient__range-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 5px;
+}
+
+.button-theme-gradient__value {
+  min-width: 24px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.button-theme-buckets {
+  margin-top: 6px;
+}
+
+.button-theme-bucket {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 5px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.button-theme-bucket--material {
+  border: 1px dashed rgba(255, 255, 255, 0.13);
+}
+
+.button-theme-bucket__label {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
+.button-theme-bucket__controls {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 3px;
+}
+
+.button-theme-bucket__controls input[type="color"] {
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  padding: 1px;
+}
+
+.button-theme-bucket__materials {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 28px;
+}
+
+.button-theme-bucket__material {
+  width: 24px;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.28);
+}
+
+.button-theme-bucket__unresolved {
+  color: var(--muted);
+  font-size: 0.62rem;
+}
+
 .theme-number-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -341,6 +524,11 @@ select:focus-visible {
 }
 
 @media (max-width: 780px) {
+  .button-theme-gradient,
+  .button-theme-buckets {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .theme-number-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -353,5 +541,14 @@ select:focus-visible {
 
   .theme-row > button {
     flex: 1 1 auto;
+  }
+
+  .button-theme-actions > button {
+    flex: 0 0 auto;
+  }
+
+  .button-theme-gradient,
+  .button-theme-buckets {
+    grid-template-columns: minmax(0, 1fr);
   }
 }

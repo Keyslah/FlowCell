@@ -10,6 +10,7 @@ import { flushSync } from "react-dom";
 import type {
   ButtonCoreMeasurement,
   ButtonSkin,
+  ButtonThemeOverride,
   ButtonTextAlignment,
   ButtonTextFitMode,
   ButtonVisualMeasurement,
@@ -36,8 +37,16 @@ import {
 } from "./buttonVisualSampling";
 import { applyButtonLabelTextOffset } from "./buttonTextOffset";
 import {
+  applyButtonSkinSurfaceThemeFallback,
+  buttonHighlightFilter,
+  buttonSkinSurfaceThemeMode,
+  buttonSkinThemeColorVariables,
+  buttonSkinTextThemeVariable,
+  normalizeButtonSkinColor,
   readButtonSkinHighlightOnActive,
-  readButtonSkinHighlightOnHover
+  readButtonSkinHighlightOnHover,
+  resolveButtonGlowAmount,
+  resolveButtonHighlightAmount
 } from "./buttonSkinColors";
 import {
   buttonVisualMotionBlocksStateChange,
@@ -57,6 +66,7 @@ type StyleWithVars = CSSProperties & Record<`--${string}`, string | number>;
 
 export interface ButtonSkinRendererProps {
   skin: ButtonSkin;
+  themeOverride?: ButtonThemeOverride;
   label: string;
   width?: number;
   height?: number;
@@ -120,6 +130,12 @@ interface ButtonVisualRenderSnapshot {
   error: boolean;
   hoverHighlighted: boolean;
   activeHighlighted: boolean;
+  hoverHighlightColor: string | null;
+  activeHighlightColor: string | null;
+  hoverHighlightAmount: number;
+  activeHighlightAmount: number;
+  hoverGlowAmount: number;
+  activeGlowAmount: number;
   samplingState: ButtonVisualState;
   transitionSamplingKey: string | number | undefined;
 }
@@ -134,20 +150,6 @@ type ButtonHostRenderScale = ButtonSkinScale;
 
 const IDENTITY_HOST_RENDER_SCALE: ButtonHostRenderScale = { scaleX: 1, scaleY: 1 };
 const BUTTON_PERSISTENT_VISUAL_SAMPLE_FRAMES = 12;
-
-/**
- * Composes the host-owned lifts. Active is the stronger of the two so a latched
- * Button reads as active at a glance, and hover still stacks on top of it so an
- * active Button under the pointer stays distinguishable from a resting one.
- */
-function buttonHighlightFilter(
-  snapshot: Pick<ButtonVisualRenderSnapshot, "hoverHighlighted" | "activeHighlighted">
-): string | undefined {
-  const lifts: string[] = [];
-  if (snapshot.activeHighlighted) lifts.push("brightness(1.3)");
-  if (snapshot.hoverHighlighted) lifts.push("brightness(1.15)");
-  return lifts.length > 0 ? lifts.join(" ") : undefined;
-}
 
 function buttonVisualStateFromSnapshot(snapshot: ButtonVisualRenderSnapshot): ButtonVisualState {
   return {
@@ -176,6 +178,12 @@ function buttonVisualSnapshotIntent(
       snapshot.error,
       snapshot.hoverHighlighted,
       snapshot.activeHighlighted,
+      snapshot.hoverHighlightColor,
+      snapshot.activeHighlightColor,
+      snapshot.hoverHighlightAmount,
+      snapshot.activeHighlightAmount,
+      snapshot.hoverGlowAmount,
+      snapshot.activeGlowAmount,
       snapshot.samplingState.hovered,
       snapshot.samplingState.pressed,
       snapshot.samplingState.held,
@@ -971,6 +979,7 @@ function setBooleanAttribute(host: HTMLElement, name: string, value: boolean): v
 
 export function ButtonSkinRenderer({
   skin,
+  themeOverride,
   label,
   width,
   height,
@@ -1059,7 +1068,6 @@ export function ButtonSkinRenderer({
   onPrepareVisualStateChangeRef.current = onPrepareVisualStateChange;
   onVisualStateChangeRef.current = onVisualStateChange;
   onDiagnosticsRef.current = onDiagnostics;
-  const compileResult = useMemo(() => compileButtonSkin(skin), [skin]);
   const skinHighlightOnHover = useMemo(
     () => readButtonSkinHighlightOnHover(skin),
     [skin.base]
@@ -1068,6 +1076,26 @@ export function ButtonSkinRenderer({
     () => readButtonSkinHighlightOnActive(skin),
     [skin.base]
   );
+  const surfaceThemeMode = useMemo(
+    () => buttonSkinSurfaceThemeMode(skin),
+    [skin]
+  );
+  const textThemeVariable = useMemo(
+    () => buttonSkinTextThemeVariable(skin),
+    [skin]
+  );
+  const themeSurfaceColor = normalizeButtonSkinColor(themeOverride?.colors.surface ?? "");
+  const themeTextColor = normalizeButtonSkinColor(themeOverride?.colors.text ?? "");
+  const renderedSkin = useMemo(
+    () => surfaceThemeMode !== "tint" || !themeSurfaceColor
+      ? skin
+      : {
+          ...skin,
+          ...applyButtonSkinSurfaceThemeFallback(skin, themeSurfaceColor)
+        },
+    [skin, surfaceThemeMode, themeSurfaceColor]
+  );
+  const compileResult = useMemo(() => compileButtonSkin(renderedSkin), [renderedSkin]);
   if (compileResult.ok) lastValidRef.current = compileResult.compiled;
   const fallback = useMemo(
     () => (compileResult.ok ? null : compileButtonSkin(DEFAULT_BUTTON_SKIN)),
@@ -1099,8 +1127,26 @@ export function ButtonSkinRenderer({
     release,
     disabled,
     error,
-    hoverHighlighted: (skinHighlightOnHover ?? highlightOnHover) && rawHovered,
-    activeHighlighted: (skinHighlightOnActive ?? false) && activeHighlight,
+    hoverHighlighted: (themeOverride?.hoverEnabled ?? skinHighlightOnHover ?? highlightOnHover) && rawHovered,
+    activeHighlighted: (themeOverride?.activeEnabled ?? skinHighlightOnActive ?? false) && activeHighlight,
+    hoverHighlightColor: themeOverride?.hoverColor
+      ? normalizeButtonSkinColor(themeOverride.hoverColor)
+      : null,
+    activeHighlightColor: themeOverride?.activeColor
+      ? normalizeButtonSkinColor(themeOverride.activeColor)
+      : null,
+    hoverHighlightAmount: resolveButtonHighlightAmount(
+      themeOverride?.hoverHighlightAmount ?? themeOverride?.highlightAmount
+    ),
+    activeHighlightAmount: resolveButtonHighlightAmount(
+      themeOverride?.activeHighlightAmount ?? themeOverride?.highlightAmount
+    ),
+    hoverGlowAmount: resolveButtonGlowAmount(
+      themeOverride?.hoverGlowAmount ?? themeOverride?.highlightAmount
+    ),
+    activeGlowAmount: resolveButtonGlowAmount(
+      themeOverride?.activeGlowAmount ?? themeOverride?.highlightAmount
+    ),
     samplingState: desiredSamplingState,
     transitionSamplingKey
   });
@@ -1544,11 +1590,20 @@ export function ButtonSkinRenderer({
     overflow: "visible",
     pointerEvents: "none",
     filter: buttonHighlightFilter(renderedVisual),
+    ...buttonSkinThemeColorVariables(skin, themeOverride?.colors),
     ...(typeof width === "number" ? { width: `${width}px` } : {}),
     ...(typeof height === "number" ? { height: `${height}px` } : {}),
     ...(typeof width === "number" ? { "--button-core-width": `${width}px` } : {}),
     ...(typeof height === "number" ? { "--button-core-height": `${height}px` } : {})
   };
 
-  return <span ref={hostRef} data-button-skin-host="true" style={style} />;
+  return (
+    <span
+      ref={hostRef}
+      data-button-skin-host="true"
+      data-button-theme-text={themeTextColor && !textThemeVariable ? "true" : "false"}
+      data-button-theme-surface-fallback={surfaceThemeMode === "tint" && themeSurfaceColor ? "true" : "false"}
+      style={style}
+    />
+  );
 }

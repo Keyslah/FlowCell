@@ -1,10 +1,12 @@
 ' Toggle Monitors launcher.
-' Nothing here is hardcoded to one machine: it finds Python and asks which single
-' monitor to toggle to the first time it runs, then remembers that choice in a
-' runtime file inside this Button's owned Local Scripts package. Each button
-' keeps its own choice, so several Buttons can target different monitors.
+' Nothing here is hardcoded to one machine: on the first successful Button press
+' it finds Python and opens the owned two-group checkbox picker. Both groups are
+' remembered in this Button owner's runtime folder, then the owned Python engine
+' toggles only between those two explicit physical-monitor combinations.
 
 Option Explicit
+
+Const CONFIGURATION_CANCELLED_EXIT_CODE = 3
 
 Dim q : q = Chr(34)
 Dim shell : Set shell = CreateObject("WScript.Shell")
@@ -14,6 +16,8 @@ Dim scriptDir : scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
 
 ' The owned Local Scripts package is runtime truth, including its engine.
 Dim scriptPath : scriptPath = fso.BuildPath(scriptDir, "toggle_monitors.py")
+Dim pickerPath : pickerPath = fso.BuildPath(scriptDir, "Toggle Monitors Picker.ps1")
+Dim startupSafetyInstallerPath : startupSafetyInstallerPath = fso.BuildPath(scriptDir, "Install Startup Safety.ps1")
 
 ' Per-button mutable settings stay outside immutable source and survive Update.
 Dim packageRoot : packageRoot = fso.GetParentFolderName(scriptDir)
@@ -21,9 +25,11 @@ Dim runtimeDir : runtimeDir = fso.BuildPath(packageRoot, "runtime")
 Dim configPath : configPath = fso.BuildPath(runtimeDir, "toggle-monitors.txt")
 
 Dim validateOnly : validateOnly = False
+Dim forceConfigure : forceConfigure = False
 Dim argument
 For Each argument In WScript.Arguments
     If LCase(argument) = "--validate" Or LCase(argument) = "-validateonly" Then validateOnly = True
+    If LCase(argument) = "--configure" Then forceConfigure = True
 Next
 
 If Not fso.FileExists(scriptPath) Then
@@ -31,18 +37,26 @@ If Not fso.FileExists(scriptPath) Then
            "Update this Button from the Toggle Monitors script package.", vbExclamation, "Toggle Monitors"
     WScript.Quit 1
 End If
+If Not fso.FileExists(pickerPath) Then
+    MsgBox "Toggle Monitors could not find Toggle Monitors Picker.ps1." & vbCrLf & _
+           "Update this Button from the Toggle Monitors script package.", vbExclamation, "Toggle Monitors"
+    WScript.Quit 1
+End If
 
-If validateOnly Then WScript.Quit 0
+If validateOnly Then
+    ValidateLauncherContracts
+    WScript.Quit 0
+End If
 
 Dim pythonwPath : pythonwPath = ResolvePythonw()
-If pythonwPath = "" Then WScript.Quit 1
+If pythonwPath = "" Then WScript.Quit 0
 
-Dim targetDisplay : targetDisplay = ResolveTargetDisplay(pythonwPath)
-If targetDisplay = "" Then WScript.Quit 1
+If Not ResolveMonitorGroups(pythonwPath, forceConfigure) Then WScript.Quit 0
+RefreshStartupSafety pythonwPath
 
 Dim command
 command = q & pythonwPath & q & " " & q & scriptPath & q & _
-    " --toggle-once --target-display " & q & targetDisplay & q
+    " --toggle-once --button-config " & q & configPath & q
 shell.Run command, 0, False
 WScript.Quit 0
 
@@ -56,7 +70,6 @@ Function ResolvePythonw()
 
     Dim detected : detected = DetectPythonw()
     If detected <> "" Then
-        WriteConfig detected, ReadConfigValue("DISPLAY")
         ResolvePythonw = detected
         Exit Function
     End If
@@ -73,7 +86,6 @@ Function ResolvePythonw()
         End If
         entered = Replace(Trim(entered), q, "")
         If fso.FileExists(entered) Then
-            WriteConfig entered, ReadConfigValue("DISPLAY")
             ResolvePythonw = entered
             Exit Function
         End If
@@ -119,82 +131,88 @@ Function WhereExe(exeName)
 End Function
 
 
-' ---- Monitor selection -----------------------------------------------------
+' ---- Two-group monitor selection -------------------------------------------
 
-Function ResolveTargetDisplay(pythonwPath)
-    Dim configured : configured = ReadConfigValue("DISPLAY")
-    If configured <> "" Then
-        ResolveTargetDisplay = configured
+Function ResolveMonitorGroups(pythonwPath, forcePicker)
+    ResolveMonitorGroups = False
+    If Not forcePicker And HasConfiguredGroups() Then
+        ResolveMonitorGroups = True
         Exit Function
     End If
 
-    Dim labels(), selectors(), count
-    count = LoadDisplays(pythonwPath, labels, selectors)
-    If count = 0 Then
-        MsgBox "Toggle Monitors could not detect any monitors to choose from.", vbExclamation, "Toggle Monitors"
-        ResolveTargetDisplay = ""
+    Dim command, exitCode
+    command = q & pythonwPath & q & " " & q & scriptPath & q & _
+        " --configure-button --button-config " & q & configPath & q & _
+        " --pythonw-path " & q & pythonwPath & q
+    exitCode = shell.Run(command, 0, True)
+    If exitCode = CONFIGURATION_CANCELLED_EXIT_CODE Then Exit Function
+    If exitCode <> 0 Then
+        MsgBox "Toggle Monitors could not open or save its two monitor groups." & vbCrLf & _
+               "No monitor settings were changed. Check toggle_monitors.log for details.", _
+               vbExclamation, "Toggle Monitors"
         Exit Function
     End If
 
-    Dim menu, i
-    menu = "Which monitor do you want to toggle to?" & vbCrLf & _
-           "(Clicking the button switches to this monitor alone, then back. Pick it by number.)" & vbCrLf & vbCrLf
-    For i = 0 To count - 1
-        menu = menu & (i + 1) & ". " & labels(i) & vbCrLf
-    Next
-
-    Dim choiceText, choiceNum
-    Do
-        choiceText = InputBox(menu, "Toggle Monitors - choose monitor", "1")
-        If choiceText = "" Then
-            ResolveTargetDisplay = ""
-            Exit Function
-        End If
-        If IsNumeric(choiceText) Then
-            choiceNum = CLng(choiceText)
-            If choiceNum >= 1 And choiceNum <= count Then
-                WriteConfig ReadConfigValue("PYTHONW"), selectors(choiceNum - 1)
-                ResolveTargetDisplay = selectors(choiceNum - 1)
-                Exit Function
-            End If
-        End If
-    Loop
+    ' The picker writes schema 3 only after Save.
+    If HasConfiguredGroups() Then ResolveMonitorGroups = True
 End Function
 
-Function LoadDisplays(pythonwPath, ByRef labels, ByRef selectors)
-    LoadDisplays = 0
-    Dim tmp : tmp = fso.BuildPath(fso.GetSpecialFolder(2), fso.GetTempName())
-    Dim cmd
-    cmd = q & pythonwPath & q & " " & q & scriptPath & q & " --list-displays --out " & q & tmp & q
-    shell.Run cmd, 0, True
-    If Not fso.FileExists(tmp) Then Exit Function
 
-    Dim content : content = ReadTextUtf8(tmp)
-    fso.DeleteFile tmp, True
+Sub RefreshStartupSafety(pythonwPath)
+    If Not fso.FileExists(startupSafetyInstallerPath) Then Exit Sub
 
-    content = Replace(content, vbCrLf, vbLf)
-    content = Replace(content, vbCr, vbLf)
-    Dim rawLines : rawLines = Split(content, vbLf)
-    ReDim labels(UBound(rawLines))
-    ReDim selectors(UBound(rawLines))
+    Dim powershellPath : powershellPath = WindowsPowerShellPath()
+    If Not fso.FileExists(powershellPath) Then Exit Sub
 
-    Dim i, n, parts, line : n = 0
-    For i = 0 To UBound(rawLines)
-        line = Trim(rawLines(i))
-        If line <> "" Then
-            parts = Split(line, vbTab)
-            If UBound(parts) >= 1 Then
-                labels(n) = parts(0)
-                selectors(n) = parts(1)
-            Else
-                labels(n) = line
-                selectors(n) = line
-            End If
-            n = n + 1
-        End If
-    Next
-    LoadDisplays = n
+    Dim command
+    command = q & powershellPath & q & _
+        " -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File " & q & startupSafetyInstallerPath & q & _
+        " -ButtonConfigPath " & q & configPath & q & _
+        " -PythonwPath " & q & pythonwPath & q
+    shell.Run command, 0, False
+End Sub
+
+Function HasConfiguredGroups()
+    HasConfiguredGroups = False
+    If ReadConfigValue("SCHEMA") <> "3" Then Exit Function
+    If ReadConfigValue("GROUP_1") = "" Then Exit Function
+    If ReadConfigValue("GROUP_2") = "" Then Exit Function
+    HasConfiguredGroups = True
 End Function
+
+Function WindowsPowerShellPath()
+    WindowsPowerShellPath = shell.ExpandEnvironmentStrings("%SystemRoot%") & _
+        "\System32\WindowsPowerShell\v1.0\powershell.exe"
+End Function
+
+Sub ValidateLauncherContracts()
+    Dim launcherText : launcherText = ReadTextUtf8(WScript.ScriptFullName)
+    If InStr(1, launcherText, "Option Explicit", vbBinaryCompare) = 0 Then
+        Err.Raise vbObjectError + 2100, "Toggle Monitors validation", "UTF-8 launcher read did not return the expected source."
+    End If
+    If InStr(1, launcherText, "If exitCode = CONFIGURATION_CANCELLED_EXIT_CODE Then Exit Function", vbBinaryCompare) = 0 Then
+        Err.Raise vbObjectError + 2104, "Toggle Monitors validation", "Picker cancellation is not guarded as a no-op."
+    End If
+    If Not fso.FileExists(pickerPath) Then
+        Err.Raise vbObjectError + 2101, "Toggle Monitors validation", "The owned checkbox picker is missing."
+    End If
+    If Not fso.FileExists(startupSafetyInstallerPath) Then
+        Err.Raise vbObjectError + 2105, "Toggle Monitors validation", "The owned startup-safety installer is missing."
+    End If
+
+    Dim powershellPath : powershellPath = WindowsPowerShellPath()
+    If Not fso.FileExists(powershellPath) Then
+        Err.Raise vbObjectError + 2102, "Toggle Monitors validation", "Windows PowerShell was not found."
+    End If
+
+    Dim command, exitCode
+    command = q & powershellPath & q & _
+        " -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Sta -File " & q & pickerPath & q & " -ValidateOnly"
+    exitCode = shell.Run(command, 0, True)
+    If exitCode <> 0 Then
+        Err.Raise vbObjectError + 2103, "Toggle Monitors validation", "The checkbox picker contract validation failed."
+    End If
+End Sub
 
 
 ' ---- Config + file helpers -------------------------------------------------
@@ -203,32 +221,24 @@ Function ReadConfigValue(key)
     ReadConfigValue = ""
     If Not fso.FileExists(configPath) Then Exit Function
 
-    Dim stream, line, prefix
+    Dim content : content = ReadTextUtf8(configPath)
+    content = Replace(content, vbCrLf, vbLf)
+    content = Replace(content, vbCr, vbLf)
+
+    Dim rawLines : rawLines = Split(content, vbLf)
+    Dim i, line, prefix
     prefix = key & "="
-    Set stream = fso.OpenTextFile(configPath, 1, False)
-    Do Until stream.AtEndOfStream
-        line = stream.ReadLine
+    For i = 0 To UBound(rawLines)
+        line = rawLines(i)
         If Left(line, Len(prefix)) = prefix Then
             ReadConfigValue = Trim(Mid(line, Len(prefix) + 1))
         End If
-    Loop
-    stream.Close
+    Next
 End Function
-
-Sub WriteConfig(pythonwVal, displayVal)
-    Dim stream
-    If Not fso.FolderExists(runtimeDir) Then fso.CreateFolder runtimeDir
-    Set stream = fso.OpenTextFile(configPath, 2, True)
-    stream.WriteLine "# Toggle Monitors - this button's saved choices."
-    stream.WriteLine "# Delete this file to make this button ask for its monitor again."
-    stream.WriteLine "PYTHONW=" & pythonwVal
-    stream.WriteLine "DISPLAY=" & displayVal
-    stream.Close
-End Sub
 
 Function ReadTextUtf8(path)
     ReadTextUtf8 = ""
-    Dim stream
+    Dim stream, failureNumber, failureDescription
     On Error Resume Next
     Set stream = CreateObject("ADODB.Stream")
     stream.Type = 2
@@ -236,6 +246,14 @@ Function ReadTextUtf8(path)
     stream.Open
     stream.LoadFromFile path
     ReadTextUtf8 = stream.ReadText(-1)
-    stream.Close
+    If Err.Number = 0 Then stream.Close
+    If Err.Number <> 0 Then
+        failureNumber = Err.Number
+        failureDescription = Err.Description
+        Err.Clear
+    End If
     On Error GoTo 0
+    If failureNumber <> 0 Then
+        Err.Raise failureNumber, "Toggle Monitors UTF-8 reader", failureDescription
+    End If
 End Function

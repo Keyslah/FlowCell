@@ -7,6 +7,11 @@ CoordMode "Mouse", "Screen"
 Persistent
 
 #Include vendor\UIA-v2\Lib\UIA.ahk
+#Include helpers\TempShotsCapture.ahk
+
+; Syntax-only validation must not initialize UI Automation, hotkeys, or capture.
+if HasCliFlag("--validate-only")
+    ExitApp(0)
 
 flowCellLocalRoot := EnsureFlowCellDir(A_ScriptDir "\local")
 flowCellLogsDir := EnsureFlowCellDir(flowCellLocalRoot "\logs")
@@ -380,6 +385,7 @@ class FlowCellApp {
         ]))
         if this.isVisualHost {
             this.LoadBindings()
+            this.RegisterSnippingOverlayEscapeFallback()
             Hotkey "Pause", ObjBindMethod(this, "HandleEmergencyMacroStop"), "On"
             this.logger.Info("Application started.")
         } else {
@@ -1277,6 +1283,39 @@ class FlowCellApp {
         this.logger.Info("Temp Shots hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Method=" result.method " | Details=" result.detail)
     }
 
+    RegisterSnippingOverlayEscapeFallback() {
+        overlayWindow := "Snipping Tool Overlay ahk_exe SnippingTool.exe"
+        this.snippingOverlayEscapeCallback := ObjBindMethod(this, "HandleSnippingOverlayEscape", overlayWindow)
+        try {
+            HotIfWinExist overlayWindow
+            Hotkey "*Escape", this.snippingOverlayEscapeCallback, "On"
+            this.logger.Info("Registered Snipping Tool overlay Escape fallback.")
+        } catch as err {
+            this.logger.Warn("Failed to register Snipping Tool overlay Escape fallback. Error=" err.Message)
+        } finally {
+            HotIfWinExist
+        }
+    }
+
+    HandleSnippingOverlayEscape(overlayWindow, *) {
+        hwnd := WinExist(overlayWindow)
+        if !hwnd
+            return
+
+        try {
+            overlayRoot := UIA.ElementFromHandle("ahk_id " hwnd, , false)
+            if !IsObject(overlayRoot)
+                throw Error("The overlay UI Automation root was unavailable.")
+            closeButton := overlayRoot.FindElement({ Type: "Button", AutomationId: "CloseButton" })
+            closeMethod := closeButton.Click()
+            this.logger.Info("Snipping Tool overlay Escape invoked its Close button. Method=" closeMethod)
+        } catch as err {
+            try WinClose overlayWindow
+            catch
+            this.logger.Warn("Snipping Tool overlay Escape Close-button invoke failed; window-close fallback requested. Error=" err.Message)
+        }
+    }
+
     RunTempShotsScript(launcherPath) {
         result := this.TryLaunchTempShotsFast(launcherPath)
         if result.attempted
@@ -1308,43 +1347,42 @@ class FlowCellApp {
     }
 
     TryLaunchTempShotsFast(launcherPath) {
-        global flowCellLastActionStatusPath
         result := {
             attempted: false,
             succeeded: false,
-            method: "temp_shots_fast_async",
+            method: "temp_shots_direct_capture",
             detail: ""
         }
 
         psScript := this.ResolveTempShotsPowerShellScriptPath(launcherPath)
         if psScript = "" {
-            result.detail := "Temp Shots PowerShell saver was not found."
+            result.detail := "Temp Shots package launcher was not found."
             return result
         }
 
-        if this.ReadTempShotsFastFolder() = "" {
+        folder := this.ReadTempShotsFastFolder()
+        if folder = "" {
             result.detail := "Temp Shots folder has not been selected yet."
-            return result
-        }
-
-        initialSequence := DllCall("user32.dll\GetClipboardSequenceNumber", "UInt")
-        if !this.StartTempShotsScreenSnip() {
-            result.attempted := true
-            result.detail := "Windows screen snip could not be started."
             return result
         }
 
         result.attempted := true
         try {
-            command := 'powershell.exe -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -Sta -File "' psScript '" -SaveStartedSnip -InitialSequence ' initialSequence
-            Run(command, , "Hide")
+            if !this.HasProp("tempShotsCapture")
+                this.tempShotsCapture := FlowCellTempShotsCapture()
+            this.tempShotsCapture.Start(folder, ObjBindMethod(this, "ReportTempShotsCaptureStatus"))
             result.succeeded := true
-            result.detail := "Temp Shots launched."
-            WriteTextFile(flowCellLastActionStatusPath, "Temp Shots is waiting for a screen snip.")
+            result.detail := "Drag to select a Temp Shot. Escape cancels."
         } catch as err {
-            result.detail := "Launching Temp Shots saver failed. " err.Message
+            result.detail := "Starting direct Temp Shots capture failed. " err.Message
         }
         return result
+    }
+
+    ReportTempShotsCaptureStatus(message) {
+        global flowCellLastActionStatusPath
+        WriteTextFile(flowCellLastActionStatusPath, message)
+        this.logger.Info(message)
     }
 
     ResolveTempShotsPowerShellScriptPath(launcherPath) {
@@ -1376,27 +1414,6 @@ class FlowCellApp {
         if !IsObject(this.scanner)
             this.scanner := IllustratorScanner(this.logger, flowCellScanStatePath)
         return this.scanner
-    }
-
-    StartTempShotsScreenSnip() {
-        try {
-            SendInput "#+s"
-            return true
-        } catch {
-        }
-
-        try {
-            Run("ms-screenclip:", , "Hide")
-            return true
-        } catch {
-        }
-
-        try {
-            Run('SnippingTool.exe /clip', , "Hide")
-            return true
-        } catch {
-            return false
-        }
     }
 
     RunBackendCommand(commandId, payloadJson, programTabId := 0, programName := "", sourceButtonId := "", runAsync := false) {
@@ -2431,6 +2448,8 @@ class FlowCellApp {
     }
 
     RunBoundScript(scriptPath, source, programTabId := 0, programName := "") {
+        if this.IsTempShotsScript(scriptPath)
+            return this.RunTempShotsScript(scriptPath)
         if programName = ""
             programName := this.GetProgramNameFromBinding(programTabId, scriptPath)
 
@@ -2456,6 +2475,11 @@ class FlowCellApp {
                 if activateExe = ""
                     activateExe := "Blender.exe"
                 return this.RunGenericScript(scriptPath, source, activateExe, "blender_bridge")
+            case "fusion_bridge":
+                activateExe := this.ResolveConfiguredProgramExePath(programConfig)
+                if activateExe = ""
+                    activateExe := "Fusion360.exe"
+                return this.RunGenericScript(scriptPath, source, activateExe, "fusion_bridge")
             case "generic":
                 activateExe := this.ResolveConfiguredProgramExePath(programConfig)
                 return this.RunGenericScript(scriptPath, source, activateExe, "generic")

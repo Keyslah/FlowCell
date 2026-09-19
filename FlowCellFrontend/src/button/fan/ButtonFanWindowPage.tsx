@@ -53,7 +53,13 @@ import {
   waitForAppliedButtonWindowRender,
   waitForButtonWindowHitTestTurn
 } from "../windows/buttonWindowGeometryTransition";
-import ButtonFanRenderer from "./ButtonFanRenderer";
+import ButtonFanRenderer, {
+  type ButtonFanMotionPhase
+} from "./ButtonFanRenderer";
+import {
+  enabledButtonFanMotionStyles,
+  type ButtonFanMotionDirection
+} from "./buttonFanMotion";
 
 function isUsableDesktopBounds(bounds: ButtonDesktopBounds | null | undefined): bounds is ButtonDesktopBounds {
   return Boolean(
@@ -122,6 +128,16 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   const nativeGeometryTransitionRef = useRef<Promise<void>>(Promise.resolve());
   const nativeGeometryTransitionPendingRef = useRef(0);
   const appliedExpandedRef = useRef<boolean | null>(null);
+  const renderedExpandedRef = useRef(false);
+  const nativeHoveredRef = useRef(false);
+  const pinnedRef = useRef(false);
+  const motionMeasurementsFrozenRef = useRef(false);
+  const fanMotionSequenceRef = useRef(0);
+  const fanMotionWaiterRef = useRef<{
+    phase: ButtonFanMotionDirection;
+    sequence: number;
+    resolve: () => void;
+  } | null>(null);
   const [activeContext, setActiveContext] = useState(context);
   const [expanded, setExpanded] = useState(false);
   const [renderedExpanded, setRenderedExpanded] = useState(false);
@@ -138,8 +154,14 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   const [nativeSpaceKeyActive, setNativeSpaceKeyActive] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [runtimeError, setRuntimeError] = useState<string | null>(null);
+  const [fanMotion, setFanMotion] = useState<{
+    phase: ButtonFanMotionPhase;
+    sequence: number;
+  }>({ phase: "resting", sequence: 0 });
   const canvasMetrics = useFixedButtonCanvasMetrics();
   const spaceDragActive = spaceKeyActive || nativeSpaceKeyActive;
+  renderedExpandedRef.current = renderedExpanded;
+  pinnedRef.current = pinned;
   const applyCanvasForFrame = useCallback(async (
     bounds: ButtonDesktopBounds,
     padding = 0
@@ -184,6 +206,57 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   );
   const setup = document?.fanSetups[activeContext.fanSetupId] ?? null;
   const surface = setup && document ? document.surfaces[setup.fanSurfaceId] : null;
+  const fanMotionStyles = useMemo(
+    () => enabledButtonFanMotionStyles(setup?.animation),
+    [setup?.animation.spinEnabled]
+  );
+  const beginFanMotion = useCallback((phase: ButtonFanMotionDirection) => {
+    fanMotionWaiterRef.current?.resolve();
+    if (renderedExpandedRef.current) {
+      motionMeasurementsFrozenRef.current = true;
+    }
+    const sequence = ++fanMotionSequenceRef.current;
+    let resolve = () => {};
+    const completion = new Promise<void>((nextResolve) => {
+      resolve = nextResolve;
+    });
+    fanMotionWaiterRef.current = { phase, sequence, resolve };
+    setFanMotion({ phase, sequence });
+    return { sequence, completion };
+  }, []);
+  const cancelFanMotion = useCallback((resetPhase = true) => {
+    fanMotionSequenceRef.current += 1;
+    fanMotionWaiterRef.current?.resolve();
+    fanMotionWaiterRef.current = null;
+    motionMeasurementsFrozenRef.current = false;
+    if (resetPhase) {
+      setFanMotion({
+        phase: "resting",
+        sequence: fanMotionSequenceRef.current
+      });
+    }
+  }, []);
+  const handleFanMotionStart = useCallback((
+    phase: ButtonFanMotionDirection,
+    sequence: number
+  ) => {
+    const waiter = fanMotionWaiterRef.current;
+    if (waiter?.phase === phase && waiter.sequence === sequence) {
+      motionMeasurementsFrozenRef.current = true;
+    }
+  }, []);
+  const handleFanMotionComplete = useCallback((
+    phase: ButtonFanMotionDirection,
+    sequence: number
+  ) => {
+    const waiter = fanMotionWaiterRef.current;
+    if (waiter?.phase !== phase || waiter.sequence !== sequence) return;
+    fanMotionWaiterRef.current = null;
+    if (phase === "opening") {
+      motionMeasurementsFrozenRef.current = false;
+    }
+    waiter.resolve();
+  }, []);
   const ownerPlacement = useMemo(
     () => (document && setup ? ownerPlacementForSetup(document, setup) : undefined),
     [document, setup]
@@ -469,6 +542,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
               Height: restoredBounds.height
             });
           }
+          cancelFanMotion();
           setPinned(false);
           setExpanded(false);
           setActiveContext(nextContext);
@@ -478,7 +552,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     return () => {
       void unlistenPromise.then((unlisten) => unlisten()).catch(() => {});
     };
-  }, [activeContext.panelOwnerButtonId]);
+  }, [activeContext.panelOwnerButtonId, cancelFanMotion]);
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -523,6 +597,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       return;
     }
     initializedSetupKeyRef.current = initializationKey;
+    cancelFanMotion();
     setGeometryInitialized(false);
     setRuntimeError(null);
     setOwnerMeasurement(null);
@@ -601,6 +676,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     canvasMetrics.scaleFactor,
     canvasMetrics.top,
     ensureCanvasContainsFrame,
+    cancelFanMotion,
     setup?.id,
     storedCollapsedEnvelope.resting
   ]);
@@ -720,16 +796,54 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   useEffect(() => {
     if (!geometryInitialized || dragging) return;
     let cancelled = false;
+    let ownedMotionSequence: number | null = null;
     pendingEnvelopeRef.current = null;
     void (async () => {
-      await scheduleNativeGeometryTransition(async () => {
-        if (expanded) {
+      if (expanded) {
+        const motion = fanMotionStyles.length > 0
+          ? beginFanMotion("opening")
+          : null;
+        if (!motion) cancelFanMotion();
+        ownedMotionSequence = motion?.sequence ?? null;
+        await scheduleNativeGeometryTransition(async () => {
           await applyExpandedGeometry(() => {
             appliedExpandedRef.current = true;
             if (!cancelled) setRenderedExpanded(true);
           });
-          return;
+        });
+        if (cancelled) return;
+        if (motion) {
+          await motion.completion;
+          if (cancelled) return;
+          setFanMotion((current) => current.sequence === motion.sequence
+            ? { phase: "resting", sequence: current.sequence }
+            : current);
         }
+        if (
+          !nativeHoveredRef.current &&
+          !pinnedRef.current &&
+          setup?.closeRule === "hover-out"
+        ) {
+          if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+          closeTimerRef.current = window.setTimeout(() => {
+            closeTimerRef.current = null;
+            if (!nativeHoveredRef.current && !pinnedRef.current) setExpanded(false);
+          }, 140);
+        }
+        return;
+      }
+
+      const motion = fanMotionStyles.length > 0 && renderedExpandedRef.current
+        ? beginFanMotion("closing")
+        : null;
+      ownedMotionSequence = motion?.sequence ?? null;
+      if (motion) {
+        await motion.completion;
+        if (cancelled) return;
+      } else {
+        cancelFanMotion();
+      }
+      await scheduleNativeGeometryTransition(async () => {
         setRenderedExpanded(false);
         await waitForAppliedButtonWindowRender();
         if (cancelled) return;
@@ -737,21 +851,43 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
           appliedExpandedRef.current = false;
         });
       });
+      motionMeasurementsFrozenRef.current = false;
+      if (!cancelled) {
+        setFanMotion((current) => motion && current.sequence !== motion.sequence
+          ? current
+          : { phase: "resting", sequence: current.sequence });
+      }
     })().catch((geometryError) => {
         if (cancelled) return;
+        cancelFanMotion();
         setRuntimeError(
           geometryError instanceof Error ? geometryError.message : String(geometryError)
         );
       });
     return () => {
       cancelled = true;
+      const waiter = fanMotionWaiterRef.current;
+      if (
+        ownedMotionSequence !== null &&
+        fanMotionSequenceRef.current === ownedMotionSequence
+      ) {
+        motionMeasurementsFrozenRef.current = false;
+      }
+      if (ownedMotionSequence !== null && waiter?.sequence === ownedMotionSequence) {
+        fanMotionWaiterRef.current = null;
+        waiter.resolve();
+      }
     };
   }, [
+    beginFanMotion,
+    cancelFanMotion,
     dragging,
     expanded,
+    fanMotionStyles,
     geometryInitialized,
     geometryRefreshToken,
     scheduleNativeGeometryTransition,
+    setup?.closeRule,
     setup?.id
   ]);
 
@@ -854,11 +990,16 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
       if (closeTimerRef.current !== null) {
         window.clearTimeout(closeTimerRef.current);
       }
+      fanMotionSequenceRef.current += 1;
+      fanMotionWaiterRef.current?.resolve();
+      fanMotionWaiterRef.current = null;
+      motionMeasurementsFrozenRef.current = false;
     };
   }, []);
 
   const handleNativeHoverChange = useCallback(
     (hovered: boolean) => {
+      nativeHoveredRef.current = hovered;
       if (!setup || dragging || spaceDragActive) {
         return;
       }
@@ -881,6 +1022,9 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
         setExpanded(true);
         return;
       }
+      if (!hovered && fanMotion.phase === "opening") {
+        return;
+      }
       if (!hovered && expanded && !pinned && setup.closeRule === "hover-out") {
         closeTimerRef.current = window.setTimeout(() => {
           closeTimerRef.current = null;
@@ -888,7 +1032,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
         }, 140);
       }
     },
-    [dragging, expanded, pinned, setup, spaceDragActive]
+    [dragging, expanded, fanMotion.phase, pinned, setup, spaceDragActive]
   );
 
   useNativeButtonHitboxes({
@@ -968,6 +1112,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     }
     event.preventDefault();
     event.stopPropagation();
+    cancelFanMotion();
     setDragging(true);
     setPinned(false);
     setExpanded(false);
@@ -1044,6 +1189,10 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     placementId: string,
     measurement: ButtonVisualMeasurement
   ) => {
+    if (
+      motionMeasurementsFrozenRef.current &&
+      placementId !== ownerPlacement?.id
+    ) return;
     const { state, ...geometry } = measurement;
     setCurrentMeasurements((current) => measurementsEqual(current[placementId], geometry)
       ? current
@@ -1062,7 +1211,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
         return { ...current, [placementId]: geometry };
       });
     }
-  }, []);
+  }, [ownerPlacement?.id]);
 
   const handlePlacementVisualStateChange = useCallback((
     placementId: string,
@@ -1117,6 +1266,11 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
             document={document}
             setup={setup}
             expanded={renderedExpanded}
+            motionPhase={fanMotion.phase}
+            motionSequence={fanMotion.sequence}
+            motionStyles={fanMotionStyles}
+            onMotionStart={handleFanMotionStart}
+            onMotionComplete={handleFanMotionComplete}
             surfaceEnvelope={renderedEnvelope}
             onOwnerActivate={handleOwnerActivate}
             onExecutionResult={(_placementId, result) =>

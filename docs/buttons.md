@@ -253,8 +253,9 @@ opens a native file-save dialog in the selected panel's matching
 `Fan`, or `Pop` folder. Program and Panel names are validated as safe folder
 components. The one-time local migration moves validated files from the former
 flat type folders into this hierarchy, and remembered legacy Pop paths resolve
-to their migrated file without changing the saved choice identity. Save writes a strict named
-`.flowcell-button-settings.json` v1 file containing the selected surface's exact
+to their migrated file without changing the saved choice identity. Save preserves
+the exact ordinary `.json` filename chosen by the user and writes strict
+`flowcell-button-settings/v1` content containing the selected surface's exact
 ordered Button membership and complete presentation: surface frame and optional
 uniform size; every placement's rectangle, z-index, text, sizing, legacy hover-highlight fallback,
 activation cycle, and visual mapping; each effective literal skin; shared labels,
@@ -265,7 +266,8 @@ the revision-safe scoped canonical commit; it is not Save Layout. The left rail
 retains the existing Edit/Run switch for workspace execution and activation
 preview.
 
-`Load {type} Settings` is directly below Save and opens the selected
+`Load {type} Settings` is directly below Save, shows ordinary JSON filenames,
+and opens the selected
 Program/Panel's matching `Main`, `Fan`, or `Pop` folder.
 Load fails closed unless the file matches the settings category and concrete
 surface subtype and every saved Button ID is still installed. Cross-surface reuse
@@ -334,6 +336,18 @@ semantic frame follows the applied visual envelope and effective WebView pixel
 ratio inside the fixed native canvas, so skin overflow cannot be clipped or
 shift the later expanded frame. Panel/program lifecycle still owns removal of a
 `panel-owner` and its dependent saved Fans.
+
+Legacy Fan Options also exposes additive Fan styles. `Spin Buttons as they fan
+out` is unchecked by default for new Fans and normalizes to unchecked when an
+older Button state or Fan settings file has no value. When enabled, every
+non-owner Button spins from the fixed owner into its existing saved grid
+placement and reverses that motion before collapse. The motion is applied to
+the Fan placement wrapper rather than the Button skin, so it works with any
+skin; its total stagger window stays bounded even for large grids. It leaves
+the owner, Fan membership, and saved layout unchanged, and Fan Options' Run
+mode previews the same open-and-reverse lifecycle. The
+style is stored as its own option so later Fan-style checkboxes can be added
+without changing this opt-in behavior.
 
 For a Tool Set owner, one Pop-out Placement choice and its Fan checkbox edit the
 same package-owned popout surface. Fan mode reveals and focuses the exact owner
@@ -560,18 +574,70 @@ technique cannot make the selector appear to do nothing.
 skin. It defaults off and records an explicit
 `--flowcell-button-highlight-on-hover: 1|0` declaration in Base, so Assign Skin,
 Assign Skin to Selection, Assign Skin to Panel, Save skin, and Save as new skin carry the choice. The host
-uses it for the same 15% brightness lift while the real authored shape is hovered;
+uses it for the host-owned brightness-and-glow highlight while the real authored shape is hovered;
 it does not change `[data-core]` measurement or hit testing. An explicit skin value
 wins over the older placement field, which remains runtime/settings compatibility
-data for skins saved before this option became skin-owned.
+data for skins saved before this option became skin-owned. A legacy Universal Theme
+Editor placement override, when explicitly set, takes precedence over both.
 
 `Highlight when active` sits directly below it and is the same kind of skin-owned
 host option, recorded as `--flowcell-button-highlight-on-active: 1|0` in Base and
 defaulting off. It answers the latched selected state instead of pointer hover, so
 a Tool Set child whose fields match its authored choice and a selected Main Page
-Button both lift by 30% until they stop being the active choice. It has no
+Button both receive the stronger active form of that host highlight until they stop
+being the active choice. It has no
 placement fallback, hover still stacks on top of it, and edit-mode selection never
-triggers it. Neither lift changes `[data-core]` measurement or hit testing.
+triggers it. Neither lift changes `[data-core]` measurement or hit testing. Theme
+overrides may also add an independent hover or active highlight color as a host
+drop-shadow without rewriting the assigned skin.
+
+The Universal Theme Editor is a bulk appearance surface, not a second Button Editor.
+FlowCell Main scope targets its fixed rails/owners plus every program-panel Button
+surface rendered in Main, while excluding Pop/Fan surfaces; program scope targets
+every occurrence in `All Panels and Pop-outs` or in one selected panel, including Main
+panel owners, regular Pop-outs, Fans, and Tool Set Pop-outs. A program's `Pop-outs
+Only` area spans every panel in that program but includes only regular and Tool Set
+Pop-out surfaces. It excludes Main panel owners, panel surfaces, legacy standalone Fan
+surfaces, and every other program.
+The editor reports the exact occurrence count before Apply. Its color controls use a
+swatch plus opacity percentage, and every gradient or one-color operation applies to
+every matched occurrence in the complete scope. The bulk channels are Surface and Text
+rather than skin-specific material parts. An
+authored Surface/Text profile or recognized legacy variable receives the exact host
+override. A skin without a Surface marker receives a transient, render-only paint map:
+its non-text paint colors move around the selected hue while relative shading, source
+alpha, geometry, shadows, and animation remain intact. The selected alpha multiplies
+paint opacity. A skin without a Text marker colors only the renderer-injected label, so
+Text remains independently controllable. None of these fallbacks rewrites or reassigns
+the saved skin. Surface is the channel shown whenever a scope opens. The Theme Editor
+has separate `Highlight` and `Glow` sections. Highlight independently controls the
+brightness lift for `On hover` and `When active`; Glow independently controls the outer
+glow for the same two states. All four percentage sliders show their current number and
+immediately preview across every Button in the exact current scope. Each defaults to
+75%. The two Highlight controls run from 0% through an intentionally extreme 1000%; 100%
+is the full-strength reference, so 1000% applies ten times that lift. Glow retains its
+separate 0-100% range. Hover/active enablement and highlight-color controls are not
+exposed and remain
+skin/runtime behavior outside this bulk appearance page. The four optional placement
+values persist through Apply, Save Theme, and Open Theme. Older state and theme files
+without them keep the 75% defaults, while the original combined amount remains a
+compatibility fallback.
+Saved-skin assignment lists only saved
+`.flowcell-button-skin.txt` files. With `Apply this saved skin to all Buttons in the
+current scope` off, only the selected occurrence is reassigned. With it on, every
+in-scope occurrence is reassigned to that saved skin regardless of the skin it currently
+uses. FlowCell `Main` therefore means every Button on the Main page; a program's
+`All Panels and Pop-outs`, `Pop-outs Only`, or selected panel likewise means every
+Button in that exact program scope. Buttons outside the current scope remain unchanged.
+Assigning a saved skin clears older placement-owned Surface, Text, hover-color, and
+active-color overrides so the newly assigned skin starts with its authored colors.
+It preserves the placement's Highlight and Glow amounts and explicit hover/active On/Off truth.
+Existing themes with those fields remain readable and applicable even though the Theme
+Editor no longer creates or edits enablement or highlight-color values.
+Neither path edits a saved skin definition, Button behavior, geometry, text, action, or
+managed-window layout. Version 2 `.flowtheme.json` files store explicit placement theme
+overrides, independent default-highlight reset intent, and requested saved-skin
+assignments; version 1 files migrate when loaded.
 
 The preview is review information outside the clean canonical paste block. Profile
 changes update only their selected Base root and live preview,

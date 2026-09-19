@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "id": "fusion360.align",
+  "version": "1.0.1",
+  "label": "align",
+  "tooltip": "Align selected native root bodies or component occurrences to the last-selected reference.",
+  "kind": "toolset",
+  "program": "Fusion 360",
+  "source": "align.py",
+  "bridgeData": {},
+  "children": [
+    { "slot": "z_min", "label": "Z Min", "tooltip": "Align target minimum Z bounds to the last-selected reference minimum Z bound.", "payload": { "command": "z_min", "action": "z_min" } },
+    { "slot": "z_center", "label": "Z Center", "tooltip": "Align target Z centers to the last-selected reference Z center.", "payload": { "command": "z_center", "action": "z_center" } },
+    { "slot": "z_max", "label": "Z Max", "tooltip": "Align target maximum Z bounds to the last-selected reference maximum Z bound.", "payload": { "command": "z_max", "action": "z_max" } },
+    { "slot": "z_surface", "label": "Z Surface", "tooltip": "Place each target against the nearest opposing Z surface of the last-selected reference.", "payload": { "command": "z_surface", "action": "z_surface" } },
+    { "slot": "z_geo", "label": "Z Origin", "tooltip": "Align each target component origin to the last-selected reference Z center.", "payload": { "command": "z_geo", "action": "z_geo" } },
+    { "slot": "y_min", "label": "Y Min", "tooltip": "Align target minimum Y bounds to the last-selected reference minimum Y bound.", "payload": { "command": "y_min", "action": "y_min" } },
+    { "slot": "y_center", "label": "Y Center", "tooltip": "Align target Y centers to the last-selected reference Y center.", "payload": { "command": "y_center", "action": "y_center" } },
+    { "slot": "y_max", "label": "Y Max", "tooltip": "Align target maximum Y bounds to the last-selected reference maximum Y bound.", "payload": { "command": "y_max", "action": "y_max" } },
+    { "slot": "y_surface", "label": "Y Surface", "tooltip": "Place each target against the nearest opposing Y surface of the last-selected reference.", "payload": { "command": "y_surface", "action": "y_surface" } },
+    { "slot": "y_geo", "label": "Y Origin", "tooltip": "Align each target component origin to the last-selected reference Y center.", "payload": { "command": "y_geo", "action": "y_geo" } },
+    { "slot": "x_min", "label": "X Min", "tooltip": "Align target minimum X bounds to the last-selected reference minimum X bound.", "payload": { "command": "x_min", "action": "x_min" } },
+    { "slot": "x_center", "label": "X Center", "tooltip": "Align target X centers to the last-selected reference X center.", "payload": { "command": "x_center", "action": "x_center" } },
+    { "slot": "x_max", "label": "X Max", "tooltip": "Align target maximum X bounds to the last-selected reference maximum X bound.", "payload": { "command": "x_max", "action": "x_max" } },
+    { "slot": "x_surface", "label": "X Surface", "tooltip": "Place each target against the nearest opposing X surface of the last-selected reference.", "payload": { "command": "x_surface", "action": "x_surface" } },
+    { "slot": "x_geo", "label": "X Origin", "tooltip": "Align each target component origin to the last-selected reference X center.", "payload": { "command": "x_geo", "action": "x_geo" } },
+    { "slot": "center_everything", "label": "Center Everything", "tooltip": "Center all targets on the last-selected reference across X, Y, and Z.", "payload": { "command": "center_everything", "action": "center_everything" } },
+    { "slot": "center_xy", "label": "X+Y", "tooltip": "Center all targets on the last-selected reference in X and Y without changing Z.", "payload": { "command": "center_xy", "action": "center_xy" } }
+  ],
+  "layout": {
+    "mode": "grid",
+    "columns": 4,
+    "gap": 8,
+    "padding": 8,
+    "updatePolicy": { "appendMissingChildSlots": true }
+  }
+}

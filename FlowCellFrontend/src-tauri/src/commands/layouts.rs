@@ -281,6 +281,21 @@ fn normalize_layout_file_path(path: &Path) -> PathBuf {
     PathBuf::from(format!("{path_text}.flowlayout.json"))
 }
 
+fn validate_layout_file_path(path: &Path) -> Result<(), String> {
+    if path
+        .to_string_lossy()
+        .to_ascii_lowercase()
+        .ends_with(".flowtheme.json")
+    {
+        return Err(
+            "The selected file is a FlowCell Theme, not a FlowCell Layout. Open it from the Theme Editor."
+                .to_string(),
+        );
+    }
+
+    Ok(())
+}
+
 fn resolve_existing_dialog_directory(initial_directory: Option<String>) -> Option<PathBuf> {
     let initial_directory = initial_directory?;
     let trimmed = initial_directory.trim();
@@ -394,7 +409,8 @@ pub(crate) fn show_save_layout_dialog(
             .set_title("Save Layout")
             .set_directory(initial_directory)
             .set_file_name(&file_name)
-            .add_filter("FlowCell Layout", &["json"]),
+            .add_filter("FlowCell Layout", &["flowlayout.json"])
+            .add_filter("Legacy FlowCell Layout", &["json"]),
         parent_label,
     )
     .save_file();
@@ -414,8 +430,7 @@ pub(crate) fn show_open_layout_dialog(
         &app,
         FileDialog::new()
             .set_title("Load Layout")
-            .set_directory(initial_directory)
-            .add_filter("FlowCell Layout", &["json"]),
+            .set_directory(initial_directory),
         parent_label,
     )
     .pick_file();
@@ -636,6 +651,7 @@ pub(crate) fn load_layout_snapshot(path: String) -> Result<LayoutSnapshotFile, S
     }
 
     let layout_path = PathBuf::from(trimmed_path);
+    validate_layout_file_path(&layout_path)?;
     let contents = fs::read_to_string(&layout_path).map_err(|error| {
         format!(
             "Failed to read layout snapshot at {}: {error}",
@@ -841,5 +857,19 @@ mod tests {
             Some("C:/FlowCell/other-layers.flowcell-button-settings.json".to_string());
         snapshot.windows.push(same_owner_different_settings_file);
         assert!(validate_layout_snapshot(&snapshot).is_err());
+    }
+
+    #[test]
+    fn layout_file_paths_reject_flowcell_themes_without_rejecting_layout_names() {
+        assert!(validate_layout_file_path(Path::new("layout.flowlayout.json")).is_ok());
+        assert!(validate_layout_file_path(Path::new("legacy.json")).is_ok());
+
+        let error = load_layout_snapshot("green.FLOWTHEME.JSON".to_string())
+            .err()
+            .expect("Theme files must not enter the layout loader");
+        assert_eq!(
+            error,
+            "The selected file is a FlowCell Theme, not a FlowCell Layout. Open it from the Theme Editor."
+        );
     }
 }

@@ -1,4 +1,4 @@
-use super::manifest::load_program_manifest;
+use super::manifest::{is_managed_bridge_runner, load_program_manifest};
 use super::records::{
     active_record_file_name, read_active_record, recover_active_record, validate_owner_button_id,
     ActiveSourceRecord,
@@ -669,7 +669,7 @@ fn remove_owned_bindings(record: &ActiveSourceRecord) -> Result<(PathBuf, usize)
     Ok((bindings_path, removed))
 }
 
-pub(crate) fn cleanup_blender_owner(
+pub(crate) fn cleanup_bridge_owner(
     program_name: &str,
     owner_button_id: &str,
     label: &str,
@@ -679,6 +679,17 @@ pub(crate) fn cleanup_blender_owner(
         return Ok(());
     }
     let manifest = load_program_manifest(program_name)?;
+    if !is_managed_bridge_runner(&manifest.runner.kind) {
+        return Err(format!(
+            "Program '{}' does not use a managed bridge runner.",
+            manifest.label
+        ));
+    }
+    let bridge_label = if manifest.runner.kind == "fusion-bridge" {
+        "Fusion"
+    } else {
+        "Blender"
+    };
     let program_root = crate::resolve_program_directory(program_name)?;
     let helper = super::manifest::resolve_runner_script_path(
         &program_root,
@@ -686,10 +697,10 @@ pub(crate) fn cleanup_blender_owner(
         &manifest.runner.delete_script,
         "runner.deleteScript",
     )?
-    .ok_or_else(|| "Blender program manifest is missing runner.deleteScript.".to_string())?;
+    .ok_or_else(|| format!("{bridge_label} program manifest is missing runner.deleteScript."))?;
     if !helper.is_file() {
         return Err(format!(
-            "Blender delete adapter was not found at {}.",
+            "{bridge_label} delete adapter was not found at {}.",
             helper.display()
         ));
     }
@@ -707,16 +718,16 @@ pub(crate) fn cleanup_blender_owner(
     } else {
         Err(crate::format_process_failure(
             &output,
-            &format!("Blender cleanup failed for '{label}'."),
+            &format!("{bridge_label} cleanup failed for '{label}'."),
         ))
     }
 }
 
-fn cleanup_blender_runtime(record: &ActiveSourceRecord) -> Result<(), String> {
-    if record.runner != "blender-bridge" {
+fn cleanup_bridge_runtime(record: &ActiveSourceRecord) -> Result<(), String> {
+    if !is_managed_bridge_runner(&record.runner) {
         return Ok(());
     }
-    cleanup_blender_owner(
+    cleanup_bridge_owner(
         &record.program_name,
         &record.owner_button_id,
         &record.label,
@@ -874,7 +885,7 @@ pub(crate) fn quarantine_owned_source(
         }
         source.removed_binding_count = removed_binding_count;
         apply_enabled_contribution_change(&source)?;
-        cleanup_blender_runtime(&source.record)
+        cleanup_bridge_runtime(&source.record)
     })();
 
     if let Err(error) = apply_result {
@@ -991,12 +1002,12 @@ pub(crate) fn rollback_quarantined_source(source: &QuarantinedOwnedSource) -> Re
     rollback_quarantined_source_with(
         source,
         |record| {
-            if record.runner != "blender-bridge" {
+            if !is_managed_bridge_runner(&record.runner) {
                 return Ok(());
             }
             let manifest = load_program_manifest(&record.program_name)?;
             let installed_source = PathBuf::from(&record.source_path);
-            super::install::deploy_blender_source(
+            super::install::deploy_bridge_source(
                 &manifest,
                 &record.owner_button_id,
                 &record.panel_name,

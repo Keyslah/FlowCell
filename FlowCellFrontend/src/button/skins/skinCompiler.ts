@@ -145,6 +145,7 @@ export function compileButtonSkin(skin: ButtonSkin): ButtonSkinCompileResult {
     "[data-button-skin-root]{display:inline-block;position:relative;box-sizing:border-box;overflow:visible;pointer-events:none;}",
     "[data-button-skin-root] *{pointer-events:none;}",
     `[data-button-label-node]{font-size:var(--button-label-font-size,inherit);line-height:inherit;${textColorOverride ? "color:var(--flowcell-button-text-color)!important;-webkit-text-fill-color:var(--flowcell-button-text-color)!important;fill:var(--flowcell-button-text-color)!important;" : ""}}`,
+    ":host([data-button-theme-text=\"true\"]) [data-button-label-node]{color:var(--flowcell-button-text-color)!important;-webkit-text-fill-color:var(--flowcell-button-text-color)!important;fill:var(--flowcell-button-text-color)!important;background-image:none!important;}",
     "[data-button-label-line]{display:block;white-space:nowrap;}",
     ":host([data-button-constrained=\"true\"]) [data-core]{box-sizing:border-box!important;width:var(--button-core-width)!important;height:var(--button-core-height)!important;min-width:0!important;min-height:0!important;max-width:none!important;max-height:none!important;}",
     ":host([data-button-text-overflow=\"true\"]) [data-core]{outline:1px dashed rgba(255,105,105,.9);outline-offset:-1px;}"

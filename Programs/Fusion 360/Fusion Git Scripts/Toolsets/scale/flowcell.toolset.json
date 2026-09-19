@@ -1,0 +1,200 @@
+{
+  "schemaVersion": 1,
+  "id": "fusion-360.scale",
+  "version": "1.0.2",
+  "label": "Scale",
+  "tooltip": "Read and edit selected body dimensions, lock aspect, pin a side or center per axis, then scale with Fusion's native draggable triad.",
+  "kind": "toolset",
+  "program": "Fusion 360",
+  "source": "scale.py",
+  "bridgeData": {},
+  "stateQuery": {
+    "slot": "refresh",
+    "payload": {
+      "action": "status",
+      "command": "status"
+    }
+  },
+  "children": [
+    {
+      "slot": "x_axis_label",
+      "label": "X",
+      "tooltip": "X dimension"
+    },
+    {
+      "slot": "x_dimension",
+      "label": "0",
+      "tooltip": "Edit the selected bodies' total X dimension in the current Fusion document units."
+    },
+    {
+      "slot": "y_axis_label",
+      "label": "Y",
+      "tooltip": "Y dimension"
+    },
+    {
+      "slot": "y_dimension",
+      "label": "0",
+      "tooltip": "Edit the selected bodies' total Y dimension in the current Fusion document units."
+    },
+    {
+      "slot": "z_axis_label",
+      "label": "Z",
+      "tooltip": "Z dimension"
+    },
+    {
+      "slot": "z_dimension",
+      "label": "0",
+      "tooltip": "Edit the selected bodies' total Z dimension in the current Fusion document units."
+    },
+    {
+      "slot": "refresh",
+      "label": "Refresh",
+      "tooltip": "Read XYZ dimensions from the currently selected native BRep bodies.",
+      "payload": {
+        "action": "refresh",
+        "command": "refresh"
+      }
+    },
+    {
+      "slot": "free_axis",
+      "label": "Free Axis",
+      "tooltip": "Choose the single free axis shown on Fusion's draggable scale triad."
+    },
+    {
+      "slot": "aspect_lock",
+      "label": "Lock Aspect",
+      "tooltip": "Lock XYZ proportions. The chosen free-axis dimension drives all three dimensions."
+    },
+    {
+      "slot": "pin_x",
+      "label": "X Center",
+      "tooltip": "Choose whether X scales around its center or holds its minimum or maximum side fixed."
+    },
+    {
+      "slot": "pin_y",
+      "label": "Y Center",
+      "tooltip": "Choose whether Y scales around its center or holds its minimum or maximum side fixed."
+    },
+    {
+      "slot": "pin_z",
+      "label": "Z Center",
+      "tooltip": "Choose whether Z scales around its center or holds its minimum or maximum side fixed."
+    },
+    {
+      "slot": "apply",
+      "label": "Scale / Drag",
+      "tooltip": "Open Fusion's native draggable free-axis scale handle; press Enter to commit or Esc to cancel.",
+      "payload": {
+        "action": "apply",
+        "command": "apply"
+      }
+    }
+  ],
+  "layout": {
+    "mode": "grid",
+    "columns": 5,
+    "gap": 8,
+    "padding": 8,
+    "width": 820,
+    "height": 168,
+    "updatePolicy": {
+      "appendMissingChildSlots": true
+    },
+    "placements": {
+      "x_axis_label": { "x": 8, "y": 8, "width": 76, "height": 42 },
+      "x_dimension": { "x": 92, "y": 8, "width": 112, "height": 42 },
+      "y_axis_label": { "x": 212, "y": 8, "width": 76, "height": 42 },
+      "y_dimension": { "x": 296, "y": 8, "width": 112, "height": 42 },
+      "z_axis_label": { "x": 416, "y": 8, "width": 76, "height": 42 },
+      "z_dimension": { "x": 500, "y": 8, "width": 112, "height": 42 },
+      "refresh": { "x": 620, "y": 8, "width": 88, "height": 42 },
+      "apply": { "x": 716, "y": 8, "width": 96, "height": 92 },
+      "free_axis": { "x": 8, "y": 58, "width": 128, "height": 42 },
+      "aspect_lock": { "x": 144, "y": 58, "width": 128, "height": 42 },
+      "pin_x": { "x": 280, "y": 58, "width": 136, "height": 42 },
+      "pin_y": { "x": 424, "y": 58, "width": 136, "height": 42 },
+      "pin_z": { "x": 568, "y": 58, "width": 144, "height": 42 }
+    },
+    "fields": [
+      { "id": "x", "kind": "number", "label": "X", "payloadKey": "x", "defaultValue": 0, "minimum": 0.000001, "maximum": 1000000000, "step": 0.1, "x": 92, "y": 8, "width": 112, "height": 42, "zIndex": 1, "hidden": true },
+      { "id": "y", "kind": "number", "label": "Y", "payloadKey": "y", "defaultValue": 0, "minimum": 0.000001, "maximum": 1000000000, "step": 0.1, "x": 296, "y": 8, "width": 112, "height": 42, "zIndex": 1, "hidden": true },
+      { "id": "z", "kind": "number", "label": "Z", "payloadKey": "z", "defaultValue": 0, "minimum": 0.000001, "maximum": 1000000000, "step": 0.1, "x": 500, "y": 8, "width": 112, "height": 42, "zIndex": 1, "hidden": true },
+      {
+        "id": "free_axis",
+        "kind": "select",
+        "label": "Free Axis",
+        "payloadKey": "free_axis",
+        "defaultValue": "X",
+        "options": [
+          { "id": "x", "label": "Free X", "value": "X" },
+          { "id": "y", "label": "Free Y", "value": "Y" },
+          { "id": "z", "label": "Free Z", "value": "Z" }
+        ],
+        "x": 8, "y": 58, "width": 128, "height": 42, "zIndex": 1, "hidden": true
+      },
+      { "id": "aspect_lock", "kind": "toggle", "label": "Lock Aspect", "payloadKey": "aspect_lock", "defaultValue": true, "x": 144, "y": 58, "width": 128, "height": 42, "zIndex": 1, "hidden": true },
+      {
+        "id": "x_pin",
+        "kind": "select",
+        "label": "X Pin",
+        "payloadKey": "x_pin",
+        "defaultValue": "NONE",
+        "options": [
+          { "id": "center", "label": "X Center", "value": "NONE" },
+          { "id": "min", "label": "X Min", "value": "MIN" },
+          { "id": "max", "label": "X Max", "value": "MAX" }
+        ],
+        "x": 280, "y": 58, "width": 136, "height": 42, "zIndex": 1, "hidden": true
+      },
+      {
+        "id": "y_pin",
+        "kind": "select",
+        "label": "Y Pin",
+        "payloadKey": "y_pin",
+        "defaultValue": "NONE",
+        "options": [
+          { "id": "center", "label": "Y Center", "value": "NONE" },
+          { "id": "min", "label": "Y Min", "value": "MIN" },
+          { "id": "max", "label": "Y Max", "value": "MAX" }
+        ],
+        "x": 424, "y": 58, "width": 136, "height": 42, "zIndex": 1, "hidden": true
+      },
+      {
+        "id": "z_pin",
+        "kind": "select",
+        "label": "Z Pin",
+        "payloadKey": "z_pin",
+        "defaultValue": "NONE",
+        "options": [
+          { "id": "center", "label": "Z Center", "value": "NONE" },
+          { "id": "min", "label": "Z Min", "value": "MIN" },
+          { "id": "max", "label": "Z Max", "value": "MAX" }
+        ],
+        "x": 568, "y": 58, "width": 144, "height": 42, "zIndex": 1, "hidden": true
+      }
+    ],
+    "childBehaviors": {
+      "x_axis_label": { "execute": false },
+      "x_dimension": { "inlineEditField": "x", "execute": false },
+      "y_axis_label": { "execute": false },
+      "y_dimension": { "inlineEditField": "y", "execute": false },
+      "z_axis_label": { "execute": false },
+      "z_dimension": { "inlineEditField": "z", "execute": false },
+      "free_axis": { "selectField": "free_axis", "execute": false },
+      "aspect_lock": { "toggleFields": ["aspect_lock"], "execute": false },
+      "pin_x": { "selectField": "x_pin", "execute": false },
+      "pin_y": { "selectField": "y_pin", "execute": false },
+      "pin_z": { "selectField": "z_pin", "execute": false },
+      "refresh": { "execute": true, "payloadTemplate": { "action": "refresh", "command": "refresh" } },
+      "apply": {
+        "execute": true,
+        "payloadTemplate": {
+          "action": "apply", "command": "apply",
+          "x": { "$field": "x" }, "y": { "$field": "y" }, "z": { "$field": "z" },
+          "aspect_lock": { "$field": "aspect_lock" }, "free_axis": { "$field": "free_axis" },
+          "x_pin": { "$field": "x_pin" }, "y_pin": { "$field": "y_pin" }, "z_pin": { "$field": "z_pin" }
+        }
+      }
+    }
+  }
+}

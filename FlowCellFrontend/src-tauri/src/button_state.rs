@@ -15,7 +15,7 @@ const BUTTON_PLACEMENT_FILE_FORMAT_V1: &str = "flowcell-button-placement/v1";
 const BUTTON_PLACEMENT_FILE_FORMAT_V2: &str = "flowcell-button-placement/v2";
 const BUTTON_PLACEMENT_FILE_EXTENSION: &str = ".flowcell-button-placement.json";
 const BUTTON_SETTINGS_FILE_FORMAT: &str = "flowcell-button-settings/v1";
-const BUTTON_SETTINGS_FILE_EXTENSION: &str = ".flowcell-button-settings.json";
+const BUTTON_SETTINGS_FILE_EXTENSION: &str = ".json";
 const BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME: &str = "Defaults";
 const BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION: &str = ".flowcell-button-default.json";
 const BUTTON_SETTINGS_FILE_MAX_BYTES: usize = 16 * 1024 * 1024;
@@ -313,6 +313,39 @@ pub(crate) fn get_button_skin_directory() -> Result<String, String> {
         )
     })?;
     Ok(directory.display().to_string())
+}
+
+fn list_button_skin_files_in(directory: &Path) -> Result<Vec<String>, String> {
+    let mut paths = fs::read_dir(directory)
+        .map_err(|error| {
+            format!(
+                "Failed to read Button skin folder at {}: {error}",
+                directory.display()
+            )
+        })?
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.is_file()
+                && path
+                    .to_string_lossy()
+                    .to_lowercase()
+                    .ends_with(BUTTON_SKIN_FILE_EXTENSION)
+        })
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>();
+    paths.sort_by(|left, right| {
+        left.to_lowercase()
+            .cmp(&right.to_lowercase())
+            .then_with(|| left.cmp(right))
+    });
+    Ok(paths)
+}
+
+#[tauri::command]
+pub(crate) fn list_button_skin_files() -> Result<Vec<String>, String> {
+    let directory = PathBuf::from(get_button_skin_directory()?);
+    list_button_skin_files_in(&directory)
 }
 
 #[tauri::command]
@@ -1999,19 +2032,19 @@ pub(crate) fn commit_button_state(
 mod tests {
     use super::{
         button_settings_default_path, button_settings_scope_relative_path,
-        classify_source_transaction, document_source_owners, load_button_placement_file,
-        load_button_settings_file, load_button_skin_file, read_button_state_document,
-        recover_button_state, resolve_program_rename_post_commit, save_button_placement_file,
-        save_button_settings_file, save_button_skin_file, validate_button_placement_file,
-        validate_button_settings_file, validate_button_skin_source, validate_button_state,
-        validate_default_surface_id, ButtonPlacementFile, ButtonPlacementFileEntryV1,
-        ButtonPlacementFileEntryV2, ButtonPlacementFileSize, ButtonPlacementFileSurface,
-        ButtonPlacementFileV1, ButtonPlacementFileV2, ButtonPlacementSurfaceKind,
-        ButtonSettingsFileV1, ButtonSettingsPlacementKind, ButtonSourceTransactionJournal,
-        SourceTransactionPhase, SourceTransactionRecovery, BUTTON_PLACEMENT_CYCLE_MAX_STATES,
-        BUTTON_PLACEMENT_FILE_EXTENSION, BUTTON_PLACEMENT_FILE_FORMAT_V1,
-        BUTTON_PLACEMENT_FILE_FORMAT_V2, BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME,
-        BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION, BUTTON_SETTINGS_FILE_EXTENSION,
+        classify_source_transaction, document_source_owners, list_button_skin_files_in,
+        load_button_placement_file, load_button_settings_file, load_button_skin_file,
+        read_button_state_document, recover_button_state, resolve_program_rename_post_commit,
+        save_button_placement_file, save_button_settings_file, save_button_skin_file,
+        validate_button_placement_file, validate_button_settings_file, validate_button_skin_source,
+        validate_button_state, validate_default_surface_id, ButtonPlacementFile,
+        ButtonPlacementFileEntryV1, ButtonPlacementFileEntryV2, ButtonPlacementFileSize,
+        ButtonPlacementFileSurface, ButtonPlacementFileV1, ButtonPlacementFileV2,
+        ButtonPlacementSurfaceKind, ButtonSettingsFileV1, ButtonSettingsPlacementKind,
+        ButtonSourceTransactionJournal, SourceTransactionPhase, SourceTransactionRecovery,
+        BUTTON_PLACEMENT_CYCLE_MAX_STATES, BUTTON_PLACEMENT_FILE_EXTENSION,
+        BUTTON_PLACEMENT_FILE_FORMAT_V1, BUTTON_PLACEMENT_FILE_FORMAT_V2,
+        BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME, BUTTON_SETTINGS_DEFAULT_FILE_EXTENSION,
         BUTTON_SETTINGS_FILE_FORMAT, BUTTON_SKIN_FILE_EXTENSION, BUTTON_SKIN_FILE_MAX_BYTES,
         SOURCE_TRANSACTION_SCHEMA_VERSION,
     };
@@ -2213,6 +2246,27 @@ mod tests {
     }
 
     #[test]
+    fn button_skin_listing_returns_only_saved_skin_files_in_stable_order() {
+        let root = button_placement_test_root("skin-list");
+        fs::create_dir_all(&root).expect("create skin list test root");
+        fs::write(root.join(format!("Zebra{BUTTON_SKIN_FILE_EXTENSION}")), "z")
+            .expect("write Zebra skin");
+        fs::write(root.join(format!("alpha{BUTTON_SKIN_FILE_EXTENSION}")), "a")
+            .expect("write alpha skin");
+        fs::write(root.join("ignored.txt"), "ignored").expect("write ignored file");
+
+        let listed = list_button_skin_files_in(&root).expect("list Button skins");
+        assert_eq!(listed.len(), 2);
+        assert!(listed[0]
+            .to_lowercase()
+            .contains("alpha.flowcell-button-skin.txt"));
+        assert!(listed[1]
+            .to_lowercase()
+            .contains("zebra.flowcell-button-skin.txt"));
+        fs::remove_dir_all(&root).expect("remove skin list test root");
+    }
+
+    #[test]
     fn button_skin_writer_rejects_missing_canonical_sections_before_writing() {
         let root = button_placement_test_root("skin-invalid");
         fs::create_dir_all(&root).expect("create invalid skin test root");
@@ -2293,22 +2347,20 @@ mod tests {
     }
 
     #[test]
-    fn button_settings_writer_uses_type_extension_and_round_trips() {
+    fn button_settings_writer_preserves_json_file_name_and_round_trips() {
         let root = button_placement_test_root("settings-valid");
         fs::create_dir_all(&root).expect("create settings test root");
         let requested_path = root.join("named-settings.json");
-        let expected_path = root.join(format!("named-settings{BUTTON_SETTINGS_FILE_EXTENSION}"));
-
         let saved_path = save_button_settings_file(
             requested_path.display().to_string(),
             valid_button_settings_file(),
         )
         .expect("save valid Button settings");
 
-        assert_eq!(PathBuf::from(saved_path), expected_path);
-        assert!(!requested_path.exists());
-        let written = fs::read_to_string(&expected_path).expect("read saved settings");
-        let parsed = load_button_settings_file(expected_path.display().to_string())
+        assert_eq!(PathBuf::from(saved_path), requested_path);
+        assert!(requested_path.exists());
+        let written = fs::read_to_string(&requested_path).expect("read saved settings");
+        let parsed = load_button_settings_file(requested_path.display().to_string())
             .expect("load saved settings");
         assert_eq!(
             serde_json::to_value(&parsed).expect("serialize loaded settings"),
@@ -2399,9 +2451,6 @@ mod tests {
                 .and_then(|value| value.to_str()),
             Some(BUTTON_SETTINGS_DEFAULT_DIRECTORY_NAME)
         );
-        assert!(!default_path
-            .to_string_lossy()
-            .ends_with(BUTTON_SETTINGS_FILE_EXTENSION));
         assert!(validate_default_surface_id("../escape").is_err());
         assert!(validate_default_surface_id("folder/surface").is_err());
         assert!(validate_default_surface_id(r"folder\surface").is_err());

@@ -47,6 +47,7 @@
     "src/button/editor/buttonFanDisclosure.ts",
     "src/button/editor/buttonMeasurementReconciliation.ts",
     "src/button/editor/stagedInstallCleanup.ts",
+    "src/button/fan/buttonFanMotion.ts",
     "src/button/popout/toolFieldRuntimeState.ts",
     "src/button/state/installedButtonLayoutValidation.ts",
     "src/button/windows/buttonWindowGeometry.ts",
@@ -72,6 +73,7 @@
     "src/lib/shortcutProfiles.ts",
     "src/theme/themeEditorState.ts",
     "src/theme/themeModel.ts",
+    "src/theme/programPopoutPalette.ts",
     "src/theme/themePageRegistry.ts"
   ]
 }

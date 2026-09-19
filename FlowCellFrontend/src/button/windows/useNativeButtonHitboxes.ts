@@ -35,6 +35,13 @@ interface InteractiveHitbox {
 const INTERACTIVE_INVENTORY_SAFETY_REFRESH_MS = 1_000;
 const activeCursorIgnoreControllers = new Map<string, NativeCursorIgnoreController>();
 
+function interactiveHitboxIsInert(hitbox: InteractiveHitbox): boolean {
+  return Boolean(
+    hitbox.buttonHost?.closest("[inert]") ||
+    (hitbox.element instanceof HTMLElement && hitbox.element.closest("[inert]"))
+  );
+}
+
 function findInteractiveInventory(root: HTMLElement): InteractiveInventory {
   const buttonHitboxes = Array.from(
     root.querySelectorAll<HTMLElement>("[data-button-skin-host]")
@@ -65,6 +72,7 @@ function findInteractiveInventory(root: HTMLElement): InteractiveInventory {
     .flatMap((hitbox): InteractiveHitbox[] => {
       const { element } = hitbox;
       if (!element.isConnected) return [];
+      if (interactiveHitboxIsInert(hitbox)) return [];
       const style = window.getComputedStyle(element);
       if (style.display === "none" || style.visibility === "hidden") return [];
       const rect = element.getBoundingClientRect();
@@ -82,6 +90,7 @@ function pointHitsInteractiveElement(
   clientX: number,
   clientY: number
 ): boolean {
+  if (interactiveHitboxIsInert(hitbox)) return false;
   if (hitbox.buttonHost) {
     return buttonCoreContainsClientPoint(hitbox.element, clientX, clientY);
   }
@@ -386,6 +395,7 @@ export function useNativeButtonHitboxes(args: {
             "class",
             "disabled",
             "hidden",
+            "inert",
             "style",
             "data-button-pointer-pressed"
           ],

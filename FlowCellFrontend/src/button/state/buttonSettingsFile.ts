@@ -22,7 +22,7 @@ import { deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
 import { resolveButtonWindowEnvelope } from "../windows/buttonWindowGeometry.js";
 
 export const BUTTON_SETTINGS_FILE_FORMAT = "flowcell-button-settings/v1" as const;
-export const BUTTON_SETTINGS_FILE_EXTENSION = ".flowcell-button-settings.json" as const;
+export const BUTTON_SETTINGS_FILE_EXTENSION = ".json" as const;
 
 export type ButtonSettingsPlacementKind = "main-page" | "fan" | "pop-out";
 
@@ -205,21 +205,27 @@ function namesMatch(left: string, right: string): boolean {
 
 export function normalizeButtonSettingsFile(value: unknown): unknown {
   if (!isObject(value) || !isObject(value.behavior)) return value;
-  if (value.behavior.kind !== "regular-popout" && value.behavior.kind !== "tool-set-popout") {
-    return value;
-  }
   const behavior: Record<string, unknown> = { ...value.behavior };
   let changed = false;
-  if (!Object.hasOwn(behavior, "interactionMode")) {
-    behavior.interactionMode = "pop";
-    changed = true;
-  }
-  if (!Object.hasOwn(behavior, "ownerPlacementId")) {
-    behavior.ownerPlacementId = null;
-    changed = true;
-  }
-  if (!Object.hasOwn(behavior, "ownerButtonId")) {
-    behavior.ownerButtonId = null;
+  if (behavior.kind === "regular-popout" || behavior.kind === "tool-set-popout") {
+    if (!Object.hasOwn(behavior, "interactionMode")) {
+      behavior.interactionMode = "pop";
+      changed = true;
+    }
+    if (!Object.hasOwn(behavior, "ownerPlacementId")) {
+      behavior.ownerPlacementId = null;
+      changed = true;
+    }
+    if (!Object.hasOwn(behavior, "ownerButtonId")) {
+      behavior.ownerButtonId = null;
+      changed = true;
+    }
+  } else if (
+    behavior.kind === "fan" &&
+    isObject(behavior.animation) &&
+    !Object.hasOwn(behavior.animation, "spinEnabled")
+  ) {
+    behavior.animation = { ...behavior.animation, spinEnabled: false };
     changed = true;
   }
   return changed ? { ...value, behavior } : value;
@@ -524,7 +530,12 @@ function validateBehavior(
     if (!isObject(value.animation)) {
       issues.push(`${path}.animation: Expected Fan animation settings.`);
     } else {
-      hasExactKeys(value.animation, ["durationMs", "easing", "staggerMs"], `${path}.animation`, issues);
+      hasExactKeys(
+        value.animation,
+        ["durationMs", "easing", "staggerMs", "spinEnabled"],
+        `${path}.animation`,
+        issues
+      );
       if (!isFiniteNumber(value.animation.durationMs) || value.animation.durationMs < 0) {
         issues.push(`${path}.animation.durationMs: Expected a nonnegative finite number.`);
       }
@@ -533,6 +544,9 @@ function validateBehavior(
       }
       if (!isFiniteNumber(value.animation.staggerMs) || value.animation.staggerMs < 0) {
         issues.push(`${path}.animation.staggerMs: Expected a nonnegative finite number.`);
+      }
+      if (typeof value.animation.spinEnabled !== "boolean") {
+        issues.push(`${path}.animation.spinEnabled: Expected a boolean.`);
       }
     }
     if (!BUTTON_WINDOW_FIT_MODES.has(value.windowFitMode as ButtonWindowFitMode)) {

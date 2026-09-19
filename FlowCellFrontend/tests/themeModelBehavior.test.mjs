@@ -4,11 +4,15 @@ import {
   applyThemeFile,
   bakeThemeGradientForDeployedLayout,
   captureThemeFile,
+  clearButtonThemeOverrideColors,
   extractSkinColorRoots,
   gradientColorForPlacement,
   isFlowCellThemeFile,
   listThemePlacements,
+  resolveThemeHighlightColorResetPlacementIds,
+  resolveThemeSkinAssignmentPlacementIds,
   setSkinColorRoot,
+  themeSkinAssignmentIdentity,
   themePlacementDeployedCenterY
 } from "./.compiled-button-system/theme/themeModel.js";
 import {
@@ -30,6 +34,16 @@ import {
   themePageSupportsButtonSurface,
   themePageTokenCssEntries
 } from "./.compiled-button-system/theme/themePageRegistry.js";
+import {
+  applyProgramPopoutPaletteTargets,
+  applyProgramPopoutTextColorTargets,
+  gradientProgramPopoutPaletteAssignments,
+  programPopoutPaletteTargetsHaveTextColor,
+  programPopoutPaletteScreenPositions,
+  programPopoutPaletteTargetPositions,
+  readProgramPopoutSkinSurfaceColor,
+  scanProgramPopoutPaletteTargets
+} from "./.compiled-button-system/theme/programPopoutPalette.js";
 import { buttonsSurfaceContentOrigin } from "./.compiled-button-system/pages/main/mainLayout.js";
 import {
   THEME_EDITOR_SCOPE_STATE_STORAGE_KEY,
@@ -194,6 +208,165 @@ function fixture() {
   addButton(document, "button-a", "a.flowcell-source.json", 10, 10);
   addButton(document, "button-b", "b.flowcell-source.json", 50, 10);
   return document;
+}
+
+function programPopoutPaletteFixture() {
+  const document = fixture();
+  const bundled = document.skins[document.settings.defaultSkinId];
+  const sectionedSkin = (id, name, base) => {
+    const skin = {
+      ...structuredClone(bundled),
+      id,
+      name,
+      base,
+      compileCache: null
+    };
+    for (const sectionName of BUTTON_SKIN_SECTION_ORDER) {
+      if (sectionName !== "base") skin[sectionName] = "";
+    }
+    return skin;
+  };
+  document.skins["skin-legacy-surface"] = sectionedSkin(
+    "skin-legacy-surface",
+    "Legacy Surface",
+    ":root{--button-bg:#445566}.surface{background:var(--button-bg)}"
+  );
+  document.skins["skin-tint-material"] = sectionedSkin(
+    "skin-tint-material",
+    "Tint Material",
+    ".surface{background:#369D8D;border-color:#3DCD9E}.label{color:#FFFFFF}"
+  );
+
+  document.buttons["button-b"].defaultSkinId = "skin-legacy-surface";
+  document.buttons["button-c"] = {
+    ...structuredClone(document.buttons["button-a"]),
+    id: "button-c",
+    label: "button-c",
+    defaultSkinId: "skin-tint-material",
+    sourceIdentity: sourceIdentity("c.flowcell-source.json"),
+    executionTarget: {
+      kind: "panel-script",
+      programName: "Blender",
+      panelName: "Tools",
+      fileName: "c.flowcell-source.json"
+    }
+  };
+
+  document.surfaces["pop-regular"] = {
+    id: "pop-regular",
+    name: "Blender / Tools Pop-out",
+    kind: "regular-popout",
+    width: 120,
+    height: 100,
+    placementIds: ["pop-a", "pop-b", "pop-hidden"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.surfaces["pop-toolset"] = {
+    id: "pop-toolset",
+    name: "Blender / Tools Tool Set",
+    kind: "tool-set-popout",
+    width: 120,
+    height: 100,
+    placementIds: ["pop-c"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.surfaces["pop-closed"] = {
+    id: "pop-closed",
+    name: "Blender / Tools Closed Pop-out",
+    kind: "regular-popout",
+    width: 120,
+    height: 100,
+    placementIds: ["pop-closed"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.placements["pop-a"] = {
+    ...placement("pop-a", "button-a", 10, 5),
+    surfaceId: "pop-regular"
+  };
+  document.placements["pop-b"] = {
+    ...placement("pop-b", "button-b", 10, 40),
+    surfaceId: "pop-regular"
+  };
+  document.placements["pop-hidden"] = {
+    ...placement("pop-hidden", "button-a", 10, 70),
+    surfaceId: "pop-regular"
+  };
+  document.placements["pop-c"] = {
+    ...placement("pop-c", "button-c", 10, 75),
+    surfaceId: "pop-toolset"
+  };
+  document.placements["pop-closed"] = {
+    ...placement("pop-closed", "button-a", 10, 25),
+    surfaceId: "pop-closed"
+  };
+  document.popoutUnits.regular = {
+    id: "regular",
+    name: "Regular",
+    kind: "regular",
+    surfaceId: "pop-regular",
+    canonicalBounds: { x: 0, y: 0, width: 120, height: 100 },
+    desktopBounds: null,
+    memberPlacementIds: ["pop-a", "pop-b"],
+    memberSourceIdentities: [
+      document.buttons["button-a"].sourceIdentity,
+      document.buttons["button-b"].sourceIdentity
+    ],
+    selectionKey: "regular",
+    openRule: "toggle",
+    closeRule: "escape",
+    transparency: 1,
+    pinnedDefault: false
+  };
+  document.popoutUnits.toolset = {
+    id: "toolset",
+    name: "Tool Set",
+    kind: "tool-set",
+    surfaceId: "pop-toolset",
+    canonicalBounds: { x: 0, y: 0, width: 120, height: 100 },
+    desktopBounds: null,
+    ownerButtonId: "button-a",
+    childButtonIds: ["button-c"],
+    childPlacementIds: ["pop-c"],
+    fields: [],
+    openRule: "toggle",
+    closeRule: "escape",
+    interactionMode: "pop",
+    ownerPlacementId: null,
+    transparency: 1,
+    pinnedDefault: false
+  };
+  document.popoutUnits.closed = {
+    id: "closed",
+    name: "Closed",
+    kind: "regular",
+    surfaceId: "pop-closed",
+    canonicalBounds: { x: 0, y: 0, width: 120, height: 100 },
+    desktopBounds: null,
+    memberPlacementIds: ["pop-closed"],
+    memberSourceIdentities: [document.buttons["button-a"].sourceIdentity],
+    selectionKey: "closed",
+    openRule: "toggle",
+    closeRule: "escape",
+    transparency: 1,
+    pinnedDefault: false
+  };
+  document.themeOverrides["placement-button-a"] = {
+    colors: { surface: "#ABCDEF" },
+    hoverColor: null,
+    activeColor: null,
+    highlightColorReset: null
+  };
+  return document;
+}
+
+function liveProgramPopoutTargets() {
+  return ["pop-a", "pop-b", "pop-c"].map((placementId) => ({
+    paletteId: JSON.stringify([`window-${placementId}`, placementId]),
+    placementId
+  }));
 }
 
 function mainProgramRailGroupFixture({ withObstacle = false } = {}) {
@@ -385,9 +558,10 @@ test("Theme Editor scope persistence isolates target, page, and panel selections
       [{ kind: "flowcell", page: "main" }, editorScopeState(21, "main")],
       [{ kind: "flowcell", page: "binds" }, editorScopeState(22, "binds")],
       [{ kind: "program", programName: "Blender", panelName: null }, editorScopeState(23, "all")],
-      [{ kind: "program", programName: "Blender", panelName: "Tools" }, editorScopeState(24, "tools")],
-      [{ kind: "program", programName: "Blender", panelName: "Other" }, editorScopeState(25, "other")],
-      [{ kind: "program", programName: "Illustrator", panelName: "Tools" }, editorScopeState(26, "illustrator")]
+      [{ kind: "program", programName: "Blender", panelName: null, area: "popouts" }, editorScopeState(24, "popouts")],
+      [{ kind: "program", programName: "Blender", panelName: "Tools" }, editorScopeState(25, "tools")],
+      [{ kind: "program", programName: "Blender", panelName: "Other" }, editorScopeState(26, "other")],
+      [{ kind: "program", programName: "Illustrator", panelName: "Tools" }, editorScopeState(27, "illustrator")]
     ];
     for (const [target, state] of entries) {
       writeThemeEditorScopeState(target, state);
@@ -400,9 +574,53 @@ test("Theme Editor scope persistence isolates target, page, and panel selections
       themeEditorScopeKey({ kind: "program", programName: " blender ", panelName: "TOOLS" }),
       themeEditorScopeKey({ kind: "program", programName: "Blender", panelName: "Tools" })
     );
+    assert.notEqual(
+      themeEditorScopeKey({ kind: "program", programName: "Blender", panelName: null }),
+      themeEditorScopeKey({
+        kind: "program",
+        programName: "Blender",
+        panelName: null,
+        area: "popouts"
+      })
+    );
+    assert.equal(
+      themeEditorScopeKey({ kind: "program", programName: "Blender", panelName: null }),
+      JSON.stringify(["program", "blender", "*"])
+    );
+    assert.equal(
+      themeEditorScopeKey({
+        kind: "program",
+        programName: "Blender",
+        panelName: "Tools"
+      }),
+      JSON.stringify(["program", "blender", "tools"])
+    );
+    assert.equal(
+      themeEditorScopeKey({
+        kind: "program",
+        programName: "Blender",
+        panelName: null,
+        area: "popouts"
+      }),
+      JSON.stringify(["program", "blender", "*", "popouts"])
+    );
+    assert.equal(
+      themeEditorScopeKey({
+        kind: "program",
+        programName: " blender ",
+        panelName: null,
+        area: "popouts"
+      }),
+      themeEditorScopeKey({
+        kind: "program",
+        programName: "Blender",
+        panelName: null,
+        area: "popouts"
+      })
+    );
     assert.deepEqual(
       readThemeEditorScopeState({ kind: "program", programName: " blender ", panelName: "TOOLS" }),
-      entries[3][1]
+      entries[4][1]
     );
     const document = JSON.parse(raw());
     assert.equal(document.version, 1);
@@ -440,7 +658,7 @@ test("declared legacy text color remains editable without inventing a semantic r
   assert.doesNotMatch(changed.base, /--flowcell-button-color-text:/i);
 });
 
-test("version 1 schema round-trips strictly with complete skins and participation flags", () => {
+test("version 2 schema round-trips strictly with host overrides and participation flags", () => {
   const document = fixture();
   const skin = document.skins["skin-semantic"];
   const theme = captureThemeFile({
@@ -454,6 +672,7 @@ test("version 1 schema round-trips strictly with complete skins and participatio
   });
   const roundTripped = JSON.parse(JSON.stringify(theme));
   assert.equal(isFlowCellThemeFile(roundTripped), true);
+  assert.equal(roundTripped.version, 2);
   assert.deepEqual(Object.keys(roundTripped).sort(), [
     "buttons",
     "gradient",
@@ -469,6 +688,15 @@ test("version 1 schema round-trips strictly with complete skins and participatio
   assert.equal(roundTripped.buttons[0].skin.id, "skin-semantic");
   assert.equal(roundTripped.buttons[0].scatterEnabled, false);
   assert.equal(roundTripped.buttons[1].gradientEnabled, false);
+  assert.deepEqual(roundTripped.buttons[0].themeOverride, {
+    colors: {},
+    hoverEnabled: null,
+    activeEnabled: null,
+    hoverColor: null,
+    activeColor: null
+  });
+  assert.equal(roundTripped.buttons[0].assignSkin, false);
+  assert.equal("highlightColorReset" in roundTripped.buttons[0], false);
   assert.equal(roundTripped.page, null);
 
   const extraField = { ...roundTripped, runtime: {} };
@@ -476,6 +704,75 @@ test("version 1 schema round-trips strictly with complete skins and participatio
   const behaviorLeak = structuredClone(roundTripped);
   behaviorLeak.buttons[0].executionTarget = { kind: "core-action", actionId: "must-not-save" };
   assert.equal(isFlowCellThemeFile(behaviorLeak), false);
+});
+
+test("highlight and glow amounts are backward-compatible, persist through themes, and survive skin assignment", () => {
+  const document = fixture();
+  const legacyShapeTheme = captured(document);
+  assert.equal(
+    legacyShapeTheme.buttons.every((appearance) => [
+      "highlightAmount",
+      "hoverHighlightAmount",
+      "activeHighlightAmount",
+      "hoverGlowAmount",
+      "activeGlowAmount"
+    ].every((field) => !(field in appearance.themeOverride))),
+    true
+  );
+  assert.equal(isFlowCellThemeFile(legacyShapeTheme), true);
+
+  const appearance = legacyShapeTheme.buttons.find(
+    (button) => button.placementId === "placement-button-a"
+  );
+  appearance.themeOverride.hoverHighlightAmount = 42;
+  appearance.themeOverride.activeHighlightAmount = 88;
+  appearance.themeOverride.hoverGlowAmount = 35;
+  appearance.themeOverride.activeGlowAmount = 73;
+  const roundTripped = JSON.parse(JSON.stringify(legacyShapeTheme));
+  assert.equal(isFlowCellThemeFile(roundTripped), true);
+  const applied = applyThemeFile(document, roundTripped);
+  assert.equal(applied.document.themeOverrides["placement-button-a"].hoverHighlightAmount, 42);
+  assert.equal(applied.document.themeOverrides["placement-button-a"].activeHighlightAmount, 88);
+  assert.equal(applied.document.themeOverrides["placement-button-a"].hoverGlowAmount, 35);
+  assert.equal(applied.document.themeOverrides["placement-button-a"].activeGlowAmount, 73);
+
+  for (const field of [
+    "highlightAmount",
+    "hoverHighlightAmount",
+    "activeHighlightAmount",
+    "hoverGlowAmount",
+    "activeGlowAmount"
+  ]) {
+    const maximum = field === "hoverHighlightAmount" || field === "activeHighlightAmount"
+      ? 1000
+      : 100;
+    for (const invalidAmount of [-1, maximum + 1, 20.5, "88"]) {
+      const invalidTheme = structuredClone(roundTripped);
+      invalidTheme.buttons[0].themeOverride[field] = invalidAmount;
+      assert.equal(isFlowCellThemeFile(invalidTheme), false);
+    }
+  }
+
+  const cleared = clearButtonThemeOverrideColors({
+    colors: { surface: "#112233" },
+    hoverEnabled: null,
+    activeEnabled: null,
+    hoverColor: "#445566",
+    activeColor: "#778899",
+    highlightAmount: 64,
+    hoverHighlightAmount: 41,
+    activeHighlightAmount: 82,
+    hoverGlowAmount: 33,
+    activeGlowAmount: 74
+  });
+  assert.deepEqual(cleared.colors, {});
+  assert.equal(cleared.hoverColor, null);
+  assert.equal(cleared.activeColor, null);
+  assert.equal(cleared.highlightAmount, 64);
+  assert.equal(cleared.hoverHighlightAmount, 41);
+  assert.equal(cleared.activeHighlightAmount, 82);
+  assert.equal(cleared.hoverGlowAmount, 33);
+  assert.equal(cleared.activeGlowAmount, 74);
 });
 
 test("captured themes discard populated compiler caches without mutating canonical skins", () => {
@@ -498,7 +795,7 @@ test("malformed theme rejection leaves the canonical document untouched", () => 
   malformed.buttons[0].width = "wide";
   assert.equal(isFlowCellThemeFile(malformed), false);
   const before = JSON.stringify(document);
-  assert.throws(() => applyThemeFile(document, malformed), /valid version 1/);
+  assert.throws(() => applyThemeFile(document, malformed), /valid version 2/);
   assert.equal(JSON.stringify(document), before);
 });
 
@@ -509,6 +806,8 @@ test("loading restores complete skin source without changing Button behavior", (
     false
   );
   const theme = captured(document);
+  theme.buttons[0].assignSkin = true;
+  theme.buttons[0].skin.base += ";--flowcell-button-color-theme-test:#224466";
   theme.buttons[0].skin.metadata = {
     ...theme.buttons[0].skin.metadata,
     themeTest: { nested: ["complete", 1, true] }
@@ -517,7 +816,9 @@ test("loading restores complete skin source without changing Button behavior", (
 
   const result = applyThemeFile(document, theme);
   const placementAfter = result.document.placements["placement-button-a"];
-  const appliedSkin = result.document.skins[placementAfter.skinOverrideId];
+  const appliedSkin = result.document.skins[
+    placementAfter.skinOverrideId ?? result.document.buttons[placementAfter.buttonId].defaultSkinId
+  ];
   for (const section of BUTTON_SKIN_SECTION_ORDER) {
     assert.equal(appliedSkin[section], theme.buttons[0].skin[section]);
   }
@@ -528,7 +829,65 @@ test("loading restores complete skin source without changing Button behavior", (
   assert.deepEqual(result.document.buttons["button-a"].executionTarget, executionBefore);
 });
 
-test("button size and skin-owned placement visual settings round-trip", () => {
+test("skin assignment keeps authored colors unless a later Theme color explicitly changes them", () => {
+  const document = fixture();
+  document.themeOverrides = {
+    "placement-button-a": {
+      colors: { surface: "#112233", text: "#445566", custom: "#667788" },
+      hoverEnabled: true,
+      activeEnabled: false,
+      hoverColor: "#778899",
+      activeColor: "#AABBCC"
+    }
+  };
+  const before = structuredClone(document);
+  const assignedTheme = captured(document);
+  const appearance = assignedTheme.buttons.find(
+    (button) => button.placementId === "placement-button-a"
+  );
+  appearance.assignSkin = true;
+  appearance.skin = {
+    ...structuredClone(appearance.skin),
+    id: "skin-authored-color-test",
+    name: "Authored Color Test",
+    base: `${appearance.skin.base};--flowcell-button-color-surface:#237A42`,
+    compileCache: null
+  };
+  appearance.themeOverride = clearButtonThemeOverrideColors(appearance.themeOverride);
+
+  const assigned = applyThemeFile(document, assignedTheme);
+  const assignedOverride = assigned.document.themeOverrides["placement-button-a"];
+  const assignedPlacement = assigned.document.placements["placement-button-a"];
+  const assignedButton = assigned.document.buttons[assignedPlacement.buttonId];
+  const assignedSkin = assigned.document.skins[
+    assignedPlacement.skinOverrideId ?? assignedButton.defaultSkinId
+  ];
+  assert.deepEqual(assignedOverride.colors, {});
+  assert.equal(assignedOverride.hoverColor, null);
+  assert.equal(assignedOverride.activeColor, null);
+  assert.equal(assignedOverride.hoverEnabled, true);
+  assert.equal(assignedOverride.activeEnabled, false);
+  for (const section of BUTTON_SKIN_SECTION_ORDER) {
+    assert.equal(assignedSkin[section], appearance.skin[section]);
+  }
+  assert.deepEqual(document, before);
+
+  const recoloredTheme = structuredClone(assignedTheme);
+  const recoloredAppearance = recoloredTheme.buttons.find(
+    (button) => button.placementId === "placement-button-a"
+  );
+  recoloredAppearance.themeOverride.colors.surface = "#334455";
+  const recolored = applyThemeFile(document, recoloredTheme);
+  const recoloredOverride = recolored.document.themeOverrides["placement-button-a"];
+  assert.deepEqual(recoloredOverride.colors, { surface: "#334455" });
+  assert.equal(recoloredOverride.hoverColor, null);
+  assert.equal(recoloredOverride.activeColor, null);
+  assert.equal(recoloredOverride.hoverEnabled, true);
+  assert.equal(recoloredOverride.activeEnabled, false);
+  assert.deepEqual(document, before);
+});
+
+test("theme application preserves layout and writes only explicit host appearance overrides", () => {
   const source = fixture();
   Object.assign(source.placements["placement-button-a"], {
     width: 24,
@@ -545,6 +904,13 @@ test("button size and skin-owned placement visual settings round-trip", () => {
     highlightOnHover: true
   });
   const theme = captured(source);
+  theme.buttons[0].themeOverride = {
+    colors: { surface: "#334455" },
+    hoverEnabled: true,
+    activeEnabled: false,
+    hoverColor: "#77889980",
+    activeColor: null
+  };
   const result = applyThemeFile(fixture(), theme);
   const placementAfter = result.document.placements["placement-button-a"];
   assert.deepEqual(
@@ -563,49 +929,127 @@ test("button size and skin-owned placement visual settings round-trip", () => {
       highlightOnHover: placementAfter.highlightOnHover
     },
     {
-      width: 24,
-      height: 22,
-      textFitMode: "shrink-and-stack",
-      textAlignment: "right",
-      textOffsetX: 2,
-      textOffsetY: -1,
-      minimumFontSize: 9,
-      textSizeOverride: 12,
-      allowLabelResize: true,
-      matchHitboxToSkin: false,
-      allowStretching: true,
-      highlightOnHover: true
+      width: 20,
+      height: 20,
+      textFitMode: "shrink",
+      textAlignment: "skin",
+      textOffsetX: 0,
+      textOffsetY: 0,
+      minimumFontSize: 8,
+      textSizeOverride: null,
+      allowLabelResize: false,
+      matchHitboxToSkin: true,
+      allowStretching: false,
+      highlightOnHover: false
     }
   );
+  assert.deepEqual(result.document.themeOverrides["placement-button-a"], theme.buttons[0].themeOverride);
 });
 
-test("applying a shared saved skin creates independent per-placement appearances", () => {
+test("explicit highlight color resets round-trip and clear only the requested canonical colors", () => {
+  const canonical = fixture();
+  canonical.themeOverrides = {
+    "placement-button-a": {
+      colors: { surface: "#123456", text: "#F0F0F0" },
+      hoverEnabled: true,
+      activeEnabled: false,
+      hoverColor: "#112233",
+      activeColor: "#445566"
+    },
+    "placement-button-b": {
+      colors: { surface: "#654321" },
+      hoverEnabled: false,
+      activeEnabled: true,
+      hoverColor: "#778899",
+      activeColor: "#AABBCC"
+    }
+  };
+  const draft = structuredClone(canonical);
+  draft.themeOverrides["placement-button-a"].hoverColor = null;
+  draft.themeOverrides["placement-button-b"].activeColor = null;
+  const theme = captureThemeFile({
+    document: draft,
+    target: TARGET,
+    savedAt: SAVED_AT,
+    highlightColorResetPlacementIds: {
+      hover: new Set(["placement-button-a"]),
+      active: new Set(["placement-button-b"])
+    }
+  });
+  const roundTripped = JSON.parse(JSON.stringify(theme));
+  assert.equal(isFlowCellThemeFile(roundTripped), true);
+  assert.deepEqual(roundTripped.buttons[0].highlightColorReset, {
+    hover: true,
+    active: false
+  });
+  assert.deepEqual(roundTripped.buttons[1].highlightColorReset, {
+    hover: false,
+    active: true
+  });
+
+  const conflicting = structuredClone(roundTripped);
+  conflicting.buttons[0].themeOverride.hoverColor = "#ABCDEF";
+  assert.equal(isFlowCellThemeFile(conflicting), false);
+
+  const result = applyThemeFile(canonical, roundTripped);
+  assert.deepEqual(result.document.themeOverrides["placement-button-a"], {
+    colors: { surface: "#123456", text: "#F0F0F0" },
+    hoverEnabled: true,
+    activeEnabled: false,
+    hoverColor: null,
+    activeColor: "#445566"
+  });
+  assert.deepEqual(result.document.themeOverrides["placement-button-b"], {
+    colors: { surface: "#654321" },
+    hoverEnabled: false,
+    activeEnabled: true,
+    hoverColor: "#778899",
+    activeColor: null
+  });
+  assert.equal(canonical.themeOverrides["placement-button-a"].hoverColor, "#112233");
+  assert.equal(canonical.themeOverrides["placement-button-b"].activeColor, "#AABBCC");
+});
+
+test("adopting one applied scope drops stale highlight reset intents from other scopes", () => {
+  const theme = captured();
+  theme.buttons[0].highlightColorReset = { hover: true, active: false };
+  const resolved = resolveThemeHighlightColorResetPlacementIds(theme, {
+    [theme.buttons[0].placementId]: "canonical-main-a"
+  });
+  const current = {
+    hover: new Set(["stale-pop-hover"]),
+    active: new Set(["stale-pop-active"])
+  };
+  current.hover.clear();
+  current.active.clear();
+  resolved.hover.forEach((placementId) => current.hover.add(placementId));
+  resolved.active.forEach((placementId) => current.active.add(placementId));
+  assert.deepEqual([...current.hover], ["canonical-main-a"]);
+  assert.deepEqual([...current.active], []);
+});
+
+test("applying per-placement colors does not clone or reassign shared skins", () => {
   const document = fixture();
   const theme = captured(document);
-  theme.buttons[0].skin = setSkinColorRoot(theme.buttons[0].skin, "surface", "#112233");
-  theme.buttons[1].skin = setSkinColorRoot(theme.buttons[1].skin, "surface", "#AABBCC");
+  theme.buttons[0].themeOverride.colors.surface = "#112233";
+  theme.buttons[1].themeOverride.colors.surface = "#AABBCC";
+  const beforeSkins = structuredClone(document.skins);
 
   const result = applyThemeFile(document, theme);
   const first = result.document.placements["placement-button-a"];
   const second = result.document.placements["placement-button-b"];
   assert.equal(result.appliedButtonCount, 2);
-  assert.notEqual(first.skinOverrideId, second.skinOverrideId);
-  assert.equal(
-    extractSkinColorRoots(result.document.skins[first.skinOverrideId]).find((entry) => entry.role === "surface")?.value,
-    "#112233"
-  );
-  assert.equal(
-    extractSkinColorRoots(result.document.skins[second.skinOverrideId]).find((entry) => entry.role === "surface")?.value,
-    "#AABBCC"
-  );
-  assert.equal(
-    extractSkinColorRoots(document.skins["skin-semantic"]).find((entry) => entry.role === "surface")?.value,
-    "#102030"
-  );
+  assert.equal(first.skinOverrideId, null);
+  assert.equal(second.skinOverrideId, null);
+  assert.deepEqual(result.document.skins, beforeSkins);
+  assert.equal(result.document.themeOverrides[first.id].colors.surface, "#112233");
+  assert.equal(result.document.themeOverrides[second.id].colors.surface, "#AABBCC");
+  assert.deepEqual(document.skins, beforeSkins);
 });
 
 test("stable identity fallback skips missing saved Buttons and leaves new Buttons intact", () => {
   const theme = captured();
+  theme.buttons[0].themeOverride.colors.surface = "#123456";
   const current = fixture();
   const renamed = current.placements["placement-button-a"];
   delete current.placements[renamed.id];
@@ -626,7 +1070,8 @@ test("stable identity fallback skips missing saved Buttons and leaves new Button
   assert.equal(result.missingButtonCount, 1);
   assert.deepEqual(result.document.placements[newPlacementId], newBefore);
   assert.deepEqual(result.document.buttons["button-new"], newButtonBefore);
-  assert.match(result.document.placements[renamed.id].skinOverrideId, /^flowcell-theme-skin-/);
+  assert.equal(result.document.placements[renamed.id].skinOverrideId, null);
+  assert.equal(result.document.themeOverrides[renamed.id].colors.surface, "#123456");
 });
 
 test("theme application never escapes its saved target even when IDs collide", () => {
@@ -648,7 +1093,7 @@ test("theme application never escapes its saved target even when IDs collide", (
   assert.deepEqual(result.document, before);
 });
 
-test("program target discovery supports All Panels and one selected panel", () => {
+test("program target discovery supports All, selected-panel, and Pop-outs Only scopes", () => {
   const document = fixture();
   document.surfaces["panel-other"] = {
     id: "panel-other",
@@ -673,18 +1118,560 @@ test("program target discovery supports All Panels and one selected panel", () =
   };
   document.buttons["button-other"].executionTarget.panelName = "Other";
 
+  document.surfaces["pop-tools"] = {
+    id: "pop-tools",
+    name: "Blender / Tools Pop-out",
+    kind: "regular-popout",
+    width: 100,
+    height: 80,
+    placementIds: ["placement-button-a-pop"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.placements["placement-button-a-pop"] = {
+    ...placement("placement-button-a-pop", "button-a", 10, 10),
+    surfaceId: "pop-tools"
+  };
+
+  document.surfaces["tool-pop-other"] = {
+    id: "tool-pop-other",
+    name: "Blender / Other Tool Set Pop-out",
+    kind: "tool-set-popout",
+    width: 100,
+    height: 80,
+    placementIds: ["placement-button-other-tool-pop"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.placements["placement-button-other-tool-pop"] = {
+    ...placement("placement-button-other-tool-pop", "button-other", 10, 10),
+    surfaceId: "tool-pop-other"
+  };
+
+  document.surfaces["fan-tools"] = {
+    id: "fan-tools",
+    name: "Blender / Tools Legacy Fan",
+    kind: "fan",
+    width: 100,
+    height: 80,
+    placementIds: ["placement-button-b-fan"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.placements["placement-button-b-fan"] = {
+    ...placement("placement-button-b-fan", "button-b", 10, 10),
+    surfaceId: "fan-tools"
+  };
+
+  document.buttons["button-panel-owner"] = {
+    ...structuredClone(document.buttons["button-a"]),
+    id: "button-panel-owner",
+    role: "panel-owner",
+    sourceIdentity: null,
+    executionTarget: { kind: "core-action", actionId: "select-panel-folder" },
+    metadata: { programName: "Blender", panelName: "Tools" }
+  };
+  document.surfaces["main-panel-owner"] = {
+    id: "main-panel-owner",
+    name: "FlowCell Main / Blender Panel Owners",
+    kind: "main",
+    width: 100,
+    height: 80,
+    placementIds: ["placement-button-panel-owner"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.placements["placement-button-panel-owner"] = {
+    ...placement("placement-button-panel-owner", "button-panel-owner", 10, 10),
+    surfaceId: "main-panel-owner"
+  };
+
+  document.buttons["button-illustrator"] = {
+    ...structuredClone(document.buttons["button-a"]),
+    id: "button-illustrator",
+    sourceIdentity: {
+      ...sourceIdentity("illustrator.flowcell-source.json"),
+      displayProgramName: "Illustrator",
+      normalizedProgramName: normalizedName("Illustrator")
+    },
+    executionTarget: {
+      kind: "panel-script",
+      programName: "Illustrator",
+      panelName: "Tools",
+      fileName: "illustrator.flowcell-source.json"
+    }
+  };
+  document.surfaces["pop-illustrator"] = {
+    id: "pop-illustrator",
+    name: "Illustrator / Tools Pop-out",
+    kind: "regular-popout",
+    width: 100,
+    height: 80,
+    placementIds: ["placement-button-illustrator-pop"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.placements["placement-button-illustrator-pop"] = {
+    ...placement("placement-button-illustrator-pop", "button-illustrator", 10, 10),
+    surfaceId: "pop-illustrator"
+  };
+
   assert.equal(
     listThemePlacements(document, { kind: "program", programName: "Blender", panelName: null }).length,
-    3
+    7
   );
   assert.equal(
     listThemePlacements(document, { kind: "program", programName: "Blender", panelName: "Tools" }).length,
-    2
+    5
   );
   assert.equal(
     listThemePlacements(document, { kind: "program", programName: "Blender", panelName: "Other" }).length,
-    1
+    2
   );
+  const popoutsTarget = {
+    kind: "program",
+    programName: "Blender",
+    panelName: null,
+    area: "popouts"
+  };
+  assert.deepEqual(
+    listThemePlacements(document, popoutsTarget).map((entry) => entry.id).sort(),
+    ["placement-button-a-pop", "placement-button-other-tool-pop"]
+  );
+
+  const popoutsTheme = JSON.parse(JSON.stringify(captureThemeFile({
+    document,
+    target: popoutsTarget,
+    savedAt: SAVED_AT
+  })));
+  assert.equal(isFlowCellThemeFile(popoutsTheme), true);
+  assert.deepEqual(popoutsTheme.target, popoutsTarget);
+  assert.deepEqual(
+    popoutsTheme.buttons.map((entry) => entry.surfaceKind).sort(),
+    ["regular-popout", "tool-set-popout"]
+  );
+
+  const unknownArea = structuredClone(popoutsTheme);
+  unknownArea.target.area = "fans";
+  assert.equal(isFlowCellThemeFile(unknownArea), false);
+  const panelBoundPopouts = structuredClone(popoutsTheme);
+  panelBoundPopouts.target.panelName = "Tools";
+  assert.equal(isFlowCellThemeFile(panelBoundPopouts), false);
+  const nonPopoutAppearance = structuredClone(popoutsTheme);
+  nonPopoutAppearance.buttons[0].surfaceKind = "fan";
+  assert.equal(isFlowCellThemeFile(nonPopoutAppearance), false);
+});
+
+test("popped Button palette scan groups only explicit live targets without guessing tint skins", () => {
+  const document = programPopoutPaletteFixture();
+  const before = structuredClone(document);
+  const targets = liveProgramPopoutTargets();
+  const scan = scanProgramPopoutPaletteTargets(document, "Blender", targets);
+  assert.deepEqual(scan.placements.map(({ placementId }) => placementId), targets.map(({ paletteId }) => paletteId));
+  const byPlacement = Object.fromEntries(scan.placements.map((entry, index) => [targets[index].placementId, entry]));
+  assert.deepEqual(byPlacement["pop-a"], {
+    placementId: targets[0].paletteId,
+    color: "#102030",
+    materialColors: []
+  });
+  assert.deepEqual(byPlacement["pop-b"], {
+    placementId: targets[1].paletteId,
+    color: "#445566",
+    materialColors: []
+  });
+  assert.equal(byPlacement["pop-c"].color, null);
+  assert.deepEqual(byPlacement["pop-c"].materialColors.sort(), ["#369D8D", "#3DCD9E"]);
+  assert.equal(scan.buttonCount, 3);
+  assert.equal(scan.colorCount, 4);
+  assert.equal(scan.placements.some(({ placementId }) => placementId.includes("pop-closed")), false);
+  assert.deepEqual(document, before, "Rescan must be read-only");
+  assert.throws(
+    () => scanProgramPopoutPaletteTargets(document, "Illustrator", targets),
+    /stale.*Rescan/i
+  );
+
+  const unusedLegacy = structuredClone(document.skins["skin-tint-material"]);
+  unusedLegacy.base = ":root{--button-bg:#010203}.surface{background:#040506}";
+  const unresolved = readProgramPopoutSkinSurfaceColor(unusedLegacy);
+  assert.equal(unresolved.color, null, "an unused legacy declaration is not an editable Surface root");
+  assert.deepEqual(unresolved.materialColors.sort(), ["#010203", "#040506"]);
+});
+
+test("popped Button gradient targets the Fan-surface owner and members without recoloring its Main owner", () => {
+  const document = programPopoutPaletteFixture();
+  document.buttons["button-fan-owner"] = {
+    ...structuredClone(document.buttons["button-a"]),
+    id: "button-fan-owner",
+    label: "Tools",
+    role: "panel-owner",
+    sourceIdentity: null,
+    executionTarget: { kind: "core-action", actionId: "select-panel-folder" },
+    metadata: { programName: "Blender", panelName: "Tools" }
+  };
+  document.surfaces["fan-live"] = {
+    id: "fan-live",
+    name: "Blender / Tools Fan",
+    kind: "fan",
+    width: 120,
+    height: 100,
+    placementIds: ["fan-owner", "fan-child"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.placements["fan-owner"] = {
+    ...placement("fan-owner", "button-fan-owner", 10, 5),
+    surfaceId: "fan-live"
+  };
+  document.placements["fan-child"] = {
+    ...placement("fan-child", "button-a", 10, 65),
+    surfaceId: "fan-live"
+  };
+  document.surfaces["main-fan-owner"] = {
+    id: "main-fan-owner",
+    name: "FlowCell Main / Blender Panel Owners",
+    kind: "main",
+    width: 120,
+    height: 100,
+    placementIds: ["main-fan-owner-placement"],
+    visualOverflowAllowance: 0,
+    uniformButtonSize: null
+  };
+  document.placements["main-fan-owner-placement"] = {
+    ...placement("main-fan-owner-placement", "button-fan-owner", 10, 5),
+    surfaceId: "main-fan-owner"
+  };
+
+  const targets = ["fan-owner", "fan-child"].map((placementId) => ({
+    paletteId: JSON.stringify(["button-fan-tools", placementId]),
+    placementId
+  }));
+  assert.equal(scanProgramPopoutPaletteTargets(document, "Blender", targets).buttonCount, 2);
+  const assignments = gradientProgramPopoutPaletteAssignments(
+    programPopoutPaletteTargetPositions(document, "Blender", targets),
+    { colors: ["#000000", "#FFFFFF"], spread: 100, scatter: 0, seed: 11 }
+  );
+  assert.deepEqual(
+    assignments.map(({ color }) => color?.toUpperCase()),
+    ["#000000", "#FFFFFF"]
+  );
+
+  const applied = applyProgramPopoutPaletteTargets(document, "Blender", targets, assignments);
+  assert.equal(applied.changedCount, 2);
+  assert.equal(applied.document.themeOverrides["fan-owner"].colors.surface, "#000000");
+  assert.equal(applied.document.themeOverrides["fan-child"].colors.surface, "#FFFFFF");
+  assert.equal(
+    applied.document.themeOverrides["main-fan-owner-placement"],
+    undefined,
+    "the same owner Button's Main placement must remain outside the exact Fan scope"
+  );
+  assert.throws(
+    () => scanProgramPopoutPaletteTargets(document, "Blender", [
+      ...targets,
+      {
+        paletteId: JSON.stringify(["flowcell-main", "main-fan-owner-placement"]),
+        placementId: "main-fan-owner-placement"
+      }
+    ]),
+    /stale.*Rescan/i,
+    "a caller cannot smuggle the external Main owner into the Fan palette"
+  );
+});
+
+test("popped Button text toggle is exact-scope and preserves surfaces, skins, highlights, and geometry", () => {
+  const document = programPopoutPaletteFixture();
+  const targets = liveProgramPopoutTargets();
+  document.themeOverrides["pop-a"] = {
+    colors: { surface: "#112233", accent: "#445566" },
+    hoverEnabled: true,
+    activeEnabled: false,
+    hoverColor: "#778899",
+    activeColor: "#AABBCC"
+  };
+  document.themeOverrides["pop-b"] = {
+    colors: { surface: "#223344", ring: "#556677" },
+    hoverEnabled: null,
+    activeEnabled: true,
+    hoverColor: null,
+    activeColor: "#CCDDEE"
+  };
+  const sourceBefore = structuredClone(document);
+  const surfaceScanBefore = scanProgramPopoutPaletteTargets(document, "Blender", targets);
+  const structuralBefore = {
+    buttons: structuredClone(document.buttons),
+    placements: structuredClone(document.placements),
+    surfaces: structuredClone(document.surfaces),
+    popoutUnits: structuredClone(document.popoutUnits),
+    skins: structuredClone(document.skins)
+  };
+
+  assert.equal(
+    programPopoutPaletteTargetsHaveTextColor(document, "Blender", targets, "#000000"),
+    false
+  );
+  const black = applyProgramPopoutTextColorTargets(document, "Blender", targets, "#000000");
+  assert.equal(black.changedCount, 3);
+  assert.equal(programPopoutPaletteTargetsHaveTextColor(
+    black.document,
+    "Blender",
+    targets,
+    "#000000"
+  ), true);
+  for (const { placementId } of targets) {
+    assert.equal(black.document.themeOverrides[placementId].colors.text, "#000000");
+  }
+  assert.deepEqual(black.document.themeOverrides["pop-a"], {
+    ...document.themeOverrides["pop-a"],
+    colors: { ...document.themeOverrides["pop-a"].colors, text: "#000000" }
+  });
+  assert.deepEqual(black.document.themeOverrides["pop-b"], {
+    ...document.themeOverrides["pop-b"],
+    colors: { ...document.themeOverrides["pop-b"].colors, text: "#000000" }
+  });
+  assert.equal(black.document.themeOverrides["pop-closed"], undefined);
+  assert.deepEqual(
+    black.document.themeOverrides["placement-button-a"],
+    document.themeOverrides["placement-button-a"]
+  );
+  assert.deepEqual(
+    scanProgramPopoutPaletteTargets(black.document, "Blender", targets),
+    surfaceScanBefore,
+    "text toggling must not change the aggregate Surface palette"
+  );
+  for (const [key, value] of Object.entries(structuralBefore)) {
+    assert.deepEqual(black.document[key], value, `${key} must not be changed by the text toggle`);
+  }
+  assert.deepEqual(document, sourceBefore, "text toggling must not mutate its source document");
+
+  const alreadyBlack = applyProgramPopoutTextColorTargets(
+    black.document,
+    "Blender",
+    targets,
+    "#000000"
+  );
+  assert.equal(alreadyBlack.changedCount, 0);
+  const mixed = structuredClone(black.document);
+  mixed.themeOverrides["pop-c"].colors.text = "#FFFFFF";
+  assert.equal(
+    programPopoutPaletteTargetsHaveTextColor(mixed, "Blender", targets, "#000000"),
+    false,
+    "a mixed live scope must collapse to black on the next toggle"
+  );
+  const collapsed = applyProgramPopoutTextColorTargets(mixed, "Blender", targets, "#000000");
+  assert.equal(collapsed.changedCount, 1);
+  const white = applyProgramPopoutTextColorTargets(
+    collapsed.document,
+    "Blender",
+    targets,
+    "#FFFFFF"
+  );
+  assert.equal(white.changedCount, 3);
+  assert.equal(programPopoutPaletteTargetsHaveTextColor(
+    white.document,
+    "Blender",
+    targets,
+    "#FFFFFF"
+  ), true);
+  assert.throws(
+    () => applyProgramPopoutTextColorTargets(document, "Blender", targets, "#123456"),
+    /black or white/i
+  );
+});
+
+test("popped Button palette Apply is exact-scope and Refill keeps scatter placement-stable", () => {
+  const document = programPopoutPaletteFixture();
+  const targets = liveProgramPopoutTargets();
+  const structuralBefore = {
+    buttons: structuredClone(document.buttons),
+    placements: structuredClone(document.placements),
+    surfaces: structuredClone(document.surfaces),
+    popoutUnits: structuredClone(document.popoutUnits),
+    skins: structuredClone(document.skins)
+  };
+  const applied = applyProgramPopoutPaletteTargets(document, "Blender", targets, [
+    { placementId: targets[0].paletteId, color: "#112233" },
+    { placementId: targets[1].paletteId, color: "#778899" },
+    { placementId: targets[2].paletteId, color: null }
+  ]);
+  assert.equal(applied.changedCount, 2);
+  assert.equal(applied.document.themeOverrides["pop-a"].colors.surface, "#112233");
+  assert.equal(applied.document.themeOverrides["pop-b"].colors.surface, "#778899");
+  assert.equal(applied.document.themeOverrides["pop-c"], undefined);
+  assert.equal(applied.document.themeOverrides["pop-closed"], undefined);
+  assert.deepEqual(applied.document.themeOverrides["placement-button-a"], document.themeOverrides["placement-button-a"]);
+  for (const [key, value] of Object.entries(structuralBefore)) {
+    assert.deepEqual(applied.document[key], value, `${key} must not be changed by aggregate color Apply`);
+  }
+  assert.throws(
+    () => applyProgramPopoutPaletteTargets(document, "Blender", targets, [
+      { placementId: targets[0].paletteId, color: "#112233" },
+      { placementId: targets[1].paletteId, color: "#778899" }
+    ]),
+    /stale.*Rescan/i
+  );
+
+  const gradient = {
+    colors: ["#102030", "#708090", "#D0E0F0"],
+    spread: 100,
+    scatter: 80,
+    seed: 17
+  };
+  const refill = (source, sourceTargets, value) => applyProgramPopoutPaletteTargets(
+    source,
+    "Blender",
+    sourceTargets,
+    gradientProgramPopoutPaletteAssignments(
+      programPopoutPaletteTargetPositions(source, "Blender", sourceTargets),
+      value
+    )
+  );
+  const first = refill(document, targets, gradient);
+  const reordered = structuredClone(document);
+  reordered.surfaces["pop-regular"].placementIds.reverse();
+  reordered.popoutUnits.regular.memberPlacementIds.reverse();
+  const second = refill(reordered, [...targets].reverse(), gradient);
+  const colorsByPlacement = (result) => Object.fromEntries(
+    result.placements.map(({ placementId, color }) => [placementId, color])
+  );
+  assert.deepEqual(colorsByPlacement(second), colorsByPlacement(first));
+  assert.equal(Object.values(colorsByPlacement(first)).every(Boolean), true);
+  const reshuffled = refill(document, targets, { ...gradient, seed: 18 });
+  assert.notDeepEqual(colorsByPlacement(reshuffled), colorsByPlacement(first));
+  assert.deepEqual(document.buttons, structuralBefore.buttons);
+  assert.deepEqual(document.placements, structuralBefore.placements);
+  assert.deepEqual(document.skins, structuralBefore.skins);
+});
+
+test("popped Button gradients interpolate ordered image-color stops", () => {
+  const items = [0, 25, 50, 75, 100].map((y) => ({ paletteId: `stop-${y}`, y }));
+  const gradient = {
+    colors: ["#000000", "#FF0000", "#FFFFFF"],
+    spread: 100,
+    scatter: 0,
+    seed: 5
+  };
+  assert.deepEqual(
+    gradientProgramPopoutPaletteAssignments(items, gradient, { minimumY: 0, maximumY: 100 }),
+    [
+      { placementId: "stop-0", color: "#000000" },
+      { placementId: "stop-25", color: "#800000" },
+      { placementId: "stop-50", color: "#ff0000" },
+      { placementId: "stop-75", color: "#ff8080" },
+      { placementId: "stop-100", color: "#ffffff" }
+    ]
+  );
+  assert.deepEqual(
+    gradientProgramPopoutPaletteAssignments(
+      [{ paletteId: "centered", y: 0 }],
+      { ...gradient, spread: 0 },
+      { minimumY: 0, maximumY: 100 }
+    ),
+    [{ placementId: "centered", color: "#ff0000" }]
+  );
+  assert.deepEqual(
+    gradientProgramPopoutPaletteAssignments(
+      items,
+      { ...gradient, colors: ["#2468AC", "#2468AC"] },
+      { minimumY: 0, maximumY: 100 }
+    ).map(({ color }) => color),
+    Array(items.length).fill("#2468ac")
+  );
+
+  for (const colors of [
+    ["#000000"],
+    Array(17).fill("#000000"),
+    ["#000000", "not-a-color"]
+  ]) {
+    assert.throws(
+      () => gradientProgramPopoutPaletteAssignments(items, { ...gradient, colors }),
+      /2 to 16 valid colors/i
+    );
+  }
+  assert.throws(
+    () => gradientProgramPopoutPaletteAssignments(
+      [{ paletteId: "invalid", y: Number.NaN }],
+      gradient,
+      { minimumY: 0, maximumY: 100 }
+    ),
+    /gradient range is invalid/i
+  );
+  assert.throws(
+    () => gradientProgramPopoutPaletteAssignments(items, { ...gradient, scatter: 101 }),
+    /scatter settings are invalid/i
+  );
+});
+
+test("popped Button screen gradient positions include window, envelope, monitor, and scale offsets", () => {
+  const negativeMonitor = programPopoutPaletteScreenPositions({
+    items: [
+      { paletteId: "negative-a", y: 80 },
+      { paletteId: "negative-b", y: 180 }
+    ],
+    visibleBounds: { Top: -900, Height: 400 },
+    envelope: { y: 20, height: 200 },
+    monitorWorkArea: { Top: -1080, Height: 1080 }
+  });
+  assert.equal(negativeMonitor[0].y, 300 / 1080);
+  assert.equal(negativeMonitor[1].y, 500 / 1080);
+
+  const scaledWindows = [
+    programPopoutPaletteScreenPositions({
+      items: [{ paletteId: "scaled-2x", y: 50 }],
+      visibleBounds: { Top: 100, Height: 200 },
+      envelope: { y: 0, height: 100 },
+      monitorWorkArea: { Top: 0, Height: 1000 }
+    })[0],
+    programPopoutPaletteScreenPositions({
+      items: [{ paletteId: "scaled-1x", y: 50 }],
+      visibleBounds: { Top: 500, Height: 100 },
+      envelope: { y: 0, height: 100 },
+      monitorWorkArea: { Top: 0, Height: 1000 }
+    })[0]
+  ];
+  assert.deepEqual(scaledWindows, [
+    { paletteId: "scaled-2x", y: 0.2 },
+    { paletteId: "scaled-1x", y: 0.55 }
+  ]);
+});
+
+test("popped Button screen gradients use the explicit full-screen range", () => {
+  const assignments = gradientProgramPopoutPaletteAssignments(
+    [
+      { paletteId: "quarter", y: 0.25 },
+      { paletteId: "three-quarters", y: 0.75 }
+    ],
+    {
+      colors: ["#000000", "#FFFFFF"],
+      spread: 100,
+      scatter: 0,
+      seed: 1
+    },
+    { minimumY: 0, maximumY: 1 }
+  );
+  assert.deepEqual(assignments, [
+    { placementId: "quarter", color: "#404040" },
+    { placementId: "three-quarters", color: "#bfbfbf" }
+  ]);
+});
+
+test("popped Button screen gradient positions reject invalid geometry", () => {
+  const valid = {
+    items: [{ paletteId: "target", y: 50 }],
+    visibleBounds: { Top: 100, Height: 200 },
+    envelope: { y: 0, height: 100 },
+    monitorWorkArea: { Top: 0, Height: 1000 }
+  };
+  for (const invalid of [
+    { ...valid, visibleBounds: { ...valid.visibleBounds, Height: 0 } },
+    { ...valid, envelope: { ...valid.envelope, height: 0 } },
+    { ...valid, monitorWorkArea: { ...valid.monitorWorkArea, Height: 0 } },
+    { ...valid, visibleBounds: { ...valid.visibleBounds, Top: Number.NaN } },
+    { ...valid, items: [{ paletteId: "target", y: Number.POSITIVE_INFINITY }] }
+  ]) {
+    assert.throws(
+      () => programPopoutPaletteScreenPositions(invalid),
+      /screen gradient geometry is invalid/i
+    );
+  }
 });
 
 test("FlowCell page registry round-trips Main background and individual rail tokens", () => {
@@ -715,10 +1702,22 @@ test("FlowCell page registry round-trips Main background and individual rail tok
     }),
     false
   );
+  assert.equal(
+    themePageSupportsButtonSurface("main", {
+      id: "panel-tools",
+      kind: "panel"
+    }),
+    true
+  );
   const document = fixture();
   assert.equal(listThemePlacements(document, { kind: "flowcell", page: "main" }).length, 2);
   assert.equal(listThemePlacements(document, { kind: "flowcell", page: "macro-lab" }).length, 0);
   assert.equal(listThemePlacements(document, { kind: "flowcell", page: "binds" }).length, 0);
+  const mainFixture = mainProgramRailGroupFixture();
+  assert.equal(
+    listThemePlacements(mainFixture.document, { kind: "flowcell", page: "main" }).length,
+    4
+  );
 
   const page = defaultThemePageAppearance("main");
   page.tokens["background-color"] = "#123456";
@@ -760,55 +1759,76 @@ test("FlowCell page registry round-trips Main background and individual rail tok
   assert.equal(isFlowCellThemeFile(wrongPage), false);
 });
 
-test("Main Program Rail reflows themed siblings as one ordered centered group", () => {
-  const { document, ids, slots } = mainProgramRailGroupFixture();
+test("Main Theme application never changes Button geometry or sibling layout", () => {
+  const { document, ids } = mainProgramRailGroupFixture();
   const before = structuredClone(document);
   const theme = capturedMainProgramGroup(document, [ids.first, ids.second]);
   theme.buttons.find((button) => button.placementId === ids.first).height = 50;
   theme.buttons.find((button) => button.placementId === ids.second).height = 24;
+  theme.buttons.find((button) => button.placementId === ids.first).themeOverride.colors.surface = "#123456";
 
   const result = applyThemeFile(document, theme);
   assert.equal(result.appliedButtonCount, 2);
   assert.equal(result.issues.length, 0);
-  const first = result.document.placements[ids.first];
-  const second = result.document.placements[ids.second];
-  const third = result.document.placements[ids.third];
-  const footer = result.document.placements[ids.footer];
-  const templateGap = slots.second.y - slots.first.y - slots.first.height;
-  assert.equal(first.y < second.y && second.y < third.y, true);
-  assertNear(second.y - first.y - first.height, templateGap, "first-to-second template gap");
-  assertNear(third.y - second.y - second.height, templateGap, "second-to-third template gap");
-  const templateCenter = (
-    slots.first.y + slots.third.y + slots.third.height
-  ) / 2;
-  const packedCenter = (first.y + third.y + third.height) / 2;
-  assertNear(packedCenter, templateCenter, "Program list group center");
-  for (const id of [ids.first, ids.second, ids.third]) {
-    const oldPlacement = before.placements[id];
-    const nextPlacement = result.document.placements[id];
-    assert.notEqual(
-      nextPlacement.y + nextPlacement.height / 2,
-      oldPlacement.y + oldPlacement.height / 2
-    );
-  }
-  assert.deepEqual(
-    {
-      width: third.width,
-      height: third.height,
-      skinOverrideId: third.skinOverrideId
-    },
-    {
-      width: before.placements[ids.third].width,
-      height: before.placements[ids.third].height,
-      skinOverrideId: before.placements[ids.third].skinOverrideId
-    }
-  );
-  assert.notEqual(third.y, before.placements[ids.third].y);
-  assert.deepEqual(footer, before.placements[ids.footer]);
+  assert.deepEqual(result.document.placements, before.placements);
+  assert.equal(result.document.themeOverrides[ids.first].colors.surface, "#123456");
   assert.deepEqual(document, before);
 });
 
-test("Main Program Rail oversize and obstacle failures leave the whole surface unchanged", () => {
+test("saved-skin assignment resolves one occurrence or the complete Main scope", () => {
+  const { document, ids } = mainProgramRailGroupFixture();
+  const target = { kind: "flowcell", page: "main" };
+  const scopedPlacements = listThemePlacements(document, target);
+  assert.equal(scopedPlacements.length, 4);
+  assert.notEqual(
+    document.placements[ids.first].skinOverrideId,
+    document.placements[ids.third].skinOverrideId,
+    "the scope fixture must contain Buttons with different current skin assignments"
+  );
+  assert.deepEqual(
+    resolveThemeSkinAssignmentPlacementIds(scopedPlacements, ids.first, false),
+    [ids.first]
+  );
+  assert.deepEqual(
+    resolveThemeSkinAssignmentPlacementIds(scopedPlacements, ids.first, true),
+    scopedPlacements.map((placement) => placement.id)
+  );
+  assert.deepEqual(
+    resolveThemeSkinAssignmentPlacementIds(scopedPlacements, "placement-outside-scope", true),
+    []
+  );
+});
+
+test("legacy per-placement Theme clones retain one current-skin display identity", () => {
+  const document = fixture();
+  const source = document.skins["skin-semantic"];
+  const first = document.placements["placement-button-a"];
+  const second = document.placements["placement-button-b"];
+  document.skins["flowcell-theme-skin-old-a"] = {
+    ...structuredClone(source),
+    id: "flowcell-theme-skin-old-a",
+    name: "Semantic Test Skin - button-a - button-a"
+  };
+  document.skins["flowcell-theme-skin-old-b"] = {
+    ...structuredClone(source),
+    id: "flowcell-theme-skin-old-b",
+    name: "Semantic Test Skin - button-b"
+  };
+  first.skinOverrideId = "flowcell-theme-skin-old-a";
+  second.skinOverrideId = "flowcell-theme-skin-old-b";
+
+  const firstIdentity = themeSkinAssignmentIdentity(document, first);
+  const secondIdentity = themeSkinAssignmentIdentity(document, second);
+  assert.equal(firstIdentity.label, "Semantic Test Skin");
+  assert.equal(firstIdentity.key, secondIdentity.key);
+  assert.equal(firstIdentity.key, "skin:skin-semantic");
+
+  first.skinOverrideId = "skin-semantic";
+  assert.equal(themeSkinAssignmentIdentity(document, first).key, "skin:skin-semantic");
+  assert.equal(themeSkinAssignmentIdentity(document, first).key, secondIdentity.key);
+});
+
+test("obsolete Theme size values are ignored for Main Buttons with or without obstacles", () => {
   const oversizeFixture = mainProgramRailGroupFixture();
   const oversizeBefore = structuredClone(oversizeFixture.document);
   const oversizeTheme = capturedMainProgramGroup(
@@ -819,9 +1839,10 @@ test("Main Program Rail oversize and obstacle failures leave the whole surface u
     button.width = 400;
   });
   const oversizeResult = applyThemeFile(oversizeFixture.document, oversizeTheme);
-  assert.equal(oversizeResult.appliedButtonCount, 0);
-  assert.equal(oversizeResult.skippedButtonCount, 2);
-  assert.equal(oversizeResult.issues.length, 1);
+  assert.equal(oversizeResult.appliedButtonCount, 2);
+  assert.equal(oversizeResult.skippedButtonCount, 0);
+  assert.equal(oversizeResult.issues.length, 0);
+  assert.deepEqual(oversizeResult.document.placements, oversizeBefore.placements);
   assert.deepEqual(oversizeResult.document, oversizeBefore);
   assert.deepEqual(oversizeFixture.document, oversizeBefore);
 
@@ -834,14 +1855,15 @@ test("Main Program Rail oversize and obstacle failures leave the whole surface u
   obstacleTheme.buttons.find((button) => button.placementId === obstacleFixture.ids.first).height = 50;
   obstacleTheme.buttons.find((button) => button.placementId === obstacleFixture.ids.second).height = 24;
   const obstacleResult = applyThemeFile(obstacleFixture.document, obstacleTheme);
-  assert.equal(obstacleResult.appliedButtonCount, 0);
-  assert.equal(obstacleResult.skippedButtonCount, 2);
-  assert.equal(obstacleResult.issues.length, 1);
+  assert.equal(obstacleResult.appliedButtonCount, 2);
+  assert.equal(obstacleResult.skippedButtonCount, 0);
+  assert.equal(obstacleResult.issues.length, 0);
+  assert.deepEqual(obstacleResult.document.placements, obstacleBefore.placements);
   assert.deepEqual(obstacleResult.document, obstacleBefore);
   assert.deepEqual(obstacleFixture.document, obstacleBefore);
 });
 
-test("unregistered Main controls remain fixed when themed and reject sizing atomically", () => {
+test("unregistered Main controls remain fixed and ignore Theme layout fields", () => {
   const appearanceFixture = mainProgramRailGroupFixture({ withObstacle: true });
   const appearanceBefore = structuredClone(appearanceFixture.document);
   const appearanceTheme = capturedMainProgramGroup(
@@ -871,7 +1893,7 @@ test("unregistered Main controls remain fixed when themed and reject sizing atom
   );
   assert.equal(
     applied.document.placements[appearanceFixture.ids.obstacle].textAlignment,
-    "right"
+    appearanceBefore.placements[appearanceFixture.ids.obstacle].textAlignment
   );
   assert.deepEqual(appearanceFixture.document, appearanceBefore);
 
@@ -883,11 +1905,13 @@ test("unregistered Main controls remain fixed when themed and reject sizing atom
   );
   resizeTheme.buttons[0].width += 1;
   const rejected = applyThemeFile(resizeFixture.document, resizeTheme);
-  assert.equal(rejected.appliedButtonCount, 0);
-  assert.equal(rejected.skippedButtonCount, 1);
-  assert.deepEqual(rejected.matchedPlacementIds, {});
-  assert.equal(rejected.issues.length, 1);
-  assert.deepEqual(rejected.document, resizeBefore);
+  assert.equal(rejected.appliedButtonCount, 1);
+  assert.equal(rejected.skippedButtonCount, 0);
+  assert.deepEqual(rejected.matchedPlacementIds, {
+    [resizeFixture.ids.obstacle]: resizeFixture.ids.obstacle
+  });
+  assert.equal(rejected.issues.length, 0);
+  assert.deepEqual(rejected.document.placements, resizeBefore.placements);
   assert.deepEqual(resizeFixture.document, resizeBefore);
 });
 
@@ -943,12 +1967,42 @@ test("gradient scatter is stable until Reshuffle changes the seed", () => {
   );
 });
 
-test("gradient baking uses Main positions after size-driven group reflow", () => {
-  const { document, ids } = mainProgramRailGroupFixture();
-  Object.values(document.skins).forEach((skin) => {
-    skin.base = `${skin.base};--flowcell-button-color-surface:#102030`;
-    skin.compileCache = null;
+test("full-scope capture and gradient baking preserve the exact placement set", () => {
+  const { document } = mainProgramRailGroupFixture();
+  const target = { kind: "flowcell", page: "main" };
+  const scopedIds = listThemePlacements(document, target)
+    .map((placement) => placement.id)
+    .sort();
+  const theme = captureThemeFile({
+    document,
+    target,
+    page: defaultThemePageAppearance("main"),
+    gradient: {
+      role: "surface",
+      topColor: "#102030",
+      bottomColor: "#A0B0C0",
+      spread: 100,
+      scatter: 0,
+      seed: 17
+    },
+    savedAt: SAVED_AT
   });
+  const capturedIds = theme.buttons.map((appearance) => appearance.placementId).sort();
+  assert.deepEqual(capturedIds, scopedIds);
+
+  const baked = bakeThemeGradientForDeployedLayout(document, theme);
+  assert.equal(baked.layout.issues.length, 0);
+  assert.equal(baked.layout.appliedButtonCount, scopedIds.length);
+  assert.deepEqual(Object.keys(baked.colorsBySavedPlacementId).sort(), scopedIds);
+  assert.deepEqual(
+    baked.theme.buttons.map((appearance) => appearance.placementId).sort(),
+    scopedIds
+  );
+});
+
+test("gradient baking uses current deployed positions without changing Main layout", () => {
+  const { document, ids } = mainProgramRailGroupFixture();
+  const beforeSkins = structuredClone(document.skins);
   const theme = capturedMainProgramGroup(document, [ids.first, ids.second, ids.third]);
   const gradient = {
     role: "surface",
@@ -976,6 +2030,9 @@ test("gradient baking uses Main positions after size-driven group reflow", () =>
   const baked = bakeThemeGradientForDeployedLayout(document, theme);
   assert.equal(baked.layout.issues.length, 0);
   assert.equal(baked.layout.appliedButtonCount, 3);
+  assert.deepEqual(Object.keys(baked.colorsBySavedPlacementId).sort(), [ids.first, ids.second, ids.third].sort());
+  assert.deepEqual(document.skins, beforeSkins);
+  assert.deepEqual(baked.layout.document.skins, beforeSkins);
   const deployedCenters = Object.fromEntries(theme.buttons.map((appearance) => {
     const matchedId = baked.layout.matchedPlacementIds[appearance.placementId];
     const deployed = baked.layout.document.placements[matchedId];
@@ -1003,11 +2060,7 @@ test("gradient baking uses Main positions after size-driven group reflow", () =>
     const bakedAppearance = baked.theme.buttons.find(
       (candidate) => candidate.placementId === appearance.placementId
     );
-    assert.equal(
-      extractSkinColorRoots(bakedAppearance.skin)
-        .find((root) => root.role === gradient.role)?.value.toLowerCase(),
-      expected.toLowerCase()
-    );
+    assert.equal(bakedAppearance.themeOverride.colors[gradient.role].toLowerCase(), expected.toLowerCase());
   }
   const staleMiddle = gradientColorForPlacement({
     placementId: ids.second,
@@ -1016,8 +2069,8 @@ test("gradient baking uses Main positions after size-driven group reflow", () =>
     maximumY: staleMaximum,
     gradient
   });
-  assert.notEqual(deployedCenters[ids.second], staleCenters[ids.second]);
-  assert.notEqual(baked.colorsBySavedPlacementId[ids.second], staleMiddle);
+  assert.equal(deployedCenters[ids.second], staleCenters[ids.second]);
+  assert.equal(baked.colorsBySavedPlacementId[ids.second], staleMiddle);
 });
 
 test("unchanged Button Section themes preserve every placement geometry", () => {
@@ -1043,7 +2096,7 @@ test("unchanged Button Section themes preserve every placement geometry", () => 
   );
 });
 
-test("Button Section sizing uses top-left alignment and keeps the visual anchor fixed", () => {
+test("Button Section Theme values never resize or realign placements", () => {
   const document = fixture();
   const before = structuredClone(document);
   const theme = captured(document);
@@ -1060,18 +2113,13 @@ test("Button Section sizing uses top-left alignment and keeps the visual anchor 
     },
     { x: 10, y: 10 }
   );
-  assert.equal(applied.document.placements["placement-button-b"].x, 40);
+  assert.equal(applied.document.placements["placement-button-b"].x, 50);
   assert.equal(applied.document.placements["placement-button-b"].y, 10);
-  assert.equal(
-    applied.document.placements["placement-button-a"].x +
-      applied.document.placements["placement-button-a"].width <=
-      applied.document.placements["placement-button-b"].x,
-    true
-  );
+  assert.deepEqual(applied.document.placements, before.placements);
   assert.deepEqual(document, before);
 });
 
-test("oversize Button Section application aborts the whole surface atomically", () => {
+test("oversize Button Section values are ignored instead of touching layout", () => {
   const document = fixture();
   const oversize = captured(document);
   oversize.buttons.forEach((appearance) => {
@@ -1079,9 +2127,12 @@ test("oversize Button Section application aborts the whole surface atomically", 
     appearance.height = 20;
   });
   const failed = applyThemeFile(document, oversize);
-  assert.equal(failed.appliedButtonCount, 0);
-  assert.equal(failed.skippedButtonCount, 2);
-  assert.deepEqual(Object.keys(failed.matchedPlacementIds), []);
-  assert.equal(failed.issues.length, 1);
+  assert.equal(failed.appliedButtonCount, 2);
+  assert.equal(failed.skippedButtonCount, 0);
+  assert.deepEqual(Object.keys(failed.matchedPlacementIds).sort(), [
+    "placement-button-a",
+    "placement-button-b"
+  ]);
+  assert.equal(failed.issues.length, 0);
   assert.deepEqual(failed.document, document);
 });

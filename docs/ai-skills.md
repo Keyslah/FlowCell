@@ -38,7 +38,7 @@ Use this document as the repository-local routing guide for FlowCell work. Inspe
 - The polished Button Editor has exactly three panes: left navigation and placement controls, center Button workspace, and right Skin Editor. It exposes no source/action library pane.
 - Program, Panel, Button, and Placement navigation exposes existing `Main Page` placements and at most one semantic `Pop-out` choice for the selected Button while retaining exact concrete surface identity. A source-backed single-script Button with no Pop placement still offers `Pop-out`; selecting it creates the regular starter Pop as an undoable draft, while merely viewing the selector does not mutate state. Repeated concrete Pop-out occurrences collapse to one option, preferring the surface already being edited. Tool Set children are omitted from the Button selector and only their owner is listed. Every canonical regular or Tool Set Pop-out uses the same `Fan` checkbox: Pop mode hides the retained owner and shows the content; Fan mode creates or reveals that exact owner with the content, focuses it for Button Label and Button Tooltip editing, and selects the existing hover-open/click-pin behavior. The Editor never creates or changes legacy Fan membership. Main's selected/generic Fan commands and the complete saved legacy Fan runtime remain supported, but legacy standalone Fan surfaces are omitted from Placement navigation.
 - A legacy Fan owner placement and a Pop-out Fan owner placement are exempt from the exact surface-bounds, nonnegative-origin, and overlap rules, in both `validateButtonStateDocument` and the settings-file validator. Each anchors the expanded surface rather than sitting inside its content, so Editor dragging skips `keepInsideSurface` and collision resolution, the working area pads by the escaped distance, and runtime unions the surface box with every placement to build its expanded frame. The owner may move anywhere in any direction, outside or across the child layout, and its relative position determines the expansion direction. Every other placement keeps all three rules.
-- The Placement selector retains exact concrete surface identities but renders only the semantic labels `Main Page` and `Pop-out`. A Tool Set owner's sole Pop-out choice uses its exact package-owned surface, remains classified as Pop-out, and uses `Save Pop-out Settings`; the same Fan checkbox is available for regular and Tool Set Pop-outs. `Save {type} Settings` opens `flowcellbackend/local/Button editor/<Program>/<Panel>/<Main|Pop>` for the selected scope; the legacy standalone Fan path uses `Fan`. Program and Panel names are validated as safe folder components. A one-time local migration moves validated flat saves into this hierarchy, while remembered legacy Pop paths resolve to the migrated file without changing choice identity. Save writes a named `.flowcell-button-settings.json` v1 containing the surface's exact ordered Button membership, complete placement presentation, effective literal skins, shared labels and activation behavior/animations, and applicable Pop/Fan container behavior. It excludes execution targets, action/source packages, live activation state, and managed desktop window layout. The same action performs a revision-safe scoped canonical commit and is not Save Layout. Every scoped skin, assignment, Button Text, animation, and settings-default write freezes its requested draft/scope and rebuilds it against freshly loaded canonical state for up to three exact revision-conflict retries.
+- The Placement selector retains exact concrete surface identities but renders only the semantic labels `Main Page` and `Pop-out`. A Tool Set owner's sole Pop-out choice uses its exact package-owned surface, remains classified as Pop-out, and uses `Save Pop-out Settings`; the same Fan checkbox is available for regular and Tool Set Pop-outs. `Save {type} Settings` opens `flowcellbackend/local/Button editor/<Program>/<Panel>/<Main|Pop>` for the selected scope; the legacy standalone Fan path uses `Fan`. Program and Panel names are validated as safe folder components. A one-time local migration moves validated flat saves into this hierarchy, while remembered legacy Pop paths resolve to the migrated file without changing choice identity. Save preserves the exact ordinary `.json` filename chosen by the user and writes strict `flowcell-button-settings/v1` content containing the surface's exact ordered Button membership, complete placement presentation, effective literal skins, shared labels and activation behavior/animations, and applicable Pop/Fan container behavior. Save and Load display only the filename rather than its absolute path. It excludes execution targets, action/source packages, live activation state, and managed desktop window layout. The same action performs a revision-safe scoped canonical commit and is not Save Layout. Every scoped skin, assignment, Button Text, animation, and settings-default write freezes its requested draft/scope and rebuilds it against freshly loaded canonical state for up to three exact revision-conflict retries.
 - `Load {type} Settings` is directly below Save and starts in the same selected Program/Panel `Main`, `Pop`, or legacy `Fan` folder. It requires the same settings category and concrete surface subtype, cross-surface reuse must also match Program and Panel, and it fails atomically unless every saved Button still exists in canonical state; a file tied to the same stable surface ID survives Program/Panel renames. It replaces only the selected surface's membership and saved presentation as one undoable draft while retaining action/source identity; tool-set settings may reorder and restyle only the exact current package-owned children. `Save {type} Settings` is still required to commit that draft. `Load {type} Default` and `Update {type} Default` follow Load. The lazily initialized internal default remains scoped to the concrete surface in the legacy flat internal type folder and captures its current committed state the first time; Update replaces that snapshot from the current draft after a revision check.
 - Main places `Open Pop` immediately left of `Pop`. Open Pop starts in the selected `<Program>/<Panel>/Pop` folder, selects one Pop-out settings file, and opens its installed regular or Tool Set Buttons through a temporary draft-session document and unique transient Pop unit. It never applies the file to an Editor/canonical surface or saves or publishes Button state; its managed window remains eligible for Save Layout using the selected file identity and bounds. Only `{ path, choiceId }` is remembered locally under the stable panel-owner Button ID. `Pop` reloads that panel's last-used file independently of Main selection; without a remembered choice it creates or reuses a canonical starter Pop containing the panel's installed single-script Buttons and opens it.
 - `Animation` opens a dedicated page with its own top-right X. Preserve its complete contract: `No animation` plus every registered preset, Apply-to-clear or Apply-to-assign, position-and-size setup, saved physical bounds, explicit setup close, and runtime playback through the retained Edit/Run workspace switch. Animation Apply and bounds saves remain independently scoped; a full Button Settings file also carries the current assignment.
@@ -308,14 +308,56 @@ opaque color so transparent clipping techniques cannot make the selector ineffec
 The `Highlight on hover` checkbox follows those rows and writes the explicit Base
 declaration `--flowcell-button-highlight-on-hover: 1|0`. It is part of the working
 skin and therefore travels through Assign Skin, Assign Skin to Selection, Assign Skin to Panel, Save skin,
-and Save as new skin. The host interprets it as the 15% hover brightness lift without
-changing `[data-core]` measurement or hit testing. Older placement values are only
-a fallback for skins that do not declare the setting. The sibling `Highlight when
+and Save as new skin. The host interprets it as the host-owned brightness-and-glow
+highlight without changing `[data-core]` measurement or hit testing. Older placement
+values are only a fallback for skins that do not declare the setting. An explicit
+Universal Theme Editor enablement override takes precedence. The sibling `Highlight when
 active` checkbox writes `--flowcell-button-highlight-on-active: 1|0` the same way
-and applies a 30% lift to the latched selected state — a Tool Set child matching
+and applies the stronger active form to the latched selected state — a Tool Set child matching
 its authored field choice, or a selected Main Page Button — rather than to hover.
 It has no placement fallback, hover stacks on top of it, and edit-mode selection
-never triggers it.
+never triggers it. Theme overrides may add independent hover and active highlight
+colors as host drop-shadows without changing skin source.
+
+Universal Theme Editor changes are placement-owned bulk appearance overrides. FlowCell
+Main scope is its fixed rails/owners plus every program-panel Button surface rendered
+in Main, excluding Pop/Fan surfaces. Program scope is every occurrence in All Panels
+and Pop-outs or one selected panel, including Main panel owners, regular Pop-outs,
+Fans, and Tool Set Pop-outs. A program's Pop-outs Only area spans every panel in that
+program and includes regular and Tool Set Pop-outs only; it excludes Main panel owners,
+panel surfaces, legacy standalone Fans, and other programs. Semantic color operations
+use the fixed universal Surface and Text channels and must cover every matched
+occurrence in the complete scope. Profiled and recognized
+legacy variables take the exact host override; an unprofiled Surface uses a transient
+render-only paint map that preserves geometry, relative shading, source alpha, shadows,
+and animation, while unprofiled Text colors only the injected label. Selected alpha
+multiplies fallback paint opacity, and no fallback changes saved skin source or assignment.
+Surface is the initial channel. Separate Highlight and Glow sections expose four
+percentage sliders: brightness `On hover`, brightness `When active`, glow `On hover`,
+and glow `When active`. Each shows its current number, immediately previews across every
+Button in the exact scope, and defaults to 75%. Highlight spans 0-1000%, with 100% as the
+full-strength reference and 1000% applying ten times that lift; Glow remains 0-100%.
+These host-owned controls change neither
+hover/active enablement nor highlight color and leave saved skin source untouched. Their
+optional placement values persist through Apply, Save Theme, and Open Theme; older state
+and theme files use the 75% defaults, and the original combined amount remains a
+compatibility fallback. The Theme Editor exposes no Hover/Active enablement or
+highlight-color controls; existing theme files containing those fields remain readable
+and applicable for compatibility. Saved-skin selection
+enumerates saved `.flowcell-button-skin.txt` files only. The assignment checkbox means:
+reassign every Button in the exact current scope to the selected saved skin, regardless
+of its current skin; unchecked means reassign only the selected occurrence. FlowCell
+Main covers every Main-page Button, while program All Panels or panel selection covers
+every Button in that program scope. Pop-outs Only covers every regular and Tool Set
+Pop-out in the selected program across all its panels. It never edits the saved skin
+source, actions, text, geometry, activation behavior, out-of-scope Buttons, or
+managed-window layout.
+Assignment first clears stale placement-owned Surface, Text, hover-color, and
+active-color overrides so the saved skin renders with its authored colors. Existing
+Highlight/Glow amounts and hover/active On/Off truth are preserved.
+Version 2 `.flowtheme.json` stores the explicit placement overrides, independent
+default-highlight reset intent, and requested skin assignments, and version 1 themes
+normalize during load.
 
 The source of truth for section names, order, and serialization is [buttonSkinFormat.ts](../FlowCellFrontend/src/button/skins/buttonSkinFormat.ts); actual header parsing and partial-update behavior are owned by [skinPasteParser.ts](../FlowCellFrontend/src/button/skins/skinPasteParser.ts). Produce canonical lowercase headers only:
 
