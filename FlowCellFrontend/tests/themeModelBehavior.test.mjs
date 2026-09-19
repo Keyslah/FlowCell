@@ -185,7 +185,6 @@ function fixture() {
     id: "skin-semantic",
     name: "Semantic Test Skin",
     base: [
-      bundled.base,
       "--flowcell-button-color-surface:#102030",
       "--flowcell-button-color-accent:#405060",
       "--flowcell-button-color-ring:#708090",

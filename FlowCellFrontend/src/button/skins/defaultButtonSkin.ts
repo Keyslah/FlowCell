@@ -1,31 +1,23 @@
-import {
-  BUTTON_SKIN_COMPILER_VERSION,
-  type ButtonSkin
-} from "../types.js";
+import type { ButtonSkin } from "../types.js";
 
 export const DEFAULT_BUTTON_SKIN_ID = "skin-default-neutral";
 
+// Literal source from DefaultGray button.flowcell-button-skin.txt.
 export const DEFAULT_BUTTON_SKIN: ButtonSkin = {
-  id: DEFAULT_BUTTON_SKIN_ID,
-  name: "Default Neutral",
-  structure: `<div data-core style="display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;padding:10px 18px;border-radius:10px;white-space:nowrap;text-align:center;background:var(--button-bg,#292d34);border:1px solid var(--button-edge,#555c67);color:var(--button-ink,#f1f3f5);font:600 13px 'Segoe UI',system-ui,sans-serif;transition:background 140ms ease,border-color 140ms ease,transform 100ms ease;transform:scale(var(--button-scale,1));">{{label}}</div>`,
-  keyframes: "",
-  base: [
-    "--button-bg:#292d34",
-    "--button-edge:#555c67",
-    "--button-ink:#f1f3f5",
-    "--button-scale:1"
-  ].join(";"),
-  hover: "--button-bg:#353b45;--button-edge:#707987",
-  play: "",
-  pressed: "--button-bg:#22262c;--button-scale:0.97",
-  held: "--button-edge:#8b96a8",
-  release: "--button-scale:1",
-  disabled: "--button-bg:#24272c;--button-edge:#3a3f47;--button-ink:#777f8a",
-  error: "--button-edge:#d26161",
-  metadata: { bundled: true },
-  compileCache: {
-    compilerVersion: BUTTON_SKIN_COMPILER_VERSION,
-    sourceFingerprint: "bundled-default-neutral-v1"
-  }
+  "id": "skin-default-neutral",
+  "name": "Default Gray",
+  "structure": "<div data-core style=\"display:inline-flex;position:relative;box-sizing:content-box;font-family:'Inter 18pt','Inter','Segoe UI',sans-serif;font-size:16px;line-height:20px;border-radius:100em;background-color:rgba(0,0,0,0.75);box-shadow:-0.15em -0.15em 0.15em -0.075em rgba(5,5,5,0.25),0.0375em 0.0375em 0.0675em 0 rgba(5,5,5,0.1);cursor:pointer;-webkit-tap-highlight-color:rgba(0,0,0,0);\">\r\n  <div style=\"position:absolute;z-index:0;box-sizing:content-box;width:calc(100% + 0.3em);height:calc(100% + 0.3em);top:-0.15em;left:-0.15em;border-radius:inherit;background:linear-gradient(-135deg,rgba(5,5,5,0.5),transparent 20%,transparent 100%);filter:blur(0.0125em);opacity:0.25;mix-blend-mode:multiply;pointer-events:none;\"></div>\r\n  <div style=\"display:flex;flex:1 1 auto;min-width:0;min-height:0;position:relative;z-index:1;box-sizing:border-box;border-radius:inherit;transition:box-shadow 300ms ease;will-change:box-shadow;box-shadow:var(--fc-skeuo-outer-shadow,0 0.05em 0.05em -0.01em rgba(5,5,5,1),0 0.01em 0.01em -0.01em rgba(5,5,5,0.5),0.15em 0.3em 0.1em -0.01em rgba(5,5,5,0.25));pointer-events:none;\">\r\n    <div style=\"--inset:0.035em;display:flex;flex:1 1 auto;min-width:0;min-height:0;align-items:center;justify-content:center;position:relative;z-index:1;box-sizing:border-box;border-radius:inherit;padding:1em 1.5em;background-image:linear-gradient(135deg,var(--flowcell-button-shade-surface-face-light,rgba(230,230,230,1)),var(--flowcell-button-shade-surface-face-dark,rgba(180,180,180,1)));transition:box-shadow 300ms ease,clip-path 250ms ease,background-image 250ms ease,transform 250ms ease;will-change:box-shadow,clip-path,background-image,transform;overflow:clip;clip-path:var(--fc-skeuo-inner-clip,inset(0 0 0 0 round 100em));box-shadow:var(--fc-skeuo-inner-shadow,0 0 0 0 inset rgba(5,5,5,0.1),-0.05em -0.05em 0.05em 0 inset rgba(5,5,5,0.25),0 0 0 0 inset rgba(5,5,5,0.1),0 0 0 0 inset rgba(255,255,255,0),0 0 0 0 inset rgba(255,255,255,0),0 0 0 0 inset rgba(255,255,255,0),-0.075em -0.25em 0.25em 0.1em inset rgba(5,5,5,0.25));transform:var(--fc-skeuo-inner-transform,scale(1));pointer-events:none;\">\r\n      <span style=\"position:relative;z-index:4;box-sizing:border-box;font-family:'Inter',sans-serif;font-size:16px;line-height:20px;letter-spacing:-0.05em;font-weight:500;color:rgba(0,0,0,0);background-image:linear-gradient(135deg,var(--flowcell-button-shade-text-dark,rgba(25,25,25,1)),var(--flowcell-button-shade-text-light,rgba(75,75,75,1)));-webkit-background-clip:text;background-clip:text;transition:transform 250ms ease;display:block;will-change:transform;text-shadow:rgba(0,0,0,0.1) 0 0 0.1em;-webkit-user-select:none;-moz-user-select:none;-ms-user-select:none;user-select:none;transform:var(--fc-skeuo-label-transform,scale(1));pointer-events:none;\">{{label}}</span>\r\n    </div>\r\n  </div>\r\n</div>",
+  "keyframes": "",
+  "base": "--flowcell-button-highlight-on-hover:0;--flowcell-button-highlight-on-active:1;--flowcell-button-color-surface:#E6E6E6;\r\n--flowcell-button-shade-surface-face-light:var(--flowcell-button-color-surface,#E6E6E6);\r\n--flowcell-button-shade-surface-face-dark:color-mix(in oklch,var(--flowcell-button-color-surface,#E6E6E6) 83.2412698031%,black);\r\n--flowcell-button-color-text:#191919;\r\n--flowcell-button-shade-text-dark:var(--flowcell-button-color-text,#191919);\r\n--flowcell-button-shade-text-light:color-mix(in oklch,var(--flowcell-button-color-text,#191919) 74.6482056525%,white);\r\n--fc-skeuo-outer-shadow: 0 0.05em 0.05em -0.01em rgba(5,5,5,1), 0 0.01em 0.01em -0.01em rgba(5,5,5,0.5), 0.15em 0.3em 0.1em -0.01em rgba(5,5,5,0.25);\r\n--fc-skeuo-inner-clip: inset(0 0 0 0 round 100em);\r\n--fc-skeuo-inner-shadow: 0 0 0 0 inset rgba(5,5,5,0.1), -0.05em -0.05em 0.05em 0 inset rgba(5,5,5,0.25), 0 0 0 0 inset rgba(5,5,5,0.1), 0 0 0 0 inset rgba(255,255,255,0), 0 0 0 0 inset rgba(255,255,255,0), 0 0 0 0 inset rgba(255,255,255,0), -0.075em -0.25em 0.25em 0.1em inset rgba(5,5,5,0.25);\r\n--fc-skeuo-inner-transform: scale(1);\r\n--fc-skeuo-label-transform: scale(1);",
+  "hover": "--fc-skeuo-outer-shadow: 0 0 0 0 rgba(5,5,5,1), 0 0 0 0 rgba(5,5,5,0.5), 0 0 0 0 rgba(5,5,5,0.25);\r\n--fc-skeuo-inner-clip: inset(clamp(1px,0.0625em,2px) clamp(1px,0.0625em,2px) clamp(1px,0.0625em,2px) clamp(1px,0.0625em,2px) round 100em);\r\n--fc-skeuo-inner-shadow: 0.1em 0.15em 0.05em 0 inset rgba(5,5,5,0.75), -0.025em -0.03em 0.05em 0.025em inset rgba(5,5,5,0.5), 0.25em 0.25em 0.2em 0 inset rgba(5,5,5,0.5), 0 0 0 0 inset rgba(255,255,255,0), 0 0 0 0 inset rgba(255,255,255,0), 0 0 0 0 inset rgba(255,255,255,0), -0.075em -0.12em 0.2em 0.1em inset rgba(5,5,5,0.25);\r\n--fc-skeuo-label-transform: scale(0.975);",
+  "play": "",
+  "pressed": "--fc-skeuo-inner-transform: scale(0.975);",
+  "held": "--fc-skeuo-inner-transform: scale(0.975);",
+  "release": "",
+  "disabled": "",
+  "error": "",
+  "metadata": {
+    "bundled": true
+  },
+  "compileCache": null
 };
