@@ -38,9 +38,14 @@
         return programRoot;
     }
 
+    function findLocalRoot() {
+        var root = findRepoRoot();
+        return new Folder(root.fsName + "/flowcellbackend").exists ? new Folder(root.fsName + "/flowcellbackend/local") : root;
+    }
+
     function getLocalPath(fileName) {
         var repoRoot = findRepoRoot();
-        var localFolder = new Folder(repoRoot.fsName + "/flowcellbackend/local");
+        var localFolder = findLocalRoot();
         if (!localFolder.exists) {
             localFolder.create();
         }
@@ -50,7 +55,7 @@
     function writeLog(message) {
         try {
             var repoRoot = findRepoRoot();
-            var logFolder = new Folder(repoRoot.fsName + "/flowcellbackend/local/logs");
+            var logFolder = new Folder(findLocalRoot().fsName + "/logs");
             if (!logFolder.exists) {
                 logFolder.create();
             }
@@ -71,7 +76,7 @@
     function status(message) {
         writeLog(message);
         try {
-            var statusFile = new File(findRepoRoot().fsName + "/flowcellbackend/local/logs/illustrator-rotate-status.txt");
+            var statusFile = new File(findLocalRoot().fsName + "/logs/illustrator-rotate-status.txt");
             statusFile.encoding = "UTF-8";
             if (statusFile.open("w")) {
                 statusFile.writeln(message);

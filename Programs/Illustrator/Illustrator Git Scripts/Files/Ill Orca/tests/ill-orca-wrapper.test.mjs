@@ -13,12 +13,6 @@ const illustratorRoot = path.resolve(packageRoot, "../../..");
 const programManifest = JSON.parse(
   readFileSync(path.join(illustratorRoot, "flowcell.program.json"), "utf8")
 );
-const localRegistration = JSON.parse(
-  readFileSync(
-    path.resolve(illustratorRoot, "../../flowcellbackend/local/program-registration/illustrator.json"),
-    "utf8"
-  )
-);
 const source = readFileSync(sourcePath, "utf8");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 
@@ -68,10 +62,8 @@ test("fresh installs expose Ill Orca in Illustrator Files with the SVG owner dep
     legacyMatchLabel: "Ill Orca",
     legacyMatchKind: "script"
   });
-  assert.deepEqual(
-    localRegistration.enabledSources.find(({ sourceId }) => sourceId === "illustrator.ill-orca"),
-    { sourceId: "illustrator.ill-orca", panelName: "Files", version: "1.0.0" }
-  );
+  // Enabled contributions are private user choices, not required release inputs.
+  // Native managed-setup tests cover selecting/registering this contribution.
 });
 
 test("wrapper discovers the installed owner through generic program and active-record contracts", () => {

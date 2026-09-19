@@ -186,7 +186,8 @@ pub(crate) fn resolve_programs_root() -> Result<PathBuf, String> {
     let repo_root = resolve_repo_root().ok_or_else(|| {
         "FlowCell repo root could not be resolved for program folders.".to_string()
     })?;
-    let programs_root = repo_root.join("Programs");
+    let programs_root = env::var_os("FLOWCELL_PROGRAMS_ROOT")
+        .map(PathBuf::from).unwrap_or_else(|| repo_root.join("Programs"));
     if programs_root.is_dir() {
         Ok(programs_root)
     } else {

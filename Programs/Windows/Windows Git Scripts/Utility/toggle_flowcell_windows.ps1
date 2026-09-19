@@ -60,6 +60,7 @@ function Find-FlowCellRoot([string]$StartPath) {
 }
 
 function Get-FlowCellLocalRoot {
+    if ($env:FLOWCELL_LOCAL_ROOT) { return $env:FLOWCELL_LOCAL_ROOT }
     $repoRoot = Find-FlowCellRoot -StartPath $PSScriptRoot
     return Join-Path $repoRoot 'flowcellbackend\local'
 }

@@ -3,19 +3,39 @@
   "programId": "fusion-360",
   "label": "Fusion 360",
   "programType": "bridge",
-  "defaultPanels": ["Tool Sets"],
-  "panels": [
-    { "id": "toolset", "label": "Tool Sets", "defaultSelected": true }
+  "defaultPanels": [
+    "Tool Sets",
+    "Files"
   ],
-  "processNames": ["Fusion360", "FusionLauncher"],
+  "panels": [
+    {
+      "id": "toolset",
+      "label": "Tool Sets",
+      "defaultSelected": true
+    },
+    {
+      "id": "files",
+      "label": "Files",
+      "defaultSelected": true
+    }
+  ],
+  "processNames": [
+    "Fusion360",
+    "FusionLauncher"
+  ],
   "bindScopedNativeOwner": false,
   "shortcutProfileId": "",
   "gitScriptsFolder": "Fusion Git Scripts",
   "panelsFolder": "Panels",
   "localScriptsFolder": "Fusion Local Scripts",
   "supportScriptsFolder": "SupportScripts",
-  "allowedScriptExtensions": ["py"],
-  "allowedManifestFileNames": ["flowcell.script.json", "flowcell.toolset.json"],
+  "allowedScriptExtensions": [
+    "py"
+  ],
+  "allowedManifestFileNames": [
+    "flowcell.script.json",
+    "flowcell.toolset.json"
+  ],
   "supportsToolsetManifests": true,
   "bundledSources": [
     {
@@ -64,6 +84,21 @@
         "Installs the Fusion Scale Tool Set with editable XYZ dimensions, aspect locking, side pinning, and a native drag command."
       ],
       "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "fusion-360.update-git-scripts",
+      "version": "1.0.0",
+      "panelName": "Files",
+      "sourcePath": "Fusion Git Scripts/Files/Update Git Scripts",
+      "importKind": "script",
+      "displayLabel": "Update Git Scripts",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Downloads this program catalog only; preserves local edits and installed Buttons."
+      ],
       "installOnAdd": true
     }
   ],

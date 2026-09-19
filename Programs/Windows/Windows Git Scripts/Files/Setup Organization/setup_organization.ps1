@@ -104,6 +104,7 @@ function ConvertFrom-ExtendedWindowsPath {
 }
 
 function Resolve-FlowCellRoot {
+    if ($env:FLOWCELL_PROGRAMS_ROOT) { return Split-Path -Parent $env:FLOWCELL_PROGRAMS_ROOT }
     $current = ConvertFrom-ExtendedWindowsPath -Path ([System.IO.Path]::GetFullPath($PSScriptRoot))
     while (-not [string]::IsNullOrWhiteSpace($current)) {
         $backend = Join-Path $current 'flowcellbackend'
@@ -122,6 +123,7 @@ function Resolve-FlowCellRoot {
 }
 
 function Get-ProgramDataRoot {
+    if ($env:FLOWCELL_LOCAL_ROOT) { return Join-Path $env:FLOWCELL_LOCAL_ROOT 'program-data/windows/setup-organization' }
     $flowCellRoot = Resolve-FlowCellRoot
     return Join-Path $flowCellRoot 'flowcellbackend\local\program-data\windows\setup-organization'
 }

@@ -12,7 +12,46 @@ https://github.com/Keyslah/FlowCell/releases/latest
 
 Do not use GitHub's automatic `Source code (zip)` download as the app download. That source archive is for developers and does not include the built app or bundled runtime files.
 
-## Pick a package
+## Install the current Windows release
+
+1. Download `flowcellwindowsinstaller.zip` from Releases.
+2. Extract it and run the included Windows setup executable.
+3. Launch **FlowCell** from the Start Menu.
+4. Download the desired `FlowCell-<Program>.zip` packages. This release includes
+   Blender, Fresco, Fusion 360, Illustrator, Krita and Windows.
+5. Paste `%APPDATA%\FlowCell\local` into Explorer's address bar. Extract each
+   program ZIP **into this folder**, merging its `Programs` folder. The result is
+   `%APPDATA%\FlowCell\local\Programs\Blender\flowcell.program.json`, for example.
+   Do not extract into another `Programs` folder or into the application folder.
+6. Use the existing **Add Program → Managed package** workflow to register and
+   configure the package and its host executable. Choose Register program only,
+   Add everything, or Custom as appropriate.
+7. Use the program normally, following the package's host restart/reload notes.
+
+Setup includes the backend and AutoHotkey runtime. Normal app/updater use needs
+no Node, npm, Rust, Cargo, Git, GitHub CLI, separate AutoHotkey, or GitHub login.
+WebView2 is installed through setup when missing (internet access required).
+Application-specific tools can still have their documented host/dependency
+requirements; for example, Toggle Monitors uses Python. Builds are unsigned.
+
+`Update Git Scripts` is an optional ordinary Button offered in Files. It can also
+be added to a personal panel, including Local, with normal Add Button. It downloads
+only that program's available catalog; it preserves local conflicts and does not
+replace scripts already installed into Buttons. The source picker reads new
+downloads immediately. Removing the updater does not cause it to be reinstalled.
+
+FlowCell works before any package is installed. Its empty Windows folder is only
+a placeholder. Normal upgrades/uninstall preserve user data and program packages.
+Restart Blender after bridge registration, and Fusion after add-in changes.
+Restart FlowCell after manually changing a program manifest. See
+[installer release details](docs/installer-release.md).
+
+## Existing portable releases
+
+The instructions below apply to older portable Core downloads. The current
+installer release does not contain a new portable Core ZIP.
+
+### Pick a package
 
 ```text
 FlowCell-Core.zip

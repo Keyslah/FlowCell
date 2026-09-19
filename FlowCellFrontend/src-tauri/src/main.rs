@@ -267,6 +267,7 @@ fn main() {
             program_sources::installed_page_webview::unmount_installed_page_webview
         ])
         .setup(|app| {
+            initialize_runtime_paths().map_err(std::io::Error::other)?;
             program_sources::rename::recover_rename_transactions_on_startup()
                 .map_err(std::io::Error::other)?;
             let recovered_program_renames =
@@ -293,6 +294,7 @@ fn main() {
             recover_add_program_transactions_on_startup(app.handle())
                 .map_err(std::io::Error::other)?;
             recover_add_panel_transactions_on_startup().map_err(std::io::Error::other)?;
+            start_installed_backend().map_err(std::io::Error::other)?;
 
             if let Err(error) = synchronize_tool_set_hotkeys(app.handle()) {
                 let message =

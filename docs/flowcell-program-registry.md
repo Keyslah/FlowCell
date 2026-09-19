@@ -132,6 +132,13 @@ package.
 
 ## Fields
 
+Published GitHub packages must include the optional `Update Git Scripts`
+contribution, compatible entry point, helper and source metadata generated and
+validated by `release-tools/add-catalog-updaters.mjs`. Its default destination is
+Files, `installOnAdd` is true, and `installIfMissing`/`required` are false. This
+release-only requirement does not affect Any program. See
+[catalog updater authoring](installer-release.md).
+
 | Field | Contract |
 | --- | --- |
 | `schemaVersion` | Required; currently `1`. |

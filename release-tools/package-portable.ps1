@@ -3,7 +3,8 @@ param(
   [string]$BuiltExe,
   [string]$AutoHotkeyExe,
   [string]$AutoHotkeyLicenseFile,
-  [string]$OutputDirectory
+  [string]$OutputDirectory,
+  [switch]$ProgramsOnly
 )
 
 Set-StrictMode -Version Latest
@@ -233,6 +234,20 @@ function New-FlowCellProgramPackage([System.IO.DirectoryInfo]$ProgramDirectory) 
 
   New-Item -ItemType Directory -Path $programsPackageRoot -Force | Out-Null
   Copy-TrackedProgramFolder $ProgramDirectory $destination $trackedFiles
+  $catalogRelative = Convert-ToSafeRelativeFolder ([string]$contract.Manifest.gitScriptsFolder) 'gitScriptsFolder' $ProgramDirectory.Name
+  $baselineRelative = "$($contract.Manifest.supportScriptsFolder)/catalog-baseline.json"
+  [void](Assert-TrackedProgramReference $ProgramDirectory $trackedFiles $baselineRelative 'catalog baseline' -RequireFile)
+  $hashes = [ordered]@{}
+  $catalogPrefix = "Programs/$($ProgramDirectory.Name)/$catalogRelative/"
+  foreach ($tracked in $trackedFiles) {
+    if ($tracked.StartsWith($catalogPrefix, [StringComparison]::Ordinal)) {
+      $relative = $tracked.Substring($catalogPrefix.Length)
+      $hashes[$relative] = (Get-FileHash -LiteralPath (Join-Path $destination "$catalogRelative/$relative") -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+  }
+  if ($hashes.Count -eq 0) { Stop-Package "Empty catalog: $($ProgramDirectory.Name)" }
+  $baseline = @{schemaVersion=1; programId=$contract.Manifest.programId; files=$hashes}
+  [IO.File]::WriteAllText((Join-Path $destination $baselineRelative), ($baseline | ConvertTo-Json -Depth 20), [Text.UTF8Encoding]::new($false))
   Assert-ProgramStagingInvariant $packageRoot $ProgramDirectory.Name $contract.MutableFolders
 
   try {
@@ -278,16 +293,21 @@ if (-not (Test-Path -LiteralPath $ProgramsRoot -PathType Container)) {
   Stop-Package "Required folder missing: $ProgramsRoot"
 }
 
-$builtExePath = Resolve-BuiltExe $BuiltExe
-$ahk = Get-AhkPath $AutoHotkeyExe
-$ahkLicense = Get-AhkLicense $AutoHotkeyLicenseFile $ahk
+& node (Join-Path $PSScriptRoot 'add-catalog-updaters.mjs')
+if ($LASTEXITCODE -ne 0) { Stop-Package 'Published program updater validation failed.' }
+if (-not $ProgramsOnly) {
+  $builtExePath = Resolve-BuiltExe $BuiltExe
+  $ahk = Get-AhkPath $AutoHotkeyExe
+  $ahkLicense = Get-AhkLicense $AutoHotkeyLicenseFile $ahk
+}
 
 New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $StagingRoot -Force | Out-Null
 
-$programDirs = Get-ChildItem -LiteralPath $ProgramsRoot -Directory | Sort-Object Name
+$programDirs = @(& git -C $RepoRoot -c core.quotePath=false ls-files -- 'Programs/*/flowcell.program.json' | ForEach-Object { Get-Item -LiteralPath (Split-Path -Parent (Join-Path $RepoRoot $_)) } | Sort-Object Name)
+if ($LASTEXITCODE -ne 0) { Stop-Package 'Could not discover tracked program manifests.' }
 try {
-  New-FlowCellCorePackage $builtExePath $ahk $ahkLicense
+  if (-not $ProgramsOnly) { New-FlowCellCorePackage $builtExePath $ahk $ahkLicense }
 
   foreach ($programDir in $programDirs) {
     New-FlowCellProgramPackage $programDir
@@ -295,7 +315,7 @@ try {
 
   Write-Host ''
   Write-Host "FlowCell release assets are ready in ${DistRoot}:"
-  Write-Host '  FlowCell-Core.zip'
+  if (-not $ProgramsOnly) { Write-Host '  FlowCell-Core.zip' }
   foreach ($programDir in $programDirs) {
     $assetName = Convert-ToAssetName $programDir.Name
     Write-Host "  FlowCell-$assetName.zip"

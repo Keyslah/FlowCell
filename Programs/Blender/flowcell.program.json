@@ -3,22 +3,50 @@
   "programId": "blender",
   "label": "Blender",
   "programType": "bridge",
-  "defaultPanels": ["Collections", "Files", "Utility"],
-  "panels": [
-    { "id": "collections", "label": "Collections", "defaultSelected": true },
-    { "id": "files", "label": "Files", "defaultSelected": true },
-    { "id": "utility", "label": "Utility", "defaultSelected": true },
-    { "id": "toolset", "label": "toolset", "defaultSelected": false }
+  "defaultPanels": [
+    "Collections",
+    "Files",
+    "Utility"
   ],
-  "processNames": ["blender", "blender-launcher"],
+  "panels": [
+    {
+      "id": "collections",
+      "label": "Collections",
+      "defaultSelected": true
+    },
+    {
+      "id": "files",
+      "label": "Files",
+      "defaultSelected": true
+    },
+    {
+      "id": "utility",
+      "label": "Utility",
+      "defaultSelected": true
+    },
+    {
+      "id": "toolset",
+      "label": "toolset",
+      "defaultSelected": false
+    }
+  ],
+  "processNames": [
+    "blender",
+    "blender-launcher"
+  ],
   "bindScopedNativeOwner": false,
   "shortcutProfileId": "blender.windows",
   "gitScriptsFolder": "Blender Git Scripts",
   "panelsFolder": "Panels",
   "localScriptsFolder": "Blender Local Scripts",
   "supportScriptsFolder": "SupportScripts",
-  "allowedScriptExtensions": ["py"],
-  "allowedManifestFileNames": ["flowcell.script.json", "flowcell.toolset.json"],
+  "allowedScriptExtensions": [
+    "py"
+  ],
+  "allowedManifestFileNames": [
+    "flowcell.script.json",
+    "flowcell.toolset.json"
+  ],
   "supportsToolsetManifests": true,
   "bundledSources": [
     {
@@ -31,7 +59,9 @@
       "sourceKind": "page",
       "required": false,
       "dependencies": [],
-      "installEffects": ["Installs the Blender-owned Save Blender page Button into Files."],
+      "installEffects": [
+        "Installs the Blender-owned Save Blender page Button into Files."
+      ],
       "installIfMissing": true,
       "installOnAdd": true,
       "legacyMatchLabel": "Save Blender",
@@ -47,7 +77,9 @@
       "sourceKind": "script",
       "required": false,
       "dependencies": [],
-      "installEffects": ["Installs the Blender OrcaSlicer export-and-launch Button into Files."],
+      "installEffects": [
+        "Installs the Blender OrcaSlicer export-and-launch Button into Files."
+      ],
       "installOnAdd": true,
       "legacyMatchLabel": "orca",
       "legacyMatchKind": "script"
@@ -62,7 +94,9 @@
       "sourceKind": "script",
       "required": false,
       "dependencies": [],
-      "installEffects": ["Installs the Blender Cura export-and-launch Button into Files."],
+      "installEffects": [
+        "Installs the Blender Cura export-and-launch Button into Files."
+      ],
       "installOnAdd": true,
       "legacyMatchLabel": "cura",
       "legacyMatchKind": "script"
@@ -77,7 +111,9 @@
       "sourceKind": "script",
       "required": false,
       "dependencies": [],
-      "installEffects": ["Installs the Blender configurable slicer export-and-launch Button into Files."],
+      "installEffects": [
+        "Installs the Blender configurable slicer export-and-launch Button into Files."
+      ],
       "installOnAdd": true,
       "legacyMatchLabel": "slicer",
       "legacyMatchKind": "script"
@@ -92,7 +128,9 @@
       "sourceKind": "page",
       "required": false,
       "dependencies": [],
-      "installEffects": ["Installs the Blender Theme page Button and its package-owned actions into the selected panel."],
+      "installEffects": [
+        "Installs the Blender Theme page Button and its package-owned actions into the selected panel."
+      ],
       "installOnAdd": true,
       "legacyMatchLabel": "Theme",
       "legacyMatchKind": "script"
@@ -107,11 +145,28 @@
       "sourceKind": "script",
       "required": false,
       "dependencies": [],
-      "installEffects": ["Installs the alpha-aware, dimension-preserving Blender Lithophane Button with collision-safe numeric object naming into Utility."],
+      "installEffects": [
+        "Installs the alpha-aware, dimension-preserving Blender Lithophane Button with collision-safe numeric object naming into Utility."
+      ],
       "installIfMissing": true,
       "installOnAdd": true,
       "legacyMatchLabel": "lithophane",
       "legacyMatchKind": "script"
+    },
+    {
+      "id": "blender.update-git-scripts",
+      "version": "1.0.0",
+      "panelName": "Files",
+      "sourcePath": "Blender Git Scripts/Files/Update Git Scripts",
+      "importKind": "script",
+      "displayLabel": "Update Git Scripts",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Downloads this program catalog only; preserves local edits and installed Buttons."
+      ],
+      "installOnAdd": true
     }
   ],
   "runner": {

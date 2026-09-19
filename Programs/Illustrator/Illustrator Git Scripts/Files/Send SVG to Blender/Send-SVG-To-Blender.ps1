@@ -368,7 +368,7 @@ function Get-BridgeRootCandidates {
     }
 
     foreach ($configPath in @(
-        (Join-Path $RepoRoot 'flowcellbackend\local\private\blender.config.local.json')
+        (Join-Path $(if ($env:FLOWCELL_LOCAL_ROOT) { $env:FLOWCELL_LOCAL_ROOT } elseif (Test-Path -LiteralPath (Join-Path $RepoRoot 'flowcellbackend')) { Join-Path $RepoRoot 'flowcellbackend/local' } else { $RepoRoot }) 'private/blender.config.local.json')
         (Join-Path $RepoRoot 'Programs\Blender\config.json')
     )) {
         if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {

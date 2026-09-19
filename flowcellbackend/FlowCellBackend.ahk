@@ -13,7 +13,7 @@ Persistent
 if HasCliFlag("--validate-only")
     ExitApp(0)
 
-flowCellLocalRoot := EnsureFlowCellDir(A_ScriptDir "\local")
+flowCellLocalRoot := EnsureFlowCellDir(EnvGet("FLOWCELL_LOCAL_ROOT") != "" ? EnvGet("FLOWCELL_LOCAL_ROOT") : A_ScriptDir "\local")
 flowCellLogsDir := EnsureFlowCellDir(flowCellLocalRoot "\logs")
 flowCellBindingsPath := flowCellLocalRoot "\bindings.ini"
 flowCellScanStatePath := flowCellLocalRoot "\scan_state.ini"
@@ -181,7 +181,10 @@ GetFlowCellWorkspaceRoot() {
     if workspaceRoot != ""
         return workspaceRoot
 
-    SplitPath A_ScriptDir, , &workspaceRoot
+    if EnvGet("FLOWCELL_PROGRAMS_ROOT") != ""
+        SplitPath EnvGet("FLOWCELL_PROGRAMS_ROOT"), , &workspaceRoot
+    else
+        SplitPath A_ScriptDir, , &workspaceRoot
     return workspaceRoot
 }
 

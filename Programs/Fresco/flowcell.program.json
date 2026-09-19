@@ -14,13 +14,37 @@
   ],
   "appRestartNotes": "",
   "bindScopedNativeOwner": false,
-  "bundledSources": [],
-  "defaultPanels": [],
+  "bundledSources": [
+    {
+      "id": "plain-adobe-fresco.update-git-scripts",
+      "version": "1.0.0",
+      "panelName": "Files",
+      "sourcePath": "Adobe Fresco Git Scripts/Files/Update Git Scripts",
+      "importKind": "script",
+      "displayLabel": "Update Git Scripts",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Downloads this program catalog only; preserves local edits and installed Buttons."
+      ],
+      "installOnAdd": true
+    }
+  ],
+  "defaultPanels": [
+    "Files"
+  ],
   "exePath": "C:\\Program Files\\WindowsApps\\Adobe.Fresco_5.7.0.1447_x64__pc75e8sa7ep4e\\Fresco.exe",
   "gitScriptsFolder": "Adobe Fresco Git Scripts",
   "label": "Fresco",
   "localScriptsFolder": "Adobe Fresco Local Scripts",
-  "panels": [],
+  "panels": [
+    {
+      "id": "files",
+      "label": "Files",
+      "defaultSelected": true
+    }
+  ],
   "panelsFolder": "Panels",
   "processNames": [
     "fresco"

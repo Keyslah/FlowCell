@@ -121,6 +121,7 @@ function Get-RepoRoot {
 }
 
 function Get-FlowCellLocalRoot {
+    if ($env:FLOWCELL_LOCAL_ROOT) { return $env:FLOWCELL_LOCAL_ROOT }
     return Join-Path (Get-RepoRoot) 'flowcellbackend\local'
 }
 

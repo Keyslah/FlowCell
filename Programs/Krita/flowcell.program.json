@@ -3,8 +3,16 @@
   "programId": "plain-krita",
   "label": "Krita",
   "programType": "local-script",
-  "defaultPanels": [],
-  "panels": [],
+  "defaultPanels": [
+    "Files"
+  ],
+  "panels": [
+    {
+      "id": "files",
+      "label": "Files",
+      "defaultSelected": true
+    }
+  ],
   "processNames": [
     "krita"
   ],
@@ -28,7 +36,23 @@
     "flowcell.script.json"
   ],
   "supportsToolsetManifests": false,
-  "bundledSources": [],
+  "bundledSources": [
+    {
+      "id": "plain-krita.update-git-scripts",
+      "version": "1.0.0",
+      "panelName": "Files",
+      "sourcePath": "Krita Git Scripts/Files/Update Git Scripts",
+      "importKind": "script",
+      "displayLabel": "Update Git Scripts",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Downloads this program catalog only; preserves local edits and installed Buttons."
+      ],
+      "installOnAdd": true
+    }
+  ],
   "runner": {
     "kind": "windows-script",
     "programKey": "windows_generic",

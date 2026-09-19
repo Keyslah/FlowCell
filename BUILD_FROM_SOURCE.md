@@ -50,6 +50,17 @@ FlowCellFrontend/src-tauri/target/release/flowcell_frontend.exe
 
 ## Create portable ZIPs from the already-built app
 
+For the current installer release, use `release-tools/build-installer.ps1` after
+`npm ci` in `FlowCellFrontend`, passing the AutoHotkey runtime/license paths when
+needed. It builds Tauri with `src-tauri/tauri.installer.conf.json`, then produces
+`flowcellwindowsinstaller.zip` plus all tracked program ZIPs in `dist/release`.
+Run `node release-tools/add-catalog-updaters.mjs` to validate required updater
+contributions. See [installer release workflow](docs/installer-release.md) for
+the pinned runtime, tests, CI artifact and publish procedure.
+
+The portable packaging path below remains available for existing development
+use; it is not published by the installer workflow.
+
 The packaging script does not build the app. It only wraps an already-built executable into release folders and ZIPs.
 
 From the repo root:

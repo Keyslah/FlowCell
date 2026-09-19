@@ -6,6 +6,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 function Resolve-FlowCellRepoRoot {
+    if ($env:FLOWCELL_RESOURCE_ROOT -and (Test-Path -LiteralPath (Join-Path $env:FLOWCELL_RESOURCE_ROOT 'flowcellbackend/FlowCellBackend.ahk'))) { return $env:FLOWCELL_RESOURCE_ROOT }
     $current = [System.IO.Path]::GetFullPath($PSScriptRoot)
     while (-not [string]::IsNullOrWhiteSpace($current)) {
         $summaryPath = Join-Path $current 'PROGRAM_SUMMARY.txt'
@@ -28,7 +29,7 @@ function Resolve-FlowCellRepoRoot {
 }
 
 $script:RepoRoot = Resolve-FlowCellRepoRoot
-$script:FlowCellLocalRoot = Join-Path $script:RepoRoot 'flowcellbackend\local'
+$script:FlowCellLocalRoot = if ($env:FLOWCELL_LOCAL_ROOT) { $env:FLOWCELL_LOCAL_ROOT } else { Join-Path $script:RepoRoot 'flowcellbackend\local' }
 $script:StatusPath = Join-Path $script:FlowCellLocalRoot 'logs\last_action_status.txt'
 $script:ConfigDirectory = Join-Path $script:FlowCellLocalRoot 'windows\temp-shots'
 $script:ConfigPath = Join-Path $script:ConfigDirectory 'temp-shots.config.json'

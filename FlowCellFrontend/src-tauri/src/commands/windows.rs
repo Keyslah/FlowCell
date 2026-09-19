@@ -1386,7 +1386,10 @@ pub(crate) async fn refresh_scoped_window_topmost(
 }
 
 #[tauri::command]
-pub(crate) fn refresh_frontend_host() -> Result<(), String> {
+pub(crate) fn refresh_frontend_host(app: AppHandle) -> Result<(), String> {
+    if installed_resource_root().is_some() {
+        app.restart();
+    }
     let launcher_path = resolve_frontend_launcher_path().ok_or_else(|| {
         "FlowCell frontend launcher script was not found for host refresh.".to_string()
     })?;

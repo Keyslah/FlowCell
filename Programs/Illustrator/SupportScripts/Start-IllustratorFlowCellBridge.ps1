@@ -26,12 +26,12 @@ $script:RepoRootPath = Get-FlowCellRepoRoot
 $script:ProgramRoot = Join-Path $script:RepoRootPath 'Programs\Illustrator'
 $script:LocalScriptsRoot = Join-Path $script:ProgramRoot 'Illustrator Local Scripts'
 $script:PidPath = if ([string]::IsNullOrWhiteSpace($PidPath)) {
-  Join-Path $script:RepoRootPath 'flowcellbackend\local\illustrator-bridge.pid.json'
+  Join-Path $(if ($env:FLOWCELL_LOCAL_ROOT) { $env:FLOWCELL_LOCAL_ROOT } elseif (Test-Path -LiteralPath (Join-Path $script:RepoRootPath 'flowcellbackend')) { Join-Path $script:RepoRootPath 'flowcellbackend\local' } else { $script:RepoRootPath }) 'illustrator-bridge.pid.json'
 } else {
   [System.IO.Path]::GetFullPath($PidPath)
 }
 $script:LogPath = if ([string]::IsNullOrWhiteSpace($LogPath)) {
-  Join-Path $script:RepoRootPath 'flowcellbackend\local\logs\illustrator-bridge.log'
+  Join-Path $(if ($env:FLOWCELL_LOCAL_ROOT) { $env:FLOWCELL_LOCAL_ROOT } elseif (Test-Path -LiteralPath (Join-Path $script:RepoRootPath 'flowcellbackend')) { Join-Path $script:RepoRootPath 'flowcellbackend\local' } else { $script:RepoRootPath }) 'logs\illustrator-bridge.log'
 } else {
   [System.IO.Path]::GetFullPath($LogPath)
 }

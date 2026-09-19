@@ -6,9 +6,10 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$FlowCellRoot = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
-$ProgramsRoot = Join-Path $FlowCellRoot 'Programs'
-$LocalRoot = Join-Path $FlowCellRoot 'flowcellbackend\local'
+. (Join-Path $PSScriptRoot 'FlowCellPaths.ps1')
+$FlowCellRoot = $FlowCellResourceRoot
+$ProgramsRoot = $FlowCellProgramsRoot
+$LocalRoot = $FlowCellLocalRoot
 $LogRoot = Join-Path $LocalRoot 'logs'
 $LogPath = Join-Path $LogRoot 'startup-preflight.log'
 $BindingsPath = Join-Path $LocalRoot 'bindings.ini'

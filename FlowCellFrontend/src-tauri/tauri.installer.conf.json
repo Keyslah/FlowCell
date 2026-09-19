@@ -1,0 +1,21 @@
+{
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "resources": {
+      "../../dist/installer-resources/flowcellbackend/": "flowcellbackend/",
+      "../../dist/installer-resources/tools/": "tools/",
+      "../../dist/installer-resources/flowcell-installed.json": "flowcell-installed.json",
+      "../../LICENSE": "LICENSE"
+    },
+    "windows": {
+      "webviewInstallMode": {"type": "downloadBootstrapper", "silent": true},
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "installerHooks": "../../release-tools/installer-hooks.nsh"
+      }
+    }
+  }
+}

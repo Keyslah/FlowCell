@@ -136,8 +136,7 @@ pub(crate) fn resolve_blender_config_path() -> Result<PathBuf, String> {
         return Ok(local_config_path);
     }
 
-    let repo_config_path = repo_root
-        .join("Programs")
+    let repo_config_path = resolve_programs_root()?
         .join("Blender")
         .join("config.json");
     if repo_config_path.is_file() {
@@ -1093,8 +1092,8 @@ fn find_running_illustrator_process_id() -> Option<u32> {
 
 #[cfg(windows)]
 fn spawn_illustrator_bridge_process() -> Result<(), String> {
-    let repo_root = resolve_repo_root()
-        .ok_or_else(|| "FlowCell repo root could not be resolved for Illustrator.".to_string())?;
+    let programs_root = resolve_programs_root()?;
+    let repo_root = programs_root.parent().ok_or("Missing Programs parent.")?.to_path_buf();
     let bridge_script = repo_root
         .join("Programs")
         .join("Illustrator")

@@ -147,7 +147,7 @@ except Exception:
 }
 
 $repoRoot = Get-RepoRoot
-$logRoot = Join-Path $repoRoot 'flowcellbackend\local\logs'
+$logRoot = Join-Path $(if ($env:FLOWCELL_LOCAL_ROOT) { $env:FLOWCELL_LOCAL_ROOT } elseif (Test-Path -LiteralPath (Join-Path $repoRoot 'flowcellbackend')) { Join-Path $repoRoot 'flowcellbackend\local' } else { $repoRoot }) 'logs'
 New-Item -ItemType Directory -Path $logRoot -Force | Out-Null
 $script:LogPath = Join-Path $logRoot 'blender-addon-install.log'
 $script:LastActionStatusPath = Join-Path $logRoot 'last_action_status.txt'

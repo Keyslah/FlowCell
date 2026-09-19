@@ -2,6 +2,12 @@
 
 ## Top-Level Owners
 
+Installed distribution paths differ from the source checkout: resources stay in
+the application directory; writable state is `%APPDATA%\FlowCell\local` and
+program packages live under its `Programs` child. `FLOWCELL_LOCAL_ROOT` is a
+direct test/development override. No ignored source data is migrated. See
+[installer storage and release contract](installer-release.md).
+
 - `FlowCellFrontend/`: React/Tauri application, canonical Button UI, editor,
   window runtime, native persistence, and program-source transactions.
 - `flowcellbackend/`: AutoHotkey/PowerShell runtime, helpers, and ignored local

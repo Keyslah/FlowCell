@@ -26,13 +26,17 @@
         var programRoot = findProgramRoot();
         return programRoot && programRoot.parent && programRoot.parent.parent ? programRoot.parent.parent : programRoot;
     }
+    function findLocalRoot() {
+        var root = findRepoRoot();
+        return new Folder(root.fsName + "/flowcellbackend").exists ? new Folder(root.fsName + "/flowcellbackend/local") : root;
+    }
     function localFile(name) {
-        var folder = new Folder(findRepoRoot().fsName + "/flowcellbackend/local");
+        var folder = findLocalRoot();
         if (!folder.exists) { folder.create(); }
         return new File(folder.fsName + "/" + name);
     }
     function logFile(name) {
-        var folder = new Folder(findRepoRoot().fsName + "/flowcellbackend/local/logs");
+        var folder = new Folder(findLocalRoot().fsName + "/logs");
         if (!folder.exists) { folder.create(); }
         return new File(folder.fsName + "/" + name);
     }

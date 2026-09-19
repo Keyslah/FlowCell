@@ -16,12 +16,17 @@ class FusionPackageTests(unittest.TestCase):
         self.assertEqual(manifest["runner"]["kind"], "fusion-bridge")
         self.assertEqual(
             [source["id"] for source in manifest["bundledSources"]],
-            ["fusion-360.align", "fusion-360.rotate", "fusion-360.scale"],
+            ["fusion-360.align", "fusion-360.rotate", "fusion-360.scale", "fusion-360.update-git-scripts"],
         )
         self.assertTrue(all(source["installOnAdd"] for source in manifest["bundledSources"]))
         for source in manifest["bundledSources"]:
             source_root = PROGRAM_ROOT / pathlib.Path(source["sourcePath"])
-            self.assertTrue((source_root / "flowcell.toolset.json").is_file())
+            manifest_name = "flowcell.toolset.json" if source["importKind"] == "tool-set" else "flowcell.script.json"
+            self.assertTrue((source_root / manifest_name).is_file())
+        updater = manifest["bundledSources"][-1]
+        self.assertEqual(updater["panelName"], "Files")
+        self.assertFalse(updater.get("installIfMissing", False))
+        self.assertFalse(updater["required"])
 
     def test_managed_actions_have_the_constrained_bridge_entrypoint(self):
         toolsets_root = PROGRAM_ROOT / "Fusion Git Scripts" / "Toolsets"

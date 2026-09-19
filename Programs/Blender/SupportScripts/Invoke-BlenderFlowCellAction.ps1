@@ -16,7 +16,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
-$flowCellLocalRoot = Join-Path $repoRoot 'flowcellbackend\local'
+$flowCellLocalRoot = if ($env:FLOWCELL_LOCAL_ROOT) { $env:FLOWCELL_LOCAL_ROOT } elseif (Test-Path -LiteralPath (Join-Path $repoRoot 'flowcellbackend')) { Join-Path $repoRoot 'flowcellbackend\local' } else { $repoRoot }
 $localConfigPath = Join-Path $flowCellLocalRoot 'private\blender.config.local.json'
 $repoProgramsConfigPath = Join-Path $repoRoot 'Programs\Blender\config.json'
 $legacyConfigPath = Join-Path $repoRoot 'Blender\config.json'

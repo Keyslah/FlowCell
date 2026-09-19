@@ -2,6 +2,14 @@ use crate::*;
 use std::io::Read;
 
 pub(crate) fn resolve_flowcell_local_root() -> Result<PathBuf, String> {
+    if let Some(root) = env::var_os("FLOWCELL_LOCAL_ROOT").filter(|value| !value.is_empty()) {
+        return Ok(PathBuf::from(root));
+    }
+    if installed_resource_root().is_some() {
+        return env::var_os("APPDATA")
+            .map(|root| PathBuf::from(root).join("FlowCell").join("local"))
+            .ok_or_else(|| "APPDATA is unavailable for installed FlowCell.".to_string());
+    }
     let repo_root = resolve_repo_root()
         .ok_or_else(|| "FlowCell repo root could not be resolved for local data.".to_string())?;
     Ok(repo_root.join("flowcellbackend").join("local"))
@@ -36,12 +44,58 @@ pub(crate) fn resolve_powershell_path() -> PathBuf {
 }
 
 pub(crate) fn resolve_repo_root() -> Option<PathBuf> {
+    if let Some(root) = installed_resource_root() {
+        return Some(root);
+    }
     let launcher_path = resolve_frontend_launcher_path()?;
     launcher_path
         .parent()
         .and_then(Path::parent)
         .and_then(Path::parent)
         .map(Path::to_path_buf)
+}
+
+pub(crate) fn installed_resource_root() -> Option<PathBuf> {
+    // Tauri copies resources into target/release while bundling. A leftover marker
+    // must not turn a later ordinary source/portable build into an installation.
+    if !matches!(tauri::utils::platform::bundle_type(), Some(tauri::utils::config::BundleType::Nsis)) {
+        return None;
+    }
+    let executable = env::current_exe().ok()?;
+    let root = executable.parent()?;
+    root.join("flowcell-installed.json").is_file().then(|| root.to_path_buf())
+}
+
+pub(crate) fn initialize_runtime_paths() -> Result<(), String> {
+    let explicit_local = env::var_os("FLOWCELL_LOCAL_ROOT").filter(|value| !value.is_empty()).is_some();
+    let installed = installed_resource_root().is_some();
+    let resource = resolve_repo_root().ok_or("FlowCell resources could not be resolved.")?;
+    let local = resolve_flowcell_local_root()?;
+    let programs = if installed || explicit_local { local.join("Programs") } else { resource.join("Programs") };
+    fs::create_dir_all(&local).map_err(|e| e.to_string())?;
+    fs::create_dir_all(&programs).map_err(|e| e.to_string())?;
+    if installed { fs::create_dir_all(programs.join("Windows")).map_err(|e| e.to_string())?; }
+    env::set_var("FLOWCELL_LOCAL_ROOT", &local);
+    env::set_var("FLOWCELL_PROGRAMS_ROOT", &programs);
+    env::set_var("FLOWCELL_RESOURCE_ROOT", &resource);
+    Ok(())
+}
+
+pub(crate) fn start_installed_backend() -> Result<(), String> {
+    if installed_resource_root().is_none() { return Ok(()); }
+    let preflight = resolve_repo_root().ok_or("Missing resources")?
+        .join("flowcellbackend/helpers/Start-FlowCellPreflight.ps1");
+    let output = spawn_powershell_output(&["-File".into(), preflight.to_string_lossy().into_owned()])?;
+    if !output.status.success() {
+        return Err(format_process_failure(&output, "FlowCell startup preflight failed."));
+    }
+    let mut command = Command::new("wscript.exe");
+    command.arg(resolve_flowcell_backend_launcher_path()?);
+    #[cfg(windows)]
+    command.creation_flags(CREATE_NO_WINDOW);
+    let status = command.status().map_err(|e| e.to_string())?;
+    if !status.success() { return Err("FlowCell backend launcher failed.".into()); }
+    Ok(())
 }
 
 pub(crate) fn escape_powershell_single_quoted(value: &str) -> String {

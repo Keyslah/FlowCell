@@ -10,6 +10,10 @@ Its a small control deck that only stays on top of its respective program.
 https://github.com/Keyslah/FlowCell/releases/latest
 ```
 
+Download `flowcellwindowsinstaller.zip`, run setup, then launch FlowCell from the
+Start Menu. Optional program ZIPs extract into `%APPDATA%\FlowCell\local`.
+Follow [SETUP.md](SETUP.md) for Add Program and the optional Update Git Scripts Button.
+
 
 ## What It Is
 
@@ -31,7 +35,7 @@ https://github.com/Keyslah/FlowCell/blob/FlowCell/docs/File%20organizer.md
 
 Developers should use the existing source launcher and build path.
 
-See [BUILD_FROM_SOURCE.md](BUILD_FROM_SOURCE.md) for the developer setup and portable package build command.
+See [BUILD_FROM_SOURCE.md](BUILD_FROM_SOURCE.md) for developer setup and [installer releases](docs/installer-release.md) for the Windows build and publication process.
 
 
 ## Codex Skills

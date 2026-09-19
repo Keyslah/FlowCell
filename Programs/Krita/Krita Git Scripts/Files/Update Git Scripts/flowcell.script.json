@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.update-git-scripts",
+  "label": "Update Git Scripts",
+  "tooltip": "Download the latest available scripts for this program. Installed Buttons and local edits are preserved.",
+  "program": "Krita",
+  "source": "update_catalog.ps1"
+}

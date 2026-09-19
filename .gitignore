@@ -1,5 +1,7 @@
 # Generated release output.
 dist/
+.release-worktrees/
+FlowCellFrontend/src-tauri/target-codex-tests/
 FlowCellFrontend/tests/.compiled-button-system/
 
 flowcellbackend/local/

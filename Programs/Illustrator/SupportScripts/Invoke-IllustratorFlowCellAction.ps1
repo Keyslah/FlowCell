@@ -32,7 +32,7 @@ $script:RepoRootPath = Get-FlowCellRepoRoot
 $script:ProgramRoot = Join-Path $script:RepoRootPath 'Programs\Illustrator'
 $script:LocalScriptsRoot = Join-Path $script:ProgramRoot 'Illustrator Local Scripts'
 $script:BridgeScript = Join-Path $script:ProgramRoot 'SupportScripts\Start-IllustratorFlowCellBridge.ps1'
-$script:PidPath = Join-Path $script:RepoRootPath 'flowcellbackend\local\illustrator-bridge.pid.json'
+$script:PidPath = Join-Path $(if ($env:FLOWCELL_LOCAL_ROOT) { $env:FLOWCELL_LOCAL_ROOT } elseif (Test-Path -LiteralPath (Join-Path $script:RepoRootPath 'flowcellbackend')) { Join-Path $script:RepoRootPath 'flowcellbackend\local' } else { $script:RepoRootPath }) 'illustrator-bridge.pid.json'
 
 function ConvertTo-RequestLine {
   param([Parameter(Mandatory = $true)]$Value)

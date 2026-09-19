@@ -10,7 +10,8 @@ $ErrorActionPreference = 'Stop'
 
 $script:ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $script:FlowCellHomeRoot = [System.IO.Path]::GetFullPath((Join-Path $script:ProjectRoot '..'))
-$script:FlowCellLocalRoot = Join-Path $script:ProjectRoot 'local'
+$script:FlowCellLocalRoot = if ($env:FLOWCELL_LOCAL_ROOT) { $env:FLOWCELL_LOCAL_ROOT } else { Join-Path $script:ProjectRoot 'local' }
+if ($env:FLOWCELL_PROGRAMS_ROOT) { $script:FlowCellHomeRoot = Split-Path -Parent $env:FLOWCELL_PROGRAMS_ROOT }
 $script:FlowCellPrivateRoot = Join-Path $script:FlowCellLocalRoot 'private'
 $script:LogsDir = Join-Path $script:FlowCellLocalRoot 'logs'
 $script:CommandHostLogPath = Join-Path $script:LogsDir 'command_host.log'
