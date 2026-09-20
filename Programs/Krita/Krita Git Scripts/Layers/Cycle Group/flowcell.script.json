@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.cycle-group",
+  "label": "cycle group",
+  "tooltip": "Show/select the next sibling inside the selected item's working group.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

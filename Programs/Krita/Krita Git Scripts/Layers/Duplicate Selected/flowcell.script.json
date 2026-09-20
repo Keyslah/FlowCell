@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.duplicate-selected",
+  "label": "duplicate",
+  "tooltip": "Duplicate highlighted layers and their complete contents.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

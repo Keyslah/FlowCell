@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.delete-highlighted",
+  "label": "delete",
+  "tooltip": "Delete highlighted layers, including hidden/locked layers. System roots, Trash and Archive are protected.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

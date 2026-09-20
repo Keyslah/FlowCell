@@ -951,6 +951,11 @@ fn validate_update_shape(
     previous: &ActiveSourceRecord,
     prepared: &PreparedSource,
 ) -> Result<(), String> {
+    if super::records::is_portable_windows_execution(previous.runner_data.as_ref())
+        != super::records::is_portable_windows_execution(prepared.runner_data.as_ref())
+    {
+        return Err("Update cannot change a Button between portable Windows execution and application execution. Add a new Button instead.".into());
+    }
     let previous_is_toolset = !previous.children.is_empty();
     let next_is_toolset = !prepared.children.is_empty();
     if previous_is_toolset != next_is_toolset {
@@ -1226,7 +1231,21 @@ fn prepare_source(
             if script.schema_version != 1 || script.label.trim().is_empty() {
                 return Err("Script manifest requires schemaVersion 1 and label.".to_string());
             }
-            if !script.program.trim().is_empty()
+            let portable = super::records::is_portable_windows_execution(script.execution.as_ref());
+            if portable
+                && (script.program != "*"
+                    || script.page.is_some()
+                    || script.execution_target.is_some()
+                    || script.bridge_data.is_some()
+                    || script.events.is_some())
+            {
+                return Err(
+                    "Portable Windows scripts require program '*' and ordinary script execution."
+                        .into(),
+                );
+            }
+            if !portable
+                && !script.program.trim().is_empty()
                 && !script.program.trim().eq_ignore_ascii_case(&manifest.label)
             {
                 return Err(format!(
@@ -1236,7 +1255,15 @@ fn prepare_source(
             }
             let source_relative = ensure_relative_source_path(&script.source)?;
             let executable = package_root.join(&source_relative);
-            if !executable.is_file() || !extension_is_allowed(manifest, &executable) {
+            let supported = if portable {
+                executable
+                    .extension()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|value| value.eq_ignore_ascii_case("ps1"))
+            } else {
+                extension_is_allowed(manifest, &executable)
+            };
+            if !executable.is_file() || !supported {
                 return Err(format!(
                     "Script package source '{}' is missing or unsupported.",
                     executable.display()
@@ -2072,12 +2099,14 @@ fn rollback_prepared_install_transaction(
         ));
     }
 
-    rollback_bridge_deployment(
-        manifest,
-        &journal.owner_button_id,
-        &journal.next_record.label,
-        journal.previous_record.as_ref(),
-    )?;
+    if !super::records::is_portable_windows_execution(journal.next_record.runner_data.as_ref()) {
+        rollback_bridge_deployment(
+            manifest,
+            &journal.owner_button_id,
+            &journal.next_record.label,
+            journal.previous_record.as_ref(),
+        )?;
+    }
     journal.phase = InstallTransactionPhase::RolledBack;
     write_install_transaction_journal(
         manifest,
@@ -2110,7 +2139,9 @@ fn complete_pending_install_transaction(
             committed_source.display()
         ));
     }
-    if is_managed_bridge_runner(&manifest.runner.kind) {
+    if is_managed_bridge_runner(&manifest.runner.kind)
+        && !super::records::is_portable_windows_execution(journal.next_record.runner_data.as_ref())
+    {
         let action = deploy_bridge_source(
             manifest,
             &journal.owner_button_id,
@@ -3273,6 +3304,7 @@ fn install_from_path_while_source_locked_with_completion(
     let committed_source = final_package
         .join("source")
         .join(&prepared.source_relative_to_package);
+    let portable = super::records::is_portable_windows_execution(prepared.runner_data.as_ref());
     let mut record = ActiveSourceRecord {
         schema_version: 1,
         owner_button_id: owner_button_id.clone(),
@@ -3288,7 +3320,7 @@ fn install_from_path_while_source_locked_with_completion(
         runner: manifest.runner.kind.clone(),
         runner_data: prepared.runner_data,
         execution_target: prepared.execution_target,
-        bridge_action: if is_managed_bridge_runner(&manifest.runner.kind) {
+        bridge_action: if is_managed_bridge_runner(&manifest.runner.kind) && !portable {
             owned_bridge_action(&owner_button_id)
         } else {
             String::new()
@@ -3366,7 +3398,7 @@ fn install_from_path_while_source_locked_with_completion(
         ));
     }
 
-    if is_managed_bridge_runner(&manifest.runner.kind) {
+    if is_managed_bridge_runner(&manifest.runner.kind) && !portable {
         match deploy_bridge_source(
             &manifest,
             &owner_button_id,
@@ -4671,6 +4703,39 @@ mod tests {
         };
         assert!(error.contains("companion file in a tool-set package"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn portable_windows_package_imports_into_application_panels_without_bridge_execution() {
+        let root = std::env::temp_dir().join(format!("flowcell-portable-{}", super::timestamp()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("entry.ps1"), "# portable\n").unwrap();
+        let mut application = windows_manifest();
+        application.label = "Blender".into();
+        application.runner.kind = "blender-bridge".into();
+        application.allowed_script_extensions = vec!["py".into()];
+        let mut package = json!({"schemaVersion":1,"label":"shortcycle","program":"*",
+            "source":"entry.ps1","execution":{"runner":"windows-script"}});
+        let path = root.join(SCRIPT_MANIFEST_FILE_NAME);
+        fs::write(&path, package.to_string()).unwrap();
+        let prepared = prepare_source(&application, &path, "script").unwrap();
+        assert!(super::super::records::is_portable_windows_execution(
+            prepared.runner_data.as_ref()
+        ));
+        assert!(prepare_source(&application, &root.join("entry.ps1"), "script").is_ok());
+        package["program"] = json!("Windows");
+        fs::write(&path, package.to_string()).unwrap();
+        assert!(prepare_source(&application, &path, "script").is_err());
+        package["program"] = json!("*");
+        package["source"] = json!("entry.py");
+        fs::write(root.join("entry.py"), "# not portable").unwrap();
+        fs::write(&path, package.to_string()).unwrap();
+        assert!(prepare_source(&application, &path, "script").is_err());
+        package["source"] = json!("entry.ps1");
+        package.as_object_mut().unwrap().remove("execution");
+        fs::write(&path, package.to_string()).unwrap();
+        assert!(prepare_source(&application, &path, "script").is_err());
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

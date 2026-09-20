@@ -416,6 +416,44 @@ fn resolve_last_external_foreground(
 }
 
 #[cfg(windows)]
+static SCRIPT_TARGET_WINDOW: OnceLock<Mutex<Option<ForegroundWindowState>>> = OnceLock::new();
+
+#[cfg(windows)]
+fn remember_script_target(foreground: &ForegroundWindowState) -> Option<ForegroundWindowState> {
+    let mut cached = SCRIPT_TARGET_WINDOW
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .ok()?;
+    if is_valid_external_foreground(foreground) {
+        *cached = Some(foreground.clone());
+    }
+    if cached
+        .as_ref()
+        .is_some_and(|window| !is_valid_cached_external(window))
+    {
+        *cached = None;
+    }
+    cached.clone()
+}
+
+/// Use the same validated last external application as scoped Button windows.
+pub(crate) fn script_target_window_handle() -> isize {
+    #[cfg(windows)]
+    {
+        let current = get_foreground_window_state_impl();
+        let target = remember_script_target(&current);
+        if is_valid_external_foreground(&current) || current.process_id == std::process::id() {
+            return target.map(|window| window.hwnd).unwrap_or(0);
+        }
+        return 0;
+    }
+    #[cfg(not(windows))]
+    {
+        0
+    }
+}
+
+#[cfg(windows)]
 fn clear_last_external_foreground(registry: &ScopedTopmostRegistry) -> Result<(), String> {
     let mut last_external = registry
         .last_external_foreground
@@ -1436,6 +1474,9 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
             }
         };
 
+        // Shortcut scripts need the last external target even with no Pop/Fan open.
+        let foreground = get_foreground_window_state_impl();
+        remember_script_target(&foreground);
         if snapshot.is_empty() {
             let _ = clear_last_external_foreground(&registry);
             drop(apply_guard);
@@ -1443,7 +1484,6 @@ pub(crate) fn start_scoped_topmost_worker(app: AppHandle, registry: ScopedTopmos
             continue;
         }
 
-        let foreground = get_foreground_window_state_impl();
         let cursor_over_taskbar_or_preview = is_cursor_over_taskbar_or_preview_surface();
         let last_external_foreground = resolve_last_external_foreground(&registry, &foreground);
         let foreground_scoped_process_names =

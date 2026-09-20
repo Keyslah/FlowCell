@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.expand-groups",
+  "label": "expand",
+  "tooltip": "Expand highlighted groups and their nested groups.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

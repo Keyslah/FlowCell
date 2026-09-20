@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.restore-locks",
+  "label": "set lock",
+  "tooltip": "Restore this document's saved lock states.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

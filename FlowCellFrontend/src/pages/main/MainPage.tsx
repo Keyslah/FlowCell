@@ -15,6 +15,7 @@ import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { CanonicalActionButton } from "../../button/CanonicalActionButton";
 import { startButtonActivationStateCoordinator } from "../../button/runtime/ButtonActivationStateBus";
+import { addKritaBrushToPanel, startKritaBrushButtonSync } from "../../button/state/kritaBrushButtons";
 import { ExactPageFrame } from "../../components/ExactPageFrame";
 import { RailSurface } from "../../components/RailSurface";
 import {
@@ -103,6 +104,7 @@ import {
   buildTransientButtonPopoutSettingsDocument
 } from "../../button/state/buttonSettingsFile";
 import { resolvePanelOwnerMainPlacement } from "../../button/state/panelOwnerButtonOperations";
+import { loadMainPageButtonBootstrap } from "../../button/state/mainPageButtonBootstrap";
 import {
   removePanelButtonDocumentScope,
   removeProgramButtonDocumentScope,
@@ -955,6 +957,14 @@ export default function MainPage() {
   }, [acceptButtonDocument, applyPanelScriptRecords]);
 
   // Motion settings are edited in their own window and applied live here.
+  useEffect(() => {
+    if (!buttonDocument || buttonBootstrapError) return;
+    return startKritaBrushButtonSync(error => {
+      console.error("Saved Krita brush could not be added to FlowCell.", error);
+      window.alert(`Your brush is saved in Krita, but its FlowCell Button is pending.\n\n${formatErrorMessage(error)}`);
+    });
+  }, [Boolean(buttonDocument), buttonBootstrapError]);
+
   useEffect(() => subscribeMotionSettings(setMotionSettings), []);
 
   // Rails are pointer-events:none (so buttons on top keep their clicks). Detect the
@@ -1540,6 +1550,9 @@ export default function MainPage() {
     contextMenuButton?.actionId === "select-program-folder" && Boolean(contextMenuButton.folderName);
   const isPanelFolderContextMenu =
     contextMenuButton?.actionId === "select-panel-folder" && Boolean(contextMenuButton.folderName);
+  const contextBrushButton = contextMenuButton?.scriptFileName && selectedProgramName && selectedPanelName
+    ? canonicalButtonsBySource.get(canonicalButtonSourceKey(selectedProgramName, selectedPanelName, contextMenuButton.scriptFileName))
+    : undefined;
 
   const closeContextMenu = () => {
     setContextMenu(null);
@@ -2944,7 +2957,11 @@ export default function MainPage() {
   const handleOpenLastPanelPop = async () => {
     if (!selectedProgramName || !selectedPanelName) return;
     try {
-      const canonical = await loadButtonStateDocument();
+      // Bundled panels can install before their Main owner has been discovered.
+      // Reconcile through the same canonical path as the Editor before opening Pop.
+      const { document: canonical } = await loadMainPageButtonBootstrap({
+        removeStaleOwners: false
+      });
       const panelOwnerPlacement = resolvePanelOwnerMainPlacement(
         canonical,
         selectedProgramName,
@@ -3630,6 +3647,20 @@ export default function MainPage() {
               >
                 {isScriptContextMenu ? (
                   <>
+                    {contextBrushButton?.metadata.kritaBrushId ? <CanonicalActionButton
+                      id={`button-context-brush-panel:${contextMenuButton.id}`}
+                      label="Add to panel"
+                      className="button-context-menu__item"
+                      onActivate={async () => {
+                        const brush = contextBrushButton;
+                        closeContextMenu();
+                        const panels = await listPanelFolders("Krita");
+                        const target = window.prompt(`Add this brush to a Krita panel:\n${panels.join(", ")}`, selectedPanelName ?? "Brushes");
+                        if (!target?.trim()) return;
+                        try { await addKritaBrushToPanel(brush, target); }
+                        catch (error) { window.alert(formatErrorMessage(error)); }
+                      }}
+                    /> : null}
                     <CanonicalActionButton
                       id={`button-context-description:${contextMenuButton.id}`}
                       label="Update Description"

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.snapshot",
+  "label": "snapshot",
+  "tooltip": "Save editable sN copies of highlighted Live layers/groups.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.brushes.save-new-brush",
+  "label": "save new brush",
+  "tooltip": "Open Krita preset naming/thumbnail dialog; after saving create a brush Button with its size.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

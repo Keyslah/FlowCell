@@ -9,6 +9,15 @@ use super::transaction::{self, AtomicWriteMode};
 pub(crate) const ACTIVE_SOURCE_RECORD_SUFFIX: &str = ".flowcell-source.json";
 pub(crate) const INSTALL_RECORD_FILE_NAME: &str = "flowcell.install.json";
 
+// Explicit package opt-in: the panel still owns the Button, while execution
+// uses Windows instead of that panel's application bridge.
+pub(crate) fn is_portable_windows_execution(execution: Option<&Value>) -> bool {
+    execution
+        .and_then(|value| value.get("runner"))
+        .and_then(Value::as_str)
+        == Some("windows-script")
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ActiveSourceChild {

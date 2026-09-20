@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.empty-trash",
+  "label": "empty trash",
+  "tooltip": "Confirm before deleting everything inside Trash; retain the Trash root.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

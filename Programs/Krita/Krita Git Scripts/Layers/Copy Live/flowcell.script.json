@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.copy-live",
+  "label": "copy live",
+  "tooltip": "Prompt for a named working group, copy highlighted Live layers into it and hide the originals.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

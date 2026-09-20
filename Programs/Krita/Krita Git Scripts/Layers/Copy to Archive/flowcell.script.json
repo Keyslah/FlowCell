@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.copy-archive",
+  "label": "copy archive",
+  "tooltip": "Copy highlighted Live layers into Archive while keeping the working originals.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

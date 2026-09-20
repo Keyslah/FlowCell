@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.shortcycle",
+  "label": "shortcycle",
+  "tooltip": "Cycle through your saved shortcuts, one per press. First use opens setup; hold Shift to edit. Each FlowCell session starts at the first shortcut.",
+  "program": "*",
+  "source": "shortcycle.ps1",
+  "execution": { "runner": "windows-script" }
+}

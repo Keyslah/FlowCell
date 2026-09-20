@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.baseline-visibility",
+  "label": "b vis",
+  "tooltip": "Save this document's layer visibility states.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

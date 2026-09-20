@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod button_state;
+mod krita_brushes;
 mod commands;
 mod program_sources;
 
@@ -244,6 +245,9 @@ fn main() {
             button_state::update_button_settings_default,
             button_state::save_button_skin_file,
             program_sources::install::install_button_source,
+            krita_brushes::pending_krita_brush_buttons,
+            krita_brushes::prepare_krita_brush_button,
+            krita_brushes::acknowledge_krita_brush_button,
             program_sources::install::update_button_source,
             program_sources::install::finalize_button_source_update,
             program_sources::install::rollback_button_source_update,

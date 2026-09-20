@@ -724,7 +724,9 @@ pub(crate) fn cleanup_bridge_owner(
 }
 
 fn cleanup_bridge_runtime(record: &ActiveSourceRecord) -> Result<(), String> {
-    if !is_managed_bridge_runner(&record.runner) {
+    if !is_managed_bridge_runner(&record.runner)
+        || super::records::is_portable_windows_execution(record.runner_data.as_ref())
+    {
         return Ok(());
     }
     cleanup_bridge_owner(
@@ -1002,7 +1004,9 @@ pub(crate) fn rollback_quarantined_source(source: &QuarantinedOwnedSource) -> Re
     rollback_quarantined_source_with(
         source,
         |record| {
-            if !is_managed_bridge_runner(&record.runner) {
+            if !is_managed_bridge_runner(&record.runner)
+                || super::records::is_portable_windows_execution(record.runner_data.as_ref())
+            {
                 return Ok(());
             }
             let manifest = load_program_manifest(&record.program_name)?;
