@@ -174,6 +174,9 @@ try {
 
     $addonPath = Join-Path $versionFolderPath 'scripts\addons'
     Copy-AddonBundle -SourceRoot $sourceRoot -AddonPath $addonPath
+    # Empty runtime directories are not carried by Git-tracked release ZIPs.
+    # The bridge resolver requires this directory before the first Button install.
+    New-Item -ItemType Directory -Path (Join-Path $addonPath 'blender_bridge_flowcell\ManagedActions') -Force | Out-Null
     $bootstrapPath = Write-StartupBootstrap -VersionFolderPath $versionFolderPath
 
     $message = @(

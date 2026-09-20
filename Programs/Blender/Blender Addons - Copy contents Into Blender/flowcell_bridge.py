@@ -53,6 +53,10 @@ def get_runtime_status_path() -> Path:
 
 
 def _write_runtime_status(event: str, **payload) -> None:
+    # FlowCell targets visible Blender windows. Background jobs can import tool
+    # modules too, but must not replace a live window's bridge ownership status.
+    if getattr(bpy.app, "background", False):
+        return
     runtime_path = get_runtime_status_path()
     history: list[dict[str, object]] = []
 

@@ -1479,7 +1479,8 @@
             throwNormalizationError(layerName, "there is no visible artwork for Pathfinder Unite.");
         }
 
-        if (operandCount > 1) {
+        // Illustrator's live Pathfinder effect requires a group even for one path.
+        if (operandCount > 0) {
             executeRequiredVectorCleanup(documentRef, "group", "Pathfinder grouping", layerName);
             groupedCount = selectTopLevelArtwork(documentRef);
             if (groupedCount !== 1) {

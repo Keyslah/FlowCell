@@ -10,6 +10,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -27,6 +28,42 @@ const pagePath = path.join(packageRoot, "page", "page.js");
 const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
 
 const actionById = new Map(manifest.page.actions.map((action) => [action.id, action]));
+
+test("cloud directory tags are distinguished from junctions and unknown reparse tags", { skip: process.platform !== "win32" }, () => {
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-cloud-"));
+  try {
+    const target = path.join(workspace, "target");
+    const junction = path.join(workspace, "junction");
+    mkdirSync(target);
+    symlinkSync(target, junction, "junction");
+    const script = `
+      $ErrorActionPreference='Stop'
+      $ast=[System.Management.Automation.Language.Parser]::ParseFile($env:FLOWCELL_TEST_DISPATCHER,[ref]$null,[ref]$null)
+      foreach($name in @('Test-CloudStorageDirectory','Assert-NotReparsePoint')) {
+        $function=$ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
+        Invoke-Expression $function.Extent.Text
+      }
+      if(Test-CloudStorageDirectory -Path $env:FLOWCELL_TEST_TARGET){throw 'Ordinary folder classified as cloud'}
+      foreach($variant in 0..15){
+        $tag=[Convert]::ToUInt32(('9000{0:X}01A' -f $variant),16)
+        if(-not [FlowCellCloudDirectory]::IsCloudTag($tag)){throw 'Cloud tag rejected'}
+      }
+      foreach($hex in @('A0000003','A000000C','8000001B','00000000')){
+        if([FlowCellCloudDirectory]::IsCloudTag([Convert]::ToUInt32($hex,16))){throw 'Redirecting or unknown tag accepted'}
+      }
+      $rejected=$false
+      try{Assert-NotReparsePoint -Path $env:FLOWCELL_TEST_JUNCTION -Label 'QA junction'}catch{$rejected=$true}
+      if(-not $rejected){throw 'Junction was accepted'}
+    `;
+    const result=spawnSync("powershell.exe",["-NoProfile","-NonInteractive","-Command",script],{
+      encoding:"utf8",env:{...process.env,FLOWCELL_TEST_DISPATCHER:dispatcherPath,FLOWCELL_TEST_TARGET:target,FLOWCELL_TEST_JUNCTION:junction}
+    });
+    assert.equal(result.status,0,result.stderr||result.stdout);
+  } finally {
+    assert.ok(workspace.startsWith(path.join(tempRoot,"setup-org-cloud-")));
+    rmSync(workspace,{recursive:true,force:true});
+  }
+});
 
 const PAGE_ACTION_IDS = [
   "delete-file-group",
@@ -423,6 +460,36 @@ function runPowerShell(scriptPath, args) {
     { encoding: "utf8" }
   );
 }
+
+test("generated organizer runs from installed local storage without a source checkout", () => {
+  const workspace = mkdtempSync(path.join(tempRoot, "setup-org-installed-"));
+  const profileId = "22222222-2222-4222-8222-222222222222";
+  try {
+    const localRoot = path.join(workspace, "local");
+    const profiles = path.join(localRoot, "program-data", "windows", "setup-organization", "profiles");
+    const project = path.join(workspace, "QA Project");
+    mkdirSync(profiles, { recursive: true });
+    mkdirSync(project);
+    writeFileSync(path.join(profiles, `${profileId}.json`), JSON.stringify({
+      schemaVersion: 1, format: "flowcell.windows.setup-organization.profile.v3", profileId,
+      name: "Installed test", recycleOtherFolders: false, recyclePreviousIgnoredFolders: false,
+      folders: [{ path: "Text", groupIds: [], fileTypes: [".txt"], ignored: false, catchAll: false }],
+      programFolders: [], createdAt: "2026-09-19T00:00:00Z", updatedAt: "2026-09-19T00:00:00Z"
+    }));
+    writeFileSync(path.join(project, "sample.txt"), "isolated QA content");
+    const script = path.join(localRoot, "organize_folder.ps1");
+    writeFileSync(script, readFileSync(templatePath, "utf8").replaceAll("{{PROFILE_ID}}", profileId));
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", script, "-TargetPath", project], {
+      encoding: "utf8", env: { ...process.env, FLOWCELL_LOCAL_ROOT: localRoot }
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(readFileSync(path.join(project, "Text", "sample.txt"), "utf8"), "isolated QA content");
+    assert.equal(JSON.parse(readFileSync(path.join(project, ".flowcell-project.json"), "utf8")).profileId, profileId);
+    assert.equal(existsSync(path.join(workspace, "flowcellbackend")), false);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
 
 function renderOrganizerForTest(profileId, dataRoot, options = {}) {
   let source = readFileSync(templatePath, "utf8")

@@ -83,26 +83,37 @@ function Write-HandoffStatus {
     )
     $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     $temporaryPath = '{0}.{1}.{2}.tmp' -f $Path, $PID, ([guid]::NewGuid().ToString('N'))
+    $temporaryIoPath = ConvertTo-ExtendedFilePath -Path $temporaryPath
+    $destinationIoPath = ConvertTo-ExtendedFilePath -Path $Path
 
     try {
-        [System.IO.File]::WriteAllLines($temporaryPath, $lines, $utf8NoBom)
-        if (Test-Path -LiteralPath $Path -PathType Leaf) {
+        [System.IO.File]::WriteAllLines($temporaryIoPath, $lines, $utf8NoBom)
+        if ([System.IO.File]::Exists($destinationIoPath)) {
             try {
-                [System.IO.File]::Replace($temporaryPath, $Path, $null)
+                [System.IO.File]::Replace($temporaryIoPath, $destinationIoPath, $null)
             }
             catch {
-                Move-Item -LiteralPath $temporaryPath -Destination $Path -Force
+                [System.IO.File]::Copy($temporaryIoPath, $destinationIoPath, $true)
+                [System.IO.File]::Delete($temporaryIoPath)
             }
         }
         else {
-            Move-Item -LiteralPath $temporaryPath -Destination $Path
+            [System.IO.File]::Move($temporaryIoPath, $destinationIoPath)
         }
     }
     finally {
-        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
-            Remove-Item -LiteralPath $temporaryPath -Force -ErrorAction SilentlyContinue
+        if ([System.IO.File]::Exists($temporaryIoPath)) {
+            [System.IO.File]::Delete($temporaryIoPath)
         }
     }
+}
+
+function ConvertTo-ExtendedFilePath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if ($Path.StartsWith('\\?\')) { return $Path }
+    if ($Path.StartsWith('\\')) { return '\\?\UNC\' + $Path.Substring(2) }
+    if (-not [System.IO.Path]::IsPathRooted($Path)) { throw 'Handoff status path must be absolute.' }
+    return '\\?\' + $Path
 }
 
 function Resolve-FlowCellRepoRoot {

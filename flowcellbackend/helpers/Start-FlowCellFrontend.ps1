@@ -314,14 +314,14 @@ function Get-FlowCellFrontendProcess {
         return @()
     }
 
-    $knownExePaths = @(
+    $knownExePaths = @(@(
         $frontendReleaseExePath,
         $frontendDebugExePath
     ) | Where-Object {
         Test-Path -LiteralPath $_ -PathType Leaf
     } | ForEach-Object {
         [System.IO.Path]::GetFullPath($_)
-    }
+    })
 
     $matches = foreach ($process in @($runningFrontend)) {
         $processPath = ''

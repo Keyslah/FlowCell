@@ -44,6 +44,7 @@ function Resolve-FlowCellRoot {
 }
 
 function Get-ProgramDataRoot {
+    if ($env:FLOWCELL_LOCAL_ROOT) { return Join-Path $env:FLOWCELL_LOCAL_ROOT 'program-data/windows/setup-organization' }
     return Join-Path (Resolve-FlowCellRoot) 'flowcellbackend\local\program-data\windows\setup-organization'
 }
 

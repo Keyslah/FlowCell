@@ -351,9 +351,23 @@ pub(crate) fn wait_for_blender_bridge_response(
     response_path: &Path,
     request_id: &str,
     timeout: Duration,
+    mut dialog_is_open: impl FnMut() -> bool,
 ) -> Option<Value> {
-    let deadline = Instant::now() + timeout;
-    while Instant::now() < deadline {
+    let mut deadline = Instant::now() + timeout;
+    let mut next_dialog_check = Instant::now();
+    loop {
+        let now = Instant::now();
+        if now >= next_dialog_check {
+            // Native script prompts run on Blender's UI thread. Give the action
+            // its normal completion budget after the user answers the prompt.
+            if dialog_is_open() {
+                deadline = now + timeout;
+            }
+            next_dialog_check = now + timeout.min(Duration::from_millis(100));
+        }
+        if now >= deadline {
+            return None;
+        }
         if let Ok(raw) = fs::read_to_string(response_path) {
             if let Ok(response) = serde_json::from_str::<Value>(&raw) {
                 let response_id = response
@@ -368,7 +382,36 @@ pub(crate) fn wait_for_blender_bridge_response(
         thread::sleep(Duration::from_millis(BLENDER_BRIDGE_RESPONSE_POLL_MS));
     }
 
-    None
+}
+
+#[cfg(windows)]
+fn blender_process_has_visible_dialog(target_process_id: u32) -> bool {
+    struct DialogSearch {
+        process_id: u32,
+        found: bool,
+    }
+    unsafe extern "system" fn find_dialog(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let search = &mut *(lparam as *mut DialogSearch);
+        let mut process_id = 0;
+        GetWindowThreadProcessId(hwnd, &mut process_id);
+        if process_id == search.process_id && IsWindowVisible(hwnd) != 0 {
+            let mut class_name = [0u16; 32];
+            let length = GetClassNameW(hwnd, class_name.as_mut_ptr(), class_name.len() as i32);
+            if length > 0 && String::from_utf16_lossy(&class_name[..length as usize]) == "#32770" {
+                search.found = true;
+                return 0;
+            }
+        }
+        1
+    }
+    let mut search = DialogSearch { process_id: target_process_id, found: false };
+    unsafe { EnumWindows(Some(find_dialog), &mut search as *mut DialogSearch as LPARAM); }
+    search.found
+}
+
+#[cfg(not(windows))]
+fn blender_process_has_visible_dialog(_target_process_id: u32) -> bool {
+    false
 }
 
 fn fusion_bridge_response_matches_request(response: &Value, request_id: &str) -> bool {
@@ -2159,8 +2202,12 @@ pub(crate) fn run_blender_bridge_action_direct_with_options(
                 .max(1),
         )
     });
-    let response = wait_for_blender_bridge_response(&response_path, &request_id, timeout_duration)
-        .ok_or_else(|| BLENDER_BRIDGE_NOT_RUNNING_MESSAGE.to_string())?;
+    let response = wait_for_blender_bridge_response(
+        &response_path, &request_id, timeout_duration,
+        || timeout_override.is_none() && blender_process_has_visible_dialog(target_blender_process_id),
+    ).ok_or_else(|| format!(
+        "Blender did not finish the action '{action}' before the response timeout. Check Blender's dialogs and the FlowCell bridge add-on."
+    ))?;
 
     let message = extract_blender_bridge_response_message(&response);
     write_last_action_status_message(&message);
@@ -2346,7 +2393,7 @@ mod tests {
     use super::{
         fusion_addin_root_candidates, fusion_bridge_response_matches_request,
         read_fusion_bridge_runtime_process_ids, resolve_macro_recorder_script_path,
-        wait_for_fusion_bridge_response, windows_child_process_path,
+        wait_for_blender_bridge_response, wait_for_fusion_bridge_response, windows_child_process_path,
     };
     use serde_json::json;
     use std::fs;
@@ -2362,6 +2409,38 @@ mod tests {
                 .unwrap_or_default()
                 .as_nanos()
         ))
+    }
+
+    #[test]
+    fn blender_response_waits_for_prompt_then_accepts_only_matching_response() {
+        let root = temporary_fusion_bridge_root("blender-dialog");
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("response.json");
+        fs::write(&path, json!({"id":"older-request"}).to_string()).unwrap();
+        let mut checks = 0;
+        let response = json!({"id":"current-request","status":"FINISHED"});
+        let result = wait_for_blender_bridge_response(&path, "current-request", Duration::from_millis(15), || {
+            checks += 1;
+            if checks == 4 {
+                fs::write(&path, response.to_string()).unwrap();
+            }
+            checks <= 4
+        });
+        assert_eq!(result, Some(response));
+        assert!(checks >= 4, "must wait beyond the original response deadline");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn blender_response_still_times_out_after_prompt_closes() {
+        let root = temporary_fusion_bridge_root("blender-dialog-timeout");
+        let mut checks = 0;
+        let result = wait_for_blender_bridge_response(&root.join("missing.json"), "request", Duration::from_millis(15), || {
+            checks += 1;
+            checks <= 2
+        });
+        assert!(result.is_none());
+        assert!(checks >= 3);
     }
 
     #[test]

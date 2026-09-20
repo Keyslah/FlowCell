@@ -4,7 +4,7 @@ param(
   [string]$ActionId,
   [string]$ScriptPath,
   [string]$RepoRoot,
-  [string]$PipeName = 'FlowCell.Illustrator.Bridge.v1',
+  [string]$PipeName = 'FlowCell.Illustrator.Bridge.v2',
   [int]$ConnectTimeoutMs = 700,
   [int]$StartTimeoutMs = 6000,
   [string]$ArgsJson,
@@ -144,7 +144,7 @@ function Ensure-Bridge {
     }
   }
 
-  $mutex = [System.Threading.Mutex]::new($false, 'Global\FlowCell.Illustrator.Bridge.Start.v1')
+  $mutex = [System.Threading.Mutex]::new($false, 'Global\FlowCell.Illustrator.Bridge.Start.v2')
   $hasMutex = $false
   try {
     $hasMutex = $mutex.WaitOne(5000)

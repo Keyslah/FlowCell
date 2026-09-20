@@ -3855,9 +3855,11 @@ def _absorb_current_theme(context):
         _safe_theme_path_value(viewport_gradients, "show_grad")
     ) if viewport_gradients is not None else False
 
+    # Blender versions expose different theme fields. Keep unavailable buckets
+    # out of the patch so the page retains them instead of rejecting null colors.
     return _result(
         "Blender theme sampled from current settings.",
-        fieldPatch={
+        fieldPatch={key: value for key, value in {
             "tabs_hex": tabs_hex,
             "tabs_text_hex": tabs_text_hex,
             "headers_hex": headers_hex,
@@ -3875,7 +3877,7 @@ def _absorb_current_theme(context):
             "viewport_background_hex": viewport_background_hex,
             "viewport_gradient_enabled": viewport_gradient_enabled,
             "viewport_gradient_hex": viewport_gradient_hex,
-        },
+        }.items() if value is not None},
     )
 
 

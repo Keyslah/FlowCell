@@ -1,7 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import {
+  currentMonitor,
   getCurrentWindow,
+  monitorFromPoint,
   LogicalPosition,
   LogicalSize,
   PhysicalPosition,
@@ -30,6 +32,7 @@ import {
   unregisterScopedWindowTopmost
 } from "./tauri";
 import { waitForManagedWindowToDisappear } from "../button/windows/managedWindowLifecycle";
+import { confineButtonWindowBoundsToWorkArea } from "../button/windows/buttonWindowGeometry";
 
 const pendingOpens = new Map<string, Promise<void>>();
 const INSTALLED_PAGE_WINDOW_CLOSE_TIMEOUT_MS = 5_000;
@@ -114,8 +117,33 @@ async function applyPlacement(
   );
 }
 
-async function showAndFocus(target: TauriWindow): Promise<void> {
+async function showAndFocus(target: TauriWindow, options: CoreWindowOptions): Promise<void> {
   if (await target.isMinimized().catch(() => false)) await target.unminimize();
+  const [position, outer, inner] = await Promise.all([
+    target.outerPosition(), target.outerSize(), target.innerSize()
+  ]);
+  const monitor = await monitorFromPoint(
+    position.x + outer.width / 2, position.y + outer.height / 2
+  ).catch(() => null) ?? await currentMonitor().catch(() => null);
+  if (monitor) {
+    const fitted = confineButtonWindowBoundsToWorkArea({
+      Left: position.x, Top: position.y, Width: outer.width, Height: outer.height
+    }, {
+      Left: monitor.workArea.position.x, Top: monitor.workArea.position.y,
+      Width: monitor.workArea.size.width, Height: monitor.workArea.size.height
+    });
+    // setSize controls the client area; reserve the measured native title bar/borders.
+    const width = Math.max(1, fitted.Width - (outer.width - inner.width));
+    const height = Math.max(1, fitted.Height - (outer.height - inner.height));
+    if (options.minimumWidth !== undefined || options.minimumHeight !== undefined) {
+      await target.setMinSize(new PhysicalSize(
+        Math.min((options.minimumWidth ?? 0) * monitor.scaleFactor, width),
+        Math.min((options.minimumHeight ?? 0) * monitor.scaleFactor, height)
+      ));
+    }
+    await target.setSize(new PhysicalSize(width, height));
+    await target.setPosition(new PhysicalPosition(fitted.Left, fitted.Top));
+  }
   await target.show();
   await target.setFocus();
 }
@@ -172,7 +200,7 @@ async function openCoreWindow(options: CoreWindowOptions): Promise<void> {
       }
       await existing.setDecorations(options.decorations ?? false).catch(() => {});
       await applyPlacement(existing, placement);
-      await showAndFocus(existing);
+      await showAndFocus(existing, options);
       return;
     }
     const target = new WebviewWindow(options.label, {
@@ -199,7 +227,7 @@ async function openCoreWindow(options: CoreWindowOptions): Promise<void> {
       await registerScopedWindowTopmost(options.label, options.programName).catch(() => {});
       await refreshScopedWindowTopmost(options.label).catch(() => {});
     }
-    await showAndFocus(target);
+    await showAndFocus(target, options);
   })().finally(() => {
     if (pendingOpens.get(options.label) === open) pendingOpens.delete(options.label);
   });

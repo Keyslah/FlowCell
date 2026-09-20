@@ -132,6 +132,41 @@ function Get-ProfilesRoot { return Join-Path (Get-ProgramDataRoot) 'profiles' }
 function Get-StagingRoot { return Join-Path (Get-ProgramDataRoot) 'staging' }
 function Get-FileGroupsPath { return Join-Path (Get-ProgramDataRoot) 'file-groups.json' }
 
+function Test-CloudStorageDirectory {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    if (-not ('FlowCellCloudDirectory' -as [type])) {
+        Add-Type @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using FILETIME = System.Runtime.InteropServices.ComTypes.FILETIME;
+public static class FlowCellCloudDirectory {
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    struct FindData {
+        public uint Attributes;
+        public FILETIME Created, Accessed, Written;
+        public uint SizeHigh, SizeLow, ReparseTag, Reserved;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)] public string Name;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 14)] public string AlternateName;
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr FindFirstFile(string path, out FindData data);
+    [DllImport("kernel32.dll")] static extern bool FindClose(IntPtr handle);
+    public static bool IsCloudTag(uint tag) { return (tag & 0xFFFF0FFFu) == 0x9000001Au; }
+    public static bool IsCloudDirectory(string path) {
+        if (!path.StartsWith(@"\\?\")) path = path.StartsWith(@"\\") ? @"\\?\UNC\" + path.Substring(2) : @"\\?\" + path;
+        FindData data;
+        IntPtr handle = FindFirstFile(path.TrimEnd('\\'), out data);
+        if (handle == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        try { return (data.Attributes & 0x10u) != 0 && IsCloudTag(data.ReparseTag); }
+        finally { FindClose(handle); }
+    }
+}
+'@
+    }
+    return [FlowCellCloudDirectory]::IsCloudDirectory($Path)
+}
+
 function Assert-NotReparsePoint {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
@@ -139,7 +174,10 @@ function Assert-NotReparsePoint {
     )
 
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
-    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    # Cloud directory tags preserve this path's identity; junctions and symlinks
+    # redirect it. Keep rejecting every other reparse tag.
+    if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -and
+        -not (Test-CloudStorageDirectory -Path $item.FullName)) {
         throw "$Label cannot be a symbolic link or reparse point: $Path"
     }
 }
@@ -1573,8 +1611,8 @@ function Invoke-StageGeneratedButton {
             importKind = 'script'
             packageId = $packageId
             sourceManifestRelativePath = 'source/flowcell.script.json'
-            sourceManifestSha256 = (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash.ToLowerInvariant()
-            scriptSha256 = (Get-FileHash -LiteralPath $scriptPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            sourceManifestSha256 = Get-FileSha256 -Path $manifestPath
+            scriptSha256 = Get-FileSha256 -Path $scriptPath
             metadata = [ordered]@{ profileId = $profileId }
         }
         Write-AtomicJsonFile -Path (Join-Path $stageRoot 'stage.json') -Value $stageManifest
@@ -1591,6 +1629,19 @@ function Invoke-StageGeneratedButton {
             Remove-Item -LiteralPath $stageRoot -Recurse -Force
         }
         throw
+    }
+}
+
+function Get-FileSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $algorithm = [System.Security.Cryptography.SHA256]::Create()
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    }
+    finally {
+        $stream.Dispose()
+        $algorithm.Dispose()
     }
 }
 

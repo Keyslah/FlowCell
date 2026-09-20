@@ -6,7 +6,8 @@
   "defaultPanels": [
     "Collections",
     "Files",
-    "Utility"
+    "Utility",
+    "toolset"
   ],
   "panels": [
     {
@@ -27,7 +28,7 @@
     {
       "id": "toolset",
       "label": "toolset",
-      "defaultSelected": false
+      "defaultSelected": true
     }
   ],
   "processNames": [
@@ -120,7 +121,7 @@
     },
     {
       "id": "blender.theme",
-      "version": "3.0.11",
+      "version": "3.0.12",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/theme",
       "importKind": "script",
@@ -165,6 +166,126 @@
       "dependencies": [],
       "installEffects": [
         "Downloads this program catalog only; preserves local edits and installed Buttons."
+      ],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.alignment-tools",
+      "version": "1.0.0",
+      "panelName": "toolset",
+      "sourcePath": "Blender Git Scripts/Toolsets/alignment-tools/flowcell.toolset.json",
+      "importKind": "tool-set",
+      "displayLabel": "alignment tools",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the alignment tools toolset into the Blender toolset panel."
+      ],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.boolean",
+      "version": "1.1.0",
+      "panelName": "toolset",
+      "sourcePath": "Blender Git Scripts/Toolsets/boolean/flowcell.toolset.json",
+      "importKind": "tool-set",
+      "displayLabel": "boolean",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the boolean toolset into the Blender toolset panel."
+      ],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.flatten-revolve",
+      "version": "1.1.0",
+      "panelName": "toolset",
+      "sourcePath": "Blender Git Scripts/Toolsets/flatten-revolve/flowcell.toolset.json",
+      "importKind": "tool-set",
+      "displayLabel": "flatten revolve",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the flatten revolve toolset into the Blender toolset panel."
+      ],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.remesh",
+      "version": "1.1.0",
+      "panelName": "toolset",
+      "sourcePath": "Blender Git Scripts/Toolsets/remesh/flowcell.toolset.json",
+      "importKind": "tool-set",
+      "displayLabel": "remesh",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the remesh toolset into the Blender toolset panel."
+      ],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.rotate",
+      "version": "1.1.0",
+      "panelName": "toolset",
+      "sourcePath": "Blender Git Scripts/Toolsets/rotate/flowcell.toolset.json",
+      "importKind": "tool-set",
+      "displayLabel": "rotate",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the rotate toolset into the Blender toolset panel."
+      ],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.smart-axis",
+      "version": "1.0.0",
+      "panelName": "toolset",
+      "sourcePath": "Blender Git Scripts/Toolsets/smart-axis/flowcell.toolset.json",
+      "importKind": "tool-set",
+      "displayLabel": "smart axis",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the smart axis toolset into the Blender toolset panel."
+      ],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.tri-poly",
+      "version": "1.1.0",
+      "panelName": "toolset",
+      "sourcePath": "Blender Git Scripts/Toolsets/tri-poly/flowcell.toolset.json",
+      "importKind": "tool-set",
+      "displayLabel": "tri poly",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the tri poly toolset into the Blender toolset panel."
+      ],
+      "installOnAdd": true
+    },
+    {
+      "id": "blender.xyz-dimensions",
+      "version": "1.0.0",
+      "panelName": "toolset",
+      "sourcePath": "Blender Git Scripts/Toolsets/xyz-dimensions/flowcell.toolset.json",
+      "importKind": "tool-set",
+      "displayLabel": "xyz dimensions",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Installs the xyz dimensions toolset into the Blender toolset panel."
       ],
       "installOnAdd": true
     }

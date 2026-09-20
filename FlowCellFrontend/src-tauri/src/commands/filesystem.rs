@@ -82,6 +82,12 @@ pub(crate) fn initialize_runtime_paths() -> Result<(), String> {
     fs::create_dir_all(&local).map_err(|e| e.to_string())?;
     fs::create_dir_all(&programs).map_err(|e| e.to_string())?;
     if installed { fs::create_dir_all(programs.join("Windows")).map_err(|e| e.to_string())?; }
+    // Source ownership resolves real filesystem paths. Use the same identities for
+    // runtime roots so redirected AppData paths also match during quarantine/recovery.
+    let local = super::execution::windows_child_process_path(
+        &fs::canonicalize(&local).map_err(|e| e.to_string())?);
+    let programs = super::execution::windows_child_process_path(
+        &fs::canonicalize(&programs).map_err(|e| e.to_string())?);
     env::set_var("FLOWCELL_LOCAL_ROOT", &local);
     env::set_var("FLOWCELL_PROGRAMS_ROOT", &programs);
     env::set_var("FLOWCELL_RESOURCE_ROOT", &resource);

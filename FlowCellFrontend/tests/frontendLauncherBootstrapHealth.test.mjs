@@ -1,11 +1,39 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const launcherSource = readFileSync(
   new URL("../../flowcellbackend/helpers/Start-FlowCellFrontend.ps1", import.meta.url),
   "utf8",
 );
+
+test("launcher process lookup supports zero, one, or two built executables", { skip: process.platform !== "win32" }, () => {
+  const script = `
+    Set-StrictMode -Version Latest
+    $ErrorActionPreference = 'Stop'
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:FLOWCELL_TEST_LAUNCHER, [ref]$null, [ref]$null)
+    $function = $ast.Find({param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Get-FlowCellFrontendProcess'}, $true)
+    Invoke-Expression $function.Extent.Text
+    $frontendReleaseExePath = Join-Path $env:TEMP 'FlowCell-launcher-test-release.exe'
+    $frontendDebugExePath = Join-Path $env:TEMP 'FlowCell-launcher-test-debug.exe'
+    function Get-Process { param($Name, $ErrorAction) @([pscustomobject]@{Path=$frontendReleaseExePath}, [pscustomobject]@{Path=$frontendDebugExePath}, [pscustomobject]@{Path=(Join-Path $env:TEMP 'unrelated.exe')}) }
+    function Test-Path { param($LiteralPath, $PathType) $availablePaths -contains $LiteralPath }
+    foreach ($count in 0,1,2) {
+      $availablePaths = @(@($frontendReleaseExePath,$frontendDebugExePath) | Select-Object -First $count)
+      $matches = @(Get-FlowCellFrontendProcess)
+      $expected = if ($count -eq 0) { 3 } else { $count }
+      if ($matches.Count -ne $expected) { throw "Expected $expected matches for $count built executables, got $($matches.Count)" }
+      if ($count -eq 1 -and $matches[0].Path -ne $frontendReleaseExePath) { throw 'Selected another installed copy' }
+    }
+  `;
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    encoding: "utf8",
+    env: { ...process.env, FLOWCELL_TEST_LAUNCHER: fileURLToPath(new URL("../../flowcellbackend/helpers/Start-FlowCellFrontend.ps1", import.meta.url)) },
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+});
 
 test("fresh frontend launches must prove Button-state bootstrap health", () => {
   assert.match(

@@ -226,13 +226,12 @@ test("Theme owns its Blender lifecycle and generic deletion owns its sidecar", (
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.11");
+  assert.equal(contribution.version, "3.0.12");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
   assert.equal("installIfMissing" in contribution, false);
   assert.equal(contribution.legacyMatchKind, "script");
-  assert.equal(blenderProgramManifest.bundledSources.some(({ importKind }) => importKind === "tool-set"), false);
 });
 
 test("every declared page resource is package-contained and present", () => {

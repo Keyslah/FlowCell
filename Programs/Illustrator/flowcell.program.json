@@ -7,6 +7,7 @@
     "Layers",
     "Layers Builder",
     "Files",
+    "Toolsets",
     "Utility"
   ],
   "panels": [
@@ -23,6 +24,11 @@
     {
       "id": "files",
       "label": "Files",
+      "defaultSelected": true
+    },
+    {
+      "id": "toolsets",
+      "label": "Toolsets",
       "defaultSelected": true
     },
     {
@@ -51,8 +57,34 @@
   "supportsToolsetManifests": true,
   "bundledSources": [
     {
+      "id": "illustrator.ill-align",
+      "version": "1.0.0",
+      "panelName": "Toolsets",
+      "sourcePath": "Illustrator Git Scripts/Toolsets/ill-align/flowcell.toolset.json",
+      "importKind": "tool-set",
+      "displayLabel": "Ill Align",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": ["Installs the Illustrator Align toolset into Toolsets."],
+      "installOnAdd": true
+    },
+    {
+      "id": "illustrator.rotate",
+      "version": "1.0.0",
+      "panelName": "Toolsets",
+      "sourcePath": "Illustrator Git Scripts/Toolsets/rotate/flowcell.toolset.json",
+      "importKind": "tool-set",
+      "displayLabel": "Illustrator Rotate",
+      "sourceKind": "tool-set",
+      "required": false,
+      "dependencies": [],
+      "installEffects": ["Installs the Illustrator Rotate toolset into Toolsets."],
+      "installOnAdd": true
+    },
+    {
       "id": "illustrator.send-svg-to-blender",
-      "version": "1.2.12",
+      "version": "1.2.14",
       "panelName": "Files",
       "sourcePath": "Illustrator Git Scripts/Files/Send SVG to Blender/18_Prepare_Selected_OBJ_Export.jsx",
       "importKind": "script",

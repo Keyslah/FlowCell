@@ -105,21 +105,62 @@ function ConvertTo-JsStringLiteral {
   return ($Value | ConvertTo-Json -Compress)
 }
 
+function Resolve-FlowCellExistingPath {
+  param([Parameter(Mandatory = $true)][string]$Path)
+
+  # Rust resolves installed paths to their final Windows filesystem identity.
+  # Resolve both sides of the containment check the same way, including AppData
+  # redirection and junctions, without admitting links outside Local Scripts.
+  if (-not ('FlowCell.IllustratorPathIdentity' -as [type])) {
+    Add-Type @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+using Microsoft.Win32.SafeHandles;
+namespace FlowCell {
+  public static class IllustratorPathIdentity {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(string path, uint access, uint share,
+      IntPtr security, uint creation, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern uint GetFinalPathNameByHandle(SafeFileHandle handle,
+      StringBuilder path, uint length, uint flags);
+    public static string Resolve(string path) {
+      using (var handle = CreateFile(path, 0, 7, IntPtr.Zero, 3, 0x02000000, IntPtr.Zero)) {
+        if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error());
+        var resolved = new StringBuilder(32768);
+        uint length = GetFinalPathNameByHandle(handle, resolved, (uint)resolved.Capacity, 0);
+        if (length == 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (length >= resolved.Capacity) throw new System.IO.PathTooLongException();
+        string value = resolved.ToString();
+        if (value.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
+          return @"\\" + value.Substring(8);
+        return value.StartsWith(@"\\?\", StringComparison.Ordinal) ? value.Substring(4) : value;
+      }
+    }
+  }
+}
+'@
+  }
+  return [FlowCell.IllustratorPathIdentity]::Resolve([System.IO.Path]::GetFullPath($Path))
+}
+
 function Test-IsUnderRoot {
   param(
     [Parameter(Mandatory = $true)][string]$Path,
     [Parameter(Mandatory = $true)][string]$Root
   )
 
-  $fullPath = [System.IO.Path]::GetFullPath($Path)
-  $fullRoot = [System.IO.Path]::GetFullPath($Root).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
+  $fullPath = Resolve-FlowCellExistingPath -Path $Path
+  $fullRoot = (Resolve-FlowCellExistingPath -Path $Root).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
   return $fullPath.StartsWith($fullRoot, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
 function Resolve-InstalledScriptPath {
   param([Parameter(Mandatory = $true)][string]$Path)
 
-  $candidate = [System.IO.Path]::GetFullPath($Path)
+  $candidate = Resolve-FlowCellExistingPath -Path $Path
   if (-not (Test-IsUnderRoot -Path $candidate -Root $script:LocalScriptsRoot)) {
     throw "Refusing Illustrator script outside Button-owned Local Scripts: $Path"
   }

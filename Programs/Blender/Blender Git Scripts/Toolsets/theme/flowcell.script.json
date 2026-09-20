@@ -1903,26 +1903,7 @@
                 "misc_hex": {
                   "type": "string"
                 }
-              },
-              "required": [
-                "tabs_hex",
-                "tabs_text_hex",
-                "headers_hex",
-                "header_text_hex",
-                "text_hex",
-                "control_text_hex",
-                "accent_text_hex",
-                "editor_background_hex",
-                "scene_hex",
-                "controls_hex",
-                "highlights_hex",
-                "viewport_background_hex",
-                "viewport_gradient_enabled",
-                "viewport_gradient_hex",
-                "borders_hex",
-                "darks_hex",
-                "misc_hex"
-              ]
+              }
             }
           },
           "required": [

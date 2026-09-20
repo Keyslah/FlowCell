@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -21,6 +23,43 @@ const blenderRegistryInstallerPath = path.resolve(
   "../../../../Blender/SupportScripts/Install-BlenderFlowCellButtons.ps1"
 );
 const blenderRegistryInstallerSource = readFileSync(blenderRegistryInstallerPath, "utf8");
+
+test("Windows PowerShell writes and replaces handoff status through long redirected paths", {
+  skip: process.platform !== "win32"
+}, () => {
+  const temporaryRoot = mkdtempSync(path.join(os.tmpdir(), "flowcell-handoff-"));
+  const script = String.raw`
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $parseErrors = $null
+$ast = [Management.Automation.Language.Parser]::ParseFile($env:FLOWCELL_TEST_HANDOFF, [ref]$tokens, [ref]$parseErrors)
+if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+foreach ($name in @('ConvertTo-SingleLineMessage', 'ConvertTo-ExtendedFilePath', 'Write-HandoffStatus')) {
+  $function = $ast.Find({ param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name }, $true)
+  . ([scriptblock]::Create($function.Extent.Text))
+}
+$directory = Join-Path $env:FLOWCELL_TEST_ROOT ('x' * 180)
+[IO.Directory]::CreateDirectory((ConvertTo-ExtendedFilePath $directory)) | Out-Null
+$status = Join-Path $directory 'send-svg-to-blender.status.txt'
+if ($status.Length + 45 -le 260) { throw 'Fixture did not cross the Windows temporary-path limit' }
+Write-HandoffStatus -Path $status -CorrelationId 'first' -Status Ok -Message 'First write' -Count 1
+Write-HandoffStatus -Path $status -CorrelationId 'replacement' -Status Ok -Message 'Replacement write' -Count 2
+$result = [IO.File]::ReadAllText((ConvertTo-ExtendedFilePath $status))
+if ($result -notmatch 'RequestId=replacement' -or $result -notmatch 'ImportedCount=2') { throw 'Status replacement failed' }
+$leftovers = [IO.Directory]::GetFiles((ConvertTo-ExtendedFilePath $directory), '*.tmp')
+if ($leftovers.Length) { throw 'Atomic status write left temporary files behind' }
+`;
+  try {
+    const result = spawnSync("powershell.exe", [
+      "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")
+    ], {
+      encoding: "utf8", timeout: 30_000,
+      env: { ...process.env, FLOWCELL_TEST_HANDOFF: handoffPath, FLOWCELL_TEST_ROOT: temporaryRoot }
+    });
+    assert.equal(result.status, 0, result.error?.message ?? result.stderr ?? result.stdout);
+  } finally {
+    rmSync(temporaryRoot, { recursive: true, force: true });
+  }
+});
 
 function loadTestApi(postAction, appOverride, warnings) {
   const globalObject = { __FLOWCELL_SEND_SVG_TO_BLENDER_TEST__: true };
@@ -483,10 +522,10 @@ test("Pathfinder Unite and expansion are mandatory and command errors fail close
   const { uniteAndBakeVectorArtwork } = loadTestApi(undefined, appMock);
 
   uniteAndBakeVectorArtwork(document, "Stencil");
-  assert.deepEqual(calls, ["Live Pathfinder Add", "expandStyle"]);
+  assert.deepEqual(calls, ["group", "Live Pathfinder Add", "expandStyle"]);
 
   appMock.executeMenuCommand = (command) => {
-    throw new Error(`disabled: ${command}`);
+    if (command !== "group") throw new Error(`disabled: ${command}`);
   };
   assert.throws(
     () => uniteAndBakeVectorArtwork(document, "Stencil"),
