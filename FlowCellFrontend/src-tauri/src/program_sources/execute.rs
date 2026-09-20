@@ -651,6 +651,10 @@ pub(crate) fn run_active_source(resolution: &ActiveSourceResolution) -> Result<V
         return Ok(json!({ "message": format!("Loaded {}.", record.label) }));
     }
     let source_path = PathBuf::from(&record.source_path);
+    if super::records::is_portable_windows_execution(record.runner_data.as_ref()) {
+        crate::run_windows_panel_script_file(&source_path)?;
+        return Ok(json!({ "message": format!("Started {}.", record.label) }));
+    }
     let manifest = load_program_manifest(&record.program_name)?;
     match record.runner.as_str() {
         "windows-script" => {

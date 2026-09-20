@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.restore-visibility",
+  "label": "set vis",
+  "tooltip": "Restore this document's saved visibility states.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

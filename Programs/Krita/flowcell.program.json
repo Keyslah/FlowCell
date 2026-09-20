@@ -4,12 +4,24 @@
   "label": "Krita",
   "programType": "local-script",
   "defaultPanels": [
-    "Files"
+    "Files",
+    "Layers",
+    "Brushes"
   ],
   "panels": [
     {
       "id": "files",
       "label": "Files",
+      "defaultSelected": true
+    },
+    {
+      "id": "layers",
+      "label": "Layers",
+      "defaultSelected": true
+    },
+    {
+      "id": "brushes",
+      "label": "Brushes",
       "defaultSelected": true
     }
   ],
@@ -51,6 +63,411 @@
         "Downloads this program catalog only; preserves local edits and installed Buttons."
       ],
       "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.brushes.save-new-brush",
+      "version": "1.0.0",
+      "panelName": "Brushes",
+      "sourcePath": "Krita Git Scripts/Brushes/Save New Brush",
+      "importKind": "script",
+      "displayLabel": "save new brush",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Open Krita preset naming/thumbnail dialog; after saving create a brush Button with its size."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.make-layers",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Make Layers",
+      "importKind": "script",
+      "displayLabel": "make layers",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Create/reuse Live, Snapshots, Trash, Archive and organize visible/hidden working layers."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.make-group",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Make Group",
+      "importKind": "script",
+      "displayLabel": "make group",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Name a new nested group inside the highlighted group or layer's containing group."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.make-layer",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Make Layer",
+      "importKind": "script",
+      "displayLabel": "make layer",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Name a new paint layer inside the highlighted group or layer's containing group."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.rename-selected",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Rename Selected",
+      "importKind": "script",
+      "displayLabel": "rename",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Prompt to rename highlighted layers."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.duplicate-selected",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Duplicate Selected",
+      "importKind": "script",
+      "displayLabel": "duplicate",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Duplicate highlighted layers and their complete contents."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.delete-highlighted",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Delete Highlighted",
+      "importKind": "script",
+      "displayLabel": "delete",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Delete highlighted layers, including hidden/locked layers. System roots, Trash and Archive are protected."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.snapshot",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Snapshot",
+      "importKind": "script",
+      "displayLabel": "snapshot",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Save editable sN copies of highlighted Live layers/groups."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.previous-snapshot",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Previous Snapshot",
+      "importKind": "script",
+      "displayLabel": "<",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Cycle backward through the selected family's Live and snapshot versions."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.next-snapshot",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Next Snapshot",
+      "importKind": "script",
+      "displayLabel": ">",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Cycle forward through the selected family's Live and snapshot versions."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.restore",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Restore",
+      "importKind": "script",
+      "displayLabel": "restore",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Restore a stored version to Live; move the displaced working version into Trash."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.back",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Back",
+      "importKind": "script",
+      "displayLabel": "back",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Step Live back to its latest snapshot, consuming that snapshot and retaining displaced work in Trash."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.add-to-live",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Add to Live",
+      "importKind": "script",
+      "displayLabel": "add to live",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Copy stored versions into Live as additional working items."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.copy-live",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Copy Live",
+      "importKind": "script",
+      "displayLabel": "copy live",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Prompt for a named working group, copy highlighted Live layers into it and hide the originals."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.trash",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Trash",
+      "importKind": "script",
+      "displayLabel": "trash",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Move highlighted Live layers into recoverable numbered Trash entries."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.archive",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Archive",
+      "importKind": "script",
+      "displayLabel": "archive",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Move highlighted Live layers into numbered Archive entries."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.copy-archive",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Copy to Archive",
+      "importKind": "script",
+      "displayLabel": "copy archive",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Copy highlighted Live layers into Archive while keeping the working originals."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.empty-trash",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Empty Trash",
+      "importKind": "script",
+      "displayLabel": "empty trash",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Confirm before deleting everything inside Trash; retain the Trash root."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.empty-groups",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Empty Groups",
+      "importKind": "script",
+      "displayLabel": "empty groups",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Remove empty working groups; retain system roots and stored versions."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.baseline-visibility",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Baseline Visibility",
+      "importKind": "script",
+      "displayLabel": "b vis",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Save this document's layer visibility states."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.restore-visibility",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Restore Visibility",
+      "importKind": "script",
+      "displayLabel": "set vis",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Restore this document's saved visibility states."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.baseline-locks",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Baseline Locks",
+      "importKind": "script",
+      "displayLabel": "b lock",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Save this document's layer lock states."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.restore-locks",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Restore Locks",
+      "importKind": "script",
+      "displayLabel": "set lock",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Restore this document's saved lock states."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.cycle-group",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Cycle Group",
+      "importKind": "script",
+      "displayLabel": "cycle group",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Show/select the next sibling inside the selected item's working group."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.expand-groups",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Expand Groups",
+      "importKind": "script",
+      "displayLabel": "expand",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Expand highlighted groups and their nested groups."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.collapse-groups",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Collapse Groups",
+      "importKind": "script",
+      "displayLabel": "collapse",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Collapse highlighted groups and their nested groups."
+      ],
+      "installIfMissing": true
+    },
+    {
+      "id": "plain-krita.layers.flatten-selected",
+      "version": "1.0.1",
+      "panelName": "Layers",
+      "sourcePath": "Krita Git Scripts/Layers/Flatten Selected",
+      "importKind": "script",
+      "displayLabel": "flatten",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Use Krita's native merge action for highlighted layers; a single selected group is flattened."
+      ],
+      "installIfMissing": true
     }
   ],
   "runner": {
@@ -59,6 +476,6 @@
     "installScript": "",
     "deleteScript": ""
   },
-  "addonReloadNotes": "",
+  "addonReloadNotes": "Install SupportScripts/Install-KritaLayers.ps1 while Krita is closed, then open Krita to load FlowCell Layers.",
   "appRestartNotes": ""
 }

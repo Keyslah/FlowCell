@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.rename-selected",
+  "label": "rename",
+  "tooltip": "Prompt to rename highlighted layers.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.next-snapshot",
+  "label": ">",
+  "tooltip": "Cycle forward through the selected family's Live and snapshot versions.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

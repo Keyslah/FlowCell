@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.make-group",
+  "label": "make group",
+  "tooltip": "Name a new nested group inside the highlighted group or layer's containing group.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

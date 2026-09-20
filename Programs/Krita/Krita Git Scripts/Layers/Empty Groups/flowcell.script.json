@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.empty-groups",
+  "label": "empty groups",
+  "tooltip": "Remove empty working groups; retain system roots and stored versions.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

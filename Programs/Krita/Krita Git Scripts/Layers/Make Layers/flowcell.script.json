@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.make-layers",
+  "label": "make layers",
+  "tooltip": "Create/reuse Live, Snapshots, Trash, Archive and organize visible/hidden working layers.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

@@ -46,6 +46,20 @@
   "supportsToolsetManifests": false,
   "bundledSources": [
     {
+      "id": "windows.shortcycle",
+      "version": "1.0.0",
+      "panelName": "Utility",
+      "sourcePath": "Windows Git Scripts/Utility/shortcycle",
+      "importKind": "script",
+      "installIfMissing": true,
+      "displayLabel": "shortcycle",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": ["Adds shortcycle with a saved per-Button shortcut list and a cycle that resets each FlowCell session."],
+      "installOnAdd": true
+    },
+    {
       "id": "windows.setup-organization",
       "version": "1.3.3",
       "panelName": "Files",

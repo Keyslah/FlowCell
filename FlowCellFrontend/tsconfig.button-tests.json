@@ -18,6 +18,7 @@
     "src/button/state/buttonPlacementFile.ts",
     "src/button/state/buttonSettingsFile.ts",
     "src/button/state/ButtonStateRepository.ts",
+    "src/button/state/kritaBrushButtonOperations.ts",
     "src/button/state/buttonStateValidation.ts",
     "src/button/state/buttonDocumentOperations.ts",
     "src/button/state/buttonPopoutInteractionOperations.ts",

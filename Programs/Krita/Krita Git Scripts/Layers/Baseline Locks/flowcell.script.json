@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.baseline-locks",
+  "label": "b lock",
+  "tooltip": "Save this document's layer lock states.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

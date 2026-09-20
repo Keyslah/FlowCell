@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.make-layer",
+  "label": "make layer",
+  "tooltip": "Name a new paint layer inside the highlighted group or layer's containing group.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

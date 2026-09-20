@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.restore",
+  "label": "restore",
+  "tooltip": "Restore a stored version to Live; move the displaced working version into Trash.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

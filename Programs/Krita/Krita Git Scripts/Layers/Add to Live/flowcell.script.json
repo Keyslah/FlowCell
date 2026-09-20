@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.add-to-live",
+  "label": "add to live",
+  "tooltip": "Copy stored versions into Live as additional working items.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

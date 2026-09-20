@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.back",
+  "label": "back",
+  "tooltip": "Step Live back to its latest snapshot, consuming that snapshot and retaining displaced work in Trash.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

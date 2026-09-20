@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.collapse-groups",
+  "label": "collapse",
+  "tooltip": "Collapse highlighted groups and their nested groups.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

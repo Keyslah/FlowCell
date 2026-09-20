@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.flatten-selected",
+  "label": "flatten",
+  "tooltip": "Use Krita's native merge action for highlighted layers; a single selected group is flattened.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

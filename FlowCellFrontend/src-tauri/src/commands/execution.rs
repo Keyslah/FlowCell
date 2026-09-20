@@ -2127,6 +2127,23 @@ pub(crate) fn run_windows_panel_script_file_with_window_mode(
     }
 
     command
+        .env("FLOWCELL_SESSION_ID", {
+            static SESSION: OnceLock<String> = OnceLock::new();
+            SESSION.get_or_init(|| {
+                format!(
+                    "{}-{}",
+                    std::process::id(),
+                    SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_nanos()
+                )
+            })
+        })
+        .env(
+            "FLOWCELL_TARGET_HWND",
+            crate::script_target_window_handle().to_string(),
+        )
         .current_dir(script_directory)
         .spawn()
         .map(|_| ())

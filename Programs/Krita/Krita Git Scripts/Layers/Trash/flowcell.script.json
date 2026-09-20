@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.layers.trash",
+  "label": "trash",
+  "tooltip": "Move highlighted Live layers into recoverable numbered Trash entries.",
+  "program": "Krita",
+  "source": "run.ps1"
+}
