@@ -217,9 +217,38 @@ class Layers:
                    if r["family"] == family_id and re.fullmatch(prefix + r"\d+", r["version"])]
         return prefix + str(max(numbers, default=0) + 1)
 
+    def remember_storage_order(self, roots):
+        # childNodes is bottom-to-top. Use document order, never selection/click order.
+        current = list(dict.fromkeys(self.records[key(n)]["family"]
+                                     for n in walk(roots["Live"]) if key(n) in self.records))
+        order = [f for f in self.data.get("storage_order", []) if f in self.families]
+        present = set(current)
+        replacements = iter(f for f in current if f in order)
+        order = [next(replacements) if f in present else f for f in order]
+        for index, family_id in enumerate(current):
+            if family_id not in order:
+                following = next((f for f in current[index + 1:] if f in order), None)
+                order.insert(order.index(following) if following else len(order), family_id)
+        # Families moved out of Live retain their last relative positions.
+        self.data["storage_order"] = order
+
+    def order_storage(self, roots):
+        order = {f: i for i, f in enumerate(self.data.get("storage_order", []))}
+        for name in ("Snapshots", "Trash", "Archive"):
+            root = roots[name]
+            ranks = {info.get("bucket:" + name): order[family_id]
+                     for family_id, info in self.families.items() if family_id in order}
+            children = root.childNodes()
+            ordered = sorted(children, key=lambda n: ranks.get(key(n), len(order)))
+            if [key(n) for n in ordered] != [key(n) for n in children]:
+                # Reuse the verified, lock-preserving move path for complete subtrees.
+                for node in ordered:
+                    self.move(node, root)
+
     def store(self, node, roots, destination, copy=False, family_id=None):
         record = self.register(node, family_id)
         family_id = record["family"]
+        self.remember_storage_order(roots)
         version = self.next_version(family_id, {"Snapshots": "s", "Trash": "T", "Archive": "A"}[destination])
         target = node.duplicate() if copy else node
         if not target:
@@ -229,6 +258,7 @@ class Layers:
         target.setName(version)
         target.setVisible(True)
         self.records[key(target)] = {"family": family_id, "version": version}
+        self.order_storage(roots)
         return target
 
     def make_layers(self):
@@ -373,6 +403,8 @@ class Layers:
         self.move(incoming, parent, below)
         incoming.setName(self.families[family_id]["name"])
         incoming.setVisible(True)
+        self.remember_storage_order(roots)
+        self.order_storage(roots)
         self.doc.setActiveNode(incoming)
         return incoming.name() + " — " + self.records[key(incoming)]["version"]
 
@@ -390,6 +422,7 @@ class Layers:
         return "Restored " + attribute + " baseline."
 
     def run(self, action):
+        original_active = self.doc.activeNode()
         if self.repair_internal_nodes():
             self.save()
         if action == "make_layers":
@@ -482,7 +515,9 @@ class Layers:
                     for node in targets:
                         self.register(node)
                         self.remember_slot(node, self.records[key(node)]["family"])
-                        self.store(node, roots, destination, copy=action in ("snapshot", "copy_archive"))
+                    self.remember_storage_order(roots)
+                    for node in targets:
+                        self.store(node, roots, destination, copy=action != "trash")
                     message = "%s: %d layer(s)." % (destination, len(targets))
                 elif action == "restore":
                     message = self.restore(targets, roots)
@@ -535,4 +570,7 @@ class Layers:
                 else:
                     raise ValueError("Unknown Layers action: " + action)
         self.save()
+        if action in ("snapshot", "archive", "copy_archive") and original_active:
+            self.doc.waitForDone()
+            self.doc.setActiveNode(original_active)
         return message

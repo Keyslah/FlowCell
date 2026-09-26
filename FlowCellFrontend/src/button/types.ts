@@ -256,6 +256,35 @@ export interface ButtonThemeOverride {
   activeGlowAmount?: number | null;
 }
 
+/** Program-owned appearance shared by every popped instance, independent of its tools. */
+export interface ProgramPopoutThemeSettings {
+  version: 1;
+  colors: string[];
+  spread: number;
+  scatter: number;
+  seed: number;
+  screenTopToBottom: boolean;
+  textColor: string;
+  hoverEnabled: boolean;
+  activeEnabled: boolean;
+  hoverColor: string;
+  activeColor: string;
+  hoverHighlightAmount: number;
+  activeHighlightAmount: number;
+  hoverGlowAmount: number;
+  activeGlowAmount: number;
+}
+
+export interface ProgramPopoutColorOverride {
+  surface?: string;
+  text?: string;
+}
+
+export interface ProgramPopoutColorOverrideRevision {
+  surface: number;
+  text: number;
+}
+
 export interface ButtonSurface {
   id: ButtonSurfaceId;
   name: string;
@@ -462,6 +491,9 @@ export interface ButtonStateDocument {
   popoutUnits: Record<ButtonPopoutUnitId, ButtonPopoutUnit>;
   fanSetups: Record<ButtonFanSetupId, ButtonFanSetup>;
   themeOverrides?: Record<ButtonPlacementId, ButtonThemeOverride>;
+  programPopoutThemes?: Record<string, ProgramPopoutThemeSettings>;
+  programPopoutColorOverrides?: Record<ButtonPlacementId, ProgramPopoutColorOverride>;
+  programPopoutColorOverrideRevisions?: Record<string, ProgramPopoutColorOverrideRevision>;
   settings: ButtonDocumentSettings;
 }
 

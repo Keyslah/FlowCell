@@ -95,6 +95,10 @@ try {
     Assert(third = names "\temp-shot-fixed-02.png", "The second collision suffix is incorrect.")
     Assert(FileRead(first, "UTF-8") = "first placeholder" && FileRead(second, "UTF-8") = "second placeholder", "Naming changed an existing fixture.")
     Assert(!FileExist(third), "Choosing a destination unexpectedly wrote a file.")
+    snapshotName := FlowCellTempShotsCapture.NextPath(names, "fixed", "snapshot")
+    Assert(snapshotName = names "\snapshot-fixed.png", "Snapshots did not use their own filename prefix.")
+    FileAppend "snapshot placeholder", snapshotName, "UTF-8-RAW"
+    Assert(FlowCellTempShotsCapture.NextPath(names, "fixed", "snapshot") = names "\snapshot-fixed-01.png", "Snapshots cannot retain shots taken within one second.")
 
     captureFolder := fixture "\capture"
     DirCreate captureFolder
@@ -137,6 +141,19 @@ try {
     Loop Files paddedFolder "\*", "F"
         paddedFileCount += 1
     Assert(paddedFileCount = 1, "The padded clipboard capture produced more than one image file.")
+
+    snapshotSession := FlowCellTempShotsCapture()
+    snapshotSession.folder := fixture "\temp-shots"
+    DirCreate snapshotSession.folder
+    snapshotSession.left := -100
+    snapshotSession.top := 20
+    snapshotSession.mode := "snapshots"
+    snapshotSession.BeginSnapshots({x: 5, y: 6, width: 3, height: 2})
+    Assert(snapshotSession.snapshotActive && snapshotSession.snapshotRegistered, "The Snapshots key session did not start.")
+    Assert(snapshotSession.snapshotRect.x = -95 && snapshotSession.snapshotRect.y = 26, "The remembered box lost its physical desktop coordinates.")
+    Assert(snapshotSession.snapshotFolder = fixture "\snapshots" && DirExist(snapshotSession.snapshotFolder), "The Snapshots folder is not beside Temp Shots.")
+    snapshotSession.Cancel()
+    Assert(!snapshotSession.snapshotActive && !snapshotSession.snapshotRegistered, "Escape cleanup did not stop the Snapshots key session.")
 
     cancelFolder := fixture "\cancel"
     DirCreate cancelFolder

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.multibrush-tool",
+  "label": "Multibrush Tool",
+  "tooltip": "Multibrush Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

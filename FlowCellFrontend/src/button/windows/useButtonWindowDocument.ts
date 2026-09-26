@@ -9,6 +9,7 @@ import {
   subscribeButtonDrafts
 } from "../state/ButtonDraftBus";
 import { loadButtonStateDocument } from "../state/ButtonStateRepository";
+import { withCanonicalProgramPopoutThemes } from "./buttonWindowThemeDocument";
 
 export interface ButtonWindowDocumentState {
   document: ButtonStateDocument | null;
@@ -33,6 +34,7 @@ export function useButtonWindowDocument(
     let cancelled = false;
     let acceptedDocumentVersion = 0;
     let savedLoadVersion = 0;
+    let canonicalDocument: ButtonStateDocument | null = null;
     const cleanups: Array<() => void> = [];
     const requesterLabel = getCurrentWindow().label;
     const requestId = createButtonDraftRequestId(requesterLabel);
@@ -54,15 +56,28 @@ export function useButtonWindowDocument(
       }
     };
 
+    const acceptDraft = (document: ButtonStateDocument) => {
+      acceptDocument(withCanonicalProgramPopoutThemes(document, canonicalDocument));
+    };
+
     const loadSavedDocument = async () => {
       const loadVersion = ++savedLoadVersion;
       const acceptedVersionAtStart = acceptedDocumentVersion;
       const document = await loadButtonStateDocument();
       if (
         cancelled ||
-        loadVersion !== savedLoadVersion ||
-        acceptedVersionAtStart !== acceptedDocumentVersion
+        loadVersion !== savedLoadVersion
       ) {
+        return;
+      }
+      // A draft may arrive before the initial disk read. Keep its layout while
+      // taking the authoritative program rules from the saved document.
+      if (canonicalDocument && document.revision < canonicalDocument.revision) return;
+      canonicalDocument = document;
+      if (acceptedVersionAtStart !== acceptedDocumentVersion) {
+        setState((current) => current.document
+          ? { ...current, document: withCanonicalProgramPopoutThemes(current.document, document) }
+          : current);
         return;
       }
       acceptDocument(document);
@@ -75,12 +90,13 @@ export function useButtonWindowDocument(
     void (async () => {
       try {
         addCleanup(await subscribeButtonCommits(async (document) => {
+          canonicalDocument = document;
           acceptDocument(document);
           await requestActiveDraft();
         }));
 
         if (draftSessionId) {
-          addCleanup(await subscribeButtonDrafts(draftSessionId, acceptDocument, {
+          addCleanup(await subscribeButtonDrafts(draftSessionId, acceptDraft, {
             requesterLabel,
             requestId
           }));

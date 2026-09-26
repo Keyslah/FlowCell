@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.tools.ill-svg",
+  "label": "Ill SVG",
+  "tooltip": "Import selected Illustrator artwork as separate, aligned SVG Assistant groups in the running Krita stencil preview.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

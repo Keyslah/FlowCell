@@ -142,11 +142,136 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "textColor": {
+                    "type": "string"
+                  },
+                  "groupLabel": {
+                    "type": "string"
                   }
                 },
                 "required": [
                   "placementId",
-                  "materialColors"
+                  "materialColors",
+                  "label",
+                  "textColor",
+                  "groupLabel"
+                ]
+              }
+            },
+            "buttonCount": {
+              "type": "integer"
+            },
+            "colorCount": {
+              "type": "integer"
+            },
+            "changedCount": {
+              "type": "integer"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "revision",
+            "placements",
+            "buttonCount",
+            "colorCount",
+            "changedCount",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "button-theme.edit",
+        "handler": {
+          "kind": "core",
+          "capability": "button-theme.palette",
+          "options": {
+            "operation": "edit"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "expectedRevision": {
+              "type": "integer"
+            },
+            "edits": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "placementId": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "textColor": {
+                    "type": "string"
+                  },
+                  "reset": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "placementId"
+                ]
+              }
+            }
+          },
+          "required": [
+            "expectedRevision",
+            "edits"
+          ]
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "revision": {
+              "type": "integer"
+            },
+            "placements": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "placementId": {
+                    "type": "string"
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "materialColors": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "textColor": {
+                    "type": "string"
+                  },
+                  "groupLabel": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "placementId",
+                  "materialColors",
+                  "label",
+                  "textColor",
+                  "groupLabel"
                 ]
               }
             },
@@ -206,6 +331,80 @@
                   "placementId"
                 ]
               }
+            },
+            "settings": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "version": {
+                  "type": "integer",
+                  "enum": [
+                    1
+                  ]
+                },
+                "colors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "spread": {
+                  "type": "number"
+                },
+                "scatter": {
+                  "type": "number"
+                },
+                "seed": {
+                  "type": "integer"
+                },
+                "screenTopToBottom": {
+                  "type": "boolean"
+                },
+                "textColor": {
+                  "type": "string"
+                },
+                "hoverEnabled": {
+                  "type": "boolean"
+                },
+                "activeEnabled": {
+                  "type": "boolean"
+                },
+                "hoverColor": {
+                  "type": "string"
+                },
+                "activeColor": {
+                  "type": "string"
+                },
+                "hoverHighlightAmount": {
+                  "type": "number"
+                },
+                "activeHighlightAmount": {
+                  "type": "number"
+                },
+                "hoverGlowAmount": {
+                  "type": "number"
+                },
+                "activeGlowAmount": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "version",
+                "colors",
+                "spread",
+                "scatter",
+                "seed",
+                "screenTopToBottom",
+                "textColor",
+                "hoverEnabled",
+                "activeEnabled",
+                "hoverColor",
+                "activeColor",
+                "hoverHighlightAmount",
+                "activeHighlightAmount",
+                "hoverGlowAmount",
+                "activeGlowAmount"
+              ]
             }
           },
           "required": [
@@ -237,11 +436,23 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "textColor": {
+                    "type": "string"
+                  },
+                  "groupLabel": {
+                    "type": "string"
                   }
                 },
                 "required": [
                   "placementId",
-                  "materialColors"
+                  "materialColors",
+                  "label",
+                  "textColor",
+                  "groupLabel"
                 ]
               }
             },
@@ -332,11 +543,23 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "textColor": {
+                    "type": "string"
+                  },
+                  "groupLabel": {
+                    "type": "string"
                   }
                 },
                 "required": [
                   "placementId",
-                  "materialColors"
+                  "materialColors",
+                  "label",
+                  "textColor",
+                  "groupLabel"
                 ]
               }
             },
@@ -401,11 +624,23 @@
                     "items": {
                       "type": "string"
                     }
+                  },
+                  "label": {
+                    "type": "string"
+                  },
+                  "textColor": {
+                    "type": "string"
+                  },
+                  "groupLabel": {
+                    "type": "string"
                   }
                 },
                 "required": [
                   "placementId",
-                  "materialColors"
+                  "materialColors",
+                  "label",
+                  "textColor",
+                  "groupLabel"
                 ]
               }
             },
@@ -428,6 +663,190 @@
             "buttonCount",
             "colorCount",
             "changedCount",
+            "message"
+          ]
+        }
+      },
+      {
+        "id": "button-theme.settings",
+        "handler": {
+          "kind": "core",
+          "capability": "button-theme.palette",
+          "options": {
+            "operation": "settings"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "settings": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "version": {
+                  "type": "integer",
+                  "enum": [
+                    1
+                  ]
+                },
+                "colors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "spread": {
+                  "type": "number"
+                },
+                "scatter": {
+                  "type": "number"
+                },
+                "seed": {
+                  "type": "integer"
+                },
+                "screenTopToBottom": {
+                  "type": "boolean"
+                },
+                "textColor": {
+                  "type": "string"
+                },
+                "hoverEnabled": {
+                  "type": "boolean"
+                },
+                "activeEnabled": {
+                  "type": "boolean"
+                },
+                "hoverColor": {
+                  "type": "string"
+                },
+                "activeColor": {
+                  "type": "string"
+                },
+                "hoverHighlightAmount": {
+                  "type": "number"
+                },
+                "activeHighlightAmount": {
+                  "type": "number"
+                },
+                "hoverGlowAmount": {
+                  "type": "number"
+                },
+                "activeGlowAmount": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "version",
+                "colors",
+                "spread",
+                "scatter",
+                "seed",
+                "screenTopToBottom",
+                "textColor",
+                "hoverEnabled",
+                "activeEnabled",
+                "hoverColor",
+                "activeColor",
+                "hoverHighlightAmount",
+                "activeHighlightAmount",
+                "hoverGlowAmount",
+                "activeGlowAmount"
+              ]
+            },
+            "resetOverrides": {
+              "type": "boolean"
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "settings": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "version": {
+                  "type": "integer",
+                  "enum": [
+                    1
+                  ]
+                },
+                "colors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "spread": {
+                  "type": "number"
+                },
+                "scatter": {
+                  "type": "number"
+                },
+                "seed": {
+                  "type": "integer"
+                },
+                "screenTopToBottom": {
+                  "type": "boolean"
+                },
+                "textColor": {
+                  "type": "string"
+                },
+                "hoverEnabled": {
+                  "type": "boolean"
+                },
+                "activeEnabled": {
+                  "type": "boolean"
+                },
+                "hoverColor": {
+                  "type": "string"
+                },
+                "activeColor": {
+                  "type": "string"
+                },
+                "hoverHighlightAmount": {
+                  "type": "number"
+                },
+                "activeHighlightAmount": {
+                  "type": "number"
+                },
+                "hoverGlowAmount": {
+                  "type": "number"
+                },
+                "activeGlowAmount": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "version",
+                "colors",
+                "spread",
+                "scatter",
+                "seed",
+                "screenTopToBottom",
+                "textColor",
+                "hoverEnabled",
+                "activeEnabled",
+                "hoverColor",
+                "activeColor",
+                "hoverHighlightAmount",
+                "activeHighlightAmount",
+                "hoverGlowAmount",
+                "activeGlowAmount"
+              ]
+            },
+            "configured": {
+              "type": "boolean"
+            },
+            "message": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "settings",
+            "configured",
             "message"
           ]
         }
@@ -979,7 +1398,8 @@
               "static_background_path",
               "grid_spacing_m",
               "grid_distance_m",
-              "grid_far_spacing_m"
+              "grid_far_spacing_m",
+              "popped_button_settings"
             ],
             "assetFields": [
               "theme_image_path",
@@ -1102,6 +1522,80 @@
                 },
                 "grid_far_spacing_m": {
                   "type": "number"
+                },
+                "popped_button_settings": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "colors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "spread": {
+                      "type": "number"
+                    },
+                    "scatter": {
+                      "type": "number"
+                    },
+                    "seed": {
+                      "type": "integer"
+                    },
+                    "screenTopToBottom": {
+                      "type": "boolean"
+                    },
+                    "textColor": {
+                      "type": "string"
+                    },
+                    "hoverEnabled": {
+                      "type": "boolean"
+                    },
+                    "activeEnabled": {
+                      "type": "boolean"
+                    },
+                    "hoverColor": {
+                      "type": "string"
+                    },
+                    "activeColor": {
+                      "type": "string"
+                    },
+                    "hoverHighlightAmount": {
+                      "type": "number"
+                    },
+                    "activeHighlightAmount": {
+                      "type": "number"
+                    },
+                    "hoverGlowAmount": {
+                      "type": "number"
+                    },
+                    "activeGlowAmount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "colors",
+                    "spread",
+                    "scatter",
+                    "seed",
+                    "screenTopToBottom",
+                    "textColor",
+                    "hoverEnabled",
+                    "activeEnabled",
+                    "hoverColor",
+                    "activeColor",
+                    "hoverHighlightAmount",
+                    "activeHighlightAmount",
+                    "hoverGlowAmount",
+                    "activeGlowAmount"
+                  ]
                 }
               },
               "required": [
@@ -1125,7 +1619,8 @@
                 "static_background_path",
                 "grid_spacing_m",
                 "grid_distance_m",
-                "grid_far_spacing_m"
+                "grid_far_spacing_m",
+                "popped_button_settings"
               ]
             }
           },
@@ -1193,7 +1688,8 @@
               "static_background_path",
               "grid_spacing_m",
               "grid_distance_m",
-              "grid_far_spacing_m"
+              "grid_far_spacing_m",
+              "popped_button_settings"
             ],
             "assetFields": [
               "theme_image_path",
@@ -1322,6 +1818,80 @@
                 },
                 "grid_far_spacing_m": {
                   "type": "number"
+                },
+                "popped_button_settings": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "colors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "spread": {
+                      "type": "number"
+                    },
+                    "scatter": {
+                      "type": "number"
+                    },
+                    "seed": {
+                      "type": "integer"
+                    },
+                    "screenTopToBottom": {
+                      "type": "boolean"
+                    },
+                    "textColor": {
+                      "type": "string"
+                    },
+                    "hoverEnabled": {
+                      "type": "boolean"
+                    },
+                    "activeEnabled": {
+                      "type": "boolean"
+                    },
+                    "hoverColor": {
+                      "type": "string"
+                    },
+                    "activeColor": {
+                      "type": "string"
+                    },
+                    "hoverHighlightAmount": {
+                      "type": "number"
+                    },
+                    "activeHighlightAmount": {
+                      "type": "number"
+                    },
+                    "hoverGlowAmount": {
+                      "type": "number"
+                    },
+                    "activeGlowAmount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "colors",
+                    "spread",
+                    "scatter",
+                    "seed",
+                    "screenTopToBottom",
+                    "textColor",
+                    "hoverEnabled",
+                    "activeEnabled",
+                    "hoverColor",
+                    "activeColor",
+                    "hoverHighlightAmount",
+                    "activeHighlightAmount",
+                    "hoverGlowAmount",
+                    "activeGlowAmount"
+                  ]
                 }
               }
             },
@@ -1375,7 +1945,8 @@
               "static_background_path",
               "grid_spacing_m",
               "grid_distance_m",
-              "grid_far_spacing_m"
+              "grid_far_spacing_m",
+              "popped_button_settings"
             ],
             "assetFields": [
               "theme_image_path",
@@ -1511,6 +2082,80 @@
                 },
                 "grid_far_spacing_m": {
                   "type": "number"
+                },
+                "popped_button_settings": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "colors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "spread": {
+                      "type": "number"
+                    },
+                    "scatter": {
+                      "type": "number"
+                    },
+                    "seed": {
+                      "type": "integer"
+                    },
+                    "screenTopToBottom": {
+                      "type": "boolean"
+                    },
+                    "textColor": {
+                      "type": "string"
+                    },
+                    "hoverEnabled": {
+                      "type": "boolean"
+                    },
+                    "activeEnabled": {
+                      "type": "boolean"
+                    },
+                    "hoverColor": {
+                      "type": "string"
+                    },
+                    "activeColor": {
+                      "type": "string"
+                    },
+                    "hoverHighlightAmount": {
+                      "type": "number"
+                    },
+                    "activeHighlightAmount": {
+                      "type": "number"
+                    },
+                    "hoverGlowAmount": {
+                      "type": "number"
+                    },
+                    "activeGlowAmount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "colors",
+                    "spread",
+                    "scatter",
+                    "seed",
+                    "screenTopToBottom",
+                    "textColor",
+                    "hoverEnabled",
+                    "activeEnabled",
+                    "hoverColor",
+                    "activeColor",
+                    "hoverHighlightAmount",
+                    "activeHighlightAmount",
+                    "hoverGlowAmount",
+                    "activeGlowAmount"
+                  ]
                 }
               }
             },
@@ -1564,7 +2209,8 @@
               "static_background_path",
               "grid_spacing_m",
               "grid_distance_m",
-              "grid_far_spacing_m"
+              "grid_far_spacing_m",
+              "popped_button_settings"
             ],
             "assetFields": [
               "theme_image_path",
@@ -1700,6 +2346,80 @@
                 },
                 "grid_far_spacing_m": {
                   "type": "number"
+                },
+                "popped_button_settings": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "version": {
+                      "type": "integer",
+                      "enum": [
+                        1
+                      ]
+                    },
+                    "colors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "spread": {
+                      "type": "number"
+                    },
+                    "scatter": {
+                      "type": "number"
+                    },
+                    "seed": {
+                      "type": "integer"
+                    },
+                    "screenTopToBottom": {
+                      "type": "boolean"
+                    },
+                    "textColor": {
+                      "type": "string"
+                    },
+                    "hoverEnabled": {
+                      "type": "boolean"
+                    },
+                    "activeEnabled": {
+                      "type": "boolean"
+                    },
+                    "hoverColor": {
+                      "type": "string"
+                    },
+                    "activeColor": {
+                      "type": "string"
+                    },
+                    "hoverHighlightAmount": {
+                      "type": "number"
+                    },
+                    "activeHighlightAmount": {
+                      "type": "number"
+                    },
+                    "hoverGlowAmount": {
+                      "type": "number"
+                    },
+                    "activeGlowAmount": {
+                      "type": "number"
+                    }
+                  },
+                  "required": [
+                    "version",
+                    "colors",
+                    "spread",
+                    "scatter",
+                    "seed",
+                    "screenTopToBottom",
+                    "textColor",
+                    "hoverEnabled",
+                    "activeEnabled",
+                    "hoverColor",
+                    "activeColor",
+                    "hoverHighlightAmount",
+                    "activeHighlightAmount",
+                    "hoverGlowAmount",
+                    "activeGlowAmount"
+                  ]
                 }
               }
             },
@@ -3084,7 +3804,8 @@
         "environment.rotation-x": "X",
         "environment.rotation-y": "Y",
         "environment.rotation-z": "Z",
-        "environment.strength": "WS"
+        "environment.strength": "WS",
+        "button-theme.settings": "Apply Highlights & Glow"
       },
       "actionTooltips": {
         "theme.image.select": "Pick an image, sample theme colors, and place it as the Place Picture image.",
@@ -3093,7 +3814,7 @@
         "theme.refill": "Randomly remix the staged sampled colors into a different bucket set and apply it.",
         "theme.fields.save": "Save the current staged Blender theme buckets for later reuse.",
         "theme.fields.load": "Load saved Blender theme buckets back into this page.",
-        "theme.package.save": "Save the actual theme image(s) plus the staged bucket colors into the Blender themes folder.",
+        "theme.package.save": "Save the theme images, staged Blender colors, and current popped Button colors, highlights, glow and text with this package.",
         "theme.package.open": "Pick a saved theme package, or browse for one.",
         "theme.package.previous": "Load the previous saved theme package.",
         "theme.package.next": "Load the next saved theme package.",
@@ -3104,7 +3825,7 @@
         "theme.apply-bucket": "Apply only this theme bucket.",
         "button-theme.scan": "Collect and group Surface colors from scoped action Buttons in open Blender Pop-out and Fan windows. Fans include their surface owner and members even while collapsed; editor previews remain excluded.",
         "button-theme.apply": "Apply the edited aggregate Surface buckets back to the same live scanned Buttons; Rescan is required if the open windows changed.",
-        "button-theme.apply-gradient": "Apply the visible ordered multi-color Top-to-Bottom Surface gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Screen Top-to-Bottom anchors colors to each Button's position on its monitor and requires an authored Fan to be expanded while applying; otherwise each window uses its local layout. Scatter stays placement-stable.",
+        "button-theme.apply-gradient": "Apply the visible ordered multi-color Top-to-Bottom Surface gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Screen Top-to-Bottom blends between the topmost and bottommost visible Buttons on each monitor; otherwise each window uses its local layout. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
         "button-theme.refill": "Apply the ordered multi-color Top-to-Bottom Surface gradient to scoped Buttons in the currently open Blender Pop-outs and Fans.",
         "button-theme.refill-colors": "Sample the selected number of Gradient Colors from the current Theme image, show them as ordered gradient stops, and apply the gradient to scoped Buttons in open Blender Pop-outs and Fans.",
         "button-theme.scatter": "Redistribute the currently present aggregate colors across the same live scanned Buttons using remembered hidden placement IDs.",
@@ -3122,7 +3843,8 @@
         "environment.rotation-x": "Apply the entered X rotation.",
         "environment.rotation-y": "Apply the entered Y rotation.",
         "environment.rotation-z": "Apply the entered Z rotation.",
-        "environment.strength": "Apply the entered world strength."
+        "environment.strength": "Apply the entered world strength.",
+        "button-theme.settings": "Apply text color, hover and active highlights, and glow to all Blender popped Buttons. Saved packages include the currently applied popped Button settings."
       },
       "fields": [
         {
@@ -3515,7 +4237,9 @@
           "scan": "button-theme.scan",
           "apply": "button-theme.apply",
           "refill": "button-theme.refill",
-          "toggleText": "button-theme.toggle-text"
+          "toggleText": "button-theme.toggle-text",
+          "settings": "button-theme.settings",
+          "edit": "button-theme.edit"
         },
         "picture": {
           "select": "picture.file.select",
@@ -3660,7 +4384,7 @@
         "spreadLabel": "Spread",
         "scatterLabel": "Scatter",
         "screenTopToBottomLabel": "Screen Top-to-Bottom",
-        "screenTopToBottomTooltip": "Use each Button's position within its monitor so one gradient runs from the top to the bottom of the screen.",
+        "screenTopToBottomTooltip": "Blend from the topmost to bottommost open popped Buttons on each screen.",
         "gradientColorCountLabel": "Gradient Colors",
         "gradientColorCountTooltip": "Choose how many colors the popped-Button gradient uses. Every ordered stop appears from Top through Bottom, and Refill samples this many colors from the current Theme image."
       }

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.edit-shapes-tool",
+  "label": "Edit Shapes Tool",
+  "tooltip": "Edit Shapes Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

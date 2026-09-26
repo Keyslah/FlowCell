@@ -77,6 +77,7 @@ type WindowPlacement = {
 export interface AppliedButtonCanvas {
   bounds: FlowCellBounds;
   scaleFactor: number;
+  monitorWorkArea: FlowCellBounds | null;
 }
 
 const pendingButtonWindowOpens = new Map<string, Promise<void>>();
@@ -294,7 +295,7 @@ async function resolveButtonContentBounds(
 
 async function resolveButtonCanvasPlacement(
   contentBounds: FlowCellBounds
-): Promise<{ placement: WindowPlacement; scaleFactor: number }> {
+): Promise<{ placement: WindowPlacement; scaleFactor: number; monitorWorkArea: FlowCellBounds | null }> {
   const centerX = contentBounds.Left + contentBounds.Width / 2;
   const centerY = contentBounds.Top + contentBounds.Height / 2;
   const [monitor, currentNativeScaleFactor] = await Promise.all([
@@ -316,16 +317,18 @@ async function resolveButtonCanvasPlacement(
       scaleFactor: resolveButtonWebviewPixelRatio(
         currentNativeScaleFactor,
         window.devicePixelRatio
-      )
+      ),
+      monitorWorkArea: null
     };
   }
 
-  const canvasBounds = resolveFixedButtonCanvasBounds(contentBounds, {
+  const monitorWorkArea = {
     Left: monitor.workArea.position.x,
     Top: monitor.workArea.position.y,
     Width: monitor.workArea.size.width,
     Height: monitor.workArea.size.height
-  });
+  };
+  const canvasBounds = resolveFixedButtonCanvasBounds(contentBounds, monitorWorkArea);
   return {
     placement: {
       width: canvasBounds.Width,
@@ -338,7 +341,8 @@ async function resolveButtonCanvasPlacement(
       currentNativeScaleFactor,
       window.devicePixelRatio,
       monitor.scaleFactor
-    )
+    ),
+    monitorWorkArea
   };
 }
 
@@ -602,7 +606,8 @@ export async function applyCurrentButtonCanvasForContentBounds(
       Width: placement.width,
       Height: placement.height
     },
-    scaleFactor: resolved.scaleFactor
+    scaleFactor: resolved.scaleFactor,
+    monitorWorkArea: resolved.monitorWorkArea
   };
 }
 

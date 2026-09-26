@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.rectangular-selection-tool",
+  "label": "Rectangular Selection Tool",
+  "tooltip": "Rectangular Selection Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

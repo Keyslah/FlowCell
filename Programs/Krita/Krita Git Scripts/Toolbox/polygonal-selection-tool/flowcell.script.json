@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.polygonal-selection-tool",
+  "label": "Polygonal Selection Tool",
+  "tooltip": "Polygonal Selection Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

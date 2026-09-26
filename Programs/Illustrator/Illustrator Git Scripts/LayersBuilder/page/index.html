@@ -32,12 +32,25 @@
 
       <section class="layer-tree__dialog" id="rename-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-title" hidden>
         <form class="layer-tree__dialog-card" id="rename-form">
-          <h2 id="rename-title">Rename Layer</h2>
+          <h2 id="rename-title">Create Layer</h2>
           <label for="rename-input">Layer name</label>
           <input id="rename-input" name="name" type="text" autocomplete="off" required>
           <div class="layer-tree__dialog-actions">
             <button type="button" data-dialog-cancel>Cancel</button>
-            <button type="submit" class="layer-tree__primary" id="rename-confirm">Rename</button>
+            <button type="submit" class="layer-tree__primary" id="rename-confirm">Create</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="layer-tree__dialog" id="rename-list-dialog" role="dialog" aria-modal="true" aria-labelledby="rename-list-title" hidden>
+        <form class="layer-tree__dialog-card layer-tree__rename-card" id="rename-list-form">
+          <h2 id="rename-list-title">Rename Layers</h2>
+          <p>Enter a new name beside each layer. Leave a field blank to keep its current name.</p>
+          <div class="layer-tree__rename-header"><span>Current layer</span><span>New name</span></div>
+          <div class="layer-tree__rename-rows" id="rename-list-rows"></div>
+          <div class="layer-tree__dialog-actions">
+            <button type="button" data-dialog-cancel>Cancel</button>
+            <button type="submit" class="layer-tree__primary">Rename</button>
           </div>
         </form>
       </section>

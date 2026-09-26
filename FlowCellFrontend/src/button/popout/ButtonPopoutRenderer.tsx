@@ -1,6 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { queryToolsetState } from "../../lib/programRails";
 import { ButtonSurface } from "../ButtonSurface";
+import type { ProgramPopoutThemeScreenGeometry } from "../../theme/programPopoutTheme";
 import type { ButtonExecutionResult } from "../runtime/ButtonRuntimeAdapter";
+import { responseFieldPatch } from "../runtime/ButtonRuntimeAdapter";
 import type {
   ButtonCoreMeasurement,
   ButtonPlacement,
@@ -57,7 +60,7 @@ function buildCollapsedOwnerDocument(args: {
   document: ButtonStateDocument;
   unit: ButtonPopoutUnit;
   sourcePlacement: ButtonPlacement;
-}): { document: ButtonStateDocument; surfaceId: string; placementId: string } | null {
+}): { document: ButtonStateDocument; surfaceId: string; placementId: string; sourcePlacementId: string } | null {
   const ownerButtonId = args.sourcePlacement.buttonId;
   const sourcePlacement = args.sourcePlacement;
 
@@ -67,6 +70,7 @@ function buildCollapsedOwnerDocument(args: {
   return {
     surfaceId,
     placementId,
+    sourcePlacementId: sourcePlacement.id,
     document: {
       ...args.document,
       placements: {
@@ -102,6 +106,7 @@ function buildCollapsedOwnerDocument(args: {
 
 export interface ButtonPopoutRendererProps {
   document: ButtonStateDocument;
+  programPopoutThemeScreenGeometry?: ProgramPopoutThemeScreenGeometry;
   unit: ButtonPopoutUnit;
   displayMode: "collapsed" | "expanded";
   surfaceScale?: number;
@@ -125,6 +130,7 @@ export interface ButtonPopoutRendererProps {
 
 export function ButtonPopoutRenderer({
   document,
+  programPopoutThemeScreenGeometry,
   unit,
   displayMode,
   surfaceScale = 1,
@@ -144,6 +150,7 @@ export function ButtonPopoutRenderer({
   );
   const [fieldState, setFieldState] = useState(() => incomingFieldState);
   const [fieldError, setFieldError] = useState<string | null>(null);
+  const fieldEditRevision = useRef(0);
   useEffect(() => {
     setFieldState((current) => reconcileToolFieldRuntimeState(current, incomingFieldState));
     setFieldError(null);
@@ -154,6 +161,7 @@ export function ButtonPopoutRenderer({
 
   const acceptFieldValues = useCallback(
     (nextValues: Readonly<typeof fieldValues>) => {
+      fieldEditRevision.current += 1;
       setFieldState((current) => {
         const active = reconcileToolFieldRuntimeState(current, incomingFieldState);
         const keys = Object.keys(nextValues);
@@ -165,6 +173,33 @@ export function ButtonPopoutRenderer({
     },
     [incomingFieldState]
   );
+
+  const stateTarget = unit.kind === "tool-set"
+    ? unit.childButtonIds.map((id) => document.buttons[id]?.executionTarget)
+      .find((target) => target?.kind === "tool-set-action")
+    : undefined;
+  const stateProgram = stateTarget?.kind === "tool-set-action" ? stateTarget.programName : "";
+  const statePanel = stateTarget?.kind === "tool-set-action" ? stateTarget.panelName : "";
+  const stateFile = stateTarget?.kind === "tool-set-action" ? stateTarget.ownerFileName : "";
+  useEffect(() => {
+    if (!stateProgram || !stateFile) return;
+    let cancelled = false;
+    const revision = fieldEditRevision.current;
+    // Only manifest-declared read-only queries run. A delayed reply must not
+    // replace a choice the user made while opening the popout.
+    void queryToolsetState({ programName: stateProgram, panelName: statePanel, fileName: stateFile })
+      .then((response) => {
+        if (cancelled || revision !== fieldEditRevision.current || response?.status === "error") return;
+        const patch = responseFieldPatch(response, fields);
+        if (Object.keys(patch).length === 0) return;
+        setFieldState((current) => {
+          const active = reconcileToolFieldRuntimeState(current, incomingFieldState);
+          return { ...active, values: { ...active.values, ...patch } };
+        });
+      })
+      .catch((error) => console.warn("FlowCell could not read the toolset's current state.", error));
+    return () => { cancelled = true; };
+  }, [incomingFieldState, stateProgram, statePanel, stateFile]);
 
   const applyExecutionResult = useCallback(
     (result: ButtonExecutionResult) => {
@@ -234,6 +269,8 @@ export function ButtonPopoutRenderer({
         >
           <ButtonSurface
             document={collapsedOwner.document}
+            programPopoutThemeScreenGeometry={programPopoutThemeScreenGeometry}
+            programPopoutThemeSourcePlacementId={collapsedOwner.sourcePlacementId}
             surfaceId={collapsedOwner.surfaceId}
             mode="run"
             ownerPlacementId={collapsedOwner.placementId}
@@ -277,6 +314,7 @@ export function ButtonPopoutRenderer({
       >
         <ButtonSurface
           document={expandedDocument}
+          programPopoutThemeScreenGeometry={programPopoutThemeScreenGeometry}
           surfaceId={surface.id}
           mode="run"
           ownerPlacementId={authoredFan ? savedOwnerPlacement?.id : undefined}

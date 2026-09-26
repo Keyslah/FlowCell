@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.color-sampler",
+  "label": "Color Sampler",
+  "tooltip": "Color Sampler",
+  "program": "Krita",
+  "source": "run.ps1"
+}

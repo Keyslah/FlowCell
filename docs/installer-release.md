@@ -11,6 +11,12 @@ Tauri resources and the bundled AutoHotkey runtime live inside the application
 installation. Start Menu launch runs the existing preflight and headless backend.
 Writable data is `%APPDATA%\FlowCell\local`, including the existing canonical
 `button-system/button-state.json`, bindings, layouts, logs and program data.
+When a packaged launcher redirects AppData, an existing canonical Button-state
+file identifies the physical data root so Programs and their children resolve
+consistently instead of mixing redirected contents with empty directory shadows.
+Installed executable updates must use the payload embedded in the NSIS bundle:
+Tauri restores the loose release executable's bundle marker after packaging, so
+copying that loose executable into an installation loses installed-mode detection.
 Program ZIPs retain `Programs/<ActualFolder>/...` archive roots and must be
 extracted into that local root. Folder roles come from each program manifest.
 Fresh launch creates only the empty `Programs/Windows` placeholder; without a
@@ -98,3 +104,10 @@ restart/reload. Fusion registration deploys its existing add-in; restart Fusion
 after add-in changes. Preserve package-specific Adobe setup notes. Restart
 FlowCell after changing a program manifest. Catalog-only downloads need no host
 reload until a user deliberately installs/updates a source that requires it.
+
+An installation may optionally keep `flowcell.runtime.json` beside its executable,
+with an absolute `localRoot` pointing to its existing writable data. Both native
+startup and backend helpers honor it; `FLOWCELL_LOCAL_ROOT` remains the explicit
+override. This per-install file is not bundled or overwritten by upgrades. Use
+the verified physical owner when a packaged launcher redirects AppData, so an
+Explorer launch and a packaged launch discover the same Programs and Button state.

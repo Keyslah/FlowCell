@@ -417,6 +417,7 @@ test("program actions cover every layers.jsx operation with fixed capability pay
   const expectedProgramActions = new Map([
     ["scan", "scan"],
     ["create", "create"],
+    ["rename-targets", "renametargets"],
     ["rename", "rename"],
     ["delete", "delete"],
     ["duplicate", "duplicate"],
@@ -438,9 +439,15 @@ test("program actions cover every layers.jsx operation with fixed capability pay
     assert.deepEqual(action.handler.payload, { op: expectedProgramActions.get(action.id) });
     assertStrictObjectSchema(action.requestSchema, `${action.id} requestSchema`);
     assertStrictObjectSchema(action.responseSchema, `${action.id} responseSchema`);
-    assert.deepEqual(action.responseSchema.required, ["ok", "active", "tree"]);
-    assert.equal(action.responseSchema.properties.tree?.type, "array");
-    assert.equal(action.responseSchema.properties.tree?.items?.additionalProperties, false);
+    if (action.id === "rename-targets") {
+      assert.deepEqual(action.responseSchema.required, ["ok", "targets"]);
+      assert.equal(action.responseSchema.properties.targets?.type, "array");
+      assert.equal(action.responseSchema.properties.targets?.items?.additionalProperties, false);
+    } else {
+      assert.deepEqual(action.responseSchema.required, ["ok", "active", "tree"]);
+      assert.equal(action.responseSchema.properties.tree?.type, "array");
+      assert.equal(action.responseSchema.properties.tree?.items?.additionalProperties, false);
+    }
   }
 
   const artworkPlacement = actions.find((action) => action.id === "place-selected-artwork");
@@ -491,6 +498,7 @@ test("sandbox page calls only declared FlowCell actions and contains no privileg
   for (const requiredActionId of [
     "scan",
     "create",
+    "rename-targets",
     "rename",
     "delete",
     "duplicate",
@@ -1269,6 +1277,68 @@ test("delete prefers selected objects' complete containing layers and falls back
   assert.deepEqual(keyedRoot.layers, []);
 });
 
+test("Force Delete removes all highlighted subtrees despite an unrelated artwork selection", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const nested = mockLayer("Nested");
+  const first = mockLayer("First", { children: [nested], locked: true, visible: false });
+  const keep = mockLayer("Keep");
+  const last = mockLayer("Last", { locked: true, visible: false });
+  const root = mockLayer("Root", { children: [first, keep, last], locked: true, visible: false });
+  const selected = mockLayer("Selected elsewhere");
+  const document = mockDocument([root, selected]);
+  document.selection = [mockSelectedObject(selected)];
+  const removals = [];
+  for (const layer of [first, nested, last, selected]) {
+    const remove = layer.remove;
+    layer.remove = () => {
+      assert.equal(first.locked, false, "all targets must be opened before the first deletion");
+      assert.equal(last.locked, false, "later targets cannot be prepared using deleted Layer references");
+      assert.equal(last.visible, true);
+      removals.push(layer.name);
+      remove();
+    };
+  }
+
+  const result = runDeleteSource(source, document, {
+    keys: ["0.2", "0.0.0", "0.0", "0.2"], force: true
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(root.layers, [keep]);
+  assert.deepEqual(removals, ["First", "Last"]);
+  assert.ok(document.layers.includes(selected));
+  assert.equal(root.locked, true);
+  assert.equal(root.visible, false);
+});
+
+test("Force Delete without highlights removes every selected object's owning subtree once", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const nested = mockLayer("Nested");
+  const first = mockLayer("First", { children: [nested] });
+  const keep = mockLayer("Keep");
+  const last = mockLayer("Last");
+  const root = mockLayer("Root", { children: [first, keep, last] });
+  const document = mockDocument([root]);
+  document.selection = [
+    mockSelectedObject(first), mockSelectedObject(nested),
+    mockSelectedObject(last), mockSelectedObject(last)
+  ];
+
+  const result = runDeleteSource(source, document, { force: true });
+  assert.equal(result.ok, true);
+  assert.deepEqual(root.layers, [keep]);
+});
+
+test("Force Delete retains Illustrator's last top-level layer safeguard", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const first = mockLayer("First");
+  const second = mockLayer("Second");
+  const document = mockDocument([first, second]);
+  const result = runDeleteSource(source, document, { keys: ["0", "1"], force: true });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /at least one top-level layer/);
+  assert.deepEqual(document.layers, [first, second]);
+});
+
 test("text insertion selections are not mistaken for selected artwork layers", async () => {
   const source = await readFile(jsxPath, "utf8");
   const textLayer = mockLayer("Text Layer");
@@ -1314,6 +1384,80 @@ test("normal Delete refuses a closed selected layer while Force Delete removes i
   assert.deepEqual(root.layers, []);
 });
 
+test("Rename lists distinct selected object layers and commits separate names", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const child = mockLayer("Child");
+  const parent = mockLayer("Parent", { children: [child] });
+  const other = mockLayer("Other");
+  const document = mockDocument([parent, other]);
+  document.selection = [
+    mockSelectedObject(parent),
+    mockSelectedObject(child),
+    mockSelectedObject(child)
+  ];
+
+  const preview = runLayerTreeSource(source, document, {
+    op: "renametargets", keys: ["1"]
+  });
+  assert.equal(preview.ok, true);
+  assert.deepEqual(Array.from(preview.targets, (target) => target.name), ["Parent", "Child"]);
+  const result = runLayerTreeSource(source, document, {
+    op: "rename", renames: [
+      { key: preview.targets[0].key, oldName: "Parent", path: "Parent", newName: "New Parent" },
+      { key: preview.targets[1].key, oldName: "Child", path: "Parent / Child", newName: "New Child" }
+    ]
+  });
+  assert.equal(result.ok, true);
+  assert.equal(parent.name, "New Parent");
+  assert.equal(child.name, "New Child");
+  assert.equal(other.name, "Other");
+});
+
+test("Rename falls back to every highlighted row without object selection", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const child = mockLayer("Child", { locked: true, visible: false });
+  const parent = mockLayer("Parent", { children: [child] });
+  const document = mockDocument([parent, mockLayer("Other")]);
+
+  const preview = runLayerTreeSource(source, document, {
+    op: "renametargets", keys: ["0", "0.0"]
+  });
+  assert.deepEqual(Array.from(preview.targets, (target) => target.name), ["Parent", "Child"]);
+  const result = runLayerTreeSource(source, document, {
+    op: "rename", renames: [
+      { key: "0", oldName: "Parent", path: "Parent", newName: "Parent 2" },
+      { key: "0.0", oldName: "Child", path: "Parent / Child", newName: "Child 2" }
+    ]
+  });
+  assert.equal(result.ok, true);
+  assert.equal(parent.name, "Parent 2");
+  assert.equal(child.name, "Child 2");
+  assert.equal(child.locked, true);
+  assert.equal(child.visible, false);
+
+  const noTarget = runLayerTreeSource(source, document, {
+    op: "renametargets", keys: []
+  });
+  assert.equal(noTarget.ok, false);
+  assert.match(noTarget.error, /Select Illustrator objects or highlight/i);
+});
+
+test("Rename dialog lists current names with individual new-name inputs", async () => {
+  const pageScript = await readText("page/page.js");
+  const dialog = pageScript.slice(
+    pageScript.indexOf("function openRenameDialog"),
+    pageScript.indexOf("function openCreateChildDialog")
+  );
+  assert.match(dialog, /request\("rename-targets"/);
+  assert.doesNotMatch(dialog, /requireOneSelection|if \(!key\) return/);
+  assert.match(dialog, /target\.name/);
+  assert.match(dialog, /target\.path/);
+  assert.match(pageScript, /runAction\("rename",\s*\{\s*renames:\s*renames\s*\}/);
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  const rename = manifest.page.actions.find((action) => action.id === "rename");
+  assert.deepEqual(rename.requestSchema.required, ["renames"]);
+});
+
 test("package HTML exposes the complete current Tree Inspector control surface", async () => {
   const html = await readText("page/index.html");
   const toolbarActions = new Set(
@@ -1331,6 +1475,9 @@ test("package HTML exposes the complete current Tree Inspector control surface",
   assert.match(html, /role="tree"/);
   assert.match(html, /aria-multiselectable="true"/);
   assert.match(html, /id="rename-dialog"/);
+  assert.match(html, /id="rename-list-dialog"/);
+  assert.match(html, /Current layer/);
+  assert.match(html, /New name/);
   assert.doesNotMatch(html, /force-delete-dialog|role="alertdialog"/);
   assert.match(html, /role="status"/);
 });

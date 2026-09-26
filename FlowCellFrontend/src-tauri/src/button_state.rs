@@ -927,18 +927,41 @@ fn validate_button_settings_file(file: &ButtonSettingsFileV1) -> Result<(), Stri
     let mut placement_ids = HashSet::new();
     let mut button_ids = HashSet::new();
     for (index, entry) in file.entries.iter().enumerate() {
+        let mut entry_keys = vec![
+            "placementId",
+            "buttonId",
+            "buttonRole",
+            "label",
+            "activationBehavior",
+            "activationAnimation",
+            "skin",
+            "placement",
+        ];
+        if let Some(color_override) = entry.get("popoutColorOverride") {
+            if matches!(surface_kind, ButtonPlacementSurfaceKind::Main | ButtonPlacementSurfaceKind::Panel) {
+                return Err(format!(
+                    "Button settings entry {index} popoutColorOverride requires a popped surface."
+                ));
+            }
+            let colors = color_override.as_object().ok_or_else(|| format!(
+                "Button settings entry {index} popoutColorOverride must be an object."
+            ))?;
+            if colors.is_empty() || colors.iter().any(|(key, value)| {
+                !matches!(key.as_str(), "surface" | "text") ||
+                    !value.as_str().is_some_and(|color| {
+                        matches!(color.len(), 7 | 9) && color.starts_with('#') &&
+                            color.as_bytes()[1..].iter().all(u8::is_ascii_hexdigit)
+                    })
+            }) {
+                return Err(format!(
+                    "Button settings entry {index} popoutColorOverride requires surface or text colors in #RRGGBB or #RRGGBBAA format."
+                ));
+            }
+            entry_keys.push("popoutColorOverride");
+        }
         exact_object_keys(
             entry,
-            &[
-                "placementId",
-                "buttonId",
-                "buttonRole",
-                "label",
-                "activationBehavior",
-                "activationAnimation",
-                "skin",
-                "placement",
-            ],
+            &entry_keys,
             &format!("Button settings entry {index}"),
         )?;
         let placement_id = entry
@@ -2374,6 +2397,78 @@ mod tests {
     }
 
     #[test]
+    fn button_settings_popout_color_overrides_accept_popped_surfaces() {
+        for (kind, placement_kind) in [
+            ("regular-popout", ButtonSettingsPlacementKind::PopOut),
+            ("tool-set-popout", ButtonSettingsPlacementKind::PopOut),
+            ("fan", ButtonSettingsPlacementKind::Fan),
+        ] {
+            for colors in [
+                json!({"surface": "#123ABC"}),
+                json!({"text": "#abcdef80"}),
+                json!({"surface": "#123ABCFF", "text": "#000000"}),
+            ] {
+                let mut file = valid_button_settings_file();
+                file.placement_kind = placement_kind;
+                file.surface["kind"] = json!(kind);
+                file.behavior["kind"] = json!(kind);
+                file.entries[0]["popoutColorOverride"] = colors.clone();
+                validate_button_settings_file(&file).expect("valid popped color override");
+                let serialized = serde_json::to_value(&file).expect("serialize popped settings");
+                let parsed: ButtonSettingsFileV1 = serde_json::from_value(serialized)
+                    .expect("deserialize popped settings");
+                assert_eq!(parsed.entries[0]["popoutColorOverride"], colors);
+            }
+        }
+    }
+
+    #[test]
+    fn button_settings_popout_color_overrides_round_trip_through_native_file_io() {
+        let root = button_placement_test_root("settings-popout-colors");
+        fs::create_dir_all(&root).expect("create color settings test root");
+        let requested_path = root.join("popout-colors.json");
+        let mut file = valid_button_settings_file();
+        file.placement_kind = ButtonSettingsPlacementKind::PopOut;
+        file.surface["kind"] = json!("regular-popout");
+        file.behavior["kind"] = json!("regular-popout");
+        file.entries[0]["popoutColorOverride"] = json!({"surface": "#123456", "text": "#FFFFFFCC"});
+        let saved_path = save_button_settings_file(requested_path.display().to_string(), file.clone())
+            .expect("save popped color settings");
+        let parsed = load_button_settings_file(saved_path).expect("reload popped color settings");
+        assert_eq!(parsed.entries, file.entries);
+        fs::remove_dir_all(&root).expect("remove current-task color settings test root");
+    }
+
+    #[test]
+    fn button_settings_popout_color_overrides_reject_main_panel_and_invalid_values() {
+        for kind in ["main", "panel"] {
+            let mut file = valid_button_settings_file();
+            file.surface["kind"] = json!(kind);
+            file.entries[0]["popoutColorOverride"] = json!({"surface": "#123456"});
+            let error = validate_button_settings_file(&file).expect_err("Main and Panel cannot carry popped colors");
+            assert!(error.contains("requires a popped surface"));
+        }
+        for colors in [
+            json!(null), json!([]), json!("#123456"), json!({}),
+            json!({"surface": null}), json!({"surface": 123}),
+            json!({"surface": "red"}), json!({"surface": "#FFF"}),
+            json!({"surface": "#1234567"}), json!({"surface": "#12GG56"}),
+            json!({"surface": " #123456"}), json!({"text": "#1234567G"}),
+            json!({"surface": "#123456", "glow": "#FFFFFF"}),
+        ] {
+            let mut file = valid_button_settings_file();
+            file.placement_kind = ButtonSettingsPlacementKind::PopOut;
+            file.surface["kind"] = json!("regular-popout");
+            file.behavior["kind"] = json!("regular-popout");
+            file.entries[0]["popoutColorOverride"] = colors.clone();
+            assert!(validate_button_settings_file(&file).is_err(), "invalid override: {colors}");
+        }
+        let mut file = valid_button_settings_file();
+        file.entries[0]["unexpected"] = json!(true);
+        assert!(validate_button_settings_file(&file).unwrap_err().contains("unknown field"));
+    }
+
+    #[test]
     fn button_settings_categories_and_default_surface_ids_are_strict() {
         assert_eq!(
             ButtonSettingsPlacementKind::MainPage.directory_name(),
@@ -2618,6 +2713,11 @@ mod tests {
         assert!(validate_button_state(&json!({ "schemaVersion": 1 })).is_ok());
         assert!(validate_button_state(&json!({ "schemaVersion": 0 })).is_err());
         assert!(validate_button_state(&json!({})).is_err());
+        assert!(validate_button_state(&json!({
+            "schemaVersion": 1,
+            "programPopoutColorOverrides": {"placement-one": {"surface": "#123456"}},
+            "programPopoutColorOverrideRevisions": {"blender": 3}
+        })).is_ok());
     }
 
     #[test]

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.similar-color-selection-tool",
+  "label": "Similar Color Selection Tool",
+  "tooltip": "Similar Color Selection Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

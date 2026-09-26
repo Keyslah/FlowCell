@@ -307,7 +307,6 @@ test("installed-page Button-theme palette is live Pop-out/Fan scoped, stale-scan
   assert.match(broker, /expandedButtonPopoutPlacementIds\(document, unit\)/);
   assert.match(broker, /expandedFanPlacementIds\(document, candidate\.fanSetupId, programName\)/);
   assert.match(broker, /resolvePanelOwnerFanPlacement\(document, setup\.id\)/);
-  assert.match(broker, /Expand this Blender Fan while applying Screen Top-to-Bottom/);
   assert.match(popoutRenderer, /expandedButtonPopoutPlacementIds\(document, unit\)/);
   assert.match(popoutOperations, /unit\.interactionMode === "fan"[\s\S]{0,160}surface\.placementIds/);
   assert.match(broker, /registered\.buttonDraftSessionId\?\.trim\(\)[\s\S]{0,80}continue/);
@@ -347,7 +346,7 @@ test("installed-page Button-theme palette is live Pop-out/Fan scoped, stale-scan
   assert.doesNotMatch(helper, /setButtonSkinTextColor/);
   assert.match(
     helper,
-    /multiStopGradientColor\(gradient\.colors, gradientPositionForPlacement\(\{[\s\S]*placementId:\s*paletteId/
+    /programPopoutGradientColor\(\{[\s\S]*placementId:\s*paletteId/
   );
   assert.match(broker, /colors:\s*Array\.isArray\(payload\.colors\)/);
   assert.match(helper, /visibleBounds\.Top[\s\S]*envelope\.y[\s\S]*monitorWorkArea\.Top/);

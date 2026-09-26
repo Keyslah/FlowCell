@@ -17,6 +17,7 @@ import type {
   JsonValue
 } from "./types";
 import { ButtonRenderer } from "./ButtonRenderer";
+import type { ProgramPopoutThemeScreenGeometry } from "../theme/programPopoutTheme";
 import {
   executeButtonToolField,
   isToolSetChildStateSelected,
@@ -68,6 +69,9 @@ function responseReportsExecutionFailure(response: unknown): boolean {
 
 export interface ButtonSurfaceProps {
   document: ButtonStateDocument;
+  programPopoutThemeScreenGeometry?: ProgramPopoutThemeScreenGeometry;
+  /** Original identity for the single synthetic Button on a collapsed owner surface. */
+  programPopoutThemeSourcePlacementId?: string;
   surfaceId: string;
   mode?: ButtonEditorMode;
   selectedPlacementIds?: ReadonlySet<string>;
@@ -209,6 +213,8 @@ function renderFieldInput(args: {
 
 export function ButtonSurface({
   document,
+  programPopoutThemeScreenGeometry,
+  programPopoutThemeSourcePlacementId,
   surfaceId,
   mode = "run",
   selectedPlacementIds,
@@ -458,6 +464,8 @@ export function ButtonSurface({
           <ButtonRenderer
             key={placementId}
             document={document}
+            programPopoutThemeScreenGeometry={programPopoutThemeScreenGeometry}
+            programPopoutThemeSourcePlacementId={programPopoutThemeSourcePlacementId}
             placementId={placementId}
             mode={mode}
             selected={selected}

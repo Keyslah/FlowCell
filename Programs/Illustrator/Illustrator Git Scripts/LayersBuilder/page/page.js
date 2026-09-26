@@ -35,7 +35,10 @@
     renameForm: document.getElementById("rename-form"),
     renameTitle: document.getElementById("rename-title"),
     renameInput: document.getElementById("rename-input"),
-    renameConfirm: document.getElementById("rename-confirm")
+    renameConfirm: document.getElementById("rename-confirm"),
+    renameListDialog: document.getElementById("rename-list-dialog"),
+    renameListForm: document.getElementById("rename-list-form"),
+    renameListRows: document.getElementById("rename-list-rows")
   };
 
   var state = {
@@ -61,8 +64,9 @@
     dragSourceRow: null,
     dragSourceElement: null,
     suppressNextClick: false,
-    nameDialogAction: "rename",
-    nameDialogKey: ""
+    nameDialogAction: "",
+    nameDialogKey: "",
+    renameTargets: []
   };
 
   function configureCopy() {
@@ -87,8 +91,8 @@
       var button = document.querySelector('[data-action="' + actionId + '"]');
       if (button) button.textContent = labels[actionId];
     });
-    elements.renameTitle.textContent = copy("renameTitle", "Rename " + resourceLabel);
-    elements.renameConfirm.textContent = copy("renameConfirm", "Rename");
+    elements.renameTitle.textContent = copy("createRootTitle", "Create New Layer");
+    elements.renameConfirm.textContent = copy("createConfirm", "Create");
     document.querySelectorAll("[data-dialog-cancel]").forEach(function (button) {
       button.textContent = copy("cancel", "Cancel");
     });
@@ -713,26 +717,56 @@
 
   function closeDialogs() {
     elements.renameDialog.hidden = true;
-    state.nameDialogAction = "rename";
+    elements.renameListDialog.hidden = true;
+    elements.renameListRows.replaceChildren();
+    state.renameTargets = [];
+    state.nameDialogAction = "";
     state.nameDialogKey = "";
   }
 
-  function openRenameDialog() {
-    var key = requireOneSelection(
-      "selectOneForRename",
-      "Highlight exactly one " + resourceLabel.toLowerCase() + " to rename it."
-    );
-    if (!key) return;
-    var node = findNode(key);
-    if (!node) return;
-    state.nameDialogAction = "rename";
-    state.nameDialogKey = key;
-    elements.renameTitle.textContent = copy("renameTitle", "Rename " + resourceLabel);
-    elements.renameConfirm.textContent = copy("renameConfirm", "Rename");
-    elements.renameInput.value = node.name;
-    elements.renameDialog.hidden = false;
-    elements.renameInput.focus();
-    elements.renameInput.select();
+  async function openRenameDialog() {
+    if (state.busy) return;
+    setBusy(true);
+    setStatus("Finding selected layers...", "busy");
+    try {
+      var result = parseResponseValue(await request("rename-targets", {
+        keys: highlightedKeys()
+      }), "Rename targets");
+      if (!result || !Array.isArray(result.targets) || result.targets.length === 0) {
+        throw new Error("Select Illustrator objects or highlight one or more Layer Tree rows.");
+      }
+      closeDialogs();
+      state.renameTargets = result.targets;
+      result.targets.forEach(function (target, index) {
+        var row = document.createElement("div");
+        row.className = "layer-tree__rename-row";
+        var current = document.createElement("div");
+        current.className = "layer-tree__current-name";
+        var name = document.createElement("strong");
+        name.textContent = target.name;
+        var path = document.createElement("small");
+        path.textContent = target.path;
+        current.append(name, path);
+        var label = document.createElement("label");
+        label.textContent = "New name for " + target.path;
+        label.setAttribute("for", "rename-target-" + index);
+        label.className = "layer-tree__visually-hidden";
+        var input = document.createElement("input");
+        input.id = "rename-target-" + index;
+        input.type = "text";
+        input.autocomplete = "off";
+        input.dataset.renameIndex = String(index);
+        row.append(current, label, input);
+        elements.renameListRows.appendChild(row);
+      });
+      elements.renameListDialog.hidden = false;
+      elements.renameListRows.querySelector("input").focus();
+      setStatus(result.targets.length + " layer" + (result.targets.length === 1 ? "" : "s") + " ready to rename.");
+    } catch (error) {
+      setStatus(errorMessage(error), "error");
+    } finally {
+      setBusy(false);
+    }
   }
 
   function openCreateChildDialog(parentKey) {
@@ -903,9 +937,9 @@
         }).catch(function () {});
         return;
       }
-      if (!key) return;
       closeDialogs();
       if (action === "create-child") {
+        if (!key) return;
         state.expandedKeys.add(key);
         void runAction("create", { parentKey: key, name: name }, {
           selectionPolicy: "clear",
@@ -913,12 +947,31 @@
         }).catch(function () {});
         return;
       }
-      void runAction("rename", { key: key, name: name }, {
-        successMessage: "Layer renamed."
+    });
+    elements.renameListForm.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var renames = [];
+      elements.renameListRows.querySelectorAll("[data-rename-index]").forEach(function (input) {
+        var target = state.renameTargets[Number(input.dataset.renameIndex)];
+        var newName = input.value.trim();
+        if (target && newName && newName !== target.name) {
+          renames.push({
+            key: target.key, oldName: target.name, path: target.path, newName: newName
+          });
+        }
+      });
+      if (renames.length === 0) {
+        closeDialogs();
+        setStatus("No layer names changed.");
+        return;
+      }
+      closeDialogs();
+      void runAction("rename", { renames: renames }, {
+        successMessage: renames.length === 1 ? "Layer renamed." : "Layers renamed."
       }).catch(function () {});
     });
     window.addEventListener("keydown", function (event) {
-      if (event.key === "Escape" && !elements.renameDialog.hidden) {
+      if (event.key === "Escape" && (!elements.renameDialog.hidden || !elements.renameListDialog.hidden)) {
         event.preventDefault();
         closeDialogs();
       }

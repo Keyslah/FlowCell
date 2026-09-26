@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.zoom-tool",
+  "label": "Zoom Tool",
+  "tooltip": "Zoom Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

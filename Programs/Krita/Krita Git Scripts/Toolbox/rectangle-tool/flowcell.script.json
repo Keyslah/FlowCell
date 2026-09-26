@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.rectangle-tool",
+  "label": "Rectangle Tool",
+  "tooltip": "Rectangle Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

@@ -13,11 +13,17 @@ import type {
   JsonValue
 } from "./types";
 import { ButtonHost } from "./ButtonHost";
+import {
+  resolveProgramPopoutThemeOverride,
+  type ProgramPopoutThemeScreenGeometry
+} from "../theme/programPopoutTheme";
 import type { ButtonExecutionResult } from "./runtime/ButtonRuntimeAdapter";
 
 export interface ButtonRendererProps {
   document: ButtonStateDocument;
   placementId: string;
+  programPopoutThemeScreenGeometry?: ProgramPopoutThemeScreenGeometry;
+  programPopoutThemeSourcePlacementId?: string;
   mode?: ButtonEditorMode;
   selected?: boolean;
   ownerPlacement?: boolean;
@@ -55,6 +61,8 @@ export interface ButtonRendererProps {
 export function ButtonRenderer({
   document,
   placementId,
+  programPopoutThemeScreenGeometry,
+  programPopoutThemeSourcePlacementId,
   mode = "run",
   selected = false,
   ownerPlacement = false,
@@ -117,7 +125,9 @@ export function ButtonRenderer({
         button={button}
         placement={placement}
         skin={skin}
-        themeOverride={document.themeOverrides?.[placement.id]}
+        themeOverride={resolveProgramPopoutThemeOverride(
+          document, placement.id, programPopoutThemeScreenGeometry, undefined, programPopoutThemeSourcePlacementId
+        )}
         mode={mode}
         selected={selected}
         fields={fields}

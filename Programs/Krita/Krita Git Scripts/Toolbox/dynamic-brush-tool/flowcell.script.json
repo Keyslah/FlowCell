@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.dynamic-brush-tool",
+  "label": "Dynamic Brush Tool",
+  "tooltip": "Dynamic Brush Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

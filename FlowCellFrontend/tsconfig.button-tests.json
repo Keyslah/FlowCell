@@ -52,6 +52,8 @@
     "src/button/popout/toolFieldRuntimeState.ts",
     "src/button/state/installedButtonLayoutValidation.ts",
     "src/button/windows/buttonWindowGeometry.ts",
+    "src/button/windows/buttonWindowThemeDocument.ts",
+    "src/button/windows/programPopoutThemeScreenRange.ts",
     "src/button/windows/buttonCoreHitTest.ts",
     "src/button/windows/managedWindowLifecycle.ts",
     "src/button/windows/pendingWindowOpen.ts",
@@ -75,6 +77,7 @@
     "src/theme/themeEditorState.ts",
     "src/theme/themeModel.ts",
     "src/theme/programPopoutPalette.ts",
+    "src/theme/programPopoutTheme.ts",
     "src/theme/themePageRegistry.ts"
   ]
 }

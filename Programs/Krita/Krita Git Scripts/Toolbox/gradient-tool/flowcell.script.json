@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.gradient-tool",
+  "label": "Gradient Tool",
+  "tooltip": "Gradient Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

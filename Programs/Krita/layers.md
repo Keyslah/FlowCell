@@ -48,14 +48,14 @@ The four top-level organizational roots cannot be deleted or stored as artwork.
 | `rename` | Prompt for each highlighted layer; cancelling leaves every name unchanged. |
 | `duplicate` | Duplicate complete highlighted subtrees beside their originals. |
 | `delete` | Delete the highlighted layers/groups, including hidden/locked targets and descendants; protect roots and Archive/Trash contents. |
-| `snapshot` | Save an editable numbered `sN` copy for every highlighted Live item. |
+| `snapshot` | Save an editable numbered `sN` copy for every highlighted Live item; keep the original layer highlighted. |
 | `<` / `>` | Cycle one selected family's original Live and `sN` versions, wrapping in either direction. |
 | `restore` | Copy the chosen stored version back into its recorded Live position; move the displaced working item into Trash; retain the source. |
 | `back` | Consume the newest snapshot into Live; move the displaced working item into Trash. |
 | `add to live` | Copy stored versions into Live as additional, independent working items. |
 | `copy live` | Prompt for a new Live group, duplicate selected working layers into it, hide the originals. |
 | `trash` | Move working items to numbered `TN` entries. |
-| `archive` / `copy archive` | Move/copy working items to numbered `AN` entries. |
+| `archive` | Copy working items to numbered `AN` entries, keeping the originals in Live. |
 | `empty trash` | Confirm, then remove contents while retaining the root. |
 | `empty groups` | Remove empty working groups; preserve storage and system roots. |
 | `b vis` / `set vis` | Save/restore per-document visibility states. |
@@ -65,6 +65,10 @@ The four top-level organizational roots cannot be deleted or stored as artwork.
 | `flatten` | Invoke Krita's native merge for multiple highlighted layers, or flatten for a single target. |
 
 There are no Sort, Sort Live, End Preview, or 3D buttons.
+
+Family folders in Snapshots, Trash and Archive follow the Live stack order,
+independent of selection order. Each storage action updates that order from Live;
+families moved to Trash retain their last relative positions.
 
 ## Version cycling and persistence
 
@@ -90,7 +94,7 @@ PowerShell caller propagates failures through FlowCell's existing script runner.
 
 `Build-LayersPackages.py` regenerates self-contained catalog packages and manifest
 entries. Only explicitly enabled contributions install through FlowCell's normal
-startup source lifecycle. The 26 Buttons share one installed Krita extension;
+startup source lifecycle. The 25 Buttons share one installed Krita extension;
 removing a Button does not remove that extension.
 
 `selftest.py` runs only when Krita was started with `FLOWCELL_KRITA_TEST=1` and the

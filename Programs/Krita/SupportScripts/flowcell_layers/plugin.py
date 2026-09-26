@@ -12,6 +12,8 @@ from PyQt5.QtGui import QIcon
 from PyQt5.QtWidgets import QApplication, QInputDialog, QLineEdit, QMessageBox
 from .engine import Layers, key
 from .brushes import BrushButtons
+from .toolbox import TOOLS, select_tool, select_ellipse_assistant
+from .svg_stencil import import_svg_stencil
 
 ACTIONS = json.loads((Path(__file__).parent / "actions.json").read_text(encoding="utf-8"))
 
@@ -31,7 +33,8 @@ class FlowCellLayers(Extension):
     def publish_ready(self):
         self.write_json(self.directory / "ready.json", {
             "version": "1.0.0", "session": self.session, "pid": os.getpid(),
-            "actions": [a[0] for a in ACTIONS] + ["save_new_brush", "select_brush"], "time": time.time(),
+            "actions": [a[0] for a in ACTIONS] + ["save_new_brush", "select_brush", "ellipse_assistant", "svg_stencil"]
+                       + ["tool:" + tool["id"] for tool in TOOLS], "time": time.time(),
         })
 
     @staticmethod
@@ -71,6 +74,12 @@ class FlowCellLayers(Extension):
             raise ValueError("Open a document in Krita first.")
         if QApplication.activeModalWidget():
             raise ValueError("Close the current Krita dialog before using a Layers button.")
+        if action.startswith("tool:"):
+            return select_tool(action[5:])
+        if action == "ellipse_assistant":
+            return select_ellipse_assistant()
+        if action == "svg_stencil":
+            return import_svg_stencil(doc, parent=self.parent_window())
         if action == "save_new_brush":
             return self.brushes.open_save(view)
         if action == "select_brush":

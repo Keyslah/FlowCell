@@ -46,6 +46,20 @@
   "supportsToolsetManifests": false,
   "bundledSources": [
     {
+      "id": "windows.snapshots",
+      "version": "1.0.0",
+      "panelName": "Utility",
+      "sourcePath": "Windows Git Scripts/Utility/Snapshots",
+      "importKind": "script",
+      "displayLabel": "Snapshots",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": ["Adds a fixed-box repeated capture mode that saves beside the Temp Shots folder."],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
       "id": "windows.shortcycle",
       "version": "1.0.0",
       "panelName": "Utility",

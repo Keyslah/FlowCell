@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.enclose-and-fill-tool",
+  "label": "Enclose and Fill Tool",
+  "tooltip": "Enclose and Fill Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

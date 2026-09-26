@@ -1270,11 +1270,17 @@ test("popped Button palette scan groups only explicit live targets without guess
   const byPlacement = Object.fromEntries(scan.placements.map((entry, index) => [targets[index].placementId, entry]));
   assert.deepEqual(byPlacement["pop-a"], {
     placementId: targets[0].paletteId,
+    label: "button-a",
+    groupLabel: "Blender / Tools Pop-out",
+    textColor: "#A0B0C0",
     color: "#102030",
     materialColors: []
   });
   assert.deepEqual(byPlacement["pop-b"], {
     placementId: targets[1].paletteId,
+    label: "button-b",
+    groupLabel: "Blender / Tools Pop-out",
+    textColor: "#FFFFFF",
     color: "#445566",
     materialColors: []
   });
@@ -1432,8 +1438,8 @@ test("popped Button text toggle is exact-scope and preserves surfaces, skins, hi
     document.themeOverrides["placement-button-a"]
   );
   assert.deepEqual(
-    scanProgramPopoutPaletteTargets(black.document, "Blender", targets),
-    surfaceScanBefore,
+    scanProgramPopoutPaletteTargets(black.document, "Blender", targets).placements.map(({ textColor: _textColor, ...entry }) => entry),
+    surfaceScanBefore.placements.map(({ textColor: _textColor, ...entry }) => entry),
     "text toggling must not change the aggregate Surface palette"
   );
   for (const [key, value] of Object.entries(structuralBefore)) {
@@ -1534,7 +1540,11 @@ test("popped Button palette Apply is exact-scope and Refill keeps scatter placem
   assert.deepEqual(colorsByPlacement(second), colorsByPlacement(first));
   assert.equal(Object.values(colorsByPlacement(first)).every(Boolean), true);
   const reshuffled = refill(document, targets, { ...gradient, seed: 18 });
-  assert.notDeepEqual(colorsByPlacement(reshuffled), colorsByPlacement(first));
+  assert.deepEqual(colorsByPlacement(reshuffled), colorsByPlacement(first), "exact stop anchors survive scatter");
+  const interior = structuredClone(document);
+  interior.placements["pop-b"].y += 7;
+  assert.notDeepEqual(colorsByPlacement(refill(interior, targets, { ...gradient, seed: 18 })),
+    colorsByPlacement(refill(interior, targets, gradient)), "interior blends still scatter by seed");
   assert.deepEqual(document.buttons, structuralBefore.buttons);
   assert.deepEqual(document.placements, structuralBefore.placements);
   assert.deepEqual(document.skins, structuralBefore.skins);
@@ -1560,7 +1570,7 @@ test("popped Button gradients interpolate ordered image-color stops", () => {
   );
   assert.deepEqual(
     gradientProgramPopoutPaletteAssignments(
-      [{ paletteId: "centered", y: 0 }],
+      [{ paletteId: "centered", y: 50 }],
       { ...gradient, spread: 0 },
       { minimumY: 0, maximumY: 100 }
     ),

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.polygon-tool",
+  "label": "Polygon Tool",
+  "tooltip": "Polygon Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

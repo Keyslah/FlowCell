@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.reference-images-tool",
+  "label": "Reference Images Tool",
+  "tooltip": "Reference Images Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

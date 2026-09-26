@@ -191,6 +191,48 @@
         }
       },
       {
+        "id": "rename-targets",
+        "handler": {
+          "kind": "program",
+          "capability": "illustrator-layer-tree",
+          "payload": {
+            "op": "renametargets"
+          }
+        },
+        "requestSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["keys"],
+          "properties": {
+            "keys": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          }
+        },
+        "responseSchema": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["ok", "targets"],
+          "properties": {
+            "ok": { "type": "boolean" },
+            "targets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["key", "name", "path"],
+                "properties": {
+                  "key": { "type": "string" },
+                  "name": { "type": "string" },
+                  "path": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      },
+      {
         "id": "rename",
         "handler": {
           "kind": "program",
@@ -203,15 +245,22 @@
           "type": "object",
           "additionalProperties": false,
           "required": [
-            "key",
-            "name"
+            "renames"
           ],
           "properties": {
-            "key": {
-              "type": "string"
-            },
-            "name": {
-              "type": "string"
+            "renames": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["key", "oldName", "path", "newName"],
+                "properties": {
+                  "key": { "type": "string" },
+                  "oldName": { "type": "string" },
+                  "path": { "type": "string" },
+                  "newName": { "type": "string" }
+                }
+              }
             }
           }
         },
@@ -1086,11 +1135,10 @@
         "duplicate": "Duplicate",
         "delete": "Delete",
         "forceDelete": "Force Delete",
-        "renameTitle": "Rename Layer",
+        "renameTitle": "Rename Layers",
         "renameConfirm": "Rename",
         "cancel": "Cancel",
         "selectOneForChild": "Highlight exactly one layer to add a child under it.",
-        "selectOneForRename": "Highlight exactly one layer to rename it.",
         "selectForDuplicate": "Highlight one or more layers to duplicate.",
         "selectionSaveFailed": "Layer selection could not be saved.",
         "stateReadFailed": "Saved Layer Tree state could not be restored.",

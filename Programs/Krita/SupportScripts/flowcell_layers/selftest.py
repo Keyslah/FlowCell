@@ -5,6 +5,7 @@ import tempfile
 from pathlib import Path
 from krita import Krita
 from .engine import Layers, ROOTS, family, key, walk, internal, ANNOTATION
+from .svg_stencil import import_svg_stencil
 
 
 def run():
@@ -157,11 +158,12 @@ def run():
         Layers(doc, [node]).run("copy_archive")
         assert node.parentNode().name() == "Live"
         Layers(doc, [node]).run("archive")
-        assert Layers(doc).top(node).name() == "Archive"
-        Layers(doc, [node]).run("add_to_live")
-        assert Layers(doc).top(node).name() == "Archive"
+        assert Layers(doc).top(node).name() == "Live"
+        saved = next(n for n in walk(doc.rootNode()) if n.name() == "A1")
+        Layers(doc, [saved]).run("add_to_live")
+        assert Layers(doc).top(saved).name() == "Archive"
         live = next(n for n in doc.rootNode().childNodes() if n.name() == "Live")
-        assert len(live.childNodes()) == 1
+        assert len(live.childNodes()) == 2
         Layers(doc, live.childNodes()).run("trash")
         engine = Layers(doc, confirm=lambda *_: False)
         engine.run("empty_trash")
@@ -169,7 +171,32 @@ def run():
         assert trash.childNodes()
         Layers(doc, confirm=lambda *_: True).run("empty_trash")
         assert not trash.childNodes()
-    test("Archive copy/move, Add to Live, Trash and confirmed emptying", storage)
+    test("Archive copies, Add to Live, Trash and confirmed emptying", storage)
+
+    def storage_order(doc, add):
+        nodes = [add(name) for name in ("Bottom", "Middle", "Top")]
+        Layers(doc).run("make_layers")
+        live = nodes[0].parentNode()
+        expected = [n.name() for n in live.childNodes()]
+        # Deliberately submit the opposite of Krita's child order.
+        Layers(doc, list(reversed(nodes))).run("snapshot")
+        for node in reversed(nodes):
+            Layers(doc, [node]).run("copy_archive")
+        roots = {n.name(): n for n in doc.rootNode().childNodes()}
+        for name in ("Snapshots", "Archive"):
+            assert [n.name() for n in roots[name].childNodes()] == expected, name
+        # A changed Live stack must also reorder already-created family folders.
+        Layers(doc).move(nodes[0], live)
+        expected = [n.name() for n in live.childNodes()]
+        Layers(doc, [nodes[0]]).run("snapshot")
+        for name in ("Snapshots", "Archive"):
+            assert [n.name() for n in roots[name].childNodes()] == expected, name
+        # Separate Trash clicks keep the pre-move order despite shrinking Live.
+        for node in reversed(live.childNodes()):
+            Layers(doc, [node]).run("trash")
+        assert [n.name() for n in roots["Trash"].childNodes()] == expected
+        assert not live.childNodes()
+    test("Snapshots, Archive and Trash follow Live across reverse clicks and reordering", storage_order)
 
     def delete(doc, add):
         group = add("Doomed", group=True)
@@ -278,6 +305,16 @@ def run():
         selected = app.activeWindow().activeView().selectedNodes()
         assert [key(n) for n in selected] == [key(node)]
         extension.execute("snapshot")
+        from PyQt5.QtWidgets import QApplication
+        doc.waitForDone()
+        QApplication.processEvents()
+        assert key(doc.activeNode()) == key(node)
+        assert [key(n) for n in app.activeWindow().activeView().selectedNodes()] == [key(node)]
+        extension.execute("copy_archive")
+        doc.waitForDone()
+        QApplication.processEvents()
+        assert key(doc.activeNode()) == key(node)
+        assert node.parentNode().name() == "Live"
         extension.execute("next_snapshot")
         assert "s1" == Layers(doc).records[key(doc.activeNode())]["version"]
         from PyQt5.QtCore import QEventLoop, QTimer
@@ -357,6 +394,27 @@ def run():
                 grid.trigger()
                 settle()
     test("Real decorations helper stays internal; misplaced helper repairs without artwork changes", decorations_wrapper)
+
+    def svg_stencil(doc, add):
+        existing = add("Existing artwork")
+        before = key(existing)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "Stencil fixture.svg"
+            path.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32">'
+                            '<path d="M 2 2 L 20 20" fill="none" stroke="#e63946"/></svg>',
+                            encoding="utf-8-sig")
+            import_svg_stencil(doc, path)
+        doc.waitForDone()
+        group = next(n for n in doc.rootNode().childNodes() if n.name() == "Stencil fixture")
+        paint, vector = group.childNodes()
+        assert [n.name() for n in group.childNodes()] == ["Paint Here", "SVG Stencil"]
+        assert vector.type() == "vectorlayer" and len(vector.shapes()) > 0
+        exported = vector.toSvg().lower()
+        assert "#e63946" in exported and 'fill="none"' in exported, exported[:600]
+        assert vector.colorLabel() == 1 and paint.type() == "paintlayer"
+        assert key(doc.activeNode()) == key(paint)
+        assert any(key(n) == before for n in doc.rootNode().childNodes())
+    test("SVG Stencil imports native shapes above selected paint without changing existing layers", svg_stencil)
 
     if original:
         app.setActiveDocument(original)

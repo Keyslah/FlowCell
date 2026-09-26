@@ -1,6 +1,10 @@
 # Description: Requests one direct-to-folder capture from the resident FlowCell backend.
 [CmdletBinding()]
-param([switch]$ValidateOnly)
+param(
+    [switch]$ValidateOnly,
+    [ValidateSet('temp-shots', 'snapshots')][string]$Mode = 'temp-shots',
+    [string]$LauncherPath = ''
+)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -163,7 +167,7 @@ public static extern System.IntPtr SendMessageTimeout(System.IntPtr hwnd, uint m
 
 function Invoke-TempShotsBackend {
     Add-TempShotsBackendBridge
-    $receiver = [FlowCell.TempShots.BackendBridge]::FindWindow($null, 'FlowCellBackendDirectScriptReceiver')
+    $receiver = [FlowCell.TempShots.BackendBridge]::FindWindow('AutoHotkeyGUI', 'FlowCellBackendDirectScriptReceiver')
     if ($receiver -eq [IntPtr]::Zero) {
         throw 'The FlowCell capture backend is not running. Restart FlowCell and try Temp Shots again.'
     }
@@ -171,7 +175,7 @@ function Invoke-TempShotsBackend {
     # Do not fall back to Windows Snipping Tool: it independently auto-saves.
     $payload = @{
         command = 'run_script_now'
-        scriptPath = Join-Path $PSScriptRoot 'Temp_Shots.vbs'
+        scriptPath = if ($LauncherPath) { [IO.Path]::GetFullPath($LauncherPath) } else { Join-Path $PSScriptRoot 'Temp_Shots.vbs' }
         programKey = 'windows_generic'
         requestId = 'temp-shots-' + [guid]::NewGuid().ToString('N')
     } | ConvertTo-Json -Compress
@@ -198,8 +202,9 @@ try {
         if (-not (Test-Path -LiteralPath $captureHelper -PathType Leaf)) {
             throw 'The direct Temp Shots capture helper is missing.'
         }
-        if (-not (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'Temp_Shots.vbs') -PathType Leaf)) {
-            throw 'The owned Temp Shots launcher is missing.'
+        $validatedLauncher = if ($LauncherPath) { $LauncherPath } else { Join-Path $PSScriptRoot 'Temp_Shots.vbs' }
+        if (-not (Test-Path -LiteralPath $validatedLauncher -PathType Leaf)) {
+            throw 'The owned capture launcher is missing.'
         }
         Write-Output 'Temp Shots direct-capture package validation OK.'
         exit 0
@@ -210,6 +215,7 @@ try {
     exit 0
 }
 catch {
-    Write-FlowCellStatus -Message ("Temp Shots failed: {0}" -f $_.Exception.Message)
+    $captureName = if ($Mode -eq 'snapshots') { 'Snapshots' } else { 'Temp Shots' }
+    Write-FlowCellStatus -Message ("{0} failed: {1}" -f $captureName, $_.Exception.Message)
     exit 1
 }

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.tools.svg-stencil",
+  "label": "SVG Stencil",
+  "tooltip": "Import an SVG as a color-labeled vector stencil above a new paint layer.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

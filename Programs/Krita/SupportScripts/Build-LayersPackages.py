@@ -28,7 +28,7 @@ for action, label, tooltip in actions:
         "$ErrorActionPreference = 'Stop'\n& (Join-Path $PSScriptRoot 'Invoke-KritaLayers.ps1') -Action '" + action + "'\n",
         encoding='utf-8')
     (package / 'Invoke-KritaLayers.ps1').write_bytes((support / 'Invoke-KritaLayers.ps1').read_bytes())
-    sources.append({'id': source_id, 'version': '1.0.1', 'panelName': 'Layers',
+    sources.append({'id': source_id, 'version': '1.0.2', 'panelName': 'Layers',
                     'sourcePath': relative_path, 'importKind': 'script',
                     'displayLabel': label, 'sourceKind': 'script', 'required': False,
                     'dependencies': [], 'installEffects': [tooltip], 'installIfMissing': True})

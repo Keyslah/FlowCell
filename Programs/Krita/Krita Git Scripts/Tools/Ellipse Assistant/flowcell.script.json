@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.tools.ellipse-assistant",
+  "label": "Ellipse Assistant",
+  "tooltip": "Select the Assistant Tool with Ellipse as its assistant type.",
+  "program": "Krita",
+  "source": "run.ps1"
+}

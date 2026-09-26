@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.measurement-tool",
+  "label": "Measurement Tool",
+  "tooltip": "Measurement Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

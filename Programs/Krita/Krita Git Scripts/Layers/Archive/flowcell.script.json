@@ -1,8 +1,0 @@
-{
-  "schemaVersion": 1,
-  "id": "plain-krita.layers.archive",
-  "label": "archive",
-  "tooltip": "Move highlighted Live layers into numbered Archive entries.",
-  "program": "Krita",
-  "source": "run.ps1"
-}

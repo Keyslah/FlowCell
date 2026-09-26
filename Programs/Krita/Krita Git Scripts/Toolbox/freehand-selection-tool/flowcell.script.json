@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.freehand-selection-tool",
+  "label": "Freehand Selection Tool",
+  "tooltip": "Freehand Selection Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

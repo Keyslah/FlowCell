@@ -928,6 +928,32 @@ test("Button settings preserve an exact zero-Button surface", () => {
   assert.equal(validateButtonStateDocument(loaded).valid, true);
 });
 
+test("individual popped colors survive settings export, import, and transient placement ID remapping", () => {
+  const { document, surface } = regularPopSettingsFixture();
+  const context = { programName: "Windows", panelName: "Files" };
+  const originalId = surface.placementIds[0];
+  document.programPopoutColorOverrides = { [originalId]: { surface: "#CC5522", text: "#102030" } };
+  document.programPopoutColorOverrideRevisions = { windows: { surface: 3, text: 5 } };
+  const file = buildButtonSettingsFile(document, surface.id, context);
+  assert.deepEqual(file.entries[0].popoutColorOverride, { surface: "#CC5522", text: "#102030" });
+  assert.equal(validateButtonSettingsFile(file).valid, true);
+  const changed = structuredClone(document);
+  changed.programPopoutColorOverrides[originalId] = { surface: "#000000" };
+  const imported = applyButtonSettingsFile(changed, surface.id, file, context);
+  assert.deepEqual(imported.programPopoutColorOverrides[originalId], { surface: "#CC5522", text: "#102030" });
+  const opened = buildTransientButtonPopoutSettingsDocument(document, file, context, "individual-colors");
+  const unit = opened.document.popoutUnits[opened.popoutUnitId];
+  const transientId = opened.document.surfaces[unit.surfaceId].placementIds[0];
+  assert.notEqual(transientId, originalId);
+  assert.deepEqual(opened.document.programPopoutColorOverrides[transientId], { surface: "#CC5522", text: "#102030" });
+  assert.deepEqual(opened.document.programPopoutColorOverrideRevisions.windows, { surface: 3, text: 5 });
+  assert.equal(validateButtonStateDocument(opened.document).valid, true);
+  delete file.entries[0].popoutColorOverride;
+  assert.equal(applyButtonSettingsFile(document, surface.id, file, context).programPopoutColorOverrides[originalId], undefined);
+  file.entries[0].popoutColorOverride = { surface: "var(--unknown)" };
+  assert.equal(validateButtonSettingsFile(file).valid, false);
+});
+
 test("Open Pop materializes a regular settings file only in an isolated transient document", () => {
   const { document, settings } = regularPopSettingsFixture();
   settings.entries[0].label = "Transient Saved Label";

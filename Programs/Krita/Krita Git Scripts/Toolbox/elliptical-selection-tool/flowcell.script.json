@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.elliptical-selection-tool",
+  "label": "Elliptical Selection Tool",
+  "tooltip": "Elliptical Selection Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

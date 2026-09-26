@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.polyline-tool",
+  "label": "Polyline Tool",
+  "tooltip": "Polyline Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

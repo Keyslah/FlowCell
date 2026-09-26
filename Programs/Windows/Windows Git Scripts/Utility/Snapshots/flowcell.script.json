@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "windows.snapshots",
+  "label": "Snapshots",
+  "tooltip": "Select a box once; Space saves each snapshot to the sibling snapshots folder, Escape finishes.",
+  "program": "Windows",
+  "source": "Snapshots.vbs"
+}

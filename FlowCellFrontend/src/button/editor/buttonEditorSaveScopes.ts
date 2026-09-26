@@ -123,7 +123,11 @@ export function buildButtonPlacementScopedDocument(
   );
   const retainedPlacementIds = new Set(placementIds);
   for (const placementId of committedSurface?.placementIds ?? []) {
-    if (!retainedPlacementIds.has(placementId)) delete next.placements[placementId];
+    if (!retainedPlacementIds.has(placementId)) {
+      delete next.placements[placementId];
+      if (next.themeOverrides) delete next.themeOverrides[placementId];
+      if (next.programPopoutColorOverrides) delete next.programPopoutColorOverrides[placementId];
+    }
   }
 
   next.surfaces[surfaceId] = committedSurface

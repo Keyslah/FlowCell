@@ -62,6 +62,7 @@ import {
 } from "../windows/buttonWindowGeometry";
 import { useButtonWindowDocument } from "../windows/useButtonWindowDocument";
 import { useFixedButtonCanvasMetrics } from "../windows/useFixedButtonCanvas";
+import { useProgramPopoutThemeScreenRange } from "../windows/useProgramPopoutThemeScreenRange";
 import { useNativeButtonHitboxes } from "../windows/useNativeButtonHitboxes";
 import {
   setButtonWindowGeometryTransitionActive,
@@ -1837,6 +1838,25 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
   const contentFrameRect = canvasMetrics.ready
     ? buttonDesktopBoundsToCanvasRect(appliedFrameBounds, canvasMetrics)
     : null;
+  const monitorWorkArea = appliedCanvasRef.current?.monitorWorkArea;
+  const physicalThemeGeometry = appliedFrameBounds && monitorWorkArea
+    ? {
+        visibleBounds: { Top: appliedFrameBounds.top, Height: appliedFrameBounds.height },
+        envelope: renderedEnvelope,
+        monitorWorkArea
+      }
+    : undefined;
+  const programPopoutThemeScreenRange = useProgramPopoutThemeScreenRange({
+    enabled: Boolean(document?.programPopoutThemes?.[
+      activeContext.programName.normalize("NFC").trim().toLocaleLowerCase("en")
+    ]?.screenTopToBottom),
+    programName: activeContext.programName,
+    placements: geometryPlacements,
+    geometry: physicalThemeGeometry
+  });
+  const programPopoutThemeScreenGeometry = physicalThemeGeometry
+    ? { ...physicalThemeGeometry, screenRange: programPopoutThemeScreenRange }
+    : undefined;
   const resizeHandleFrame = resizeHandlesVisible && renderedEnvelope
     ? {
         left: (expandedResizeHandleEnvelope.x - renderedEnvelope.x) * surfaceScale,
@@ -1897,6 +1917,7 @@ export function ButtonPopoutWindowPage({ context }: ButtonPopoutWindowPageProps)
           <ButtonPopoutRenderer
             key={`${unit.id}:${openRevision}`}
             document={document}
+            programPopoutThemeScreenGeometry={programPopoutThemeScreenGeometry}
             unit={unit}
             displayMode={renderedDisplayMode}
             surfaceScale={surfaceScale}

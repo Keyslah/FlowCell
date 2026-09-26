@@ -1244,6 +1244,10 @@ class FlowCellApp {
             this.HandleTempShotsShortcutInvocation(binding)
             return
         }
+        if this.IsSnapshotsScript(binding.scriptPath) {
+            this.HandleSnapshotsShortcutInvocation(binding)
+            return
+        }
 
         this.logger.Info("Script hotkey requested. Shortcut=" binding.shortcut " | Script=" binding.scriptPath)
         result := this.RunBackendScriptCommand(binding.scriptPath, binding.HasOwnProp("programTabId") ? binding.programTabId : 0, "hotkey " binding.shortcut)
@@ -1264,6 +1268,30 @@ class FlowCellApp {
         resolvedScriptPath := NormalizeFlowCellProgramPath(scriptPath)
         SplitPath resolvedScriptPath, &fileName
         return StrLower(Trim(fileName)) = "temp_shots.vbs"
+    }
+
+    IsSnapshotsScript(scriptPath) {
+        resolvedScriptPath := NormalizeFlowCellProgramPath(scriptPath)
+        SplitPath resolvedScriptPath, &fileName
+        return StrLower(Trim(fileName)) = "snapshots.vbs"
+    }
+
+    HandleSnapshotsShortcutInvocation(binding) {
+        global flowCellLastActionStatusPath
+        scriptPath := NormalizeFlowCellProgramPath(binding.scriptPath)
+        result := this.RunSnapshotsScript(scriptPath)
+        lines := [
+            "Shortcut: " binding.shortcut,
+            "Script: " scriptPath,
+            "Attempted: " BoolToWord(result.attempted),
+            "Succeeded: " BoolToWord(result.succeeded),
+            "Method: " result.method,
+            "Details: " result.detail
+        ]
+        statusText := JoinLines(lines)
+        this.SetShortcutStatus(statusText)
+        WriteTextFile(flowCellLastActionStatusPath, statusText)
+        this.logger.Info("Snapshots hotkey completed. Shortcut=" binding.shortcut " | Succeeded=" BoolToWord(result.succeeded) " | Details=" result.detail)
     }
 
     HandleTempShotsShortcutInvocation(binding) {
@@ -1349,6 +1377,29 @@ class FlowCellApp {
         return result
     }
 
+    RunSnapshotsScript(launcherPath) {
+        result := this.TryLaunchSnapshotsFast(launcherPath)
+        if result.attempted
+            return result
+        result := {attempted: true, succeeded: false, method: "snapshots_wscript_async", detail: ""}
+        launcherPath := NormalizeFlowCellProgramPath(launcherPath)
+        if !FileExist(launcherPath) {
+            result.detail := "Snapshots launcher was not found."
+            return result
+        }
+        wscriptPath := A_WinDir "\System32\wscript.exe"
+        if !FileExist(wscriptPath)
+            wscriptPath := "wscript.exe"
+        try {
+            Run('"' wscriptPath '" //nologo "' launcherPath '"', , "Hide")
+            result.succeeded := true
+            result.detail := "Snapshots launched."
+        } catch as err {
+            result.detail := "Launching Snapshots failed. " err.Message
+        }
+        return result
+    }
+
     TryLaunchTempShotsFast(launcherPath) {
         result := {
             attempted: false,
@@ -1378,6 +1429,28 @@ class FlowCellApp {
             result.detail := "Drag to select a Temp Shot. Escape cancels."
         } catch as err {
             result.detail := "Starting direct Temp Shots capture failed. " err.Message
+        }
+        return result
+    }
+
+    TryLaunchSnapshotsFast(launcherPath) {
+        result := {attempted: false, succeeded: false, method: "snapshots_direct_capture", detail: ""}
+        launcherPath := NormalizeFlowCellProgramPath(launcherPath)
+        SplitPath launcherPath, , &launcherDir
+        if !FileExist(launcherDir "\Snapshots.ps1")
+            return result
+        folder := this.ReadTempShotsFastFolder()
+        if folder = ""
+            return result
+        result.attempted := true
+        try {
+            if !this.HasProp("tempShotsCapture")
+                this.tempShotsCapture := FlowCellTempShotsCapture()
+            this.tempShotsCapture.Start(folder, ObjBindMethod(this, "ReportTempShotsCaptureStatus"), "snapshots")
+            result.succeeded := true
+            result.detail := "Drag to select a box, then press Space for each snapshot. Escape finishes."
+        } catch as err {
+            result.detail := "Starting Snapshots failed. " err.Message
         }
         return result
     }
@@ -2453,6 +2526,8 @@ class FlowCellApp {
     RunBoundScript(scriptPath, source, programTabId := 0, programName := "") {
         if this.IsTempShotsScript(scriptPath)
             return this.RunTempShotsScript(scriptPath)
+        if this.IsSnapshotsScript(scriptPath)
+            return this.RunSnapshotsScript(scriptPath)
         if programName = ""
             programName := this.GetProgramNameFromBinding(programTabId, scriptPath)
 

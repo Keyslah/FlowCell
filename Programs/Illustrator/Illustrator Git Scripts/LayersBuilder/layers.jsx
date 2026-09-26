@@ -391,6 +391,21 @@
         return keys;
     }
 
+    function renameTargetKeys(value) {
+        var keys = selectedObjectLayerKeys();
+        return keys.length > 0 ? keys : asKeyList(value);
+    }
+
+    function layerPath(layer) {
+        var names = [];
+        var current = layer;
+        while (current && current.typename === 'Layer') {
+            names.unshift(String(current.name));
+            current = current.parent && current.parent.typename === 'Layer' ? current.parent : null;
+        }
+        return names.join(' / ');
+    }
+
     function selectedOrHighlightedLayerTargets(value) {
         var selectedKeys = selectedObjectLayerKeys();
         if (selectedKeys.length > 0) {
@@ -868,21 +883,69 @@
             } finally {
                 restoreLayerStates(createStates);
             }
+        } else if (op === 'renametargets') {
+            var renameKeys = renameTargetKeys(args.keys);
+            if (renameKeys.length === 0) {
+                return fail('Select Illustrator objects or highlight one or more Layer Tree rows.');
+            }
+            var renameTargets = resolvedLayerTargets(renameKeys);
+            var renameRows = [];
+            for (var n = 0; n < renameTargets.length; n += 1) {
+                renameRows.push('{"key":' + jsonString(renameTargets[n].key) +
+                    ',"name":' + jsonString(renameTargets[n].layer.name) +
+                    ',"path":' + jsonString(layerPath(renameTargets[n].layer)) + '}');
+            }
+            return '{"ok":true,"targets":[' + renameRows.join(',') + ']}';
         } else if (op === 'rename') {
-            var renameTarget = resolveLayerByKey(args.key);
-            if (!renameTarget) {
-                return fail('Layer to rename was not found.');
+            var requestedRenames = args.renames || [];
+            if (requestedRenames.length === 0) {
+                return fail('Enter a new name for at least one layer.');
+            }
+            var renameTargets = [];
+            var seenRenameKeys = {};
+            for (var n = 0; n < requestedRenames.length; n += 1) {
+                var change = requestedRenames[n];
+                var renameTarget = resolveLayerByKey(change.key);
+                if (!renameTarget) {
+                    return fail('Layer to rename was not found: ' + change.key);
+                }
+                var canonicalRenameKey = keyForLayer(renameTarget);
+                if (canonicalRenameKey === null || seenRenameKeys[canonicalRenameKey]) {
+                    return fail('Rename targets are invalid or repeated.');
+                }
+                seenRenameKeys[canonicalRenameKey] = true;
+                if (String(renameTarget.name) !== String(change.oldName) ||
+                    layerPath(renameTarget) !== String(change.path)) {
+                    return fail('A layer changed while Rename was open. Refresh and try again.');
+                }
+                var newName = String(change.newName).replace(/^\s+|\s+$/g, '');
+                if (!newName) {
+                    return fail('Enter a new name for each edited layer.');
+                }
+                renameTargets.push({ layer: renameTarget, oldName: String(renameTarget.name), newName: newName });
             }
             var renameStates = [];
-            openAncestors(renameTarget, renameStates);
+            var completedRenames = [];
             try {
-                renameTarget.name = args.name ? String(args.name) : renameTarget.name;
+                for (var n = 0; n < renameTargets.length; n += 1) {
+                    openAncestors(renameTargets[n].layer, renameStates);
+                    renameTargets[n].layer.name = renameTargets[n].newName;
+                    completedRenames.push(renameTargets[n]);
+                }
+            } catch (renameError) {
+                for (var undo = completedRenames.length - 1; undo >= 0; undo -= 1) {
+                    try { completedRenames[undo].layer.name = completedRenames[undo].oldName; } catch (rollbackError) {}
+                }
+                throw renameError;
             } finally {
                 restoreLayerStates(renameStates);
             }
         } else if (op === 'delete') {
             var force = args.force ? true : false;
-            var doomed = selectedOrHighlightedLayerTargets(args.keys);
+            var highlightedDeleteKeys = asKeyList(args.keys);
+            var doomed = force && highlightedDeleteKeys.length > 0
+                ? normalizedLayerTargets(highlightedDeleteKeys)
+                : selectedOrHighlightedLayerTargets(highlightedDeleteKeys);
             var topLevelCount = 0;
             for (var d = 0; d < doomed.length; d += 1) {
                 if (doomed[d].key.indexOf('.') < 0) {
@@ -897,10 +960,14 @@
             }
             var deleteStates = [];
             try {
-                for (var r = 0; r < doomed.length; r += 1) {
-                    if (force) {
+                if (force) {
+                    // Deleted Illustrator Layer references become invalid, including comparisons.
+                    // Prepare the complete batch before rememberLayerState sees any removed layer.
+                    for (var r = 0; r < doomed.length; r += 1) {
                         openAncestors(doomed[r].layer, deleteStates);
                     }
+                }
+                for (var r = 0; r < doomed.length; r += 1) {
                     doomed[r].layer.remove();
                 }
             } finally {

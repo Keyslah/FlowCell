@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.assistant-tool",
+  "label": "Assistant Tool",
+  "tooltip": "Assistant Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

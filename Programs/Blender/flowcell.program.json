@@ -121,7 +121,7 @@
     },
     {
       "id": "blender.theme",
-      "version": "3.0.12",
+      "version": "3.0.17",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/theme",
       "importKind": "script",
@@ -186,7 +186,7 @@
     },
     {
       "id": "blender.boolean",
-      "version": "1.1.0",
+      "version": "1.1.1",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/boolean/flowcell.toolset.json",
       "importKind": "tool-set",

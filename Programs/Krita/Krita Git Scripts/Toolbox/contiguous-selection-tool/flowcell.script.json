@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.contiguous-selection-tool",
+  "label": "Contiguous Selection Tool",
+  "tooltip": "Contiguous Selection Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

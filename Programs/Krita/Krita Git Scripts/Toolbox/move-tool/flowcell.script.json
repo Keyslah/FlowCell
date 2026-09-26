@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.move-tool",
+  "label": "Move Tool",
+  "tooltip": "Move Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

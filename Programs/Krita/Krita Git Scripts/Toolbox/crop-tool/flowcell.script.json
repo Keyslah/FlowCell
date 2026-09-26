@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.crop-tool",
+  "label": "Crop Tool",
+  "tooltip": "Crop Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

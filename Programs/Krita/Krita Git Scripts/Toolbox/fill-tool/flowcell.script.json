@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.fill-tool",
+  "label": "Fill Tool",
+  "tooltip": "Fill Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

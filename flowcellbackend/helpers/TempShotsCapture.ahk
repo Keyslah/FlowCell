@@ -6,21 +6,29 @@ class FlowCellTempShotsCapture {
         this.window := ""
         this.timer := ObjBindMethod(this, "Poll")
         this.escape := ObjBindMethod(this, "Cancel")
+        this.snapshotKey := ObjBindMethod(this, "TakeSnapshot")
+        this.snapshotHotIf := ObjBindMethod(this, "IsSnapshotSessionActive")
+        this.snapshotActive := false
+        this.snapshotRegistered := false
+        this.mode := "temp-shots"
         this.cursorHandler := ObjBindMethod(this, "SetCursor")
         this.cursorRegistered := false
         this.escapeRegistered := false
         this.callback := ""
     }
 
-    Start(folder, statusCallback) {
+    Start(folder, statusCallback, mode := "temp-shots") {
         previousCritical := A_IsCritical
         Critical "On"
         previousDpi := 0
         try {
             this.Cancel()
+            if mode != "temp-shots" && mode != "snapshots"
+                throw Error("Unknown capture mode: " mode)
             if !DirExist(folder)
                 throw Error("The Temp Shots folder does not exist: " folder)
             this.folder := folder
+            this.mode := mode
             this.callback := statusCallback
             previousDpi := DllCall("user32\SetThreadDpiAwarenessContext", "Ptr", -4, "Ptr")
             if !previousDpi
@@ -59,7 +67,7 @@ class FlowCellTempShotsCapture {
             this.active := true
             this.window.Show("x" this.left " y" this.top " w" this.width " h" this.height)
             SetTimer this.timer, 16
-            this.Report("Temp Shots: drag a rectangle; press Escape to cancel.")
+            this.Report(mode = "snapshots" ? "Snapshots: drag a rectangle; then press Space for each shot or Escape to finish." : "Temp Shots: drag a rectangle; press Escape to cancel.")
             return true
         } catch {
             this.Cleanup()
@@ -152,6 +160,10 @@ class FlowCellTempShotsCapture {
         Critical "On"
         try {
             SetTimer this.timer, 0
+            if this.mode = "snapshots" {
+                this.BeginSnapshots(rect)
+                return
+            }
             path := FlowCellTempShotsCapture.NextPath(this.folder)
             writer := ObjBindMethod(FlowCellTempShotsCapture, "WriteClipboardImage", this.window.Hwnd)
             FlowCellTempShotsCapture.SaveBitmapArea(this.bitmap, rect, path, writer)
@@ -163,15 +175,74 @@ class FlowCellTempShotsCapture {
     }
 
     Cancel(*) {
-        wasActive := this.active
+        wasActive := this.active || this.snapshotActive
+        wasSnapshots := this.mode = "snapshots"
         this.Cleanup()
         if wasActive
-            this.Report("Temp Shots cancelled. No image saved.")
+            this.Report(wasSnapshots ? "Snapshots finished." : "Temp Shots cancelled. No image saved.")
+    }
+
+    BeginSnapshots(rect) {
+        this.snapshotRect := {x: this.left + rect.x, y: this.top + rect.y, width: rect.width, height: rect.height}
+        SplitPath RTrim(this.folder, "\/"), , &parentFolder
+        this.snapshotFolder := parentFolder "\snapshots"
+        DirCreate this.snapshotFolder
+        this.Cleanup()
+        try {
+            this.snapshotActive := true
+            HotIf this.snapshotHotIf
+            try {
+                Hotkey "*Space", this.snapshotKey, "On"
+                Hotkey "*Escape", this.escape, "On"
+                this.snapshotRegistered := true
+            } finally {
+                HotIf
+            }
+            this.Report("Snapshots ready: press Space to capture the selected box; Escape to finish.")
+        } catch {
+            this.Cleanup()
+            throw
+        }
+    }
+
+    IsSnapshotSessionActive(*) {
+        return this.snapshotActive
+    }
+
+    TakeSnapshot(*) {
+        if !this.snapshotActive
+            return
+        rect := this.snapshotRect
+        bitmap := 0
+        try {
+            bitmap := FlowCellTempShotsCapture.CaptureDesktop(rect.x, rect.y, rect.width, rect.height)
+            path := FlowCellTempShotsCapture.NextPath(this.snapshotFolder, FormatTime(, "yyyyMMdd-HHmmss"), "snapshot")
+            writer := ObjBindMethod(FlowCellTempShotsCapture, "WriteClipboardImage", A_ScriptHwnd)
+            FlowCellTempShotsCapture.SaveBitmapArea(bitmap, {x: 0, y: 0, width: rect.width, height: rect.height}, path, writer)
+            this.Report("Snapshot saved and copied to clipboard: " path)
+        } catch as err {
+            this.Report("Snapshots failed: " err.Message)
+        } finally {
+            if bitmap
+                DllCall("gdi32\DeleteObject", "Ptr", bitmap)
+            KeyWait "Space"
+        }
     }
 
     Cleanup() {
         this.active := false
+        this.snapshotActive := false
         SetTimer this.timer, 0
+        if this.snapshotRegistered {
+            HotIf this.snapshotHotIf
+            try {
+                Hotkey "*Space", "Off"
+                Hotkey "*Escape", "Off"
+            } finally {
+                HotIf
+                this.snapshotRegistered := false
+            }
+        }
         if this.escapeRegistered && IsObject(this.window) {
             try {
                 HotIfWinExist "ahk_id " this.window.Hwnd
@@ -208,10 +279,10 @@ class FlowCellTempShotsCapture {
         return {x: Min(x1, x2), y: Min(y1, y2), width: Abs(x2 - x1), height: Abs(y2 - y1)}
     }
 
-    static NextPath(folder, stamp := "") {
+    static NextPath(folder, stamp := "", prefix := "temp-shot") {
         if stamp = ""
             stamp := FormatTime(, "yyyyMMdd-HHmmss")
-        stem := RTrim(folder, "\/") "\temp-shot-" stamp
+        stem := RTrim(folder, "\/") "\" prefix "-" stamp
         path := stem ".png"
         suffix := 0
         while FileExist(path) {

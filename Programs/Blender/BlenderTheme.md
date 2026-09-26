@@ -77,6 +77,39 @@ Theme controls:
 - `Save Buckets` and `Load Buckets` use generic field-file operations.
 - `Previous`, `Open Package`, `Next`, and `Save Package` use the generic package
   library operations and the package's declared field and asset mappings.
+- `Popped Button Colors` also owns text color and separate hover/active highlight
+  and glow controls. Packages save these settings with the palette, gradient
+  stops, spread, scatter, seed, and screen-gradient option. The settings apply
+  to any Blender Pop-out or Fan, including collapsed owners and newly opened
+  tools; they take precedence over the Main Theme only on these popped surfaces.
+- `Lock All Popped Button Settings`, at the top of Popped Button Colors, covers
+  colors, every gradient stop, Spread, Scatter, text, highlights and glow.
+  It temporarily keeps the current popped appearance when opening
+  or cycling packages. Unlocking applies the selected package's saved settings.
+  Switching packages never writes their files. Older packages without popped
+  settings keep the last-used appearance. First use adopts the saved page
+  gradient and the common current popout effects, without replacing skins.
+- Individual Buttons stay listed below the aggregate color buckets, with their
+  names, owning group, and separate Fill and Text pickers. Select any subset for
+  one-click Black Text or White Text, or choose a custom text color and Apply to
+  Selected. Use Theme Colors restores the selected buttons' shared appearance.
+- Individual edits override only the selected popped occurrences; shared effects,
+  authored skins, actions and Main-page buttons stay intact. Button Settings files
+  round-trip these edits. Unlocked package switches restore package colors; Lock
+  All Popped Button Settings preserves individual edits too. Portable theme packages
+  continue to apply their palette to whichever tools are currently popped out.
+- Shared appearance applies directly when switching packages. The button list
+  remains visible and refreshes asynchronously; stale edits are disabled until
+  the refreshed list arrives. `Rescan` remains available. Legacy packages retain
+  the current shared appearance.
+- Popped gradients use the exact chosen top/bottom colors and pass through every
+  ordered intermediate stop. Spread adjusts each blend's width; Scatter varies
+  interior blends without changing stop anchors. Increasing Gradient Colors
+  retains the existing chosen colors and inserts new blends between them.
+- Screen Top-to-Bottom spans the visible popped Button centers on each monitor.
+  Moving, collapsing, opening or closing a window updates this live range without
+  saving geometry into packages or rescanning on package switches. Collapsed
+  hidden members do not move the endpoints. Authored skin shading is preserved.
 
 Place Picture controls:
 

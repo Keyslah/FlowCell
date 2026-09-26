@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.bezier-curve-selection-tool",
+  "label": "Bezier Curve Selection Tool",
+  "tooltip": "Bezier Curve Selection Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

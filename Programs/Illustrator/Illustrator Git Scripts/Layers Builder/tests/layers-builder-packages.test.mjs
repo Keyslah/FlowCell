@@ -27,7 +27,8 @@ const globalActions = new Set([
   "set-vis",
   "empty-sublayers",
   "empty-trash",
-  "copy-live"
+  "copy-live",
+  "rename"
 ]);
 const directOpenTreeActions = new Set(["new-sub", "delete-sublayer"]);
 const nonmutatingTreeActions = new Set([
@@ -194,9 +195,9 @@ function resolverFixture(helper) {
   };
 }
 
-test("all 19 Layers Builder actions are ordinary manifest packages", () => {
-  assert.equal(contributions.length, 19);
-  assert.equal(globalActions.size, 9);
+test("all 20 Layers Builder actions are ordinary manifest packages", () => {
+  assert.equal(contributions.length, 20);
+  assert.equal(globalActions.size, 10);
   assert.equal(directOpenTreeActions.size, 2);
   assert.equal(nonmutatingTreeActions.size, 7);
   assert.equal(
@@ -240,7 +241,7 @@ test("all 19 Layers Builder actions are ordinary manifest packages", () => {
       contribution.version,
       actionName === "snapshot"
         ? "3.1.4"
-        : actionName === "new-sub" || actionName === "3d" || actionName === "sort" || actionName === "copy-live"
+        : actionName === "new-sub" || actionName === "3d" || actionName === "sort" || actionName === "copy-live" || actionName === "rename"
           ? "3.1.2"
           : "3.1.1"
     );
@@ -265,11 +266,14 @@ test("all 19 Layers Builder actions are ordinary manifest packages", () => {
       "program",
       "source"
     ];
-    if (actionName === "new-sub") expectedManifestKeys.push("execution");
+    if (actionName === "new-sub" || actionName === "rename") expectedManifestKeys.push("execution");
     assert.deepEqual(Object.keys(manifest), expectedManifestKeys);
     assert.equal(manifest.schemaVersion, 1);
     assert.equal(manifest.id, contribution.id);
     assert.equal(manifest.program, "Illustrator");
+    if (actionName === "rename") {
+      assert.deepEqual(manifest.execution, { waitForCompletion: true });
+    }
     assert.equal(path.isAbsolute(manifest.source), false);
     assert.equal(manifest.source.split(/[\\/]/).includes(".."), false);
 
@@ -316,7 +320,7 @@ test("all 19 Layers Builder actions are ordinary manifest packages", () => {
     }
   }
 
-  assert.equal(classifiedActions.size, 19);
+  assert.equal(classifiedActions.size, 20);
   assert.equal(helpers.length, 10, "only tree-driven and hybrid actions include the resolver");
   assert.equal(new Set(helpers.map(digest)).size, 1, "every included resolver must be identical");
 });
@@ -429,6 +433,74 @@ test("Copy Live copies Illustrator-selected objects into a named Live sublayer a
   assert.match(source, /duplicateItemToLayer\(itemsToCopy\[i\], resolveDestinationLayer\(targetLayer, itemsToCopy\[i\]\)\);/);
   assert.doesNotMatch(source, /FlowCellLayersBuilderSelection|flowcell-layer-tree-selection/);
   assert.doesNotMatch(source, /collectHighlightedLayerItems/);
+});
+
+test("Rename dialog lists each selected layer and applies its own new name", () => {
+  const source = readActionSource("rename").replace(/^#target[^\r\n]*\r?\n/m, "");
+  const root = { typename: "Layer", name: "Root", locked: true, visible: false };
+  const child = { typename: "Layer", name: "Child", locked: false, visible: true, parent: root };
+  const other = { typename: "Layer", name: "Other", locked: false, visible: true };
+  const document = {
+    selection: [
+      { typename: "PathItem", layer: root },
+      { typename: "PathItem", layer: child },
+      { typename: "PathItem", layer: child },
+      { typename: "TextRange", layer: other }
+    ]
+  };
+  const dialogs = [];
+  let cancelNext = false;
+  function Window() {
+    function control(type, label) {
+      return {
+        type, text: label || "", preferredSize: {}, children: [],
+        add(childType, unused, childLabel) {
+          const child = control(childType, childLabel);
+          this.children.push(child);
+          return child;
+        }
+      };
+    }
+    const dialog = control("dialog", "Rename Layers");
+    dialog.close = (code) => { dialog.result = code; };
+    dialog.show = () => {
+      dialogs.push(dialog);
+      if (cancelNext) return 0;
+      const all = [];
+      function walk(item) { all.push(item); item.children.forEach(walk); }
+      walk(dialog);
+      const currentNames = all.filter((item) => item.type === "statictext" && ["Root", "Root / Child"].includes(item.text));
+      assert.deepEqual(currentNames.map((item) => item.text), ["Root", "Root / Child"]);
+      all.filter((item) => item.type === "edittext").forEach((item, index) => {
+        item.text = ["New Root", "New Child"][index];
+      });
+      all.find((item) => item.type === "button" && item.text === "Rename").onClick();
+      return dialog.result;
+    };
+    return dialog;
+  }
+  vm.runInNewContext(source, {
+    app: { documents: [document], activeDocument: document, redraw() {} },
+    Window,
+    alert(message) { assert.fail(`Unexpected alert: ${message}`); }
+  });
+  assert.equal(dialogs.length, 1);
+  assert.equal(root.name, "New Root");
+  assert.equal(child.name, "New Child");
+  assert.equal(other.name, "Other");
+  assert.equal(root.locked, true);
+  assert.equal(root.visible, false);
+  assert.equal(child.visible, true);
+
+  const canceled = { typename: "Layer", name: "Unchanged" };
+  document.selection = [{ typename: "PathItem", layer: canceled }];
+  cancelNext = true;
+  vm.runInNewContext(source, {
+    app: { documents: [document], activeDocument: document, redraw() {} },
+    Window,
+    alert(message) { assert.fail(`Unexpected alert: ${message}`); }
+  });
+  assert.equal(canceled.name, "Unchanged");
 });
 
 test("3D prefers eligible Illustrator artwork and falls back to Layer Tree highlights", () => {
@@ -618,7 +690,7 @@ test("New Sub requires exactly one target and creates a direct child", () => {
 
 test("Layer Tree is default-selected but never resurrected after deletion", () => {
   assert.ok(layerTreeContribution);
-  assert.equal(layerTreeContribution.version, "3.0.12");
+  assert.equal(layerTreeContribution.version, "3.0.15");
   assert.equal(layerTreeContribution.sourcePath, "Illustrator Git Scripts/LayersBuilder");
   assert.equal(layerTreeContribution.importKind, "script");
   assert.equal(layerTreeContribution.installOnAdd, true);

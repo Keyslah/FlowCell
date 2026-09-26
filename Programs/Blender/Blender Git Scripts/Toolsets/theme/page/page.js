@@ -44,7 +44,8 @@
     },
     activePackage: {
       path: "",
-      name: ""
+      name: "",
+      poppedButtonSettings: null
     },
     buttonTheme: {
       revision: null,
@@ -56,6 +57,18 @@
       gradientColorCount: boundedInteger(buttonThemeConfig.gradientColorCount, 5, 2, 16),
       gradientColors: [],
       screenTopToBottom: buttonThemeConfig.screenTopToBottom === true,
+      lockSettings: false,
+      selectionTextColor: "#FFFFFF",
+      lastAppliedSettings: null,
+      textColor: "#FFFFFF",
+      hoverEnabled: true,
+      activeEnabled: true,
+      hoverColor: "#FFFFFF",
+      activeColor: "#FFFFFF",
+      hoverHighlightAmount: 100,
+      activeHighlightAmount: 100,
+      hoverGlowAmount: 0,
+      activeGlowAmount: 0,
       placements: [],
       buckets: []
     }
@@ -69,6 +82,11 @@
 
   let busy = false;
   let persistenceTimer = 0;
+  let buttonThemeScanGeneration = 0;
+  let buttonThemeScanInFlight = false;
+  let buttonThemeScanPending = false;
+  let buttonThemeScanNote = "";
+  const selectedButtonPlacements = new Set();
 
   function cloneValue(value) {
     if (Array.isArray(value)) return value.map(cloneValue);
@@ -95,6 +113,12 @@
     if (typeof value !== "string") return null;
     const normalized = value.trim().toUpperCase();
     return HEX_COLOR.test(normalized) ? normalized : null;
+  }
+
+  function normalizeEffectColor(value) {
+    if (typeof value !== "string") return null;
+    const normalized = value.trim().toUpperCase();
+    return /^#[0-9A-F]{6}(?:[0-9A-F]{2})?$/.test(normalized) ? normalized : null;
   }
 
   function normalizeFieldValue(field, value) {
@@ -163,9 +187,12 @@
     busy = nextBusy;
     root.dataset.busy = String(nextBusy);
     root.setAttribute("aria-busy", String(nextBusy));
-    root.querySelectorAll("button").forEach((button) => {
-      button.disabled = nextBusy;
-    });
+    ["button", "input", "select"].forEach((tag) => root.querySelectorAll(tag).forEach((control) => {
+      control.disabled = nextBusy ||
+        (control.dataset.paletteEdit === "true" && !Number.isSafeInteger(model.buttonTheme.revision)) ||
+        (control.dataset.requiresSelection === "true" && selectedButtonPlacements.size === 0);
+    }));
+    if (!nextBusy) startButtonThemeScan();
   }
 
   function responseMessage(response, fallback) {
@@ -175,9 +202,13 @@
       : fallback;
   }
 
-  async function requestAction(actionId, payload, progressMessage) {
-    if (busy || typeof actionId !== "string" || !actionId) return null;
-    setBusy(true);
+  async function requestAction(actionId, payload, progressMessage, withinOperation = false) {
+    if ((busy && !withinOperation) || typeof actionId !== "string" || !actionId) return null;
+    if (!withinOperation) setBusy(true);
+    if ([buttonThemeActions.apply, buttonThemeActions.refill, buttonThemeActions.toggleText, buttonThemeActions.edit].includes(actionId) ||
+        (actionId === buttonThemeActions.settings && payload?.settings)) {
+      invalidateButtonThemeScan();
+    }
     setStatus(progressMessage || copy.working || "Working…");
     try {
       const response = await pageApi.request(actionId, payload || {});
@@ -189,7 +220,7 @@
       setStatus(error instanceof Error ? error.message : String(error), "error");
       return null;
     } finally {
-      setBusy(false);
+      if (!withinOperation) setBusy(false);
     }
   }
 
@@ -211,6 +242,7 @@
   function actionButton(actionId, handler, tooltipOverride = "") {
     const button = element("button", "", actionLabel(actionId));
     button.type = "button";
+    if (actionId === buttonThemeActions.apply || actionId === localActions.scatterButtonColors) button.dataset.paletteEdit = "true";
     const tooltip = tooltipOverride || actionTooltip(actionId);
     if (tooltip) button.title = tooltip;
     button.addEventListener("click", () => void handler());
@@ -503,7 +535,12 @@
           ? { id: bucketId, kind: "surface", color, materialColors: [] }
           : { id: bucketId, kind: "material", color: null, materialColors });
       }
-      placementById.set(placementId, { placementId, bucketId });
+      placementById.set(placementId, {
+        placementId, bucketId, color,
+        label: typeof placement.label === "string" && placement.label.trim() ? placement.label.trim() : "Button",
+        groupLabel: typeof placement.groupLabel === "string" ? placement.groupLabel : "Blender",
+        textColor: normalizeEffectColor(placement.textColor) || model.buttonTheme.textColor
+      });
     });
     const placements = [...placementById.values()];
     return {
@@ -512,16 +549,63 @@
     };
   }
 
-  function adoptButtonThemeResponse(response) {
+  function adoptButtonThemeResponse(response, fromScan = false) {
     const record = objectRecord(response);
     if (!record || !Array.isArray(record.placements) || !Number.isSafeInteger(record.revision)) return false;
+    if (!fromScan) {
+      buttonThemeScanGeneration += 1;
+      buttonThemeScanPending = false;
+    }
     const palette = scannedButtonThemePalette(record.placements);
     model.buttonTheme.revision = record.revision;
     model.buttonTheme.placements = palette.placements;
     model.buttonTheme.buckets = palette.buckets;
+    const liveIds = new Set(palette.placements.map(({ placementId }) => placementId));
+    for (const placementId of selectedButtonPlacements) {
+      if (!liveIds.has(placementId)) selectedButtonPlacements.delete(placementId);
+    }
+    buttonThemeScanNote = "";
     schedulePersistence();
     render();
     return true;
+  }
+
+  function invalidateButtonThemeScan() {
+    buttonThemeScanGeneration += 1;
+    buttonThemeScanPending = false;
+    model.buttonTheme.revision = null;
+  }
+
+  function queueButtonThemeScan() {
+    invalidateButtonThemeScan();
+    buttonThemeScanPending = true;
+    buttonThemeScanNote = "Refreshing buttons…";
+    render();
+  }
+
+  function startButtonThemeScan() {
+    if (busy || buttonThemeScanInFlight || !buttonThemeScanPending) return;
+    buttonThemeScanPending = false;
+    buttonThemeScanInFlight = true;
+    const generation = buttonThemeScanGeneration;
+    void pageApi.request(buttonThemeActions.scan, {}).then((response) => {
+      if (generation !== buttonThemeScanGeneration) return;
+      if (busy) {
+        buttonThemeScanPending = true;
+        return;
+      }
+      if (!adoptButtonThemeResponse(response, true)) {
+        buttonThemeScanNote = "Button list could not refresh. Press Rescan to enable editing.";
+        render();
+      }
+    }).catch(() => {
+      if (generation !== buttonThemeScanGeneration) return;
+      buttonThemeScanNote = "Button list could not refresh. Press Rescan to enable editing.";
+      render();
+    }).finally(() => {
+      buttonThemeScanInFlight = false;
+      startButtonThemeScan();
+    });
   }
 
   function buttonThemeAssignments() {
@@ -567,13 +651,6 @@
     );
   }
 
-  function buttonThemeGradientColorAt(colors, amount) {
-    if (colors.length <= 1) return colors[0] || "#000000";
-    const scaled = bounded(amount, 0, 1) * (colors.length - 1);
-    const startIndex = Math.min(colors.length - 2, Math.floor(scaled));
-    return interpolatedButtonThemeColor(colors[startIndex], colors[startIndex + 1], scaled - startIndex);
-  }
-
   function resampledButtonThemeGradientColors(value, count, topColor, bottomColor) {
     const requestedCount = boundedInteger(count, 5, 2, 16);
     let colors = orderedButtonThemeGradientColors(value);
@@ -581,10 +658,21 @@
       colors = [normalizeHex(topColor), normalizeHex(bottomColor)].filter(Boolean);
     }
     if (colors.length < 2) colors = [colors[0] || "#8FDB0A", colors[0] || "#141414"];
-    return Array.from(
-      { length: requestedCount },
-      (_, index) => buttonThemeGradientColorAt(colors, index / (requestedCount - 1))
-    );
+    if (requestedCount <= colors.length) {
+      return Array.from({ length: requestedCount }, (_, index) => (
+        colors[Math.round(index * (colors.length - 1) / (requestedCount - 1))]
+      ));
+    }
+    // Keep every chosen stop exact; only fill the new slots between them.
+    const expanded = [colors[0]];
+    for (let index = 0; index < colors.length - 1; index += 1) {
+      const start = Math.round(index * (requestedCount - 1) / (colors.length - 1));
+      const end = Math.round((index + 1) * (requestedCount - 1) / (colors.length - 1));
+      for (let step = 1; step <= end - start; step += 1) {
+        expanded.push(interpolatedButtonThemeColor(colors[index], colors[index + 1], step / (end - start)));
+      }
+    }
+    return expanded;
   }
 
   function synchronizeButtonThemeGradientEndpoints() {
@@ -599,6 +687,115 @@
     )));
   }
 
+  function normalizePoppedButtonSettings(value) {
+    const settings = objectRecord(value);
+    if (!settings || settings.version !== 1) return null;
+    const colors = orderedButtonThemeGradientColors(settings.colors);
+    if (!colors.length || colors.length !== settings.colors?.length) return null;
+    const result = { version: 1, colors };
+    for (const key of ["textColor", "hoverColor", "activeColor"]) {
+      const color = normalizeEffectColor(settings[key]);
+      if (!color) return null;
+      result[key] = color;
+    }
+    for (const key of ["screenTopToBottom", "hoverEnabled", "activeEnabled"]) {
+      if (typeof settings[key] !== "boolean") return null;
+      result[key] = settings[key];
+    }
+    for (const key of ["spread", "scatter", "hoverHighlightAmount", "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount"]) {
+      const maximum = key.endsWith("HighlightAmount") ? 1000 : 100;
+      if (typeof settings[key] !== "number" || !Number.isFinite(settings[key]) || settings[key] < 0 || settings[key] > maximum) return null;
+      result[key] = settings[key];
+    }
+    if (!Number.isSafeInteger(settings.seed)) return null;
+    result.seed = settings.seed;
+    return result;
+  }
+
+  function buttonThemeEffects() {
+    return Object.fromEntries([
+      "textColor", "hoverEnabled", "activeEnabled", "hoverColor", "activeColor",
+      "hoverHighlightAmount", "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount"
+    ].map((key) => [key, model.buttonTheme[key]]));
+  }
+
+  function adoptPoppedButtonSettings(value, adoptGradient = true) {
+    const settings = normalizePoppedButtonSettings(value);
+    if (!settings) return null;
+    model.buttonTheme.lastAppliedSettings = cloneValue(settings);
+    for (const key of Object.keys(buttonThemeEffects())) model.buttonTheme[key] = settings[key];
+    if (adoptGradient) {
+      model.buttonTheme.gradientColors = settings.colors.length === 1
+        ? [settings.colors[0], settings.colors[0]]
+        : [...settings.colors];
+      model.buttonTheme.gradientColorCount = model.buttonTheme.gradientColors.length;
+      for (const key of ["spread", "scatter", "seed", "screenTopToBottom"]) model.buttonTheme[key] = settings[key];
+      synchronizeButtonThemeGradientEndpoints();
+    }
+    schedulePersistence();
+    return settings;
+  }
+
+  async function readPoppedButtonSettings(withinOperation = false, adoptGradient = false, adoptSettings = true) {
+    const response = await requestAction(buttonThemeActions.settings, {}, "Reading Blender popped Button settings…", withinOperation);
+    const settings = adoptSettings
+      ? adoptPoppedButtonSettings(response?.settings, adoptGradient)
+      : normalizePoppedButtonSettings(response?.settings);
+    if (response && !settings) setStatus("Blender returned invalid popped Button settings.", "error");
+    return settings;
+  }
+
+  async function applyPoppedButtonSettings(settings, withinOperation = false, resetOverrides = false) {
+    if (busy && !withinOperation) return null;
+    if (!withinOperation) setBusy(true);
+    try {
+      const response = await requestAction(buttonThemeActions.settings, {
+        settings, ...(resetOverrides ? { resetOverrides: true } : {})
+      }, "Applying Blender popped Button settings…", true);
+      if (!response) return null;
+      const applied = adoptPoppedButtonSettings(response.settings);
+      if (!applied) {
+        setStatus("Blender returned invalid popped Button settings after applying them.", "error");
+        return null;
+      }
+      // Keep the named list visible while its current colors refresh separately.
+      queueButtonThemeScan();
+      return applied;
+    } finally {
+      if (!withinOperation) setBusy(false);
+    }
+  }
+
+  async function applyButtonThemeEffects() {
+    if (busy) return;
+    const effects = buttonThemeEffects();
+    setBusy(true);
+    try {
+      const settings = await readPoppedButtonSettings(true);
+      if (settings) await applyPoppedButtonSettings({ ...settings, ...effects }, true);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setButtonThemeLock(locked) {
+    if (busy) return;
+    if (locked) {
+      model.buttonTheme.lockSettings = true;
+      schedulePersistence();
+      render();
+      return;
+    }
+    const settings = model.activePackage.poppedButtonSettings;
+    if (settings && !await applyPoppedButtonSettings(settings, false, true)) {
+      render();
+      return;
+    }
+    model.buttonTheme.lockSettings = false;
+    schedulePersistence();
+    render();
+  }
+
   function scatteredButtonThemeAssignments(colors, seed) {
     const palette = exactButtonThemePalette(colors);
     if (!palette.length) throw new Error(copy.buttonThemeNeedsColors || "No popped Button colors are available. Press Rescan and try again.");
@@ -611,6 +808,9 @@
   function hydrateButtonThemeState(value) {
     const state = objectRecord(value);
     if (!state) return;
+    adoptPoppedButtonSettings(state.lastAppliedSettings, false);
+    model.buttonTheme.lockSettings = state.lockSettings === true;
+    model.buttonTheme.selectionTextColor = normalizeHex(state.selectionTextColor) || "#FFFFFF";
     model.buttonTheme.topColor = normalizeHex(state.topColor) || model.buttonTheme.topColor;
     model.buttonTheme.bottomColor = normalizeHex(state.bottomColor) || model.buttonTheme.bottomColor;
     model.buttonTheme.spread = bounded(finiteNumber(state.spread, model.buttonTheme.spread), 0, 100);
@@ -656,7 +856,13 @@
       const placement = objectRecord(entry);
       const placementId = typeof placement?.placementId === "string" ? placement.placementId.trim() : "";
       const bucketId = typeof placement?.bucketId === "string" ? placement.bucketId.trim() : "";
-      if (placementId && bucketById.has(bucketId)) placementById.set(placementId, { placementId, bucketId });
+      if (placementId && bucketById.has(bucketId)) placementById.set(placementId, {
+        placementId, bucketId,
+        color: normalizeHex(placement.color) || bucketById.get(bucketId).color,
+        label: typeof placement.label === "string" && placement.label.trim() ? placement.label.trim() : "Button",
+        groupLabel: typeof placement.groupLabel === "string" ? placement.groupLabel : "Blender",
+        textColor: normalizeEffectColor(placement.textColor) || model.buttonTheme.textColor
+      });
     });
     const placements = [...placementById.values()];
     model.buttonTheme.placements = placements;
@@ -685,14 +891,14 @@
     else patchFields(response);
   }
 
-  async function applyTheme() {
-    const response = await requestAction(actions.theme.apply, themePayload(), copy.applyingTheme);
+  async function applyTheme(withinOperation = false) {
+    const response = await requestAction(actions.theme.apply, themePayload(), copy.applyingTheme, withinOperation);
     applyResponsePatch(response);
     return response;
   }
 
-  async function applyPicture() {
-    const response = await requestAction(actions.picture.apply, picturePayload(), copy.applyingPicture);
+  async function applyPicture(withinOperation = false) {
+    const response = await requestAction(actions.picture.apply, picturePayload(), copy.applyingPicture, withinOperation);
     applyResponsePatch(response);
     return response;
   }
@@ -741,12 +947,31 @@
   }
 
   async function rescanButtonTheme() {
-    const response = await requestAction(
-      buttonThemeActions.scan,
-      {},
-      copy.scanningButtonTheme
-    );
-    if (response) adoptButtonThemeResponse(response);
+    if (!busy) queueButtonThemeScan();
+  }
+
+  async function editPoppedButtons(edits) {
+    if (busy || !edits.length) return;
+    if (!Number.isSafeInteger(model.buttonTheme.revision)) {
+      setStatus("Wait for the button list to refresh, or press Rescan before editing.", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const response = await requestAction(buttonThemeActions.edit, {
+        expectedRevision: model.buttonTheme.revision, edits
+      }, "Updating selected popped Buttons…", true);
+      if (!response || !adoptButtonThemeResponse(response)) queueButtonThemeScan();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function editSelectedPoppedButtons(patch) {
+    const edits = model.buttonTheme.placements
+      .filter(({ placementId }) => selectedButtonPlacements.has(placementId))
+      .map(({ placementId }) => ({ placementId, ...patch }));
+    await editPoppedButtons(edits);
   }
 
   async function applyButtonThemeBuckets() {
@@ -836,6 +1061,7 @@
   }
 
   async function scatterButtonTheme() {
+    if (busy) return;
     if (!Number.isSafeInteger(model.buttonTheme.revision)) {
       setStatus(copy.buttonThemeNeedsScan || "Press Rescan before applying popped Button colors.", "error");
       return;
@@ -850,17 +1076,47 @@
       setStatus(error instanceof Error ? error.message : String(error), "error");
       return;
     }
-    const response = await applyButtonThemeAssignments(assignments, copy.scatteringButtonTheme);
-    if (!response) model.buttonTheme.seed = previousSeed;
+    setBusy(true);
+    try {
+      const seed = model.buttonTheme.seed;
+      const settings = await readPoppedButtonSettings(true);
+      const colors = currentButtonThemePalette();
+      const response = await requestAction(buttonThemeActions.apply, {
+        expectedRevision: model.buttonTheme.revision,
+        assignments,
+        ...(settings ? { settings: {
+          ...settings,
+          colors: colors.length > 16 ? resampledButtonThemeGradientColors(colors, 16) : colors,
+          seed,
+          spread: 100,
+          scatter: 100,
+          screenTopToBottom: false
+        } } : {})
+      }, copy.scatteringButtonTheme, true);
+      if (response) adoptButtonThemeResponse(response);
+      else model.buttonTheme.seed = previousSeed;
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function toggleButtonThemeText() {
-    const response = await requestAction(
-      buttonThemeActions.toggleText,
-      {},
-      copy.togglingButtonThemeText || "Toggling popped Button text..."
-    );
-    if (response) adoptButtonThemeResponse(response);
+    if (busy) return;
+    setBusy(true);
+    try {
+      const response = await requestAction(
+        buttonThemeActions.toggleText,
+        {},
+        copy.togglingButtonThemeText || "Toggling popped Button text...",
+        true
+      );
+      if (response) {
+        await readPoppedButtonSettings(true);
+        adoptButtonThemeResponse(response);
+      }
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveFields() {
@@ -877,41 +1133,76 @@
   }
 
   async function savePackage() {
-    const response = await requestAction(
-      actions.theme.savePackage,
-      { values: pickFields(config.persistence.packageFieldIds) },
-      copy.savingPackage
-    );
-    if (!response || response.saved === false) return;
-    model.activePackage = {
-      path: String(response.packagePath || response.path || ""),
-      name: String(response.packageName || response.name || "")
-    };
-    schedulePersistence();
+    if (busy) return;
+    setBusy(true);
+    try {
+      const settings = await readPoppedButtonSettings(true);
+      if (!settings) return;
+      const response = await requestAction(
+        actions.theme.savePackage,
+        { values: { ...pickFields(config.persistence.packageFieldIds), popped_button_settings: settings } },
+        copy.savingPackage,
+        true
+      );
+      if (!response || response.saved === false) return;
+      model.activePackage = {
+        path: String(response.packagePath || response.path || ""),
+        name: String(response.packageName || response.name || ""),
+        poppedButtonSettings: cloneValue(settings)
+      };
+      schedulePersistence();
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function loadPackage(actionId) {
-    const isCycle = actionId === actions.theme.previousPackage || actionId === actions.theme.nextPackage;
-    const response = await requestAction(
-      actionId,
-      isCycle ? { activePackagePath: model.activePackage.path } : {},
-      copy.loadingPackage
-    );
-    if (!response || response.selected === false) return;
-    applyResponsePatch(response);
-    model.activePackage = {
-      path: String(response.packagePath || response.path || ""),
-      name: String(response.packageName || response.name || "")
-    };
-    schedulePersistence();
-    let pictureResponse = null;
-    if (String(model.fields[config.picture.pathFieldId] || "").trim()) {
-      pictureResponse = await applyPicture();
-    } else {
-      pictureResponse = await runPictureAction(actions.picture.clear, {}, copy.clearingPicture);
+    if (busy) return;
+    setBusy(true);
+    invalidateButtonThemeScan();
+    try {
+      const isCycle = actionId === actions.theme.previousPackage || actionId === actions.theme.nextPackage;
+      const response = await requestAction(
+        actionId,
+        isCycle ? { activePackagePath: model.activePackage.path } : {},
+        copy.loadingPackage,
+        true
+      );
+      if (!response || response.selected === false) return;
+      const patch = objectRecord(response.fieldPatch) || objectRecord(response.values) || {};
+      const savedSettings = normalizePoppedButtonSettings(patch.popped_button_settings);
+      if (Object.prototype.hasOwnProperty.call(patch, "popped_button_settings") && !savedSettings) {
+        setStatus("This package contains invalid popped Button settings. The package was not applied.", "error");
+        return;
+      }
+      const previousSettings = savedSettings || await readPoppedButtonSettings(true, true, !model.buttonTheme.lockSettings);
+      if (!previousSettings) return;
+      applyResponsePatch(response);
+      model.activePackage = {
+        path: String(response.packagePath || response.path || ""),
+        name: String(response.packageName || response.name || ""),
+        poppedButtonSettings: cloneValue(previousSettings)
+      };
+      schedulePersistence();
+      // Popped Buttons apply independently of Blender's picture/theme bridge.
+      let settingsError = "";
+      if (!model.buttonTheme.lockSettings && savedSettings) {
+        if (!await applyPoppedButtonSettings(savedSettings, true, true)) settingsError = statusNode.textContent;
+      }
+      let pictureResponse = null;
+      if (String(model.fields[config.picture.pathFieldId] || "").trim()) {
+        pictureResponse = await applyPicture(true);
+      } else {
+        pictureResponse = await runPictureAction(actions.picture.clear, {}, copy.clearingPicture, true);
+      }
+      if (!pictureResponse) return;
+      await applyTheme(true);
+      if (settingsError) setStatus(settingsError, "error");
+      render();
+    } finally {
+      queueButtonThemeScan();
+      setBusy(false);
     }
-    if (!pictureResponse) return;
-    await applyTheme();
   }
 
   async function selectFile(actionId, fieldId, progressMessage) {
@@ -919,8 +1210,8 @@
     if (response?.selected) patchFields({ [fieldId]: response.path });
   }
 
-  async function runPictureAction(actionId, payload, progressMessage) {
-    const response = await requestAction(actionId, payload, progressMessage);
+  async function runPictureAction(actionId, payload, progressMessage, withinOperation = false) {
+    const response = await requestAction(actionId, payload, progressMessage, withinOperation);
     applyResponsePatch(response);
     return response;
   }
@@ -1134,7 +1425,7 @@
     return stops;
   }
 
-  function renderButtonThemeRangeControl(labelText, key) {
+  function renderButtonThemeRangeControl(labelText, key, maximum = 100) {
     const control = element("label", "button-theme-gradient__range");
     const labelRow = element("span", "button-theme-gradient__range-label");
     const valueNode = element("span", "button-theme-gradient__value", Math.round(model.buttonTheme[key]));
@@ -1142,11 +1433,13 @@
     const slider = document.createElement("input");
     slider.type = "range";
     slider.min = "0";
-    slider.max = "100";
+    slider.max = String(maximum);
     slider.step = "1";
     slider.value = String(model.buttonTheme[key]);
+    slider.dataset.setting = key;
+    slider.setAttribute("aria-label", labelText);
     slider.addEventListener("input", () => {
-      model.buttonTheme[key] = bounded(Number(slider.value), 0, 100);
+      model.buttonTheme[key] = bounded(Number(slider.value), 0, maximum);
       valueNode.textContent = String(Math.round(model.buttonTheme[key]));
       schedulePersistence();
     });
@@ -1157,7 +1450,7 @@
   function renderButtonThemeScreenGradientControl() {
     const control = element("label", "button-theme-gradient__screen-toggle");
     control.title = buttonThemeConfig.screenTopToBottomTooltip ||
-      "Use each Button's position within its monitor so one gradient runs from the top to the bottom of the screen.";
+      "Blend from the topmost to bottommost open popped Buttons on each screen.";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = model.buttonTheme.screenTopToBottom;
@@ -1273,6 +1566,7 @@
 
   function renderButtonThemeCard() {
     const { section, heading } = makeCard(copy.buttonThemeSectionTitle || "Popped Button Colors");
+    heading.append(renderButtonThemeEffectToggle("Lock All Popped Button Settings", "lockSettings"));
     const presentColors = new Set();
     model.buttonTheme.buckets.forEach((bucket) => {
       if (bucket.kind === "surface") presentColors.add(bucket.color);
@@ -1285,6 +1579,11 @@
       buttonCount
         ? `${presentColors.size} color${presentColors.size === 1 ? "" : "s"} · ${buttonCount} scoped popped Button${buttonCount === 1 ? "" : "s"}`
         : copy.buttonThemeEmpty || "Press Rescan to collect popped Button colors."
+    ));
+    section.append(element("p", "button-theme-effects__help",
+      model.buttonTheme.lockSettings
+        ? "Locked: colors, all gradient stops, Spread, Scatter, text, highlights and glow stay as they are when switching packages. Unlock to restore the selected package's saved appearance."
+        : "Lock the entire popped Button appearance: colors, all gradient stops, Spread, Scatter, text, highlights and glow. The lock is temporary and does not change saved packages."
     ));
 
     const actionsRow = element("div", "theme-row theme-row--actions button-theme-actions");
@@ -1314,7 +1613,169 @@
       model.buttonTheme.buckets.forEach((bucket) => buckets.append(renderButtonThemeBucket(bucket)));
       section.append(buckets);
     }
+    section.append(renderIndividualPoppedButtons());
+    section.append(renderButtonThemeEffects());
     return section;
+  }
+
+  function individualButtonAction(label, tooltip, handler, editSelection = false) {
+    const button = actionButton(buttonThemeActions.edit, handler, tooltip);
+    button.textContent = label;
+    if (editSelection) {
+      button.dataset.paletteEdit = "true";
+      button.dataset.requiresSelection = "true";
+    }
+    return button;
+  }
+
+  function individualButtonColor(placement, key, label, value) {
+    const control = element("label", "button-theme-individual__color");
+    const picker = document.createElement("input");
+    picker.type = "color";
+    picker.value = opaqueButtonThemeColor(value) || "#808080";
+    picker.dataset.paletteEdit = "true";
+    picker.dataset.individualColor = key;
+    picker.setAttribute("aria-label", `${placement.label} ${label.toLowerCase()} color`);
+    picker.title = `Change only ${placement.label}'s ${label.toLowerCase()} color.`;
+    picker.addEventListener("change", () => {
+      const color = normalizeHex(picker.value);
+      if (color) void editPoppedButtons([{ placementId: placement.placementId, [key]: color }]);
+    });
+    control.append(element("span", "", label), picker);
+    return control;
+  }
+
+  function renderIndividualPoppedButtons() {
+    const section = element("div", "button-theme-individuals");
+    const heading = element("div", "theme-card__heading");
+    heading.append(element("h3", "", "Individual Buttons"), element("span", "button-theme-summary",
+      `${selectedButtonPlacements.size} selected · ${model.buttonTheme.placements.length} buttons`));
+    section.append(heading);
+    section.append(element("p", "button-theme-effects__help",
+      buttonThemeScanNote || "Select buttons to change their text together, or use each button's Fill and Text controls."
+    ));
+    const actions = element("div", "button-theme-individuals__actions");
+    actions.append(
+      individualButtonAction("Select All", "Select every button in this list.", () => {
+        model.buttonTheme.placements.forEach(({ placementId }) => selectedButtonPlacements.add(placementId));
+        render();
+      }),
+      individualButtonAction("Clear Selection", "Clear the selected buttons.", () => {
+        selectedButtonPlacements.clear();
+        render();
+      }),
+      individualButtonAction("Black Text", "Make the selected buttons' text black without changing their fill colors.",
+        () => editSelectedPoppedButtons({ textColor: "#000000" }), true),
+      individualButtonAction("White Text", "Make the selected buttons' text white without changing their fill colors.",
+        () => editSelectedPoppedButtons({ textColor: "#FFFFFF" }), true)
+    );
+    const textControl = element("label", "button-theme-individuals__text");
+    const textPicker = document.createElement("input");
+    textPicker.type = "color";
+    textPicker.value = model.buttonTheme.selectionTextColor;
+    textPicker.setAttribute("aria-label", "Selected buttons custom text color");
+    textPicker.addEventListener("input", () => {
+      model.buttonTheme.selectionTextColor = normalizeHex(textPicker.value) || model.buttonTheme.selectionTextColor;
+      schedulePersistence();
+    });
+    textControl.append(element("span", "", "Text"), textPicker);
+    actions.append(textControl,
+      individualButtonAction("Apply to Selected", "Apply the chosen text color to selected buttons without changing their fills.",
+        () => editSelectedPoppedButtons({ textColor: model.buttonTheme.selectionTextColor }), true),
+      individualButtonAction("Use Theme Colors", "Restore the selected buttons' fill and text colors from the current Blender popped Button theme.",
+        () => editSelectedPoppedButtons({ reset: true }), true));
+    section.append(actions);
+    const list = element("div", "button-theme-individuals__list");
+    const buckets = new Map(model.buttonTheme.buckets.map((bucket) => [bucket.id, bucket]));
+    model.buttonTheme.placements.forEach((placement) => {
+      const row = element("div", "button-theme-individual");
+      const selected = selectedButtonPlacements.has(placement.placementId);
+      row.dataset.selected = String(selected);
+      const select = element("label", "button-theme-individual__select");
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.checked = selected;
+      checkbox.setAttribute("aria-label", `Select ${placement.label} (${placement.groupLabel})`);
+      checkbox.addEventListener("change", () => {
+        if (checkbox.checked) selectedButtonPlacements.add(placement.placementId);
+        else selectedButtonPlacements.delete(placement.placementId);
+        render();
+      });
+      select.append(checkbox);
+      const preview = element("div", "button-theme-individual__preview");
+      const bucket = buckets.get(placement.bucketId);
+      const fill = placement.color || bucket?.color;
+      if (fill) preview.style.backgroundColor = fill;
+      else if (bucket?.materialColors.length) preview.style.background = `linear-gradient(135deg, ${bucket.materialColors.join(", ")})`;
+      preview.style.color = placement.textColor;
+      preview.append(element("span", "button-theme-individual__name", placement.label),
+        element("span", "button-theme-individual__group", placement.groupLabel));
+      preview.title = `${placement.groupLabel} · ${placement.label}`;
+      row.append(select, preview,
+        individualButtonColor(placement, "color", "Fill", fill || bucket?.materialColors[0]),
+        individualButtonColor(placement, "textColor", "Text", placement.textColor));
+      list.append(row);
+    });
+    section.append(list);
+    return section;
+  }
+
+  function renderButtonThemeEffectColor(labelText, key) {
+    const control = element("label", "button-theme-effect-color");
+    const picker = document.createElement("input");
+    picker.type = "color";
+    picker.value = model.buttonTheme[key].slice(0, 7);
+    picker.dataset.setting = key;
+    picker.setAttribute("aria-label", labelText);
+    picker.addEventListener("input", () => {
+      const color = normalizeHex(picker.value);
+      if (color) model.buttonTheme[key] = color + model.buttonTheme[key].slice(7);
+      schedulePersistence();
+    });
+    control.append(element("span", "", labelText), picker);
+    return control;
+  }
+
+  function renderButtonThemeEffectToggle(labelText, key) {
+    const control = element("label", "button-theme-effect-toggle");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = model.buttonTheme[key];
+    checkbox.dataset.setting = key;
+    checkbox.setAttribute("aria-label", labelText);
+    checkbox.addEventListener("change", () => {
+      if (key === "lockSettings") void setButtonThemeLock(checkbox.checked === true);
+      else {
+        model.buttonTheme[key] = checkbox.checked === true;
+        schedulePersistence();
+      }
+    });
+    control.append(checkbox, element("span", "", labelText));
+    return control;
+  }
+
+  function renderButtonThemeEffects() {
+    const effects = element("div", "button-theme-effects");
+    const heading = element("div", "theme-card__heading");
+    heading.append(element("h3", "", "Popped Highlights & Glow"));
+    const description = element("p", "button-theme-effects__help",
+      "Text, highlights and glow apply to every Blender popped Button. Lock All Popped Button Settings above includes these controls and the colors and gradients."
+    );
+    const grid = element("div", "button-theme-effects__grid");
+    grid.append(renderButtonThemeEffectColor("Text Color", "textColor"));
+    for (const [prefix, label] of [["hover", "Hover"], ["active", "Active"]]) {
+      const group = element("div", "button-theme-effects__group");
+      group.append(
+        renderButtonThemeEffectToggle(`${label} Enabled`, `${prefix}Enabled`),
+        renderButtonThemeEffectColor(`${label} Color`, `${prefix}Color`),
+        renderButtonThemeRangeControl(`${label} Highlight`, `${prefix}HighlightAmount`, 1000),
+        renderButtonThemeRangeControl(`${label} Glow`, `${prefix}GlowAmount`)
+      );
+      grid.append(group);
+    }
+    effects.append(heading, description, grid,
+      actionButton(buttonThemeActions.settings, applyButtonThemeEffects));
+    return effects;
   }
 
   function renderPictureCard() {
@@ -1434,7 +1895,8 @@
     if (activePackage) {
       model.activePackage = {
         path: typeof activePackage.path === "string" ? activePackage.path : "",
-        name: typeof activePackage.name === "string" ? activePackage.name : ""
+        name: typeof activePackage.name === "string" ? activePackage.name : "",
+        poppedButtonSettings: normalizePoppedButtonSettings(activePackage.poppedButtonSettings)
       };
     }
     hydrateButtonThemeState(state.buttonTheme);
@@ -1442,16 +1904,33 @@
 
   async function initialize() {
     render();
+    setBusy(true);
     setStatus(copy.loading || "Loading…");
     try {
       const response = objectRecord(await pageApi.request(actions.state.read, {})) || {};
       hydrateState(response.state);
+      const previousGradient = objectRecord(response.state?.buttonTheme)
+        ? buttonThemeGradientPayload(model.buttonTheme.seed)
+        : null;
+      const settingsResponse = await pageApi.request(buttonThemeActions.settings, {});
+      const settings = normalizePoppedButtonSettings(settingsResponse?.settings);
+      if (!settings) throw new Error("Blender returned invalid popped Button settings.");
+      if (settingsResponse.configured === false) {
+        const applied = await applyPoppedButtonSettings({ ...settings, ...(previousGradient || {}) }, true);
+        if (!applied || statusNode.dataset.kind === "error") {
+          render();
+          return;
+        }
+      } else {
+        adoptPoppedButtonSettings(settings);
+      }
       render();
       setStatus(copy.ready || "Ready.", "success");
     } catch (error) {
       render();
       setStatus(error instanceof Error ? error.message : String(error), "error");
     } finally {
+      queueButtonThemeScan();
       setBusy(false);
     }
   }

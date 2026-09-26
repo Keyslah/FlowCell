@@ -13,6 +13,7 @@ import type {
   ButtonStateDocument,
   ButtonSurface,
   ButtonSurfaceKind,
+  ProgramPopoutColorOverride,
   ToolSetButtonPopoutUnit,
   ButtonWindowFitMode
 } from "../types.js";
@@ -20,6 +21,7 @@ import { cloneButtonDocument } from "./buttonDefaults.js";
 import { validateButtonStateDocument } from "./buttonStateValidation.js";
 import { deriveRegularPopoutSelectionKey } from "./sourceIdentity.js";
 import { resolveButtonWindowEnvelope } from "../windows/buttonWindowGeometry.js";
+import { normalizeProgramPopoutColorOverride } from "../../theme/programPopoutTheme.js";
 
 export const BUTTON_SETTINGS_FILE_FORMAT = "flowcell-button-settings/v1" as const;
 export const BUTTON_SETTINGS_FILE_EXTENSION = ".json" as const;
@@ -49,6 +51,7 @@ export interface ButtonSettingsFileEntry {
   activationAnimation: ButtonActivationAnimation | null;
   skin: ButtonSkin;
   placement: ButtonSettingsFilePlacement;
+  popoutColorOverride?: ProgramPopoutColorOverride;
 }
 
 interface ButtonSettingsMainPageBehavior {
@@ -684,7 +687,8 @@ export function validateButtonSettingsFile(value: unknown): ButtonSettingsFileVa
           "activationBehavior",
           "activationAnimation",
           "skin",
-          "placement"
+          "placement",
+          ...(Object.hasOwn(entry, "popoutColorOverride") ? ["popoutColorOverride"] : [])
         ],
         path,
         issues
@@ -707,6 +711,10 @@ export function validateButtonSettingsFile(value: unknown): ButtonSettingsFileVa
         issues.push(`${path}.buttonRole: Unsupported Button role.`);
       }
       if (typeof entry.label !== "string") issues.push(`${path}.label: Expected a string.`);
+      if (Object.hasOwn(entry, "popoutColorOverride") &&
+        (placementKind === "main-page" || !normalizeProgramPopoutColorOverride(entry.popoutColorOverride))) {
+        issues.push(`${path}.popoutColorOverride: Expected valid popped Button surface or text colors.`);
+      }
       if (entry.activationBehavior !== null && !isObject(entry.activationBehavior)) {
         issues.push(`${path}.activationBehavior: Expected null or an activation-behavior object.`);
       }
@@ -832,6 +840,9 @@ export function buildButtonSettingsFile(
       activationBehavior: structuredClone(button.activationBehavior),
       activationAnimation: structuredClone(button.activationAnimation),
       skin: structuredClone(skin),
+      ...(document.programPopoutColorOverrides?.[placementId]
+        ? { popoutColorOverride: normalizeProgramPopoutColorOverride(document.programPopoutColorOverrides[placementId])! }
+        : {}),
       placement: {
         ...structuredClone(placementSettings),
         zIndex: index
@@ -1214,7 +1225,10 @@ export function applyButtonSettingsFile(
   const previousPlacementByButtonId = new Map(
     previousPlacements.map((placement) => [placement.buttonId, placement])
   );
-  for (const placement of previousPlacements) delete next.placements[placement.id];
+  for (const placement of previousPlacements) {
+    delete next.placements[placement.id];
+    if (next.programPopoutColorOverrides) delete next.programPopoutColorOverrides[placement.id];
+  }
 
   nextSurface.name = file.surface.name;
   nextSurface.width = file.surface.width;
@@ -1251,6 +1265,12 @@ export function applyButtonSettingsFile(
       zIndex: nextSurface.placementIds.length
     };
     nextSurface.placementIds.push(placementId);
+    if (entry.popoutColorOverride) {
+      next.programPopoutColorOverrides ??= {};
+      next.programPopoutColorOverrides[placementId] = normalizeProgramPopoutColorOverride(entry.popoutColorOverride)!;
+      next.programPopoutColorOverrideRevisions ??= {};
+      next.programPopoutColorOverrideRevisions[normalized(context.programName)] ??= { surface: 0, text: 0 };
+    }
   }
 
   updateSurfaceOwnerRecords(next, nextSurface, file);
@@ -1512,6 +1532,12 @@ export function buildTransientButtonPopoutSettingsDocument(
     };
     transientSurface.placementIds.push(placementId);
     transientPlacementBySavedId.set(entry.placementId, placementId);
+    if (entry.popoutColorOverride) {
+      working.programPopoutColorOverrides ??= {};
+      working.programPopoutColorOverrides[placementId] = normalizeProgramPopoutColorOverride(entry.popoutColorOverride)!;
+      working.programPopoutColorOverrideRevisions ??= {};
+      working.programPopoutColorOverrideRevisions[normalized(context.programName)] ??= { surface: 0, text: 0 };
+    }
   }
   const transientOwnerPlacementId = file.behavior.ownerPlacementId
     ? transientPlacementBySavedId.get(file.behavior.ownerPlacementId) ?? null

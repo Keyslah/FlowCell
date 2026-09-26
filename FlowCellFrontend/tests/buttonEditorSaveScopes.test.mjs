@@ -70,6 +70,25 @@ function documentWithButton() {
   return document;
 }
 
+test("saving a popped placement removal clears both legacy and individual color references", () => {
+  const committed = documentWithButton();
+  committed.surfaces[DEFAULT_BUTTON_SURFACE_ID].kind = "regular-popout";
+  committed.themeOverrides = {
+    "placement-one": { colors: { surface: "#224466" }, hoverEnabled: null, activeEnabled: null, hoverColor: null, activeColor: null }
+  };
+  committed.programPopoutColorOverrides = { "placement-one": { surface: "#FF9900", text: "#000000" } };
+  assert.equal(validateButtonStateDocument(committed).valid, true);
+  const draft = structuredClone(committed);
+  draft.surfaces[DEFAULT_BUTTON_SURFACE_ID].placementIds = [];
+  delete draft.placements["placement-one"];
+  const result = buildButtonPlacementScopedDocument(committed, draft, DEFAULT_BUTTON_SURFACE_ID);
+  assert.equal(result.placements["placement-one"], undefined);
+  assert.equal(result.themeOverrides["placement-one"], undefined);
+  assert.equal(result.programPopoutColorOverrides["placement-one"], undefined);
+  assert.equal(validateButtonStateDocument(result).valid, true);
+  assert.deepEqual(committed.programPopoutColorOverrides["placement-one"], { surface: "#FF9900", text: "#000000" });
+});
+
 function stagedToolSetSaveFixture() {
   const committed = documentWithButton();
   const panelId = "panel-illustrator-toolset";

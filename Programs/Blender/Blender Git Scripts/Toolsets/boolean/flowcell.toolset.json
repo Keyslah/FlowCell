@@ -1,13 +1,17 @@
 {
     "schemaVersion": 1,
     "id": "blender.boolean",
-    "version": "1.1.0",
+    "version": "1.1.1",
     "label": "boolean",
     "tooltip": "Quick Boolean with I/U/D operation buttons, one cycling solver button, SI/HT/HC/S toggles, and Run.",
     "kind": "toolset",
     "program": "Blender",
     "source": "boolean.py",
     "bridgeData": {},
+    "stateQuery": {
+        "slot": "operation_difference",
+        "payload": { "command": "status", "action": "status" }
+    },
     "children": [
         {
             "slot": "operation_intersect",

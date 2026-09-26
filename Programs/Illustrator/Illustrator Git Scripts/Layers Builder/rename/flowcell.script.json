@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "illustrator.layers-builder.rename",
+  "label": "rename",
+  "tooltip": "Show each selected object's layer with its current name and a separate new-name field.",
+  "program": "Illustrator",
+  "source": "rename.jsx",
+  "execution": {
+    "waitForCompletion": true
+  }
+}

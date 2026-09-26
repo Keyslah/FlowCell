@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { ButtonSurface } from "../ButtonSurface";
+import type { ProgramPopoutThemeScreenGeometry } from "../../theme/programPopoutTheme";
 import {
   executeButtonRecord,
   type ButtonExecutionResult
@@ -107,6 +108,7 @@ function buildCollapsedPanelOwnerDocument(args: {
 
 export interface ButtonFanRendererProps {
   document: ButtonStateDocument;
+  programPopoutThemeScreenGeometry?: ProgramPopoutThemeScreenGeometry;
   setup: ButtonFanSetup;
   expanded: boolean;
   motionPhase?: ButtonFanMotionPhase;
@@ -141,6 +143,7 @@ export interface ButtonFanRendererProps {
 
 export function ButtonFanRenderer({
   document,
+  programPopoutThemeScreenGeometry,
   setup,
   expanded,
   motionPhase = "resting",
@@ -334,6 +337,8 @@ export function ButtonFanRenderer({
         >
           <ButtonSurface
             document={collapsedOwner.document}
+            programPopoutThemeScreenGeometry={programPopoutThemeScreenGeometry}
+            programPopoutThemeSourcePlacementId={collapsedOwner.sourcePlacementId}
             surfaceId={collapsedOwner.surfaceId}
             mode="run"
             onPlacementMeasurement={onPlacementMeasurement}
@@ -372,6 +377,7 @@ export function ButtonFanRenderer({
       >
       <ButtonSurface
         document={document}
+        programPopoutThemeScreenGeometry={programPopoutThemeScreenGeometry}
         surfaceId={surface.id}
         mode="run"
         onPlacementMeasurement={onPlacementMeasurement}

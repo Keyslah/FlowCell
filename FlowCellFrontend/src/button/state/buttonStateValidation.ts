@@ -25,6 +25,7 @@ import {
   normalizeButtonSkinColor
 } from "../skins/buttonSkinColors.js";
 import { isButtonActivationAnimationPresetId } from "../animations/buttonActivationAnimations.js";
+import { normalizeProgramPopoutColorOverride, normalizeProgramPopoutThemeSettings } from "../../theme/programPopoutTheme.js";
 
 export interface ButtonStateValidationIssue {
   path: string;
@@ -585,6 +586,12 @@ function validateTopLevel(value: unknown, issues: ButtonStateValidationIssue[]):
   if (value.themeOverrides !== undefined && !isObject(value.themeOverrides)) {
     addIssue(issues, "themeOverrides", "Theme overrides must be an object.", "fatal");
   }
+  if (value.programPopoutThemes !== undefined && !isObject(value.programPopoutThemes)) {
+    addIssue(issues, "programPopoutThemes", "Program popout themes must be an object.", "fatal");
+  }
+  for (const key of ["programPopoutColorOverrides", "programPopoutColorOverrideRevisions"]) {
+    if (value[key] !== undefined && !isObject(value[key])) addIssue(issues, key, `${key} must be an object.`, "fatal");
+  }
   return !issues.some((issue) => issue.severity === "fatal");
 }
 
@@ -895,6 +902,29 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
     }
     if (placement.resizeAnchor !== "top-left") {
       addIssue(issues, `${path}.resizeAnchor`, "Placement resize anchor is invalid.");
+    }
+  }
+
+  for (const [programName, settings] of Object.entries(document.programPopoutThemes ?? {})) {
+    if (!programName || programName !== programName.normalize("NFC").trim().toLocaleLowerCase("en") ||
+      !normalizeProgramPopoutThemeSettings(settings)) {
+      addIssue(issues, `programPopoutThemes.${programName}`, "Program popout theme name or appearance settings are invalid.");
+    }
+  }
+
+  for (const [placementId, override] of Object.entries(document.programPopoutColorOverrides ?? {})) {
+    const placement = document.placements[placementId];
+    const kind = placement && document.surfaces[placement.surfaceId]?.kind;
+    if (!placement || !["regular-popout", "tool-set-popout", "fan"].includes(kind) ||
+      !normalizeProgramPopoutColorOverride(override)) {
+      addIssue(issues, `programPopoutColorOverrides.${placementId}`, "Individual popped Button colors require a popped placement and valid surface or text colors.");
+    }
+  }
+  for (const [programName, revision] of Object.entries(document.programPopoutColorOverrideRevisions ?? {})) {
+    if (!programName || programName !== programName.normalize("NFC").trim().toLocaleLowerCase("en") ||
+      !isObject(revision) || Object.keys(revision).length !== 2 ||
+      ![revision.surface, revision.text].every((value) => Number.isSafeInteger(value) && Number(value) >= 0)) {
+      addIssue(issues, `programPopoutColorOverrideRevisions.${programName}`, "Individual popped Button color revisions require a program name and nonnegative surface/text counters.");
     }
   }
 

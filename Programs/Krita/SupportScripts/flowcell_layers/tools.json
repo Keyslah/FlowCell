@@ -1,0 +1,187 @@
+[
+  {
+    "id": "PathTool",
+    "label": "Edit Shapes Tool",
+    "slug": "edit-shapes-tool"
+  },
+  {
+    "id": "KritaShape/KisToolKnife",
+    "label": "Comic Panel Editing Tool",
+    "slug": "comic-panel-editing-tool"
+  },
+  {
+    "id": "KarbonCalligraphyTool",
+    "label": "Calligraphy",
+    "slug": "calligraphy"
+  },
+  {
+    "id": "SvgTextTool",
+    "label": "Text Tool",
+    "slug": "text-tool"
+  },
+  {
+    "id": "InteractionTool",
+    "label": "Select Shapes Tool",
+    "slug": "select-shapes-tool"
+  },
+  {
+    "id": "KritaShape/KisToolLine",
+    "label": "Line Tool",
+    "slug": "line-tool"
+  },
+  {
+    "id": "KritaShape/KisToolEllipse",
+    "label": "Ellipse Tool",
+    "slug": "ellipse-tool"
+  },
+  {
+    "id": "KisToolPencil",
+    "label": "Freehand Path Tool",
+    "slug": "freehand-path-tool"
+  },
+  {
+    "id": "KisToolPath",
+    "label": "Bezier Curve Tool",
+    "slug": "bezier-curve-tool"
+  },
+  {
+    "id": "KisToolPolygon",
+    "label": "Polygon Tool",
+    "slug": "polygon-tool"
+  },
+  {
+    "id": "KritaShape/KisToolRectangle",
+    "label": "Rectangle Tool",
+    "slug": "rectangle-tool"
+  },
+  {
+    "id": "KritaShape/KisToolMultiBrush",
+    "label": "Multibrush Tool",
+    "slug": "multibrush-tool"
+  },
+  {
+    "id": "KisToolPolyline",
+    "label": "Polyline Tool",
+    "slug": "polyline-tool"
+  },
+  {
+    "id": "KritaShape/KisToolBrush",
+    "label": "Freehand Brush Tool",
+    "slug": "freehand-brush-tool"
+  },
+  {
+    "id": "KritaShape/KisToolDyna",
+    "label": "Dynamic Brush Tool",
+    "slug": "dynamic-brush-tool"
+  },
+  {
+    "id": "KritaFill/KisToolGradient",
+    "label": "Gradient Tool",
+    "slug": "gradient-tool"
+  },
+  {
+    "id": "KritaShape/KisToolSmartPatch",
+    "label": "Smart Patch Tool",
+    "slug": "smart-patch-tool"
+  },
+  {
+    "id": "KritaSelected/KisToolColorSampler",
+    "label": "Color Sampler",
+    "slug": "color-sampler"
+  },
+  {
+    "id": "KritaFill/KisToolFill",
+    "label": "Fill Tool",
+    "slug": "fill-tool"
+  },
+  {
+    "id": "KritaShape/KisToolLazyBrush",
+    "label": "Colorize Mask Tool",
+    "slug": "colorize-mask-tool"
+  },
+  {
+    "id": "KisToolEncloseAndFill",
+    "label": "Enclose and Fill Tool",
+    "slug": "enclose-and-fill-tool"
+  },
+  {
+    "id": "KisToolSelectPath",
+    "label": "Bezier Curve Selection Tool",
+    "slug": "bezier-curve-selection-tool"
+  },
+  {
+    "id": "KisToolSelectSimilar",
+    "label": "Similar Color Selection Tool",
+    "slug": "similar-color-selection-tool"
+  },
+  {
+    "id": "KisToolSelectOutline",
+    "label": "Freehand Selection Tool",
+    "slug": "freehand-selection-tool"
+  },
+  {
+    "id": "KisToolSelectPolygonal",
+    "label": "Polygonal Selection Tool",
+    "slug": "polygonal-selection-tool"
+  },
+  {
+    "id": "KisToolSelectElliptical",
+    "label": "Elliptical Selection Tool",
+    "slug": "elliptical-selection-tool"
+  },
+  {
+    "id": "KisToolSelectContiguous",
+    "label": "Contiguous Selection Tool",
+    "slug": "contiguous-selection-tool"
+  },
+  {
+    "id": "KisToolSelectMagnetic",
+    "label": "Magnetic Selection Tool",
+    "slug": "magnetic-selection-tool"
+  },
+  {
+    "id": "KisToolSelectRectangular",
+    "label": "Rectangular Selection Tool",
+    "slug": "rectangular-selection-tool"
+  },
+  {
+    "id": "KritaTransform/KisToolMove",
+    "label": "Move Tool",
+    "slug": "move-tool"
+  },
+  {
+    "id": "KisToolCrop",
+    "label": "Crop Tool",
+    "slug": "crop-tool"
+  },
+  {
+    "id": "KisToolTransform",
+    "label": "Transform Tool",
+    "slug": "transform-tool"
+  },
+  {
+    "id": "KritaShape/KisToolMeasure",
+    "label": "Measurement Tool",
+    "slug": "measurement-tool"
+  },
+  {
+    "id": "ToolReferenceImages",
+    "label": "Reference Images Tool",
+    "slug": "reference-images-tool"
+  },
+  {
+    "id": "KisAssistantTool",
+    "label": "Assistant Tool",
+    "slug": "assistant-tool"
+  },
+  {
+    "id": "ZoomTool",
+    "label": "Zoom Tool",
+    "slug": "zoom-tool"
+  },
+  {
+    "id": "PanTool",
+    "label": "Pan Tool",
+    "slug": "pan-tool"
+  }
+]

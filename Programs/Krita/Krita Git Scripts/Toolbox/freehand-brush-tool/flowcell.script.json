@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.freehand-brush-tool",
+  "label": "Freehand Brush Tool",
+  "tooltip": "Freehand Brush Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.comic-panel-editing-tool",
+  "label": "Comic Panel Editing Tool",
+  "tooltip": "Comic Panel Editing Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

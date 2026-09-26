@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.colorize-mask-tool",
+  "label": "Colorize Mask Tool",
+  "tooltip": "Colorize Mask Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

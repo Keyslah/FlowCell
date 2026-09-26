@@ -78,7 +78,7 @@ export function resolveButtonPressEventPlan(button: ButtonRecord): ButtonPressEv
   };
 }
 
-function responseFieldPatch(
+export function responseFieldPatch(
   response: unknown,
   fields: readonly ButtonToolField[],
   fallbackFieldId?: string

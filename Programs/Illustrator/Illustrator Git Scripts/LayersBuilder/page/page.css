@@ -360,6 +360,61 @@ button:disabled {
   color: #f1f3f7;
 }
 
+.layer-tree__rename-card {
+  width: min(100%, 520px);
+}
+
+.layer-tree__rename-header,
+.layer-tree__rename-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.layer-tree__rename-header {
+  padding: 5px 0;
+  color: #c4cad4;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.layer-tree__rename-rows {
+  max-height: min(50vh, 420px);
+  overflow-y: auto;
+}
+
+.layer-tree__rename-row {
+  padding: 7px 0;
+  border-top: 1px solid #3b414b;
+}
+
+.layer-tree__current-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.layer-tree__current-name strong,
+.layer-tree__current-name small {
+  display: block;
+}
+
+.layer-tree__current-name small {
+  margin-top: 2px;
+  color: #aeb6c2;
+}
+
+.layer-tree__visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
 .layer-tree__dialog-actions {
   display: flex;
   justify-content: flex-end;

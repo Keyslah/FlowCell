@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.pan-tool",
+  "label": "Pan Tool",
+  "tooltip": "Pan Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

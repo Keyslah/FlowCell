@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.select-shapes-tool",
+  "label": "Select Shapes Tool",
+  "tooltip": "Select Shapes Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

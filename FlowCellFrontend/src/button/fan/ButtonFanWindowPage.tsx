@@ -8,7 +8,10 @@ import {
 } from "react";
 import { cursorPosition, getCurrentWindow } from "@tauri-apps/api/window";
 import type { ButtonFanWindowContext } from "../../lib/windowContext";
-import { writeRegisteredLayoutWindowSnapshotBounds } from "../../lib/layoutSnapshots";
+import {
+  writeRegisteredLayoutWindowButtonDisplayMode,
+  writeRegisteredLayoutWindowSnapshotBounds
+} from "../../lib/layoutSnapshots";
 import {
   isNativePrimaryMouseButtonDown
 } from "../../lib/nativeKeyState";
@@ -47,6 +50,7 @@ import {
 } from "../windows/buttonWindowGeometry";
 import { useButtonWindowDocument } from "../windows/useButtonWindowDocument";
 import { useFixedButtonCanvasMetrics } from "../windows/useFixedButtonCanvas";
+import { useProgramPopoutThemeScreenRange } from "../windows/useProgramPopoutThemeScreenRange";
 import { useNativeButtonHitboxes } from "../windows/useNativeButtonHitboxes";
 import {
   setButtonWindowGeometryTransitionActive,
@@ -1232,6 +1236,30 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   const contentFrameRect = canvasMetrics.ready
     ? buttonDesktopBoundsToCanvasRect(appliedFrameBounds, canvasMetrics)
     : null;
+  const monitorWorkArea = appliedCanvasRef.current?.monitorWorkArea;
+  const physicalThemeGeometry = appliedFrameBounds && monitorWorkArea
+    ? {
+        visibleBounds: { Top: appliedFrameBounds.top, Height: appliedFrameBounds.height },
+        envelope: renderedEnvelope,
+        monitorWorkArea
+      }
+    : undefined;
+  const programPopoutThemeScreenRange = useProgramPopoutThemeScreenRange({
+    enabled: Boolean(document?.programPopoutThemes?.[
+      activeContext.programName.normalize("NFC").trim().toLocaleLowerCase("en")
+    ]?.screenTopToBottom),
+    programName: activeContext.programName,
+    placements: renderedExpanded ? expandedPlacements : collapsedPlacement ? [collapsedPlacement] : [],
+    geometry: physicalThemeGeometry
+  });
+  const programPopoutThemeScreenGeometry = physicalThemeGeometry
+    ? { ...physicalThemeGeometry, screenRange: programPopoutThemeScreenRange }
+    : undefined;
+  useEffect(() => {
+    writeRegisteredLayoutWindowButtonDisplayMode(
+      getCurrentWindow().label, renderedExpanded ? "expanded" : "collapsed"
+    );
+  }, [renderedExpanded]);
 
   return (
     <main
@@ -1264,6 +1292,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
         >
           <ButtonFanRenderer
             document={document}
+            programPopoutThemeScreenGeometry={programPopoutThemeScreenGeometry}
             setup={setup}
             expanded={renderedExpanded}
             motionPhase={fanMotion.phase}

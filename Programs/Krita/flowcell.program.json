@@ -6,7 +6,9 @@
   "defaultPanels": [
     "Files",
     "Layers",
-    "Brushes"
+    "Brushes",
+    "Toolbox",
+    "Tools"
   ],
   "panels": [
     {
@@ -23,10 +25,21 @@
       "id": "brushes",
       "label": "Brushes",
       "defaultSelected": true
+    },
+    {
+      "id": "toolbox",
+      "label": "Toolbox",
+      "defaultSelected": true
+    },
+    {
+      "id": "tools",
+      "label": "Tools",
+      "defaultSelected": true
     }
   ],
   "processNames": [
-    "krita"
+    "krita",
+    "KritaStencilPreview"
   ],
   "exePath": "C:\\Program Files\\Krita (x64)\\bin\\krita.exe",
   "bindScopedNativeOwner": false,
@@ -49,6 +62,54 @@
   ],
   "supportsToolsetManifests": false,
   "bundledSources": [
+    {
+      "id": "plain-krita.tools.ill-svg",
+      "version": "1.0.0",
+      "panelName": "Tools",
+      "sourcePath": "Krita Git Scripts/Tools/Ill SVG",
+      "importKind": "script",
+      "displayLabel": "Ill SVG",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Read the current Illustrator selection and import each source layer as an aligned, original-size native stencil group in the isolated Krita preview."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.tools.svg-stencil",
+      "version": "1.0.0",
+      "panelName": "Tools",
+      "sourcePath": "Krita Git Scripts/Tools/SVG Stencil",
+      "importKind": "script",
+      "displayLabel": "SVG Stencil",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Prompt for an SVG and add a labeled vector stencil above a selected paint layer in a new group."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.tools.ellipse-assistant",
+      "version": "1.0.0",
+      "panelName": "Tools",
+      "sourcePath": "Krita Git Scripts/Tools/Ellipse Assistant",
+      "importKind": "script",
+      "displayLabel": "Ellipse Assistant",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select the Assistant Tool with Ellipse as its assistant type."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
     {
       "id": "plain-krita.update-git-scripts",
       "version": "1.0.0",
@@ -80,8 +141,600 @@
       "installIfMissing": true
     },
     {
+      "id": "plain-krita.toolbox.edit-shapes-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/edit-shapes-tool",
+      "importKind": "script",
+      "displayLabel": "Edit Shapes Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Edit Shapes Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.comic-panel-editing-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/comic-panel-editing-tool",
+      "importKind": "script",
+      "displayLabel": "Comic Panel Editing Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Comic Panel Editing Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.calligraphy",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/calligraphy",
+      "importKind": "script",
+      "displayLabel": "Calligraphy",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Calligraphy."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.text-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/text-tool",
+      "importKind": "script",
+      "displayLabel": "Text Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Text Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.select-shapes-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/select-shapes-tool",
+      "importKind": "script",
+      "displayLabel": "Select Shapes Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Select Shapes Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.line-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/line-tool",
+      "importKind": "script",
+      "displayLabel": "Line Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Line Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.ellipse-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/ellipse-tool",
+      "importKind": "script",
+      "displayLabel": "Ellipse Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Ellipse Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.freehand-path-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/freehand-path-tool",
+      "importKind": "script",
+      "displayLabel": "Freehand Path Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Freehand Path Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.bezier-curve-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/bezier-curve-tool",
+      "importKind": "script",
+      "displayLabel": "Bezier Curve Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Bezier Curve Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.polygon-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/polygon-tool",
+      "importKind": "script",
+      "displayLabel": "Polygon Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Polygon Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.rectangle-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/rectangle-tool",
+      "importKind": "script",
+      "displayLabel": "Rectangle Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Rectangle Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.multibrush-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/multibrush-tool",
+      "importKind": "script",
+      "displayLabel": "Multibrush Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Multibrush Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.polyline-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/polyline-tool",
+      "importKind": "script",
+      "displayLabel": "Polyline Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Polyline Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.freehand-brush-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/freehand-brush-tool",
+      "importKind": "script",
+      "displayLabel": "Freehand Brush Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Freehand Brush Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.dynamic-brush-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/dynamic-brush-tool",
+      "importKind": "script",
+      "displayLabel": "Dynamic Brush Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Dynamic Brush Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.gradient-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/gradient-tool",
+      "importKind": "script",
+      "displayLabel": "Gradient Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Gradient Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.smart-patch-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/smart-patch-tool",
+      "importKind": "script",
+      "displayLabel": "Smart Patch Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Smart Patch Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.color-sampler",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/color-sampler",
+      "importKind": "script",
+      "displayLabel": "Color Sampler",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Color Sampler."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.fill-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/fill-tool",
+      "importKind": "script",
+      "displayLabel": "Fill Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Fill Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.colorize-mask-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/colorize-mask-tool",
+      "importKind": "script",
+      "displayLabel": "Colorize Mask Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Colorize Mask Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.enclose-and-fill-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/enclose-and-fill-tool",
+      "importKind": "script",
+      "displayLabel": "Enclose and Fill Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Enclose and Fill Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.bezier-curve-selection-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/bezier-curve-selection-tool",
+      "importKind": "script",
+      "displayLabel": "Bezier Curve Selection Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Bezier Curve Selection Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.similar-color-selection-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/similar-color-selection-tool",
+      "importKind": "script",
+      "displayLabel": "Similar Color Selection Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Similar Color Selection Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.freehand-selection-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/freehand-selection-tool",
+      "importKind": "script",
+      "displayLabel": "Freehand Selection Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Freehand Selection Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.polygonal-selection-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/polygonal-selection-tool",
+      "importKind": "script",
+      "displayLabel": "Polygonal Selection Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Polygonal Selection Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.elliptical-selection-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/elliptical-selection-tool",
+      "importKind": "script",
+      "displayLabel": "Elliptical Selection Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Elliptical Selection Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.contiguous-selection-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/contiguous-selection-tool",
+      "importKind": "script",
+      "displayLabel": "Contiguous Selection Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Contiguous Selection Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.magnetic-selection-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/magnetic-selection-tool",
+      "importKind": "script",
+      "displayLabel": "Magnetic Selection Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Magnetic Selection Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.rectangular-selection-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/rectangular-selection-tool",
+      "importKind": "script",
+      "displayLabel": "Rectangular Selection Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Rectangular Selection Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.move-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/move-tool",
+      "importKind": "script",
+      "displayLabel": "Move Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Move Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.crop-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/crop-tool",
+      "importKind": "script",
+      "displayLabel": "Crop Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Crop Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.transform-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/transform-tool",
+      "importKind": "script",
+      "displayLabel": "Transform Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Transform Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.measurement-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/measurement-tool",
+      "importKind": "script",
+      "displayLabel": "Measurement Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Measurement Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.reference-images-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/reference-images-tool",
+      "importKind": "script",
+      "displayLabel": "Reference Images Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Reference Images Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.assistant-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/assistant-tool",
+      "importKind": "script",
+      "displayLabel": "Assistant Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Assistant Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.zoom-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/zoom-tool",
+      "importKind": "script",
+      "displayLabel": "Zoom Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Zoom Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
+      "id": "plain-krita.toolbox.pan-tool",
+      "version": "1.0.0",
+      "panelName": "Toolbox",
+      "sourcePath": "Krita Git Scripts/Toolbox/pan-tool",
+      "importKind": "script",
+      "displayLabel": "Pan Tool",
+      "sourceKind": "script",
+      "required": false,
+      "dependencies": [],
+      "installEffects": [
+        "Select Krita's Pan Tool."
+      ],
+      "installIfMissing": true,
+      "installOnAdd": true
+    },
+    {
       "id": "plain-krita.layers.make-layers",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Make Layers",
       "importKind": "script",
@@ -96,7 +749,7 @@
     },
     {
       "id": "plain-krita.layers.make-group",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Make Group",
       "importKind": "script",
@@ -111,7 +764,7 @@
     },
     {
       "id": "plain-krita.layers.make-layer",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Make Layer",
       "importKind": "script",
@@ -126,7 +779,7 @@
     },
     {
       "id": "plain-krita.layers.rename-selected",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Rename Selected",
       "importKind": "script",
@@ -141,7 +794,7 @@
     },
     {
       "id": "plain-krita.layers.duplicate-selected",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Duplicate Selected",
       "importKind": "script",
@@ -156,7 +809,7 @@
     },
     {
       "id": "plain-krita.layers.delete-highlighted",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Delete Highlighted",
       "importKind": "script",
@@ -171,7 +824,7 @@
     },
     {
       "id": "plain-krita.layers.snapshot",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Snapshot",
       "importKind": "script",
@@ -186,7 +839,7 @@
     },
     {
       "id": "plain-krita.layers.previous-snapshot",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Previous Snapshot",
       "importKind": "script",
@@ -201,7 +854,7 @@
     },
     {
       "id": "plain-krita.layers.next-snapshot",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Next Snapshot",
       "importKind": "script",
@@ -216,7 +869,7 @@
     },
     {
       "id": "plain-krita.layers.restore",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Restore",
       "importKind": "script",
@@ -231,7 +884,7 @@
     },
     {
       "id": "plain-krita.layers.back",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Back",
       "importKind": "script",
@@ -246,7 +899,7 @@
     },
     {
       "id": "plain-krita.layers.add-to-live",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Add to Live",
       "importKind": "script",
@@ -261,7 +914,7 @@
     },
     {
       "id": "plain-krita.layers.copy-live",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Copy Live",
       "importKind": "script",
@@ -276,7 +929,7 @@
     },
     {
       "id": "plain-krita.layers.trash",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Trash",
       "importKind": "script",
@@ -290,27 +943,12 @@
       "installIfMissing": true
     },
     {
-      "id": "plain-krita.layers.archive",
-      "version": "1.0.1",
-      "panelName": "Layers",
-      "sourcePath": "Krita Git Scripts/Layers/Archive",
-      "importKind": "script",
-      "displayLabel": "archive",
-      "sourceKind": "script",
-      "required": false,
-      "dependencies": [],
-      "installEffects": [
-        "Move highlighted Live layers into numbered Archive entries."
-      ],
-      "installIfMissing": true
-    },
-    {
       "id": "plain-krita.layers.copy-archive",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Copy to Archive",
       "importKind": "script",
-      "displayLabel": "copy archive",
+      "displayLabel": "archive",
       "sourceKind": "script",
       "required": false,
       "dependencies": [],
@@ -321,7 +959,7 @@
     },
     {
       "id": "plain-krita.layers.empty-trash",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Empty Trash",
       "importKind": "script",
@@ -336,7 +974,7 @@
     },
     {
       "id": "plain-krita.layers.empty-groups",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Empty Groups",
       "importKind": "script",
@@ -351,7 +989,7 @@
     },
     {
       "id": "plain-krita.layers.baseline-visibility",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Baseline Visibility",
       "importKind": "script",
@@ -366,7 +1004,7 @@
     },
     {
       "id": "plain-krita.layers.restore-visibility",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Restore Visibility",
       "importKind": "script",
@@ -381,7 +1019,7 @@
     },
     {
       "id": "plain-krita.layers.baseline-locks",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Baseline Locks",
       "importKind": "script",
@@ -396,7 +1034,7 @@
     },
     {
       "id": "plain-krita.layers.restore-locks",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Restore Locks",
       "importKind": "script",
@@ -411,7 +1049,7 @@
     },
     {
       "id": "plain-krita.layers.cycle-group",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Cycle Group",
       "importKind": "script",
@@ -426,7 +1064,7 @@
     },
     {
       "id": "plain-krita.layers.expand-groups",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Expand Groups",
       "importKind": "script",
@@ -441,7 +1079,7 @@
     },
     {
       "id": "plain-krita.layers.collapse-groups",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Collapse Groups",
       "importKind": "script",
@@ -456,7 +1094,7 @@
     },
     {
       "id": "plain-krita.layers.flatten-selected",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "panelName": "Layers",
       "sourcePath": "Krita Git Scripts/Layers/Flatten Selected",
       "importKind": "script",

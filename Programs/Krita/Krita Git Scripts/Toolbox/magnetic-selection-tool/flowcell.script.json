@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.magnetic-selection-tool",
+  "label": "Magnetic Selection Tool",
+  "tooltip": "Magnetic Selection Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

@@ -22,9 +22,14 @@ try {
     . $helper
     if($FlowCellLocalRoot -ne (Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'FlowCell/local')){throw 'Installed AppData path incorrect.'}
     if($FlowCellProgramsRoot -ne (Join-Path $FlowCellLocalRoot 'Programs')){throw 'Installed Programs path incorrect.'}
+    $configured=Join-Path $root 'Physical User Data'
+    @{localRoot=$configured}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $root 'flowcell.runtime.json')
+    $env:FLOWCELL_LOCAL_ROOT='';$env:FLOWCELL_PROGRAMS_ROOT=''
+    . $helper
+    if($FlowCellLocalRoot -ne $configured -or $FlowCellProgramsRoot -ne (Join-Path $configured 'Programs')){throw 'Installed runtime config was ignored.'}
     $override=Join-Path $root 'Explicit User Data'
     $env:FLOWCELL_LOCAL_ROOT=$override;$env:FLOWCELL_PROGRAMS_ROOT=''
     . $helper
     if($FlowCellLocalRoot -ne $override -or $FlowCellProgramsRoot -ne (Join-Path $override 'Programs')){throw 'Explicit local root was not used directly.'}
-    Write-Output 'PASS: development, installed AppData, and direct local override path checks.'
+    Write-Output 'PASS: development, installed AppData, configured physical root, and direct local override path checks.'
 } finally {foreach($key in $saved.Keys){[Environment]::SetEnvironmentVariable($key,$saved[$key])}}

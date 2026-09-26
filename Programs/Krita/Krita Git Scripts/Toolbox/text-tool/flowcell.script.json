@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "id": "plain-krita.toolbox.text-tool",
+  "label": "Text Tool",
+  "tooltip": "Text Tool",
+  "program": "Krita",
+  "source": "run.ps1"
+}

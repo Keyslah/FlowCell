@@ -4,6 +4,7 @@ Set-StrictMode -Version Latest
 $windowsRoot = Split-Path -Parent $PSScriptRoot
 $repoRoot = Split-Path -Parent (Split-Path -Parent $windowsRoot)
 $sourcePath = Join-Path $windowsRoot 'Windows Git Scripts\Utility\Temp Shots\Temp Shots.ps1'
+$snapshotsPath = Join-Path $windowsRoot 'Windows Git Scripts\Utility\Snapshots\Snapshots.ps1'
 $backendPath = Join-Path $repoRoot 'flowcellbackend\FlowCellBackend.ahk'
 $helperPath = Join-Path $repoRoot 'flowcellbackend\helpers\TempShotsCapture.ahk'
 $testScriptPath = Join-Path $PSScriptRoot 'Test-TempShotsCapture.ahk'
@@ -28,6 +29,9 @@ $tokens = $null
 $parseErrors = $null
 [void][Management.Automation.Language.Parser]::ParseFile($sourcePath, [ref]$tokens, [ref]$parseErrors)
 Assert-True (@($parseErrors).Count -eq 0) 'The Temp Shots package has PowerShell parse errors.'
+$snapshotParseErrors = $null
+[void][Management.Automation.Language.Parser]::ParseFile($snapshotsPath, [ref]$tokens, [ref]$snapshotParseErrors)
+Assert-True (@($snapshotParseErrors).Count -eq 0) 'The Snapshots package has PowerShell parse errors.'
 $source = [IO.File]::ReadAllText($sourcePath)
 $backend = [IO.File]::ReadAllText($backendPath)
 $helper = [IO.File]::ReadAllText($helperPath)
@@ -44,6 +48,10 @@ $cleanup = Get-AhkMethod $helper 'Cleanup'
 $save = Get-AhkMethod $helper 'SaveBitmapArea'
 $createDib = Get-AhkMethod $helper 'CreateClipboardDib'
 $publish = Get-AhkMethod $helper 'WriteClipboardImage'
+$beginSnapshots = Get-AhkMethod $helper 'BeginSnapshots'
+$takeSnapshot = Get-AhkMethod $helper 'TakeSnapshot'
+$snapshotsRoute = Get-AhkMethod $backend 'RunSnapshotsScript'
+$snapshotsDirect = Get-AhkMethod $backend 'TryLaunchSnapshotsFast'
 
 Assert-True ($backend.Contains('#Include helpers\TempShotsCapture.ahk')) 'The backend does not load its direct capture helper.'
 Assert-True ($hotkey.Contains('this.RunTempShotsScript(scriptPath)')) 'The hotkey bypasses the shared Temp Shots route.'
@@ -54,7 +62,13 @@ Assert-True ($direct.Contains('this.tempShotsCapture.Start(folder,')) 'Direct ca
 Assert-True ($direct.Contains('this.ReadTempShotsFastFolder()')) 'Direct capture does not resolve the Temp Shots folder.'
 Assert-True ($direct.Contains('temp_shots_direct_capture')) 'Direct capture has no distinct runtime method marker.'
 Assert-True ($source.Contains("command = 'run_script_now'") -and $source.Contains('SendMessageTimeout')) 'The package does not relay to the resident backend.'
-Assert-True ($source.Contains('scriptPath = Join-Path $PSScriptRoot ''Temp_Shots.vbs''')) 'The relay does not retain the owned package launcher.'
+Assert-True ($source.Contains("FindWindow('AutoHotkeyGUI', 'FlowCellBackendDirectScriptReceiver')")) 'The package cannot find the resident AutoHotkey receiver by its actual window class.'
+Assert-True ($source.Contains("Join-Path `$PSScriptRoot 'Temp_Shots.vbs'") -and $source.Contains('if ($LauncherPath)')) 'The relay does not retain the owned package launcher or support Snapshots.'
+Assert-True ($snapshotsRoute.Contains('this.TryLaunchSnapshotsFast(launcherPath)') -and $snapshotsDirect.Contains('"snapshots"')) 'Snapshots does not route to the resident fixed-box capture.'
+Assert-True ($panel.Contains('this.IsSnapshotsScript(scriptPath)') -and $hotkey -notmatch 'Snapshots') 'Snapshots panel routing is missing or Temp Shots routing changed unexpectedly.'
+Assert-True ($beginSnapshots.Contains('this.snapshotRect :=') -and $beginSnapshots.Contains('this.snapshotFolder := parentFolder "\snapshots"') -and $beginSnapshots.Contains('Hotkey "*Space"') -and $beginSnapshots.Contains('Hotkey "*Escape"')) 'Snapshots does not retain a box and bind Space/Escape.'
+Assert-True ($takeSnapshot.Contains('CaptureDesktop(rect.x, rect.y, rect.width, rect.height)') -and $takeSnapshot.Contains('SaveBitmapArea(bitmap, {x: 0, y: 0, width: rect.width, height: rect.height}') -and $takeSnapshot.Contains('KeyWait "Space"')) 'Snapshots does not capture fresh pixels once per Space press.'
+Assert-True ($cleanup.Contains('Hotkey "*Space", "Off"') -and $cleanup.Contains('this.snapshotActive := false')) 'Escape cannot end the Snapshots session.'
 Assert-True (-not ($source -match 'Wait-ForClipboardScreenshot|GetClipboardSequenceNumber|SaveStartedSnip|InitialSequence')) 'The obsolete asynchronous clipboard saver remains.'
 
 $capturePath = $source + $route + $direct + $helper
