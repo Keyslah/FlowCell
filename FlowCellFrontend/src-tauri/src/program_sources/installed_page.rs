@@ -2808,6 +2808,52 @@ mod tests {
     }
 
     #[test]
+    fn shipped_blender_theme_page_passes_native_manifest_validation() {
+        let package_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("Programs/Blender/Blender Git Scripts/Toolsets/theme");
+        let raw = fs::read_to_string(package_root.join("flowcell.script.json"))
+            .expect("read shipped Blender Theme descriptor");
+        let descriptor: Value = serde_json::from_str(&raw).expect("parse Theme descriptor");
+        let mut candidate: InstalledPageManifest =
+            serde_json::from_value(descriptor["page"].clone()).expect("parse Theme page");
+
+        // Page opening validates every action, including nested response schemas.
+        validate_and_normalize_page_manifest(&mut candidate, &package_root, "Blender")
+            .expect("shipped Blender Theme page must load through the native page host");
+
+        let sample = candidate
+            .actions
+            .iter()
+            .find(|action| action.id == "theme.image.sample")
+            .expect("image sampling action");
+        assert_eq!(
+            sample.response_schema.pointer(
+                "/properties/fieldPatch/properties/grid_scale/type"
+            ),
+            Some(&json!("number"))
+        );
+        let grid = candidate
+            .actions
+            .iter()
+            .find(|action| action.id == "picture.grid")
+            .expect("native grid action");
+        validate_json_schema_value(
+            &grid.request_schema,
+            &json!({
+                "static_background_path": "",
+                "grid_spacing_m": 1.0,
+                "grid_distance_m": 100.0,
+                "grid_far_spacing_m": 10.0,
+                "grid_scale": 0.01,
+                "grid_subdivisions": 10
+            }),
+            "picture.grid payload",
+        )
+        .expect("native grid controls must pass the host payload validator");
+    }
+
+    #[test]
     fn refresh_events_allow_protocol_tokens_but_reject_traversal() {
         let root = TestRoot::new("refresh-events");
         let mut candidate = page(&root);

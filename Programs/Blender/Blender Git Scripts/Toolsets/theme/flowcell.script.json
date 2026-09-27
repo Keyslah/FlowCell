@@ -1356,14 +1356,10 @@
                   "type": "number"
                 },
                 "grid_scale": {
-                  "type": "number",
-                  "minimum": 0.001,
-                  "maximum": 1000
+                  "type": "number"
                 },
                 "grid_subdivisions": {
-                  "type": "integer",
-                  "minimum": 2,
-                  "maximum": 100
+                  "type": "integer"
                 }
               }
             },
@@ -1497,14 +1493,10 @@
                   "type": "number"
                 },
                 "grid_scale": {
-                  "type": "number",
-                  "minimum": 0.001,
-                  "maximum": 1000
+                  "type": "number"
                 },
                 "grid_subdivisions": {
-                  "type": "integer",
-                  "minimum": 2,
-                  "maximum": 100
+                  "type": "integer"
                 }
               },
               "required": [
@@ -1710,14 +1702,10 @@
                   "type": "number"
                 },
                 "grid_scale": {
-                  "type": "number",
-                  "minimum": 0.001,
-                  "maximum": 1000
+                  "type": "number"
                 },
                 "grid_subdivisions": {
-                  "type": "integer",
-                  "minimum": 2,
-                  "maximum": 100
+                  "type": "integer"
                 }
               }
             },
@@ -1895,14 +1883,10 @@
                   "type": "number"
                 },
                 "grid_scale": {
-                  "type": "number",
-                  "minimum": 0.001,
-                  "maximum": 1000
+                  "type": "number"
                 },
                 "grid_subdivisions": {
-                  "type": "integer",
-                  "minimum": 2,
-                  "maximum": 100
+                  "type": "integer"
                 },
                 "popped_button_settings": {
                   "type": "object",
@@ -2300,14 +2284,10 @@
                   "type": "number"
                 },
                 "grid_scale": {
-                  "type": "number",
-                  "minimum": 0.001,
-                  "maximum": 1000
+                  "type": "number"
                 },
                 "grid_subdivisions": {
-                  "type": "integer",
-                  "minimum": 2,
-                  "maximum": 100
+                  "type": "integer"
                 },
                 "popped_button_settings": {
                   "type": "object",
@@ -2673,14 +2653,10 @@
                   "type": "number"
                 },
                 "grid_scale": {
-                  "type": "number",
-                  "minimum": 0.001,
-                  "maximum": 1000
+                  "type": "number"
                 },
                 "grid_subdivisions": {
-                  "type": "integer",
-                  "minimum": 2,
-                  "maximum": 100
+                  "type": "integer"
                 },
                 "popped_button_settings": {
                   "type": "object",
@@ -3046,14 +3022,10 @@
                   "type": "number"
                 },
                 "grid_scale": {
-                  "type": "number",
-                  "minimum": 0.001,
-                  "maximum": 1000
+                  "type": "number"
                 },
                 "grid_subdivisions": {
-                  "type": "integer",
-                  "minimum": 2,
-                  "maximum": 100
+                  "type": "integer"
                 },
                 "popped_button_settings": {
                   "type": "object",
@@ -3780,14 +3752,10 @@
               "type": "number"
             },
             "grid_scale": {
-              "type": "number",
-              "minimum": 0.001,
-              "maximum": 1000
+              "type": "number"
             },
             "grid_subdivisions": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 100
+              "type": "integer"
             }
           },
           "required": [
@@ -3808,14 +3776,10 @@
               "type": "string"
             },
             "grid_scale": {
-              "type": "number",
-              "minimum": 0.001,
-              "maximum": 1000
+              "type": "number"
             },
             "grid_subdivisions": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 100
+              "type": "integer"
             }
           },
           "required": [
@@ -3851,14 +3815,10 @@
               "type": "number"
             },
             "grid_scale": {
-              "type": "number",
-              "minimum": 0.001,
-              "maximum": 1000
+              "type": "number"
             },
             "grid_subdivisions": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 100
+              "type": "integer"
             }
           },
           "required": [
@@ -3885,14 +3845,10 @@
               "type": "number"
             },
             "grid_scale": {
-              "type": "number",
-              "minimum": 0.001,
-              "maximum": 1000
+              "type": "number"
             },
             "grid_subdivisions": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 100
+              "type": "integer"
             },
             "grid_enabled": {
               "type": "boolean"
@@ -3966,14 +3922,10 @@
               "type": "number"
             },
             "grid_scale": {
-              "type": "number",
-              "minimum": 0.001,
-              "maximum": 1000
+              "type": "number"
             },
             "grid_subdivisions": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 100
+              "type": "integer"
             }
           },
           "required": [
@@ -4006,14 +3958,10 @@
               "type": "number"
             },
             "grid_scale": {
-              "type": "number",
-              "minimum": 0.001,
-              "maximum": 1000
+              "type": "number"
             },
             "grid_subdivisions": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 100
+              "type": "integer"
             },
             "startup_state": {
               "type": "object",
@@ -4534,14 +4482,10 @@
               "type": "number"
             },
             "grid_scale": {
-              "type": "number",
-              "minimum": 0.001,
-              "maximum": 1000
+              "type": "number"
             },
             "grid_subdivisions": {
-              "type": "integer",
-              "minimum": 2,
-              "maximum": 100
+              "type": "integer"
             },
             "saved_overlay_path": {
               "type": "string"

@@ -336,7 +336,7 @@ test("Theme owns its Blender lifecycle and generic deletion owns its sidecar", (
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.21");
+  assert.equal(contribution.version, "3.0.22");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -1373,7 +1373,7 @@ test("native grid fields stay optional for legacy clients and travel with saved 
     assert.equal(page.config.payloadMaps.picture[fieldId], fieldId);
     for (const actionId of ["picture.apply", "picture.grid", "picture.startup"]) {
       const schema = actionById.get(actionId).requestSchema;
-      assert.deepEqual(schema.properties[fieldId], { type, minimum, maximum });
+      assert.deepEqual(schema.properties[fieldId], { type });
       assert.equal(schema.required.includes(fieldId), false, `${actionId} must accept legacy callers`);
     }
     for (const actionId of ["theme.fields.save", "theme.fields.load", "theme.package.save", "theme.package.open", "theme.package.previous", "theme.package.next"]) {
@@ -1382,12 +1382,12 @@ test("native grid fields stay optional for legacy clients and travel with saved 
       const schema = actionId.endsWith(".save")
         ? action.requestSchema.properties.values
         : action.responseSchema.properties.fieldPatch;
-      assert.deepEqual(schema.properties[fieldId], { type, minimum, maximum });
+      assert.deepEqual(schema.properties[fieldId], { type });
       assert.equal((schema.required || []).includes(fieldId), false);
     }
     for (const actionId of ["picture.apply", "picture.grid", "picture.startup", "runtime.read-picture-state"]) {
       const schema = actionById.get(actionId).responseSchema;
-      assert.deepEqual(schema.properties[fieldId], { type, minimum, maximum });
+      assert.deepEqual(schema.properties[fieldId], { type });
     }
   }
   assert.match(page.config.picture.gridHelp, /finer squares.*minor lines fade before major lines/);
