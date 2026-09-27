@@ -121,7 +121,7 @@
     },
     {
       "id": "blender.theme",
-      "version": "3.0.19",
+      "version": "3.0.21",
       "panelName": "toolset",
       "sourcePath": "Blender Git Scripts/Toolsets/theme",
       "importKind": "script",

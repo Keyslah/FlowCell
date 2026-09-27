@@ -281,7 +281,7 @@ test("Theme owns its Blender lifecycle and generic deletion owns its sidecar", (
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.19");
+  assert.equal(contribution.version, "3.0.21");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -1065,7 +1065,7 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
     "button-theme.settings": "Apply text color, hover and active highlights, and glow to all Blender popped Buttons. Saved packages include the currently applied popped Button settings.",
     "picture.file.select": "Pick a Place Picture image.",
     "picture.apply": "Place the picture path in the Blender viewport with the overlay.",
-    "picture.grid": "Enable Blender's native viewport grid.",
+    "picture.grid": "Apply Grid Scale and Subdivisions and enable Blender's native viewport grid.",
     "picture.grid.remove": "Hide Blender's native grid; keep any Place Picture image and gizmos active.",
     "picture.startup": "Save the current Place Picture image so Blender restores it on startup.",
     "picture.clear": "Remove the Place Picture background, grid, and gizmos, and clear the picture path.",
@@ -1264,16 +1264,16 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
   assert.doesNotMatch(renderThemeSource, /applyRow/);
 });
 
-test("native Grid hides obsolete spacing controls while retaining old saved values", async () => {
+test("native Grid exposes native settings while retaining hidden legacy saved values", async () => {
   const legacyGrid = { grid_spacing_m: 0.25, grid_distance_m: 17, grid_far_spacing_m: 3 };
   const root = await renderThemePage({ fields: legacyGrid }, {
     "button-theme.settings": { settings: poppedSettings(), configured: true },
     "theme.package.save": { saved: true, packagePath: "C:\\Themes\\legacy.json", packageName: "Legacy" }
   });
-  assert.deepEqual(page.config.picture.gridFieldIds, []);
-  assert.equal(root.querySelectorAll("div").find((node) => node.className === "theme-number-grid theme-number-grid--picture").children.length, 0);
+  assert.deepEqual(page.config.picture.gridFieldIds, ["grid_scale", "grid_subdivisions"]);
+  assert.equal(root.querySelectorAll("div").find((node) => node.className === "theme-number-grid theme-number-grid--picture").children.length, 2);
   assert.equal(root.querySelectorAll("span").some((node) => ["Near grid", "Distance", "Far grid"].includes(node.textContent)), false);
-  assert.equal(page.config.copy.applyingGrid, "Enabling Blender's native grid…");
+  assert.equal(page.config.copy.applyingGrid, "Applying Blender's native grid settings…");
   assert.equal(page.config.copy.removingGrid, "Hiding Blender's native grid...");
 
   for (const fieldId of Object.keys(legacyGrid)) {
@@ -1295,6 +1295,145 @@ test("native Grid hides obsolete spacing controls while retaining old saved valu
   await root.flushTimers();
   const savedState = root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state;
   assert.deepEqual(Object.fromEntries(Object.keys(legacyGrid).map((fieldId) => [fieldId, savedState.fields[fieldId]])), legacyGrid);
+});
+
+test("native grid fields stay optional for legacy clients and travel with saved fields and packages", () => {
+  for (const [fieldId, type, minimum, maximum, defaultValue] of [
+    ["grid_scale", "number", 0.001, 1000, 1],
+    ["grid_subdivisions", "integer", 2, 100, 10]
+  ]) {
+    const field = fieldById.get(fieldId);
+    assert.equal(field.defaultValue, defaultValue);
+    assert.equal(field.minimum, minimum);
+    assert.equal(field.maximum, maximum);
+    assert.ok(page.config.persistence.fieldIds.includes(fieldId));
+    assert.ok(page.config.persistence.packageFieldIds.includes(fieldId));
+    assert.equal(page.config.payloadMaps.picture[fieldId], fieldId);
+    for (const actionId of ["picture.apply", "picture.grid", "picture.startup"]) {
+      const schema = actionById.get(actionId).requestSchema;
+      assert.deepEqual(schema.properties[fieldId], { type, minimum, maximum });
+      assert.equal(schema.required.includes(fieldId), false, `${actionId} must accept legacy callers`);
+    }
+    for (const actionId of ["theme.fields.save", "theme.fields.load", "theme.package.save", "theme.package.open", "theme.package.previous", "theme.package.next"]) {
+      const action = actionById.get(actionId);
+      assert.ok(action.handler.options.valueFields.includes(fieldId), `${actionId} keeps ${fieldId}`);
+      const schema = actionId.endsWith(".save")
+        ? action.requestSchema.properties.values
+        : action.responseSchema.properties.fieldPatch;
+      assert.deepEqual(schema.properties[fieldId], { type, minimum, maximum });
+      assert.equal((schema.required || []).includes(fieldId), false);
+    }
+    for (const actionId of ["picture.apply", "picture.grid", "picture.startup", "runtime.read-picture-state"]) {
+      const schema = actionById.get(actionId).responseSchema;
+      assert.deepEqual(schema.properties[fieldId], { type, minimum, maximum });
+    }
+  }
+  assert.match(page.config.picture.gridHelp, /finer squares.*minor lines fade before major lines/);
+  assert.match(page.config.picture.gridHelp, /Scene Units is None.*Metric\/Imperial/);
+});
+
+test("native grid controls normalize values, adopt Blender results and persist them", async () => {
+  const root = await renderThemePage({ fields: { grid_scale: 0.01, grid_subdivisions: 20 } }, {
+    "button-theme.settings": { settings: poppedSettings(), configured: true },
+    "picture.grid": { grid_scale: 0.003, grid_subdivisions: 8, grid_enabled: true },
+    "theme.package.save": { saved: true, packagePath: "C:\\Themes\\fine.json", packageName: "Fine" }
+  });
+  const control = (label) => root.querySelectorAll("label")
+    .find((candidate) => candidate.querySelectorAll("span").some((span) => span.textContent === label))
+    .querySelectorAll("input")[0];
+  const scale = control("Grid Scale");
+  const subdivisions = control("Subdivisions (unitless)");
+  assert.equal(scale.value, "0.01");
+  assert.equal(scale.min, "0.001");
+  assert.equal(scale.max, "1000");
+  assert.equal(subdivisions.value, "20");
+  assert.equal(subdivisions.min, "2");
+  assert.equal(subdivisions.max, "100");
+  for (const [input, value, expected] of [
+    [scale, "0", "0.001"], [scale, "2000", "1000"], [scale, "0.0025", "0.0025"],
+    [subdivisions, "1", "2"], [subdivisions, "200", "100"], [subdivisions, "4.6", "5"]
+  ]) {
+    input.value = value;
+    dispatch(input, "change");
+    assert.equal(input.value, expected);
+  }
+  await clickPageButton(root, "Grid");
+  const gridRequest = root.requests.find(({ actionId }) => actionId === "picture.grid");
+  assert.equal(gridRequest.payload.grid_scale, 0.0025);
+  assert.equal(gridRequest.payload.grid_subdivisions, 5);
+  assert.equal(control("Grid Scale").value, "0.003");
+  assert.equal(control("Subdivisions (unitless)").value, "8");
+  for (const [label, actionId] of [["Startup", "picture.startup"], ["Save Buckets", "theme.fields.save"], ["Save Package", "theme.package.save"]]) {
+    await clickPageButton(root, label);
+    const request = root.requests.find((candidate) => candidate.actionId === actionId);
+    const values = request.payload.values || request.payload;
+    assert.equal(values.grid_scale, 0.003, `${actionId} saves applied scale`);
+    assert.equal(values.grid_subdivisions, 8, `${actionId} saves applied subdivisions`);
+  }
+  await root.flushTimers();
+  const saved = root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state.fields;
+  assert.equal(saved.grid_scale, 0.003);
+  assert.equal(saved.grid_subdivisions, 8);
+});
+
+test("loading a package applies its native grid scale with its picture", async () => {
+  const root = await renderThemePage({ fields: { grid_scale: 1, grid_subdivisions: 10 } }, {
+    "button-theme.settings": { settings: poppedSettings(), configured: true },
+    "theme.package.open": {
+      selected: true, packagePath: "C:\\Themes\\fine.json", packageName: "Fine",
+      fieldPatch: { static_background_path: "C:\\Themes\\fine.png", grid_scale: 0.005, grid_subdivisions: 5 }
+    }
+  });
+  await clickPageButton(root, "Open Package");
+  const request = root.requests.find(({ actionId }) => actionId === "picture.apply");
+  assert.equal(request.payload.static_background_path, "C:\\Themes\\fine.png");
+  assert.equal(request.payload.grid_scale, 0.005);
+  assert.equal(request.payload.grid_subdivisions, 5);
+});
+
+test("older saved fields and packages reset missing native grid settings without enabling Grid", async () => {
+  for (const [label, actionId] of [["Load Buckets", "theme.fields.load"], ["Open Package", "theme.package.open"], ["Previous", "theme.package.previous"], ["Next", "theme.package.next"]]) {
+    for (const storedGrid of [{}, { grid_scale: 0.2 }, { grid_subdivisions: 4 }]) {
+      const root = await renderThemePage({ fields: { grid_scale: 0.005, grid_subdivisions: 20 } }, {
+        "button-theme.settings": { settings: poppedSettings(), configured: true },
+        [actionId]: {
+          selected: true, packagePath: "C:\\Themes\\older.json", packageName: "Older",
+          fieldPatch: { static_background_path: "C:\\Themes\\older.png", ...storedGrid }
+        }
+      });
+      await clickPageButton(root, label);
+      await root.flushTimers();
+      const fields = root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state.fields;
+      assert.equal(fields.grid_scale, storedGrid.grid_scale ?? 1, `${label} resets missing scale`);
+      assert.equal(fields.grid_subdivisions, storedGrid.grid_subdivisions ?? 10, `${label} resets missing subdivisions`);
+      assert.equal(Object.hasOwn(fields, "grid_enabled"), false);
+      assert.equal(root.requests.some(({ actionId }) => actionId === "picture.grid"), false);
+      const picture = root.requests.find(({ actionId }) => actionId === "picture.apply");
+      if (actionId === "theme.fields.load") assert.equal(picture, undefined, "loading fields only stages settings");
+      else {
+        assert.equal(picture.payload.grid_scale, storedGrid.grid_scale ?? 1);
+        assert.equal(picture.payload.grid_subdivisions, storedGrid.grid_subdivisions ?? 10);
+        assert.equal(Object.hasOwn(picture.payload, "grid_enabled"), false);
+      }
+    }
+  }
+});
+
+test("cancelled or failed saved-field loads preserve the current native grid settings", async () => {
+  for (const [label, actionId] of [["Load Buckets", "theme.fields.load"], ["Open Package", "theme.package.open"], ["Previous", "theme.package.previous"], ["Next", "theme.package.next"]]) {
+    for (const response of [{ selected: false, fieldPatch: {} }, () => { throw new Error("Load failed"); }]) {
+      const root = await renderThemePage({ fields: { grid_scale: 0.005, grid_subdivisions: 20 } }, {
+        "button-theme.settings": { settings: poppedSettings(), configured: true },
+        [actionId]: response
+      });
+      await clickPageButton(root, label);
+      await clickPageButton(root, "Save Buckets");
+      const fields = root.requests.find(({ actionId }) => actionId === "theme.fields.save").payload.values;
+      assert.equal(fields.grid_scale, 0.005);
+      assert.equal(fields.grid_subdivisions, 20);
+      assert.equal(root.requests.some(({ actionId }) => actionId === "picture.grid" || actionId === "picture.apply"), false);
+    }
+  }
 });
 
 test("Remove Grid preserves the picture and the startup bundle stays atomic", () => {

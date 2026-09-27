@@ -1019,6 +1019,16 @@
                 },
                 "grid_far_spacing_m": {
                   "type": "number"
+                },
+                "grid_scale": {
+                  "type": "number",
+                  "minimum": 0.001,
+                  "maximum": 1000
+                },
+                "grid_subdivisions": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 100
                 }
               }
             },
@@ -1066,7 +1076,9 @@
               "static_background_path",
               "grid_spacing_m",
               "grid_distance_m",
-              "grid_far_spacing_m"
+              "grid_far_spacing_m",
+              "grid_scale",
+              "grid_subdivisions"
             ],
             "dialogTitle": "Save Blender Theme Fields"
           }
@@ -1148,6 +1160,16 @@
                 },
                 "grid_far_spacing_m": {
                   "type": "number"
+                },
+                "grid_scale": {
+                  "type": "number",
+                  "minimum": 0.001,
+                  "maximum": 1000
+                },
+                "grid_subdivisions": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 100
                 }
               },
               "required": [
@@ -1228,7 +1250,9 @@
               "static_background_path",
               "grid_spacing_m",
               "grid_distance_m",
-              "grid_far_spacing_m"
+              "grid_far_spacing_m",
+              "grid_scale",
+              "grid_subdivisions"
             ],
             "legacyFormats": [
               "flowcell-blender-theme-v1"
@@ -1349,6 +1373,16 @@
                 },
                 "grid_far_spacing_m": {
                   "type": "number"
+                },
+                "grid_scale": {
+                  "type": "number",
+                  "minimum": 0.001,
+                  "maximum": 1000
+                },
+                "grid_subdivisions": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 100
                 }
               }
             },
@@ -1399,6 +1433,8 @@
               "grid_spacing_m",
               "grid_distance_m",
               "grid_far_spacing_m",
+              "grid_scale",
+              "grid_subdivisions",
               "popped_button_settings"
             ],
             "assetFields": [
@@ -1522,6 +1558,16 @@
                 },
                 "grid_far_spacing_m": {
                   "type": "number"
+                },
+                "grid_scale": {
+                  "type": "number",
+                  "minimum": 0.001,
+                  "maximum": 1000
+                },
+                "grid_subdivisions": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 100
                 },
                 "popped_button_settings": {
                   "type": "object",
@@ -1689,6 +1735,8 @@
               "grid_spacing_m",
               "grid_distance_m",
               "grid_far_spacing_m",
+              "grid_scale",
+              "grid_subdivisions",
               "popped_button_settings"
             ],
             "assetFields": [
@@ -1819,6 +1867,16 @@
                 "grid_far_spacing_m": {
                   "type": "number"
                 },
+                "grid_scale": {
+                  "type": "number",
+                  "minimum": 0.001,
+                  "maximum": 1000
+                },
+                "grid_subdivisions": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 100
+                },
                 "popped_button_settings": {
                   "type": "object",
                   "additionalProperties": false,
@@ -1946,6 +2004,8 @@
               "grid_spacing_m",
               "grid_distance_m",
               "grid_far_spacing_m",
+              "grid_scale",
+              "grid_subdivisions",
               "popped_button_settings"
             ],
             "assetFields": [
@@ -2083,6 +2143,16 @@
                 "grid_far_spacing_m": {
                   "type": "number"
                 },
+                "grid_scale": {
+                  "type": "number",
+                  "minimum": 0.001,
+                  "maximum": 1000
+                },
+                "grid_subdivisions": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 100
+                },
                 "popped_button_settings": {
                   "type": "object",
                   "additionalProperties": false,
@@ -2210,6 +2280,8 @@
               "grid_spacing_m",
               "grid_distance_m",
               "grid_far_spacing_m",
+              "grid_scale",
+              "grid_subdivisions",
               "popped_button_settings"
             ],
             "assetFields": [
@@ -2346,6 +2418,16 @@
                 },
                 "grid_far_spacing_m": {
                   "type": "number"
+                },
+                "grid_scale": {
+                  "type": "number",
+                  "minimum": 0.001,
+                  "maximum": 1000
+                },
+                "grid_subdivisions": {
+                  "type": "integer",
+                  "minimum": 2,
+                  "maximum": 100
                 },
                 "popped_button_settings": {
                   "type": "object",
@@ -2973,6 +3055,16 @@
             },
             "grid_far_spacing_m": {
               "type": "number"
+            },
+            "grid_scale": {
+              "type": "number",
+              "minimum": 0.001,
+              "maximum": 1000
+            },
+            "grid_subdivisions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 100
             }
           },
           "required": [
@@ -2991,6 +3083,16 @@
             },
             "static_background_path": {
               "type": "string"
+            },
+            "grid_scale": {
+              "type": "number",
+              "minimum": 0.001,
+              "maximum": 1000
+            },
+            "grid_subdivisions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 100
             }
           },
           "required": [
@@ -3024,6 +3126,16 @@
             },
             "grid_far_spacing_m": {
               "type": "number"
+            },
+            "grid_scale": {
+              "type": "number",
+              "minimum": 0.001,
+              "maximum": 1000
+            },
+            "grid_subdivisions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 100
             }
           },
           "required": [
@@ -3048,6 +3160,16 @@
             },
             "grid_far_spacing_m": {
               "type": "number"
+            },
+            "grid_scale": {
+              "type": "number",
+              "minimum": 0.001,
+              "maximum": 1000
+            },
+            "grid_subdivisions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 100
             },
             "grid_enabled": {
               "type": "boolean"
@@ -3119,6 +3241,16 @@
             },
             "grid_far_spacing_m": {
               "type": "number"
+            },
+            "grid_scale": {
+              "type": "number",
+              "minimum": 0.001,
+              "maximum": 1000
+            },
+            "grid_subdivisions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 100
             }
           },
           "required": [
@@ -3149,6 +3281,16 @@
             },
             "grid_far_spacing_m": {
               "type": "number"
+            },
+            "grid_scale": {
+              "type": "number",
+              "minimum": 0.001,
+              "maximum": 1000
+            },
+            "grid_subdivisions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 100
             },
             "startup_state": {
               "type": "object",
@@ -3668,6 +3810,16 @@
             "grid_far_spacing_m": {
               "type": "number"
             },
+            "grid_scale": {
+              "type": "number",
+              "minimum": 0.001,
+              "maximum": 1000
+            },
+            "grid_subdivisions": {
+              "type": "integer",
+              "minimum": 2,
+              "maximum": 100
+            },
             "saved_overlay_path": {
               "type": "string"
             },
@@ -3759,7 +3911,7 @@
         "loadingPackage": "Loading the theme package…",
         "selectingPicture": "Choosing a background picture…",
         "applyingPicture": "Applying Place Picture…",
-        "applyingGrid": "Enabling Blender's native grid…",
+        "applyingGrid": "Applying Blender's native grid settings…",
         "savingStartup": "Saving Place Picture startup settings…",
         "clearingPicture": "Clearing Place Picture…",
         "selectingEnvironment": "Choosing an HDRI…",
@@ -3832,7 +3984,7 @@
         "button-theme.toggle-text": "Toggle all scoped Button label text in open Blender Pop-outs and Fans between black and white without changing Surface colors or saved skins.",
         "picture.file.select": "Pick a Place Picture image.",
         "picture.apply": "Place the picture path in the Blender viewport with the overlay.",
-        "picture.grid": "Enable Blender's native viewport grid.",
+        "picture.grid": "Apply Grid Scale and Subdivisions and enable Blender's native viewport grid.",
         "picture.grid.remove": "Hide Blender's native grid; keep any Place Picture image and gizmos active.",
         "picture.startup": "Save the current Place Picture image so Blender restores it on startup.",
         "picture.clear": "Remove the Place Picture background, grid, and gizmos, and clear the picture path.",
@@ -3990,6 +4142,25 @@
           "defaultValue": 1,
           "minimum": 0.0001,
           "step": 0.01
+        },
+        {
+          "id": "grid_scale",
+          "kind": "number",
+          "label": "Grid Scale",
+          "defaultValue": 1,
+          "minimum": 0.001,
+          "maximum": 1000,
+          "step": 0.001
+        },
+        {
+          "id": "grid_subdivisions",
+          "kind": "number",
+          "label": "Subdivisions (unitless)",
+          "defaultValue": 10,
+          "minimum": 2,
+          "maximum": 100,
+          "step": 1,
+          "integer": true
         },
         {
           "id": "hdri_path",
@@ -4184,7 +4355,11 @@
       },
       "picture": {
         "pathFieldId": "static_background_path",
-        "gridFieldIds": []
+        "gridFieldIds": [
+          "grid_scale",
+          "grid_subdivisions"
+        ],
+        "gridHelp": "Lower Grid Scale gives finer squares; native minor lines fade before major lines. Subdivisions applies when Scene Units is None; Blender uses fixed unit-based subdivisions in Metric/Imperial. Click Grid to apply."
       },
       "environment": {
         "pathFieldId": "hdri_path",
@@ -4291,7 +4466,9 @@
           "static_background_path": "static_background_path",
           "grid_spacing_m": "grid_spacing_m",
           "grid_distance_m": "grid_distance_m",
-          "grid_far_spacing_m": "grid_far_spacing_m"
+          "grid_far_spacing_m": "grid_far_spacing_m",
+          "grid_scale": "grid_scale",
+          "grid_subdivisions": "grid_subdivisions"
         },
         "environment": {
           "hdri_path": "hdri_path",
@@ -4323,7 +4500,9 @@
           "static_background_path",
           "grid_spacing_m",
           "grid_distance_m",
-          "grid_far_spacing_m"
+          "grid_far_spacing_m",
+          "grid_scale",
+          "grid_subdivisions"
         ],
         "packageFieldIds": [
           "theme_palette_hexes",
@@ -4346,7 +4525,9 @@
           "static_background_path",
           "grid_spacing_m",
           "grid_distance_m",
-          "grid_far_spacing_m"
+          "grid_far_spacing_m",
+          "grid_scale",
+          "grid_subdivisions"
         ],
         "assetFieldIds": [
           "theme_image_path",

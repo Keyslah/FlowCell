@@ -126,12 +126,13 @@ def registered_overlay():
     namespace = load_functions(
         "_register_viewport_overlay_from_resolved_path", "_remove_place_picture_draw_handlers",
         "_place_picture_overlay_is_current", "_remove_viewport_overlay_handler", "_remove_place_picture_grid",
-        "_free_native_view_caches",
+        "_free_native_view_caches", "_read_native_grid_settings",
         _overlay_state=lambda: state,
         _disable_camera_background_images=lambda: None,
         _snapshot_place_picture_viewports=lambda: [],
         _apply_place_picture_viewport_settings=lambda enabled=False: None,
         _set_native_grid_visibility=lambda enabled: None,
+        _iter_view3d_spaces=lambda: [],
         _restore_place_picture_viewports=lambda state: None,
         _bump_place_picture_generation=lambda: 1,
         _register_place_picture_modal_operator=lambda: None,
@@ -233,7 +234,7 @@ def native_cache_fixture():
 
 class ThemeGridDefaultsTests(unittest.TestCase):
     def test_new_and_legacy_project_states_default_off_but_explicit_choice_survives(self):
-        namespace = load_functions("_empty_project_theme_state", "_normalize_project_theme_state")
+        namespace = load_functions("_empty_project_theme_state", "_normalize_project_theme_state", "_read_native_grid_settings")
         empty = namespace["_empty_project_theme_state"]()
         self.assertFalse(empty["place_picture"]["grid_enabled"])
         normalize = namespace["_normalize_project_theme_state"]
@@ -247,7 +248,7 @@ class ThemeGridDefaultsTests(unittest.TestCase):
     def test_runtime_startup_capture_does_not_invent_a_grid(self):
         state = {"enabled": True, "path": "photo.png"}
         namespace = load_functions(
-            "_startup_place_picture_state_from_runtime",
+            "_startup_place_picture_state_from_runtime", "_read_native_grid_settings",
             _overlay_state=lambda: state,
             _project_relative_path=lambda path: "//" + path,
         )
@@ -261,7 +262,7 @@ class ThemeGridDefaultsTests(unittest.TestCase):
     def test_saving_startup_for_a_new_image_does_not_enable_grid(self):
         state = {"enabled": True, "path": "old.png", "grid_enabled": True}
         namespace = load_functions(
-            "_set_startup_place_picture_state",
+            "_set_startup_place_picture_state", "_read_native_grid_settings",
             _overlay_state=lambda: state,
             _resolve_optional_image_path=lambda path: path,
             _read_string=lambda payload, key, default: payload.get(key, default),
@@ -285,7 +286,7 @@ class ThemeGridDefaultsTests(unittest.TestCase):
             return path
 
         namespace = load_functions(
-            "_place_picture_image", "_apply_grid_spacing",
+            "_place_picture_image", "_apply_grid_spacing", "_read_native_grid_settings",
             _overlay_state=lambda: state,
             _read_grid_settings=lambda payload: (1.0, 5.0, 2.0),
             _set_runtime_grid_settings=lambda *args: None,
@@ -312,6 +313,172 @@ class ThemeGridDefaultsTests(unittest.TestCase):
                      and isinstance(node.args[0], ast.Constant) and node.args[0].value == "grid_enabled"
                      and isinstance(node.args[1], ast.Constant) and node.args[1].value is True]
         self.assertEqual([node.lineno for node in fallbacks], [])
+
+
+class NativeGridControlTests(unittest.TestCase):
+    def test_fractional_scales_and_whole_subdivisions_keep_native_values(self):
+        read = load_functions("_read_native_grid_settings")["_read_native_grid_settings"]
+        self.assertEqual(read({}), {"grid_scale": 1.0, "grid_subdivisions": 10})
+        for scale, divisions in ((0.001, 2), (0.025, 8), (0.1, 10), (1000, 100)):
+            with self.subTest(scale=scale, subdivisions=divisions):
+                result = read({"grid_scale": str(scale), "grid_subdivisions": str(divisions)})
+                self.assertEqual(result, {"grid_scale": float(scale), "grid_subdivisions": divisions})
+                self.assertIsInstance(result["grid_subdivisions"], int)
+
+    def test_invalid_native_values_are_rejected_before_actions_change_state(self):
+        invalid_values = {
+            "grid_scale": (None, "invalid", 0, -1, 0.0009, 1001, float("nan"), float("inf")),
+            "grid_subdivisions": (None, "invalid", 1, 101, 2.5, float("nan"), float("inf")),
+        }
+        state = {"path": "photo.png", "grid_scale": 0.025, "grid_subdivisions": 8}
+        mutations = []
+        namespace = load_functions(
+            "_read_native_grid_settings", "_place_picture_image", "_apply_grid_spacing", "_set_startup_place_picture_state",
+            _overlay_state=lambda: state,
+            _read_grid_settings=lambda payload: (1.0, 5.0, 2.0),
+            _set_runtime_grid_settings=lambda *args: mutations.append("runtime"),
+            _resolve_optional_image_path=lambda path: path,
+            _read_string=lambda payload, key, default: payload.get(key, default),
+            _register_viewport_overlay_from_resolved_path=lambda *args, **kwargs: mutations.append("register"),
+            _read_owner_runtime_theme_state=lambda: {},
+            _write_owner_runtime_theme_state=lambda value: mutations.append("startup"),
+            _set_project_place_picture_state=lambda *args, **kwargs: mutations.append("project"),
+        )
+        for action in ("_place_picture_image", "_apply_grid_spacing", "_set_startup_place_picture_state"):
+            for field, values in invalid_values.items():
+                for value in values:
+                    with self.subTest(action=action, field=field, value=value):
+                        with self.assertRaises(ValueError):
+                            namespace[action](None, {"static_background_path": "photo.png", field: value})
+                        self.assertEqual(state, {"path": "photo.png", "grid_scale": 0.025, "grid_subdivisions": 8})
+                        self.assertEqual(mutations, [])
+
+    def test_project_normalization_preserves_valid_settings_and_repairs_each_invalid_field(self):
+        namespace = load_functions("_empty_project_theme_state", "_normalize_project_theme_state", "_read_native_grid_settings")
+        normalize = namespace["_normalize_project_theme_state"]
+        saved = namespace["_empty_project_theme_state"]()
+        self.assertEqual((saved["place_picture"]["grid_scale"], saved["place_picture"]["grid_subdivisions"]), (1.0, 10))
+        for scale, divisions, expected in (("0.025", "8", (0.025, 8)),
+                                           ("invalid", 8, (1.0, 8)),
+                                           (0.025, 2.5, (0.025, 10)),
+                                           (float("inf"), 101, (1.0, 10))):
+            with self.subTest(scale=scale, subdivisions=divisions):
+                saved["place_picture"].update(grid_scale=scale, grid_subdivisions=divisions)
+                result = normalize(saved)["place_picture"]
+                self.assertEqual((result["grid_scale"], result["grid_subdivisions"]), expected)
+                self.assertFalse(result["grid_enabled"], "restoring spacing must not enable a previously disabled grid")
+
+    def test_picture_grid_and_remove_actions_round_trip_settings_into_project_state(self):
+        state = {}
+        project = {"place_picture": {}}
+        registrations = []
+
+        def register(path, **options):
+            state.update(path=path, enabled=True, **options)
+            registrations.append((path, options))
+            return path
+
+        namespace = load_functions(
+            "_read_native_grid_settings", "_set_project_place_picture_state", "_place_picture_image",
+            "_apply_grid_spacing", "_remove_place_picture_grid",
+            _overlay_state=lambda: state,
+            _read_grid_settings=lambda payload: (1.0, 5.0, 2.0),
+            _set_runtime_grid_settings=lambda *args: None,
+            _resolve_optional_image_path=lambda path: path,
+            _read_string=lambda payload, key, default: payload.get(key, default),
+            _register_viewport_overlay_from_resolved_path=register,
+            _set_saved_overlay_path=lambda path: None,
+            _read_project_theme_state=lambda context: project,
+            _project_relative_path=lambda path: "//" + path,
+            _write_project_theme_state=lambda context, value: value,
+            _set_native_grid_visibility=lambda enabled: None,
+            _free_native_view_caches=lambda value: None,
+            _tag_redraw_view3d=lambda: None,
+            _result=lambda message, **payload: payload,
+        )
+        namespace["_place_picture_image"](None, {"static_background_path": "photo.png", "grid_scale": 0.025, "grid_subdivisions": 8})
+        self.assertEqual((state["grid_scale"], state["grid_subdivisions"]), (0.025, 8))
+        self.assertEqual((project["place_picture"]["grid_scale"], project["place_picture"]["grid_subdivisions"]), (0.025, 8))
+        self.assertFalse(project["place_picture"]["grid_enabled"])
+        result = namespace["_apply_grid_spacing"](None, {"grid_scale": 0.01, "grid_subdivisions": 5})
+        self.assertEqual((result["grid_scale"], result["grid_subdivisions"]), (0.01, 5))
+        self.assertEqual((project["place_picture"]["grid_scale"], project["place_picture"]["grid_subdivisions"]), (0.01, 5))
+        self.assertTrue(project["place_picture"]["grid_enabled"])
+        namespace["_remove_place_picture_grid"]()
+        self.assertEqual((project["place_picture"]["grid_scale"], project["place_picture"]["grid_subdivisions"]), (0.01, 5))
+        self.assertFalse(project["place_picture"]["grid_enabled"])
+        self.assertEqual(project["place_picture"]["path"], "photo.png")
+        self.assertEqual(len(registrations), 2, "Remove Grid must keep the existing picture registration")
+
+    def test_startup_save_and_runtime_capture_keep_native_spacing_without_enabling_grid(self):
+        state = {"enabled": True, "path": "photo.png", "grid_enabled": False,
+                 "grid_scale": 0.025, "grid_subdivisions": 8}
+        saved = []
+        namespace = load_functions(
+            "_read_native_grid_settings", "_set_startup_place_picture_state", "_startup_place_picture_state_from_runtime",
+            _overlay_state=lambda: state,
+            _read_grid_settings=lambda payload: (1.0, 5.0, 2.0),
+            _resolve_optional_image_path=lambda path: path,
+            _read_string=lambda payload, key, default: payload.get(key, default),
+            _read_owner_runtime_theme_state=lambda: {},
+            _write_owner_runtime_theme_state=lambda value: saved.append(value) or value,
+            _project_relative_path=lambda path: "//" + path,
+            _startup_state_payload=lambda value: {},
+            _result=lambda message, **payload: payload,
+        )
+        captured = namespace["_startup_place_picture_state_from_runtime"]()
+        self.assertEqual((captured["grid_scale"], captured["grid_subdivisions"]), (0.025, 8))
+        self.assertFalse(captured["grid_enabled"])
+        response = namespace["_set_startup_place_picture_state"](None, {
+            "static_background_path": "photo.png", "grid_scale": 0.001, "grid_subdivisions": 20,
+        })
+        for value in (saved[-1]["place_picture"], response):
+            self.assertEqual((value["grid_scale"], value["grid_subdivisions"]), (0.001, 20))
+            self.assertFalse(value["grid_enabled"])
+        self.assertEqual((state["grid_scale"], state["grid_subdivisions"]), (0.025, 8), "saving startup does not change the current viewport")
+
+    def test_startup_restore_forwards_saved_native_settings_without_overwriting_project(self):
+        saved = {"enabled": True, "path": "photo.png", "grid_enabled": True,
+                 "grid_scale": 0.025, "grid_subdivisions": 8}
+        restored = []
+        namespace = load_functions(
+            "_restore_project_startup_state", "_read_native_grid_settings",
+            _restore_state_for_startup=lambda context: ({}, {}, {}, saved, True),
+            _project_theme_payload_for_restore=lambda state: {},
+            _resolve_project_place_picture_path=lambda state, **kwargs: (state["path"], ""),
+            _place_picture_image=lambda context, payload, **kwargs: restored.append((payload, kwargs)),
+            _project_state_payload=lambda state: {},
+            _startup_state_payload=lambda state: {},
+            _result=lambda message, **payload: payload,
+        )
+        result = namespace["_restore_project_startup_state"](None)
+        self.assertTrue(result["restored_place_picture"])
+        self.assertEqual(result["warnings"], [])
+        payload, options = restored[-1]
+        self.assertEqual((payload["grid_scale"], payload["grid_subdivisions"], payload["grid_enabled"]), (0.025, 8, True))
+        self.assertFalse(options["persist_project_state"])
+
+    def test_registration_applies_finer_native_grid_after_snapshot_without_changing_view_or_units(self):
+        namespace, state, _handlers, _removed, _gpu_state, _matrices, _draws = registered_overlay()
+        overlay = types.SimpleNamespace(grid_scale=1.5, grid_subdivisions=8)
+        view = types.SimpleNamespace(view_distance=2.0, view_location=(1.0, 2.0, 3.0), view_rotation=(1.0, 0.0, 0.0, 0.0))
+        space = types.SimpleNamespace(overlay=overlay, shading=types.SimpleNamespace(type="MATERIAL"), region_3d=view)
+        units = types.SimpleNamespace(system="METRIC", scale_length=0.001, length_unit="MILLIMETERS")
+        namespace["bpy"].context = types.SimpleNamespace(scene=types.SimpleNamespace(unit_settings=units))
+        namespace.update(load_functions(
+            "_snapshot_place_picture_viewports", "_restore_place_picture_viewports",
+            _iter_view3d_spaces=lambda: [space],
+            _safe_set=lambda obj, attr, value: setattr(obj, attr, value),
+        ))
+        before_view, before_units = vars(view).copy(), vars(units).copy()
+        state.update(grid_scale=0.025, grid_subdivisions=10)
+        namespace["_register_viewport_overlay_from_resolved_path"]("photo.png", grid_enabled=True)
+        self.assertEqual((overlay.grid_scale, overlay.grid_subdivisions), (0.025, 10))
+        self.assertEqual(vars(view), before_view)
+        self.assertEqual(vars(units), before_units)
+        self.assertIsNone(state["grid_handler"], "fine/coarse fading must continue through Blender's native renderer")
+        namespace["_restore_place_picture_viewports"](state)
+        self.assertEqual((overlay.grid_scale, overlay.grid_subdivisions), (1.5, 8), "the original grid settings must be captured before applying FlowCell values")
 
 
 class ThemeGridViewportTests(unittest.TestCase):
@@ -418,6 +585,7 @@ class ThemeGridViewportTests(unittest.TestCase):
         overlay = types.SimpleNamespace(
             show_overlays=False, show_floor=True, show_ortho_grid=True,
             show_axis_x=False, show_axis_y=True, show_axis_z=False, show_extras=False,
+            grid_scale=0.025, grid_subdivisions=8,
         )
         shading = types.SimpleNamespace(
             type="MATERIAL", show_xray=True, show_xray_wireframe=True,
@@ -447,6 +615,8 @@ class ThemeGridViewportTests(unittest.TestCase):
         for flag in ("show_floor", "show_ortho_grid", "show_axis_x", "show_axis_y"):
             self.assertTrue(getattr(overlay, flag), flag)
         self.assertFalse(overlay.show_axis_z)
+        overlay.grid_scale = 0.001
+        overlay.grid_subdivisions = 100
         namespace["_remove_viewport_overlay_handler"]()
         self.assertEqual(vars(overlay), before[0])
         self.assertEqual(vars(shading), before[1])
@@ -638,7 +808,7 @@ class NativeGridCacheTests(unittest.TestCase):
                  "background_handler": "picture", "overlay_handler": "gizmos",
                  "native_view_caches": {1: {"offscreen": types.SimpleNamespace(free=lambda: freed.append(1))}}}
         namespace = load_functions(
-            "_remove_place_picture_grid", "_free_native_view_caches",
+            "_remove_place_picture_grid", "_free_native_view_caches", "_read_native_grid_settings",
             _overlay_state=lambda: state,
             _set_native_grid_visibility=lambda enabled: visibility.append(enabled),
             _set_project_place_picture_state=lambda *args, **kwargs: saved.append(kwargs),

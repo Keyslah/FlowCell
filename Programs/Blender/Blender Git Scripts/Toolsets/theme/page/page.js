@@ -127,9 +127,9 @@
     if (field.kind === "number") {
       const parsed = typeof value === "number" ? value : Number(value);
       const fallback = finiteNumber(field.defaultValue, 0);
-      return Number.isFinite(parsed)
-        ? Math.max(finiteNumber(field.minimum, -Number.MAX_VALUE), parsed)
-        : fallback;
+      const resolved = Number.isFinite(parsed) ? parsed : fallback;
+      return bounded(field.integer ? Math.round(resolved) : resolved,
+        finiteNumber(field.minimum, -Number.MAX_VALUE), finiteNumber(field.maximum, Number.MAX_VALUE));
     }
     if (field.kind === "boolean") return Boolean(value);
     if (field.kind === "palette") return normalizePalette(value);
@@ -282,6 +282,7 @@
     input.type = inputType || (field.kind === "number" ? "number" : field.kind === "color" ? "color" : "text");
     if (field.step !== undefined) input.step = String(field.step);
     if (field.minimum !== undefined) input.min = String(field.minimum);
+    if (field.maximum !== undefined) input.max = String(field.maximum);
     if (field.placeholder) input.placeholder = field.placeholder;
     writeControlValue(input, field);
     registerControl(field.id, input);
@@ -891,6 +892,14 @@
     else patchFields(response);
   }
 
+  function applySavedFields(response) {
+    const patch = objectRecord(response.fieldPatch) || objectRecord(response.values);
+    if (!patch) return;
+    const gridDefaults = Object.fromEntries(config.picture.gridFieldIds.map((fieldId) =>
+      [fieldId, cloneValue(fieldById.get(fieldId).defaultValue)]));
+    patchFields({ ...gridDefaults, ...patch });
+  }
+
   async function applyTheme(withinOperation = false) {
     const response = await requestAction(actions.theme.apply, themePayload(), copy.applyingTheme, withinOperation);
     applyResponsePatch(response);
@@ -1129,7 +1138,7 @@
 
   async function loadFields() {
     const response = await requestAction(actions.theme.loadFields, {}, copy.loadingFields);
-    if (response && response.selected !== false) applyResponsePatch(response);
+    if (response && response.selected !== false) applySavedFields(response);
   }
 
   async function savePackage() {
@@ -1177,7 +1186,7 @@
       }
       const previousSettings = savedSettings || await readPoppedButtonSettings(true, true, !model.buttonTheme.lockSettings);
       if (!previousSettings) return;
-      applyResponsePatch(response);
+      applySavedFields(response);
       model.activePackage = {
         path: String(response.packagePath || response.path || ""),
         name: String(response.packageName || response.name || ""),
@@ -1794,6 +1803,7 @@
     const numberGrid = element("div", "theme-number-grid theme-number-grid--picture");
     config.picture.gridFieldIds.forEach((fieldId) => numberGrid.append(labeledField(fieldById.get(fieldId))));
     section.append(numberGrid);
+    if (config.picture.gridHelp) section.append(element("p", "button-theme-effects__help", config.picture.gridHelp));
     const row = element("div", "theme-row theme-row--actions");
     row.append(
       actionButton(actions.picture.apply, applyPicture),

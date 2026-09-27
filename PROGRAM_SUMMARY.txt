@@ -1,6 +1,13 @@
 FlowCell Program Summary
 Last updated: 2026-09-27
 
+Blender native grid scale controls (2026-09-27)
+----------------------------------------------
+- Theme 3.0.21 adds Grid Scale (0.001-1000) and Subdivisions (unitless, 2-100) to Place Picture. Grid applies the native overlay values; lower Scale gives finer squares with Blender's existing fine-before-coarse distance fade. Metric/Imperial keep their native fixed subdivisions. Scene units, object scale and the fixed picture fit stay unchanged.
+- Values round-trip through page state, saved buckets/packages, project and startup picture state; legacy packages default to Scale 1/Subdivisions 10. Cancelled loads retain current values. Clear restores the previous native overlay values. Grid remains off by default.
+- Changed files: Theme manifest, page.js and page tests, theme.py and grid tests, Blender program version, BlenderTheme.md and this summary. Validation: 32 Theme Python tests and 42 page tests pass. Disposable Blender 5.2 GPU checks verify finer grids at Scale 0.1/0.01 and native adaptive fading at Scale 0.001 in a closer view; geometry, view and millimeter units were restored after the probe.
+- Final release build, live deployment and GitHub sync pending. Broader frontend tests are not required for these external package controls; HDR, alternate OCIO and Rendered shading remain outside this change's validation.
+
 Blender native grid behind a fixed picture (2026-09-27)
 ------------------------------------------------------
 - Theme 3.0.19 uses Blender's native floor, orthographic grid and axes while retaining the fixed, full-viewport Place Picture fit. Grid remains off by default; explicit saved choices still apply. Remove Grid hides the grid; Clear restores prior viewport settings.

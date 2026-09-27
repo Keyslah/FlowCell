@@ -413,6 +413,24 @@ def _read_grid_settings(payload):
     )
 
 
+def _read_native_grid_settings(payload):
+    settings = {}
+    for key, default, minimum, maximum in (
+        ("grid_scale", 1.0, 0.001, 1000.0),
+        ("grid_subdivisions", 10, 2, 100),
+    ):
+        try:
+            value = float((payload or {}).get(key, default))
+        except (TypeError, ValueError):
+            raise ValueError(f"Invalid {key.replace('_', ' ')}.") from None
+        if (not math.isfinite(value) or not minimum <= value <= maximum
+                or (key == "grid_subdivisions" and not value.is_integer())):
+            raise ValueError(f"{key.replace('_', ' ').capitalize()} must be between {minimum:g} and {maximum:g}"
+                             + (" and a whole number." if key == "grid_subdivisions" else "."))
+        settings[key] = int(value) if key == "grid_subdivisions" else value
+    return settings
+
+
 def _grid_spacing_blender_units(spacing_m: float) -> float:
     scene = getattr(bpy.context, "scene", None)
     unit_settings = getattr(scene, "unit_settings", None)
@@ -595,6 +613,8 @@ def _empty_project_theme_state():
             "path": "",
             "relative_path": "",
             "grid_enabled": False,
+            "grid_scale": 1.0,
+            "grid_subdivisions": 10,
             "grid_spacing_m": DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
             "grid_distance_m": DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
             "grid_far_spacing_m": DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
@@ -625,6 +645,13 @@ def _normalize_project_theme_state(value):
         state["place_picture"]["grid_enabled"] = bool(
             place_picture_state.get("grid_enabled", False)
         )
+        for key, default in (("grid_scale", 1.0), ("grid_subdivisions", 10)):
+            try:
+                state["place_picture"][key] = _read_native_grid_settings(
+                    {key: place_picture_state.get(key, default)}
+                )[key]
+            except ValueError:
+                state["place_picture"][key] = default
         spacing_m = place_picture_state.get(
             "grid_spacing_m",
             DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
@@ -754,6 +781,8 @@ def _startup_place_picture_state_from_runtime(context=None):
             "path": "",
             "relative_path": "",
             "grid_enabled": False,
+            "grid_scale": 1.0,
+            "grid_subdivisions": 10,
             "grid_spacing_m": DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
             "grid_distance_m": DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
             "grid_far_spacing_m": DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
@@ -765,6 +794,7 @@ def _startup_place_picture_state_from_runtime(context=None):
         "path": runtime_path,
         "relative_path": _project_relative_path(runtime_path),
         "grid_enabled": bool(runtime_state.get("grid_enabled", False)),
+        **_read_native_grid_settings(runtime_state),
         "grid_spacing_m": float(
             runtime_state.get(
                 "grid_spacing_m",
@@ -793,6 +823,8 @@ def _set_project_place_picture_state(
     grid_distance_m: float = DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
     grid_far_spacing_m: float = DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
     grid_enabled: bool = False,
+    grid_scale: float = 1.0,
+    grid_subdivisions: int = 10,
 ):
     state = _read_project_theme_state(context)
     normalized_path = str(resolved_path or "").strip()
@@ -801,6 +833,7 @@ def _set_project_place_picture_state(
         "path": normalized_path,
         "relative_path": _project_relative_path(normalized_path),
         "grid_enabled": bool(grid_enabled),
+        **_read_native_grid_settings({"grid_scale": grid_scale, "grid_subdivisions": grid_subdivisions}),
         "grid_spacing_m": float(grid_spacing_m),
         "grid_distance_m": float(grid_distance_m),
         "grid_far_spacing_m": float(grid_far_spacing_m),
@@ -813,6 +846,7 @@ def _set_startup_place_picture_state(context, payload):
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
     spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
+    native_settings = _read_native_grid_settings(payload)
     runtime_state = _overlay_state()
     runtime_path = str(runtime_state.get("path") or "").strip()
     grid_enabled = (
@@ -828,6 +862,7 @@ def _set_startup_place_picture_state(context, payload):
         "path": resolved_path,
         "relative_path": _project_relative_path(resolved_path),
         "grid_enabled": grid_enabled,
+        **native_settings,
         "grid_spacing_m": spacing_m,
         "grid_distance_m": distance_m,
         "grid_far_spacing_m": far_spacing_m,
@@ -837,6 +872,7 @@ def _set_startup_place_picture_state(context, payload):
         f"Place Picture startup image saved from {resolved_path}.",
         static_background_path=resolved_path,
         grid_enabled=grid_enabled,
+        **native_settings,
         grid_spacing_m=spacing_m,
         grid_distance_m=distance_m,
         grid_far_spacing_m=far_spacing_m,
@@ -859,6 +895,7 @@ def _read_place_picture_runtime_state(context=None):
         place_picture_runtime_has_overlay_handler=state.get("overlay_handler") is not None,
         place_picture_runtime_has_view3d=any(True for _ in (_iter_view3d_spaces() or [])),
         grid_enabled=bool(state.get("grid_enabled", False)),
+        **_read_native_grid_settings(state),
         grid_spacing_m=float(
             state.get("grid_spacing_m", DEFAULT_PLACE_PICTURE_GRID_SPACING_M)
         ),
@@ -1030,6 +1067,8 @@ def _snapshot_place_picture_viewports():
                     pass
         for attr in (
             "show_overlays",
+            "grid_scale",
+            "grid_subdivisions",
             "show_floor",
             "show_ortho_grid",
             "show_axis_x",
@@ -2596,8 +2635,22 @@ def _register_viewport_overlay_from_resolved_path(
 
     if not state.get("viewport_snapshots"):
         state["viewport_snapshots"] = _snapshot_place_picture_viewports()
+    # A live action reload can retain snapshots made before these controls existed.
+    for snapshot in state["viewport_snapshots"]:
+        overlay = snapshot.get("overlay")
+        for key in ("grid_scale", "grid_subdivisions"):
+            if key not in snapshot["overlay_attrs"] and overlay is not None:
+                try:
+                    snapshot["overlay_attrs"][key] = getattr(overlay, key)
+                except ReferenceError:
+                    pass
 
     _apply_place_picture_viewport_settings(grid_enabled)
+    native_settings = _read_native_grid_settings(state)
+    state.update(native_settings)
+    for space in _iter_view3d_spaces() or []:
+        for key, value in native_settings.items():
+            _safe_set(space.overlay, key, value)
 
     image_shader = gpu.shader.from_builtin("IMAGE") if image is not None else None
     color_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
@@ -2776,8 +2829,10 @@ def _register_viewport_overlay_from_resolved_path(
 
 def _apply_grid_spacing(context, payload):
     spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
+    native_settings = _read_native_grid_settings(payload)
     _set_runtime_grid_settings(spacing_m, distance_m, far_spacing_m)
     state = _overlay_state()
+    state.update(native_settings)
     runtime_path = str(state.get("path") or "").strip()
     _register_viewport_overlay_from_resolved_path(
         runtime_path,
@@ -2792,9 +2847,11 @@ def _apply_grid_spacing(context, payload):
             distance_m,
             far_spacing_m,
             grid_enabled=True,
+            **native_settings,
         )
     return _result(
-        "Blender native grid enabled. Spacing and units follow Blender viewport settings.",
+        "Native grid applied. Smaller Scale gives finer squares; Blender fades fine lines before coarse lines. Subdivisions applies only with Scene Units set to None.",
+        **native_settings,
         grid_spacing_m=spacing_m,
         grid_distance_m=distance_m,
         grid_far_spacing_m=far_spacing_m,
@@ -2804,8 +2861,10 @@ def _apply_grid_spacing(context, payload):
 
 def _place_picture_image(context, payload, persist_project_state=True):
     spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
+    native_settings = _read_native_grid_settings(payload)
     grid_enabled = bool(payload.get("grid_enabled", False))
     _set_runtime_grid_settings(spacing_m, distance_m, far_spacing_m)
+    _overlay_state().update(native_settings)
     resolved_path = _resolve_optional_image_path(
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
     )
@@ -2822,6 +2881,7 @@ def _place_picture_image(context, payload, persist_project_state=True):
             distance_m,
             far_spacing_m,
             grid_enabled=grid_enabled,
+            **native_settings,
         )
     return applied_path
 
@@ -2855,6 +2915,7 @@ def _remove_place_picture_grid(context=None):
                 )
             ),
             grid_enabled=False,
+            **_read_native_grid_settings(state),
         )
     _tag_redraw_view3d()
     return _result("Grid removed.", grid_enabled=False)
@@ -4226,6 +4287,7 @@ def _restore_project_startup_state(context):
                 context,
                 {
                     "static_background_path": resolved_picture_path,
+                    **_read_native_grid_settings(place_picture_state),
                     "grid_spacing_m": place_picture_state.get(
                         "grid_spacing_m",
                         DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
@@ -4466,6 +4528,7 @@ def run_flowcell_action(context=None, data=None):
             return _result(
                 f"Place Picture installed from {resolved_path}.",
                 static_background_path=resolved_path,
+                **_read_native_grid_settings(_overlay_state()),
             )
         return _result("Place Picture cleared.", static_background_path="")
     if command == "set_place_picture_startup":

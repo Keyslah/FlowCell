@@ -125,8 +125,16 @@ Place Picture controls:
   presents on the following redraw, before native viewport text and gizmos.
   Turning the grid off frees this cache and restores the inexpensive picture
   path. Clearing the picture restores the previous viewport settings.
-- Grid spacing and units follow Blender. The old near/distance/far controls
-  are hidden; their saved values remain readable for package compatibility.
+- `Grid Scale` adjusts Blender's native spacing (0.001–1000). Try 0.1 or 0.01
+  for finer squares when working close up. The native grid still fades its fine
+  lines before the larger squares as distance increases. `Subdivisions
+  (unitless)` controls the native divisions (2–100) when Scene Units is None;
+  Metric and Imperial retain Blender's fixed unit-based divisions. Scene units,
+  object scale and the fixed picture are not changed. Press `Grid` to apply.
+- Scale and subdivisions persist with the page, theme packages, project and
+  startup picture settings. `Clear` restores the previous native grid values.
+  The old near/distance/far fields stay hidden but remain readable for legacy
+  package compatibility.
 
 HDRI controls:
 
