@@ -94,7 +94,8 @@ test("popout and Fan paths forward physical screen geometry to normal and collap
   for (const [folder, name] of [["popout", "ButtonPopout"], ["fan", "ButtonFan"]]) {
     const page = readFileSync(join(frontend, "src", "button", folder, `${name}WindowPage.tsx`), "utf8");
     const renderer = readFileSync(join(frontend, "src", "button", folder, `${name}Renderer.tsx`), "utf8");
-    assert.match(page, /visibleBounds: \{ Top: appliedFrameBounds\.top, Height: appliedFrameBounds\.height \}/);
+    assert.match(page, /visibleBounds: \{\s*Left: appliedFrameBounds\.left,\s*Top: appliedFrameBounds\.top,\s*Width: appliedFrameBounds\.width,\s*Height: appliedFrameBounds\.height\s*\}/);
+    assert.match(page, /enabled: Boolean\(programPopoutThemeSettings\?\.screenTopToBottom \|\| programPopoutThemeSettings\?\.textScreenTopToBottom\)/);
     assert.match(page, /envelope: renderedEnvelope/);
     assert.match(page, /appliedCanvasRef\.current\?\.monitorWorkArea/);
     assert.equal((renderer.match(/programPopoutThemeScreenGeometry=\{programPopoutThemeScreenGeometry\}/g) ?? []).length, 2);

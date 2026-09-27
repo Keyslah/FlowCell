@@ -215,3 +215,27 @@ test("live windows join, move, hide and close without rescanning when only palet
   second.close();
   first.close();
 });
+
+test("horizontal extent is shared when windows report it and kept when a legacy peer omits it", () => {
+  const geometryX = {
+    visibleBounds: { Left: 100, Top: 50, Width: 400, Height: 500 },
+    envelope: { x: 10, y: -20, width: 200, height: 250 },
+    monitorWorkArea: monitor
+  };
+  const placementsX = [{ x: 0, y: 0, width: 20, height: 40 }, { x: 150, y: 150, width: 50, height: 60 }];
+  const own = programPopoutThemeWindowRange("Blender", placementsX, geometryX);
+  assert.deepEqual(own, {
+    programName: "blender", monitorKey: "1920,-300,2560,1400", minimumY: 130, maximumY: 450, minimumX: 100, maximumX: 430
+  });
+  assert.equal(isProgramPopoutThemeWindowRange(own), true);
+  assert.equal(isProgramPopoutThemeWindowRange({ ...own, minimumX: 500 }), false);
+  assert.equal(isProgramPopoutThemeWindowRange({ ...own, maximumX: undefined }), false);
+  const peer = { ...own, minimumX: -50, maximumX: 200, minimumY: 0, maximumY: 10 };
+  assert.deepEqual(aggregateProgramPopoutThemeScreenRange(own, [peer]), {
+    minimumY: 0, maximumY: 450, minimumX: -50, maximumX: 430
+  });
+  const legacyPeer = { programName: own.programName, monitorKey: own.monitorKey, minimumY: 0, maximumY: 10 };
+  assert.deepEqual(aggregateProgramPopoutThemeScreenRange(own, [legacyPeer]), {
+    minimumY: 0, maximumY: 450, minimumX: 100, maximumX: 430
+  });
+});

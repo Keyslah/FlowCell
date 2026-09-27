@@ -256,6 +256,21 @@ export interface ButtonThemeOverride {
   activeGlowAmount?: number | null;
 }
 
+/**
+ * One point of a gradient curve in the unit box: x is the position along the gradient
+ * direction and y the progress through the ordered stops. Aligned/free points carry
+ * their own relative Bezier handles; auto/corner handles are derived from neighbors.
+ */
+export interface ProgramPopoutGradientCurvePoint {
+  x: number;
+  y: number;
+  mode: "auto" | "corner" | "aligned" | "free";
+  inX?: number;
+  inY?: number;
+  outX?: number;
+  outY?: number;
+}
+
 /** Program-owned appearance shared by every popped instance, independent of its tools. */
 export interface ProgramPopoutThemeSettings {
   version: 1;
@@ -264,7 +279,16 @@ export interface ProgramPopoutThemeSettings {
   scatter: number;
   seed: number;
   screenTopToBottom: boolean;
+  /** Fill direction in degrees: 0 runs top-to-bottom, 90 left-to-right. Absent means 0. */
+  angle?: number;
+  /** Fill position-to-stop mapping. Absent means linear. */
+  curve?: ProgramPopoutGradientCurvePoint[];
   textColor: string;
+  /** Ordered text gradient stops. Absent means the solid textColor. */
+  textColors?: string[];
+  textAngle?: number;
+  textCurve?: ProgramPopoutGradientCurvePoint[];
+  textScreenTopToBottom?: boolean;
   hoverEnabled: boolean;
   activeEnabled: boolean;
   hoverColor: string;

@@ -77,39 +77,55 @@ Theme controls:
 - `Save Buckets` and `Load Buckets` use generic field-file operations.
 - `Previous`, `Open Package`, `Next`, and `Save Package` use the generic package
   library operations and the package's declared field and asset mappings.
-- `Popped Button Colors` also owns text color and separate hover/active highlight
-  and glow controls. Packages save these settings with the palette, gradient
-  stops, spread, scatter, seed, and screen-gradient option. The settings apply
-  to any Blender Pop-out or Fan, including collapsed owners and newly opened
-  tools; they take precedence over the Main Theme only on these popped surfaces.
+- `Popped Button Colors` owns two independent gradient boxes, `Button Fill` and
+  `Button Text`, plus separate hover/active highlight and glow controls. Packages
+  save both gradients (stops, curve, angle, whole-screen option), spread, scatter
+  and seed with the effects. The settings apply to any Blender Pop-out or Fan,
+  including collapsed owners and newly opened tools; they take precedence over the
+  Main Theme only on these popped surfaces.
+- Each box has ordered Start-to-End color stops, a curve box, an Angle and a
+  `Whole Screen` checkbox. Button Fill needs 2-16 stops and keeps Spread and
+  Scatter; Button Text takes 1-16 stops, where one stop is a solid label color.
+  `Apply Gradient` (fill) and `Apply Text Gradient` apply each box independently;
+  a sample grid above the boxes previews both together.
+- The curve box maps position along the gradient (left to right) to progress
+  through the stops (bottom to top); its left strip shows the stops and its
+  bottom strip the result. The default bottom-left to top-right line is linear.
+  Click to add points (up to 32), drag points or their Bezier handles, double-click
+  or press Delete to remove one; Shift snaps and Alt breaks a handle. Points can be
+  Smooth, Corner, Bezier or Broken, with exact Position/Value fields. Presets
+  include Ease In/Out/In-Out, Hold Middle, Peak, Valley, Wave and Steps (one flat
+  band per stop), plus Flip, Mirror and Reset.
+- Angle tilts the gradient: 0 degrees runs top to bottom, 90 left to right, 180
+  bottom to top and -90 right to left. Drag the dial (Shift snaps to 15 degrees),
+  use the slider, or type a value. Tilted gradients project each Button center
+  along the angle, so the corner Buttons of a window hold the Start and End stops.
 - `Lock All Popped Button Settings`, at the top of Popped Button Colors, covers
-  colors, every gradient stop, Spread, Scatter, text, highlights and glow.
+  both gradients (stops, curves, angles), Spread, Scatter, highlights and glow.
   It temporarily keeps the current popped appearance when opening
   or cycling packages. Unlocking applies the selected package's saved settings.
   Switching packages never writes their files. Older packages without popped
   settings keep the last-used appearance. First use adopts the saved page
   gradient and the common current popout effects, without replacing skins.
-- Individual Buttons stay listed below the aggregate color buckets, with their
-  names, owning group, and separate Fill and Text pickers. Select any subset for
-  one-click Black Text or White Text, or choose a custom text color and Apply to
-  Selected. Use Theme Colors restores the selected buttons' shared appearance.
-- Individual edits override only the selected popped occurrences; shared effects,
-  authored skins, actions and Main-page buttons stay intact. Button Settings files
-  round-trip these edits. Unlocked package switches restore package colors; Lock
-  All Popped Button Settings preserves individual edits too. Portable theme packages
-  continue to apply their palette to whichever tools are currently popped out.
-- Shared appearance applies directly when switching packages. The button list
-  remains visible and refreshes asynchronously; stale edits are disabled until
-  the refreshed list arrives. `Rescan` remains available. Legacy packages retain
-  the current shared appearance.
-- Popped gradients use the exact chosen top/bottom colors and pass through every
+- The per-Button Individual Buttons list was removed in Theme 3.0.20. Aggregate
+  color buckets and `Apply Buckets` remain. Per-occurrence colors left from the
+  old list are cleared when a new fill or text gradient is applied (fill clears
+  Surface overrides, text clears Text overrides); `Toggle Text` also replaces a
+  text gradient with solid black or white.
+- Shared appearance applies directly when switching packages. The buckets remain
+  visible and refresh asynchronously; bucket edits are disabled until the refreshed
+  scan arrives. `Rescan` remains available. Legacy packages retain the current
+  shared appearance, and packages saved before gradient curves/angles load as
+  linear, 0-degree gradients with a solid text color.
+- Popped gradients use the exact chosen Start/End colors and pass through every
   ordered intermediate stop. Spread adjusts each blend's width; Scatter varies
   interior blends without changing stop anchors. Increasing Gradient Colors
   retains the existing chosen colors and inserts new blends between them.
-- Screen Top-to-Bottom spans the visible popped Button centers on each monitor.
-  Moving, collapsing, opening or closing a window updates this live range without
-  saving geometry into packages or rescanning on package switches. Collapsed
-  hidden members do not move the endpoints. Authored skin shading is preserved.
+- `Whole Screen` spans the visible popped Button centers on each monitor, in both
+  directions for tilted gradients. Moving, collapsing, opening or closing a window
+  updates this live range without saving geometry into packages or rescanning on
+  package switches. Collapsed hidden members do not move the endpoints. Authored
+  skin shading is preserved.
 
 Place Picture controls:
 

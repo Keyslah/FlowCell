@@ -11,15 +11,26 @@ import type {
   ButtonPlacement,
   ButtonRect,
   ButtonSkin,
-  ButtonStateDocument
+  ButtonStateDocument,
+  ProgramPopoutGradientCurvePoint
 } from "../button/types.js";
 import type { FlowCellBounds } from "../types.js";
-import { normalizeProgramPopoutColorOverride, resolveProgramPopoutThemeOverride } from "./programPopoutTheme.js";
-import { programPopoutGradientColor } from "./programPopoutGradient.js";
+import {
+  normalizeProgramPopoutColorOverride,
+  normalizeProgramPopoutThemeSettings,
+  resolveProgramPopoutThemeOverride
+} from "./programPopoutTheme.js";
+import {
+  normalizeProgramPopoutGradientCurve,
+  programPopoutGradientBoxPosition,
+  programPopoutGradientColor,
+  programPopoutGradientProjection
+} from "./programPopoutGradient.js";
 import {
   buttonThemeOverrideIsEmpty,
   emptyButtonThemeOverride,
   placementMatchesThemeTarget,
+  themePlacementDeployedCenterX,
   themePlacementDeployedCenterY,
   type ThemeTarget
 } from "./themeModel.js";
@@ -61,6 +72,8 @@ export interface ProgramPopoutPaletteGradient {
   spread: number;
   scatter: number;
   seed: number;
+  angle?: number;
+  curve?: ProgramPopoutGradientCurvePoint[];
 }
 
 export interface ProgramPopoutPaletteTarget {
@@ -71,6 +84,8 @@ export interface ProgramPopoutPaletteTarget {
 export interface ProgramPopoutPaletteGradientItem {
   paletteId: string;
   y: number;
+  /** Horizontal center in the same units as y; absent contributes no horizontal extent. */
+  x?: number;
   screenId?: string;
   rangeEligible?: boolean;
 }
@@ -82,31 +97,36 @@ export interface ProgramPopoutPaletteGradientRange {
 
 export interface ProgramPopoutPaletteScreenPositionArgs {
   items: readonly ProgramPopoutPaletteGradientItem[];
-  visibleBounds: Pick<FlowCellBounds, "Top" | "Height">;
-  envelope: Pick<ButtonRect, "y" | "height">;
-  monitorWorkArea: Pick<FlowCellBounds, "Top" | "Height">;
+  visibleBounds: Pick<FlowCellBounds, "Top" | "Height"> & Partial<Pick<FlowCellBounds, "Left" | "Width">>;
+  envelope: Pick<ButtonRect, "y" | "height"> & Partial<Pick<ButtonRect, "x" | "width">>;
+  monitorWorkArea: Pick<FlowCellBounds, "Top" | "Height"> & Partial<Pick<FlowCellBounds, "Left">>;
   screenId?: string;
 }
 
-/** Normalize only occupied rows, independently per screen; hidden members do not anchor the range. */
+/**
+ * Normalize only occupied rows, independently per screen; hidden members do not anchor the range.
+ * A tilted angle projects each center across the occupied box, so its corners hold the end stops.
+ */
 export function normalizedProgramPopoutScreenPositions(
-  items: readonly ProgramPopoutPaletteGradientItem[]
+  items: readonly ProgramPopoutPaletteGradientItem[],
+  angle = 0
 ): ProgramPopoutPaletteGradientItem[] {
-  const ranges = new Map<string, ProgramPopoutPaletteGradientRange>();
+  const boxes = new Map<string, { minimumX: number; maximumX: number; minimumY: number; maximumY: number }>();
   for (const item of items) {
     if (item.rangeEligible === false) continue;
     const key = item.screenId ?? "";
-    const range = ranges.get(key);
-    ranges.set(key, {
-      minimumY: Math.min(range?.minimumY ?? item.y, item.y),
-      maximumY: Math.max(range?.maximumY ?? item.y, item.y)
+    const box = boxes.get(key);
+    const x = item.x ?? 0;
+    boxes.set(key, {
+      minimumX: Math.min(box?.minimumX ?? x, x),
+      maximumX: Math.max(box?.maximumX ?? x, x),
+      minimumY: Math.min(box?.minimumY ?? item.y, item.y),
+      maximumY: Math.max(box?.maximumY ?? item.y, item.y)
     });
   }
   return items.map((item) => {
-    const range = ranges.get(item.screenId ?? "");
-    return { ...item, y: range && range.maximumY > range.minimumY
-      ? Math.min(1, Math.max(0, (item.y - range.minimumY) / (range.maximumY - range.minimumY)))
-      : 0 };
+    const box = boxes.get(item.screenId ?? "");
+    return { ...item, y: box ? programPopoutGradientBoxPosition({ x: item.x ?? 0, y: item.y }, box, angle) : 0 };
   });
 }
 
@@ -226,7 +246,9 @@ export function scanProgramPopoutPaletteTargets(
   targets: readonly ProgramPopoutPaletteTarget[],
   screenPositions?: readonly ProgramPopoutPaletteGradientItem[]
 ): ProgramPopoutPaletteScan {
-  const screenPositionByPaletteId = new Map(screenPositions && normalizedProgramPopoutScreenPositions(screenPositions)
+  const programKey = programName.normalize("NFC").trim().toLocaleLowerCase("en");
+  const fillAngle = normalizeProgramPopoutThemeSettings(document.programPopoutThemes?.[programKey])?.angle;
+  const screenPositionByPaletteId = new Map(screenPositions && normalizedProgramPopoutScreenPositions(screenPositions, fillAngle)
     .map(({ paletteId, y }) => [paletteId, y]));
   const placements = resolvedProgramPopoutPaletteTargets(document, programName, targets).map(({
     paletteId,
@@ -425,11 +447,18 @@ function validatedGradient(value: ProgramPopoutPaletteGradient): ProgramPopoutPa
       !Number.isSafeInteger(value.seed)) {
     throw new Error("Popped Button scatter settings are invalid.");
   }
+  if (value.angle !== undefined && !(Number.isFinite(value.angle) && value.angle >= -360 && value.angle <= 360)) {
+    throw new Error("Popped Button gradient angle must be between -360 and 360 degrees.");
+  }
+  const curve = value.curve === undefined ? undefined : normalizeProgramPopoutGradientCurve(value.curve);
+  if (curve === null) throw new Error("Popped Button gradient curve is invalid.");
   return {
     colors: colors as string[],
     spread: value.spread,
     scatter: value.scatter,
-    seed: value.seed
+    seed: value.seed,
+    ...(value.angle !== undefined ? { angle: value.angle } : {}),
+    ...(curve ? { curve } : {})
   };
 }
 
@@ -440,22 +469,26 @@ export function gradientProgramPopoutPaletteAssignments(
 ): ProgramPopoutPaletteAssignment[] {
   const gradient = validatedGradient(value);
   if (items.length === 0) return [];
-  const minimumY = range?.minimumY ?? Math.min(...items.map(({ y }) => y));
-  const maximumY = range?.maximumY ?? Math.max(...items.map(({ y }) => y));
+  // An explicit range means positions were already projected (screen mode).
+  const positions = items.map(({ x, y }) => range
+    ? y
+    : programPopoutGradientProjection({ x: x ?? 0, y }, gradient.angle));
+  const minimumY = range?.minimumY ?? Math.min(...positions);
+  const maximumY = range?.maximumY ?? Math.max(...positions);
   if (
     !Number.isFinite(minimumY) ||
     !Number.isFinite(maximumY) ||
-    items.some(({ y }) => !Number.isFinite(y)) ||
+    positions.some((position) => !Number.isFinite(position)) ||
     (range !== undefined && maximumY <= minimumY)
   ) {
     throw new Error("Popped Button gradient range is invalid.");
   }
-  return items.map(({ paletteId, y }) => ({
+  return items.map(({ paletteId }, index) => ({
       placementId: paletteId,
       color: programPopoutGradientColor({
         ...gradient,
         placementId: paletteId,
-        y,
+        y: positions[index],
         minimumY,
         maximumY
       }).toLowerCase()
@@ -484,12 +517,21 @@ export function programPopoutPaletteScreenPositions({
     throw new Error("Popped Button screen gradient geometry is invalid.");
   }
   const physicalPerDesignPixel = visibleBounds.Height / envelope.height;
-  return items.map(({ paletteId, y }) => {
+  // x shares y's monitor-height unit so tilted gradients keep the physical aspect ratio.
+  const hasX = Number.isFinite(visibleBounds.Left) && Number.isFinite(envelope.x) &&
+    Number.isFinite(monitorWorkArea.Left) &&
+    Number.isFinite(visibleBounds.Width) && (visibleBounds.Width ?? 0) > 0 &&
+    Number.isFinite(envelope.width) && (envelope.width ?? 0) > 0;
+  return items.map(({ paletteId, x, y }) => {
     const desktopY = visibleBounds.Top + (y - envelope.y) * physicalPerDesignPixel;
     const normalizedY = (desktopY - monitorWorkArea.Top) / monitorWorkArea.Height;
+    const desktopX = hasX && typeof x === "number" && Number.isFinite(x)
+      ? visibleBounds.Left! + (x - envelope.x!) * visibleBounds.Width! / envelope.width!
+      : null;
     return {
       paletteId,
       y: normalizedY,
+      ...(desktopX !== null ? { x: (desktopX - monitorWorkArea.Left!) / monitorWorkArea.Height } : {}),
       ...(screenId ? { screenId } : {})
     };
   });
@@ -506,6 +548,7 @@ export function programPopoutPaletteTargetPositions(
     placement
   }) => ({
     paletteId,
+    x: themePlacementDeployedCenterX(document, placement, target),
     y: themePlacementDeployedCenterY(document, placement, target)
   }));
 }
