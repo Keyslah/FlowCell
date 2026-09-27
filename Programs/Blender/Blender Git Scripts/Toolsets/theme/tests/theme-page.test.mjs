@@ -281,7 +281,7 @@ test("Theme owns its Blender lifecycle and generic deletion owns its sidecar", (
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.17");
+  assert.equal(contribution.version, "3.0.18");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -1277,10 +1277,18 @@ test("Remove Grid preserves the picture and the startup bundle stays atomic", ()
   const removeGridSource = blenderSource.slice(removeGridStart, clearPictureStart);
   assert.match(removeGridSource, /state\["grid_enabled"\] = False/);
   assert.doesNotMatch(removeGridSource, /_remove_viewport_overlay_handler|_clear_place_picture_overlay|_disable_camera_background_images|_set_saved_overlay_path/);
-  assert.match(
-    blenderSource,
-    /if state\.get\("grid_enabled", True\):\s*_draw_fake_grid_2d[\s\S]*_draw_fake_gizmos_2d/
-  );
+  const gridDrawStart = blenderSource.indexOf("    def draw_grid_overlay():");
+  const gizmoDrawStart = blenderSource.indexOf("    def draw_grid_and_gizmo_overlay():");
+  assert.ok(gridDrawStart >= 0 && gizmoDrawStart > gridDrawStart);
+  const gridDraw = blenderSource.slice(gridDrawStart, gizmoDrawStart);
+  assert.match(gridDraw, /state\.get\("grid_enabled", False\)/);
+  assert.match(gridDraw, /depth_test_set\("LESS_EQUAL"\)/);
+  assert.match(gridDraw, /depth_mask_set\(False\)/);
+  assert.match(gridDraw, /_draw_fake_grid_3d\(color_shader, region, rv3d\)/);
+  const gizmoDraw = blenderSource.slice(gizmoDrawStart, blenderSource.indexOf('    state["draw_background_image"]', gizmoDrawStart));
+  assert.match(gizmoDraw, /_draw_fake_gizmos_2d/);
+  assert.doesNotMatch(gizmoDraw, /_draw_fake_grid_/);
+  assert.match(blenderSource, /state\["grid_handler"\] = bpy\.types\.SpaceView3D\.draw_handler_add\([\s\S]*?"POST_VIEW"/);
 
   const loadPackageStart = pageScript.indexOf("async function loadPackage(");
   const selectFileStart = pageScript.indexOf("async function selectFile(");

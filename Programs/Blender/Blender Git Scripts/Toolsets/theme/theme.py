@@ -508,7 +508,11 @@ def _bump_place_picture_generation():
 
 def _place_picture_overlay_is_current(state, generation):
     try:
-        return bool(state.get("enabled", False)) and int(state.get("generation", -1)) == int(generation)
+        return (
+            bpy.app.driver_namespace.get(VIEWPORT_OVERLAY_NAMESPACE_KEY) is state
+            and bool(state.get("enabled", False))
+            and int(state.get("generation", -1)) == int(generation)
+        )
     except Exception:
         return False
 
@@ -590,7 +594,7 @@ def _empty_project_theme_state():
             "enabled": False,
             "path": "",
             "relative_path": "",
-            "grid_enabled": True,
+            "grid_enabled": False,
             "grid_spacing_m": DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
             "grid_distance_m": DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
             "grid_far_spacing_m": DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
@@ -619,7 +623,7 @@ def _normalize_project_theme_state(value):
             place_picture_state.get("relative_path") or ""
         )
         state["place_picture"]["grid_enabled"] = bool(
-            place_picture_state.get("grid_enabled", True)
+            place_picture_state.get("grid_enabled", False)
         )
         spacing_m = place_picture_state.get(
             "grid_spacing_m",
@@ -760,7 +764,7 @@ def _startup_place_picture_state_from_runtime(context=None):
         "saved_by": "theme_bundle",
         "path": runtime_path,
         "relative_path": _project_relative_path(runtime_path),
-        "grid_enabled": bool(runtime_state.get("grid_enabled", True)),
+        "grid_enabled": bool(runtime_state.get("grid_enabled", False)),
         "grid_spacing_m": float(
             runtime_state.get(
                 "grid_spacing_m",
@@ -788,7 +792,7 @@ def _set_project_place_picture_state(
     grid_spacing_m: float = DEFAULT_PLACE_PICTURE_GRID_SPACING_M,
     grid_distance_m: float = DEFAULT_PLACE_PICTURE_GRID_DISTANCE_M,
     grid_far_spacing_m: float = DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
-    grid_enabled: bool = True,
+    grid_enabled: bool = False,
 ):
     state = _read_project_theme_state(context)
     normalized_path = str(resolved_path or "").strip()
@@ -812,9 +816,9 @@ def _set_startup_place_picture_state(context, payload):
     runtime_state = _overlay_state()
     runtime_path = str(runtime_state.get("path") or "").strip()
     grid_enabled = (
-        bool(runtime_state.get("grid_enabled", True))
+        bool(runtime_state.get("grid_enabled", False))
         if runtime_path == resolved_path
-        else True
+        else False
     )
     state = _read_owner_runtime_theme_state()
     state["place_picture"] = {
@@ -854,7 +858,7 @@ def _read_place_picture_runtime_state(context=None):
         place_picture_runtime_has_background_handler=state.get("background_handler") is not None,
         place_picture_runtime_has_overlay_handler=state.get("overlay_handler") is not None,
         place_picture_runtime_has_view3d=any(True for _ in (_iter_view3d_spaces() or [])),
-        grid_enabled=bool(state.get("grid_enabled", True)),
+        grid_enabled=bool(state.get("grid_enabled", False)),
         grid_spacing_m=float(
             state.get("grid_spacing_m", DEFAULT_PLACE_PICTURE_GRID_SPACING_M)
         ),
@@ -1023,6 +1027,7 @@ def _snapshot_place_picture_viewports():
         for attr in (
             "show_overlays",
             "show_floor",
+            "show_ortho_grid",
             "show_axis_x",
             "show_axis_y",
             "show_axis_z",
@@ -1063,10 +1068,13 @@ def _apply_place_picture_viewport_settings():
             _safe_set(shading, "background_type", "THEME")
         if overlay is not None:
             _safe_set(overlay, "show_overlays", True)
-            _safe_set(overlay, "show_floor", True)
-            _safe_set(overlay, "show_axis_x", True)
-            _safe_set(overlay, "show_axis_y", True)
-            _safe_set(overlay, "show_axis_z", True)
+            # Place Picture owns its grid; native floor/side-view grids and
+            # axes would otherwise remain visible when its Grid is off.
+            _safe_set(overlay, "show_floor", False)
+            _safe_set(overlay, "show_ortho_grid", False)
+            _safe_set(overlay, "show_axis_x", False)
+            _safe_set(overlay, "show_axis_y", False)
+            _safe_set(overlay, "show_axis_z", False)
             _safe_set(overlay, "show_extras", True)
         _safe_set(space, "show_gizmo", True)
         if PLACE_PICTURE_HIDE_REAL_BLENDER_TRANSFORM_GIZMOS:
@@ -1134,6 +1142,20 @@ def _draw_2d_triangles(shader, points, color):
     shader.bind()
     shader.uniform_float("color", color)
     batch.draw(shader)
+
+
+def _draw_world_lines(shader, points, color, width):
+    if not points or len(points) < 2:
+        return
+    batch = batch_for_shader(shader, "LINES", {"pos": points})
+    old_width = gpu.state.line_width_get() if hasattr(gpu.state, "line_width_get") else 1.0
+    try:
+        gpu.state.line_width_set(width)
+        shader.bind()
+        shader.uniform_float("color", color)
+        batch.draw(shader)
+    finally:
+        gpu.state.line_width_set(old_width)
 
 
 def _make_circle_triangles(center, radius, segments=28):
@@ -1672,7 +1694,7 @@ def _draw_screen_grid_fallback(shader, region):
     _draw_2d_lines(shader, [Vector((center_x, 0.0)), Vector((center_x, height))], (0.05, 0.95, 0.08, PLACE_PICTURE_AXIS_ALPHA * 0.75), PLACE_PICTURE_AXIS_WIDTH)
 
 
-def _draw_fake_grid_2d(shader, region, rv3d):
+def _draw_fake_grid_3d(shader, region, rv3d):
     if not PLACE_PICTURE_ENABLE_FAKE_GRID:
         return
     # Adaptive spacing: the grid step follows the zoom so the on-screen line
@@ -1704,49 +1726,36 @@ def _draw_fake_grid_2d(shader, region, rv3d):
     major = []
     x_axis = []
     y_axis = []
-    projected_count = 0
-    proj = _make_screen_projector(region, rv3d)
     for index in range(int(max(0, round((end_x - start_x) / step))) + 1):
         x = start_x + index * step
         if abs(x) < eps:
-            projected_count += int(_append_projected_line(y_axis, proj, (0.0, start_y, 0.0), (0.0, end_y, 0.0)))
+            y_axis.extend(((0.0, start_y, 0.0), (0.0, end_y, 0.0)))
             continue
         bucket = major if int(round(x / step)) % 10 == 0 else minor
-        projected_count += int(_append_projected_line(bucket, proj, (x, start_y, 0.0), (x, end_y, 0.0)))
+        bucket.extend(((x, start_y, 0.0), (x, end_y, 0.0)))
     for index in range(int(max(0, round((end_y - start_y) / step))) + 1):
         y = start_y + index * step
         if abs(y) < eps:
-            projected_count += int(_append_projected_line(x_axis, proj, (start_x, 0.0, 0.0), (end_x, 0.0, 0.0)))
+            x_axis.extend(((start_x, 0.0, 0.0), (end_x, 0.0, 0.0)))
             continue
         bucket = major if int(round(y / step)) % 10 == 0 else minor
-        projected_count += int(_append_projected_line(bucket, proj, (start_x, y, 0.0), (end_x, y, 0.0)))
-    projected_x_axis = _project_world_axis_to_viewport(
-        region, rv3d, Vector((1.0, 0.0, 0.0))
-    )
-    projected_y_axis = _project_world_axis_to_viewport(
-        region, rv3d, Vector((0.0, 1.0, 0.0))
-    )
-    if projected_x_axis is not None:
-        x_axis = list(projected_x_axis)
-    if projected_y_axis is not None:
-        y_axis = list(projected_y_axis)
-
-    if projected_count <= 0:
-        return
+        bucket.extend(((start_x, y, 0.0), (end_x, y, 0.0)))
     grazing = _xy_grid_grazing_factor(rv3d)
     grid_shadow_alpha = 0.25 + grazing * 0.22
     minor_alpha = min(0.82, PLACE_PICTURE_GRID_ALPHA * (1.0 + grazing * 0.9))
     major_alpha = min(0.95, PLACE_PICTURE_GRID_MAJOR_ALPHA * (1.0 + grazing * 0.7))
     minor_width = PLACE_PICTURE_GRID_MINOR_WIDTH + grazing * 0.55
     major_width = PLACE_PICTURE_GRID_MAJOR_WIDTH + grazing * 0.75
-    _draw_2d_lines(shader, minor, (0.0, 0.0, 0.0, minor_alpha * grid_shadow_alpha), minor_width + 1.8)
-    _draw_2d_lines(shader, major, (0.0, 0.0, 0.0, major_alpha * grid_shadow_alpha), major_width + 1.8)
-    _draw_2d_lines(shader, minor, (0.55, 0.55, 0.55, minor_alpha), minor_width)
-    _draw_2d_lines(shader, major, (0.68, 0.68, 0.68, major_alpha), major_width)
-    _draw_2d_lines(shader, x_axis, (0.0, 0.0, 0.0, PLACE_PICTURE_AXIS_ALPHA * 0.28), PLACE_PICTURE_AXIS_WIDTH + 2.0)
-    _draw_2d_lines(shader, y_axis, (0.0, 0.0, 0.0, PLACE_PICTURE_AXIS_ALPHA * 0.28), PLACE_PICTURE_AXIS_WIDTH + 2.0)
-    _draw_2d_lines(shader, x_axis, (1.0, 0.05, 0.035, PLACE_PICTURE_AXIS_ALPHA), PLACE_PICTURE_AXIS_WIDTH)
-    _draw_2d_lines(shader, y_axis, (0.05, 0.95, 0.08, PLACE_PICTURE_AXIS_ALPHA), PLACE_PICTURE_AXIS_WIDTH)
+    # Keep world Z rather than projecting to pixel XY: the viewport's depth
+    # buffer must be able to hide every grid/axis stroke behind scene objects.
+    _draw_world_lines(shader, minor, (0.0, 0.0, 0.0, minor_alpha * grid_shadow_alpha), minor_width + 1.8)
+    _draw_world_lines(shader, major, (0.0, 0.0, 0.0, major_alpha * grid_shadow_alpha), major_width + 1.8)
+    _draw_world_lines(shader, minor, (0.55, 0.55, 0.55, minor_alpha), minor_width)
+    _draw_world_lines(shader, major, (0.68, 0.68, 0.68, major_alpha), major_width)
+    _draw_world_lines(shader, x_axis, (0.0, 0.0, 0.0, PLACE_PICTURE_AXIS_ALPHA * 0.28), PLACE_PICTURE_AXIS_WIDTH + 2.0)
+    _draw_world_lines(shader, y_axis, (0.0, 0.0, 0.0, PLACE_PICTURE_AXIS_ALPHA * 0.28), PLACE_PICTURE_AXIS_WIDTH + 2.0)
+    _draw_world_lines(shader, x_axis, (1.0, 0.05, 0.035, PLACE_PICTURE_AXIS_ALPHA), PLACE_PICTURE_AXIS_WIDTH)
+    _draw_world_lines(shader, y_axis, (0.05, 0.95, 0.08, PLACE_PICTURE_AXIS_ALPHA), PLACE_PICTURE_AXIS_WIDTH)
 
 
 def _make_rotate_ring_segments(region, rv3d, origin, axis, radius_world):
@@ -2260,7 +2269,7 @@ def _start_place_picture_modal_operator():
 def _remove_place_picture_draw_handlers(state):
     state["enabled"] = False
     handles = []
-    for handle_name in ("handler", "background_handler", "overlay_handler"):
+    for handle_name in ("handler", "background_handler", "grid_handler", "overlay_handler"):
         handle = state.get(handle_name)
         if handle is not None and handle not in handles:
             handles.append(handle)
@@ -2424,7 +2433,7 @@ def _build_viewport_overlay_draw_callback():
 def _register_viewport_overlay_from_resolved_path(
     resolved_path: str,
     grid_only: bool = False,
-    grid_enabled: bool = True,
+    grid_enabled: bool = False,
 ) -> str:
     state = _overlay_state()
     _remove_place_picture_draw_handlers(state)
@@ -2530,6 +2539,35 @@ def _register_viewport_overlay_from_resolved_path(
             if old_depth_mask is not None and hasattr(gpu.state, "depth_mask_set"):
                 gpu.state.depth_mask_set(old_depth_mask)
 
+    def draw_grid_overlay():
+        if not _place_picture_overlay_is_current(state, generation) or not state.get("grid_enabled", False):
+            return
+        region, rv3d, _space = _get_current_3d_context()
+        if region is None:
+            return
+        old_blend = gpu.state.blend_get() if hasattr(gpu.state, "blend_get") else None
+        old_depth_test = gpu.state.depth_test_get() if hasattr(gpu.state, "depth_test_get") else None
+        old_depth_mask = gpu.state.depth_mask_get() if hasattr(gpu.state, "depth_mask_get") else None
+        try:
+            gpu.state.blend_set("ALPHA")
+            gpu.state.depth_test_set("LESS_EQUAL")
+            gpu.state.depth_mask_set(False)
+            with gpu.matrix.push_pop():
+                gpu.matrix.push_projection()
+                try:
+                    gpu.matrix.load_matrix(rv3d.view_matrix)
+                    gpu.matrix.load_projection_matrix(rv3d.window_matrix)
+                    _draw_fake_grid_3d(color_shader, region, rv3d)
+                finally:
+                    gpu.matrix.pop_projection()
+        finally:
+            if old_blend is not None:
+                gpu.state.blend_set(old_blend)
+            if old_depth_test is not None:
+                gpu.state.depth_test_set(old_depth_test)
+            if old_depth_mask is not None:
+                gpu.state.depth_mask_set(old_depth_mask)
+
     def draw_grid_and_gizmo_overlay():
         if not _place_picture_overlay_is_current(state, generation):
             return
@@ -2550,8 +2588,6 @@ def _register_viewport_overlay_from_resolved_path(
                 try:
                     gpu.matrix.load_matrix(Matrix.Identity(4))
                     gpu.matrix.load_projection_matrix(_pixel_projection(region.width, region.height))
-                    if state.get("grid_enabled", True):
-                        _draw_fake_grid_2d(color_shader, region, rv3d)
                     _draw_fake_gizmos_2d(color_shader, region, rv3d)
                 finally:
                     gpu.matrix.pop_projection()
@@ -2564,6 +2600,7 @@ def _register_viewport_overlay_from_resolved_path(
                 gpu.state.depth_mask_set(old_depth_mask)
 
     state["draw_background_image"] = draw_background_image
+    state["draw_grid_overlay"] = draw_grid_overlay
     state["draw_grid_and_gizmo_overlay"] = draw_grid_and_gizmo_overlay
     state["background_handler"] = (
         bpy.types.SpaceView3D.draw_handler_add(
@@ -2574,6 +2611,12 @@ def _register_viewport_overlay_from_resolved_path(
         )
         if image is not None
         else None
+    )
+    state["grid_handler"] = bpy.types.SpaceView3D.draw_handler_add(
+        draw_grid_overlay,
+        (),
+        "WINDOW",
+        "POST_VIEW",
     )
     state["overlay_handler"] = bpy.types.SpaceView3D.draw_handler_add(
         draw_grid_and_gizmo_overlay,
@@ -2622,7 +2665,7 @@ def _apply_grid_spacing(context, payload):
 
 def _place_picture_image(context, payload, persist_project_state=True):
     spacing_m, distance_m, far_spacing_m = _read_grid_settings(payload)
-    grid_enabled = bool(payload.get("grid_enabled", True))
+    grid_enabled = bool(payload.get("grid_enabled", False))
     _set_runtime_grid_settings(spacing_m, distance_m, far_spacing_m)
     resolved_path = _resolve_optional_image_path(
         _read_string(payload, "static_background_path", DEFAULT_STATIC_BACKGROUND_PATH)
@@ -4055,7 +4098,7 @@ def _restore_project_startup_state(context):
                         DEFAULT_PLACE_PICTURE_GRID_FAR_SPACING_M,
                     ),
                     "grid_enabled": bool(
-                        place_picture_state.get("grid_enabled", True)
+                        place_picture_state.get("grid_enabled", False)
                     ),
                 },
                 persist_project_state=False,

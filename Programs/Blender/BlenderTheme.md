@@ -116,6 +116,12 @@ Place Picture controls:
 - `Browse`, `Place Picture`, `Grid`, `Remove Grid`, `Startup`, and `Clear`
   operate on the declared image-path and grid fields. `Remove Grid` leaves the
   picture and fake gizmos active.
+- New pictures and saved states without an explicit grid choice start with the
+  grid off. `Grid` enables it; explicit saved on/off choices are still respected.
+  The grid draws on the world XY plane in the 3D pass with scene-depth testing,
+  so solid objects hide lines behind them. Fake transform gizmos remain above
+  the scene. Native grid/axes are hidden while Place Picture owns the viewport
+  and their previous settings return when the picture overlay is cleared.
 - Near spacing, distance, and far spacing are owner-state fields sent only to
   fixed package-declared `theme.py` commands.
 

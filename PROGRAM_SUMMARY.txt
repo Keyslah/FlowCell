@@ -1,5 +1,12 @@
 FlowCell Program Summary
-Last updated: 2026-09-26
+Last updated: 2026-09-27
+
+Blender default-off, depth-tested picture grid (2026-09-27)
+----------------------------------------------------------
+- Theme 3.0.18 defaults Place Picture and missing legacy grid settings to off. The Grid action explicitly enables it; explicit saved choices remain readable. The grid uses world-space XY lines in POST_VIEW with scene-depth testing and no depth writes, so objects occlude it. Fake gizmos retain their separate screen overlay.
+- Adaptive spacing and line caps remain. Native floor, orthographic grid and axes are hidden while the picture overlay owns the viewport and restored on clearing it; handler cleanup includes the separate grid handler. Retired overlay callbacks must match the current runtime state by identity, so reused generation numbers cannot resurrect a stale screen grid after a reload.
+- Changed files: Theme theme.py, its page contract tests, Blender grid tests, Blender program version, BlenderTheme.md and this summary. Validation: 15 Python Theme tests and 36 page tests pass; Python compilation and diff checks pass. Real Blender 5.2 GPU tests in perspective/orthographic views show zero grid pixels over the cube interior, with depth-disabled negative controls reproducing the fault. A live Material Preview check confirms the knight occludes grid lines; the grid was then left off.
+- Rebuilt the compiled release and ran the required forced-restart helper after final source edits. Its separate development launch exited before bootstrap while installed FlowCell remained running; no frontend/native implementation changed. Synced Theme 3.0.18 catalog, owner and managed-action copies with backups and reloaded the live action. Removed one verified stale overlay's two handlers. Current and startup grid settings are off; all 11 scene objects, selection/transforms, picture and Material Preview mode were preserved. Blender was not restarted; no manual reload/resync remains. Broad frontend/native suites were not repeated because changes are confined to the Blender package; wireframe/X-ray and native-style side-view grid planes were not visually tested.
 
 Blender individual popped Button colors (2026-09-26)
 ---------------------------------------------------
