@@ -281,7 +281,7 @@ test("Theme owns its Blender lifecycle and generic deletion owns its sidecar", (
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.18");
+  assert.equal(contribution.version, "3.0.19");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -1065,8 +1065,8 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
     "button-theme.settings": "Apply text color, hover and active highlights, and glow to all Blender popped Buttons. Saved packages include the currently applied popped Button settings.",
     "picture.file.select": "Pick a Place Picture image.",
     "picture.apply": "Place the picture path in the Blender viewport with the overlay.",
-    "picture.grid": "Apply the entered near, distance, and far grid spacing values.",
-    "picture.grid.remove": "Hide only the fake grid; keep any Place Picture image and gizmos active.",
+    "picture.grid": "Enable Blender's native viewport grid.",
+    "picture.grid.remove": "Hide Blender's native grid; keep any Place Picture image and gizmos active.",
     "picture.startup": "Save the current Place Picture image so Blender restores it on startup.",
     "picture.clear": "Remove the Place Picture background, grid, and gizmos, and clear the picture path.",
     "environment.file.select": "Pick an HDRI file.",
@@ -1264,6 +1264,39 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
   assert.doesNotMatch(renderThemeSource, /applyRow/);
 });
 
+test("native Grid hides obsolete spacing controls while retaining old saved values", async () => {
+  const legacyGrid = { grid_spacing_m: 0.25, grid_distance_m: 17, grid_far_spacing_m: 3 };
+  const root = await renderThemePage({ fields: legacyGrid }, {
+    "button-theme.settings": { settings: poppedSettings(), configured: true },
+    "theme.package.save": { saved: true, packagePath: "C:\\Themes\\legacy.json", packageName: "Legacy" }
+  });
+  assert.deepEqual(page.config.picture.gridFieldIds, []);
+  assert.equal(root.querySelectorAll("div").find((node) => node.className === "theme-number-grid theme-number-grid--picture").children.length, 0);
+  assert.equal(root.querySelectorAll("span").some((node) => ["Near grid", "Distance", "Far grid"].includes(node.textContent)), false);
+  assert.equal(page.config.copy.applyingGrid, "Enabling Blender's native grid…");
+  assert.equal(page.config.copy.removingGrid, "Hiding Blender's native grid...");
+
+  for (const fieldId of Object.keys(legacyGrid)) {
+    assert.ok(fieldById.has(fieldId), `retain legacy ${fieldId} state`);
+    assert.ok(page.config.persistence.fieldIds.includes(fieldId));
+    assert.ok(page.config.persistence.packageFieldIds.includes(fieldId));
+    assert.equal(page.config.payloadMaps.picture[fieldId], fieldId);
+    for (const actionId of ["theme.package.open", "theme.package.previous", "theme.package.next"]) {
+      assert.equal(actionById.get(actionId).responseSchema.properties.fieldPatch.properties[fieldId].type, "number");
+    }
+  }
+  for (const [label, actionId] of [["Grid", "picture.grid"], ["Save Buckets", "theme.fields.save"], ["Save Package", "theme.package.save"]]) {
+    await clickPageButton(root, label);
+    const request = root.requests.find((candidate) => candidate.actionId === actionId);
+    assert.ok(request, `retain ${label} action`);
+    const values = request.payload.values || request.payload;
+    assert.deepEqual(Object.fromEntries(Object.keys(legacyGrid).map((fieldId) => [fieldId, values[fieldId]])), legacyGrid);
+  }
+  await root.flushTimers();
+  const savedState = root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state;
+  assert.deepEqual(Object.fromEntries(Object.keys(legacyGrid).map((fieldId) => [fieldId, savedState.fields[fieldId]])), legacyGrid);
+});
+
 test("Remove Grid preserves the picture and the startup bundle stays atomic", () => {
   assert.equal(page.config.actions.picture.removeGrid, "picture.grid.remove");
   assert.match(
@@ -1276,19 +1309,23 @@ test("Remove Grid preserves the picture and the startup bundle stays atomic", ()
   assert.ok(removeGridStart >= 0 && clearPictureStart > removeGridStart);
   const removeGridSource = blenderSource.slice(removeGridStart, clearPictureStart);
   assert.match(removeGridSource, /state\["grid_enabled"\] = False/);
+  assert.match(removeGridSource, /_set_native_grid_visibility\(False\)/);
   assert.doesNotMatch(removeGridSource, /_remove_viewport_overlay_handler|_clear_place_picture_overlay|_disable_camera_background_images|_set_saved_overlay_path/);
-  const gridDrawStart = blenderSource.indexOf("    def draw_grid_overlay():");
+  const nativeGridStart = blenderSource.indexOf("def _set_native_grid_visibility(");
+  const viewportSettingsStart = blenderSource.indexOf("def _apply_place_picture_viewport_settings(");
+  assert.ok(nativeGridStart >= 0 && viewportSettingsStart > nativeGridStart);
+  const nativeGridSource = blenderSource.slice(nativeGridStart, viewportSettingsStart);
+  for (const attribute of ["show_floor", "show_ortho_grid", "show_axis_x", "show_axis_y"]) {
+    assert.ok(nativeGridSource.includes(`"${attribute}"`));
+  }
+  assert.match(nativeGridSource, /_safe_set\(overlay, attr, bool\(enabled\)\)/);
   const gizmoDrawStart = blenderSource.indexOf("    def draw_grid_and_gizmo_overlay():");
-  assert.ok(gridDrawStart >= 0 && gizmoDrawStart > gridDrawStart);
-  const gridDraw = blenderSource.slice(gridDrawStart, gizmoDrawStart);
-  assert.match(gridDraw, /state\.get\("grid_enabled", False\)/);
-  assert.match(gridDraw, /depth_test_set\("LESS_EQUAL"\)/);
-  assert.match(gridDraw, /depth_mask_set\(False\)/);
-  assert.match(gridDraw, /_draw_fake_grid_3d\(color_shader, region, rv3d\)/);
+  assert.ok(gizmoDrawStart >= 0);
   const gizmoDraw = blenderSource.slice(gizmoDrawStart, blenderSource.indexOf('    state["draw_background_image"]', gizmoDrawStart));
   assert.match(gizmoDraw, /_draw_fake_gizmos_2d/);
   assert.doesNotMatch(gizmoDraw, /_draw_fake_grid_/);
-  assert.match(blenderSource, /state\["grid_handler"\] = bpy\.types\.SpaceView3D\.draw_handler_add\([\s\S]*?"POST_VIEW"/);
+  assert.doesNotMatch(blenderSource, /def draw_grid_overlay\(/);
+  assert.match(blenderSource, /state\["grid_handler"\] = None/);
 
   const loadPackageStart = pageScript.indexOf("async function loadPackage(");
   const selectFileStart = pageScript.indexOf("async function selectFile(");

@@ -118,12 +118,15 @@ Place Picture controls:
   picture and fake gizmos active.
 - New pictures and saved states without an explicit grid choice start with the
   grid off. `Grid` enables it; explicit saved on/off choices are still respected.
-  The grid draws on the world XY plane in the 3D pass with scene-depth testing,
-  so solid objects hide lines behind them. Fake transform gizmos remain above
-  the scene. Native grid/axes are hidden while Place Picture owns the viewport
-  and their previous settings return when the picture overlay is cleared.
-- Near spacing, distance, and far spacing are owner-state fields sent only to
-  fixed package-declared `theme.py` commands.
+  Theme 3.0.19 uses Blender's native floor, orthographic grid and axes. The
+  picture retains its fixed full-viewport fit during navigation. With a picture
+  and grid enabled, a GPU-only native viewport cache supplies object occlusion,
+  grid planes and antialiasing. It refreshes outside Blender's draw engine and
+  presents on the following redraw, before native viewport text and gizmos.
+  Turning the grid off frees this cache and restores the inexpensive picture
+  path. Clearing the picture restores the previous viewport settings.
+- Grid spacing and units follow Blender. The old near/distance/far controls
+  are hidden; their saved values remain readable for package compatibility.
 
 HDRI controls:
 

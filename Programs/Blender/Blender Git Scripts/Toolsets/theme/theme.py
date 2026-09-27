@@ -1,4 +1,4 @@
-# Description: Set Blender UI theme and HDRI values, plus Place Picture fake gizmos and fake grid over a background image.
+# Description: Set Blender UI theme and HDRI values, plus a fixed viewport picture with Blender's native grid.
 
 
 
@@ -951,11 +951,15 @@ def _get_current_3d_context():
     region = getattr(bpy.context, "region", None)
     rv3d = getattr(bpy.context, "region_data", None)
     space = getattr(bpy.context, "space_data", None)
-    if region is None or rv3d is None or space is None:
+    if region is None or space is None:
         return None, None, None
     if getattr(region, "type", "") != "WINDOW":
         return None, None, None
     if getattr(space, "type", "") != "VIEW_3D":
+        return None, None, None
+    if rv3d is None and not space.region_quadviews:
+        rv3d = space.region_3d
+    if rv3d is None:
         return None, None, None
     return region, rv3d, space
 
@@ -1052,7 +1056,15 @@ def _restore_place_picture_viewports(state):
             _safe_set(snapshot.get("overlay"), attr, value)
 
 
-def _apply_place_picture_viewport_settings():
+def _set_native_grid_visibility(enabled):
+    for space in _iter_view3d_spaces() or []:
+        overlay = getattr(space, "overlay", None)
+        for attr in ("show_floor", "show_ortho_grid", "show_axis_x", "show_axis_y"):
+            _safe_set(overlay, attr, bool(enabled))
+        _safe_set(overlay, "show_axis_z", False)
+
+
+def _apply_place_picture_viewport_settings(grid_enabled=False):
     for space in _iter_view3d_spaces() or []:
         shading = getattr(space, "shading", None)
         overlay = getattr(space, "overlay", None)
@@ -1068,19 +1080,13 @@ def _apply_place_picture_viewport_settings():
             _safe_set(shading, "background_type", "THEME")
         if overlay is not None:
             _safe_set(overlay, "show_overlays", True)
-            # Place Picture owns its grid; native floor/side-view grids and
-            # axes would otherwise remain visible when its Grid is off.
-            _safe_set(overlay, "show_floor", False)
-            _safe_set(overlay, "show_ortho_grid", False)
-            _safe_set(overlay, "show_axis_x", False)
-            _safe_set(overlay, "show_axis_y", False)
-            _safe_set(overlay, "show_axis_z", False)
             _safe_set(overlay, "show_extras", True)
         _safe_set(space, "show_gizmo", True)
         if PLACE_PICTURE_HIDE_REAL_BLENDER_TRANSFORM_GIZMOS:
             _safe_set(space, "show_gizmo_object_translate", False)
             _safe_set(space, "show_gizmo_object_rotate", False)
             _safe_set(space, "show_gizmo_object_scale", False)
+    _set_native_grid_visibility(grid_enabled)
 
 
 def _nice_step_from_raw(raw):
@@ -2266,10 +2272,118 @@ def _start_place_picture_modal_operator():
         print(f"Could not start Place Picture fake gizmo modal handler: {exc}")
 
 
+def _free_native_view_caches(state):
+    freed = set()
+    for cache in state.pop("native_view_caches", {}).values():
+        offscreen = cache["offscreen"]
+        if id(offscreen) in freed:
+            continue
+        freed.add(id(offscreen))
+        try:
+            offscreen.free()
+        except (ReferenceError, RuntimeError):
+            pass
+
+
+def _native_view_appearance(space, context):
+    values = []
+    # Overlay/shading changes do not necessarily update the scene depsgraph.
+    # Snapshot their scalar RNA settings rather than maintaining a partial list.
+    theme = context.preferences.themes[0]
+    for settings in (
+        space.overlay, space.shading, theme.view_3d, theme.user_interface,
+        context.scene.view_settings, context.scene.display_settings, context.scene.unit_settings,
+    ):
+        for prop in settings.bl_rna.properties:
+            if prop.type not in {"BOOLEAN", "INT", "FLOAT", "ENUM", "STRING"}:
+                continue
+            value = getattr(settings, prop.identifier)
+            values.append((prop.identifier, tuple(value) if getattr(prop, "is_array", False) else value))
+    return tuple(values)
+
+
+def _native_view_signature(context, region, rv3d, space, state):
+    # A second draw presents the freshly rendered texture. Only skip its
+    # refresh if the view and dependency graph have not changed meanwhile.
+    return (
+        region.width, region.height, context.scene.as_pointer(),
+        context.view_layer.as_pointer(), state.get("scene_revision", 0),
+        tuple(value for row in rv3d.view_matrix for value in row),
+        tuple(value for row in rv3d.window_matrix for value in row),
+        _native_view_appearance(space, context),
+        context.object.as_pointer() if context.object is not None else None,
+        context.object.mode if context.object is not None else None,
+        tuple(obj.as_pointer() for obj in context.selected_objects),
+    )
+
+
+def _refresh_native_view_cache(state, generation):
+    if (not _place_picture_overlay_is_current(state, generation)
+            or not state.get("grid_enabled") or state.get("image") is None):
+        return
+    region, rv3d, space = _get_current_3d_context()
+    if region is None:
+        return
+    context = bpy.context
+    caches = state.setdefault("native_view_caches", {})
+    live_regions = {
+        item.as_pointer()
+        for window in context.window_manager.windows for area in window.screen.areas
+        if area.type == "VIEW_3D" for item in area.regions if item.type == "WINDOW"
+    }
+    for closed in caches.keys() - live_regions:
+        try:
+            caches.pop(closed)["offscreen"].free()
+        except (ReferenceError, RuntimeError):
+            pass
+    key = region.as_pointer()
+    size = (region.width, region.height)
+    signature = _native_view_signature(context, region, rv3d, space, state)
+    cache = caches.get(key)
+    if cache is not None and cache.pop("followup", None) == signature:
+        return
+    if cache is not None and cache["size"] != size:
+        cache["offscreen"].free()
+        caches.pop(key)
+        cache = None
+    old_viewport = gpu.state.viewport_get()
+    old_blend = gpu.state.blend_get()
+    old_depth = gpu.state.depth_test_get()
+    old_mask = gpu.state.depth_mask_get()
+    try:
+        if cache is None:
+            cache = {"offscreen": gpu.types.GPUOffScreen(*size, format="RGBA16F"), "size": size}
+            caches[key] = cache
+        # POST_PIXEL is outside Blender's draw engine. POST_VIEW cannot start
+        # a nested native render. No pixels are read back to the CPU.
+        cache["offscreen"].draw_view3d(
+            context.scene, context.view_layer, space, region,
+            rv3d.view_matrix, rv3d.window_matrix,
+            do_color_management=True, draw_background=False,
+        )
+        cache["ready"] = True
+        cache["signature"] = _native_view_signature(context, region, rv3d, space, state)
+        cache["followup"] = cache["signature"]
+        state.pop("native_view_error", None)
+        context.area.tag_redraw()
+    except Exception as exc:
+        message = str(exc)
+        if state.get("native_view_error") != message:
+            print(f"Place Picture native viewport: {message}")
+        state["native_view_error"] = message
+        if cache is not None:
+            cache["ready"] = False
+    finally:
+        gpu.state.viewport_set(*old_viewport)
+        gpu.state.blend_set(old_blend)
+        gpu.state.depth_test_set(old_depth)
+        gpu.state.depth_mask_set(old_mask)
+
+
 def _remove_place_picture_draw_handlers(state):
     state["enabled"] = False
     handles = []
-    for handle_name in ("handler", "background_handler", "grid_handler", "overlay_handler"):
+    for handle_name in ("handler", "background_handler", "grid_handler", "native_view_handler", "overlay_handler"):
         handle = state.get(handle_name)
         if handle is not None and handle not in handles:
             handles.append(handle)
@@ -2278,6 +2392,31 @@ def _remove_place_picture_draw_handlers(state):
             bpy.types.SpaceView3D.draw_handler_remove(handle, "WINDOW")
         except Exception:
             pass
+    update_handler = state.pop("native_view_update_handler", None)
+    if update_handler is not None and update_handler in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(update_handler)
+    _free_native_view_caches(state)
+
+
+def _build_native_view_shader():
+    interface = gpu.types.GPUStageInterfaceInfo("flowcell_native_view")
+    interface.smooth("VEC2", "uv")
+    info = gpu.types.GPUShaderCreateInfo()
+    info.vertex_in(0, "VEC2", "pos")
+    info.vertex_in(1, "VEC2", "texCoord")
+    info.vertex_out(interface)
+    info.sampler(0, "FLOAT_2D", "cachedView")
+    info.fragment_out(0, "VEC4", "fragColor")
+    info.vertex_source("void main() { uv = texCoord; gl_Position = vec4(pos, 0.0, 1.0); }")
+    # Undo Blender's display transfer before reinserting its native render
+    # into the UI-linear overlay layer. Coverage is already premultiplied.
+    info.fragment_source("""
+        void main() {
+            vec4 c = texture(cachedView, uv);
+            fragColor = vec4(sign(c.rgb) * pow(abs(c.rgb), vec3(2.2)), c.a);
+        }
+    """)
+    return gpu.shader.create_from_info(info)
 
 
 def _remove_viewport_overlay_handler():
@@ -2458,7 +2597,7 @@ def _register_viewport_overlay_from_resolved_path(
     if not state.get("viewport_snapshots"):
         state["viewport_snapshots"] = _snapshot_place_picture_viewports()
 
-    _apply_place_picture_viewport_settings()
+    _apply_place_picture_viewport_settings(grid_enabled)
 
     image_shader = gpu.shader.from_builtin("IMAGE") if image is not None else None
     color_shader = gpu.shader.from_builtin("UNIFORM_COLOR")
@@ -2473,13 +2612,30 @@ def _register_viewport_overlay_from_resolved_path(
     state["enabled"] = True
     state["grid_enabled"] = bool(grid_enabled)
     state["generation"] = generation
+    state["native_view_caches"] = {}
+    state["scene_revision"] = 0
+    native_shader = _build_native_view_shader() if image is not None and grid_enabled else None
+    native_batch = (batch_for_shader(
+        native_shader, "TRIS",
+        {"pos": ((-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)),
+         "texCoord": ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))},
+        indices=((0, 1, 2), (0, 2, 3)),
+    ) if native_shader is not None else None)
+
+    def native_scene_updated(*_args):
+        if _place_picture_overlay_is_current(state, generation):
+            state["scene_revision"] = state.get("scene_revision", 0) + 1
+
+    if image is not None and grid_enabled:
+        state["native_view_update_handler"] = native_scene_updated
+        bpy.app.handlers.depsgraph_update_post.append(native_scene_updated)
 
     def draw_background_image():
         if not _place_picture_overlay_is_current(state, generation):
             return
         if image is None or not PLACE_PICTURE_ENABLE_BACKGROUND:
             return
-        region, _rv3d, _space = _get_current_3d_context()
+        region, rv3d, space = _get_current_3d_context()
         if region is None:
             return
         image_size = getattr(image, "size", None)
@@ -2512,12 +2668,17 @@ def _register_viewport_overlay_from_resolved_path(
             {"pos": vertices, "texCoord": tex_coords},
             indices=((0, 1, 2), (0, 2, 3)),
         )
+        cache = state.get("native_view_caches", {}).get(region.as_pointer())
+        native_ready = (state.get("grid_enabled") and native_shader is not None
+                        and cache is not None and cache.get("ready")
+                        and cache["size"] == (region.width, region.height)
+                        and cache.get("signature") == _native_view_signature(bpy.context, region, rv3d, space, state))
         old_blend = gpu.state.blend_get() if hasattr(gpu.state, "blend_get") else None
         old_depth_test = gpu.state.depth_test_get() if hasattr(gpu.state, "depth_test_get") else None
         old_depth_mask = gpu.state.depth_mask_get() if hasattr(gpu.state, "depth_mask_get") else None
         try:
             if hasattr(gpu.state, "depth_test_set"):
-                gpu.state.depth_test_set("LESS_EQUAL")
+                gpu.state.depth_test_set("NONE" if native_ready else "LESS_EQUAL")
             if hasattr(gpu.state, "depth_mask_set"):
                 gpu.state.depth_mask_set(False)
             gpu.state.blend_set("ALPHA" if STATIC_BACKGROUND_USE_ALPHA else "NONE")
@@ -2529,6 +2690,11 @@ def _register_viewport_overlay_from_resolved_path(
                     image_shader.bind()
                     image_shader.uniform_sampler("image", texture)
                     batch.draw(image_shader)
+                    if native_ready:
+                        gpu.state.blend_set("ALPHA_PREMULT")
+                        native_shader.bind()
+                        native_shader.uniform_sampler("cachedView", cache["offscreen"].texture_color)
+                        native_batch.draw(native_shader)
                 finally:
                     gpu.matrix.pop_projection()
         finally:
@@ -2539,34 +2705,8 @@ def _register_viewport_overlay_from_resolved_path(
             if old_depth_mask is not None and hasattr(gpu.state, "depth_mask_set"):
                 gpu.state.depth_mask_set(old_depth_mask)
 
-    def draw_grid_overlay():
-        if not _place_picture_overlay_is_current(state, generation) or not state.get("grid_enabled", False):
-            return
-        region, rv3d, _space = _get_current_3d_context()
-        if region is None:
-            return
-        old_blend = gpu.state.blend_get() if hasattr(gpu.state, "blend_get") else None
-        old_depth_test = gpu.state.depth_test_get() if hasattr(gpu.state, "depth_test_get") else None
-        old_depth_mask = gpu.state.depth_mask_get() if hasattr(gpu.state, "depth_mask_get") else None
-        try:
-            gpu.state.blend_set("ALPHA")
-            gpu.state.depth_test_set("LESS_EQUAL")
-            gpu.state.depth_mask_set(False)
-            with gpu.matrix.push_pop():
-                gpu.matrix.push_projection()
-                try:
-                    gpu.matrix.load_matrix(rv3d.view_matrix)
-                    gpu.matrix.load_projection_matrix(rv3d.window_matrix)
-                    _draw_fake_grid_3d(color_shader, region, rv3d)
-                finally:
-                    gpu.matrix.pop_projection()
-        finally:
-            if old_blend is not None:
-                gpu.state.blend_set(old_blend)
-            if old_depth_test is not None:
-                gpu.state.depth_test_set(old_depth_test)
-            if old_depth_mask is not None:
-                gpu.state.depth_mask_set(old_depth_mask)
+    def refresh_native_view():
+        _refresh_native_view_cache(state, generation)
 
     def draw_grid_and_gizmo_overlay():
         if not _place_picture_overlay_is_current(state, generation):
@@ -2600,7 +2740,7 @@ def _register_viewport_overlay_from_resolved_path(
                 gpu.state.depth_mask_set(old_depth_mask)
 
     state["draw_background_image"] = draw_background_image
-    state["draw_grid_overlay"] = draw_grid_overlay
+    state["refresh_native_view"] = refresh_native_view
     state["draw_grid_and_gizmo_overlay"] = draw_grid_and_gizmo_overlay
     state["background_handler"] = (
         bpy.types.SpaceView3D.draw_handler_add(
@@ -2612,11 +2752,10 @@ def _register_viewport_overlay_from_resolved_path(
         if image is not None
         else None
     )
-    state["grid_handler"] = bpy.types.SpaceView3D.draw_handler_add(
-        draw_grid_overlay,
-        (),
-        "WINDOW",
-        "POST_VIEW",
+    state["grid_handler"] = None
+    state["native_view_handler"] = (
+        bpy.types.SpaceView3D.draw_handler_add(refresh_native_view, (), "WINDOW", "POST_PIXEL")
+        if image is not None and grid_enabled else None
     )
     state["overlay_handler"] = bpy.types.SpaceView3D.draw_handler_add(
         draw_grid_and_gizmo_overlay,
@@ -2655,7 +2794,7 @@ def _apply_grid_spacing(context, payload):
             grid_enabled=True,
         )
     return _result(
-        f"Grid set to {spacing_m:g} m up to {distance_m:g} m from world origin, then {far_spacing_m:g} m.",
+        "Blender native grid enabled. Spacing and units follow Blender viewport settings.",
         grid_spacing_m=spacing_m,
         grid_distance_m=distance_m,
         grid_far_spacing_m=far_spacing_m,
@@ -2690,6 +2829,8 @@ def _place_picture_image(context, payload, persist_project_state=True):
 def _remove_place_picture_grid(context=None):
     state = _overlay_state()
     state["grid_enabled"] = False
+    _set_native_grid_visibility(False)
+    _free_native_view_caches(state)
     runtime_path = str(state.get("path") or "").strip()
     if runtime_path:
         _set_project_place_picture_state(

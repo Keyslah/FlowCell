@@ -3743,7 +3743,7 @@
         "togglingButtonThemeText": "Toggling popped Button text between black and white...",
         "pictureSectionTitle": "Place Picture",
         "environmentSectionTitle": "HDRI",
-        "removingGrid": "Removing the grid...",
+        "removingGrid": "Hiding Blender's native grid...",
         "paletteLabel": "Sampled palette",
         "loading": "Loading owner state…",
         "ready": "Blender Theme is ready.",
@@ -3759,7 +3759,7 @@
         "loadingPackage": "Loading the theme package…",
         "selectingPicture": "Choosing a background picture…",
         "applyingPicture": "Applying Place Picture…",
-        "applyingGrid": "Applying grid settings…",
+        "applyingGrid": "Enabling Blender's native grid…",
         "savingStartup": "Saving Place Picture startup settings…",
         "clearingPicture": "Clearing Place Picture…",
         "selectingEnvironment": "Choosing an HDRI…",
@@ -3832,8 +3832,8 @@
         "button-theme.toggle-text": "Toggle all scoped Button label text in open Blender Pop-outs and Fans between black and white without changing Surface colors or saved skins.",
         "picture.file.select": "Pick a Place Picture image.",
         "picture.apply": "Place the picture path in the Blender viewport with the overlay.",
-        "picture.grid": "Apply the entered near, distance, and far grid spacing values.",
-        "picture.grid.remove": "Hide only the fake grid; keep any Place Picture image and gizmos active.",
+        "picture.grid": "Enable Blender's native viewport grid.",
+        "picture.grid.remove": "Hide Blender's native grid; keep any Place Picture image and gizmos active.",
         "picture.startup": "Save the current Place Picture image so Blender restores it on startup.",
         "picture.clear": "Remove the Place Picture background, grid, and gizmos, and clear the picture path.",
         "environment.file.select": "Pick an HDRI file.",
@@ -4184,11 +4184,7 @@
       },
       "picture": {
         "pathFieldId": "static_background_path",
-        "gridFieldIds": [
-          "grid_spacing_m",
-          "grid_distance_m",
-          "grid_far_spacing_m"
-        ]
+        "gridFieldIds": []
       },
       "environment": {
         "pathFieldId": "hdri_path",
