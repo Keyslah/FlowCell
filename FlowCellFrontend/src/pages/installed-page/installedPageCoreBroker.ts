@@ -2,7 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { getCurrentWindow, monitorFromPoint } from "@tauri-apps/api/window";
 
-import type { ButtonStateDocument, JsonValue, ProgramPopoutThemeSettings } from "../../button/types";
+import type {
+  ButtonStateDocument,
+  JsonValue,
+  ProgramPopoutGradientCurvePoint,
+  ProgramPopoutThemeSettings
+} from "../../button/types";
 import type { FlowCellBounds } from "../../types";
 import { mappedToolPackageFields } from "../../button/runtime/toolPackageMapping.js";
 import {
@@ -300,6 +305,7 @@ function popoutPaletteAssignments(
 function popoutPaletteGradient(
   payload: Readonly<Record<string, JsonValue>>
 ): { gradient: ProgramPopoutPaletteGradient; screenTopToBottom: boolean } {
+  // Angle and curve are optional; the palette validator rejects malformed values.
   return {
     gradient: {
       colors: Array.isArray(payload.colors)
@@ -307,7 +313,11 @@ function popoutPaletteGradient(
         : [],
       spread: numberValue(payload, "spread", Number.NaN),
       scatter: numberValue(payload, "scatter", Number.NaN),
-      seed: numberValue(payload, "seed", Number.NaN)
+      seed: numberValue(payload, "seed", Number.NaN),
+      ...(payload.angle !== undefined ? { angle: numberValue(payload, "angle", Number.NaN) } : {}),
+      ...(payload.curve !== undefined
+        ? { curve: payload.curve as unknown as ProgramPopoutGradientCurvePoint[] }
+        : {})
     },
     screenTopToBottom: payload.screenTopToBottom === true
   };
@@ -685,7 +695,7 @@ async function liveProgramPopoutPaletteScope(
     group.targets.push(...targets);
     if (screenTopToBottom && targets.length > 0) {
       let visibleBounds: FlowCellBounds | null = null;
-      let envelope: { y: number; height: number } | null = null;
+      let envelope: { x?: number; y: number; width?: number; height: number } | null = null;
       let collapsedOwner: { paletteId: string; bounds: FlowCellBounds } | null = null;
       const items = programPopoutPaletteTargetPositions(document, programName, targets);
       if (candidate.windowKind === "button-popout") {
@@ -708,7 +718,7 @@ async function liveProgramPopoutPaletteScope(
           envelope = unit.desktopBoundsEnvelope ?? unit.canonicalBounds;
           if (!visibleBounds && owner && usableFlowCellBounds(collapsedBounds)) {
             visibleBounds = collapsedBounds;
-            envelope = { y: owner.y, height: owner.height };
+            envelope = { x: owner.x, y: owner.y, width: owner.width, height: owner.height };
           }
         } else {
           visibleBounds = candidate.snapshotBounds ?? flowCellBoundsFromDesktopBounds(unit.desktopBounds);
@@ -727,7 +737,9 @@ async function liveProgramPopoutPaletteScope(
         }
         visibleBounds = candidate.snapshotBounds ?? flowCellBoundsFromDesktopBounds(setup.collapsedPanelOwnerBounds);
         envelope = {
+          x: ownerPlacement.x + (collapsedEnvelope?.x ?? 0),
           y: ownerPlacement.y + (collapsedEnvelope?.y ?? 0),
+          width: collapsedEnvelope?.width ?? ownerPlacement.width,
           height: collapsedEnvelope?.height ?? ownerPlacement.height
         };
         if (candidate.displayMode === "collapsed" && usableFlowCellBounds(visibleBounds)) {
@@ -751,6 +763,7 @@ async function liveProgramPopoutPaletteScope(
           visibleBounds,
           envelope,
           monitorWorkArea: {
+            Left: monitor.workArea.position.x,
             Top: monitor.workArea.position.y,
             Height: monitor.workArea.size.height
           },
@@ -770,6 +783,10 @@ async function liveProgramPopoutPaletteScope(
             ownerPosition.screenId = JSON.stringify(ownerMonitor.workArea);
             ownerPosition.y = (
               (collapsedOwner.bounds.Top + collapsedOwner.bounds.Height / 2 - ownerMonitor.workArea.position.y) /
+              ownerMonitor.workArea.size.height
+            );
+            ownerPosition.x = (
+              (collapsedOwner.bounds.Left + collapsedOwner.bounds.Width / 2 - ownerMonitor.workArea.position.x) /
               ownerMonitor.workArea.size.height
             );
           }
@@ -995,7 +1012,7 @@ function refillLiveProgramPopoutPalette(
   screenTopToBottom: boolean
 ): LiveProgramPopoutPaletteApplyResult {
   const positions = screenTopToBottom
-    ? scope.screenPositions && normalizedProgramPopoutScreenPositions(scope.screenPositions)
+    ? scope.screenPositions && normalizedProgramPopoutScreenPositions(scope.screenPositions, gradient.angle)
     : scope.groups.flatMap((group) =>
         programPopoutPaletteTargetPositions(group.document, programName, group.targets)
       );
@@ -1008,6 +1025,7 @@ function refillLiveProgramPopoutPalette(
     gradientProgramPopoutPaletteAssignments(
       positions,
       gradient,
+      // Screen positions are already projected along the gradient angle.
       screenTopToBottom ? { minimumY: 0, maximumY: 1 } : undefined
     )
   );
@@ -1022,9 +1040,10 @@ function changedProgramPopoutColorChannels(
   next: ProgramPopoutThemeSettings
 ): Array<"surface" | "text"> {
   const channels: Array<"surface" | "text"> = [];
-  if (!previous || ["colors", "spread", "scatter", "seed", "screenTopToBottom"].some((key) =>
-    stableJson(previous[key as keyof ProgramPopoutThemeSettings]) !== stableJson(next[key as keyof ProgramPopoutThemeSettings]))) channels.push("surface");
-  if (!previous || previous.textColor !== next.textColor) channels.push("text");
+  const changed = (keys: readonly (keyof ProgramPopoutThemeSettings)[]) => !previous ||
+    keys.some((key) => stableJson(previous[key]) !== stableJson(next[key]));
+  if (changed(["colors", "spread", "scatter", "seed", "screenTopToBottom", "angle", "curve"])) channels.push("surface");
+  if (changed(["textColor", "textColors", "textAngle", "textCurve", "textScreenTopToBottom"])) channels.push("text");
   return channels;
 }
 
@@ -1214,8 +1233,10 @@ async function runButtonThemePalette(
   if (operation === "toggle-text") {
     const textColor = nextLiveProgramPopoutTextColor(live, identity.programName);
     const applied = applyLiveProgramPopoutTextColor(live, identity.programName, textColor);
+    // A solid toggle replaces any text gradient.
+    const { textColors: _textColors, ...captured } = captureProgramPopoutThemeSettings(current, identity.programName);
     const result = withProgramPopoutSettings(current, applied, identity.programName, {
-      ...captureProgramPopoutThemeSettings(current, identity.programName),
+      ...captured,
       textColor
     }, ["text"]);
     const committed = await commitLiveProgramPopoutPalette(current, result);

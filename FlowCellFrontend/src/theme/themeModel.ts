@@ -463,6 +463,21 @@ export function extractSkinColorRoots(skin: ButtonSkin): SkinColorRoot[] {
     : profileColors;
 }
 
+export function themePlacementDeployedCenterX(
+  document: ButtonStateDocument,
+  placement: ButtonPlacement,
+  target: ThemeTarget
+): number {
+  const surface = document.surfaces[placement.surfaceId];
+  if (!surface || !placementMatchesThemeTarget(document, placement, target)) {
+    throw new Error(`Button placement '${placement.id}' is outside the selected Theme target.`);
+  }
+  const surfaceOffsetX = surface.kind === "panel"
+    ? buttonsSurfaceContentOrigin.x
+    : 0;
+  return surfaceOffsetX + placement.x + placement.width / 2;
+}
+
 export function themePlacementDeployedCenterY(
   document: ButtonStateDocument,
   placement: ButtonPlacement,

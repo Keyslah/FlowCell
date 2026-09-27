@@ -1239,15 +1239,21 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   const monitorWorkArea = appliedCanvasRef.current?.monitorWorkArea;
   const physicalThemeGeometry = appliedFrameBounds && monitorWorkArea
     ? {
-        visibleBounds: { Top: appliedFrameBounds.top, Height: appliedFrameBounds.height },
+        visibleBounds: {
+          Left: appliedFrameBounds.left,
+          Top: appliedFrameBounds.top,
+          Width: appliedFrameBounds.width,
+          Height: appliedFrameBounds.height
+        },
         envelope: renderedEnvelope,
         monitorWorkArea
       }
     : undefined;
+  const programPopoutThemeSettings = document?.programPopoutThemes?.[
+    activeContext.programName.normalize("NFC").trim().toLocaleLowerCase("en")
+  ];
   const programPopoutThemeScreenRange = useProgramPopoutThemeScreenRange({
-    enabled: Boolean(document?.programPopoutThemes?.[
-      activeContext.programName.normalize("NFC").trim().toLocaleLowerCase("en")
-    ]?.screenTopToBottom),
+    enabled: Boolean(programPopoutThemeSettings?.screenTopToBottom || programPopoutThemeSettings?.textScreenTopToBottom),
     programName: activeContext.programName,
     placements: renderedExpanded ? expandedPlacements : collapsedPlacement ? [collapsedPlacement] : [],
     geometry: physicalThemeGeometry

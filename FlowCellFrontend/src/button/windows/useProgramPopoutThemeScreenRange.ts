@@ -10,6 +10,7 @@ import {
   isProgramPopoutThemeWindowRange,
   programPopoutThemeProgramKey,
   programPopoutThemeWindowRange,
+  type ProgramPopoutThemeScreenBox,
   type ProgramPopoutThemeWindowRange
 } from "./programPopoutThemeScreenRange";
 
@@ -23,7 +24,7 @@ export function useProgramPopoutThemeScreenRange(args: {
   programName: string;
   placements: readonly ButtonPlacement[];
   geometry: (ProgramPopoutThemeScreenGeometry & { monitorWorkArea: FlowCellBounds }) | undefined;
-}): { minimumY: number; maximumY: number } | undefined {
+}): ProgramPopoutThemeScreenBox | undefined {
   const programKey = programPopoutThemeProgramKey(args.programName);
   const own = args.enabled ? programPopoutThemeWindowRange(programKey, args.placements, args.geometry) : undefined;
   const ownSignature = JSON.stringify(own ?? null);

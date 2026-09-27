@@ -339,18 +339,302 @@ select:focus-visible {
   text-align: center;
 }
 
-.button-theme-gradient,
 .button-theme-buckets {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 5px;
 }
 
-.button-theme-gradient {
+.button-theme-gradients {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.button-theme-sample {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 3px;
   padding: 5px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 7px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.button-theme-sample__button {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  height: 24px;
+  border-radius: 5px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.button-theme-channel {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  min-width: 0;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9px;
   background: rgba(0, 0, 0, 0.12);
+}
+
+.button-theme-channel .theme-card__heading {
+  margin-bottom: 0;
+}
+
+.button-theme-gradient {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  min-width: 0;
+}
+
+.button-theme-channel__footer {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.button-theme-channel__footer > button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.gradient-curve {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(150px, 210px) minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  min-width: 0;
+}
+
+.gradient-curve__box {
+  width: 100%;
+  height: auto;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
+  cursor: crosshair;
+  touch-action: none;
+  user-select: none;
+}
+
+.gradient-curve__box:focus-visible {
+  outline: 1px solid var(--accent);
+}
+
+.gradient-curve__frame {
+  fill: rgba(255, 255, 255, 0.025);
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 0.6;
+}
+
+.gradient-curve__grid,
+.gradient-curve__guides {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.07);
+  stroke-width: 0.4;
+}
+
+.gradient-curve__guides {
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-dasharray: 1 2;
+}
+
+.gradient-curve__diagonal {
+  stroke: rgba(255, 255, 255, 0.16);
+  stroke-width: 0.5;
+  stroke-dasharray: 2 2;
+}
+
+.gradient-curve__strip {
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 0.4;
+}
+
+.gradient-curve__line {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 1px rgba(0, 0, 0, 0.9));
+}
+
+.gradient-curve__point-dot {
+  fill: #0f1215;
+  stroke: #ffffff;
+  stroke-width: 0.9;
+}
+
+.gradient-curve__point-dot--selected {
+  fill: var(--accent);
+  stroke: #ffffff;
+}
+
+.gradient-curve__handle-line {
+  stroke: var(--accent-strong);
+  stroke-width: 0.6;
+}
+
+.gradient-curve__handle {
+  fill: var(--accent-strong);
+}
+
+.gradient-curve__hit {
+  fill: transparent;
+  cursor: grab;
+}
+
+.gradient-curve__tools {
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  min-width: 0;
+}
+
+.gradient-curve__presets {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.gradient-curve__row,
+.gradient-curve__modes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 3px;
+}
+
+.gradient-curve__tool {
+  min-height: 24px;
+  padding: 2px 6px;
+  font-size: 0.64rem;
+}
+
+.gradient-curve__tool[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: #26352f;
+  color: #fff;
+}
+
+.gradient-curve__preset {
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  height: 30px;
+  padding: 2px;
+}
+
+.gradient-curve__glyph {
+  width: 22px;
+  height: 22px;
+}
+
+.gradient-curve__glyph-frame {
+  fill: rgba(255, 255, 255, 0.04);
+  stroke: rgba(255, 255, 255, 0.18);
+  stroke-width: 4;
+}
+
+.gradient-curve__glyph-line {
+  fill: none;
+  stroke: var(--accent-strong);
+  stroke-width: 9;
+  stroke-linejoin: round;
+}
+
+.gradient-curve__point {
+  display: grid;
+  gap: 3px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.gradient-curve__point-label,
+.gradient-curve__number,
+.gradient-curve__hint {
+  color: var(--muted);
+  font-size: 0.64rem;
+}
+
+.gradient-curve__number {
+  display: grid;
+  gap: 1px;
+  width: 64px;
+}
+
+.gradient-curve__number input {
+  height: 24px;
+  padding: 2px 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.gradient-curve__hint {
+  margin: 0;
+  line-height: 1.35;
+}
+
+.gradient-angle {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 46px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.gradient-angle__dial {
+  width: 46px;
+  height: 46px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.gradient-angle__dial:focus-visible {
+  outline: 1px solid var(--accent);
+  border-radius: 50%;
+}
+
+.gradient-angle__face {
+  stroke: rgba(255, 255, 255, 0.35);
+  stroke-width: 1.2;
+}
+
+.gradient-angle__arrow {
+  fill: none;
+  stroke: #ffffff;
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 1.5px rgba(0, 0, 0, 0.95));
+}
+
+.gradient-angle__label {
+  color: var(--muted);
+  font-size: 0.66rem;
+}
+
+.gradient-angle__inputs {
+  display: grid;
+  grid-template-columns: minmax(60px, 1fr) 58px;
+  align-items: center;
+  gap: 4px;
+}
+
+.gradient-angle__inputs input[type="number"] {
+  padding: 3px 5px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
 }
 
 .button-theme-gradient__stops {
@@ -447,7 +731,7 @@ select:focus-visible {
 
 .button-theme-effects__grid {
   display: grid;
-  grid-template-columns: minmax(65px, 0.5fr) repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -472,94 +756,6 @@ select:focus-visible {
 
 .button-theme-effects > button {
   justify-self: start;
-}
-
-.button-theme-individuals {
-  display: grid;
-  gap: 6px;
-  margin-top: 9px;
-  padding-top: 9px;
-  border-top: 1px solid var(--border);
-}
-
-.button-theme-individuals__actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
-}
-
-.button-theme-individuals__text {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--muted);
-  font-size: 0.68rem;
-}
-
-.button-theme-individuals__list {
-  display: grid;
-  gap: 5px;
-  max-height: 320px;
-  overflow-y: auto;
-}
-
-.button-theme-individual {
-  display: grid;
-  grid-template-columns: 20px minmax(0, 1fr) 38px 38px;
-  align-items: center;
-  gap: 7px;
-  padding: 5px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-}
-
-.button-theme-individual[data-selected="true"] {
-  border-color: var(--accent);
-}
-
-.button-theme-individual__select input {
-  margin: 0;
-}
-
-.button-theme-individual__preview {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-  padding: 7px;
-  border-radius: 5px;
-}
-
-.button-theme-individual__name,
-.button-theme-individual__group {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.button-theme-individual__name {
-  font-size: 0.78rem;
-  font-weight: 600;
-}
-
-.button-theme-individual__group {
-  font-size: 0.65rem;
-  opacity: 0.8;
-}
-
-.button-theme-individual__color {
-  display: grid;
-  gap: 2px;
-  color: var(--muted);
-  font-size: 0.65rem;
-}
-
-.button-theme-individual__color input[type="color"],
-.button-theme-individuals__text input[type="color"] {
-  width: 34px;
-  min-width: 34px;
-  height: 28px;
-  padding: 1px;
 }
 
 .button-theme-bucket {
@@ -657,9 +853,12 @@ select:focus-visible {
 }
 
 @media (max-width: 780px) {
-  .button-theme-gradient,
   .button-theme-buckets {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .button-theme-gradients {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .theme-number-grid {
@@ -681,7 +880,8 @@ select:focus-visible {
   }
 
   .button-theme-gradient,
-  .button-theme-buckets {
+  .button-theme-buckets,
+  .gradient-curve {
     grid-template-columns: minmax(0, 1fr);
   }
 }

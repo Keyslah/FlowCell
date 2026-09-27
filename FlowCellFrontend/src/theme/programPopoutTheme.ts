@@ -20,21 +20,27 @@ import {
 } from "../button/skins/buttonSkinColors.js";
 import type { FlowCellBounds } from "../types.js";
 import { placementMatchesThemeTarget } from "./themeModel.js";
-import { programPopoutGradientColor } from "./programPopoutGradient.js";
+import {
+  normalizeProgramPopoutGradientCurve,
+  programPopoutGradientBoxPosition,
+  programPopoutGradientColor,
+  programPopoutGradientProjection
+} from "./programPopoutGradient.js";
 import { readProgramPopoutSkinSurfaceColor } from "./programPopoutPalette.js";
 
 export type { ProgramPopoutThemeSettings } from "../button/types.js";
 
 /** Live physical geometry belongs to the window, never to a saved theme package. */
 export interface ProgramPopoutThemeScreenGeometry {
-  visibleBounds: Pick<FlowCellBounds, "Top" | "Height">;
-  envelope: Pick<ButtonRect, "y" | "height">;
-  monitorWorkArea: Pick<FlowCellBounds, "Top" | "Height">;
-  screenRange?: { minimumY: number; maximumY: number };
+  visibleBounds: Pick<FlowCellBounds, "Top" | "Height"> & Partial<Pick<FlowCellBounds, "Left" | "Width">>;
+  envelope: Pick<ButtonRect, "y" | "height"> & Partial<Pick<ButtonRect, "x" | "width">>;
+  monitorWorkArea: Pick<FlowCellBounds, "Top" | "Height"> & Partial<Pick<FlowCellBounds, "Left" | "Width">>;
+  screenRange?: { minimumY: number; maximumY: number; minimumX?: number; maximumX?: number };
 }
 
 const SETTING_KEYS = new Set([
-  "version", "colors", "spread", "scatter", "seed", "screenTopToBottom", "textColor",
+  "version", "colors", "spread", "scatter", "seed", "screenTopToBottom", "angle", "curve", "textColor",
+  "textColors", "textAngle", "textCurve", "textScreenTopToBottom",
   "hoverEnabled", "activeEnabled", "hoverColor", "activeColor", "hoverHighlightAmount",
   "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount"
 ]);
@@ -89,18 +95,48 @@ export function clearProgramPopoutColorOverrides(
   return true;
 }
 
+function opaqueColors(value: unknown): (string | null)[] {
+  return Array.isArray(value)
+    ? value.map((color) => {
+      const normalized = normalizedColor(color);
+      return normalized ? buttonSkinOpaqueColor(normalized)?.toUpperCase() ?? null : null;
+    })
+    : [];
+}
+
+function validAngle(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= -360 && value <= 360;
+}
+
 /** Reject malformed explicit settings rather than silently replacing package values. */
 export function normalizeProgramPopoutThemeSettings(value: unknown): ProgramPopoutThemeSettings | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const candidate = value as Record<string, unknown>;
   if (Object.keys(candidate).some((key) => !SETTING_KEYS.has(key)) || candidate.version !== 1) return null;
-  const colors = Array.isArray(candidate.colors)
-    ? candidate.colors.map((color) => {
-      const normalized = normalizedColor(color);
-      return normalized ? buttonSkinOpaqueColor(normalized)?.toUpperCase() ?? null : null;
-    })
-    : [];
+  const colors = opaqueColors(candidate.colors);
   if (colors.length < 1 || colors.length > 16 || colors.some((color) => !color)) return null;
+  // Gradient shape keys are optional so packages saved before they existed stay valid.
+  const shape: Partial<ProgramPopoutThemeSettings> = {};
+  for (const key of ["angle", "textAngle"] as const) {
+    if (candidate[key] === undefined) continue;
+    if (!validAngle(candidate[key])) return null;
+    shape[key] = candidate[key] as number;
+  }
+  for (const key of ["curve", "textCurve"] as const) {
+    if (candidate[key] === undefined) continue;
+    const curve = normalizeProgramPopoutGradientCurve(candidate[key]);
+    if (!curve) return null;
+    shape[key] = curve;
+  }
+  if (candidate.textColors !== undefined) {
+    const textColors = opaqueColors(candidate.textColors);
+    if (textColors.length < 2 || textColors.length > 16 || textColors.some((color) => !color)) return null;
+    shape.textColors = textColors as string[];
+  }
+  if (candidate.textScreenTopToBottom !== undefined) {
+    if (typeof candidate.textScreenTopToBottom !== "boolean") return null;
+    shape.textScreenTopToBottom = candidate.textScreenTopToBottom;
+  }
   if (![candidate.spread, candidate.scatter].every((amount) => (
     typeof amount === "number" && Number.isFinite(amount) && amount >= 0 && amount <= 100
   )) || !Number.isSafeInteger(candidate.seed)) return null;
@@ -122,7 +158,13 @@ export function normalizeProgramPopoutThemeSettings(value: unknown): ProgramPopo
     scatter: candidate.scatter as number,
     seed: candidate.seed as number,
     screenTopToBottom: candidate.screenTopToBottom as boolean,
+    ...(shape.angle !== undefined ? { angle: shape.angle } : {}),
+    ...(shape.curve ? { curve: shape.curve } : {}),
     textColor,
+    ...(shape.textColors ? { textColors: shape.textColors } : {}),
+    ...(shape.textAngle !== undefined ? { textAngle: shape.textAngle } : {}),
+    ...(shape.textCurve ? { textCurve: shape.textCurve } : {}),
+    ...(shape.textScreenTopToBottom !== undefined ? { textScreenTopToBottom: shape.textScreenTopToBottom } : {}),
     hoverEnabled: candidate.hoverEnabled as boolean,
     activeEnabled: candidate.activeEnabled as boolean,
     hoverColor,
@@ -204,19 +246,95 @@ export function captureProgramPopoutThemeSettings(
   };
 }
 
-function screenPosition(y: number, geometry: ProgramPopoutThemeScreenGeometry): number | null {
-  const { visibleBounds, envelope, monitorWorkArea } = geometry;
+interface ProgramPopoutGradientChannel {
+  colors: readonly string[];
+  spread: number;
+  scatter: number;
+  seed: number;
+  screen: boolean;
+  angle?: number;
+  curve?: ProgramPopoutThemeSettings["curve"];
+}
+
+function finitePositive(value: number | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+/** Maps a design-space center to desktop pixels and returns its position inside the shared screen box. */
+function screenPosition(
+  center: { x: number; y: number },
+  geometry: ProgramPopoutThemeScreenGeometry,
+  angle = 0
+): number | null {
+  const { visibleBounds, envelope, monitorWorkArea, screenRange } = geometry;
   if (![visibleBounds.Top, envelope.y, monitorWorkArea.Top].every(Number.isFinite) ||
     ![visibleBounds.Height, envelope.height, monitorWorkArea.Height]
       .every((height) => Number.isFinite(height) && height > 0)) return null;
-  const desktopY = visibleBounds.Top + (y - envelope.y) * visibleBounds.Height / envelope.height;
-  const minimumY = geometry.screenRange?.minimumY ?? monitorWorkArea.Top;
-  const maximumY = geometry.screenRange?.maximumY ?? monitorWorkArea.Top + monitorWorkArea.Height;
-  return maximumY > minimumY
-    ? Math.min(1, Math.max(0, (desktopY - minimumY) / (maximumY - minimumY)))
+  const desktopY = visibleBounds.Top + (center.y - envelope.y) * visibleBounds.Height / envelope.height;
+  const minimumY = screenRange?.minimumY ?? monitorWorkArea.Top;
+  const maximumY = screenRange?.maximumY ?? monitorWorkArea.Top + monitorWorkArea.Height;
+  // Horizontal geometry is optional; without it the tilt only follows the vertical component.
+  const hasX = Number.isFinite(visibleBounds.Left) && Number.isFinite(envelope.x) &&
+    finitePositive(visibleBounds.Width) && finitePositive(envelope.width);
+  const desktopX = hasX
+    ? visibleBounds.Left! + (center.x - envelope.x!) * visibleBounds.Width! / envelope.width!
     : 0;
+  let rangeX = [desktopX, desktopX];
+  if (hasX && screenRange) {
+    if (Number.isFinite(screenRange.minimumX) && Number.isFinite(screenRange.maximumX)) {
+      rangeX = [screenRange.minimumX!, screenRange.maximumX!];
+    }
+  } else if (hasX && Number.isFinite(monitorWorkArea.Left) && finitePositive(monitorWorkArea.Width)) {
+    rangeX = [monitorWorkArea.Left!, monitorWorkArea.Left! + monitorWorkArea.Width];
+  }
+  return programPopoutGradientBoxPosition(
+    { x: desktopX, y: desktopY },
+    { minimumX: rangeX[0], maximumX: rangeX[1], minimumY, maximumY },
+    angle
+  );
 }
 
+function placementCenter(placement: ButtonPlacement): { x: number; y: number } {
+  return { x: placement.x + placement.width / 2, y: placement.y + placement.height / 2 };
+}
+
+function gradientChannelColor(
+  document: ButtonStateDocument,
+  placement: ButtonPlacement,
+  programName: string,
+  channel: ProgramPopoutGradientChannel,
+  geometry?: ProgramPopoutThemeScreenGeometry,
+  normalizedScreenPosition?: number,
+  sourcePlacementId?: string
+): string {
+  if (channel.colors.length === 1) return channel.colors[0];
+  const center = placementCenter(placement);
+  const screenY = channel.screen
+    ? typeof normalizedScreenPosition === "number" && Number.isFinite(normalizedScreenPosition)
+      ? Math.min(1, Math.max(0, normalizedScreenPosition))
+      : geometry ? screenPosition(center, geometry, channel.angle) : null
+    : null;
+  const projected = programPopoutGradientProjection(center, channel.angle);
+  // Local gradients use only the rendered surface: closed windows cannot alter
+  // the colors of a currently visible set of Buttons.
+  const projections = screenY !== null ? [] : document.surfaces[placement.surfaceId].placementIds
+    .map((id) => document.placements[id])
+    .filter((entry) => entry && placementMatchesThemeTarget(document, entry, {
+      kind: "program", programName, panelName: null
+    }))
+    .map((entry) => programPopoutGradientProjection(placementCenter(entry), channel.angle));
+  return programPopoutGradientColor({
+    ...channel,
+    placementId: sourcePlacementId && document.placements[sourcePlacementId]?.buttonId === placement.buttonId
+      ? sourcePlacementId
+      : placement.id,
+    y: screenY ?? projected,
+    minimumY: screenY !== null ? 0 : Math.min(projected, ...projections),
+    maximumY: screenY !== null ? 1 : Math.max(projected, ...projections)
+  }).toUpperCase();
+}
+
+/** A scan passes a position already projected along the fill angle within its screen box. */
 function surfaceColor(
   document: ButtonStateDocument,
   placement: ButtonPlacement,
@@ -226,30 +344,36 @@ function surfaceColor(
   normalizedScreenY?: number,
   sourcePlacementId?: string
 ): string {
-  if (settings.colors.length === 1) return settings.colors[0];
-  const centerY = placement.y + placement.height / 2;
-  const screenY = settings.screenTopToBottom
-    ? typeof normalizedScreenY === "number" && Number.isFinite(normalizedScreenY)
-      ? Math.min(1, Math.max(0, normalizedScreenY))
-      : geometry ? screenPosition(centerY, geometry) : null
-    : null;
-  // Local gradients use only the rendered surface: closed windows cannot alter
-  // the colors of a currently visible set of Buttons.
-  const centers = screenY !== null ? [] : document.surfaces[placement.surfaceId].placementIds
-    .map((id) => document.placements[id])
-    .filter((entry) => entry && placementMatchesThemeTarget(document, entry, {
-      kind: "program", programName, panelName: null
-    }))
-    .map((entry) => entry.y + entry.height / 2);
-  return programPopoutGradientColor({
-    ...settings,
-    placementId: sourcePlacementId && document.placements[sourcePlacementId]?.buttonId === placement.buttonId
-      ? sourcePlacementId
-      : placement.id,
-    y: screenY ?? centerY,
-    minimumY: screenY !== null ? 0 : Math.min(centerY, ...centers),
-    maximumY: screenY !== null ? 1 : Math.max(centerY, ...centers)
-  }).toUpperCase();
+  return gradientChannelColor(document, placement, programName, {
+    colors: settings.colors,
+    spread: settings.spread,
+    scatter: settings.scatter,
+    seed: settings.seed,
+    screen: settings.screenTopToBottom,
+    angle: settings.angle,
+    curve: settings.curve
+  }, geometry, normalizedScreenY, sourcePlacementId);
+}
+
+/** Text gradients blend smoothly without Scatter; without stops the solid text color applies. */
+function textColor(
+  document: ButtonStateDocument,
+  placement: ButtonPlacement,
+  programName: string,
+  settings: ProgramPopoutThemeSettings,
+  geometry?: ProgramPopoutThemeScreenGeometry,
+  sourcePlacementId?: string
+): string {
+  if (!settings.textColors) return settings.textColor;
+  return gradientChannelColor(document, placement, programName, {
+    colors: settings.textColors,
+    spread: 100,
+    scatter: 0,
+    seed: 0,
+    screen: settings.textScreenTopToBottom === true,
+    angle: settings.textAngle,
+    curve: settings.textCurve
+  }, geometry, undefined, sourcePlacementId);
 }
 
 /** The program theme wins on popped instances while every other surface inherits as before. */
@@ -277,7 +401,7 @@ export function resolveProgramPopoutThemeOverride(
       colors: {
         ...original?.colors,
         surface: surfaceColor(document, placement, programName, settings, geometry, normalizedScreenY, sourcePlacementId),
-        text: settings.textColor,
+        text: textColor(document, placement, programName, settings, geometry, sourcePlacementId),
         ...colorOverride
       },
       hoverEnabled: settings.hoverEnabled,

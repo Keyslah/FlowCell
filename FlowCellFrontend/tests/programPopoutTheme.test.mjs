@@ -17,6 +17,11 @@ import {
   scanProgramPopoutPaletteTargets
 } from "./.compiled-button-system/theme/programPopoutPalette.js";
 import { removeOwnedButtonGraph } from "./.compiled-button-system/button/state/buttonDocumentOperations.js";
+import {
+  normalizeProgramPopoutGradientCurve,
+  programPopoutGradientBoxPosition,
+  programPopoutGradientCurveValue
+} from "./.compiled-button-system/theme/programPopoutGradient.js";
 
 function settings(patch = {}) {
   return {
@@ -317,4 +322,146 @@ test("first capture uses common current effects so stale Utility and Lithophane 
   assert.equal(captured.textColor, "#000000");
   document.programPopoutThemes = { blender: settings({ activeGlowAmount: 5 }) };
   assert.equal(captureProgramPopoutThemeSettings(document, " Blender ").activeGlowAmount, 5);
+});
+
+const LINEAR_CURVE = [{ x: 0, y: 0, mode: "auto" }, { x: 1, y: 1, mode: "auto" }];
+
+function addGridPlacement(document, id, x, y) {
+  addPlacement(document, id, "grid", "regular-popout", "Blender", y);
+  document.placements[id].x = x;
+}
+
+test("gradient curves map positions through auto, corner and Bezier points and fail closed when malformed", () => {
+  for (const x of [0, 0.1, 0.25, 0.5, 0.9, 1]) {
+    assert.ok(Math.abs(programPopoutGradientCurveValue(LINEAR_CURVE, x) - x) < 1e-12, `linear at ${x}`);
+  }
+  const peak = [{ x: 0, y: 0, mode: "auto" }, { x: 0.5, y: 1, mode: "auto" }, { x: 1, y: 0, mode: "auto" }];
+  assert.equal(programPopoutGradientCurveValue(peak, 0.5), 1);
+  assert.ok(Math.abs(programPopoutGradientCurveValue(peak, 0.25) - programPopoutGradientCurveValue(peak, 0.75)) < 1e-9);
+  const steps = [
+    { x: 0, y: 0, mode: "corner" }, { x: 0.499, y: 0, mode: "corner" },
+    { x: 0.5, y: 1, mode: "corner" }, { x: 1, y: 1, mode: "corner" }
+  ];
+  assert.equal(programPopoutGradientCurveValue(steps, 0.3), 0);
+  assert.equal(programPopoutGradientCurveValue(steps, 0.7), 1);
+  const easeInOut = [
+    { x: 0, y: 0, mode: "free", inX: 0, inY: 0, outX: 0.42, outY: 0 },
+    { x: 1, y: 1, mode: "free", inX: -0.42, inY: 0, outX: 0, outY: 0 }
+  ];
+  assert.ok(programPopoutGradientCurveValue(easeInOut, 0.2) < 0.2);
+  assert.ok(Math.abs(programPopoutGradientCurveValue(easeInOut, 0.5) - 0.5) < 1e-9);
+  assert.ok(programPopoutGradientCurveValue(easeInOut, 0.8) > 0.8);
+  const overshoot = [
+    { x: 0, y: 0.5, mode: "free", inX: 0, inY: 0, outX: 0.9, outY: 1 },
+    { x: 1, y: 0.5, mode: "free", inX: -0.9, inY: -1, outX: 0, outY: 0 }
+  ];
+  for (let x = 0; x <= 1; x += 0.05) {
+    const value = programPopoutGradientCurveValue(overshoot, x);
+    assert.ok(value >= 0 && value <= 1, `clamped at ${x}`);
+  }
+  assert.deepEqual(normalizeProgramPopoutGradientCurve(easeInOut), easeInOut);
+  for (const curve of [
+    [], [{ x: 0, y: 0, mode: "auto" }], [{ x: 0.1, y: 0, mode: "auto" }, { x: 1, y: 1, mode: "auto" }],
+    [{ x: 0, y: 0, mode: "auto" }, { x: 0.9, y: 1, mode: "auto" }],
+    [{ x: 0, y: 0, mode: "auto" }, { x: 0.5, y: 0, mode: "auto" }, { x: 0.5, y: 1, mode: "auto" }, { x: 1, y: 1, mode: "auto" }],
+    [{ x: 0, y: 1.2, mode: "auto" }, { x: 1, y: 1, mode: "auto" }],
+    [{ x: 0, y: 0, mode: "smooth" }, { x: 1, y: 1, mode: "auto" }],
+    [{ x: 0, y: 0, mode: "auto", outX: 0.2, outY: 0 }, { x: 1, y: 1, mode: "auto" }],
+    [{ x: 0, y: 0, mode: "free" }, { x: 1, y: 1, mode: "auto" }],
+    [{ x: 0, y: 0, mode: "free", inX: 0.1, inY: 0, outX: 0.2, outY: 0 }, { x: 1, y: 1, mode: "auto" }],
+    Array.from({ length: 33 }, (_, index) => ({ x: index / 32, y: 0, mode: "auto" }))
+  ]) assert.equal(normalizeProgramPopoutGradientCurve(curve), null, JSON.stringify(curve).slice(0, 120));
+});
+
+test("gradient shape settings are optional, validated, and never added to older settings", () => {
+  const legacy = normalizeProgramPopoutThemeSettings(settings());
+  for (const key of ["angle", "curve", "textColors", "textAngle", "textCurve", "textScreenTopToBottom"]) {
+    assert.equal(Object.hasOwn(legacy, key), false, key);
+  }
+  const shaped = normalizeProgramPopoutThemeSettings(settings({
+    angle: 45, curve: LINEAR_CURVE, textColors: ["#fff", "#000"], textAngle: -90, textCurve: LINEAR_CURVE,
+    textScreenTopToBottom: true
+  }));
+  assert.equal(shaped.angle, 45);
+  assert.deepEqual(shaped.curve, LINEAR_CURVE);
+  assert.deepEqual(shaped.textColors, ["#FFFFFF", "#000000"]);
+  assert.equal(shaped.textAngle, -90);
+  assert.equal(shaped.textScreenTopToBottom, true);
+  const document = createButtonStateDocument();
+  document.programPopoutThemes = { blender: shaped };
+  assert.equal(validateButtonStateDocument(document).valid, true);
+  for (const patch of [
+    { angle: 400 }, { angle: "0" }, { curve: [] }, { textCurve: [{ x: 0, y: 0, mode: "auto" }] },
+    { textColors: ["#FFFFFF"] }, { textColors: ["#FFFFFF", "nope"] }, { textScreenTopToBottom: "yes" }
+  ]) assert.equal(normalizeProgramPopoutThemeSettings(settings(patch)), null, JSON.stringify(patch));
+});
+
+test("tilted fill gradients project each center along the angle while 0 degrees stays top-to-bottom", () => {
+  const document = createButtonStateDocument();
+  for (const [id, x, y] of [["tl", 0, 0], ["tr", 100, 0], ["bl", 0, 100], ["br", 100, 100]]) {
+    addGridPlacement(document, id, x, y);
+  }
+  const surfaces = (angle) => {
+    document.programPopoutThemes = { blender: settings(angle === undefined ? {} : { angle }) };
+    return ["tl", "tr", "bl", "br"].map((id) => resolveProgramPopoutThemeOverride(document, id).colors.surface);
+  };
+  assert.deepEqual(surfaces(undefined), ["#000000", "#000000", "#FFFFFF", "#FFFFFF"]);
+  assert.deepEqual(surfaces(0), ["#000000", "#000000", "#FFFFFF", "#FFFFFF"]);
+  assert.deepEqual(surfaces(90), ["#000000", "#FFFFFF", "#000000", "#FFFFFF"]);
+  assert.deepEqual(surfaces(-90), ["#FFFFFF", "#000000", "#FFFFFF", "#000000"]);
+  assert.deepEqual(surfaces(180), ["#FFFFFF", "#FFFFFF", "#000000", "#000000"]);
+  const diagonal = surfaces(45);
+  assert.equal(diagonal[0], "#000000");
+  assert.equal(diagonal[3], "#FFFFFF");
+  assert.equal(diagonal[1], diagonal[2], "a 45 degree tilt is symmetric across the diagonal");
+  assert.ok(["#7F7F7F", "#808080"].includes(diagonal[1]), diagonal[1]);
+  document.programPopoutThemes = { blender: settings({ curve: [
+    { x: 0, y: 1, mode: "auto" }, { x: 1, y: 0, mode: "auto" }
+  ] }) };
+  assert.equal(resolveProgramPopoutThemeOverride(document, "tl").colors.surface, "#FFFFFF", "curves can reverse the stops");
+  const assignments = gradientProgramPopoutPaletteAssignments(
+    [{ paletteId: "l", x: 0, y: 5 }, { paletteId: "r", x: 100, y: 5 }],
+    { colors: ["#000000", "#FFFFFF"], spread: 100, scatter: 0, seed: 1, angle: 90 }
+  );
+  assert.deepEqual(assignments.map(({ color }) => color), ["#000000", "#ffffff"]);
+});
+
+test("text gradients resolve per Button independently of the fill, and a solid text color stays solid", () => {
+  const document = createButtonStateDocument();
+  for (const [id, x, y] of [["tl", 0, 0], ["tr", 100, 0], ["bl", 0, 100]]) addGridPlacement(document, id, x, y);
+  document.programPopoutThemes = { blender: settings({ textColors: ["#FF0000", "#0000FF"], textAngle: 90 }) };
+  const resolved = (id) => resolveProgramPopoutThemeOverride(document, id).colors;
+  assert.deepEqual([resolved("tl").text, resolved("tr").text, resolved("bl").text], ["#FF0000", "#0000FF", "#FF0000"]);
+  assert.deepEqual([resolved("tl").surface, resolved("tr").surface, resolved("bl").surface], ["#000000", "#000000", "#FFFFFF"]);
+  document.programPopoutThemes = { blender: settings({ textColor: "#123456" }) };
+  assert.equal(resolved("tr").text, "#123456");
+});
+
+test("whole-screen tilted gradients use the shared horizontal extent and scans report the same color", () => {
+  const document = createButtonStateDocument();
+  document.programPopoutThemes = { blender: settings({ screenTopToBottom: true, angle: 90 }) };
+  addPlacement(document, "popped", "screen", "regular-popout", "Blender", 40);
+  const geometry = {
+    visibleBounds: { Left: 100, Top: 100, Width: 200, Height: 200 },
+    envelope: { x: 0, y: 0, width: 100, height: 100 },
+    monitorWorkArea: { Left: 0, Top: 0, Width: 1000, Height: 800 },
+    screenRange: { minimumY: 150, maximumY: 350, minimumX: 100, maximumX: 300 }
+  };
+  const [expected] = gradientProgramPopoutPaletteAssignments(
+    [{ paletteId: "a", y: 0.1 }], { colors: ["#000000", "#FFFFFF"], spread: 100, scatter: 0, seed: 23 },
+    { minimumY: 0, maximumY: 1 }
+  );
+  const rendered = resolveProgramPopoutThemeOverride(document, "popped", geometry);
+  assert.equal(rendered.colors.surface, expected.color.toUpperCase());
+  const targets = [{ paletteId: "live-window:popped", placementId: "popped" }];
+  const scan = scanProgramPopoutPaletteTargets(document, "Blender", targets, [
+    { paletteId: "left", x: 100 / 800, y: 150 / 800 },
+    { paletteId: "live-window:popped", x: 120 / 800, y: 200 / 800 },
+    { paletteId: "right", x: 300 / 800, y: 350 / 800 }
+  ]);
+  assert.equal(scan.placements[0].color, rendered.colors.surface);
+  assert.deepEqual(normalizedProgramPopoutScreenPositions([
+    { paletteId: "a", x: 0, y: 0 }, { paletteId: "b", x: 1, y: 0 }, { paletteId: "c", x: 0, y: 1 }
+  ], 90).map(({ y }) => y), [0, 1, 0]);
+  assert.equal(programPopoutGradientBoxPosition({ x: 1, y: 1 }, { minimumX: 0, maximumX: 2, minimumY: 0, maximumY: 2 }, 45), 0.5);
 });
