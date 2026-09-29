@@ -104,6 +104,7 @@ export interface LayoutSnapshotWindow {
   ButtonOwnerId?: string;
   PanelOwnerButtonId?: string;
   ButtonDisplayMode?: "collapsed" | "expanded";
+  ButtonCloseControlOffset?: { x: number; y: number };
   ButtonPopoutSettingsPath?: string;
   ButtonPopoutChoiceId?: string;
   InstalledPageFileName?: string;

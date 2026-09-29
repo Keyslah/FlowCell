@@ -1,3 +1,4 @@
+import { isButtonWindowCloseOffset } from "../windows/buttonWindowCloseControl.js";
 import {
   BUTTON_PLACEMENT_CYCLE_MAX_STATES,
   BUTTON_SKIN_COMPILER_VERSION,
@@ -1060,10 +1061,11 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       continue;
     }
     const unit = rawUnit as unknown as ButtonPopoutUnit;
+    if (unit.closeControlOffset !== undefined && !isButtonWindowCloseOffset(unit.closeControlOffset)) addIssue(issues, `${path}.closeControlOffset`, "Close X position must contain finite x/y offsets.");
     const commonKeys = [
       "id", "name", "kind", "surfaceId", "canonicalBounds", "desktopBounds",
       "openRule", "closeRule", "transparency", "pinnedDefault", "windowFitMode",
-      "desktopBoundsFitMode", "desktopBoundsEnvelope", "interactionMode", "ownerPlacementId"
+      "desktopBoundsFitMode", "desktopBoundsEnvelope", "interactionMode", "ownerPlacementId", "closeControlOffset"
     ];
     const allowedKeys = new Set(unit.kind === "regular"
       ? [...commonKeys, "ownerButtonId", "memberPlacementIds", "memberSourceIdentities", "selectionKey"]
@@ -1211,6 +1213,10 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
         for (const fieldId of Object.keys(behavior?.activationPatch ?? {})) {
           if (!fieldIds.has(fieldId)) addIssue(issues, `buttons.${childId}.toolSetBehavior.activationPatch`, `Activation-patched field '${fieldId}' does not exist.`);
         }
+        if (behavior && Object.hasOwn(behavior, "labelField") &&
+            (typeof behavior.labelField !== "string" || !fieldIds.has(behavior.labelField))) {
+          addIssue(issues, `buttons.${childId}.toolSetBehavior.labelField`, "Label field must name an existing tool field.");
+        }
         if (behavior?.activateField) {
           const field = fields.find((candidate) => candidate.id === behavior.activateField);
           if (!field || field.kind !== "path") {
@@ -1310,6 +1316,7 @@ export function validateButtonStateDocument(value: unknown): ButtonStateValidati
       continue;
     }
     const setup = rawSetup as unknown as ButtonStateDocument["fanSetups"][string];
+    if (setup.closeControlOffset !== undefined && !isButtonWindowCloseOffset(setup.closeControlOffset)) addIssue(issues, `${path}.closeControlOffset`, "Close X position must contain finite x/y offsets.");
     if (setup.id !== key || !document.surfaces[setup.fanSurfaceId]) addIssue(issues, path, "Fan setup ID or surface is invalid.");
     if (!BUTTON_WINDOW_FIT_MODES.has(setup.windowFitMode ?? "surface")) {
       addIssue(issues, `${path}.windowFitMode`, "Fan window-fit mode is invalid.");

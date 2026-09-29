@@ -2779,7 +2779,7 @@ test("Button activation state drives live labels and mapped visuals without exte
   assert.match(activationStateBus, /rememberConsumedInteraction\(consumedInteractionIds, request\.activationKey, request\.interactionId\)/);
   assert.match(activationStateBus, /MAX_CONSUMED_INTERACTION_IDS_PER_KEY/);
   assert.match(activationStateBus, /request\.advanceTriggers\[current\] !== request\.trigger/);
-  assert.match(buttonHost, /const renderedLabel = inlineEditField[\s\S]{0,160}: resolvedAppearance\.label;/);
+  assert.match(buttonHost, /const renderedLabel = inlineEditField[\s\S]{0,340}: resolvedAppearance\.label;/);
   assert.match(buttonHost, /: renderedLabel \|\| "FlowCell Button"/);
   assert.match(buttonHost, /if \(index === activationStateIndexRef\.current\) return;\s*activationStateIndexRef\.current = index;\s*setActivationStateIndex\(index\);/);
   assert.doesNotMatch(buttonHost, /activationStateTransitionRef|resolvePreparedVisualStateRef/);
@@ -8423,4 +8423,16 @@ test("Undo after import separates discarded staged packages from committed unins
   removeOwnedButtonGraph(document, "one");
   assert.deepEqual(resolveDiscardedStagedOwnerButtonIds(document, [" one ", "one"]), ["one"]);
   assert.deepEqual(resolveUninstallOwnerButtonIds(document, [" one ", "one"], ["one"]), ["one"]);
+});
+
+
+test("idle highlight and glow use independent amounts and never stack on interaction effects", () => {
+  const idle = { idleHighlighted: true, idleHighlightColor: "#FF0000", idleHighlightAmount: 100, idleGlowAmount: 25,
+    hoverHighlighted: false, activeHighlighted: false, hoverHighlightColor: null, activeHighlightColor: null };
+  assert.match(buttonHighlightFilter(idle), /brightness\(1.35\).*drop-shadow/);
+  assert.equal(buttonHighlightFilter({ ...idle, idleHighlighted: false }), undefined);
+  for (const state of ["hoverHighlighted", "activeHighlighted"]) {
+    assert.equal(buttonHighlightFilter({ ...idle, [state]: true }),
+      buttonHighlightFilter({ ...idle, idleHighlighted: false, [state]: true }));
+  }
 });

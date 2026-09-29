@@ -1,3 +1,4 @@
+import { isButtonWindowCloseOffset } from "../windows/buttonWindowCloseControl.js";
 import type {
   ButtonActivationBehavior,
   ButtonActivationAnimation,
@@ -59,6 +60,7 @@ interface ButtonSettingsMainPageBehavior {
 }
 
 interface ButtonSettingsPopoutBehaviorBase {
+  closeControlOffset?: { x: number; y: number };
   interactionMode: ButtonPopoutInteractionMode;
   ownerButtonId: string | null;
   ownerPlacementId: string | null;
@@ -79,6 +81,7 @@ interface ButtonSettingsToolSetPopoutBehavior extends ButtonSettingsPopoutBehavi
 }
 
 interface ButtonSettingsFanBehavior {
+  closeControlOffset?: { x: number; y: number };
   kind: "fan";
   panelOwnerButtonId: string;
   selectedToolSetOwnerButtonIds: string[];
@@ -440,11 +443,13 @@ function validateBehavior(
       value,
       [
         "kind", "interactionMode", "ownerButtonId", "ownerPlacementId", "openRule",
-        "closeRule", "transparency", "pinnedDefault", "windowFitMode"
+        "closeRule", "transparency", "pinnedDefault", "windowFitMode",
+        ...("closeControlOffset" in value ? ["closeControlOffset"] : [])
       ],
       path,
       issues
     );
+    if (value.closeControlOffset !== undefined && !isButtonWindowCloseOffset(value.closeControlOffset)) issues.push(`${path}.closeControlOffset: Expected finite x/y offsets.`);
     if (placementKind !== "pop-out") {
       issues.push(`${path}.kind: Pop-out behavior requires Pop-out settings.`);
     }
@@ -498,11 +503,13 @@ function validateBehavior(
         "closeRule",
         "pinnedDefault",
         "animation",
-        "windowFitMode"
+        "windowFitMode",
+        ...("closeControlOffset" in value ? ["closeControlOffset"] : [])
       ],
       path,
       issues
     );
+    if (value.closeControlOffset !== undefined && !isButtonWindowCloseOffset(value.closeControlOffset)) issues.push(`${path}.closeControlOffset: Expected finite x/y offsets.`);
     if (placementKind !== "fan") issues.push(`${path}.kind: Fan behavior requires Fan settings.`);
     if (!nonemptyString(value.panelOwnerButtonId)) {
       issues.push(`${path}.panelOwnerButtonId: Expected a nonempty panel-owner Button ID.`);
@@ -788,6 +795,7 @@ function resolveBehavior(
       closeRule: setup.closeRule,
       pinnedDefault: setup.pinnedDefault,
       animation: structuredClone(setup.animation),
+      ...(setup.closeControlOffset ? { closeControlOffset: { ...setup.closeControlOffset } } : {}),
       windowFitMode: setup.windowFitMode ?? "surface"
     };
   }
@@ -802,6 +810,7 @@ function resolveBehavior(
     closeRule: unit.closeRule,
     transparency: unit.transparency,
     pinnedDefault: unit.pinnedDefault,
+    ...(unit.closeControlOffset ? { closeControlOffset: { ...unit.closeControlOffset } } : {}),
     windowFitMode: unit.windowFitMode ?? "surface"
   };
   return unit.kind === "tool-set"
@@ -1068,6 +1077,7 @@ function updateSurfaceOwnerRecords(
     unit.interactionMode = file.behavior.interactionMode;
     unit.transparency = file.behavior.transparency;
     unit.pinnedDefault = file.behavior.pinnedDefault;
+    unit.closeControlOffset = file.behavior.closeControlOffset ? { ...file.behavior.closeControlOffset } : undefined;
     unit.windowFitMode = file.behavior.windowFitMode;
     unit.canonicalBounds = { x: 0, y: 0, width: surface.width, height: surface.height };
     if (unit.kind === "regular" && file.behavior.kind === "regular-popout") {
@@ -1173,6 +1183,7 @@ function updateSurfaceOwnerRecords(
   setup.closeRule = file.behavior.closeRule;
   setup.pinnedDefault = file.behavior.pinnedDefault;
   setup.animation = structuredClone(file.behavior.animation);
+  setup.closeControlOffset = file.behavior.closeControlOffset ? { ...file.behavior.closeControlOffset } : undefined;
   setup.windowFitMode = file.behavior.windowFitMode;
 }
 
@@ -1417,6 +1428,7 @@ export function buildTransientButtonPopoutSettingsDocument(
       ownerPlacementId: null,
       transparency: file.behavior.transparency,
       pinnedDefault: file.behavior.pinnedDefault,
+      ...(file.behavior.closeControlOffset ? { closeControlOffset: { ...file.behavior.closeControlOffset } } : {}),
       windowFitMode: file.behavior.windowFitMode,
       memberSourceIdentities,
       selectionKey: deriveRegularPopoutSelectionKey(memberSourceIdentities)
@@ -1498,6 +1510,7 @@ export function buildTransientButtonPopoutSettingsDocument(
       ownerPlacementId: null,
       transparency: file.behavior.transparency,
       pinnedDefault: file.behavior.pinnedDefault,
+      ...(file.behavior.closeControlOffset ? { closeControlOffset: { ...file.behavior.closeControlOffset } } : {}),
       windowFitMode: file.behavior.windowFitMode
     };
   } else {

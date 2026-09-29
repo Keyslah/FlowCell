@@ -22,7 +22,6 @@ import type { FlowCellBounds } from "../types.js";
 import { placementMatchesThemeTarget } from "./themeModel.js";
 import {
   normalizeProgramPopoutGradientCurve,
-  programPopoutGradientBoxPosition,
   programPopoutGradientColor,
   programPopoutGradientProjection
 } from "./programPopoutGradient.js";
@@ -42,7 +41,8 @@ const SETTING_KEYS = new Set([
   "version", "colors", "spread", "scatter", "seed", "screenTopToBottom", "angle", "curve", "textColor",
   "textColors", "textAngle", "textCurve", "textScreenTopToBottom",
   "hoverEnabled", "activeEnabled", "hoverColor", "activeColor", "hoverHighlightAmount",
-  "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount"
+  "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount",
+  "idleEnabled", "idleColor", "idleHighlightAmount", "idleGlowAmount"
 ]);
 const POPOUT_SURFACE_KINDS = new Set(["regular-popout", "tool-set-popout", "fan"]);
 
@@ -137,6 +137,22 @@ export function normalizeProgramPopoutThemeSettings(value: unknown): ProgramPopo
     if (typeof candidate.textScreenTopToBottom !== "boolean") return null;
     shape.textScreenTopToBottom = candidate.textScreenTopToBottom;
   }
+  if (candidate.idleEnabled !== undefined) {
+    if (typeof candidate.idleEnabled !== "boolean") return null;
+    shape.idleEnabled = candidate.idleEnabled;
+  }
+  if (candidate.idleColor !== undefined) {
+    const color = normalizedColor(candidate.idleColor);
+    if (!color) return null;
+    shape.idleColor = color;
+  }
+  for (const key of ["idleHighlightAmount", "idleGlowAmount"] as const) {
+    if (candidate[key] === undefined) continue;
+    const amount = key === "idleGlowAmount"
+      ? normalizeButtonGlowAmount(candidate[key]) : normalizeButtonHighlightAmount(candidate[key]);
+    if (amount === null) return null;
+    shape[key] = amount;
+  }
   if (![candidate.spread, candidate.scatter].every((amount) => (
     typeof amount === "number" && Number.isFinite(amount) && amount >= 0 && amount <= 100
   )) || !Number.isSafeInteger(candidate.seed)) return null;
@@ -158,6 +174,10 @@ export function normalizeProgramPopoutThemeSettings(value: unknown): ProgramPopo
     scatter: candidate.scatter as number,
     seed: candidate.seed as number,
     screenTopToBottom: candidate.screenTopToBottom as boolean,
+    ...(shape.idleEnabled !== undefined ? { idleEnabled: shape.idleEnabled } : {}),
+    ...(shape.idleColor !== undefined ? { idleColor: shape.idleColor } : {}),
+    ...(shape.idleHighlightAmount !== undefined ? { idleHighlightAmount: shape.idleHighlightAmount } : {}),
+    ...(shape.idleGlowAmount !== undefined ? { idleGlowAmount: shape.idleGlowAmount } : {}),
     ...(shape.angle !== undefined ? { angle: shape.angle } : {}),
     ...(shape.curve ? { curve: shape.curve } : {}),
     textColor,
@@ -256,42 +276,17 @@ interface ProgramPopoutGradientChannel {
   curve?: ProgramPopoutThemeSettings["curve"];
 }
 
-function finitePositive(value: number | undefined): value is number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0;
-}
-
-/** Maps a design-space center to desktop pixels and returns its position inside the shared screen box. */
 function screenPosition(
   center: { x: number; y: number },
-  geometry: ProgramPopoutThemeScreenGeometry,
-  angle = 0
+  geometry: ProgramPopoutThemeScreenGeometry
 ): number | null {
-  const { visibleBounds, envelope, monitorWorkArea, screenRange } = geometry;
-  if (![visibleBounds.Top, envelope.y, monitorWorkArea.Top].every(Number.isFinite) ||
-    ![visibleBounds.Height, envelope.height, monitorWorkArea.Height]
-      .every((height) => Number.isFinite(height) && height > 0)) return null;
+  const { visibleBounds, envelope, screenRange } = geometry;
+  // Whole Layout uses actual visible Button centers, never monitor edges or empty box corners.
+  if (!screenRange || ![visibleBounds.Top, envelope.y, screenRange.minimumY, screenRange.maximumY].every(Number.isFinite) ||
+    ![visibleBounds.Height, envelope.height].every((height) => Number.isFinite(height) && height > 0)) return null;
   const desktopY = visibleBounds.Top + (center.y - envelope.y) * visibleBounds.Height / envelope.height;
-  const minimumY = screenRange?.minimumY ?? monitorWorkArea.Top;
-  const maximumY = screenRange?.maximumY ?? monitorWorkArea.Top + monitorWorkArea.Height;
-  // Horizontal geometry is optional; without it the tilt only follows the vertical component.
-  const hasX = Number.isFinite(visibleBounds.Left) && Number.isFinite(envelope.x) &&
-    finitePositive(visibleBounds.Width) && finitePositive(envelope.width);
-  const desktopX = hasX
-    ? visibleBounds.Left! + (center.x - envelope.x!) * visibleBounds.Width! / envelope.width!
-    : 0;
-  let rangeX = [desktopX, desktopX];
-  if (hasX && screenRange) {
-    if (Number.isFinite(screenRange.minimumX) && Number.isFinite(screenRange.maximumX)) {
-      rangeX = [screenRange.minimumX!, screenRange.maximumX!];
-    }
-  } else if (hasX && Number.isFinite(monitorWorkArea.Left) && finitePositive(monitorWorkArea.Width)) {
-    rangeX = [monitorWorkArea.Left!, monitorWorkArea.Left! + monitorWorkArea.Width];
-  }
-  return programPopoutGradientBoxPosition(
-    { x: desktopX, y: desktopY },
-    { minimumX: rangeX[0], maximumX: rangeX[1], minimumY, maximumY },
-    angle
-  );
+  const range = screenRange.maximumY - screenRange.minimumY;
+  return range > 0 ? Math.min(1, Math.max(0, (desktopY - screenRange.minimumY) / range)) : 0;
 }
 
 function placementCenter(placement: ButtonPlacement): { x: number; y: number } {
@@ -312,7 +307,7 @@ function gradientChannelColor(
   const screenY = channel.screen
     ? typeof normalizedScreenPosition === "number" && Number.isFinite(normalizedScreenPosition)
       ? Math.min(1, Math.max(0, normalizedScreenPosition))
-      : geometry ? screenPosition(center, geometry, channel.angle) : null
+      : geometry ? screenPosition(center, geometry) : null
     : null;
   const projected = programPopoutGradientProjection(center, channel.angle);
   // Local gradients use only the rendered surface: closed windows cannot alter
@@ -404,6 +399,10 @@ export function resolveProgramPopoutThemeOverride(
         text: textColor(document, placement, programName, settings, geometry, sourcePlacementId),
         ...colorOverride
       },
+      idleEnabled: settings.idleEnabled ?? false,
+      idleColor: settings.idleColor ?? "#FFFFFFCC",
+      idleHighlightAmount: settings.idleHighlightAmount ?? 0,
+      idleGlowAmount: settings.idleGlowAmount ?? 0,
       hoverEnabled: settings.hoverEnabled,
       activeEnabled: settings.activeEnabled,
       hoverColor: settings.hoverColor,

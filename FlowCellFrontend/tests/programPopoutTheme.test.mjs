@@ -437,7 +437,7 @@ test("text gradients resolve per Button independently of the fill, and a solid t
   assert.equal(resolved("tr").text, "#123456");
 });
 
-test("whole-screen tilted gradients use the shared horizontal extent and scans report the same color", () => {
+test("Whole Layout ignores saved angles and scans match the occupied vertical range", () => {
   const document = createButtonStateDocument();
   document.programPopoutThemes = { blender: settings({ screenTopToBottom: true, angle: 90 }) };
   addPlacement(document, "popped", "screen", "regular-popout", "Blender", 40);
@@ -448,7 +448,7 @@ test("whole-screen tilted gradients use the shared horizontal extent and scans r
     screenRange: { minimumY: 150, maximumY: 350, minimumX: 100, maximumX: 300 }
   };
   const [expected] = gradientProgramPopoutPaletteAssignments(
-    [{ paletteId: "a", y: 0.1 }], { colors: ["#000000", "#FFFFFF"], spread: 100, scatter: 0, seed: 23 },
+    [{ paletteId: "a", y: 0.25 }], { colors: ["#000000", "#FFFFFF"], spread: 100, scatter: 0, seed: 23 },
     { minimumY: 0, maximumY: 1 }
   );
   const rendered = resolveProgramPopoutThemeOverride(document, "popped", geometry);
@@ -462,6 +462,60 @@ test("whole-screen tilted gradients use the shared horizontal extent and scans r
   assert.equal(scan.placements[0].color, rendered.colors.surface);
   assert.deepEqual(normalizedProgramPopoutScreenPositions([
     { paletteId: "a", x: 0, y: 0 }, { paletteId: "b", x: 1, y: 0 }, { paletteId: "c", x: 0, y: 1 }
-  ], 90).map(({ y }) => y), [0, 1, 0]);
+  ], 90).map(({ y }) => y), [0, 0, 1]);
   assert.equal(programPopoutGradientBoxPosition({ x: 1, y: 1 }, { minimumX: 0, maximumX: 2, minimumY: 0, maximumY: 2 }, 45), 0.5);
+});
+
+
+test("idle effects round trip with old packages and remain scoped to Blender popout surfaces", () => {
+  const legacy = settings();
+  assert.deepEqual(normalizeProgramPopoutThemeSettings(legacy), legacy);
+  const idle = settings({ idleEnabled: true, idleColor: "#AABBCC", idleHighlightAmount: 350, idleGlowAmount: 27 });
+  assert.deepEqual(normalizeProgramPopoutThemeSettings(idle), idle);
+  for (const patch of [{ idleEnabled: 1 }, { idleColor: "bad" }, { idleHighlightAmount: 1001 }, { idleGlowAmount: 101 }]) {
+    assert.equal(normalizeProgramPopoutThemeSettings({ ...idle, ...patch }), null);
+  }
+  const document = createButtonStateDocument();
+  document.programPopoutThemes = { blender: idle };
+  addPlacement(document, "pop", "popout", "regular-popout");
+  addPlacement(document, "main", "main", "panel");
+  addPlacement(document, "krita", "krita", "regular-popout", "Krita");
+  assert.equal(resolveProgramPopoutThemeOverride(document, "pop").idleGlowAmount, 27);
+  assert.equal(resolveProgramPopoutThemeOverride(document, "main").idleEnabled, undefined);
+  assert.equal(resolveProgramPopoutThemeOverride(document, "krita").idleEnabled, undefined);
+});
+
+
+test("Whole Layout anchors staggered Fill and Text to actual top/bottom Buttons at saved angles", () => {
+  const document = createButtonStateDocument();
+  document.programPopoutThemes = { blender: settings({
+    colors: ["#4FB3C9", "#16404B"], spread: 67, scatter: 4, angle: 34, screenTopToBottom: true,
+    textColors: ["#000000", "#FFFFFF"], textAngle: 37, textScreenTopToBottom: true
+  }) };
+  for (const [id, x, y] of [["top", 800, 100], ["middle", 450, 450], ["bottom", 100, 800]]) {
+    addPlacement(document, id, "layout", "regular-popout", "Blender", y);
+    document.placements[id].x = x;
+  }
+  const geometry = {
+    visibleBounds: { Left: 0, Top: 0, Width: 1000, Height: 1000 },
+    envelope: { x: 0, y: 0, width: 1000, height: 1000 },
+    monitorWorkArea: { Left: 0, Top: -200, Width: 3000, Height: 2000 },
+    screenRange: { minimumX: 110, maximumX: 810, minimumY: 110, maximumY: 810 }
+  };
+  assert.deepEqual(["top", "bottom"].map(id => resolveProgramPopoutThemeOverride(document, id, geometry).colors.surface),
+    ["#4FB3C9", "#16404B"]);
+  assert.deepEqual(["top", "bottom"].map(id => resolveProgramPopoutThemeOverride(document, id, geometry).colors.text),
+    ["#000000", "#FFFFFF"]);
+  const scan = scanProgramPopoutPaletteTargets(document, "Blender", ["top", "middle", "bottom"].map(id => ({ placementId: id, paletteId: id })),
+    [{ paletteId: "top", x: 810, y: 110 }, { paletteId: "middle", x: 460, y: 460 }, { paletteId: "bottom", x: 110, y: 810 }]);
+  assert.deepEqual(scan.placements.map(item => item.color), ["top", "middle", "bottom"].map(id => resolveProgramPopoutThemeOverride(document, id, geometry).colors.surface));
+});
+
+test("missing shared layout range falls back to local Buttons instead of monitor edges", () => {
+  const document = createButtonStateDocument();
+  document.programPopoutThemes = { blender: settings({ screenTopToBottom: true }) };
+  addPlacement(document, "top", "local", "regular-popout", "Blender", 100);
+  addPlacement(document, "bottom", "local", "regular-popout", "Blender", 200);
+  const geometry = { visibleBounds: { Top: 300, Height: 400 }, envelope: { y: 0, height: 400 }, monitorWorkArea: { Top: 0, Height: 2000 } };
+  assert.deepEqual(["top", "bottom"].map(id => resolveProgramPopoutThemeOverride(document, id, geometry).colors.surface), ["#000000", "#FFFFFF"]);
 });

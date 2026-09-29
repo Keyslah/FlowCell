@@ -261,6 +261,7 @@ function validateBehavior(
       "activateField",
       "inlineEditField",
       "selectField",
+      "labelField",
       "execute",
       "payloadTemplate"
     ],
@@ -282,7 +283,7 @@ function validateBehavior(
       Object.keys(value[key]).forEach((fieldId) => references.add(fieldId));
     }
   }
-  for (const key of ["activateField", "inlineEditField", "selectField"] as const) {
+  for (const key of ["activateField", "inlineEditField", "selectField", "labelField"] as const) {
     if (value[key] !== undefined) {
       references.add(requireNonemptyString(value[key], `${path}.${key}`));
     }

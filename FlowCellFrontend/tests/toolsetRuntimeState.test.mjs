@@ -167,3 +167,57 @@ test("new and updated Tool Sets validate layout data before consuming it", () =>
     /layout:\s*validateInstalledButtonLayout\(response\.layout/
   );
 });
+
+
+test("Align manifest keeps separate limits and equal bottom controls", () => {
+  const manifest = JSON.parse(readFileSync(join(frontendRoot, "..", "Programs", "Blender", "Blender Git Scripts", "Toolsets", "alignment-tools", "flowcell.toolset.json"), "utf8"));
+  assert.doesNotThrow(() => validateInstalledButtonLayout(manifest.layout));
+  assert.equal(manifest.children.length, 18);
+  assert.equal(manifest.children.filter(child => child.slot.endsWith("_max")).length, 3);
+  for (const axis of ["x", "y", "z"]) {
+    const { placements, childBehaviors } = manifest.layout;
+    assert.equal(placements[`${axis}_min`].y, placements[`${axis}_surface`].y);
+    assert.equal(childBehaviors[`${axis}_min`], undefined);
+    for (const suffix of ["center", "surface", "geo"]) {
+      assert.equal(placements[`${axis}_min`].y, placements[`${axis}_${suffix}`].y);
+      assert.ok(!manifest.children.find(child => child.slot === `${axis}_${suffix}`).label.startsWith(axis.toUpperCase()+" "));
+    }
+  }
+  const bottoms = ["center_everything", "center_xy", "group"].map(slot => manifest.layout.placements[slot]);
+  assert.equal(new Set(bottoms.map(rect => rect.width)).size, 1);
+  assert.equal(new Set(bottoms.map(rect => rect.y)).size, 1);
+  assert.ok(bottoms[0].y > manifest.layout.placements.z_min.y);
+  const broken = structuredClone(manifest.layout);
+  broken.childBehaviors.x_min = { labelField: "missing" };
+  assert.throws(() => validateInstalledButtonLayout(broken), /unknown field/);
+  assert.deepEqual(manifest.layout.childBehaviors.group, { toggleFields: ["group"], execute: false });
+});
+
+
+test("Blender Align Surface and Origin execute every click without latching or disabling", async () => {
+  const { executeButtonRecord, isToolSetChildStateSelected, registerButtonCoreAction } = await import("./.compiled-button-system/button/runtime/ButtonRuntimeAdapter.js");
+  const manifest = JSON.parse(readFileSync(join(frontendRoot, "..", "Programs", "Blender", "Blender Git Scripts", "Toolsets", "alignment-tools", "flowcell.toolset.json"), "utf8"));
+  const fields = manifest.layout.fields;
+  const values = Object.fromEntries(fields.map(field => [field.id, field.defaultValue]));
+  assert.deepEqual(Object.keys(values),["group"]);
+  let executions = 0;
+  const unregister = registerButtonCoreAction("align-test", async () => { executions++; return {}; });
+  try {
+    for (const axis of ["x", "y", "z"]) {
+      for (const suffix of ["surface", "geo", "min", "max"]) {
+        const slot=`${axis}_${suffix}`;
+        const child={ id:slot, label:slot, role:"tool-set-child", disabled:false,
+          executionTarget:{kind:"core-action", actionId:"align-test", payload:manifest.children.find(c => c.slot===slot).payload},
+          toolSetBehavior:manifest.layout.childBehaviors[slot] };
+        for (let click=0; click<3; click++) {
+          const result=await executeButtonRecord(child, "click", {fields,fieldValues:values});
+          assert.equal(result.executed,true);
+          assert.equal(isToolSetChildStateSelected(child,result.fieldValues),false);
+          assert.deepEqual(result.fieldValues,values);
+          assert.equal(child.disabled,false);
+        }
+      }
+    }
+    assert.equal(executions,36);
+  } finally { unregister(); }
+});

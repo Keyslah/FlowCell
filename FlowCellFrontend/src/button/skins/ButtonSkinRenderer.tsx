@@ -128,6 +128,10 @@ interface ButtonVisualRenderSnapshot {
   release: boolean;
   disabled: boolean;
   error: boolean;
+  idleHighlighted: boolean;
+  idleHighlightColor: string | null;
+  idleHighlightAmount: number;
+  idleGlowAmount: number;
   hoverHighlighted: boolean;
   activeHighlighted: boolean;
   hoverHighlightColor: string | null;
@@ -176,6 +180,10 @@ function buttonVisualSnapshotIntent(
       snapshot.release,
       snapshot.disabled,
       snapshot.error,
+      snapshot.idleHighlighted,
+      snapshot.idleHighlightColor,
+      snapshot.idleHighlightAmount,
+      snapshot.idleGlowAmount,
       snapshot.hoverHighlighted,
       snapshot.activeHighlighted,
       snapshot.hoverHighlightColor,
@@ -1127,6 +1135,11 @@ export function ButtonSkinRenderer({
     release,
     disabled,
     error,
+    idleHighlighted: themeOverride?.idleEnabled === true && !rawHovered && !activeHighlight &&
+      !hovered && !pressed && !held && !play && !release && !disabled && !error,
+    idleHighlightColor: normalizeButtonSkinColor(themeOverride?.idleColor ?? "#FFFFFFCC"),
+    idleHighlightAmount: resolveButtonHighlightAmount(themeOverride?.idleHighlightAmount ?? 0),
+    idleGlowAmount: resolveButtonGlowAmount(themeOverride?.idleGlowAmount ?? 0),
     hoverHighlighted: (themeOverride?.hoverEnabled ?? skinHighlightOnHover ?? highlightOnHover) && rawHovered,
     activeHighlighted: (themeOverride?.activeEnabled ?? skinHighlightOnActive ?? false) && activeHighlight,
     hoverHighlightColor: themeOverride?.hoverColor

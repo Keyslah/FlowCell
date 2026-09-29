@@ -566,6 +566,10 @@ function buttonHighlightGlowColor(value: string | null, intensity: number): stri
  * remains stronger at the same percentage, and hover still stacks on it.
  */
 export function buttonHighlightFilter(args: {
+  idleHighlighted?: boolean;
+  idleHighlightColor?: string | null;
+  idleHighlightAmount?: number;
+  idleGlowAmount?: number;
   hoverHighlighted: boolean;
   activeHighlighted: boolean;
   hoverHighlightColor: string | null;
@@ -577,7 +581,7 @@ export function buttonHighlightFilter(args: {
   hoverGlowAmount?: number | null;
   activeGlowAmount?: number | null;
 }): string | undefined {
-  if (!args.hoverHighlighted && !args.activeHighlighted) return undefined;
+  if (!args.idleHighlighted && !args.hoverHighlighted && !args.activeHighlighted) return undefined;
   const hoverHighlightIntensity = resolveButtonHighlightAmount(
     args.hoverHighlightAmount ?? args.highlightAmount
   ) / BUTTON_EFFECT_AMOUNT_REFERENCE;
@@ -591,6 +595,14 @@ export function buttonHighlightFilter(args: {
     args.activeGlowAmount ?? args.highlightAmount
   ) / BUTTON_EFFECT_AMOUNT_REFERENCE;
   const filters: string[] = [];
+  if (args.idleHighlighted && !args.hoverHighlighted && !args.activeHighlighted) {
+    const highlight = resolveButtonHighlightAmount(args.idleHighlightAmount ?? 0) / BUTTON_EFFECT_AMOUNT_REFERENCE;
+    const glow = resolveButtonGlowAmount(args.idleGlowAmount ?? 0) / BUTTON_EFFECT_AMOUNT_REFERENCE;
+    if (highlight > 0) filters.push(`brightness(${highlightFilterNumber(1 + 0.35 * highlight)})`);
+    if (glow > 0) filters.push(
+      `drop-shadow(0 0 ${highlightFilterNumber(2 + 14 * glow)}px ${buttonHighlightGlowColor(args.idleHighlightColor ?? null, glow)})`
+    );
+  }
   if (args.activeHighlighted && activeHighlightIntensity > 0) {
     filters.push(`brightness(${highlightFilterNumber(1 + 0.5 * activeHighlightIntensity)})`);
   }

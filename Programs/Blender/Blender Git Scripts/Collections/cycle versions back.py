@@ -1,4 +1,4 @@
-# Description: With one selected Live object, cycle Live and snapshot versions one visible object at a time.
+# Description: Cycle backward through the original anywhere in the scene and its snapshots, one visible object at a time.
 
 from __future__ import annotations
 

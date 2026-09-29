@@ -901,14 +901,10 @@
       void refresh("clear-if-structure-changed").catch(function () {});
     });
     document.querySelector('[data-action="duplicate"]').addEventListener("click", function () {
-      var keys = requireSelection(
-        "selectForDuplicate",
-        "Highlight one or more " + resourceLabel.toLowerCase() + "s to duplicate."
-      );
-      if (!keys) return;
+      var keys = highlightedKeys();
       void runAction("duplicate", { keys: keys }, {
         selectionPolicy: "clear",
-        successMessage: keys.length <= 1 ? "Layer duplicated." : "Layers duplicated."
+        successMessage: "Layers duplicated."
       }).catch(function () {});
     });
     document.querySelector('[data-action="delete"]').addEventListener("click", function () {

@@ -1561,3 +1561,21 @@ test("a Tool Set Pop-out Fan owner remains an unrestricted anchor in Fan and Pop
   document.placements[unit.childPlacementIds[0]].x = -1;
   assert.equal(validateButtonStateDocument(document).valid, false);
 });
+
+
+test("Close X position survives Pop settings save/apply and transient layout reopen", () => {
+  const { document, surface } = regularPopSettingsFixture();
+  const offset = { x: -42.5, y: 81.25 };
+  document.popoutUnits["saved-pop"].closeControlOffset = offset;
+  const settings = buildButtonSettingsFile(document, surface.id, { programName: "Windows", panelName: "Files" });
+  assert.deepEqual(settings.behavior.closeControlOffset, offset);
+  assert.equal(validateButtonSettingsFile(JSON.parse(JSON.stringify(settings))).valid, true);
+  document.popoutUnits["saved-pop"].closeControlOffset = { x: 0, y: 0 };
+  const loaded = applyButtonSettingsFile(document, surface.id, settings, { programName: "Windows", panelName: "Files" });
+  assert.deepEqual(loaded.popoutUnits["saved-pop"].closeControlOffset, offset);
+  const transient = buildTransientButtonPopoutSettingsDocument(document, settings, { programName: "Windows", panelName: "Files" }, "close-offset-test");
+  assert.deepEqual(transient.document.popoutUnits[transient.popoutUnitId].closeControlOffset, offset);
+  const broken = structuredClone(settings);
+  broken.behavior.closeControlOffset.x = Infinity;
+  assert.ok(validateButtonSettingsFile(broken).issues.some((issue) => issue.includes("closeControlOffset")));
+});

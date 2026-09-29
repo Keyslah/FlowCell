@@ -1,4 +1,4 @@
-# Description: Copy the selected Live objects into Snapshots as versioned s# duplicates.
+# Description: Snapshot selected objects from anywhere, preserving their source collections for Back and Restore.
 
 from __future__ import annotations
 

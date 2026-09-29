@@ -1,14 +1,14 @@
 // FlowCell Layers Builder catalog source.
-// Runs the original Layers script "Add to Live" against the
-// FlowCell-highlighted layers.
+// Copies selected Illustrator artwork, or FlowCell-highlighted saved layers,
+// back into Live.
 #target illustrator
 
 #include "flowcell-layer-tree-selection.jsxinc"
 
-var FLOWCELL_LB_TARGETS = FlowCellLayersBuilderSelection.resolveTargets(false);
+var FLOWCELL_LB_TARGETS = { layers: [], restore: [] };
 
 try {
-// Description: Move the selected layer or object back into the Live root.
+// Description: Copy selected artwork or highlighted saved layers into Live.
 
 #target illustrator
 
@@ -19,7 +19,7 @@ try {
  * Snapshots > now > s3 (blabla)  -> Live > now(s3) blabla
  */
 (function () {
-    var SCRIPT_VERSION = "2026-03-23 15:20";
+    var SCRIPT_VERSION = "2026-09-28 selection and closed-source repair";
     var LOG_PATH = Folder.temp.fsName + "/Illustrator_Add_Selected_To_Live_Debug.log";
     var ROOT_LIVE = "Live";
     var ROOT_SNAPSHOTS = "Snapshots";
@@ -36,30 +36,26 @@ try {
 
     try {
         resetLog(doc);
-        roots = ensureRootLayers(doc);
-        roots.live.visible = true;
-        roots.live.locked = false;
-
         var targets = resolveTargets();
         var i;
 
         logLine("Resolved target count: " + targets.length);
 
         if (targets.length === 0) {
-            return;
+            throw new Error("Select artwork outside Live or highlight a saved layer containing artwork outside Live.");
         }
+
+        roots = ensureRootLayers(doc);
+        roots.live.visible = true;
+        roots.live.locked = false;
 
         for (i = targets.length - 1; i >= 0; i -= 1) {
             addTargetToLive(roots.live, targets[i]);
         }
     } catch (err) {
         logLine("Exception: " + err);
+        throw err;
     } finally {
-        if (roots) {
-            setSystemLayerState(roots.trash, false, true);
-            setSystemLayerState(roots.archive, false, true);
-            setSystemLayerState(roots.snapshots, true, false);
-        }
         restoreActiveLayer(doc, originalActiveLayer);
     }
 
@@ -82,17 +78,37 @@ try {
         var items = [];
         var i;
 
-        logLine("Highlighted layer count: " + FLOWCELL_LB_TARGETS.layers.length);
-
-        for (i = 0; i < FLOWCELL_LB_TARGETS.layers.length; i += 1) {
-            collectLayerPageItems(FLOWCELL_LB_TARGETS.layers[i], items);
+        var selection = doc.selection;
+        if (selection && selection.typename) {
+            selection = [selection];
+        }
+        for (i = 0; selection && i < selection.length; i += 1) {
+            if (selection[i].typename !== "TextRange" && selection[i].typename !== "InsertionPoint") {
+                addUniqueItemReference(items, selection[i]);
+            }
         }
 
-        logLine("Collected highlighted page item count: " + items.length);
+        if (items.length === 0) {
+            FLOWCELL_LB_TARGETS = FlowCellLayersBuilderSelection.resolveTargets(false);
+            for (i = 0; i < FLOWCELL_LB_TARGETS.layers.length; i += 1) {
+                collectLayerPageItems(FLOWCELL_LB_TARGETS.layers[i], items);
+            }
+        }
+
+        logLine("Collected source page item count: " + items.length);
 
         for (i = 0; i < items.length; i += 1) {
-            logLine("Highlighted item[" + i + "]: " + describeItem(items[i]));
-            addResolvedTarget(result, items[i]);
+            // A selected group already contains its children; never copy them twice.
+            var parent = items[i].parent;
+            var covered = false;
+            while (parent && parent.typename !== "Layer" && parent.typename !== "Document") {
+                for (var j = 0; j < items.length; j += 1) {
+                    if (items[j] === parent) { covered = true; break; }
+                }
+                if (covered) { break; }
+                parent = parent.parent;
+            }
+            if (!covered) { addResolvedTarget(result, items[i]); }
         }
 
         return result;
@@ -232,6 +248,10 @@ try {
             }
         }
 
+        if (topLayer.name !== ROOT_SNAPSHOTS && topLayer.name !== ROOT_TRASH &&
+                topLayer.name !== ROOT_ARCHIVE && topLayer.name !== "3D") {
+            return { targetName: sanitizeName(getCanonicalTargetName(topLayer.name)), versionToken: "", versionNote: "" };
+        }
         return null;
     }
 
@@ -258,10 +278,7 @@ try {
 
     function ensureRootLayers(documentRef) {
         return {
-            live: ensureRootLayer(documentRef, ROOT_LIVE),
-            snapshots: ensureRootLayer(documentRef, ROOT_SNAPSHOTS),
-            trash: ensureRootLayer(documentRef, ROOT_TRASH),
-            archive: ensureRootLayer(documentRef, ROOT_ARCHIVE)
+            live: ensureRootLayer(documentRef, ROOT_LIVE)
         };
     }
 
@@ -342,11 +359,11 @@ try {
             return false;
         }
 
-        return /^(?:s\d+|t\d+|a\d+)(?:\s.*)?$/i.test(name);
+        return /^(?:s\d+|t\d+|a\d+|d\d+)(?:\s.*)?$/i.test(name);
     }
 
     function parseVersionLayerName(name) {
-        var match = String(name).match(/^([sStTaA]\d+)(?:\s+(.+))?$/);
+        var match = String(name).match(/^([sStTaAdD]\d+)(?:\s+(.+))?$/);
         var note = "";
 
         if (!match) {
@@ -382,20 +399,34 @@ try {
 
     function copyPageItemToLayer(sourceItem, targetLayer) {
         var itemState = captureItemState(sourceItem);
+        var ancestorStates = [];
+        var ancestor = sourceItem.parent;
         var duplicate;
 
-        unlockItemFromState(itemState);
-        duplicate = sourceItem.duplicate(targetLayer, ElementPlacement.PLACEATBEGINNING);
-
         try {
+            while (ancestor && ancestor.typename !== "Document") {
+                ancestorStates.push({ ref: ancestor, locked: ancestor.locked,
+                    visible: ancestor.typename === "Layer" ? ancestor.visible : !ancestor.hidden });
+                ancestor = ancestor.parent;
+            }
+            for (var i = ancestorStates.length - 1; i >= 0; i -= 1) {
+                ancestorStates[i].ref.locked = false;
+                if (ancestorStates[i].ref.typename === "Layer") { ancestorStates[i].ref.visible = true; }
+                else { ancestorStates[i].ref.hidden = false; }
+            }
+            unlockItemFromState(itemState);
+            duplicate = sourceItem.duplicate(targetLayer, ElementPlacement.PLACEATBEGINNING);
             duplicate.hidden = itemState.hidden;
-        } catch (ignore1) {}
-
-        try {
             duplicate.locked = itemState.locked;
-        } catch (ignore2) {}
-
-        restoreItemFromState(itemState);
+        } finally {
+            restoreItemFromState(itemState);
+            for (var r = 0; r < ancestorStates.length; r += 1) {
+                var state = ancestorStates[r];
+                if (state.ref.typename === "Layer") { state.ref.visible = state.visible; }
+                else { state.ref.hidden = !state.visible; }
+                state.ref.locked = state.locked;
+            }
+        }
     }
 
     function captureItemState(item) {
@@ -427,14 +458,7 @@ try {
     }
 
     function resetLog(documentRef) {
-        var file = new File(LOG_PATH);
-
-        if (file.exists) {
-            try {
-                file.remove();
-            } catch (ignore) {}
-        }
-
+        logLine("--- New run ---");
         logLine("Add Selected To Live version: " + SCRIPT_VERSION);
         logLine("Document: " + safeDocName(documentRef));
         logLine("Active layer: " + getLayerPath(documentRef.activeLayer));
@@ -576,19 +600,6 @@ try {
         } catch (ignore) {}
     }
 
-    function setSystemLayerState(layer, visible, locked) {
-        if (!layer) {
-            return;
-        }
-
-        try {
-            layer.visible = visible;
-        } catch (ignore1) {}
-
-        try {
-            layer.locked = locked;
-        } catch (ignore2) {}
-    }
 }());
 
 } finally {

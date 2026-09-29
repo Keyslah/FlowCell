@@ -157,6 +157,7 @@ function poppedSettings(overrides = {}) {
     screenTopToBottom: true, textColor: "#FFFFFF", hoverEnabled: true, activeEnabled: true,
     hoverColor: "#AACCFF", activeColor: "#88FFCC", hoverHighlightAmount: 75,
     activeHighlightAmount: 95, hoverGlowAmount: 8, activeGlowAmount: 12,
+    idleEnabled: false, idleColor: "#FFFFFFCC", idleHighlightAmount: 0, idleGlowAmount: 0,
     ...overrides
   };
 }
@@ -336,7 +337,7 @@ test("Theme owns its Blender lifecycle and generic deletion owns its sidecar", (
 test("Theme is default-selected through the ordinary bundled script lifecycle", () => {
   const contribution = blenderProgramManifest.bundledSources.find(({ id }) => id === "blender.theme");
   assert.ok(contribution);
-  assert.equal(contribution.version, "3.0.22");
+  assert.equal(contribution.version, "3.0.27");
   assert.equal(contribution.sourcePath, "Blender Git Scripts/Toolsets/theme");
   assert.equal(contribution.importKind, "script");
   assert.equal(contribution.installOnAdd, true);
@@ -510,7 +511,7 @@ test("popped Button colors use an aggregate revision-bound Core contract", async
   assert.equal(page.config.buttonTheme.gradientColorCountMaximum, 16);
   assert.equal(page.config.buttonTheme.gradientColorCountLabel, "Gradient Colors");
   assert.equal(page.config.buttonTheme.screenTopToBottom, false);
-  assert.equal(page.config.buttonTheme.screenTopToBottomLabel, "Whole Screen");
+  assert.equal(page.config.buttonTheme.screenTopToBottomLabel, "Whole Layout");
   assert.equal(page.config.buttonTheme.topLabel, "Start");
   assert.equal(page.config.buttonTheme.bottomLabel, "End");
   assert.equal(page.config.localActions.applyButtonText, "button-theme.apply-text");
@@ -1117,13 +1118,13 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
     "theme.apply-bucket": "Apply only this theme bucket.",
     "button-theme.scan": "Collect and group Surface colors from scoped action Buttons in open Blender Pop-out and Fan windows. Fans include their surface owner and members even while collapsed; editor previews remain excluded.",
     "button-theme.apply": "Apply the edited aggregate Surface buckets back to the same live scanned Buttons; Rescan is required if the open windows changed.",
-    "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Screen blends across the visible Buttons on each monitor; otherwise each window uses its local layout. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
+    "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout anchors vertically to the highest and lowest visible Buttons on each monitor; otherwise Angle applies within each window. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
     "button-theme.apply-text": "Apply the Button Text gradient to every Blender popped Button label, independently of the fill. One Text Color keeps the labels solid; more colors run from Start to End along the text Angle and curve.",
     "button-theme.refill": "Apply the ordered multi-color Surface gradient, with its angle and curve, to scoped Buttons in the currently open Blender Pop-outs and Fans.",
     "button-theme.refill-colors": "Sample the selected number of Gradient Colors from the current Theme image, show them as ordered gradient stops, and apply the gradient to scoped Buttons in open Blender Pop-outs and Fans.",
     "button-theme.scatter": "Redistribute the currently present aggregate colors across the same live scanned Buttons using remembered hidden placement IDs.",
     "button-theme.toggle-text": "Toggle all scoped Button label text in open Blender Pop-outs and Fans between black and white, replacing any text gradient, without changing Surface colors or saved skins.",
-    "button-theme.settings": "Apply hover and active highlights and glow to all Blender popped Buttons. Saved packages include the currently applied popped Button settings.",
+    "button-theme.settings": "Apply separate Regular, Hover, and Active highlights and glow to Blender buttons. Regular applies only while neither hovered nor active. Saved packages include all three groups.",
     "picture.file.select": "Pick a Place Picture image.",
     "picture.apply": "Place the picture path in the Blender viewport with the overlay.",
     "picture.grid": "Apply Grid Scale and Subdivisions and enable Blender's native viewport grid.",
@@ -1155,8 +1156,8 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
 
   const root = await renderThemePage();
   const buttons = root.querySelectorAll("button");
-  // 30 page actions, Apply Text Gradient, and 17 curve tools in each of the Fill and Text boxes.
-  assert.equal(buttons.length, 31 + 2 * 17 + page.config.roles.length + page.config.environment.valueFields.length);
+  // Grid visibility and spacing apply directly through their inputs.
+  assert.equal(buttons.length, 28 + 2 * 17 + page.config.roles.length + page.config.environment.valueFields.length);
   assert.deepEqual(
     buttons.flatMap((button, index) => button.title.trim() ? [] : [`${index}: ${button.textContent}`]),
     []
@@ -1169,11 +1170,11 @@ test("every rendered Theme button restores an explanatory tooltip", async () => 
   );
   const checkboxes = root.querySelectorAll("input").filter((input) => input.type === "checkbox");
   const gradientRole = root.querySelectorAll("div").find((node) => node.title === "Gradient 2");
-  assert.equal(checkboxes.length, 6);
+  assert.equal(checkboxes.length, 8);
   assert.ok(gradientRole);
   assert.equal(gradientRole.querySelectorAll("input").filter((input) => input.type === "checkbox").length, 1);
   assert.equal(
-    root.querySelectorAll("span").filter((node) => node.textContent === "Whole Screen").length === 2,
+    root.querySelectorAll("span").filter((node) => node.textContent === "Whole Layout").length === 2,
     true
   );
   assert.equal(root.querySelectorAll("span").some((node) => node.textContent === page.config.gradient.label), false);
@@ -1294,7 +1295,7 @@ test("package page is headerless and keeps Theme plus Place Picture compact", ()
   assert.match(pageCss, /\.theme-profiles\s*\{\s*display:\s*contents;/);
   assert.match(
     pageCss,
-    /\.theme-number-grid--picture\s*\{[\s\S]*grid-template-columns:\s*repeat\(3, minmax\(0, 1fr\)\);/
+    /\.theme-grid-controls\s*\{[\s\S]*grid-column:\s*span 3;/
   );
   assert.doesNotMatch(pageCss, /scrollbar-width:\s*none;/);
   assert.doesNotMatch(pageCss, /\.theme-page__header/);
@@ -1333,7 +1334,7 @@ test("native Grid exposes native settings while retaining hidden legacy saved va
     "theme.package.save": { saved: true, packagePath: "C:\\Themes\\legacy.json", packageName: "Legacy" }
   });
   assert.deepEqual(page.config.picture.gridFieldIds, ["grid_scale", "grid_subdivisions"]);
-  assert.equal(root.querySelectorAll("div").find((node) => node.className === "theme-number-grid theme-number-grid--picture").children.length, 2);
+  assert.equal(root.querySelectorAll("div").find((node) => node.className === "theme-grid-controls").children.length, 3);
   assert.equal(root.querySelectorAll("span").some((node) => ["Near grid", "Distance", "Far grid"].includes(node.textContent)), false);
   assert.equal(page.config.copy.applyingGrid, "Applying Blender's native grid settings…");
   assert.equal(page.config.copy.removingGrid, "Hiding Blender's native grid...");
@@ -1348,7 +1349,12 @@ test("native Grid exposes native settings while retaining hidden legacy saved va
     }
   }
   for (const [label, actionId] of [["Grid", "picture.grid"], ["Save Buckets", "theme.fields.save"], ["Save Package", "theme.package.save"]]) {
-    await clickPageButton(root, label);
+    if (label === "Grid") {
+      const checkbox = root.querySelectorAll("input").find((input) => input["aria-label"] === "Grid");
+      checkbox.checked = true;
+      dispatch(checkbox, "change");
+      await settlePageAction();
+    } else await clickPageButton(root, label);
     const request = root.requests.find((candidate) => candidate.actionId === actionId);
     assert.ok(request, `retain ${label} action`);
     const values = request.payload.values || request.payload;
@@ -1361,7 +1367,7 @@ test("native Grid exposes native settings while retaining hidden legacy saved va
 
 test("native grid fields stay optional for legacy clients and travel with saved fields and packages", () => {
   for (const [fieldId, type, minimum, maximum, defaultValue] of [
-    ["grid_scale", "number", 0.001, 1000, 1],
+    ["grid_scale", "number", 0.001, 1000, 0.01],
     ["grid_subdivisions", "integer", 2, 100, 10]
   ]) {
     const field = fieldById.get(fieldId);
@@ -1395,7 +1401,7 @@ test("native grid fields stay optional for legacy clients and travel with saved 
 });
 
 test("native grid controls normalize values, adopt Blender results and persist them", async () => {
-  const root = await renderThemePage({ fields: { grid_scale: 0.01, grid_subdivisions: 20 } }, {
+  const root = await renderThemePage({ fields: { grid_enabled: false, grid_scale: 0.01, grid_subdivisions: 20 } }, {
     "button-theme.settings": { settings: poppedSettings(), configured: true },
     "picture.grid": { grid_scale: 0.003, grid_subdivisions: 8, grid_enabled: true },
     "theme.package.save": { saved: true, packagePath: "C:\\Themes\\fine.json", packageName: "Fine" }
@@ -1419,13 +1425,17 @@ test("native grid controls normalize values, adopt Blender results and persist t
     dispatch(input, "change");
     assert.equal(input.value, expected);
   }
-  await clickPageButton(root, "Grid");
+  assert.equal(root.requests.some(({ actionId }) => actionId === "picture.grid"), false, "spacing edits keep an unchecked grid off");
+  const checkbox = root.querySelectorAll("input").find((input) => input["aria-label"] === "Grid");
+  checkbox.checked = true;
+  dispatch(checkbox, "change");
+  await settlePageAction();
   const gridRequest = root.requests.find(({ actionId }) => actionId === "picture.grid");
   assert.equal(gridRequest.payload.grid_scale, 0.0025);
   assert.equal(gridRequest.payload.grid_subdivisions, 5);
   assert.equal(control("Grid Scale").value, "0.003");
   assert.equal(control("Subdivisions (unitless)").value, "8");
-  for (const [label, actionId] of [["Startup", "picture.startup"], ["Save Buckets", "theme.fields.save"], ["Save Package", "theme.package.save"]]) {
+  for (const [label, actionId] of [["Save Buckets", "theme.fields.save"], ["Save Package", "theme.package.save"]]) {
     await clickPageButton(root, label);
     const request = root.requests.find((candidate) => candidate.actionId === actionId);
     const values = request.payload.values || request.payload;
@@ -1453,7 +1463,7 @@ test("loading a package applies its native grid scale with its picture", async (
   assert.equal(request.payload.grid_subdivisions, 5);
 });
 
-test("older saved fields and packages reset missing native grid settings without enabling Grid", async () => {
+test("older saved fields and packages adopt the current grid defaults", async () => {
   for (const [label, actionId] of [["Load Buckets", "theme.fields.load"], ["Open Package", "theme.package.open"], ["Previous", "theme.package.previous"], ["Next", "theme.package.next"]]) {
     for (const storedGrid of [{}, { grid_scale: 0.2 }, { grid_subdivisions: 4 }]) {
       const root = await renderThemePage({ fields: { grid_scale: 0.005, grid_subdivisions: 20 } }, {
@@ -1466,16 +1476,16 @@ test("older saved fields and packages reset missing native grid settings without
       await clickPageButton(root, label);
       await root.flushTimers();
       const fields = root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state.fields;
-      assert.equal(fields.grid_scale, storedGrid.grid_scale ?? 1, `${label} resets missing scale`);
+      assert.equal(fields.grid_scale, storedGrid.grid_scale ?? 0.01, `${label} resets missing scale`);
       assert.equal(fields.grid_subdivisions, storedGrid.grid_subdivisions ?? 10, `${label} resets missing subdivisions`);
-      assert.equal(Object.hasOwn(fields, "grid_enabled"), false);
+      assert.equal(fields.grid_enabled, true);
       assert.equal(root.requests.some(({ actionId }) => actionId === "picture.grid"), false);
       const picture = root.requests.find(({ actionId }) => actionId === "picture.apply");
       if (actionId === "theme.fields.load") assert.equal(picture, undefined, "loading fields only stages settings");
       else {
-        assert.equal(picture.payload.grid_scale, storedGrid.grid_scale ?? 1);
+        assert.equal(picture.payload.grid_scale, storedGrid.grid_scale ?? 0.01);
         assert.equal(picture.payload.grid_subdivisions, storedGrid.grid_subdivisions ?? 10);
-        assert.equal(Object.hasOwn(picture.payload, "grid_enabled"), false);
+        assert.equal(picture.payload.grid_enabled, true);
       }
     }
   }
@@ -1502,7 +1512,7 @@ test("Remove Grid preserves the picture and the startup bundle stays atomic", ()
   assert.equal(page.config.actions.picture.removeGrid, "picture.grid.remove");
   assert.match(
     pageScript,
-    /actionButton\(actions\.picture\.removeGrid[\s\S]*copy\.removingGrid/
+    /enabled \? actions\.picture\.grid : actions\.picture\.removeGrid/
   );
 
   const removeGridStart = blenderSource.indexOf("def _remove_place_picture_grid(");
@@ -1549,7 +1559,7 @@ test("packages declare only portable popped settings, without placement identity
   const schema = settingsAction.requestSchema.properties.settings;
   const shapeKeys = ["angle", "curve", "textAngle", "textColors", "textCurve", "textScreenTopToBottom"];
   assert.deepEqual(Object.keys(schema.properties).sort(), [...Object.keys(poppedSettings()), ...shapeKeys].sort());
-  assert.deepEqual([...schema.required].sort(), Object.keys(poppedSettings()).sort(), "older packages stay valid");
+  assert.deepEqual([...schema.required].sort(), Object.keys(poppedSettings()).filter((key) => !key.startsWith("idle")).sort(), "older packages stay valid");
   assert.deepEqual(schema.properties.curve.items.properties.mode.enum, ["auto", "corner", "aligned", "free"]);
   assert.equal(schema.additionalProperties, false);
   for (const actionId of ["theme.package.save", "theme.package.open", "theme.package.previous", "theme.package.next"]) {
@@ -1584,8 +1594,8 @@ test("first use promotes the saved popped gradient over captured live effects, w
     screenTopToBottom: false, angle: 0, curve: LINEAR_CURVE,
     hoverGlowAmount: 17, hoverColor: "#FFFFFFCC", activeColor: "#FFFFFFCC"
   })]);
-  assert.equal(poppedControl(root, "hoverGlowAmount").value, "17");
-  assert.equal(poppedControl(root, "hoverColor").value, "#FFFFFF");
+  assert.equal(poppedControl(root, "idleGlowAmount").value, "0");
+  assert.equal(poppedControl(root, "idleColor").value, "#FFFFFF");
   assert.equal(root.requests.some(({ payload }) => payload.resetOverrides === true), false, "migration must preserve individual overrides");
   assert.equal(root.dataset.busy, "false");
   const configuredRoot = await renderThemePage(owner, {
@@ -1605,26 +1615,35 @@ test("effects apply without replacing the applied gradient and package save capt
     },
     "theme.package.save": { saved: true, packagePath: "C:\\Themes\\night.json", packageName: "Night" }
   });
-  assert.ok(root.querySelectorAll("h3").some((node) => node.textContent === "Popped Highlights & Glow"));
-  assert.equal(poppedControl(root, "hoverHighlightAmount").max, "1000");
-  assert.equal(poppedControl(root, "activeGlowAmount").max, "100");
+  assert.ok(root.querySelectorAll("h3").some((node) => node.textContent === "Highlights and Glow"));
+  assert.equal(poppedControl(root, "idleHighlightAmount").max, "1000");
+  assert.equal(poppedControl(root, "idleGlowAmount").max, "100");
   const stagedGradient = root.querySelectorAll("div").find((node) => node.className === "button-theme-gradient__stops")
     .querySelectorAll("input").find((input) => input.type === "color");
   stagedGradient.value = "#EE0000";
   dispatch(stagedGradient, "input");
-  const hoverGlow = poppedControl(root, "hoverGlowAmount");
+  const hoverGlow = poppedControl(root, "idleGlowAmount");
   hoverGlow.value = "3";
   dispatch(hoverGlow, "input");
   const stagedText = channelStops(root, "text")[0];
   setInput(stagedText, "#000000");
-  const activeEnabled = poppedControl(root, "activeEnabled");
-  activeEnabled.checked = false;
+  const activeEnabled = poppedControl(root, "idleEnabled");
+  activeEnabled.checked = true;
   dispatch(activeEnabled, "change");
-  const hoverColor = poppedControl(root, "hoverColor");
+  const hoverColor = poppedControl(root, "idleColor");
   hoverColor.value = "#335577";
   dispatch(hoverColor, "input");
+  for (const [key, value] of Object.entries({ hoverGlowAmount: 19, hoverHighlightAmount: 234, activeGlowAmount: 27, activeHighlightAmount: 456 })) {
+    const control = poppedControl(root, key);
+    control.value = String(value);
+    dispatch(control, "input");
+  }
+  const activeToggle = poppedControl(root, "activeEnabled");
+  activeToggle.checked = false;
+  dispatch(activeToggle, "change");
   await clickPageButton(root, "Apply Highlights & Glow");
-  assert.deepEqual(live, poppedSettings({ hoverGlowAmount: 3, activeEnabled: false, hoverColor: "#335577CC" }),
+  assert.deepEqual(live, poppedSettings({ hoverColor: "#FFFFFFCC", idleGlowAmount: 3, idleEnabled: true, idleColor: "#335577CC",
+    hoverGlowAmount: 19, hoverHighlightAmount: 234, activeGlowAmount: 27, activeHighlightAmount: 456, activeEnabled: false }),
     "effects leave the applied text alone; the staged text waits for Apply Text Gradient");
   assert.equal(channelStops(root, "text")[0].value, "#000000");
   assert.equal(root.requests.some(({ payload }) => payload.resetOverrides === true), false, "effects apply is not a package reset");
@@ -1707,7 +1726,7 @@ test("package switching never waits for a live popout scan and retains the named
   await clickPageButton(root, "Next");
   assert.equal(root.dataset.busy, "false");
   assert.deepEqual(root.requests.map(({ actionId }) => actionId), [
-    "theme.package.next", "button-theme.settings", "picture.clear", "theme.apply"
+    "theme.package.next", "button-theme.settings", "picture.clear", "picture.grid", "theme.apply"
   ]);
   await root.flushTimers();
   const saved = root.requests.filter(({ actionId }) => actionId === page.config.actions.state.write).at(-1).payload.state;
@@ -1733,7 +1752,7 @@ test("legacy package switching keeps live popout settings without saving or resc
   await clickPageButton(root, "Next");
   assert.equal(root.dataset.busy, "false");
   assert.deepEqual(root.requests.map(({ actionId }) => actionId), [
-    "theme.package.next", "button-theme.settings", "picture.clear", "theme.apply"
+    "theme.package.next", "button-theme.settings", "picture.clear", "picture.grid", "theme.apply"
   ]);
   assert.equal(root.requests.some(({ payload }) => payload.settings), false);
 });
@@ -1773,9 +1792,10 @@ test("a locked legacy package switch preserves every staged appearance control w
   const expectedText = { colors: ["#123123", "#ABCABC"], angle: 30, points: 3 };
   assert.deepEqual(stagedText(), expectedText);
   const stagedControls = {
-    spread: 23, scatter: 81, hoverColor: "#AABBCD", activeColor: "#8899AA",
-    hoverEnabled: false, activeEnabled: false, hoverHighlightAmount: 123,
-    activeHighlightAmount: 987, hoverGlowAmount: 3, activeGlowAmount: 7
+    spread: 23, scatter: 81, idleColor: "#AABBCD",
+    idleEnabled: true, idleHighlightAmount: 123, idleGlowAmount: 7,
+    hoverEnabled: false, hoverHighlightAmount: 85, hoverGlowAmount: 9,
+    activeEnabled: true, activeHighlightAmount: 220, activeGlowAmount: 15
   };
   for (const [key, value] of Object.entries(stagedControls)) {
     const control = poppedControl(root, key);
@@ -1812,7 +1832,7 @@ test("a locked legacy package switch preserves every staged appearance control w
   assert.deepEqual(plain(state.buttonTheme.gradientColors), stagedColors);
   assert.equal(state.buttonTheme.gradientColorCount, 3);
   assert.equal(state.buttonTheme.screenTopToBottom, false);
-  for (const [key, value] of Object.entries(stagedControls)) assert.equal(state.buttonTheme[key], value, key);
+  for (const [key, value] of Object.entries(stagedControls)) assert.equal(state.buttonTheme[key], key === "idleColor" ? value + "CC" : value, key);
   assert.deepEqual(plain(state.buttonTheme.textColors), expectedText.colors);
   assert.equal(state.buttonTheme.textAngle, 30);
   assert.deepEqual(plain(state.buttonTheme.lastAppliedSettings), current);
@@ -2121,4 +2141,119 @@ test("a late background response cannot overwrite newer gradient and text result
   assert.deepEqual(bucketColors(root), ["#771199"]);
   assert.equal(applyBucketsButton(root).disabled, false, "the newest complete response keeps its revision");
   assert.equal(scans, 2, "complete responses supersede the pending scan without queuing another");
+});
+
+
+test("Regular controls accompany the existing Hover and Active controls with no Startup button", async () => {
+  const root = await renderThemePage({}, {
+    "button-theme.settings": { settings: poppedSettings(), configured: true }
+  });
+  assert.equal(root.querySelectorAll("button").some((node) => node.textContent === "Startup"), false);
+  for (const prefix of ["idle", "hover", "active"]) {
+    for (const suffix of ["Enabled", "Color", "HighlightAmount", "GlowAmount"]) {
+      assert.ok(poppedControl(root, prefix + suffix));
+    }
+  }
+});
+
+
+test("Grid defaults on and unchecking saves explicit false through package reload", async () => {
+  let saved;
+  const root = await renderThemePage({}, {
+    "button-theme.settings": { settings: poppedSettings(), configured: true },
+    "picture.grid.remove": { grid_enabled: false, message: "Grid removed" },
+    "theme.package.save": (payload) => {
+      saved = plain(payload.values);
+      return { saved: true, packagePath: "C:\\Themes\\grid-off.json", packageName: "Off" };
+    },
+    "theme.package.open": () => ({ selected: true, fieldPatch: { ...saved, static_background_path: "C:\\Themes\\picture.png" } })
+  });
+  const checkbox = () => root.querySelectorAll("input").find((input) => input["aria-label"] === "Grid");
+  assert.equal(checkbox().checked, true);
+  checkbox().checked = false;
+  dispatch(checkbox(), "change");
+  await new Promise((resolve) => setImmediate(resolve));
+  await clickPageButton(root, "Save Package");
+  assert.equal(saved.grid_enabled, false);
+  assert.equal(saved.grid_scale, 0.01);
+  assert.equal(saved.grid_subdivisions, 10);
+  checkbox().checked = true;
+  dispatch(checkbox(), "change");
+  await settlePageAction();
+  assert.equal(checkbox().checked, true);
+  await clickPageButton(root, "Open Package");
+  assert.equal(checkbox().checked, false);
+  assert.equal(root.requests.filter(({ actionId }) => actionId === "picture.apply").at(-1).payload.grid_enabled, false);
+  await clickPageButton(root, "Save Buckets");
+  assert.equal(root.requests.filter(({ actionId }) => actionId === "theme.fields.save").at(-1).payload.values.grid_enabled, false);
+});
+
+test("Grid controls follow Gradient 2 in Theme Palette and leave Place Picture grid-free", async () => {
+  const root = await renderThemePage();
+  const palette = root.children[0];
+  const roles = palette.querySelectorAll("div").find((node) => node.className === "theme-role-grid");
+  const gradientIndex = roles.children.findIndex((node) => node.title === "Gradient 2");
+  const controls = roles.children[gradientIndex + 1];
+  assert.equal(controls.className, "theme-grid-controls");
+  assert.equal(controls.children[0].querySelectorAll("input")[0]["aria-label"], "Grid");
+  assert.equal(controls.children[1].querySelectorAll("span")[0].textContent, "Grid Scale");
+  assert.equal(controls.children[2].querySelectorAll("span")[0].textContent, "Subdivisions (unitless)");
+  const picture = root.children[2];
+  assert.equal(picture.querySelectorAll("input").length, 1, "only the picture path remains");
+  assert.deepEqual(picture.querySelectorAll("button").map((button) => button.textContent), ["Browse", "Place Picture", "Clear"]);
+});
+
+test("spacing edits apply immediately while Grid is enabled", async () => {
+  const root = await renderThemePage();
+  const controls = root.querySelectorAll("div").find((node) => node.className === "theme-grid-controls");
+  for (const [index, value, fieldId] of [[1, "0.05", "grid_scale"], [2, "12", "grid_subdivisions"]]) {
+    const input = controls.children[index].querySelectorAll("input")[0];
+    input.value = value;
+    dispatch(input, "change");
+    await settlePageAction();
+    const request = root.requests.filter(({ actionId }) => actionId === "picture.grid").at(-1);
+    assert.equal(request.payload[fieldId], Number(value));
+    assert.equal(request.payload.grid_enabled, true);
+  }
+});
+
+test("a failed grid checkbox action keeps the prior saved choice", async () => {
+  const root = await renderThemePage({}, { "picture.grid.remove": () => { throw new Error("Blender unavailable"); } });
+  const checkbox = root.querySelectorAll("input").find((input) => input["aria-label"] === "Grid");
+  checkbox.checked = false;
+  dispatch(checkbox, "change");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(checkbox.checked, true);
+});
+
+test("grid visibility is optional in every IO schema and survives migrated legacy packages", () => {
+  assert.equal(fieldById.get("grid_enabled").defaultValue, true);
+  for (const actionId of ["theme.fields.save", "theme.fields.load", "theme.package.save", "theme.package.open", "theme.package.previous", "theme.package.next"]) {
+    const action = actionById.get(actionId);
+    assert.ok(action.handler.options.valueFields.includes("grid_enabled"));
+    const schema = actionId.endsWith(".save") ? action.requestSchema.properties.values : action.responseSchema.properties.fieldPatch;
+    assert.deepEqual(schema.properties.grid_enabled, { type: "boolean" });
+    assert.equal((schema.required || []).includes("grid_enabled"), false);
+    if (!actionId.endsWith(".save")) {
+      assert.equal(action.handler.options.legacyFieldMap.GridEnabled, "grid_enabled");
+      assert.equal(action.handler.options.legacyFieldMap.GridScale, "grid_scale");
+      assert.equal(action.handler.options.legacyFieldMap.GridSubdivisions, "grid_subdivisions");
+    }
+  }
+  for (const actionId of ["picture.apply", "picture.grid", "picture.startup"]) {
+    assert.deepEqual(actionById.get(actionId).requestSchema.properties.grid_enabled, { type: "boolean" });
+  }
+});
+
+test("themes without a picture still honor explicit grid on and off", async () => {
+  for (const grid_enabled of [true, false]) {
+    const root = await renderThemePage({}, {
+      "button-theme.settings": { settings: poppedSettings(), configured: true },
+      "theme.package.open": { selected: true, fieldPatch: { static_background_path: "", grid_enabled } }
+    });
+    await clickPageButton(root, "Open Package");
+    const actionIds = root.requests.map(({ actionId }) => actionId);
+    assert.ok(actionIds.includes(grid_enabled ? "picture.grid" : "picture.grid.remove"));
+    assert.equal(actionIds.includes(grid_enabled ? "picture.grid.remove" : "picture.grid"), false);
+  }
 });

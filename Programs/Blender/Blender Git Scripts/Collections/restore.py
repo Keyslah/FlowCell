@@ -1,4 +1,4 @@
-# Description: Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first.
+# Description: Restore selected snapshot, trash, or archive objects to their source collections and move the current original to Trash first.
 
 from __future__ import annotations
 

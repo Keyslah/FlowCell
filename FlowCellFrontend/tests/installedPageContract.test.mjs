@@ -468,14 +468,26 @@ test("scoped-window IPC cannot block the main thread during installed-page WebVi
   }
   assert.match(
     windows,
-    /last_external_matches_target\s*\|\|\s*!entry\.selective_input/,
-    "full installed pages must remain an interactive scoped-window continuation"
+    /let valid_scoped_continuation\s*=\s*foreground_is_scoped_window\s*&&\s*last_external_matches_target;/,
+    "full installed pages and transparent hosts must only bind to their matching program"
   );
   assert.match(
     windows,
     /if\s+!entry\.selective_input\s*\{\s*window\.set_ignore_cursor_events\(false\)/,
     "full installed pages must never inherit transparent-host click-through"
   );
+});
+
+test("scoped native placement does not enqueue an intermediate Tauri Z-order change", () => {
+  const windows = read(frontendRoot, "src-tauri", "src", "commands", "windows.rs");
+  const placement = windows.slice(
+    windows.indexOf("fn set_scoped_native_window_placement"),
+    windows.indexOf("fn set_native_window_topmost")
+  );
+  assert.ok(placement.length > 0);
+  assert.doesNotMatch(placement, /set_always_on_top/);
+  assert.match(placement, /SetWindowPos\(/);
+  assert.match(placement, /SWP_NOACTIVATE/);
 });
 
 test("Blender Theme and Illustrator Layer Tree are ordinary program-owned page sources", () => {

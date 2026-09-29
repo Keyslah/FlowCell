@@ -194,6 +194,7 @@ interface MainPopDraftSession {
 }
 
 interface MainPopOpenOptions {
+  closeControlOffset?: { x: number; y: number };
   programName?: string;
   panelName?: string;
   bounds?: FlowCellBounds;
@@ -1712,7 +1713,10 @@ export default function MainPage() {
         ButtonFanSetupId: registeredWindow.buttonFanSetupId,
         ButtonOwnerId: registeredWindow.buttonOwnerId,
         PanelOwnerButtonId: registeredWindow.panelOwnerButtonId,
-        ButtonDisplayMode: registeredWindow.buttonDisplayMode,
+        // Fan display mode is live palette geometry, not a persisted Fan layout field.
+        ButtonDisplayMode: registeredWindow.kind === "button-popout"
+          ? registeredWindow.buttonDisplayMode : undefined,
+        ButtonCloseControlOffset: registeredWindow.buttonCloseControlOffset,
         ButtonPopoutSettingsPath: registeredWindow.buttonPopoutSettingsPath,
         ButtonPopoutChoiceId: registeredWindow.buttonPopoutChoiceId,
         InstalledPageFileName: registeredWindow.installedPageFileName,
@@ -1842,6 +1846,7 @@ export default function MainPage() {
                   panelName: windowEntry.PanelName,
                   bounds: windowEntry.Bounds,
                   displayMode: windowEntry.ButtonDisplayMode,
+                  closeControlOffset: windowEntry.ButtonCloseControlOffset,
                   reveal: false
                 }
               );
@@ -1855,6 +1860,7 @@ export default function MainPage() {
               popoutUnitId: windowEntry.ButtonPopoutUnitId,
               ownerButtonId: windowEntry.ButtonOwnerId,
               displayMode: windowEntry.ButtonDisplayMode,
+              closeControlOffset: windowEntry.ButtonCloseControlOffset,
               bounds: windowEntry.Bounds,
               reveal: false
             });
@@ -1873,6 +1879,7 @@ export default function MainPage() {
               fanSetupId: windowEntry.ButtonFanSetupId,
               panelOwnerButtonId: windowEntry.ButtonOwnerId,
               collapsedBounds: windowEntry.Bounds,
+              closeControlOffset: windowEntry.ButtonCloseControlOffset,
               reveal: false
             });
           }
@@ -2874,6 +2881,7 @@ export default function MainPage() {
         displayMode: options.displayMode ?? (authoredFan ? "collapsed" : "expanded"),
         draftSessionId: sessionId,
         bounds: options.bounds,
+        closeControlOffset: options.closeControlOffset,
         reveal: options.reveal,
         settingsBackedLayout: {
           panelOwnerButtonId,

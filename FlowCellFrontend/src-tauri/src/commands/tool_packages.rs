@@ -326,16 +326,31 @@ fn save_tool_package_to_root(
             selected_parent.display()
         )
     })?;
-    if canonical_parent != canonical_root {
+    let stem = tool_package_stem(&selected_path, manifest_suffix);
+    let package_dir = root.join(&stem);
+    // Selecting an existing manifest in its own immediate library folder is an
+    // explicit update (the native Save dialog confirms replacement).
+    let updating = canonical_parent.parent() == Some(canonical_root.as_path())
+        && selected_path.is_file()
+        && selected_path.file_name() == Some(std::ffi::OsStr::new(&format!("{stem}{manifest_suffix}")))
+        && fs::canonicalize(&package_dir).ok().as_ref() == Some(&canonical_parent)
+        && fs::canonicalize(&selected_path).ok().is_some_and(|path| path.parent() == Some(canonical_parent.as_path()));
+    if canonical_parent != canonical_root && !updating {
         return Err(format!(
             "Tool packages must be saved directly inside the package library at {}.",
             root.display()
         ));
     }
 
-    let stem = tool_package_stem(&selected_path, manifest_suffix);
-    let package_dir = root.join(&stem);
-    if package_dir.exists() {
+    if updating {
+        let previous: Value = serde_json::from_str(&fs::read_to_string(&selected_path)
+            .map_err(|error| format!("Failed to read existing tool package: {error}"))?)
+            .map_err(|error| format!("Failed to read existing tool package: {error}"))?;
+        if previous.get("format").and_then(Value::as_str) != Some(format!("flowcell-tool-package/{format_id}/v1").as_str()) {
+            return Err("Existing tool package has a different format; choose a new package name.".to_string());
+        }
+    }
+    if package_dir.exists() && !updating {
         return Err(format!(
             "Tool package '{}' already exists. Choose a new package name.",
             stem
@@ -445,12 +460,20 @@ fn save_tool_package_to_root(
                 staged_manifest_path.display()
             )
         })?;
-        fs::rename(&staging_dir, &package_dir).map_err(|error| {
-            format!(
-                "Failed to publish tool package at {}: {error}",
-                package_dir.display()
-            )
-        })?;
+        let backup_dir = if updating {
+            let backup_root = root.join(".flowcell-package-backups");
+            fs::create_dir_all(&backup_root).map_err(|error| format!("Failed to prepare package backup: {error}"))?;
+            let backup = backup_root.join(format!("{stem}-{staging_token}"));
+            fs::rename(&package_dir, &backup).map_err(|error| format!("Failed to back up existing package: {error}"))?;
+            Some(backup)
+        } else { None };
+        if let Err(error) = fs::rename(&staging_dir, &package_dir) {
+            if let Some(backup) = backup_dir {
+                fs::rename(&backup, &package_dir).map_err(|restore_error| format!(
+                    "Failed to publish package: {error}; restore failed: {restore_error}. Original package is at {}.", backup.display()))?;
+            }
+            return Err(format!("Failed to publish tool package at {}: {error}", package_dir.display()));
+        }
         Ok(package_dir.join(format!("{stem}{manifest_suffix}")))
     })();
 
@@ -878,6 +901,52 @@ mod tests {
 
         let _ = fs::remove_dir_all(&root);
         let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn save_updates_selected_existing_manifest_with_assets_and_keeps_original_backup() {
+        let root = temporary_root("update-existing");
+        let package = root.join("Jegwire_no_grid");
+        fs::create_dir_all(&package).unwrap();
+        let selected = package.join("Jegwire_no_grid.flowcell-theme-pack.json");
+        let original = r#"{"format":"flowcell-tool-package/blender-theme/v1","values":{"grid_enabled":true}}"#;
+        fs::write(&selected, original).unwrap();
+        fs::write(package.join("buckets.png"), b"original image").unwrap();
+        fs::write(package.join("user-note.txt"), b"preserve in backup").unwrap();
+        let values = json!({"grid_enabled":false,"theme_image_path":package.join("buckets.png").display().to_string()});
+        let saved = save_tool_package_to_root(&root, "blender-theme", &selected.display().to_string(),
+            ".flowcell-theme-pack.json", &["grid_enabled".into(), "theme_image_path".into()],
+            &["theme_image_path".into()], &values).unwrap();
+        assert_eq!(PathBuf::from(saved), selected);
+        let updated: serde_json::Value = serde_json::from_str(&fs::read_to_string(&selected).unwrap()).unwrap();
+        assert_eq!(updated["values"]["grid_enabled"], false);
+        assert_eq!(fs::read(package.join("buckets.png")).unwrap(), b"original image");
+        let backup = fs::read_dir(root.join(".flowcell-package-backups")).unwrap().next().unwrap().unwrap().path();
+        assert_eq!(fs::read_to_string(backup.join("Jegwire_no_grid.flowcell-theme-pack.json")).unwrap(), original);
+        assert_eq!(fs::read(backup.join("user-note.txt")).unwrap(), b"preserve in backup");
+        assert_eq!(list_tool_packages_in_root(&root, ".flowcell-theme-pack.json").unwrap().len(), 1);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn failed_existing_package_update_preserves_original_and_rejects_other_formats() {
+        let root = temporary_root("update-failure");
+        let package = root.join("Existing");
+        fs::create_dir_all(&package).unwrap();
+        let selected = package.join("Existing.flowcell-theme-pack.json");
+        let original = r#"{"format":"flowcell-tool-package/blender-theme/v1","values":{"grid_enabled":false}}"#;
+        fs::write(&selected, original).unwrap();
+        let values = json!({"image_path":package.join("missing.png").display().to_string()});
+        let failed = save_tool_package_to_root(&root, "blender-theme", &selected.display().to_string(),
+            ".flowcell-theme-pack.json", &["image_path".into()], &["image_path".into()], &values);
+        assert!(failed.unwrap_err().contains("was not found"));
+        assert_eq!(fs::read_to_string(&selected).unwrap(), original);
+        assert!(!root.join(".flowcell-package-backups").exists());
+        let wrong_format = save_tool_package_to_root(&root, "other", &selected.display().to_string(),
+            ".flowcell-theme-pack.json", &["image_path".into()], &[], &values);
+        assert!(wrong_format.unwrap_err().contains("different format"));
+        assert_eq!(fs::read_to_string(&selected).unwrap(), original);
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

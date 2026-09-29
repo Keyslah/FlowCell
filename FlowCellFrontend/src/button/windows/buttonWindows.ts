@@ -718,6 +718,7 @@ export async function closeButtonEditorWindow(): Promise<void> {
 }
 
 export async function openButtonPopoutWindow(args: {
+  closeControlOffset?: { x: number; y: number };
   programName: string;
   panelName?: string;
   popoutUnitId: string;
@@ -771,6 +772,7 @@ export async function openButtonPopoutWindow(args: {
       registerLayoutWindow({
         windowLabel,
         kind: "button-popout",
+        buttonCloseControlOffset: args.closeControlOffset,
         programName: args.programName,
         panelName: args.panelName,
         buttonPopoutUnitId: args.popoutUnitId,
@@ -882,6 +884,7 @@ export async function toggleButtonPopoutWindow(args: {
 }
 
 export async function openButtonFanWindow(args: {
+  closeControlOffset?: { x: number; y: number };
   programName: string;
   panelName: string;
   fanSetupId: string;
@@ -925,6 +928,7 @@ export async function openButtonFanWindow(args: {
     registerLayoutWindow({
       windowLabel,
       kind: "button-fan",
+      buttonCloseControlOffset: args.closeControlOffset,
       programName: args.programName,
       panelName: args.panelName,
       buttonFanSetupId: args.fanSetupId,

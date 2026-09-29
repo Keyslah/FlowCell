@@ -1420,12 +1420,15 @@ async function runSavePackage(
     values
   });
   activeToolPackagePaths.set(packageKey(identity, options), savedPath);
+  const savedFileName = savedPath.split(/[\\/]/).pop() ?? "";
+  const packageName = savedFileName.toLowerCase().endsWith(suffix.toLowerCase())
+    ? savedFileName.slice(0, -suffix.length) : fileStem(savedPath);
   return {
     saved: true,
     savedPath,
     packagePath: savedPath,
-    packageName: suggestedName,
-    message: `Saved ${suggestedName}.`
+    packageName,
+    message: `Saved ${packageName}.`
   };
 }
 

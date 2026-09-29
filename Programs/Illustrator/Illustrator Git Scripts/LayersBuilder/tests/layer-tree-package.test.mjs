@@ -289,6 +289,83 @@ function runDuplicateSource(source, document, { keys = [] } = {}) {
   return runLayerTreeSource(source, document, { op: "duplicate", keys });
 }
 
+async function runAddToLive(document, highlighted = []) {
+  const source = await readFile(path.resolve(packageRoot, "../Layers Builder/add-to-live/Add to Live.jsx"), "utf8");
+  return vm.runInNewContext(source.replace(/^#(?:target|include)[^\r\n]*\r?\n/gm, ""), {
+    app: { documents: [document], activeDocument: document, redraw() {} },
+    ElementPlacement: mockElementPlacement,
+    Folder: { temp: { fsName: "test-temp" } },
+    File: function () { this.open = this.writeln = this.close = () => {}; },
+    FlowCellLayersBuilderSelection: {
+      resolveTargets() {
+        assert.equal(document.selection?.length ?? 0, 0, "native selection must bypass tree highlights");
+        return { layers: highlighted, restore: [] };
+      },
+      restore() {}
+    }
+  });
+}
+
+test("Add to Live accepts native artwork from ordinary roots and retains saved version names", async () => {
+  const ordinary = mockLayer("Drawing");
+  const selected = mockPageItem(ordinary, "Selected");
+  mockPageItem(ordinary, "Unselected");
+  const version = mockLayer("d3 (draft)");
+  const saved = mockLayer("3D", { children: [mockLayer("Part", { children: [version] })] });
+  const versionItem = mockPageItem(version, "Saved");
+  const document = mockDocument([ordinary, saved]);
+  document.selection = [selected, versionItem];
+  await runAddToLive(document);
+  const live = document.layers.find((layer) => layer.name === "Live");
+  assert.deepEqual(live.layers.find((layer) => layer.name === "Drawing").pageItems.map((item) => item.name), ["Selected"]);
+  assert.equal(live.layers.find((layer) => layer.name === "Part(d3) draft").pageItems.length, 1);
+  assert.equal(ordinary.pageItems.length, 2);
+});
+
+test("Add to Live opens closed saved ancestors for copying and restores them on success or failure", async () => {
+  for (const fail of [false, true]) {
+    const version = mockLayer("s2", { locked: true, visible: false });
+    const container = mockLayer("Part", { children: [version], locked: true, visible: false });
+    const saved = mockLayer("Snapshots", { children: [container], locked: true, visible: false });
+    const item = mockPageItem(version, "Saved artwork", { locked: true, hidden: true });
+    const duplicate = item.duplicate;
+    item.duplicate = function (...args) {
+      for (const layer of [saved, container, version]) {
+        assert.equal(layer.locked, false);
+        assert.equal(layer.visible, true);
+      }
+      assert.equal(item.locked, false);
+      assert.equal(item.hidden, false);
+      if (fail) throw new Error("copy failed");
+      return duplicate.apply(this, args);
+    };
+    const document = mockDocument([saved]);
+    if (fail) await assert.rejects(runAddToLive(document, [saved, version]), /copy failed/);
+    else {
+      await runAddToLive(document, [saved, version]);
+      const live = document.layers.find((layer) => layer.name === "Live");
+      assert.equal(live.layers[0].name, "Part(s2)");
+      assert.equal(live.layers[0].pageItems.length, 1);
+    }
+    for (const layer of [saved, container, version]) {
+      assert.equal(layer.locked, true);
+      assert.equal(layer.visible, false);
+    }
+    assert.equal(item.locked, true);
+    assert.equal(item.hidden, true);
+  }
+});
+
+test("Add to Live reports artwork already in Live without creating unrelated roots", async () => {
+  const layer = mockLayer("Part");
+  const live = mockLayer("Live", { children: [layer] });
+  const document = mockDocument([live]);
+  document.selection = [mockPageItem(layer, "Already live")];
+  await assert.rejects(runAddToLive(document), /Select artwork outside Live/);
+  assert.equal(document.layers.length, 1);
+  assert.equal(layer.pageItems.length, 1);
+});
+
 function runPlaceArtworkSource(source, document, { sourceKey, targetKey, copy = false }) {
   const args = {
     op: "placeartwork",
@@ -1049,7 +1126,7 @@ test("text-edit selections are ignored by artwork placement", async () => {
   assert.deepEqual(target._stack, []);
 });
 
-test("Duplicate requires a tree highlight while Delete and Force Delete dispatch directly", async () => {
+test("Duplicate, Delete and Force Delete dispatch without requiring tree highlights", async () => {
   const pageScript = await readText("page/page.js");
   const toolbar = pageScript.slice(
     pageScript.indexOf("function bindToolbar"),
@@ -1061,8 +1138,8 @@ test("Duplicate requires a tree highlight while Delete and Force Delete dispatch
   );
 
   assert.match(duplicateHandler, /runAction\("duplicate",\s*\{\s*keys:\s*keys\s*\}/);
-  assert.match(duplicateHandler, /var keys\s*=\s*requireSelection\(/);
-  assert.match(duplicateHandler, /if \(!keys\) return;/);
+  assert.match(duplicateHandler, /var keys\s*=\s*highlightedKeys\(\)/);
+  assert.doesNotMatch(duplicateHandler, /requireSelection|if \(!keys\) return;/);
   assert.match(
     toolbar,
     /runAction\("delete",\s*\{\s*keys:\s*highlightedKeys\(\),\s*force:\s*force\s*\}/
@@ -1072,7 +1149,7 @@ test("Duplicate requires a tree highlight while Delete and Force Delete dispatch
   assert.doesNotMatch(pageScript, /openForceDeleteDialog|forceDialog|forceConfirm/);
 });
 
-test("duplicate uses only highlighted rows and copies the complete layer tree", async () => {
+test("duplicate copies complete highlighted layer trees when no artwork is selected", async () => {
   const source = await readFile(jsxPath, "utf8");
   const nested = mockLayer("Nested", { locked: true, visible: false });
   mockPageItem(nested, "Nested artwork", { hidden: true, locked: true });
@@ -1103,10 +1180,6 @@ test("duplicate uses only highlighted rows and copies the complete layer tree", 
     highlightedFallback,
     mockLayer("Spare")
   ]);
-  selectedDocument.selection = [
-    mockSelectedObject(nested),
-    mockSelectedObject(nestedRight)
-  ];
 
   const highlightedResult = runDuplicateSource(source, selectedDocument, { keys: ["0"] });
   assert.equal(highlightedResult.ok, true);
@@ -1153,7 +1226,7 @@ test("duplicate uses only highlighted rows and copies the complete layer tree", 
   assert.equal(
     selectedLayer.layers.some((layer) => layer.name === "Nested1" || layer.name === "Nested Right1"),
     false,
-    "selected child artwork must not redirect Duplicate into the highlighted parent"
+    "copying the parent must not add copies inside the source parent"
   );
 
   const highlightedChild = mockLayer("Highlighted Child");
@@ -1171,13 +1244,43 @@ test("duplicate uses only highlighted rows and copies the complete layer tree", 
   const selectionOnlyDocument = mockDocument([selectionOnlyLayer, mockLayer("Spare")]);
   selectionOnlyDocument.selection = [mockSelectedObject(selectionOnlyLayer)];
   const selectionOnlyResult = runDuplicateSource(source, selectionOnlyDocument);
-  assert.equal(selectionOnlyResult.ok, false);
-  assert.match(selectionOnlyResult.error, /Highlight one or more Layer Tree rows/i);
-  assert.deepEqual(
-    selectionOnlyDocument.layers.map((layer) => layer.name),
-    ["Selection Only", "Spare"]
-  );
+  assert.equal(selectionOnlyResult.ok, true);
+  assert.ok(selectionOnlyDocument.layers.some((layer) => layer.name === "Selection Only1"));
   assert.doesNotMatch(source, /\.layer\.duplicate\s*\(/);
+});
+
+test("duplicate prioritizes distinct selected-object owning layers over highlights", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const child = mockLayer("Child");
+  mockPageItem(child, "Selected artwork");
+  mockPageItem(child, "Unselected sibling artwork");
+  const parent = mockLayer("Parent", { children: [child] });
+  const other = mockLayer("Other");
+  mockPageItem(other, "Other artwork");
+  const fallback = mockLayer("Fallback");
+  const document = mockDocument([parent, other, fallback]);
+  document.selection = [mockSelectedObject(child), mockSelectedObject(child), mockSelectedObject(other)];
+  const result = runDuplicateSource(source, document, { keys: ["2"] });
+  assert.equal(result.ok, true);
+  assert.equal(parent.layers.filter((layer) => layer.name === "Child1").length, 1);
+  assert.deepEqual(parent.layers.find((layer) => layer.name === "Child1").pageItems.map((item) => item.name),
+    ["Selected artwork", "Unselected sibling artwork"]);
+  assert.ok(document.layers.some((layer) => layer.name === "Other1"));
+  assert.equal(document.layers.some((layer) => layer.name === "Fallback1"), false);
+});
+
+test("duplicate normalizes overlapping owners and rejects an empty target set", async () => {
+  const source = await readFile(jsxPath, "utf8");
+  const child = mockLayer("Child");
+  const parent = mockLayer("Parent", { children: [child] });
+  const document = mockDocument([parent]);
+  document.selection = [mockSelectedObject(parent), mockSelectedObject(child)];
+  assert.equal(runDuplicateSource(source, document).ok, true);
+  assert.equal(document.layers.length, 2);
+  assert.equal(parent.layers.length, 1);
+  const empty = mockDocument([mockLayer("Untouched")]);
+  assert.match(runDuplicateSource(source, empty).error, /Select Illustrator objects or highlight/);
+  assert.equal(empty.layers.length, 1);
 });
 
 test("duplicate sublayer names advance one compact trailing number", async () => {

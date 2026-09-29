@@ -204,9 +204,28 @@
 }
 
 .window-grid__card-title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: block;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.window-grid__card-kind {
+  display: block;
+  margin-top: 4px;
+  color: #aeb5be;
+  font-size: 11px;
+}
+
+.window-grid__search {
+  flex: 1;
+  min-width: 80px;
+  max-width: 320px;
+  margin: 0 12px;
+  padding: 4px 8px;
+  border: 1px solid #454b54;
+  border-radius: 4px;
+  background: #1f2227;
+  color: #eee;
 }
 
 .window-grid__card-close {

@@ -61,7 +61,7 @@ function findInteractiveInventory(root: HTMLElement): InteractiveInventory {
     return controls.length > 0 ? [field] : [];
   });
   const resizeHandles = Array.from(
-    root.querySelectorAll<HTMLElement>("[data-button-window-resize-handle]")
+    root.querySelectorAll<HTMLElement>("[data-button-window-resize-handle],[data-button-window-close-control]")
   );
   const hitboxCandidates: InteractiveHitbox[] = [
     ...buttonHitboxes,
@@ -120,9 +120,12 @@ export function useNativeButtonHitboxes(args: {
   broadPhasePadding?: number;
   enabled?: boolean;
   onHoverChange?: (hovered: boolean) => void;
+  onButtonHoverChange?: (target: HTMLElement | null) => void;
   onNativeSpaceChange?: (spaceDown: boolean) => void;
 }): void {
   const onHoverChangeRef = useRef(args.onHoverChange);
+  const onButtonHoverChangeRef = useRef(args.onButtonHoverChange);
+  onButtonHoverChangeRef.current = args.onButtonHoverChange;
   const onNativeSpaceChangeRef = useRef(args.onNativeSpaceChange);
   onHoverChangeRef.current = args.onHoverChange;
   onNativeSpaceChangeRef.current = args.onNativeSpaceChange;
@@ -252,6 +255,7 @@ export function useNativeButtonHitboxes(args: {
       notifyNativeSpace(snapshot.spaceDown);
       const root = args.rootRef.current;
       if (cancelled || !root || !scopeActive || args.enabled === false) {
+        onButtonHoverChangeRef.current?.(null);
         if (currentHoverState !== false) {
           currentHoverState = false;
           onHoverChangeRef.current?.(false);
@@ -260,7 +264,7 @@ export function useNativeButtonHitboxes(args: {
         return;
       }
       const pointerPressActive = root.querySelector<HTMLElement>(
-        '[data-button-skin-host][data-button-pointer-pressed="true"]'
+        '[data-button-skin-host][data-button-pointer-pressed="true"],[data-close-control-dragging="true"]'
       ) !== null;
 
       if (!windowPosition || scaleFactor === null) {
@@ -306,7 +310,12 @@ export function useNativeButtonHitboxes(args: {
           { x: clientX, y: clientY },
           args.broadPhasePadding ?? 0
         );
-        if (!insideBroadPhase) {
+        const overCloseControl = currentInventory.hitboxes.some((hitbox) =>
+          hitbox.element.hasAttribute("data-button-window-close-control") &&
+          pointHitsInteractiveElement(hitbox, clientX, clientY)
+        );
+        if (!insideBroadPhase && !overCloseControl) {
+          onButtonHoverChangeRef.current?.(null);
           if (currentHoverState !== false) {
             dispatchSyntheticButtonHover(
               currentInventory.buttonHosts,
@@ -328,6 +337,7 @@ export function useNativeButtonHitboxes(args: {
         ({ element }) => element.isConnected
       );
       if (connectedHitboxes.length === 0) {
+        onButtonHoverChangeRef.current?.(null);
         if (currentHoverState !== false) {
           currentHoverState = false;
           onHoverChangeRef.current?.(false);
@@ -340,6 +350,10 @@ export function useNativeButtonHitboxes(args: {
       const hovered = connectedHitboxes.some((hitbox) =>
         pointHitsInteractiveElement(hitbox, clientX, clientY)
       );
+      const hoveredButton = currentInventory.buttonHosts.find((hitbox) =>
+        pointHitsInteractiveElement(hitbox, clientX, clientY)
+      );
+      onButtonHoverChangeRef.current?.(hoveredButton?.buttonHost ?? null);
 
       // While the window ignores cursor events the webview receives no pointer
       // events. Drive hover from each authored target's live bounds so native
@@ -422,6 +436,7 @@ export function useNativeButtonHitboxes(args: {
       // start every scope transition fail-closed until fresh geometry is read.
       cursorIgnoreController.reset(true);
       if (!active) {
+        onButtonHoverChangeRef.current?.(null);
         if (currentHoverState !== false) {
           currentHoverState = false;
           onHoverChangeRef.current?.(false);

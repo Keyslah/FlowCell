@@ -96,6 +96,10 @@
       textAngle: 0,
       textCurve: linearCurve(),
       textScreenTopToBottom: false,
+      idleEnabled: false,
+      idleColor: "#FFFFFFCC",
+      idleHighlightAmount: 0,
+      idleGlowAmount: 0,
       hoverEnabled: true,
       activeEnabled: true,
       hoverColor: "#FFFFFF",
@@ -869,6 +873,14 @@
       if (typeof settings[key] !== "number" || !Number.isFinite(settings[key]) || settings[key] < 0 || settings[key] > maximum) return null;
       result[key] = settings[key];
     }
+    for (const key of ["idleEnabled", "idleColor", "idleHighlightAmount", "idleGlowAmount"]) {
+      if (settings[key] === undefined) continue;
+      const value = settings[key];
+      if (key === "idleEnabled" ? typeof value !== "boolean"
+        : key === "idleColor" ? !normalizeEffectColor(value)
+        : !inUnitRange(value, 0, key === "idleHighlightAmount" ? 1000 : 100)) return null;
+      result[key] = key === "idleColor" ? normalizeEffectColor(value) : value;
+    }
     if (!Number.isSafeInteger(settings.seed)) return null;
     result.seed = settings.seed;
     // Gradient shape keys are optional so packages saved before them stay valid.
@@ -898,7 +910,8 @@
   function buttonThemeEffects() {
     return Object.fromEntries([
       "hoverEnabled", "activeEnabled", "hoverColor", "activeColor",
-      "hoverHighlightAmount", "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount"
+      "hoverHighlightAmount", "activeHighlightAmount", "hoverGlowAmount", "activeGlowAmount",
+      "idleEnabled", "idleColor", "idleHighlightAmount", "idleGlowAmount"
     ].map((key) => [key, model.buttonTheme[key]]));
   }
 
@@ -906,7 +919,7 @@
     const settings = normalizePoppedButtonSettings(value);
     if (!settings) return null;
     model.buttonTheme.lastAppliedSettings = cloneValue(settings);
-    for (const key of Object.keys(buttonThemeEffects())) model.buttonTheme[key] = settings[key];
+    for (const key of Object.keys(buttonThemeEffects())) model.buttonTheme[key] = settings[key] ?? ({ idleEnabled: false, idleColor: "#FFFFFFCC", idleHighlightAmount: 0, idleGlowAmount: 0 })[key];
     if (adoptGradient) {
       model.buttonTheme.gradientColors = settings.colors.length === 1
         ? [settings.colors[0], settings.colors[0]]
@@ -1124,7 +1137,7 @@
   function applySavedFields(response) {
     const patch = objectRecord(response.fieldPatch) || objectRecord(response.values);
     if (!patch) return;
-    const gridDefaults = Object.fromEntries(config.picture.gridFieldIds.map((fieldId) =>
+    const gridDefaults = Object.fromEntries([...config.picture.gridFieldIds, config.picture.enabledFieldId].map((fieldId) =>
       [fieldId, cloneValue(fieldById.get(fieldId).defaultValue)]));
     patchFields({ ...gridDefaults, ...patch });
   }
@@ -1133,6 +1146,16 @@
     const response = await requestAction(actions.theme.apply, themePayload(), copy.applyingTheme, withinOperation);
     applyResponsePatch(response);
     return response;
+  }
+
+  async function setPictureGridEnabled(enabled) {
+    const response = await runPictureAction(
+      enabled ? actions.picture.grid : actions.picture.removeGrid,
+      enabled ? picturePayload() : {},
+      enabled ? copy.applyingGrid : copy.removingGrid
+    );
+    if (response) patchFields({ [config.picture.enabledFieldId]: enabled });
+    else syncControls();
   }
 
   async function applyPicture(withinOperation = false) {
@@ -1409,7 +1432,14 @@
       if (String(model.fields[config.picture.pathFieldId] || "").trim()) {
         pictureResponse = await applyPicture(true);
       } else {
+        const gridEnabled = model.fields[config.picture.enabledFieldId];
         pictureResponse = await runPictureAction(actions.picture.clear, {}, copy.clearingPicture, true);
+        if (pictureResponse) pictureResponse = await runPictureAction(
+          gridEnabled ? actions.picture.grid : actions.picture.removeGrid,
+          gridEnabled ? picturePayload() : {},
+          gridEnabled ? copy.applyingGrid : copy.removingGrid,
+          true
+        );
       }
       if (!pictureResponse) return;
       await applyTheme(true);
@@ -1558,6 +1588,7 @@
         )
       );
       grid.append(roleNode);
+      if (role.fieldId === config.gradient.gradientFieldId) grid.append(renderGridControls());
     });
     section.append(grid);
   }
@@ -1673,7 +1704,7 @@
     const key = GRADIENT_CHANNELS[channel].screenKey;
     const control = element("label", "button-theme-gradient__screen-toggle");
     control.title = buttonThemeConfig.screenTopToBottomTooltip ||
-      "Blend across every open popped Button on each monitor instead of within each window.";
+      "Run from the highest visible popped Button to the lowest on each monitor. Angle applies only when Whole Layout is off.";
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = model.buttonTheme[key] === true;
@@ -1686,7 +1717,7 @@
       element(
         "span",
         "button-theme-gradient__screen-label",
-        buttonThemeConfig.screenTopToBottomLabel || "Whole Screen"
+        buttonThemeConfig.screenTopToBottomLabel || "Whole Layout"
       )
     );
     return control;
@@ -2493,12 +2524,12 @@
   function renderButtonThemeEffects() {
     const effects = element("div", "button-theme-effects");
     const heading = element("div", "theme-card__heading");
-    heading.append(element("h3", "", "Popped Highlights & Glow"));
+    heading.append(element("h3", "", "Highlights and Glow"));
     const description = element("p", "button-theme-effects__help",
-      "Highlights and glow apply to every Blender popped Button. Lock All Popped Button Settings above includes these controls and both gradients."
+      "Set highlights and glow separately for Regular, Hover, and Active buttons. Regular applies while a button is neither hovered nor active. The lock above includes all three groups and both gradients."
     );
     const grid = element("div", "button-theme-effects__grid");
-    for (const [prefix, label] of [["hover", "Hover"], ["active", "Active"]]) {
+    for (const [prefix, label] of [["hover", "Hover"], ["active", "Active"], ["idle", "Regular"]]) {
       const group = element("div", "button-theme-effects__group");
       group.append(
         renderButtonThemeEffectToggle(`${label} Enabled`, `${prefix}Enabled`),
@@ -2511,6 +2542,29 @@
     effects.append(heading, description, grid,
       actionButton(buttonThemeActions.settings, applyButtonThemeEffects));
     return effects;
+  }
+
+  function renderGridControls() {
+    const controls = element("div", "theme-grid-controls");
+    controls.title = config.picture.gridHelp || "";
+    const gridField = fieldById.get(config.picture.enabledFieldId);
+    const gridToggle = element("label", "button-theme-effect-toggle");
+    const gridCheckbox = document.createElement("input");
+    gridCheckbox.type = "checkbox";
+    gridCheckbox.setAttribute("aria-label", gridField.label);
+    registerControl(gridField.id, gridCheckbox);
+    writeControlValue(gridCheckbox, gridField);
+    gridCheckbox.addEventListener("change", () => void setPictureGridEnabled(gridCheckbox.checked));
+    gridToggle.append(gridCheckbox, element("span", "", gridField.label));
+    controls.append(gridToggle);
+    config.picture.gridFieldIds.forEach((fieldId) => {
+      const field = labeledField(fieldById.get(fieldId));
+      field.querySelectorAll("input")[0].addEventListener("change", () => {
+        if (model.fields[config.picture.enabledFieldId]) void setPictureGridEnabled(true);
+      });
+      controls.append(field);
+    });
+    return controls;
   }
 
   function renderPictureCard() {
@@ -2526,20 +2580,9 @@
       ))
     );
     section.append(pathRow);
-    const numberGrid = element("div", "theme-number-grid theme-number-grid--picture");
-    config.picture.gridFieldIds.forEach((fieldId) => numberGrid.append(labeledField(fieldById.get(fieldId))));
-    section.append(numberGrid);
-    if (config.picture.gridHelp) section.append(element("p", "button-theme-effects__help", config.picture.gridHelp));
     const row = element("div", "theme-row theme-row--actions");
     row.append(
       actionButton(actions.picture.apply, applyPicture),
-      actionButton(actions.picture.grid, () => runPictureAction(actions.picture.grid, picturePayload(), copy.applyingGrid)),
-      actionButton(actions.picture.removeGrid, () => runPictureAction(
-        actions.picture.removeGrid,
-        {},
-        copy.removingGrid
-      )),
-      actionButton(actions.picture.startup, () => runPictureAction(actions.picture.startup, picturePayload(), copy.savingStartup)),
       actionButton(actions.picture.clear, () => runPictureAction(actions.picture.clear, {}, copy.clearingPicture))
     );
     section.append(row);

@@ -193,6 +193,7 @@ export interface ButtonToolSetChildBehavior {
   activateField?: string;
   inlineEditField?: string;
   selectField?: string;
+  labelField?: string;
   execute?: boolean;
   payloadTemplate?: ButtonPayloadTemplate;
 }
@@ -254,6 +255,10 @@ export interface ButtonThemeOverride {
   activeHighlightAmount?: number | null;
   hoverGlowAmount?: number | null;
   activeGlowAmount?: number | null;
+  idleEnabled?: boolean;
+  idleColor?: string;
+  idleHighlightAmount?: number;
+  idleGlowAmount?: number;
 }
 
 /**
@@ -297,6 +302,11 @@ export interface ProgramPopoutThemeSettings {
   activeHighlightAmount: number;
   hoverGlowAmount: number;
   activeGlowAmount: number;
+  /** Optional idle-only effects; older packages leave these disabled. */
+  idleEnabled?: boolean;
+  idleColor?: string;
+  idleHighlightAmount?: number;
+  idleGlowAmount?: number;
 }
 
 export interface ProgramPopoutColorOverride {
@@ -430,6 +440,7 @@ export type ButtonToolField =
   | ButtonDisplayToolField;
 
 interface ButtonPopoutUnitBase {
+  closeControlOffset?: { x: number; y: number };
   id: ButtonPopoutUnitId;
   name: string;
   surfaceId: ButtonSurfaceId;
@@ -472,6 +483,7 @@ export interface ButtonFanAnimationSettings {
 }
 
 export interface ButtonFanSetup {
+  closeControlOffset?: { x: number; y: number };
   id: ButtonFanSetupId;
   name: string;
   programName: string;

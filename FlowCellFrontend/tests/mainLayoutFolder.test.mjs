@@ -2,11 +2,50 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
+import vm from "node:vm";
+import ts from "typescript";
 import { fileURLToPath } from "node:url";
 
 const frontendRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const readSource = (...segments) =>
   readFileSync(path.join(frontendRoot, ...segments), "utf8");
+
+test("layout capture omits live Fan display mode but keeps Pop-out mode and semantic bounds", async () => {
+  const source = readSource("src", "pages", "main", "MainPage.tsx");
+  const start = source.indexOf("const captureLayoutSnapshotState =");
+  const end = source.indexOf("const restoreLayoutSnapshotState =", start);
+  assert.ok(start >= 0 && end > start);
+  const compiled = ts.transpileModule(source.slice(start, end) + "\nglobalThis.capture = captureLayoutSnapshotState;", {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }
+  }).outputText;
+  const bounds = { Left: 123, Top: 456, Width: 160, Height: 90 };
+  const registry = {
+    fan: { kind: "button-fan", programName: "Blender", panelName: "Tools", buttonFanSetupId: "fan-1",
+      buttonOwnerId: "owner-1", buttonDisplayMode: "expanded", snapshotBounds: bounds },
+    pop: { kind: "button-popout", programName: "Blender", buttonPopoutUnitId: "pop-1",
+      buttonDisplayMode: "collapsed", snapshotBounds: bounds }
+  };
+  const sandbox = {
+    getCurrentWindow: () => ({ label: "main" }),
+    WebviewWindow: { getAll: async () => ["main", "fan", "pop"].map(label => ({ label })) },
+    readRegisteredLayoutWindow: label => registry[label],
+    captureWindowBounds: () => { throw new Error("Do not save monitor-sized Fan/Pop canvases"); },
+    isValidFlowCellBounds: value => Boolean(value?.Width > 0 && value?.Height > 0),
+    LAYOUT_SNAPSHOT_VERSION: 10
+  };
+  vm.runInNewContext(compiled, sandbox);
+  for (const mode of ["expanded", "collapsed"]) {
+    registry.fan.buttonDisplayMode = mode;
+    const snapshot = JSON.parse(JSON.stringify(await sandbox.capture()));
+    const fan = snapshot.Windows.find(entry => entry.Kind === "button-fan");
+    assert.equal(Object.hasOwn(fan, "ButtonDisplayMode"), false);
+    assert.equal(fan.ButtonFanSetupId, "fan-1");
+    assert.equal(fan.ButtonOwnerId, "owner-1");
+    assert.deepEqual(fan.Bounds, bounds);
+    assert.equal(snapshot.Windows.find(entry => entry.Kind === "button-popout").ButtonDisplayMode, "collapsed");
+    assert.equal(registry.fan.buttonDisplayMode, mode, "live palette state must remain available");
+  }
+});
 
 test("Main Save and Load Layout use the existing strict secondary-window pipeline", () => {
   const snapshots = readSource("src", "lib", "layoutSnapshots.ts");

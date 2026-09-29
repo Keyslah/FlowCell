@@ -41,6 +41,8 @@ pub(crate) struct LayoutSnapshotWindow {
     button_owner_id: Option<String>,
     panel_owner_button_id: Option<String>,
     button_display_mode: Option<LayoutSnapshotButtonDisplayMode>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    button_close_control_offset: Option<LayoutCloseControlOffset>,
     button_popout_settings_path: Option<String>,
     button_popout_choice_id: Option<String>,
     installed_page_file_name: Option<String>,
@@ -55,6 +57,13 @@ pub(crate) struct LayoutSnapshotFile {
     version: u64,
     layout_kind: String,
     windows: Vec<LayoutSnapshotWindow>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct LayoutCloseControlOffset {
+    x: f64,
+    y: f64,
 }
 
 fn has_text(value: &Option<String>) -> bool {
@@ -89,6 +98,17 @@ fn validate_layout_snapshot(snapshot: &LayoutSnapshotFile) -> Result<(), String>
     }
     let mut stable_window_keys = HashSet::new();
     for window in &snapshot.windows {
+        if let Some(offset) = &window.button_close_control_offset {
+            if !offset.x.is_finite()
+                || !offset.y.is_finite()
+                || !matches!(
+                    window.kind,
+                    LayoutSnapshotWindowKind::ButtonPopout | LayoutSnapshotWindowKind::ButtonFan
+                )
+            {
+                return Err("FlowCell layout contains an invalid Button close-control offset.".to_string());
+            }
+        }
         if snapshot.version == LEGACY_LAYOUT_SNAPSHOT_VERSION
             && (window.panel_owner_button_id.is_some()
                 || window.button_popout_settings_path.is_some()
@@ -744,6 +764,30 @@ mod tests {
         let snapshot = serde_json::from_str::<LayoutSnapshotFile>(current_layout_json())
             .expect("current layout should deserialize");
         assert!(validate_layout_snapshot(&snapshot).is_ok());
+    }
+
+    #[test]
+    fn close_control_offsets_round_trip_for_pop_fan_and_settings_backed_windows() {
+        let mut value: serde_json::Value = serde_json::from_str(current_layout_json()).unwrap();
+        for index in [1, 2, 3] {
+            value["Windows"][index]["ButtonCloseControlOffset"] = serde_json::json!({"x": -42.5, "y": 81.25});
+        }
+        let snapshot: LayoutSnapshotFile = serde_json::from_value(value).unwrap();
+        assert!(validate_layout_snapshot(&snapshot).is_ok());
+        let saved = serde_json::to_value(snapshot).unwrap();
+        assert_eq!(saved["Windows"][2]["ButtonCloseControlOffset"]["x"], -42.5);
+        let reloaded: LayoutSnapshotFile = serde_json::from_value(saved).unwrap();
+        assert!(validate_layout_snapshot(&reloaded).is_ok());
+    }
+
+    #[test]
+    fn close_control_offsets_reject_wrong_window_kind_and_invalid_numbers() {
+        let mut snapshot: LayoutSnapshotFile = serde_json::from_str(current_layout_json()).unwrap();
+        snapshot.windows[0].button_close_control_offset = Some(LayoutCloseControlOffset { x: 0.0, y: 0.0 });
+        assert!(validate_layout_snapshot(&snapshot).is_err());
+        snapshot.windows[0].button_close_control_offset = None;
+        snapshot.windows[1].button_close_control_offset = Some(LayoutCloseControlOffset { x: f64::NAN, y: 0.0 });
+        assert!(validate_layout_snapshot(&snapshot).is_err());
     }
 
     #[test]

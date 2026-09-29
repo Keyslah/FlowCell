@@ -1,6 +1,8 @@
 import type { FlowCellBounds, LayoutSnapshotWindowKind } from "../types.js";
 import { isUsableButtonWindowBounds } from "../button/windows/buttonWindowGeometry.js";
 
+import { isButtonWindowCloseOffset, type ButtonWindowCloseOffset } from "../button/windows/buttonWindowCloseControl.js";
+
 const MANAGED_LAYOUT_WINDOWS_STORAGE_KEY = "flowcell.button-layout-windows.v2";
 const LAST_MAIN_PAGE_LAYOUT_DIRECTORY_STORAGE_KEY =
   "flowcell.main-page-layout-directory.v1";
@@ -21,6 +23,7 @@ export interface RegisteredLayoutWindow {
   installedPageFileName?: string;
   installedPageId?: string;
   snapshotBounds?: FlowCellBounds;
+  buttonCloseControlOffset?: ButtonWindowCloseOffset;
 }
 
 function normalizeBounds(bounds: FlowCellBounds | null | undefined): FlowCellBounds | undefined {
@@ -67,6 +70,7 @@ function readRegisteredLayoutWindowMap(): Record<string, RegisteredLayoutWindow>
           windowLabel,
           {
             ...entry,
+            buttonCloseControlOffset: isButtonWindowCloseOffset(entry.buttonCloseControlOffset) ? entry.buttonCloseControlOffset : undefined,
             snapshotBounds: normalizeBounds(entry.snapshotBounds)
           }
         ])
@@ -98,6 +102,7 @@ export function registerLayoutWindow(entry: RegisteredLayoutWindow): void {
   const previousEntry = nextValue[entry.windowLabel];
   nextValue[entry.windowLabel] = {
     windowLabel: entry.windowLabel,
+    buttonCloseControlOffset: entry.buttonCloseControlOffset ?? previousEntry?.buttonCloseControlOffset,
     kind: entry.kind,
     programName: entry.programName?.trim() || undefined,
     panelName: entry.panelName?.trim() || undefined,
@@ -220,6 +225,15 @@ export function writeRegisteredLayoutWindowButtonDisplayMode(
     buttonDisplayMode: displayMode
   };
   writeRegisteredLayoutWindowMap(nextValue);
+}
+
+export function writeRegisteredLayoutWindowCloseOffset(windowLabel: string, offset: ButtonWindowCloseOffset | undefined): void {
+  if (offset !== undefined && !isButtonWindowCloseOffset(offset)) return;
+  const windows = readRegisteredLayoutWindowMap();
+  const entry = windows[windowLabel];
+  if (!entry || (entry.kind !== "button-popout" && entry.kind !== "button-fan")) return;
+  windows[windowLabel] = { ...entry, buttonCloseControlOffset: offset };
+  writeRegisteredLayoutWindowMap(windows);
 }
 
 export function readLastMainPageLayoutDirectory(): string | null {

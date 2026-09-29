@@ -1,3 +1,4 @@
+import { ButtonCloseControlFields } from "./ButtonCloseControlEditor";
 import {
   useCallback,
   useEffect,
@@ -697,6 +698,16 @@ function ButtonEditorContent({
   const selectedFanSetup = Object.values(store.draft.fanSetups).find(
     (candidate) => candidate.fanSurfaceId === selectedSurfaceId
   ) ?? null;
+  const updateCloseControlOffset = (offset: { x: number; y: number } | undefined) => {
+    store.transact((draft) => {
+      const target = selectedSurfaceUnit ? draft.popoutUnits[selectedSurfaceUnit.id]
+        : selectedFanSetup ? draft.fanSetups[selectedFanSetup.id] : undefined;
+      if (target) {
+        if (offset) target.closeControlOffset = { ...offset };
+        else delete target.closeControlOffset;
+      }
+    }, { label: "Move close X", coalesceKey: `close-control:${selectedSurfaceId}` });
+  };
   const selectedSurfaceOwnerPlacementId = selectedSurfaceUnit &&
     "ownerPlacementId" in selectedSurfaceUnit &&
     typeof selectedSurfaceUnit.ownerPlacementId === "string"
@@ -2928,6 +2939,13 @@ function ButtonEditorContent({
                 <span>Fan</span>
               </label>
             ) : null}
+            {selectedSurfaceUnit || selectedFanSetup ? (
+              <ButtonCloseControlFields
+                offset={selectedSurfaceUnit?.closeControlOffset ?? selectedFanSetup?.closeControlOffset}
+                disabled={busy}
+                onChange={updateCloseControlOffset}
+              />
+            ) : null}
             {settingsPlacementKind === "fan" && selectedFanSetup ? (
               <fieldset className="button-editor-sidebar__fan-styles" disabled={busy}>
                 <legend>Fan styles</legend>
@@ -3177,6 +3195,7 @@ function ButtonEditorContent({
             selectedPlacementSizingMode={selectedWorkingSizingMode}
             reorderMode={reorderMode}
             onPlacementOrderChange={applyPlacementOrder}
+            onCloseControlOffsetChange={updateCloseControlOffset}
           />
         )}
         <ButtonSkinEditor

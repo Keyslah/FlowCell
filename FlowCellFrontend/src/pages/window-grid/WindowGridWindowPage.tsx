@@ -8,6 +8,9 @@ import {
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { readRegisteredLayoutWindow } from "../../lib/layoutSnapshots";
+import { useButtonWindowDocument } from "../../button/windows/useButtonWindowDocument";
+import { buildButtonFanWindowLabel, buildButtonPopoutWindowLabel } from "../../button/windows/buttonWindows";
+import { resolveWindowGridDetails } from "./windowGridDetails";
 import "./windowGridWindowPage.css";
 
 const SELF_LABEL = "flowcell-window-grid";
@@ -32,6 +35,8 @@ type WindowEntry = {
   panel: string;
   title: string;
   closeable: boolean;
+  kind: string;
+  members: string;
 };
 
 type ResizeDirection =
@@ -56,7 +61,9 @@ function programRank(program: string): number {
 }
 
 export default function WindowGridWindowPage() {
+  const { document: buttonDocument } = useButtonWindowDocument();
   const [entries, setEntries] = useState<WindowEntry[]>([]);
+  const [search, setSearch] = useState("");
   const [spaceDragActive, setSpaceDragActive] = useState(false);
   const [spaceDragging, setSpaceDragging] = useState(false);
 
@@ -68,18 +75,23 @@ export default function WindowGridWindowPage() {
       if (label === SELF_LABEL) {
         continue;
       }
-      const meta = readRegisteredLayoutWindow(label);
+      let meta = readRegisteredLayoutWindow(label);
+      // Recover readable ownership even when an older window lost its registry entry.
+      if (!meta && buttonDocument) {
+        const fan = Object.values(buttonDocument.fanSetups).find((item) => buildButtonFanWindowLabel(item.panelOwnerButtonId) === label);
+        const unit = !fan ? Object.values(buttonDocument.popoutUnits).find((item) =>
+          buildButtonPopoutWindowLabel({ popoutUnitId: item.id, ownerButtonId: item.ownerButtonId ?? undefined }) === label
+        ) : undefined;
+        if (fan) meta = { windowLabel: label, kind: "button-fan", buttonFanSetupId: fan.id };
+        else if (unit) meta = { windowLabel: label, kind: "button-popout", buttonPopoutUnitId: unit.id };
+      }
       const known = KNOWN_WINDOWS[label];
-      const program = (meta?.programName || known?.program || "Other").trim() || "Other";
-      const panel = (meta?.panelName || known?.panel || "").trim();
-      const title = (
-        known?.title ||
-        meta?.buttonPopoutUnitId ||
-        meta?.buttonFanSetupId ||
-        (meta?.kind === "button-editor" ? "Buttons Editor" : label)
-      ).trim() || label;
+      const details = resolveWindowGridDetails(meta, buttonDocument, await handle.title().catch(() => ""));
+      const program = known?.program || details.program;
+      const panel = known?.panel ?? details.panel;
+      const title = known?.title || details.title;
       const closeable = known?.closeable !== false && label !== "main";
-      next.push({ label, program, panel, title, closeable });
+      next.push({ ...details, label, program, panel, title, closeable });
     }
     next.sort(
       (a, b) =>
@@ -89,7 +101,7 @@ export default function WindowGridWindowPage() {
         a.title.localeCompare(b.title)
     );
     setEntries(next);
-  }, []);
+  }, [buttonDocument]);
 
   useEffect(() => {
     void refresh();
@@ -188,6 +200,7 @@ export default function WindowGridWindowPage() {
   const groups = useMemo(() => {
     const byProgram = new Map<string, Map<string, WindowEntry[]>>();
     for (const entry of entries) {
+      if (search.trim() && !`${entry.program} ${entry.panel} ${entry.title} ${entry.kind} ${entry.members}`.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())) continue;
       let panels = byProgram.get(entry.program);
       if (!panels) {
         panels = new Map<string, WindowEntry[]>();
@@ -199,7 +212,7 @@ export default function WindowGridWindowPage() {
       panels.set(panelKey, list);
     }
     return byProgram;
-  }, [entries]);
+  }, [entries, search]);
 
   return (
     <div
@@ -249,6 +262,7 @@ export default function WindowGridWindowPage() {
 
       <div className="window-grid__toolbar">
         <span className="window-grid__title">Windows</span>
+        <input className="window-grid__search" aria-label="Find an open window" placeholder="Find a window…" value={search} onChange={(event) => setSearch(event.target.value)} />
         <div className="window-grid__toolbar-actions">
           <button type="button" onClick={() => void refresh()}>
             Refresh
@@ -265,8 +279,8 @@ export default function WindowGridWindowPage() {
       </div>
 
       <div className="window-grid__body">
-        {entries.length === 0 ? (
-          <div className="window-grid__empty">No open FlowCell windows.</div>
+        {groups.size === 0 ? (
+          <div className="window-grid__empty">{search.trim() ? "No matching windows." : "No open FlowCell windows."}</div>
         ) : (
           Array.from(groups.entries()).map(([program, panels]) => (
             <section key={program} className="window-grid__program">
@@ -279,10 +293,13 @@ export default function WindowGridWindowPage() {
                       <div
                         key={entry.label}
                         className="window-grid__card"
-                        title={entry.title}
+                        title={[entry.program, entry.panel, entry.title, entry.kind, entry.members].filter(Boolean).join(" · ")}
                         onClick={() => void focusWindow(entry.label)}
                       >
-                        <span className="window-grid__card-title">{entry.title}</span>
+                        <div>
+                          <span className="window-grid__card-title">{entry.title}</span>
+                          <span className="window-grid__card-kind">{entry.kind}</span>
+                        </div>
                         {entry.closeable ? (
                           <button
                             type="button"

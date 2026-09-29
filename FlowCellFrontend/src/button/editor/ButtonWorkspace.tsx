@@ -1,3 +1,4 @@
+import { ButtonCloseControlPreview } from "./ButtonCloseControlEditor";
 import {
   useCallback,
   useEffect,
@@ -150,6 +151,7 @@ function buttonFanPreviewIsHovered(root: HTMLElement | null): boolean {
 }
 
 export interface ButtonWorkspaceProps {
+  onCloseControlOffsetChange?: (offset: { x: number; y: number }) => void;
   document: ButtonStateDocument;
   surfaceId: string;
   mode: ButtonEditorMode;
@@ -198,7 +200,8 @@ export function ButtonWorkspace({
   onOwnerActivate,
   selectedPlacementSizingMode,
   reorderMode = false,
-  onPlacementOrderChange
+  onPlacementOrderChange,
+  onCloseControlOffsetChange
 }: ButtonWorkspaceProps) {
   const [preview, setPreview] = useState<{
     placementId: string;
@@ -675,6 +678,7 @@ export function ButtonWorkspace({
   }, [surface]);
 
   const beginSelectedGroupDrag = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as Element).closest("[data-close-control-editor]")) return;
     if (
       mode !== "edit" ||
       reorderMode ||
@@ -967,10 +971,15 @@ export function ButtonWorkspace({
       placement.y + placement.height - surface.height
     );
   }, 0);
+  const closeFrame = windowFrame?.resting ?? { x: 0, y: 0, width: surface.width, height: surface.height };
+  const closeOffset = unit?.closeControlOffset ?? fanSetup?.closeControlOffset;
+  const closeX = closeFrame.x + (closeOffset ? closeOffset.x / (window.devicePixelRatio || 1) : closeFrame.width + 10);
+  const closeY = closeFrame.y + (closeOffset ? closeOffset.y / (window.devicePixelRatio || 1) : 0);
   const workspacePadding = Math.max(
     16,
     windowFitPreviewMode ? Math.max(40, surface.visualOverflowAllowance + 16) : 0,
-    Math.ceil(outsideOverflow) + 16
+    Math.ceil(outsideOverflow) + 16,
+    (unit || fanSetup) ? Math.max(80, -closeX + 16, -closeY + 16, closeX + 72 - surface.width, closeY + 72 - surface.height) : 0
   );
 
   return (
@@ -990,6 +999,14 @@ export function ButtonWorkspace({
           onPointerCancel={(event) => finishCanvasPointer(event, false)}
           onLostPointerCapture={(event) => finishCanvasPointer(event, false)}
         >
+          {mode === "edit" && (unit || fanSetup) && onCloseControlOffsetChange ? (
+            <ButtonCloseControlPreview
+              key={surfaceId}
+              offset={unit?.closeControlOffset ?? fanSetup?.closeControlOffset}
+              frame={windowFrame?.resting ?? { x: 0, y: 0, width: surface.width, height: surface.height }}
+              onChange={onCloseControlOffsetChange}
+            />
+          ) : null}
           {mode === "run" && fanSetup ? (
             <div
               style={{

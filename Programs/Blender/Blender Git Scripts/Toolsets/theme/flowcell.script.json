@@ -483,6 +483,18 @@
                 },
                 "activeGlowAmount": {
                   "type": "number"
+                },
+                "idleEnabled": {
+                  "type": "boolean"
+                },
+                "idleColor": {
+                  "type": "string"
+                },
+                "idleHighlightAmount": {
+                  "type": "number"
+                },
+                "idleGlowAmount": {
+                  "type": "number"
                 }
               },
               "required": [
@@ -972,6 +984,18 @@
                 },
                 "activeGlowAmount": {
                   "type": "number"
+                },
+                "idleEnabled": {
+                  "type": "boolean"
+                },
+                "idleColor": {
+                  "type": "string"
+                },
+                "idleHighlightAmount": {
+                  "type": "number"
+                },
+                "idleGlowAmount": {
+                  "type": "number"
                 }
               },
               "required": [
@@ -1151,6 +1175,18 @@
                   "type": "number"
                 },
                 "activeGlowAmount": {
+                  "type": "number"
+                },
+                "idleEnabled": {
+                  "type": "boolean"
+                },
+                "idleColor": {
+                  "type": "string"
+                },
+                "idleHighlightAmount": {
+                  "type": "number"
+                },
+                "idleGlowAmount": {
                   "type": "number"
                 }
               },
@@ -1360,6 +1396,9 @@
                 },
                 "grid_subdivisions": {
                   "type": "integer"
+                },
+                "grid_enabled": {
+                  "type": "boolean"
                 }
               }
             },
@@ -1409,7 +1448,8 @@
               "grid_distance_m",
               "grid_far_spacing_m",
               "grid_scale",
-              "grid_subdivisions"
+              "grid_subdivisions",
+              "grid_enabled"
             ],
             "dialogTitle": "Save Blender Theme Fields"
           }
@@ -1497,6 +1537,9 @@
                 },
                 "grid_subdivisions": {
                   "type": "integer"
+                },
+                "grid_enabled": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -1579,7 +1622,8 @@
               "grid_distance_m",
               "grid_far_spacing_m",
               "grid_scale",
-              "grid_subdivisions"
+              "grid_subdivisions",
+              "grid_enabled"
             ],
             "legacyFormats": [
               "flowcell-blender-theme-v1"
@@ -1605,7 +1649,10 @@
               "ThemeHighlightsHex": "highlights_hex",
               "ThemeViewportBackgroundHex": "viewport_background_hex",
               "ThemeViewportGradientEnabled": "viewport_gradient_enabled",
-              "ThemeViewportGradientHex": "viewport_gradient_hex"
+              "ThemeViewportGradientHex": "viewport_gradient_hex",
+              "GridEnabled": "grid_enabled",
+              "GridScale": "grid_scale",
+              "GridSubdivisions": "grid_subdivisions"
             },
             "legacyFieldTransforms": {
               "GridSpacing": "parse-number",
@@ -1706,6 +1753,9 @@
                 },
                 "grid_subdivisions": {
                   "type": "integer"
+                },
+                "grid_enabled": {
+                  "type": "boolean"
                 }
               }
             },
@@ -1758,7 +1808,8 @@
               "grid_far_spacing_m",
               "grid_scale",
               "grid_subdivisions",
-              "popped_button_settings"
+              "popped_button_settings",
+              "grid_enabled"
             ],
             "assetFields": [
               "theme_image_path",
@@ -1792,7 +1843,10 @@
               "ThemeHighlightsHex": "highlights_hex",
               "ThemeViewportBackgroundHex": "viewport_background_hex",
               "ThemeViewportGradientEnabled": "viewport_gradient_enabled",
-              "ThemeViewportGradientHex": "viewport_gradient_hex"
+              "ThemeViewportGradientHex": "viewport_gradient_hex",
+              "GridEnabled": "grid_enabled",
+              "GridScale": "grid_scale",
+              "GridSubdivisions": "grid_subdivisions"
             },
             "legacyFieldTransforms": {
               "GridSpacing": "parse-number",
@@ -2039,6 +2093,18 @@
                     },
                     "activeGlowAmount": {
                       "type": "number"
+                    },
+                    "idleEnabled": {
+                      "type": "boolean"
+                    },
+                    "idleColor": {
+                      "type": "string"
+                    },
+                    "idleHighlightAmount": {
+                      "type": "number"
+                    },
+                    "idleGlowAmount": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -2058,6 +2124,9 @@
                     "hoverGlowAmount",
                     "activeGlowAmount"
                   ]
+                },
+                "grid_enabled": {
+                  "type": "boolean"
                 }
               },
               "required": [
@@ -2153,7 +2222,8 @@
               "grid_far_spacing_m",
               "grid_scale",
               "grid_subdivisions",
-              "popped_button_settings"
+              "popped_button_settings",
+              "grid_enabled"
             ],
             "assetFields": [
               "theme_image_path",
@@ -2187,7 +2257,10 @@
               "ThemeHighlightsHex": "highlights_hex",
               "ThemeViewportBackgroundHex": "viewport_background_hex",
               "ThemeViewportGradientEnabled": "viewport_gradient_enabled",
-              "ThemeViewportGradientHex": "viewport_gradient_hex"
+              "ThemeViewportGradientHex": "viewport_gradient_hex",
+              "GridEnabled": "grid_enabled",
+              "GridScale": "grid_scale",
+              "GridSubdivisions": "grid_subdivisions"
             },
             "legacyFieldTransforms": {
               "GridSpacing": "parse-number",
@@ -2440,6 +2513,18 @@
                     },
                     "activeGlowAmount": {
                       "type": "number"
+                    },
+                    "idleEnabled": {
+                      "type": "boolean"
+                    },
+                    "idleColor": {
+                      "type": "string"
+                    },
+                    "idleHighlightAmount": {
+                      "type": "number"
+                    },
+                    "idleGlowAmount": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -2459,6 +2544,9 @@
                     "hoverGlowAmount",
                     "activeGlowAmount"
                   ]
+                },
+                "grid_enabled": {
+                  "type": "boolean"
                 }
               }
             },
@@ -2515,7 +2603,8 @@
               "grid_far_spacing_m",
               "grid_scale",
               "grid_subdivisions",
-              "popped_button_settings"
+              "popped_button_settings",
+              "grid_enabled"
             ],
             "assetFields": [
               "theme_image_path",
@@ -2549,7 +2638,10 @@
               "ThemeHighlightsHex": "highlights_hex",
               "ThemeViewportBackgroundHex": "viewport_background_hex",
               "ThemeViewportGradientEnabled": "viewport_gradient_enabled",
-              "ThemeViewportGradientHex": "viewport_gradient_hex"
+              "ThemeViewportGradientHex": "viewport_gradient_hex",
+              "GridEnabled": "grid_enabled",
+              "GridScale": "grid_scale",
+              "GridSubdivisions": "grid_subdivisions"
             },
             "legacyFieldTransforms": {
               "GridSpacing": "parse-number",
@@ -2809,6 +2901,18 @@
                     },
                     "activeGlowAmount": {
                       "type": "number"
+                    },
+                    "idleEnabled": {
+                      "type": "boolean"
+                    },
+                    "idleColor": {
+                      "type": "string"
+                    },
+                    "idleHighlightAmount": {
+                      "type": "number"
+                    },
+                    "idleGlowAmount": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -2828,6 +2932,9 @@
                     "hoverGlowAmount",
                     "activeGlowAmount"
                   ]
+                },
+                "grid_enabled": {
+                  "type": "boolean"
                 }
               }
             },
@@ -2884,7 +2991,8 @@
               "grid_far_spacing_m",
               "grid_scale",
               "grid_subdivisions",
-              "popped_button_settings"
+              "popped_button_settings",
+              "grid_enabled"
             ],
             "assetFields": [
               "theme_image_path",
@@ -2918,7 +3026,10 @@
               "ThemeHighlightsHex": "highlights_hex",
               "ThemeViewportBackgroundHex": "viewport_background_hex",
               "ThemeViewportGradientEnabled": "viewport_gradient_enabled",
-              "ThemeViewportGradientHex": "viewport_gradient_hex"
+              "ThemeViewportGradientHex": "viewport_gradient_hex",
+              "GridEnabled": "grid_enabled",
+              "GridScale": "grid_scale",
+              "GridSubdivisions": "grid_subdivisions"
             },
             "legacyFieldTransforms": {
               "GridSpacing": "parse-number",
@@ -3178,6 +3289,18 @@
                     },
                     "activeGlowAmount": {
                       "type": "number"
+                    },
+                    "idleEnabled": {
+                      "type": "boolean"
+                    },
+                    "idleColor": {
+                      "type": "string"
+                    },
+                    "idleHighlightAmount": {
+                      "type": "number"
+                    },
+                    "idleGlowAmount": {
+                      "type": "number"
                     }
                   },
                   "required": [
@@ -3197,6 +3320,9 @@
                     "hoverGlowAmount",
                     "activeGlowAmount"
                   ]
+                },
+                "grid_enabled": {
+                  "type": "boolean"
                 }
               }
             },
@@ -3756,6 +3882,9 @@
             },
             "grid_subdivisions": {
               "type": "integer"
+            },
+            "grid_enabled": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -3780,6 +3909,9 @@
             },
             "grid_subdivisions": {
               "type": "integer"
+            },
+            "grid_enabled": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -3819,6 +3951,9 @@
             },
             "grid_subdivisions": {
               "type": "integer"
+            },
+            "grid_enabled": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -3926,6 +4061,9 @@
             },
             "grid_subdivisions": {
               "type": "integer"
+            },
+            "grid_enabled": {
+              "type": "boolean"
             }
           },
           "required": [
@@ -4645,7 +4783,7 @@
         "theme.apply-bucket": "Apply only this theme bucket.",
         "button-theme.scan": "Collect and group Surface colors from scoped action Buttons in open Blender Pop-out and Fan windows. Fans include their surface owner and members even while collapsed; editor previews remain excluded.",
         "button-theme.apply": "Apply the edited aggregate Surface buckets back to the same live scanned Buttons; Rescan is required if the open windows changed.",
-        "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Screen blends across the visible Buttons on each monitor; otherwise each window uses its local layout. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
+        "button-theme.apply-gradient": "Apply the Button Fill gradient to scoped Buttons in the currently open Blender Pop-outs and Fans, including each Fan surface owner and every member while collapsed or expanded. Colors run from Start to End along the Angle (0 degrees is top to bottom) and the curve reshapes how quickly they change. Whole Layout anchors vertically to the highest and lowest visible Buttons on each monitor; otherwise Angle applies within each window. Every selected color stop stays exact. Spread controls blend width and Scatter varies interior colors.",
         "button-theme.refill": "Apply the ordered multi-color Surface gradient, with its angle and curve, to scoped Buttons in the currently open Blender Pop-outs and Fans.",
         "button-theme.refill-colors": "Sample the selected number of Gradient Colors from the current Theme image, show them as ordered gradient stops, and apply the gradient to scoped Buttons in open Blender Pop-outs and Fans.",
         "button-theme.scatter": "Redistribute the currently present aggregate colors across the same live scanned Buttons using remembered hidden placement IDs.",
@@ -4664,7 +4802,7 @@
         "environment.rotation-y": "Apply the entered Y rotation.",
         "environment.rotation-z": "Apply the entered Z rotation.",
         "environment.strength": "Apply the entered world strength.",
-        "button-theme.settings": "Apply hover and active highlights and glow to all Blender popped Buttons. Saved packages include the currently applied popped Button settings.",
+        "button-theme.settings": "Apply separate Regular, Hover, and Active highlights and glow to Blender buttons. Regular applies only while neither hovered nor active. Saved packages include all three groups.",
         "button-theme.apply-text": "Apply the Button Text gradient to every Blender popped Button label, independently of the fill. One Text Color keeps the labels solid; more colors run from Start to End along the text Angle and curve."
       },
       "fields": [
@@ -4813,10 +4951,16 @@
           "step": 0.01
         },
         {
+          "id": "grid_enabled",
+          "kind": "boolean",
+          "label": "Grid",
+          "defaultValue": true
+        },
+        {
           "id": "grid_scale",
           "kind": "number",
           "label": "Grid Scale",
-          "defaultValue": 1,
+          "defaultValue": 0.01,
           "minimum": 0.001,
           "maximum": 1000,
           "step": 0.001
@@ -5028,7 +5172,8 @@
           "grid_scale",
           "grid_subdivisions"
         ],
-        "gridHelp": "Lower Grid Scale gives finer squares; native minor lines fade before major lines. Subdivisions applies when Scene Units is None; Blender uses fixed unit-based subdivisions in Metric/Imperial. Click Grid to apply."
+        "gridHelp": "Grid is on by default. Uncheck Grid and save the package to keep it off for that theme. Lower Grid Scale gives finer squares; native minor lines fade before major lines. Subdivisions applies when Scene Units is None; Blender uses fixed unit-based subdivisions in Metric/Imperial. Spacing changes apply immediately while Grid is checked.",
+        "enabledFieldId": "grid_enabled"
       },
       "environment": {
         "pathFieldId": "hdri_path",
@@ -5138,7 +5283,8 @@
           "grid_distance_m": "grid_distance_m",
           "grid_far_spacing_m": "grid_far_spacing_m",
           "grid_scale": "grid_scale",
-          "grid_subdivisions": "grid_subdivisions"
+          "grid_subdivisions": "grid_subdivisions",
+          "grid_enabled": "grid_enabled"
         },
         "environment": {
           "hdri_path": "hdri_path",
@@ -5172,7 +5318,8 @@
           "grid_distance_m",
           "grid_far_spacing_m",
           "grid_scale",
-          "grid_subdivisions"
+          "grid_subdivisions",
+          "grid_enabled"
         ],
         "packageFieldIds": [
           "theme_palette_hexes",
@@ -5197,7 +5344,8 @@
           "grid_distance_m",
           "grid_far_spacing_m",
           "grid_scale",
-          "grid_subdivisions"
+          "grid_subdivisions",
+          "grid_enabled"
         ],
         "assetFieldIds": [
           "theme_image_path",
@@ -5230,8 +5378,8 @@
         "bottomLabel": "End",
         "spreadLabel": "Spread",
         "scatterLabel": "Scatter",
-        "screenTopToBottomLabel": "Whole Screen",
-        "screenTopToBottomTooltip": "Blend across every open popped Button on each monitor instead of within each window.",
+        "screenTopToBottomLabel": "Whole Layout",
+        "screenTopToBottomTooltip": "Run from the highest visible popped Button to the lowest on each monitor. Angle applies only when Whole Layout is off.",
         "gradientColorCountLabel": "Gradient Colors",
         "gradientColorCountTooltip": "Choose how many colors the Button Fill gradient uses. Every ordered stop appears from Start through End, and Refill samples this many colors from the current Theme image.",
         "fillTitle": "Button Fill",

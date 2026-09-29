@@ -272,6 +272,8 @@ struct ToolsetChildBehaviorManifest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     select_field: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    label_field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     execute: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     payload_template: Option<Value>,
@@ -697,6 +699,7 @@ fn validate_toolset_layout(
             references.extend(behavior.activate_field.as_deref());
             references.extend(behavior.inline_edit_field.as_deref());
             references.extend(behavior.select_field.as_deref());
+            references.extend(behavior.label_field.as_deref());
             if let Some(reference) = references
                 .into_iter()
                 .find(|reference| !field_exists(reference))
@@ -4993,6 +4996,23 @@ mod tests {
             "old"
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shipped_alignment_labels_and_layout_are_valid() {
+        let entry = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Programs/Blender/Blender Git Scripts/Toolsets/alignment-tools/alignment tools.py");
+        let mut manifest = windows_manifest();
+        manifest.program_id = "blender".into();
+        manifest.label = "Blender".into();
+        manifest.allowed_script_extensions = vec!["py".into()];
+        manifest.supports_toolset_manifests = true;
+        manifest.runner.kind = "blender-bridge".into();
+        let prepared = prepare_source(&manifest, &entry, "tool-set").expect("Align clean import");
+        assert_eq!(prepared.children.len(), 18);
+        let layout = prepared.layout.expect("layout");
+        assert!(layout.pointer("/childBehaviors/x_min").is_none());
+        assert_eq!(layout.pointer("/placements/x_min/y"), layout.pointer("/placements/x_surface/y"));
     }
 
     #[test]

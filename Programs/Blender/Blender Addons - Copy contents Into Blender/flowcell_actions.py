@@ -28,7 +28,7 @@ Cura: Export selected mesh objects as STL files and send them to Cura.
 
 Orca: Export selected mesh objects as STL files and send them to Orca.
 
-Make Layers: Create Live, Snapshots, Trash, and Archive if missing.
+Make Collections: Create Live, Snapshots, Trash, and Archive; move other collections and loose objects under Live, preserving nested structure and hidden content.
 
 Sort: Sort by visibility: visible objects become Live, matching invisible family objects become Snapshots as s#, and other invisible objects become Trash as t#.
 
@@ -36,9 +36,9 @@ Sort Live: Move every currently hidden object under Live into Trash.
 
 Snapshot: Copy the selected objects into Snapshots as versioned s# duplicates, creating roots and buckets as needed.
 
-Back: Move the current Live version to Trash and restore the newest matching snapshot back into Live.
+Back: Move the current original to Trash and restore the newest matching snapshot to its source collections.
 
-Restore: Copy selected snapshot, trash, or archive objects into Live and move the current Live version to Trash first.
+Restore: Copy selected stored versions to their source collections and move the current original to Trash first.
 
 Baseline Visibility: Record the objects currently visible in the active view layer.
 
@@ -58,7 +58,7 @@ Empty Collections: Delete empty collections while keeping the system roots.
 
 Cycle Collection: Use the selected object's collection and show one direct object at a time while selecting it.
 
-Cycle Versions: With one selected Live object, cycle Live and snapshot versions one visible object at a time.
+Cycle Versions: With one selected original or snapshot, cycle the original anywhere in the scene and its snapshots one visible object at a time.
 
 Rename Selected Objects: Prompt for rename values and batch-rename selected Blender objects through the FlowCell bridge.
 """
@@ -105,6 +105,7 @@ READ_ONLY_BRIDGE_COMMANDS = {
 }
 VERSION_PREFIX_RE = re.compile(r"^\([sta]\d+\)", re.IGNORECASE)
 TARGET_NAME_PROP = "lls_target_name"
+ORIGIN_COLLECTIONS_PROP = "lls_origin_collections"
 CYCLE_INDEX_PROP = "lls_cycle_index"
 VISIBILITY_BASELINE_PROP = "flowcell_visibility_baseline_objects"
 CYCLE_COLLECTION_HOVER_VISIBILITY_PROP = "flowcell_cycle_collection_hover_visibility_v1"
@@ -1948,12 +1949,18 @@ def prune_empty_collections(
         if child.children or child.objects:
             continue
 
+        # Stored versions may be the only remaining users of their home.
+        if any(child in stored_origin_collections(obj) for obj in bpy.data.objects):
+            continue
+
         parent.children.unlink(child)
         if child.users == 0:
             bpy.data.collections.remove(child)
 
 
 def duplicate_object_for_snapshot(obj: bpy.types.Object) -> bpy.types.Object:
+    if obj.mode == "EDIT":
+        obj.update_from_editmode()
     duplicate = obj.copy()
 
     if obj.data is not None:
@@ -2082,6 +2089,79 @@ def find_live_object(
     return exact_match or family_match
 
 
+def stored_origin_collections(obj: bpy.types.Object) -> list[bpy.types.Collection]:
+    origins = obj.get(ORIGIN_COLLECTIONS_PROP)
+    if origins is None or not hasattr(origins, "values"):
+        return []
+    return [
+        item.collection if isinstance(item, bpy.types.Scene) else item
+        for item in origins.values()
+        if isinstance(item, (bpy.types.Collection, bpy.types.Scene))
+    ]
+
+
+def working_collections(obj: bpy.types.Object, scene_root: bpy.types.Collection) -> list[bpy.types.Collection]:
+    storage = {
+        collection.as_pointer()
+        for name in ("Snapshots", "Trash", "Archive")
+        if (root := scene_root.children.get(name)) is not None
+        for collection in (root, *root.children_recursive)
+    }
+    scene_collections = {scene_root.as_pointer(), *(c.as_pointer() for c in scene_root.children_recursive)}
+    return [c for c in obj.users_collection if c.as_pointer() in scene_collections and c.as_pointer() not in storage]
+
+
+def remember_object_origin(
+    obj: bpy.types.Object,
+    scene_root: bpy.types.Collection,
+    destination: bpy.types.Object | None = None,
+) -> None:
+    collections = working_collections(obj, scene_root)
+    if collections:
+        # Datablock references survive collection renames and .blend save/load.
+        target = destination if destination is not None else obj
+        target[ORIGIN_COLLECTIONS_PROP] = {
+            str(index): next(scene for scene in bpy.data.scenes if scene.collection == c) if c == scene_root else c
+            for index, c in enumerate(collections)
+        }
+
+
+def find_original_object(context: bpy.types.Context, target_name: str) -> bpy.types.Object | None:
+    candidates = [obj for obj in context.scene.objects if working_collections(obj, context.scene.collection)]
+    return next((obj for obj in candidates if obj.name == target_name), None) or next(
+        (obj for obj in candidates if obj.get(TARGET_NAME_PROP) == target_name), None
+    )
+
+
+def restore_object_to_origin(
+    source_obj: bpy.types.Object,
+    current_obj: bpy.types.Object | None,
+    target_name: str,
+    context: bpy.types.Context,
+    roots: dict[str, bpy.types.Collection],
+    parent_map: dict[int, bpy.types.Collection],
+) -> bpy.types.Object:
+    scene_root = context.scene.collection
+    available = {scene_root.as_pointer(), *(c.as_pointer() for c in scene_root.children_recursive)}
+    destinations = [c for c in stored_origin_collections(source_obj) if c.as_pointer() in available]
+    if not destinations and current_obj is not None:
+        destinations = working_collections(current_obj, scene_root)
+    if not destinations:
+        destinations = [roots["Live"]]  # Legacy versions without recorded origins.
+    if current_obj is not None:
+        move_object_to_version_bucket(current_obj, roots["Trash"], "t", target_name, roots["Archive"], parent_map)
+        set_object_live_state(current_obj, context, hidden=True, render_hidden=True)
+    duplicate = duplicate_object_for_snapshot(source_obj)
+    duplicate[TARGET_NAME_PROP] = target_name
+    duplicate.name = target_name
+    for collection in destinations:
+        collection.objects.link(duplicate)
+    remember_object_origin(duplicate, scene_root)
+    reveal_object_collection_paths(context, duplicate)
+    set_object_live_state(duplicate, context, hidden=False, render_hidden=False)
+    return duplicate
+
+
 def find_named_bucket(
     root_collection: bpy.types.Collection,
     target_name: str,
@@ -2119,14 +2199,14 @@ def find_latest_version_object(
 
 
 def get_version_cycle_items(
-    live_collection: bpy.types.Collection,
+    context: bpy.types.Context,
     snapshots_collection: bpy.types.Collection,
     target_name: str,
 ) -> list[tuple[str, bpy.types.Object]]:
     items = []
-    live_object = find_live_object(live_collection, target_name)
+    live_object = find_original_object(context, target_name)
     if live_object is not None:
-        items.append(("live", live_object))
+        items.append(("original", live_object))
 
     snapshot_bucket = find_named_bucket(snapshots_collection, target_name)
     if snapshot_bucket is not None:
@@ -2152,6 +2232,7 @@ def move_object_to_version_bucket(
     archive_root: bpy.types.Collection,
     parent_map: dict[int, bpy.types.Collection],
 ) -> bpy.types.Collection:
+    remember_object_origin(obj, bpy.context.scene.collection)
     bucket = ensure_named_bucket(bucket_parent, target_name)
     obj[TARGET_NAME_PROP] = target_name
     obj.name = format_version_label(prefix, next_object_version_number(bucket, prefix), target_name)
@@ -2171,6 +2252,7 @@ def duplicate_object_to_bucket(
 ) -> bpy.types.Object:
     bucket = ensure_named_bucket(bucket_parent, target_name)
     duplicate = duplicate_object_for_snapshot(source_obj)
+    remember_object_origin(source_obj, context.scene.collection, duplicate)
     duplicate[TARGET_NAME_PROP] = target_name
     version_number = next_object_version_number(bucket, prefix)
     if prefix == "a":
@@ -2194,6 +2276,7 @@ def duplicate_object_to_live(
     duplicate[TARGET_NAME_PROP] = target_name
     duplicate.name = target_name
     live_collection.objects.link(duplicate)
+    remember_object_origin(duplicate, context.scene.collection)
     set_object_live_state(duplicate, context, hidden=False, render_hidden=False)
     return duplicate
 
@@ -2346,6 +2429,8 @@ def perform_snapshot(context: bpy.types.Context) -> str:
 
     for obj in selected_objects:
         target_name = get_target_name_for_object(obj, root_collections, parent_map)
+        if obj.is_editable:
+            obj[TARGET_NAME_PROP] = target_name
         snapshot_family = ensure_named_bucket(snapshots_collection, target_name)
         snapshot_name = format_version_label(
             "s",
@@ -2354,6 +2439,7 @@ def perform_snapshot(context: bpy.types.Context) -> str:
         )
 
         duplicate = duplicate_object_for_snapshot(obj)
+        remember_object_origin(obj, scene_root, duplicate)
         duplicate[TARGET_NAME_PROP] = target_name
         duplicate.name = snapshot_name
         duplicate.hide_viewport = False
@@ -2370,23 +2456,24 @@ def perform_make_layers(context: bpy.types.Context) -> str:
     scene_root = context.scene.collection
     root_collections = ensure_root_structure(scene_root)
     live_collection = root_collections["Live"]
-    archive_collection = root_collections["Archive"]
-    parent_map = build_collection_parent_map(scene_root)
-    moved_to_live = 0
+    moved_collections = 0
+    for collection in list(scene_root.children):
+        if collection in root_collections.values():
+            continue
+        if live_collection.children.get(collection.name) is None:
+            live_collection.children.link(collection)
+        scene_root.children.unlink(collection)
+        moved_collections += 1
 
-    for obj in list(context.scene.objects):
-        if not object_is_visible(obj, context.view_layer):
-            continue
-        if object_is_exclusively_in_root(obj, archive_collection, parent_map):
-            continue
-        if not object_is_in_root(obj, live_collection, parent_map):
-            moved_to_live += 1
-        move_object_to_target(obj, live_collection, archive_collection, parent_map)
-        obj[TARGET_NAME_PROP] = strip_version_prefix(obj.name) or obj.name
+    loose_objects = list(scene_root.objects)
+    for obj in loose_objects:
+        if live_collection.objects.get(obj.name) is None:
+            live_collection.objects.link(obj)
+        scene_root.objects.unlink(obj)
 
     return (
         "Ensured Live, Snapshots, Trash, and Archive. "
-        f"Moved {moved_to_live} visible object(s) to Live."
+        f"Moved {moved_collections} collection(s) and {len(loose_objects)} loose object(s) to Live."
     )
 
 
@@ -2521,29 +2608,17 @@ def perform_restore(context: bpy.types.Context) -> str:
         return "Restore cancelled: select only objects from Snapshots, Trash, or Archive."
 
     root_collections = ensure_root_structure(scene_root)
-    live_collection = root_collections["Live"]
     trash_collection = root_collections["Trash"]
-    archive_collection = root_collections["Archive"]
     restored = 0
 
     for target_name, source_obj in dedupe_selected_targets(targets, root_collections, parent_map):
-        current_live = find_live_object(live_collection, target_name)
-        if current_live is not None:
-            move_object_to_version_bucket(
-                current_live,
-                trash_collection,
-                "t",
-                target_name,
-                archive_collection,
-                parent_map,
-            )
-
-        duplicate_object_to_live(source_obj, live_collection, target_name, context)
+        current_live = find_original_object(context, target_name)
+        restore_object_to_origin(source_obj, current_live, target_name, context, root_collections, parent_map)
         restored += 1
 
     prune_empty_collections(trash_collection)
     prune_empty_collections(scene_root, skip_names=set(ROOT_STRUCTURE))
-    return f"Restored {restored} object(s) into Live."
+    return f"Restored {restored} object(s) to their original collections."
 
 
 def perform_baseline_visibility(context: bpy.types.Context) -> str:
@@ -2681,10 +2756,8 @@ def perform_back(context: bpy.types.Context) -> str:
     disable_outliner_alpha_sort()
     scene_root = context.scene.collection
     root_collections = ensure_root_structure(scene_root)
-    live_collection = root_collections["Live"]
     snapshots_collection = root_collections["Snapshots"]
     trash_collection = root_collections["Trash"]
-    archive_collection = root_collections["Archive"]
     parent_map = build_collection_parent_map(scene_root)
     targets = list(context.selected_objects)
 
@@ -2700,18 +2773,10 @@ def perform_back(context: bpy.types.Context) -> str:
         if latest_snapshot is None:
             continue
 
-        current_live = find_live_object(live_collection, target_name)
-        if current_live is not None:
-            move_object_to_version_bucket(
-                current_live,
-                trash_collection,
-                "t",
-                target_name,
-                archive_collection,
-                parent_map,
-            )
-
-        restored_live = duplicate_object_to_live(latest_snapshot, live_collection, target_name, context)
+        current_live = find_original_object(context, target_name)
+        restored_live = restore_object_to_origin(
+            latest_snapshot, current_live, target_name, context, root_collections, parent_map
+        )
         restored_objects.append(restored_live)
         delete_object_and_data_if_possible(latest_snapshot)
         restored += 1
@@ -2848,34 +2913,33 @@ def perform_cycle_live_versions(
 ) -> dict[str, str]:
     scene_root = context.scene.collection
     root_collections = ensure_root_structure(scene_root)
-    live_collection = root_collections["Live"]
     snapshots_collection = root_collections["Snapshots"]
     parent_map = build_collection_parent_map(scene_root)
     selected_objects = list(context.selected_objects)
 
     if len(selected_objects) != 1:
         return {
-            "message": "Select exactly one object from Live or its snapshots.",
+            "message": "Select exactly one original object or one of its snapshots.",
             "display": "",
         }
 
     step = -1 if str(direction).strip().lower() == "backward" else 1
 
     selected_object = selected_objects[0]
-    in_live = object_is_in_root(selected_object, live_collection, parent_map)
+    in_live = bool(working_collections(selected_object, scene_root))
     in_snapshots = object_is_in_root(selected_object, snapshots_collection, parent_map)
     if not in_live and not in_snapshots:
         return {
-            "message": "Select one Live object or one of its snapshots.",
+            "message": "Select one original object or one of its snapshots.",
             "display": "",
         }
 
     target_name = get_target_name_for_object(selected_object, root_collections, parent_map)
-    version_items = get_version_cycle_items(live_collection, snapshots_collection, target_name)
+    version_items = get_version_cycle_items(context, snapshots_collection, target_name)
     snapshot_bucket = find_named_bucket(snapshots_collection, target_name)
     if not version_items:
         return {
-            "message": f"No Live or snapshot versions found for '{target_name}'.",
+            "message": f"No original or snapshot versions found for '{target_name}'.",
             "display": "",
         }
 
@@ -2899,7 +2963,6 @@ def perform_cycle_live_versions(
         next_index = (current_index + step) % len(version_items)
     next_label, next_object = version_items[next_index]
 
-    reveal_collection_in_view_layer(context, live_collection)
     reveal_collection_in_view_layer(context, snapshots_collection)
     reveal_collection_in_view_layer(context, snapshot_bucket)
     reveal_object_collection_paths(context, next_object)
@@ -3822,8 +3885,8 @@ class OBJECT_OT_flowcell_live_snapshot_save(bpy.types.Operator):
 
 class OBJECT_OT_flowcell_live_snapshot_make_layers(bpy.types.Operator):
     bl_idname = "object.flowcell_live_snapshot_make_layers"
-    bl_label = "Make Layers"
-    bl_description = "Create Live, Snapshots, Trash, and Archive if missing"
+    bl_label = "Make Collections"
+    bl_description = "Create system collections and move other collections and loose objects under Live"
     bl_options = {"REGISTER"}
 
     def execute(self, context: bpy.types.Context):
@@ -3836,7 +3899,7 @@ class OBJECT_OT_flowcell_live_snapshot_make_layers(bpy.types.Operator):
 class OBJECT_OT_flowcell_live_snapshot_back(bpy.types.Operator):
     bl_idname = "object.flowcell_live_snapshot_back"
     bl_label = "Back"
-    bl_description = "Move current Live to Trash and restore the latest snapshot"
+    bl_description = "Move the current original to Trash and restore the latest snapshot to its source collections"
     bl_options = {"REGISTER"}
 
     def execute(self, context: bpy.types.Context):
@@ -3849,7 +3912,7 @@ class OBJECT_OT_flowcell_live_snapshot_back(bpy.types.Operator):
 class OBJECT_OT_flowcell_live_snapshot_restore(bpy.types.Operator):
     bl_idname = "object.flowcell_live_snapshot_restore"
     bl_label = "Restore"
-    bl_description = "Restore selected snapshot/trash/archive objects into Live"
+    bl_description = "Restore selected snapshot/trash/archive objects to their source collections"
     bl_options = {"REGISTER"}
 
     def execute(self, context: bpy.types.Context):
@@ -3955,7 +4018,7 @@ class OBJECT_OT_flowcell_live_snapshot_cycle_collection(bpy.types.Operator):
 class OBJECT_OT_flowcell_live_snapshot_cycle_live_versions(bpy.types.Operator):
     bl_idname = "object.flowcell_live_snapshot_cycle_live_versions"
     bl_label = "Cycle Live Versions"
-    bl_description = "Cycle the selected Live object and its snapshots one visible version at a time"
+    bl_description = "Cycle the original anywhere in the scene and its snapshots one visible version at a time"
     bl_options = {"REGISTER"}
     direction: bpy.props.StringProperty(name="Direction", default="forward")
 

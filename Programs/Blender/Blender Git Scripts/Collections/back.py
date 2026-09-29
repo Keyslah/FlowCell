@@ -1,4 +1,4 @@
-# Description: Move the current Live version to Trash and restore the newest matching snapshot back into Live.
+# Description: Move the current original to Trash and restore the newest snapshot to its source collections, anywhere in the scene.
 
 from __future__ import annotations
 

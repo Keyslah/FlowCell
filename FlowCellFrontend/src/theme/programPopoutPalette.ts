@@ -105,11 +105,11 @@ export interface ProgramPopoutPaletteScreenPositionArgs {
 
 /**
  * Normalize only occupied rows, independently per screen; hidden members do not anchor the range.
- * A tilted angle projects each center across the occupied box, so its corners hold the end stops.
+ * Whole Layout anchors vertically to actual Buttons; local gradients retain their angle.
  */
 export function normalizedProgramPopoutScreenPositions(
   items: readonly ProgramPopoutPaletteGradientItem[],
-  angle = 0
+  _angle = 0
 ): ProgramPopoutPaletteGradientItem[] {
   const boxes = new Map<string, { minimumX: number; maximumX: number; minimumY: number; maximumY: number }>();
   for (const item of items) {
@@ -126,7 +126,7 @@ export function normalizedProgramPopoutScreenPositions(
   }
   return items.map((item) => {
     const box = boxes.get(item.screenId ?? "");
-    return { ...item, y: box ? programPopoutGradientBoxPosition({ x: item.x ?? 0, y: item.y }, box, angle) : 0 };
+    return { ...item, y: box ? programPopoutGradientBoxPosition({ x: item.x ?? 0, y: item.y }, box, 0) : 0 };
   });
 }
 

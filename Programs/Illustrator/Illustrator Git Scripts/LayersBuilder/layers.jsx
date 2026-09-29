@@ -418,14 +418,6 @@
         return highlightedTargets;
     }
 
-    function highlightedLayerTargets(value) {
-        var highlightedTargets = normalizedLayerTargets(value);
-        if (highlightedTargets.length === 0) {
-            throw new Error('Highlight one or more Layer Tree rows to duplicate.');
-        }
-        return highlightedTargets;
-    }
-
     function containsObjectReference(items, candidate) {
         for (var i = 0; i < items.length; i += 1) {
             if (items[i] === candidate) {
@@ -974,7 +966,7 @@
                 restoreLayerStates(deleteStates);
             }
         } else if (op === 'duplicate') {
-            var dupTargets = highlightedLayerTargets(args.keys);
+            var dupTargets = selectedOrHighlightedLayerTargets(args.keys);
             var duplicateStates = [];
             var duplicateItemStates = [];
             var duplicateItems = [];

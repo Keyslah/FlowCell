@@ -464,18 +464,6 @@ fn clear_last_external_foreground(registry: &ScopedTopmostRegistry) -> Result<()
 }
 
 #[cfg(any(windows, test))]
-fn resolve_behind_anchor(
-    external_foreground_hwnd: Option<isize>,
-    window_hwnd: isize,
-    last_external_hwnd: Option<isize>,
-) -> Option<isize> {
-    [external_foreground_hwnd, last_external_hwnd]
-        .into_iter()
-        .flatten()
-        .find(|candidate| *candidate != 0 && *candidate != window_hwnd)
-}
-
-#[cfg(any(windows, test))]
 fn resolve_scoped_window_placement(
     matches_target_process: bool,
     foreground_is_scoped_window: bool,
@@ -485,19 +473,9 @@ fn resolve_scoped_window_placement(
     cursor_over_taskbar_or_preview: bool,
     foreground_hwnd: isize,
     window_hwnd: isize,
-    external_foreground_hwnd: Option<isize>,
-    last_external_hwnd: Option<isize>,
 ) -> (ScopedWindowPlacement, bool) {
-    let behind_anchor =
-        resolve_behind_anchor(external_foreground_hwnd, window_hwnd, last_external_hwnd);
-
     if cursor_over_taskbar_or_preview {
-        return (
-            behind_anchor
-                .map(ScopedWindowPlacement::Behind)
-                .unwrap_or(ScopedWindowPlacement::Bottom),
-            false,
-        );
+        return (ScopedWindowPlacement::Bottom, false);
     }
 
     if matches_target_process {
@@ -522,19 +500,20 @@ fn resolve_scoped_window_placement(
     // clicked. That is a continuation of the last proven owning application,
     // never a new topmost match. Keep the matching group in the normal band so
     // it remains usable over its owner without floating above other programs.
-    if foreground_is_scoped_window && last_external_matches_target {
-        if foreground_scoped_group_matches && foreground_hwnd != window_hwnd {
+    if foreground_is_scoped_window
+        && foreground_scoped_group_matches
+        && last_external_matches_target
+    {
+        if foreground_hwnd != window_hwnd {
             return (ScopedWindowPlacement::Behind(foreground_hwnd), true);
         }
         return (ScopedWindowPlacement::Normal, true);
     }
 
-    (
-        behind_anchor
-            .map(ScopedWindowPlacement::Behind)
-            .unwrap_or(ScopedWindowPlacement::Bottom),
-        false,
-    )
+    // Inactive program windows may only move down. Inserting directly behind
+    // the foreground would lift them above other apps on another monitor:
+    // [Blender, Chrome, Layer Tree] would become [Blender, Layer Tree, Chrome].
+    (ScopedWindowPlacement::Bottom, false)
 }
 
 #[cfg(any(windows, test))]
@@ -550,9 +529,10 @@ fn resolve_selective_window_interactivity(
 
     // A visible transparent Pop/Fan must never become a click-through copy of
     // its controls merely because its owning program is closed or inactive.
-    // Keep it in the normal band and let the frontend's exact geometry decide
-    // which authored controls receive input. TOPMOST remains owner-scoped.
-    (ScopedWindowPlacement::Normal, true)
+    // Keep the resolved Z order and let the frontend's exact geometry decide
+    // which exposed controls receive input. Moving to Normal here would raise
+    // every inactive program's Pop/Fan on each foreground change.
+    (placement, true)
 }
 
 #[cfg(any(windows, test))]
@@ -660,8 +640,6 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         cursor_over_taskbar_or_preview,
         foreground.hwnd,
         window_hwnd,
-        foreground_is_valid_external.then_some(foreground.hwnd),
-        last_external_hwnd,
     );
     let (placement, input_active) = resolve_selective_window_interactivity(
         scoped_placement,
@@ -669,11 +647,10 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
         entry.selective_input,
         cursor_over_taskbar_or_preview,
     );
-    // Opaque tool pages are ordinary interactive windows. Transparent Pop/Fan
-    // hosts also retain geometry-selective input when their program is absent,
-    // but only the proven owner may become their native owner.
+    // Input eligibility never grants native ownership. Both opaque tool pages
+    // and transparent Pop/Fan hosts may only bind to their proven program.
     let valid_scoped_continuation =
-        foreground_is_scoped_window && (last_external_matches_target || !entry.selective_input);
+        foreground_is_scoped_window && last_external_matches_target;
     let owner_candidate_hwnd = if matches_target_process {
         Some(foreground.hwnd)
     } else if valid_scoped_continuation {
@@ -730,9 +707,8 @@ fn apply_scoped_window_state<R: tauri::Runtime>(
     }
 
     // Only an exact external process match is ever allowed to select TOPMOST.
-    // Inactive windows are placed behind the real foreground HWND instead of
-    // merely using HWND_NOTOPMOST, which would put them at the top of the normal
-    // band and could still cover the newly selected application.
+    // Inactive windows go to the bottom, never directly behind the foreground:
+    // even that insertion can raise them above apps on another monitor.
     if should_reapply {
         set_scoped_native_window_placement(window, placement, matches_target_process)?;
     }
@@ -763,12 +739,21 @@ fn set_scoped_native_window_placement<R: tauri::Runtime>(
     placement: ScopedWindowPlacement,
     promote: bool,
 ) -> Result<(), String> {
-    window
-        .set_always_on_top(false)
-        .map_err(|error| error.to_string())?;
+    // Apply the final native placement directly. A preliminary Tauri demotion
+    // queues another Z-order change and can raise inactive windows into the
+    // normal foreground band (or undo the placement below after it returns).
     let hwnd = window
         .hwnd()
         .map_err(|error| format!("Failed to resolve window handle: {error}"))?;
+    set_scoped_native_hwnd_placement(hwnd, placement, promote)
+}
+
+#[cfg(windows)]
+fn set_scoped_native_hwnd_placement(
+    hwnd: Win32Hwnd,
+    placement: ScopedWindowPlacement,
+    promote: bool,
+) -> Result<(), String> {
     let mut resolved_placement = match placement {
         ScopedWindowPlacement::Behind(anchor)
             if anchor == 0
@@ -1686,8 +1671,6 @@ mod tests {
                 false,
                 200,
                 100,
-                Some(200),
-                Some(200),
             ),
             (ScopedWindowPlacement::Topmost, true)
         );
@@ -1701,10 +1684,8 @@ mod tests {
                 false,
                 300,
                 100,
-                Some(300),
-                Some(200),
             ),
-            (ScopedWindowPlacement::Behind(300), false)
+            (ScopedWindowPlacement::Bottom, false)
         );
     }
 
@@ -1720,8 +1701,6 @@ mod tests {
                 false,
                 100,
                 100,
-                None,
-                Some(200),
             ),
             (ScopedWindowPlacement::Normal, true)
         );
@@ -1735,15 +1714,13 @@ mod tests {
                 false,
                 100,
                 100,
-                None,
-                Some(300),
             ),
-            (ScopedWindowPlacement::Behind(300), false)
+            (ScopedWindowPlacement::Bottom, false)
         );
     }
 
     #[test]
-    fn wrong_scoped_group_anchors_behind_the_real_external_program() {
+    fn unrelated_scoped_group_cannot_raise_windows_of_the_previous_program() {
         assert_eq!(
             resolve_scoped_window_placement(
                 false,
@@ -1754,10 +1731,8 @@ mod tests {
                 false,
                 100,
                 101,
-                None,
-                Some(200),
             ),
-            (ScopedWindowPlacement::Behind(200), false)
+            (ScopedWindowPlacement::Bottom, false)
         );
         assert_eq!(
             resolve_scoped_window_placement(
@@ -1769,10 +1744,8 @@ mod tests {
                 false,
                 100,
                 110,
-                None,
-                Some(200),
             ),
-            (ScopedWindowPlacement::Normal, true)
+            (ScopedWindowPlacement::Bottom, false)
         );
     }
 
@@ -1788,10 +1761,8 @@ mod tests {
                 true,
                 200,
                 100,
-                Some(200),
-                Some(200),
             ),
-            (ScopedWindowPlacement::Behind(200), false)
+            (ScopedWindowPlacement::Bottom, false)
         );
     }
 
@@ -1804,7 +1775,7 @@ mod tests {
                 true,
                 false,
             ),
-            (ScopedWindowPlacement::Normal, true)
+            (ScopedWindowPlacement::Behind(300), true)
         );
         assert_eq!(
             resolve_selective_window_interactivity(
@@ -1815,6 +1786,122 @@ mod tests {
             ),
             (ScopedWindowPlacement::Behind(300), false)
         );
+    }
+
+    #[test]
+    fn unrelated_program_windows_stay_behind_during_repeated_button_focus_changes() {
+        // 200 is the working app, 100 its FlowCell button, 300 another app's
+        // window. Exercise both transparent Pop/Fan hosts and opaque pages.
+        for selective_input in [false, true] {
+            for foreground in [200, 100, 200, 100, 200] {
+                let (placement, active) = resolve_scoped_window_placement(
+                    false,
+                    foreground == 100,
+                    false,
+                    false,
+                    false,
+                    false,
+                    foreground,
+                    300,
+                );
+                let (placement, _) =
+                    resolve_selective_window_interactivity(placement, active, selective_input, false);
+                assert_eq!(placement, ScopedWindowPlacement::Bottom);
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn native_inactive_page_never_rises_above_other_monitor_windows() {
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
+            CreateWindowExW, DestroyWindow, GetWindow, SetWindowPos, GW_HWNDNEXT,
+            HWND_TOP, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE,
+            WS_EX_TOOLWINDOW, WS_POPUP,
+        };
+        // Hidden disposable HWNDs exercise the production native placement
+        // without activating, showing, or changing any user application.
+        struct TestWindow(super::HWND);
+        impl TestWindow {
+            fn new(owner: super::HWND, x: i32) -> Self {
+                let class: Vec<u16> = "STATIC\0".encode_utf16().collect();
+                let hwnd = unsafe {
+                    CreateWindowExW(
+                        WS_EX_TOOLWINDOW, class.as_ptr(), class.as_ptr(), WS_POPUP,
+                        x, 0, 64, 64, owner, std::ptr::null_mut(),
+                        std::ptr::null_mut(), std::ptr::null(),
+                    )
+                };
+                assert!(!hwnd.is_null());
+                Self(hwnd)
+            }
+            fn raise_without_focus(&self) {
+                assert_ne!(unsafe {
+                    SetWindowPos(self.0, HWND_TOP, 0, 0, 0, 0,
+                        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER)
+                }, 0);
+            }
+            fn is_above(&self, other: &Self) -> bool {
+                let mut next = unsafe { GetWindow(self.0, GW_HWNDNEXT) };
+                while !next.is_null() {
+                    if next == other.0 { return true; }
+                    next = unsafe { GetWindow(next, GW_HWNDNEXT) };
+                }
+                false
+            }
+        }
+        impl Drop for TestWindow {
+            fn drop(&mut self) { unsafe { DestroyWindow(self.0); } }
+        }
+        for owned in [false, true] {
+            let illustrator = TestWindow::new(std::ptr::null_mut(), 2000);
+            let page = TestWindow::new(
+                if owned { illustrator.0 } else { std::ptr::null_mut() }, 2000);
+            let chrome = TestWindow::new(std::ptr::null_mut(), 2000);
+            let blender = TestWindow::new(std::ptr::null_mut(), 0);
+            let button = TestWindow::new(std::ptr::null_mut(), 0);
+            page.raise_without_focus();
+            chrome.raise_without_focus();
+            assert!(chrome.is_above(&page));
+            for foreground in [&blender, &button, &blender, &chrome, &blender] {
+                foreground.raise_without_focus();
+                let (placement, _) = resolve_scoped_window_placement(
+                    false, foreground.0 == button.0, false, false, false, false,
+                    foreground.0 as isize, page.0 as isize,
+                );
+                super::set_scoped_native_hwnd_placement(
+                    super::Win32Hwnd(page.0), placement, false).unwrap();
+                assert!(chrome.is_above(&page),
+                    "inactive page rose above Chrome when another program was clicked (owned={owned})");
+            }
+            let (placement, _) = resolve_scoped_window_placement(
+                true, false, false, true, false, false,
+                illustrator.0 as isize, page.0 as isize,
+            );
+            super::set_scoped_native_hwnd_placement(
+                super::Win32Hwnd(page.0), placement, false).unwrap();
+            assert!(page.is_above(&chrome), "the matching program must still raise its page");
+            assert!(super::is_native_window_topmost(page.0 as isize));
+        }
+    }
+
+    #[test]
+    fn selective_input_never_changes_the_resolved_window_order() {
+        for placement in [
+            ScopedWindowPlacement::Topmost,
+            ScopedWindowPlacement::Normal,
+            ScopedWindowPlacement::Behind(200),
+            ScopedWindowPlacement::Bottom,
+        ] {
+            for active in [false, true] {
+                for preview in [false, true] {
+                    let (resolved, input) =
+                        resolve_selective_window_interactivity(placement, active, true, preview);
+                    assert_eq!(resolved, placement);
+                    assert_eq!(input, active || !preview);
+                }
+            }
+        }
     }
 
     #[test]
@@ -1850,8 +1937,6 @@ mod tests {
                 false,
                 100,
                 110,
-                None,
-                Some(200),
             ),
             (ScopedWindowPlacement::Normal, true)
         );
@@ -1865,10 +1950,8 @@ mod tests {
                 true,
                 100,
                 110,
-                None,
-                Some(200),
             ),
-            (ScopedWindowPlacement::Behind(200), false)
+            (ScopedWindowPlacement::Bottom, false)
         );
         assert_eq!(
             resolve_scoped_window_placement(
@@ -1880,8 +1963,6 @@ mod tests {
                 false,
                 120,
                 110,
-                None,
-                Some(200),
             ),
             (ScopedWindowPlacement::Behind(120), true)
         );
@@ -1895,8 +1976,6 @@ mod tests {
                 false,
                 120,
                 110,
-                None,
-                Some(200),
             ),
             (ScopedWindowPlacement::Behind(120), false)
         );

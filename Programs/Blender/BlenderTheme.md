@@ -78,13 +78,15 @@ Theme controls:
 - `Previous`, `Open Package`, `Next`, and `Save Package` use the generic package
   library operations and the package's declared field and asset mappings.
 - `Popped Button Colors` owns two independent gradient boxes, `Button Fill` and
-  `Button Text`, plus separate hover/active highlight and glow controls. Packages
-  save both gradients (stops, curve, angle, whole-screen option), spread, scatter
+  `Button Text`, plus independent Regular, Hover, and Active controls in
+  `Highlights and Glow`. Regular affects only idle buttons; the existing Hover
+  and Active controls remain fully editable. Packages
+  save both gradients (stops, curve, angle, whole-layout option), spread, scatter
   and seed with the effects. The settings apply to any Blender Pop-out or Fan,
   including collapsed owners and newly opened tools; they take precedence over the
   Main Theme only on these popped surfaces.
 - Each box has ordered Start-to-End color stops, a curve box, an Angle and a
-  `Whole Screen` checkbox. Button Fill needs 2-16 stops and keeps Spread and
+  `Whole Layout` checkbox. Button Fill needs 2-16 stops and keeps Spread and
   Scatter; Button Text takes 1-16 stops, where one stop is a solid label color.
   `Apply Gradient` (fill) and `Apply Text Gradient` apply each box independently;
   a sample grid above the boxes previews both together.
@@ -121,24 +123,31 @@ Theme controls:
   ordered intermediate stop. Spread adjusts each blend's width; Scatter varies
   interior blends without changing stop anchors. Increasing Gradient Colors
   retains the existing chosen colors and inserts new blends between them.
-- `Whole Screen` spans the visible popped Button centers on each monitor, in both
-  directions for tilted gradients. Moving, collapsing, opening or closing a window
+- `Whole Layout` spans the visible popped Button centers on each monitor for
+  Fill and Text, from the highest to the lowest visible Button. Angle applies only
+  within individual windows when Whole Layout is off. Its checkbox sits beside
+  the corresponding Apply button. Moving, collapsing, opening or closing a window
   updates this live range without saving geometry into packages or rescanning on
   package switches. Collapsed hidden members do not move the endpoints. Authored
   skin shading is preserved.
 
-Place Picture controls:
+Grid controls in Theme Palette:
 
-- `Browse`, `Place Picture`, `Grid`, `Remove Grid`, `Startup`, and `Clear`
-  operate on the declared image-path and grid fields. `Remove Grid` leaves the
-  picture and fake gizmos active.
-- New pictures and saved states without an explicit grid choice start with the
-  grid off. `Grid` enables it; explicit saved on/off choices are still respected.
+- `Grid`, `Grid Scale`, and `Subdivisions (unitless)` sit immediately right of
+  Gradient 2, in that order. Grid help is available on hover.
+- The `Grid` checkbox defaults on with Scale 0.01 and Subdivisions 10. Its
+  checked state and spacing travel with saved buckets/packages. Uncheck it and
+  save to keep the grid off for that theme; explicit false is never replaced
+  by the default. The checkbox updates the live grid; spacing changes apply
+  immediately while checked and stay saved without enabling the grid when off.
   Theme 3.0.19 uses Blender's native floor, orthographic grid and axes. The
   picture retains its fixed full-viewport fit during navigation. With a picture
   and grid enabled, a GPU-only native viewport cache supplies object occlusion,
   grid planes and antialiasing. It refreshes outside Blender's draw engine and
   presents on the following redraw, before native viewport text and gizmos.
+
+Place Picture contains only the picture path, `Browse`, `Place Picture`, and
+`Clear`. Unchecking Grid preserves the picture and fake gizmos.
   Turning the grid off frees this cache and restores the inexpensive picture
   path. Clearing the picture restores the previous viewport settings.
 - `Grid Scale` adjusts Blender's native spacing (0.001–1000). Try 0.1 or 0.01
@@ -163,7 +172,8 @@ restoration remains declared by the package as
 `restore-project-theme-state`; it resolves the installed owner instead of a
 hardcoded Theme action name.
 
-Theme apply commits the current theme and live Place Picture as one owner
+There is no Startup button: every Theme Apply automatically remembers the last-used
+theme for the next Blender startup. Theme apply commits the current theme and live Place Picture as one owner
 startup bundle, including grid values and grid visibility. Package load applies
 or clears its picture first and applies the theme last, so a saved theme cannot
 restore with an older picture.
@@ -181,3 +191,10 @@ After changing the catalog package:
 See [`../../docs/blendertheme.md`](../../docs/blendertheme.md) for the user
 workflow and [`../../docs/buttons.md`](../../docs/buttons.md) for the generic
 Button-source lifecycle.
+
+Saving changes to an existing package:
+- In Save Package, select the existing package's own `.flowcell-theme-pack.json`
+  file and confirm replacement. Assets are staged before replacing the package;
+  the previous complete folder is retained under `blender_themes/.flowcell-package-backups`.
+- New packages are still named directly from the library root. Existing packages
+  of another format and destinations outside the library are rejected.

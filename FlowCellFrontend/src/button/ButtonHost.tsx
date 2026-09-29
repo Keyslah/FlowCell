@@ -253,11 +253,14 @@ export function ButtonHost({
       error
     }
   });
+  const labelField = fields?.find((field) => field.id === button.toolSetBehavior?.labelField);
   const renderedLabel = inlineEditField
     ? String(inlineEditValue ?? "")
     : selectField
       ? selectedSelectOption?.label ?? String(selectValue ?? "")
-      : resolvedAppearance.label;
+      : labelField
+        ? String(fieldValues?.[labelField.id] ?? labelField.defaultValue ?? "")
+        : resolvedAppearance.label;
   const pointerActiveRef = useRef(false);
   const hoverActiveRef = useRef(false);
   const holdTimerRef = useRef<number | null>(null);
@@ -700,6 +703,9 @@ export function ButtonHost({
       const result = await executeButtonRecord(button, eventName, {
         fields,
         fieldValues,
+        payloadOverride: activationEvent && button.executionTarget?.kind === "tool-set-action"
+          ? { modifiers: { shift: activationEvent.shiftKey, ctrl: activationEvent.ctrlKey, alt: activationEvent.altKey, meta: activationEvent.metaKey } }
+          : undefined,
         onFieldActivate,
         onFieldPatch
       });

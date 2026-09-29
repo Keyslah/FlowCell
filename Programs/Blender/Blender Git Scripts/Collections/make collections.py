@@ -1,4 +1,4 @@
-# Description: Create Live, Snapshots, Trash, and Archive collections  if missing. Visible objects go to Live
+# Description: Make Collections: create system collections and move other collections and loose objects into Live, including hidden content and nested collections.
 
 from __future__ import annotations
 

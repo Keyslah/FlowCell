@@ -118,6 +118,96 @@ def main() -> None:
     assert bpy.context.view_layer.objects.active is active
     assert sorted(obj.name for obj in bpy.context.selected_objects) == selected_before
 
+    # All anchor variants, one-object external anchors, and combined bounds.
+    for modifiers, anchor_point in [({"shift": True}, (0, 0, 0)), ({"ctrl": True}, (7, 8, 9))]:
+        active.select_set(False)
+        bpy.context.scene.cursor.location = (7, 8, 9)
+        mover.matrix_world.translation = Vector((100, 70, 70))
+        bpy.context.view_layer.update()
+        alignment.run_flowcell_action(bpy.context, {"command": "center_everything", "modifiers": modifiers})
+        bpy.context.view_layer.update()
+        _assert_vector(mover.matrix_world.translation, anchor_point)
+    active.select_set(True)
+    other = _new_box("Other Mover", (106, 80, 90), (6, 2, 4))
+    mover.matrix_world.translation = Vector((100, 70, 70))
+    bpy.context.view_layer.update()
+    relative = other.matrix_world.translation - mover.matrix_world.translation
+    alignment.run_flowcell_action(bpy.context, {"command": "center_xy", "group": True})
+    bpy.context.view_layer.update()
+    lo, hi = alignment._combined_bounds([mover, other])
+    assert abs((lo.x + hi.x) / 2 - 10) < 1e-6
+    assert abs((lo.y + hi.y) / 2 - 20) < 1e-6
+    _assert_vector(other.matrix_world.translation - mover.matrix_world.translation, relative)
+    assert _matrix_values(active) == active_before
+    other.select_set(False)
+    # Separate Min and Max stay fixed, including repeated clicks.
+    for axis, index in zip("xyz", range(3)):
+        for mode in ("min", "max"):
+            for repeat in range(3):
+                response = alignment.run_flowcell_action(bpy.context, {"command": axis + "_" + mode})
+                bpy.context.view_layer.update()
+                lo, hi = alignment._alignment_bounds(mover)
+                alo, ahi = alignment._alignment_bounds(active)
+                assert abs((lo if mode == "min" else hi)[index] - (alo if mode == "min" else ahi)[index]) < 1e-6
+                assert response["fieldPatch"] == {}
+    # Surface is an immediate opposite-face action and alternates without latching.
+    for axis, index in zip("xyz", range(3)):
+        mover.matrix_world.translation = Vector((100, 100, 100))
+        bpy.context.view_layer.update()
+        for side in ("MIN", "MAX", "MIN"):
+            alignment.run_flowcell_action(bpy.context, {"command": axis + "_surface"})
+            bpy.context.view_layer.update()
+            lo, hi = alignment._alignment_bounds(mover)
+            alo, ahi = alignment._alignment_bounds(active)
+            assert abs((hi if side == "MIN" else lo)[index] - (alo if side == "MIN" else ahi)[index]) < 1e-6
+    # Origin always uses the object origin, even with off-center geometry.
+    for vertex in mover.data.vertices:
+        vertex.co += Vector((3, 4, 5))
+    mover.data.update()
+    for axis, index in zip("xyz", range(3)):
+        mover.matrix_world.translation = Vector((100, 100, 100))
+        bpy.context.view_layer.update()
+        for side in ("MIN", "MAX", "MIN"):
+            result = alignment.run_flowcell_action(bpy.context, {"command": axis + "_geo"})
+            bpy.context.view_layer.update()
+            alo, ahi = alignment._alignment_bounds(active)
+            assert abs(mover.matrix_world.translation[index] - (alo if side == "MIN" else ahi)[index]) < 1e-6
+            assert result["changed"] == 1
+            assert result["fieldPatch"] == {}
+
+    # Both immediate actions include the single active selection for external anchors.
+    active.select_set(False)
+    bpy.context.view_layer.objects.active = mover
+    for modifiers, anchor_point in [({"shift": True}, Vector((0, 0, 0))), ({"ctrl": True}, Vector((7, 8, 9)))]:
+        bpy.context.scene.cursor.location = (7, 8, 9)
+        for axis, index in zip("xyz", range(3)):
+            mover.matrix_world.translation = Vector((100, 100, 100))
+            bpy.context.view_layer.update()
+            alignment.run_flowcell_action(bpy.context, {"command": axis + "_geo", "modifiers": modifiers})
+            assert abs(mover.matrix_world.translation[index] - anchor_point[index]) < 1e-6
+            for repeat in range(2):
+                before_lo, before_hi = alignment._alignment_bounds(mover)
+                before_center = (before_lo + before_hi) / 2
+                alignment.run_flowcell_action(bpy.context, {"command": axis + "_surface", "modifiers": modifiers})
+                bpy.context.view_layer.update()
+                lo, hi = alignment._alignment_bounds(mover)
+                source = hi if before_center[index] > anchor_point[index] else lo
+                assert abs(source[index] - anchor_point[index]) < 1e-6
+    active.select_set(True)
+    bpy.context.view_layer.objects.active = active
+
+    # Group also preserves selected parent-child world-space offsets.
+    other.select_set(True)
+    other.parent = mover
+    other.matrix_world.translation = mover.matrix_world.translation + Vector((6, 10, 20))
+    bpy.context.view_layer.update()
+    relative = other.matrix_world.translation - mover.matrix_world.translation
+    alignment.run_flowcell_action(bpy.context, {"command": "center_everything", "group": True, "modifiers": {"shift": True}})
+    bpy.context.view_layer.update()
+    _assert_vector(other.matrix_world.translation - mover.matrix_world.translation, relative)
+    lo, hi = alignment._combined_bounds([active, mover, other])
+    _assert_vector((lo + hi) / 2, (0, 0, 0))
+
     status = alignment.run_flowcell_action(bpy.context, {"command": "status"})
     assert status["message"] == "Alignment tools ready."
     print(f"FLOWCELL_ALIGN_PROBE_OK target={target}", flush=True)

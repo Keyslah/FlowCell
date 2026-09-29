@@ -241,7 +241,7 @@ test("all 20 Layers Builder actions are ordinary manifest packages", () => {
       contribution.version,
       actionName === "snapshot"
         ? "3.1.4"
-        : actionName === "new-sub" || actionName === "3d" || actionName === "sort" || actionName === "copy-live" || actionName === "rename"
+        : actionName === "new-sub" || actionName === "3d" || actionName === "sort" || actionName === "copy-live" || actionName === "rename" || actionName === "add-to-live"
           ? "3.1.2"
           : "3.1.1"
     );
@@ -266,12 +266,12 @@ test("all 20 Layers Builder actions are ordinary manifest packages", () => {
       "program",
       "source"
     ];
-    if (actionName === "new-sub" || actionName === "rename") expectedManifestKeys.push("execution");
+    if (actionName === "new-sub" || actionName === "rename" || actionName === "add-to-live") expectedManifestKeys.push("execution");
     assert.deepEqual(Object.keys(manifest), expectedManifestKeys);
     assert.equal(manifest.schemaVersion, 1);
     assert.equal(manifest.id, contribution.id);
     assert.equal(manifest.program, "Illustrator");
-    if (actionName === "rename") {
+    if (actionName === "rename" || actionName === "add-to-live") {
       assert.deepEqual(manifest.execution, { waitForCompletion: true });
     }
     assert.equal(path.isAbsolute(manifest.source), false);
@@ -690,7 +690,7 @@ test("New Sub requires exactly one target and creates a direct child", () => {
 
 test("Layer Tree is default-selected but never resurrected after deletion", () => {
   assert.ok(layerTreeContribution);
-  assert.equal(layerTreeContribution.version, "3.0.15");
+  assert.equal(layerTreeContribution.version, "3.0.16");
   assert.equal(layerTreeContribution.sourcePath, "Illustrator Git Scripts/LayersBuilder");
   assert.equal(layerTreeContribution.importKind, "script");
   assert.equal(layerTreeContribution.installOnAdd, true);

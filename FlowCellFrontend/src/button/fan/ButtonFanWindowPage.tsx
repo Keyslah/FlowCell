@@ -52,6 +52,7 @@ import { useButtonWindowDocument } from "../windows/useButtonWindowDocument";
 import { useFixedButtonCanvasMetrics } from "../windows/useFixedButtonCanvas";
 import { useProgramPopoutThemeScreenRange } from "../windows/useProgramPopoutThemeScreenRange";
 import { useNativeButtonHitboxes } from "../windows/useNativeButtonHitboxes";
+import { useButtonWindowCloseControl } from "../windows/useButtonWindowCloseControl";
 import {
   setButtonWindowGeometryTransitionActive,
   waitForAppliedButtonWindowRender,
@@ -1039,14 +1040,6 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     [dragging, expanded, fanMotion.phase, pinned, setup, spaceDragActive]
   );
 
-  useNativeButtonHitboxes({
-    rootRef,
-    broadPhaseRef: contentFrameRef,
-    broadPhasePadding: 16,
-    enabled: geometryInitialized && !dragging,
-    onHoverChange: handleNativeHoverChange,
-    onNativeSpaceChange: setNativeSpaceKeyActive
-  });
 
   const handleOwnerActivate = useCallback(() => {
     if (expanded) {
@@ -1111,6 +1104,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
   }, [activeContext.draftSessionId, collapsedEnvelope.resting, document, setup]);
 
   const handlePointerDownCapture = (event: ReactPointerEvent<HTMLElement>) => {
+    if ((event.target as Element).closest("[data-button-window-close-control]")) return;
     if (!geometryInitialized || !spaceDragActive || dragging || event.button !== 0) {
       return;
     }
@@ -1267,6 +1261,25 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
     );
   }, [renderedExpanded]);
 
+  const closeControl = useButtonWindowCloseControl({
+    enabled: geometryInitialized && !dragging,
+    spaceDown: spaceDragActive,
+    defaultOffset: setup?.closeControlOffset,
+    frame: contentFrameRect,
+    onHoverChange: handleNativeHoverChange,
+    onError: setRuntimeError
+  });
+
+  useNativeButtonHitboxes({
+    rootRef,
+    broadPhaseRef: contentFrameRef,
+    broadPhasePadding: 16,
+    enabled: geometryInitialized && !dragging,
+    onHoverChange: closeControl.onHoverChange,
+    onButtonHoverChange: closeControl.onButtonHoverChange,
+    onNativeSpaceChange: setNativeSpaceKeyActive
+  });
+
   return (
     <main
       ref={rootRef}
@@ -1321,6 +1334,7 @@ export function ButtonFanWindowPage({ context }: ButtonFanWindowPageProps) {
           />
         </div>
       ) : null}
+      {closeControl.control}
     </main>
   );
 }

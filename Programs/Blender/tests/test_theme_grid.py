@@ -437,6 +437,31 @@ class NativeGridControlTests(unittest.TestCase):
             self.assertFalse(value["grid_enabled"])
         self.assertEqual((state["grid_scale"], state["grid_subdivisions"]), (0.025, 8), "saving startup does not change the current viewport")
 
+    def test_last_applied_theme_wins_over_project_state_without_a_startup_button(self):
+        saved = {"theme": {"name": "last-used"}, "place_picture": {"enabled": False}}
+        project = {"theme": {"name": "older-project"}}
+        namespace = load_functions(
+            "_restore_state_for_startup",
+            _read_project_theme_state=lambda context: project,
+            _owner_runtime_theme_state_exists=lambda: True,
+            _read_owner_runtime_theme_state=lambda: saved,
+            _is_explicit_startup_place_picture_state=lambda state: False,
+        )
+        self.assertEqual(namespace["_restore_state_for_startup"](None)[2], saved["theme"])
+
+    def test_each_theme_apply_automatically_updates_the_startup_bundle(self):
+        writes = []
+        namespace = load_functions(
+            "_write_theme_state",
+            _write_project_theme_state=lambda context, state: state,
+            _empty_project_theme_state=lambda: {},
+            _startup_place_picture_state_from_runtime=lambda context: {"enabled": False},
+            _write_owner_runtime_theme_state=lambda state: writes.append(state),
+        )
+        for name in ("first", "last-used"):
+            namespace["_write_theme_state"](None, {"theme": {"name": name}})
+        self.assertEqual(writes[-1], {"theme": {"name": "last-used"}, "place_picture": {"enabled": False}})
+
     def test_startup_restore_forwards_saved_native_settings_without_overwriting_project(self):
         saved = {"enabled": True, "path": "photo.png", "grid_enabled": True,
                  "grid_scale": 0.025, "grid_subdivisions": 8}

@@ -119,88 +119,105 @@ def _normalize_payload(data):
     return payload
 
 
+def _combined_bounds(objects):
+    bounds = [_alignment_bounds(obj) for obj in objects]
+    return (Vector(tuple(min(lo[i] for lo, hi in bounds) for i in range(3))),
+            Vector(tuple(max(hi[i] for lo, hi in bounds) for i in range(3))))
+
+
 def _run_alignment(context, data):
     command = str(data.get("command", "align_axis") or "align_axis").strip().lower()
     if command in {"", "status", "state", "probe"}:
         return _result("ok", "Alignment tools ready.")
+    if getattr(context, "mode", "OBJECT") != "OBJECT":
+        raise ValueError("Switch to Object Mode to align objects.")
 
+    modifiers = data.get("modifiers") or {}
+    anchor = "CURSOR" if modifiers.get("ctrl") else "WORLD" if modifiers.get("shift") else "ACTIVE"
     selected_objects = list(getattr(context, "selected_objects", []) or [])
     active = getattr(context.view_layer.objects, "active", None)
-    if active is None or active not in selected_objects:
-        raise ValueError("Select an active reference object and one object to move.")
+    if not selected_objects:
+        raise ValueError("Select at least one object to align.")
+    if anchor == "ACTIVE":
+        if active is None or active not in selected_objects:
+            raise ValueError("Select an active reference object and one object to move.")
+        moved_objects = [obj for obj in selected_objects if obj != active]
+        if not moved_objects:
+            raise ValueError("Select an object besides the active reference, or hold Shift/Control for world/cursor.")
+    else:
+        moved_objects = selected_objects
 
-    moved_objects = [obj for obj in selected_objects if obj != active]
-    if not moved_objects:
-        raise ValueError("Select at least one object besides the active reference object.")
-
-    active_min, active_max = _alignment_bounds(active)
+    # A moving parent would also move the active anchor. Reject before any edits.
+    parent = active.parent if anchor == "ACTIVE" else None
+    while parent is not None:
+        if parent in moved_objects:
+            raise ValueError("The active anchor is a child of a moving object. Choose an independent anchor.")
+        parent = parent.parent
+    context.view_layer.update()
+    if anchor == "ACTIVE":
+        active_min, active_max = _alignment_bounds(active)
+    else:
+        point = context.scene.cursor.location.copy() if anchor == "CURSOR" else Vector((0, 0, 0))
+        active_min, active_max = point.copy(), point.copy()
     active_center = (active_min + active_max) / 2.0
-
-    if command in {"center_all", "center_xy"}:
-        axis_indexes = (0, 1, 2) if command == "center_all" else (0, 1)
-        for obj in moved_objects:
-            obj_min, obj_max = _alignment_bounds(obj)
-            obj_center = (obj_min + obj_max) / 2.0
-            offset = active_center - obj_center
-            matrix = obj.matrix_world.copy()
-            translation = matrix.translation.copy()
-            for axis_index in axis_indexes:
-                translation[axis_index] += offset[axis_index]
-            matrix.translation = translation
-            obj.matrix_world = matrix
-        _restore_selection(context, selected_objects, active)
-        message = (
-            f"Centered {len(moved_objects)} object(s) on X and Y."
-            if command == "center_xy"
-            else f"Centered {len(moved_objects)} object(s)."
-        )
-        return _result("ok", message, changed=len(moved_objects))
-
-    if command != "align_axis":
-        raise ValueError(f"Unsupported alignment command: {command}")
-
-    axis_lookup = {"X": 0, "Y": 1, "Z": 2}
-    axis = str(data.get("axis", "X") or "X").strip().upper()
-    if axis not in axis_lookup:
+    axis = str(data.get("axis", "X") or "X").upper()
+    if axis not in {"X", "Y", "Z"}:
         raise ValueError(f"Unsupported alignment axis: {axis}")
-
-    mode = str(data.get("mode", "CENTER") or "CENTER").strip().upper()
+    mode = str(data.get("mode", "CENTER")).upper()
     if mode not in {"MIN", "CENTER", "MAX"}:
         raise ValueError(f"Unsupported alignment mode: {mode}")
-
-    modifier = str(data.get("modifier", "") or "").strip().upper()
+    modifier = str(data.get("modifier", "") or "").upper()
     if modifier not in {"", "SURFACE", "GEOCENTER", "ORIGIN"}:
         raise ValueError(f"Unsupported alignment modifier: {modifier}")
-
-    axis_index = axis_lookup[axis]
-    moved_count = 0
-    for obj in moved_objects:
-        obj_min, obj_max = _alignment_bounds(obj)
+    if command not in {"align_axis", "center_all", "center_xy"}:
+        raise ValueError(f"Unsupported alignment command: {command}")
+    centering = command in {"center_all", "center_xy"}
+    axes = (0, 1, 2) if command == "center_all" else (0, 1) if command == "center_xy" else ("XYZ".index(axis),)
+    grouped = bool(data.get("group", False))
+    batches = [moved_objects] if grouped else [[obj] for obj in moved_objects]
+    matrices = {}
+    for objects in batches:
+        obj_min, obj_max = _combined_bounds(objects)
         obj_center = (obj_min + obj_max) / 2.0
-        obj_origin = _alignment_origin(obj)
-
-        if modifier == "SURFACE":
-            target = active_min[axis_index] if obj_center[axis_index] > active_center[axis_index] else active_max[axis_index]
-            source = obj_min if obj_center[axis_index] <= active_center[axis_index] else obj_max
-        else:
-            if mode == "MIN":
-                target = active_min[axis_index]
-                source = obj_min
-            elif mode == "MAX":
-                target = active_max[axis_index]
-                source = obj_max
+        offset = Vector((0, 0, 0))
+        for index in axes:
+            if modifier == "SURFACE":
+                # Use the current side so repeated presses cross the anchor.
+                target = active_min[index] if obj_center[index] > active_center[index] else active_max[index]
+                source = obj_max[index] if obj_center[index] > active_center[index] else obj_min[index]
+            elif modifier in {"GEOCENTER", "ORIGIN"}:
+                source = obj_center[index] if grouped else _alignment_origin(objects[0])[index]
+                target = active_min[index] if source > active_center[index] else active_max[index]
+            elif centering or mode == "CENTER":
+                target, source = active_center[index], obj_center[index]
+            elif mode == "MIN":
+                target = active_min[index]
+                source = obj_min[index]
             else:
-                target = active_center[axis_index]
-                source = obj_center
+                target = active_max[index]
+                source = obj_max[index]
+            offset[index] = target - source
+        for obj in objects:
+            matrix = obj.matrix_world.copy()
+            matrix.translation += offset
+            matrices[obj] = matrix
 
-            if modifier in {"GEOCENTER", "ORIGIN"}:
-                source = obj_origin
-
-        _offset_object_world_axis(obj, axis_index, target - source[axis_index])
-        moved_count += 1
-
-    _restore_selection(context, selected_objects, active)
-    return _result("ok", f"Aligned {moved_count} object(s) on {axis}.", changed=moved_count)
+    # Snapshot all destinations before moving anything, then parents before children.
+    def depth(obj):
+        result = 0
+        while obj.parent is not None:
+            result += 1
+            obj = obj.parent
+        return result
+    for obj in sorted(moved_objects, key=depth):
+        obj.matrix_world = matrices[obj]
+        context.view_layer.update()
+    if centering:
+        message = (f"Centered {len(moved_objects)} object(s) on X and Y." if command == "center_xy"
+                   else f"Centered {len(moved_objects)} object(s).")
+    else:
+        message = f"Aligned {len(moved_objects)} object(s) on {axis}."
+    return _result("ok", message, changed=len(moved_objects), anchor=anchor, group=grouped, fieldPatch={})
 
 
 def run_flowcell_action(context=None, data=None):

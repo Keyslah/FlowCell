@@ -193,7 +193,7 @@
     },
     {
       "id": "illustrator.layers-builder.add-to-live",
-      "version": "3.1.1",
+      "version": "3.1.2",
       "panelName": "Layers Builder",
       "sourcePath": "Illustrator Git Scripts/Layers Builder/add-to-live",
       "importKind": "script",
@@ -516,7 +516,7 @@
     },
     {
       "id": "illustrator.layer-tree",
-      "version": "3.0.15",
+      "version": "3.0.16",
       "panelName": "Layers Builder",
       "sourcePath": "Illustrator Git Scripts/LayersBuilder",
       "importKind": "script",

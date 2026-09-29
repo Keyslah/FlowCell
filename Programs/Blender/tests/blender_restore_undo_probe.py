@@ -117,7 +117,7 @@ def main() -> None:
         assert str(result.get("message", "")).startswith("Restore cancelled:")
         assert before == after
     else:
-        assert str(result.get("message", "")) == "Restored 1 object(s) into Live."
+        assert str(result.get("message", "")) == "Restored 1 object(s) to their original collections."
         assert sorted(obj.name for obj in bpy.data.objects) == ["(s1)Probe", "(t1)Probe", "Probe"]
 
     if not bpy.ops.ed.undo.poll():

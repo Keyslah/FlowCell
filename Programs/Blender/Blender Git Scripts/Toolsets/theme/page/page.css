@@ -399,7 +399,7 @@ select:focus-visible {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 6px;
 }
 
@@ -818,8 +818,25 @@ select:focus-visible {
   margin-top: 6px;
 }
 
-.theme-number-grid--picture {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.theme-grid-controls {
+  grid-column: span 3;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 4px 8px;
+}
+
+.theme-grid-controls .theme-field {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.theme-grid-controls input[type="number"] {
+  width: 80px;
+  min-width: 0;
 }
 
 .theme-number-control {

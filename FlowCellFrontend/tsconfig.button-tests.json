@@ -58,6 +58,8 @@
     "src/button/windows/managedWindowLifecycle.ts",
     "src/button/windows/pendingWindowOpen.ts",
     "src/button/windows/nativeCursorIgnoreController.ts",
+    "src/button/windows/buttonWindowCloseControl.ts",
+    "src/pages/window-grid/windowGridDetails.ts",
     "src/button/text/textFit.ts",
     "src/button/skins/buttonVisualSampling.ts",
     "src/button/skins/buttonTextOffset.ts",

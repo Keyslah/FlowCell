@@ -1,0 +1,26 @@
+.button-window-hover-close {
+  position: absolute;
+  z-index: 10000;
+  box-sizing: border-box;
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  padding: 0;
+  border: 2px solid rgb(255 72 72 / 85%);
+  border-radius: 12px;
+  background: rgb(220 0 0 / 35%);
+  color: rgb(255 65 65 / 95%);
+  font: 48px/1 Arial, sans-serif;
+  cursor: pointer;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.button-window-hover-close:hover,
+.button-window-hover-close:focus-visible {
+  background: rgb(220 0 0 / 65%);
+  color: white;
+  outline: 2px solid rgb(255 110 110 / 85%);
+  outline-offset: 2px;
+}
